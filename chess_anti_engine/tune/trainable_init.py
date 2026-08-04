@@ -1,20 +1,28 @@
 """Restore / bootstrap / replay-buffer initialization for the Ray Tune trainable.
 
-Three phases that run once at trial startup (before the main loop):
+Four phases that run once at trial startup (before the main loop):
   * _restore_checkpoint_or_salvage — Ray ckpt or salvage seed pool or fresh
   * _maybe_load_bootstrap          — pre-trained weights for fresh starts
   * _init_replay_buffers           — replay + holdout buffers, seeded
                                      from warmstart / shared / exploit
+  * _init_era_probes               — the two FROZEN era-forgetting row sets
 """
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.eval.era_probe import (
+    PROBE_ERA,
+    PROBE_INWINDOW,
+    ProbeSet,
+    load_probe_set,
+)
 from chess_anti_engine.model import (
     load_state_dict_tolerant,
     reinit_volatility_head_parameters_,
@@ -24,6 +32,7 @@ from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import copy_or_link_shard, iter_shard_paths, load_shard_arrays
 from chess_anti_engine.tune._utils import (
+    DURABLE_GATE_STATE,
     SIDECAR_PID_STATE,
     SIDECAR_RNG_STATE,
     SIDECAR_TRIAL_META,
@@ -47,6 +56,7 @@ from chess_anti_engine.tune.replay_exchange import (
 from chess_anti_engine.tune.trainable_config_ops import (
     _TRAINER_WEIGHT_KEYS,
     _apply_lr_gamma_weights,
+    reject_dead_config_keys,
 )
 from chess_anti_engine.tune.trainable_metrics import _count_jsonl_rows
 from chess_anti_engine.tune.trial_config import RestoreResult, TrialConfig
@@ -222,9 +232,26 @@ def _restore_from_salvage_pool(
 
     restored_rng_state = load_optional_json(Path(picked_dir) / SIDECAR_RNG_STATE)
     restored_trial_meta = load_optional_json(Path(picked_dir) / SIDECAR_TRIAL_META)
+  # Pools exported before this carry no gate_state.json, which reads as None
+  # and leaves the gate exactly where it was: an empty window.
+    rr.restored_gate_state = load_optional_json(Path(picked_dir) / DURABLE_GATE_STATE)
     rr.holdout_state_dir = Path(picked_dir)
     if isinstance(restored_trial_meta, dict):
         _apply_restored_holdout_scalars(rr, restored_trial_meta)
+  # ⚑ The donor's EMA rides ONLY when the operator also asked for the donor's
+  # PID state (review N4). `opp_strength_ema` is opponent_strength smoothed,
+  # and opponent_strength is difficulty x winrate -- so importing it while
+  # `salvage_restore_pid_state` is false would anchor the scheduler's own
+  # objective, for ~10 iterations at alpha 0.3, to a difficulty this process
+  # deliberately is NOT running. Production sets the flag true
+  # (configs/pbt2_small.yaml), so this changes nothing today; it stops a future
+  # default flip from reintroducing the mismatch silently.
+        if bool(config.get("salvage_restore_pid_state", False)):
+            _apply_restored_opp_strength_ema(rr, restored_trial_meta)
+  # The yaml key baseline is deliberately NOT adopted from a pool: a salvage
+  # slot was written by a different experiment, so today's yaml differing from
+  # its key set says nothing about an operator's recent edit. Only an ordinary
+  # resume, which continues the SAME trial, carries it (review B2).
         rr.global_iter = int(restored_trial_meta.get("global_iter", rr.global_iter))
         rr.restored_window = int(restored_trial_meta.get("current_window", rr.restored_window))
         rr.restored_owner_trial_dir = str(
@@ -282,7 +309,7 @@ def _restore_from_salvage_pool(
 
 
 def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
-    """Copy lr/cosmos_gamma/loss-weights from donor manifest row into config + trainer.
+    """Copy lr/loss-weights from donor manifest row into config + trainer.
 
     Dual-write pattern: ``config[k] = donor_cfg[k]`` so live YAML reload
     preserves the donor's values across iter boundaries; ``setattr`` (via
@@ -290,7 +317,7 @@ def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
     iteration. ``rescale_current_lr=False`` because the trainer was just
     built — no scheduler progress to rescale against.
     """
-    for k in ("lr", "cosmos_gamma", *_TRAINER_WEIGHT_KEYS):
+    for k in ("lr", *_TRAINER_WEIGHT_KEYS):
         if k in donor_cfg:
             config[k] = donor_cfg[k]
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=False)
@@ -318,12 +345,47 @@ def _apply_restored_holdout_scalars(rr: RestoreResult, restored_trial_meta: dict
     rr.holdout_ruler = str(restored_trial_meta.get("holdout_ruler", "") or "")
 
 
+def _apply_restored_yaml_keys(rr: RestoreResult, restored_trial_meta: dict) -> None:
+    """Carry the previous process's yaml key set across the restart (review B2).
+
+    Names only, and only the ones that are strings: this feeds a comparison, so
+    a malformed entry must shrink the baseline rather than crash a restore.
+    """
+    banked = restored_trial_meta.get("yaml_keys")
+    if not isinstance(banked, list):
+        return
+    rr.restored_yaml_keys = frozenset(k for k in banked if isinstance(k, str))
+
+
+def _apply_restored_opp_strength_ema(rr: RestoreResult, restored_trial_meta: dict) -> None:
+    """Carry the opponent-strength EMA across the restart (audit T1).
+
+    Read on BOTH restore paths, from the same file the holdout scalars ride in.
+    Absent (every checkpoint written before this existed) or non-finite leaves
+    ``rr.opp_strength_ema`` at None, which the loop reads as "no restored EMA"
+    and falls back to ``best.json`` and then to the re-seed. A stored 0.0 is
+    honoured as a value rather than treated as absence, because the loop's
+    ``== 0.0`` re-seed is exactly the behaviour this restores around: the EMA of
+    a trial whose opponent strength really is 0 must not be re-seeded either.
+    """
+    if "opp_strength_ema" not in restored_trial_meta:
+        return
+    try:
+        value = float(restored_trial_meta["opp_strength_ema"])
+    except (TypeError, ValueError):
+        return
+    if math.isfinite(value):
+        rr.opp_strength_ema = value
+
+
 def _apply_restored_trial_meta(rr: RestoreResult, restored_trial_meta: dict | None) -> tuple[str, str]:
     """Pull owner/salvage/global-iter fields from checkpoint metadata into ``rr``.
     Returns (owner_trial_id, owner_optimizer)."""
     if not isinstance(restored_trial_meta, dict):
         return "", ""
     _apply_restored_holdout_scalars(rr, restored_trial_meta)
+    _apply_restored_opp_strength_ema(rr, restored_trial_meta)
+    _apply_restored_yaml_keys(rr, restored_trial_meta)
     rr.restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
     rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
     rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))
@@ -602,6 +664,12 @@ def _init_replay_buffers(
     Returns ``(buf, holdout_buf, current_window, replay_shard_dir,
     selfplay_shards_dir)``.
     """
+  # Refuse a yaml knob that this constructor would silently drop, BEFORE any
+  # shard seeding: the argument list below is exactly where
+  # `replay_sf_gap_priority_signed` goes missing, so the check belongs on this
+  # path and not in a startup banner that a resume could skip.
+    reject_dead_config_keys(config)
+
     current_window = tc.replay_window_start
     replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
     selfplay_shards_dir = work_dir / "selfplay_shards"
@@ -637,6 +705,7 @@ def _init_replay_buffers(
         shard_size=tc.shard_size,
         refresh_interval=tc.shuffle_refresh_interval,
         refresh_shards=tc.shuffle_refresh_shards,
+        shard_recency_exponent=tc.replay_shard_recency_exponent,
         draw_cap_frac=tc.shuffle_draw_cap_frac,
         wl_max_ratio=tc.shuffle_wl_max_ratio,
         sf_gap_priority_weight=tc.replay_sf_gap_priority_weight,
@@ -670,12 +739,68 @@ def _init_replay_buffers(
         f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions} "
         f"shuffle_cap={buf._shuffle_cap} shuffle_cap_eff={buf._effective_shuffle_cap()} "
         f"refresh_interval={buf._refresh_interval} refresh_shards={buf._refresh_shards} "
+  # Read off the CONSTRUCTED buffer for the same reason as the two above, and
+  # placed on THIS line rather than only on the buffer's own `[disk_buf] shard
+  # draw` line because audit_realized_config.py names this print as the
+  # effect-level observable for construction-only keys -- so a new key of that
+  # class has to appear where the audit already points.
+        f"shard_recency_exponent={buf._shard_recency_exponent} "
         f"upgrade_v1_planes={tc.replay_upgrade_v1_planes}"
     )
     holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
     _restore_holdout_buffer(tc=tc, restore=restore, holdout_buf=holdout_buf)
 
     return buf, holdout_buf, current_window, replay_shard_dir, selfplay_shards_dir
+
+
+def _init_era_probes(*, tc: TrialConfig) -> dict[str, ProbeSet]:
+    """Load the two frozen era-forgetting row sets. Empty dict == probes off.
+
+    Called ONCE per trial process, which is what makes the three keys behind it
+    construction-only (see ``trainable_config_ops``). The loader prints one
+    line per set with the set's DIGEST and row count, read off the loaded
+    arrays rather than off config — the effect-level observable an operator
+    checks on the first row after a restart, exactly as ``[trial] buffer init:``
+    is for the replay knobs.
+
+    Deliberately NOT lazily constructed inside the iteration loop the way the
+    prefetcher and async eval are. Those flip a behaviour on; this decides WHAT
+    a published column is measured over, and a column that silently changes
+    ruler mid-run is the failure the classification exists to prevent. A probe
+    added by a live yaml edit would produce a column whose early rows are nan
+    and whose later rows are a different measurement, with nothing in the file
+    to mark the seam.
+
+    Never raises: ``load_probe_set`` returns None with a printed reason for
+    every failure, and a missing probe costs the run nothing but the column.
+    """
+    probes: dict[str, ProbeSet] = {}
+    planes = input_plane_count(tc.input_extra_features)
+    width = policy_size_for_encoding(tc.policy_encoding)
+    for label, raw_path in (
+        (PROBE_ERA, tc.era_probe_path),
+        (PROBE_INWINDOW, tc.era_probe_inwindow_path),
+    ):
+        loaded = load_probe_set(
+            raw_path, label=label, max_rows=tc.era_probe_rows,
+            expected_planes=planes, expected_policy_size=width,
+            expects_relations=bool(tc.use_dynamic_relations),
+        )
+        if loaded is not None:
+            probes[label] = loaded
+    if probes and len(probes) < 2:
+        # The PAIR is the instrument; one leg alone reads as "the net moved"
+        # and cannot separate forgetting from ordinary progress. Still worth
+        # running -- a lone era curve is the hinge signal the 07-31 run lacked
+        # -- but the operator must not read the level as the signature.
+        print(
+            f"[probe] only {sorted(probes)} configured: probe_gap_* will read "
+            f"nan. The DIVERGENCE of the era/in-window pair is the treadmill "
+            f"fingerprint; a single set's level moves with anything that moves "
+            f"the net.",
+            flush=True,
+        )
+    return probes
 
 
 def _restore_holdout_buffer(

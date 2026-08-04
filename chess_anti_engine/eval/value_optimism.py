@@ -396,6 +396,46 @@ def sf_bestmove_is_first_legal_rate(
     return AxisReading(float((smi[ok] == first_legal).mean()))
 
 
+def desync_reject_reason(
+    *,
+    attachment: AxisReading,
+    multipv: AxisReading,
+    attachment_min: float = SF_LABEL_ATTACHMENT_MIN,
+    multipv_miss_max: float = SF_MULTIPV_MISS_MAX,
+) -> str:
+    """The shipped two-axis SF-desync verdict. Empty string == accept.
+
+    ⚑ THIS IS THE ONE COPY. It used to be three: an inline branch in
+    ``scripts/value_optimism.py``, a re-implementation in
+    ``scripts/quarantine_desync_shards.py::judge``, and a test that pinned only
+    the second against the axis functions here. ``quarantine_desync_shards``'s
+    own docstring recorded the consequence: an independent review changed the
+    scorer's ``multipv.value > multipv_miss_max`` to ``> 999.0``, disabling its
+    multipv axis and flipping 118 of 834 live shards, and the whole suite still
+    passed. Every new consumer must call THIS, never restate it — a guard that
+    does not share the criterion's instrument is not a guard.
+
+    An UNUSABLE reading on either axis is a REJECT, not a pass: a gate that
+    could not evaluate a shard has not cleared it. ``usable`` rather than
+    ``status == "ok"`` because a finite check has to happen somewhere, and the
+    only two places it could live are here and in every caller.
+
+    The bestmove-is-first-legal axis is deliberately absent. It is a
+    DIAGNOSTIC (``SF_DESYNC_MAX`` defaults to 1.0 = never reject) because its
+    sound maximum and corrupt minimum are 0.0009 apart; folding it in here
+    would make it look enforced.
+    """
+    if not attachment.usable:
+        return attachment.describe("attachment")
+    if attachment.value < float(attachment_min):
+        return f"attachment {attachment.value:+.4f} < {attachment_min}"
+    if not multipv.usable:
+        return multipv.describe("multipv-miss")
+    if multipv.value > float(multipv_miss_max):
+        return f"multipv-miss {multipv.value:.6f} > {multipv_miss_max}"
+    return ""
+
+
 @dataclass(frozen=True)
 class OptimismRows:
     """Per-row inputs to the scorer, all aligned and already POV-consistent.
@@ -484,7 +524,7 @@ class BucketStat:
     tb_range_frac: float
 
 
-def _cluster_bootstrap_ci(
+def cluster_bootstrap_ci(
     values: np.ndarray, game_id: np.ndarray, *, n_boot: int, rng: np.random.Generator,
     alpha: float = 0.05,
 ) -> tuple[float, float]:
@@ -493,6 +533,11 @@ def _cluster_bootstrap_ci(
     Rows inside one game are strongly correlated (consecutive plies of the same
     position sequence), so a row-level bootstrap reports a CI several times too
     tight. The cluster is the game.
+
+    Public because ``scripts/value_loss_scorer.py`` scores a different sample
+    with the same clustering: two copies of this would be two chances to get
+    the cluster wrong, and a row-level bootstrap in one of them would report a
+    CI several times too tight while looking identical in the output.
     """
     v = np.asarray(values, dtype=np.float64)
     if v.size == 0:
@@ -560,14 +605,14 @@ def score_buckets(
             target_sf_score=float(rows.target_sf_score[sel].mean()),
             search_score=float(rows.search_score[sel].mean()),
             net_minus_sf=float(d_net_sf.mean()),
-            net_minus_sf_ci=_cluster_bootstrap_ci(d_net_sf, gid, n_boot=n_boot, rng=rng),
+            net_minus_sf_ci=cluster_bootstrap_ci(d_net_sf, gid, n_boot=n_boot, rng=rng),
             target_minus_sf=float(d_tgt_sf.mean()),
-            target_minus_sf_ci=_cluster_bootstrap_ci(d_tgt_sf, gid, n_boot=n_boot, rng=rng),
+            target_minus_sf_ci=cluster_bootstrap_ci(d_tgt_sf, gid, n_boot=n_boot, rng=rng),
             net_minus_target=float(d_net_tgt.mean()),
-            net_minus_target_ci=_cluster_bootstrap_ci(d_net_tgt, gid, n_boot=n_boot, rng=rng),
+            net_minus_target_ci=cluster_bootstrap_ci(d_net_tgt, gid, n_boot=n_boot, rng=rng),
             net_cp_mean=float(net_cp[sel].mean()),
             net_minus_sf_cp=float(d_net_sf_cp.mean()),
-            net_minus_sf_cp_ci=_cluster_bootstrap_ci(d_net_sf_cp, gid, n_boot=n_boot, rng=rng),
+            net_minus_sf_cp_ci=cluster_bootstrap_ci(d_net_sf_cp, gid, n_boot=n_boot, rng=rng),
             target_minus_sf_cp=float((target_cp[sel] - sf_cp_clamped[sel]).mean()),
             optimistic_frac=float((d_net_sf > 0.0).mean()),
             cp_clamped_frac=float(net_clamped[sel].mean()),
@@ -736,6 +781,6 @@ def outcome_calibration(
             ruler_score=float(ruler[sel].mean()),
             outcome_score=float(out[sel].mean()),
             delta=float(delta.mean()),
-            ci=_cluster_bootstrap_ci(delta, game_id[sel], n_boot=n_boot, rng=rng),
+            ci=cluster_bootstrap_ci(delta, game_id[sel], n_boot=n_boot, rng=rng),
         ))
     return result

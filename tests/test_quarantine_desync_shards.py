@@ -119,12 +119,18 @@ def test_judge_matches_the_shipped_reject_rule(window: Path) -> None:
     ⚑ SCOPE, stated exactly because an earlier version of this docstring
     overclaimed it: this recomputes the verdict from
     `chess_anti_engine.eval.value_optimism` and compares it to `judge()`. It
-    therefore pins `judge()` against the AXIS FUNCTIONS AND THRESHOLDS ONLY.
-    It does NOT import, execute or observe `scripts/value_optimism.py`, whose
-    inline copy of the same reject rule is a third implementation — review
-    demonstrated that breaking that copy (`> multipv_miss_max` -> `> 999.0`,
-    which flips 118 of the 834 live shards) leaves this whole suite green.
-    Closing that hole needs the shared predicate, not another assertion here.
+    therefore pins `judge()` against the AXIS FUNCTIONS AND THRESHOLDS ONLY,
+    and it still does NOT import, execute or observe `scripts/value_optimism.py`.
+
+    What HAS changed since that was written: the hole this docstring described
+    -- three independent copies of the reject rule, of which review broke one
+    (`> multipv_miss_max` -> `> 999.0`, flipping 118 of the 834 live shards)
+    with the whole suite staying green -- is closed. There is now one
+    predicate, `eval.value_optimism.desync_reject_reason`, and all three
+    consumers call it. The cross-copy assertion that could not be written here
+    is `tests/test_era_forgetting_probe.py::
+    test_every_desync_consumer_goes_through_one_predicate`, which forces the
+    shared predicate to reject and requires the consumers to follow.
     """
     import zarr
     for p in qds.iter_shard_paths(window):

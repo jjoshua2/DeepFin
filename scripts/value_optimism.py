@@ -94,6 +94,7 @@ from chess_anti_engine.eval.value_optimism import (
     bucket_names_for,
     bucket_net_score_spread,
     cp_to_expected_score,
+    desync_reject_reason,
     expected_score,
     outcome_calibration,
     perfect_head_tail_asymmetry,
@@ -360,15 +361,19 @@ def _load_rows(
         except KeyError:
             desync = AxisReading(float("nan"), "field_missing")
 
-        verdict: str | None = None
-        if not attach.usable:
-            verdict = attach.describe("attachment")
-        elif attach.value < attachment_min:
-            verdict = f"attachment {attach.value:+.4f} < {attachment_min}"
-        elif not multipv.usable:
-            verdict = multipv.describe("multipv-miss")
-        elif multipv.value > multipv_miss_max:
-            verdict = f"multipv-miss {multipv.value:.6f} > {multipv_miss_max}"
+        # The two ENFORCED axes go through the one shared predicate
+        # (eval/value_optimism.desync_reject_reason) rather than being restated
+        # here: this copy's drift is what the review demonstrated -- setting the
+        # multipv comparison to `> 999.0` disabled the axis, flipped 118 of 834
+        # live shards, and the whole suite passed. The optional third axis stays
+        # local because it is a DIAGNOSTIC, off by default, and folding it into
+        # the shared rule would make it look enforced.
+        verdict: str | None = desync_reject_reason(
+            attachment=attach, multipv=multipv,
+            attachment_min=attachment_min, multipv_miss_max=multipv_miss_max,
+        ) or None
+        if verdict is not None:
+            pass
         elif desync_max < 1.0 and not desync.usable:
             verdict = desync.describe("desync")
         elif desync_max < 1.0 and desync.value > desync_max:

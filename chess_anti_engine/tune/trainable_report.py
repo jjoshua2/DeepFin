@@ -12,9 +12,11 @@ import math
 import shutil
 import time
 import traceback
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.eval.era_probe import probe_metric_defaults
 from chess_anti_engine.tune._utils import (
     SIDECAR_PID_STATE,
     SIDECAR_RNG_STATE,
@@ -261,6 +263,8 @@ def _save_trial_checkpoint(
     holdout_frozen: bool,
     holdout_generation: int,
     holdout_ruler: str,
+    opp_strength_ema: float,
+    yaml_keys: Iterable[str],
     Checkpoint,
 ):
     """Flush replay buffer and save a lightweight checkpoint.
@@ -275,6 +279,23 @@ def _save_trial_checkpoint(
     promotion across two rulers happened at iter 165. Storing it here — beside
     the generation and the rows, in the file both restore paths already read —
     is what lets the next restart notice.
+
+    `opp_strength_ema` rides here for the same reason and none other: it is the
+    scheduler's own objective metric (`GPBTPairwiseScheduler._metric`), it is
+    what salvage and the sibling-share ranking sort on, and until this it died
+    at every process start (audit T1). `best.json` also carries it, but that
+    file is only rewritten when a best-model candidate is ACCEPTED, so it can be
+    hundreds of iterations stale; trial_meta.json is rewritten with every
+    checkpoint. The value stored is the EMA in effect when the checkpoint was
+    written — this iteration's PID update runs after the save — so a resume
+    continues the series one update behind instead of restarting it.
+
+    `yaml_keys` is the flat key set of the yaml this process last loaded
+    successfully. It is banked for one purpose: the next process compares the
+    yaml it finds against it, so a key DELETED while the trial was down is
+    reported instead of silently keeping its restored value (review B2). Key
+    NAMES only, never values — the values are the yaml's job, and copying them
+    here would create a second source of truth for the live config.
     """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
@@ -299,6 +320,8 @@ def _save_trial_checkpoint(
                 "holdout_frozen": bool(holdout_frozen),
                 "holdout_generation": int(holdout_generation),
                 "holdout_ruler": str(holdout_ruler),
+                "opp_strength_ema": float(opp_strength_ema),
+                "yaml_keys": sorted(yaml_keys),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -839,6 +862,25 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # fractions. The fractions are the outage detector (see TrainMetrics).
     "m_sf_own": 0.0, "m_sf_own_regret": 0.0,
     "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
+  # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
+  # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
+  # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
+  # nothing was inspected, in either of two operationally identical cases —
+  # the batch carried no `has_sf_multipv_raw` field, or it held no SF-labelled
+  # rows at all. `scripts/loop_health.py` alerts on that; the RATE alert is
+  # deferred until a TRAIN row reads 0.0 (the `test_` twin cannot, see below).
+    "sf_labelled_no_multipv_frac": 0.0, "sf_multipv_checked_frac": 0.0,
+  # VALUE half of the same always-on detector (see TrainMetrics).
+  # `sf_eval_pv_orphan_frac` is the one with power: it inspects the rows the
+  # policy column PASSES, floor exactly 0.000000 (474,278 pre-episode labelled
+  # rows), 0.117386 on the 122 quarantined shards. Read it with
+  # `sf_eval_pv_checked_frac` — zero there
+  # means nothing was inspected. `sf_wdl_degenerate_frac` reads 0.0 on
+  # poisoned data too and is a producer tripwire, not a desync one;
+  # `sf_wdl_orphaned_frac` is `sf_labelled_no_multipv_frac`'s twin by design
+  # and must never be summed with it.
+    "sf_wdl_degenerate_frac": 0.0, "sf_wdl_orphaned_frac": 0.0,
+    "sf_eval_pv_orphan_frac": 0.0, "sf_eval_pv_checked_frac": 0.0,
   # SF target rebuild coverage (train.rebuild_sf_targets). 0.0 with the flag
   # off; non-zero is the proof the flip reached the batch pipeline. The
   # masked_p0/_volatility pair are PRE-mask presence fractions — the outage
@@ -849,14 +891,31 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "policy_loss_selfplay": 0.0, "policy_loss_curriculum": 0.0,
     "wdl_loss_selfplay": 0.0, "wdl_loss_curriculum": 0.0,
     "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
-    "policy_loss_open": 0.0, "policy_loss_mid": 0.0, "policy_loss_end": 0.0,
-    "wdl_loss_open": 0.0, "wdl_loss_mid": 0.0, "wdl_loss_end": 0.0,
+    "policy_loss_phase_open": 0.0, "policy_loss_phase_mid": 0.0, "policy_loss_phase_end": 0.0,
+    "wdl_loss_phase_open": 0.0, "wdl_loss_phase_mid": 0.0, "wdl_loss_phase_end": 0.0,
+  # Denominators of the three columns above. `masked_mean` clamps its
+  # denominator to 1.0, so an empty bucket reports a loss of 0.0 and nothing
+  # else can say so — see train/losses.py.
+    "wdl_loss_phase_n_open": 0.0, "wdl_loss_phase_n_mid": 0.0,
+    "wdl_loss_phase_n_end": 0.0,
+  # The policy head's own denominators — a different mask (`has_policy` on top
+  # of `net_mask`), so these can be empty where the wdl counts are not.
+    "policy_loss_phase_n_open": 0.0, "policy_loss_phase_n_mid": 0.0,
+    "policy_loss_phase_n_end": 0.0,
     "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
     "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
     "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
     "grad_norm_aurora": 0.0, "grad_norm_adamw": 0.0,
     "grad_nonfinite_skip_rate": 0.0,
     "opt_lr_mean": 0.0, "opt_lr_max": 0.0,
+    "aurora_uw_count": 0.0, "aurora_uw_lr": 0.0,
+    "aurora_uw_ratio_median": 0.0,
+    "aurora_uw_effective_ratio_min": 0.0,
+    "aurora_uw_effective_ratio_median": 0.0,
+    "aurora_polar_steps_configured": 0.0, "aurora_polar_sv_samples": 0.0,
+    "aurora_polar_sv_errors": 0.0,
+    "aurora_polar_sv_ratio_square": 0.0, "aurora_polar_sv_ratio_rect": 0.0,
+    "aurora_polar_orth_err_square": 0.0, "aurora_polar_orth_err_rect": 0.0,
 }
 
 
@@ -903,9 +962,30 @@ def _train_metrics_dict(metrics) -> dict:
         "m_sf_own_regret": float(metrics.m_sf_own_regret),
         "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
         "has_sf_p0_regret_frac": float(metrics.has_sf_p0_regret_frac),
-        # Rebuild coverage. `sf_rebuild_policy_frac` below the SF-labelled row
-        # fraction is the rows the rebuild could NOT reach (no sf_multipv_raw),
-        # which stay at capture-time targets; `sf_rebuild_masked_frac` counts
+        # Desync alarm over the rows training actually consumed. Unlike the
+        # sf_rebuild_* pair below it is computed unconditionally, from the
+        # batch's own presence flags, so it is readable on every iteration
+        # rather than only while a rebuild experiment runs.
+        "sf_labelled_no_multipv_frac": float(metrics.sf_labelled_no_multipv_frac),
+        "sf_multipv_checked_frac": float(metrics.sf_multipv_checked_frac),
+        # The same alarm on the VALUE half of the label, which carries 0.45 of
+        # the trained value target and had no detector at all until 2026-08-03.
+        # `sf_eval_pv_orphan_frac` sees the desync pass-through the policy
+        # column structurally cannot; the other two are a producer tripwire and
+        # the blind spot's own count. See TrainMetrics for what each floor is.
+        "sf_wdl_degenerate_frac": float(metrics.sf_wdl_degenerate_frac),
+        "sf_wdl_orphaned_frac": float(metrics.sf_wdl_orphaned_frac),
+        "sf_eval_pv_orphan_frac": float(metrics.sf_eval_pv_orphan_frac),
+        "sf_eval_pv_checked_frac": float(metrics.sf_eval_pv_checked_frac),
+        # Rebuild coverage. `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`
+        # is a Stockfish-DESYNC signal, not a coverage cost: both divide by all
+        # batch rows and a healthy labelled row always carries both fields, so
+        # the difference is the fully-stripped-label share of the batch — a
+        # LOWER bound on contamination (~59% of poisoned rows lose the block).
+        # ⚑ All five read 0.0 while `rebuild_sf_targets` is off, which is the
+        # default and is in no config, so a zero here is NOT evidence of health;
+        # see target_builder.py::SfRebuildCoverage.metric_kwargs for the
+        # always-on detectors. `sf_rebuild_masked_frac` counts
         # the cross-ply targets it masked instead of leaving stale, and the
         # per-flag pair decomposes it PRE-mask (the rebuild-mode outage
         # detector — see the has_sf_p0_frac caveat above).
@@ -922,12 +1002,22 @@ def _train_metrics_dict(metrics) -> dict:
         "wdl_loss_curriculum": float(metrics.wdl_loss_curriculum),
         "frac_is_selfplay_batch": float(metrics.frac_is_selfplay),
         "frac_tagged_batch": float(metrics.frac_tagged),
-        "policy_loss_open": float(metrics.policy_loss_open),
-        "policy_loss_mid": float(metrics.policy_loss_mid),
-        "policy_loss_end": float(metrics.policy_loss_end),
-        "wdl_loss_open": float(metrics.wdl_loss_open),
-        "wdl_loss_mid": float(metrics.wdl_loss_mid),
-        "wdl_loss_end": float(metrics.wdl_loss_end),
+        "policy_loss_phase_open": float(metrics.policy_loss_phase_open),
+        "policy_loss_phase_mid": float(metrics.policy_loss_phase_mid),
+        "policy_loss_phase_end": float(metrics.policy_loss_phase_end),
+        "wdl_loss_phase_open": float(metrics.wdl_loss_phase_open),
+        "wdl_loss_phase_mid": float(metrics.wdl_loss_phase_mid),
+        "wdl_loss_phase_end": float(metrics.wdl_loss_phase_end),
+        # Rows each of the three losses above was averaged over, summed across
+        # the iteration. Without these a bucket that collected NO rows is
+        # indistinguishable from one with a perfect loss, because `masked_mean`
+        # clamps its denominator to 1.0 and publishes 0.0.
+        "wdl_loss_phase_n_open": float(metrics.wdl_loss_phase_n_open),
+        "wdl_loss_phase_n_mid": float(metrics.wdl_loss_phase_n_mid),
+        "wdl_loss_phase_n_end": float(metrics.wdl_loss_phase_n_end),
+        "policy_loss_phase_n_open": float(metrics.policy_loss_phase_n_open),
+        "policy_loss_phase_n_mid": float(metrics.policy_loss_phase_n_mid),
+        "policy_loss_phase_n_end": float(metrics.policy_loss_phase_n_end),
         # Grad-norm / clipping, aggregated over every step of the iteration.
         # Previously TensorBoard-only, at a 1-in-10 subsample, in event files
         # that rotate per Ray session — so no ledger yardstick could cite them
@@ -955,6 +1045,37 @@ def _train_metrics_dict(metrics) -> dict:
         # sqrt_release ramp and is ~9x smaller (I19).
         "opt_lr_mean": float(metrics.opt_lr_mean),
         "opt_lr_max": float(metrics.opt_lr_max),
+        # Aurora update/weight ratios. These were TrainMetrics fields that
+        # `_train_metrics_dict` never listed, so they reached TensorBoard only
+        # -- event files that rotate per Ray session, which is the same reason
+        # the grad-norm family above had to be promoted. `aurora_uw_count` is
+        # the wiring column: 48 is the production matrix group, 0.0 means no
+        # step collected. ⚑ `aurora_uw_effective_ratio_*` is sampled at the
+        # sqrt_release sawtooth FLOOR and is ~10x under a typical step by
+        # construction (M4-2) -- divide it by `aurora_uw_lr` and multiply by
+        # `opt_lr_mean` before reading it as "how big is one step".
+        "aurora_uw_count": float(metrics.aurora_uw_count),
+        "aurora_uw_lr": float(metrics.aurora_uw_lr),
+        "aurora_uw_ratio_median": float(metrics.aurora_uw_ratio_median),
+        "aurora_uw_effective_ratio_min": float(metrics.aurora_uw_effective_ratio_min),
+        "aurora_uw_effective_ratio_median": float(
+            metrics.aurora_uw_effective_ratio_median
+        ),
+        # Polar residual of the update Aurora applied, at the step count that
+        # produced it. `aurora_polar_steps_configured` is the proof-of-effect
+        # column for any change to `aurora_polar_steps`: it is read off the
+        # optimizer's own param group during the step, not off the yaml.
+        # `_sv_ratio_*` -> 1.0 and `_orth_err_*` -> 0.0 as the polar factor
+        # converges. Nothing reported polar convergence before this (M4-1 was
+        # invisible for the life of the run); `aurora_polar_sv_samples` < 2
+        # means a shape class went unsampled, so its 0.0 is "not measured".
+        "aurora_polar_steps_configured": float(metrics.aurora_polar_steps_configured),
+        "aurora_polar_sv_samples": float(metrics.aurora_polar_sv_samples),
+        "aurora_polar_sv_errors": float(metrics.aurora_polar_sv_errors),
+        "aurora_polar_sv_ratio_square": float(metrics.aurora_polar_sv_ratio_square),
+        "aurora_polar_sv_ratio_rect": float(metrics.aurora_polar_sv_ratio_rect),
+        "aurora_polar_orth_err_square": float(metrics.aurora_polar_orth_err_square),
+        "aurora_polar_orth_err_rect": float(metrics.aurora_polar_orth_err_rect),
     }
 
 
@@ -973,7 +1094,8 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_categorical_loss", "test_volatility_loss", "test_sf_volatility_loss",
     "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
     "test_policy_loss_selfplay", "test_policy_loss_curriculum",
-    "test_policy_loss_open", "test_policy_loss_mid", "test_policy_loss_end",
+    "test_policy_loss_phase_open", "test_policy_loss_phase_mid",
+    "test_policy_loss_phase_end",
   # The RULER-side rebuild coverage. `eval_full_pass` pins the SF target
   # rebuild off, so these are 0.0 by construction and a non-zero value means
   # the frozen holdout rebuilt its own targets -- the alarm that
@@ -985,6 +1107,18 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_sf_rebuild_policy_frac", "test_sf_rebuild_wdl_frac",
     "test_sf_rebuild_masked_frac",
     "test_sf_rebuild_masked_p0_frac", "test_sf_rebuild_masked_volatility_frac",
+  # The holdout's own SF-label contamination reading. It is NOT redundant with
+  # the train-side twin: the holdout is a FROZEN set, so its rate is fixed at
+  # the contamination the set was cut with and does not decay as the replay
+  # window turns over. A non-zero value here says the ruler itself was cut
+  # from poisoned data — which happened (`scratchpad/split/eval_shards`, 14.10 %
+  # rejected, docs/experiment_ledger.md 2026-08-01) and was found only by
+  # re-gating the pool offline, long after the numbers were published.
+    "test_sf_labelled_no_multipv_frac", "test_sf_multipv_checked_frac",
+  # VALUE half on the same frozen set, for the same reason: the holdout scores
+  # `sf_wdl`-derived quantities, so "was the ruler's own value label detached"
+  # is a question about the ruler and it needs its own column here.
+    "test_sf_eval_pv_orphan_frac", "test_sf_eval_pv_checked_frac",
 )
 
 
@@ -1046,9 +1180,9 @@ def _test_and_drift_dict(
             "test_wdl_ece": float(tm.wdl_ece),
             "test_policy_loss_selfplay": float(tm.policy_loss_selfplay),
             "test_policy_loss_curriculum": float(tm.policy_loss_curriculum),
-            "test_policy_loss_open": float(tm.policy_loss_open),
-            "test_policy_loss_mid": float(tm.policy_loss_mid),
-            "test_policy_loss_end": float(tm.policy_loss_end),
+            "test_policy_loss_phase_open": float(tm.policy_loss_phase_open),
+            "test_policy_loss_phase_mid": float(tm.policy_loss_phase_mid),
+            "test_policy_loss_phase_end": float(tm.policy_loss_phase_end),
             # Ruler alarm: 0.0 by construction (the full pass pins the SF
             # target rebuild off), so non-zero means the frozen holdout
             # rebuilt its own targets and `test_loss` changed meaning.
@@ -1059,6 +1193,31 @@ def _test_and_drift_dict(
             "test_sf_rebuild_masked_volatility_frac": float(
                 tm.sf_rebuild_masked_volatility_frac
             ),
+            # Contamination of the FROZEN holdout set itself. Exactly 0.000000
+            # on a sound set; anything else means the ruler was cut from
+            # poisoned shards and every `test_*` SF-derived column above is
+            # scored against detached labels.
+            #
+            # ⚑⚑ THE CURRENT HOLDOUT IS NOT SOUND, AND ITS FIRST READING IS
+            # KNOWN: 0.101305 (194 no-PV rows of 1915 labelled over 2000),
+            # identical in checkpoint_000474/476/478, with
+            # `test_sf_multipv_checked_frac` 0.957500. That is ~500x the train
+            # row's ~2e-4 post-quarantine residue and it does NOT decay — the
+            # set is frozen, so it stays until the holdout is re-cut from
+            # post-quarantine shards. Expected on the first live holdout row;
+            # it is a real finding about the RULER, not a plumbing fault, and
+            # must not be used as a reason to mute the column.
+            "test_sf_labelled_no_multipv_frac": float(tm.sf_labelled_no_multipv_frac),
+            "test_sf_multipv_checked_frac": float(tm.sf_multipv_checked_frac),
+            # Same question on the value half. The full-pass eval path reaches
+            # `_prepare_host_arrays` (`_full_pass_host_batch`), which is where
+            # the flags are derived, so this reads for real — but ONLY on the
+            # array path: the legacy `ReplaySample` list path
+            # (`_sample_batch_host`'s else branch) never touches that method
+            # and publishes `checked_frac` 0.0, i.e. UNMEASURED. Read the two
+            # together; the orphan rate above a zero checked_frac means nothing.
+            "test_sf_eval_pv_orphan_frac": float(tm.sf_eval_pv_orphan_frac),
+            "test_sf_eval_pv_checked_frac": float(tm.sf_eval_pv_checked_frac),
         })
     return test_dict
 
@@ -1073,6 +1232,7 @@ def _build_report_dict(
     drift: DriftMetrics,
     eval_dict: dict,
     puzzle_dict: dict,
+    probe_dict: dict | None = None,
     # Iteration context
     wdl_regret_used: float,
     sf_nodes_used: int,
@@ -1344,6 +1504,16 @@ def _build_report_dict(
         "fdp_outposts":    float(trainer._feature_group_dropout[4][2]),
         "selfplay_fraction": tc.selfplay_fraction,
         "optimizer_name": tc.optimizer,
+        # `mirror_prob` has NO yaml key: `trainer_kwargs_from_config` never
+        # reads one, so production runs at the constructor default and a
+        # left-right mirror of ~half of every training batch was invisible to
+        # `audit_realized_config.py` and to the 319-key config audit. Reported
+        # (not plumbed) so the realized value is auditable from the row --
+        # adding the yaml key is restart-gated, since the live-yaml validator
+        # rejects a key the running code does not define.
+        "mirror_prob": float(trainer.mirror_prob),
+        # BOTH of these shape only the AUXILIARY `sf_eval` head's row mask.
+        # Neither touches the WDL value target (docs/model_heads.md).
         "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),
         "sf_wdl_draw_scale": float(trainer.sf_wdl_draw_scale),
         "sf_wdl_temperature": float(trainer.sf_wdl_temperature),
@@ -1366,5 +1536,11 @@ def _build_report_dict(
         **eval_dict,
         **test_dict,
         **puzzle_dict,
+  # `probe_metric_defaults()` on None, never `**(probe_dict or {})`: Ray's CSV
+  # logger fixes the header from row 1 and a resume appends without re-heading,
+  # so a column set that depends on whether the probes are configured would
+  # misalign every later segment of progress.csv. The columns exist from row 1
+  # and read nan until a set is named.
+        **(probe_metric_defaults() if probe_dict is None else probe_dict),
         "curriculum_winrate_raw": float(pr.curriculum_winrate_raw) if pr.curriculum_winrate_raw is not None else 0.0,
     }

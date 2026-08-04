@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging as _logging
 import os
+import sys as _sys
+import time as _time
 from collections.abc import Sequence
 from typing import Literal, cast, overload
 
@@ -25,7 +27,7 @@ import torch
 from numpy.typing import NDArray
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
 from chess_anti_engine.inference_dispatcher import supports_inplace_api
 from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.lc0 import (
@@ -71,6 +73,7 @@ from chess_anti_engine.mcts.gumbel import (
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
+from chess_anti_engine.mcts.sampling import sample_action_with_temperature
 from chess_anti_engine.moves import POLICY_SIZE
 
 
@@ -180,8 +183,18 @@ def reset_duplicate_stats() -> None:
 # start_gumbel_sims with them raises a cryptic mid-search TypeError. CANONICAL
 # definition (uci/search.py imports it) so the guard covers EVERY C-path consumer —
 # selfplay/training and eval call run_gumbel_root_many_c directly, not just UCI.
-# See _mcts_tree.c PyInit (ABI_VERSION).
-_REQUIRED_MCTS_ABI = 2
+# See _mcts_tree.c PyInit (ABI_VERSION). Raised to 3 for the audit-W1 fix: an
+# un-rebuilt .so still keys the transposition table on the ep-blind repetition
+# hash and copies donor child action lists unverified, which injects illegal
+# moves into the tree. That failure is SILENT, so it gets the loud guard.
+_REQUIRED_MCTS_ABI = 3
+
+# Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
+# pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
+# the child's existing mean. See the guard in run_gumbel_root_many_c: the
+# Gumbel descent only implements LEGACY correctly.
+VLOSS_MODE_LEGACY = 0
+VLOSS_MODE_VIRTUAL_MEAN = 1
 
 GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
 GumbelManyCDiagnosticsResult = tuple[
@@ -206,6 +219,93 @@ def _batch_encoders(input_history_encoding: str | None):
 
 _log = _logging.getLogger(__name__)
 _EncodeBuffer = NDArray[np.float32] | NDArray[np.uint16]
+
+# One-shot flags for the two "this silently costs you something" warnings below
+# (audit F5 tree-carry vs pipeline, F7 policy_temp vs compact-legal bf16).
+# Module-level so a per-ply search does not re-log every move.
+_PIPELINE_TREE_WARNED = False
+_LEGAL_BF16_TEMP_WARNED = False
+
+
+def _mark_pipeline_tree_warned() -> None:
+    global _PIPELINE_TREE_WARNED
+    _PIPELINE_TREE_WARNED = True
+
+
+def _mark_legal_bf16_temp_warned() -> None:
+    global _LEGAL_BF16_TEMP_WARNED
+    _LEGAL_BF16_TEMP_WARNED = True
+
+
+# Audit W2. Counts reused-root candidates rejected because their child set did
+# not cover the actions we were about to search. Process-cumulative so a run can
+# be asked "did this ever fire?" — a guard nobody can observe is a guard nobody
+# knows is dead. Read with root_coverage_miss_count().
+_ROOT_COVERAGE_MISSES = 0
+_ROOT_COVERAGE_WARNED = False
+
+
+def _warn_root_coverage_miss() -> None:
+    global _ROOT_COVERAGE_MISSES, _ROOT_COVERAGE_WARNED
+    _ROOT_COVERAGE_MISSES += 1
+    if not _ROOT_COVERAGE_WARNED:
+        _ROOT_COVERAGE_WARNED = True
+        _log.warning(
+            "gumbel: discarded a reused root whose child set did not cover the "
+            "search actions (audit W2); rebuilding the root. Further "
+            "occurrences are counted, not logged."
+        )
+
+
+def root_coverage_miss_count() -> int:
+    """Reused roots rejected by the coverage check since process start."""
+    return _ROOT_COVERAGE_MISSES
+
+
+# Operator surface for the two audit-W1/W2 guards. A counter no production path
+# reads is the same defect the guards exist to fix — a value accepted and then
+# silently ignored — so the shared C-path entry point emits a line whenever
+# either guard has fired since the last report.
+#
+# stderr, NOT stdout: this path is also the UCI engine's search, whose stdout is
+# the protocol channel; an unsolicited line there desynchronises the GUI. Both
+# production consumers capture stderr into their logs — the selfplay workers via
+# `stderr=subprocess.STDOUT` (`tune/distributed_runtime.py`) and the trial itself
+# via `> "$LOG" 2>&1` (`scripts/train.sh`) — and the trial actor has no logging
+# handler, so a `_log.info` would reach nothing.
+#
+# Zero cost when the guards are silent: the interval check is one monotonic()
+# compare, and the counters are not even read until it elapses.
+_TT_HEALTH_INTERVAL_S = 60.0
+_tt_health_next_check = 0.0
+_tt_health_reported = (0, 0)
+
+
+def _report_guard_health() -> None:
+    global _tt_health_next_check, _tt_health_reported
+    now = _time.monotonic()
+    if now < _tt_health_next_check:
+        return
+    _tt_health_next_check = now + _TT_HEALTH_INTERVAL_S
+
+    try:
+        reject = int(_mcts_tree_ext.tt_stats()["reject"])
+    except (AttributeError, KeyError, TypeError):
+        return  # pre-fix .so; the ABI guard above already covers that case
+    current = (reject, _ROOT_COVERAGE_MISSES)
+    if current == (0, 0) or current == _tt_health_reported:
+        return
+    _tt_health_reported = current
+    print(
+        f"[mcts] search guards FIRED since process start: "
+        f"tt_donor_reject={current[0]} root_coverage_miss={current[1]}. "
+        "tt_donor_reject>0 means the transposition key no longer implies the "
+        "legal move set (audit W1); root_coverage_miss>0 means a carried tree "
+        "root was discarded (audit W2). Neither corrupts the search — both mean "
+        "something upstream changed.",
+        file=_sys.stderr,
+        flush=True,
+    )
 
 
 def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]:
@@ -354,8 +454,32 @@ def run_gumbel_root_many_c(
     if _abi < _REQUIRED_MCTS_ABI:
         raise RuntimeError(
             f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
-            "(missing the start_gumbel_sims root-scale args); rebuild the C extension: "
-            "python setup.py build_ext --inplace"
+            "(missing the start_gumbel_sims root-scale args and/or the audit-W1 "
+            "transposition-key fix); rebuild the C extension: "
+            "python3 scripts/build_production_extensions.py"
+        )
+  # Operator surface for the audit-W1/W2 guards. Here rather than in a caller
+  # because this is the choke point EVERY C-path consumer goes through —
+  # selfplay, training-time eval and UCI all land on this function.
+    _report_guard_health()
+    if int(vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
+        # `tree_gumbel_select_child` (_mcts_tree.c:2941-2944) mirrors
+        # `tree_select_child`'s VIRTUAL_MEAN accounting for the CHILD term and
+        # NOT for the PARENT term: there is no VIRTUAL_MEAN branch on
+        # parent_N/parent_W, so parent_Q -- which is the FPU for every
+        # unvisited child and the weighted_q fallback -- still carries exactly
+        # the parallel-PUCT pessimism VIRTUAL_MEAN exists to remove. No caller
+        # passes vloss_mode=1 to the Gumbel path today (play-path audit
+        # 2026-08-03, F4), so this refuses the trap instead of silently
+        # running a half-mirrored descent for whoever wires the knob through.
+        # Lift it in the same commit that adds the C parent branch.
+        raise ValueError(
+            "vloss_mode=VLOSS_MODE_VIRTUAL_MEAN (1) is not implemented for the "
+            "Gumbel descent: tree_gumbel_select_child mirrors tree_select_child's "
+            "VIRTUAL_MEAN accounting for the child term only, leaving parent_Q "
+            "(the FPU for unvisited children) with legacy virtual-loss pessimism "
+            "(play-path audit 2026-08-03, F4). Use vloss_mode=0 until the C "
+            "parent branch is mirrored."
         )
     if volatility_search_enabled(cfg):
         # Fail loud rather than silently searching without the volatility
@@ -368,7 +492,6 @@ def run_gumbel_root_many_c(
             "run_gumbel_root_many (mcts/gumbel.py) when volatility_q_scale/"
             "volatility_fpu are non-zero"
         )
-    import time as _time
     _t_init = 0.0
     _t_prepare = 0.0
     _t_gpu = 0.0
@@ -411,6 +534,28 @@ def run_gumbel_root_many_c(
   # All async-capable evaluators conform to the protocol; _has_async is the runtime check.
     _async_eval = cast("AsyncBatchEvaluator", eval_impl)
     _use_pipeline = _has_async and n_boards >= 64 and not cfg.compute_relations  # relations ride the single-loop fallback path
+  # The pipeline builds its OWN ephemeral sub-trees, ignores the caller's
+  # `tree`/`root_node_ids` entirely and returns root ids [-1]*n_boards, so a
+  # caller that asked for a persistent tree silently lost every root for the
+  # ply -- and lost it as a function of BATCH SIZE, so crossing 64 boards
+  # turned tree reuse off with no signal (play-path audit 2026-08-03, F5).
+  # A caller passing `tree` is asking for tree carry, which is a search-shape
+  # property; the pipeline is a throughput optimisation. Honour the contract
+  # and drop the optimisation, loudly, rather than discarding the argument.
+  # Production distributed selfplay never reaches this: SlotInferenceClient has
+  # no `evaluate_encoded_async`, so `_has_async` is False there.
+    if _use_pipeline and tree is not None:
+        if not _PIPELINE_TREE_WARNED:
+            _log.warning(
+                "gumbel_c: disabling the 2-group eval pipeline for this call because a "
+                "persistent tree was supplied (n_boards=%d >= 64). The pipeline builds "
+                "ephemeral sub-trees and would discard the caller's tree/root_node_ids "
+                "(play-path audit 2026-08-03, F5). Pass tree=None to opt back into the "
+                "pipeline and accept cold roots every ply.",
+                n_boards,
+            )
+            _mark_pipeline_tree_warned()
+        _use_pipeline = False
 
   # Zero-copy path: when the evaluator exposes get_input_buffer + evaluate_inplace_async
   # (DirectGPUEvaluator with n_slots>=needed), we route the C tree walks to write
@@ -472,9 +617,17 @@ def run_gumbel_root_many_c(
         if _has_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
             assert batch_enc_bf16 is not None
             root_buf = eval_impl.get_input_buffer_bf16_bits(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            check_encode_buffer_planes(
+                root_buf, cfg.input_extra_features,
+                where="run_gumbel_many_c root inplace bf16",
+            )
             batch_enc_bf16(root_cboards, root_buf)
         else:
             root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            check_encode_buffer_planes(
+                root_buf, cfg.input_extra_features,
+                where="run_gumbel_many_c root inplace",
+            )
             batch_enc(root_cboards, root_buf)
         if cfg.compute_relations:
             _root_rel = np.empty((n_boards, 5, 64, 64), dtype=np.uint8)
@@ -642,12 +795,21 @@ def run_gumbel_root_many_c(
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
                 rid = root_node_ids[i]
-                if tree.is_expanded(rid) and (
-                    allowed_root_indices_batch is None
-                    or _expanded_root_covers_actions(tree, rid, legal_idx)
+                # The coverage check runs on EVERY reuse, including selfplay
+                # (audit W2). It used to be short-circuited by
+                # `allowed_root_indices_batch is None`, which selfplay always
+                # is — so the only path that carries a tree across plies was
+                # the only path the check never ran on. A reused root whose
+                # child set is missing an action we are about to search makes
+                # tree_gumbel_collect_leaf bail at depth 1 (`child_id < 0`),
+                # silently spending the whole simulation on the root.
+                if tree.is_expanded(rid) and _expanded_root_covers_actions(
+                    tree, rid, legal_idx
                 ):
                     root_ids[i] = rid
                     _reused = True
+                elif tree.is_expanded(rid):
+                    _warn_root_coverage_miss()
 
             if not _reused:
                 rid = tree.add_root(1, float(root_qs[i]))
@@ -737,6 +899,11 @@ def run_gumbel_root_many_c(
                 eval_impl.get_input_buffer(_leaf_cap, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
                 for g in range(2)
             ]
+            for _buf in _enc_bufs:
+                check_encode_buffer_planes(
+                    _buf, cfg.input_extra_features,
+                    where="run_gumbel_many_c split leaf inplace",
+                )
         else:
             _enc_dtype = np.uint16 if _has_input_bf16 else np.float32
             _enc_bufs = [
@@ -997,6 +1164,31 @@ def run_gumbel_root_many_c(
             # tempering-aware path when it's set rather than re-pack BF16.
             and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
         )
+  # The gate above is correct, but its PRICE was invisible at the config
+  # surface: setting policy_temp to anything but 1.0 costs ~1.9x end-to-end
+  # search time (1.63 s -> 3.12 s over 40 searches x 8 boards x 256 sims on
+  # CPU; play-path audit 2026-08-03 F7, scratchpad/code_audit_20260803/
+  # profile_search.py), because the leaf transport falls back from compact
+  # legal bf16 to dense float32 4672. Say so once per process so a
+  # policy_temp sweep prices itself.
+        if (
+            not _use_legal_bf16
+            and _has_legal_bf16
+            and not cfg.compute_relations
+            and hasattr(tree, "get_pending_legal_indices")
+            and hasattr(tree, "continue_gumbel_sims_legal_bf16")
+            and float(getattr(cfg, "policy_temp", 1.0)) != 1.0
+            and not _LEGAL_BF16_TEMP_WARNED
+        ):
+            _log.warning(
+                "gumbel_c: policy_temp=%.6g != 1.0 disables the compact-legal bf16 leaf "
+                "transport; leaves fall back to dense float32 %d-wide, measured ~1.9x "
+                "end-to-end search cost (play-path audit 2026-08-03, F7). The gate is "
+                "deliberate (the C bf16 leaf softmax has no temperature hook) -- this "
+                "is the price, not a bug.",
+                float(getattr(cfg, "policy_temp", 1.0)), POLICY_SIZE,
+            )
+            _mark_legal_bf16_temp_warned()
         _use_input_bf16 = _has_input_bf16 and _use_legal_bf16
         if _inplace:
             _max_batch = getattr(eval_impl, "_max_batch", _max_leaves_per_rep * 2)
@@ -1005,6 +1197,12 @@ def run_gumbel_root_many_c(
                 _enc_buf = eval_impl.get_input_buffer_bf16_bits(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
             else:
                 _enc_buf = eval_impl.get_input_buffer(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            # Buffer-sourced plane count vs cfg's: the C encoder trusts the
+            # buffer and never sees cfg.input_extra_features (audit E4).
+            check_encode_buffer_planes(
+                _enc_buf, cfg.input_extra_features,
+                where="run_gumbel_many_c leaf inplace",
+            )
         else:
             _enc_dtype = np.uint16 if _use_input_bf16 else np.float32
             _enc_buf = np.empty(
@@ -1158,31 +1356,42 @@ def run_gumbel_root_many_c(
         probs[legal] = imp_all.astype(np.float32)
 
         best_a = int(remaining[0])
-        if cfg.temperature <= 0:
-            action = best_a
+  # Gumbel sequential halving leaves the survivor at remaining[0]; map that
+  # back to its position in the full ``legal`` array (= imp_all), as the
+  # Python reference does (gumbel.py). This used to be an inlined
+  # re-implementation of the shared primitive whose degenerate fallback was
+  # `best_a` and which exponentiated out of log space with no isfinite guard
+  # (play-path audit 2026-08-03, F10).
+  #
+  # ONE searchsorted, IN-RANGE-CHECKED, reused by the value lookup below --
+  # which already carried that check, so the codebase has never treated
+  # `best_a in legal` as guaranteed. Unchecked, an out-of-range hit would
+  # silently select a DIFFERENT legal action, or IndexError when `best_a`
+  # exceeds every entry. It is unreachable by construction (the candidate set
+  # is drawn from the same pruned `legal_idx` the priors were written on, and
+  # a prior only leaves `legal` by underflowing to exactly 0.0, i.e. a >745
+  # float64 logit gap), so this is belt-and-braces, not a live path.
+        j_best = int(np.searchsorted(legal, best_a)) if legal.size > 0 else 0
+        best_in_legal = j_best < legal.size and int(legal[j_best]) == best_a
+        if best_in_legal:
+            action = sample_action_with_temperature(
+                rng, legal, imp_all, float(cfg.temperature), argmax_idx=j_best,
+            )
         else:
-            p = imp_all.astype(np.float64, copy=True)
-            if cfg.temperature != 1.0:
-                p = np.power(np.maximum(p, 0.0), 1.0 / float(cfg.temperature))
-            ps = float(p.sum())
-            if ps > 0:
-                p /= ps
-                action = int(rng.choice(legal, p=p))
-            else:
-                action = best_a
+  # Pre-F10 behaviour at temperature <= 0. It also differs from pre-F10 at
+  # temperature > 0, which sampled from `legal` (and consumed an rng draw):
+  # a survivor outside the returned policy's support means the played-move
+  # and returned-policy criteria have already diverged (audit F3), so the
+  # draw carries no information and the survivor is the honest answer.
+            action = best_a
 
         probs_out[i] = probs
         actions_out[i] = action
 
   # Value from child
         slot = action_to_slot.get(best_a)
-        if slot is not None and int(child_visits[slot]) > 0:
-  # completed_q for best_a
-            j_best = np.searchsorted(legal, best_a)
-            if j_best < legal.size and int(legal[j_best]) == best_a:
-                values_out[i] = float(completed_q[j_best])
-            else:
-                values_out[i] = root_q_i
+        if slot is not None and int(child_visits[slot]) > 0 and best_in_legal:
+            values_out[i] = float(completed_q[j_best])
         else:
             values_out[i] = root_q_i
 

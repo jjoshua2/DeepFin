@@ -433,8 +433,104 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # this is another declared false positive of the same shape as #283's.
 #   full_pass  2efe658b4e778870 -> bed3d8e3799e997d
 #   sampled    d6f7cabecd8e6f67 -> 610f05cf817b4783
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:bed3d8e3799e997d"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:610f05cf817b4783"
+#
+# Moved again 2026-08-01 by the always-on SF-label contamination column: a
+# single line leaves `_prepare_host_arrays`, which no longer prunes
+# `has_sf_multipv_raw` from the H2D payload when `sf_policy_sparse_ce` is off.
+# That frame is in BOTH lists, so both ids move.
+#
+# THIRD declared false positive, and this one is proved rather than argued:
+# `has_sf_multipv_raw` is consumed by exactly one loss term,
+# `sparse_sf_policy_ce`, which is reached only when `sf_sparse_params is not
+# None` (i.e. `sf_policy_sparse_ce` ON — a config in which nothing was pruned
+# before either) and which returns an all-zero eligibility mask unless
+# `sf_multipv_raw` is ALSO present, and that block is still pruned. Pinned by
+# `tests/test_sf_no_multipv_metric.py::
+# test_adding_the_presence_flag_does_not_move_the_loss`, which runs
+# `compute_loss` with and without the vector and requires every scalar in
+# `total` to be bitwise equal. The measurement did not move; the source did.
+#   full_pass  bed3d8e3799e997d -> b8482e83d3b1c61f
+#   sampled    610f05cf817b4783 -> 71ac6f0457876d02
+#
+# Moved again 2026-08-02 by the per-phase loss split (backlog #124). It used to
+# bucket on `moves_left` = plies-remaining / `max_plies` -- the CAP, 450, not
+# the game's length -- which put 96.37% of the live window in `end` and made
+# `wdl_loss_open` / `_mid` a long-games-only subsample wearing a phase name. It
+# now buckets by PIECE COUNT on `eval/audit.py`'s own constant, and the columns
+# are renamed accordingly. `compute_loss` and `_build_metrics` both change, so
+# both ids move.
+#
+# FOURTH declared false positive, proved the same way as the third rather than
+# argued: `batch["x"]` feeds exactly one thing inside `compute_loss` -- this
+# split -- so rewriting the piece planes without touching `outputs` isolates it
+# completely. `tests/test_phase_loss_buckets.py::
+# test_the_phase_split_cannot_perturb_the_trained_loss` performs that
+# intervention and requires that EVERY scalar which moves has `phase_` in its
+# name and that `total` is bitwise equal. The measurement did not move; the
+# source did, and the reported column names did.
+#   full_pass  b8482e83d3b1c61f -> 3a336231d9b5fce5
+#   sampled    71ac6f0457876d02 -> 9f9c078dd590db13
+#
+# Moved again 2026-08-03 by the F11 policy-index-LUT swap (play-path audit
+# 2026-08-03; this PR). `Trainer._policy_accuracy_stats` had a module-private
+# `lru_cache` over COMPACT_TO_FULL_POLICY / FULL_TO_COMPACT_POLICY -- the
+# duplicate `moves/torch_maps.py` exists to prevent (CLAUDE.md: "don't add
+# per-module `lru_cache` copies"), and strictly worse, because it keyed on
+# `target.device.index` raw and so allocated two copies of both tables for
+# `torch.device("cuda")` vs `("cuda", 0)`. `_align_index` -- a closure inside
+# `_policy_accuracy_stats`, one of the frames `_compute_metrics` reaches, and
+# `digest_source` hashes SOURCE -- now calls
+# `torch_maps.policy_index_remap_table(source_width, dst_width, device)` once
+# instead of carrying its own width->table dispatch, so both ids move.
+#
+# FIFTH declared false positive, proved rather than argued -- and proved of the
+# RIGHT property, which the first version of this block was not. Review of #318
+# showed the round-trip test could NOT catch the two directions being swapped:
+# transposing the two branch bodies in `_align_index` left both symbol names
+# present and every value-identity test passed; only this pin noticed, and a
+# source hash is a tripwire, not a semantic control. So the duplicated dispatch
+# was deleted rather than re-worded. `tests/test_trainer_policy_index_lut.py`
+# now (a) reconstructs the deleted helper's exact body and requires dtype,
+# device, shape and ELEMENT-WISE equality against the shared tables, (b) runs
+# BOTH the pre- and post-refactor `_align_index` bodies over in-range, negative
+# and out-of-range ids in both directions and requires the mapped indices AND
+# the validity masks to agree, and (c) asserts the width-pair -> table binding
+# by BEHAVIOUR, so swapping the two returns inside `policy_index_remap_table`
+# fails. Same `torch.long`, same source arrays, same values -- the measurement
+# cannot have moved, only the source hash. Records stay comparable across the
+# handover.
+#   full_pass  3a336231d9b5fce5 -> 025b6ef8e537ffcb
+#   sampled    9f9c078dd590db13 -> 408bcad98fb150b4
+#
+# ⚑ OPERATOR-VISIBLE: `holdout_generation` bumps at the deploying restart, so
+# the running trial HANDS OVER its best-model record once, adopting the current
+# loss instead of comparing to it. Expected, and recorded in the ledger entry.
+# RESTART-GATED, but NOT because the id is read once at construction -- it is
+# recomputed on EVERY evaluation (`trainer.py`, in `_compute_metrics`). The
+# gate is that a running process holds the old module source, so `digest_source`
+# keeps hashing the old code until the process restarts onto this checkout.
+# Moved again 2026-08-03 by the VALUE-half SF-label detector (PR #326): three
+# lines enter `_prepare_host_arrays` to derive `sf_eval_pv_orphan` /
+# `sf_eval_pv_checked` from `sf_multipv_raw` + `sf_label_meta` BEFORE the H2D
+# payload prune drops the first and while the second is still in `arrs` at all.
+# That frame is in BOTH lists, so both ids move.
+#   full_pass  025b6ef8e537ffcb -> 44755941fd0bf0c8
+#   sampled    408bcad98fb150b4 -> bbae91591858d35c
+#
+# SIXTH declared false positive, and MEASURED rather than argued. The two new
+# arrays are read by exactly one consumer, `losses.sf_eval_pv_orphan_counts`,
+# whose two sums leave `compute_loss` as `sf_eval_pv_orphan_rows` /
+# `sf_eval_pv_checked_rows` and are mapped by `_RATIO_METRIC_FIELDS` to the
+# observation fields `sf_eval_pv_orphan_frac` / `sf_eval_pv_checked_frac`.
+# Nothing reaches `total`, so nothing reaches `loss` or `test_loss`. The
+# control that proves it: a production full pass over `shard_033130.zarr` run
+# twice, once as shipped and once with the three lines patched out (i.e.
+# `main`'s behaviour), comparing all 87 scalar `TrainMetrics` fields --
+# `loss` bit-identical at 7.238113220214844, and the ONLY field that differs is
+# `sf_eval_pv_checked_frac` (0.0 -> 0.9975), which is the new instrument coming
+# alive. Records stay comparable across the handover.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:44755941fd0bf0c8"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:bbae91591858d35c"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

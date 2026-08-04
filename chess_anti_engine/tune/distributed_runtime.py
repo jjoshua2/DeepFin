@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.inference import trial_slot_prefix
 from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
@@ -907,9 +908,25 @@ def _build_distributed_worker_cmd(
 
 
 def _trial_slot_prefix(*, trial_id: str) -> str:
-    """Deterministic shared-memory slot prefix for a trial's inference broker."""
-    h = stable_seed_u32("slot-prefix", trial_id)
-    return f"cae-{h:08x}"
+    """Deterministic shared-memory slot prefix for a trial's inference broker.
+
+    Carries the slot-protocol version, so a wire-format change also changes the
+    NAME. Without that, the name is stable across restarts for a given trial_id
+    and an old worker — one that survived a restart, or was launched from a
+    checkout that had not pulled (see the `stale_worker_ingest_wedge_on_resume`
+    history) — reconnects by name to a NEW broker's segment on its next
+    disconnect/connect cycle. The version guards in the header cannot save it:
+    the old client runs OLD code and has no validation to fail, and because the
+    v2 header grew at the FRONT while state@0 / mode@1 / batch_size@4 kept their
+    offsets, the state machine still completes with the two sides 16 bytes out
+    of phase — measured to return an all-zero policy and an all-zero WDL with no
+    exception, which is exactly the poisoning this protocol version exists to
+    delete. Versioning the name turns that into a FileNotFoundError -> TimeoutError.
+
+    Delegates to ``inference.trial_slot_prefix``: the broker creates the
+    segments this names, so the two must never be able to drift.
+    """
+    return trial_slot_prefix(trial_id=trial_id)
 
 
 def _resolve_shared_cache_root(config: dict, server_root: Path) -> Path:

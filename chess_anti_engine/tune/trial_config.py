@@ -9,6 +9,7 @@ from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
 from chess_anti_engine.utils.architecture import (
+    DEFAULT_PHASE_PIECE_THRESHOLDS,
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
@@ -134,12 +135,11 @@ class TrialConfig:
     phase_output_adapter: bool = False
     phase_output_adapter_dim: int = 64
     phase_smolgen: bool = False
-    phase_piece_thresholds: tuple[int, int] = (13, 22)
+    phase_piece_thresholds: tuple[int, int] = DEFAULT_PHASE_PIECE_THRESHOLDS
 
   # --- Training ---
     lr: float = 0.0003
     optimizer: str = "nadamw"
-    cosmos_gamma: float = 0.0
     batch_size: int = 128
     accum_steps: int = 1
     train_steps: int = 25
@@ -312,6 +312,12 @@ class TrialConfig:
     replay_upgrade_v1_planes: bool = False
     shuffle_refresh_interval: int = 5
     shuffle_refresh_shards: int = 3
+    # Exponent on the shuffle-refresh shard draw's recency weight
+    # (weight ∝ rank**α, oldest rank 1). 1.0 = the linear draw production has
+    # always run and the ONLY value that reproduces it bit-for-bit; 0.0 =
+    # uniform over the window. Construction-time (see
+    # trainable_config_ops.construction_only_config_keys).
+    replay_shard_recency_exponent: float = 1.0
     shuffle_draw_cap_frac: float = 0.90
     shuffle_wl_max_ratio: float = 1.5
     # Surprise-priority shaping at shuffle append (live-reloadable). Weight
@@ -359,6 +365,30 @@ class TrialConfig:
     puzzle_epd: str | None = None
     puzzle_interval: int = 1
     puzzle_simulations: int = 200
+
+  # --- Era-forgetting probes (chess_anti_engine/eval/era_probe.py) ---
+  # Two FROZEN row sets scored with the current weights every
+  # `era_probe_interval` iterations: one cut from an OLD era, one re-cut from
+  # the newest shards. Their divergence is the treadmill's fingerprint. Both
+  # default to "" = off, so the live yaml is untouched until an operator names
+  # a set built by scripts/build_era_probe_set.py.
+  #
+  # The two paths and the row cap are CONSTRUCTION-ONLY (see
+  # trainable_config_ops.construction_only_config_keys): the sets are loaded
+  # once at trial startup, so a live edit would read back correct from the
+  # trial's config while the probe kept scoring the launch-time set — the
+  # exact class of lie that classification exists to refuse. Changing which
+  # rows a column is measured over is a RULER change and must invalidate the
+  # column's history, which is a restart, not a reload.
+    era_probe_path: str = ""
+    era_probe_inwindow_path: str = ""
+    era_probe_rows: int = 2048
+  # Live-reloadable: read fresh off `tc` on the iteration they act on, so an
+  # operator can throttle or silence the probe on a contended box without a
+  # restart. `era_probe_interval <= 0` disables scoring (the sets stay loaded
+  # and the columns read nan).
+    era_probe_interval: int = 1
+    era_probe_batch_size: int = 512
 
   # --- Distributed ---
     distributed_workers_per_trial: int = 1
@@ -485,13 +515,12 @@ class TrialConfig:
             phase_output_adapter_dim=int(config.get("phase_output_adapter_dim", 64)),
             phase_smolgen=bool(config.get("phase_smolgen", False)),
             phase_piece_thresholds=normalize_phase_piece_thresholds(
-                config.get("phase_piece_thresholds", (13, 22))
+                config.get("phase_piece_thresholds")
             ),
 
   # --- Training ---
             lr=float(config["lr"]) if "lr" in config else 0.0003,
             optimizer=str(config.get("optimizer", "nadamw")),
-            cosmos_gamma=float(config["cosmos_gamma"]) if "cosmos_gamma" in config else 0.0,
             batch_size=int(config.get("batch_size", 128)),
             accum_steps=int(config.get("accum_steps", 1)),
             train_steps=int(config.get("train_steps", 25)),
@@ -717,6 +746,8 @@ class TrialConfig:
             replay_upgrade_v1_planes=bool(config.get("replay_upgrade_v1_planes", False)),
             shuffle_refresh_interval=int(config.get("shuffle_refresh_interval", 5)),
             shuffle_refresh_shards=int(config.get("shuffle_refresh_shards", 3)),
+            replay_shard_recency_exponent=float(
+                config.get("replay_shard_recency_exponent", 1.0)),
             shuffle_draw_cap_frac=float(config.get("shuffle_draw_cap_frac", 0.90)),
             shuffle_wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
             replay_sf_gap_priority_weight=float(
@@ -754,6 +785,12 @@ class TrialConfig:
             puzzle_epd=_get("puzzle_epd", None),
             puzzle_interval=int(config.get("puzzle_interval", 1)),
             puzzle_simulations=int(config.get("puzzle_simulations", 200)),
+            era_probe_path=str(config.get("era_probe_path", "") or ""),
+            era_probe_inwindow_path=str(
+                config.get("era_probe_inwindow_path", "") or ""),
+            era_probe_rows=int(config.get("era_probe_rows", 2048)),
+            era_probe_interval=int(config.get("era_probe_interval", 1)),
+            era_probe_batch_size=int(config.get("era_probe_batch_size", 512)),
 
   # --- Distributed ---
             distributed_workers_per_trial=max(1, int(config.get("distributed_workers_per_trial", 1))),
@@ -1054,7 +1091,15 @@ class RestoreResult:
     startup_source: StartupSource = "fresh"
     restored_pid_state: dict | None = None
     global_iter: int = 0
-    opp_strength_ema: float = 0.0
+  # None means "this restore carries no opponent-strength EMA", which is NOT
+  # the same as 0.0 and is why the field is optional. The loop treats 0.0 as
+  # "no EMA yet" and re-seeds from the instantaneous opponent_strength of the
+  # first post-restart iteration -- the single row the post-restart winrate
+  # truncation makes least trustworthy -- so a restore that unconditionally
+  # assigned its default wiped the restored value every restart (audit T1,
+  # 6/6 live process segments). Only a restore that actually found one (the
+  # checkpoint's trial_meta.json, or a PB2 donor's result row) sets it.
+    opp_strength_ema: float | None = None
     active_seed: int = 0
     seed_warmstart_used: bool = False
     seed_warmstart_slot: int = -1
@@ -1079,3 +1124,14 @@ class RestoreResult:
   # ruler change across the restart bumps the generation instead of hiding
   # inside it. "" on any checkpoint written before this was recorded.
     holdout_ruler: str = ""
+  # The flat yaml key set the process that wrote the restored checkpoint was
+  # running, banked in its trial_meta.json. Empty for a fresh start and for any
+  # checkpoint written before it was banked; the startup check treats empty as
+  # "no baseline" and stays silent rather than reporting every key as deleted.
+    restored_yaml_keys: frozenset[str] = frozenset()
+  # The promotion gate's `gate_state.json` as found in a salvage seed slot, for
+  # a trial whose own durable dir has none. None on every other path -- an
+  # ordinary `--resume` reads the trial's own file and never consults this
+  # (audit T10: a salvage restart used to start with an empty gate window while
+  # a resume kept it, with nothing saying the two differed).
+    restored_gate_state: dict | None = None

@@ -10,8 +10,8 @@ rows the live pipeline built its SF targets from, so those targets can be
 recomputed from scratch at sample time under new parameters —
 `train.rebuild_sf_targets` (default OFF), implemented in
 `chess_anti_engine/train/target_builder.py`. When it is on, an
-`SfTargetParams` change applies to **most of the existing window on the next
-iteration** — not all of it: see "Coverage is not total" below.
+`SfTargetParams` change applies to **the whole SF-labelled window on the next
+iteration** — see "Coverage over labelled rows is total" below.
 
 Most targets do not escape it. This file says exactly which, why, and what
 extra storage would move a row from the second table to the first. Every claim
@@ -19,16 +19,152 @@ below was verified against 10 live shards (18 307 rows) from the iter-168
 window on 2026-07-27; the "verified" column gives rows checked and the worst
 disagreement observed, which for the rebuildable ones is fp16 storage noise.
 
-## Coverage is not total — 94.6 %, and it is reported
+**⚠ That sample is now known to have been drawn inside a Stockfish-desync
+episode** (next section). The per-target *identities* below are unaffected — a
+row whose SF label is detached from its position is still bit-equal to its own
+neighbouring row, which is all those checks assert — but every *rate* derived
+from that sample (the coverage figures, and the 12.6 % / 22.6 % / 95.6 %
+population shares quoted further down) is measured on contaminated data and
+should be treated as indicative only.
 
-Measured on the same shards: 18 307 rows, 17 778 SF-labelled (97.1 %), 16 822
-carrying `sf_multipv_raw` (91.9 % of all rows, **94.62 % of SF-labelled rows**).
-The remaining **956 rows — 5.38 % of the labelled rows** — have a stored
-`sf_policy_target` that the `w_sf_move` leg trains on and the rebuild cannot
-touch, so they keep capture-time targets. A `sf_policy_temp` 0.012 → 0.05
-experiment is therefore a ~95/5 **mixture of two target regimes**, not a clean
-swap. Probably tolerable; it is not "the entire window", and a verdict that
-assumes a clean swap is overstating its own treatment.
+## Coverage over labelled rows is TOTAL — and the shortfall column is a desync alarm
+
+**⚠ CORRECTED 2026-08-01. This section previously claimed a structural 5.38 %
+coverage gap. There is no such gap: the floor is exactly zero.** The old figure
+came from a 10-shard sample (18 307 rows, 956 labelled rows without
+`sf_multipv_raw`) drawn on 2026-07-27 — which was itself a Stockfish-desync
+episode day. Of the 260 possible 10-consecutive-shard windows written that day,
+**192 read exactly 0.000000** and exactly one lands near 5.4 %; that one
+reproduces the old numbers to within rounding (17 844 labelled / 16 892 with
+raw / 952 missing / **0.0534**). The sample was the anomaly, not the norm.
+
+The selfplay writer stamps `sf_multipv_raw` and `sf_label_meta` on a labelled
+row **together** (`selfplay/stockfish_turn.py::_stamp_sparse_sf_labels`), so
+every SF-labelled row carries raw and the rebuild reaches **100 % of the
+SF-labelled window**. An `SfTargetParams` change is a clean swap, not a mixture
+of two target regimes.
+
+Both causes this document previously offered are refuted:
+
+* **Pre-raw-schema rows.** Real, but long dead. The schema shipped 2026-06-10
+  (`49436d3a0`) and a 1.5M-row window turns over in ~18 h, so no such row could
+  survive to a July measurement. Confirmed: across every retained shard pool
+  from 2026-07-02 onward, **zero shards lack the `has_sf_multipv_raw` array.**
+* **The "no-scoreable-candidates fallback" being a benign structural cost.** It
+  is `if not rows: return None` in `_collect_sparse_pv_rows`, and it fires
+  exactly when **not one** of Stockfish's 40 MultiPV moves is legal at the
+  position queried. That is not benign — it is the fingerprint of a desynced
+  UCI engine answering a *different* position, so the whole SF label block on
+  that row is detached from its row. Same measurement as the live
+  `_SF_NO_LEGAL_PV_WARN_RATE` counter and the offline
+  `eval/value_optimism.py::sf_multipv_missing_rate` gate.
+
+Measured 2026-08-01 over **6 535 unique shards / 11 052 418 labelled rows**
+(all retained salvage pools + the live window + the quarantine set, deduplicated
+by file identity and bucketed by the day each shard was *written*):
+
+* **90.5 % of individual shards read exactly 0.000000**, and **10 of 23 days read
+  exactly 0.000000 across 5 463 097 labelled rows** — including 07-06..07-09
+  (1 621 603 rows), 07-22, 07-24, 07-25 and 07-26.
+* The non-zero mass sits in contiguous **episodes** (332 shards above 10 %, up to
+  0.67), not in a chronic background. Four days carry a tiny residue (4 to 258
+  missing rows each, confined to 1-9 shards) that looks like episode tapers.
+* The desync is fixed by PR #297 and the contaminated live shards were
+  quarantined 2026-08-01 (122 shards), so new data reads zero.
+
+**⚑ Read `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac` as CONTAMINATION,
+not as cost.** Both columns divide by **all rows in the rebuilt batch**, and a
+healthy labelled row always sets both presence flags, so on clean data they are
+**equal** and their difference is the **fully-stripped-label share of the
+batch**: 0.000000 on clean days, **0.192** over the quarantined shards. Do not
+read a gap as "the rebuild could not reach those rows".
+
+Three qualifications, all of which the name hides:
+
+* **It is a LOWER BOUND, not the poisoned share.** The difference counts only
+  rows that lost their *whole* MultiPV block. A desynced engine poisons every
+  label it touches but strips the block on only **~59 %** of them
+  (`scripts/quarantine_desync_shards.py`; also `_SF_NO_LEGAL_PV_WARN_RATE`'s
+  0.074 = 0.125 × 0.59 for one engine in eight), so **~41 % of poisoned rows
+  read clean here**. Divide by ~0.59 — about **1.7×** — for the true share: the
+  quarantined set's 0.192 implies ~0.33 of batch rows actually poisoned. The
+  same point without the constant: the worst shard of the 07-27 episode still
+  has 47 % of its labelled rows carrying a MultiPV block.
+* **Denominator.** All batch rows, not labelled rows. To read the gap against
+  the labelled population, divide by `sf_rebuild_wdl_frac`: on the quarantined
+  set 0.191973 / 0.925347 = **0.207** of labelled rows. Both numbers are
+  correct and they measure different populations — mixing them is how "5.4 %"
+  and "0.92" ended up in this document describing different things.
+* **A latent non-desync way for the gap to open.** `policy_frac` counts
+  *successful rebuilds*, not the presence flag, and `ok` depends on
+  `SfTargetParams`: with `sf_wdl_use_cp_logistic` False a PV entry is scoreable
+  only if it carries native WDL; with it True, cp/mate entries count too. One
+  clean row with both flags set reads gap **+0.0000** at True and **+1.0000** at
+  False. Latent today — 2,750,435 stored PV entries on the live window, **zero**
+  without native WDL, because `stockfish/uci.py:269` hardcodes
+  `UCI_ShowWDL true` — but that knob is the `SfTargetParams` dataclass default
+  (production yaml sets it `true`) and one of the five params this rebuild
+  exists to sweep. **A sweep of it would turn the "detector" into a readout of
+  the sweep.**
+
+### ⚑⚑ The detector is disconnected in production
+
+`rebuild_sf_targets` defaults to `False` and **appears in no config file**, so
+all five columns read exactly `0.0` today — byte-identical to a perfectly
+healthy window. **A zero here is not a pass, and this pair must not go on an
+operator dashboard as "watch for a gap".** As shipped it is a free cross-check
+that exists only while a rebuild experiment is running.
+
+The always-on detectors are the ones to watch instead:
+
+* **`sf_labelled_no_multipv_frac`** — the in-loop one, added 2026-08-01. Share
+  of the batch's **SF-labelled** rows (`has_sf_wdl`) carrying no
+  `sf_multipv_raw` block, computed in
+  `train/losses.py::sf_multipv_presence_counts` from the batch's own presence
+  flags and so gated on nothing. Reported on the train row and as
+  `test_sf_labelled_no_multipv_frac` on the holdout row. **Healthy is exactly
+  `0.000000`, so any non-zero value is an incident and there is no threshold to
+  argue about.** Verified 0.207461 over the 122 shards quarantined 2026-08-01
+  and exactly 0.000000 over 475 713 clean rows, both through the production
+  metric path (`scripts/sf_no_multipv_probe.py`).
+
+  ⚑⚑ **The `test_` twin is contaminated TODAY and does not age out.** The frozen
+  holdout bundled with the checkpoints carries 194 no-PV rows out of 1915
+  labelled over 2000 rows — byte-identical in `checkpoint_000474`, `_000476`
+  and `_000478` — so `test_sf_labelled_no_multipv_frac` reads **0.101305** and
+  `test_sf_multipv_checked_frac` **0.957500** on the FIRST live holdout row,
+  about 500× the train row's ~2e-4 post-quarantine residue. The training
+  window's residue drains with the ~34 h FIFO; the holdout's does not, because
+  the set is frozen until it is re-cut. **That is a finding about the ruler,
+  not a wiring bug — do not mute the column over it.** It also means the
+  eventual "any non-zero is an incident" alert must be scoped to the TRAIN row
+  until the holdout is re-cut from post-quarantine shards.
+* its companion **`sf_multipv_checked_frac`** — which reports that same
+  denominator (the SF-labelled rows) as a share of ALL batch rows. The RATE's
+  own denominator is the SF-labelled rows, not all batch rows. `0.0` here means
+  the rate measured *nothing*, in either of two operationally identical cases —
+  `has_sf_multipv_raw` was absent from the batch (it is an optional shard
+  field), or the batch held no SF-labelled rows at all. Never read the rate
+  without it; `scripts/loop_health.py` alerts on `checked_frac == 0` for
+  exactly this reason.
+* the worker's `sf label health` log line
+  (`selfplay/stockfish_turn.py::_report_sf_label_health`), which fires above
+  `_SF_NO_LEGAL_PV_WARN_RATE` = 0.01, and
+* the offline gate `eval/value_optimism.py::sf_multipv_missing_rate`, used by
+  `scripts/quarantine_desync_shards.py`.
+
+⚑ **Do not get a training-side signal by turning `rebuild_sf_targets` on.** That
+flag is training-affecting (it masks the `w_sf_own` and `w_sf_volatility` legs)
+and needs its own ledger entry with a pre-committed kill threshold. The
+unconditional column above is the reason it is no longer necessary.
+
+⚑ **The two share a fingerprint but not a denominator.** Over the quarantined
+122, `sf_labelled_no_multipv_frac` = 0.207461 while
+`sf_rebuild_policy_frac − sf_rebuild_wdl_frac` = 0.191973, because the rebuild
+pair divides by every row of the batch and the new column divides by the
+SF-labelled rows (0.191973 / 0.925347 = 0.207). They are the same rows counted
+against two populations; quoting one against the other's denominator is how
+"5.4 %" survived here for five days.
 
 Five `progress.csv` columns report what actually happened, per iteration:
 
@@ -266,22 +402,20 @@ Three rejected alternatives, for the record:
   and at temp 0.012 keeps only ~18 non-zero entries; softening has to resurrect
   a tail that fp16 already flushed to zero. Softening is the direction any
   `sf_policy_temp` experiment goes, so this is not a substitute.
-* **Also mask the ~5.4 % of SF-labelled rows without `sf_multipv_raw`.** Those
-  rows train `w_sf_move` on capture-time targets while the other ~95 % move —
-  the SAME failure shape the cross-ply mask exists to prevent, just bounded by
-  the mixture fraction instead of total. And the slice is **not a random
-  5.4 %**: whether a row carries raw is decided by what happened at capture
-  (the live builder's no-scoreable-candidates fallback writes no sparse rows,
-  and pre-raw-schema rows age through the window), so it is correlated with
-  position type and shard age. It is left UNMASKED as a judgment call, and
-  this is a **known gap**, not an oversight: masking would silently delete
-  those rows from the `w_sf_move` leg for the entire run — a permanent
-  coverage cut paid on every iteration — to prevent a contamination that is
-  (a) reported per iteration by `sf_rebuild_policy_frac` sitting below the
-  SF-labelled fraction and (b) proportional to how far the experiment's
-  params sit from capture. An experiment that moves the params far enough to
-  care should apply the strict variant itself (mask `has_sf_move` where
-  `has_sf_multipv_raw` is 0) and say so in its ledger entry.
+* **Also mask the SF-labelled rows without `sf_multipv_raw`.** ⚠ **This bullet
+  used to argue against masking a "~5.4 % structural" slice. That population
+  does not exist on healthy data — it is exactly the desynced rows** (see the
+  coverage section), so the trade-off it weighed was fictional. What is left is
+  a genuinely different and much easier call: on a clean window there is
+  nothing to mask (the slice is empty, so masking costs zero coverage), and on
+  a contaminated window the right response is to quarantine the shards
+  (`scripts/quarantine_desync_shards.py`), not to paper over them at sample
+  time. Masking is therefore still not implemented, but for the opposite
+  reason: not "the cure is worse than the disease", but "the disease is a data
+  incident with its own detector and its own remedy". An experiment that
+  nonetheless wants belt-and-braces can mask `has_sf_move` where
+  `has_sf_multipv_raw` is 0 and say so in its ledger entry — on a clean window
+  that is a no-op, which is the point.
 
 ## NOT rebuildable — the source was never stored
 
@@ -312,7 +446,7 @@ first readout — they shorten every readout after it.
 ## Before flipping the flag live
 
 Flipping `train.rebuild_sf_targets` to `true` is a **training-affecting
-change**: it re-points the SF targets for ~95 % of the SF-**labelled** rows in
+change**: it re-points the SF targets for the SF-**labelled** rows in
 the replay window in one iteration and takes the `w_sf_own` /
 `w_sf_volatility` legs out of training. Per the experiment protocol it needs a
 `docs/experiment_ledger.md` entry with ONE deciding yardstick as an exact
@@ -320,14 +454,27 @@ command and a pre-committed kill threshold **before** launch, and the yardstick
 has to be an external one (see "What the pin does NOT cover"). Proof it took
 effect: `sf_rebuild_policy_frac` > 0 on the first new row of `progress.csv`.
 
-**Expect `sf_rebuild_policy_frac` ≈ 0.92, not 0.95.** The column's denominator
-is **all rows in the batch**, not SF-labelled rows: 16,822 / 18,307 = **0.919**
-on the measured window, where the 94.6 % figure quoted everywhere else is
-16,822 / 17,778 SF-**labelled** rows. Both numbers are correct and they measure
-different things. The gap is definitional, so do not read 0.92 against the
-prose's "~95 %" as a coverage regression. The denominator is all batch rows on
-purpose — it makes the column a fraction of the training batch, which is what
-"how much of what I trained on was re-pointed" actually asks.
+**Expect `sf_rebuild_policy_frac` ≈ `sf_rebuild_wdl_frac` ≈ the SF-labelled
+fraction of the batch (0.996-0.997 on the current live window), and expect the
+two to be EQUAL.** ⚠ This
+paragraph previously told operators to expect **0.92** and to read that as
+definitional rather than as a regression. That was wrong, and it is exactly the
+reading that would have made a live desync invisible: the 0.919 came from
+16,822 / 18,307 on the contaminated 07-27 sample, where the missing 5.4 % were
+poisoned rows. The denominator being all batch rows *is* deliberate — it makes
+the column a fraction of the training batch, which is what "how much of what I
+trained on was re-pointed" asks — but on healthy data every SF-labelled row
+rebuilds, so `policy_frac` and `wdl_frac` land on the same number.
+
+**A gap between them is the alarm — while the flag is on.** `wdl_frac −
+policy_frac` is the share of batch rows that lost their whole MultiPV block; it
+reads 0.000000 on clean data and 0.192 over the shards quarantined 2026-08-01,
+and it is a **lower bound** on contamination (multiply by ~1.7; see the
+qualifications in "Coverage over labelled rows is TOTAL"). Treat any sustained
+non-zero value as a desync incident and check the worker logs for the `sf label
+health` line. With `rebuild_sf_targets` off — the default, and its state in
+every config today — this reads 0.0 regardless of the data, so it is a check to
+run *during a rebuild experiment*, not a standing monitor.
 
 **The deploying restart will ROTATE `progress.csv`.** The rebuild reports
 **five** `sf_rebuild_*` keys, each with a `test_` twin — ten columns in all.
@@ -346,9 +493,14 @@ rotations — but it is visible at the restart and must not be read as data loss
 `sf_policy_temp`, `sf_policy_label_smooth`, `sf_wdl_use_cp_logistic`,
 `sf_wdl_cp_slope`, `sf_wdl_cp_draw_width` — plus the categorical-blend family
 under its own flag. Those move from "wait ~18 h for window turnover" to
-"applies to **~95 % of the SF-labelled window** at the next iteration" — the
-other ~5 % keep capture-time targets, per "Coverage is not total" above. It is
-not the entire window and a verdict must not be written as if it were.
+"applies to **the whole SF-labelled window** at the next iteration", per
+"Coverage over labelled rows is TOTAL" above. Rows with no SF label are
+untouched because they have no SF target to re-point, so a verdict may be
+written as a clean swap over the labelled population — but confirm it per
+iteration from `sf_rebuild_policy_frac == sf_rebuild_wdl_frac`, rather than
+assuming it. (That check only reads while the flag is on, which during such an
+experiment it is — it is not a standing monitor; see the disconnected-detector
+section above.)
 
 Note the interaction, and its price: the SF param keys are also **worker reco
 keys** — all five of them (`WorkerSession._RECO_RESTART_KEYS`,

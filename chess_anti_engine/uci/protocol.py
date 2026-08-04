@@ -133,6 +133,32 @@ _GO_KEYWORDS = frozenset({
 })
 
 
+def _parse_fen_fields(tokens: list[str], *, start: int) -> tuple[str | None, int]:
+    """``(fen, next_index)`` for the FEN beginning at ``tokens[start]``.
+
+    A full FEN is six space-separated fields (pieces stm castling ep halfmove
+    fullmove), but EPD-derived tooling routinely sends only the first four or
+    five. Requiring six meant such a command silently selected the START
+    POSITION and the engine then returned a confidently-scored move for a
+    completely different board, with no diagnostic anywhere. Pad the missing
+    move counters instead — they affect 50-move / repetition bookkeeping, not
+    the position. Fewer than four fields is not a FEN, so ``(None, start)``
+    (still start-position, but now the caller's `chess.Board` parse is what
+    rejects it, and that path prints an `info string`).
+    """
+    end = min(len(tokens), start + 6)
+    if "moves" in tokens[start:end]:
+        end = tokens.index("moves", start)
+    fields = tokens[start:end]
+    if len(fields) < 4:
+        return None, start
+    if len(fields) == 4:
+        fields = [*fields, "0", "1"]
+    elif len(fields) == 5:
+        fields = [*fields, "1"]
+    return " ".join(fields), end
+
+
 def _parse_position(tokens: list[str]) -> CmdPosition:
     if not tokens:
         return CmdPosition(fen=None)
@@ -143,12 +169,11 @@ def _parse_position(tokens: list[str]) -> CmdPosition:
         fen = None
         i = 1
     elif tokens[0] == "fen":
-  # FEN is 6 space-separated tokens: pieces stm castling ep halfmove fullmove
-        if len(tokens) >= 7:
-            fen = " ".join(tokens[1:7])
-            i = 7
-        else:
-            return CmdPosition(fen=None)
+        fen, i = _parse_fen_fields(tokens, start=1)
+    elif "/" in tokens[0]:
+  # Bare FEN with no `fen` keyword. Non-standard but common in EPD-derived
+  # tooling; the alternative is answering for the START POSITION.
+        fen, i = _parse_fen_fields(tokens, start=0)
     if i < len(tokens) and tokens[i] == "moves":
         moves = list(tokens[i + 1:])
     return CmdPosition(fen=fen, moves=tuple(moves))

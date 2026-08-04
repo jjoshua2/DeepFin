@@ -46,6 +46,7 @@ from pathlib import Path
 
 import numpy as np
 
+from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
 from chess_anti_engine.replay.shard import (
     iter_shard_paths,
     load_shard_arrays,
@@ -54,7 +55,11 @@ from chess_anti_engine.replay.shard import (
 
 _EPS = 1e-12
 _IDENTICAL_TV = 0.01
-_PHASE_THRESHOLDS = (13, 22)  # model phase buckets: end <=13 < mid <= 22 < open
+# Imported, not re-typed. This was the FOURTH copy of the same two numbers
+# (utils/architecture, eval/audit, train/losses, here); a probe that silently
+# stopped agreeing with the trainer and the audit would be comparing buckets
+# that no longer name the same positions.
+_PHASE_THRESHOLDS = DEFAULT_PHASE_PIECE_THRESHOLDS
 _PHASES = ("endgame", "middlegame", "opening")
 _SOURCES = ("selfplay", "curriculum", "unknown")
 

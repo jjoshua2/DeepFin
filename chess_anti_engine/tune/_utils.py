@@ -28,6 +28,14 @@ SIDECAR_TRIAL_META = "trial_meta.json"
   # frozen + generation -- ride in trial_meta.json; see tune/holdout_state.py.
 SIDECAR_HOLDOUT_ROWS = "holdout.npz"
 
+  # Per-trial state that lives in `durable_dir`, one level ABOVE the checkpoint
+  # dirs, and therefore outside everything `salvage-export` used to copy (audit
+  # T10/T11). Named here because three files now agree about them: trainable
+  # writes them, salvage exports them, trainable_init reads the exported copy
+  # back out of a seed slot.
+DURABLE_GATE_STATE = "gate_state.json"
+DURABLE_BEST_STATE = "best.json"
+
 
 def load_optional_json(path: Path) -> dict | None:
     """Read ``path`` as JSON. Returns the parsed dict, or ``None`` for any

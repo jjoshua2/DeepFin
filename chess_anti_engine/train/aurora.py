@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from itertools import repeat
@@ -251,8 +252,97 @@ class _CapturedAuroraUpdate:
         return self.static_output
 
 
+def polar_convergence(update: Tensor) -> tuple[float, float]:
+    """Polar residual of one applied Aurora update: ``(sv_ratio, orth_err)``.
+
+    ``sv_ratio`` is ``sigma_min / sigma_max`` of ``update`` and ``orth_err`` is
+    ``||Q Q^T - I||_F / sqrt(n)`` of the same matrix rescaled to unit spectral
+    norm and oriented wide (``n`` = the short side). Both are the quantities
+    tabulated in `MODEL_OPT_AUDIT.md` Addendum II B3 ("full" and "orth"), and
+    `tests/test_aurora_polar_convergence.py` pins this function against that
+    table's real-momentum reference values at 8 and 12 polar steps.
+
+    A perfectly converged polar factor reads ``(1.0, 0.0)``. Production's
+    `aurora_polar_steps: 8` reads **0.0273 / 0.2114** on the DESIGNATED square
+    tensor of `checkpoint_000478` (group index 0, the tensor `step()` actually
+    samples): the iteration's amplification budget is short of what that
+    momentum's conditioning needs (M4-1), so the update it applies is a
+    partially-preconditioned step rather than an orthogonal one. Nothing
+    measured this for the life of the run, which is why the number is an
+    instrument here and not a fix.
+
+    ⚑ Those are ONE TENSOR's readings, not the 16-tensor group means
+    (0.0209 / 0.1082) that `MODEL_OPT_AUDIT.md` B3 tabulates. Across the 16
+    square tensors the PE-8 spread is 0.0005-0.0455 on ``sv_ratio`` (94x) and
+    0.0794-0.2114 on ``orth_err`` (2.7x), so a group mean is NOT a bar this
+    column can be held to. The arm/control RATIO on the same designated tensor
+    is the stable statistic -- 11.40-12.36 on ``sv_ratio`` across every
+    possible designation, a 1.08x spread -- and is what the ledger gate uses.
+
+    Both readings are invariant to a positive rescale of ``update``, so the
+    trailing ``sqrt(rows/cols)`` factor and any ``aurora_uw_floor`` scaling
+    that `step()` applies do not move them -- measuring the update Aurora
+    actually applies and measuring the raw polar factor are the same
+    measurement. The SVD runs in float64 because the interesting singular
+    values sit 6+ orders of magnitude below ``sigma_max``; a power-iteration
+    estimator cannot resolve them (Addendum II B2 measured one landing BELOW
+    ``sigma_max`` on 11 of 20 real tensors) and is the reason this is not the
+    "few power iterations, no SVD" sketch the audit's I3 proposed.
+    """
+    if update.ndim != 2:
+        raise ValueError(f"Expected a 2D tensor, got shape={tuple(update.shape)}")
+    mat = update.detach().to(torch.float64)
+    svals = torch.linalg.svdvals(mat)
+    sigma_max = float(svals[0].item())
+    if not math.isfinite(sigma_max) or sigma_max <= 0.0:
+        raise ValueError(f"degenerate update spectrum: sigma_max={sigma_max!r}")
+    sv_ratio = float(svals[-1].item()) / sigma_max
+    wide = mat / sigma_max
+    if wide.size(0) > wide.size(1):
+        wide = wide.transpose(0, 1)
+    n = int(wide.size(0))
+    eye = torch.eye(n, dtype=wide.dtype, device=wide.device)
+    orth_err = float((wide @ wide.transpose(0, 1) - eye).norm().item()) / math.sqrt(n)
+    return sv_ratio, orth_err
+
+
+def _polar_stats(
+    samples: dict[str, tuple[float, float]],
+    *,
+    polar_steps: int,
+    errors: int,
+) -> dict[str, float]:
+    """Assemble the per-iteration polar-residual row from the sampled tensors.
+
+    ``polar_steps`` travels with the readings on purpose: the numbers only mean
+    anything against the step count that produced them, and the A8 A/B's whole
+    question is whether a changed step count reached the optimizer.
+    """
+    out: dict[str, float] = {
+        "aurora_polar_steps_configured": float(polar_steps),
+        "aurora_polar_sv_samples": float(len(samples)),
+        "aurora_polar_sv_errors": float(errors),
+    }
+    for shape_class, (sv_ratio, orth_err) in samples.items():
+        out[f"aurora_polar_sv_ratio_{shape_class}"] = float(sv_ratio)
+        out[f"aurora_polar_orth_err_{shape_class}"] = float(orth_err)
+    return out
+
+
 def _uw_stats(ratios: list[Tensor], scales: list[Tensor], *, lr: float, floor: float) -> dict[str, float]:
-    """Summarize Aurora update/weight ratios from one optimizer step."""
+    """Summarize Aurora update/weight ratios from one optimizer step.
+
+    ``aurora_uw_effective_ratio_*`` multiplies by ``lr``, and the caller
+    (`Trainer.train_steps`) collects these on the LAST step of the training
+    window. Under `lr_schedule: sqrt_release` with `lr_release_cycle_steps: 0`
+    that window IS one whole WSD cycle, so the last step sits at the sawtooth
+    FLOOR -- `lr_release_min_scale` (0.1 in production) times the peak. The
+    effective-ratio pair is therefore ~10x below a typical step's, every
+    iteration, by construction (M4-2). ``aurora_uw_lr`` is that exact ``lr``,
+    reported alongside so the pair can be de-scaled against `opt_lr_mean` /
+    `opt_lr_max` instead of being read as if it described a typical step.
+    ``aurora_uw_ratio_*`` carries no ``lr`` factor and is unaffected.
+    """
     if not ratios:
         return {}
     ratio = torch.stack([r.float().reshape(()) for r in ratios])
@@ -261,6 +351,7 @@ def _uw_stats(ratios: list[Tensor], scales: list[Tensor], *, lr: float, floor: f
     floored = scale > 1.000001
     return {
         "aurora_uw_floor": float(floor),
+        "aurora_uw_lr": float(lr),
         "aurora_uw_count": float(ratio.numel()),
         "aurora_uw_ratio_min": float(ratio.min().item()),
         "aurora_uw_ratio_p10": float(torch.quantile(ratio, 0.10).item()),
@@ -315,7 +406,9 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         }
         super().__init__(params, defaults)
         self.last_uw_stats: dict[str, float] = {}
+        self.last_polar_stats: dict[str, float] = {}
         self._collect_uw_stats = True
+        self._collect_polar_stats = False
         self._use_update_graphs = bool(aurora_cuda_graphs)
         self._coalesce_finite_checks = bool(aurora_coalesce_finite_checks)
         self._update_graphs: dict[tuple[object, ...], _CapturedAuroraUpdate] = {}
@@ -323,6 +416,16 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
     def set_collect_uw_stats(self, collect: bool) -> None:
         """Collect zero-floor diagnostics on this step when requested."""
         self._collect_uw_stats = bool(collect)
+
+    def set_collect_polar_stats(self, collect: bool) -> None:
+        """Sample polar residual on this step when requested.
+
+        Defaults OFF and is armed per step by the caller, because each sample
+        costs a float64 SVD. `Trainer.train_steps` arms it on one step per
+        iteration; at that cadence the cost is ~2 SVDs of a 512-wide matrix
+        against a ~665 s iteration.
+        """
+        self._collect_polar_stats = bool(collect)
 
     def _aurora_update_for_param(
         self,
@@ -381,7 +484,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         return captured(update)
 
     @torch.no_grad()
-    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -408,6 +511,14 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                 uw_floor = float(group.get("aurora_uw_floor", 0.0))
                 collect_uw_stats = self._collect_uw_stats or uw_floor > 0.0
                 eps = float(group.get("eps", 1e-8))
+  # One designated tensor per shape class per armed step: the FIRST square
+  # and the FIRST non-square parameter of the group in group order. Not a
+  # random draw -- there is no sampling rng to seed, and the same two
+  # tensors are measured every iteration, so the series is a paired
+  # comparison of one tensor against itself rather than a shape-mix
+  # average that moves when the group's composition does.
+                polar_samples: dict[str, tuple[float, float]] = {}
+                polar_errors = 0
                 for param in group["params"]:
                     if param.grad is None:
                         continue
@@ -458,6 +569,38 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                             update = update * scale.to(update.dtype)
                         uw_ratios.append(uw_ratio.detach())
                         uw_scales.append(scale.detach())
+  # Measured HERE, on the live `update` tensor this step is about to
+  # apply, and never stashed for later: under CUDA graphs `update` is
+  # the captured graph's static output buffer, which the next replay
+  # overwrites. A copy taken now and measured after the loop would
+  # report some other parameter's update under this one's name.
+                    if self._collect_polar_stats:
+                        shape_class = "square" if param.size(0) == param.size(1) else "rect"
+                        if shape_class not in polar_samples:
+                            try:
+                                polar_samples[shape_class] = polar_convergence(update)
+  # torch.linalg raises `_LinAlgError`, a RuntimeError subclass, when a
+  # decomposition fails to converge. Counted rather than raised: this is a
+  # diagnostic, and `aurora_polar_sv_errors` on the row is what says the
+  # reading is missing instead of merely zero.
+  #
+  # OOM is NOT that. `RuntimeError` is also what an exhausted allocator
+  # raises, and this is a diagnostic allocating a float64 copy of a
+  # 512-wide matrix on a card the training step is already filling --
+  # swallowing that would turn "the run is out of memory" into a silently
+  # incremented counter and let the step proceed into whatever fails
+  # next. Re-raise it, and name the class for everything else so a
+  # non-zero counter is diagnosable from the log instead of being a
+  # bare integer.
+                            except torch.cuda.OutOfMemoryError:
+                                raise
+                            except (RuntimeError, ValueError) as exc:
+                                polar_errors += 1
+                                logging.getLogger(__name__).warning(
+                                    "polar-convergence sample failed on a %s tensor "
+                                    "(%s: %s); reporting aurora_polar_sv_errors",
+                                    shape_class, type(exc).__name__, exc,
+                                )
                     if self._coalesce_finite_checks:
                         finite_checks.append(torch.isfinite(update).all())
                         pending_updates.append((param, update))
@@ -471,6 +614,10 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                 if collect_uw_stats:
                     self.last_uw_stats = _uw_stats(
                         uw_ratios, uw_scales, lr=lr, floor=uw_floor,
+                    )
+                if self._collect_polar_stats:
+                    self.last_polar_stats = _polar_stats(
+                        polar_samples, polar_steps=polar_steps, errors=polar_errors,
                     )
                 continue
 

@@ -38,6 +38,7 @@ from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.vloss import release_paths
 
 _log = logging.getLogger(__name__)
 
@@ -238,42 +239,58 @@ class WalkerPool:
             pending_paths = []
             pending_legals = []
             acquired = 0
-            for i in range(gather):
-                if stop_event.is_set() or not budget.acquire(blocking=False):
-                    break
-                acquired += 1
-                _, path, legal, term_q = tree.walker_descend_puct(
-                    root_id, root_cb, c_puct, fpu_root, fpu_red, vloss,
-                    enc[i:i+1],
-                    rel[i:i+1] if rel is not None else None,
-                )
-                if term_q is not None:
-                    tree.backprop(path, float(term_q))
-                else:
-                    pending_slots.append(i)
-                    pending_paths.append(path)
-                    pending_legals.append(legal)
-            if acquired == 0:
-                return
-            if pending_paths:
+  # walker_descend_puct APPLIES vloss and walker_integrate_leaf REMOVES
+  # it, with an evaluator call that can raise in between. The tree is
+  # caller-owned and reused across chunks and plies, so an unguarded
+  # escape leaves that vloss on it for the rest of the game
+  # (SHARED_BROKER_AUDIT B7 — measured 8-48 units over 5/5 failed runs).
+  # `integrated` is the count already handed to walker_integrate_leaf,
+  # which removed their vloss itself; only the tail still owes a release.
+            integrated = 0
+            try:
+                for i in range(gather):
+                    if stop_event.is_set() or not budget.acquire(blocking=False):
+                        break
+                    acquired += 1
+                    _, path, legal, term_q = tree.walker_descend_puct(
+                        root_id, root_cb, c_puct, fpu_root, fpu_red, vloss,
+                        enc[i:i+1],
+                        rel[i:i+1] if rel is not None else None,
+                    )
+                    if term_q is not None:
+                        # Terminal leaves carry no vloss (descend backprops
+                        # them inline), so they never enter pending_paths.
+                        tree.backprop(path, float(term_q))
+                    else:
+                        pending_slots.append(i)
+                        pending_paths.append(path)
+                        pending_legals.append(legal)
+                if acquired == 0:
+                    return
+                if pending_paths:
   # Hot path is full-gather with no terminals → contiguous slice. Fancy
   # indexing copies, so reserve it for the partial-gather case.
-                n_pending = len(pending_slots)
-                if n_pending == gather:
-                    xs = enc[:n_pending]
-                    rels = rel[:n_pending] if rel is not None else None
-                else:
-                    xs = enc[pending_slots]
-                    rels = rel[pending_slots] if rel is not None else None
-                if rels is None:
-                    pol, wdl_arr = evaluator.evaluate_encoded(xs)
-                else:
-                    pol, wdl_arr = evaluator.evaluate_encoded(xs, relations=rels)
-                for k in range(n_pending):
-                    tree.walker_integrate_leaf(
-                        pending_paths[k], pending_legals[k],
-                        pol[k], wdl_arr[k], vloss,
-                    )
+                    n_pending = len(pending_slots)
+                    if n_pending == gather:
+                        xs = enc[:n_pending]
+                        rels = rel[:n_pending] if rel is not None else None
+                    else:
+                        xs = enc[pending_slots]
+                        rels = rel[pending_slots] if rel is not None else None
+                    if rels is None:
+                        pol, wdl_arr = evaluator.evaluate_encoded(xs)
+                    else:
+                        pol, wdl_arr = evaluator.evaluate_encoded(xs, relations=rels)
+                    for k in range(n_pending):
+                        tree.walker_integrate_leaf(
+                            pending_paths[k], pending_legals[k],
+                            pol[k], wdl_arr[k], vloss,
+                        )
+                        integrated = k + 1
+            finally:
+                release_paths(
+                    tree, pending_paths[integrated:], vloss_weight=vloss,
+                )
             # Terminals already backpropped above; NN leaves just integrated.
             # Every acquired token is one completed sim.
             with self._completed_lock:

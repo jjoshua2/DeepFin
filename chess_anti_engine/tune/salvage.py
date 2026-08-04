@@ -18,7 +18,11 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.replay.shard import iter_shard_paths
-from chess_anti_engine.tune._utils import SIDECAR_HOLDOUT_ROWS
+from chess_anti_engine.tune._utils import (
+    DURABLE_BEST_STATE,
+    DURABLE_GATE_STATE,
+    SIDECAR_HOLDOUT_ROWS,
+)
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
 
 # How far (in checkpoint-dir index units) the newest result row may lag the
@@ -480,6 +484,50 @@ def _print_dry_run_plan(
     )
 
 
+# The durable files a pool deliberately does NOT carry, and why — copied into
+# every manifest entry so the omission is a recorded decision rather than a
+# discovery made after a restart. `best/` and `best_regret/` are whole model
+# exports (~250 MB each, plus optimizer state) and `gate_promoted_model.pt` is
+# the same again: a pool is already ~2.3 GB with its replay window, and none of
+# the three is needed to CONTINUE — the loop re-creates each on its next
+# accept/promote. What is needed to continue is the WINDOW behind those
+# artifacts, which is exactly what `gate_state.json` holds.
+_DURABLE_STATE_NOT_EXPORTED: tuple[str, ...] = (
+    "best/", "best_regret/", "gate_promoted_model.pt",
+)
+
+
+def _export_durable_trial_state(*, td: Path, seed_dir: Path) -> list[str]:
+    """Copy the trial's durable-dir state files into the seed slot (audit T10).
+
+    ``salvage-export`` copied the Ray checkpoint directory and nothing else, so
+    a salvage restart silently began with an EMPTY promotion-gate window while
+    an ordinary ``--resume`` kept it — the two restart modes disagreed about
+    state that decides what the fleet is served, and nothing said so.
+
+    ``gate_state.json`` is copied AND consumed: ``trainable`` seeds a trial that
+    has no gate state of its own from the pool's, which is safe because the
+    anchor (``gate_promoted_model.pt``) is not exported and
+    ``GateHoldController.create`` RELEASES a restored hold whose anchor is
+    absent rather than trusting it.
+
+    ``best.json`` is copied and deliberately NOT consumed. It records a loss
+    earned by the weights in ``best/``, which the pool does not carry, so
+    restoring it as an active record would leave the new trial defending a
+    number whose model is gone — and locking its own best-model tracking out
+    until it beat that number. Banked for the operator and the manifest; the
+    one field inside it a restart needs (``opp_strength_ema``) now rides in the
+    checkpoint's ``trial_meta.json``, which IS consumed.
+    """
+    exported: list[str] = []
+    for fn in (DURABLE_GATE_STATE, DURABLE_BEST_STATE):
+        src = td / fn
+        if src.is_file():
+            shutil.copy2(str(src), str(seed_dir / fn))
+            exported.append(fn)
+    return exported
+
+
 def _export_one_seed(
     *,
     slot: int,
@@ -498,12 +546,15 @@ def _export_one_seed(
 
   # SIDECAR_HOLDOUT_ROWS carries the holdout ruler so a salvage restart
   # resumes measuring `test_loss` against the same rows instead of a fresh
-  # post-restart sample; trial_meta.json carries its frozen/generation flags.
+  # post-restart sample; trial_meta.json carries its frozen/generation flags
+  # and (audit T1) the opponent-strength EMA.
     for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json",
                SIDECAR_HOLDOUT_ROWS):
         src = plan.ckpt_dir / fn
         if src.exists():
             shutil.copy2(str(src), str(seed_dir / fn))
+
+    durable_exported = _export_durable_trial_state(td=td, seed_dir=seed_dir)
 
     # Align the exported pid_state only to the row that actually matches the
     # exported checkpoint. Aligning to a mismatched (stale) row stamps old
@@ -547,6 +598,11 @@ def _export_one_seed(
         "replay_shard_source": replay_source,
         "replay_shard_paths_tried": list(replay_tried),
         "pid_state_overrides": list(pid_state_overrides),
+  # Which of the trial's DURABLE files (one level above the checkpoint) came
+  # along, so a pool is self-describing about the gate/best state a restart
+  # from it will and will not have. See `_export_durable_trial_state`.
+        "durable_state_exported": list(durable_exported),
+        "durable_state_not_exported": list(_DURABLE_STATE_NOT_EXPORTED),
         "result_row": plan.row,
     }
 

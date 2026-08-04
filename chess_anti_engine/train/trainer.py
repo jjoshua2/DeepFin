@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import math
 import threading
@@ -8,7 +9,6 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -52,24 +52,23 @@ from chess_anti_engine.train.target_builder import (
     rebuild_categorical_target_in_arrays,
     rebuild_sf_targets_in_arrays,
 )
-from chess_anti_engine.moves import (
-    COMPACT_POLICY_SIZE,
-    COMPACT_TO_FULL_POLICY,
-    FULL_TO_COMPACT_POLICY,
-    POLICY_SIZE,
-)
+from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import torch_maps
 from chess_anti_engine.replay.augment import (
     maybe_mirror_batch_arrays,
     maybe_mirror_samples,
 )
 from chess_anti_engine.replay.buffer import ReplayBuffer, ReplaySample
 from chess_anti_engine.replay.dataset import collate, collate_arrays
-from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY
+from chess_anti_engine.replay.shard import (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    SF_EVAL_PV_CHECKED_FIELD,
+    SF_EVAL_PV_ORPHAN_FIELD,
+    sf_eval_pv_orphan_flags,
+)
 
 from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
-from .cosmos import COSMOS
-from .cosmos_fast import COSMOSFast
 from .losses import (
     align_policy_target,
     apply_policy_mask_to_logits,
@@ -230,31 +229,6 @@ class _SqrtReleaseLRScheduler:
         last_lr = [float(v) for v in state_dict.get("_last_lr", base_lrs)]
         self._last_lr = last_lr if len(last_lr) == len(base_lrs) else list(base_lrs)
         self.last_epoch = int(state_dict.get("last_epoch", self.last_epoch))
-
-
-@lru_cache(maxsize=16)
-def _policy_index_lut(
-    lut_name: str,
-    *,
-    device_type: str,
-    device_index: int | None,
-) -> torch.Tensor:
-    if lut_name == "full_to_compact":
-        values = FULL_TO_COMPACT_POLICY
-    elif lut_name == "compact_to_full":
-        values = COMPACT_TO_FULL_POLICY
-    else:
-        raise ValueError(f"unknown policy index LUT {lut_name!r}")
-    device = torch.device(device_type) if device_index is None else torch.device(device_type, device_index)
-    return torch.as_tensor(values, dtype=torch.long, device=device)
-
-
-def _policy_index_lut_for(target: torch.Tensor, lut_name: str) -> torch.Tensor:
-    return _policy_index_lut(
-        lut_name,
-        device_type=target.device.type,
-        device_index=target.device.index,
-    )
 
 
 def _metadata_strings(
@@ -565,7 +539,7 @@ class _ChainedOptimizer(torch.optim.Optimizer):
         for opt in self.optimizers:
             opt.zero_grad(set_to_none=set_to_none)
 
-    def step(self, closure: Callable[[], float] | None = None) -> float:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+    def step(self, closure: Callable[[], float] | None = None) -> float:  # pyright: ignore[reportIncompatibleMethodOverride]
         loss = 0.0
         for i, opt in enumerate(self.optimizers):
             loss_i = opt.step(closure if i == 0 else None)
@@ -807,6 +781,10 @@ class TrainMetrics:
     train_steps_done: int = 0
     train_samples_seen: int = 0
     aurora_uw_floor: float = 0.0
+  # The matrix-group LR the effective-ratio pair below was multiplied by.
+  # Sampled at the sqrt_release sawtooth FLOOR (M4-2) -- ~10x under a typical
+  # step -- so the pair is only readable against this column.
+    aurora_uw_lr: float = 0.0
     aurora_uw_count: float = 0.0
     aurora_uw_ratio_min: float = 0.0
     aurora_uw_ratio_p10: float = 0.0
@@ -816,6 +794,21 @@ class TrainMetrics:
     aurora_uw_floored_frac: float = 0.0
     aurora_uw_effective_ratio_min: float = 0.0
     aurora_uw_effective_ratio_median: float = 0.0
+  # Polar residual of the update Aurora applied, sampled on ONE designated
+  # tensor per shape class per iteration (`train.aurora.polar_convergence`).
+  # `_sv_ratio_*` is sigma_min/sigma_max (1.0 = a true orthogonal step) and
+  # `_orth_err_*` is ||QQ^T - I||_F/sqrt(n) (0.0 = converged); both are read
+  # AGAINST `aurora_polar_steps_configured`, which is the step count that
+  # produced them. `aurora_polar_sv_samples` is 2 when both shape classes
+  # were sampled -- below 2, a 0.0 ratio means "not measured", not
+  # "degenerate". M4-1 / audit I3.
+    aurora_polar_steps_configured: float = 0.0
+    aurora_polar_sv_samples: float = 0.0
+    aurora_polar_sv_errors: float = 0.0
+    aurora_polar_sv_ratio_square: float = 0.0
+    aurora_polar_sv_ratio_rect: float = 0.0
+    aurora_polar_orth_err_square: float = 0.0
+    aurora_polar_orth_err_rect: float = 0.0
   # Per-source loss split (observation-only; only meaningful once shards carry is_selfplay).
     policy_loss_selfplay: float = 0.0
     policy_loss_curriculum: float = 0.0
@@ -838,14 +831,96 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
+  # is the share of the iteration's SF-LABELLED rows that carry no
+  # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value
+  # on healthy data is EXACTLY 0.000000 (11.05M labelled rows across every
+  # clean stretch on disk, PR #302). Because the floor is exactly zero the
+  # alert rule needs no threshold: any non-zero reading is an incident.
+  # Denominator is stated once, in `losses.sf_multipv_presence_counts`, and it
+  # is `has_sf_wdl` rows — the same population the offline gate
+  # `eval/value_optimism.py::sf_multipv_missing_rate` divides by.
+  #
+  # It reads the batch's own `has_` vectors and consults NO flag, which is the
+  # whole point: the pre-existing signal (`sf_rebuild_policy_frac` below
+  # `sf_rebuild_wdl_frac`) is definitionally the same measurement but only
+  # exists while `rebuild_sf_targets` is on, and that key defaults False and
+  # is in no config file — so it read 0.0, indistinguishable from healthy,
+  # through three separate desync episodes spanning 25 days.
+  #
+  # ⚑ NEVER READ THE RATE WITHOUT `sf_multipv_checked_frac`, which reports that
+  # same denominator as a share of all batch rows. (The RATE's own denominator
+  # is the SF-labelled rows, above — not all batch rows.)
+  # `has_sf_multipv_raw` is an OPTIONAL shard field, so a batch that lost it
+  # reports rate 0.0 — which is also what perfect health reports. checked_frac
+  # 0.0 means UNMEASURED, and it reads 0.0 in two cases that are operationally
+  # identical: the field was absent from the batch, OR the batch held no
+  # SF-labelled rows at all. Either way nothing was inspected. On the
+  # production window it sits at the SF-labelled share of the batch (~0.99 on
+  # the 2026-08-01 live window).
+  #
+  # ⚑⚑ THE `test_` TWINS WILL NOT READ ZERO ON THE FIRST LIVE ROW, AND THAT IS
+  # NOT A PLUMBING BUG. The frozen holdout bundled with the checkpoints is
+  # itself desync-contaminated: 194 no-PV rows out of 1915 labelled over 2000
+  # rows, byte-identical across checkpoint_000474/476/478, so
+  # `test_sf_labelled_no_multipv_frac` = 0.101305 and
+  # `test_sf_multipv_checked_frac` = 0.957500 — about 500x the train row's
+  # ~2e-4 post-quarantine residue. Unlike the train row it does NOT age out:
+  # the holdout is FROZEN, so it stays at 0.101305 until the set is re-cut.
+  # Do not read it as a wiring fault and mute the column.
+    sf_labelled_no_multipv_frac: float = 0.0
+    sf_multipv_checked_frac: float = 0.0
+  # ALWAYS-ON SF-label contamination detector, VALUE HALF (audit P2). The
+  # column above reads only the POLICY half of the SF label block; `sf_wdl` —
+  # realized `sf_wdl_frac` 0.45 of the trained value target — had no detector
+  # in EITHER direction until 2026-08-03, and 99.99 % of the rows the policy
+  # column flagged on the quarantined shards still carried one.
+  #
+  # `sf_eval_pv_orphan_frac` is the one with detection power, and it is the
+  # first instrument that looks INSIDE the population the policy column
+  # passes: it fires when the record-level SF eval that BECAME this row's
+  # `sf_wdl` disagrees with the top surviving MultiPV line, which on a healthy
+  # row is impossible — both are the same accumulator field. Measured
+  # 2026-08-03 THROUGH THIS COLUMN: 0.117386 over the 122 quarantined shards
+  # (19,468 orphans of 165,846 checked), 3.0e-5 over the 640 policy-clean
+  # post-quarantine shards (34 rows, 1,128,248 labelled), and exactly 0.000000
+  # over the 474,278 labelled rows of the pre-episode range 33118:33387, which
+  # is the floor. Its denominator is rows carrying ALL THREE blocks, published as
+  # `sf_eval_pv_checked_frac` — read them together, exactly as with the policy
+  # pair, because a rate over zero checked rows is UNMEASURED, not clean.
+  #
+  # `sf_wdl_degenerate_frac` has NO power against desync and is not pretending
+  # to: it reads exactly 0 on the quarantined shards too, because a desynced
+  # engine's label is well-formed and wrong. It is a producer/parameter
+  # tripwire with a floor proven over 1.47 M rows.
+  #
+  # `sf_wdl_orphaned_frac` is the P2 blind spot counted rather than described:
+  # policy-flagged rows still carrying a well-formed value label. It is a
+  # near-twin of `sf_labelled_no_multipv_frac` BY DESIGN (0.9999 of flagged
+  # rows on the quarantined set) — the pair being equal is the finding. Never
+  # sum it with the policy rate; they count the same rows.
+    sf_wdl_degenerate_frac: float = 0.0
+    sf_wdl_orphaned_frac: float = 0.0
+    sf_eval_pv_orphan_frac: float = 0.0
+    sf_eval_pv_checked_frac: float = 0.0
   # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
   # has_sf_p0_frac -> 0 only proves it on a window that has p0 rows at all.
-  # `policy_frac` < the SF-labelled fraction is the real coverage gap: rows
-  # with a stored sf_policy_target but no sf_multipv_raw keep capture-time
-  # targets (5.4% of labelled rows on the live window), so a params change is
-  # a mixture of two regimes, not a clean swap.
+  # `policy_frac` BELOW `wdl_frac` is a CONTAMINATION SIGNAL, not a coverage
+  # cost. Both fracs divide by ALL rows in the rebuilt batch, and every healthy
+  # labelled row carries `sf_label_meta` AND `sf_multipv_raw`, so the two are
+  # EQUAL on clean data and their difference is the count of rows that lost
+  # their whole MultiPV block, over ALL BATCH ROWS. That is the desync
+  # fingerprint (`selfplay/stockfish_turn.py::_SF_NO_LEGAL_PV_WARN_RATE`) and a
+  # LOWER BOUND on contamination — a desynced engine strips the block on only
+  # ~59% of the labels it poisons, so divide by ~0.59 for the true share.
+  # A gap of 5.4% was once documented here as structural; it was a 07-27 desync
+  # episode. Measured through this very accumulator: 0.000000 on clean live
+  # shards, 0.192 over the 122 quarantined 2026-08-01 (0.207 of LABELLED rows
+  # there; do not mix the two denominators). ⚑ Reads 0.0 when
+  # `rebuild_sf_targets` is off, which is the default and is not in any config
+  # — see target_builder's metric_kwargs before treating it as a live alarm.
   # `eval_full_pass` — the frozen ruler, and the only eval production runs
   # (tune/trainable_phases.py) — pins the rebuild off, so these stay 0.0 on
   # its `eval` row by construction and a non-zero value there means the ruler
@@ -863,13 +938,38 @@ class TrainMetrics:
   # the selfplay workers stopped recording sf_p0 rows.
     sf_rebuild_masked_p0_frac: float = 0.0
     sf_rebuild_masked_volatility_frac: float = 0.0
-  # Per-game-phase loss split (bucketed by moves_left).
-    policy_loss_open: float = 0.0
-    policy_loss_mid: float = 0.0
-    policy_loss_end: float = 0.0
-    wdl_loss_open: float = 0.0
-    wdl_loss_mid: float = 0.0
-    wdl_loss_end: float = 0.0
+  # Per-game-phase loss split, bucketed by PIECE COUNT on the same constant
+  # `eval/audit.py` uses, so these columns and the audit's per-phase deep-SF
+  # regret name the same positions.
+  #
+  # ⚑ RENAMED FROM `*_loss_{open,mid,end}` IN THE SAME COMMIT THAT CHANGED THE
+  # DEFINITION. Until 2026-08-02 the split bucketed on `moves_left` =
+  # plies-remaining / `max_plies` (the CAP), which is not a board property at
+  # all and put 96.37 % of the live window in `end`. The old and new columns
+  # measure different sets of rows, so they deliberately do not share a name —
+  # see train/losses.py for the measurement.
+    policy_loss_phase_open: float = 0.0
+    policy_loss_phase_mid: float = 0.0
+    policy_loss_phase_end: float = 0.0
+    wdl_loss_phase_open: float = 0.0
+    wdl_loss_phase_mid: float = 0.0
+    wdl_loss_phase_end: float = 0.0
+  # Rows each `wdl_loss_phase_{open,mid,end}` was actually averaged over,
+  # summed across the iteration's microbatches. Raw COUNTS, not rates: a rate
+  # would need a denominator to divide by and the whole point is that the
+  # denominator is the thing that goes missing. `masked_mean` clamps its
+  # denominator to 1.0, so a bucket that collected NO rows publishes 0.0 — the
+  # best possible loss — and no other column can contradict it.
+    wdl_loss_phase_n_open: float = 0.0
+    wdl_loss_phase_n_mid: float = 0.0
+    wdl_loss_phase_n_end: float = 0.0
+  # The policy head's own denominators. NOT redundant with the three above: the
+  # policy mask carries `has_policy` as well as `net_mask`, so the two counts
+  # diverge on any window holding value-only rows. `scripts/status.py` prints
+  # the POLICY phase columns, so these are the ones an operator reads against.
+    policy_loss_phase_n_open: float = 0.0
+    policy_loss_phase_n_mid: float = 0.0
+    policy_loss_phase_n_end: float = 0.0
   # Value-head calibration (populated on holdout eval).
     wdl_brier: float = 0.0
     wdl_ece: float = 0.0
@@ -957,16 +1057,54 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
+  # Contamination detector. Row-weighted for the same reason: the SF-labelled
+  # count varies batch to batch, so a mean of per-batch rates is the wrong
+  # estimator. `sf_multipv_checked_rows` is BOTH the rate's denominator and the
+  # checked-frac's numerator — one quantity, so the pair cannot disagree about
+  # how many rows were actually inspected.
+    "sf_labelled_no_multipv_frac": ("sf_no_multipv_rows", "sf_multipv_checked_rows"),
+    "sf_multipv_checked_frac": ("sf_multipv_checked_rows", "batch_rows"),
+  # Value half. The first two divide by `sf_wdl_rows` — their OWN denominator,
+  # not the policy pair's `sf_multipv_checked_rows`, so a batch that lost
+  # `has_sf_multipv_raw` still reports them over the rows that have a value
+  # label. The eval-PV pair keeps its own `checked` count for the same reason
+  # the policy pair does: it is the blind-instrument column, and a rate above
+  # zero checked rows is unmeasured rather than clean.
+    "sf_wdl_degenerate_frac": ("sf_wdl_degenerate_rows", "sf_wdl_rows"),
+    "sf_wdl_orphaned_frac": ("sf_wdl_orphaned_rows", "sf_wdl_rows"),
+    "sf_eval_pv_orphan_frac": ("sf_eval_pv_orphan_rows", "sf_eval_pv_checked_rows"),
+    "sf_eval_pv_checked_frac": ("sf_eval_pv_checked_rows", "batch_rows"),
 }
 
-# The compute_loss scalars consumed by ``_ratio_metric_kwargs``. They are
-# already SUMS over the batch's rows, so they accumulate unweighted; every
-# other scalar is a per-batch MEAN and must be weighted by the batch's row
-# count before it can be pooled across ragged batches (see
-# ``Trainer._compute_metrics``). Weighting these would scale numerator and
-# denominator by the same factor per batch and so silently change the ratio.
+# TrainMetrics field -> the compute_loss scalar reported VERBATIM, with no
+# division at all. `_loss_sums_to_metric_kwargs` divides every other key by the
+# step count and `_ratio_metric_kwargs` divides one sum by another; a row COUNT
+# needs neither, and passing it through either path would turn "how many rows
+# were in this bucket over the iteration" into rows-per-step or a ratio.
+#
+# These are the denominators of `wdl_loss_{open,mid,end}` (rl_loop_audit /
+# backlog #124). `masked_mean` clamps its denominator to 1.0, so a bucket with
+# zero rows publishes a loss of 0.0 — the best possible value — and no other
+# column can contradict it. The counts make that state legible.
+_RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
+    "wdl_loss_phase_n_open": "wdl_rows_phase_open",
+    "wdl_loss_phase_n_mid": "wdl_rows_phase_mid",
+    "wdl_loss_phase_n_end": "wdl_rows_phase_end",
+    "policy_loss_phase_n_open": "policy_rows_phase_open",
+    "policy_loss_phase_n_mid": "policy_rows_phase_mid",
+    "policy_loss_phase_n_end": "policy_rows_phase_end",
+}
+
+# The compute_loss scalars consumed by ``_ratio_metric_kwargs`` and
+# ``_raw_count_metric_kwargs``. They are already SUMS over the batch's rows, so
+# they accumulate unweighted; every other scalar is a per-batch MEAN and must be
+# weighted by the batch's row count before it can be pooled across ragged
+# batches (see ``Trainer._compute_metrics``). Weighting these would scale
+# numerator and denominator by the same factor per batch and so silently change
+# the ratio.
 _RAW_SUM_LOSS_KEYS: frozenset[str] = frozenset(
-    key for pair in _RATIO_METRIC_FIELDS.values() for key in pair
+    [key for pair in _RATIO_METRIC_FIELDS.values() for key in pair]
+    + list(_RAW_COUNT_METRIC_FIELDS.values()),
 )
 
 
@@ -1084,7 +1222,23 @@ def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, f
         if field in _TRAIN_METRICS_FIELDS:
             out[field] = v / n
     out.update(_ratio_metric_kwargs(sums))
+    out.update(_raw_count_metric_kwargs(sums))
     return out
+
+
+def _raw_count_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
+    """Row-count metrics passed through with no division of any kind.
+
+    An absent key is reported as 0.0 rather than omitted: these columns are read
+    as "how many rows landed here", and a missing column and a zero column mean
+    the same thing to the reader, while omitting it would let the field's
+    dataclass default supply the same 0.0 anyway with no record of which path
+    produced it.
+    """
+    return {
+        field: float(sums.get(sum_key, 0.0))
+        for field, sum_key in _RAW_COUNT_METRIC_FIELDS.items()
+    }
 
 
 def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
@@ -1101,6 +1255,57 @@ def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
         den = float(sums[den_key])
         out[field] = float(sums[num_key]) / den if den > 0.0 else 0.0
     return out
+
+
+def state_dict_unique_param_count(sd: Mapping[str, Any]) -> int:
+    """Parameters in *sd*, counting each STORAGE once.
+
+    ``sum(v.numel())`` over `state_dict` entries double-counts weight tying: the
+    production net shares one smolgen generator across 16 keys, so the naive sum
+    reads 78,812,768 against a true 63,084,128 (CLAUDE.md, rl_loop_audit J11).
+    A published-model log line that reported the naive number would be a count
+    that does not mean what its name says, in the very place this log exists to
+    make unambiguous.
+    """
+    seen: set[int] = set()
+    total = 0
+    for value in sd.values():
+        if not isinstance(value, torch.Tensor):
+            continue
+        ptr = value.untyped_storage().data_ptr()
+        if ptr in seen:
+            continue
+        seen.add(ptr)
+        total += int(value.numel())
+    return total
+
+
+def state_dict_digest(sd: Mapping[str, Any]) -> str:
+    """Short content hash over every tensor in *sd*, key order independent.
+
+    Hashes the VALUES (plus each key, dtype and shape), so it changes when the
+    weights change and matches when two artifacts carry the same weights under
+    different names. That is the property the publish log needs: it is what
+    distinguishes ``self.model`` from ``self._swa_model.module`` — measured in
+    repro, those differ in 86/86 tensors under SWA — and what lets a reader
+    tie a published file to the checkpoint it claims to be.
+
+    Not `sha256_file` on the written path: this must describe the object that
+    was exported, not the bytes torch happened to serialize, so a future change
+    to the container format cannot make the identity silently drift.
+    """
+    digest = hashlib.sha256()
+    for key in sorted(sd):
+        value = sd[key]
+        if not isinstance(value, torch.Tensor):
+            continue
+        digest.update(key.encode("utf-8"))
+        digest.update(str(value.dtype).encode("utf-8"))
+        digest.update(str(tuple(value.shape)).encode("utf-8"))
+        digest.update(
+            value.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes(),
+        )
+    return digest.hexdigest()[:16]
 
 
 def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
@@ -1313,8 +1518,6 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "aurora_polar_dtype": str(config.get("aurora_polar_dtype", "auto")),
         "aurora_polar_safety": _f("aurora_polar_safety", 1.01),
         "aurora_cuda_graphs": bool(config.get("aurora_cuda_graphs", True)),
-        "cosmos_rank": _f("cosmos_rank", 64, int),
-        "cosmos_gamma": _f("cosmos_gamma", 0.2),
         "swa_start": _f("swa_start", 0, int),
         "swa_freq": _f("swa_freq", 50, int),
         "w_policy": _f("w_policy", 1.0),
@@ -1404,8 +1607,6 @@ class Trainer:
         aurora_polar_dtype: str = "auto",
         aurora_polar_safety: float = 1.01,
         aurora_cuda_graphs: bool = True,
-        cosmos_rank: int = 64,
-        cosmos_gamma: float = 0.2,
         swa_start: int = 0,
         swa_freq: int = 50,
         mirror_prob: float = 0.5,
@@ -1579,46 +1780,6 @@ class Trainer:
                     aurora_polar_safety=float(aurora_polar_safety),
                     aurora_cuda_graphs=bool(aurora_cuda_graphs),
                 )
-        elif optimizer == "cosmos_fast":
-            hd, hnd, ad, and_ = _split_decay_groups(
-                self.model,
-                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
-            )
-            matrix_wd = float(matrix_weight_decay)
-            aux_wd = float(aux_weight_decay)
-            param_groups = [
-                {"params": hd, "weight_decay": matrix_wd, "use_cosmos_fast": True},
-                {"params": hnd, "weight_decay": 0.0, "use_cosmos_fast": True},
-                {"params": ad, "weight_decay": aux_wd, "use_cosmos_fast": False},
-                {"params": and_, "weight_decay": 0.0, "use_cosmos_fast": False},
-            ]
-            use_soda_weight_decay = _mark_soda(param_groups)
-            self.opt = COSMOSFast(
-                param_groups,
-                lr=lr,
-                rank=int(cosmos_rank),
-                gamma=float(cosmos_gamma),
-            )
-        elif optimizer == "cosmos" and matrix_optimizer_scope not in ("default", "", "legacy"):
-            hd, hnd, ad, and_ = _split_decay_groups(
-                self.model,
-                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
-            )
-            matrix_wd = float(matrix_weight_decay)
-            aux_wd = float(aux_weight_decay)
-            param_groups = [
-                {"params": hd, "weight_decay": matrix_wd, "use_cosmos": True},
-                {"params": hnd, "weight_decay": 0.0, "use_cosmos": False},
-                {"params": ad, "weight_decay": aux_wd, "use_cosmos": False},
-                {"params": and_, "weight_decay": 0.0, "use_cosmos": False},
-            ]
-            use_soda_weight_decay = _mark_soda(param_groups)
-            self.opt = COSMOS(
-                param_groups,
-                lr=lr,
-                rank=int(cosmos_rank),
-                gamma=float(cosmos_gamma),
-            )
         else:
   # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
             if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
@@ -1655,15 +1816,6 @@ class Trainer:
         elif optimizer == "adamw":
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
         elif optimizer == "muon" or optimizer == "aurora":
-            pass
-        elif optimizer == "cosmos":
-            if matrix_optimizer_scope in ("default", "", "legacy"):
-                self.opt = COSMOS(
-                    param_groups,
-                    lr=lr,
-                    weight_decay=0.0 if weight_decay_mode == "soda" else 1e-4,
-                )
-        elif optimizer == "cosmos_fast":
             pass
         elif optimizer == "soap":
   # SOAP: Shampoo-like second-order optimizer. Prefer a local
@@ -1717,7 +1869,7 @@ class Trainer:
                 )
         else:
             raise ValueError(
-                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, aurora, cosmos, cosmos_fast, soap"
+                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, aurora, soap"
             )
 
         if use_soda_weight_decay:
@@ -1781,11 +1933,14 @@ class Trainer:
 
         self.feature_dropout_p = float(feature_dropout_p)
   # Rebuild SF targets from sparse MultiPV labels at sample time, so an
-  # SfTargetParams change applies to ~95% of the SF-labelled rows already in
-  # the replay window instead of waiting ~18h for it to turn over. NOT the
-  # whole window: rows without sf_multipv_raw (5.4% of labelled rows measured
-  # on the live window) keep capture-time targets, so the window is a mixture
-  # of two target regimes -- sf_rebuild_policy_frac reports the real rate.
+  # SfTargetParams change applies to the SF-labelled rows already in the replay
+  # window instead of waiting ~18h for it to turn over. On healthy data that is
+  # ALL of them: every labelled row is written with sf_multipv_raw, so the
+  # rebuild reaches 100% of the SF-labelled window and there is no mixture of
+  # two target regimes. sf_rebuild_policy_frac reports the realized rate, and
+  # any shortfall below sf_rebuild_wdl_frac is Stockfish-desync contamination
+  # (a LOWER bound on it: docs/target_rebuildability.md), not a structural cost
+  # of the rebuild.
   # False = use stored targets, bitwise identical to the pre-flag pipeline.
   # `set_sf_target_rebuild` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
@@ -2185,13 +2340,44 @@ class Trainer:
             arrs = rebuild_categorical_target_in_arrays(
                 arrs, params=self.categorical_target_params,
             )
+  # The VALUE-half desync check, derived HERE because its two inputs
+  # (`sf_multipv_raw`, `sf_label_meta`) never reach the GPU: the first is
+  # pruned three lines below in production and the second is not in the collate
+  # spec at all. Deriving it before the prune turns 960 B/row + 24 B/row of raw
+  # blocks into two (B,) float32 vectors — 4 KB at batch_size 512, 0.03 % of
+  # the `x` tensor — so the check rides the same always-on channel as
+  # `sf_labelled_no_multipv_frac` instead of being gated behind
+  # `sf_policy_sparse_ce`, which defaults False and is in no config file. That
+  # gating is exactly how `sf_rebuild_policy_frac` came to read 0.0 through
+  # three desync episodes; see `replay/shard.py::sf_eval_pv_orphan_flags`.
+  #
+  # Placed before the mirror as well as before the prune: mirroring permutes
+  # move indices, and the (cp, mate) columns this compares are mirror-invariant,
+  # so the two orders agree — but only this one is also independent of the
+  # mirror ever learning to touch a score column.
+        orphaned, checked = sf_eval_pv_orphan_flags(arrs)
+        arrs[SF_EVAL_PV_ORPHAN_FIELD] = orphaned
+        arrs[SF_EVAL_PV_CHECKED_FIELD] = checked
         if not self.sf_policy_sparse_ce:
-            # Keep the default H2D payload identical to the pre-sparse-CE
-            # pipeline: the int rows only ride to the GPU when the sparse
-            # loss consumes them. (Dropped AFTER the rebuild hook, which
-            # also reads them.)
+            # Keep the H2D payload small: the (B, 40, 4) int32 candidate block
+            # only rides to the GPU when the sparse loss consumes it. (Dropped
+            # AFTER the rebuild hook, which also reads it.)
+            #
+            # Its `has_` flag is NOT dropped with it, and that is deliberate.
+            # It is a (B,) float32 vector — 2 KB at batch_size 512, 0.017 % of
+            # the `x` tensor alone (512x175x8x8 float16 = 11.5 MB), and the
+            # smallest payload any batch field has — and it is the whole input to
+            # `sf_labelled_no_multipv_frac`, the always-on desync detector.
+            # Pruning it here would gate that column behind
+            # `sf_policy_sparse_ce`, which defaults False and is in no config
+            # file: the column would read 0.0 in production, which is also what
+            # a healthy window reads. That is precisely the defect
+            # `sf_rebuild_policy_frac` already has and the reason a 25-day
+            # desync went unseen in-loop. `sparse_sf_policy_ce` tolerates the
+            # flag arriving without its block (it needs `sf_multipv_raw` too
+            # and returns an all-zero eligibility mask when any input is
+            # missing), so the loss path is unchanged either way.
             arrs.pop("sf_multipv_raw", None)
-            arrs.pop("has_sf_multipv_raw", None)
         arrs = select_input_history_arrays(
             arrs,
             input_history_encoding=self._input_history_encoding,
@@ -2616,12 +2802,15 @@ class Trainer:
         batch the prefetch thread builds.
 
         Turning it ON is the whole point of the flag: an ``SfTargetParams``
-        change then applies to ~95 % of the SF-LABELLED rows already in the
-        replay window on the next iteration, instead of only to data generated
-        after the edit (~18h for a 1.5M-row window to turn over at the current
-        ingest rate). Not the entire window — rows without ``sf_multipv_raw``
-        keep capture-time targets, so the window becomes a mixture of two
-        target regimes; ``sf_rebuild_policy_frac`` reports the realized rate.
+        change then applies to the SF-LABELLED rows already in the replay
+        window on the next iteration, instead of only to data generated after
+        the edit (~18h for a 1.5M-row window to turn over at the current ingest
+        rate). On healthy data that is every one of them — a labelled row is
+        written with ``sf_multipv_raw`` — so the window does NOT become a
+        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports the
+        realized rate; it falling below ``sf_rebuild_wdl_frac`` means desynced
+        Stockfish rows, not a bound on what the rebuild can reach — and it
+        UNDERCOUNTS them, since only ~59% of poisoned rows lose the block.
 
         ``sf_target_params`` is written only when a CONSUMER is active — this
         rebuild, or ``sf_policy_sparse_ce``, which reads the same field as
@@ -2727,21 +2916,34 @@ class Trainer:
         def _align_index(
             target: torch.Tensor, *, source_width: int, dst_width: int,
         ) -> tuple[torch.Tensor, torch.Tensor]:
-            if source_width == dst_width:
+  # ONE dispatch, in torch_maps, which owns both the width->table binding and
+  # the ONE device cache for these tables (CLAUDE.md: "Use the shared
+  # device-cached lookups in moves/torch_maps.py -- don't add per-module
+  # lru_cache copies"). This module used to carry a private lru_cache over
+  # the same two arrays, keyed on target.device.index RAW, so
+  # torch.device("cuda") and ("cuda", 0) allocated two separate copies of
+  # both tables; torch_maps._device_key normalises that away.
+  #
+  # The width dispatch lives there too, deliberately: duplicating it here
+  # meant the branch->direction binding could be swapped with both symbol
+  # names still present, which no test in this repo could see (a reviewer
+  # swapped the two branch bodies and every value-identity test passed --
+  # only the ruler-id source hash noticed, and a source hash is a tripwire,
+  # not a semantic control). With one dispatch there is no pair of branches
+  # to swap, and the binding is asserted directly in
+  # tests/test_trainer_policy_index_lut.py.
+            lut = torch_maps.policy_index_remap_table(
+                source_width, dst_width, target.device,
+            )
+            if lut is None:  # widths already agree
                 return target, torch.ones_like(target, dtype=torch.bool)
-            if source_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-                lut = _policy_index_lut_for(target, "full_to_compact")
-                valid = (target >= 0) & (target < POLICY_SIZE)
-                safe_target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
-                mapped = lut.index_select(0, safe_target)
-                return mapped, valid & (mapped >= 0)
-            if source_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-                lut = _policy_index_lut_for(target, "compact_to_full")
-                valid = (target >= 0) & (target < COMPACT_POLICY_SIZE)
-                safe_target = target.clamp(0, COMPACT_POLICY_SIZE - 1).to(torch.long)
-                mapped = lut.index_select(0, safe_target)
-                return mapped, valid
-            raise ValueError(f"policy index width {source_width} is incompatible with logits width {dst_width}")
+            valid = (target >= 0) & (target < source_width)
+            safe_target = target.clamp(0, source_width - 1).to(torch.long)
+            mapped = lut.index_select(0, safe_target)
+  # `full_to_compact` stores -1 for "no compact move"; `compact_to_full` is
+  # total (min 0), so the extra term is a no-op on that direction rather
+  # than a behaviour change -- asserted, not assumed.
+            return mapped, valid & (mapped >= 0)
 
         def _policy_width_from_batch(*keys: str) -> int:
             for key in keys:
@@ -2992,6 +3194,12 @@ class Trainer:
         set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
         if callable(set_collect_uw_stats):
             set_collect_uw_stats(bool(collect_optimizer_stats))
+  # Polar residual rides the same one-step-per-iteration gate. It is
+  # scale-invariant and carries no `lr` factor, so unlike the uw-effective
+  # pair (M4-2) sampling at the sawtooth floor does not bias it.
+        set_collect_polar_stats = getattr(self.opt, "set_collect_polar_stats", None)
+        if callable(set_collect_polar_stats):
+            set_collect_polar_stats(bool(collect_optimizer_stats))
         self.opt.step()
         opt_step_time_s = time.perf_counter() - opt_step_start
         if update_lr:
@@ -3109,6 +3317,7 @@ class Trainer:
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
+            **getattr(self.opt, "last_polar_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
         self._log_metrics(metrics, "train_avg")
@@ -3406,8 +3615,10 @@ class Trainer:
                 device=torch.device(self.device),
             )
         if self._swa_model is None:
+            source = "model"
             raw_state = self.model.state_dict()
         else:
+            source = "swa_model.module"
             raw_state = self._swa_model.module.state_dict()
             logging.getLogger(__name__).warning(
                 "export_swa: SWA is ENABLED, so %s carries the SWA average while "
@@ -3426,3 +3637,24 @@ class Trainer:
                 **dataclasses.asdict(self._model_config),
             }
         atomic_write(path, lambda tmp: torch.save(export, str(tmp)))
+  # ⚑ print(), NOT logging.info(). The trial actor installs NO logging handler:
+  # `tune/trainable.py::_set_log_level` sets a LEVEL on the `chess_anti_engine`
+  # logger and stops there, and nothing in this package or in Ray attaches one
+  # for that process. So an INFO record falls through to `logging.lastResort`,
+  # which is WARNING+, and is DISCARDED — verified directly: with no handler,
+  # `logger.warning` reaches stderr and `logger.info` reaches nothing at all.
+  # Every operator-visible line in this process is a print() for that reason
+  # (`[trial]`, `[disk_buf]`, `[tune]`), and this line exists precisely so that
+  # which weights shipped is OBSERVABLE rather than re-derived from the config.
+  # A provenance line nobody can read would be this PR's own defect: a value
+  # emitted and then silently dropped. Do not "fix" this back to a logger
+  # without also installing a handler, and do not promote it to WARNING — it is
+  # not a warning, it is the normal record of a normal publish.
+        print(
+            f"[trial] export_swa: wrote {path} source={source} "
+            f"step={int(self.step)} tensors={len(state_dict)} "
+            f"params={state_dict_unique_param_count(state_dict)} "
+            f"digest={state_dict_digest(state_dict)} "
+            f"swa_enabled={self._swa_model is not None}",
+            flush=True,
+        )

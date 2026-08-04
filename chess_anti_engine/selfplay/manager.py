@@ -314,7 +314,10 @@ def play_batch(
 
     # Apply the gated repetition-plane fix (process-global in the C encoders)
     # to match the configured value before any encoding happens this batch.
-    rep_fix.apply(bool(game.history_rep_fix))
+    # boards_discarded: this runs before SelfplayState.create, i.e. before any
+    # CBoard of this batch exists, and the previous batch's boards died with its
+    # state — so nothing pushed under an older flag value can survive here.
+    rep_fix.apply(bool(game.history_rep_fix), boards_discarded=True)
 
     state = SelfplayState.create(
         model=model,
@@ -521,13 +524,29 @@ def play_batch(
         t_sf / max(0.001, t_net + t_sf) * 100,
     )
     if continuous:
-        # Quantifies the session-teardown waste: in-flight games at exit are
-        # unfinalized and their compute is discarded. With the pause hold this
-        # should only be paid at REAL teardowns (restart-keyed reco change,
-        # task/trial reassignment, shutdown), not every iteration.
+        # Games still holding a slot when the session tears down. With the
+        # pause hold this is only paid at REAL teardowns (restart-keyed reco
+        # change, task/trial reassignment, shutdown), not every iteration.
+        #
+        # ⚑ THIS IS NOT THE WASTE. It was called `in_flight_abandoned` until
+        # in-flight resume landed (selfplay/resume.py), and the name asserted a
+        # fate play_batch cannot see: suspension happens in the CALLER, after
+        # this line, so these games may be persisted and restored next session.
+        # The 2026-07-30 teardown logged `in_flight_abandoned=24` beside
+        # `suspended games=20` for the same games. Discarded compute is
+        # `in_flight_at_exit` MINUS the resume line's `suspended`, plus
+        # whatever the next session's `resumed` fails to restore -- read
+        # `selfplay resume: suspended games=` and `selfplay resume totals`
+        # next to this line, never this line alone.
+        #
+        # Renamed outright rather than aliased: the token feeds no metric
+        # series, no CSV column and no test -- only these logs -- so there is
+        # no record for a second counter to protect. Logs written BEFORE the
+        # rename still carry the old token; grep both when spanning it.
         _in_flight = max(0, int(state.games_started) - int(state.games_completed))
         logging.getLogger("chess_anti_engine.worker").info(
-            "play_batch exit: completed=%d started=%d in_flight_abandoned=%d",
+            "play_batch exit: completed=%d started=%d in_flight_at_exit=%d"
+            " (persisted-or-abandoned; see 'selfplay resume: suspended games=')",
             int(state.games_completed), int(state.games_started), _in_flight,
         )
     sf_nodes = int(getattr(stockfish, "nodes", 0) or 0)

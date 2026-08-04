@@ -460,11 +460,24 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
     release = threading.Event()
 
     # Names only the three arguments this test relies on, typed as the real
-    # method types them, so a RENAME or a type change on the real
-    # `_load_refresh_chunks` still fails the type gate here. `**_added_later`
-    # absorbs keyword arguments the real method grows afterwards (`context` and
-    # `chosen_out` arrived with the open-time pool seed) — an additive signature
-    # change must not turn a test that never reads them red.
+    # method types them, so a RENAME or a type change OF ONE OF THOSE THREE on the
+    # real `_load_refresh_chunks` still fails the type gate here. `**_added_later`
+    # absorbs every other keyword argument, so an additive signature change cannot
+    # turn a test that never reads them red.
+    #
+    # Scope that guarantee honestly: it covers ONLY the three named arguments.
+    # `context` and `chosen_out` exist today (they arrived with the open-time pool
+    # seed) and land in `**_added_later`, so renaming or retyping either one is
+    # invisible here.
+    #
+    # Note `chosen_out` is an OUT-parameter: `_load_refresh_chunks` appends the
+    # drawn shard ranks to it (disk_buffer.py:955-958) and `_seed_shuffle_pool`
+    # reads them back for `mean_recency`. `**_added_later` would accept it and
+    # silently drop the writes. Harmless today because the only call this test
+    # reaches is `_prefetch_loop` (disk_buffer.py:895-899), which passes exactly
+    # the three named kwargs — but one refactor away from this repo's signature
+    # defect, a value accepted and then silently ignored. If a call this test
+    # reaches ever starts passing `chosen_out`, name it here.
     def _slow_load_refresh_chunks(
         *,
         shard_paths: list[Path],
@@ -478,8 +491,18 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
         return [arrs]
 
     buf._load_refresh_chunks = _slow_load_refresh_chunks
-    buf._schedule_refresh_prefetch()
-    assert started.wait(timeout=1.0)
+    # The prefetch loop refills whenever the slot is empty, including on plain
+    # 0.1s timeout ticks — so during the add_many/flush setup above the REAL
+    # loader may already have filled the slot, in which case a single
+    # _schedule_refresh_prefetch() is a no-op and the stub never runs (the
+    # pre-fix 1-in-4 flake on a loaded box). Drain the slot and re-arm until
+    # the stub is the load that actually happens.
+    deadline = time.monotonic() + 15.0
+    while not started.is_set() and time.monotonic() < deadline:
+        buf._take_prefetched_refresh()
+        buf._schedule_refresh_prefetch()
+        started.wait(timeout=0.1)
+    assert started.is_set()
 
     buf.close()
     release.set()

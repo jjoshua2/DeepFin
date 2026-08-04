@@ -1,4 +1,5 @@
 from .encode import (
+    check_encode_buffer_planes,
     encode_position,
     encode_position_fused,
     encode_position_into,
@@ -15,6 +16,7 @@ from .model_inputs import (
 )
 
 __all__ = [
+    "check_encode_buffer_planes",
     "encode_cboard_for_model",
     "encode_position",
     "encode_position_for_model",

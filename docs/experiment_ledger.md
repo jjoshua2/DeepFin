@@ -18399,6 +18399,8 @@ this codebase's signature defect in mild form. Now:
   it never had a prefetch thread. `scripts/e2e_strength_test.py` generates its own
   selfplay against a wall-clock deadline and is not a paired ruler; left alone.
 
+⚠ **SUPERSEDED — the "73 of 75" observation below is WITHDRAWN as evidence of effect; see "Correction to point 2 of the amendment above" ~50 lines down. It does not discriminate: the control with the flag forced OFF agrees just as well.**
+
 Observation that the wiring TAKES EFFECT, not just that it was typed: two independent
 invocations of `scripts/retarget_retrain.py`, same args, 13 minutes apart, one paying the
 max-autotune compile and one hitting the cache (**473s vs 36s wall — the exact load
@@ -28654,3 +28656,4083 @@ pre-registered re-analysis under a corrected instrument.
   on reading a NULL outcome, and no outcome was read. Shipping 12 now would be
   citing a verdict this wave did not produce. The deployment evidence above means a
   future A8 needs no new plumbing work — only a sound confirming leg.
+---
+
+## 2026-08-01 — PRE-REGISTRATION: an ALWAYS-ON no-MultiPV column, because the only in-loop desync tripwire is gated behind a flag that is in no config file
+
+**Type: observer change.** No loss weight, no target, no config key, no gradient
+moves. The yardstick below is therefore about the INSTRUMENT, not about Elo — per
+the method rules, an Elo yardstick on an observer change is unfalsifiable at
+~0.02 Elo/iter and would only launder the change through a number that cannot
+resolve it.
+
+### Hypothesis
+
+The share of SF-**labelled** rows carrying no `sf_multipv_raw` block is a
+zero-floored contamination fingerprint (established twice: 2 878 620 labelled
+rows across four separated quiet stretches at exactly 0.000000, and 11.05 M rows
+/ 6 535 shards in PR #302). Reported unconditionally from the training batch it
+becomes an in-loop desync alarm with **no threshold to argue about**: healthy is
+exactly 0, so any non-zero reading is an incident.
+
+Today there is no such column. `sf_rebuild_policy_frac` − `sf_rebuild_wdl_frac`
+is definitionally the same signal but is **structurally 0.0 in production**:
+`rebuild_sf_targets` defaults False and appears in NO config file, so the pair
+reads byte-identically to a perfectly healthy window and always has. That is why
+a 25-day, at-least-three-episode Stockfish desync was found by hand from shard
+files in retrospect and by nothing in the loop.
+`train/target_builder.py::SfRebuildCoverage.metric_kwargs` says so in its own
+docstring and names the fix — *"a presence-flag column reported unconditionally
+by the trainer; it costs one metric field and a `progress.csv` schema
+rotation"*. This entry pre-registers exactly that.
+
+### What ships
+
+Two columns, both computed in `train/losses.py::compute_loss` from tensors that
+are already in the batch, both reported on the train row and (as `test_*`) on
+the holdout row:
+
+| column | numerator | DENOMINATOR |
+|---|---|---|
+| `sf_labelled_no_multipv_frac` | batch rows with `has_sf_wdl` set **and** `has_sf_multipv_raw` clear | batch rows with `has_sf_wdl` set |
+| `sf_multipv_checked_frac` | batch rows with `has_sf_wdl` set (0 when the batch carries no `has_sf_multipv_raw` field at all) | **all** rows of the batch |
+
+The denominator is stated once, at the point of definition, and it is
+`has_sf_wdl` alone — **not** `net_mask * has_sf_wdl`, and **not** all batch rows
+— so the live column and `eval/value_optimism.py::sf_multipv_missing_rate` (the
+offline gate that selected the 122 quarantined shards) divide by the same
+population and can be compared without rescaling. The sibling
+`sf_rebuild_*_frac` pair is the counter-example this rule is written from: it
+divides by all rows of the rebuilt batch, so its 0.191973 and the 0.207466 four
+lines away in the same docstring describe different populations.
+
+`sf_multipv_checked_frac` exists because `has_sf_multipv_raw` is an OPTIONAL
+shard field. Without it a batch that never carried the field would report a
+perfect `sf_labelled_no_multipv_frac == 0.0` while measuring nothing — the
+identical failure to the one being fixed. **Read the pair; a rate of 0.0 under a
+checked-frac of 0.0 is not a pass, it is a blind instrument.**
+
+### ONE deciding yardstick — exact command
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/sf_no_multipv_probe.py \
+  --poisoned-dir data/desync_quarantine_20260801 \
+  --clean-dir 'runs/pbt2_small/replay/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/replay_shards' \
+  --clean-index-range 33118:33387 \
+  --limit 24 --batch-size 512
+```
+
+The probe drives the **production metric path end to end** — real shard on disk →
+`Trainer._prepare_host_arrays` (including the payload prune that would have
+dropped the field) → `collate_arrays` → `compute_loss` → `_extract_loss_scalars`
+→ `_loss_sums_to_metric_kwargs` → `TrainMetrics` — and reads
+`sf_labelled_no_multipv_frac` off the returned `TrainMetrics`. It is the same
+call `eval_full_pass` makes for the `test_*` row. Read-only: it opens shards
+`mode="r"` and writes nothing.
+
+Arms, and why each selector is what it is:
+
+* **Poisoned**: all 122 shards of `data/desync_quarantine_20260801`. Selector is
+  "the whole directory" — no per-shard choice.
+* **Clean**: shard index range **33118–33387** of the live window. Selector is a
+  contiguous ID band fixed in advance, taken from the 2026-08-01 addendum's
+  pre-episode stretch (270 shards / 474 278 labelled rows / 0.000000). ⚑ Stated
+  plainly: that band was established on the SAME axis this metric computes, so
+  this arm proves *the live path agrees with the offline reading on the same
+  rows* — it does not independently re-establish that the rows are clean. It is
+  a plumbing control, and that is the claim being made.
+
+### Pre-committed SUCCESS (all four, judged on the command's own printout)
+
+1. **Positive control fires.** Poisoned arm `sf_labelled_no_multipv_frac` in
+   **[0.19, 0.23]**. The all-122-shard whole-directory truth is **0.207461**
+   (43 413 / 209 259, counted directly off the zarrs 2026-08-01); the band allows
+   for the probe reading a shard subset under `--limit`.
+2. **Negative control is EXACT.** Clean arm `sf_labelled_no_multipv_frac ==
+   0.0` exactly — `== 0.0`, not `< 1e-6`. Every clean stretch on disk reads
+   exactly zero and the column must too.
+3. **The instrument is not blind in either arm.** `sf_multipv_checked_frac >
+   0.5` on BOTH arms. This is the clause that makes clauses 1-2 mean something:
+   without it a metric that silently lost its input passes clause 2.
+4. **Cost is stated, not buried.** The PR reports measured per-step overhead of
+   the two columns as a fraction of the training step, from a timed
+   before/after on the same machine.
+
+### Pre-committed KILL
+
+* Positive arm reads **< 0.05** — the alarm does not fire on real poisoned data.
+  Revert the metric; the batch pipeline is dropping the field somewhere the code
+  reading suggested it does not.
+* Clean arm reads **non-zero**. Either the plumbing is wrong or the floor is not
+  zero; either way the "any non-zero is an incident" alert rule is unsupportable
+  and the change must not ship with it.
+* Measured overhead **> 0.5 %** of the training step. This runs every step; a
+  detector that costs half a percent of throughput forever needs a different
+  design (host-side, once per batch build), not a waiver.
+
+### ⚑ The first live reading will NOT be 0.000000, and that is not a false alarm
+
+Measured 2026-08-01 over the whole current live window (713 shards, 1 264 058
+labelled rows, direct zarr read): **252 no-PV rows, rate 1.99e-4, spread over 72
+shards, none of them exactly zero-free.** Max shard rate **0.008032** — which is
+precisely the quarantine gate's kept maximum, because `sf_multipv_miss_max: 0.01`
+kept the sub-threshold tail of the 07-30/31 episode on purpose. The 72 shards run
+33454-33716, mtimes 07-30 13:41 → 07-31 04:48.
+
+So on the first restart onto this code the column reads **~2e-4, not 0**, until
+that band ages out of the 1.5 M FIFO (~34 h; last of them written 07-31 04:48).
+Recording it here so the first operator to see it does not read a real residue as
+a plumbing bug and mute the alarm — the failure mode this whole change exists to
+prevent.
+
+### Confounds
+
+None on the training path: no target, weight or config key changes. The only
+production-path edit is that `has_sf_multipv_raw` — a `(B,)` float32 vector,
+2 KB at `batch_size: 512` — is no longer pruned from the H2D payload when
+`sf_policy_sparse_ce` is off. `sf_multipv_raw` itself, the `(B, 40, 4)` int32
+block that the prune exists for, is still dropped. Priced in the cost clause
+above.
+
+### Revert point
+
+Weights are untouched, so no salvage snapshot is required by rule 2. The revert
+is `git revert` of the PR plus one restart; the columns then vanish and
+`progress.csv` rotates again on the next schema change, which is the mechanism's
+normal behaviour (`tune/harness.py::_rotate_progress_csv_if_schema_changed`).
+
+---
+
+## 2026-08-01 — VERDICT on the always-on no-MultiPV column: all four criteria PASS, but criterion 1 FAILED on the command as written and the command — not the criterion — was wrong
+
+Judged the same session, against the rule as pre-committed above. Both readings
+are reported; the failing one is not deleted.
+
+### The failure
+
+The yardstick command carried `--limit 24`, a stride subsample of the 122
+quarantined shards. It read:
+
+```
+poisoned  shards=  24 rows=    47585  sf_labelled_no_multipv_frac=0.182063  sf_multipv_checked_frac=0.936577
+clean     shards=  24 rows=    41033  sf_labelled_no_multipv_frac=0.000000  sf_multipv_checked_frac=0.997051
+[FAIL] positive control fires: 0.182063 in [0.19, 0.23]
+```
+
+**Criterion 1 failed by 0.0079.** The band was centred on 0.207461, which is a
+WHOLE-DIRECTORY quantity (43 413 no-PV / 209 259 labelled, counted directly off
+the zarrs). The quarantined shards are extremely heterogeneous — per-shard rate
+ranges 0.013 to 0.31 in a 4-shard spot check — so 24 of 122 does not estimate
+that mean to ±0.02. The pre-registration's parenthetical *"the band allows for
+the probe reading a shard subset under `--limit`"* was an assumption, not a
+measurement, and it was wrong.
+
+Same family as the 2026-08-01 "SUCCESS CRITERION 1 FAILED on its first real run"
+entry above: **the window was correct, the instrument that judged it was not.**
+
+### The correction, and why it is not band-widening
+
+The band is untouched. What changed is the population the command reads: the
+target number 0.207461 is defined over all 122 shards, so the criterion can only
+be judged over all 122 shards. `--limit` now defaults to **0 (whole arm)** and
+the yardstick command drops it. Re-run:
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/sf_no_multipv_probe.py \
+  --poisoned-dir data/desync_quarantine_20260801 \
+  --clean-dir 'runs/pbt2_small/replay/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/replay_shards' \
+  --clean-index-range 33118:33387 --limit 0 --batch-size 512
+```
+
+```
+poisoned  shards= 122 rows=   226141  sf_labelled_no_multipv_frac=0.207461  sf_multipv_checked_frac=0.925347
+clean     shards= 270 rows=   475713  sf_labelled_no_multipv_frac=0.000000  sf_multipv_checked_frac=0.996983
+
+[PASS] positive control fires: 0.207461 in [0.19, 0.23]
+[PASS] negative control is EXACTLY zero: 0.0 == 0.0
+[PASS] poisoned arm was actually inspected: checked 0.925347 > 0.5
+[PASS] clean arm was actually inspected: checked 0.996983 > 0.5
+```
+
+### What that printout actually establishes
+
+1. **0.207461 — to all six decimals** of the number counted independently off
+   the raw zarrs (43 413 / 209 259) before any of this code existed. The live
+   metric path and a direct array count are the same measurement, not two
+   measurements that happen to be close.
+2. **0.925347 falls out as `sf_multipv_checked_frac`** — the same value the
+   `sf_rebuild_wdl_frac` docstring reports for this shard set, arrived at
+   through a completely different code path (unconditional presence counting vs
+   the rebuild accumulator). An unplanned cross-check that both denominators
+   are the population each claims.
+3. **Exactly 0.000000 over 475 713 rows / 270 shards** on the clean arm — not
+   "below 1e-6". The zero floor survives the trip through
+   `_prepare_host_arrays`, the payload prune, `collate_arrays`, `compute_loss`
+   and the ratio-of-sums pooling.
+
+### Criterion 4 — measured cost
+
+Per microbatch, at `batch_size: 512` on the production GPU, each component timed
+in isolation (2 000 iterations after 200 warm-up, `nice -n 19`):
+
+| component | cost |
+|---|---|
+| `sf_multipv_presence_counts` (2 elementwise + 2 reductions on `(512,)`) | 86.2 µs |
+| 3 extra scalars in `_extract_loss_scalars`'s existing `stack().tolist()` | 52.6 µs |
+| H2D of the `(512,)` float32 presence flag no longer pruned (2 048 B) | 29.8 µs |
+| **total** | **168.7 µs** |
+
+Against the production microbatch — `train_time_s` median **107.13 s** over
+**82.5** steps on the live `progress.csv`, i.e. **1.298 s/microbatch** — that is
+**0.013 %**, and **0.0022 %** of the 628.9 s iteration. Kill threshold was
+0.5 %; this is ~38x under it. The figure is an upper bound in two ways: the
+components are timed serially rather than overlapped on the CUDA stream, and
+the 86 µs is kernel-launch-bound (four launches), not work-bound.
+
+### Mutation results — five, each killed by the test that names the term
+
+| mutation | dies on |
+|---|---|
+| denominator → all batch rows | `test_the_column_fires_on_poisoned_rows_at_the_exact_count`, `..._denominator_is_labelled_rows_...`, `..._unlabelled_rows_...`, `..._full_pass_publishes_...` |
+| restore `arrs.pop("has_sf_multipv_raw")` under `sf_policy_sparse_ce: false` | `test_the_payload_prune_keeps_the_presence_flag_with_sparse_ce_off`, `..._is_not_gated_on_rebuild_sf_targets`, `..._full_pass_publishes_...` |
+| absent presence field returns the labelled count (reads CLEAN, not UNMEASURED) | `test_a_batch_without_the_presence_field_reads_unmeasured_not_clean` |
+| ratio wired to `batch_rows` instead of `sf_multipv_checked_rows` | `test_checked_frac_reports_the_labelled_share_of_the_batch`, `..._full_pass_publishes_...`, `..._row_weighted_across_ragged_batches` |
+| numerator hard-wired to zero (the "constant detector") | four tests, including both exact-count ones |
+
+The denominator test is built so labelled / network-turn-and-labelled / all-rows
+give **three different** answers (0.375 / 0.500 / 0.250) and the numerator with
+the label ignored gives a fourth. An earlier draft had two of them collide at
+0.25, which would have pinned the disjunction and not the term.
+
+### Not covered, stated
+
+* **No live iteration has emitted these columns.** By the audit's own rule this
+  is `CODE-ONLY` until a `progress.csv` row carries them. Promote by checking a
+  post-restart row for `sf_labelled_no_multipv_frac` **and**
+  `sf_multipv_checked_frac ≈ 0.99`; a checked-frac of 0.0 means the column is
+  blind, not clean.
+* **The clean arm is a plumbing control**, as pre-registered: shard band
+  33118-33387 was established on the SAME axis, so this proves the live path
+  agrees with the offline reading on those rows, not that the rows are clean by
+  an independent oracle.
+* **The metric measures the TRAINED batch, not the window.** The full-pass path
+  used by the probe and by `test_*` reads rows uniformly; the TRAIN row's
+  batches are WDL-rebalanced and priority-weighted, so the train-side rate is
+  the contamination of the rows the loss actually consumed and can differ from
+  the window's raw rate. That is the quantity worth alarming on, and the column
+  name says "labelled rows", not "window".
+* **Lower bound, not the poisoned share.** Unchanged from PR #302: a desynced
+  engine strips the block on only ~59 % of the labels it poisons.
+
+### ⚑ OPERATOR-VISIBLE SIDE EFFECT: one best-model handover at the deploying restart
+
+The holdout ruler id MOVES:
+
+```
+full_pass  bed3d8e3799e997d -> b8482e83d3b1c61f
+sampled    610f05cf817b4783 -> 71ac6f0457876d02
+```
+
+One line leaves `Trainer._prepare_host_arrays` — it no longer prunes
+`has_sf_multipv_raw` from the H2D payload — and that frame is in BOTH
+`measured_by` lists. So `holdout_generation` bumps at the next restart and the
+running trial **hands over its best-model record**, adopting the current
+`test_loss` instead of comparing against the pre-restart one. Expect it, and do
+not read the handover as a regression.
+
+**The MEASUREMENT did not move**, and unlike the two earlier declared false
+positives of this shape (PR #283 and its review follow-up, both argued from
+source) this one is proved:
+`tests/test_sf_no_multipv_metric.py::test_adding_the_presence_flag_does_not_move_the_loss`
+runs `compute_loss` on one batch with and without the vector and requires
+**every** returned scalar — not just `total` — to be bitwise equal. The vector
+feeds exactly one loss term, `sparse_sf_policy_ce`, which additionally needs
+`sf_multipv_raw` (still pruned) and is reached only when `sf_policy_sparse_ce`
+is on, a configuration in which nothing was pruned before either.
+
+---
+
+## 2026-08-01 — the FROZEN HOLDOUT is 10.13% desync-contaminated, and the `test_` twin will say so on the first live row (PR #306 review fixes)
+
+**VERDICT: a real finding about the RULER, recorded here because it outlives the
+PR that surfaced it.** Applying the independent review of PR #306 (the always-on
+`sf_labelled_no_multipv_frac` column) required reproducing what the column's
+`test_` twin will actually publish. It is not ~0, and it is not the train row's
+~2e-4 residue:
+
+```
+checkpoint_000474  2000 rows, 1915 labelled, 194 no_pv, rate 0.101305, checked_frac 0.957500
+checkpoint_000476  2000 rows, 1915 labelled, 194 no_pv, rate 0.101305, checked_frac 0.957500
+checkpoint_000478  2000 rows, 1915 labelled, 194 no_pv, rate 0.101305, checked_frac 0.957500
+```
+
+(read off `runs/pbt2_small/tune/train_trial_13a9f_*/checkpoint_0004NN/holdout.npz`,
+`sum((1 - has_sf_multipv_raw) * has_sf_wdl) / sum(has_sf_wdl)` — the same
+quantity the live column computes.)
+
+Three things follow, and only the third is about PR #306:
+
+1. **The frozen holdout was cut from desync-poisoned shards.** 10.13% of its
+   SF-labelled rows carry no `sf_multipv_raw` block, and by PR #302's ~59%
+   strip rate that is a LOWER bound on the poisoned share (~17% implied). Every
+   `test_*` SF-derived column — `test_sf_move_loss`, `test_sf_move_acc`,
+   `test_sf_eval_loss`, and the SF leg of `test_loss` — is scored partly
+   against labels answering a different position. This is independent of, and
+   additive to, the already-recorded 14.10% rejection rate on
+   `scratchpad/split/eval_shards`.
+2. **It does NOT age out.** The training window drains its residue with the
+   ~34 h FIFO; the holdout is FROZEN by design, so 0.101305 is what the ruler
+   reads until the set is re-cut from post-quarantine shards. That re-cut is
+   the fix, and it is a ruler change — by
+   `docs/rl_loop_audit.md`'s own rule it invalidates the records made on the
+   old set rather than silently improving them.
+3. **The rate alert must be scoped to the TRAIN row.** PR #306's promotion
+   trigger ("once a live row reads `sf_labelled_no_multipv_frac == 0.0` with
+   `checked_frac ~ 0.99`") is unsatisfiable by the `test_` twin on the current
+   holdout, so an unscoped trigger is a gate that cannot pass. Scoped in this
+   PR, in `docs/rl_loop_audit.md` D20, `scripts/loop_health.py`'s header and
+   `docs/target_rebuildability.md`.
+
+**The blind-instrument half of the alert IS wired in this PR** —
+`scripts/loop_health.py::blind_desync_detector_alerts` fires on
+`sf_multipv_checked_frac == 0.0` for a row that trained, and on
+`test_sf_multipv_checked_frac == 0.0` for a row that scored holdout rows.
+`checked_frac == 0` means the detector inspected nothing, which is never
+healthy and has no false-alarm case today. The RATE alert stays deferred behind
+the train-row-scoped trigger above.
+
+**Method note, and it is the same shape as the defect the PR repairs.** The
+review's headline finding was that `sf_multipv_checked_frac`'s DENOMINATOR was
+pinned by no test: mutating `batch_rows` from all-rows to `net_mask.sum()`
+turns the column into `1.750` — an impossible "fraction" — and the full
+2959-test suite still exited 0. Cause: the only fixture reaching `compute_loss`
+end to end carried no `is_network_turn`, so all-rows and network-turn-rows
+COLLIDED at 8. Fixed by giving that fixture an explicit
+`is_network_turn` making all-rows (8), network-turn-rows (4), labelled-rows (7)
+and labelled-AND-net (3) four different numbers; the mutation now fails naming
+`sf_multipv_checked_frac` with `assert 1.75 == 0.875`. **A denominator is only
+pinned on a fixture where the candidate denominators disagree** — the live
+shards are `is_network_turn == 1.0` on every row, which is exactly why the
+collision was invisible.
+
+---
+
+## 2026-08-01 — REVIEW CLOSE-OUT of `892842e4e` ("wire deterministic_refresh into the tracked ruler"): the ENFORCED pairing was still breakable, and the proof-of-effect probe was a silent no-op in the venv
+
+REQUEST-CHANGES review of `892842e4e` raised five findings. Verdicts and the
+evidence for each. **Self-authored PR, no independent review** — recorded here
+because an unlabelled self-review is the thing this repo bans, not the
+occasional labelled one.
+
+Context for why this is not cosmetic: training is PAUSED and every restart
+decision now rests on OFFLINE measurement. The sibling rig's run-to-run
+non-determinism is **0.0131 nats** on bit-identical programs, seed-only control
+spans **0.0640**, against a pre-committed materiality bar of **0.05**. A ruler
+that promises pairing and does not deliver it decides whether a verdict means
+anything. Nothing in the training loop's CORRECTNESS is at stake — the pool and
+rng are never checkpointed, GPBT is pinned off, the promotion gate runs off
+`ArrayReplayBuffer` — only bit-for-bit reproducibility of the offline rulers,
+which production never claimed.
+
+**F2 (material) — FIXED. The "ENFORCED" pairing broke on a pool that changed
+between arms.** `892842e4e` upgraded `scripts/retarget_retrain.py`'s docstring
+from "intended" to enforced on the strength of `deterministic_refresh=True`
+alone. That flag removes the refresh RACE; it does not make the arms share a
+POOL. `_scan_existing_shards` runs per variant inside `_run_variant`, variants
+run sequentially, and each is a full `--steps 800` retrain — so a `--replay-dir`
+that is the live window or a salvage pool being topped up (the script's own
+comment says that is the routine case) hands arm 2 a different pool. Same seed,
+different rows, silently unpaired. Measured with the flag ON, same seed, 800
+steps: **+1 shard → 617/800 sampled rows differ (77.1%); −1 shard → 343/800
+(42.9%).**
+
+⚑ **SUPERSEDED 2026-08-02** — the pre-arm `iter_shard_paths` snapshot described in this paragraph was itself a defect (it false-aborts arm 1 on shards that land during startup); the reference is now arm 1's own `_snapshot_shards()`, and the test names cited below have been renamed. See the 2026-08-02 post-merge-review entry at EOF.
+
+Fix: `main()` snapshots the shard list ONCE with `iter_shard_paths` before any
+arm runs and passes it down; `_run_variant` compares the constructed buffer's
+OWN `_snapshot_shards()` against it and `SystemExit`s naming DE-PAIRED. It runs
+BEFORE the empty-pool check (a pool emptied mid-sweep is a pairing failure, not
+a "wrong --replay-dir") and before `train_steps`, so nothing trains on a
+de-paired pool. Comparing the buffer's list rather than a second `glob` is the
+point: two independent re-globs agree even when the buffer filtered.
+
+Mutation-tested three ways, all against `tests/test_retarget_retrain.py`:
+- delete the guard CALL from `_run_variant` → `test_the_shard_guard_runs_on_the_real_call_path` FAILS;
+- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → **8** tests FAIL (this line said 5, then 6; re-run on the merged `82390612c` and counted 8 — `..._ADDED_mid_sweep`, `..._REMOVED_mid_sweep`, `..._on_reordering_alone`, `..._names_the_shards_that_moved`, `..._runs_on_the_real_call_path`, `..._snapshot_source_matches_what_the_buffer_scans`, `..._reads_the_BUFFER_list_not_a_re_glob`, `..._depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir`. The 6 count predated the last two tests, which the same PR added; the number was never re-measured after they landed);
+- re-glob per arm instead of snapshotting once in `main()` → `test_main_snapshots_the_pool_ONCE_for_the_whole_sweep` FAILS.
+
+That third mutation is the one worth keeping. A per-arm re-glob leaves the
+guard present, reached, and **unable to fire** — it would compare each arm
+against a snapshot taken microseconds before that same arm's own scan. The
+test pins it by making the fake pool GROW on every scan and requiring both arms
+to receive arm 1's list.
+
+The failure is also constructed for real, not only with fakes:
+`test_the_snapshot_source_matches_what_the_buffer_scans` writes real shards,
+snapshots, builds arm 1's real `DiskReplayBuffer` (guard passes), writes one
+more shard, builds arm 2's real buffer, and requires the abort.
+
+**F1 (material) — FIXED, comment only, behaviour deliberately unchanged.**
+`scripts/profile_training.py`'s justification for staying racy claimed "no
+number here depends on WHICH rows were drawn". False: the script prints 12 loss
+means over the drawn rows. The DECISION is still right — the script exists for
+timing fidelity and pinning the refresh onto the sampling thread would report
+steps/s slower than the loop being profiled — so only the justification was
+narrowed, to what is actually true: those losses do move run to run, every row
+is synthetic (`_make_sample` draws Gaussian planes and a uniform-random
+policy/WDL target), so they describe noise rather than the net and are not a
+ruler; only the timings are read.
+
+**F3 — ALREADY CLOSED UPSTREAM at `origin/main`; no change made.** The finding
+(deleting `deterministic_refresh=True` leaves the suite green) was true of
+`892842e4e`. `5777e0906` — "#299 review F1-F4", landed 2026-08-01, twelve hours
+after the reviewed commit — added
+`test_the_buffer_is_built_with_a_deterministic_refresh`. Verified rather than
+assumed: on a clean `origin/main` worktree, deleting the `deterministic_refresh=True`
+line fails that test naming the term (`AssertionError: retarget_retrain builds
+its replay buffer WITHOUT deterministic_refresh=True ... kwargs: [...]`). A
+reasoned no, not a skip.
+
+**F4 — FIXED, and the instrument was worse than "fragile".** The observer the
+correction below cites as its discriminating evidence lived at
+`scratchpad/probe_site/usercustomize.py`. `site.py` imports `usercustomize`
+only when `site.ENABLE_USER_SITE` is true. Measured:
+`/usr/bin/python3` → **True**, `.venv/bin/python` → **False**. So under the
+documented `PYTHONPATH=. python3 scripts/...` with the project venv the probe
+never loaded and printed NOTHING, and "no `[probe_site]` line" was
+indistinguishable from "no buffer was constructed" — an absence that reads as
+evidence.
+
+Made to work under the venv rather than merely self-announcing, because a
+working instrument beats a loud broken one: the module is now
+`scripts/probe_site/sitecustomize.py`, tracked (it was untracked scratch that
+the ledger cited as an instrument), and `sitecustomize` is imported by `site.py`
+unconditionally, ahead of the `ENABLE_USER_SITE` branch. Both belts kept
+anyway: a banner prints at IMPORT time before anything can fail, so a missing
+banner means the probe did not load and nothing after it is a measurement; and
+the exit line says `buffers=[]  <-- NO buffer was constructed` rather than
+going quiet. `tests/test_probe_site_observer.py` runs it under `sys.executable`
+— whatever interpreter the suite uses, venv included — so a rename back to
+`usercustomize.py` fails there, and pins the `PROBE_FORCE_RACE=1`
+counterfactual, i.e. that the probe can print `deterministic_refresh=False
+prefetch_thread=True` and is not a check that cannot fail.
+
+⚠ The 07-31 `[probe_site]` readings themselves STAND: those runs used
+`python3` = `/usr/bin/python3` (ENABLE_USER_SITE true), which is why they
+printed at all. The defect was reproducibility for whoever ran it next under
+the documented interpreter, not the recorded numbers.
+
+**F5 — FIXED.** The withdrawn "73 of 75 metrics bit-for-bit" claim now carries
+a SUPERSEDED marker at the claim itself, pointing at the retraction ~50 lines
+below. One inserted line, `git diff --numstat` = `2 0`, nothing rewritten.
+
+---
+
+## 2026-08-02 — POST-MERGE REVIEW of `82390612c` (#307): the pairing gate's reference was a pre-startup glob, so it could fire on a sweep that was perfectly paired
+
+#307's shard-snapshot gate is the right gate wired to the wrong reference.
+`main()` globbed `--replay-dir` with `iter_shard_paths` and handed that list to
+**every** arm including arm 1. Arm 1's own scan happens inside its
+`DiskReplayBuffer` ctor, after `torch.load` + `build_model` + `Trainer()` +
+CUDA init — tens of seconds later. A shard landing inside that startup window
+aborts the sweep, and **nothing is de-paired by it**: no arm has drawn a row
+yet, so all arms would still have scanned the same pool. With a single
+`--variant` the gate can produce nothing BUT that false abort — there is no
+second arm for it to protect. #307's own docstring argued this was
+"deliberately STRICTER … fail-closed on purpose"; it is not stricter, it is
+false, and the cost is a re-run of an `--steps 800` sweep per occurrence.
+
+**Fix.** Pairing is defined relative to the pool arm 1 actually drew from, so
+arm 1's own `_snapshot_shards()` is the only honest reference. `_run_variant`
+takes `shard_snapshot: list[Path] | None`; `None` means "you are arm 1, adopt
+your own scan", the arm reports that scan back in its summary (and into
+`retarget_report.json`, so a reader can see WHICH shards the printed deltas
+were paired over — previously unrecorded), and `main()` threads it to arms
+2..N. The gate is unchanged and still fatal for every arm that has a reference
+to fail against. `main()` no longer globs at all.
+
+⚑ `[]` is a REAL reference (arm 1 scanned an empty pool), never a synonym for
+"unset". The sentinel is `None` and the test is `is None`.
+
+⚠ **Correction (post-review).** This entry first justified that choice by saying
+a falsy test "would disable the gate for the rest of any sweep whose first arm
+found no shards". **That consequence cannot occur.** An arm-1 pool of `[]` means
+`len(buf) == 0`, which `SystemExit`s before `_run_variant` returns a summary, so
+`main()` can never adopt an empty reference and the sweep dies at arm 1 under
+either spelling. Verified against an empty `--replay-dir`. The `is None` choice
+is still right — it makes the distinction a property of this code rather than of
+the empty-pool guard's ordering — but it is a pinned DECISION, not a fix for a
+reachable bug. Same honesty the sibling test already applies to the
+buffer-filter justification ("describes a case which cannot arise — but the
+choice is still right").
+
+**Mutation table — 11 mutations, 10 killed + 1 made UNEXPRESSIBLE**
+(`tests/test_retarget_retrain.py`, 28 tests, clean run green):
+
+| # | mutation | outcome |
+|---|---|---|
+| M1 | `main()` pre-globs and hands it to arm 1 (revert the fix) | 2 tests FAIL |
+| M2 | `if not snapshot: return` in the helper | 2 tests FAIL |
+| M3 | `if not shard_snapshot:` instead of `is None` at the call site | 1 test FAILS |
+| M4 | pass the two lists positionally, swapped, at the call site | **`TypeError` — not expressible** (see below) |
+| M5 | the two params trade ROLES in the helper body | 3 tests FAIL incl. `..._argument_ORDER_is_pinned` |
+| M6 | delete the guard call | 4 tests FAIL |
+| M7 | helper returns unconditionally | 11 tests FAIL |
+| M8 | `main()` never adopts arm 1's pool | 2 tests FAIL |
+| M9 | arm 1 reports a re-glob instead of its buffer scan | 4 tests FAIL |
+| M10 | `shard_snapshot` gains a `= None` default | 1 test FAILS |
+| M11 | adopt via `.get("shard_pool", [])` instead of subscript | 1 test FAILS |
+
+⚑ **M4 is not "killed" — it is unexpressible.** Both shard lists are now
+keyword-only, so the positional swap #307 allowed raises
+`TypeError: _assert_shards_unchanged() takes 0 positional arguments but 2 were
+given` at the call. The 4 tests that go red do so on that `TypeError`, not on a
+misdirected message. That is the stronger outcome: a defect the signature
+forbids beats one the tests catch.
+
+⚠ Keyword-only cannot stop a RENAME, so M5 was redefined. Merely REORDERING two
+keyword-only parameters is a semantic no-op — the first attempt at M5 did that
+and survived all 28 tests, correctly, because it changed nothing. The real
+mutation swaps what the two names MEAN inside the body, and
+`..._argument_ORDER_is_pinned` catches it by asserting the direction of the
+added/removed report rather than merely that an abort happened.
+
+M10/M11 close the two "kills zero tests" gaps a reviewer found: a default on
+`shard_snapshot` silently gives a forgetful caller arm-1 semantics (gate off),
+and `.get(..., [])` turns a lost field into a false `(0 shards at start, N now)`
+abort instead of a loud `KeyError`. The third candidate in that family —
+`main()`'s adopt-site falsy test — was deliberately NOT pinned: given the
+correction above it is unreachable, and M10 covers the same family at the site
+where it can actually bite.
+
+**What proves the fix is on the production path**, not just in the tests: arm 1
+now prints `shard reference = this arm's own scan, N shards under <dir>` from
+inside `_run_variant` (after the buffer is built, not before), and every
+`retarget_report.json` carries each arm's `shard_pool`. A sweep whose arms were
+paired has identical `shard_pool` lists across arms; one that was not never
+reaches the report, because the gate is still `SystemExit` before `train_steps`.
+
+**Also corrected above:** the F2 mutation count in the #307 entry said 6. Re-run
+on merged `82390612c` it is 8 — the 6 predated `..._reads_the_BUFFER_list_not_a_re_glob`
+and `..._depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir`, which the
+same PR added and after which the number was never re-measured.
+
+⚠ Nothing here is training-affecting: `scripts/retarget_retrain.py` is an
+offline sidecar and training is paused. No yardstick, no kill threshold — this
+is an instrument-correctness entry, not an experiment.
+
+---
+
+## INSTRUMENT 2026-08-02 — `scripts/value_loss_scorer.py`, value error on ORACLE-LOST rows
+
+Not an experiment: a packaged instrument, plus two rename/persistence fixes
+bundled with it. No training-affecting change, so no hypothesis/kill rule — but
+the instrument's own null is pre-registered here, because the trap it sits on is
+one this ledger has been caught by before.
+
+**WHAT IT MEASURES.** Per-row value-head error on replay rows the ORACLE calls
+lost for the side to move (stored `sf_wdl` P(loss) ≥ a bar, and/or the same
+label's cp below a bar). Selection is POSITION-level and never touches the net.
+The `rest` stratum is scored by the identical instrument and the number to read
+is the CONTRAST. Every CI resamples GAMES (`game_id`, the loop's own content
+hash of the whole game), reusing `eval/value_optimism.cluster_bootstrap_ci` so
+the two level instruments cannot drift apart. Banks a per-position npz that is
+itself a valid `--npz` row source.
+
+**⚑ PRE-REGISTERED NULLS — DO NOT READ AN ERROR COLUMN AGAINST ZERO.** Under a
+destroyed position↔prediction association only `net_score` (the net's own
+level) has a null of zero. Every error column is a difference against a
+reference that varies BY STRATUM — the oracle score is ~0.05 where it says lost
+and ~0.58 elsewhere — so a stratum-blind head reads as hugely "optimistic" in
+the lost stratum. Measured on 600 rows of `data/c17_ab/pre` at
+`ck_2026-08-01_iter478.pt`, CPU, `--n-boot 1000`:
+
+| contrast (lost − rest) | real net | `--shuffle-rows` | `--shuffle-weights` |
+|---|---|---|---|
+| `net_score` | **−0.4544** [−0.5235, −0.3896] | −0.0346 [−0.0746, +0.0131] **CONTAINS 0** | +0.0018 [+0.0008, +0.0026] (0.4% of real) |
+| `d_score` | +0.0740 [+0.0388, +0.1101] | **+0.4938** | **+0.5302** |
+| `d_loss` | −0.0986 [−0.1609, −0.0389] | **−0.5902** | **−0.6182** |
+| `d_cp` | +543 [+412, +674] | **+826** | **+853** |
+
+A weight shuffle is still a deterministic function of the input, so its null is
+SMALL, not zero — read the control as a FRACTION of the measured effect.
+`--self-test` T3/T4 pin both halves; T4's bar is "the control kills ≥90%".
+
+**FIRST READING (descriptive, n=600, one 43-shard pool — NOT a verdict).** The
+population asymmetry is the thing to follow up. On CURRICULUM rows the head
+reads `d_score` **+0.199** in the lost stratum against +0.071 elsewhere
+(contrast **+0.128** [+0.075, +0.173]) and `d_loss` **−0.325** against −0.123
+(contrast **−0.202** [−0.269, −0.109]) — it under-calls the loss by 33 points
+where the oracle says lost. On SELFPLAY rows the same two contrasts are
+**+0.058** [+0.042, +0.077] and **−0.067** [−0.090, −0.048], i.e. 2–3× smaller. That is the
+direction the PID-handicap chain predicts — the handicapped opponent plays ONLY
+in curriculum games — and it is exactly the split `scripts/value_optimism.py`'s
+head/target arm structurally cannot see (that arm needs consecutive-ply pairing,
+which curriculum games produce at 0.00%). ⚠ `d_cp` is 16.6% clamp-pinned
+overall and 34.9% in the curriculum-lost stratum; the cp column is reported with
+its clamp rate for exactly this reason and must not be quoted as a level.
+
+**NOT ESTABLISHED.** One shard pool, 600 rows, 25 lost-stratum games, single
+checkpoint, no second pool, no arena. Nothing here is a verdict about the head
+or the handicap; it is the instrument's first exercise and its null table.
+
+**ALSO IN THIS BUNDLE.**
+* `PromotionGate.state_dict()` now persists `cur_wdl_regret` /
+  `prev_wdl_regret` / `regret_fit_slope`. They were recorded at runtime and
+  dropped at every restart, so a restored window silently carried NaN confounds.
+  No current consumer reads them off the gate (the confound leg fits from
+  `progress.csv`), so nothing already recorded changes; the persisted rows
+  simply stop lying about being the gate's state. NaN is written as `null`
+  (strict JSON) and a legacy file with no confound keys loads as NaN, never 0.0.
+* **⚑ RULER RENAME.** `play_batch exit: … in_flight_abandoned=N` →
+  `in_flight_at_exit=N`. The number is unchanged; the NAME was wrong. Since
+  in-flight resume landed, suspension happens in the caller AFTER this line, so
+  play_batch cannot know the fate — 2026-07-30 logged `in_flight_abandoned=24`
+  beside `suspended games=20` for the same games (see the note ~line 2178, and
+  PR #149's pre-registered yardstick ~line 11576, both of which read this
+  token). Renamed outright rather than aliased: it feeds no metric series, no
+  CSV column and no test — the only consumers were this ledger's two mentions
+  and `scratchpad/verify_deploy.sh` (untracked). **Logs written before
+  2026-08-02 carry the OLD token; any grep spanning the rename must match
+  both.** True waste = `in_flight_at_exit` − the resume line's `suspended`,
+  plus whatever the next session's `resumed` fails to restore.
+## 2026-08-02 — INFRASTRUCTURE, NOT AN EXPERIMENT: `replay_shard_recency_exponent`, a knob on the shard-recency draw whose default is byte-identical to the code it replaces
+
+**No verdict is claimed here and no behaviour changes.** This entry exists so
+that the knob's arrival is on the record BEFORE the experiment that would flip
+it, rather than being discovered later in a diff.
+
+### What the draw is today
+
+`chess_anti_engine/replay/disk_buffer.py::_load_refresh_chunks` picks the
+shuffle-refresh shards with weight ∝ rank, oldest rank 1:
+
+```python
+weights = np.arange(1, n_shards + 1, dtype=np.float64)
+weights /= weights.sum()
+chosen_idxs = rng.choice(n_shards, size=n_pick, replace=False, p=weights)
+```
+
+Linear in recency. At the live scale (834 tracked shards) the newest shard is
+drawn 834× as often as the oldest; the mean drawn shard sits at the 2/3 recency
+percentile, i.e. mean sampled row age ≈ ⅓ of the window span. The same draw
+seeds the hot pool at open (`_seed_shuffle_pool`), so it sets both the
+steady-state and the post-restart sampling distribution.
+
+### What ships
+
+`replay_shard_recency_exponent` (float, default **1.0**): weight ∝ rank**α.
+α = 1.0 is today's draw, α = 0.0 is uniform over the window, α > 1 sharpens
+onto the newest shards. Threaded exactly like the neighbouring
+`shuffle_refresh_*` construction params — yaml allowlist → `TrialConfig` →
+`DiskReplayBuffer(...)` in `trainable_init._init_replay_buffers` — and also
+into the two offline rigs that already mirror those params
+(`scripts/retarget_retrain.py`, `scripts/holdout_policy_screen.py`), so a rig
+arm cannot silently draw differently from the run it stands in for.
+
+Classified **construction-only** (`trainable_config_ops`
+`_CONSTRUCTION_ONLY_REPLAY_KEYS`). It is the SHAPE of the sampling
+distribution, so a mid-run edit would split one replay window across two
+sampling regimes — the same argument that froze `shuffle_draw_cap_frac` and
+`shuffle_wl_max_ratio`. A live yaml edit therefore WARNS "requires restart"
+and is not applied, instead of landing in the result row as a value the buffer
+is not running.
+
+### Why the default is safe to ship into a live run
+
+The claim is IDENTITY, not similarity, and it is tested as such:
+
+* `shard_draw_weights(n, 1.0)` is compared to an inline copy of the two lines
+  above with `.tobytes()`, at n ∈ {1, 2, 7, 64, 834}. α = 1.0 takes its own
+  branch precisely so the default does not depend on whether
+  `np.power(x, 1.0)` returns `x` bit-for-bit, which is a libm/numpy-version
+  property rather than a promise.
+* End-to-end through the production `_load_refresh_chunks`: same seed in, same
+  shard indices out, **and `rng.bit_generator.state` identical afterwards**.
+  That second half is the one an indices-only assertion misses — the refresh
+  draw shares `self.rng` with every later row-level sample, so a draw picking
+  the same shards while consuming a different number of variates would still
+  redirect the rest of the run's sampling.
+
+### Proof of effect
+
+`DiskReplayBuffer.__init__` prints ONE line, `print` not `log.info` (the Ray
+trial actor installs no logging handler; INFO from this module reaches no file
+and no console on the production path, so an INFO-level proof line's presence
+and absence are indistinguishable):
+
+```
+[disk_buf] shard draw: recency_exponent=1.0000 (1.0=linear/production, 0.0=uniform) decile_mass_oldest_to_newest=[0.0100 0.0300 ... 0.1900] newest_decile=0.1900 oldest_decile=0.0100 mean_rank_pct=0.667
+```
+
+Analytic, not measured: a fresh trial has no shards yet and a resumed one has a
+window that changes size every iteration, while the SHAPE of the draw depends
+on neither. Decile j spans `(j/10)**(α+1) - ((j-1)/10)**(α+1)`; for α = 1 the
+newest-fraction-f cumulative is the closed form `2f - f²`, which the tests
+check the realized sampler against at 200k draws. `mean_rank_pct` is
+`(α+1)/(α+2)` — 0.667 today, the same 2/3 the `[disk_buf] shuffle seed` line
+already prints as its steady-state reference, and 0.500 under a uniform draw.
+
+The mutation was RUN, not asserted: swapping the `print` for `log.info` fails
+`test_construction_prints_the_realized_exponent_and_decile_table` with
+`assert 0 == 1` on the captured stdout, and reverting restores 16/16 green. A
+`caplog` version of that test would have PASSED under the mutation, because
+pytest attaches a handler production does not have.
+
+### The deciding instrument is PENDING — nothing is pre-registered here
+
+Whether the recency weighting is itself accelerating the forgetting measured
+over this run (window-exit hinge; never-in-window audit set degraded +9.04cp
+MONOTONE, so churn is not the whole −48.6 Elo) is the offline absorption rig's
+**arm G**, which has not read out. This entry pre-registers NO threshold and
+NO direction, because a knob added before its verdict must not smuggle in the
+verdict's shape.
+
+`test_no_live_config_ships_the_key_yet` asserts the key appears in NO file
+under `configs/`, so every run — production and every `exp_*` — keeps drawing
+linearly until someone deliberately adds the line. When arm G reads out, the
+flip gets its OWN entry with a hypothesis, one deciding yardstick as an exact
+command, and a pre-committed kill rule, applied at a restart (the key is
+construction-only, so a live edit cannot deploy it anyway). Note the standing
+caveat: a yaml revert would not be a rollback, since the replay window holds
+~a day of data drawn under whichever exponent was live.
+
+### Revert point
+
+None taken, and none needed: the shipped default is bit-for-bit the current
+code and no config references the key, so the revert is `git revert` of the PR
+with no data-window consequence. A revert point becomes REQUIRED for the flip,
+not for this.
+
+## 2026-08-02 — CORRECTION to the entry above: the shard-recency underflow finding is TWO failures three orders of magnitude apart, and one leg of it does not exist
+
+Review round on PR #312 (Codex plus an independent reviewer, reached
+independently) raised: at extreme-but-valid non-default exponents the shard
+draw weights underflow/overflow in float64, old shards become permanently
+ineligible, and `rng.choice(replace=False)` breaks. The reviewer put the
+threshold at "above α ≈ 111 at n = 834, all but the newest weights underflow to
+exactly 0 and `rng.choice` raises inside the prefetch thread".
+
+**The finding is real and is now fixed. The threshold as stated was wrong, and
+the first version of the regression test asserted it AS REPORTED and FAILED** —
+which is the only reason the conflation was caught rather than shipped as a
+docstring. Measured on the pre-fix expression `(rank/n)**α`, binary-searched:
+
+| window | oldest weight becomes exactly 0.0 | `count_nonzero(p) < refresh_shards` (the raise) |
+|---|---|---|
+| n = 834 (live), 5 picks | α ≈ **110.5** | α ≈ **154,987** |
+| n = 12, 5 picks | α ≈ **299.9** | α ≈ **1,838** |
+
+So α ≈ 111 is where **ONE** shard — the oldest — becomes undrawable. Not "all
+but the newest", and **no exception**: the draw keeps working and a shard sits
+in the window that can never be sampled. That silent half is the worse one and
+was the part worth fixing. The `rng.choice` raise needs α ~1.5e5 at the live
+window.
+
+**The OVERFLOW leg does not apply to this code at all.** `(rank/n)**α` is
+bounded by 1 for every α ≥ 0, verified at α = 1e6 (`max == 1.0`). Overflow
+would apply to a raw `rank**α`, which the buffer has never used. Recorded
+because "the report named three failure modes and two were real" is the kind of
+thing that otherwise gets cited later as three.
+
+### What shipped
+
+* Weights computed in **log space** (`α·log(rank)`, max subtracted, exp), so
+  the dynamic range is linear in α rather than exponential in it, and the
+  post-shift maximum is exactly 1.0 — which is what makes the sum provably in
+  `[1, n]`.
+* **Floor at the smallest positive normal float64** before normalizing, so
+  every shard keeps a strictly positive probability for any finite α. Floored
+  mass is ≤ n·2.2e-308 ≈ 2e-305, ~300 orders of magnitude below the printed
+  table's last digit.
+* **`MAX_SHARD_RECENCY_EXPONENT = 50.0`**, DERIVED not picked: 708.396/ln(1e6)
+  = 51.28 rounded down, i.e. at a window 1200× the live one nothing underflows
+  even before the floor. ⚑ The bound is **not** the crash fix — the floor is,
+  unconditionally. The bound exists because past the underflow point every
+  larger α produces the same "newest shard, p = 1 − 1e-305" draw, so the yaml
+  value would read back correctly while selecting a REGIME rather than a value.
+  A test re-derives the inequality rather than pinning the constant.
+* **Negative α stays refused**, deliberately: oldest-heavy is not a hypothesis
+  anyone has proposed (arm G is about α ∈ [0, 1]). The log form is correct for
+  it, so enabling it is a one-line relaxation behind a ledger entry.
+
+### The α = 1.0 byte-identity was RE-PROVEN after the restructure, not asserted
+
+The default branch was left untouched and deliberately not routed through the
+log-space form. Re-run after the rewrite, and independently of pytest: weight
+vector byte-identical (`.tobytes()`) at n ∈ {1, 2, 7, 12, 64, 834, 5000}; and
+through `rng.choice`, identical indices AND identical `bit_generator.state` at
+(n, k) = (12, 5), (834, 5), (40, 6).
+
+⚑ Banked method point from the review: **`state_after_open` is identical even at
+α = 0.0**, because `rng.choice` consumes the same variates regardless of `p`.
+An RNG-state assertion ALONE therefore cannot detect a distribution change —
+it is necessary, not sufficient — which is why the test asserts the drawn
+indices *and* the state.
+
+### Two more corrections the same round produced
+
+**The printed decile table is now REALIZED, not analytic, whenever a window
+exists.** The continuum form is visibly wrong at small n: at n = 40 the oldest
+decile is 0.0122 realized against 0.0100 analytic, and `mean_rank_pct` 0.675
+against 0.667 — both above the printed precision. A fresh trial (no shards)
+still prints the continuum form, labelled `source=analytic n_shards=0` so the
+two can never be confused, and `floored=K` reports whether the floor engaged.
+
+**The without-replacement caveat was also cited with the wrong sign and
+magnitude.** The review reported the realized multi-pick mean recency as 0.821
+against 0.667 printed, at n = 40 with 6 picks. Measured over 4000 draws:
+
+| n / picks | printed marginal | realized | delta |
+|---|---|---|---|
+| 834 / 5 (production) | 0.667 | 0.669 | **+0.002** |
+| 40 / 6 | 0.675 | 0.666 | −0.009 |
+| 10 / 6 | 0.700 | 0.652 | −0.048 |
+| 6 / 6 | 0.722 | 0.583 | −0.139 |
+
+The gap is **downward and small**, not upward and large, and it is material
+only once the picks are a large fraction of the window — a draw that takes most
+of the shards leaves recency little to select among, so it is pulled toward the
+window's unweighted mean. At production shape the printed number IS the draw to
+three decimals. Both ends are pinned by a test so the docstring cannot rot back.
+
+### Coverage gap closed
+
+Every test in the module set `deterministic_refresh=True`, which SUPPRESSES the
+prefetch thread — so the knob was proven only on the synchronous path, not the
+one production usually takes. Added a test that drives the real thread's
+generator (`deterministic_refresh=False`) and requires the drawn distribution
+to move with α (mean recency 0.60–0.74 at α = 1.0 vs 0.44–0.56 at α = 0.0, and
+a ≥ 0.08 separation), plus an assertion that the thread is actually alive in
+that configuration — otherwise the test would be the synchronous path again
+under a different name.
+
+### Operational note, no code change
+
+`scripts/holdout_policy_screen.py --override replay_shard_recency_exponent=...`
+is REFUSED: the guard requires the key to pre-exist in the flattened yaml, and
+no config carries it (verified — `k in flat` is False against
+`configs/pbt2_small.yaml`). That is the guard working as designed ("refusing a
+silently-ignored knob") and it fails loudly, so arm-G-era use wants a rig-local
+yaml copy carrying the key rather than a change here.
+
+Still no config carries the key; still no verdict; the flip still needs its own
+entry once arm G reads out.
+
+---
+
+## 2026-08-03 — train/data code audit: (A) shipped as no-op hardening, (B) held at the restart boundary
+
+PR `fix/traindata-audit-20260803` lands only the half of
+`scratchpad/code_audit_20260803/TRAIN_DATA_AUDIT.md` that changes **no produced
+number**: the two `sf_wdl_*` knobs documented as aux-`sf_eval`-only (C1, they
+cannot touch the value blend — pinned by a bit-identical `wdl_ce` test), a loud
+refusal in `_gather_rows` when shuffle chunks disagree about `has_policy` /
+`priority` (C4, previously a silent zero-fill that deletes rows from the policy
+loss), the dead `_concat_sparse_batches` retention branch (C6), the dead
+`collate_arrays` `shape` spec (S1), the duplicated SF-label attach with its
+unreachable `turn=None` skip (S3, whose only reachable effect would have been a
+FALSE desync fingerprint), and `mirror_prob` reported into the realized-config
+row (S2 — it has no yaml key, so production runs at the constructor default
+0.5). A/B against `origin/main` on a seeded batch: `compute_loss` scalars, a
+`sample_batch_arrays` draw, `collate_arrays`, and the SF-label stamp are all
+bit-identical (digest `1d52e2ca…` / `dac016fd…`).
+
+**Held for the restart boundary — decisions owed, not deferrals:** (B1) **C3,
+the pooling family.** ~18 of 20 masked heads publish a MEAN OF PER-BATCH RATIOS
+(`_loss_sums_to_metric_kwargs` divides by step count; `_compute_metrics` weights
+by `n_rows`; neither is the mask count), and `masked_mean`'s denominator clamp
+makes an EMPTY bucket publish 0.0 — the best possible loss — with no row-count
+column able to contradict it outside the three phase buckets. Realized coverage
+runs 0.096 (`has_sf_p0_regret`) to 0.978 (`has_sf_policy`), and the
+selfplay/curriculum split swings 1–35 %, so both effects are live every
+iteration. Fixing it CHANGES the value of every affected column: a ruler change
+must invalidate its records, so `soft_policy_ce`, `future_policy_ce`,
+`categorical_ce`, `sf_move_ce`, `sf_eval_ce`, `volatility`, `sf_volatility` and
+the `*_selfplay` / `*_curriculum` twins recorded before the flip must not be
+plotted through it. Current behaviour is pinned by
+`tests/test_masked_pooling_characterization.py`, which is a CHARACTERIZATION of
+a known defect and is expected to fail when the fix lands. (B2) **C7**, dropping
+the SF label entirely when `_collect_sparse_pv_rows` returns None instead of
+fabricating a one-hot on `legal_indices[0]` — changes produced training rows;
+`origin/main` already counts the event (`no_legal_pv`), so it is observable
+before it is changed. (B3) **P1**, moving `_pad_x_planes` + `sparsify_chunk` off
+the sampling thread (~8.0 s/iter, not currently binding): pure functions, but
+the move changes when refresh chunks become visible and therefore which rows a
+given step draws. (B4) **P3**, one global gather index instead of per-chunk
+densify (~40 % of 17 ms/batch) — same reason, and it is not binding today.
+(B5) unverified lead 4, discarded non-finite steps still committing their loss
+into the reported columns. (B6) the C1 alternative — if damping the value
+target by SF draw confidence was ever the intent, that is a new training-affecting
+knob and needs its own entry with a yardstick, not a rename. (B7) **C2** is an
+ops precondition, not a fix: `git diff HEAD...origin/main -- chess_anti_engine/`
+must be empty before the next restart, or the live tree restarts onto the
+`moves_left` phase split that put ~96 % of rows in one bucket.
+
+No yardstick and no kill threshold here on purpose: nothing in (A) is an
+experiment, and nothing in (B) has been launched. Each (B) item needs its own
+entry with a pre-committed readout before it goes live.
+## 2026-08-02 — INSTRUMENT PROMOTION (no experiment): audit-v2 enters the repo as `--input-encoding {fen_only,stored}`
+
+**Not an experiment. No hypothesis, no yardstick, no kill threshold, nothing
+launched.** The audit-v2 rig that produced the 2026-08-02 audit-v2 entries lived
+in a scratchpad bank; this promotes it to `scripts/` + `chess_anti_engine/eval/`
+so the numbers the ledger already cites are reproducible from the repo. Those
+verdicts are unchanged by this and are NOT re-adjudicated here.
+
+⚑ **Cross-reference note.** This entry lands on `main` via PR #314. The
+audit-v2 entries it refers to ("the entries above") are on the LIVE branch
+`ops/live-20260725` — the 2026-08-02 pre-registration, verdict, lineage and SWA
+entries around lines 25180 / 25259 / 25376 / 25511 — and do not exist on `main`
+until the branches meet. Read this entry against the live branch until then.
+
+### What landed
+
+| path | what |
+|---|---|
+| `chess_anti_engine/eval/audit_history.py` | `pov_flip_slot` / `child_input_planes`, the encoding switch, `MatchedAuditRows` |
+| `scripts/match_audit_rows.py` | position-key join -> the matched-rows index |
+| `scripts/verify_audit_history_transform.py` | the bit-exactness verifier + test-fixture emitter |
+| `scripts/score_audit_v2.py` | the 3-arm (`v1`/`v1_stm`/`v2`) per-position scorer |
+| `scripts/value_regret.py`, `scripts/audit_targets.py` | `--input-encoding`, default `fen_only` |
+| `tests/test_audit_history_encoding.py` + `tests/data/audit_history_pairs.npz` | 25 tests, 16 real stored pairs |
+
+### ⚑ RULE 1 — v1 AND v2 NUMBERS NEVER MIX
+
+`fen_only` and `stored` are DIFFERENT RULERS of the same set, and a ruler change
+invalidates its records. Every report line, dumped record and table row from
+either now carries its encoding (`[enc=... b=...]`, `[arm=v2 enc=stored ...]`,
+`(a) net raw policy [enc=stored]`). A figure without that tag cannot be placed
+in a table, a trend or a threshold. The ledger's published arm names `v1` /
+`v1_stm` / `v2` were deliberately NOT renamed — `v1 ≡ fen_only`,
+`v2 ≡ stored` — because renaming them would silently break every
+cross-reference in the entries above.
+
+`audit_targets.py` is the sharp edge: `--input-encoding` moves ONLY row (a),
+the net's raw policy. Rows (b)/(d)/(e) are searches that encode internally from
+the board and stay `fen_only` under both settings; row (c) is pure Stockfish.
+The report says so per row rather than in a header that would be false for four
+rows out of five. The root network WDL behind value row (iv) is likewise kept
+on the search's encoding, so (iv) never becomes a stored/FEN-only hybrid.
+
+### ⚑ RULE 2 — `value_regret.py` IS BATCH-SIZE DEPENDENT (new instrument trap)
+
+Measured 2026-08-02, same checkpoint, same positions, same encoding:
+
+| ckpt | `--batch-size 128` | `--batch-size 256` | delta |
+|---|---|---|---|
+| boot512 | 61.19 cp | 60.53 cp | **0.66 cp** |
+| iter477 | 74.35 cp | 74.64 cp | 0.29 cp |
+
+Mechanism is the one already flagged for raw policy regret (~0.8 cp between 64
+and 256): batch composition changes the GPU reduction order, and a 1-ply ARGMAX
+over child values turns a float-level wobble into a different chosen move.
+**0.66 cp exceeds several effects this ruler has been used to judge.** Pin the
+batch across every arm of a comparison and state it; it is now echoed on every
+line, and `score_audit_v2.py --value-batch` defaults to the PINNED 256 rather
+than to a value no banked readout used.
+
+### Verification, re-derived here rather than inherited
+
+- **Join**: 4000/4000 audit rows recovered, 1463 shards, 24 s. Canonicalisation
+  proof: current-frame piece planes and castling planes 104..107 bit-identical
+  to the FEN-only encoding. History-plane occupancy 0.0 -> 0.713.
+- **⚑ Correction to how `legal_move_sets_identical` was first described here.**
+  It reads true on 4000/4000, but it is NOT independent validation of the join:
+  the join already accepts a row only when `position_key(decode(row))` equals
+  the audit `key`, and `position_key` determines legal moves, so for any row
+  that passed the join the check is IMPLIED. What it independently proves is
+  that the audit set's own `key` agrees with its own `fen` (the legal moves are
+  compared against `Board(fen)` while the join matched on `key`) — a guard on
+  AUDIT-SET SELF-CONSISTENCY, which is worth having because a set whose `key`
+  and `fen` disagreed would attach every per-UCI label to the wrong position.
+  Calling it "the invariant that licenses the labels" overstated it, and doing
+  so in a PR largely about checks that cannot fail for the reason their name
+  implies is exactly the error this record exists to catch.
+- **`pov_flip_slot`**, FULL snapshot (the bank verified 4,077 pairs; this is all
+  of them): **396,733 pairs, 2,777,131/2,777,131 piece-history slots exact,
+  396,733/396,733 colour flags exact.** Repetition planes 2,776,608/2,777,131
+  (523 misses, 0.019% — repetitions older than the parent's 8-slot window, which
+  no shift can recover; measured, not assumed away).
+
+### ⚑ DEFECT FOUND AND FIXED IN THE BANKED RIG
+
+`match_audit_rows.py` reported a single boolean `meta_planes_104_111_identical`.
+It reads **false on a perfectly sound join**, because plane 108 is the colour
+flag and its differing on ~51% of rows IS audit-v2. A check that cannot fail for
+the reason its name implies is this codebase's signature defect, and the bank's
+README had already drifted to claiming something narrower (104..107) than what
+the code checked. Replaced with per-block fields that each name what they prove
+(`canonicalisation_castling_104_107_identical`, `rows_differing_stm_flag_108`,
+`rows_differing_ep_110`, ...) plus `legal_move_sets_identical`, which is the
+invariant that actually licenses the labels — and the script now EXITS NONZERO
+if it fails rather than printing a false and moving on. Two further guards
+added: shards not in the production layout are skipped and counted rather than
+silently spliced, and a non-canonical audit FEN is refused rather than quietly
+failing to match.
+
+### Wiring proof (the standing bias: a value accepted and then ignored)
+
+Three mutations, each run against the committed tests:
+
+| mutation | tests that FAILED |
+|---|---|
+| stored branch returns the FEN-only child (row accepted, ignored) | `test_value_regret_stored_feeds_spliced_history`, `test_value_regret_stored_differs_from_fen_only` |
+| `fen_only` branch splices plane 108 (default no longer bit-identical) | `test_fen_only_child_is_identity` x2 |
+| `audit_targets._net_candidates` ignores `stored_x` | `test_audit_targets_stored_encoding_reaches_the_raw_policy_forward` |
+| **F** — `score_audit_v2.root_planes` `v1` arm returns the STORED row | `test_score_audit_v2_v1_arm_is_the_fen_only_identity` x6, `test_score_audit_v2_v2_arm_is_the_stored_encoding` x6 |
+| **G** — `match_audit_rows.require_canonical` never flags anything | `test_require_canonical_refuses_a_black_to_move_audit_board` |
+| **H** — the inferred stamp keeps the scalar shape (the false-refusal above) | `test_unstamped_audit_targets_dump_compares_to_a_default_run` |
+| **I** — the shape expansion fills `null` candidates | `test_unstamped_audit_targets_dump_compares_to_a_default_run`, `test_match_stamp_shape_preserves_null_candidates` |
+
+⚑ **F and G were found by the independent reviewer, not by me, and F is the
+serious one.** `score_audit_v2.py` is the file that produced every published
+`arm v2` number and it had NO tests; pointing its `v1` BASELINE at the stored
+row makes every v1-vs-v2 contrast read exactly **0.00** with the whole suite and
+the lint gate still green. That is the same failure shape as mutation B, one
+file over, in the one file whose entire job is the contrast. Fixed twice over:
+the `v1`/`v2` branches now DELEGATE to the shared encoding switch instead of
+carrying a second copy, and the arms are pinned by test — including that
+`v1_stm` differs from `fen_only` at *exactly* plane 108 and nowhere else, so the
+attribution arm cannot drift into either neighbour.
+
+⚑ The FIRST version of the fen_only mutation PASSED, and the reason is worth
+keeping: audit boards are white-to-move canonical, so every 1-ply child is black
+to move and already carries colour flag 1.0 — forcing it to 1.0 was a no-op on
+this set. The test now also runs on children that come out white to move.
+A default-preservation test that only sees one side of a flag proves nothing.
+
+### RULE 1 IS A GATE, NOT ONLY A LABEL
+
+`scripts/paired_compare.py` is where every ledger verdict's paired delta is
+computed, and it joins two dumps by position key while ignoring everything else
+in the record — so it would happily join a `fen_only` dump to a `stored` one and
+report the RULER as if it were the checkpoint difference. A stamp nothing reads
+is a value accepted and then ignored, so the stamps are now CHECKED:
+`require_same_ruler` compares `input_encoding` and `batch_size` across the two
+dumps and REFUSES on disagreement, refuses a dump that mixes rulers within
+itself, and warns (rather than refusing) when a dump is too old to declare
+either. Mutating the gate to a no-op fails 5 tests; renaming the stamp in
+`value_regret.py` fails `test_value_regret_dump_carries_its_ruler`, which pins
+the field names against the producer rather than assuming them.
+
+⚑ **AND THE INFERRED STAMP MUST ADOPT THE COUNTERPART'S SHAPE.** The two
+producers stamp differently: `value_regret.py` writes a scalar, `audit_targets.py`
+writes one encoding PER CANDIDATE (a dict), because its `--input-encoding` moves
+only row (a). The first cut of the inference below could only name the scalar,
+and a scalar never equals a dict — so it FALSE-REFUSED an unstamped
+`audit_targets` dump against a fresh DEFAULT-encoding one: same ruler on both
+sides, no override flag. Not hypothetical — 103 banked unstamped `audit_targets`
+dumps exist under `scratchpad/` and several documented readouts join exactly
+that pair, so every one of them would have needed a GPU re-run. Caught by the
+reviewer, not by me; my test for this case only ever fed the scalar producer.
+`_match_stamp_shape` expands the inferred scalar to the counterpart's key set
+(`sf_soft` stays `null`, so it cannot manufacture a disagreement), and a
+`stored` counterpart still differs on `raw` and is still refused. **⚑ The
+general lesson: a gate with TWO producers needs a test per producer. The gap was
+a shape the gate's tests never fed it — the same defect the stamping exists to
+prevent, one level up.**
+
+⚑ **An unstamped dump counts as `input_encoding=fen_only`, and that is the
+point.** Every dump written before this PR is `fen_only` by construction, since
+`stored` did not exist to produce one. Treating absence as "unknown" left the
+single join the gate exists to stop — a legacy `fen_only` dump against a new
+`stored` one — on the warn path with exit 0, i.e. the highest-risk comparison
+was the one it did not refuse, while the stamped-vs-stamped case it did refuse
+is the one a careful operator was least likely to get wrong. `batch_size` is
+NOT inferred: old dumps genuinely varied (the standing VALUE yardstick pins
+`--batch-size 128` against a CLI default of 256), so a guess there would refuse
+legitimate comparisons.
+
+### The matched-rows index is a BUILD ARTIFACT, not checked in
+
+Same treatment as `data/audit_set_v1.jsonl` and the shallow-SF cache, neither of
+which is tracked. ~3.8 MB, re-derives in 24 s:
+
+```
+PYTHONPATH=. python3 scripts/match_audit_rows.py \
+    --audit-set data/audit_set_v1.jsonl \
+    --snapshot runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats
+```
+
+Default read path is `<audit-set>.matched_rows.npz`; a `stored` run without it
+exits with that exact command. **If that snapshot is ever pruned, the `stored`
+ruler becomes unreproducible** — it is the only surviving source of the history,
+and nothing in this PR protects it.
+
+### Known limits, stated rather than discovered later
+
+- A derived child does NOT get its own current-frame repetition plane (12): it
+  depends on positions older than the parent's window. 0.019% of slots.
+- `--input-encoding stored` refuses dynamic-relation checkpoints (relations are
+  rebuilt from the bare board and would contradict the spliced history) and
+  refuses checkpoints not on `lc0_root_legacy_meta` + `v2_threats`.
+- The VALUE ruler still has no smooth analogue of expected regret, so the
+  METHOD RULE above ("use EXPECTED, not top-1, for paired contrasts") can only
+  be honoured on the policy leg. Unchanged by this PR; building one remains the
+  prerequisite for any future value-vs-policy lead test.
+
+
+## INSTRUMENT 2026-08-03 — three per-iteration era-forgetting probes (`probe_era_*`, `probe_inwindow_*`, `probe_gap_*`), all default OFF
+
+Not an experiment. No hypothesis, no kill rule, no yardstick — there is nothing
+to decide, because nothing about training changes. Every knob defaults to the
+value that makes the probes inert (`era_probe_path` / `era_probe_inwindow_path`
+= `""`), no config file carries any of the five keys, and
+`test_no_config_ships_any_of_the_five_probe_keys` asserts none does over every
+`configs/*.yaml`. ⚑ That test did NOT exist when this entry was first written
+and the clause was an unbacked control sitting in the canonical record — the
+"a rule in a doc is not a control" failure, in the one file where it must never
+appear. Caught in review (PR #315, finding 4) and written. Recorded here because the ledger is where a RULER's identity is supposed
+to live, and this ships one.
+
+**WHY.** The run that ended 2026-07-31 lost **−48.6 Elo [−68.2, −29.4]** over
+three weeks with every live column flat, and the flatness is why the slide went
+unread until an offline arena found it. The shape that WAS there, established
+afterwards and recorded above, is the forgetting hinge: a fixed old-era row set
+decays from the iteration its content leaves the effective window, while
+in-window rows keep improving. Both halves of that were only ever measured
+offline, weeks late. This puts them on `progress.csv`, per iteration, so a hinge
+reads out in days.
+
+**THE THREE PROBES.**
+
+| column | what it is |
+|---|---|
+| `probe_era_policy_eregret` / `probe_era_value_err` | a FROZEN old-era row set, scored with the current weights |
+| `probe_inwindow_policy_eregret` / `probe_inwindow_value_err` | the same code on a set re-cut from the NEWEST shards, rebuilt at each restart |
+| `probe_gap_policy_eregret` / `probe_gap_value_err` | era − in-window, the treadmill's fingerprint |
+
+Plus `probe_era_n` / `probe_inwindow_n` (rows scored), `probe_*_policy_n` (rows
+carrying the policy ruler) and `probe_ms` (wall cost). Eleven columns, present
+from row 1 at nan whether or not a probe is configured — Ray's CSV logger fixes
+the header on row 1 and a resume appends without re-heading, so a
+conditionally-present column would misalign every later segment.
+
+**⚑ READ THE PAIR, NOT THE LEVEL.** Either level moves with anything that moves
+the net. Only their SEPARATION says an in-window gain is being paid for out of
+old-era competence. `probe_gap_*` reads nan unless both legs are configured, and
+the loader prints a warning when only one is. Stronger still: `probe_gap_*`
+carries an unmeasured POSITION-DIFFICULTY offset between two different row sets,
+so its level is not a quantity at all — only its TREND is interpretable.
+
+**⚑⚑ THE ERA SET IS NOT HELD OUT, AND THE PRE-HINGE SEGMENT WILL MISLEAD ANYONE
+WHO THINKS IT IS.** "The probe rows never train" (below) says the probe INJECTS
+nothing. It does NOT say the era rows are outside training. `--oldest N` over a
+live shard dir returns the oldest still-RETAINED shards, which are still IN the
+window at build time — so for the first stretch `probe_era_*` is reading rows
+the trainer is drawing from, and it is EXPECTED TO IMPROVE. That is the
+mechanism, not a fault: the hinge is the TURN at the iteration those shards
+exit, and the pre-exit segment is the baseline the turn is measured against.
+Reading the early era curve as "old-era competence is fine" is the misread this
+paragraph exists to prevent, and it is the reading a restart-day operator is
+most likely to reach for. (Raised as a non-blocking note in the PR #315 review;
+recorded here because post-restart interpretation depends on it.)
+
+**THE EXPECTED-REGRET RULE, stated because it is a standing method rule.**
+`policy_eregret` is `sum_m p_own(m) * regret(m)` — the EXPECTATION under the
+net's own legal-masked prior, never the argmax's regret. On 2026-08-02 a paired
+within-position contrast read a real, significant history benefit as "absent"
+purely because the top-1 form carries a ±5.4cp median CI (the argmax moves on
+only ~19% of positions) against a 3–5cp effect. `regret(m)` is the stored
+`sf_p0_regret` — SF's normalized cp-loss at THIS position, the one-ply-shifted
+field — and NOT the row's own `sf_multipv_raw`, which is SF's read of the NEXT
+position in the opponent's perspective (labels are queried at P1). This is the
+same quantity `train/losses.py` minimises as `sf_own_regret` under
+`w_sf_own_regret`, so the probe reads the axis training pushes on.
+
+`value_err` is the value-side twin, `sum_c p(c) * |score(c) − score(target)|`
+with `score = (1.0, 0.5, 0.0)` — LINEAR in the predicted distribution, exactly
+as expected regret is linear in the policy. The collapsed form
+`|E[score] − target|` is refused and a test pins the separating case: a
+maximally hedged prediction `(0.5, 0, 0.5)` on a DRAW row scores **0.0** under
+the collapsed form (the win and loss mass cancel) and **0.5** under this one. A
+net that knows nothing must not read as perfect.
+
+**THE PROBE SET IS DESYNC-SCREENED.** `scripts/build_era_probe_set.py` runs
+every candidate shard through the shipped two-axis SF-desync gate and refuses
+any shard named by a `quarantine_manifest.json`. The gate is now ONE predicate,
+`eval/value_optimism.desync_reject_reason`, called by all three consumers
+(`quarantine_desync_shards.judge`, `scripts/value_optimism.py`, and the
+builder) — this closes the follow-up recorded in `quarantine_desync_shards`'s
+own docstring, where three copies existed and review demonstrated that breaking
+one (`> multipv_miss_max` → `> 999.0`, flipping 118 of 834 live shards) left the
+whole suite green. The screen is not decoration: the frozen holdout reads
+`test_sf_labelled_no_multipv_frac` 0.101305 and, being frozen, never ages out —
+an unscreened probe set would be a forgetting curve about detached labels.
+
+**SAMPLING.** Whole GAME clusters, keyed on `(shard, game_id)` and never on
+`game_id` alone (game ids collide across shards exactly as shard indices collide
+across lineages). `n_games`, not the row count, is the effective sample size and
+is recorded in the provenance sidecar so nobody quotes the row count as the
+denominator. Eligible rows are those carrying BOTH `sf_p0_regret` and
+`legal_mask` — a POSITION-level filter applied once at build time, identically
+to both legs, so it cannot condition a denominator on any outcome. The legal
+mask is required because an unmasked softmax spreads onto illegal indices, and
+those are NOT zero-regret: `_build_sf_p0_regret_vector` pre-fills every
+uncovered index with `(worst_regret + 1) / 2 >= 0.5`, measured at mean **0.8302**
+against **0.3272** on legal moves over 2578 rows of `data/c17_ab/pre`. So a
+maskless row reads HIGHER than the net earns — a large PESSIMISTIC bias.
+⚑ The PR's original comments asserted the opposite (illegal regret 0, optimistic
+bias); review measured the shards and inverted it. The conclusion never
+depended on the direction, but the wrong premise is what gets confirmed rather
+than caught next time. Enforcement is now per-ROW as well as per-field: a row
+with `has_legal_mask` clear is dropped from the policy denominator at load with
+a printed count, because `apply_policy_mask_to_logits` multiplies the mask by
+that flag and would otherwise score the row fully unmasked, silently. It does
+restrict both sets to consecutive-full-ply selfplay rows (~24% of selfplay
+rows): the pair is comparable to each other and neither is a sample of the whole
+window. `--newest`/`--oldest` refuse to run over more than one `--shard-dir`,
+because a recency order over pooled lineages is undefined.
+
+**THE SET FREEZES.** Same convention as `build_audit_set.py`: new sampling is a
+new version at a new path, and overwriting needs `--force`. The three keys that
+decide WHICH rows are scored (`era_probe_path`, `era_probe_inwindow_path`,
+`era_probe_rows`) are classified CONSTRUCTION-ONLY, so a live yaml edit warns
+"requires restart" rather than silently splicing two rulers into one column
+whose header was fixed on row 1. `era_probe_interval` and `era_probe_batch_size`
+are deliberately NOT frozen — they throttle cost, not meaning, and a test pins
+that direction too (no generic test can: a key absent from the set is invisible
+to a test parametrised over it).
+
+**PROOF OF EFFECT.** The builder prints the set's digest and row count; the
+trial prints them again at load, read off the LOADED ARRAYS rather than off the
+config that named them. Equality of the two is the observation that proves the
+run is scoring the set that was screened, and it is checkable on the first row
+after a restart:
+
+```
+[era-probe] wrote data/era_probe/era_20260803.npz
+  label=era rows=2048 policy_rows=2048 games=51 (singletons 0) digest=<16 hex>
+[probe] era set loaded: path=... rows=2048/2048 policy_rows=2048 digest=<same> ...
+```
+
+A provenance SIDECAR (`<set>.npz.provenance.json`) carries the shard list, the
+lineage, the gate thresholds and the reject log, and records the digest; the
+loader RECHECKS it against the rows it loaded and refuses to believe a sidecar
+that describes a different set. A set with no sidecar loads with a printed
+warning that nothing screened it — "no provenance" must not look like "screened
+and sound". Every operator-facing line is `print()` on the `[trial]`/`[probe]`
+convention, never `logger.info`: the Ray trial actor installs no logging
+handler, which is the defect that blocked PR #310.
+
+**COST, BOUNDED STRUCTURALLY AND THEN MEASURED.** One forward per set per due
+iteration, no backward, no optimizer, under `inference_mode`, over a
+config-capped row set. At the shipped default (2048 rows, batch 512, two sets)
+that is 8 forwards against ~88 full training steps — under 1% of an iteration.
+`probe_ms` is published so the bound is an observation on the row and not a
+claim in this entry. `era_probe_interval` throttles further on a contended box
+without a restart.
+
+**THE PROBE ROWS NEVER TRAIN.** A frozen ruler that leaks into the replay window
+stops measuring forgetting and starts measuring memorisation, which is the exact
+confusion the instrument exists to resolve. `ProbeSet` holds its arrays
+privately and the only thing done with them is a forward pass; the test marks
+probe rows, scores them, and draws from `DiskReplayBuffer` until the marker
+would have had to appear — with the POSITIVE CONTROL inline (add the rows on
+purpose and the same detector must fire), so the assertion cannot pass against a
+buffer that returns anything at all.
+
+**MUTATIONS RUN, each killing the test named in its docstring.** Probe
+configured but never scored (`_run_era_probes_if_due` returns defaults) → 5
+failures. Metric computed but never published (drop `**probe_dict` from
+`_build_report_dict`) → 1. Expected regret → top-1 → 2. Legal mask removed → 2.
+Pooled denominator → mean-of-batch-means → 3. Linear value error → collapsed
+form → 1. Sidecar digest check deleted → 1. Loop stops passing `era_probes` → 1.
+Per-row `has_legal_mask` intersection deleted → 1. A probe key added to
+`configs/pbt2_small.yaml` → 1. The desync predicate forced to reject: every
+consumer follows.
+
+⚑ The legal-mask test's FIXTURE was itself wrong until the review round: it
+zero-filled illegal indices, which quietly encoded the inverted premise above,
+and the mutation still killed it — so a passing mutation was not evidence the
+test asserted the right thing. The fixture now carries production's
+`>= 0.5` fill and the test asserts the measured direction (a net that is
+PERFECT on its legal moves reads 0.0 masked and ~0.748 unmasked).
+
+**HOW TO ARM IT AT THE RESTART** (nothing here is armed; the live yaml is
+untouched):
+
+```bash
+PYTHONPATH=. python3 scripts/build_era_probe_set.py \
+    --shard-dir <trial>/replay_shards --oldest 40 --rows 2048 --label era \
+    --out data/era_probe/era_<date>.npz
+PYTHONPATH=. python3 scripts/build_era_probe_set.py \
+    --shard-dir <trial>/replay_shards --newest 40 --rows 2048 --label inwindow \
+    --out data/era_probe/inwindow_<date>.npz --force
+```
+
+then set `era_probe_path` / `era_probe_inwindow_path` in the yaml AT A RESTART
+(construction-only), and verify on the FIRST new row that the printed digests
+match the builder's and that `probe_era_n` is the row count, not 0.
+
+**NOT ESTABLISHED.** No live reading exists. The probe has never run against a
+real lineage, so its noise floor, its per-iteration cost on the production net,
+and the hinge's amplitude on these columns are all unmeasured. Nothing here is
+evidence about forgetting; it is the instrument and its wiring proofs. The first
+five iterations after arming are a shakedown, not a readout.
+---
+
+## 2026-08-03 — F11: the trainer's private policy-index LUT moves to `torch_maps`; the holdout ruler id MOVES, the MEASUREMENT does not
+
+**VERDICT: CODE-ONLY, no experiment.** Not a training-affecting change in the
+sense rule 1 covers — it changes no target, no loss weight, no sampling and no
+number the trainer computes — but it has one **operator-visible side effect**
+that this file exists to record, so it gets an entry rather than a silent merge.
+
+**What changed.** `train/trainer.py` defined `_policy_index_lut` /
+`_policy_index_lut_for`, a module-private `lru_cache` over
+`COMPACT_TO_FULL_POLICY` / `FULL_TO_COMPACT_POLICY` — exactly the duplicate
+`moves/torch_maps.py` exists to prevent (CLAUDE.md: "Use the shared
+device-cached lookups in `moves/torch_maps.py` — don't add per-module
+`lru_cache` copies"), found by the 2026-08-03 play-path code audit as F11. It
+was also strictly worse than the shared one: it keyed on `target.device.index`
+raw, without `torch_maps._device_key`'s cuda-index normalisation, so
+`torch.device("cuda")` and `torch.device("cuda", 0)` allocated two separate
+copies of BOTH tables for the same physical GPU.
+`Trainer._policy_accuracy_stats._align_index` now calls
+`torch_maps.policy_index_remap_table(source_width, dst_width, device)` once,
+instead of carrying its own copy of the width -> table dispatch. Routing through
+the existing helper rather than just swapping the two `lut = ...` lines is the
+review outcome recorded under "the MEASUREMENT did not move" below, and it is
+why this entry's ids differ from the ones circulated during review.
+
+### ⚑ OPERATOR-VISIBLE SIDE EFFECT: one best-model handover at the deploying restart
+
+```
+full_pass  3a336231d9b5fce5 -> 025b6ef8e537ffcb
+sampled    9f9c078dd590db13 -> 408bcad98fb150b4
+```
+
+`_align_index` is a closure inside `_policy_accuracy_stats`, one of the frames
+`eval_ruler_id_for`'s `call_closure` walks from `_compute_metrics`, and
+`digest_source` hashes SOURCE — so a value-identical refactor still moves the
+fingerprint, and it moves BOTH ids (the frame is in both `measured_by` lists).
+`holdout_generation` therefore bumps at the next restart and the running trial
+**hands over its best-model record**, adopting the current `test_loss` instead
+of comparing against the pre-restart one. Expect it; do not read the handover as
+a regression.
+
+**RESTART-GATED — and not for the reason it is tempting to give.** The id is
+NOT read once when the trainer is constructed: `eval_ruler_id_for` is called
+inside `_compute_metrics`, on **every evaluation**. The gate is that a running
+process holds the module source it imported at start, so `digest_source` keeps
+hashing the OLD code until the process restarts onto this checkout. Same
+conclusion — merging changes nothing on the live run, the handover happens at
+the next restart and not before — but a file that exists to stop exactly this
+class of wrong-mechanism claim should not contain one. Judge the deploy from the
+first post-restart `progress.csv` row (`holdout_generation` incremented exactly
+once).
+
+**The MEASUREMENT did not move, and this one is proved rather than argued** —
+the fifth declared false positive of this shape, and the standard the earlier
+ones (PR #283 and its review follow-up) did not meet. The first version of this
+entry claimed that standard and did not meet it either, which is worth recording
+because it is the failure this file keeps cataloguing: the review of #318 took
+the round-trip test at its word ("would catch the two directions having been
+silently swapped"), then **transposed the two branch bodies in `_align_index`**
+so `full -> compact` called `compact_to_full_index` and vice versa. Both symbol
+names were still present, so the source-grep test was blind, the round-trip test
+operates on the two shared tables directly and cannot see which one the trainer
+calls in which branch, and **all four tests passed**. Only the ruler-id pin
+noticed — a source hash, i.e. a tripwire, not a semantic control.
+
+Closed rather than re-worded, because the ids were moving in this PR anyway and
+so the refactor was free exactly once: the duplicated width dispatch is deleted,
+`_align_index` calls `torch_maps.policy_index_remap_table`, and there is no
+longer a pair of branch bodies to transpose. What now backs the claim:
+
+1. the deleted private helper's exact body is reconstructed and required to
+   match the shared tables on dtype, device, shape and **element-wise** values;
+2. BOTH the pre- and post-refactor `_align_index` bodies are run over in-range,
+   negative and out-of-range ids in both width directions, and required to agree
+   on the mapped indices **and** the validity masks (so the refactor itself is
+   pinned as value-identical, including the `mapped >= 0` term the
+   compact -> full branch used not to carry — the `compact_to_full` table's
+   minimum is asserted to be >= 0, which is why unifying them was safe);
+3. the width-pair -> table binding is asserted by **behaviour**, so swapping the
+   two returns inside `policy_index_remap_table` fails. Verified by running that
+   mutation: two tests go red.
+
+Same `torch.long`, same source arrays, same values. So `test_loss` means the
+same thing on both sides of the handover and records stay comparable across it —
+which is the only reason a moved ruler id is acceptable at all.
+
+**Revert point.** None taken: no weights, optimizer, PID or replay state is
+touched, and reverting is `git revert` plus one more handover at the following
+restart. `PRODUCTION_FULL_PASS_RULER` / `PRODUCTION_SAMPLED_RULER` in
+`tests/test_holdout_ruler_identity.py` are updated in the same commit, per that
+test's own maintenance contract (cited by name, not line number, because the
+line number has already rotted once in this entry's lifetime).
+
+**Confounds.** Split out of PR #317 (the play-path audit's safe subset)
+precisely so #317 stays ruler-neutral; it is the only change in its PR, so a
+handover observed at a restart carrying both PRs is attributable here and
+nowhere else.
+
+## 2026-08-03 — inference-stack audit I1–I4, I6: the slot protocol gets a request identity (DATA-INTEGRITY, restart-gated)
+
+**Not an experiment.** No training-affecting knob moves, no loss weight, no
+target, no sampling. Five serving-path defects from
+`scratchpad/code_audit_20260803/INFERENCE_AUDIT.md`, all CPU-reproduced, are
+fixed. Recorded here anyway because **I1 is a data-integrity fix**: it changes
+which rows can enter the training shards, and its deploy is gated on a restart
+in a way that is easy to get wrong.
+
+**I1 — a timed-out client was served the PREVIOUS request's policy and WDL.**
+The 8-byte slot header carried state, mode and batch_size and **no request id,
+sequence or epoch**. The broker does not change slot state while it works, so:
+client submits R1 → the hardcoded 30 s `request_timeout_s` elapses → the worker
+resets its client (`worker.py:_reset_inference_client`) and re-submits R2 into
+the **same named slot** → the broker finishes R1, writes R1's answer and marks
+the slot RESPONSE → the client waiting on R2 reads it and returns. **R2 is never
+evaluated at all.** Nothing raises, nothing logs, no counter moves. On the
+production compact-legal transport the row is worse than wrong: the client
+slices `policy_u16[:n_legal]` with its OWN n_legal, so the tail is
+re-interpreted bytes of its own request metadata. Those evaluations feed MCTS
+and are **recorded as training rows**. The precondition is documented in-source
+as observed in production (the 2026-07-24 ~50-minute outage comment at
+`inference.py`'s compact-metadata snapshot), and there is a 270-second band
+between the client timeout (30 s) and the hang watchdog (300 s) in which every
+slot times out and re-submits while the broker is still considered healthy.
+
+Fix: a client-stamped 32-bit `request_id` in a widened 24-byte header, snapshotted
+by the broker **before** it reads any payload and echoed back **before** it sets
+RESPONSE; the client accepts only an exact match and otherwise discards, counts
+and re-submits. The two orderings are load-bearing and commented as such — the
+broker reading the tag last, or the client publishing it first, would each let a
+torn read pass as a match.
+
+**This is the upstream fix the malformed-legal-metadata entry pre-registered.**
+That entry's KILL/DIAGNOSE branch says in as many words: *"the right fix moves
+upstream to a sequence number in the slot header so the broker can detect a
+re-submit directly instead of inferring it from failed validation."* It is now
+in. The `malformed_legal_meta` counter and its rejection path are **kept
+unchanged** — they cover a genuinely malformed client, which the request id does
+not; the id covers the *response* side, which that fix explicitly did not.
+
+**⚑ How often it fired is UNKNOWN, and the fix does not tell us retroactively.**
+The audit established the mechanism, not the rate: the live run has been paused
+since 07-31, `shared_broker.out` is from May, and no worker logs were retained.
+The one-command bound is `grep -c 'resetting client'` over live worker logs, and
+it should be run on the first post-restart day. **`stale_responses_rejected` is
+now in `MultiSlotInferenceClient.stats` and on the worker's `broker client
+stats:` line (printed only when non-zero)** — that is the observation which
+proves the guard is live and the race real. Zero on a healthy run; non-zero is a
+grep hit and a count of poisoned rows that did NOT happen.
+
+**I2 — a plane-count skew returned all-zero policy and WDL, silently.** Client
+and broker each computed `_SlotLayout.compute(max_batch, planes)` and never
+compared. With the client's plane count the smaller (146 v1 vs 175 v2_threats —
+and 146 is the argparse default on both sides) every numpy view still fitted
+inside the larger segment, so the protocol completed and the client read its
+policy and WDL out of the **middle of the broker's input region**. That is the
+exact zero-fill poisoning `tests/test_broker_no_zero_fill.py` and
+`BrokerModelUnavailable` exist to make impossible, through a channel none of it
+covers. Fix: magic + layout-identity hash in the header, size check on connect,
+`SlotProtocolMismatch` raised loudly. Plus a `_ensure_model` check that the
+published model's plane count matches the broker's launched `--input-planes`.
+
+**I3 — the hang watchdog could not fire on the failure it was written for.** It
+was inert until the first *successful* forward, so a broker booting into an
+already-wedged CUDA/WSL2-dxg context hung on forward #1, never armed, never
+aborted — the scenario its own docstring names. And its window covered only
+H2D + forward + sync, while `torch.load`, `.to(device)`, the AOT
+`load_constants` loop and `torch.compile` ran outside it. Now: armed from
+construction with a separate `boot_threshold_s` (1800 s default,
+`CAE_BROKER_BOOT_HANG_ABORT_S`), started before the AOT package load rather than
+in `serve_forever`, and named stages cover model load, package load and pinned
+allocation. In-flight tracking is a dict keyed by token, so "oldest" is oldest.
+
+**I4 — AOT constants were rebound against ONE package's FQN list with
+`check_full_update=False`.** A package from a different architecture revision
+kept its build-time weights across every model publish while the comment three
+lines above promised the opposite. Now: package↔package FQN-set uniformity is
+asserted at load, and `check_full_update` defaults to True.
+**⚑ The flip could not be exercised on the real GPU path here** (`aoti_load_package`
+needs CUDA). What was verified offline is the precondition: all 21 packages in
+`data/aot_models_512/` declare the same 455 constant FQNs, unique and non-empty,
+read out of each `.pt2`'s generated `wrapper.cpp`. Kill switch
+`CAE_AOT_CHECK_FULL_UPDATE=0` if a real load disagrees — **check the first
+post-restart `broker.out` for `AOT bucket ... rejected`.**
+
+**I6 — the broker burned ~83% of a core at idle.** `_wait_for_ready_slots` did
+200 unyielded polls then a 20-**microsecond** sleep, forever. Replaced by a
+time-based ladder whose **rung 0 is the old behaviour verbatim** and which only
+descends after the whole fleet has been silent, so the gather-window regime and
+loaded-path latency are untouched by construction. Measured on the audit's own
+repro (16 slots, production gather settings, 5 s with zero requests): **84% → 3%
+of one core.**
+
+**Deploy is RESTART-GATED, and the gate is a hard one.** The wire format changed
+(8 → 24 byte header, protocol v2). Broker and workers are launched together by
+`distributed_runtime`, so this is safe *provided the whole fleet restarts onto
+this code*. A v1 client attaching to a v2 broker's segment now fails loudly with
+`SlotProtocolMismatch` instead of reading garbage — which is the desired
+behaviour, but it means a partial rollout takes selfplay down rather than
+degrading. Merging changes nothing on a running fleet; judge the deploy from the
+first post-restart `broker.out`, which now prints
+`planes=... layout_id=0x... proto_v=2` on the `slots ready` line.
+
+**Yardstick.** None — there is no Elo claim here and none is available: the loop
+has been paused since 07-31 and the effect of removing poisoned rows is far
+below the instrument (~2.74 Elo/DAY at best vs ~0.02 Elo/iter). The checks that
+matter are the three observations above (`stale_responses_rejected`, the
+`slots ready` line, absence of `AOT bucket ... rejected`), all read on the first
+post-restart iteration.
+
+**Revert point.** None taken: no weights, optimizer, PID or replay state is
+touched. Revert is `git revert` plus a fleet restart — and note that the restart
+is required in **both** directions, because a v2 broker and a v1 client cannot
+talk.
+
+**Confounds.** Five findings in one PR. They are independent code paths
+(protocol header, watchdog, AOT rebind, idle poll) and none is judged on a
+training metric, so there is nothing for them to confound. I5 (the
+`EncodedEvalCache` bypass) and I7–I9 (`ThreadedDispatcher`, off the production
+path) are deliberately **not** in this PR.
+
+**UNREVIEWED at open.**
+
+## 2026-08-03 — CORRECTION to the entry above: "restart-gated in BOTH directions" was FALSE in the dangerous direction, and the header could never have made it true
+
+The entry above (inference audit I1–I4, I6 / PR #322) says:
+
+> A v1 client attaching to a v2 broker's segment now fails loudly with
+> `SlotProtocolMismatch` instead of reading garbage … the restart is required in
+> **both** directions, because a v2 broker and a v1 client cannot talk.
+
+**The second half of that is wrong, and it is wrong in the direction that
+poisons data.** The independent reviewer of #322 measured it with two worktrees
+— an `origin/main` client and a PR-head broker on the same named slot:
+
+```
+# broker: PR head            client: origin/main
+[broker] slots ready n=1 planes=8 layout_id=0xdbbd9102 proto_v=2
+v1 client _HEADER_BYTES=8
+RETURNED policy[:4]=[0. 0. 0. 0.] wdl=[0. 0. 0.]
+EXPECTED (if the protocol were honoured) policy==42.0 wdl==42.0
+```
+
+All-zero policy and all-zero WDL, **no exception** — the exact I2 outcome the PR
+exists to delete, reintroduced by the fix, in the one deploy shape the entry
+declared safe.
+
+**Why the claim was never reachable, which is the part worth keeping.** A guard
+in a header can only be executed by a peer that has the code to execute it. A v1
+client runs v1 `_connect` (`main:inference.py:2340-2359`): no size check, no
+magic, no layout id — there is nothing there to fail. And because the v2 header
+grew at the **front** (`_HEADER_BYTES` 8 → 24) while `state@0`, `mode@1`,
+`batch_size@4` kept their offsets, the state machine still completes; the two
+sides simply read and write 16 bytes out of phase. **A version bump can never
+make an old peer refuse. Only a new peer can refuse.** The same reasoning
+applies to any future bump of this protocol and to every other
+version-in-a-payload scheme in this repo.
+
+**Reachability was not theoretical.** The slot name is derived, not negotiated —
+`cae-{stable_seed_u32("slot-prefix", trial_id):08x}` — and therefore *stable
+across restarts for the same trial_id*. A worker that survived a restart, or one
+launched from a checkout that had not pulled (this repo has
+`stale_worker_ingest_wedge_on_resume` for exactly that), reconnects **by name**
+on its next `_disconnect`/`_connect` cycle and is served zeros into MCTS and
+into the shards.
+
+**Fixed rather than merely documented.** The protocol version is now in the slot
+NAME as well as the header — `stable_seed_u32(f"slot-prefix-v{VERSION}", …)` and
+a `cae{VERSION}-` prefix, in both `distributed_runtime._trial_slot_prefix` and
+`SharedSlotBroker._register_new_trial`, pinned equal by a test. A stale v1 worker
+now looks up a name that does not exist, gets `FileNotFoundError` →
+`TimeoutError`, and never maps a v2 segment. **The name is the backward-safety
+mechanism; the header is only the forward one.** Both must be bumped together.
+
+**The accurate statement, replacing the one above:** the NEW client refuses
+loudly in both skew directions; an OLD client cannot refuse at all, so backward
+safety comes from the versioned slot name and from never restarting the broker
+ahead of its workers. The old-broker/new-client direction is loud but slow — the
+size check is classed `still_settling`, so it retries to `request_timeout_s`
+(30 s per request in production) before raising: a warn-loop, not a hard stop.
+
+**Also corrected in the same commit** (all from the same review):
+
+- **`--hang-abort-seconds 0` no longer disabled the watchdog.** Arming from
+  process start resolved the boot window independently, so a broker told *not*
+  to hang-abort still started the thread and still `os._exit(42)`-ed at 1800 s
+  while unarmed — the escape hatch is reached for precisely when the watchdog is
+  misfiring. The gate now lives inside `resolve_boot_hang_abort_seconds`, not at
+  the two construction sites, because a rule duplicated across call sites is how
+  one of them ends up without it. Help text corrected on both clauses.
+- **"token-keyed dict so oldest is oldest" was true of the API and false of both
+  callers.** The token was discarded and `mark_forward_done` called without it,
+  so the no-token fallback popped the *oldest* forward: a completing newer batch
+  deleted a wedged older one's start time and the critical log named the wrong
+  batch. Two lines; now pinned at the **caller**, and the pin is
+  sabotage-verified (dropping the token turns the test red).
+- The plane-count refusal is a **per-batch** error, not the "startup error" its
+  comment claimed (50 consecutive failures to exit the broker), and a stale
+  rejection landing on the deadline no longer reports itself as a broker
+  shutdown.
+
+**⚑ `stale_responses_rejected` is a LOWER BOUND, not a count.** It lives on the
+`SlotInferenceClient` instance, and the recovery that *creates* the race
+(`worker._reset_inference_client`) destroys the client. A rejection observed and
+then reset before the next 60 s `broker client stats:` line is lost. **Do not
+read a zero as "the race did not happen"** — read a non-zero as proof that it
+did. The rate bound remains `grep -c 'resetting client'` over live worker logs.
+
+**Method note, since this file exists to catalogue this class.** The false claim
+was not a typo: it was a plausible mechanism asserted without being executed,
+in a PR whose entire subject is guards that are present but do not take effect.
+The author wrote the guard, verified the *new* side of it, and then described
+the *old* side from the design rather than from a run. **A cross-version claim
+requires running the old version** — the reviewer's two-worktree measurement is
+the standard, and one worktree can never meet it.
+
+---
+
+## 2026-08-03 — W1/W2: the Gumbel transposition table keys on a position-only hash and permanently corrupts node child sets (CORRECTNESS FIX, deploy-gated on an extension rebuild + restart)
+
+**What was wrong.** `tree_ht_probe`/`tree_ht_insert` keyed on `CBoard.hash`,
+which is the **repetition** key: `cboard_compute_hash` excludes en passant by
+design (and the halfmove clock and repetition history never entered it either).
+The sole consumer, `gss_prepare_batch` — the production Gumbel path, selfplay
+AND UCI — does not merely reuse a donor's value on a hit: it **copies the donor
+node's child ACTION LIST** and installs it via `tree_expand`, after which the
+leaf is marked expanded and never re-expanded. So a position whose only
+difference from the donor is an ep right inherits the donor's moves forever.
+
+Both directions occur, and the dangerous one dominates. Measured on the audit's
+fuzzer (8 positions × 3 seeds × {512,1024} sims, **32,076 expanded nodes**):
+**67 nodes carrying an ILLEGAL ep move, 3 nodes missing a legal one**; worst
+single tree 42/1025 = 4.1 %. Selecting an injected ep index reaches
+`cboard_push_index` with `is_ep` false (no ep right) and the "there is a pawn on
+the source square" guard satisfied, so it executes a **diagonal pawn move onto
+an empty square**. The board stays self-consistent, nothing raises, and the
+entire subtree below is a position that cannot arise in chess — encoded, sent to
+the net, and backpropped into the real tree's statistics.
+
+**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`), the check that would
+catch a stale root child set, was short-circuited by
+`allowed_root_indices_batch is None`. Only `uci/search.py` ever passes that
+argument, so **the one path that carries a tree across plies (selfplay) was the
+one path the check never ran on** — the by-now familiar shape of a gate that
+cannot fail.
+
+**Fix, in two layers (both needed, and the second is proved not decorative).**
+
+1. `cboard_transposition_key()` = `CBoard.hash` XOR an ep-file Zobrist, mixed in
+   only when a pawn of the side to move actually attacks the ep square (the same
+   test the FEN writer already used, now shared). `cboard_compute_hash` is
+   **deliberately unchanged**: it has other consumers whose semantics want
+   ep-exclusion — `hash_stack`/`hist_hash` repetition detection, the encoder's
+   repetition planes, and `pos_hash` values **persisted** in selfplay resume
+   records (`selfplay/resume.py`). `ZOBRIST_EP` is drawn LAST in `init_zobrist`
+   so every pre-existing Zobrist value is bit-identical and in-flight resume
+   state stays valid.
+2. At the copy site, the donor's action list is verified against the recipient
+   leaf's own generated legal set; on mismatch the transposition is refused and
+   the leaf gets a real evaluation. This converts **any** future key deficiency
+   from corruption into a missed hit.
+
+**Yardstick, pre-committed: the audit fuzzer at ≥32k expanded nodes must report
+0 illegal and 0 missing children.** Result: 32,079 checked, **0 / 0** (baseline
+rebuilt from the same `origin/main` commit: 32,076 → 67 / 3). Shipped as
+`tests/test_mcts_transposition_key.py`; **each of its three parametrisations is
+individually RED on the pre-fix build** (22 / 2 / 1 corrupt nodes), which needed
+a per-position search shape — the same FEN at a different seed builds a clean
+tree, and a parametrisation that cannot fail is decoration.
+
+**Negative control (the layer-2 claim is measured, not asserted).** With the key
+deliberately reverted to `b->hash` and layer 2 left in place: **78 donors
+REJECTED, invariant still 0 / 0**, and identical NN-row count. So layer 2 alone
+is sufficient for correctness, and layer 1 converts those 78 rejects into 78
+distinct table entries at no cost.
+
+**Cost, stated honestly.** Over 66 searches: TT `probe_hits` 3,141, `reuse`
+3,141, `reject` 0 — the table is not gutted. NN rows evaluated 37,656 → 37,700
+(**+0.117 %**), all of it on ep-capable positions (the ep-free subset is
+byte-identical). Wall clock is **not resolvable** at this noise level on a
+loaded box (baseline 1.22–1.59 s, fixed 1.39–1.58 s over 3 runs each) — reported
+as inconclusive rather than dressed up. Correctness wins regardless.
+
+**The W2 change is pinned in BOTH directions.** Making the coverage check
+unconditional could equally well have disabled tree carry outright, and every
+other test here would still have passed — the only symptom would be a slower
+search throwing its tree away every ply. So a selfplay-shaped carry (persistent
+tree, root advanced by `find_child`, `allowed_root_indices_batch=None`) asserts
+**4/4 carried plies reuse their root** with zero coverage misses. Verified
+falsifiable by mutation: forcing `_reused = False` makes it read 0/4.
+
+**Bit-identity on clean paths.** 18/18 searches over positions where no ep right
+can arise are bit-identical (probs and value), as are 43/48 ep-capable searches.
+The 5 that differ are exactly the trees where a real ep transposition was
+previously merged.
+
+**Observability, because a guard nobody can read is a guard nobody knows is
+dead.** `_mcts_tree.tt_stats(reset=False)` returns
+`{probe_hits, reuse, reject}` process-cumulative (NOT tree state — `reset_compact`
+swaps the `TreeData` wholesale), and `gumbel_c.root_coverage_miss_count()` counts
+W2 rejections, with a one-shot WARNING on the first. A nonzero `reject` in
+production means the key is incomplete again; it must read 0.
+
+**And that surface is READ by production, which is the whole point.** The first
+version of this fix exposed both counters and stopped there — the guard against
+the "value accepted and then silently ignored" defect, itself accepted and
+silently ignored. `run_gumbel_root_many_c` — the choke point every C-path
+consumer goes through, selfplay, training-time eval and UCI alike — now emits an
+operator line whenever either counter has moved since the last report:
+`[mcts] search guards FIRED since process start: tt_donor_reject=N root_coverage_miss=M`.
+On **stderr**, not stdout, because this same function is the UCI engine's search
+and stdout is the protocol channel; both production consumers capture stderr into
+their logs (`stderr=subprocess.STDOUT` in `tune/distributed_runtime.py`,
+`> "$LOG" 2>&1` in `scripts/train.sh`), and the trial actor has no logging handler
+so `_log.info` would have reached nothing. Rate-limited to one poll per 60 s and
+silent unless a count changed, so the cost when the guards are quiet is one
+`monotonic()` compare per search — the counters are not even read. Pinned by
+four tests, including a forced W2 miss observed through `capsys` on the real
+production entry point.
+
+**DEPLOY IS GATED ON THE EXTENSION REBUILD.** This is `.c`/`.h`. Merging changes
+nothing on the live run: the running process holds the `.so` it started with.
+Deploy = `python3 scripts/build_production_extensions.py` (NOT `pip install -e .`)
+followed by a restart, and the fix is in effect only from the first selfplay
+worker that starts after it.
+
+**The stale-`.so` case is made LOUD rather than left to discipline.**
+`ABI_VERSION` 2 → 3 and `_REQUIRED_MCTS_ABI` 2 → 3, so new Python on an
+un-rebuilt extension raises at `run_gumbel_root_many_c` / UCI-search construction
+with the rebuild command, instead of quietly running the corrupting search. This
+is the only reason the correctness claim is checkable at all from outside: a
+pulled-but-not-rebuilt tree cannot pretend to carry the fix. Second proof, from
+the feature's own surface: `_mcts_tree.tt_stats()` exists only on a rebuilt `.so`,
+and a nonzero `reject` on it means the key regressed.
+
+**Training-data-affecting.** Every phantom subtree contributed visits to the
+Gumbel target that produced a training row, so the policy targets written before
+the deploying restart contain this contamination and those after it do not. The
+replay window holds ~a day of pre-fix rows; expect no clean step at the restart.
+Rate bound from the fuzzer: 67 corrupt nodes / 32,076 expanded ≈ **0.21 % of
+expanded nodes**, concentrated in ep-rich openings, so the expected effect on any
+day-scale learning metric is far below this project's ~2.74 Elo/day instrument
+resolution. **Do NOT read a strength change at the deploying restart as this
+fix.** It is shipped because it is wrong, not because it is measurable.
+
+**Revert point.** None taken: no weights, optimizer, PID or replay state is
+touched. Reverting is `git revert` plus the same rebuild + restart.
+
+**Confounds.** None from this PR alone; it is the only change in it. If it
+restarts alongside anything else, that overlap belongs in the other entry's
+Confounds line.
+
+**Not fixed here, recorded so it is not mistaken for fixed.** The halfmove clock
+and repetition history are still outside the key. They cannot change the legal
+move set — only the VALUE — so a leaf can still inherit Q from a transposition
+with a different draw horizon. That is a pre-existing bias toward draws in the
+reused value, unchanged by this PR and deliberately out of its scope. Second,
+`walker`/`batch_descend_puct`/pucv never probe the table at all, so multi-GPU
+pucv forgoes transposition entirely — a real asymmetry between the two engines
+this project ships, also untouched. Third, the review of this PR found a
+realloc-dangle in the children pool that is **shared with `main` and predates
+this work**; it is recorded here as a known pre-existing defect and deliberately
+not bundled into a correctness fix that is trying to stay reviewable.
+
+---
+
+## GATE PROMOTION 2026-08-03 — E1-E4 of the encoding audit: the C-vs-Python plane oracle enters CI in the production regime, and three "value accepted then ignored" sites get an observation that can fail
+
+**Not an experiment.** No training-affecting change, no config key, no loss
+weight, no data-pipeline semantics. Nothing here alters a single training row on
+the current settings; every fix is either a gate turned on, a keyword threaded,
+or a guard added. Recorded because the ledger is where the standing instruments
+are catalogued, and because three of the four items are the house signature
+defect (`docs/rl_loop_audit.md` M11's family) in fresh instances.
+
+Source: `scratchpad/code_audit_20260803/ENCODING_AUDIT.md` (CPU-only, `nice -n 19`).
+Its headline is a NEGATIVE result worth banking: **the C and Python encoders are
+bit-identical in the production regime at 175 planes**, with history, castling,
+EP and repetitions present — 1,654 real-game positions × 2 history modes ×
+2 rep-fix phases, 0 divergences, plus 552 boards × 3 encoders on the batch path.
+Nothing in the repo had ever measured that. This PR turns the one-off
+measurement into a standing gate.
+
+**E1 — the only C-vs-Python plane differential was off in every gate.**
+`scripts/fuzz_cboard_diff.py`'s encode oracle defaulted to `--encode-every 0`,
+`scripts/fuzz/run_fuzz.sh diff` never passed it, `tests/test_fuzz_smoke.py` set
+`encode_every=0` explicitly, and when asked for at all it hardcoded
+`input_extra_features="v1"` (146 planes) and never called `rep_fix.apply`. The
+reason was a **stale docstring** claiming the oracle "fails on default seeds
+until [`history_rep_fix`] lands". It landed **2026-06-17**
+(`configs/pbt2_small.yaml:197`); the gate was never re-enabled. So the regime
+carrying 100% of production traffic was the one regime nothing checked.
+Now: defaults are production (`v2_threats`/175, `history_rep_fix` on,
+`--encode-every 4`), `run_fuzz.sh diff` passes the cadence explicitly,
+`fuzz_batch_encode_diff.py` runs at 175 too, and `tests/test_fuzz_smoke.py`
+carries the CI gate. **Green on arrival** — 60 games at defaults, 0 divergences.
+
+**The gate ships with its negative control.** `--no-history-rep-fix` must FAIL,
+and does: plane 90, a slot-6 repetition plane, at game13 ply180. That test is in
+CI (`test_encode_oracle_catches_the_prefix_divergence`). Without it the gate
+would pass in both phases and prove nothing about whether the flag reaches the
+planes. A separate test pins the realized CLI defaults so a silent revert to
+v1/146 or `encode_every=0` goes red rather than quietly reducing the fuzzer to a
+state-parity check again.
+
+**E2 — the AOT verification gate encoded its "deployment input distribution" in
+the LEGACY history layout.** `scripts/build_aot_packages.py` threaded
+`input_extra_features` into `_real_position_batch` but never
+`input_history_encoding`, so `encode_positions_batch` fell back to legacy while
+the model is `lc0_root_legacy_meta`. Measured: **98 of 175 planes differ on ≥1
+row, 92.0 planes per row, 7.3% of cells** — and the plane COUNT is identical
+either way (112 + n_extra), so the buffer shape, the package signature and the
+verify comparison all succeeded on the wrong content. `verify_packages` decides
+whether a built AOT package is numerically equivalent to eager, including
+`argmax_min=0.90` on the policy; the AOT packages are the live worker inference
+path. Fixed by taking the encoding off the MODEL (`model_encoding_kwargs`)
+rather than adding a second forgettable keyword — the encoding is not a free
+parameter of this gate, and a keyword that can be forgotten is how this bug
+survived. ⚠ Precisely what that buys (review F5): the attributes are the values
+the model was CONSTRUCTED with, so they cannot drift from it the way a separately
+threaded keyword can. It is NOT an extra guard against a model of unknown
+encoding — `build_model` normalizes `None` to `legacy`/`v1`, so a real model
+always declares something and `model_encoding_kwargs`' `ValueError` is reachable
+only for objects it did not build. An earlier draft of this entry claimed the
+stronger thing.
+
+⚠ **The consequence was NOT measured.** Establishing whether a package's
+AOT-vs-eager verdict actually changes under the two input distributions needs
+the GPU, and this work was CPU-only. The claim is that the gate's own stated
+premise ("judged on the deployment input distribution") now holds — **not** that
+any shipped package was miscompiled or that any past PASS was wrong. Anyone who
+wants that number must run `--verify-only` on both encodings and compare.
+
+**E3 — `rep_fix`'s ordering contract had no guard.** The flag is a bare module
+global in each `.so`; a board pushed across a flip encodes repetition planes
+matching **NEITHER** regime: slots `[1,1,1,1,1,1,1,0]` under either clean value,
+`[1,0,1,0,1,0,1,0]` across the flip — half the slots silently blanked. `CBoard`
+is a C type with no `__dict__` and no weakref support, so the flag cannot be
+stamped per board from Python; the guard sits on the flip. `apply()` now raises
+`RepFixFlipError` on a value CHANGE unless the caller passes
+`boards_discarded=True`.
+
+⚠ **Honest limit on this guard: the three production callers are exempted**
+(`selfplay/manager.py` batch start, `selfplay/match.py` per move cycle,
+`build_model`), each with the observation that makes the exemption true recorded
+at the site. So on today's paths the guard **cannot fire** — it is latent, as the
+finding is. Its value is that a NEW caller, or the future long-lived-CBoard
+optimisation on the arena path that the audit names, fails loudly instead of
+mis-encoding. The audit's repro (`enc_repfix_midgame_flip.py`) now raises, and
+the same shape is a test.
+
+**E4 — the C batch encoders take the plane count from the OUTPUT BUFFER.**
+`n_extra = PyArray_DIM(out_arr, 1) - 112` at seven sites; the C shape check
+accepts either 146 or 175 and then trusts the buffer, so
+`cfg.input_extra_features` never reaches the C encoder. `mcts/puct_c.py`'s two
+branches disagreed about the source of truth (evaluator buffer when
+`n_boards <= _max_batch`, config otherwise) — the SAME run would encode
+differently depending on batch size. Latent today (config and model agree), so
+this is a guard, not a bugfix. `check_encode_buffer_planes` now asserts
+buffer-vs-config at all 7 evaluator-sourced call sites (`puct_c` ×1, `gumbel_c`
+×4 — root fp32, root bf16, split-leaf, leaf — and `selfplay/network_turn` ×2, the
+last being the path every training row is written from). Same family:
+`_CHANNELS = input_plane_count()` =
+**146** is the argparse default for `--input-planes` on both brokers and
+`--inference-slot-input-planes` on the worker, while production is 175;
+`require_model_planes` now compares against the model at both brokers' model
+load, and `_require_slot_planes_match_manifest` compares the slot width against
+the **manifest's** declared encoding on the worker's poll path.
+
+⚠ **The worker check was in the wrong place in the first version of this PR, and
+that is the more instructive half of it.** It sat in `_load_and_compile_model`,
+described here and in the PR as "the worker's single chokepoint". It is not one:
+with a broker client `_sync_model` returns before the load (`need_local_model =
+inference_client is None or task_type == "arena"`) and
+`_swap_model_from_manifest` returns after only re-tagging — so the check fired on
+arena tasks and **never on production selfplay**, i.e. never on the configuration
+whose hazard (`INFERENCE_AUDIT` I2, all-zero policy/WDL from a narrow client)
+motivated it. Caught by review F2, driving the two real methods with a stub. A
+guard placed where the code does not go is worse than no guard, because the next
+reader stops looking; `tests/test_worker_slot_planes_guard.py` now asserts the
+reachability itself, not just the comparison.
+
+**Yardstick.** Not applicable in the experiment sense; the deciding observation
+for a gate promotion is that the gate can fail. Each fix was mutation-tested:
+
+```
+# E1  encode oracle, production defaults + negative control
+PYTHONPATH=. python3 scripts/fuzz_cboard_diff.py --games 60             # exit 0
+PYTHONPATH=. python3 scripts/fuzz_cboard_diff.py --games 60 --no-history-rep-fix
+                                                                         # exit 1, plane 90
+# E1  pin input_extra_features="v1" inside _check_encode's loop -> 3 tests red
+#     (before review F1: 0 tests red, CLI still printed "v=v2_threats")
+# E2  drop input_history_encoding in _real_position_batch  -> 1 test red
+#     hardcode "legacy" in verify_packages                 -> 1 test red
+# E3  scratchpad/code_audit_20260803/enc_repfix_midgame_flip.py -> now RAISES
+#     match.py passes cboards= to the search               -> 1 test red (F4)
+# E4  delete the check in puct_c / gumbel_c / network_turn -> 1 test red each,
+#     and each shows the C encoder writing 146 planes and execution proceeding
+# F2  move the worker check back into _load_and_compile_model -> 4 tests red
+PYTHONPATH=. python3 -m pytest tests/test_fuzz_smoke.py \
+    tests/test_encode_buffer_plane_guard.py tests/test_build_aot_packages.py \
+    tests/test_history_rep_fix.py tests/test_worker_slot_planes_guard.py
+```
+
+**REVIEW ROUND (independent agent, reviewer ≠ author).** Verdict on the first
+push was REQUEST CHANGES, on two findings that were **both the exact defect class
+this entry is about — an observation that cannot fail**:
+
+- **F1** — the E1 gate pinned the module constants and the argparse defaults but
+  not whether the threaded value REACHED the encoder. The reviewer's mutation
+  (one line inside `_check_encode` re-binding `input_extra_features = "v1"`) left
+  all six tests green and the CLI still printing `v=v2_threats — no divergence`,
+  with the 29 v2_threats planes silently back out of the differential. That is
+  audit E1 verbatim, reintroduced by the PR that fixes it. Now `_run` computes
+  the expected plane count once, far from the encoder calls, and `_check_encode`
+  asserts the arrays it compared are that wide; the mutation turns 3 tests red
+  and makes the CLI exit 1.
+- **F2** — the worker guard was unreachable on production selfplay (above).
+
+Both were found by attacking placement and reachability, not by re-reading the
+diff — which is the argument for the reviewer-≠-author rule holding here. Three
+non-blocking items were also taken: the 6 untested `check_encode_buffer_planes`
+sites now have the two production ones pinned (`gumbel_c` root, `network_turn`
+root — the training-row path), E3's exemption PRECONDITION is pinned (match.py
+must pass no `cboards=`, so a future long-lived-CBoard change goes red instead of
+inheriting the keyword), and the two wording overclaims are corrected in place.
+
+**Revert point.** None taken. No weights, optimizer, PID or replay state is
+touched; nothing here reads or writes a training row. Revert is `git revert`.
+
+**Confounds.** None with any live readout. The only behaviour change on a
+production path is that four guards can now raise where they previously could
+not, and every one is proved inert on today's configuration: the plane-count
+guards compare two values that both derive from
+`config["input_extra_features"]` (`tune/distributed_runtime.py:541,889,1044,1106`
+and the manifest, written by `model_config_to_manifest_dict`), and no production
+caller flips `history_rep_fix` with a live board. The one new per-poll code path
+is an int comparison plus a **one-shot** warning for a manifest that declares no
+encoding — production manifests always declare one, so that branch should never
+be seen; if it is, the log line is the finding. The AOT verify change alters what
+`--verify` measures on, so any verify PASS/FAIL recorded before this commit is
+not comparable to one after it.
+
+**Review status.** UNREVIEWED at open; independently reviewed after the first
+push (REQUEST CHANGES, 2 blockers + 3 recommendations, all addressed above). The
+reviewer's own re-run reproduced the E1 negative control, both E2 mutations and
+the E4 puct mutation, and instrumented the C setter to confirm the gate really
+drives 175 planes in both production history modes with the flag pushed into
+both extensions.
+
+Two things after that round, both worth recording because they are the same
+class again. First, re-reading the F2 fix found that
+`_require_slot_planes_match_manifest` read only the **dict** form of
+`manifest["model_config"]`, while `_swap_model_from_manifest` also accepts a
+**`ModelConfig` instance** — the object form fell through to the "cannot check"
+branch and downgraded the raise to a one-shot warning. A guard that quietly
+stops guarding on one of its two real inputs; fixed and mutation-pinned. Second,
+#320 (Gumbel transposition key) merged mid-review and changes `.c`/`.h`, so every
+number measured before that merge was measured against a stale `.so`. The
+worktree's extensions were rebuilt and the whole verification re-run on the
+merged tree rather than assuming the merge was inert — the same rule as
+`c_extension_rebuild_after_pull`, applied to a PR's own evidence.
+
+---
+
+## GATE-BLOCKING FIX 2026-08-03 — the server's upload compactor drops 8 of 56 `ShardMeta` fields, including BOTH inputs to the promotion gate's PID-confound instrument (audit wave 3, K1 / G3-1)
+
+**Type: correctness fix, no training-target change. Deploy-gated on a server
+restart** (the compactor runs in the server process; a running server keeps the
+old module — `running_scripts_keep_the_old_file`).
+
+**The defect.** `_flush_buffered_upload_to_inbox` (`server/app.py`) rebuilt
+`ShardMeta` from a hand-written kwarg list that set 48 of the dataclass's 56
+fields. The other 8 silently took their dataclass defaults, and
+`_BufferedUploadAccumulator` had no slot for four of them at all, so the loss
+happened at ACCUMULATE time, not just at flush. Compaction is unconditional
+(`compact_target_positions = max(1, ...)`, and the live trial's `processed/`
+holds only `_compacted/`), so this is **100% of production shards**:
+
+| dropped field | was | consumer that died |
+|---|---|---|
+| `opponent_wdl_regret_limit` | `None` on 447/447 ingested shards | the gate's confound leg |
+| `sf_nodes` | `None` | per-shard difficulty provenance |
+| `sf_d6_sum` / `sf_d6_n` | `None` | `sf_eval_delta6` (`0.0` on every live row) |
+| `run_id` | `None` | trial provenance on a compacted shard |
+| `policy_encoding` / `policy_size` | rewritten by the shard writer | — (no live effect) |
+| `version` | writer-owned; correct as-is | — |
+
+Downstream: `_process_shard`'s `if shard_regret is not None:` never fired,
+`gate_{cur,prev}_regret_games` stayed 0, `_arm_mean_regret` returned NaN,
+`AnchoredSample.confound_elo` propagated it, and `_confound_fit` saw n=0.
+**`gate_sample_confound_elo` was NaN on 109 of 109 live rows** (iters 370–478).
+The ledger's blocking finding (1) — "the anchored delta may be a CONTROLLED
+VARIABLE of the PID" — is recorded above as CLOSED AS BUILT with the kill rule
+"|corr(predicted confound, measured delta)| ≥ 0.5 → do NOT enable". That rule
+has only ever been evaluated over an empty set. **It is not closed; this fix is
+what makes it evaluable.** The 24/24 mutations that were killed in that review
+were all run against shards that HAD the field — the reviewer exercised the
+consumer with an input the producer's output never carried.
+
+The same paragraph's claim that "difficulty is part of upload-buffer identity
+(flush on change)" is true of the WORKER's buffer and was false of the SERVER's:
+the compaction merge key was `(trial, model_sha, history|repfix)` and omitted
+difficulty entirely.
+
+**The fix.**
+1. All 8 fields carried, each with explicit aggregation semantics.
+   `sf_d6_sum`/`sf_d6_n` join the summed classes. `opponent_wdl_regret_limit`,
+   `sf_nodes`, `policy_encoding` and `policy_size` become
+   `_COMPACTION_IDENTITY_FIELDS`: part of the merge key (matching the worker's
+   flush-on-change semantics) AND asserted uniform inside the accumulator, with
+   both sides coerced through one helper so the guard cannot disagree with the
+   criterion. `run_id` is set from the accumulator's trial, which the upload
+   route has already proved equal to any non-empty shard `run_id`. `version`,
+   `username`, `generated_at_unix` and `positions` are writer-owned by
+   construction — a compacted shard is a NEW shard, written by this process,
+   from these samples, possibly merging several uploaders.
+2. The kwarg list is GONE. The flush builds its kwargs from
+   `_SHARD_META_FIELD_KINDS`, a table that must classify every `ShardMeta`
+   field; `server/app.py` raises at IMPORT if the table and the dataclass
+   disagree. A hand-written list cannot fail on an ABSENT key, which is the
+   entire mechanism of this defect.
+3. An upload whose identity values cannot be typed is REJECTED (the existing
+   `{"stored": False, "rejected": True}` shape), and the equivalent pending
+   shard is quarantined on recovery — rather than 500-ing the keying or being
+   silently dropped.
+
+**Why 110 green tests missed it.**
+`tests/test_promotion_gate.py::test_ingest_splits_anchored_counts_by_publishing_model`
+hand-writes shards into the inbox with `meta["opponent_wdl_regret_limit"]`
+already set. The whole suite tested the CONSUMER against an input the PRODUCER
+never emitted. `tests/test_shard_meta_compaction_completeness.py` closes that:
+it enumerates `dataclasses.fields(ShardMeta)` (never a hand-list — a diff-based
+check is blind to exactly the absent key that caused this), gives every field a
+distinguishable non-default value, drives it through the real
+accumulate→flush path, and separately walks worker producer → HTTP upload →
+compactor → `_ingest_distributed_selfplay`.
+
+**Mutation results** (all run; each is the defect being re-introduced):
+
+```
+M1  omit sf_d6_n from the flush build         -> 3 tests red
+M2  omit opponent_wdl_regret_limit from flush -> 2 tests red
+        ...and tests/test_promotion_gate.py stays 110/110 GREEN, which is
+        the direct demonstration of why the old suite could not see K1
+M3  add an unclassified field to ShardMeta    -> server.app raises at IMPORT
+M4  drop difficulty from the merge key        -> 1 test red
+```
+
+**VERIFICATION OBSERVABLE for the restart** (do NOT read an exit code — an exit
+code is an OR over axes, and the readout's prev_share leg can fail or pass
+independently of this):
+
+1. **First post-restart ingested shard.** On the first compacted shard written
+   after the server restarts onto this code, `opponent_wdl_regret_limit` must be
+   a finite float and `sf_nodes` a positive int:
+   ```
+   PYTHONPATH=. python3 -c "import glob,json,sys; p=sorted(glob.glob('runs/pbt2_small/server/trials/*/processed/_compacted/*.zarr/.zattrs'))[-1]; d=json.load(open(p)); print(p, d.get('opponent_wdl_regret_limit'), d.get('sf_nodes'), d.get('sf_d6_n')); sys.exit(0 if isinstance(d.get('opponent_wdl_regret_limit'), float) else 1)"
+   ```
+   PASS = a float, not `None`. This reads out in ONE compaction window (~90s),
+   long before any training row.
+2. **Within 3 iterations**, `gate_sample_confound_elo` must be finite on every
+   new `progress.csv` row, and `sf_eval_delta6` must be non-zero. Assert the
+   AXIS STATE, not the readout's exit status:
+   ```
+   PYTHONPATH=. python3 scripts/gate_shadow_readout.py <trial>/progress.csv
+   ```
+   and require **`n_confound >= 3`** over the window before ANY verdict on
+   blocking finding (1) is recorded. `confound=unreported` is a FAILED
+   instrument, not a passing leg.
+3. **KILL for this fix**: if the first post-restart compacted shard still shows
+   `None`, the fix is not in effect — check the server was restarted onto this
+   commit (`merged_on_live_branch_still_never_ran`), not just that the PR
+   merged.
+
+Note this fix does not by itself re-open the gate: it makes the gate's
+pre-registered confound KILL rule *readable*. The rule must then actually be run
+over a full 40-row window before the gate is enabled.
+
+**Revert point.** None taken. No weights, optimizer, PID or replay state is
+touched. The only behaviour changes on a production path are (a) compacted
+shards carry 8 more meta fields, (b) the compaction merge key gains 4
+dimensions — difficulty ships in the same `recommended_worker` manifest as the
+model sha, which is already in the key, so expected extra fragmentation is
+~zero, and idle accumulators still age-flush at `upload_compact_max_age_seconds`
+(90s), so the key cannot grow unbounded — and (c) two new upload-rejection
+reasons that are unreachable from any shard our own worker writes. Revert is
+`git revert`.
+
+**Confounds.** Historical shards already in the replay window keep their `None`
+difficulty forever; `_process_shard` correctly treats absent as UNKNOWN (a `0.0`
+regret would read as unhandicapped Stockfish), so the confound leg's denominator
+grows only from post-restart shards. Any confound readout taken before the
+window has turned over is measured on a partial sample — state `n_confound` with
+the number.
+
+**Review status.** UNREVIEWED at open. Reviewer ≠ author.
+
+**CORRECTION (post-review, appended — the entry above is left as written).** The
+Risk paragraph's "expected extra fragmentation is ~zero" was WRONG, and the
+independent reviewer measured the real figure. The premise (difficulty and model
+sha ship in one `recommended_worker` manifest, and the sha is already in the key)
+is right; the conclusion does not follow, because the worker does not apply them
+atomically. `worker.py:1968-1969` runs `_reco_changed` — which live-applies the
+new regret and does NOT flush the upload buffer, since
+`opponent_wdl_regret_limit`/`sf_nodes` are in `_RECO_LIVE_KEYS` — BEFORE
+`_swap_model_from_manifest`, which is what flushes. Every iteration therefore has
+a real **(old sha, NEW regret)** window that merged under the old key and now
+forms its own accumulator.
+
+Measured on the live baseline (447 compacted shards, 13.06 h, 70 distinct shas =
+1/iteration): **only 7.6% of live compacted shards reach the 2000-position
+target — 92.4% flush on the 90 s AGE timer.** That is why key width matters at
+all here: with age-dominated flushing, an extra key dimension does not merely
+re-partition a size-bounded group, it subtracts positions from the shard that
+window would otherwise have produced. Simulation driving the real
+`_upload_identity_acc_key` against the old key, parameterised from those live
+numbers, gives **+70 shards over 70 iterations = exactly +1 compacted shard per
+iteration** (all 4 workers cross the transition together and share the one extra
+accumulator), flat in the size of the decoupling window ⇒ **+15.7% shard count,
+roughly −17% mean shard size**, extra shard <200 positions at a realistic 5-15 s
+download+compile window.
+
+This is the fix working, not a side effect — those games really were played at a
+different difficulty, and merging them is the "shard whose stated difficulty is
+true of neither half" the entry above exists to prevent. Bounded (one extra
+accumulator per iteration; idle accumulators still age-flush at
+`upload_compact_max_age_seconds`), total ingested positions unchanged, and the
+gate's regret is games-weighted (`distributed_runtime.py:1660-1670`) so
+more/smaller shards do not bias it. Live shards already range down to 3
+positions, so nothing downstream carries a minimum-size assumption.
+
+**ADDED DEPLOY OBSERVABLE (4), to be read alongside (1)-(3) above.** Confirm the
+magnitude instead of assuming it. Over the first full post-restart hour, compare
+compacted-shard count and mean size against the pre-restart baseline
+(447 shards / 1396.7 p mean / 1441 p median over 13.06 h):
+
+```
+PYTHONPATH=. python3 -c "import glob,json; ps=glob.glob('runs/pbt2_small/server/trials/*/processed/_compacted/*.zarr/.zattrs'); ns=[json.load(open(p)).get('positions') or 0 for p in ps]; ns=[n for n in ns if n]; print('shards',len(ns),'mean',sum(ns)/len(ns),'median',sorted(ns)[len(ns)//2],'under200',sum(n<200 for n in ns))"
+```
+
+EXPECTED: shards/hour up ~15%, mean size down ~17%, and roughly one sub-200p
+shard per iteration appearing where there were none. **This is a PASS, not a
+regression** — read it as confirmation the difficulty split is live. A shard rate
+UNCHANGED from baseline means the difficulty dimension is not actually splitting
+anything, i.e. observable (1) should be re-checked before believing the
+confound column.
+
+**Also corrected (F2, docstring only, no behaviour change).**
+`_upload_identity_acc_key`'s claim that key and guard "cannot disagree" is false
+for exactly one value: the key compares by `repr()` and `_absorb_identity` by
+`!=`, which disagree on NaN (same key, unequal values ⇒ the second upload raises,
+and there is no try/except around `add_upload`, so it would surface as an HTTP
+500). Unreachable in production — `distributed_runtime.py:413` maps a non-finite
+or negative `wdl_regret` to `None` before it can reach a worker, and NaN >= 0.0
+is False. The docstring now says exactly that, and says not to close the gap by
+relaxing the assert: a NaN difficulty is a broken reading, and rejecting the
+upload is the correct outcome if one ever gets that far.
+
+**Review status (updated).** APPROVED by an independent reviewer (reviewer ≠
+author), PR #323, who reproduced all four author mutations and added a fifth
+(dropping `policy_encoding`/`policy_size` from the key goes red — the key really
+is the protection for those two, as claimed). Both findings above were theirs.
+
+#### FIX (B), audit wave 3 — the gate's internals and the shadow readout's per-AXIS rule (G3-2..G3-8, G3-11)
+
+The second of the two PRs the wave-3 routing named. (A) carries the server
+compactor (K1/G3-1) and is not touched here. **Nothing in this entry changes a
+training target, a loss, a decision threshold or the pre-registered rule
+semantics.** `gate_mode` is still `off` in the production yaml, so the gate's
+own decision path stays inert; what changes is what it will record and refuse
+when it first fires, and what the pre-committed readout says when it is run.
+
+**Hypothesis.** Every finding below is a defect in the INSTRUMENT rather than in
+the loop, so the deciding question is not "did the model improve" but "does the
+observation this instrument produces mean what its name says, and what
+observation would prove it took effect".
+
+**Yardstick (exact command), run on the live trial before the change and after:**
+
+```
+CUDA_VISIBLE_DEVICES= PYTHONPATH=. python3 scripts/gate_shadow_readout.py \
+  runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/progress.csv
+```
+
+**Pre-committed reading of it.** The exit code alone is NOT the criterion (⚑ an
+exit code is an OR over axes). SUCCESS = the per-leg table names every axis with
+its state, the attribution axis is reported as `refresh_lag` in seconds against
+the reference lag, and `confound` reads `UNMEASURED` with `n=0` — i.e. the
+command now refuses to return 0 while the PID-confound leg has no data. FAILURE
+= any axis silently absent from the table, or a bare exit 0 while
+`n_confound < 3`.
+
+**Readout, 2026-08-03, on `progress.csv` iters 439-478 (last 40):**
+
+```
+kill  rows=40 usable=40 (1.000)  games_cur=182.9 games_prev=64.7 prev_share=0.2612
+      cadence=635s expected_prev_share=0.1850 refresh_lag=166s/ref117s
+      delta mean=-2.16 sd=33.22  confound=unreported
+legs:
+  PASS       cadence                  635s = 0.88x the reference 721s, inside [0.6, 3.0]
+  PASS       anchored_games_vs_pooled cur+prev == pid_curriculum_w+d+l on 40/40 rows
+  PASS       usable_frac              1.000 >= 0.85 (40/40 rows)
+  PASS       games_per_second         0.3899 = 1.20x the reference (band 0.5-2.0)
+  FAIL       refresh_lag              165.8s vs reference 117.5s (1.41x)
+  PASS       sd_delta_elo             33.22 inside (20, 70)
+  PASS       |mean_delta_elo|         2.16 <= 15
+  PASS       window_length            40 rows >= the pre-registered 40
+  UNMEASURED confound                 n=0 of 40 usable rows carry gate_sample_confound_elo
+EXIT=2
+```
+
+VERDICT: **success by the pre-committed rule.** The exit code is unchanged at 2
+— deliberately: the leg's threshold and its fail-closed direction are exactly as
+pre-registered, and re-basing a constant to make a failing rule pass is not a fix
+that belongs in the same change as the fix to the rule's reporting.
+
+**⚑ NEW AND UNRESOLVED — the two readings of the refresh lag DISAGREE.** The
+audit read G3-2's mover as the fleet's model-refresh lag (117.5 s -> 166-194 s).
+An independent re-derivation from shard `.zattrs` — the same construction
+`OfflineReference` was originally built from, and the one this PR ships as
+`--rederive-reference` — says otherwise over the SAME trial:
+
+```
+$ ... gate_shadow_readout.py <trial>/progress.csv \
+      --rederive-reference runs/pbt2_small/server/trials/13a9f_00000/processed
+re-derived from 435 shards binned against 68 iterations; usable bins 67
+  mean_games_cur    197.9   (shipped 196.8)     prev_share        0.1802 (shipped 0.1629)
+  mean_games_prev    43.5   (shipped  38.3)     refresh_lag       112.7s (shipped 117.5s)
+  mean_iter_seconds 625.6   (shipped 721.0)     mean_delta_elo    -7.83  (shipped  -4.33)
+                                                sd_delta_elo      45.16  (shipped  45.56)
+```
+
+Total anchored volume agrees (241.4 vs the in-loop 247.6, 2.5%); the SPLIT does
+not (prev_share 0.1802 vs 0.2612). So on the shard side the lag never moved, and
+the in-loop split attributes ~45% more games to `prev` than the shard binning
+does. That is either a binning artefact of the reconstruction (shards are binned
+by `generated_at_unix` against iteration boundaries; the original reconstruction
+warned this is per-row unreliable and only claimed aggregate accuracy) or a real
+attribution difference. **It is NOT settled, and the whole point of the axis
+rename is that `progress.csv` cannot settle it**: `refresh_lag = prev_share x
+cadence` is an identity, so a moved lag and a mislabelled split are the same
+number there. The pooled-count identity passing 109/109 proves no game was LOST;
+it does not prove the labels are right, because a coin-shuffle preserves that
+sum exactly. **Pre-registered before the next reading: resolve this disagreement
+from shards BEFORE any `OfflineReference` constant moves, record both readings
+here, and never re-base the reference on `gate_sample_*` — a control conditioned
+on its own outcome cannot fail.**
+
+**What changed, by finding.** Each is mutation-checked (mutation -> the named
+test must FAIL); all 11 mutations were KILLED.
+
+- **G3-2** the attribution leg is now the `refresh_lag` axis: same comparison,
+  same 0.06 tolerance, same fail-closed direction, but named for the quantity it
+  measures, reporting both lags in seconds, and saying in the failure message
+  that it cannot distinguish a moved lag from a mis-attributed split. The readout
+  reports EVERY axis with its state (PASS/FAIL/HOLD/SKIPPED/UNMEASURED).
+- **G3-2 x K1 exit-code trap** — `readout_exit_code` gives a window with
+  `n_confound < 3` its own exit code (5) and its own message. A window with no
+  confound measurement can no longer exit 0 or 1; a KILL still outranks it.
+  `--refresh-lag-seconds` and `--rederive-reference` exist, and `--help`
+  documents the re-derivation obligation.
+- **G3-3** `degenerate_variance` tested `se <= 0.0` and missed 51.2% of stuck
+  windows (float round-trip leaves se ~1e-17, and the gate then DEMOTED on a
+  zero-width CI). Now an identical-values short-circuit plus a scale-aware floor
+  derived from the deltas' own magnitudes (`_DEGENERATE_SE_ULPS` ulps of the
+  window's scale); the audit's 40,000-window fuzz is a test and both margins are
+  pinned. ⚠ `test_a_hold_erases_its_own_evidence` was DRIVING THE ACTUATOR
+  THROUGH THIS BUG — its "sustained regression" was a constant delta — and now
+  uses the existing `_WOBBLE` fixed-spread idiom. Held fraction 66.7%, inside
+  the documented 55-66%, so the module's braking claim is unchanged.
+- **G3-4** new columns `gate_hold_effective` / `gate_fallback_missing`: "held,
+  fallback present" and "held, fallback MISSING -> published anyway" used to be
+  byte-identical in the metrics.
+- **G3-5** `anchor_refresh_failures` is persisted (restored from
+  `gate_state.json`, so the auto-resume after an ENOSPC crash no longer resets
+  the one thing standing between a stale export and the fleet), and the anchor
+  now carries a stamp (iteration / step / source sha / trial) written in the same
+  `try` as the copy. An unstamped or `> gate_max_hold_iters`-old anchor is
+  refused at startup, which closes the `off -> on` re-arming trap.
+- **G3-6** the `gate_state.json` write is catch+count+`log.error` +
+  `gate_state_write_failures`, not `contextlib.suppress(Exception)`.
+- **G3-8** the anchor refreshes only on a GENUINE promote (plus the initial
+  create and the pre-first-verdict publish). It was refreshed on NOT_RUN, on a
+  shadow-suppressed demote and on the RELEASE iteration — where it was
+  overwritten with the very weights the hold existed to keep off the fleet. New
+  consequence, and it is deliberate: the anchor can now legitimately go stale, so
+  `anchor_is_trustworthy` also refuses on AGE, reported as
+  `gate_anchor_age_iters`.
+- **G3-11** `gate_threshold` / `gate_interval` / `gate_mcts_sims` join
+  `_DEAD_CONFIG_KEY_INERT_VALUES` at the values the production yaml ships
+  (0.50 / 1 / 1), so a non-inert value is refused at startup instead of starting
+  a run and doing nothing. This forced the shared dead-key predicate to become
+  type-aware — `bool(5) == bool(1)`, so truthiness could not see the value it
+  exists to refuse — and `scripts/audit_realized_config.py` now imports that one
+  predicate instead of re-deriving it. The three keys left
+  `_LIVE_RELOAD_SKIPPED_KEYS`: dead and restart-required are disjoint classes,
+  and a restart REFUSES a dead key rather than applying it.
+
+**Production-visible effects at the next restart, both expected:** (1) four new
+`gate_*` report keys ROTATE `progress.csv` (G3-12, same mechanism as the 11
+`probe_*` keys); (2) `reject_dead_config_keys` now refuses a non-inert
+`gate_interval`/`gate_threshold`/`gate_mcts_sims` — the shipped yaml's values are
+the inert ones and `reject_dead_config_keys(flat_yaml)` is asserted to pass on
+`configs/pbt2_small.yaml` by a test, so the live config starts.
+
+**Not in scope, deliberately:** G3-1/K1 (PR A); G3-7 (the restart's degenerate
+`cur=0` row — costs one dead row per restart, no fix attempted); G3-9 (TOCTOU,
+PLAUSIBLE, unreproduced); G3-10 (`gate.holds` not reset when `create()` releases
+an anchorless hold — one line, but a behaviour change nobody asked for).
+
+##### CORRECTION, 2026-08-03 (PR #324 review round) — RETRACTING "on the shard side the lag never moved"
+
+The entry above is left as written; this paragraph corrects it. **The sentence
+"on the shard side the lag never moved, and the in-loop split attributes ~45%
+more games to `prev` than the shard binning does" is WITHDRAWN as unsupported,
+and so is every number in the `--rederive-reference` block it summarises.** The
+reviewer of PR #324 showed that the reconstruction's `prev_share` is not a
+measurement at all: shifting the iteration bin edges by a quarter of an
+iteration — an alignment the reconstruction has no way to pin — moved it from
+0.1771 to 0.4275 with the shard set and its internal structure unchanged. The
+disagreement the sentence adjudicated (0.1802 shard vs 0.2612 in-loop) is
+strictly inside the reconstruction's own phase uncertainty, so it read a
+choice of bin edge as a finding. ⚑ This is the [A STEP IS NOT A RAMP]
+failure in a new costume: a number that reproduces is not thereby a
+measurement, and here it reproduces only because the same arbitrary phase was
+used twice.
+
+`--rederive-reference` now sweeps the bin-edge phase over
+`[-0.5, -0.25, 0, +0.25, +0.5]` of an iteration, reports every field as a BAND,
+and REFUSES to emit an `OfflineReference` body when `prev_share`'s band exceeds
+the attribution leg's own 0.06 tolerance — with its own exit code (7), because
+a refusal that exits 0 is a silent accept for anything that captures the output.
+Real output on the live trial, 2026-08-03, post-fix:
+
+```
+$ CUDA_VISIBLE_DEVICES= PYTHONPATH=. python3 scripts/gate_shadow_readout.py \
+    runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/progress.csv \
+    --rederive-reference runs/pbt2_small/server/trials/13a9f_00000/processed
+re-derived from 430 shards ... binned against 68 iterations
+  subtrees read: EXCLUDED _quarantine=5, _compacted=430
+  usable bins (both arms non-empty): 67 at zero shift
+
+  usable bins per shift (a shift below 50% of the best is DEGENERATE and does not set the band):
+    -0.50: 67  -0.25: 67  +0.00: 67  +0.25: 13 DEGENERATE  +0.50: 66
+
+  field                point estimate   shipped     phase band (4 non-degenerate of the bin-edge shifts [-0.5, -0.25, 0.0, 0.25, 0.5] of an iteration)
+  mean_games_cur              197.9       196.8   [79.4, 197.9]
+  mean_games_prev              43.5        38.3   [43.5, 156.7]
+  prev_share                 0.1802      0.1629   [0.1802, 0.6638]  <-- UNRESOLVED, spans the leg's own tolerance
+  mean_iter_seconds           625.6       721.0   [625.6, 665.7]
+  refresh_lag                 112.7       117.5   [112.7, 441.9]
+  mean_delta_elo              -7.83       -4.33   [-7.83, -0.81]
+  sd_delta_elo                45.16       45.56   [35.01, 45.16]
+
+OfflineReference body these imply:
+    REFUSED: prev_share is phase-unstable over the bin-edge sweep
+    (0.1802..0.6638, spread 0.4836 > the leg's own 0.06 tolerance, over 4
+    non-degenerate shifts).
+    ...
+    RE-RUNNING THIS COMMAND CANNOT RESOLVE IT. The free phase is a property of
+    the input -- shards carry the compactor's flush stamp, the loop attributes
+    at INGEST -- so every fleet whose refresh lag is a real fraction of an
+    iteration reads as unstable here. The resolution is to attribute shards at
+    the loop's own INGEST event and re-derive from THAT.
+EXIT=7
+```
+
+⚠ **Two things in the block above were wrong in the first draft of this
+correction and are fixed here rather than left to be re-derived** (PR #324
+review round 2):
+
+1. **The band was banked off a COLLAPSED shift.** The quoted `prev_share` upper
+   bound 0.8232 came from the `+0.25` shift, where only 13 of 68 bins still hold
+   two models — that shift measures the binning falling apart, not the split. A
+   shift keeping under half the best shift's usable bins is now excluded from
+   the band and printed as `DEGENERATE`, and the per-shift counts are printed so
+   no future endpoint can be banked without its n. The verdict is unchanged: the
+   four surviving shifts still span 0.1802-0.6638, **eight times** the leg's
+   tolerance. The exclusion is by SAMPLE SIZE, never by the value — filtering on
+   the share itself would condition the control on its own outcome — and because
+   narrowing a band can only move a verdict toward "stable", a sweep with fewer
+   than three surviving shifts now refuses on that ground alone.
+2. **`mean_iter_seconds` is NOT phase-invariant, and the first draft's claim
+   that its spread was "exactly 0.0" was false.** The seconds come from
+   `progress.csv`, but the MEAN is taken over the USABLE bins, and usability is
+   exactly what the phase moves — the real band is [625.6, 665.7] (and was
+   [625.6, 906.8] before the degenerate shift was excluded). The test pinning the
+   claim used a synthetic fleet where every bin is usable at every shift, so it
+   confirmed its own premise; it now uses a fleet whose usability varies with the
+   shift and asserts the spread is NOT zero. **Nothing this reconstruction
+   produces is phase-invariant.**
+
+**`mean_iter_seconds` 625.6 s vs the shipped 721.0 s still stands, on a
+different instrument:** the readout's own `cadence` leg averages
+`time_this_iter_s` over the csv rows and never bins a shard, and it reads 635 s
+= 0.88x the reference over the last 40 iterations. That is the independent
+support; the reconstruction's 625.6 is consistent with it but is not itself
+evidence. The shard count fell 435 -> 430 because `read_shard_arms` now EXCLUDES
+`_quarantine/` — those 5 shards (136 curriculum games) are ones the loop
+REJECTED and never counted, so including them made the "independent
+reconstruction" a mixture of what the loop used and what it threw away.
+
+**The pre-registered next step is therefore unchanged in obligation and changed
+in method:** the `refresh_lag` FAIL still may not be read as an attribution
+failure, and `OfflineReference` still may not move — but the resolution now
+requires attributing shards at the loop's INGEST event rather than at the
+server's flush stamp. ⚑ **RE-RUNNING `--rederive-reference` LATER CANNOT
+PRODUCE CONSTANTS.** The free phase is a property of the input, not of this
+window: any fleet whose refresh lag is a real fraction of an iteration reads as
+unstable here, so the refusal is STRUCTURAL and no amount of waiting for a
+cleaner window changes it. Until a reconstruction that attributes at INGEST
+exists, there is NO shard-side reading of the lag, in either direction. The
+in-loop 0.2612 is the only measurement on the table, and it cannot separate a
+moved lag from a mis-attributed split by itself — which is exactly why the leg
+is named for the quantity and reports both readings.
+
+Also corrected: the mutation count in the entry above ("all 11 mutations were
+KILLED") was wrong at the time of writing — round 1 ran and killed 12 (M1-M12),
+independently re-killed by the reviewer. The review round adds M13-M18, all
+KILLED, for 18 total; the test each mutation is killed by is in the PR #324
+body. One of those rows was also wrong: M7 as first written renamed the leg key
+AND its message, and the test it was credited to
+(`test_the_attribution_axis_names_the_refresh_lag_and_reports_both`) reads the
+MESSAGE — a key-only rename passes it. The mutation is killed by
+`test_the_readout_reports_every_axis_state_not_only_the_failures`, which is the
+test that asserts the axis NAME, and M7 is now run as the key-only rename.
+
+And the readout block quoted in the entry above was reformatted for width, which
+dropped the `FAILED:` clause from the header line and truncated three leg
+details. ⚑ BANK THE DUMP. The verbatim output, same command, 2026-08-03:
+
+```
+kill  rows=40 usable=40 (1.000)  games_cur=182.9 games_prev=64.7 prev_share=0.2612  cadence=635s expected_prev_share=0.1850 refresh_lag=166s/ref117s  delta mean=-2.16 sd=33.22  confound=unreported  FAILED: refresh_lag 165.8s vs reference 117.5s (1.41x): prev_share 0.2612 vs expected 0.1850 +/-0.06 -- a fleet whose model-refresh lag MOVED and a split that mis-attributes shards are the same number here; check the anchored_games_vs_pooled leg above and re-derive the reference from shards (gate_shadow_readout.py --rederive-reference) before reading this as an attribution failure
+legs:
+  PASS       cadence                  635s = 0.88x the reference 721s, inside [0.6, 3.0]
+  PASS       anchored_games_vs_pooled cur+prev == pid_curriculum_w+d+l on 40/40 rows
+  PASS       usable_frac              1.000 >= 0.85 (40/40 rows)
+  PASS       games_per_second         0.3899 = 1.20x the reference 0.3261 (band 0.5-2.0)
+  FAIL       refresh_lag              refresh_lag 165.8s vs reference 117.5s (1.41x): prev_share 0.2612 vs expected 0.1850 +/-0.06 -- a fleet whose model-refresh lag MOVED and a split that mis-attributes shards are the same number here; check the anchored_games_vs_pooled leg above and re-derive the reference from shards (gate_shadow_readout.py --rederive-reference) before reading this as an attribution failure
+  PASS       sd_delta_elo             33.22 inside (20, 70)
+  PASS       |mean_delta_elo|         2.16 <= 15
+  PASS       window_length            40 rows >= the pre-registered 40
+  UNMEASURED confound                 n=0 of 40 usable rows carry gate_sample_confound_elo -- the PID-confound leg, which the ledger pre-registered as the deciding KILL rule for enabling this gate, has NO measurement. Do not read a promote off this window
+EXIT=2
+```
+
+The pre-committed reading is unchanged and still SUCCESS: every axis prints with
+its state, the attribution axis is `refresh_lag` in seconds against the
+reference lag, `confound` reads `UNMEASURED` with `n=0`, and the command refuses
+to return 0 while it does.
+
+## 2026-08-03 — B6/B7/B1 + K5 of the wave-3/4 audit: a wedged inference slot is evicted and stops reading as throughput, walker virtual loss is released when the evaluator raises, and the shared broker refuses a transport it cannot serve
+
+**Not an experiment.** No config key, no loss weight, no target semantics, no
+change to a single training row on the current settings. Two of the four items
+are on the production selfplay path but neither alters what is computed when
+nothing fails; the third is behind a flag that is OFF; the fourth is a guard.
+Recorded here because three of them are the house signature defect — a value
+accepted and then silently ignored — and because B7 changes what a *failed*
+search leaves behind, which is a real state change to a persistent object.
+
+Source: `scratchpad/code_audit_20260803/SHARED_BROKER_AUDIT.md` (B1, B6, B7) and
+`WORKER_AUDIT.md` (K5), CPU-only repros, plus three reviewer follow-ups the #321
+and #322 merges left in COVERAGE.md's deferred table (task #137).
+
+**B6 — a dead slot was handed out forever, and its failures were counted as
+served throughput. PRODUCTION-REACHABLE.** Production builds
+`MultiSlotInferenceClient` at 4 slots per worker
+(`distributed_inference_slots_per_worker: 4`) with `request_timeout_s`
+defaulted to 30 s. `_release_client` ran from a `finally` and did two
+unconditional things: put the slot straight back on the availability queue, and
+increment `lifetime_requests`/`lifetime_positions`/`slot_requests[idx]` — for a
+request that raised. Measured with 3 live slots and 1 whose shared memory never
+exists (`sb_multislot_wedge_accounting.py`), 12 requests of 2 rows:
+
+```
+12 sequential requests: 9 ok, 3 failed, wall=2.45s
+per-slot request counts   : [3, 3, 3, 3]
+per-slot total roundtrip_s: [0.02, 0.0, 0.0, 2.43]
+stats['lifetime_requests']  = 12   (actually served: 9)
+stats['lifetime_positions'] = 24  (actually evaluated: 18)
+stats keys naming errors/failures/timeouts: []
+```
+
+⚑ **The severity is diagnosis, not correctness.** The failing request does
+raise and `worker.py` resets the client. What was broken is that the ONLY
+production surface — the 60-second `broker client stats:` line — read exactly
+one per-slot array, `slot_requests`, in which the dead slot is `3` like every
+healthy one. `slot_roundtrip_s` carried the 100× separation that identifies the
+wedge instantly; it was computed, exported in `stats`, and **read by nothing**.
+Meanwhile `pos_s` and `rows_per_req` came from `lifetime_positions`, so a broker
+stall printed full throughput for rows no model ever saw.
+
+Now: per-slot consecutive-failure tracking with quarantine after N (default 2)
+consecutive failures, re-probed on an exponential backoff (5 s doubling to 60 s,
+reset by any success) — **a probe, not an execution**, because a transient stall
+must not permanently shrink the worker's capacity. `lifetime_positions` and
+`lifetime_legal_*` count only rows a model evaluated; `lifetime_requests` stays
+ATTEMPTS and `lifetime_served_requests`/`lifetime_failed_requests` split it, so
+every key means what its name says. The worker's line now reads `slot_served`
+(so `slots_active` can read 3/4), prints `slot_rt_ms_max` always, and prints
+`failed_req=` / `slots_quarantined=` only when non-zero — same rule as
+`stale_responses_rejected`, so the healthy line is unchanged and any hit is a
+grep result.
+
+⚑ **The early return is NOT a blind spot, and an earlier draft of this entry
+said it was.** `delta_requests` counts ATTEMPTS, so a window in which every
+request failed still reaches the log; the gate is unchanged from main. What is
+true is narrower: once served/failed exist as separate counters, the obvious
+refactor is to key the gate on `delta_served`, and THAT would go silent for
+exactly the stall the line exists to show. So the gate is left alone and
+`test_a_window_where_every_request_failed_still_logs` pins it against that
+refactor. The first draft shipped a defensive `or delta_failed > 0` clause which
+the reviewer showed was provably inert (reverting it passes all five tests); the
+clause is removed and the claim corrected here.
+
+**B7 — virtual loss leaked permanently whenever the evaluator raised.
+PRODUCTION-REACHABLE on the UCI/arena (ruler) path.** The pairing is split
+across two C calls with a network call in between:
+
+```
+_, path, legal, term_q = tree.walker_descend_puct(...)   # APPLIES vloss
+pol, wdl = evaluator.evaluate_encoded(xs)                # <-- can raise
+tree.walker_integrate_leaf(path, legal, ...)             # REMOVES vloss
+```
+
+`WalkerPool._descend_until_done` had no `try/finally` around that span.
+`tree.remove_vloss_path` existed, was exported, and was **called from nowhere in
+`chess_anti_engine/`**. The tree is caller-owned and outlives the failed run
+(`SearchWorker._tree` persists across chunks and plies — the warm-tree reuse
+PLAY_PATH F1 documents), so the leak biased selection away from those subtrees
+for the rest of the game, invisibly, since nothing reads virtual loss back out.
+The raising evaluator is the documented one: this path calls a broker client and
+`TimeoutError` is I1's own failure mode. Banked, `sb_cwalk_vloss_leak_on_eval_error.py`:
+
+```
+--- control: evaluator never fails -> vloss must return to zero ---
+  leaked virtual loss: total=0 over 0 nodes   (expect 0 / 0)
+--- evaluator raises TimeoutError after the first few batches ---
+  [0..4] leaked: 48 / 32 / 16 / 16 / 16     (re-run: 48, 8, 8, 16, 8)
+```
+
+⚑ **Three is not the total — the Gumbel C path is a FOURTH instance, already
+mitigated by a different strategy.** `MCTSTree_start_gumbel_sims` memsets the
+whole `virtual_loss` array at the start of every search when `vloss_weight > 0`,
+and its own comment names this exact hazard ("a search ABANDONED between start
+and the final continue ... leaves its penalties behind"). A leak there is
+therefore cleared by the NEXT search on that tree rather than at the point of
+failure. **That strategy is not available to the three sites fixed here**:
+WalkerPool and MultiGpuPucvPool run N threads against ONE shared tree, so a
+blanket memset would wipe a concurrent walker's in-flight vloss — which is why
+those need the targeted per-path release. Recorded so "all three sites" is never
+later read as "three is the total".
+
+Fixed at **all three** unmitigated sites with the same shape, not only the
+reproduced one:
+`WalkerPool._descend_until_done`, `PucvChunker.run` (audit called this PLAUSIBLE
+and never ran it — it is now reproduced and fixed), and
+`MultiGpuPucvPool._pipeline_until_done`. The release lives in one place,
+`chess_anti_engine/mcts/vloss.py`, which is the first caller of
+`remove_vloss_path` in the package. After: **0 leaked on 5/5 failed runs, and
+0 on the clean control** — the control is load-bearing, because a cleanup that
+fired unconditionally would also read as "no leak" while corrupting a healthy
+search. Only the UN-integrated tail is released; `walker_integrate_leaf` removes
+vloss for what it consumes, and releasing twice would push a concurrent walker's
+in-flight count down past the C floor at 0.
+
+**B1 — the shared broker served DENSE_F32 to every request regardless of mode.
+LATENT (flag OFF), and the fix is a refusal, not an implementation.**
+`SharedSlotBroker._process_parallel` never read `slot.request_mode`. Because
+`_InferenceSlot` aliases the regions (`input`/`input_bf16_bits` share
+`input_offset`; `policy`/`policy_i32`/`policy_u16` share `policy_offset`), a
+bf16-bits payload was read as float32, the model ran on garbage, and the client
+decoded a dense f32 answer as bf16 — measured as an in-range plausible WDL and a
+policy of alternating `3.85e-13` / `0.488` where every entry should have been
+`~0.51`. No exception, no counter, no log line. **Both production transports
+send modes with no dispatch here** (`MultiSlotInferenceClient` hardcodes
+`supports_compact_root_policy` and `supports_input_bf16_bits` to True), so the
+only mode that worked is the one no production client sends — and every existing
+shared-broker test set `request_mode = _MODE_DENSE_F32`, i.e. the only working
+mode was the only tested one.
+
+⚑ **Deliberately NOT implementing the other two modes.** The shared broker is
+OFF (`distributed_inference_shared_broker: false`, yaml:862) and the per-trial
+`SlotBroker` implements all three. Adding untested dispatch to a dead path buys
+nothing; converting silent corruption into the existing release-for-retry path
+(→ loud client-side `TimeoutError`) buys the whole finding. The refusal releases
+only the offending slots (a mixed batch still serves its dense clients), logs
+throttled at 30 s for the same reason the no-model branch is, and increments
+`unsupported_mode_requests` — the count is NOT throttled, because a refusal
+nobody can count is indistinguishable from one that never fires.
+
+⚑ **That counter initially had NO reader — the signature defect inside the fix
+for the signature defect** (reviewer finding). It is now appended to the shared
+broker's own 10-second serve-loop report, non-zero only. That is the only
+process that can read it: it lives on `SharedSlotBroker`, so the worker's
+`broker client stats:` line is a different process entirely and cannot. Fixing
+that exposed a second instance in the same line — `_total_positions` is summed
+BEFORE `_process_parallel`, so refused rows counted as served pos/s, which is
+B6(c) verbatim in the sibling path. `_process_parallel` now returns the refused
+ROW count and the serve loop subtracts it.
+
+⚑ **THE B6(c) FAMILY IS OPEN, NOT CLOSED — there is a THIRD instance, in the
+PRODUCTION broker, and it is deliberately NOT fixed here.**
+`SlotBroker.serve_forever:2662-2663` adds `sum(s.batch_size for s in ready)` to
+`metrics["positions"]` BEFORE calling `_process_batch`, which releases slots
+unanswered on three paths — `BrokerModelUnavailable` (`:2054`), a generic batch
+failure (`:2073`), and malformed legal metadata (`:2254`) — so the per-trial
+broker's own positions metric counts rows it declined to evaluate, exactly like
+the two instances above. Pre-existing, untouched by this PR, and left alone
+because it is the live production broker and this PR's readout window is already
+spoken for; **tracked as coordinator task #142 for the next inference-adjacent
+PR.** Recorded so the paragraph above is never read as "the family is closed":
+the pattern is a serve loop that counts work at DISPATCH time and a callee that
+can decline it, and this repo now has three known instances of it.
+
+**K5 — the third plane-count leg.** `_check_manifest_compat` validated the
+manifest against ITSELF; #321 added client-vs-manifest at the chokepoint a
+production selfplay worker actually reaches. The CLI arg
+`--inference-slot-input-planes` (argparse default 146 = v1, production 175) was
+still in no comparison. Its value comes from `config["input_extra_features"]`
+(`distributed_runtime.py:890`) while the manifest's comes from
+`model_cfg.input_extra_features` (`:384`) — two sources of truth nothing
+compared. Now all three must agree, client leg first (its message names the
+width the segment was actually built with), and the CLI leg is inert when no
+slot name is configured so a local-inference worker is not killed for a flag
+that sizes nothing.
+
+**Task #137 follow-ups, all three taken.**
+
+- ⚑ **`test_both_slot_prefix_derivations_agree` was a THIRD copy of the
+  formula.** It re-derived `cae{V}-{h:08x}` by hand, so sabotaging either
+  implementation left it green — the exact failure mode the test was written to
+  prevent. There is now ONE derivation, `inference.trial_slot_prefix()`;
+  `distributed_runtime._trial_slot_prefix` and
+  `SharedSlotBroker._register_new_trial` both delegate; and the test calls the
+  REAL `_register_new_trial` and reads the segment names it actually created. A
+  second test performs the sabotage and requires the launcher side to follow.
+- **CORRECTION to the #321 entry above.** It states the plane-count guard covers
+  "all 7 evaluator-sourced call sites". That was **7 of the 8** — `puct_c.py`'s
+  LEAF in-place branch (`get_input_buffer` → `batch_encode`, directly below the
+  guarded ROOT branch) had no guard. It has one now, and a test reaches it via a
+  wide-root/narrow-leaf evaluator, since the root check would otherwise fire
+  first.
+- **F1's last rung.** `_run` computed `expect_planes` from the same
+  `input_extra_features` it passed to the encoders, so pinning that argument at
+  the top of `_run` moved the expectation with it and every test stayed green —
+  an expectation derived from the value under test. `run()` now computes it and
+  passes it down, and the test performs that exact mutation and requires a
+  Failure.
+
+**Deploy.** Nothing here is live until a restart, and nothing here needs one
+urgently: on a healthy fleet every change is a no-op. B7's behaviour differs only
+after an evaluator raises; B6's counters differ only after a request fails; B1 is
+unreachable at the current flag; K5 fires only on a skew that would already be
+returning all-zero policy/WDL. The one operator-visible change on a healthy run
+is the new always-on `slot_rt_ms_max=` field in `broker client stats:`.
+
+**No yardstick, no kill rule, because there is no hypothesis** — this is
+remediation of measured defects, and each one's proof is its repro going from
+red to green plus a mutation that turns the new test red. Mutation results are in
+the PR body.
+
+⚑ **METHOD, from the mutation sweep — an end-state total cannot detect a
+floored double-decrement.** 22 mutations were run; 21 died immediately and one
+SURVIVED: "release the WHOLE batch instead of the un-integrated tail".
+`remove_vloss_path` floors at 0, so releasing a path whose vloss
+`walker_integrate_leaf` had ALREADY removed still ends at 0 on an idle tree —
+every assertion of the form "sum the virtual loss afterwards and require 0"
+passes under the defect. It is not harmless: the decrement lands on shared
+ancestors and steals a CONCURRENT walker's in-flight vloss, biasing selection
+back toward the subtree everyone is already in, which is exactly the state
+virtual loss exists to prevent. The test now counts the release CALLS
+(`released N paths for M un-integrated leaves`) instead of summing the result,
+and the mutation dies. **Generalise: when the quantity under test is clamped,
+the clamp is a censoring instrument — measure the operation, not the residue.**
+
+⚑ **CORRECTION to B6(a) above, made before the PR was reviewed.** The entry
+(and the audit) describe the wedged slot as costing "every fourth request a
+30 s stall, forever". Tracing the escape path shows that is bounded in
+production by something else: `play_batch` has NO exception handling, so a
+broker `TimeoutError` propagates out of `_dispatch_selfplay_one_shard` and
+`_reset_inference_client` nulls and rebuilds the entire client. **In a
+sequential shape the reset fires before a second strike and the new quarantine
+never engages.** What it does cover is the concurrent shape — 32 selfplay
+threads against 4 slots, so many requests are in flight when a slot wedges and
+several fail before the unwind reaches the reset. The eviction is kept because
+it costs nothing on a healthy run and the forever-wedge returns the moment any
+future call site swallows a per-request failure, but **the eviction is not what
+makes B6 worth fixing: the accounting and the visibility are.** That matches the
+audit's own severity ("not a correctness bug ... it is a diagnosis bug"), which
+this entry had drifted away from while describing the fix.
+
+⚑ **SEMANTIC DRIFT in two existing metrics, and one counter that is not
+cumulative.** Splitting served from attempted moved denominators without
+renaming the fields, so a reader comparing a `broker client stats:` line across
+this deploy is comparing two definitions:
+
+- `slot_req_skew` and `slots_active` now denominate on **served** requests
+  (`slot_served`), not attempts. That is the point — a wedged slot taking
+  attempts and serving nothing used to read as active — but a skew value from
+  before the restart is not comparable to one after it.
+- `avg_rows_per_request` / `rows_per_req` now divide by **served** requests, so
+  the value rises slightly on any window that contained failures. It was
+  previously deflated by counting attempts in the denominator and (separately)
+  inflated by counting unserved rows in the numerator.
+- `failed_req_total` is per-CLIENT-OBJECT, not per-session: `_reset_inference_client`
+  nulls and rebuilds the client, so the total restarts at 0 on every broker
+  recovery. Read the `+N` delta, not the total, when judging how bad a stall was.
+
+⚑ **DISCLOSURE — this entry was amended in place after its independent review
+(#325 comment 5172094351, verdict CONFIRM with five non-blocking findings), on
+the #324 precedent that a PR's own not-yet-merged append may be corrected rather
+than appended to.** What changed, so the diff is not the only record: the
+early-return claim above was WRONG and is rewritten (the reviewer proved the
+clause it described was inert); the B1 refusal counter is no longer described as
+observable-in-principle because it now has an actual reader; the Gumbel fourth
+instance was added; the mutation count 21 -> 22; this drift note is new. A
+later amendment (delta re-review, comment 5172343930) added the third-instance
+paragraph naming `SlotBroker.serve_forever:2662` and task #142 — docs only, no
+code or test changed with it. The
+B6(a) scope correction further up was made BEFORE review, by me, and is
+unrelated to these findings. Nothing measured changed — no number in this entry
+was re-derived, and none moved.
+
+## DETECTOR 2026-08-03 — the SF label's VALUE half gets an instrument (audit wave 3, SELFPLAY_AUDIT P2), and the health line stops counting failures as labels (P9)
+
+**Not an experiment. No training-affecting knob moves.** Four new observation
+columns, one new live-log field, one corrected denominator. `git diff origin/main`
+touches no config, no loss weight and no target. Recorded here because the ledger
+is where a reading's provenance lives and because two of the numbers below are
+baselines that later readers will quote.
+
+### The defect (P2)
+
+`sf_wdl` carries realized `sf_wdl_frac` **0.45** of the trained value target
+(`docs/model_heads.md`; realized 0.45 in 478/478 iterations, floor-pinned).
+Until today it had **no detector in either direction.** The always-on desync
+tripwire — `_report_sf_label_health`'s `no_legal_pv` live, and
+`TrainMetrics.sf_labelled_no_multipv_frac` in-loop — reads the presence of
+`sf_multipv_raw`, which is the POLICY half of the label block.
+`_attach_sf_target_to_record:773` attaches `sf_wdl` from `res.cp`
+**unconditionally**, before and independently of that stamp.
+
+Measured on the 122 shards the 2026-08-01 quarantine removed (226,141 rows,
+**209,259** labelled, i.e. carrying `has_sf_wdl` — the policy detector's own
+denominator): of the **43,413** rows the policy tripwire flagged, **43,413
+(0.9999 of the 43,417 that carry `sf_label_meta`) still carried
+`has_sf_wdl = 1`**, and **0 of them were malformed.**
+
+### What the detector sees
+
+**`sf_eval_pv_orphan_frac` (the one with power).** A labelled row is ORPHANED
+when the record-level SF eval that became its `sf_wdl` does not match the top
+surviving MultiPV line. On a healthy row those two stored numbers are the same
+number **by construction**, not by empirical agreement: `res.cp`/`res.mate` are
+`_SearchInfoAccumulator.cp_pv1`/`mate_pv1` (`stockfish/uci.py:169-179, 195-196`),
+and the same accumulator files the rank-1 line into `res.pvs[0]`. They differ
+when rank 1's line was dropped by `_collect_sparse_pv_rows` — i.e. the score
+that became the value label belongs to a move that is not playable in the
+queried position.
+
+⚑ **The prose above is stronger than the code enforces, so state the gap.** The
+drop test is `a < 0 or a not in legal_set`, so UNMAPPABLE is a second route
+beside illegal. And `cp_pv1` is updated by ANY `multipv 1` line carrying a
+score while `pvs[1]` is written only by lines that also carry a `pv` token
+(`uci.py:162-179`), so a scored rank-1 line with no PV — or no rank-1 PV line
+at all, leaving `pvs[0]` as rank 2 — would split the pair with no drop
+involved. Real Stockfish ships `pv` on every scored MultiPV line and this was
+**never observed**: 0 orphans over the 474,278 labelled rows of the pre-episode
+range. Unobserved, not impossible.
+
+⚑ **Its population is DISJOINT from the policy detector's numerator.** That one
+counts rows with NO MultiPV block; this one is only computable on rows that HAVE
+one. It is the first instrument that looks INSIDE the set the policy detector
+passes — the ~41 % desync pass-through `sf_multipv_presence_counts`' docstring
+has priced since PR #302 and nothing measured.
+
+⚑ **THE TABLE BELOW WAS CORRECTED IN PLACE — see "Corrected numbers" at the
+end of this entry.** Every rate here is now produced by the SHIPPED
+`sf_eval_pv_orphan_flags`, over `has_sf_wdl` rows.
+
+| population | labelled | policy `no_pv` | value `orphan` / `checked` |
+|---|---|---|---|
+| 122 quarantined shards | 209,259 | 43,413 → 0.207461 | 19,468 / 165,846 → **0.117386** |
+| post-quarantine window | 1,264,058 | 252 → 0.000199 | 210 / 1,263,806 → 0.000166 |
+| its 640 policy-clean shards | 1,128,248 | 0 → 0.000000 | 34 / 1,128,248 → 3.0e-5 |
+| pre-episode ids 33118:33387 | 474,278 | 0 → **0.000000** | 0 / 474,278 → **0.000000** |
+
+Combined with `no_legal_pv` it flags **62,881 of 209,259 labelled rows =
+0.300494** on the quarantined set against **0.207461** for the policy half alone
+— **+44.8 % more rows detected**, and **~85 %** of the ~0.352 true poisoned
+share the module's own ~0.59 pass-through calibration implies, against ~59 %
+before. The two counts are disjoint by construction AND observed disjoint
+(intersection exactly 0), which is what licenses adding them. That the two
+independent routes agree on ~0.59 is a check on the calibration, not a new
+estimate of it.
+
+**`sf_wdl_degenerate_frac`.** `sf_wdl` present but not a usable distribution
+(non-finite / out of [0,1] / not summing to 1 / exactly uniform). Reported
+because it is the check the audit named, and its verdict is **it has no power
+against desync whatsoever**: exactly 0 rows on the quarantined shards AND
+exactly 0 on the post-quarantine window, 1.47 M rows in total. A desynced engine
+returns a genuine search of another position, so its cp is an ordinary number
+and the logistic maps it to an ordinary distribution. **The label is well-formed
+and wrong.** Kept as a producer/parameter tripwire with a floor proven over
+1.47 M rows; do not read a 0.0 here as evidence about desync.
+
+**`sf_wdl_orphaned_frac`.** The blind spot itself, counted: policy-flagged rows
+carrying a well-formed value label. A near-twin of `sf_labelled_no_multipv_frac`
+by design (0.9999 on the quarantined set). Its value is that the audit's claim
+becomes machine-checked instead of documented — equality means every flagged row
+carries an unmarked value label, and a divergence is worth knowing the moment it
+appears. **Never sum it with the policy rate; they count the same rows.**
+
+### The measured clean baseline, and its provenance
+
+**Floor: exactly 0.000000, and structurally so** for the reason in the second
+paragraph above. The two numbers a later reader should quote:
+
+* **`sf_eval_pv_orphan_frac` = 0.000000 exactly**, over **270 shards /
+  475,713 rows (474,278 labelled)** of the **pre-episode range 33118:33387** —
+  every id strictly below the first quarantined id (33388). Read **through the
+  production path** (`scripts/sf_no_multipv_probe.py`, shard →
+  `_prepare_host_arrays` → collate → `compute_loss` → `TrainMetrics`), not off
+  a side scan. On the live 4096-row report window this is 115/115 windows at
+  exactly 0.
+* **3.0e-5** over the **640 policy-clean post-quarantine shards** (1,136,262
+  rows, **1,128,248 labelled**) — **34 rows in 25 shards, and this is RESIDUE,
+  not a background.**
+
+⚑ **PROVENANCE, STATED BECAUSE THE LAST DETECTOR'S BASELINE WAS CONTAMINATED**
+(PR #304's "clean 0.0008"). The 3.0e-5 is not quoted as the floor, and the
+0.000000 is derived from shards written BEFORE the episode rather than from a
+set selected by the policy gate — which is the mistake #304 had to retract.
+Two independent arguments that the 34 rows are burst-edge residue:
+
+* **Position.** All 25 flagged shard ids (33461–33713) lie inside the episode's
+  id span; the pre-episode 270 shards contain zero. Distance to the nearest
+  quarantined id: observed median **25** against **49.7 ± 15.0** for a uniform
+  draw of 25 from the same policy-clean pool, 2000 draws, **p = 0.0145**.
+  (An independent reviewer's re-run at another seed reads 50.4 ± 14.8,
+  p = 0.0155 — the same statistic, and the seed sensitivity is the honest
+  width of this leg.)
+* **Direction.** **34 of 34** run in the eval-better-than-best-surviving-line
+  direction the dropped-rank-1 mechanism predicts. A benign stale-score artifact
+  would be sign-symmetric; one-sided 34/34 is p = 2⁻³⁴. Across the WHOLE
+  post-quarantine arm the same test reads **208 better / 0 worse** of 210
+  orphans (the 2 remainder are mate-vs-mate pairs that tie under the
+  effective-cp proxy, not counter-examples).
+
+The p = 0.0145 alone would be weak. The structural argument is the load-bearing
+one and the two statistics agree with it.
+
+### What it structurally CANNOT see — stated, because P2 exists precisely because the last detector's blind spot was not
+
+1. **A desynced search whose rank-1 move is coincidentally legal here** keeps a
+   matching pair and passes. Same coincidental-legality escape the policy half
+   has; this does not remove it, it narrows it. Note also that the drop test is
+   `a < 0 or a not in legal_set`, so UNMAPPABLE is a second route beside
+   illegal, and a scored rank-1 line that carried no `pv` token would split the
+   pair with no drop at all — never observed over 474,278 clean labelled rows,
+   but unobserved is not impossible.
+2. **A (cp, mate) TIE between rank 1 and the top surviving line** passes. The
+   19,468 flagged rows are 0.0930 of the quarantined labelled rows against a
+   pass-through share of ~0.144, so the detector catches **~65 %** of the
+   population it can see.
+3. **Rows with no MultiPV block at all are not counted here.** They are the
+   policy detector's numerator. The two rates must be read together and never
+   summed onto a shared denominator.
+4. **It says nothing about whether the eval was RIGHT** — only about whether its
+   own PV survived. A correctly-attached but badly-searched label is invisible
+   to it, as it is to everything else in the loop.
+5. **`sf_wdl_degenerate_frac` is not a desync detector** (see above), and the
+   `_emit_sf_refute_opp_record` site reports `eval_pv_checked = 0`, i.e.
+   UNMEASURED, because it stamps no sparse block. Inert in production
+   (`sf_refute_record_opp_rows` false); if that row type ever ships it needs its
+   own instrumentation, not a borrowed one.
+6. **The offline quarantine GATE is unchanged.** `eval/value_optimism.py` gains
+   no axis in this PR and `SF_MULTIPV_MISS_MAX` does not move. Decision, not a
+   deferral: adding a third gate axis changes which shards get quarantined,
+   which is data-affecting and needs its own pre-registered readout. The numbers
+   above are banked here so that change can be written without re-measuring.
+7. **The RATE alert in `scripts/loop_health.py` is NOT armed**, only the
+   BLINDNESS alert. Same reason as the policy twin: with 34 residue rows still
+   in the window the rate fires on arrival and gets muted. Promotion trigger,
+   train row only: arm it once a live row reads `sf_eval_pv_orphan_frac == 0.0`
+   with `sf_eval_pv_checked_frac` at its production level.
+
+   ⚑ The BLINDNESS alert IS armed on **both arms** — train and holdout —
+   matching the policy half. First draft armed only the train arm while the
+   docstring claimed "same rule", and the `test_sf_eval_pv_*` columns shipped
+   into `_TEST_METRIC_KEYS` read by nothing. Decided (not deferred): **arm the
+   holdout arm**, because the ruler's own value labels being detached is a live
+   failure mode — the frozen holdout is already 10.13 % contaminated on the
+   POLICY half, found only by re-gating offline long after the numbers were
+   published — and because a published-but-unread value column is the P2
+   asymmetry reproduced one layer up, in the thing that reads the columns.
+   `test_both_halves_of_the_blindness_alert_have_both_arms` asserts all four.
+
+### Threshold
+
+`_SF_EVAL_PV_ORPHAN_WARN_RATE = 0.01`, the SAME bar as the policy half, so the
+two halves of one label stay comparable on one instrument. Calibrated on the
+live 4096-label report window:
+
+| arm | windows | zero-windows | median | max |
+|---|---|---|---|---|
+| policy-clean post-quarantine | 275 | 257 | 0.000000 | **0.001465** |
+| 122 quarantined shards | 51 | 0 | **0.102205** | 0.726198 |
+
+6.8× headroom under the bar, 10× margin over it, 49 of 51 poisoned windows fire.
+⚑ **2 of the 51 read BELOW the bar.** This is a SECOND view, not a superset of
+the policy one.
+
+### P9 — the health line counted failures as labels
+
+`_report_sf_label_health` incremented `labelled` on **every** call, and both
+failure sites (`poll_async_sf_labels:1037`, `flush_async_sf_labels_for_records:1075`)
+call it with `failed=1` on a path where no row was labelled. So
+`no_legal_pv/labelled` and `bestmove_illegal/labelled` were damped by
+`F/(L+F)` — the third term of the very rule they feed. Fixed: `labelled` counts
+labels; a new `calls` counter drives the report window, so a window of pure
+failures still emits a line instead of going silent.
+
+**EFFECTIVE STRINGENCY IS UNCHANGED, AND NO THRESHOLD WAS RETUNED.** The two
+denominators differ only in windows with `failed > 0`, and `failed > 0` is an
+unconditional term of `unhealthy` — so every window whose rate the fix moves was
+already WARNING under both. The escalation VERDICT cannot have changed. What
+changed is the number a human reads. This is asserted, not argued:
+`test_the_corrected_denominator_cannot_change_the_escalation_verdict` fails the
+moment a later edit drops `failed > 0` from the rule.
+
+⚑ Two existing tests were **inverted** in the same commit. They asserted
+`labelled == 1` after a failure, i.e. they pinned the P9 dilution as intended
+behaviour. Anyone bisecting past this commit should expect that flip.
+
+### P9 follow-up (task #99): the two `failed=1` call sites
+
+**Verified pinned.** `test_a_swallowed_poll_failure_reaches_the_health_counter`
+and `test_a_swallowed_finalize_failure_reaches_the_health_counter` both assert
+on the COUNTER and not on the returned `failed` local, which is the distinction
+that makes them bite. No new pinning was needed; both were updated for the
+corrected denominator.
+
+### Verification
+
+* **Positive/negative control through the PRODUCTION path**, all 8 checks PASS
+  (`scripts/sf_no_multipv_probe.py`, now covering both halves):
+
+```
+poisoned  shards= 122 rows=   226141  sf_labelled_no_multipv_frac=0.207461  sf_multipv_checked_frac=0.925347  sf_eval_pv_orphan_frac=0.117386  sf_eval_pv_checked_frac=0.733374
+clean     shards= 270 rows=   475713  sf_labelled_no_multipv_frac=0.000000  sf_multipv_checked_frac=0.996983  sf_eval_pv_orphan_frac=0.000000  sf_eval_pv_checked_frac=0.996983
+
+[PASS] positive control fires: 0.207461 in [0.19, 0.23]
+[PASS] negative control is EXACTLY zero: 0.0 == 0.0
+[PASS] poisoned arm was actually inspected: checked 0.925347 > 0.5
+[PASS] clean arm was actually inspected: checked 0.996983 > 0.5
+[PASS] VALUE-half positive control fires: 0.117386 in [0.1, 0.14]
+[PASS] VALUE-half negative control is near zero: 0.000000 <= 0.0005
+[PASS] VALUE-half poisoned arm was actually inspected: orphan_checked 0.733374 > 0.5
+[PASS] VALUE-half clean arm was actually inspected: orphan_checked 0.996983 > 0.5
+```
+
+  `sf_eval_pv_checked_frac` reads 0.733 on the poisoned arm and 0.997 on the
+  clean one, and that gap is the detector working: the no-PV rows fall out of
+  the value denominator by construction.
+
+* **The negative control is shipped as a test**, both directions:
+  `test_a_pairing_PRESERVING_permutation_leaves_the_clean_rate_at_zero` (reorder
+  whole rows → exactly 0, so the detector is not reading row order) and
+  `test_a_pairing_BREAKING_shuffle_makes_the_clean_arm_fire` (shuffle the evals
+  against the PV blocks → flags exactly the rows that moved). Both over 5 seeds.
+  Fixtures are verbatim 48-row excerpts of `shard_033949.zarr` (quarantined) and
+  `shard_033130.zarr` (pre-episode), copied into the test rather than read from
+  a live path.
+
+* **Mutations, all KILLED:** (M1) always increment `labelled` → 5 tests fail;
+  (M2) orphan predicate can never fire → 9 fail; (M3) derive the flags AFTER the
+  `sf_multipv_raw` prune → `test_the_column_reaches_TrainMetrics_through_the_production_path[False]`
+  fails, which is the "gated behind a flag that is off in production" defect
+  reproduced deliberately; (M4) divide the orphan rate by `labelled` → the
+  dilution test fails; (M5) well-formedness always true → 2 fail.
+
+* `./scripts/lint.sh` with **no arguments**: `EXIT=0`, ruff `All checks passed`,
+  basedpyright `0 errors, 0 warnings, 0 notes`, vulture clean, `lint: OK`.
+
+* Tests green: `test_sf_value_half_detector.py` (new, 22), plus
+  `test_stockfish_uci_desync.py`, `test_sf_no_multipv_metric.py`,
+  `test_stockfish_label_gating.py`, `test_sparse_multipv_labels.py`,
+  `test_quarantine_desync_shards.py`, `test_compute_loss.py`, `test_losses.py`,
+  `test_phase_loss_buckets.py`, `test_wdl_loss_reporting.py`,
+  `test_trainable_report.py`, `test_report_counters.py`,
+  `test_replay_field_defaults.py`, `test_replay_shard_validation.py`,
+  `test_replay_disk_buffer.py`, `test_selfplay_sf_wdl_pov.py`,
+  `test_selfplay_result_labeling.py`, `test_selfplay_label_overlap.py`,
+  `test_sf_p0_teacher_metrics.py`, `test_loop_health.py`.
+
+### Cost
+
+Two (B,) float32 vectors added to the H2D payload — **4 KB at batch_size 512,
+0.03 % of the `x` tensor**. They are derived on the host in
+`_prepare_host_arrays` BEFORE the payload prune, because neither input reaches
+the GPU in production: `sf_multipv_raw` is pruned when `sf_policy_sparse_ce` is
+off (the default, and in no config file) and `sf_label_meta` is in no collate
+spec at all. Computing them after the prune is exactly how this column would
+have become another `sf_rebuild_policy_frac`, and M3 above is that mutation.
+
+**Readout obligation.** Training is PAUSED, so none of these columns has a live
+reading yet. On resume, the first `progress.csv` row is the check: expect
+`sf_eval_pv_checked_frac` near the SF-labelled share of the batch and
+`sf_eval_pv_orphan_frac` at or near 0. **A zero on the orphan column with a zero
+on the checked column is UNMEASURED and must not be recorded as clean.**
+
+### ⚑⚑ CORRECTED NUMBERS (amended in place before merge, 2026-08-03)
+
+**This entry's calibration table originally quoted a scan that is NOT the
+predicate this PR ships.** An independent review of PR #326 caught it. The entry
+above is amended in place rather than appended-to because it had not merged yet
+and a ledger table that states two different rulers three screens apart is worse
+than one that states the right one — but the amendment is disclosed here rather
+than made silently, per the #324 precedent.
+
+**What was wrong, and why it matters.** The entry says its numbers are banked
+"so that change can be written without re-measuring", and scope item 6 defers
+the third quarantine-gate axis *on their strength*. A follow-up would have
+pre-registered `SF_EVAL_PV_ORPHAN_MAX` against a ruler that does not exist —
+the `A RULER CHANGE MUST INVALIDATE ITS RECORDS` shape, and the same shape as
+PR #304's retracted "clean 0.0008" that this very entry was written to avoid.
+
+**Two distinct causes, both found and reproduced, not guessed at:**
+
+1. **Mate-scored rows were excluded from BOTH numerator and denominator.** The
+   scratch scan carried `valid = (r0_idx >= 0) & (m_cp != SF_CP_SENTINEL) &
+   (r0_cp != SF_CP_SENTINEL)`. On the quarantined shards that dropped **14,568**
+   mate-scored rows from the denominator (165,846 → 151,278) and hid **1,448**
+   genuine orphans from the numerator (19,468 → 18,020) — the sentinel-vs-
+   non-sentinel pairs, i.e. exactly the rows where a dropped rank 1 replaced a
+   mate score with a cp score or the reverse. `18,020 / 151,278 = 0.119118`
+   reproduces the banked figure to all six digits; the shipped predicate, which
+   compares the (cp, mate) PAIR over every checked row, gives
+   `19,468 / 165,846 = 0.117386`.
+2. **"Labelled" meant `has_sf_label_meta`, not `has_sf_wdl`.** 4 quarantined
+   rows carry the meta block without a value label, so the policy rate read
+   `43,417 / 209,263 = 0.207476` instead of the detector's own denominator
+   `43,413 / 209,259 = 0.207461`.
+
+**Everything downstream of those two:**
+
+| quantity | was | is (shipped predicate) |
+|---|---|---|
+| quarantined orphan rate | 0.119118 | **0.117386** |
+| quarantined policy `no_pv` | 0.207476 | **0.207461** |
+| quarantined labelled | 209,263 | **209,259** |
+| combined detection | 0.2936 / +41.5 % | **0.300494 / +44.8 %** |
+| share of true poisoned caught | ~83 % | **~85 %** |
+| post-quarantine window orphan | 0.000176 | **0.000166** |
+| policy-clean residue | 33 rows, 3.2e-5 | **34 rows, 3.0e-5** |
+| residue sign test | 33/33, p = 2⁻³³ | **34/34, p = 2⁻³⁴** |
+| pass-through share caught | "roughly two thirds" | **~65 %** |
+
+**Unchanged, and re-derived rather than assumed:** the 4096-row report-window
+calibration (`policy-clean max 0.001465`, 257/275 exactly zero; quarantined
+median 0.102205, 49/51 fire) — that scan already compared the pair without the
+sentinel filter, so it was the shipped semantics all along. Re-run with the
+shipped function to confirm, and it added a clean data point: **115/115
+pre-episode windows read exactly 0.** The threshold does not move; `[0.10, 0.14]`
+still contains 0.117386, so the probe's pre-registered band does not move either.
+The residue clustering (25 shards, ids 33461–33713, median distance 25,
+p = 0.0145) is unchanged.
+
+**Which run produced which table, so the next reader can tell them apart.** The
+corrected table is `sf_eval_pv_orphan_flags` imported and applied directly to
+the shard arrays, cross-checked against `scripts/sf_no_multipv_probe.py` driving
+the full production path, and independently against a reviewer's from-scratch
+scan that imports no project code (agreement to the row: 19,468 / 165,846 /
+43,413 / 0 intersection). The superseded numbers came from
+`scratchpad/study_head_agreement.py`, which was exploratory and is not shipped.
+
+**The general lesson, which is the reusable part.** The PR's own verification
+block printed `sf_eval_pv_orphan_frac=0.117386` two screens below a table
+asserting 0.119118 and the author did not notice, because the exploratory scan
+came first and the production reading was read as confirmation of it rather than
+as a comparison against it. **A number produced before the instrument exists is
+not a baseline for that instrument.** Re-derive every banked figure from the
+shipped code path once it exists, and diff it against the exploratory one
+deliberately.
+
+### ⚑⚑ THE HOLDOUT RULER IDENTITY MOVES WITH THIS PR (amended in place, round-2 review)
+
+Round-2 review of PR #326 found CI red on `tests/test_holdout_ruler_identity.py
+::test_the_production_ruler_id_is_pinned`. Round 1 missed it because that suite
+was not in the set I ran — the pin exists exactly so this cannot merge silently,
+and it worked.
+
+**Why it moved.** The three lines that derive `sf_eval_pv_orphan` /
+`sf_eval_pv_checked` live in `Trainer._prepare_host_arrays`, which is one of the
+19 frames `eval_ruler_id_for` digests, and it is in BOTH the full-pass and the
+sampled `measured_by` lists. So both ids move:
+
+```
+full_pass  025b6ef8e537ffcb -> 44755941fd0bf0c8
+sampled    408bcad98fb150b4 -> bbae91591858d35c
+```
+
+**The MEASUREMENT is neutral, and this is measured, not argued.** The two new
+arrays have exactly one consumer, `losses.sf_eval_pv_orphan_counts`; its sums
+leave `compute_loss` as `sf_eval_pv_orphan_rows` / `sf_eval_pv_checked_rows` and
+are mapped by `_RATIO_METRIC_FIELDS` onto two observation fields. Nothing enters
+`total`, so nothing enters `loss` or `test_loss`. Control: a production full
+pass over `shard_033130.zarr`, run twice — as shipped, and with the three lines
+patched out (`main`'s behaviour) — comparing all **87** scalar `TrainMetrics`
+fields. **`loss` bit-identical at 7.238113220214844**, and the only field that
+differs is `sf_eval_pv_checked_frac` (0.0 → 0.9975), i.e. the new instrument
+coming alive. This is the sixth declared false positive of the pin and the first
+one with a numeric control attached rather than a source-level argument.
+
+⚑ **OPERATOR-VISIBLE AT THE NEXT RESTART.** `tune/trainable.py:399-409` sees the
+mismatch, bumps `holdout_generation`, and `_update_best_model` takes its
+ruler-changed branch: the running trial **hands over its best-model record
+once**, adopting the current loss instead of comparing to it. Expected, not a
+defect. Restart-gated — a running process keeps hashing the module source it
+loaded, so nothing happens until the restart that loads this checkout.
+
+⚑ **Per the standing rule (`A RULER CHANGE MUST INVALIDATE ITS RECORDS`):
+holdout-series records are NOT comparable across this boundary.** `test_loss`
+before and after the deploying restart are measurements by two ids. The
+neutrality control above says the numbers should in fact agree; that is a
+prediction the next restart can check, not a licence to splice the series.
+
+⚑ Round 2 also relayed a `sampled` id that did not reproduce
+(`c2fe2306f2e41035`). Both constants here were re-derived from a **pristine
+checkout of the pushed commit** and confirmed by running the suite green;
+`bbae91591858d35c` is what `Trainer.eval_ruler_id_for(batch_size=512, steps=5,
+mirror_prob=0.0, full_pass=False)` returns, which is the exact call the pin
+asserts. Pinning an unverified constant is the same class of error as banking an
+unverified calibration.
+
+### The instrument's first catch: the FROZEN HOLDOUT is contaminated on the VALUE half too
+
+Found by the round-2 reviewer, re-measured here independently with the shipped
+`sf_eval_pv_orphan_flags` on `checkpoint_000478/holdout.npz`:
+
+| | value | of |
+|---|---|---|
+| labelled (`has_sf_wdl`) | 1,915 | 2,000 rows |
+| policy `no_pv` (already known) | 194 | 0.101305 |
+| **value orphan** | **86 / 1,721 checked** | **0.049971** |
+| intersection of the two | **0** | disjoint, as designed |
+| union | **280** | **0.146214 of labelled** |
+
+The value half reads **5× the 0.01 bar**, and because the two sets are disjoint
+the ruler has **14.6 % of its labelled rows detached on one half or the other** —
+which coheres with the standing 14.1 % contamination figure for the holdout pool
+rather than duplicating it.
+
+**What this changes.** The known statement was "the frozen holdout is 10.13 %
+contaminated on the policy half". It is now: **the frozen holdout is 14.6 %
+contaminated across both halves, and the extra 5.0 % is on `sf_wdl` — the half
+that carries 0.45 of the value target.** Every `test_*` value-derived column on
+the current holdout is scored against a set with that much detached labelling.
+This does not move any verdict in this entry; it raises the priority of re-cutting
+the holdout from post-quarantine shards, which was already the stated fix for the
+policy half and is now the fix for both. Recorded here rather than as a separate
+entry because the measurement is this PR's own instrument, on its first use.
+#### WAVE-4 PR G — the polar-convergence INSTRUMENT (M4-1 / audit I3), plus M4-2 and M4-3
+
+**Not training-affecting.** No optimizer numerics change: `aurora_polar_steps`,
+the Polar Express coefficients, `aurora_polar_safety`, the normalisation and the
+`pp_*` loop are untouched. This PR only observes, and adds one guard on the
+holdout merge. The A8 A/B decides the step count; this is the ruler it reads.
+
+**The instrument.** `train/aurora.py::polar_convergence(update)` returns
+`(sv_ratio, orth_err)` for one applied Aurora update:
+`sv_ratio = sigma_min/sigma_max` and `orth_err = ||QQ^T - I||_F / sqrt(n)` on the
+same matrix rescaled to unit spectral norm and oriented wide. These are exactly
+Addendum II B3's `full` and `orth` columns. Both are invariant to a positive
+rescale, so the trailing `sqrt(rows/cols)` and any `aurora_uw_floor` scaling do
+not move them — "measured on the applied update" and "measured on the polar
+factor" are the same measurement, and the square branch makes that an identity
+rather than an approximation.
+
+Deviation from I3's sketch, stated: I3 proposed "a few power iterations — no
+SVD". It is a float64 `svdvals` instead. The interesting singular values sit 6+
+orders of magnitude below `sigma_max` (real momentum kappa 4.8e4–5.7e6), and B2
+MEASURED a 12-iteration power estimate landing BELOW `sigma_max` on 11 of 20
+real tensors. An estimator that cannot resolve the quantity is not a cheaper
+version of it. At the sampling cadence below the exact decomposition is ~2 SVDs
+of a 512-wide matrix per ~665 s iteration.
+
+**Sampling cadence and determinism.** One designated tensor per shape class per
+iteration: the FIRST square and the FIRST non-square parameter of the Aurora
+group in group order, on the single step where `Trainer.train_steps` already
+sets `collect_optimizer_stats` (`train_steps_done + 1 >= requested_steps`). No
+rng is consulted and there is no sampling seed — the same two tensors are
+measured every iteration, so the series is one tensor paired against itself.
+Unlike the uw-effective pair (M4-2) the reading carries no `lr` factor and is
+scale-invariant, so sampling at the sqrt_release sawtooth floor does not bias it.
+
+**Columns** (progress.csv, via TrainMetrics; the schema change rotates
+progress.csv once at the restart that picks it up, per the harness's own
+rotation path): `aurora_polar_sv_ratio_square`, `aurora_polar_sv_ratio_rect`,
+`aurora_polar_orth_err_square`, `aurora_polar_orth_err_rect`,
+`aurora_polar_steps_configured`, `aurora_polar_sv_samples`,
+`aurora_polar_sv_errors`. `aurora_polar_steps_configured` is read off the
+optimizer's own param group DURING the step, not off the yaml, so it is the
+proof-of-effect column for any `aurora_polar_steps` change — per *a yaml edit +
+restart may NOT be in effect*. `aurora_polar_sv_samples` is 2 when both shape
+classes were sampled; below 2, a 0.0 ratio means NOT MEASURED, not degenerate.
+
+**Calibration (shipped as `tests/test_aurora_polar_convergence.py`).** Pinned
+against Addendum II B3 on `checkpoint_000478`'s real Aurora momentum, all eight
+cells reproduced to four decimals (tolerance 5e-4):
+
+| group | steps | sv_ratio | orth_err |
+|---|---|---|---|
+| square (16 `out_proj`) | 8 | 0.0209 | 0.1082 |
+| square | 12 | 0.2489 | 0.0439 |
+| rect (4 `ffn`) | 8 | 0.0604 | 0.0800 |
+| rect | 12 | 0.6220 | 0.0257 |
+
+The fixture is the 20 momentum SPECTRA (83 kB,
+`tests/data/aurora_polar_momentum_spectra.npz`, emitted by
+`scripts/extract_aurora_momentum_spectra.py`), not the 23 MB of tensors: the PE
+iterate is orthogonally equivariant, so a matrix rebuilt from a banked spectrum
+reproduces the polar-path readings exactly — verified across three
+reconstruction seeds and both float32 and float64.
+
+**⚑ Two corrections to A8/B8's pre-committed instrument gate, both measured
+here.** B8 wrote the gate as "`aurora_polar_sv_ratio` reads >=0.99 median on the
+matrix group in the arm and reproduces ~0.02-0.06 in the control".
+
+1. **>=0.99 is unreachable in the arm on the SQUARE group.** PE-12 on real
+   square momentum reads **0.2489**, not >=0.99. The 0.99 came from A6's
+   Gaussian-surrogate cell (fp16 0.998) — the surrogate B0 retracted. Read as
+   written, the gate FAILS the arm for a reason that has nothing to do with
+   whether the arm took effect.
+2. **The RECT control value 0.0604 is off the polar-only path, not
+   production's.** Production feeds the rectangular branch a ROW-NORMALISED
+   matrix `pp_iterations` times. Measured on the same real tensors through
+   `_aurora_update`: rect reads **0.3926 / orth 0.0374 at 8 steps** and
+   **1.0000 / 0.0000 at 12**. Comparing a live `aurora_polar_sv_ratio_rect`
+   against 0.0604 would report a large change where there is none. (This also
+   bears on B5's "square-only is not supported": on the path production
+   actually runs, the rect group at 8 steps is 19x better converged than the
+   squares by sv_ratio and 2.9x by orth_err. Not my call — recorded for the A/B
+   coordinator, who owns the arm.)
+
+**AMENDED IN PLACE, 2026-08-03, PR #327 review round — my first restatement
+of this gate repeated the very slippage it was correcting.** I replaced B8's
+retracted Gaussian bar with centres taken from B3's 16-tensor GROUP MEANS
+(square `sv_ratio` 0.021 -> ~0.25, `orth_err` 0.108 -> ~0.044, "few-percent
+band"), while the column this PR ships samples ONE designated tensor — the
+first square of the Aurora group, index 0. The independent reviewer measured
+that tensor through the production `_aurora_update` and it reads **0.0273 /
+0.2114 at 8 steps** and **0.3275 / 0.0614 at 12** — `orth_err` at 1.95x the
+centre I pre-committed. Reproduced here exactly. **A correctly installed
+instrument on a correctly applied arm would have failed my gate, for the wrong
+reason.**
+
+Note the failure class precisely, because it is not the usual one: this was
+never *a gate that cannot fail*. The primary binary leg
+(`aurora_polar_steps_configured` 8 vs 12) was sound as written and remains
+untouched. What was wrong is that the CONFIRMING leg was stated in a statistic
+the column does not compute, so it would have fired on the wrong hypothesis —
+"the arm did not take effect" — when the true reading was "the arm took effect
+and this tensor is simply not the group average".
+
+Why one tensor is not the group: across the 16 square tensors at PE-8 the
+spread is **0.0005-0.0455 on `sv_ratio` (94x)** and **0.0794-0.2114 on
+`orth_err` (2.7x)**. No single-tensor column can be held to a mean of that
+population. The **arm/control RATIO on the SAME designated tensor** is the
+statistic that survives the choice: PE-12/PE-8 on `sv_ratio` spans
+**11.40-12.36 across every possible designation — a 1.08x spread**. That is
+why the confirming leg below is primarily a paired ratio and only secondarily
+an absolute.
+
+All of it is now pinned as shipped tests rather than as prose
+(`test_the_designated_square_tensor_reads_its_own_pinned_values`,
+`test_the_group_mean_is_not_a_bar_a_one_tensor_column_can_meet`,
+`test_the_paired_arm_over_control_ratio_survives_the_choice_of_tensor`), and
+the `polar_convergence` docstring carries the designated-tensor numbers instead
+of the group means it first quoted.
+
+**Restated instrument gate for the A8 A/B, pre-committed here** (fp32 CPU
+references on `checkpoint_000478`; production runs fp16 on CUDA, which B3
+measured as reproducing fp32 to 3 decimals on the production row, and live
+momentum is not the 478 snapshot — so the ABSOLUTES below are expectations, and
+only the ratio and the binary leg are bars):
+
+* **PRIMARY, binary:** `aurora_polar_steps_configured` == 12.0 on every arm row
+  and == 8.0 on every control row, with `aurora_polar_sv_samples` == 2.0 and
+  `aurora_polar_sv_errors` == 0.0. If this does not hold the change did not
+  reach the optimizer and no verdict is readable. **Unchanged by this
+  amendment — it was always the sound leg.**
+* **PRIMARY CONFIRMING — PAIRED, arm/control on the same designated tensor,**
+  medians over the first 5 live iterations of each arm:
+  * square `sv_ratio` ratio **>= 8.0** (measured centre 12.07, full
+    across-tensor range 11.40-12.36, so the bar clears the loosest designation
+    by 1.4x);
+  * square `orth_err` ratio **<= 0.70** (measured centre 0.42, range
+    0.290-0.544);
+  * rect `sv_ratio` in the ARM **>= 0.99** and `orth_err` **<= 0.005** — an
+    absolute, and admissible as one because PE-12 drives every rectangular
+    tensor to exactly 1.0000 / 0.0000 on the production path (all 4 sampled).
+    ⚑ B8's original ">=0.99 on the matrix group" bar is reachable on the RECT
+    group and NOT on the square group; that is the second half of the
+    correction recorded above.
+* **SUPPORTING, not a bar** (expected designated-tensor readings, quoted so a
+  wildly different row is noticed): square 0.0273 / 0.2114 in the control and
+  0.3275 / 0.0614 in the arm; rect 0.3714 / 0.0381 in the control and
+  1.0000 / 0.0000 in the arm.
+* The kill/success rules of B8 (held_ce_excess, inw/oow top1, cost bar) are
+  unchanged and are not this PR's to set.
+
+**M4-2 — `aurora_uw_effective_ratio_*` is 10x low by construction.** Not
+redefined: moving the sample step would silently re-base the historical series
+(*a ruler change must invalidate its records*). Instead `aurora_uw_lr` — the
+group `lr` the pair was multiplied by — is emitted beside it, and the whole
+family is promoted to progress.csv. It was TensorBoard-only: the fields existed
+on `TrainMetrics` but `_train_metrics_dict` never listed them, so no ledger
+yardstick could cite them, the same defect the grad-norm family had. De-scale
+with `opt_lr_mean / aurora_uw_lr` before reading the pair as "how big is one
+step".
+
+**M4-3 — the holdout merge homogenised encoding-identity markers.**
+`ArrayReplayBuffer._gather_rows` now (a) widens each field's dtype across ALL
+selected chunks instead of taking the prototype's, killing the `<U4` truncation
+that stored `"false"` as `"fals"`, and (b) refuses a set whose chunks disagree
+about `_history_rep_fix` / `_input_history_encoding` / `_policy_encoding`, with
+the same `mixed replay metadata ...` message `shard._scalar_metadata_string`
+already raises and through the same predicate `history_rep_fix_from_arrays`
+uses. An ABSENT `_history_rep_fix` counts as `"false"` because shard.py
+documents that it does. **Reachability, measured read-only:**
+`checkpoint_000476/477/478`'s live `holdout.npz` all carry `_history_rep_fix`
+uniformly `"true"` and `_input_history_encoding` uniformly
+`"lc0_root_legacy_meta"`, so the new raise cannot fire on a resume from today's
+state; it is armed for the next encoding flip. Negative control shipped:
+`tests/test_holdout_encoding_marker_merge.py` requires the mixed export to
+FAIL, and 5 of its 8 tests are red against `origin/main`.
+
+**Yardstick for this PR.** It is an instrument, so there is no Elo claim and no
+kill rule on play strength. The pass condition is the calibration above plus
+proof-of-effect on the first live iteration: `aurora_polar_sv_samples` == 2.0,
+`aurora_polar_sv_errors` == 0.0 and `aurora_polar_steps_configured` == 8.0 on a
+production restart that has not changed the step count. If those three read
+otherwise, the instrument is not installed and the A8 A/B must not be launched.
+
+#### PR F (2026-08-03) — tune lifecycle: T1 opp_strength_ema restore, T4 reload-delete observable, T2 derived startup-only class, T10 salvage gate state
+
+Wave-4 remediation batch F, routed by the AUDIT WAVE 4 entry (fae465951) from
+`scratchpad/code_audit_20260803/TUNE_AUDIT.md`. **Not training-affecting: no
+yardstick, no readout window, no pre-registration.** Nothing here changes a
+loss, a target, a sampling distribution or a search shape. Most of it is
+observability or restart-state carriage, and there are THREE behaviour changes,
+each described in its own section below and none of them touching the training
+target: T2 DECLINES to overlay FIVE keys whose consumers never re-read them
+(`iterations`, `puzzle_epd`, `eval_sf_nodes`, `sf_pid_enabled`, `pause_file`);
+N3 makes a present-but-unreadable `gate_state.json` yield an empty window
+instead of falling through to a salvage pool's; N4 makes the salvage
+opponent-strength EMA follow `salvage_restore_pid_state`, which production sets
+true, so nothing moves today. Each fix is listed with the deploy-time observable
+that proves it took effect, because a lifecycle fix that quietly did not land is
+the exact defect being fixed.
+
+⚑ This opening paragraph said "six keys" and "the one behaviour change" until
+the delta review caught it: both numbers were the pre-review shape of the PR
+(`eval_games` was the sixth key and is now correctly unfrozen — see the T2
+section — and N3/N4 arrived with the review response). Amended in place rather
+than appended, because the paragraph is a summary of the sections beneath it and
+a summary that disagrees with them is worse than no summary; nothing measured
+changed, and no other entry was touched.
+
+**T1 — `opp_strength_ema` survives a restart.** It was written to `best.json`,
+read at startup, and overwritten one line later by `RestoreResult.opp_strength_ema`,
+a field only a PB2 exploit clone ever assigned — unreachable at `num_samples: 1`.
+So `_run_pid_and_eval`'s `== 0.0` branch re-seeded the EMA from the first
+post-restart iteration's raw `opponent_strength` on 6 of 6 live process
+segments, on the row the winrate-truncation rule already flags as +0.110 biased.
+It is `GPBTPairwiseScheduler._metric`, the `--salvage-metric` family, and the
+sibling-share ranking metric. Now: written into the checkpoint's
+`trial_meta.json` (rewritten every iteration; `best.json` only on an accept, so
+it can be hundreds of iterations stale), read on both restore paths, best.json
+as fallback, and a fresh start still re-seeds.
+**Observable at the next restart:** `[trial] opponent-strength EMA at startup:
+<value> source=restore/checkpoint`, and then the first row of the new process
+segment must have `opponent_strength_ema != opponent_strength`. The negative
+control is already banked: 6/6 segments currently fail that check.
+⚑ The stored value is the EMA as of the checkpoint write, and this iteration's
+PID update runs AFTER the save, so a resume continues one update behind. That
+is a lag, not a reset.
+
+**T4 — a key DELETED from the live yaml now says so.** The reload iterates the
+fresh yaml and only ever writes `config[k] = v`; there is no removal pass, and
+`flatten_run_config_defaults` drops `key: null` before the reloader sees it, so
+both spellings of "turn this off" are no-ops that match none of the three loud
+branches (all of which key off a key the yaml still names). Semantics are
+UNCHANGED — reverting would need a revert target the yaml cannot supply, and its
+own entry. The reloader now remembers the last successfully parsed key set per
+yaml path and logs one WARNING per key that disappeared while the trial is still
+running its value, naming the value and saying "delete does not revert; write
+the old value explicitly". A rejected reload does not move the baseline, so the
+deletion made while fixing a broken yaml is still reported.
+**Observable:** `YAML reload: <key> is no longer set by <path> (it was, as of
+<when>) but the trial is STILL RUNNING <value>`. Silent on a clean reload, on a
+value change and on an add — asserted as a negative control, because a warning
+that fires in normal operation is one an operator learns to scroll past.
+
+⚑ **THE FIRST VERSION COULD NOT SEE THE RESTART, WHICH IS THE PATH DELETIONS
+ACTUALLY TAKE** (found by the independent reviewer, with a repro). The baseline
+lived only in the process, and this process's own startup reload seeds it from
+the yaml as it is NOW — while `--resume` restores the saved trial config, which
+still carries the deleted key's value because neither the experiment-state
+overlay nor the reloader ever removes one. So *pause → edit → restart* kept the
+value AND said nothing: exactly the scenario the warning exists for, and with
+training paused, the next thing an operator does. Closed rather than disclosed:
+`_save_trial_checkpoint` banks the flat yaml KEY SET (names only, no values) in
+the same `trial_meta.json` T1 uses, the restore carries it, and
+`seed_yaml_reload_baseline` compares it against the yaml this process found,
+emitting the same sentence with "as of the checkpoint this process resumed
+from". Remaining blind spots, stated rather than implied: a deletion made while
+down when the resumed checkpoint predates the banking (every checkpoint written
+before this lands), a deletion of a key the trial never carried, and a salvage
+restart — a pool comes from another experiment, so its key set says nothing
+about an operator's recent edit and is deliberately not adopted. And the
+warning fires ONCE per deletion, not once per iteration: the durable form is a
+report column, which rotates progress.csv and belongs with the next schema
+change.
+
+**T2 — the construction-only classification is now DERIVED.** FIVE startup-only
+trial keys join the frozen class (`iterations`, `puzzle_epd`, `eval_sf_nodes`,
+`sf_pid_enabled`, `pause_file`); before this, a live edit to any of them landed
+in `config`, echoed back correct in the result row, and reached nobody — and
+`scripts/audit_realized_config.py` reported them under "the running value is
+correct". `sf_pid_enabled` is the one that matters: a boolean an operator would
+flip during a diagnosis, failing silently in the safe-looking direction because
+`_init_pid` returned None at launch and nothing rebuilds it.
+`tests/test_startup_only_config_keys.py`
+derives the class from the AST (reachability from `train_trial`'s startup region
+minus everything the `while` loop reaches, `TrialConfig.from_dict` excluded as
+parsing rather than consuming) and pins the unclassified residue exactly, so a
+startup-only key added tomorrow fails a test instead of joining the broken class
+in silence.
+**Observable:** `YAML reload: sf_pid_enabled changed (False -> True) but
+requires restart — skipping`, and the provenance audit prints
+`PENDING-RESTART sf_pid_enabled` instead of a clean bill.
+
+⚑⚑ **AN INSTRUMENT YOU OVERRIDE BY HAND IS AN INSTRUMENT YOU DO NOT HAVE.**
+This entry as first written froze **six** keys, and the sixth — `eval_games` —
+was not startup-only. `_run_eval_games` reads it as a MAGNITUDE
+(`games=tc.eval_games`, `trainable_phases.py`) off a `tc` the loop rebuilds
+every iteration, so for a trial launched with `eval_games > 0` the live COUNT
+edit worked on main and the freeze removed it — the same objection that
+(correctly) keeps `log_level` out of the set. The reasoning in the frozen set's
+comment ("can only ever DISABLE") described the ENABLE direction and was
+asserted of the key. What makes this worth a ledger paragraph rather than a
+quiet fix is the failure mode: **both instruments in this PR flagged it and both
+were overridden by hand.** The AST derivation refused to derive `eval_games` —
+so a `_CLASSIFIED_BUT_NOT_DERIVED = {"eval_games"}` exemption was written to
+make the test pass — and `test_construction_only_keys_have_no_live_consumer`
+would have named `trainable_phases.py`, so the whole startup-only class was
+exempted from its scan. Each override was individually plausible and jointly
+they turned two guards into decoration. The correction: the key is out, the
+exemption is deleted, the no-live-consumer scan now covers the startup-only
+keys (matching config READS, not bare word mentions, against a per-key list of
+declared readers), and
+`test_the_startup_only_scan_names_the_key_that_slipped_through` fails if that
+scan ever stops naming `trainable_phases.py` for `eval_games`. Caught by an
+independent reviewer, not by me. Still true and NOT fixed: with
+`eval_games: 0` at launch (production), enabling eval live remains a silent
+no-op, because nothing rebuilds `eval_sf` — a wiring gap in
+`_init_eval_stockfish`, which freezing the key papered over while breaking the
+direction that worked.
+**Scoped out, decided not deferred:** the ~31 `sf_pid_*` lever gains are
+genuinely construction-only inside `pid_from_config` (`refresh_live_params`
+re-reads only ~10 of the family) and the derivation flags every one, but
+freezing 31 knobs of the LIVE difficulty controller is a change to a running
+experiment's control surface and needs its own entry. `log_level` is deliberately
+NOT frozen: it is in `_WORKER_LAUNCH_CONFIG_KEYS`, so a live edit does reach the
+next worker relaunch. `tune_scheduler` / `pb2_perturbation_interval` /
+`tune_keep_last_experiments` are DRIVER-side and, per T6, a `--resume` restart
+does not apply the first two either — calling them "restart required" would be
+false in a new way.
+
+**T10 — a salvage pool carries the gate window.** `salvage-export` copied the
+checkpoint dir's five files and nothing from `durable_dir`, so a salvage restart
+began with an EMPTY promotion-gate window while an ordinary `--resume` kept its
+own, and nothing said the two modes differed. Pools now carry `gate_state.json`,
+which the trial consumes ONLY when it has no state of its own (a resume must
+never be handed a window earned by other weights). Safe without the anchor,
+which pools deliberately do not carry: `GateHoldController.create` releases a
+restored hold whose `gate_promoted_model.pt` is absent. `best.json` is banked
+but NOT consumed — the `best/` weights it describes are not exported, so
+restoring it would leave the new trial defending a number whose model is gone.
+The manifest entry now records `durable_state_exported` AND
+`durable_state_not_exported`, so a pool is self-describing about what a restart
+from it will not have.
+**Observable on a salvage restart:** `[trial] promotion-gate state seeded from
+the salvage pool: matches=<n> holds=<n>`, plus `durable_state_exported` in the
+pool's `manifest.json` at export time.
+
+Every fix has at least one BEHAVIOURAL test that fails on `origin/main` — the
+claim the evidence supports; the headline count is shim-dependent (the reviewer
+reproduced 12/26 against my 13/25 with differently-written shims for the symbols
+main lacks, same per-item conclusion). Mutations, one per fix direction
+including the two dangerous inversions (warn about every key; let a pool's gate
+state outrank the trial's own), each killed by a NAMED test — with one
+correction from the review: main's exact EMA semantics
+(`float(restore.opp_strength_ema or 0.0)`) is killed only by
+`test_best_json_is_the_fallback_when_the_checkpoint_predates_the_field`; the two
+tests originally credited hand the helper a `RestoreResult` that already carries
+an EMA, which on main only an exploit clone produces, so they are controls, not
+discriminators. Repo-wide `./scripts/lint.sh` exit 0.
+
+Two smaller review items taken rather than argued: the salvage EMA now follows
+`salvage_restore_pid_state` (importing a difficulty-derived scalar while the
+operator explicitly dropped the donor's difficulty anchored the scheduler's own
+objective, for ~10 iterations at alpha 0.3, to a difficulty the process is not
+running — production sets the flag true, so nothing moves today), and
+`_startup_gate_state` now distinguishes a PRESENT-BUT-UNREADABLE own
+`gate_state.json` from an absent one, so a truncated file (how a crash
+mid-write presents) cannot route a trial into another lineage's window.
+#### PR E (wave-4 remediation) — UCI match-play safety: U2 + U1 + U3 + U5/U6 + U7
+
+**NOT training-affecting.** Every line lands under `chess_anti_engine/uci/`
+(`engine.py`, `search.py`, `protocol.py`, `time_manager.py`). Selfplay, the
+replay pipeline, loss weights and every training target are untouched — the
+shared C entry point `run_gumbel_root_many_c` is NOT modified, only how the UCI
+`SearchWorker` reads its return value. No pre-registration and no yardstick is
+required by the experiment protocol; these are correctness fixes with unit
+tests, not experiments. Routed by `fae465951` ("(E) UCI safety (U2+U1+U5/U6+U7)");
+U3 is included because it is one condition in the same file family.
+
+**U2 (headline), and the reason this batch was ranked first:** any in-search
+exception was answered with `next(iter(board.legal_moves))` — python-chess
+square order, effectively a random move — while `_ensure_root_eval_cached` had
+already computed and retained the root policy logits that name a decent one.
+The fallback now reads that cached prior (`SearchWorker.root_policy_bestmove`),
+re-validates the answer against the real board, and emits
+`info string bestmove_fallback_used=N source=root_policy|first_legal move=<uci>
+exception=<class>`. `Engine.bestmove_fallback_used` is a session counter; zero
+is the only healthy value.
+
+**U2's pre-committed yardstick was an EXISTENCE CHECK over banked match logs,
+and it returns a NULL result with a caveat that matters more than the null:**
+
+* `grep -rlI "info string search error" runs/matches/` → **0 files.**
+* But the corpus *cannot record that line*. Positive control: of 74 banked match
+  logs, **6** contain the string `info string` at all, and in all 6 it is inside
+  a truncated asyncio exception repr (`b"info string...ns\nreadyok\n"`) from the
+  handshake — not search output. `scripts/match_vs_uci.py` writes only its own
+  `[match] ...` summary lines and configures no logging; engine stdout is
+  consumed by python-chess's UCI protocol and never persisted. **"No evidence
+  found" here is not evidence of absence — the instrument does not exist.**
+* Behavioural proxy, which the corpus *can* record: the fallback emits
+  `info ... nodes 0`, which `match_vs_uci.py` records as **`nodes == 0`**.
+  Enumerating per-move files by their HEADER rather than by filename —
+  **35 files** (31 `*_moves.csv` + 4 `*/moves.jsonl`, which are CSV-formatted
+  despite the extension), **45,681 rows**, **25,492 DeepFin rows** —
+  **0 DeepFin rows have `nodes == 0`.** Separately, 538 DeepFin rows carry no
+  `nodes` value at all; they are exactly two files from one 2026-06-01 run
+  (497 + 41), **all with elapsed 0.466–1.007 s** (min 0.4655 s), **0 under
+  50 ms**, so they are missing info-line captures, not ~1 ms fallback moves.
+  **No behavioural trace of the first-legal fallback in any banked match.** The
+  audit's instruction ("ship the fix anyway, it is 5 lines, and stop
+  investigating") stands, and the counter is what makes the NEXT occurrence
+  findable.
+* **AMENDED 2026-08-03 after independent review of PR #329 (comment
+  5173120786), and the correction is worth more than the number.** This entry
+  first stated the proxy as *"rows carrying no `nodes` value"* over *29 files /
+  20,547 rows*. **The predicate was wrong**: the fallback writes `nodes 0`, and
+  `match_vs_uci.py` records that as the string `"0"`, not as an empty field — so
+  the predicate I ran could not have detected a fallback move even if one
+  existed. It found the 538 missing-nodes rows, which are a *different*
+  phenomenon, and I reported their absence-of-fast-rows as if it were the test.
+  The reviewer ran the right predicate (0 rows) and also could not reproduce my
+  counts (finding 27 files / 13,628 rows). **Both counts were wrong, mine and
+  the reviewer's**, because both globbed filenames: mine missed 2 CSVs, the
+  reviewer's missed the 4 `moves.jsonl` files that are per-move CSVs under a
+  `.jsonl` name. Enumerating by header settles it at 35 / 25,492. The null
+  survives and is stronger, but it survives on a predicate I had not actually
+  run — a verdict read off an instrument that could not fail. Left in place
+  rather than silently corrected.
+* Consequence for the Cheese loss profile: this mechanism is **not exonerated
+  and not implicated** — it was never observable. The 80%-of-losses-is-one-
+  collapse finding keeps its other candidate causes.
+
+**U1** (`root_ids[0] == -1` stored verbatim → `ValueError: node_id out of range`
+→ the U2 handler) is CONFIRMED end-to-end on the real engine binary, and it is
+the one exception source we can demonstrate. Same script, same tiny CPU
+checkpoint, `--walkers 1`, `position fen 8/8/8/4k3/8/4K3/4R3/8 w - - 100 60`
+(halfmove 100, **12 legal moves**, an ordinary playable position — only a
+*claim* would end it):
+
+```
+origin/main : info string search error: ValueError('node_id out of range')
+              bestmove e3f3      <- exactly next(iter(board.legal_moves))
+this branch : bestmove e2g2      <- no error line
+```
+
+**U5** on the same binary, `position fen 6k1/5ppp/8/8/8/8/5PPP/R5K1 w - -`
+(4-field FEN, mate in one is `a1a8`):
+
+```
+origin/main : bestmove b2b4      <- ILLEGAL in that position, legal at startpos
+this branch : bestmove a1a8      <- the mate
+```
+
+`b2b4` is the proof, not the weights: it cannot be played on the intended board
+at all, so main was demonstrably searching the start position.
+
+**U6/U7** on the same binary:
+
+```
+info string position: ignored 2 of 4 move(s) from 'e1e8' onward (illegal in ...)
+info string Hash 256 is below the advertised minimum 1024; using 1024
+```
+
+both absent on `origin/main`, which accepted `Hash 256` verbatim — and below
+~17 MB `advance_root` refuses cross-move reuse from move one.
+
+**U3**: `movestogo 1` was allocated ≤50% of the clock because
+`_MAX_FRACTION_OF_REMAINING` was applied *after* the movestogo division. The
+ceiling bounds a LONG-horizon estimate; the last move before a fresh allotment
+is definitionally not that. 60 s clock, `movestogo 1`: 29,970 ms → 57,000 ms.
+`movestogo 0` (a GUI saying "no repeating control") is explicitly excluded — the
+allocation ignores it in favour of the pieces estimate, which is exactly the
+case the ceiling is for.
+
+**Evidence discipline.** 41 tests in `tests/test_uci_match_safety.py`; **27 are
+red on `origin/main`** (the other 14 are deliberate controls: walkers=2 already
+answered the declined roots, 6-field FENs and `startpos` already parsed, a
+complete move list already said nothing, `Hash 4096` was already taken
+verbatim). An 11-row mutation table breaks each fix one plausible way —
+including reverting U2's fallback to first-legal on a position where the two
+answers differ — and **11/11 are caught**. Mutation M7 (`movestogo 0` read as
+the last move) initially **ESCAPED**: the three "ceiling still applies" controls
+asserted `deadline <= 50%` while the unscaled allocation was far below either
+ceiling, so they were true whichever ceiling applied — a control that could not
+fail. Fixed by scaling the budget past both ceilings and asserting equality.
+Negative control for the counter: three clean searches leave
+`bestmove_fallback_used == 0` and print no such line.
+
+**Two existing tests were changed**, and a reviewer should look at them first:
+`test_clock_ceiling_caps_half_remaining` and
+`test_time_budget_scale_still_capped_at_half_remaining` both asserted the 50%
+ceiling **at `movestogo=1`** — i.e. they pinned the U3 defect. They were
+re-pointed at a long-horizon case, which is what their own comments described.
+
+**Explicitly out of scope**, per the wave-4 routing: **U4** (the
+time-management sweep — an experiment, not a fix; its baseline-arm rule
+"never use `optimum_fraction=0`, use `abort_factor=1.0,time_budget_scale=1.0`"
+is already recorded in `fae465951`), **W3/#135** (root-parallel vloss —
+unreachable at 1 GPU), **I5/#136** (eval cache — moot at
+`eval_cache_entries: 0`). U8–U13 are not in this batch.
+
+**Residual risk.**
+1. The `bestmove_fallback_used` line has never been observed in a real
+   subprocess session, because on this branch its only CPU-inducible trigger
+   (U1) no longer fires and CUDA/OOM faults cannot be induced CPU-only. It is
+   exercised by driving the real `Engine._run_one_phase` against a real
+   `SearchWorker` whose evaluator raises after the root eval — the production
+   path minus the subprocess boundary. Stated as a gap, not covered.
+2. **DECLINED ROOTS ARE PLAYED UNSEARCHED, and that is a live match-play
+   condition, not an edge case.** `CBoard.is_game_over()` declines **threefold
+   repetition reached through the move stack**, and the engine holds the game
+   history (`position ... moves`) — so from the ply we shuffle into a
+   repetition, *every* move is the raw policy prior with **zero simulations**
+   until a pawn move / capture / the repetition clears. Same for
+   `halfmove_clock >= 100` and insufficient material. This is not introduced
+   here (on `main` those roots raised and were answered with a RANDOM legal
+   move, which is strictly worse), and it is not fixed here — the fix would be
+   in the C predicate, which is a **training-affecting** change to
+   `gumbel_c.py` and belongs in its own pre-registered entry. What this PR adds
+   is that it is no longer **silent**: `info string prior_only_root=N
+   reason=... nodes=0 (... NOT searched)`, a separate `Engine.prior_only_roots`
+   counter, and an honest `nodes=0` instead of the fabricated chunk count
+   (`_run_one_chunk` returns `chunk` as completed for the gumbel path whether or
+   not a sim ran, so a 0-sim answer used to print `nodes 2048 nps 1024000`).
+   **This is the shuffle-in-a-won-position regime the value-head work ties to
+   the Cheese collapse profile, so the counter should be read on the next
+   Cheese gauntlet.**
+
+**Review round (2026-08-03, comment 5173120786 — REQUEST CHANGES, then
+addressed).** The independent reviewer reproduced every claim above on a
+fixed-seed checkpoint shared by both arms (stronger than my per-invocation
+random init), swept `limits_from_go` over 336 cells and confirmed that the cells
+that change are **all `movestogo=1`**, fuzzed 3,021 `position` commands and
+found **0 cases where `main` resolved a real board and this branch changed it**,
+and confirmed on a real 1858-wide head that `_policy_logits_to_full` +
+`move_to_index` is the correct pair. Three additive items came back:
+
+* **B1 — the declined-root path was silent AND reported work it did not do.**
+  `main` at least printed the search-error line; this branch printed nothing,
+  touched no counter, and emitted `info depth 1 nodes 2048 nps 1024000 ... pv
+  e2c2` for **zero** simulations. Fixed: `SearchResult.root_declined` carries
+  the reason, `nodes` is 0, and `Engine` prints `info string prior_only_root=N
+  ...`. **Decision: a SECOND counter, not `bestmove_fallback_used`** — a raise
+  is a fault whose only healthy value is 0, while a declined root fires during
+  ordinary repetition play; merging them would make the fault counter tick in
+  normal games and destroy the one thing it is for. Both emit an `info string`
+  and both return `nodes=0`, so one proxy sees either.
+* **B2 — the tests could not see the production policy encoding.** The stub
+  emitted dense 4672; production's head is `lc0_1858`, the only width for which
+  `_policy_logits_to_full` is not a no-op. The reviewer's 12th mutation (index
+  the raw head output — **the U2 defect restored on the real net**) left all 41
+  tests GREEN. The three U2-critical tests now run at BOTH widths; under that
+  mutant **only the `[1858]` arms fail**, which is the whole point. Now M12 of
+  15, and killed. *This is the negative-control lesson again: a suite that only
+  feeds the non-production encoding cannot fail on the production one.*
+* **N1 — DECISION: GATE the 0.95 `movestogo=1` ceiling on
+  `optimum_fraction > 0`.** The batch-time clock margin, the guard that actually
+  keeps an un-interruptible chunk off the flag, is inert exactly when
+  `optimum_ms is None`; ungated, the OFF-sentinel arm spent 920 of a 1000 ms
+  clock with neither the soft abort nor the overrun guard behind it. That branch
+  also promises to reproduce the pre-time-management allocation EXACTLY, so
+  moving it would have made the A/B **baseline arm no longer the old engine** —
+  U4 all over again, introduced by the fix for U3. Baseline arm is now
+  bit-identical to `main` (470 ms on the reviewer's 1 s cell), asserted.
+
+**CORRECTED 2026-08-03 (docs-only, caught by the delta pass).** The sentence
+above originally read *"56 cells change and every one is `movestogo=1`"*. **56
+describes the PRE-N1 head (`089d044c2`), not what ships.** N1 gated the raised
+ceiling on `optimum_fraction > 0`, which removed the off-sentinel half of that
+set. Re-swept the same 336-cell grid across three arms (`origin/main`, the
+pre-N1 head, and the shipped head) rather than adjusting the number by
+argument:
+
+```
+pre-N1 head 089d044c2 : 56 of 336 cells differ from origin/main
+                          movestogo=1, optimum_fraction=0.7 : 28
+                          movestogo=1, optimum_fraction=0.0 : 28
+SHIPPED head c3edb1555: 28 of 336 cells differ from origin/main
+                          movestogo=1, optimum_fraction=0.7 : 28
+```
+
+**Shipped is 28, all of them `movestogo=1` at `optimum_fraction=0.7`; all 168
+off-sentinel cells are bit-identical to `main`.** Quoting a reviewer's
+measurement of an earlier head as if it described the merge candidate is the
+same class of error as this entry's own N2 amendment — a number carried forward
+across a change that invalidated it. Corrected in place with the disclosure.
+
+Mutation table is now **15/15 caught** (M12–M15 added), plus the reviewer's
+M16 pinning the two-counter split. Method note for the next batch: the mutation
+harness reverted each mutation with `git checkout --`, which silently
+**discarded a full round of uncommitted edits** in the same files. It now
+restores from an in-memory copy.
+
+#### WAVE-4 SIMPLIFICATION BATCH (2026-08-03) — 3 of 7 shortlist items deleted, 4 refused; the audits' own dead-proofs are 3-for-7 point-in-time correct
+
+Branch `chore/wave4-simplification` off `origin/main e02121691`. **Not
+training-affecting: no config key changes meaning, no default value moves, no
+yaml line is touched, and every deletion is code that provably cannot execute
+at any shipping config.** Training is PAUSED; this batch is not a restart
+blocker and does not consume a readout window. One commit per audit item so the
+reviewer can bisect. UNREVIEWED by the author — reviewer is a separate agent per
+the reviewer-≠-author rule.
+
+**Total: 865 lines deleted, 59 inserted (net −806).**
+
+**DELETED (3 items):**
+
+- **MODEL_OPT_AUDIT S1 / M4-4 — `TransformerConfig.dropout` and the block-dropout
+  path. −5 LOC.** `ModelConfig` has no `dropout` field, so no yaml key reaches
+  it; the only production construction site never passes one. After the commit
+  `grep -rn 'dropout=' --include=*.py` (excluding `feature_dropout` /
+  `resid_channel_dropout`, different knobs) returns zero hits. `dropout_p` is
+  dropped from the SDPA call, whose default is 0.0 — the value it always
+  received.
+- **MODEL_OPT_AUDIT S3 — `replay/buffer.py::balance_wdl`. −50/+2.** The only
+  references in the entire repo were the definition and the two re-export lines
+  in `replay/__init__.py`. It operates on `list[ReplaySample]`, which the
+  disk-backed production path never builds; live WDL balancing is
+  `sample_batch_arrays`' own per-class draw.
+- **MODEL_OPT_AUDIT S4 (PARTIAL) — COSMOS + COSMOSFast retired. −810/+57.** No
+  config in the repo selects `cosmos`/`cosmos_fast`; `cosmos_rank`/`cosmos_gamma`
+  appear in no config, nor in the restart package. The 14 configs carrying
+  `search_optimizer_choices: [cosmos_fast]` (production included) are inert: that
+  value is read only by `_optimizer_candidates_from_config`, whose result is
+  consumed exclusively under `if base_config.get("search_optimizer", False)`, and
+  `search_optimizer` is false in every config except `bt4_aurora_asha.yaml`,
+  which searches `[aurora, adamw]`. Muon's `_zeropower_via_newton_schulz5` lived
+  in `cosmos_fast` and is MOVED VERBATIM into `muon.py`, its only consumer.
+
+**REFUSED (4 items) — with the observation that refused them:**
+
+- **`soda` (named in the same shortlist line as cosmos): NOT DEAD, and not an
+  optimizer.** It is a weight-decay MODE reachable on the live trainer path via
+  the allowlisted `weight_decay_mode: soda` (`trainer.py:1667`), driven by
+  `scripts/offline_replay_epoch.py --weight-decay-mode soda` and
+  `scripts/arch_sweep_soda_weight_decay.sh`. The audit's classification was
+  wrong. Kept in full.
+- **TUNE_AUDIT S3 (`gate_*` corpses, ~25 LOC): the dead-proof is FALSIFIED
+  today.** The audit states "`configs/pbt2_small.yaml` ships **none** of them";
+  the live yaml ships all four at lines 1076–1079, and
+  `scratchpad/restart_package_20260804/proposed_pbt2_small.yaml` PINS
+  `gate_games: 0` / `gate_threshold: 0.5` / `gate_mcts_sims: 1` with explicit
+  comments (only `gate_interval` is deleted there). Removing them from
+  `_TUNE_KEYS` makes `_check_unknown` raise on the whole file
+  (`config_yaml.py:412`) — the all-or-nothing validator — so this deletion would
+  refuse the live yaml AND the restart yaml at load. Also `gate_games != 0`
+  raising at startup is load-bearing per the restart file's own annotation.
+- **TUNE_AUDIT S1 (population/exploit half of `replay_exchange.py`, ~500 LOC):
+  restart-package dependency.** The restart yaml sets 13 `exploit_replay_*` keys,
+  including the FLIP that is brief blocker #4 —
+  `exploit_replay_refresh_enabled: false`, documented there as "THIS KEY IS THE
+  ONLY KILL SWITCH" for the −252-Elo cross-era window import. Deleting the
+  consumers of a key whose whole purpose at this restart is to be read and
+  obeyed is the opposite of behaviour-neutral.
+- **TUNE_AUDIT S2 (scheduler builders collapse, ~125 LOC): reachable via shipped
+  configs.** `configs/bt4_aurora_asha.yaml` sets `tune_scheduler: asha` and
+  `configs/default.yaml` sets `pb2`. The audit's dead-proof covers only the
+  production yaml. Deleting `_build_asha`/`_build_pb2` would turn both configs
+  into a startup crash. Separately, the restart yaml sets `search_smolgen`,
+  `search_nla` and `search_optimizer`, so the `search_*` branches and
+  `_optimizer_candidates_from_config` must keep their consumers regardless.
+- **UCI_AUDIT S1 (ponder path, ~150 LOC): refused by construction.** The audit
+  says it is "not inert — it is *reachable and broken*" (U10 history loss). This
+  batch deletes only what cannot run; fix-or-hard-refuse is a behaviour decision
+  that belongs in its own pre-registered change, not in a simplification batch.
+
+**Method note for the next simplification batch: verify the audit's dead-proof
+against today's tree, not against the audit's prose.** 3 of the 7 shortlist
+items had a proof that no longer held (S3's "ships none of them" was false; S1's
+keys became restart-load-bearing after the audit; S2's "only gpbt_pl" ignored two
+checked-in configs), and one item (`soda`) was misclassified at the audit's own
+time of writing. The shortlist's LOC estimates are therefore an upper bound on
+what is safely removable, not a target.
+
+**Landing order:** if `main` moves before merge, the only plausible conflicts are
+`chess_anti_engine/train/trainer.py` (optimizer dispatch) and
+`chess_anti_engine/tune/trainable_config_ops.py` (key sets). Rebase, keep the
+incoming change, and re-apply the deletion; then re-run
+`pytest tests/test_trainer_warmup.py tests/test_trainable_config_ops.py` plus
+no-arg `./scripts/lint.sh` before merging.
+---
+
+## 2026-08-03 — B6(c) CLOSED: the PRODUCTION broker stops counting unanswered rows as served (task #142)
+
+**Closes the "THE B6(c) FAMILY IS OPEN, NOT CLOSED" thread opened by #325.**
+That entry named a THIRD instance and deliberately left it alone because it is
+the live production broker and #325's readout window was already spoken for.
+This is that instance, and it is **3 of 3 known**. Instrument-only: no training
+row, no target, no config key changes — a metric stops lying about failures.
+
+**The defect.** `SlotBroker.serve_forever` adds
+`sum(s.batch_size for s in ready)` to `metrics["positions"]` BEFORE calling
+`_process_batch`, which hands slots back UNANSWERED on three paths:
+
+| # | path | site (as merged) | what it releases |
+|---|------|------------------|------------------|
+| 1 | `BrokerModelUnavailable` | `_process_batch` handler | the whole mode group — the publish manifest is missing past its 30 s deadline or carries no sha |
+| 2 | generic batch failure | `_process_batch` handler | the whole mode group — the broker survives one bad batch by design rather than taking inference from the fleet |
+| 3 | malformed compact-legal metadata | `_process_batch_mode`, per SLOT | one slot, so a batch is partly served and partly refused |
+
+On all three the slot goes to `_STATE_IDLE` and the client re-submits, so no
+model evaluated those rows — yet `pos/s` counted them. **A broker answering
+nothing at all reported full throughput**, and it is worst on path 1, which is
+the cold-boot failure and repeats every serve loop until a model appears. That
+number is what an operator reads to decide whether the fleet is healthy.
+
+**The fix**, matching B6(c) in the sibling path verbatim: `_process_batch_mode`
+returns the rows it declined, `_process_batch` adds the whole group on either
+failure path and returns the total, and the serve loop subtracts it.
+`batches`/`slots` stay DISPATCH counts on purpose — they answer "how much did
+the loop try to batch", which a refusal does not change; `positions` alone
+means "rows a model evaluated".
+
+Two details that are load-bearing, each pinned by its own test:
+
+* **The row count is read BEFORE `_release_slots_for_retry`.** That call sets
+  `_STATE_IDLE`, after which the client may re-submit into the same shared slot
+  with a different `batch_size`; reading afterwards subtracts a count belonging
+  to the NEXT request. `test_modelless_rows_are_counted_before_the_release`
+  simulates exactly that client and is the mutation-M4 target.
+* **The callee's return is accumulated in the `else` clause, not at the call
+  site inside the `try`.** Inside, a `_process_batch_mode` that returned `None`
+  would raise `TypeError` into the generic handler, be **swallowed as "one bad
+  batch"**, and silently walk `_consecutive_batch_failures` toward a broker
+  exit. `lint.sh` (no args) found the live version of this: three existing tests
+  stub `_process_batch_mode` with a `-> None` return, now `-> int` / `0`. The
+  house defect — a value accepted and then silently ignored — inside the fix for
+  the house defect, caught by the gate rather than by reasoning.
+
+**Red→green.** 9 of the 10 tests in `tests/test_broker_served_count.py` FAIL on
+`origin/main` (`e02121691`) and pass on the fix. The tenth,
+`test_the_serve_loop_counts_served_rows`, is the positive control and MUST pass
+on main — it is the arm that dies if the dispatch-time accumulation is deleted
+instead of corrected, which is the mirror-image defect.
+
+**7 mutations, 7 KILLED**, each by a NAMED test: M1 drop the loop's
+subtraction; M2a drop the loop's accumulation; M2b drop `_process_batch`'s
+accumulation of the callee's count; M3a/M3b/M3c drop the count on exactly one
+of the three paths (the "subtract on only 2 of 3" mutation, one per path); M4
+move the read below the release. Harness rules followed: mutations applied and
+restored from an IN-MEMORY copy, sweep refuses a dirty tree, `git diff` asserted
+empty and HEAD unchanged afterwards. **M4 initially reported `SECOND PATTERN NOT
+FOUND` rather than passing** — its anchor (release + failure-counter pair)
+occurs in BOTH handlers, so an ambiguous match was refused loudly instead of
+reading as a kill; re-anchored on the throttled-log tail.
+
+⚑⚑ **AMENDED 2026-08-03 AFTER THE INDEPENDENT REVIEW (#330 comment 5173998880,
+REQUEST CHANGES). Everything from here to the end of this entry replaces what
+was originally written, and the original was WRONG in a way worth keeping.**
+The code fix above was confirmed in full (all 8 reviewer probes green, my 7
+mutations re-run 7/7, the printed-line proof done through the real printer).
+The block was this section: the family-closure claim, and the instrument behind
+it.
+
+**METHOD LESSON — a grep for increments cannot find missing increments.**
+I closed the family by grepping `inference.py` for every counter increment
+(`+= 1`, `+= sum`, `+= int`, `+= len`) and checking each one. But **this defect
+class IS THE ABSENCE OF AN INCREMENT.** An increment grep can only enumerate
+sites that already count; the broken sites are precisely the ones it cannot
+see. It is the negative-control error in a new costume: I validated the
+instrument against the cases it was built from.
+
+**The enumerating instrument is the sites that RELEASE work, not the sites that
+count it** — `_release_slots_for_retry(` and `state = _STATE_IDLE` — each then
+checked against whether a dispatch-time counter had already counted those rows.
+The whole slot protocol lives in `inference.py` (grep confirms no other
+production module references `_STATE_IDLE` or `_release_slots_for_retry`), so
+that enumeration is exhaustive for this family.
+
+### Release-site enumeration (the corrected claim, from the right instrument)
+
+| site | context | releases DISPATCHED work? | counting disposition |
+|---|---|---|---|
+| `:1892` | `SlotBroker` slot allocation | no — nothing dispatched yet | n/a |
+| `:2105` | `_process_batch` `BrokerModelUnavailable` | **yes** | COUNTED (this PR, path 1) |
+| `:2132` | `_process_batch` generic batch failure | **yes** | COUNTED (this PR, path 2) |
+| `:2170` | `_release_slots_for_retry` body | the mechanism; callers above | n/a |
+| `:2336` | `_process_batch_mode` malformed legal metadata | **yes** | COUNTED (this PR, path 3) |
+| `:3100` | `SlotInferenceClient` stale-response reject | client side; its counter is completion-based with a `failed` flag (B6) | not dispatch-counted |
+| `:3104` | `SlotInferenceClient` successful read | no — success path returning the slot | n/a |
+| `:3577` | `SharedSlotBroker` slot allocation | no | n/a |
+| `:3813` | `SharedSlotBroker._process_parallel` **NO-MODEL trial** | **yes** | ⚑ **WAS MISSING — instance 4, fixed in this PR** |
+| `:3838` | `_process_parallel` unsupported `request_mode` | **yes** | COUNTED (#325 B6(c)) |
+
+**Instance 4 is real and reachable.** The no-model branch sets every one of a
+trial's ready slots to `_STATE_IDLE` and `continue`s with no increment, while
+`serve_forever` counts them at dispatch (`:3997-3998`) and subtracts only the
+return (`:4004`). A trial whose weights had not loaded yet had **every row
+reported as served pos/s**. Dormant at today's settings
+(`pbt2_small.yaml:869`, `distributed_inference_shared_broker: false`) but the
+shared broker is part of the **#322 restart-gated deploy**, so this path can go
+live at a restart. Reproduced by probe (refused=0 while the slot is released),
+fixed with the same shape and the same read-before-release ordering as path 1.
+`refused_rows` is renamed `unanswered_rows`: the name stopped matching its
+contents the moment the no-model path joined it, and **a counter whose name is
+narrower than what it holds is how the missing case stayed invisible** — the
+serve-loop comment naming only the mode path is what made the gap read as
+intentional.
+
+**Instance 5, the `FIRST_BATCH_DONE` boot marker — also fixed here** (the
+reviewer's non-blocking suggestion, taken rather than deferred). It printed the
+DISPATCHED row count after `_process_batch` without consulting the outcome and
+set `_first_batch_logged` either way, so a broker whose first batch was wholly
+released — the cold-boot no-model case, the one this marker is watched for —
+announced `FIRST_BATCH_DONE` with a full row count. It now reports rows
+actually served, and a wholly unanswered batch is not a first batch: the flag
+stays down and the marker fires on the first batch genuinely served. **Checked
+before changing it:** nothing in the repo reads `FIRST_BATCH_DONE` or
+`_first_batch_logged`, and readiness is signalled by `ACCEPTING_REQUESTS`
+(untouched), so the suppression cannot hang a launcher.
+
+**A THIRD disposition the enumeration exposed, and fixed:** the clamp. Not a
+release site at all, but still counted-at-dispatch-never-evaluated —
+`_process_batch_mode` clamped to `max_batch` while the other row-count sites
+summed the raw `batch_size`, so a client writing above layout capacity had the
+excess reported as throughput. **There are FOUR row-count sites on the
+`SlotBroker` path, not two:** the gather (`:2249`), the serve loop's dispatch
+count (`:2749`), and both `_process_batch` failure handlers (`:2091`, `:2121`).
+All four now call one `_slot_rows` helper.
+
+⚑⚑ **CORRECTED 2026-08-03 by the delta re-review (#330 comment 5174306780),
+and this correction is the sharpest lesson in the entry.** The first version of
+this fix converted only two of the four sites — the gather and the dispatch
+count — and the helper's own docstring said "both", which is precisely what let
+the two handlers go on reading raw. **That made the residual WORSE than before
+the helper existed**, because it inverted the sign:
+
+```
+before _slot_rows:      dispatch 12 (raw)     - handler 12 (raw)     =  0
+after, handlers raw:    dispatch  8 (clamped) - handler 12 (raw)     = -4
+fixed (all four):       dispatch  8 (clamped) - handler  8 (clamped) =  0
+```
+
+Reproduced on head `656b33a05` at `batch_size=12` on an 8-row slot: `positions
+== -4` on BOTH failure paths, where the un-helpered head `f39bb8336` read 0.
+**A PARTIAL application of "a guard must share its criterion's instrument" is
+worse than no application at all** — the sites that adopted the shared
+instrument made the sites that did not actively wrong, and the error changed
+sign rather than shrinking. Unreachable through the sanctioned client (which
+raises at `:2980`/`:3015`) and a negative count is loud rather than silent, so
+it was non-blocking; fixed anyway rather than shipping a closure claim with an
+asterisk. The helper's docstring now states the site COUNT, so the next edit
+has to notice if it adds a fifth. Pinned by a parametrized regression test over
+both failure paths that asserts the sign invariant directly, and by mutations
+M10/M11.
+
+The clamp work was beyond the reviewer's original list, taken because it is one
+line per site and it is the difference between "closed" and "closed except for
+this". Note for the record that taking it is also what created the sign
+inversion above: an opportunistic extra fix earned its own defect, and only a
+second independent review caught it.
+
+**`SharedSlotBroker` needs no equivalent change and that is checked, not
+assumed:** it has no clamp anywhere — the gather (`:3869`), both unanswered
+counts (`:3811`, `:3837`) and the dispatch count (`:3998`) all read raw
+`batch_size`, so all four agree with each other.
+
+**FAMILY STATUS — now claimed from the release-site enumeration, not the
+increment grep.** Every release site above is either fixed, or provably not
+dispatch-counted, with its reason stated. Five instances known and all five
+now fixed: `MultiSlotInferenceClient` (B6), `_process_parallel`'s unsupported
+mode (B6(c)), `SlotBroker.serve_forever`'s three paths (this PR),
+`_process_parallel`'s no-model trial (this PR), `FIRST_BATCH_DONE` (this PR),
+plus the clamp. The two non-instances the increment grep did find, recorded so
+the next reader does not re-litigate them: `MultiSlotInferenceClient._inflight`
+(a gauge, decremented unconditionally in the same release path) and
+`_record_bucket_hist` (runs after the malformed filter, so it counts real
+forwards). **Anyone re-opening this family should re-run the RELEASE-site grep,
+not the increment grep.**
+
+**14 mutations, 14 KILLED**, each by a named test — the original 7 plus M5/M6
+(instance 4: drop the increment; read it after the release), M7/M8 (instance 5:
+report dispatched rows again; fire on a wholly unanswered batch again), M9 (the
+clamp: dispatch counts the raw claimed batch_size again) and M10/M11 (each of
+the two failure handlers, independently, reverts to the raw count — so neither
+site can regress behind the other's coverage).
+
+⚑ **The stale-anchor guard fired FOUR times across this PR and was right every
+time.** M4's anchor was ambiguous in round one; M1/M2a went stale in round two
+when the edits landed on those exact lines; M3a/M3b/M4 went stale in round three
+when the handlers became multi-line calls. Every one reported **PATTERN NOT
+FOUND rather than reading as a pass**. Round three also caught a bug in the
+*patch script that maintains the harness*: it asserted each anchor occurred once,
+but M3a and M4 deliberately share an anchor, so the count was 2 and the script
+aborted before writing — which meant the sweep ran the OLD harness and reported
+three NOT-FOUND lines instead of silently skipping them. A harness that fails
+loudly protects its own maintenance, not just the code under test.
+
+Red on the previous head `f39bb8336`: 6 of the 8 new tests fail there; the
+other two are positive controls that must pass (a served trial subtracts
+nothing; the marker still fires once the broker genuinely serves).
+
+Verified: `./scripts/lint.sh` (no args) exit 0 — read as a real exit code, not
+through `| tail`; **163 tests green** across `test_broker_served_count`,
+`test_inference_broker`, `test_inference_slot_protocol`,
+`test_broker_no_zero_fill`, `test_broker_malformed_legal_meta`,
+`test_broker_hang`, `test_shared_broker_request_mode`,
+`test_multislot_wedged_slot`, `test_worker_broker_stats_line`,
+`test_worker_slot_planes_guard`, `test_inference_cache`,
+`test_aot_broker_integration`. (The original entry said 128 — that count simply
+omitted `test_aot_broker_integration`, which was run separately; the reviewer
+collected 153 on the pre-amendment head. 161 is this head's number.)
+
+**Landing order note:** this entry is a pure EOF append that was rebased over
+PR #331, which merged after this PR's first head. #331's wave-4 simplification
+entry sits ABOVE this one, matching merge order; no existing line was modified
+by the rebase (`git diff origin/main -- docs/experiment_ledger.md` shows
+insertions only). **Not reviewed by its author** — the re-review verdict is
+REQUEST CHANGES and the reviewer gets this delta.

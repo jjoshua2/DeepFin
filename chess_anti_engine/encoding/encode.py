@@ -53,6 +53,35 @@ def input_plane_count(input_extra_features: str | None = None) -> int:
     return 112 + extra_feature_plane_count(input_extra_features)
 
 
+def check_encode_buffer_planes(
+    out: np.ndarray, input_extra_features: str | None, *, where: str,
+) -> None:
+    """Assert an encode output buffer has the channel count the config implies.
+
+    The C batch encoders take the number of feature planes from the OUTPUT
+    BUFFER (``n_extra = PyArray_DIM(out, 1) - 112``) and never see
+    ``input_extra_features`` at all; the shape check in C accepts either 146 or
+    175 and then trusts the buffer. So a buffer sized by one source of truth and
+    a config saying something else produce a silently different encoding rather
+    than an error — the exact "value accepted, then ignored" shape (encoding
+    audit E4). Call this wherever the buffer comes from somewhere other than the
+    config: the evaluator's pinned slot pool, a shared-memory view, a caller.
+
+    ``where`` names the call site in the message; it is the only thing that
+    distinguishes one failure from another.
+    """
+    want = input_plane_count(input_extra_features)
+    got = int(out.shape[1]) if out.ndim >= 2 else -1
+    if got != want:
+        raise ValueError(
+            f"{where}: encode buffer has {got} planes but "
+            f"input_extra_features={input_extra_features!r} implies {want}. "
+            "The C batch encoders infer the feature version from the buffer, so "
+            "this would encode a different plane layout instead of failing "
+            "(encoding audit E4)."
+        )
+
+
 def version_for_input_planes(n: int) -> str:
     """Reverse of :func:`input_plane_count`: the extra-features version at ``n`` planes.
 

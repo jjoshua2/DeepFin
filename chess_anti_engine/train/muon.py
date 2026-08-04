@@ -5,6 +5,46 @@ from collections.abc import Callable
 from typing import overload
 
 import torch
+from torch import Tensor
+
+
+def _zeropower_via_newton_schulz5(
+    grad: Tensor,
+    *,
+    steps: int = 5,
+    eps: float = 1e-7,
+    work_dtype: torch.dtype | None = None,
+) -> Tensor:
+    """Quintic Newton-Schulz orthogonalization of a 2D tensor (Muon's NS5).
+
+    Moved here verbatim from the deleted ``cosmos_fast`` module, which was its
+    original home; Muon is now its only consumer.
+    """
+    if grad.ndim != 2:
+        raise ValueError(f"Expected a 2D tensor, got shape={tuple(grad.shape)}")
+
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    if work_dtype is None:
+        if grad.device.type != "cuda":
+            work_dtype = grad.dtype if grad.dtype in (torch.float32, torch.float64) else torch.float32
+        else:
+            work_dtype = torch.bfloat16 if grad.dtype not in (torch.float16, torch.bfloat16) else grad.dtype
+
+    x = grad.to(work_dtype)
+    x = x / (x.norm() + eps)
+
+    transposed = False
+    if x.size(0) > x.size(1):
+        x = x.transpose(0, 1)
+        transposed = True
+
+    for _ in range(max(1, int(steps))):
+        xx_t = x @ x.transpose(0, 1)
+        x = a * x + (b * xx_t + c * (xx_t @ xx_t)) @ x
+
+    if transposed:
+        x = x.transpose(0, 1)
+    return x.to(dtype=grad.dtype)
 
 
 class MuonWithAuxAdam(torch.optim.Optimizer):
@@ -44,7 +84,6 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
 
     @staticmethod
     def _zeropower_via_newton_schulz5(mat: torch.Tensor, *, steps: int) -> torch.Tensor:
-        from chess_anti_engine.train.cosmos_fast import _zeropower_via_newton_schulz5
         return _zeropower_via_newton_schulz5(mat, steps=steps)
 
     @overload

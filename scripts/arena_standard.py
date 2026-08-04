@@ -105,6 +105,28 @@ class SideSearch:
     gumbel: dict[str, float]
     vloss_weight: int
     target_batch: int
+  # Whether the search tree is carried across plies. EVERY arena move is a
+  # COLD search: `selfplay/match.pick_moves_for_boards` -- the only entry point
+  # this script and `chess_anti_engine/arena.py` use -- passes neither `tree`
+  # nor `root_node_ids`, while production selfplay
+  # (`selfplay/network_turn.py:799-801`) passes both and advances the root with
+  # `find_child` after each ply. Measured (play-path audit 2026-08-03 F1,
+  # `scratchpad/code_audit_20260803/repro_tree_reuse.py`, 256 nominal sims):
+  # cold roots see 256 visits / max_visit 60 on every ply, warm ones 315-363 /
+  # 77-108, i.e. the root value-transform scale q_scale=c_scale*(c_visit+
+  # max_visit) is up to +44% sharper in production than in any arena. So
+  # `matched_sims` matches the nominal budget, NOT the visit counts the policy
+  # is built from. Recorded rather than fixed: giving `pick_moves_for_boards` a
+  # tree carry changes arena behaviour and needs its own pre-registered
+  # readout. Constant today; a field so the JSONL record dates from before the
+  # fix rather than being silent about it.
+  #
+  # ⚑ ABSENT != "cold". Every JSONL row written before 2026-08-03 lacks this
+  # key. A reader must treat a missing `tree_reuse` as UNKNOWN, never default
+  # it to "cold" -- those rows were cold in fact, but a default that silently
+  # answers for rows the field never covered is the `reco_diff misses absent
+  # keys` failure mode, and it would keep answering after tree carry lands.
+    tree_reuse: str = "cold"
 
     def realized_gumbel(self) -> dict[str, float | int]:
         """Every shape-defining knob's REALIZED value, overrides or not.
@@ -113,12 +135,21 @@ class SideSearch:
         which is the selfplay/training shape by construction. Printing this
         rather than the sparse override dict is the point: a `training` run
         must be able to show that it is NOT running c_scale 0.025.
+
+        Knobs in ``INERT_GUMBEL_KNOBS`` are excluded unconditionally: printing
+        a value the search cannot act on as "realized" is what made a c_puct
+        Swiss look like a measurement (audit 2026-08-03, F2).
         """
-        from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
+        from chess_anti_engine.mcts.gumbel import (
+            INERT_GUMBEL_KNOBS,
+            PLAY_SEARCH_DEFAULTS,
+            GumbelConfig,
+        )
 
         base = GumbelConfig()
         out: dict[str, float | int] = {}
-        for key in sorted(set(PLAY_SEARCH_DEFAULTS) | set(self.gumbel)):
+        keys = (set(PLAY_SEARCH_DEFAULTS) | set(self.gumbel)) - INERT_GUMBEL_KNOBS
+        for key in sorted(keys):
             value = self.gumbel[key] if key in self.gumbel else getattr(base, key, None)
             if not isinstance(value, (int, float)):
                 raise SystemExit(
@@ -135,13 +166,15 @@ class SideSearch:
             "gumbel": dict(self.realized_gumbel()),
             "vloss_weight": self.vloss_weight,
             "target_batch": self.target_batch,
+            "tree_reuse": self.tree_reuse,
         }
 
     def describe(self) -> str:
         knobs = " ".join(f"{k}={v}" for k, v in self.realized_gumbel().items())
         return (
             f"shape={self.shape} vloss_weight={self.vloss_weight} "
-            f"target_batch={self.target_batch} {knobs} [{self.source}]"
+            f"target_batch={self.target_batch} tree_reuse={self.tree_reuse} "
+            f"{knobs} [{self.source}]"
         )
 
 
@@ -244,7 +277,7 @@ def apply_search_overrides(
     """Layer per-side CLI overrides on top of a resolved shape."""
     import dataclasses
 
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel import INERT_GUMBEL_KNOBS, GumbelConfig
 
     fields = {f.name for f in dataclasses.fields(GumbelConfig)}
     gumbel = dict(base.gumbel)
@@ -264,6 +297,17 @@ def apply_search_overrides(
                 f"--*-gumbel: {k!r} is not a GumbelConfig field. Valid keys: "
                 f"{', '.join(sorted(fields))}"
             )
+        if k in INERT_GUMBEL_KNOBS:
+            # Accepting it would produce a perfectly reproducible null that
+            # reads as a measurement: the PUCT descent these drive is
+            # unreachable while full_tree is True (audit 2026-08-03, F2).
+            raise SystemExit(
+                f"--*-gumbel: {k!r} cannot affect a Gumbel search and is refused. "
+                "It drives the PUCT descent, which GumbelConfig.full_tree=True "
+                "makes unreachable (play-path audit 2026-08-03 F2; repro "
+                "scratchpad/code_audit_20260803/repro_inert_knobs.py). A Swiss "
+                "over it would return a flat null and read as a measurement."
+            )
         gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
         extra.append(part)
     if vloss_weight is not None:
@@ -277,6 +321,7 @@ def apply_search_overrides(
         gumbel=gumbel,
         vloss_weight=base.vloss_weight if vloss_weight is None else int(vloss_weight),
         target_batch=base.target_batch if target_batch is None else int(target_batch),
+        tree_reuse=base.tree_reuse,
     )
 
 
@@ -1484,9 +1529,12 @@ def main() -> None:
                    help="dataset-mean volatility anchor override (see exp_volatility_search.yaml)")
     p.add_argument("--cand-gumbel", default=None,
                    help="candidate gumbel knob overrides as k=v,k=v "
-                        "(c_scale,c_visit,c_visit_root,topk,c_puct,fpu_reduction,halving_div). "
-                        "Use the SAME checkpoint for --candidate/--reference + differing "
-                        "gumbel here = a pure search-config Swiss (matched_sims).")
+                        "(c_scale,c_visit,c_visit_root,c_scale_root,topk,halving_div,"
+                        "policy_temp). Use the SAME checkpoint for "
+                        "--candidate/--reference + differing gumbel here = a pure "
+                        "search-config Swiss (matched_sims). c_puct/fpu_reduction/"
+                        "cpuct_factor/cpuct_base are REJECTED: they cannot affect a "
+                        "Gumbel search (audit 2026-08-03 F2).")
     p.add_argument("--ref-gumbel", default=None,
                    help="reference gumbel knob overrides (same k=v,k=v format as --cand-gumbel)")
     p.add_argument("--cand-vloss-weight", type=int, default=None,

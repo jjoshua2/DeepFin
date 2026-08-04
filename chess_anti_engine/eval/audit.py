@@ -30,8 +30,12 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_history,
 )
 from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
+from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
 
-PHASE_THRESHOLDS = (13, 22)
+# Imported, not re-typed: `train/losses.py` splits its per-phase losses on the
+# same constant so the training columns and this module's per-phase regret name
+# the same buckets. A second literal here would let them drift apart silently.
+PHASE_THRESHOLDS = DEFAULT_PHASE_PIECE_THRESHOLDS
 PHASE_NAMES = ("endgame", "middlegame", "opening")
 SOURCE_NAMES = ("selfplay", "curriculum")
 

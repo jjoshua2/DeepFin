@@ -19,8 +19,12 @@ def sample_action_with_temperature(
     ``argmax_idx`` is the fallback index *into actions* used when
     ``temperature <= 0``, ``weights.sum()`` is zero or non-finite, or the
     distribution is otherwise degenerate. Callers pre-compute it as the
-    natural argmax (``np.argmax(weights)`` for PUCT; ``0`` for Gumbel,
-    where the survivor is always at index 0 after sequential halving).
+    natural argmax: ``np.argmax(weights)`` for PUCT, and for Gumbel
+    ``np.searchsorted(legal, best_a)`` where ``best_a = remaining[0]`` is the
+    sequential-halving survivor. It is NOT 0 for Gumbel — index 0 of ``legal``
+    is the lowest legal action id, not the survivor. (This docstring claimed
+    otherwise until the 2026-08-03 play-path audit, F10; both Gumbel call
+    sites always passed the searchsorted index.)
     """
     if actions.size == 0:
         return 0

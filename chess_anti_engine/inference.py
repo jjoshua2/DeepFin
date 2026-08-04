@@ -6,9 +6,11 @@ import json
 import logging
 import os
 import queue
+import random
 import struct
 import threading
 import time
+import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace as dataclass_replace
 from multiprocessing import resource_tracker
@@ -20,12 +22,15 @@ import numpy as np
 import torch
 
 from chess_anti_engine.broker_hang import (
+    BOOT_HANG_ABORT_ENV as _BOOT_HANG_ABORT_ENV,
+    DEFAULT_BOOT_HANG_ABORT_S as _DEFAULT_BOOT_HANG_ABORT_S,
     DEFAULT_HANG_ABORT_S as _DEFAULT_HANG_ABORT_S,
     HANG_ABORT_ENV as _HANG_ABORT_ENV,
     BrokerHangWatchdog,
+    resolve_boot_hang_abort_seconds,
     resolve_hang_abort_seconds,
 )
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import input_plane_count, model_input_plane_count
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
@@ -42,6 +47,12 @@ log = logging.getLogger(__name__)
 # Input/output tensor shape constants shared by evaluators, slot layouts and
 # pinned buffers. _CHANNELS is the v1 default (146 = 112 LC0 + 34 extra);
 # v2_threats paths pass their own channel count explicitly.
+#
+# A 175-plane production system that forgets one of the --input-planes /
+# --inference-slot-input-planes flags silently gets this 146 instead (encoding
+# audit E4). The default is kept — changing it would only move which
+# configuration is silently wrong — and every path that later meets a real model
+# calls require_model_planes, so the mismatch raises instead of running.
 _CHANNELS = input_plane_count()  # 146 = 112 LC0 + 34 v1 extra
 _BOARD_H = 8
 _BOARD_W = 8
@@ -74,6 +85,50 @@ class AsyncBatchEvaluator(BatchEvaluator, Protocol):
 def _policy_output(out: dict[str, torch.Tensor]) -> torch.Tensor:
     """Extract policy tensor from model output (handles both key conventions)."""
     return out["policy"] if "policy" in out else out["policy_own"]
+
+
+def require_model_planes(model: torch.nn.Module, channels: int, *, where: str) -> None:
+    """Fail loudly when a buffer/slot width disagrees with the model's encoding.
+
+    ``channels`` is a shared-memory or pinned-buffer width chosen before the
+    model was known — from ``--input-planes`` / ``--inference-slot-input-planes``,
+    whose default is the v1 146. The model declares its own encoding, so once it
+    exists the two can be compared; without this the broker allocates a
+    146-plane segment for a 175-plane net and the mismatch surfaces as garbage
+    or as a shape error far from its cause (encoding audit E4/E5).
+    """
+    want = int(model_input_plane_count(model))
+    if int(channels) != want:
+        raise ValueError(
+            f"{where}: buffer width is {int(channels)} input planes but the model "
+            f"declares input_extra_features="
+            f"{getattr(model, 'input_extra_features', None)!r} = {want} planes. "
+            "Pass the matching --input-planes / --inference-slot-input-planes "
+            "(the default is the v1 146)."
+        )
+
+
+def _slot_rows(slot: _InferenceSlot, max_batch: int) -> int:
+    """Rows this broker will actually evaluate for ``slot``.
+
+    ONE definition for ALL FOUR row-count sites on the ``SlotBroker`` path: the
+    gather loop that evaluates the rows, the serve loop that counts them at
+    dispatch, and the two ``_process_batch`` failure handlers that hand them
+    back. They used to differ: the gather clamped to ``max_batch`` while the
+    other three summed the raw ``slot.batch_size``, so a client writing a
+    batch_size above the layout's capacity had the excess counted as served
+    throughput and never evaluated.
+
+    ⚑ The first version of this helper covered only the gather and the serve
+    loop, and its docstring said "both" -- which is how the two handlers went on
+    reading raw. That made the residual WORSE than before the helper existed:
+    dispatch counted the clamped 8 while a handler subtracted the claimed 12, so
+    a wholly failed batch reported -4 rows instead of 0. A partial application
+    of "share the instrument" inverted the error it was meant to remove. Four
+    sites, one definition, and the count is stated here so the next edit has to
+    notice if it adds a fifth.
+    """
+    return max(0, min(int(slot.batch_size), int(max_batch)))
 
 
 def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -988,6 +1043,62 @@ def build_aot_constants(
     return {fqn: _prep(state_dict[fqn]) for fqn in constant_fqns}
 
 
+AOT_CHECK_FULL_UPDATE_ENV = "CAE_AOT_CHECK_FULL_UPDATE"
+
+
+def aot_check_full_update_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Whether ``load_constants`` should validate full constant coverage.
+
+    Default ON (audit I4). It used to be hardcoded ``False``, which explicitly
+    tells AOTInductor not to complain about constants the payload does not
+    cover — so a package built from a different architecture revision silently
+    kept its build-time weights across every model publish, while the comment
+    above the call promised the opposite.
+
+    Kept behind an env kill switch because the flip could not be exercised on
+    the GPU path here: ``aoti_load_package`` needs CUDA. What WAS verified,
+    offline, is the precondition the check tests — all 21 packages in
+    ``data/aot_models_512/`` declare the same 455 constant FQNs, unique and
+    non-empty (read out of each ``.pt2``'s generated ``wrapper.cpp``), and the
+    rebind payload is built from exactly that FQN list. Set
+    ``CAE_AOT_CHECK_FULL_UPDATE=0`` to fall back if a real load disagrees.
+    """
+    env_map = os.environ if env is None else env
+    raw = str(env_map.get(AOT_CHECK_FULL_UPDATE_ENV, "")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def assert_uniform_constant_fqns(models: Mapping[int, Any]) -> list[str]:
+    """Return the shared constant-FQN list, refusing a heterogeneous package set.
+
+    The rebind path builds ONE constants payload from ONE package's
+    ``get_constant_fqns()`` and loads it into all of them. That is only sound if
+    every package declares the same FQNs; nothing checked it, and
+    ``check_full_update=False`` guaranteed the mismatch would be silent (audit
+    I4). ``load_aot_packages`` skips missing files, so a partial rebuild — the
+    exact output of a bucket-ladder change — is how this arms.
+    """
+    if not models:
+        raise ValueError("assert_uniform_constant_fqns requires at least one package")
+    items = sorted(models.items())
+    ref_bucket, ref_model = items[0]
+    ref_fqns = list(ref_model.get_constant_fqns())
+    ref_set = set(ref_fqns)
+    for bucket, model in items[1:]:
+        fqns = set(model.get_constant_fqns())
+        if fqns != ref_set:
+            missing = sorted(ref_set - fqns)[:5]
+            extra = sorted(fqns - ref_set)[:5]
+            raise RuntimeError(
+                f"AOT package set is not uniform: bucket {bucket} declares "
+                f"{len(fqns)} constant fqns vs bucket {ref_bucket}'s {len(ref_set)} "
+                f"(missing={missing}, extra={extra}). Rebinding one bucket's fqn "
+                f"list into all of them would leave some packages on stale "
+                f"build-time weights. Rebuild aot_dir from a single model."
+            )
+    return ref_fqns
+
+
 def _aoti_load_package(path: str) -> Any:
     """Load one AOTInductor package; isolated for tests to monkeypatch."""
     # PyTorch 2.10's package loader accesses ``torch._inductor.codecache`` as
@@ -1056,7 +1167,7 @@ class AOTEvaluator:
         buckets = select_aot_buckets(max_batch=self._max_batch, buckets=_BATCH_BUCKETS)
         self._models = load_aot_packages(aot_dir, buckets=buckets)
         self._sorted_buckets = sorted(self._models.keys())
-        self._constant_fqns = list(next(iter(self._models.values())).get_constant_fqns())
+        self._constant_fqns = assert_uniform_constant_fqns(self._models)
 
         # Pre-allocate pinned buffers
         _pin = self.device.startswith("cuda")
@@ -1102,8 +1213,17 @@ class AOTEvaluator:
         constants = build_aot_constants(
             source, self._constant_fqns, device=self.device,
         )
-        for model in self._models.values():
-            model.load_constants(constants, check_full_update=False)
+        check_full = aot_check_full_update_enabled()
+        for bucket, model in self._models.items():
+            try:
+                model.load_constants(constants, check_full_update=check_full)
+            except Exception as exc:  # re-raised below with the bucket named
+                raise RuntimeError(
+                    f"AOT bucket {bucket} rejected the rebind of {len(constants)} "
+                    f"constants (check_full_update={check_full}): {exc}. Rebuild "
+                    f"the packages against this model rather than serving stale "
+                    f"build-time weights."
+                ) from exc
 
     def _pick_bucket(self, bsz: int) -> int:
         for b in self._sorted_buckets:
@@ -1248,16 +1368,59 @@ class AOTEvaluator:
 #
 #   [0]        state      uint8   (see _STATE_* constants)
 #   [1]        mode       uint8   (see _MODE_* constants)
+#   [2:4]      pad
 #   [4:8]      batch_size int32   (number of positions in this request)
-#   [8:...]    input      float32 or bf16-bits[max_batch, 146, 8, 8]
+#   [8:12]     request_id uint32  (client-stamped tag; broker echoes it — see below)
+#   [12:16]    magic      uint32  (_SLOT_MAGIC; written once at slot creation)
+#   [16:20]    layout_id  uint32  (_SlotLayout.identity(); written once at creation)
+#   [20:24]    reserved
+#   [24:...]   input      float32 or bf16-bits[max_batch, planes, 8, 8]
 #   [after input]  policy/output float32[max_batch, 4672] or compact metadata/bf16 bits
 #   [after policy] wdl    float32[max_batch, 3]
 #
 # Flow:
-#   1. Worker writes input + batch_size, sets state = REQUEST
-#   2. Broker sees state == REQUEST, reads input, runs GPU inference
-#   3. Broker writes policy + wdl, sets state = RESPONSE
-#   4. Worker reads output, sets state = IDLE
+#   1. Worker writes input + batch_size + a FRESH request_id, sets state = REQUEST
+#   2. Broker sees state == REQUEST, snapshots request_id FIRST, then reads input
+#   3. Broker writes policy + wdl, writes back the snapshotted request_id, sets
+#      state = RESPONSE
+#   4. Worker reads output ONLY if the echoed request_id matches the one it
+#      stamped; otherwise it discards the answer and re-submits.
+#
+# WHY the request_id exists (audit I1, 2026-08-03). The broker does not change
+# slot state while it works: it leaves the slot in _STATE_REQUEST until it
+# writes the answer. So when a client's request_timeout_s elapses mid-forward,
+# the worker resets its client (worker.py `_reset_inference_client`) and
+# re-submits into the SAME named slot; the broker then finishes the OLD request
+# and marks the slot _STATE_RESPONSE. Without a tag the waiting client accepts
+# that as the answer to its NEW request -- a policy/WDL belonging to a
+# different position, fed to MCTS and recorded as training data, with nothing
+# raised and no counter moved. On the compact-legal transport it is worse: the
+# client slices policy_u16[:n_legal] with its OWN n_legal, so the tail of the
+# row is re-interpreted bytes of its own request metadata.
+#
+# ORDERING is load-bearing on both sides and must not be "tidied":
+#   * client writes input/metadata/batch_size/mode, THEN request_id, THEN state
+#   * broker reads request_id BEFORE batch_size/metadata/input
+# Together these make a mismatch conservative: the broker can only echo a tag
+# whose payload it read at or after that tag was published, so "echoed ==
+# pending" implies the payload is the pending request's. Reading the tag last
+# would invert that and let a torn read pass as a match.
+#
+# WHAT MAKES THE ORDER SAFE, precisely: there is no fence here. Program order in
+# CPython plus x86-64's store ordering (TSO -- stores are not reordered with
+# other stores, loads not with other loads) is what carries it, and this stack
+# is x86-64 only. The same source on a weakly-ordered target (arm64, POWER)
+# would need explicit barriers; the guarantee above would silently stop holding
+# rather than fail a test. Do not port the protocol without revisiting this.
+#
+# WHY magic/layout_id exist (audit I2). Both sides compute _SlotLayout.compute()
+# independently and never exchanged the result. A client with a SMALLER plane
+# count than the broker still fits every numpy view inside the larger segment,
+# so the protocol completed normally and the client read its policy and WDL out
+# of the middle of the broker's INPUT region -- all-zero policy + all-zero WDL,
+# no exception. That is the exact zero-fill poisoning `_release_slots_for_retry`
+# and tests/test_broker_no_zero_fill.py exist to make impossible, reached
+# through a channel none of that work covers.
 #
 # No sockets, no per-request allocation, no connection setup/teardown.
 
@@ -1274,6 +1437,35 @@ _MODE_LEGAL_BF16 = 2
 # CUDA context does not livelock the fleet for an entire iteration.
 _MAX_CONSECUTIVE_BATCH_FAILURES = 50
 
+# Idle poll ladder for the serve loops: (idle_below_s, spin_polls, sleep_s).
+# The first rung is the pre-2026-08-03 behaviour verbatim -- 200 unyielded polls
+# then a 20µs sleep -- and it is what the loaded path uses, so batch latency and
+# the gather-window regime are untouched. The rungs below it only engage after
+# the broker has seen NOTHING for the given wall time, which under any real load
+# never happens: a client that has just been answered re-submits within
+# microseconds, and every arrival resets the ladder to rung 0. The cost this
+# removes is the drought/pause/inter-iteration case, where the old loop burned
+# ~83% of a core polling an empty slot set forever (audit I6).
+#
+# Worst case added latency is one rung's sleep, and a rung is only reachable
+# after that rung's idle time has already elapsed: 5ms of sleep can only be
+# paid by a request that arrives after >=500ms of total silence.
+_IDLE_BACKOFF_LADDER: tuple[tuple[float, int, float], ...] = (
+    (0.005, 200, 0.00002),
+    (0.050, 200, 0.0002),
+    (0.500, 32, 0.001),
+    (float("inf"), 8, 0.005),
+)
+
+
+def _idle_backoff(idle_s: float) -> tuple[int, float]:
+    """Spin count + sleep for a serve loop that has been idle for *idle_s*."""
+    for limit, polls, sleep_s in _IDLE_BACKOFF_LADDER:
+        if idle_s < limit:
+            return polls, sleep_s
+    last = _IDLE_BACKOFF_LADDER[-1]
+    return last[1], last[2]
+
 
 class BrokerModelUnavailable(RuntimeError):
     """No model is loaded, so the batch cannot be answered honestly.
@@ -1288,7 +1480,75 @@ class BrokerModelUnavailable(RuntimeError):
     """
 
 
-_HEADER_BYTES = 8  # 1 byte state + 1 byte mode + 2 pad + 4 byte batch_size
+_HEADER_BYTES = 24  # see the header map above; 8-byte aligned so input views stay aligned
+_OFF_STATE = 0
+_OFF_MODE = 1
+_OFF_BATCH_SIZE = 4
+_OFF_REQUEST_ID = 8
+_OFF_MAGIC = 12
+_OFF_LAYOUT_ID = 16
+
+# Bumped whenever the wire format changes. Broker and clients are launched
+# together by distributed_runtime, so a format change is deployable as long as
+# the whole fleet restarts.
+#
+# **The header guards protect only the NEW side, and the earlier version of this
+# comment claimed otherwise.** A client from a previous generation runs OLD
+# code, which has no size/magic/layout validation to fail; and because the v2
+# header grew at the FRONT while state@0 / mode@1 / batch_size@4 kept their
+# offsets, the state machine still completes with the two sides 16 bytes out of
+# phase. Measured across two worktrees, an origin/main client on a v2 broker's
+# segment returned an ALL-ZERO policy and an ALL-ZERO WDL with no exception --
+# exactly the poisoning this protocol version exists to delete. A version bump
+# can never make an old peer refuse; only a NEW peer can refuse.
+#
+# What actually makes the old-client direction safe is that the version is in
+# the slot NAME as well as the header (distributed_runtime._trial_slot_prefix
+# and SharedSlotBroker._register_new_trial). A stale worker then looks up a name
+# that does not exist and gets FileNotFoundError -> TimeoutError instead of
+# mapping a v2 segment. **Both must be bumped together**, and the name is the
+# one that matters for backward safety.
+SLOT_PROTOCOL_VERSION = 2
+_SLOT_MAGIC = 0x43414532  # b"CAE2"
+
+
+def trial_slot_prefix(*, trial_id: str) -> str:
+    """The ONE derivation of a trial's shared-memory slot name prefix.
+
+    The launcher tells workers a name and the shared broker creates one; they
+    must be byte-identical or every worker times out against a segment nobody
+    created — silent from the broker's side, since it simply never sees a
+    request. They used to be two hand-written copies of the same formula, and
+    the test that "checked they agree" was a third copy: mutating either
+    implementation left it green (PR #322 review). One function, two
+    delegating call sites, and a test that calls the real ones.
+
+    The version belongs in the NAME, not only in the header: see the
+    SLOT_PROTOCOL_VERSION comment above for why a header bump cannot make a
+    stale client refuse, and the name can.
+    """
+    from chess_anti_engine.tune._utils import (
+        stable_seed_u32,  # deferred: avoids a circular import
+    )
+
+    h = stable_seed_u32(f"slot-prefix-v{SLOT_PROTOCOL_VERSION}", trial_id)
+    return f"cae{SLOT_PROTOCOL_VERSION}-{h:08x}"
+
+# request_id 0 is reserved for "no request has been stamped" (a freshly created
+# or zeroed segment), so a client never treats a virgin slot as an echo.
+_REQUEST_ID_NONE = 0
+_REQUEST_ID_MASK = 0xFFFFFFFF
+
+
+class SlotProtocolMismatch(RuntimeError):
+    """The attached shared-memory segment is not a slot this client can use.
+
+    Raised by ``SlotInferenceClient._connect`` when the segment is too small for
+    the client's layout, carries a wrong/absent magic, or was created for a
+    different layout (different max_batch or plane count). Deliberately fatal
+    rather than a retry: every read on a mismatched layout is silently wrong
+    (see the I2 note on the header map), so there is nothing to wait for.
+    """
 
 
 @dataclass(frozen=True)
@@ -1302,6 +1562,23 @@ class _SlotLayout:
     wdl_offset: int
     wdl_bytes: int
     total_bytes: int
+
+    def identity(self) -> int:
+        """Stable 32-bit id of everything both sides must agree on.
+
+        Written into the segment header at creation and compared on connect.
+        Covers the protocol version and every field that moves an offset, so a
+        plane-count or max_batch skew cannot present as a compatible slot.
+        """
+        payload = (
+            f"cae-slot-v{SLOT_PROTOCOL_VERSION}"
+            f"|mb={self.max_batch}|ch={self.channels}"
+            f"|io={self.input_offset}|ib={self.input_bytes}"
+            f"|po={self.policy_offset}|pb={self.policy_bytes}"
+            f"|wo={self.wdl_offset}|wb={self.wdl_bytes}"
+            f"|tb={self.total_bytes}"
+        ).encode("ascii")
+        return zlib.crc32(payload) & _REQUEST_ID_MASK
 
     @staticmethod
     def compute(max_batch: int, channels: int = _CHANNELS) -> _SlotLayout:
@@ -1386,27 +1663,55 @@ class _InferenceSlot:
 
     @property
     def state(self) -> int:
-        return int(self._buf[0])
+        return int(self._buf[_OFF_STATE])
 
     @state.setter
     def state(self, v: int) -> None:
-        self._buf[0] = int(v) & 0xFF
+        self._buf[_OFF_STATE] = int(v) & 0xFF
 
     @property
     def batch_size(self) -> int:
-        return struct.unpack_from("<i", self._buf, 4)[0]
+        return struct.unpack_from("<i", self._buf, _OFF_BATCH_SIZE)[0]
 
     @batch_size.setter
     def batch_size(self, v: int) -> None:
-        struct.pack_into("<i", self._buf, 4, int(v))
+        struct.pack_into("<i", self._buf, _OFF_BATCH_SIZE, int(v))
 
     @property
     def request_mode(self) -> int:
-        return int(self._buf[1])
+        return int(self._buf[_OFF_MODE])
 
     @request_mode.setter
     def request_mode(self, v: int) -> None:
-        self._buf[1] = int(v) & 0xFF
+        self._buf[_OFF_MODE] = int(v) & 0xFF
+
+    @property
+    def request_id(self) -> int:
+        """Client-stamped tag for the request currently in the slot (audit I1).
+
+        Read by the broker BEFORE the payload and echoed back on response; the
+        client accepts a response only when this matches what it stamped. See
+        the ordering note on the header map — this must not be read after the
+        payload.
+        """
+        return struct.unpack_from("<I", self._buf, _OFF_REQUEST_ID)[0]
+
+    @request_id.setter
+    def request_id(self, v: int) -> None:
+        struct.pack_into("<I", self._buf, _OFF_REQUEST_ID, int(v) & _REQUEST_ID_MASK)
+
+    def write_protocol_header(self) -> None:
+        """Stamp layout id + magic. Called once by whoever CREATES the segment.
+
+        **Magic is written LAST and is the publish barrier.** A client can attach
+        to a freshly created segment at any point, so anything it validates must
+        already be in place by the time the magic it keys on becomes visible.
+        Writing magic first would let a client read a valid magic beside an
+        unwritten layout id and reject a perfectly good slot.
+        """
+        self.request_id = _REQUEST_ID_NONE
+        struct.pack_into("<I", self._buf, _OFF_LAYOUT_ID, self._layout.identity())
+        struct.pack_into("<I", self._buf, _OFF_MAGIC, _SLOT_MAGIC)
 
     @property
     def name(self) -> str:
@@ -1460,7 +1765,18 @@ class SlotBroker:
         self._first_inference_pending = False
         self.batch_wait_ms = float(batch_wait_ms)
         self.adaptive_idle_ms = float(adaptive_idle_ms)
-        self._hang_watchdog = BrokerHangWatchdog(threshold_s=float(hang_abort_seconds))
+        self._hang_watchdog = BrokerHangWatchdog(
+            threshold_s=float(hang_abort_seconds),
+            boot_threshold_s=resolve_boot_hang_abort_seconds(float(hang_abort_seconds)),
+        )
+        # Started HERE, not in serve_forever: everything below this line in
+        # __init__ (AOT package load/replay, pinned-buffer allocation) is a CUDA
+        # call on a possibly-wedged bridge, and MEMORY.md records exactly that
+        # -- "loading/replaying AOT cudagraph packages at startup reliably trips
+        # the flaky bridge". The old watchdog started after all of it and was
+        # inert until the first successful forward, so the boot-into-wedged-dxg
+        # scenario its own docstring names could never fire it (audit I3).
+        self._hang_watchdog.start()
         self._consecutive_batch_failures = 0
       # Throttle for the no-model warning; see BrokerModelUnavailable.
         self._no_model_warned_at = 0.0
@@ -1489,6 +1805,8 @@ class SlotBroker:
         self._layout = _SlotLayout.compute(max_batch_per_slot, int(input_planes))
         self._slots: list[_InferenceSlot] = []
         self._slot_names: list[str] = []
+        # Monotonic start of the current no-work stretch (None = work flowing).
+        self._idle_since: float | None = None
 
         print(
             f"[broker] boot start wall={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self._boot_wall0))} "
@@ -1511,10 +1829,9 @@ class SlotBroker:
                     f"<= max_batch={aot_max_batch}"
                 )
             t_aot = time.perf_counter()
-            self._aot_models = load_aot_packages(aot_raw, buckets=aot_buckets)
-            self._aot_constant_fqns = list(
-                next(iter(self._aot_models.values())).get_constant_fqns()
-            )
+            with self._hang_watchdog.stage("aot_package_load"):
+                self._aot_models = load_aot_packages(aot_raw, buckets=aot_buckets)
+                self._aot_constant_fqns = assert_uniform_constant_fqns(self._aot_models)
             print(
                 f"[broker] AOT packages loaded n={len(self._aot_models)} "
                 f"elapsed_s={time.perf_counter() - t_aot:.2f} "
@@ -1523,32 +1840,35 @@ class SlotBroker:
             )
 
         # Pre-allocated pinned buffers for zero-copy GPU transfer.
+        # Under a watchdog stage: cudaHostAlloc is a driver call and blocks
+        # forever on a wedged bridge exactly like a forward does.
         _total_cap = num_slots * max_batch_per_slot
         _pin = "cuda" in self.device and torch.cuda.is_available()
-        self._pinned_input = torch.empty(
-            (_total_cap, int(input_planes), _BOARD_H, _BOARD_W),
-            dtype=torch.float32, pin_memory=_pin,
-        )
-        self._pinned_input_bf16 = torch.empty(
-            (_total_cap, int(input_planes), _BOARD_H, _BOARD_W),
-            dtype=torch.bfloat16, pin_memory=_pin,
-        )
-        self._pinned_pol = torch.empty(
-            (_total_cap, _POLICY_SIZE), dtype=torch.float32, pin_memory=_pin,
-        )
-        self._pinned_wdl = torch.empty(
-            (_total_cap, _WDL_SIZE), dtype=torch.float32, pin_memory=_pin,
-        )
-        self._pinned_legal_pol_bf16_bits = torch.empty(
-            (_total_cap * 256,), dtype=torch.uint16, pin_memory=_pin,
-        )
         _legal_metadata_cap = _total_cap * 256 if _pin else 0
-        self._pinned_legal_flat = torch.empty(
-            (_legal_metadata_cap,), dtype=torch.long, pin_memory=_pin,
-        )
-        self._pinned_legal_rows = torch.empty(
-            (_legal_metadata_cap,), dtype=torch.long, pin_memory=_pin,
-        )
+        with self._hang_watchdog.stage("pinned_buffer_alloc"):
+            self._pinned_input = torch.empty(
+                (_total_cap, int(input_planes), _BOARD_H, _BOARD_W),
+                dtype=torch.float32, pin_memory=_pin,
+            )
+            self._pinned_input_bf16 = torch.empty(
+                (_total_cap, int(input_planes), _BOARD_H, _BOARD_W),
+                dtype=torch.bfloat16, pin_memory=_pin,
+            )
+            self._pinned_pol = torch.empty(
+                (_total_cap, _POLICY_SIZE), dtype=torch.float32, pin_memory=_pin,
+            )
+            self._pinned_wdl = torch.empty(
+                (_total_cap, _WDL_SIZE), dtype=torch.float32, pin_memory=_pin,
+            )
+            self._pinned_legal_pol_bf16_bits = torch.empty(
+                (_total_cap * 256,), dtype=torch.uint16, pin_memory=_pin,
+            )
+            self._pinned_legal_flat = torch.empty(
+                (_legal_metadata_cap,), dtype=torch.long, pin_memory=_pin,
+            )
+            self._pinned_legal_rows = torch.empty(
+                (_legal_metadata_cap,), dtype=torch.long, pin_memory=_pin,
+            )
   # Pinned tensors need force=True for numpy conversion.
         self._pinned_input_np = self._pinned_input.numpy(force=True)
         self._pinned_input_bf16_bits_np = self._pinned_input_bf16.view(torch.uint16).numpy(force=True)
@@ -1572,11 +1892,15 @@ class SlotBroker:
             slot.state = _STATE_IDLE
             slot.batch_size = 0
             slot.request_mode = _MODE_DENSE_F32
+            slot.write_protocol_header()
             self._slots.append(slot)
             self._slot_names.append(name)
 
         print(
             f"[broker] slots ready n={len(self._slots)} "
+            f"planes={self._layout.channels} "
+            f"layout_id={self._layout.identity():#010x} "
+            f"proto_v={SLOT_PROTOCOL_VERSION} "
             f"since_boot_s={time.perf_counter() - self._boot_t0:.2f}",
             flush=True,
         )
@@ -1626,10 +1950,35 @@ class SlotBroker:
             model_config_from_manifest_dict(manifest.get("model_config") or {}),
             use_gradient_checkpointing=False,
         )
+        # Plane-count binding (audit I2/I4). The shm layout, the pinned buffers
+        # and — when AOT is on — the compiled packages were all sized from the
+        # broker's --input-planes; the model about to be served is sized by the
+        # manifest. A disagreement means every request is read at the wrong
+        # offsets and every forward is fed the wrong shape, so it must raise
+        # rather than serve a silent all-zero policy.
+        #
+        # This is a PER-BATCH error, not a startup one: _ensure_model is only
+        # reachable from _process_batch_mode, so the raise is caught by
+        # _process_batch, logged with a traceback, the slots are released for
+        # retry, and it takes _MAX_CONSECUTIVE_BATCH_FAILURES (50) consecutive
+        # batches to exit the broker. Loud and self-limiting, but it is not a
+        # refusal to boot -- do not read it as one.
+        model_planes = int(input_plane_count(model_cfg.input_extra_features))
+        if model_planes != int(self._layout.channels):
+            raise SlotProtocolMismatch(
+                f"published model wants {model_planes} input planes "
+                f"(input_extra_features={model_cfg.input_extra_features!r}) but this "
+                f"broker was launched with --input-planes {int(self._layout.channels)}; "
+                "refusing to serve a model the slot layout cannot carry"
+            )
+
         model_path = self.publish_dir / "latest_model.pt"
         ckpt = torch.load(str(model_path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
         raw_model = build_model(model_cfg)
+        require_model_planes(
+            raw_model, self._layout.channels, where="SlotBroker slot layout",
+        )
         load_state_dict_tolerant(raw_model, sd, label="broker-model")
         raw_model.to(self.device)
         raw_model.eval()
@@ -1657,8 +2006,19 @@ class SlotBroker:
                 self._aot_constant_fqns,
                 device=self.device,
             )
-            for aot_model in self._aot_models.values():
-                aot_model.load_constants(constants, check_full_update=False)
+            check_full = aot_check_full_update_enabled()
+            for bucket, aot_model in self._aot_models.items():
+                try:
+                    aot_model.load_constants(constants, check_full_update=check_full)
+                except Exception as exc:  # re-raised below with the bucket named
+                    raise RuntimeError(
+                        f"AOT bucket {bucket} rejected the rebind of "
+                        f"{len(constants)} constants (check_full_update={check_full}): "
+                        f"{exc}. The package set in aot_dir does not match the "
+                        f"published model — rebuild it (see "
+                        f"scripts/build_aot_packages.py) rather than serving "
+                        f"stale build-time weights."
+                    ) from exc
 
         t_model = time.perf_counter()
         if self.compile_inference and self.device.startswith("cuda"):
@@ -1681,14 +2041,55 @@ class SlotBroker:
 
   # -- batch processing --
 
-    def _process_batch(self, ready: list[_InferenceSlot]) -> None:
-        by_mode: dict[int, list[_InferenceSlot]] = {}
-        for slot in ready:
-            by_mode.setdefault(int(slot.request_mode), []).append(slot)
-        for mode, slots in by_mode.items():
+    def _process_batch(self, ready: list[_InferenceSlot]) -> int:
+        """Evaluate the ready slots, grouped by request_mode.
+
+        Returns the number of ROWS handed back UNANSWERED. ``serve_forever``
+        adds ``sum(s.batch_size for s in ready)`` to its ``positions`` total
+        BEFORE calling this, and three paths in here release slots without an
+        answer: ``BrokerModelUnavailable``, a generic batch failure, and
+        malformed compact-legal metadata (the last one inside
+        ``_process_batch_mode``, which returns its own count for the same
+        reason). Without the return, a broker that answered nothing at all
+        still reported full ``pos/s`` -- the failure reads as throughput.
+
+        Third and last of the three known instances of that family: B6 fixed
+        it in ``MultiSlotInferenceClient`` and B6(c) in
+        ``SharedSlotBroker._process_parallel``; this is the production broker
+        (task #142).
+        """
+        # The request tag is read HERE, before request_mode, because this is the
+        # first field of the slot the broker touches. Reading mode first and the
+        # tag later would leave a window in which a re-submitting client writes
+        # mode -> batch_size -> tag between the two reads: the broker would then
+        # decode the NEW payload in the OLD mode and echo the NEW tag, and the
+        # client would accept a mis-decoded answer as its own. The whole
+        # guarantee is "the tag is read before anything it vouches for" (audit
+        # I1); the comprehension below evaluates left to right, so it holds.
+        snapshot = [
+            (slot, int(slot.request_id), int(slot.request_mode)) for slot in ready
+        ]
+        by_mode: dict[int, list[tuple[_InferenceSlot, int]]] = {}
+        for slot, req_id, mode in snapshot:
+            by_mode.setdefault(mode, []).append((slot, req_id))
+        unanswered_rows = 0
+        for mode, entries in by_mode.items():
+            slots = [s for s, _ in entries]
+            request_ids = [r for _, r in entries]
             try:
-                self._process_batch_mode(slots, mode=mode)
+                mode_unanswered = self._process_batch_mode(
+                    slots, mode=mode, request_ids=request_ids,
+                )
             except BrokerModelUnavailable as exc:
+                # Counted BEFORE the release, and this ordering is load-bearing:
+                # _release_slots_for_retry sets _STATE_IDLE, after which the
+                # client is free to re-submit into the same shared slot with a
+                # different batch_size. Reading afterwards would subtract a row
+                # count belonging to the NEXT request. Same rule below and in
+                # _process_batch_mode's malformed-metadata branch.
+                unanswered_rows += sum(
+                    _slot_rows(s, self._layout.max_batch) for s in slots
+                )
                 # Same recovery as any other failed batch, but logged as one
                 # throttled line rather than a traceback: this path repeats
                 # every serve loop until a model appears, and 50 identical
@@ -1711,6 +2112,14 @@ class SlotBroker:
                     )
                     raise
             except Exception:
+                # Before the release, for the reason given above. A partial
+                # failure -- _process_batch_mode released some malformed slots
+                # and then raised -- loses its own return value, so counting
+                # the whole group here is what keeps those rows counted; the
+                # group is unanswered either way.
+                unanswered_rows += sum(
+                    _slot_rows(s, self._layout.max_batch) for s in slots
+                )
                 # One bad batch must not take down the broker. Every worker in
                 # the fleet depends on this process and nothing relaunches it
                 # until the next selfplay phase begins, so a crash here costs a
@@ -1735,6 +2144,16 @@ class SlotBroker:
                     raise
             else:
                 self._consecutive_batch_failures = 0
+                # The rows _process_batch_mode itself declined (malformed
+                # compact-legal metadata) while the group otherwise succeeded.
+                # Accumulated HERE rather than at the call site inside the try:
+                # there, a callee that returned None would raise TypeError into
+                # the generic handler above, be swallowed as "one bad batch",
+                # and silently walk _consecutive_batch_failures toward a broker
+                # exit. Outside the try it is loud, which is what a wrong return
+                # type deserves.
+                unanswered_rows += mode_unanswered
+        return unanswered_rows
 
     def _release_slots_for_retry(self, slots: list[_InferenceSlot]) -> None:
         """Hand slots back to their clients unanswered so they re-submit.
@@ -1771,10 +2190,24 @@ class SlotBroker:
             self._pinned_legal_rows[:transfer_size].to(self.device, non_blocking=True),
         )
 
-    def _process_batch_mode(self, ready: list[_InferenceSlot], *, mode: int) -> None:
+    def _process_batch_mode(
+        self, ready: list[_InferenceSlot], *, mode: int, request_ids: list[int],
+    ) -> int:
+        """Evaluate one request_mode's slots.
+
+        Returns the number of ROWS released unanswered for malformed
+        compact-legal metadata, which ``_process_batch`` forwards to the serve
+        loop's ``positions`` total. See that method's docstring for why.
+        """
         _timing = getattr(self, "_timing_metrics", None)
         _t_pack0 = time.perf_counter()
-        self._ensure_model()
+        # Under a watchdog stage (audit I3): torch.load, .to(device), the AOT
+        # load_constants loop and torch.compile all live in here, and they are
+        # the CUDA calls most likely to block forever on a cold boot into a
+        # wedged bridge. Before this the instrumented window started AFTER
+        # _ensure_model returned.
+        with self._hang_watchdog.stage("ensure_model"):
+            self._ensure_model()
         if self._model is None:
             # Deliberately NOT a zero-filled response, for the reason spelled
             # out on _release_slots_for_retry: an all-zero policy+WDL marked
@@ -1805,11 +2238,15 @@ class SlotBroker:
   # from shm → pinned, then async DMA to GPU — no intermediate allocs).
         active: list[_InferenceSlot] = []
         batch_sizes: list[int] = []
+        active_request_ids: list[int] = []
         legal_counts_by_slot: list[np.ndarray] = []
         legal_flat_by_slot: list[np.ndarray] = []
         total = 0
-        for slot in ready:
-            bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
+        unanswered_rows = 0
+        # ``request_ids`` was snapshotted by _process_batch before it read any
+        # other field of these slots; see the ordering note on the header map.
+        for slot, req_id in zip(ready, request_ids, strict=True):
+            bsz = _slot_rows(slot, self._layout.max_batch)
             if compact_legal:
                 meta = slot.policy_i32
                 n_legal = max(0, int(meta[0]))
@@ -1890,6 +2327,12 @@ class SlotBroker:
                             "answering with a stale policy (%d total)",
                             bad_reason, self._malformed_legal_meta_total,
                         )
+                    # These rows were counted at dispatch by serve_forever and
+                    # no model will evaluate them, so report them back (task
+                    # #142). ``bsz`` rather than a re-read of slot.batch_size:
+                    # the release below lets the client overwrite that field,
+                    # and bsz is the value this batch actually worked from.
+                    unanswered_rows += bsz
                     self._release_slots_for_retry([slot])
                     continue
                 legal_counts_by_slot.append(counts)
@@ -1900,16 +2343,18 @@ class SlotBroker:
                 self._pinned_input_np[total:total + bsz] = slot.input[:bsz]
             active.append(slot)
             batch_sizes.append(bsz)
+            active_request_ids.append(req_id)
             total += bsz
 
         assert total <= self._pinned_input.shape[0], (
             f"gather overflow: {total} > {self._pinned_input.shape[0]}"
         )
         if total <= 0:
-            for slot in active:
+            for slot, req_id in zip(active, active_request_ids, strict=True):
                 slot.request_mode = _MODE_DENSE_F32
+                slot.request_id = req_id
                 slot.state = _STATE_RESPONSE
-            return
+            return unanswered_rows
         forward_total = _compiled_padded_batch_size(total, capacity=self._pinned_input.shape[0])
         pin_input = self._pinned_input_bf16 if use_bf16_input else self._pinned_input
         compact_offsets: list[tuple[int, int]] = []
@@ -1961,7 +2406,11 @@ class SlotBroker:
         _t_forward0 = time.perf_counter()
         # Hang window covers H2D + forward + device sync — any of these can
         # block forever on a dead CUDA/WSL2 context without raising.
-        self._hang_watchdog.mark_forward_start(total)
+        # Keep the token. Without it mark_forward_done falls back to popping the
+        # OLDEST forward, so a completing newer batch would delete a wedged older
+        # one's start time and the abort log would name the wrong batch. Serial
+        # today, but the fallback is the trap audit I3-H2 describes.
+        hang_token = self._hang_watchdog.mark_forward_start(total)
         forward_ok = False
         try:
             xt = pin_input[:forward_total].to(self.device, non_blocking=True)
@@ -2100,7 +2549,7 @@ class SlotBroker:
             # Scatter from pinned buffer to worker slots
             start = 0
             compact_idx = 0
-            for slot, bsz in zip(active, batch_sizes, strict=True):
+            for slot, bsz, req_id in zip(active, batch_sizes, active_request_ids, strict=True):
                 end = start + bsz
                 if compact_legal:
                     assert compact_bits_np is not None
@@ -2111,26 +2560,42 @@ class SlotBroker:
                     slot.policy[:bsz] = self._pinned_pol_np[start:end]
                 slot.wdl[:bsz] = self._pinned_wdl_np[start:end]
                 slot.request_mode = _MODE_DENSE_F32
+                # Echo the tag snapshotted at gather, NOT whatever the client
+                # may have written since: that is what lets a client which
+                # timed out and re-submitted reject this answer (audit I1).
+                # Written before state so the client cannot observe RESPONSE
+                # with the previous tag still in place.
+                slot.request_id = req_id
                 slot.state = _STATE_RESPONSE
                 start = end
             if _timing is not None:
                 _timing["scatter_s"] += time.perf_counter() - _t_scatter0
             forward_ok = True
         finally:
-            self._hang_watchdog.mark_forward_done(success=forward_ok)
+            self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
+        return unanswered_rows
 
   # -- main loop --
 
     def _wait_for_ready_slots(self) -> bool:
-        """Tight-spin with 20µs yield until at least one slot becomes ready.
+        """Poll for a ready slot; returns True as soon as one is in REQUEST.
 
-        Returns False to skip the rest of the loop iteration (no slot ready
-        within the spin budget).
+        Hot while work is flowing (rung 0 of ``_IDLE_BACKOFF_LADDER`` is the
+        original 200-poll spin + 20µs yield), backing off only once the whole
+        fleet has been silent for a while. ``_idle_since`` is cleared by any
+        arrival here and by ``serve_forever`` whenever it dispatches a batch, so
+        a busy broker never leaves rung 0.
         """
-        for _ in range(200):
+        now = time.monotonic()
+        idle_since = self._idle_since
+        spin_polls, sleep_s = _idle_backoff(0.0 if idle_since is None else max(0.0, now - idle_since))
+        for _ in range(spin_polls):
             if any(s.state == _STATE_REQUEST for s in self._slots):
+                self._idle_since = None
                 return True
-        time.sleep(0.00002)
+        if idle_since is None:
+            self._idle_since = now
+        time.sleep(sleep_s)
         return False
 
     def _gather_more_within_window(self, ready: list) -> None:
@@ -2261,9 +2726,11 @@ class SlotBroker:
 
             ready = [s for s in self._slots if s.state == _STATE_REQUEST]
             if not ready:
-                if not self._wait_for_ready_slots():
-                    continue
+                # Both branches continued anyway; the bool is kept for tests and
+                # for _idle_backoff coverage, not as a control-flow signal.
+                self._wait_for_ready_slots()
                 continue
+            self._idle_since = None
 
             if _ARRIVAL_TRACE_ENABLED:
                 self._note_arrival_trace(ready)
@@ -2276,19 +2743,39 @@ class SlotBroker:
                 if _ARRIVAL_TRACE_ENABLED:
                     self._note_arrival_trace(ready)
                 metrics["batches"] += 1
-                metrics["positions"] += sum(s.batch_size for s in ready)
+  # Read ONCE. FIRST_BATCH_DONE below used to re-read slot.batch_size after
+  # _process_batch, i.e. after any release, so its row count could describe
+  # the client's NEXT request rather than this batch's.
+                dispatched = sum(_slot_rows(s, self._layout.max_batch) for s in ready)
+                metrics["positions"] += dispatched
                 metrics["slots"] += len(ready)
                 self._timing_metrics = metrics
                 # Emit before _process_batch so wait_ms is gather wait only
                 # (forward duration would otherwise skew the diagnostic).
                 if _ARRIVAL_TRACE_ENABLED:
                     self._emit_arrival_trace(ready)
-                self._process_batch(ready)
-                if not self._first_batch_logged:
+  # positions was added at DISPATCH above; _process_batch returns the rows
+  # it handed back UNANSWERED (no model, batch failure, malformed legal
+  # metadata), so subtracting them makes `pos/s` mean rows a model
+  # evaluated. batches/slots stay dispatch counts deliberately: they answer
+  # "how much did the loop try to batch", which a refusal does not change.
+                unanswered = self._process_batch(ready)
+                metrics["positions"] -= unanswered
+  # The boot marker means "this broker has served a batch", and operators
+  # read it as exactly that. It used to print the DISPATCHED row count
+  # unconditionally and set the flag either way, so a broker whose first
+  # batch was released unanswered -- the cold-boot no-model case, the one
+  # this marker is watched for -- still announced FIRST_BATCH_DONE with a
+  # full row count. Now it reports rows actually served, and a wholly
+  # unanswered batch is not a first batch: the flag stays down and the
+  # marker fires on the first batch that really is served. A modelless
+  # broker never prints it, which is the truth and is already accompanied
+  # by the throttled no-model WARNING.
+                served = dispatched - unanswered
+                if served > 0 and not self._first_batch_logged:
                     self._first_batch_logged = True
                     print(
-                        f"[broker] FIRST_BATCH_DONE positions="
-                        f"{sum(s.batch_size for s in ready)} "
+                        f"[broker] FIRST_BATCH_DONE positions={served} "
                         f"slots={len(ready)} "
                         f"since_boot_s={self._since_boot_s():.2f}",
                         flush=True,
@@ -2328,6 +2815,22 @@ class SlotInferenceClient:
         self._slot: _InferenceSlot | None = None
         self._request_timeout_s = max(0.001, float(request_timeout_s))
         self._lock = threading.Lock()
+        # Request tags must be unique across client INSTANCES on the same named
+        # slot, not just within one instance: the failure this closes is a
+        # worker that resets its client and builds a fresh one on the same slot
+        # (worker.py `_reset_inference_client`). A per-instance counter starting
+        # at 0 would hand the new client the same tag the timed-out one used and
+        # reproduce the bug exactly. Random 32-bit seed, incremented per submit.
+        self._next_request_id = random.getrandbits(32)
+        # Observability for the thing this guard exists to catch. Without a
+        # counter a fixed race is indistinguishable from a race that never
+        # fired -- see the house rule about gates that cannot be observed.
+        self.stale_responses_rejected = 0
+
+    @property
+    def input_planes(self) -> int:
+        """Slot width in input planes — must match the broker's and the model's."""
+        return int(self._layout.channels)
 
     def _disconnect(self) -> None:
         shm = self._shm
@@ -2336,6 +2839,72 @@ class SlotInferenceClient:
         if shm is not None:
             with contextlib.suppress(Exception):
                 shm.close()
+
+    def _alloc_request_id(self) -> int:
+        rid = self._next_request_id & _REQUEST_ID_MASK
+        if rid == _REQUEST_ID_NONE:
+            rid = 1
+        self._next_request_id = (rid + 1) & _REQUEST_ID_MASK
+        return rid
+
+    def _validate_segment(self, shm: SharedMemory) -> tuple[str, bool]:
+        """Check the segment is this client's slot layout (audit I2).
+
+        Returns ``("", False)`` when the segment is usable, else
+        ``(reason, still_settling)``. The old code attached and built numpy
+        views with no comparison at all: when the client's plane count was the
+        SMALLER of the two (146 v1 vs the broker's 175 v2_threats -- and 146 is
+        the argparse default on both sides) every view still fit inside the
+        larger segment, so the protocol completed and the client read its policy
+        and WDL out of the middle of the broker's input region: all-zero policy,
+        all-zero WDL, no exception.
+
+        ``still_settling`` marks a reason a client can lose to the broker's own
+        slot creation rather than to a real mismatch: a creating process stamps
+        the header only after the segment exists, so a client attaching inside
+        that window legitimately sees an unstamped one -- the same class as "the
+        slot does not exist yet", which ``_connect`` already retries. A layout-id
+        mismatch is NOT in that class: magic is written last and is the publish
+        barrier, so seeing valid magic means the layout id beside it is final.
+
+        The size branch is marked settling too, but note it does NOT actually
+        cover the ``ftruncate`` window: ``SharedMemory(name=..., create=False)``
+        mmaps the fd and raises ``ValueError: cannot mmap an empty file`` before
+        this function runs, and ``_connect`` only catches ``FileNotFoundError``
+        (unchanged from before this guard existed). In practice the size branch
+        fires only for a genuinely undersized segment -- an OLD broker serving a
+        NEW client -- where retrying to the deadline is merely slow, not wrong.
+        """
+        want = self._layout.total_bytes
+        if int(shm.size) < want:
+            return (
+                f"inference broker slot {self._slot_name!r} is {int(shm.size)} bytes "
+                f"but this client's layout needs {want} "
+                f"(max_batch={self._layout.max_batch}, planes={self._layout.channels})",
+                True,
+            )
+        buf = shm.buf
+        assert buf is not None  # attached SharedMemory always has a buffer
+        magic = struct.unpack_from("<I", buf, _OFF_MAGIC)[0]
+        if magic != _SLOT_MAGIC:
+            return (
+                f"inference broker slot {self._slot_name!r} has magic {magic:#010x}, "
+                f"expected {_SLOT_MAGIC:#010x} (protocol v{SLOT_PROTOCOL_VERSION}); "
+                "broker and workers must be launched from the same code generation",
+                True,
+            )
+        layout_id = struct.unpack_from("<I", buf, _OFF_LAYOUT_ID)[0]
+        want_id = self._layout.identity()
+        if layout_id != want_id:
+            return (
+                f"inference broker slot {self._slot_name!r} was created for layout "
+                f"{layout_id:#010x} but this client computes {want_id:#010x} "
+                f"(max_batch={self._layout.max_batch}, planes={self._layout.channels}, "
+                f"segment_bytes={int(shm.size)}, client_layout_bytes={want}); "
+                "refusing to read policy/WDL out of the wrong offsets",
+                False,
+            )
+        return "", False
 
     def _connect(self, *, deadline: float) -> _InferenceSlot:
         while True:
@@ -2354,6 +2923,15 @@ class SlotInferenceClient:
                 time.sleep(0.01)
                 continue
             _detach_attached_shm_from_resource_tracker(shm)
+            reason, still_settling = self._validate_segment(shm)
+            if reason:
+                with contextlib.suppress(Exception):
+                    shm.close()
+                if still_settling and time.monotonic() < deadline:
+                    # Mid-creation, not a mismatch — retry like a missing slot.
+                    time.sleep(0.01)
+                    continue
+                raise SlotProtocolMismatch(reason)
             self._shm = shm
             self._slot = _InferenceSlot(shm, self._layout, owns=False)
             return self._slot
@@ -2404,7 +2982,7 @@ class SlotInferenceClient:
                 f"batch size {bsz} exceeds slot max {self._layout.max_batch}"
             )
 
-        def _submit(slot: _InferenceSlot) -> None:
+        def _submit(slot: _InferenceSlot, request_id: int) -> None:
   # Write input directly into shared memory (one memcpy).
             if request_mode == _MODE_DENSE_BF16:
                 slot.input_bf16_bits[:bsz] = xb
@@ -2412,6 +2990,11 @@ class SlotInferenceClient:
                 slot.input[:bsz] = xb
             slot.request_mode = request_mode
             slot.batch_size = bsz
+            # Tag AFTER the payload, state last. See the ordering note on the
+            # header map: the broker reads the tag first, so publishing the tag
+            # before the payload would let it echo a tag for data it has not
+            # written yet.
+            slot.request_id = request_id
             slot.state = _STATE_REQUEST
 
         def _read(slot: _InferenceSlot) -> tuple[np.ndarray, np.ndarray]:
@@ -2456,13 +3039,15 @@ class SlotInferenceClient:
                     f"{self._layout.policy_bytes // 2} capacity"
                 )
 
-            def _submit(slot: _InferenceSlot) -> None:
+            def _submit(slot: _InferenceSlot, request_id: int) -> None:
                 slot.input_bf16_bits[:bsz] = xb
                 slot.policy_i32[0] = n_legal
                 slot.policy_i32[1:1 + bsz] = counts
                 slot.policy_i32[1 + bsz:1 + bsz + n_legal] = flat
                 slot.request_mode = _MODE_LEGAL_BF16
                 slot.batch_size = bsz
+                # Tag last-but-one, state last -- see _evaluate_encoded_locked.
+                slot.request_id = request_id
                 slot.state = _STATE_REQUEST
 
             def _read(slot: _InferenceSlot) -> tuple[np.ndarray, np.ndarray]:
@@ -2477,21 +3062,44 @@ class SlotInferenceClient:
     ) -> tuple[np.ndarray, np.ndarray]:
         deadline = time.monotonic() + self._request_timeout_s
         last_timeout = False
+        last_stale = False
         while True:
             slot = self._connect(deadline=deadline)
 
-            submit(slot)
+            request_id = self._alloc_request_id()
+            submit(slot, request_id)
 
   # Wait for response. Keep the fast spin path for short broker latency,
   # but recover if the broker went away and the slot had to be recreated.
             spins = 0
             retry = False
+            last_stale = False
             while True:
   # slot.state is shared-memory; at runtime the broker writes
   # other state values concurrently, so we wrap in int() to keep
   # pyright from narrowing to the last literal we stored.
                 state = int(slot.state)
                 if state == _STATE_RESPONSE:
+                    echoed = int(slot.request_id)
+                    if echoed != request_id:
+                        # The broker answered an EARLIER request into this slot
+                        # -- the audit-I1 race. Reading it would hand MCTS (and
+                        # the training shards) a policy/WDL for a different
+                        # position. Drop it and re-submit; the payload we wrote
+                        # has been overwritten by the answer, so the slot must
+                        # be re-armed from scratch rather than re-waited.
+                        self.stale_responses_rejected += 1
+                        last_stale = True
+                        log.warning(
+                            "inference slot %s returned a stale response "
+                            "(echoed request_id=%d, expected %d); discarding and "
+                            "re-submitting (%d rejected on this client)",
+                            self._slot_name, echoed, request_id,
+                            self.stale_responses_rejected,
+                        )
+                        slot.state = _STATE_IDLE
+                        retry = True
+                        break
                     pol, wdl = read(slot)
                     slot.state = _STATE_IDLE
                     return pol, wdl
@@ -2516,6 +3124,16 @@ class SlotInferenceClient:
                     raise TimeoutError(
                         f"inference broker timed out after {self._request_timeout_s:.3f}s"
                     )
+                if last_stale:
+                    # Distinct from the shutdown message below: recovery is the
+                    # same, but this is the ONE log line describing the race
+                    # this identity check exists for, and calling it a shutdown
+                    # would send the next reader looking at the wrong thing.
+                    raise TimeoutError(
+                        f"inference broker returned a stale response and the retry "
+                        f"did not fit in {self._request_timeout_s:.3f}s "
+                        f"({self.stale_responses_rejected} rejected on this client)"
+                    )
                 raise RuntimeError("inference broker shut down while request was in flight")
             if retry:
                 time.sleep(0.01)
@@ -2529,6 +3147,13 @@ class MultiSlotInferenceClient:
 
     Each underlying slot still serializes its own request/response protocol,
     but different selfplay threads can make progress through different slots.
+
+    A slot that keeps failing is QUARANTINED rather than handed straight back
+    out: production runs 4 slots at a 30 s request timeout, so one wedged slot
+    used to cost every fourth request a full 30 s stall, forever, with nothing
+    in the stats able to tell it from a healthy one (SHARED_BROKER_AUDIT B6).
+    Quarantine is temporary and re-probed on an exponential backoff — a
+    transient broker stall must not permanently shrink the worker's capacity.
     """
 
     def __init__(
@@ -2538,11 +3163,19 @@ class MultiSlotInferenceClient:
         max_batch: int,
         request_timeout_s: float = 30.0,
         input_planes: int = _CHANNELS,
+        slot_failure_threshold: int = 2,
+        slot_quarantine_s: float = 5.0,
+        slot_quarantine_max_s: float = 60.0,
     ) -> None:
         names = [str(n).strip() for n in slot_names if str(n).strip()]
         if not names:
             raise ValueError("MultiSlotInferenceClient requires at least one slot")
         self._request_timeout_s = max(0.001, float(request_timeout_s))
+        self._slot_failure_threshold = max(1, int(slot_failure_threshold))
+        self._slot_quarantine_s = max(0.0, float(slot_quarantine_s))
+        self._slot_quarantine_max_s = max(
+            self._slot_quarantine_s, float(slot_quarantine_max_s),
+        )
         self._clients = [
             SlotInferenceClient(
                 slot_name=name,
@@ -2552,6 +3185,7 @@ class MultiSlotInferenceClient:
             )
             for name in names
         ]
+        self._input_planes = int(input_planes)
         self._available_clients: queue.Queue[tuple[int, SlotInferenceClient]] = queue.Queue()
         for idx, client in enumerate(self._clients):
             self._available_clients.put((idx, client))
@@ -2564,10 +3198,32 @@ class MultiSlotInferenceClient:
         self._lifetime_roundtrip_s = 0.0
         self._inflight = 0
         self._max_inflight = 0
+        self._lifetime_failed_requests = 0
+        self._lifetime_failed_positions = 0
+        # slot_requests counts ATTEMPTS (unchanged meaning); slot_served and
+        # slot_failures split it, because attempts alone cannot distinguish a
+        # dead slot from a healthy one -- the audit measured [3, 3, 3, 3] with
+        # slot 3 serving nothing.
         self._slot_requests = [0 for _ in self._clients]
+        self._slot_served = [0 for _ in self._clients]
+        self._slot_failures = [0 for _ in self._clients]
+        self._slot_consecutive_failures = [0 for _ in self._clients]
+        self._slot_quarantines = [0 for _ in self._clients]
         self._slot_positions = [0 for _ in self._clients]
         self._slot_wait_s = [0.0 for _ in self._clients]
         self._slot_roundtrip_s = [0.0 for _ in self._clients]
+        # idx -> (client, monotonic re-probe deadline). Held here instead of on
+        # _available_clients, so a wedged slot stops being handed out; the
+        # deadline is what puts it back.
+        self._quarantined: dict[int, tuple[SlotInferenceClient, float]] = {}
+        self._slot_quarantine_backoff_s = [
+            self._slot_quarantine_s for _ in self._clients
+        ]
+
+    @property
+    def input_planes(self) -> int:
+        """Slot width in input planes — must match the broker's and the model's."""
+        return self._input_planes
 
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
@@ -2580,8 +3236,14 @@ class MultiSlotInferenceClient:
             )
         idx, client, wait_s = self._acquire_client()
         t0 = time.perf_counter()
+        # Set BEFORE the call and cleared only on a normal return, so every
+        # abnormal exit (exception, GeneratorExit) is accounted as a failure
+        # rather than as served throughput.
+        failed = True
         try:
-            return client.evaluate_encoded(x)
+            out = client.evaluate_encoded(x)
+            failed = False
+            return out
         finally:
             self._release_client(
                 idx, client,
@@ -2589,6 +3251,7 @@ class MultiSlotInferenceClient:
                 legal=False,
                 wait_s=wait_s,
                 roundtrip_s=time.perf_counter() - t0,
+                failed=failed,
             )
 
     @property
@@ -2609,8 +3272,11 @@ class MultiSlotInferenceClient:
     ) -> tuple[np.ndarray, np.ndarray]:
         idx, client, wait_s = self._acquire_client()
         t0 = time.perf_counter()
+        failed = True
         try:
-            return client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+            out = client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+            failed = False
+            return out
         finally:
             self._release_client(
                 idx, client,
@@ -2618,6 +3284,7 @@ class MultiSlotInferenceClient:
                 legal=True,
                 wait_s=wait_s,
                 roundtrip_s=time.perf_counter() - t0,
+                failed=failed,
             )
 
     def _acquire_client(self) -> tuple[int, SlotInferenceClient, float]:
@@ -2628,26 +3295,76 @@ class MultiSlotInferenceClient:
         forever and the per-request broker timeout never runs. Cap wait at the
         same budget as a single request so the worker can raise, reset, or
         exit via the session liveness watchdog.
+
+        Quarantined slots are re-probed here: the wait is capped at the next
+        re-probe deadline so a pool that is entirely quarantined recovers as
+        soon as the first backoff expires instead of burning the whole acquire
+        budget waiting on a queue nothing will fill.
         """
         t0 = time.perf_counter()
         # Allow a little more than one request so a just-busy slot can free.
         acquire_timeout_s = max(0.05, float(self._request_timeout_s) * 2.0)
-        try:
-            idx, client = self._available_clients.get(timeout=acquire_timeout_s)
-        except queue.Empty as exc:
+        deadline = t0 + acquire_timeout_s
+        while True:
+            self._reinstate_due_slots()
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.0:
+                break
+            probe_in = self._next_probe_wait_s()
+            wait_for = remaining if probe_in is None else min(remaining, max(0.01, probe_in))
+            try:
+                idx, client = self._available_clients.get(timeout=wait_for)
+            except queue.Empty:
+                continue
+            wait_s = time.perf_counter() - t0
             with self._stats_lock:
-                inflight = int(self._inflight)
-                available = int(self._available_clients.qsize())
-            raise TimeoutError(
-                f"inference slot acquire timed out after {acquire_timeout_s:.1f}s "
-                f"(slots={len(self._clients)} inflight={inflight} available={available}); "
-                "all slots held — broker stall or slot leak"
-            ) from exc
-        wait_s = time.perf_counter() - t0
+                self._inflight += 1
+                self._max_inflight = max(self._max_inflight, self._inflight)
+            return idx, client, wait_s
+
         with self._stats_lock:
-            self._inflight += 1
-            self._max_inflight = max(self._max_inflight, self._inflight)
-        return idx, client, wait_s
+            inflight = int(self._inflight)
+            available = int(self._available_clients.qsize())
+            quarantined = sorted(self._quarantined)
+        # The periodic `broker client stats:` line CANNOT show this window: no
+        # request completes, so its own delta gate returns before printing and
+        # slots_quarantined never reaches an operator through that channel. The
+        # count therefore has to leave here, on the one event that does happen.
+        log.warning(
+            "inference slot acquire failed: %d/%d slot(s) quarantined %s, "
+            "%d inflight, %d available -- the periodic stats line cannot show "
+            "this window because no request completed in it (audit B6)",
+            len(quarantined), len(self._clients), quarantined, inflight, available,
+        )
+        raise TimeoutError(
+            f"inference slot acquire timed out after {acquire_timeout_s:.1f}s "
+            f"(slots={len(self._clients)} inflight={inflight} available={available} "
+            f"quarantined={quarantined}); "
+            "all slots held or quarantined — broker stall or slot leak"
+        )
+
+    def _next_probe_wait_s(self) -> float | None:
+        """Seconds until the earliest quarantined slot is due, or None if none are."""
+        with self._stats_lock:
+            if not self._quarantined:
+                return None
+            soonest = min(until for _, until in self._quarantined.values())
+        return max(0.0, soonest - time.monotonic())
+
+    def _reinstate_due_slots(self) -> None:
+        """Return quarantined slots to the pool once their backoff has expired.
+
+        Quarantine must be a probe, not an execution: a broker restart or a
+        transient stall would otherwise shrink the worker to the slots that
+        happened to be idle at the time, permanently, and nothing in the loop
+        ever re-widens it.
+        """
+        now = time.monotonic()
+        with self._stats_lock:
+            due = [i for i, (_, until) in self._quarantined.items() if until <= now]
+            revived = [(i, self._quarantined.pop(i)[0]) for i in due]
+        for idx, client in revived:
+            self._available_clients.put((idx, client))
 
     def _release_client(
         self,
@@ -2658,20 +3375,65 @@ class MultiSlotInferenceClient:
         legal: bool,
         wait_s: float,
         roundtrip_s: float,
+        failed: bool = False,
     ) -> None:
+        """Account the request and hand the slot back — unless it must be quarantined.
+
+        A failed request evaluated no positions, so it must not land in the
+        lifetime totals the worker reports as throughput: during a broker stall
+        the 60-second `broker client stats:` line used to report full pos_s
+        while nothing at all was being served (SHARED_BROKER_AUDIT B6).
+        """
+        backoff = 0.0
+        quarantined_now = 0
+        total = len(self._clients)
         with self._stats_lock:
             self._lifetime_requests += 1
-            self._lifetime_positions += int(positions)
-            if legal:
-                self._lifetime_legal_requests += 1
-                self._lifetime_legal_positions += int(positions)
+            self._slot_requests[idx] += 1
             self._lifetime_wait_s += float(wait_s)
             self._lifetime_roundtrip_s += float(roundtrip_s)
-            self._slot_requests[idx] += 1
-            self._slot_positions[idx] += int(positions)
             self._slot_wait_s[idx] += float(wait_s)
             self._slot_roundtrip_s[idx] += float(roundtrip_s)
             self._inflight = max(0, self._inflight - 1)
+            quarantine = False
+            if failed:
+                self._lifetime_failed_requests += 1
+                self._lifetime_failed_positions += int(positions)
+                self._slot_failures[idx] += 1
+                self._slot_consecutive_failures[idx] += 1
+                if self._slot_consecutive_failures[idx] >= self._slot_failure_threshold:
+                    quarantine = self._slot_quarantine_s > 0.0
+            else:
+                self._lifetime_positions += int(positions)
+                if legal:
+                    self._lifetime_legal_requests += 1
+                    self._lifetime_legal_positions += int(positions)
+                self._slot_served[idx] += 1
+                self._slot_positions[idx] += int(positions)
+                # A success clears the strike count AND the backoff: the next
+                # wedge on this slot starts from the short quarantine again.
+                self._slot_consecutive_failures[idx] = 0
+                self._slot_quarantine_backoff_s[idx] = self._slot_quarantine_s
+            if quarantine:
+                backoff = min(
+                    self._slot_quarantine_backoff_s[idx], self._slot_quarantine_max_s,
+                )
+                self._quarantined[idx] = (client, time.monotonic() + backoff)
+                self._slot_quarantines[idx] += 1
+                self._slot_consecutive_failures[idx] = 0
+                self._slot_quarantine_backoff_s[idx] = min(
+                    max(backoff, self._slot_quarantine_s) * 2.0,
+                    self._slot_quarantine_max_s,
+                )
+                quarantined_now = len(self._quarantined)
+        if quarantine:
+            log.warning(
+                "inference slot %d quarantined for %.1fs after %d consecutive "
+                "failures (%d/%d slots now quarantined); it will be re-probed, "
+                "not dropped",
+                idx, backoff, self._slot_failure_threshold, quarantined_now, total,
+            )
+            return
         self._available_clients.put((idx, client))
 
     @property
@@ -2679,24 +3441,43 @@ class MultiSlotInferenceClient:
         with self._stats_lock:
             requests = int(self._lifetime_requests)
             positions = int(self._lifetime_positions)
+            served = requests - int(self._lifetime_failed_requests)
             return {
                 "slots": len(self._clients),
                 "available_slots": int(self._available_clients.qsize()),
                 "inflight": int(self._inflight),
                 "max_inflight": int(self._max_inflight),
+                # requests = ATTEMPTS; served/failed split it. positions counts
+                # only rows a model actually evaluated -- a timed-out request
+                # transported nothing and must never read as throughput (B6).
                 "lifetime_requests": requests,
+                "lifetime_served_requests": served,
+                "lifetime_failed_requests": int(self._lifetime_failed_requests),
+                "lifetime_failed_positions": int(self._lifetime_failed_positions),
                 "lifetime_positions": positions,
                 "lifetime_legal_requests": int(self._lifetime_legal_requests),
                 "lifetime_legal_positions": int(self._lifetime_legal_positions),
                 "lifetime_wait_s": float(self._lifetime_wait_s),
                 "lifetime_roundtrip_s": float(self._lifetime_roundtrip_s),
-                "avg_rows_per_request": positions / requests if requests else 0.0,
+                "avg_rows_per_request": positions / served if served else 0.0,
                 "avg_wait_ms": 1000.0 * self._lifetime_wait_s / requests if requests else 0.0,
                 "avg_roundtrip_ms": 1000.0 * self._lifetime_roundtrip_s / requests if requests else 0.0,
                 "slot_requests": list(self._slot_requests),
+                "slot_served": list(self._slot_served),
+                "slot_failures": list(self._slot_failures),
+                "slot_quarantines": list(self._slot_quarantines),
+                "slots_quarantined": len(self._quarantined),
                 "slot_positions": list(self._slot_positions),
                 "slot_wait_s": list(self._slot_wait_s),
                 "slot_roundtrip_s": list(self._slot_roundtrip_s),
+                # Audit I1. A guard nobody can observe is indistinguishable from
+                # a guard that never fires, and this one closes a silent
+                # data-integrity hole -- so the count is reported, not just
+                # logged. Non-zero means the timeout/re-submit race DID occur
+                # and was caught; it should be zero on a healthy run.
+                "stale_responses_rejected": sum(
+                    int(c.stale_responses_rejected) for c in self._clients
+                ),
             }
 
     def close(self) -> None:
@@ -2741,7 +3522,10 @@ class SharedSlotBroker:
         self.compile_inference = bool(compile_inference)
         self.compile_mode = str(compile_mode or "reduce-overhead")
         self.batch_wait_ms = float(batch_wait_ms)
-        self._hang_watchdog = BrokerHangWatchdog(threshold_s=float(hang_abort_seconds))
+        self._hang_watchdog = BrokerHangWatchdog(
+            threshold_s=float(hang_abort_seconds),
+            boot_threshold_s=resolve_boot_hang_abort_seconds(float(hang_abort_seconds)),
+        )
         self._stop = False
 
         self._layout = _SlotLayout.compute(max_batch_per_slot, int(input_planes))
@@ -2762,15 +3546,22 @@ class SharedSlotBroker:
       # released for retry come straight back round the serve loop, so an
       # unthrottled warning here would write thousands of lines a second.
         self._trial_no_model_warned_at: dict[str, float] = {}
+      # Same, for a request whose transport this broker has no dispatch for.
+        self._trial_bad_mode_warned_at: dict[str, float] = {}
+      # Lifetime count of requests refused for an unimplemented request_mode.
+      # A refusal nobody can count is indistinguishable from one that never
+      # fires, and this one is the difference between a loud timeout and a
+      # mis-decoded policy reaching MCTS (SHARED_BROKER_AUDIT B1).
+        self.unsupported_mode_requests = 0
         self._all_slots: list[tuple[str, _InferenceSlot]] = []
+        # Monotonic start of the current no-work stretch (None = work flowing).
+        self._idle_since: float | None = None
 
     def _register_new_trial(self, trial_id: str) -> None:
         """Allocate ``slots_per_trial`` shared-memory slots for a freshly seen trial."""
-        from chess_anti_engine.tune._utils import (
-            stable_seed_u32,  # deferred: avoids circular import
-        )
-        h = stable_seed_u32("slot-prefix", trial_id)
-        slot_prefix = f"cae-{h:08x}"
+        # Version-carrying name, derived by the SAME function the launcher uses
+        # to tell workers what to attach to. Never re-derive it here.
+        slot_prefix = trial_slot_prefix(trial_id=trial_id)
 
         slots: list[_InferenceSlot] = []
         for i in range(self.slots_per_trial):
@@ -2785,6 +3576,7 @@ class SharedSlotBroker:
             slot = _InferenceSlot(shm, self._layout, owns=True)
             slot.state = _STATE_IDLE
             slot.batch_size = 0
+            slot.write_protocol_header()
             slots.append(slot)
 
         self._trial_slots[trial_id] = slots
@@ -2844,6 +3636,10 @@ class SharedSlotBroker:
     ) -> None:
         """Construct + register a fresh model instance + CUDA stream for a new trial."""
         model = build_model(model_cfg)
+        require_model_planes(
+            model, self._layout.channels,
+            where=f"SharedSlotBroker slot layout (trial {trial_id})",
+        )
         model.to(self.device)
         model.eval()
         if hasattr(model, "_inference_only"):
@@ -2960,12 +3756,27 @@ class SharedSlotBroker:
         self._trial_manifest_sigs[trial_id] = sig
         return True
 
-    def _process_parallel(self, ready_by_trial: dict[str, list[_InferenceSlot]]) -> None:
-        """Process all trials' batches in parallel using per-trial CUDA streams."""
+    def _process_parallel(self, ready_by_trial: dict[str, list[_InferenceSlot]]) -> int:
+        """Process all trials' batches in parallel using per-trial CUDA streams.
+
+        Returns the number of ROWS released UNANSWERED, on either path that
+        can release one: a trial with no model yet, and a request_mode this
+        broker does not implement. The serve loop counts positions BEFORE
+        calling this, so without the return its pos/s would count rows this
+        broker declined to evaluate -- the same "a failure reads as throughput"
+        defect B6 fixed on the client side, in the sibling path.
+
+        The name is ``unanswered_rows`` rather than the original
+        ``refused_rows`` because it stopped meaning "refused for an
+        unimplemented mode" when the no-model path was added to it (task #142
+        re-review): a counter whose name is narrower than its contents is how
+        the missing no-model case survived the first enumeration.
+        """
         use_cuda = self.device.startswith("cuda")
+        unanswered_rows = 0
 
         # Host-side pack first; H2D + forward sit under the hang watchdog.
-        packed: list[tuple[str, list[_InferenceSlot], list[int], np.ndarray]] = []
+        packed: list[tuple[str, list[_InferenceSlot], list[int], list[int], np.ndarray]] = []
         for trial_id, ready in ready_by_trial.items():
             model = self._trial_models.get(trial_id)
             if model is None:
@@ -2986,28 +3797,98 @@ class SharedSlotBroker:
                         "slot(s) for retry (NOT answering with zeros)",
                         trial_id, len(ready),
                     )
+                # Counted BEFORE the release, for the reason spelled out on
+                # SlotBroker._process_batch: _STATE_IDLE frees the client to
+                # re-submit into the same shared slot with a different
+                # batch_size, so a read afterwards belongs to the NEXT request.
+                #
+                # This increment was MISSING until the task #142 re-review.
+                # The serve loop counts these rows at dispatch and subtracts
+                # only this return, so a trial whose model had not loaded yet
+                # had every one of its rows reported as served pos/s -- the
+                # fourth instance of the family, in the path that is hardest to
+                # notice because it is the transient one.
+                unanswered_rows += sum(int(s.batch_size) for s in ready)
                 for slot in ready:
                     slot.state = _STATE_IDLE
                 continue
+            # Tags snapshotted BEFORE batch_size/input, and echoed on response.
+            # Same contract and same reason as SlotBroker._process_batch_mode
+            # (audit I1) -- this broker shares the slot protocol verbatim.
+            request_ids = [int(slot.request_id) for slot in ready]
+            request_modes = [int(slot.request_mode) for slot in ready]
+            # The mode was never read here at all (SHARED_BROKER_AUDIT B1).
+            # This broker only implements dense-f32; a bf16-bits or compact
+            # request was decoded AS f32 (the slot regions alias) and answered
+            # with a dense f32 policy the client then re-read as bf16 -- a
+            # plausible in-range WDL and a garbage policy, no exception, no
+            # counter. Both production transports (evaluate_encoded's bf16 path
+            # and evaluate_legal_bf16) send exactly those modes, so this is the
+            # only branch that ever worked. Refuse loudly instead of
+            # implementing dispatch that production does not use: the shared
+            # broker is OFF (distributed_inference_shared_broker: false) and a
+            # silent wrong answer is the failure class this whole audit exists
+            # to delete.
+            unsupported = sorted({m for m in request_modes if m != _MODE_DENSE_F32})
+            if unsupported:
+                n_bad = sum(1 for m in request_modes if m != _MODE_DENSE_F32)
+                for slot, mode in zip(ready, request_modes, strict=True):
+                    if mode != _MODE_DENSE_F32:
+                        unanswered_rows += int(slot.batch_size)
+                        slot.state = _STATE_IDLE
+                # Throttled for the same reason as the no-model branch above:
+                # a released slot comes straight back round the serve loop, so
+                # an unthrottled line here writes thousands a second.
+                _now_nm = time.monotonic()
+                if _now_nm - self._trial_bad_mode_warned_at.get(trial_id, 0.0) >= 30.0:
+                    self._trial_bad_mode_warned_at[trial_id] = _now_nm
+                    log.error(
+                        "shared broker cannot serve request_mode(s) %s for trial "
+                        "%s: SharedSlotBroker._process_parallel implements only "
+                        "_MODE_DENSE_F32 (%d). _MODE_DENSE_BF16 (%d) and "
+                        "_MODE_LEGAL_BF16 (%d) have NO dispatch here -- serving "
+                        "them as dense f32 returns a mis-decoded policy with no "
+                        "error (SHARED_BROKER_AUDIT B1). Releasing %d slot(s) "
+                        "unanswered; the per-trial SlotBroker implements all "
+                        "three, this broker does not.",
+                        unsupported, trial_id, _MODE_DENSE_F32,
+                        _MODE_DENSE_BF16, _MODE_LEGAL_BF16, n_bad,
+                    )
+                self.unsupported_mode_requests += n_bad
+                kept = [
+                    (slot, req)
+                    for slot, req, mode in zip(
+                        ready, request_ids, request_modes, strict=True,
+                    )
+                    if mode == _MODE_DENSE_F32
+                ]
+                if not kept:
+                    continue
+                ready = [slot for slot, _ in kept]
+                request_ids = [req for _, req in kept]
             batch_sizes = [slot.batch_size for slot in ready]
             xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes, strict=True)]
             xb = np.concatenate(xs, axis=0)
-            packed.append((trial_id, ready, batch_sizes, xb))
+            packed.append((trial_id, ready, batch_sizes, request_ids, xb))
 
         if not packed:
-            return
+            return unanswered_rows
 
-        hang_batch = sum(int(xb.shape[0]) for _, _, _, xb in packed)
-        self._hang_watchdog.mark_forward_start(hang_batch)
+        hang_batch = sum(int(xb.shape[0]) for *_, xb in packed)
+        # Token kept for the same reason as SlotBroker._process_batch_mode.
+        hang_token = self._hang_watchdog.mark_forward_start(hang_batch)
         forward_ok = False
         try:
-            trial_data: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor]] = [
-                (trial_id, ready, batch_sizes, torch.from_numpy(xb).to(self.device, non_blocking=True))
-                for trial_id, ready, batch_sizes, xb in packed
+            trial_data: list[tuple[str, list[_InferenceSlot], list[int], list[int], torch.Tensor]] = [
+                (trial_id, ready, batch_sizes, request_ids,
+                 torch.from_numpy(xb).to(self.device, non_blocking=True))
+                for trial_id, ready, batch_sizes, request_ids, xb in packed
             ]
             # Launch forward passes in parallel on separate streams
-            results: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor, torch.Tensor]] = []
-            for trial_id, ready, batch_sizes, xt in trial_data:
+            results: list[
+                tuple[str, list[_InferenceSlot], list[int], list[int], torch.Tensor, torch.Tensor]
+            ] = []
+            for trial_id, ready, batch_sizes, request_ids, xt in trial_data:
                 model = self._trial_models[trial_id]
                 stream = self._trial_streams.get(trial_id)
 
@@ -3021,7 +3902,7 @@ class SharedSlotBroker:
                     pol = _policy_output_full(out).detach().float().cpu()
                     wdl = out["wdl"].detach().float().cpu()
 
-                results.append((trial_id, ready, batch_sizes, pol, wdl))
+                results.append((trial_id, ready, batch_sizes, request_ids, pol, wdl))
 
             # Synchronize all streams
             if use_cuda:
@@ -3035,24 +3916,27 @@ class SharedSlotBroker:
                 log.info("shared broker: first parallel inference complete (%d trials)", len(results))
 
             # Scatter results back to slots
-            for _trial_id, ready, batch_sizes, pol, wdl in results:
+            for _trial_id, ready, batch_sizes, request_ids, pol, wdl in results:
                 pol_np = pol.numpy()
                 wdl_np = wdl.numpy()
                 start = 0
-                for slot, bsz in zip(ready, batch_sizes, strict=True):
+                for slot, bsz, req_id in zip(ready, batch_sizes, request_ids, strict=True):
                     end = start + bsz
                     slot.policy[:bsz] = pol_np[start:end]
                     slot.wdl[:bsz] = wdl_np[start:end]
+                    slot.request_id = req_id
                     slot.state = _STATE_RESPONSE
                     start = end
             forward_ok = True
         finally:
-            self._hang_watchdog.mark_forward_done(success=forward_ok)
+            self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
+        return unanswered_rows
 
     def serve_forever(self) -> None:
         _batch_count = 0
         _total_positions = 0
         _last_report = time.monotonic()
+        _last_unsupported = 0
         _last_scan = 0.0
         _report_interval = 10.0
         _scan_interval = 5.0
@@ -3064,9 +3948,12 @@ class SharedSlotBroker:
   # Periodically scan for new trials
             if now - _last_scan >= _scan_interval:
                 self._scan_trials()
-  # Refresh weights for all known trials
-                for tid in list(self._trial_slots.keys()):
-                    self._load_trial_weights(tid)
+  # Refresh weights for all known trials. Under a watchdog stage for the
+  # same reason as SlotBroker._ensure_model (audit I3): torch.load,
+  # .to(device) and torch.compile happen in here, outside any forward.
+                with self._hang_watchdog.stage("load_trial_weights"):
+                    for tid in list(self._trial_slots.keys()):
+                        self._load_trial_weights(tid)
                 _last_scan = now
 
             if not self._all_slots:
@@ -3086,29 +3973,59 @@ class SharedSlotBroker:
                     ready_by_trial.setdefault(trial_id, []).append(slot)
 
             if not ready_by_trial:
-                for _ in range(200):
+                # Same idle ladder as SlotBroker._wait_for_ready_slots (audit
+                # I6): rung 0 is the original 200-poll spin + 20µs yield, so a
+                # loaded shared broker is unchanged; only a fleet-wide drought
+                # backs off.
+                idle_since = self._idle_since
+                spin_polls, sleep_s = _idle_backoff(
+                    0.0 if idle_since is None else max(0.0, now - idle_since)
+                )
+                for _ in range(spin_polls):
                     if any(s.state == _STATE_REQUEST for _, s in self._all_slots):
+                        self._idle_since = None
                         break
                 else:
-                    time.sleep(0.00002)
+                    if idle_since is None:
+                        self._idle_since = now
+                    time.sleep(sleep_s)
                 continue
+            self._idle_since = None
 
   # Process all trials' batches in parallel on separate CUDA streams
             for ready in ready_by_trial.values():
                 _batch_count += 1
                 _total_positions += sum(s.batch_size for s in ready)
-            self._process_parallel(ready_by_trial)
+  # Rows released UNANSWERED were counted above but never evaluated;
+  # subtract them so pos/s means served rows. Both release paths in
+  # _process_parallel are in that return: an unimplemented request_mode
+  # AND a trial whose model has not loaded yet. The comment used to name
+  # only the first, which is exactly how the second went unfixed.
+            _total_positions -= self._process_parallel(ready_by_trial)
 
   # Periodic metrics
             now = time.monotonic()
             if now - _last_report >= _report_interval and _batch_count > 0:
                 avg_pos = _total_positions / _batch_count
                 n_trials = len(self._trial_slots)
+  # The B1 refusal counter's ONE reader. Appended only when non-zero, so
+  # the healthy line is unchanged and any occurrence is a grep hit; a
+  # refusal nobody can count is indistinguishable from one that never
+  # fires, and this counter had no reader when the guard was written.
+                _unsupported = int(self.unsupported_mode_requests)
+                _refused_delta = _unsupported - _last_unsupported
+                _last_unsupported = _unsupported
                 print(
                     f"[shared-broker] {_batch_count} batches in {now - _last_report:.1f}s | "
                     f"avg {avg_pos:.1f} pos/batch | "
                     f"{_total_positions / (now - _last_report):.0f} pos/s | "
-                    f"{n_trials} trials",
+                    f"{n_trials} trials"
+                    + (
+                        f" | REFUSED {_refused_delta} request(s) for an "
+                        f"unimplemented request_mode ({_unsupported} total) -- "
+                        "this broker serves only dense f32 (audit B1)"
+                        if _refused_delta else ""
+                    ),
                     flush=True,
                 )
                 _batch_count = 0
@@ -3133,9 +4050,14 @@ def _add_hang_abort_arg(ap: argparse.ArgumentParser) -> None:
         type=float,
         default=_DEFAULT_HANG_ABORT_S,
         help=(
-            "Hard-exit (code 42) if a GPU forward stays in flight longer than this "
-            "after the first successful batch. 0 disables. Env "
-            f"{_HANG_ABORT_ENV} overrides when set. Default: {_DEFAULT_HANG_ABORT_S:g}."
+            "Hard-exit (code 42) if GPU work stays in flight longer than this. "
+            "Covers model load, AOT package load and pinned allocation as well as "
+            "the forward. Before the first SUCCESSFUL forward a longer cold-start "
+            f"window applies instead ({_BOOT_HANG_ABORT_ENV}, default "
+            f"{_DEFAULT_BOOT_HANG_ABORT_S:g}s), so a slow first compile cannot "
+            "false-fire. 0 disables the watchdog entirely, cold window included. "
+            f"Env {_HANG_ABORT_ENV} overrides when set. "
+            f"Default: {_DEFAULT_HANG_ABORT_S:g}."
         ),
     )
 

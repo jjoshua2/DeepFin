@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+import pytest
 
 from chess_anti_engine.tune.trainable_config_ops import (
     _OPTIMIZER_CONSTRUCTION_KEYS,
     _apply_lr_gamma_weights,
     _play_batch_kwargs,
     _reload_yaml_into_config,
+    reset_yaml_reload_key_tracking,
 )
 from chess_anti_engine.tune.trial_config import TrialConfig
 
 
 class _FakeOpt:
     def __init__(self) -> None:
-        self.gamma = 0.0
         self.param_groups = [
             {"use_aurora": True},
             {"use_aurora": False},
@@ -152,7 +155,6 @@ def test_apply_lr_gamma_weights_syncs_all_trainer_loss_kwargs() -> None:
         trainer,
         {
             "lr": 0.123,
-            "cosmos_gamma": 0.456,
             "w_policy": 1.1,
             "w_soft": 1.2,
             "w_future": 1.3,
@@ -175,7 +177,6 @@ def test_apply_lr_gamma_weights_syncs_all_trainer_loss_kwargs() -> None:
     )
 
     assert trainer.peak_lr_calls == [(0.123, True)]
-    assert trainer.opt.gamma == 0.456
     assert trainer.w_policy == 1.1
     assert trainer.w_soft == 1.2
     assert trainer.w_future == 1.3
@@ -389,7 +390,7 @@ def test_optimizer_construction_keys_cover_structural() -> None:
     # changing those on resume is as safe as changing lr.
     structural = {
         "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
-        "soda_scope", "soda_start_step", "cosmos_rank",
+        "soda_scope", "soda_start_step",
     }
     value_only = {
         "matrix_lr_multiplier", "matrix_weight_decay", "aux_weight_decay",
@@ -398,8 +399,8 @@ def test_optimizer_construction_keys_cover_structural() -> None:
     }
     assert structural <= _OPTIMIZER_CONSTRUCTION_KEYS
     assert not (value_only & _OPTIMIZER_CONSTRUCTION_KEYS)
-    # cosmos_rank in particular changes low-rank moment shapes -> must block.
-    assert "cosmos_rank" in _OPTIMIZER_CONSTRUCTION_KEYS
+    # soda_start_step in particular changes the per-group anchor schedule -> must block.
+    assert "soda_start_step" in _OPTIMIZER_CONSTRUCTION_KEYS
 
 
 def test_startup_yaml_reload_does_not_inject_optimizer_construction_keys(tmp_path) -> None:
@@ -413,7 +414,7 @@ def test_startup_yaml_reload_does_not_inject_optimizer_construction_keys(tmp_pat
 optimizer: aurora
 matrix_optimizer_scope: mlp_out
 weight_decay_mode: decoupled
-cosmos_rank: 128
+soda_start_step: 128
 num_samples: 4
 train:
   lr: 0.0007
@@ -427,9 +428,9 @@ train:
     assert config["lr"] == 0.0007
     # Safe infra key still propagates.
     assert config["num_samples"] == 4
-    # Optimizer-construction keys are NOT injected (incl. cosmos_rank, which
-    # changes low-rank moment shapes).
-    for key in ("optimizer", "matrix_optimizer_scope", "weight_decay_mode", "cosmos_rank"):
+    # Optimizer-construction keys are NOT injected (incl. soda_start_step, which
+    # changes the per-group weight-decay anchor schedule).
+    for key in ("optimizer", "matrix_optimizer_scope", "weight_decay_mode", "soda_start_step"):
         assert key not in config, f"{key} must not be auto-filled on resume"
 
 
@@ -582,7 +583,10 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
 
     import yaml as _yaml
 
-    from chess_anti_engine.tune.trainable_config_ops import restart_required_config_keys
+    from chess_anti_engine.tune.trainable_config_ops import (
+        dead_config_keys,
+        restart_required_config_keys,
+    )
     from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
     production = Path(__file__).resolve().parents[1] / "configs" / "pbt2_small.yaml"
@@ -638,6 +642,12 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
     # Only keys with a value that can be perturbed are observable; the yaml
     # carries a few keys declared with no value at all (`kind:`), and those say
     # nothing either way.
+    # DEAD keys are the fourth class and are excluded here by the same rule
+    # `restart_required_config_keys`'s docstring states: the reloader declines
+    # them exactly like a restart-required key, but a restart REFUSES them
+    # rather than applying them, so reporting them in this set would send an
+    # operator into the one action that turns a silent no-op into a crash.
+    observed_restart_required -= dead_config_keys()
     declared = restart_required_config_keys() & exercised
     assert observed_restart_required == declared, (
         "restart_required_config_keys() disagrees with what the reloader does; "
@@ -650,3 +660,154 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
     assert len(observed_restart_required) < len(exercised) // 2
     assert "opening_fen_dole_per_iter" not in declared, \
         "the key that made params.json look stale must be live-reloadable"
+
+
+# --- audit T4: a deletion from the live yaml reverts nothing, silently -----
+
+
+def _reload_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage() for r in caplog.records
+        if "no longer set by" in r.getMessage()
+    ]
+
+
+def _write_cfg(path: Path, *, body: str) -> None:
+    path.write_text(body, encoding="utf-8")
+
+
+def test_live_reload_names_every_key_the_yaml_stopped_setting(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The reloader is ADD/UPDATE-only, so removing a line cannot revert the
+    value the trial is running. That is a behaviour this PR deliberately does
+    NOT change -- but it now says so, naming the key and the value still in
+    effect (audit T4)."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n")
+    config: dict = {}
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert config["rebuild_sf_targets"] is True
+
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n")
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    # Semantics unchanged: the deleted key keeps the value it was running.
+    assert config["rebuild_sf_targets"] is True
+    warnings = _reload_warnings(caplog)
+    assert len(warnings) == 1, warnings
+    assert "rebuild_sf_targets" in warnings[0]
+    assert "delete does not revert" in warnings[0]
+    assert "True" in warnings[0]
+
+
+def test_live_reload_reports_a_nulled_key_as_a_deletion(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`key: null` is the other spelling of "turn this off".
+    ``flatten_run_config_defaults`` drops None before the reloader sees it, so
+    it is indistinguishable from a delete -- and must be reported as one."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n")
+    config: dict = {}
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: null\n")
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert config["rebuild_sf_targets"] is True
+    assert any("rebuild_sf_targets" in m for m in _reload_warnings(caplog))
+
+
+def test_live_reload_is_silent_when_no_key_was_removed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """NEGATIVE CONTROL. An unchanged reload, a value CHANGE and an ADD must
+    all stay quiet: a warning that fires on ordinary operation is one an
+    operator learns to scroll past."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n")
+    config: dict = {}
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+        _write_cfg(
+            yaml_path,
+            body="train:\n  lr: 0.0009\n  rebuild_sf_targets: true\n  batch_size: 512\n",
+        )
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert config["lr"] == 0.0009
+    assert config["batch_size"] == 512
+    assert _reload_warnings(caplog) == []
+
+
+def test_a_rejected_reload_does_not_move_the_deletion_baseline(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The validator is all-or-nothing: an unknown key rejects the WHOLE
+    overlay. The key set that a later deletion is measured against must
+    therefore come from the last SUCCESSFUL parse, or the deletion an operator
+    makes while fixing the broken yaml is never reported."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n")
+    config: dict = {}
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    _write_cfg(
+        yaml_path,
+        body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n  totally_unknown_key: 1\n",
+    )
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n")
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert any("rebuild_sf_targets" in m for m in _reload_warnings(caplog))
+
+
+def test_a_key_the_trial_never_carried_is_not_reported_as_kept(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only a key with a value STILL IN EFFECT is worth a warning. A
+    restart-required key the reloader declined never entered ``config``, so its
+    removal from the yaml kept nothing."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\nmodel:\n  num_layers: 8\n")
+    config: dict = {}
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert "num_layers" not in config
+
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n")
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert _reload_warnings(caplog) == []
+
+
+def test_the_startup_reload_seeds_the_baseline_without_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A startup reload has no previous reload to compare against, so it must
+    only RECORD -- and the first live reload after it must still be able to
+    report a key removed since launch."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n")
+    config: dict = {}
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path))
+    assert _reload_warnings(caplog) == []
+
+    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n")
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert any("rebuild_sf_targets" in m for m in _reload_warnings(caplog))

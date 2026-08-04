@@ -9,9 +9,10 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.config_keys import is_inert_dead_config_value, TRAINER_WEIGHT_KEYS
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.selfplay.config import (
@@ -379,7 +380,7 @@ _MODEL_BUILD_KEYS = frozenset(f.name for f in dataclasses.fields(ModelConfig))
 # locks this split so a newly-added STRUCTURE knob can't silently slip back in.
 _OPTIMIZER_CONSTRUCTION_KEYS = frozenset({
     "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
-    "soda_scope", "soda_start_step", "cosmos_rank",
+    "soda_scope", "soda_start_step",
 })
 
 # Construction-bound keys: changing one on resume rebuilds the model OR the
@@ -406,6 +407,164 @@ _LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
     "opening_book_path", "opening_book_path_2",
 })
 
+# Keys whose ONLY consumer is a constructor argument in
+# ``trainable_init._init_replay_buffers``, which runs once per trial process.
+# A live yaml edit to one of these lands in ``config`` — and therefore in the
+# result-row ``config`` block and in every tool that reads it — while the
+# object that was going to use it was built at startup and never re-reads it.
+# That is strictly worse than being ignored: the running trial reports the new
+# value back as though it had taken, so `audit_realized_config.py` printed
+# "the running value is correct" about a `shuffle_buffer_size` the
+# `DiskReplayBuffer` was not running (found 2026-08-01, this file's own class
+# of defect). Listing them turns that silent overlay into a WARNING plus a
+# PENDING-RESTART finding, exactly as for `gate_games` below.
+#
+# Membership requires the key to have NO other consumer — a key read again on
+# the per-iteration path takes effect live and must NOT be frozen here. The
+# four sampling knobs passed to the same constructor
+# (`replay_sf_gap_priority_weight`, `replay_fast_low_surprise_priority`,
+# `diff_focus_pol_scale`, `diff_focus_q_weight`) are re-pushed onto the buffer
+# every iteration by ``trainable.py``, and `shard_size` is re-read per
+# iteration by the replay-share ingest, so all five stay live-reloadable.
+# ``tests/test_construction_only_config_keys.py`` re-derives that split from
+# the source and fails on any newly-added constructor argument that joins this
+# class without being classified.
+_CONSTRUCTION_ONLY_REPLAY_KEYS = frozenset({
+    # DiskReplayBuffer(...) — trainable_init.py:625
+    "shuffle_buffer_size",        # -> shuffle_cap, disk_buffer.py:249
+    "shuffle_refresh_interval",   # -> refresh_interval, disk_buffer.py:251
+    "shuffle_refresh_shards",     # -> refresh_shards, disk_buffer.py:252
+    # -> shard_recency_exponent. Same class as the two above and for a stronger
+    # reason than "the constructor is the only reader": it is the SHAPE of the
+    # shuffle-refresh shard draw, so a mid-run edit would split one replay
+    # window across two sampling regimes -- the same argument that froze
+    # shuffle_draw_cap_frac / shuffle_wl_max_ratio below.
+    "replay_shard_recency_exponent",
+    # ⚑ THESE TWO WERE A REAL CHOICE, not a classification. Unlike the three
+    # above (consumed inside the buffer's own construction), draw_cap_frac and
+    # wl_max_ratio are plain public attributes read PER BATCH DRAW
+    # (disk_buffer.py:1456, :1469) — structurally identical to
+    # diff_focus_pol_scale, which trainable.py:774 pushes live every iteration.
+    # Two lines in that push loop would make them live-editable.
+    # DECIDED: freeze them. Both change the SAMPLING DISTRIBUTION the window is
+    # drawn with, so a mid-window edit splits one replay window across two
+    # sampling regimes and silently confounds whatever readout spans it — the
+    # experiment protocol's one-data-affecting-change-per-window rule cannot be
+    # honoured for a knob that can move underneath a running window. The
+    # diff_focus_* knobs are pushed live because they were already being tuned
+    # against a same-day readout; these have no such caller. Revisit only with a
+    # ledger entry that names the readout wanting them live.
+    "shuffle_draw_cap_frac",      # -> draw_cap_frac, disk_buffer.py:344
+    "shuffle_wl_max_ratio",       # -> wl_max_ratio, disk_buffer.py:345
+    "replay_upgrade_v1_planes",   # -> upgrade_v1_planes, disk_buffer.py:235
+    # The initial sliding-window size, read once into a local at
+    # trainable_init.py:605; every later window move goes through
+    # replay_window_max / replay_window_growth, which ARE live.
+    "replay_window_start",
+    # ArrayReplayBuffer(...) — trainable_init.py:675. `.capacity` is never
+    # re-assigned from config afterwards.
+    "holdout_capacity",
+})
+
+# The era-forgetting probes' SET IDENTITY. `_init_era_probes` loads both frozen
+# npz files once per trial process (trainable_init.py) and the loop then scores
+# the loaded arrays; nothing re-reads these three keys afterwards, so a live
+# edit would land in `config`, echo back correct in the result row, and leave
+# the probe scoring the launch-time set.
+#
+# The classification is stronger than "only a constructor reads it", and the
+# reason is the standing rule that a ruler change must invalidate its records:
+# `probe_era_policy_eregret` is only comparable across iterations because the
+# rows behind it did not move. A mid-run repoint would silently splice two
+# rulers into one column of progress.csv, whose header is fixed from row 1 and
+# whose segments append across restarts — the reader has no way to see the
+# seam. A restart is the honest way to change a ruler, and the loader prints
+# the new set's digest when it happens.
+#
+# `era_probe_interval` and `era_probe_batch_size` are deliberately NOT here:
+# both are read off the freshly reloaded TrialConfig on the iteration they act
+# on (trainable_phases._run_era_probes_if_due), so a live edit DOES take effect
+# and freezing them would break a working throttle. Neither changes what is
+# measured, only how often and in what chunk size.
+_CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
+    "era_probe_path",
+    "era_probe_inwindow_path",
+    "era_probe_rows",
+})
+
+# The same class as the replay/probe sets above, found one file further out
+# (audit T2): keys whose only consumer runs in ``train_trial`` BEFORE the
+# iteration loop. The classification had been finished for the replay buffer
+# and the era probes and never swept over the rest of the startup block, so
+# ``scripts/audit_realized_config.py`` reached its live-reloadable branch for
+# these — the branch that reports "the running value is correct".
+#
+# ``tests/test_startup_only_config_keys.py`` DERIVES this class from the source
+# instead of restating it: reachability from the startup region of
+# ``train_trial``, minus everything the ``while`` loop can reach. A key added to
+# the schema tomorrow whose only reader is a startup helper fails that test
+# until it is classified here.
+#
+#   iterations      -- the `while` bound is read into a local ONCE
+#                      (trainable.py). Also, and separately worth knowing when
+#                      an operator edits it: it is a PER-PROCESS budget, not a
+#                      per-run one -- `completed_iterations` starts at 0 in
+#                      every process.
+#   puzzle_epd      -- `_load_puzzle_suite` loads the EPD file once. The
+#                      `puzzle_interval` / `puzzle_simulations` throttles ARE
+#                      live and deliberately stay live.
+#   eval_sf_nodes   -- the eval engine's node limit, fixed when that engine is
+#                      constructed (or not constructed at all).
+#   sf_pid_enabled  -- `_init_pid` returns None when it is false at launch, and
+#                      `pid.refresh_live_params(config)` cannot resurrect a
+#                      controller that does not exist.
+#   pause_file      -- `_resolve_pause_marker_paths` resolves the marker list
+#                      once; the loop polls the resolved paths.
+#
+# NOT here, decided rather than overlooked:
+#   eval_games      -- ⚑ IT WAS HERE, AND THAT WAS WRONG (review of PR F, B1).
+#                      The first version of this set froze it on the reasoning
+#                      that `_init_eval_stockfish` returns None for <= 0 at
+#                      startup and `eval_sf` is never rebuilt, so a live edit
+#                      "can only ever DISABLE". That is true of the ENABLE
+#                      direction and false of the key: `_run_eval_games` also
+#                      reads it as a MAGNITUDE (`games=tc.eval_games`,
+#                      trainable_phases.py), off a `tc` the loop rebuilds every
+#                      iteration, so for a trial launched with eval_games > 0
+#                      an edit to the COUNT takes effect live -- measured on
+#                      main. Freezing it removed a working knob, which is the
+#                      same objection that (correctly) keeps `log_level` out of
+#                      this set. What remains true and is NOT fixed here: with
+#                      eval_games 0 at launch, turning eval on live is still a
+#                      silent no-op, because nothing rebuilds `eval_sf`. That is
+#                      a wiring gap in `_init_eval_stockfish`, not a reload
+#                      class, and freezing the key papered over it while
+#                      breaking the direction that worked.
+#   log_level       -- startup-only for the TRIAL's own logger, but it is in
+#                      `_WORKER_LAUNCH_CONFIG_KEYS`, so a live edit changes the
+#                      worker launch signature and the next relaunch honours
+#                      it. Freezing it would break a knob that works.
+#   the sf_pid_* lever gains -- genuinely construction-only inside
+#                      `pid_from_config` (only ~10 of the family are re-read by
+#                      `refresh_live_params`), and the derivation test flags
+#                      every one of them. Freezing ~30 knobs of the live
+#                      difficulty controller is a behaviour change to a running
+#                      experiment's control surface, not an observability fix,
+#                      so it belongs to its own ledger entry.
+#   tune_scheduler / pb2_perturbation_interval / tune_keep_last_experiments --
+#                      DRIVER-side keys (harness.py); the trial actor never
+#                      reads them. Calling them "restart required" here would
+#                      also be false for the first two: on `--resume` they come
+#                      back from `tuner.pkl`, so not even a restart applies them
+#                      (audit T6). They need the driver-side fix, not this set.
+_STARTUP_ONLY_TRIAL_KEYS = frozenset({
+    "iterations",
+    "puzzle_epd",
+    "eval_sf_nodes",
+    "sf_pid_enabled",
+    "pause_file",
+})
+
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
 # already built), but IS applied during startup/resume before the trainer
 # exists — so it is restart-required for a running trial like the rest.
@@ -419,13 +578,195 @@ _LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
 # the whole difference between "restart required" and "quietly ignored".
 # Window shape is deliberately construction-time as well: changing
 # window_iters mid-window redefines what a half-filled window means.
+#
+# `gate_threshold` / `gate_interval` / `gate_mcts_sims` are NOT here any more
+# (audit G3-11): they are DEAD, not construction-only, and the two classes are
+# disjoint by design -- a restart applies a construction-only key and REFUSES a
+# dead one, so listing a dead key here would tell an operator to restart into a
+# hard error. `gate_games` stays: it is not in the dead set, because it raises
+# with its own message from `gate_config_from_dict`.
 _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
     "lr_schedule",
-    "gate_games", "gate_threshold", "gate_interval", "gate_mcts_sims",
+    "gate_games",
     "gate_mode", "gate_window_iters", "gate_min_iters",
     "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
     "gate_alpha", "gate_max_hold_iters",
-})
+}) | _CONSTRUCTION_ONLY_REPLAY_KEYS | _CONSTRUCTION_ONLY_PROBE_KEYS | _STARTUP_ONLY_TRIAL_KEYS
+
+
+# Yaml keys the validator still ACCEPTS and `TrialConfig` still parses, but
+# which no production code path consumes. This is not the construction-only
+# class: those reach a constructor and are merely frozen after it. These reach
+# NOTHING, so their value is read back correctly from the trial's own config
+# while the object that would use it never sees the number at all.
+#
+# `replay_sf_gap_priority_signed` (backlog #106): allow-listed at
+# `utils/config_yaml.py:277`, parsed at `trial_config.py:727`, supported by
+# `DiskReplayBuffer.sf_gap_priority_signed` — and never passed. The production
+# construction site (`trainable_init.py`, `DiskReplayBuffer(...)`) passes only
+# `sf_gap_priority_weight`, and the per-iteration live push
+# (`trainable.py`) pushes only the same four live knobs. Its real consumers are
+# both OFFLINE — `scripts/retarget_retrain.py` and
+# `scripts/holdout_policy_screen.py` — which is why the key is refused here
+# rather than deleted from `TrialConfig`.
+#
+# Each key maps to the ONE value that is inert, i.e. the value the production
+# object actually runs at. That value is tolerated: deleting a key from a live
+# yaml is itself a reload risk (the validator is all-or-nothing), so an
+# operator must be able to leave it in place. Any other value is refused
+# loudly, on the precedent of `promotion_gate.gate_config_from_dict`'s
+# `gate_games` check — silently accepting it is the failure this repo keeps
+# paying for.
+# `gate_threshold` / `gate_interval` / `gate_mcts_sims` (audit G3-11): the
+# corpses of the removed 1-sim-vs-Stockfish gate. `grep` finds each of them in
+# exactly three places -- the yaml allowlist, the live-reload skip set, and
+# `TrialConfig`, which parses them and never reads them. `gate_config_from_dict`
+# builds the anchored gate from the eight `gate_mode`-family keys and looks at
+# none of these. `gate_games` is the only one that refuses, and it refuses
+# because a non-zero value asks for BEHAVIOUR that was deleted; these three
+# were left "tolerated at any value" on the grounds that they are inert
+# scalars, which is true of the value and false of the operator's belief: a
+# `gate_interval: 5` starts a run, reads back correctly from the trial's own
+# config, and does nothing at all.
+#
+# Their inert values are the ones the production yaml ships (pbt2_small.yaml
+# :1077-1079), so this refusal cannot fire on the live config as it stands.
+_DEAD_CONFIG_KEY_INERT_VALUES: dict[str, object] = {
+    "replay_sf_gap_priority_signed": False,
+    "gate_threshold": 0.50,
+    "gate_interval": 1,
+    "gate_mcts_sims": 1,
+}
+
+# Why each dead key is dead, in the words the refusal needs. Keyed by the same
+# names, and ``test_every_dead_config_key_explains_itself`` requires one per
+# key so a key cannot be added to the set above without saying what happened
+# to it.
+_DEAD_CONFIG_KEY_REASONS: dict[str, str] = {
+    "replay_sf_gap_priority_signed": (
+        "the trial builds its DiskReplayBuffer without it (trainable_init.py) "
+        "and never pushes it on live reload (trainable.py). Its only consumers "
+        "are the offline scripts/retarget_retrain.py and "
+        "scripts/holdout_policy_screen.py, and the gap-priority family was "
+        "KILLED by experiment #104 (docs/experiment_ledger.md), so re-enabling "
+        "it needs a ledger entry and a deliberate wiring change, not a yaml line"
+    ),
+    "gate_threshold": (
+        "it was the win-rate line of the REMOVED 1-sim vs-Stockfish gate. "
+        "Nothing reads it: the anchored gate demotes on gate_demote_delta_elo "
+        "against the previous MODEL, never on a score against a PID-controlled "
+        "opponent whose setpoint equalled this number"
+    ),
+    "gate_interval": (
+        "it was how often the REMOVED 1-sim vs-Stockfish gate ran. The "
+        "anchored gate judges EVERY iteration -- there is no interval to set, "
+        "and TrialConfig.gate_interval is parsed and read by nothing"
+    ),
+    "gate_mcts_sims": (
+        "it was the search width of the REMOVED 1-sim vs-Stockfish gate, and 1 "
+        "simulation is raw policy argmax rather than the quantity production "
+        "plays. The anchored gate plays no games at all: it splits the games "
+        "the loop already played by publishing model"
+    ),
+}
+
+
+def dead_config_key_inert_values() -> dict[str, object]:
+    """The dead keys with the ONE value each that is inert, for reporting tools.
+
+    ``dead_config_keys()`` answers "is this key dead"; this answers "is this
+    VALUE the harmless one", which a provenance report needs in order to stay
+    quiet on a yaml that merely leaves the key in place at its realized default.
+    """
+    return dict(_DEAD_CONFIG_KEY_INERT_VALUES)
+
+
+def dead_config_key_violations(
+    config: Mapping[str, object],
+) -> list[tuple[str, object, object]]:
+    """Dead keys in *config* set to something other than their inert value.
+
+    ⚑ THE SINGLE TABLE, walked with the SINGLE PREDICATE
+    (``config_keys.is_inert_dead_config_value``, which lives in the
+    dependency-free key module so the reporting script can import it at module
+    scope rather than inside its per-key loop). ``reject_dead_config_keys``
+    raises at startup on exactly this list; ``scripts/audit_realized_config.py``
+    reports on exactly this predicate. Two implementations that agree today
+    drift the moment a dead key is added whose inert value is not falsey, and
+    then the audit would call safe a value the trial refuses to start on — a
+    guard disagreeing with the criterion it guards.
+
+    Returns ``(key, value, inert)`` triples so a caller can name all three.
+    """
+    return [
+        (key, config[key], inert)
+        for key, inert in _DEAD_CONFIG_KEY_INERT_VALUES.items()
+        if key in config and not is_inert_dead_config_value(config[key], inert)
+    ]
+
+
+
+
+def reject_dead_config_keys(config: Mapping[str, object]) -> None:
+    """Raise on a yaml key that is parsed but reaches no production consumer.
+
+    Called from the production replay-buffer construction path, so the refusal
+    happens at STARTUP, before any training compute. The live-reload path
+    cannot reach here — it warns and declines to apply instead (see
+    ``_reload_yaml_into_config``), because crashing a running trial on a yaml
+    edit would crash-loop under ``train.sh``'s auto-resume.
+    """
+    for key, value, inert in dead_config_key_violations(config):
+        raise ValueError(
+            f"{key}={value!r} is parsed but reaches no production code path: "
+            f"{_DEAD_CONFIG_KEY_REASONS.get(key, 'nothing reads it')}. The "
+            f"only value this run can realize is {inert!r}. Refusing rather "
+            f"than accepting a knob that reads back correctly and does nothing."
+        )
+
+
+def dead_config_keys() -> frozenset[str]:
+    """Yaml keys that reach NO production consumer at any value.
+
+    A FOURTH reload class, distinct from all three in
+    ``restart_required_config_keys()``. Those are declined live because
+    applying them would be unsafe or could not act until a restart; a dead key
+    is declined live and then REFUSED at the restart
+    (``reject_dead_config_keys``). So "not overlaid" is true of both, and
+    "a restart will apply it" is true only of the others.
+
+    Exported so a provenance tool can say which one it is looking at. Without
+    it, a set-but-declined dead key falls through every branch and is reported
+    as a healthy live-reloadable key whose yaml and realized values agree —
+    the exact verdict shape PR #303 removed for construction-only keys.
+    """
+    return frozenset(_DEAD_CONFIG_KEY_INERT_VALUES)
+
+
+def construction_only_config_keys() -> frozenset[str]:
+    """Yaml keys that reach ONLY a constructor, so a live edit cannot act.
+
+    A strict subset of ``restart_required_config_keys()``, and the reason the
+    two are not the same question: the rest of that set is frozen because
+    applying it live would be UNSAFE (rebuild the model away from its
+    checkpoint, advertise an asset the server cannot serve). These are frozen
+    because applying it live would be a LIE — the value would read back correct
+    from the trial's own config while the object using it kept the launch
+    value.
+
+    Exported for tooling that reports on config provenance: a checker may say
+    "the running value is correct" only about a key some live consumer
+    re-reads, and this set is the one it must never say it about.
+
+    ``_STARTUP_ONLY_TRIAL_KEYS`` joined it in the audit-T2 sweep: same class,
+    same lie, one file further out (``train_trial``'s startup block rather than
+    a buffer constructor).
+    """
+    return (
+        _CONSTRUCTION_ONLY_REPLAY_KEYS
+        | _CONSTRUCTION_ONLY_PROBE_KEYS
+        | _STARTUP_ONLY_TRIAL_KEYS
+    )
 
 
 def restart_required_config_keys() -> frozenset[str]:
@@ -450,6 +791,20 @@ def restart_required_config_keys() -> frozenset[str]:
     PB2-searched keys are also preserved across a reload, but that is a
     property of the trial's own ``pb2_bounds_*`` entries rather than of the key,
     so callers must exclude them separately.
+
+    "Not in here" means the reloader overlays the yaml value into ``config``
+    **unless the key is dead** — see ``dead_config_keys()``. A dead key is
+    declined on live reload like a restart-required one, but it is deliberately
+    NOT in this set, because a restart does not apply it either: it makes the
+    trial REFUSE to start. Reporting it as restart-required would tell an
+    operator to do the one thing that turns a silent no-op into a crash.
+    Callers that branch on this set must handle that class separately;
+    ``scripts/audit_realized_config.py`` takes it as its own injected argument.
+
+    Being overlaid still does not mean a running component re-read it — that is
+    a per-key fact about consumers, and ``construction_only_config_keys()`` is
+    the part of it already proven. A tool that reads "overlaid" as "in effect"
+    will report a knob as healthy precisely when it is inert.
     """
     return (
         _TOPOLOGY_KEYS
@@ -457,6 +812,126 @@ def restart_required_config_keys() -> frozenset[str]:
         | _LAUNCH_FIXED_ASSET_PATH_KEYS
         | _LIVE_RELOAD_SKIPPED_KEYS
     )
+
+
+# The flat key set the last SUCCESSFUL load of each yaml path produced. Keyed
+# by path because one trial process reloads exactly one yaml while the tests
+# drive several, and only written after `flatten_run_config_defaults` returns —
+# a rejected reload must not move the baseline, or the deletion it could not
+# see would be reported against the wrong iteration.
+_LAST_RELOAD_YAML_KEYS: dict[str, frozenset[str]] = {}
+
+
+def reset_yaml_reload_key_tracking() -> None:
+    """Forget every remembered key set. A fresh trial process starts empty."""
+    _LAST_RELOAD_YAML_KEYS.clear()
+
+
+def last_reload_yaml_keys(yaml_path: str | None) -> frozenset[str]:
+    """The key set of the last successful load of *yaml_path*, for persisting.
+
+    Empty when nothing has been loaded yet. The checkpoint writer banks this so
+    the NEXT process can compare against the yaml this one was running -- see
+    ``seed_yaml_reload_baseline``.
+    """
+    if not yaml_path:
+        return frozenset()
+    return _LAST_RELOAD_YAML_KEYS.get(yaml_path, frozenset())
+
+
+def seed_yaml_reload_baseline(
+    *, yaml_path: str | None, keys: Iterable[str], config: Mapping[str, object],
+) -> None:
+    """Adopt a PREVIOUS PROCESS's yaml key set and report what has gone missing.
+
+    Closes the restart-shaped hole in the delete warning (review B2). The
+    in-process baseline is seeded by this process's own startup reload, i.e.
+    from the yaml as it is NOW, so a key deleted while the trial was down was
+    invisible: `--resume` restores the saved trial config (which still carries
+    the value, because neither the experiment-state overlay nor the reloader
+    ever removes a key) and the first live reload compares the new yaml against
+    a baseline that also lacks the key. Pause -> edit -> restart is the common
+    operator path, and it was the one path the warning could not see.
+
+    Called once at startup with the key set banked in the restored checkpoint's
+    trial_meta.json. The comparison is the same one the live path makes, so the
+    operator gets the same sentence.
+
+    Silent, and leaves the baseline alone, when there is nothing to adopt: a
+    fresh start, or a checkpoint written before this was banked.
+    """
+    banked = frozenset(keys)
+    if not (yaml_path and banked):
+        return
+    current = _LAST_RELOAD_YAML_KEYS.get(yaml_path)
+    if current is None:
+        return
+    _warn_on_keys_dropped_from_yaml(
+        yaml_path=yaml_path, fresh=current, config=config, previous=banked,
+        since="the checkpoint this process resumed from",
+    )
+
+
+def _warn_on_keys_dropped_from_yaml(
+    *,
+    yaml_path: str,
+    fresh: Mapping[str, object] | Iterable[str],
+    config: Mapping[str, object],
+    previous: frozenset[str] | None = None,
+    since: str = "the previous reload",
+) -> None:
+    """Name every key the yaml stopped setting while the trial still runs it.
+
+    The reload is ADD/UPDATE-only: it iterates the fresh yaml and writes
+    ``config[k] = v``, so there is no pass that could remove anything. Deleting
+    a line, and writing ``key: null`` (``flatten_run_config_defaults`` drops
+    None before the reloader sees it), are therefore both no-ops — and they are
+    no-ops the three loud branches below cannot report, because every one of
+    them keys off a key the fresh yaml still names (audit T4). An operator who
+    removes a line to turn an experiment off gets exactly the silence the
+    memory rule "a yaml edit may NOT be in effect" was written about.
+
+    This is OBSERVABILITY ONLY. Reverting the value would be a behaviour change
+    — the trial has been running on it, and the revert target (an argparse
+    default, or a value from a config that no longer exists) is not knowable
+    from the yaml — so it needs its own pre-registered entry. What is knowable,
+    and what this says, is that the deletion did nothing.
+
+    ⚑ IT FIRES ONCE PER DELETION, not once per iteration. The baseline moves to
+    the new key set immediately afterwards, so the second reload has nothing to
+    compare (review N5). That is the same noise trade the other three loud
+    branches make, and it is a real limit of the observable: one WARNING in a
+    665 s iteration is easy to lose in a multi-hour stdout stream. The durable
+    form would be a report column, which rotates progress.csv and belongs with
+    whoever next changes the report schema.
+
+    ⚑ Two baselines feed this, and the restart one is why ``previous`` is an
+    argument rather than a module lookup: it defaults to the in-process record
+    of the last successful load, and ``seed_yaml_reload_baseline`` passes the
+    set banked in the checkpoint so a deletion made while the trial was DOWN is
+    reported too (review B2). Still invisible: a deletion made while down when
+    the resumed checkpoint predates the banking, a salvage restart (a pool's key
+    set describes another experiment and is deliberately not adopted), and a
+    deletion of a key the trial does not carry at all.
+    """
+    if previous is None:
+        previous = _LAST_RELOAD_YAML_KEYS.get(yaml_path)
+    if previous is None:
+        return
+    missing = object()
+    for key in sorted(previous - frozenset(fresh)):
+        current = config.get(key, missing)
+        if current is missing:
+  # The yaml stopped naming a key the trial does not carry either: nothing
+  # is in effect, so nothing was silently kept.
+            continue
+        log.warning(
+            "YAML reload: %s is no longer set by %s (it was, as of %s) but the "
+            "trial is STILL RUNNING %r — delete does not revert; write the old "
+            "value explicitly. (`%s: null` is dropped before the reloader sees "
+            "it, so it reads as a delete too.)",
+            key, yaml_path, since, current, key,
+        )
 
 
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
@@ -476,6 +951,12 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
     try:
         from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
         fresh = flatten_run_config_defaults(load_yaml_file(yaml_path))
+  # Before the overlay, so `config` still holds the values this reload is
+  # about to leave in place, and after the parse, so a rejected reload leaves
+  # the baseline where it was.
+        if live_reload:
+            _warn_on_keys_dropped_from_yaml(yaml_path=yaml_path, fresh=fresh, config=config)
+        _LAST_RELOAD_YAML_KEYS[yaml_path] = frozenset(fresh)
   # Derive searched keys from the config's own bounds (stable), not YAML.
         searched = {
             k.removeprefix("pb2_bounds_")
@@ -484,6 +965,35 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
         missing = object()
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
+                continue
+            # A dead key gets its own message, NOT the "requires restart" one
+            # below: restarting does not make it work, it makes the trial
+            # refuse to start (``reject_dead_config_keys``). Telling an
+            # operator to restart into a hard error would be the same lie in a
+            # different place. Declining to apply also keeps the poison out of
+            # `config`, so the trial keeps running on the value it has actually
+            # been running on.
+            #
+            # FIRST, ahead of the skipped-keys branch, and it stays first even
+            # though this diff removed the three gate_* keys from
+            # `_LIVE_RELOAD_SKIPPED_KEYS`: the ordering is what makes
+            # `dead_config_keys() & restart_required_config_keys()` free to be
+            # empty. Were a future dead key also declared restart-required,
+            # this branch is the one that must win -- the other tells an
+            # operator to do the one thing that turns a silent no-op into a
+            # crash. `tests/test_dead_config_keys.py` pins both halves.
+            if (
+                live_reload
+                and k in _DEAD_CONFIG_KEY_INERT_VALUES
+                and not is_inert_dead_config_value(v, _DEAD_CONFIG_KEY_INERT_VALUES[k])
+            ):
+                log.warning(
+                    "YAML reload: %s=%r reaches no production code path and is "
+                    "NOT applied — a restart will REFUSE to start with this "
+                    "value, not honour it. Set it back to %r. See "
+                    "reject_dead_config_keys.",
+                    k, v, _DEAD_CONFIG_KEY_INERT_VALUES[k],
+                )
                 continue
             if (
                 live_reload
@@ -568,7 +1078,7 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
 
 
 def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_lr: bool) -> None:
-    """Push lr / cosmos_gamma / loss-weight keys from config into trainer.
+    """Push lr / loss-weight keys from config into trainer.
 
     ``rescale_current_lr=True`` is the iter-loop call (PB2 perturbations
     take effect immediately). ``False`` is the one-shot init call from
@@ -590,8 +1100,6 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
             min_scale=config.get("lr_release_min_scale"),
             release_shape=config.get("lr_release_shape"),
         )
-    if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
-        trainer.opt.gamma = float(config["cosmos_gamma"])
     aurora_group_updates: dict[str, object] = {}
     if "aurora_pp_iterations" in config:
         aurora_group_updates["aurora_pp_iterations"] = int(config["aurora_pp_iterations"])
@@ -649,9 +1157,9 @@ def _sync_trainer_weights(
 
     # SF target rebuild: construction-time on the Trainer, so it needs an
     # explicit push or a live yaml edit silently waits for the next restart.
-    # This is what lets an SfTargetParams change hit ~95% of the SF-labelled
-    # rows already in the replay window at the next iteration, instead of only
-    # newly generated data. Not the whole window -- see target_builder.
+    # This is what lets an SfTargetParams change hit the SF-labelled rows
+    # already in the replay window at the next iteration, instead of only newly
+    # generated data. All of them on healthy data -- see target_builder.
     want_rebuild = bool(config.get("rebuild_sf_targets", False))
     was_rebuild = trainer.rebuild_sf_targets
     want_params = resolve_sf_target_params(config)
@@ -662,14 +1170,14 @@ def _sync_trainer_weights(
     if trainer.set_sf_target_rebuild(enabled=want_rebuild, params=want_params):
         log.warning(
             "SF target rebuild: enabled=%s (was %s) params=%s. While ON, SF "
-            "targets are rebuilt from sf_multipv_raw for ~95%% of the "
-            "SF-LABELLED replay rows -- NOT the whole window; rows without "
-            "sf_multipv_raw keep capture-time targets, so the window is a "
-            "mixture of two target regimes. sf_p0_policy_target / "
-            "sf_volatility_target are MASKED (their sources live on other "
-            "shard rows) so has_sf_p0_frac reads 0. The frozen full-pass "
-            "holdout is NOT rebuilt. Proof of effect is "
-            "sf_rebuild_policy_frac in progress.csv, not this line.",
+            "targets are rebuilt from sf_multipv_raw for every SF-LABELLED "
+            "replay row -- un-labelled rows have no SF target to rebuild. "
+            "sf_p0_policy_target / sf_volatility_target are MASKED (their "
+            "sources live on other shard rows) so has_sf_p0_frac reads 0. The "
+            "frozen full-pass holdout is NOT rebuilt. Proof of effect is "
+            "sf_rebuild_policy_frac in progress.csv, not this line; that "
+            "column sitting BELOW sf_rebuild_wdl_frac means desynced Stockfish "
+            "labels in the window, not rows the rebuild could not reach.",
             want_rebuild, was_rebuild, want_params,
         )
 

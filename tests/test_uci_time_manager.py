@@ -81,11 +81,15 @@ def test_clock_movestogo_overrides_default_divisor() -> None:
 
 
 def test_clock_ceiling_caps_half_remaining() -> None:
-    # With movestogo=1 (one move to make) and no increment, naive math says
-    # spend all remaining. We must cap at 50%.
+    # Naive math wants far more than the clock; the ceiling caps a LONG-horizon
+    # allocation at 50% of remaining. This used to be asserted at movestogo=1,
+    # which is the one case the ceiling should NOT bind (a fresh allotment
+    # arrives right after) — see
+    # tests/test_uci_match_safety.py::test_movestogo_one_gets_almost_the_whole_clock.
     lim = limits_from_go(
-        GoArgs(wtime_ms=10000, movestogo=1),
+        GoArgs(wtime_ms=10000, movestogo=30),
         side_to_move_is_white=True,
+        time_budget_scale=100.0,
     )
     assert lim.deadline_ms == 5000
 
@@ -111,9 +115,11 @@ def test_time_budget_scale_raises_budget_below_ceiling() -> None:
 
 
 def test_time_budget_scale_still_capped_at_half_remaining() -> None:
-    # Even a large scale cannot exceed the 50%-of-remaining ceiling.
+    # Even a large scale cannot exceed the 50%-of-remaining ceiling. `movestogo=2`
+    # rather than 1: at 1 this is the last move of the allotment and the ceiling
+    # is deliberately relaxed (U3).
     lim = limits_from_go(
-        GoArgs(wtime_ms=10000, movestogo=1), side_to_move_is_white=True,
+        GoArgs(wtime_ms=10000, movestogo=2), side_to_move_is_white=True,
         time_budget_scale=10.0,
     )
     assert lim.deadline_ms == 5000

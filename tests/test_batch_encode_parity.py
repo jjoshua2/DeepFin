@@ -19,9 +19,9 @@ _MOD = load_script_module("fuzz_batch_encode_diff.py")
 
 @pytest.fixture(autouse=True)
 def _reset_flag():
-    rep_fix.apply(False)
+    rep_fix.apply(False, boards_discarded=True)
     yield
-    rep_fix.apply(False)
+    rep_fix.apply(False, boards_discarded=True)
 
 
 @pytest.mark.parametrize("history_rep_fix", [False, True])

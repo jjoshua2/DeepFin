@@ -14,14 +14,59 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE, future_regret_field_names
 
-# Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
-# max_plies so 1.0 = opening, 0.0 = endgame. Thresholds calibrated from
-# empirical P33/P67 of recent selfplay shards (data is skewed toward shorter
-# games due to adjudication, so a naive 0.33/0.66 split puts ~11% in open
-# and ~51% in mid). Re-derive periodically — `scripts/eval_phase_thresholds`
-# (or the inline grep in trainable_phases) when the distribution drifts.
-_PHASE_OPEN_THRESHOLD = 0.45
-_PHASE_END_THRESHOLD = 0.31
+# Game-phase buckets for per-phase loss reporting, by PIECE COUNT — the same
+# definition and the same constant as `eval/audit.py`'s per-phase deep-SF
+# regret, so a training column and an audit column now name the same set of
+# positions.
+#
+# ⚑⚑ THIS USED TO BUCKET ON `moves_left`, AND THAT WAS AN INSTRUMENT BUG, NOT A
+# DISTRIBUTION. `selfplay/finalize.py:924` writes `moves_left` as
+# ``(total_plies_played - ply_index) / max_plies`` — the divisor is the
+# CONFIGURED PLY CAP (`max_plies: 450` in production), not the game's own
+# length — so the quantity is "plies REMAINING as a share of the cap" and says
+# nothing about the board. A row at ply 2 of a 60-ply adjudicated game scored
+# 0.129 and was labelled `end`. The old cuts (0.45 / 0.31, calibrated
+# 2026-04-25 in commit 0fcf899e4 and correct then) had drifted to P99.4 / P96.4
+# of the realized distribution, which put 96.4 % of rows in `end`: measured
+# 2026-08-02 over the whole live window (713 shards, 1,273,501 rows,
+# `runs/pbt2_small/replay/train_trial_13a9f_.../replay_shards`) at
+# 0.61 % / 3.03 % / 96.37 %, median `moves_left` 0.113, implied median game
+# length 123 plies. Re-deriving the two thresholds would have restored three
+# equal buckets of a quantity that still is not game phase — the failure mode
+# this repo keeps paying for, a metric that does not mean what its name says,
+# with healthy-looking numbers on top. Under the piece-count definition below
+# the same window reads 30.7 / 32.4 / 36.9.
+#
+# ⚑ THE COLUMNS WERE RENAMED IN THE SAME COMMIT — `wdl_loss_open` ->
+# `wdl_loss_phase_open`, and likewise for `policy_loss_*` and the `test_`
+# twins. A ruler change must invalidate its records: the old and new columns
+# measure different sets of rows, so they must not share a name that lets them
+# be plotted as one series.
+#
+# `moves_left` is untouched as a TARGET (the `moves_left` head still regresses
+# it); only the reporting split moved off it. NOTE for anyone who returns to
+# that field: `finalize.py:924` divides by an ABSOLUTE game total, while the
+# Python fallback in `selfplay/network_turn.py:558` sets `ply_index` RELATIVE
+# to the search root where the production C path (`mcts/_mcts_tree.c:4734`)
+# sets it ABSOLUTE. That mismatch no longer touches this split.
+from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
+
+# Deliberately the module constant and NOT `model_cfg.phase_piece_thresholds`:
+# that knob shapes the model's own phase adapter, and letting the reporting
+# split follow it would silently break comparability with `eval/audit.py`,
+# which is the entire reason for bucketing this way.
+_PHASE_END_MAX_PIECES, _PHASE_MID_MAX_PIECES = DEFAULT_PHASE_PIECE_THRESHOLDS
+
+# Planes 0:12 are the current position's 12 piece-occupancy planes in every
+# shipping LC0 encoding (legacy and root-history), so their sum is the exact
+# root piece count. Same slice and same assumption as
+# `model/transformer.py::_phase_indices_from_input`.
+_PIECE_PLANE_COUNT = 12
+
+# The suffixes from `_phase_split_masks` that partition by game phase. Only
+# these get row-count columns: `selfplay`/`curriculum` split on a boolean flag
+# whose balance is already reported by `frac_is_selfplay` / `frac_tagged`.
+_PHASE_BUCKET_SUFFIXES = ("phase_open", "phase_mid", "phase_end")
 
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -45,6 +90,186 @@ def masked_sum_and_count(
     """
     m = mask.to(torch.float32)
     return (x.to(torch.float32) * m).sum(), m.sum()
+
+
+def sf_multipv_presence_counts(
+    batch: dict[str, torch.Tensor], *, has_sf_wdl: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """(no-MultiPV labelled rows, labelled rows CHECKED) for this batch, as 0-d sums.
+
+    **DENOMINATOR, stated once: rows of this batch with ``has_sf_wdl`` set.**
+    Not ``net_mask * has_sf_wdl``, and not all batch rows. That is the exact
+    population ``eval/value_optimism.py::sf_multipv_missing_rate`` divides by —
+    the offline gate that selected the 122 shards quarantined 2026-08-01 — so
+    the live column and the gate's per-shard reading are the same quantity and
+    compare without rescaling. (The sibling ``sf_rebuild_*_frac`` pair divides
+    by ALL rows of the rebuilt batch; quoting one against the other's
+    denominator is how 0.191973 and 0.207461 ended up describing the same 122
+    shards in one docstring. Do not repeat it here.)
+
+    The numerator is the desync fingerprint. The selfplay writer stamps
+    ``sf_multipv_raw`` on a labelled row together with its SF eval
+    (``selfplay/stockfish_turn.py::_stamp_sparse_sf_labels``); a labelled row
+    that arrives without the block came through
+    ``_collect_sparse_pv_rows``'s ``if not rows: return None``, i.e. not ONE of
+    Stockfish's MultiPV moves was legal at the position queried — a UCI engine
+    answering a DIFFERENT position. On healthy data this is **exactly
+    0.000000**: 11.05 M labelled rows over every clean stretch on disk (PR #302),
+    2 878 620 across four separated quiet stretches. It is a LOWER bound on
+    contamination, not the poisoned share: a desynced engine strips the block on
+    only ~59 % of the labels it poisons, so divide by ~0.59 for the true share.
+
+    ⚑ The second return value is not decoration. ``has_sf_multipv_raw`` is an
+    OPTIONAL shard field, so a batch that never carried it must not report a
+    perfect zero rate. When the field is absent BOTH counts are zero, which
+    drives the reported ``sf_multipv_checked_frac`` to 0.0 and marks the rate
+    unmeasured — as opposed to measured-and-clean. A consumer that reads the
+    rate without the checked-frac cannot tell a healthy window from a blind
+    instrument, which is the exact defect this column exists to catch.
+
+    ``checked_frac == 0.0`` covers TWO cases, and they are operationally
+    identical — nothing was inspected, so the rate above it means nothing:
+    (a) the batch carried no ``has_sf_multipv_raw`` field at all (the early
+    return here), and (b) the batch carried the field but had no ``has_sf_wdl``
+    rows, so the mask summed to zero. Do not read (b) as "clean"; on the
+    production window ``checked_frac`` sits near 0.99 and any collapse toward
+    zero is a blind instrument whichever cause produced it.
+
+    ⚑ SHARD HETEROGENEITY READS AS CONTAMINATION, NOT AS HEALTH.
+    ``DiskReplayBuffer._gather_rows`` builds its ``proto`` as the UNION of the
+    fields across the sampled chunks, so a chunk written without
+    ``has_sf_multipv_raw`` is zero-filled to match a chunk that has it — and a
+    zero there is indistinguishable from "labelled but no MultiPV block", i.e.
+    contamination. That is a false ALARM rather than a silent pass, the right
+    direction for a tripwire, but a future "any non-zero is an incident" rule
+    would then fire on a mixed pool instead of on a desync.
+
+    Currently moot, and by a slightly stronger margin than "every shard has the
+    field": over the 713 shards of the live window, 712 carry ``has_sf_wdl``
+    and ``has_sf_multipv_raw`` TOGETHER and exactly 0 carry ``has_sf_wdl``
+    without the raw flag — which is the only combination that could produce the
+    false alarm. The single exception (``shard_033951.zarr``) carries NEITHER,
+    so the union zero-fills its ``has_sf_wdl`` as well and its rows fall out of
+    the denominator instead of into the numerator.
+
+    Unconditional by construction: it reads two ``has_`` vectors that every
+    collated batch either carries or does not, and consults no flag. The
+    tripwire it replaces (``sf_rebuild_policy_frac`` minus
+    ``sf_rebuild_wdl_frac``) is definitionally the same signal but is gated
+    behind ``rebuild_sf_targets``, which defaults False and is in no config
+    file — so it has read 0.0 through three separate desync episodes.
+    """
+    has_raw = batch.get("has_sf_multipv_raw")
+    if has_raw is None:
+        zero = has_sf_wdl.new_zeros(())
+        return zero, zero.clone()
+    missing = 1.0 - has_raw.to(torch.float32)
+    return masked_sum_and_count(missing, has_sf_wdl)
+
+
+def sf_wdl_wellformed(sf_wdl: torch.Tensor | None) -> torch.Tensor | None:
+    """Per-row 1.0/0.0: is this ``sf_wdl`` a usable (W, D, L) distribution?
+
+    Degenerate means non-finite, outside [0, 1], not summing to 1, or exactly
+    uniform. Kept as its own function because it is the ONE test the P2 audit
+    named that the desync does not move, and a reader needs to be able to see
+    that the thing being counted is a well-formedness test and nothing cleverer.
+    """
+    if sf_wdl is None or sf_wdl.ndim != 2 or sf_wdl.shape[-1] != 3:
+        return None
+    v = sf_wdl.to(torch.float32)
+    finite = torch.isfinite(v).all(dim=-1)
+    in_range = ((v >= -1e-6) & (v <= 1.0 + 1e-6)).all(dim=-1)
+    sums_to_one = (v.sum(dim=-1) - 1.0).abs() <= 1e-3
+    uniform = ((v - 1.0 / 3.0).abs() < 1e-4).all(dim=-1)
+    return (finite & in_range & sums_to_one & ~uniform).to(torch.float32)
+
+
+def sf_wdl_health_counts(
+    batch: dict[str, torch.Tensor], *, has_sf_wdl: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """(degenerate rows, orphaned rows, sf_wdl rows) for this batch, as 0-d sums.
+
+    The VALUE half of the SF label had no detector in either direction until
+    2026-08-03 (SELFPLAY_AUDIT P2), while carrying realized ``sf_wdl_frac``
+    0.45 of the trained value target. These two counts close the two directions
+    the audit named; the third value is their shared denominator.
+
+    **DENOMINATOR: rows with ``has_sf_wdl`` set** — the same population
+    ``sf_multipv_presence_counts`` divides by, and published in its own right
+    (``sf_wdl_rows``) rather than borrowed from ``sf_multipv_checked_rows``.
+    Borrowing would make both value-side rates go blind the moment the POLICY
+    field went missing from the batch, which is the one circumstance under
+    which they matter most.
+
+    ``degenerate`` — ``sf_wdl`` present but not a usable distribution. State
+    plainly what this is worth as a desync detector: **nothing.** Measured
+    2026-08-03 it is exactly 0 rows on the 122 quarantined shards (209,259
+    labelled) AND exactly 0 on the 1,264,058-row post-quarantine window. A
+    desynced engine returns a real search of another position, so its cp is an
+    ordinary number and the logistic maps it to an ordinary distribution: the
+    label is WELL-FORMED AND WRONG. The count is kept because its floor is a
+    proven exact zero over 1.47 M rows, which makes it a cheap tripwire for a
+    different class — a cp→WDL parameter, POV or dtype change reaching the
+    writer — and because "we looked and it is not this" is the finding.
+
+    ``orphaned`` — the P2 blind spot itself, counted: rows the POLICY detector
+    flagged (no MultiPV block) that nonetheless carry a well-formed ``sf_wdl``,
+    which trains at 0.45 weight with nothing marking it. On the quarantined
+    shards this was 43,413 of 43,417 flagged rows (0.9999). It is deliberately
+    a near-twin of ``sf_no_multipv_rows``: publishing both makes the audit's
+    claim machine-checked rather than documented. Equality means every flagged
+    row carried an unmarked value label; a divergence would mean some flagged
+    rows at least carry a marker, and that is worth knowing the moment it
+    changes. It is NOT an independent detector and must not be summed with the
+    policy rate.
+    """
+    wdl_rows = has_sf_wdl.to(torch.float32).sum()
+    wellformed = sf_wdl_wellformed(batch.get("sf_wdl"))
+    if wellformed is None:
+  # No sf_wdl column: nothing to judge. Report zero rows so the rates read
+  # UNMEASURED via `sf_wdl_rows` rather than reading a clean 0.0 over a
+  # denominator that still counts rows.
+        zero = has_sf_wdl.new_zeros(())
+        return zero, zero.clone(), zero.clone()
+    degenerate = ((1.0 - wellformed) * has_sf_wdl.to(torch.float32)).sum()
+    has_raw = batch.get("has_sf_multipv_raw")
+    if has_raw is None:
+        return degenerate, has_sf_wdl.new_zeros(()), wdl_rows
+    missing = 1.0 - has_raw.to(torch.float32)
+    orphaned = (missing * wellformed * has_sf_wdl.to(torch.float32)).sum()
+    return degenerate, orphaned, wdl_rows
+
+
+def sf_eval_pv_orphan_counts(
+    batch: dict[str, torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """(orphaned rows, checked rows) for the value-half desync check, as 0-d sums.
+
+    Both are computed on the HOST by ``Trainer._prepare_host_arrays``, because
+    the two shard fields the predicate needs — ``sf_multipv_raw`` and
+    ``sf_label_meta`` — do not reach the GPU in production. The definition, the
+    calibration and the honest list of what it cannot see all live in ONE
+    place, ``replay/shard.py::sf_eval_pv_orphan_flags``; this only reduces.
+
+    ⚑ ``checked`` is the denominator AND the blind-instrument column, same
+    contract as ``sf_multipv_checked_rows``: it is zero when the host never
+    derived the flags (a caller that skipped ``_prepare_host_arrays``) and when
+    no row carried all three blocks. A rate above a zero ``checked`` means
+    nothing was inspected — never "clean".
+
+    ⚑ This population is DISJOINT from ``sf_multipv_presence_counts``'
+    numerator by construction: that one counts rows with no MultiPV block, this
+    one is only computable on rows that have one. It is the first instrument
+    that looks INSIDE the set the policy detector passes.
+    """
+    orphaned = batch.get("sf_eval_pv_orphan")
+    checked = batch.get("sf_eval_pv_checked")
+    if orphaned is None or checked is None:
+        ref = batch["wdl_t"] if "wdl_t" in batch else next(iter(batch.values()))
+        zero = ref.new_zeros((), dtype=torch.float32)
+        return zero, zero.clone()
+    return orphaned.to(torch.float32).sum(), checked.to(torch.float32).sum()
 
 
 def normalize_distribution(probs: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
@@ -164,7 +389,18 @@ def _compute_sf_wdl_mask(
     conf_power: float,
     draw_scale: float,
 ) -> torch.Tensor:
-    """SF-WDL per-sample mask with optional confidence damping + draw rescale.
+    """Row mask for the AUXILIARY ``sf_eval`` head. NOT the WDL value target.
+
+    ⚑ Read this before tuning ``sf_wdl_conf_power`` / ``sf_wdl_draw_scale``.
+    The mask returned here has exactly ONE consumer, ``m_sf_eval``. The WDL
+    value target -- the load-bearing blend in ``compute_loss`` -- weights its
+    SF component by ``sf_effective = sf_available * keep``, and ``keep`` carries
+    only the ``sf_search_dampen_sf_*`` terms. Neither knob appears in that
+    expression, so neither can damp the value target: change either one and
+    ``wdl_ce`` is bit-identical while ``sf_eval_ce`` moves (a 0.1-weighted head,
+    ~0.006 % of total loss). Pinned by
+    ``tests/test_sf_wdl_conf_knobs_are_aux_only.py``; the name is kept because
+    it is a live yaml key and the live-yaml validator rejects unknown keys.
 
     Damping: ``(1 - draw_prob)^power`` zeros out high-draw rows where SF's
     label barely disagrees with a fresh-init model. Draw rescale boosts/cuts
@@ -210,25 +446,49 @@ def _future_regret_tensor(batch: dict[str, torch.Tensor], source: str) -> tuple[
     )
 
 
+def piece_counts_from_input(x: torch.Tensor) -> torch.Tensor:
+    """Root piece count per row, from the 12 piece-occupancy planes.
+
+    Rounded before comparison because the planes travel through fp16/bf16
+    autocast on the eval path, where a 32-piece sum can land at 31.9995 and a
+    bare ``> 22`` on the raw sum would still be right but a ``<= 13`` boundary
+    row would not be.
+
+    ``flatten(1)`` rather than ``sum(dim=(1, 2, 3))``: production ``x`` is
+    (B, planes, 8, 8), but compute_loss is also called on reduced synthetic
+    batches, and a hard-coded rank makes this raise ``IndexError`` there — a
+    reporting-only split must never be able to take down the loss.
+    """
+    return torch.round(x[:, :_PIECE_PLANE_COUNT].float().flatten(1).sum(dim=1))
+
+
 def _phase_split_masks(
     *,
     has_is_selfplay: torch.Tensor,
     is_selfplay: torch.Tensor,
-    has_moves_left: torch.Tensor,
-    moves_left_val: torch.Tensor,
+    piece_counts: torch.Tensor,
 ) -> tuple[tuple[str, torch.Tensor], ...]:
-    """selfplay/curriculum + opening/midgame/endgame masks for split loss reporting."""
+    """selfplay/curriculum + opening/midgame/endgame masks for split loss reporting.
+
+    The phase masks PARTITION every row — there is no ``has_`` gate, because
+    every row carries its own board planes. The previous `moves_left` version
+    needed one and silently dropped any row whose shard lacked that optional
+    field.
+    """
     sp_mask = has_is_selfplay * is_selfplay
     cur_mask = has_is_selfplay - sp_mask
-    open_mask = has_moves_left * (moves_left_val > _PHASE_OPEN_THRESHOLD).to(torch.float32)
-    end_mask = has_moves_left * (moves_left_val < _PHASE_END_THRESHOLD).to(torch.float32)
-    mid_mask = has_moves_left - open_mask - end_mask
+  # Identical predicate to `eval.audit.phase_bucket`: end is `<= low`, open is
+  # `> high`, mid is the remainder. Written as the same two comparisons rather
+  # than as a call so the tensor path stays free of host round-trips.
+    end_mask = (piece_counts <= _PHASE_END_MAX_PIECES).to(torch.float32)
+    open_mask = (piece_counts > _PHASE_MID_MAX_PIECES).to(torch.float32)
+    mid_mask = 1.0 - end_mask - open_mask
     return (
         ("selfplay", sp_mask),
         ("curriculum", cur_mask),
-        ("open", open_mask),
-        ("mid", mid_mask),
-        ("end", end_mask),
+        ("phase_open", open_mask),
+        ("phase_mid", mid_mask),
+        ("phase_end", end_mask),
     )
 
 
@@ -536,7 +796,11 @@ def compute_loss(
 
   # Loss weights — float() casts defend against numpy scalars from Ray Tune config mutation
     w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
-    m_sf_wdl_mask = _compute_sf_wdl_mask(
+  # Named for what it masks (the aux `sf_eval` head), not for the knobs that
+  # shape it: `sf_wdl_conf_power` / `sf_wdl_draw_scale` read as if they scale
+  # the SF component of the VALUE blend and they do not. See
+  # `_compute_sf_wdl_mask`'s docstring; the single consumer is `m_sf_eval`.
+    m_sf_eval_mask = _compute_sf_wdl_mask(
         net_mask=net_mask, has_sf_wdl=has_sf_wdl, sf_wdl_probs=sf_wdl_probs,
         wdl_target=batch["wdl_t"],
         conf_power=max(0.0, float(sf_wdl_conf_power)),
@@ -567,10 +831,18 @@ def compute_loss(
         sf_own_regret, sf_p0_regret_base,
     )
     net_rows = net_mask.to(torch.float32).sum()
+    sf_no_multipv_rows, sf_multipv_checked_rows = sf_multipv_presence_counts(
+        batch, has_sf_wdl=has_sf_wdl,
+    )
+    sf_wdl_degenerate_rows, sf_wdl_orphaned_rows, sf_wdl_rows = sf_wdl_health_counts(
+        batch, has_sf_wdl=has_sf_wdl,
+    )
+    sf_eval_pv_orphan_rows, sf_eval_pv_checked_rows = sf_eval_pv_orphan_counts(batch)
+    batch_rows = net_mask.new_full((), float(net_mask.shape[0]))
     m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
-    m_sf_eval = masked_mean(sf_eval_ce, m_sf_wdl_mask)
+    m_sf_eval = masked_mean(sf_eval_ce, m_sf_eval_mask)
     m_cat = masked_mean(cat_ce, net_mask * has_cat)
     m_vol = masked_mean(vol_loss, net_mask * has_vol)
     m_sf_vol = masked_mean(sf_vol_loss, net_mask * has_sf_vol)
@@ -582,8 +854,7 @@ def compute_loss(
     is_sp_bool = _get_mask(batch, "is_selfplay", default=0.0).to(torch.float32)
     split_masks = _phase_split_masks(
         has_is_selfplay=has_is_sp, is_selfplay=is_sp_bool,
-        has_moves_left=has_moves_left,
-        moves_left_val=_get_mask(batch, "moves_left", default=1.0).to(torch.float32),
+        piece_counts=piece_counts_from_input(batch["x"]),
     )
   # Split reductions use the TRAINED per-sample value loss (blended soft CE),
   # not the one-hot diagnostic — before 2026-07-26 these were the diagnostic,
@@ -591,8 +862,23 @@ def compute_loss(
   # ever came from.
     split_losses: dict[str, torch.Tensor] = {}
     for suffix, m in split_masks:
-        split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, pol_base * m)
-        split_losses[f"wdl_loss_{suffix}"] = masked_mean(blended_wdl_ce, net_mask * m)
+        policy_bucket_mask = pol_base * m
+        split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, policy_bucket_mask)
+        wdl_bucket_mask = net_mask * m
+        split_losses[f"wdl_loss_{suffix}"] = masked_mean(blended_wdl_ce, wdl_bucket_mask)
+  # The DENOMINATORS of the two lines above, as raw row counts. Without them a
+  # bucket cannot be told apart from a good one: `masked_mean` clamps its
+  # denominator to 1.0, so a bucket holding zero rows reports 0.0, which reads
+  # as the best possible value. Summed (not averaged) across the iteration's
+  # microbatches — see `_RAW_COUNT_METRIC_FIELDS` in train/trainer.py.
+  #
+  # BOTH heads, because their denominators are DIFFERENT: the policy mask
+  # carries `has_policy` on top of `net_mask`, so a phase can be well populated
+  # for the value head and empty for the policy head in the same batch. One
+  # head's count cannot stand in for the other's.
+        if suffix in _PHASE_BUCKET_SUFFIXES:
+            split_losses[f"wdl_rows_{suffix}"] = wdl_bucket_mask.to(torch.float32).sum()
+            split_losses[f"policy_rows_{suffix}"] = policy_bucket_mask.to(torch.float32).sum()
 
     total = (
         float(w_policy) * m_policy
@@ -639,6 +925,27 @@ def compute_loss(
         "sf_own_regret_sum": sf_own_regret_sum,
         "sf_own_regret_rows": sf_own_regret_rows,
         "net_rows": net_rows,
+  # SF-label contamination detector, ALWAYS ON. Sums + row counts for the same
+  # reason as the sf_p0 pair above: the trainer accumulates them over every
+  # microbatch and divides once, so the ratio is row-weighted rather than a
+  # mean of per-batch means. See `sf_multipv_presence_counts` for the
+  # denominator and the zero floor; mapped to `sf_labelled_no_multipv_frac` /
+  # `sf_multipv_checked_frac` in train/trainer.py.
+        "sf_no_multipv_rows": sf_no_multipv_rows,
+        "sf_multipv_checked_rows": sf_multipv_checked_rows,
+  # SF-label contamination detector, VALUE half — the same channel and the same
+  # sums-then-divide-once treatment. `sf_wdl_rows` is their denominator and is
+  # deliberately NOT `sf_multipv_checked_rows`, so a missing POLICY field
+  # cannot blind the value-side rates. See `sf_wdl_health_counts` and
+  # `sf_eval_pv_orphan_counts`; mapped to `sf_wdl_degenerate_frac` /
+  # `sf_wdl_orphaned_frac` / `sf_eval_pv_orphan_frac` / `sf_eval_pv_checked_frac`
+  # in train/trainer.py.
+        "sf_wdl_degenerate_rows": sf_wdl_degenerate_rows,
+        "sf_wdl_orphaned_rows": sf_wdl_orphaned_rows,
+        "sf_wdl_rows": sf_wdl_rows,
+        "sf_eval_pv_orphan_rows": sf_eval_pv_orphan_rows,
+        "sf_eval_pv_checked_rows": sf_eval_pv_checked_rows,
+        "batch_rows": batch_rows,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,
         "categorical_ce": m_cat,

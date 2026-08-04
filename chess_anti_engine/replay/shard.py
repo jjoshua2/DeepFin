@@ -53,6 +53,16 @@ SF_CP_SENTINEL = -32768
 SF_MULTIPV_PAD_ROW = (-1, SF_CP_SENTINEL, 0, -1, -1)
 LOCAL_SHARD_SUFFIX = ".zarr"
 LEGACY_SHARD_SUFFIX = ".npz"
+
+# Field names `sf_eval_pv_orphan_flags` reads and the two it publishes. Named
+# once so the trainer's payload prune, the collate spec and the offline readers
+# cannot disagree about which columns the check consumes.
+SF_EVAL_PV_ORPHAN_INPUT_FIELDS: tuple[str, ...] = (
+    "sf_multipv_raw", "sf_label_meta", "has_sf_multipv_raw",
+    "has_sf_label_meta", "has_sf_wdl",
+)
+SF_EVAL_PV_ORPHAN_FIELD = "sf_eval_pv_orphan"
+SF_EVAL_PV_CHECKED_FIELD = "sf_eval_pv_checked"
 DEFAULT_MAX_SHARD_POSITIONS = 50_000
 DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 INPUT_HISTORY_ENCODING_ARRAY_KEY = "_input_history_encoding"
@@ -197,6 +207,18 @@ _SHARD_FIELDS: tuple[str, ...] = (
     *_REQUIRED_STORAGE_FIELDS,
     *(name for s in _OPTIONAL_FIELD_SPECS for name in (s.arr, s.flag)),
 )
+
+
+# Stored fields whose "missing" default is NOT zeros. Both are required fields,
+# and for both the zero value is a MEANINGFUL, wrong one: `has_policy = 0` drops
+# the row from the main policy loss and its accuracy stats with nothing counting
+# the drop, and `priority = 0` makes the row unsamplable under priority draws.
+# Any code path that synthesizes a missing field with a bare `np.zeros` is a
+# silent-corruption site for exactly these two names -- see `_gather_rows` in
+# replay/disk_buffer.py, which refuses rather than guesses. Kept honest by
+# tests/test_replay_field_defaults.py, which re-derives it from
+# `zeros_for_storage_field` itself.
+NONZERO_DEFAULT_STORAGE_FIELDS: frozenset[str] = frozenset({"priority", "has_policy"})
 
 
 def zeros_for_storage_field(
@@ -494,6 +516,116 @@ def densify_chunk(arrs: dict[str, np.ndarray], policy_size: int = POLICY_SIZE) -
     return out
 
 
+def sf_eval_pv_orphan_flags(
+    arrs: dict[str, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """(orphaned, checked) per row — the SF-desync fingerprint on the VALUE half.
+
+    **What it tests.** ``sf_wdl`` — realized 0.45 of the trained value target —
+    is built by ``selfplay/stockfish_turn.py::_sf_result_wdl_for_record`` from
+    ``res.cp`` / ``res.mate``. Those two fields are literally
+    ``_SearchInfoAccumulator.cp_pv1`` / ``mate_pv1``, and the same accumulator
+    files the rank-1 line into ``res.pvs[0]``, so on a healthy row the stored
+    ``sf_label_meta`` eval and the stored ``sf_multipv_raw`` row 0 carry the
+    SAME (cp, mate) pair BY CONSTRUCTION — not by empirical agreement.
+
+    They differ when rank 1's line was dropped by ``_collect_sparse_pv_rows``,
+    leaving a lower-ranked line at row 0. That is a Stockfish answering a
+    DIFFERENT position: the score that became this row's value label belongs to
+    a move that is not playable here. ORPHANED is the name — the eval outlived
+    the PV it came from.
+
+    ⚑ Two smaller routes, so the prose does not claim more than the code
+    enforces. ``_collect_sparse_pv_rows`` drops a line on ``a < 0 or a not in
+    legal_set``, so UNMAPPABLE is a second route beside illegal. And ``cp_pv1``
+    is updated by ANY ``multipv 1`` info line carrying a score while
+    ``self.pvs[1]`` is written only by lines that also carry a ``pv`` token
+    (``stockfish/uci.py:162-179``), so a rank-1 score with no PV — or no rank-1
+    PV line at all, leaving ``pvs[0]`` as rank 2 — would also split the pair
+    with no drop involved. Real Stockfish ships ``pv`` on every scored MultiPV
+    line and this was never observed: 0 orphans over the 474,278 labelled rows
+    of the pre-episode range. It is not proven impossible, only unobserved.
+
+    **Why it is not a second copy of the policy detector.** The policy-side
+    fingerprint (``train/losses.py::sf_multipv_presence_counts``) fires when NO
+    MultiPV move survived, i.e. on rows with ``has_sf_multipv_raw == 0``. This
+    one is only computable on rows WITH the block, so the two populations are
+    DISJOINT and this one is exactly the population the policy detector
+    declares healthy — the ~41 % desync pass-through that
+    ``sf_multipv_presence_counts``' docstring prices and nothing measured.
+
+    Measured 2026-08-03 **through this function**, on ``has_sf_wdl`` rows (the
+    policy detector's own denominator). Provenance and the corrected-numbers
+    note in docs/experiment_ledger.md — an earlier draft of this table quoted a
+    scan that excluded mate-scored rows and its numbers are NOT these:
+
+    ==========================================  ============  ============
+    population                                  policy no_pv  value orphan
+    ==========================================  ============  ============
+    122 quarantined shards (209,259 labelled)       0.207461      0.117386
+    post-quarantine window (1,264,058 labelled)     0.000199      0.000166
+    its 640 policy-clean shards (1,128,248 lab.)    0.000000      0.000030
+    pre-episode ids 33118:33387 (474,278 lab.)      0.000000      0.000000
+    ==========================================  ============  ============
+
+    **Floor.** Exactly 0.000000, and structurally so per the paragraph above.
+    The 3.0e-5 on the policy-clean subset is 34 rows in 25 shards, and it is
+    burst-edge RESIDUE rather than a background: those 25 shard ids sit a median
+    of 25 from the nearest quarantined id against 49.7 +/- 15.0 for a uniform
+    draw from the same pool (p = 0.0145), and 34 of 34 run in the
+    eval-better-than-best-surviving-line direction the dropped-rank-1 mechanism
+    predicts, where a benign stale-score artifact would be sign-symmetric.
+    Do not restate it as "the normal background" — that is the PR #304 mistake.
+
+    **What it cannot see.** (a) A desynced search whose rank-1 move happens to
+    be legal here keeps a matching pair and passes — the same coincidental-
+    legality escape the policy half has. (b) A (cp, mate) TIE between rank 1 and
+    the top surviving line passes; ties are why the 19,468 flagged rows are
+    0.0930 of the quarantined labelled rows against a pass-through share of
+    ~0.144, i.e. it catches ~65 % of the population it can see. (c) Rows with no
+    MultiPV block at all are NOT counted here (they are the policy detector's
+    numerator), so the two rates must be read together and never summed onto a
+    shared denominator. (d) It says nothing about whether the eval was RIGHT,
+    only about whether its own PV survived.
+
+    Returns two float32 (N,) vectors so the caller can sum them: ``checked`` is
+    rows where all three blocks are present and row 0 is a real candidate
+    (``-1`` is the pad index), ``orphaned`` is the subset that disagrees.
+    Missing inputs yield all-zero vectors — UNMEASURED, which is why ``checked``
+    is published next to the rate instead of being folded into it.
+    """
+  # Row count from `x` first: a batch that lost every SF field must still get
+  # correctly-SHAPED zero vectors, or collate would emit a column shorter than
+  # the batch and the reduction would silently read a different population.
+    n = 0
+    for key in ("x", "has_sf_wdl", "has_sf_label_meta", "has_sf_multipv_raw"):
+        value = arrs.get(key)
+        if value is not None:
+            n = int(np.asarray(value).shape[0])
+            break
+    zero = np.zeros((n,), dtype=np.float32)
+    if any(k not in arrs for k in SF_EVAL_PV_ORPHAN_INPUT_FIELDS):
+        return zero, zero.copy()
+
+    raw = np.asarray(arrs["sf_multipv_raw"])
+    meta = np.asarray(arrs["sf_label_meta"])
+    if raw.ndim != 3 or raw.shape[1] < 1 or raw.shape[2] < 3 or meta.ndim != 2 or meta.shape[1] < 4:
+        return zero, zero.copy()
+    present = (
+        np.asarray(arrs["has_sf_wdl"]).astype(bool).reshape(-1)
+        & np.asarray(arrs["has_sf_label_meta"]).astype(bool).reshape(-1)
+        & np.asarray(arrs["has_sf_multipv_raw"]).astype(bool).reshape(-1)
+    )
+    top = raw[:, 0, :].astype(np.int64)
+    checked = present & (top[:, 0] >= 0)
+    meta_i = meta.astype(np.int64)
+  # int16 (raw) vs int32 (meta) storage, but both clipped to the SAME bounds by
+  # `_collect_sparse_pv_rows` / `_collect_sf_label_meta` (+/-32000 cp, +/-127
+  # mate), so equality after a widening cast is exact, not approximate.
+    orphaned = checked & ((top[:, 1] != meta_i[:, 2]) | (top[:, 2] != meta_i[:, 3]))
+    return orphaned.astype(np.float32), checked.astype(np.float32)
+
+
 @dataclass(frozen=True)
 class ShardMeta:
     version: int = SHARD_VERSION
@@ -617,8 +749,17 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         flag = np.asarray(arrs.get(flag_name, np.zeros((out["x"].shape[0],), dtype=np.uint8)), dtype=np.uint8)
         if np.any(flag):
             out[flag_name] = flag
-            if value_name in arrs:
-                out[value_name] = np.asarray(arrs[value_name])
+            # UNCONDITIONAL on purpose. This used to be `if value_name in arrs`,
+            # which reads as "the value array is optional next to a set flag" --
+            # it is not, and persisting `has_X = 1` with X absent is a false
+            # NEGATIVE generator: compute_loss takes the target-absent branch
+            # (loss == 0) while the head's mask still counts the row, so a dead
+            # head reports as a perfectly-fit one. `validate_arrays` above
+            # already raises ("<flag> is set but <arr> is missing") on that
+            # input, so this indexing cannot KeyError from any caller that has
+            # not first weakened the validator -- and if one does, a KeyError
+            # here is the loud failure, not a silently mislabelled shard.
+            out[value_name] = np.asarray(arrs[value_name])
     # Preserve every scalar encoding-identity marker (history encoding, rep-fix);
     # dropping one makes pruned shards reload with the flag defaulted off and
     # silently mix encodings across a training window (the mixed-value guard in

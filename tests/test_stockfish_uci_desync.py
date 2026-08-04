@@ -26,10 +26,12 @@ import logging
 import os
 import stat
 import sys
+from concurrent.futures import Future
 from types import SimpleNamespace
 from typing import Any
 
 import chess
+import numpy as np
 import pytest
 
 from chess_anti_engine.moves.encode import legal_move_indices
@@ -254,11 +256,15 @@ def test_base_exception_mid_section_poisons_the_engine(tmp_path):
         eng.close()
 
 
-def test_pool_replaces_on_a_base_exception_too(tmp_path):
-    """`_search`'s handler is `except BaseException` for the same reason.
+def test_pool_refuses_then_replaces_a_poisoned_engine(tmp_path):
+    """Pins the cost of the repair, which is exactly one query.
 
-    Also pins the cost of the repair, which is exactly one query: the submit
-    that MEETS the poisoned engine is refused and re-raises (that refusal is
+    NOT a test of `_search`'s `except BaseException` — it reaches `_search`
+    through a `StockfishDesyncError`, which IS an `Exception`, so `except
+    Exception` would behave identically here. That path is covered by
+    `test_search_re_raises_a_base_exception_and_still_replaces`.
+
+    The submit that MEETS the poisoned engine is refused and re-raises (that refusal is
     the point — it is never answered with stale data), the engine is replaced
     on the way out, and the next submit is served correctly. The pool does not
     retry transparently; a swallowed retry would hide the incident, and the
@@ -287,15 +293,29 @@ def test_pool_replaces_on_a_base_exception_too(tmp_path):
 # ── the health line: what an operator actually reads ────────────────────────
 
 
+_ZERO_COUNTS = {
+    "calls": 0, "labelled": 0, "failed": 0, "bestmove_illegal": 0,
+    "no_legal_pv": 0, "eval_pv_orphan": 0, "eval_pv_checked": 0,
+    "wdl_degenerate": 0, "wdl_orphaned": 0,
+}
+
+
 @pytest.fixture(name="fresh_counters")
 def _fresh_counters():
-    stockfish_turn._sf_label_counts.update(
-        labelled=0, failed=0, bestmove_illegal=0, no_legal_pv=0,
-    )
+    stockfish_turn._sf_label_counts.update(**_ZERO_COUNTS)
     yield
-    stockfish_turn._sf_label_counts.update(
-        labelled=0, failed=0, bestmove_illegal=0, no_legal_pv=0,
-    )
+    stockfish_turn._sf_label_counts.update(**_ZERO_COUNTS)
+
+
+def test_the_reset_fixture_covers_every_counter():
+    """A counter the fixture forgets leaks across tests and reads as a signal.
+
+    Written against the DICT, not a hand-written list: adding a counter to
+    `_sf_label_counts` without adding it here would otherwise leave the new
+    one accumulating through the whole session, and the first test to assert
+    on it would read another test's residue as production data.
+    """
+    assert set(_ZERO_COUNTS) == set(stockfish_turn._sf_label_counts)
 
 
 def _emit(caplog, *, n, **per_row):
@@ -313,7 +333,11 @@ def _emit(caplog, *, n, **per_row):
 @pytest.mark.usefixtures("fresh_counters")
 def test_health_line_is_info_when_the_label_path_is_clean(caplog):
     n = stockfish_turn._SF_LABEL_REPORT_EVERY
-    # The measured clean baseline: no_legal_pv 0.0008, bestmove_illegal 0.079.
+    # A BELOW-THRESHOLD reading, which is not the same as a clean one. This was
+    # written as "the measured clean baseline: no_legal_pv 0.0008" -- that 0.0008
+    # was residual contamination in the set chosen as the baseline. The
+    # structural rate is exactly 0.000000 (see _SF_NO_LEGAL_PV_WARN_RATE). What
+    # this test pins is only that a sub-threshold rate does not escalate.
     rec = _emit(caplog, n=n, no_legal_pv=3, bestmove_illegal=int(0.079 * n))
     assert rec.levelno == logging.INFO
 
@@ -497,3 +521,510 @@ def test_an_already_labelled_row_is_not_counted_twice():
         state, rec=rec, res=res, turn=True, legal_indices=legal,
     )
     assert stockfish_turn._sf_label_counts["labelled"] == 1
+
+
+@pytest.mark.usefixtures("fresh_counters")
+@pytest.mark.parametrize("run", [1, 2])
+def test_counters_reset_between_windows(caplog, run):
+    """Two consecutive windows must read identically on an identical signal.
+
+    Pins the reset in BOTH places, because the shipped reset being correct is
+    not the same as it being held correct:
+
+    * Drop ``labelled=0`` from the production reset and the denominator grows
+      without bound while the numerators reset — so every rate **decays toward
+      zero** and the detector goes quiet while the fault continues. That is the
+      exact defect class this whole change exists to fix, sitting inside the
+      fix's own instrument.
+    * Drop ``no_legal_pv=0`` and the numerator accumulates instead (loud, but
+      wrong).
+    * Misspell a key in the TEST fixture and ``dict.update`` silently adds a
+      junk key and resets nothing — caught by the zero-check below, which only
+      holds on run 2 if the fixture actually ran. The body deliberately leaves a
+      partial window behind so run 2 has something to fail on.
+
+    Asserting the reported counts, not just the level, is what makes this bite:
+    an unreset denominator still WARNs in window 2 here, it just lies about the
+    base it was computed over.
+    """
+    every = stockfish_turn._SF_LABEL_REPORT_EVERY
+    assert stockfish_turn._sf_label_counts == _ZERO_COUNTS, (
+        f"run {run}: the fixture did not reset the counters between tests"
+    )
+
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.selfplay"):
+        for _ in range(2 * every):
+            stockfish_turn._report_sf_label_health(no_legal_pv=1)
+        stockfish_turn._report_sf_label_health(no_legal_pv=1)  # residue for run 2
+
+    recs = [r for r in caplog.records if r.msg.startswith("sf label health")]
+    assert len(recs) == 2, f"expected two windows, got {len(recs)}"
+    for i, rec in enumerate(recs, start=1):
+        labelled, no_pv = rec.args[1], rec.args[2]
+        assert labelled == every, (
+            f"run {run} window {i} reported labelled={labelled}, want {every} — the "
+            "denominator is not reset, so every rate decays toward zero while "
+            "the fault continues"
+        )
+        assert no_pv == every, (
+            f"window {i} reported no_legal_pv={no_pv}, expected {every} — the "
+            "numerator is not reset"
+        )
+        assert rec.levelno == logging.WARNING
+
+
+# ── the sync (curriculum) label path ────────────────────────────────────────
+
+
+class _StubCBoard:
+    """Only what `_process_sf_results` reads off a board."""
+
+    def __init__(self, board: chess.Board) -> None:
+        self._idx = legal_move_indices(board)
+        self.turn = bool(board.turn)
+
+    def legal_move_indices(self):
+        return self._idx
+
+
+def _sync_state(board: chess.Board, rec) -> Any:
+    state = _fake_state()
+    state.opponent = SimpleNamespace(wdl_regret_limit=None)
+    state.cboards = [_StubCBoard(board)]
+    state.samples_per_game = [[rec]]
+    state.done_arr = [0]
+    state.selfplay_arr = [1]
+    return state
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_the_sync_label_path_is_counted_too():
+    """N11: curriculum labels attach through `_process_sf_results`.
+
+    It is one of three counting sites and the only one the other two tests do
+    not reach — deleting its `_report_sf_label_health` call used to fail
+    nothing. A desynced engine serves the curriculum label queue exactly as it
+    serves the async one, so an uncounted site is a blind spot of the same
+    shape as the bug.
+    """
+    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 1")
+    own_ucis = [m.uci() for m in board.legal_moves]
+
+    rec = _blank_record()
+    rec.has_policy = True
+    rec.is_sf_refute_opp = False
+    stockfish_turn._process_sf_results(
+        _sync_state(board, rec),
+        [0],
+        results={0: _FakeRes(own_ucis[0], own_ucis[:4])},
+        play_curriculum_moves=False,
+        attach_labels=True,
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 1
+    assert stockfish_turn._sf_label_counts["no_legal_pv"] == 0
+
+    # A real search of an unrelated position, arriving on the curriculum queue.
+    rec2 = _blank_record()
+    rec2.has_policy = True
+    rec2.is_sf_refute_opp = False
+    stockfish_turn._process_sf_results(
+        _sync_state(board, rec2),
+        [0],
+        results={0: _FakeRes("g8f6", ["g8f6", "b8c6", "e7e5"])},
+        play_curriculum_moves=False,
+        attach_labels=True,
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 2
+    assert stockfish_turn._sf_label_counts["no_legal_pv"] == 1, (
+        "the sync label path did not count a result belonging to another position"
+    )
+    assert stockfish_turn._sf_label_counts["bestmove_illegal"] == 1
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_curriculum_move_query_is_not_counted_as_a_label():
+    """Denominator hygiene at the same site.
+
+    `_process_sf_results` also runs for curriculum MOVE queries, which produce
+    no training row. Counting those would put something in the denominator of a
+    line named "sf label health" that is not a label, diluting exactly the rate
+    the restart checklist reads.
+    """
+    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 1")
+    rec = _blank_record()
+    rec.has_policy = True
+    rec.is_sf_refute_opp = False
+    stockfish_turn._process_sf_results(
+        _sync_state(board, rec),
+        [0],
+        results={0: _FakeRes("g8f6", ["g8f6", "b8c6"])},
+        play_curriculum_moves=False,
+        attach_labels=False,
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 0
+
+
+def test_search_re_raises_a_base_exception_and_still_replaces(tmp_path):
+    """`_search`'s handler is `except BaseException`, not `except Exception`.
+
+    Unreachable in practice — a poisoned engine refuses at entry with
+    `StockfishDesyncError`, which IS an `Exception` — so this drives the case
+    directly rather than claiming the pool test covers it. It does not: that
+    test reaches `_search` through a `StockfishDesyncError`, and `except
+    Exception` would catch it identically.
+    """
+    engine_path = _write_engine(tmp_path, "basesearch.py", stall=0.0)
+    pool = StockfishPool(path=engine_path, nodes=10, num_workers=1)
+    try:
+        assert pool.submit("A").result().bestmove_uci == "A"
+        victim = pool._engines[0]
+
+        def _abandon(*_a, **_k):
+            victim._desynced = True  # what _protocol_section would have done
+            raise KeyboardInterrupt
+
+        victim.search = _abandon
+        with pytest.raises(KeyboardInterrupt):
+            pool.submit("B").result()
+        assert pool.replacements == 1, (
+            "a BaseException left the desynced engine installed — `except "
+            "Exception` here would serve the NEXT query from a poisoned engine"
+        )
+        assert pool.submit("C").result().bestmove_uci == "C"
+    finally:
+        pool.close()
+
+
+# ── the WIRING from each swallow site to the counter ────────────────────────
+#
+# The escalation RULE is pinned above (test_a_single_abandoned_search_escalates
+# calls the reporter directly). What was NOT pinned is that the two places which
+# swallow a label exception actually REACH the reporter. Deleting either
+# `_report_sf_label_health(failed=1)` call failed no test, on the label path's
+# primary post-fix evidence -- the "a value is accepted and then silently
+# ignored" shape this repo keeps producing.
+#
+# ⚑ These assert on the COUNTER, never on the returned `failed`. The return is a
+# separate local that keeps incrementing with the reporting call deleted, so a
+# test written against it passes under exactly the mutation it exists to catch.
+
+
+def _pending_whose_label_raises(record: Any) -> Any:
+    """A pending label whose future is already failed.
+
+    `escalated_from_res=None` matters: with an original result present,
+    `_resolve_pending_label_result` swallows the failure and returns the
+    airbag instead, so the except branch under test never runs.
+    """
+    fut: Future[Any] = Future()
+    fut.set_exception(RuntimeError("stockfish went away mid-search"))
+    return stockfish_turn._PendingSfLabel(
+        future=fut,
+        record=record,
+        turn=True,
+        legal_indices=np.asarray([0], dtype=np.int32),
+        escalated_from_res=None,
+    )
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_swallowed_poll_failure_reaches_the_health_counter():
+    record: Any = object()
+    # A stand-in, not a SelfplayState: these two functions touch only
+    # `pending_sf_labels` on the failure path, and building a real state would
+    # drag in the whole selfplay session for no added coverage.
+    state: Any = SimpleNamespace(
+        pending_sf_labels=[_pending_whose_label_raises(record)],
+    )
+
+    attached, failed = stockfish_turn.poll_async_sf_labels(state)
+
+    assert (attached, failed) == (0, 1)
+    assert stockfish_turn._sf_label_counts["failed"] == 1, (
+        "poll_async_sf_labels swallowed the label exception without reaching "
+        "_report_sf_label_health -- the operator's only post-fix signal that an "
+        "abandoned search happened is gone, while the returned `failed` still "
+        "reads 1 and looks fine"
+    )
+    # ⚑ THIS ASSERTION WAS INVERTED ON 2026-08-03 (audit P9), deliberately.
+    # It used to require `labelled == 1` on a path where NO ROW WAS LABELLED,
+    # which pinned the dilution bug as intended behaviour: the failure count
+    # sat in the denominator of `no_legal_pv/labelled`, the rate the escalation
+    # rule reads. The report WINDOW must still advance -- that is `calls` --
+    # but the LABEL denominator must not.
+    assert stockfish_turn._sf_label_counts["labelled"] == 0, (
+        "a failure labelled no row; counting it as a label dilutes "
+        "no_legal_pv/labelled and bestmove_illegal/labelled by the failure count"
+    )
+    assert stockfish_turn._sf_label_counts["calls"] == 1, (
+        "the report window must still advance on a failure, or a window of "
+        "pure failures never emits a line at all"
+    )
+    assert state.pending_sf_labels == [], "the failed entry must not be retried forever"
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_swallowed_finalize_failure_reaches_the_health_counter():
+    record: Any = object()
+    # A stand-in, not a SelfplayState: these two functions touch only
+    # `pending_sf_labels` on the failure path, and building a real state would
+    # drag in the whole selfplay session for no added coverage.
+    state: Any = SimpleNamespace(
+        pending_sf_labels=[_pending_whose_label_raises(record)],
+    )
+
+    attached, failed = stockfish_turn.flush_async_sf_labels_for_records(state, [record])
+
+    assert (attached, failed) == (0, 1)
+    assert stockfish_turn._sf_label_counts["failed"] == 1, (
+        "flush_async_sf_labels_for_records swallowed the label exception "
+        "without reaching _report_sf_label_health; this is the finalize path, "
+        "the last chance to label a row before it is emitted to replay"
+    )
+    # Same inversion as the poll twin above, same reason (audit P9).
+    assert stockfish_turn._sf_label_counts["labelled"] == 0
+    assert stockfish_turn._sf_label_counts["calls"] == 1
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_the_health_line_binds_each_number_to_its_own_name(caplog):
+    """Four DISTINCT values, so a swapped format arg cannot pass.
+
+    The other health tests drive counters that coincide (labelled == n, and
+    single-field arms leave the rest at 0), which makes several of the six
+    format arguments interchangeable without any assertion noticing.
+    """
+    n = stockfish_turn._SF_LABEL_REPORT_EVERY
+    rec = _emit(caplog, n=n, no_legal_pv=7, bestmove_illegal=11, failed=3)
+    msg = rec.getMessage()
+
+    # `_emit` puts the three failures on rows 0-2, and a failure is no longer a
+    # label, so the LABEL denominator is n-3 while the WINDOW is n.
+    for field, value in (
+        ("calls", n), ("labelled", n - 3), ("no_legal_pv", 7),
+        ("bestmove_illegal", 11), ("failed", 3),
+    ):
+        assert f"{field}={value}" in msg, (
+            f"{field} did not report {value} in {msg!r} -- the format arguments "
+            f"are positional, so a reordering silently relabels the numbers"
+        )
+    assert f"({7 / (n - 3):.4f})" in msg, (
+        "the no_legal_pv RATE must divide by rows that were actually LABELLED; "
+        f"dividing by calls would print {7 / n:.4f} instead (audit P9)"
+    )
+    assert rec.levelno == logging.WARNING
+
+
+# ── P9: failures are failures, not labels ───────────────────────────────────
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_failure_does_not_dilute_the_rate_the_escalation_rule_reads(caplog):
+    """The exact defect: `failed` in the denominator of `no_legal_pv/labelled`.
+
+    Two windows carrying the SAME number of labelled rows and the SAME number
+    of no-PV rows among them must report the SAME rate, whether or not extra
+    failures happened to land in the window. Under the old code they did not:
+    a failure incremented `labelled`, so the rate a human reads was damped by
+    `F/(L+F)` -- the third term of the very rule it feeds.
+    """
+    n = stockfish_turn._SF_LABEL_REPORT_EVERY
+    failures = 400
+    labels = n - failures
+    no_pv = 60
+
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.selfplay"):
+        for i in range(n):
+            if i < failures:
+                stockfish_turn._report_sf_label_health(failed=1)
+            else:
+                stockfish_turn._report_sf_label_health(
+                    no_legal_pv=int(i - failures < no_pv),
+                )
+    rec = next(r for r in caplog.records if r.msg.startswith("sf label health"))
+
+    assert rec.args[1] == labels, "labelled must count LABELLED rows only"
+    assert rec.args[3] == pytest.approx(no_pv / labels), (
+        "the rate must divide by labelled rows; the old denominator "
+        f"(labelled+failed = {n}) would report {no_pv / n:.6f} instead of "
+        f"{no_pv / labels:.6f} -- a {n / labels:.3f}x understatement"
+    )
+
+
+@pytest.mark.usefixtures("fresh_counters")
+@pytest.mark.parametrize("no_pv", [0, 1, 4096])
+def test_the_corrected_denominator_cannot_change_the_escalation_verdict(caplog, no_pv):
+    """Why no threshold was retuned, asserted rather than argued.
+
+    The two denominators differ ONLY in windows with `failed > 0`, and
+    `failed > 0` is an unconditional term of `unhealthy`. So every window whose
+    rate the P9 fix moves was already WARNING under both. Effective stringency
+    is identical; only the printed number changed. If a later edit drops
+    `failed > 0` from the rule, this test fails and the stringency claim in the
+    docstring stops being true at the same moment.
+    """
+    n = stockfish_turn._SF_LABEL_REPORT_EVERY
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.selfplay"):
+        for i in range(n):
+            if i == 0:
+                stockfish_turn._report_sf_label_health(failed=1)
+            else:
+                stockfish_turn._report_sf_label_health(no_legal_pv=int(i < no_pv))
+    rec = next(r for r in caplog.records if r.msg.startswith("sf label health"))
+    assert rec.levelno == logging.WARNING, (
+        "a window containing a failure must escalate regardless of the rates, "
+        "which is what makes the denominator change verdict-neutral"
+    )
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_window_of_pure_failures_still_emits_a_line(caplog):
+    """The reason the window counts CALLS and not labels.
+
+    Pin the denominator to `labelled` and a total label outage -- every query
+    failing -- would advance nothing and the health line would go SILENT at the
+    exact moment it matters most.
+    """
+    n = stockfish_turn._SF_LABEL_REPORT_EVERY
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.selfplay"):
+        for _ in range(n):
+            stockfish_turn._report_sf_label_health(failed=1)
+    recs = [r for r in caplog.records if r.msg.startswith("sf label health")]
+    assert len(recs) == 1, "a window of pure failures emitted no health line"
+    assert recs[0].args[1] == 0, "labelled must read 0 when nothing was labelled"
+    assert recs[0].args[6] == n
+    assert recs[0].levelno == logging.WARNING
+
+
+# ── P2: the VALUE half of the label ─────────────────────────────────────────
+
+
+def _rec_with_label(*, meta_cp, top_cp, wdl=(0.4, 0.3, 0.3), n_pv=3):
+    """A record carrying a stored SF label block, as the writer leaves it.
+
+    Shapes and column meanings are `replay/shard.py`'s: `sf_multipv_raw` is
+    (K, 5) int16 in rank order, `sf_label_meta` is (6,) int32 whose cols 2/3
+    are the record-level cp/mate.
+    """
+    raw = np.array(
+        [[10 + i, top_cp - 5 * i, 0, -1, -1] for i in range(n_pv)],
+        dtype=np.int16,
+    )
+    meta = np.array([1000, 12, meta_cp, 0, -1, -1], dtype=np.int32)
+    return SimpleNamespace(
+        sf_multipv_raw=raw,
+        sf_label_meta=meta,
+        sf_wdl=None if wdl is None else np.asarray(wdl, dtype=np.float32),
+    )
+
+
+def test_a_healthy_label_reports_checked_and_no_orphan():
+    counts = stockfish_turn._sf_value_half_counts(
+        _rec_with_label(meta_cp=42, top_cp=42),
+    )
+    assert counts == {
+        "eval_pv_orphan": 0, "eval_pv_checked": 1,
+        "wdl_degenerate": 0, "wdl_orphaned": 0,
+    }
+
+
+def test_an_eval_whose_own_pv_was_dropped_is_an_orphan():
+    """The desync fingerprint on the value half.
+
+    `res.cp` IS `pvs[0].cp` in `_SearchInfoAccumulator.result`, so these two
+    stored numbers are equal by construction on a healthy row. They can only
+    differ when rank 1's move failed the legality filter and was dropped --
+    i.e. the score that became `sf_wdl` belongs to a move that is not legal in
+    the position queried.
+    """
+    counts = stockfish_turn._sf_value_half_counts(
+        _rec_with_label(meta_cp=180, top_cp=42),
+    )
+    assert counts["eval_pv_orphan"] == 1
+    assert counts["eval_pv_checked"] == 1
+
+
+def test_an_unmeasurable_row_is_reported_unchecked_not_clean():
+    """`eval_pv_checked = 0`, never a silent orphan=0 over a full denominator."""
+    rec = _rec_with_label(meta_cp=180, top_cp=42)
+    rec.sf_multipv_raw = None
+    counts = stockfish_turn._sf_value_half_counts(rec)
+    assert counts["eval_pv_checked"] == 0, (
+        "a row with no MultiPV block cannot be compared; counting it as checked "
+        "would push the orphan rate down by exactly the rows the POLICY "
+        "detector already reported"
+    )
+    assert counts["eval_pv_orphan"] == 0
+
+
+def test_a_policy_flagged_row_carrying_a_wellformed_value_label_is_orphaned():
+    """P2's blind spot, counted: 0.9999 of flagged rows on the quarantined set."""
+    rec = _rec_with_label(meta_cp=42, top_cp=42)
+    rec.sf_multipv_raw = None
+    counts = stockfish_turn._sf_value_half_counts(rec)
+    assert counts["wdl_orphaned"] == 1
+    assert counts["wdl_degenerate"] == 0
+
+
+@pytest.mark.parametrize(
+    "wdl",
+    [
+        (float("nan"), 0.5, 0.5),
+        (1.5, -0.3, -0.2),
+        (0.2, 0.2, 0.2),
+        (1 / 3, 1 / 3, 1 / 3),
+    ],
+)
+def test_a_degenerate_value_label_is_counted(wdl):
+    rec = _rec_with_label(meta_cp=42, top_cp=42, wdl=wdl)
+    assert stockfish_turn._sf_value_half_counts(rec)["wdl_degenerate"] == 1
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_the_value_half_escalates_on_its_own(caplog):
+    """A window clean on the POLICY half but orphaned on the VALUE half WARNs.
+
+    This is the whole point of P2: before this, `sf_wdl` could be detached on
+    every row of a window and the health line still read INFO.
+    """
+    n = stockfish_turn._SF_LABEL_REPORT_EVERY
+    orphans = int(0.05 * n)
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.selfplay"):
+        for i in range(n):
+            stockfish_turn._report_sf_label_health(
+                eval_pv_checked=1, eval_pv_orphan=int(i < orphans),
+            )
+    rec = next(r for r in caplog.records if r.msg.startswith("sf label health"))
+    assert rec.args[2] == 0, "the policy half must read clean in this window"
+    assert rec.levelno == logging.WARNING, (
+        "a 0.05 value-half orphan rate over a policy-clean window must "
+        "escalate, or sf_wdl is again a 0.45-weight target with no detector"
+    )
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_the_value_half_rate_is_not_diluted_by_unmeasurable_rows(caplog):
+    """Its denominator is `eval_pv_checked`, not `labelled`.
+
+    The no-PV rows can never be orphans (there is nothing to compare against),
+    so dividing by `labelled` would damp the rate by exactly the contamination
+    the policy detector already reported -- one detector hiding inside the
+    other's denominator.
+    """
+    n = stockfish_turn._SF_LABEL_REPORT_EVERY
+    checked = n // 2
+    orphans = int(0.05 * checked)
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.selfplay"):
+        for i in range(n):
+            in_checked = i < checked
+            stockfish_turn._report_sf_label_health(
+                eval_pv_checked=int(in_checked),
+                eval_pv_orphan=int(in_checked and i < orphans),
+                no_legal_pv=int(not in_checked),
+            )
+    rec = next(r for r in caplog.records if r.msg.startswith("sf label health"))
+    assert rec.args[9] == checked
+    assert rec.args[8] == pytest.approx(orphans / checked), (
+        "dividing by labelled would report "
+        f"{orphans / n:.6f} instead of {orphans / checked:.6f}"
+    )

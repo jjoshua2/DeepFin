@@ -111,6 +111,153 @@ def test_stale_games_is_note() -> None:
     assert any("winrate spike" in n for n in notes)
 
 
+# --------------------------------------------------------------------------
+# The SF-desync detector's blind-instrument alert (checked_frac == 0).
+#
+# The RATE is deliberately NOT alerted on yet: the train row reads ~2e-4 while
+# the quarantine tail ages out, and the `test_` twin reads 0.101305 on the
+# frozen holdout and does not age out at all. Only "the instrument saw nothing"
+# is armed here, which is why every test below pins checked_frac and not the
+# rate.
+# --------------------------------------------------------------------------
+
+# What a live row looks like once the column has deployed and the window is
+# healthy: the labelled share of the batch (~0.99), and a holdout that IS
+# contaminated at the known 0.101305 but is being MEASURED.
+LIVE_WITH_COLUMN = {
+    **HEALTHY,
+    "sf_labelled_no_multipv_frac": 0.0002,
+    "sf_multipv_checked_frac": 0.9915,
+    "test_size": 2000,
+    "test_sf_labelled_no_multipv_frac": 0.101305,
+    "test_sf_multipv_checked_frac": 0.9575,
+}
+
+
+def test_a_healthy_row_carrying_the_columns_is_green() -> None:
+    alerts, notes = _check(LIVE_WITH_COLUMN)
+    assert alerts == []
+    assert notes == []
+
+
+def test_the_contaminated_frozen_holdout_is_not_an_alert() -> None:
+    """0.101305 on `test_sf_labelled_no_multipv_frac` is the REAL reading of
+    the shipped holdout. The rate alert is not armed, so it must stay green —
+    an operator seeing red here on the first restart would mute the column."""
+    alerts, _ = _check(LIVE_WITH_COLUMN)
+    assert not any("no_multipv" in a for a in alerts)
+
+
+def test_a_blind_train_detector_alerts() -> None:
+    alerts, _ = _check({**LIVE_WITH_COLUMN, "sf_multipv_checked_frac": 0.0})
+    assert any("sf_multipv_checked_frac=0.0 on a trained iteration" in a for a in alerts)
+
+
+def test_a_blind_holdout_detector_alerts() -> None:
+    alerts, _ = _check({**LIVE_WITH_COLUMN, "test_sf_multipv_checked_frac": 0.0})
+    assert any("test_sf_multipv_checked_frac=0.0" in a for a in alerts)
+
+
+def test_a_blind_value_half_detector_alerts() -> None:
+    """`sf_wdl` is 0.45 of the value target and had NO detector before
+    2026-08-03. Watching only the policy column would rebuild the P2
+    asymmetry one layer up, in the thing that reads the columns."""
+    alerts, _ = _check({**LIVE_WITH_COLUMN, "sf_eval_pv_checked_frac": 0.0})
+    assert any("sf_eval_pv_checked_frac=0.0 on a trained iteration" in a for a in alerts)
+
+
+def test_a_blind_value_half_detector_is_silent_when_absent_or_dark() -> None:
+    """Same two guards as the policy twin: an absent column is a schema fact,
+    and a zero-step iteration publishes the dataclass default, not a reading."""
+    absent, _ = _check(LIVE_WITH_COLUMN)
+    assert not any("sf_eval_pv_checked_frac" in a for a in absent)
+    dark, _ = _check(
+        {**LIVE_WITH_COLUMN, "train_steps_used": 0, "sf_eval_pv_checked_frac": 0.0},
+    )
+    assert not any("sf_eval_pv_checked_frac=0.0 on a trained iteration" in a for a in dark)
+
+
+def test_a_blind_value_half_HOLDOUT_detector_alerts() -> None:
+    """The ruler's own value labels can be detached, and the frozen set has
+    form: it is already 10.13 % contaminated on the POLICY half. A column that
+    ships into `_TEST_METRIC_KEYS` and is read by nothing is P2 one layer up."""
+    alerts, _ = _check({**LIVE_WITH_COLUMN, "test_sf_eval_pv_checked_frac": 0.0})
+    assert any("test_sf_eval_pv_checked_frac=0.0" in a for a in alerts)
+
+
+def test_a_dark_holdout_does_not_read_as_a_blind_value_half_detector() -> None:
+    alerts, _ = _check(
+        {**LIVE_WITH_COLUMN, "test_size": 0, "test_sf_eval_pv_checked_frac": 0.0},
+    )
+    assert not any("test_sf_eval_pv_checked_frac" in a for a in alerts)
+
+
+def test_both_halves_of_the_blindness_alert_have_both_arms() -> None:
+    """The claim `loop_health`'s docstring makes, asserted.
+
+    Four checks: {policy, value} x {train, holdout}. Deleting any one of them
+    leaves a published column that nothing reads, which is the failure this
+    whole PR is about.
+    """
+    row = {
+        **LIVE_WITH_COLUMN,
+        "sf_multipv_checked_frac": 0.0, "test_sf_multipv_checked_frac": 0.0,
+        "sf_eval_pv_checked_frac": 0.0, "test_sf_eval_pv_checked_frac": 0.0,
+    }
+    alerts = loop_health.blind_desync_detector_alerts(row)
+    assert len(alerts) == 4, f"expected all four arms to fire, got {alerts}"
+    for key in (
+        "sf_multipv_checked_frac=0.0 on a trained iteration",
+        "test_sf_multipv_checked_frac=0.0",
+        "sf_eval_pv_checked_frac=0.0 on a trained iteration",
+        "test_sf_eval_pv_checked_frac=0.0",
+    ):
+        assert any(key in a for a in alerts), f"{key} arm is missing"
+
+
+def test_an_absent_column_is_silent() -> None:
+    """Every result.json row written before the column shipped lacks it. A
+    missing key is a schema fact, not a blindness reading — if this fired the
+    monitor would latch ALERTS PRESENT on all history and be ignored."""
+    alerts, _ = _check(HEALTHY)
+    assert not any("checked_frac" in a for a in alerts)
+
+
+def test_zero_steps_does_not_read_as_a_blind_detector() -> None:
+    """With no train phase the reporter publishes the dataclass DEFAULT 0.0,
+    which is not a measurement. The zero-steps state has its own alert."""
+    alerts, _ = _check(
+        {**LIVE_WITH_COLUMN, "train_steps_used": 0, "sf_multipv_checked_frac": 0.0},
+    )
+    assert not any("checked_frac=0.0 on a trained iteration" in a for a in alerts)
+
+
+def test_a_dark_holdout_eval_does_not_read_as_a_blind_detector() -> None:
+    """The eval is legitimately dark for two iterations after every restart
+    (rl_loop_audit G17); it publishes NaN and test_size 0."""
+    alerts, _ = _check(
+        {**LIVE_WITH_COLUMN, "test_size": 0,
+         "test_sf_multipv_checked_frac": float("nan")},
+    )
+    assert not any("test_sf_multipv_checked_frac" in a for a in alerts)
+    # ...and an explicit 0.0 with no rows scored is equally not a reading.
+    alerts0, _ = _check(
+        {**LIVE_WITH_COLUMN, "test_size": 0, "test_sf_multipv_checked_frac": 0.0},
+    )
+    assert not any("test_sf_multipv_checked_frac" in a for a in alerts0)
+
+
+def test_the_blind_detector_alert_is_wired_into_check_row() -> None:
+    """The helper is not the production path — `check_row` is. A helper that
+    works while nothing calls it is this repo's signature defect."""
+    direct = loop_health.blind_desync_detector_alerts(
+        {**LIVE_WITH_COLUMN, "sf_multipv_checked_frac": 0.0},
+    )
+    assert len(direct) == 1
+    via_check_row, _ = _check({**LIVE_WITH_COLUMN, "sf_multipv_checked_frac": 0.0})
+    assert direct[0] in via_check_row
+
+
 def test_outcome_stats_parser() -> None:
     d = loop_health.parse_outcome_stats(
         "opening_fenlist_games=12|selfplay_fenlist_games=11|pid_reason=not_active|bad")
