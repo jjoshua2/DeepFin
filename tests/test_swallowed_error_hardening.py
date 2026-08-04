@@ -10,8 +10,10 @@ each adds an observation that did not exist.
 it flagged as unverified ("I did not read the call site"). I read it. The premise
 does not hold:
 
-* `_active_difficulty` has exactly ONE production caller, `_on_game_complete`,
-  which stamps the pair onto the SHARD'S METADATA;
+* `_active_difficulty` has two production callers and NEITHER sets the
+  difficulty: `_on_completed_game` stamps the pair onto the SHARD'S METADATA,
+  and the session-start log line this tranche added reads it to print what the
+  session adopted;
 * the difficulty games are actually PLAYED at comes from
   `_build_selfplay_configs`, which reads the same two reco keys independently
   and casts them UNGUARDED — a corrupt value raises there and takes the session
@@ -666,3 +668,60 @@ def test_a_soap_that_accepts_param_groups_is_silent(
         )
 
     assert "rejected param_groups" not in caplog.text
+
+
+def test_the_real_worker_init_starts_the_corrupt_counter_at_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """Pins `self._reco_corrupt_count = 0` in the PRODUCTION `__init__`.
+
+    ⚑ EVERY OTHER TEST OF THIS COUNTER USES A STUB THAT SUPPLIES THE
+    ATTRIBUTE ITSELF, so deleting the production initialiser leaves the whole
+    suite green while the shipped worker raises `AttributeError` inside the
+    corrupt branch — an exception on the error path, reached only once a
+    corrupt reco actually arrives, which is the worst possible place for it.
+    A stub that hands the class its own preconditions cannot see that.
+
+    This runs the shipped `__init__` and then the shipped
+    `_active_difficulty`, so the counter is exercised from the value
+    production gives it.
+
+    Two things are stubbed and neither is under test: `_collect_worker_info`
+    (it calls `torch.cuda.is_available()`, and this repo's tests must not
+    touch the GPU a live run owns) and `requests`. `device="cpu"` is passed so
+    the one other CUDA probe in `__init__` short-circuits. Everything between
+    those, including the initialiser this test exists for, is the real thing.
+    """
+    import argparse
+
+    from chess_anti_engine import worker as worker_mod
+
+    monkeypatch.setattr(
+        worker_mod, "_collect_worker_info", lambda **_kw: {"hostname": "t", "device": "cpu"}
+    )
+    args = argparse.Namespace(
+        username="u", password="p", server_url="http://localhost:0", trial_id="",
+        work_dir=str(tmp_path), shared_cache_dir=None, device="cpu", seed=0,
+        games_per_batch=1, allow_overrides=False, save_config=False,
+        inference_slot_name="",
+    )
+    session = WorkerSession(
+        args,
+        cfg={},
+        cfg_path=tmp_path / "worker.yaml",
+        log=logging.getLogger("test_real_worker_init"),
+        pinned_games_per_batch_cli=False,
+        requests_mod=None,
+    )
+
+    assert session._reco_corrupt_count == 0
+    assert session._reco_corrupt_last is None
+
+    session._active_reco = {"opponent_wdl_regret_limit": "not-a-number", "sf_nodes": 5000}
+    with caplog.at_level(logging.WARNING):
+        assert session._active_difficulty() == (None, None)
+
+    assert session._reco_corrupt_count == 1, (
+        "the shipped __init__ must supply the counter the corrupt path increments"
+    )
+    assert "reco difficulty is CORRUPT" in caplog.text

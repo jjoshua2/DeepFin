@@ -1513,8 +1513,11 @@ class WorkerSession:
         ⚑ Scope, because the audit that raised this rated it HIGH on the
         premise that it silently reverts the worker to default DIFFICULTY, and
         that premise does not survive reading the call site. This method has
-        exactly one production caller (``_on_game_complete``), which stamps
-        the pair onto the SHARD'S METADATA. The difficulty the games are
+        two production callers, and NEITHER sets the difficulty: the
+        per-game one (``_on_completed_game``) stamps the pair onto the
+        SHARD'S METADATA, and the session-start log line added alongside this
+        docstring reads it to print what the session adopted. The difficulty
+        the games are
         actually played at comes from ``_build_selfplay_configs``, which reads
         the same two keys independently and casts them UNGUARDED -- a corrupt
         value raises there and takes the session down loudly. So the blast

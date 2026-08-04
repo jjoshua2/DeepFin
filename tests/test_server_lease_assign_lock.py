@@ -174,6 +174,59 @@ def test_an_unusable_timestamp_falls_back_to_file_age(
     )
 
 
+def test_an_unbounded_json_integer_does_not_500_the_lease_path(tmp_path: Path) -> None:
+    """JSON integers have no upper bound; Python floats do.
+
+    `10 ** 400` parses fine and then raises `OverflowError` inside `float()`.
+    Unguarded that propagates out of the acquisition and the lease route
+    answers 500 -- persistently, because the offending lock file is still
+    there next poll. The corrupt-value case is precisely what the mtime
+    fallback exists to route around, so it must reach it.
+    """
+    lock_path = tmp_path / ".assign.lock"
+    # Hand-assembled: `json.dumps` would render the big int fine, but writing
+    # it literally is what makes the fixture's point legible.
+    holder = json.dumps({"pid": os.getpid(), "host": os.uname().nodename, "token": "theirs"})
+    lock_path.write_text(
+        holder[:-1] + ', "created_at_unix": ' + "1" + "0" * 400 + "}", encoding="utf-8"
+    )
+    assert isinstance(
+        json.loads(lock_path.read_text(encoding="utf-8"))["created_at_unix"], int
+    ), "the fixture must reach float() as an int, not as inf"
+    aged_to = time.time() - 10_000.0
+    os.utime(lock_path, (aged_to, aged_to))
+
+    # Reaches the mtime fallback rather than raising: the lock is stealable.
+    with _LeaseAssignLock(lock_path, timeout_s=2.0, stale_after_s=1.0):
+        assert json.loads(lock_path.read_text(encoding="utf-8"))["token"] != "theirs"
+
+
+def test_a_future_mtime_reports_age_zero_not_a_negative(tmp_path: Path) -> None:
+    """Pins the clamp itself, which no outcome-level test can reach.
+
+    A negative age is still `< stale_after_s`, so dropping `max(0.0, ...)`
+    leaves every steal/busy decision unchanged and the clamp survives
+    mutation. Its value is in what it hands to the CALLER: the number is
+    logged as the evidence for a steal, and a negative age would read as a
+    lock taken in the future. Asserted on `_lock_age` directly, which is the
+    only place the clamp is observable.
+
+    Distinct from `test_a_clock_that_ran_backwards_reads_as_brand_new`, which
+    pins the busy DECISION; this pins the number that decision is made from.
+    """
+    lock_path = tmp_path / ".assign.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    now = time.time()
+    ahead = now + 10_000.0
+    os.utime(lock_path, (ahead, ahead))
+
+    aged = _LeaseAssignLock(lock_path)._lock_age({"pid": os.getpid()}, now)
+
+    assert aged is not None
+    assert aged[1] == "file mtime"
+    assert aged[0] == 0.0, f"a future mtime must clamp to 0.0, got {aged[0]}"
+
+
 def test_a_bool_is_not_a_timestamp(tmp_path: Path) -> None:
     """`True` is an `int` to `isinstance`, so a naive numeric check reads it as
     the epoch + 1s and invents an ancient lock. Here the FILE is fresh, so the
