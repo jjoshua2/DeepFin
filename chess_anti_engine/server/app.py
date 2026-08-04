@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import secrets
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
@@ -59,6 +60,175 @@ def _compacted_token_suffix(flush_token: str) -> str:
 # mid-iter resume after workers died). Consumed inside the gate lock with claim
 # so concurrent multi-worker polls cannot double-dole (see PR #209 review).
 SEED_DOLE_REARM_FILENAME = "seed_dole_rearm.json"
+
+
+_LOG = logging.getLogger("chess_anti_engine.server")
+_LOCK_HOST = socket.gethostname()
+
+
+class _LeaseAssignBusy(RuntimeError):
+    """The lease-assign lock is held by a live holder and did not free up.
+
+    Raised instead of stealing. The route turns it into a 503 + Retry-After:
+    a worker retries its next poll for free, whereas two workers assigned the
+    same trial slot is not recoverable at all. Failing CLOSED is the whole
+    point of audit A17.
+    """
+
+
+class _LeaseAssignLock:
+    """Cross-process mutual exclusion for lease assignment, with a STALENESS test.
+
+    ⚑ THE OLD BODY DID NOT EXCLUDE, AND FAILED OPEN (audit A17). It was
+    `while True` with no failure exit: past the deadline it unlinked the
+    lock file every 50ms *unconditionally*, so a holder that was merely
+    SLOW had its lock deleted out from under it. The next `O_EXCL` create
+    then succeeded, both holders had `_held = True` and both ran the
+    critical section; each unlinked on exit, so a third caller walked
+    straight in. Reproduced deterministically -- see
+    `tests/test_server_lease_assign_lock.py`.
+
+    Three changes, and the first is the whole fix:
+
+    * **A steal requires EVIDENCE.** The lock file carries the holder's pid
+      and creation time. We take it only when the holder process is gone
+      (`os.kill(pid, 0)` raises `ProcessLookupError`) or the file is older
+      than `stale_after_s`. A slow-but-alive holder is never stolen from; a
+      crashed one does not wedge the server until someone restarts it.
+    * **The deadline FAILS the acquisition** instead of forcing it. Without
+      staleness evidence we raise `_LeaseAssignBusy`, which the route turns
+      into a 503 with `Retry-After` -- a worker retries a poll happily, and
+      a wrong lease assignment is not recoverable at all.
+    * **Release checks ownership.** `__exit__` unlinks only if the file
+      still carries OUR token, so a holder that was legitimately stolen
+      from (it really had crashed... or it was paused past
+      `stale_after_s`) cannot delete its successor's lock on the way out.
+      This is the half that turns a single stolen lock into a cascade.
+
+    `stale_after_s` defaults to 10x `timeout_s`, i.e. a generous multiple of
+    the expected section time: assignment is a few small file reads and a
+    write. Every steal is logged with the evidence that justified it,
+    because a steal is either a crash recovery or a bug and the log line is
+    how anyone tells which.
+
+    A18: this is a file lock used from SYNC routes (`lease_trial` is a
+    `def`, run in Starlette's threadpool). Nothing here goes near the event
+    loop, and nothing here should be made `async` -- the blocking retry
+    sleep is correct precisely because it is not on the loop.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        timeout_s: float = 10.0,
+        stale_after_s: float | None = None,
+    ) -> None:
+        self.path = path
+        self.timeout_s = float(timeout_s)
+        self.stale_after_s = (
+            float(stale_after_s) if stale_after_s is not None else 10.0 * float(timeout_s)
+        )
+        self._held = False
+        # Identifies THIS acquisition, not this process: two acquisitions in
+        # one process must not be able to release each other.
+        self._token = secrets.token_hex(8)
+
+    def _read_holder(self) -> dict[str, Any]:
+        try:
+            raw = self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # A pre-fix lock file held a bare pid. Treat it as a holder with
+            # an unknown age rather than as garbage to be stolen on sight.
+            pid_txt = raw.strip().splitlines()[0] if raw.strip() else ""
+            return {"pid": int(pid_txt)} if pid_txt.isdigit() else {}
+        return data if isinstance(data, dict) else {}
+
+    def _staleness_reason(self, now: float) -> str | None:
+        """Why the existing lock may be taken, or None if it may not be."""
+        holder = self._read_holder()
+        if not holder:
+            # Unreadable or empty. Do NOT steal on this alone -- a partial
+            # write is a live holder mid-create. Fall back to file age.
+            try:
+                age = now - self.path.stat().st_mtime
+            except OSError:
+                return None
+            if age > self.stale_after_s:
+                return f"unreadable lock file, age {age:.1f}s > {self.stale_after_s:.1f}s"
+            return None
+        pid = holder.get("pid")
+        created = holder.get("created_at_unix")
+        age = now - float(created) if isinstance(created, (int, float)) else None
+        if isinstance(pid, int) and pid > 0 and holder.get("host") in (None, _LOCK_HOST):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return f"holder pid {pid} is gone (age {age if age is None else round(age, 1)}s)"
+            except PermissionError:
+                pass  # alive, owned by another user
+            except OSError:
+                pass
+        if age is not None and age > self.stale_after_s:
+            return f"holder pid {pid} alive but lock age {age:.1f}s > {self.stale_after_s:.1f}s"
+        return None
+
+    def __enter__(self) -> _LeaseAssignLock:
+        deadline = time.time() + self.timeout_s
+        while True:
+            try:
+                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "pid": os.getpid(),
+                        "host": _LOCK_HOST,
+                        "token": self._token,
+                        "created_at_unix": time.time(),
+                    }))
+                self._held = True
+                return self
+            except FileExistsError as exists_exc:
+                now = time.time()
+                reason = self._staleness_reason(now)
+                if reason is not None:
+                    _LOG.warning(
+                        "stealing stale lease-assign lock %s: %s", self.path, reason,
+                    )
+                    with contextlib.suppress(OSError):
+                        self.path.unlink(missing_ok=True)
+                    continue
+                if now >= deadline:
+                    raise _LeaseAssignBusy(
+                        f"lease assignment is busy: {self.path} held by "
+                        f"{self._read_holder() or 'an unreadable holder'} and not "
+                        f"stale after {self.timeout_s:.1f}s"
+                    ) from exists_exc
+                time.sleep(0.05)
+
+    def close(self) -> None:
+        """Release. For callers that entered manually and use `contextlib.closing`
+        because they need to catch `_LeaseAssignBusy` around the acquisition."""
+        self.__exit__(None, None, None)
+
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
+        if not self._held:
+            return
+        self._held = False
+        # Only OUR lock. If we were stolen from, the file now belongs to a
+        # live successor and unlinking it would restart the cascade this
+        # class exists to stop.
+        if self._read_holder().get("token") != self._token:
+            _LOG.warning(
+                "lease-assign lock %s was taken from us before release; "
+                "leaving the current holder's file alone", self.path,
+            )
+            return
+        with contextlib.suppress(OSError):
+            self.path.unlink(missing_ok=True)
 
 
 class _SeedDoleGate:
@@ -1174,32 +1344,6 @@ def create_app(
         out["backpressure"] = out_backpressure
         return out
 
-    class _LeaseAssignLock:
-        def __init__(self, path: Path, *, timeout_s: float = 10.0) -> None:
-            self.path = path
-            self.timeout_s = float(timeout_s)
-            self._held = False
-
-        def __enter__(self) -> _LeaseAssignLock:
-            deadline = time.time() + float(self.timeout_s)
-            while True:
-                try:
-                    fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(f"{os.getpid()}\n")
-                    self._held = True
-                    return self
-                except FileExistsError:
-                    if time.time() >= deadline:
-                        with contextlib.suppress(Exception):
-                            self.path.unlink(missing_ok=True)
-                    time.sleep(0.05)
-
-        def __exit__(self, _exc_type, _exc, _tb) -> None:
-            if self._held:
-                with contextlib.suppress(Exception):
-                    self.path.unlink(missing_ok=True)
-
     def _load_json_stats(path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
@@ -1669,7 +1813,21 @@ def create_app(
         payload: dict[str, Any] = Body(default_factory=dict),
         username: str = Depends(_auth_user),
     ) -> Any:
-        with _LeaseAssignLock(leases_root / ".assign.lock"):
+        try:
+            lease_lock = _LeaseAssignLock(leases_root / ".assign.lock")
+            lease_lock.__enter__()
+        except _LeaseAssignBusy as exc:
+            # 503 + Retry-After, not a 500: the server is healthy and the
+            # worker should poll again shortly. A traceback here would read as
+            # a server fault and, worse, the pre-A17 code would have silently
+            # double-assigned instead of saying anything at all.
+            log.warning("lease assignment busy, asking the worker to retry: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="lease assignment is busy; retry shortly",
+                headers={"Retry-After": "1"},
+            ) from exc
+        with contextlib.closing(lease_lock):
             lease_seconds = 3600
             requested_lease_id = str(payload.get("lease_id") or "").strip()
             requested_trial_id = _normalize_trial_id(payload.get("trial_id"))
