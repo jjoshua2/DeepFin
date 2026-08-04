@@ -142,12 +142,28 @@ def test_parse_rejects_garbage_and_invalid_thresholds(spec: str) -> None:
         at._parse_blunder_taus(spec)
 
 
+@pytest.mark.parametrize("spec", ["12.5", "50,100.25", "0.5"])
+def test_parse_rejects_fractional_thresholds(spec: str) -> None:
+    """A fractional tau names a key like `blunder12.5`, and the dot is a
+    separator in `paired_compare.py`'s dotted `--field` path — so the column
+    could never be addressed and every paired row would be unusable. Rejected
+    at parse time rather than after a full GPU scoring pass."""
+    with pytest.raises(SystemExit, match="whole number of centipawns"):
+        at._parse_blunder_taus(spec)
+
+
+def test_parse_accepts_whole_numbers_written_with_a_decimal_point() -> None:
+    assert at._parse_blunder_taus("50.0,100") == (50.0, 100.0)
+
+
 def test_dump_key_is_the_flat_dotted_path_the_paired_reader_uses() -> None:
     """`paired_compare.py --field cand.raw.blunder100` resolves a dotted path,
-    so the key must be flat inside the per-candidate dict, not nested."""
+    so the key must be flat inside the per-candidate dict, not nested — and,
+    for the same reason, must never contain a dot itself."""
     assert at._blunder_key(100.0) == "blunder100"
     assert at._blunder_key(50.0) == "blunder50"
-    assert at._blunder_key(12.5) == "blunder12.5"
+    for tau in at._parse_blunder_taus("50,100,200"):
+        assert "." not in at._blunder_key(tau)
 
 
 # --------------------------------------------------------------------------

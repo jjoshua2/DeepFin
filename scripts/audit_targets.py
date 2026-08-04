@@ -765,6 +765,14 @@ def _parse_blunder_taus(spec: str | None) -> tuple[float, ...]:
 
     Deduplicated and sorted so the report columns and the dump keys are in a
     stable order no matter how the operator typed them.
+
+    WHOLE CENTIPAWNS ONLY, enforced rather than assumed. A fractional
+    threshold would name its dump key `blunder12.5`, and the dot is a
+    separator in `paired_compare.py`'s dotted `--field` path — so
+    `cand.raw.blunder12.5` resolves to nothing and every joined row is
+    unusable. That failure is loud (the reader exits non-zero) but it happens
+    only after a full GPU scoring pass, so it is rejected here at parse time
+    instead.
     """
     if spec is None:
         return ()
@@ -785,6 +793,14 @@ def _parse_blunder_taus(spec: str | None) -> tuple[float, ...]:
                 f"--blunder-taus: {tau} is not a valid cp threshold "
                 f"(must be finite and >= 0)",
             )
+        if tau != round(tau):
+            raise SystemExit(
+                f"--blunder-taus: {text!r} must be a whole number of "
+                f"centipawns. A fractional threshold names the dump key "
+                f"'blunder{tau:g}', whose dot paired_compare.py's dotted "
+                f"--field path cannot address, so every paired row would be "
+                f"unusable.",
+            )
         out.add(tau)
     return tuple(sorted(out))
 
@@ -794,7 +810,8 @@ def _blunder_key(tau: float) -> str:
 
     Flat (not nested under a 'blunder' dict) because the paired reader
     addresses it as a dotted path: `paired_compare.py --field
-    cand.raw.blunder100`.
+    cand.raw.blunder100`. That same reader is why `_parse_blunder_taus`
+    admits only whole centipawns: a dot in the key would split the path.
     """
     return f"blunder{tau:g}"
 
