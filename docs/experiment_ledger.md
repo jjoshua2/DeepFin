@@ -33019,3 +33019,15 @@ Watch continues; the deciding instrument remains the ~5-day arena.
 - `daily_gate_ratchet.sh --max-attempts 0` relaunched by hand ~19:30 — first
   vs_boot512 row of the 0f888 lineage expected within the hour. The banked
   iter169 snapshot remains available for a second retro point.
+
+## 2026-08-04 ~18:05 — the dxg wedge is INTERMITTENT, not drained; evening ratchet attempt also starved
+
+- 19:30 entry amended: the drain was temporary. New kernel event at uptime 715140s
+  (`query_adapter_info Ioctl failed: -512`), nvidia-smi hangs again, and the manual
+  ratchet's vs_prev leg loaded both checkpoints fine (2s/1s — past the morning's
+  failure point) but then froze in the game loop at 0 completed games and hit the
+  899s backstop. Trainer unaffected throughout (progress.csv current).
+- Net: 2026-08-04 still has NO strength row, and the instrument cannot run reliably
+  until reboot. Snapshots banked for retro-measurement: iter169 (16:00 manual bank)
+  and iter177 (ratchet snapshot dir).
+- Recommendation restored: REBOOT, folded into the graceful restart (user timing).
