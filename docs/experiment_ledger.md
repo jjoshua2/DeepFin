@@ -28360,3 +28360,127 @@ improvement.** That is the answer to the original question, and it is negative.
   on `A_s2`/`A_s3` is what kept those interpolations short.
 - `FE05` is descriptive only (2 seeds, cannot satisfy seed agreement) and is reported
   in the dose table above, not as a verdict.
+
+### PRE-REGISTRATION — A8 v2 stage-2: global `aurora_polar_steps` 8 vs 12
+
+Committed BEFORE any A/B run launched. References: MODEL_OPT_AUDIT.md Addendum II,
+ledger 210f6810a, and the PR #327 entry whose **RESTATED instrument gate** is
+reproduced and adopted verbatim below.
+
+#### Code provenance — the rig runs DIFFERENT code from every prior wave
+
+Every earlier wave imported `chess_anti_engine` from the live tree
+(`/home/josh/projects/chess`, currently `ba0656728`), which predates PR #327 and has
+no polar instrument. This wave runs a dedicated worktree at
+`.../scratchpad/wt-a8v2`, **SHA `0333932cf`** — the #327 merge itself. The live tree
+was never checked out or modified; `git worktree add --detach` only creates a new
+directory. C extensions were rebuilt in the worktree
+(`scripts/build_production_extensions.py`, GCC 15.3 + native + LTO, 3 `.so`), because
+3 `.c`/`.h` files differ between `ba0656728` and `origin/main`.
+
+**⚑ A defect found while wiring this, worth its own note.** `PYTHONPATH` pointing at
+the worktree was **silently ignored**: `sys.path[0]` is the process CWD, and every
+driver in this rig does `cd /home/josh/projects/chess`, so the live tree won every
+import. The first import test I ran "passed" while resolving to the WRONG tree — the
+signature defect exactly (a value accepted, then discarded). The fix is an explicit
+`ABSORB_REPO` env var consumed before the imports, and the run header now banks
+`repo_resolved` read from the imported module's own `__file__` plus `repo_sha` from
+`git -C` on that path — i.e. where Python actually went, never where it was asked to
+go. Both smoke runs confirm `repo_resolved` = the worktree and `repo_sha` =
+`0333932cf9b8`.
+
+(The editable install's `MAPPING` points at `/tmp/chess-pr12-fix`, which no longer
+exists, so the finder is inert and falls through to `sys.path`. Noted so nobody
+re-diagnoses it.)
+
+#### Design
+
+| | arm | `aurora_polar_steps` | seeds |
+|---|---|---|---|
+| control | `A8` | **8** (production's yaml override) | 0, 1 |
+| arm | `A8` | **12** (the code default) | 0, 1 |
+
+4 runs. Identical in every other respect — same corpus, init, batch 256, 176
+steps/chunk, 48 chunks (8,448 steps), eval grid (every 8 to chunk 24 then every 4),
+banking at chunks 32/40/48, same seeds, same LR schedule. **Both sides pass the flag
+explicitly**, so the control is stated rather than inherited and a missing flag is a
+hard error rather than a silent default.
+
+Note the control is NOT reusable from the FE wave's `A_s0`/`A_s1`: those ran on
+pre-#327 live-tree code. Fresh controls on the worktree are required and are included.
+
+#### 1. INSTRUMENT GATE — adopted verbatim from the #327 RESTATED gate
+
+Mapping to this rig: a "live iteration" is one **chunk** (the trainer arms
+`collect_optimizer_stats` on the last step of each `train_steps` call, so there is
+exactly one polar sample per chunk). Medians are over **chunks 1-5**, logged to
+`polar.jsonl` every chunk rather than at eval points, because the eval grid's first
+point is chunk 8 and an eval-only log could not answer this gate at all.
+
+- **PRIMARY, binary:** `aurora_polar_steps_configured` == 12.0 on every arm row and
+  == 8.0 on every control row, with `aurora_polar_sv_samples` == 2.0 and
+  `aurora_polar_sv_errors` == 0.0. **If this fails, the change did not reach the
+  optimizer and NO verdict is readable — abort and report, do not interpret.**
+- **PRIMARY CONFIRMING, paired arm/control on the same designated tensor**, medians
+  over chunks 1-5:
+  - square `sv_ratio` ratio **>= 8.0**
+  - square `orth_err` ratio **<= 0.70**
+  - rect **in the ARM**, absolute: `sv_ratio` **>= 0.99** and `orth_err` **<= 0.005**
+- **A ratio ~= 1.0 means the setting silently did not take effect. That is an ABORT,
+  not a null.** The distinction is the whole point of the gate: "no effect on the
+  optimizer" and "effect on the optimizer, no effect on learning" are different
+  findings and must not be reported as the same one.
+- **SUPPORTING, not bars** (expected designated-tensor readings): square 0.0273 /
+  0.2114 control and 0.3275 / 0.0614 arm; rect 0.3714 / 0.0381 control and
+  1.0000 / 0.0000 arm.
+
+**Smoke evidence already in hand** (tiny run, batch 64 x 4 steps, both sides): binary
+leg passes on both; square `sv_ratio` ratio **18.1**, square `orth_err` ratio
+**0.307**, rect arm **0.9984 / 0.0017** — all four confirming legs clear. Rect
+control read 0.3879 / 0.0376 against an expected 0.3714 / 0.0381. Square `sv_ratio`
+came in below expectation on both sides, which is anticipated: at 4-20 steps the
+momentum is nearly rank-1, and the ledger states the absolutes are expectations, not
+bars, with 94x across-tensor spread. **The gate is re-evaluated on the real runs and
+only that evaluation counts.**
+
+#### 2. OUTCOME — NULL IS PRE-DECLARED AS THE EXPECTED RESULT
+
+Prior: NorMuon, plus PE-8's significant-subspace ratio already reading 1.0000. Both
+arms see identical data for identical steps, so no learning is being traded and
+**matched STEPS is the primary comparison** (matched-learning is reported as a
+secondary only if `inw` diverges beyond its bar).
+
+Bars carry over unchanged: `oow` **0.638**, `inw` **0.307**, `era` **0.394**, at
+verdict steps **7,040 and 8,448**, paired game-clustered bootstrap.
+
+- **REGRESSION** — arm worse than control beyond the bar on `oow` OR `era`, CI
+  excluding 0, at both verdict steps, sign-consistent across both seeds.
+  -> **Keep 8; the production override was load-bearing.**
+- **IMPROVEMENT** — arm better beyond the bar, CI excluding 0, **on seed-pooled rows**
+  (per the "judged only if SIG on pooled seeds" instruction), at both verdict steps.
+  -> Bonus; report as such.
+- **NULL** — anything else, including a within-bar difference of either sign.
+  -> **12 is free insurance and ships at restart per the open_decisions default.**
+
+I expect NULL and am recording that now so a small favourable wobble cannot be
+narrated into a win.
+
+#### 3. COST
+
+`opt_step_time_s` is banked every chunk (new `tm_opt_step_time_s` column plus
+`polar.jsonl`). Reported as the arm/control ratio over all 48 chunks per seed.
+Expected negligible — training is ~16% of loop time and the polar step is a slice of
+that; #327 banked ~129 ms/iter for the metric itself. **No cost bar is set here**;
+the number is reported, and a cost verdict is not this wave's to make.
+
+#### 4. Discipline
+
+No peeking before all four runs complete. N15's `wall_s` caveat no longer applies
+(the external CPU probe has drained; load 4.8 at launch) but cadence is stated in the
+verdict regardless. The neutral frozen-audit ruler is run on all four sets of final
+weights.
+
+**Already delivered, not owed:** the neutral audit on the two banked H2 EMA
+checkpoints — `H2_ema500` **53.92 cp**, `H2_ema2000` **52.92 cp** — was completed and
+banked in ledger 00be40af1 and restated in 6dbccc872. If a DIFFERENT pair of EMA
+checkpoints is meant, name them and I will run those.
