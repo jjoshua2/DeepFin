@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import hashlib
 import json
+import math
 import logging
 import os
 import re
@@ -135,6 +136,14 @@ class _LeaseAssignLock:
         self._token = secrets.token_hex(8)
 
     def _read_holder(self) -> dict[str, Any]:
+        """The lock file's contents, or {} if it has none we can use.
+
+        A legacy pre-fix lock file held `f"{pid}\n"`, which is valid JSON and
+        decodes to an int, so it lands in the `{}` branch below and is judged
+        on file age. There is deliberately no `JSONDecodeError` special case
+        for it: an earlier revision of this method had one and it was DEAD --
+        the decode it claimed to rescue never fails.
+        """
         try:
             raw = self.path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -142,39 +151,61 @@ class _LeaseAssignLock:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            # A pre-fix lock file held a bare pid. Treat it as a holder with
-            # an unknown age rather than as garbage to be stolen on sight.
-            pid_txt = raw.strip().splitlines()[0] if raw.strip() else ""
-            return {"pid": int(pid_txt)} if pid_txt.isdigit() else {}
+            return {}
         return data if isinstance(data, dict) else {}
+
+    def _lock_age(self, holder: dict[str, Any], now: float) -> tuple[float, str] | None:
+        """Seconds since the lock was taken, and where the clock came from.
+
+        ⚑ THE AGE TEST IS THE ONLY BACKSTOP THE STALENESS CHECK HAS, so it must
+        ALWAYS have a clock source. An earlier revision consulted `st_mtime`
+        only when the holder dict was EMPTY, which left a hole: a NON-empty
+        holder whose `created_at_unix` was missing, non-numeric or in the
+        future had no usable age, so with a live-looking pid (a recycled one,
+        say) it was never stealable AT ALL -- the reviewer aged such a file to
+        10,000s with `stale_after_s = 1.0` and it stayed busy permanently.
+        That is a total outage of the lease path, on precisely the crashed-
+        holder case this class exists to recover from, and each blocked poll
+        holds a threadpool token for the full timeout while it happens. The
+        future-timestamp variant is reachable on WSL2 clock jumps.
+
+        So: trust `created_at_unix` only when it is a finite number that is not
+        in the future, and fall back to `st_mtime` in every other case,
+        including a non-empty holder. Age is clamped non-negative -- a clock
+        that ran backwards must read as "brand new", never as a negative age
+        that some future comparison treats as enormous.
+        """
+        raw = holder.get("created_at_unix")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            stamp = float(raw)
+            if math.isfinite(stamp) and stamp <= now:
+                return max(0.0, now - stamp), "created_at_unix"
+        try:
+            return max(0.0, now - self.path.stat().st_mtime), "file mtime"
+        except OSError:
+            return None
 
     def _staleness_reason(self, now: float) -> str | None:
         """Why the existing lock may be taken, or None if it may not be."""
         holder = self._read_holder()
-        if not holder:
-            # Unreadable or empty. Do NOT steal on this alone -- a partial
-            # write is a live holder mid-create. Fall back to file age.
-            try:
-                age = now - self.path.stat().st_mtime
-            except OSError:
-                return None
-            if age > self.stale_after_s:
-                return f"unreadable lock file, age {age:.1f}s > {self.stale_after_s:.1f}s"
-            return None
+        aged = self._lock_age(holder, now)
+        age_txt = "unknown" if aged is None else f"{aged[0]:.1f}s"
         pid = holder.get("pid")
-        created = holder.get("created_at_unix")
-        age = now - float(created) if isinstance(created, (int, float)) else None
         if isinstance(pid, int) and pid > 0 and holder.get("host") in (None, _LOCK_HOST):
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
-                return f"holder pid {pid} is gone (age {age if age is None else round(age, 1)}s)"
+                return f"holder pid {pid} is gone (age {age_txt})"
             except PermissionError:
                 pass  # alive, owned by another user
             except OSError:
                 pass
-        if age is not None and age > self.stale_after_s:
-            return f"holder pid {pid} alive but lock age {age:.1f}s > {self.stale_after_s:.1f}s"
+        if aged is not None and aged[0] > self.stale_after_s:
+            held_by = f"holder pid {pid}" if pid else "an unreadable holder"
+            return (
+                f"{held_by} did not release: lock age {aged[0]:.1f}s "
+                f"(by {aged[1]}) > {self.stale_after_s:.1f}s"
+            )
         return None
 
     def __enter__(self) -> _LeaseAssignLock:

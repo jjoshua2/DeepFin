@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -122,6 +123,124 @@ def test_an_expired_lock_is_stolen_from(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with _LeaseAssignLock(lock_path, timeout_s=0.2, stale_after_s=1.0):
+        assert json.loads(lock_path.read_text(encoding="utf-8"))["pid"] == os.getpid()
+
+
+@pytest.mark.parametrize(
+    ("created_at", "label"),
+    [
+        (None, "missing"),
+        ("not-a-number", "non-numeric"),
+        (float("nan"), "NaN"),
+        (float("inf"), "infinite"),
+        (time.time() + 86_400.0, "a day in the future"),
+    ],
+)
+def test_an_unusable_timestamp_falls_back_to_file_age(
+    tmp_path: Path, created_at: object, label: str
+) -> None:
+    """The age backstop must not be skippable (the #338 review's blocking find).
+
+    A NON-empty holder whose `created_at_unix` is unusable, plus a live-looking
+    pid, had no clock source at all in the first revision: `st_mtime` was
+    consulted only when the holder dict was EMPTY. Such a lock was never
+    stealable -- the reviewer aged one to 10,000s with `stale_after_s = 1.0`
+    and it stayed BUSY permanently, a total lease-path outage on exactly the
+    crashed-holder case this class promises to handle. Each blocked poll also
+    pins a threadpool token for the full timeout.
+
+    The pid here is OUR OWN and alive, so only the age test can justify the
+    steal -- the same shape a recycled pid produces after a crash. The future
+    timestamp is not hypothetical: WSL2 clock jumps produce it.
+    """
+    lock_path = tmp_path / ".assign.lock"
+    holder: dict[str, Any] = {"pid": os.getpid(), "host": os.uname().nodename, "token": "theirs"}
+    if created_at is not None:
+        # json can't encode NaN/inf round-trippably by default, and the point
+        # is that the FILE may contain anything, so write it permissively.
+        holder["created_at_unix"] = created_at
+    lock_path.write_text(json.dumps(holder), encoding="utf-8")
+    aged_to = time.time() - 10_000.0
+    os.utime(lock_path, (aged_to, aged_to))
+
+    t0 = time.time()
+    with _LeaseAssignLock(lock_path, timeout_s=2.0, stale_after_s=1.0):
+        assert json.loads(lock_path.read_text(encoding="utf-8"))["token"] != "theirs"
+    elapsed = time.time() - t0
+
+    assert elapsed < 1.0, (
+        f"created_at_unix={label} made a 10000s-old lock unstealable for "
+        f"{elapsed:.2f}s; the mtime fallback is not universal"
+    )
+
+
+def test_a_bool_is_not_a_timestamp(tmp_path: Path) -> None:
+    """`True` is an `int` to `isinstance`, so a naive numeric check reads it as
+    the epoch + 1s and invents an ancient lock. Here the FILE is fresh, so the
+    correct answer is busy: an `isinstance(raw, (int, float))` that does not
+    exclude `bool` steals from a live holder instead."""
+    lock_path = tmp_path / ".assign.lock"
+    lock_path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "host": os.uname().nodename,
+                "token": "theirs",
+                "created_at_unix": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with (
+        pytest.raises(_LeaseAssignBusy),
+        _LeaseAssignLock(lock_path, timeout_s=0.2, stale_after_s=60.0),
+    ):
+        pytest.fail("a bool timestamp was read as an ancient lock")
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["token"] == "theirs"
+
+
+def test_a_clock_that_ran_backwards_reads_as_brand_new(tmp_path: Path) -> None:
+    """Age is clamped non-negative, so a backwards clock cannot force a steal.
+
+    The failure this guards is the mirror of the one above: an unclamped
+    negative age is still a number, and any later comparison that flips sign
+    turns "the future" into "ancient". Clamping keeps a jumped clock on the
+    SAFE side -- the lock reads as brand new and the caller gets a busy answer
+    it can retry, rather than a steal from a live holder.
+    """
+    lock_path = tmp_path / ".assign.lock"
+    lock_path.write_text(
+        json.dumps({"pid": os.getpid(), "host": os.uname().nodename, "token": "theirs"}),
+        encoding="utf-8",
+    )
+    ahead = time.time() + 10_000.0
+    os.utime(lock_path, (ahead, ahead))
+
+    with (
+        pytest.raises(_LeaseAssignBusy),
+        _LeaseAssignLock(lock_path, timeout_s=0.2, stale_after_s=1.0),
+    ):
+        pytest.fail("stole a live holder's lock because the clock jumped forward")
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["token"] == "theirs"
+
+
+def test_a_legacy_bare_pid_lock_file_is_judged_on_age(tmp_path: Path) -> None:
+    """`f"{pid}\n"` is valid JSON, so it decodes to an int, so it takes the
+    age path -- which is why the `JSONDecodeError` legacy branch was dead code
+    and is gone. Pins the behaviour the deleted branch's comment claimed."""
+    lock_path = tmp_path / ".assign.lock"
+    lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    fresh = time.time()
+    os.utime(lock_path, (fresh, fresh))
+    with (
+        pytest.raises(_LeaseAssignBusy),
+        _LeaseAssignLock(lock_path, timeout_s=0.2, stale_after_s=60.0),
+    ):
+        pytest.fail("stole a fresh legacy lock file")
+
+    aged_to = time.time() - 10_000.0
+    os.utime(lock_path, (aged_to, aged_to))
+    with _LeaseAssignLock(lock_path, timeout_s=2.0, stale_after_s=1.0):
         assert json.loads(lock_path.read_text(encoding="utf-8"))["pid"] == os.getpid()
 
 
