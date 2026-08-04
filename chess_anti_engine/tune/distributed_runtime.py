@@ -42,6 +42,7 @@ from chess_anti_engine.tune._utils import (
     terminate_process as _stop_process,
 )
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
+from chess_anti_engine.tune.trainable_metrics import games_per_iter_for_iteration_values
 from chess_anti_engine.utils import sha256_file
 from chess_anti_engine.utils.atomic import atomic_copy2, atomic_write_text
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
@@ -435,6 +436,23 @@ def build_recommended_worker(
     }
 
 
+def _first_iteration_games_need(config: dict) -> int:
+    """Matching games iteration 1's ingest wait will hold out for.
+
+    Delegates to the SAME helper the trainer's target comes from
+    (``trainable_phases.py`` -> ``_games_per_iter_for_iteration(tc, 1)``), so
+    the backpressure floor and the wait it must clear cannot drift. Under a
+    ramp this is ``games_per_iter_start``, NOT ``games_per_iter`` -- the two
+    differ for exactly the configs a hand-copied version would get wrong.
+    """
+    return games_per_iter_for_iteration_values(
+        games_per_iter=int(config.get("games_per_iter", 0) or 0),
+        games_per_iter_start=int(config.get("games_per_iter_start", 0) or 0),
+        games_per_iter_ramp_iters=int(config.get("games_per_iter_ramp_iters", 0) or 0),
+        iteration_idx=1,
+    )
+
+
 def _publish_distributed_trial_state(
     *,
     trainer: Trainer,
@@ -495,6 +513,41 @@ def _publish_distributed_trial_state(
             float(config.get("games_per_iter", 0))
             * max(0.0, float(config.get("distributed_prev_model_max_fraction", 0.0)))
         )
+  # COLD-START FLOOR (latent bug; did NOT fire on 2026-08-04 -- see the
+  # ledger CORRECTION: production sets this key explicitly to 1870, so the
+  # formula above never ran and the cap sat ABOVE the need, not below it).
+  #
+  # For a config that DOES rely on the default, the frac-based value is below
+  # iteration 1's need by construction whenever the fraction is < 1:
+  # ceil(440 * 0.6) = 264 against a 440-game wait. From cold there is exactly
+  # one published sha, so the server pauses the fleet at 264 while the
+  # trainer waits for 440, and only a NEW sha -- which needs the iteration to
+  # finish -- can release it.
+  #
+  # ``trainer_step <= 0`` IS the cold-start test, and the scope matters:
+  # no training step has been taken, so no second sha can have been published
+  # and the trainer's accepted set has exactly one member. It covers the
+  # bootstrap publish and iteration 1's republish of the same weights, then
+  # self-clears the moment training advances the step. A RESUME is excluded
+  # for free (its step is restored non-zero), which is correct -- prev-sha
+  # games count as matching there, and that is what makes the whole class
+  # cold-start-only.
+  #
+  # ⚑ Gating on the step is not a refinement, it is the fix being correct.
+  # An unconditional floor also raises the target in STEADY state, where no
+  # deadlock is possible, which silently moves when backpressure engages --
+  # caught by test_distributed_selfplay_backpressure's steady-state cases
+  # (trainer_step=123: 500 must stay 500, not become 1000) after an earlier
+  # revision of this block claimed "steady state is unchanged" without
+  # enforcing it.
+  #
+  # The floor also only ever RAISES, and only on the auto path: an explicit
+  # target is a recorded operator decision (production's 1870 is ledger'd)
+  # and is published verbatim.
+        if int(trainer_step) <= 0:
+            stale_pause_target_games = max(
+                stale_pause_target_games, _first_iteration_games_need(config),
+            )
 
     worker_wheel_raw = str(config.get("worker_wheel_path", "")).strip()
     if worker_wheel_raw:
@@ -713,6 +766,56 @@ def _worker_launch_signature(
     )
 
 
+  # How many previous worker-log generations to keep beside the live file.
+  # 2 because one revive is not the interesting case: the 2026-08-04 stall
+  # began ~00:23 and was revived at 01:47, so a SECOND revive before anyone
+  # read the logs would have taken the original evidence with it.
+_WORKER_LOG_GENERATIONS = 2
+
+
+def _rotate_worker_logs(*paths: Path) -> None:
+    """Move existing worker logs aside so a (re)launch cannot overwrite them.
+
+    ⚑ Banked from the 2026-08-04 cold start, where this cost us the diagnosis.
+    The 01:47:22 revive left ``worker_00/worker.log`` holding a single
+    ``worker starting version=`` line at 01:47:22 and nothing from the
+    00:19-01:47 incident window -- the 00:34:22 pause line and ~4,264
+    upload-buffer drop lines from 00:37:20 were read live and can never be read
+    again. The primary failure (the upload path wedging at ~00:23) is still
+    UNDIAGNOSED for exactly that reason.
+
+    The truncating writer was NOT identified, and this fix deliberately does
+    not depend on identifying it: ``logging.FileHandler`` defaults to append
+    (``worker.py``), ``_spawn_with_reap`` opens the .out with ``"ab"``,
+    ``os.execv`` on self-update reuses the same argv, and ``scripts/train.sh``
+    documents the append behaviour as the reason its drain must truncate its
+    READING at ``worker starting version=`` -- yet the file was truncated in
+    place (the artifact directory's mtime never moved, so nothing was
+    recreated). Renaming the previous generation to a different filename
+    BEFORE the replacement process can open anything makes whatever truncates
+    ``worker.log`` afterwards truncate a fresh, empty file instead.
+
+    Never raises: the revive exists to bring a dead worker back, and a guard
+    that can take down the thing it guards is worse than the gap it closes.
+    """
+    for path in paths:
+        try:
+  # An empty file carries no evidence, and rotating it would push a real
+  # generation out of the window for nothing.
+            if not path.exists() or path.stat().st_size <= 0:
+                continue
+            for gen in range(_WORKER_LOG_GENERATIONS - 1, 0, -1):
+                older = path.with_name(f"{path.name}.{gen}")
+                if older.exists():
+                    older.replace(path.with_name(f"{path.name}.{gen + 1}"))
+            path.replace(path.with_name(f"{path.name}.1"))
+        except OSError:
+            log.warning(
+                "could not rotate worker log %s; relaunching anyway (the "
+                "previous generation may be overwritten)", path, exc_info=True,
+            )
+
+
 def _launch_distributed_worker(
     *,
     config: dict,
@@ -724,6 +827,10 @@ def _launch_distributed_worker(
     worker_artifact_root.mkdir(parents=True, exist_ok=True)
     worker_log = worker_artifact_root / "worker.log"
     worker_out = worker_artifact_root / "worker.out"
+  # BEFORE the spawn, not after: rotating afterwards would race the
+  # replacement's first writes into the rotated file and leave the live log
+  # holding a fragment -- the same unreadable interleaving, one step later.
+    _rotate_worker_logs(worker_log, worker_out)
 
     server_root_raw = str(config.get("distributed_server_root") or "").strip()
     if server_root_raw:

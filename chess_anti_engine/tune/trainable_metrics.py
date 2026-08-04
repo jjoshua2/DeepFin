@@ -208,10 +208,27 @@ def _curriculum_winrate_raw_or_none(
     return (float(wins) + 0.5 * float(draws)) / float(total_games_played)
 
 
-def _games_per_iter_for_iteration(tc: TrialConfig, iteration_idx: int) -> int:
-    target = max(1, tc.games_per_iter)
-    start = tc.games_per_iter_start
-    ramp_iters = max(0, tc.games_per_iter_ramp_iters)
+def games_per_iter_for_iteration_values(
+    *,
+    games_per_iter: int,
+    games_per_iter_start: int,
+    games_per_iter_ramp_iters: int,
+    iteration_idx: int,
+) -> int:
+    """How many games iteration *iteration_idx* waits for, from raw values.
+
+    The arithmetic lives here, once, because two callers need it from two
+    different shapes: the trainer holds a ``TrialConfig``, while the publish
+    path in ``distributed_runtime`` holds the raw config dict and must floor
+    the stale-pause target at iteration 1's value. A second, hand-copied
+    version of this ramp rule in the publish path is the failure mode this
+    split exists to prevent -- a backpressure target and the wait it is
+    supposed to clear must share their instrument, or they drift apart at
+    exactly the config that is not the one anybody tested.
+    """
+    target = max(1, int(games_per_iter))
+    start = int(games_per_iter_start)
+    ramp_iters = max(0, int(games_per_iter_ramp_iters))
 
     if ramp_iters <= 0 or iteration_idx >= ramp_iters:
         return int(target)
@@ -219,6 +236,15 @@ def _games_per_iter_for_iteration(tc: TrialConfig, iteration_idx: int) -> int:
     frac = float(max(0, iteration_idx - 1)) / float(ramp_iters)
     value = float(start) + (float(target) - float(start)) * frac
     return max(1, round(value))
+
+
+def _games_per_iter_for_iteration(tc: TrialConfig, iteration_idx: int) -> int:
+    return games_per_iter_for_iteration_values(
+        games_per_iter=tc.games_per_iter,
+        games_per_iter_start=tc.games_per_iter_start,
+        games_per_iter_ramp_iters=tc.games_per_iter_ramp_iters,
+        iteration_idx=iteration_idx,
+    )
 
 
 def _sample_drift_arrays(src_buf: object, n: int) -> dict[str, np.ndarray]:
