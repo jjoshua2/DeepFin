@@ -1,228 +1,201 @@
-# PBT2 (PB2) search config — small model, 10 parallel trials on RTX 5090 (32 GB)
+# RESTART PROPOSAL -- NOT A LIVE CONFIG. Do not point train.sh at this file.
+# Written 2026-08-04 (restart package). Living context: scratchpad/restart_brief_20260802.md
+# -- this file EXECUTES that brief's keep/drop table; it does not replace it.
 #
-# Run 8: Raise w_wdl/w_soft defaults to PBT-converged values; expand high bounds.
-#   Run 7: PBT converged: w_wdl→0.95-0.98, w_soft→1.2 (ceiling). Gumbel values_out
-#   bug fixed (search Q now returned instead of stale root Q), enabling real diff-focus.
-#   New plateau: os≈278-280 (rmp≈0.27) vs old 222-224. Both weights hit upper bounds.
+# Provenance: scratchpad/config_audit_20260802/pbt2_small_minimal.yaml.PROPOSED (the audited
+# minimal core, 29 deletions, verified NO SEMANTIC DRIFT) PLUS the pre-registered restart
+# changes below. Every deletion's evidence: scratchpad/config_audit_20260802/CONFIG_AUDIT.md
 #
-# What PB2 searches now (2026-07-26: CORRECTED — the old list here named six
-# keys including diff_focus_q_weight, and also listed diff_focus_* under
-# "pinned" two lines later, contradicting itself. Only keys with a pb2_bounds_*
-# entry are searched, and there is exactly one):
-#   lr
+# Verify with scratchpad/restart_package_20260804/verify_restart_proposal.py, which extends
+# the 08-02 checker with an ADDED-key class. It must print 'NO SEMANTIC DRIFT'.
+# Findings summary: scratchpad/restart_package_20260804/verify_report.md
+# First-row observables for EVERY changed/added key: first_row_checks.md
+# Decisions the operator still owes: open_decisions.md
 #
-# What is pinned: everything else, including diff_focus_*, temperature,
-#   playout_cap_fraction, sf_policy_temp, sf_policy_label_smooth,
-#   feature_dropout_p, w_future, soft_policy_temp
+# Line classes, marked in place:
+#   PRE-REGISTERED -- a ledger entry with a yardstick and a kill rule already exists
+#   FLIP           -- deliberate, named; pinned to the value the loop already realizes
+#   ADDED          -- a key not in today's live yaml; the code that defines it IS on
+#                     origin/main today (verified by name in config_yaml.py's allowlists)
+#   PENDING        -- left at the live value on purpose; a running rig decides it
+#   PIN            -- inert TODAY, but deleting the line substitutes a dataclass default
+#                     written for a different era. The comment says what deletion flips.
 #
-# Data flow per iteration:
-#   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
+# ⚑ THE VALIDATOR IS ALL-OR-NOTHING. Every ADDED key here is in
+# chess_anti_engine/utils/config_yaml.py's section allowlist on origin/main (era_probe_* /
+# gate_* / replay_shard_recency_exponent in the TUNE section, salvage_seed_pool_dir in
+# _CORE_KEYS). None of them may be pasted into a RUNNING process on older code: an unknown
+# key rejects the WHOLE reload. They are safe here only because this file goes live at a
+# restart onto merged origin/main (blocker #114).
+#
+# ⚑ A LIVE RELOAD IS ADD/UPDATE-ONLY (TUNE_AUDIT T4). Deleting a line does NOT revert it on
+# a --resume; only a --fresh experiment rebuilds `config` from yaml+argparse. Everything the
+# "Deleted here" list removes therefore reverts ONLY on a --fresh start. See open_decisions.md
+# decision 1 -- the restart mode is an operator decision and it changes what this file means.
+#
+# Deleted from the live yaml: 29 keys (unchanged from the 08-02 audit).
+# Added by this package: 15 keys. Changed values: 5.
+# Deletions considered and DECLINED are listed at the bottom -- several 'dead' keys are
+# load-bearing PINS.
 
 seed: 0
 work_dir: runs/pbt2_small
 device: cuda
 iterations: 750
-replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
-replay_window_max: 1500000   # 2026-07-04: RECOVERY BANKED @ckpt524 (raw top-1 −1.7 and endgame value +1.3 vs ckpt457, both CIs include 0; value 72.15 ≈ the 72.4 known-good) → cap raised 800k→1.5M per the pre-committed plan. NOT back to 3M: 1.5M keeps data-path experiment clocks ~2 days instead of ~5. History: 2026-07-03 3M→800k→250k one-iteration eviction of the fast-ply-contaminated band→800k. Live-reloadable; shrink via enforce_window.
-replay_window_growth_frac: 1.0   # 2026-07-03: retain ALL new (clean) positions while regrowing post deep-cut (~482k @iter524). DROP TO 0.10 when the window reaches ~1.5M cap (~2 days at ~13.5k/iter). Prior: 0.10 (2026-05-28, grow slowly / retain ~10%).
-replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset.
-replay_sf_gap_priority_weight: 0   # 2026-07-05: EXPERIMENT #104 KILLED at the pre-committed ckpt559 readout — every kill threshold crossed: panel v1 18→24/35 (kill ≥20), v2 47→83/113 (kill ≥57), value_regret 72.1→86.0 paired Δ −13.8 [−22.4,−5.8]. Mechanism WORKED on its target (gap_resolution top-decile Δ +0.067) while bottom-half worsened → capacity theft at w=30; policy unchanged (CI includes 0). Do not re-enable at w=30; a low-w retry is a separate future experiment. History: activated w=30 @iter526 2026-07-04; dry-run 31.7% priority mass. Live-tunable; 0 = off. Baselines @ckpt524: panels 18/35 + 47/113, value 72.15, dumps scratchpad/policy_ci/*_ckpt524.jsonl.
-
-# Bootstrap: train initial net on all random games, then discard from window
-bootstrap_dir: data/bootstrap
-bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v5_iter239.pt  # os=334, reg=0.375
-bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
-worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
-bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
-bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
-shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
-# salvage_seed_pool_dir: intentionally omitted — set via CLI --salvage-seed-pool-dir.
-# If set here, the live YAML reload at trainable.py:68 clobbers any CLI-provided value.
-salvage_restore_donor_config: false   # Disabled: use GPBT-sampled LR (0.0003) not donor's 0.001
-salvage_restore_full_trainer_state: true  # Full optimizer + scheduler + step state
-salvage_restore_pid_state: true  # Copy PID controller state (regret, ema_winrate)
-salvage_reinit_volatility_heads: false  # Keep volatility heads from trial 3
+replay_window_start: 400000
+replay_window_max: 1500000
+# PIN (both lines). Inert only while the window sits at replay_window_max. On the
+# fresh-window regeneration this restart plans they are LIVE from iteration 1, and
+# deleting them substitutes 10000 / None instead of 20000 / 1.0.
+replay_window_growth_frac: 1.0
+replay_window_growth: 20000
+# DELETED replay_sf_gap_priority_weight: 0 disables the branch (disk_buffer.py:635 needs >0); replay_pmass_gap_share==0.0 on 478/478 rows; experiment #104 KILLED (rl_loop_audit H2)
+# DELETED bootstrap_dir: DEAD KEY - appears only in the config_yaml.py:44 allowlist, zero consumers in chess_anti_engine/
+# DECISION 1 EXECUTED 2026-08-04 (user-authorized restart; ledger entry this date).
+# Base = boot512 + fresh window regeneration (CLOSED 08-03, ledger 1e5e2bfab), mechanism
+# --fresh. These two lines are the ONLY fresh-start model source (trainable_init.py:461
+# fires when ckpt is None and no seed warmstart). PAIRED EDIT, both lines together:
+# bootstrap_zero_policy_heads MUST be false for boot512 -- true would ZERO its trained
+# policy heads at load (trainable_init.py:471-472). The old pointer
+# (data/bootstrap/bootstrap_net_v5_iter239.pt, value/trunk-only, zero_policy_heads: true)
+# is what any revert of this pair must restore -- never revert one line alone.
+bootstrap_checkpoint: /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+bootstrap_zero_policy_heads: false
+worker_wheel_path: null
+# DELETED bootstrap_max_positions: DEAD KEY - config_yaml.py:46 allowlist only, zero consumers
+# DELETED bootstrap_train_steps: DEAD KEY - config_yaml.py:46 allowlist only, zero consumers
+# DELETED shared_shards_dir: None, and ABSENT from the realized iter-478 config entirely
+# ADDED -- GHOST-KEY PURGE #1 of 7, and the only harmful one (TUNE_AUDIT T5).
+# The live trial's SAVED config carries
+#   salvage_seed_pool_dir = '/home/josh/projects/chess/data/salvage/swap_512x16_20260711'
+# -- the −494 Elo swap pool. Today's yaml deliberately OMITS the key, and omission cannot
+# clear it: both writers only add/update (harness.py:362), so the value has ridden every
+# restart since 2026-07-26. Reproduced live 2026-08-04 by
+#   PYTHONPATH=. python3 scratchpad/code_audit_20260803/tn_deleted_yaml_key_is_sticky.py
+# It is inert only while a resume FINDS a checkpoint (trainable_init.py:409 is an `elif
+# ckpt is None`). The day one does not -- Ray loses the manager list, checkpoints are pruned,
+# a checkpoint fails to materialise -- the trial silently warm-starts from that pool, and
+# guard_warm_start_lr does NOT stop it (3e-5 configured vs a HIGHER donor peak_lr passes the
+# ratio test in the safe direction).
+# WHY EMPTY STRING WORKS: trainable_init.py:409 requires a non-empty `.strip()`, so "" is a
+# hard disable, and flatten_run_config_defaults drops only None, never "".
+# ⚑ COST, STATED: naming this key here CLOBBERS any `--salvage-seed-pool-dir` CLI value
+# (the live-yaml reload overlays it). If you ever want a salvage-pool restart, blank or
+# delete this line in the SAME action as passing the CLI flag.
+salvage_seed_pool_dir: ""
+salvage_restore_donor_config: false
+salvage_restore_full_trainer_state: true
+salvage_restore_pid_state: true
+salvage_reinit_volatility_heads: false
+puzzle_epd: null
+puzzle_interval: 0
 
 model:
   kind: transformer
-  # 512x16 SWAP 2026-07-11 (ledger: "ARENA READ + GATE AMENDMENT"): topology
-  # switched from 384x12x12 (trial 5fac4 lineage, ~46M) to the offline-boot
-  # 512x16x16 profile. Must match the boot checkpoint's run_config exactly —
-  # revert vehicle: data/salvage/recover_ckpt751_20260711 (46M trunk).
   embed_dim: 512
   num_layers: 16
   num_heads: 16
-  ffn_mult: 1.5  # base value; per-layer profile below takes precedence
-  ffn_mult_by_layer: [1.5, 1.5, 1.5, 1.5, 1.5, 1.555556, 1.65, 1.772222, 1.894444, 1.666667, 1.638889, 1.905556, 1.783333, 1.794444, 1.744444, 1.5]
-  use_smolgen: true  # Pin to true (we know smolgen helps from spec)
-  smolgen_mode: per_layer  # Epoch-4 candidate topology: per-layer dynamic attention bias.
+  ffn_mult: 1.5
+  ffn_mult_by_layer: [1.5, 1.5, 1.5, 1.5, 1.5, 1.555556, 1.65, 1.772222, 1.894444, 1.666667, 1.638889,
+  1.905556, 1.783333, 1.794444, 1.744444, 1.5]
+  use_smolgen: true
+  smolgen_mode: per_layer
   smolgen_bias_scale: layer_head
   smolgen_bias_norm: center_rms
   smolgen_relation_basis: true
   smolgen_relation_norm: none
   smolgen_relation_coeff_norm: none
   smolgen_relation_scale: none
-  use_nla: false
-  input_pos_encoding: arc_adapter  # Zero-init square geometry adapter; safe warmstart from current best.
-  qkv_projection: split  # Split fused QKV for Aurora scope control; tolerant loader migrates old fused weights.
-  use_deepnorm: true  # Epoch-4 candidate topology.
-  policy_encoding: lc0_1858  # Keep production auto-resume compatible with the live compact-policy checkpoint stream.
-  input_history_encoding: lc0_root_legacy_meta  # Switched live to epoch-6 candidate input; replay keeps recorded LC0-root planes.
-  input_extra_features: v2_threats  # Production default: 175 planes. Keep explicit so fresh/salvage runs cannot fall back to legacy v1/146.
+  # DELETED use_nla: False; the NLA attention variant is off and its search flag (tune.search_nla) is off too
+  input_pos_encoding: arc_adapter
+  qkv_projection: split
+  use_deepnorm: true
+  policy_encoding: lc0_1858
+  input_history_encoding: lc0_root_legacy_meta
+  input_extra_features: v2_threats
   gradient_checkpointing: false
 
 stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
-  sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
-  sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
-  sf_label_nodes_cap: 0  # 2026-07-02 (late): 400k->0 UNCAPPED — full-refill read at ckpt478 fired the second kill: net+search 52.2 vs 49.6 baseline (>2cp), and raw top-1 61.7 vs 51.5 NEVER recovered from the cap era (60.7 at ckpt466) — the policy teacher needs full ~700k-node labels. Label-cost saving abandoned; leg 2 (fast-ply rows) was killed the same evening — only views survives the triple. History: uncapped->150k (2026-07-01) ->400k (07-02 early) ->0. NOTE: label-node changes shift SF-pool congestion -> finished-game counts -> PID winrate-sample bias; expect n_games and measured winrate to move again. Next read after another refill: if policy still >2cp worse than 49.6, suspect trunk dilution from the 75% value-only rows (levers: per-row loss weighting / record_fast_ply_value off).
+  # FLIP sf_nodes: 5000 -> 50000
+  #   PIN TO REACHABLE. pid.py:961 uses this as initial_nodes and pid.py:487 immediately clamps it
+  #   into [sf_pid_min_nodes, sf_pid_max_nodes] = [50000, 1000000], so 5000 can never be the node
+  #   count even at cold boot. The published reco reads 698289 (the PID's live base_nodes).
+  sf_nodes: 50000
+  sf_move_nodes: 0
+  sf_label_nodes_cap: 0
   sf_workers: 4
-  sf_nice: 19              # Run SF at lowest CPU priority so search/dispatch/GPU batching wins contention.
-  sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
-  # 2026-07-30 16→17: a DELIBERATE 1 MB no-op used as a graceful-teardown
-  # trigger. sf_hash_mb is a _RECO_RESTART_KEY, so changing it makes every
-  # worker tear its selfplay session down through the REAL stop path (which
-  # runs on_suspend) and start a new one — the exact code path a process
-  # restart uses, WITHOUT the SIGKILL that would destroy the suspend. It is
-  # also in _RESUME_COMPAT_EXEMPT_KEYS ("no bearing on a stored ply"), so it
-  # cannot invalidate a suspended game's compat fingerprint. 1 MB is chosen to
-  # make the SF-strength perturbation negligible while still changing the key.
-  # This is the first flag-ON teardown, i.e. the owed test of PR #287.
-  sf_hash_mb: 17           # Larger TT helps at higher node counts
-  # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
-
+  sf_nice: 19
+  sf_multipv: 40
+  sf_hash_mb: 17
   sf_pid_enabled: true
-  sf_pid_target_winrate: 0.50  # 2026-06-29: 0.575→0.50 (user). Winrate parked ~0.63 well above the old target with regret settling ~0.050 (NOT heading to the 0.0075 floor); per-iter steps are sub-cap so the cap knobs don't help — the lever is the target. Target=0.50 (even match) spends the headroom to drive regret toward full SF strength, then stage 2 climbs nodes past 698k. Airbag floors dropped to 0.45 to sit below the new target. Live-reloadable. 2026-05-29: 0.58→0.575.
-  sf_pid_ema_alpha: 0.05      # 2026-04-29: 0.20→0.10→0.05. Offline bake-off (200 episodes × ~30 candidates against a logit-fit plant β=2.18, drift=-0.0064/iter, walk_std=0.31) shows raw_wr behavior is invariant across α (raw_rmse=0.264 universally) — controller is already raw-driven via the inverse fit's history; ema only gates a deadband that almost never fires. Lower α earns a cleaner ema dashboard (settle 50.8 vs 54.4 iters) and a measurably bigger raw-vs-ema lead (~14 iter half-life vs 6.6) which matches the "trust raw, treat ema as stale" intuition. Live-reloadable.
-  sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
-  sf_pid_min_games_for_adjust: 30  # 2026-06-29 (user, PR #83): hard floor on the FINISHED curriculum sample required to step the levers, NOT bypassed by the forced boundary adjust. At 698k-node SF only ~5-7 curriculum games finish/iter (ingest ~96% selfplay), so a 2-game raw 0% was noise tripping the airbag; below this floor the levers hold and held W/D/L pool across iterations until ≥30 games accumulate, then the step scores on the combined sample. 0 = legacy/off.
-  sf_pid_min_nodes: 50000        # 2026-04-28: 1→50000. Going back to high-nodes regret-controlled training (stage 1). 50k nodes gives clean WDL labels + sharp sf_policy targets even when SF play is regret-handicapped. Difficulty knob is regret, not nodes. Live-reloaded: refresh_live_params re-clamps the node count into [min,max] each iter (was construction-only before the node-bounds live-reload).
-  sf_pid_max_nodes: 1000000      # 2026-04-23: raise ceiling to 1M. Compute cap, not control. Live-reloaded: refresh_live_params re-clamps the node count into [min,max] each iter (was construction-only before the node-bounds live-reload).
-  sf_pid_wdl_regret_start: 0.20       # Construction-only; only matters on fresh PID restart.
-  sf_pid_wdl_regret_min: 0.0075       # 2026-06-17: 0.01 → 0.0075. Live-reloaded. Stage 1 regret-lever can drop all the way to 0.0075 (full SF strength); stage 2 only takes over after regret hits stage_end below.
-  sf_pid_wdl_regret_max: 0.70         # 2026-04-29: 0.50→0.70. Joint-fit plant on iters 5-83 says wr at regret=0.50 is only ≈0.43 (current model is too weak vs SF@50k); regret=0.70 brings predicted wr to ≈0.55 — finally inside the airbag-free band. Bake-off across 17 controllers shows ceiling-bump is the single biggest win (RMSE 0.259→0.226, airbag rate 0.61→0.52). Live-reloadable. The airbag still catches real crashes; widening the ceiling just stops capping the lever's authority before it can compensate the model's degraded plant.
-  sf_pid_wdl_regret_stage_end: 0.0075 # 2026-06-17: 0.01 → 0.0075 (tracks regret_min). 2026-04-28: -1 → 0.01 (re-enabled). Disabled-gate path turned out to silently activate the nodes lever (stage_complete=True set unconditionally → nodes lever ran every iter), ratcheting nodes from 50k → 79k while regret was also tightening — dual-knob "make harder" without telling us. pid.py:501 now requires gate_enabled too, so re-enabling the gate gives the original "regret descends in stage 1, nodes takes over after floor" semantic. Wedge bug fix at pid.py:486 (regret unfreezes when nodes <= min_nodes) prevents the original day-1 wedge.
-
-  # Regret + nodes inverse-fit levers: each fits observed (lever, winrate)
-  # history via weighted least squares and steps toward the value that
-  # predicts target winrate. Weights are 1/SE² where SE comes from the W/D/L
-  # distribution per iter. Regret moves first; nodes only move once regret
-  # has settled at stage_end. Both stages share the same step / dual z-gate /
-  # raw-vs-fit-disagreement code (chess_anti_engine/stockfish/pid.py:_step_lever).
-  sf_pid_regret_window: 20            # rolling history length (construction-only)
-  sf_pid_regret_max_step: 0.10             # 2026-04-28: 0.02→0.10. Was clamping emergency-ease to 0.02 even when emergency_ease_step was higher (airbag uses min(ease_step, max_step)). Raised to 0.10 so a real airbag actually rescues the model in 1-2 fires instead of 10+. Live-reloadable.
-  sf_pid_regret_max_step_frac: 0.03        # 2026-04-28: 0.10→0.05. 2026-05-02: 0.05→0.03. Model oscillating at regret 0.30-0.32 for ~12 iters; slowing tighten step to ~0.009/iter at regret=0.30 to force longer dwell before pushing lower. Live-reloadable.
-  sf_pid_regret_ease_step_frac: 0.03       # 2026-05-14: 0.06->0.03; normal ease matched to tighten cap after overshooting loose at 1500 games/iter. Emergency airbag unchanged.
-  sf_pid_regret_tighten_streak_after: 2    # 2026-05-09: damp only repeated hardening. Audit on iters 620-685: streak3/0.5 helped 3, hurt 1, neutral 5; avoids blanket under-hardening.
-  sf_pid_regret_tighten_streak_gain: 1.0   # 2026-07-02: 0.5→1.0 — accelerate tightening after the iter-460 airbag ease (regret 0.04→0.09; honest n~950 sample said 0.09 ≈ true wr 0.50). The 400k label cap re-congested SF (finished curriculum sample 850→61-200/iter, survivorship-inflated raws ~0.77) and the lever was pinned at its damped cap ~0.0013/iter. RESTORE 0.5 when EMA nears ~0.52 (same maneuver 2026-06-30: regret 0.050→0.0426, wr 0.63→0.48 over ~20 iters). Live-reloadable. (prior off-window: 1.0 for ~iters 390-406.)
-  sf_pid_regret_crash_ease_z: 2.0          # 2026-05-09: if raw score is >2σ below target, require a minimum normal ease response even when the inverse fit is stale.
-  sf_pid_regret_crash_ease_min_frac: 0.5   # 2026-05-09: minimum 50% of normal ease cap on >2σ underperformance; softer than point-estimate raw<0.50 airbag.
-  sf_pid_regret_safety_floor: 0.45         # 2026-06-29: 0.50→0.45 (user) — target lowered to 0.50, so the airbag must sit below it; only a real collapse (raw < 0.45) trips emergency ease. below this raw winrate → emergency ease
-  sf_pid_regret_emergency_ease_step: 0.05  # 2026-04-28: 0.10→0.05. 0.10 was overshooting equilibrium — single-iter dip 0.27→raw=0.46 (2.3σ below 0.50 floor) airbagged to 0.37, double the actual handicap shortfall. 0.05 still rescues real crashes in 2-3 fires while halving overshoot near equilibrium. max_step kept at 0.10 (caps airbag); airbag effective step is now min(0.05, 0.10)=0.05. Live-reloadable.
-  sf_pid_regret_recency_half_life: 1.0     # 2026-04-29: 2.0→0.5. 2026-05-01: 0.5→1.0. Backtest on 65 post-restart iters showed hl=0.5 produced 10/65 degenerate fallbacks (fit collapsed to <3 effective points) vs 7/65 at hl=1.0, with better prediction RMSE (0.0544 vs 0.0558). Salvage-stale-data concern no longer applies — history is 65 iters of fresh current-run observations. Live-reloadable.
-  sf_pid_regret_deadband_sigma: 1.0  # 2026-05-29: 0.75→1.0 to reduce near-target twitch on noisy raw winrate while keeping the separate safety-floor airbag. Live-reloadable.
-  sf_pid_regret_degen_step_frac: 0.5  # Fraction of abs_max_step taken when the inverse fit is degenerate (slope wrong-sign or det≈0). Direction is known but magnitude is not — a full step would be overconfident. Start at 0.5; tune down if oscillation persists, up if convergence is too slow. Live-reloadable.
-
-  # Nodes lever (stage 2). Same inverse-fit mechanism as regret but with
-  # direction=+1 (raising nodes makes Stockfish stronger). Once stage 2 is
-  # entered, the regret lever freezes for good — wr crashes are handled
-  # entirely by the nodes airbag below, which can drop nodes all the way
-  # to min_nodes=1 if needed. Single-knob-per-regime keeps cause and
-  # effect attributable.
-  #
-  # NOTE: regret-side knobs were tuned via the 168-iter walk-forward
-  # backtest; nodes-side knobs are mirrored from regret as a starting
-  # point and have not been calibrated against real data. Expect to
-  # revisit once the controller has spent meaningful time in stage 2.
-  sf_pid_nodes_window: 20                 # construction-only
-  sf_pid_nodes_max_step_frac: 0.10        # 2026-04-27: 0.05→0.10 — at 0.05 the normal-step cap (~330 @ 6700 nodes) couldn't drop nodes fast enough when raw_wr sagged, so we kept hitting the 0.50 airbag (8 fires by iter 334). Restoring the original cap; airbag is a worse outcome than oscillation. Live-reloadable.
-  sf_pid_nodes_deadband_sigma: 2.0        # 2026-04-27: 1.5→2.0. Gives raw=±12.4%, ema=±2.8% (at se≈0.062, α=0.10). Just under the ±3% target; matched the user's "maybe 2 is good" call. Holds the lever through normal slow EMA drift, only acts on persistent >2.8% bias from target. Live-reloadable.
-  sf_pid_nodes_recency_half_life: 3.0     # mirror regret-side half-life.
-  sf_pid_nodes_degen_step_frac: 0.5      # same semantics as regret-side; half-step when fit is degenerate. Live-reloadable.
-  sf_pid_nodes_safety_floor: 0.45         # 2026-06-29: 0.50→0.45 (user), tracks the regret airbag floor below the new 0.50 target. raw_wr < floor → airbag drops nodes by emergency_ease_step.
-  sf_pid_nodes_emergency_ease_step: 1000  # absolute nodes drop on airbag fire.
-  # sf_pid_nodes_max_step intentionally unset: the frac cap (above) is the
-  # only normal-step bound; an absolute cap would silently override frac at
-  # high node counts (10% of 500k = 50k > 5k absolute) and create operator
-  # surprise. Airbag step is bounded by emergency_ease_step alone.
+  sf_pid_target_winrate: 0.5
+  sf_pid_ema_alpha: 0.05
+  sf_pid_min_games_between_adjust: 200
+  sf_pid_min_games_for_adjust: 30
+  sf_pid_min_nodes: 50000
+  sf_pid_max_nodes: 1000000
+  # ⚑ PIN, AND IT STOPS BEING INERT AT THIS RESTART. Construction-only: it only matters on a
+  # FRESH PID start, which is exactly what a --fresh experiment does (the three-restart-mode
+  # table: PID state is "fresh from yaml" only in that column). Every prior restart resumed
+  # pid_state.json, so 0.20 has been dormant. On a fresh start it sets the opening difficulty
+  # -- and remember PID regret runs BACKWARDS: higher regret = WEAKER SF = easier. 0.20 is
+  # far easier than the 0.0689-0.0984 the run actually settled at, i.e. a deliberate easy
+  # start that the controller then tightens.
+  sf_pid_wdl_regret_start: 0.2
+  sf_pid_wdl_regret_min: 0.0075
+  sf_pid_wdl_regret_max: 0.7
+  sf_pid_wdl_regret_stage_end: 0.0075
+  sf_pid_regret_window: 20
+  sf_pid_regret_max_step: 0.1
+  sf_pid_regret_max_step_frac: 0.03
+  sf_pid_regret_ease_step_frac: 0.03
+  sf_pid_regret_tighten_streak_after: 2
+  sf_pid_regret_tighten_streak_gain: 1.0
+  sf_pid_regret_crash_ease_z: 2.0
+  sf_pid_regret_crash_ease_min_frac: 0.5
+  sf_pid_regret_safety_floor: 0.45
+  sf_pid_regret_emergency_ease_step: 0.05
+  sf_pid_regret_recency_half_life: 1.0
+  sf_pid_regret_deadband_sigma: 1.0
+  sf_pid_regret_degen_step_frac: 0.5
+  sf_pid_nodes_window: 20
+  sf_pid_nodes_max_step_frac: 0.1
+  sf_pid_nodes_deadband_sigma: 2.0
+  sf_pid_nodes_recency_half_life: 3.0
+  sf_pid_nodes_degen_step_frac: 0.5
+  sf_pid_nodes_safety_floor: 0.45
+  sf_pid_nodes_emergency_ease_step: 1000
 
 selfplay:
-  # 2026-07-24: 3520 -> 440. The 3520 target was 7.7x real throughput (measured
-  # 459 games / 2250s = 0.204 games/s = 734 games/h), so min_games (0.90*3520 =
-  # 3168) was UNREACHABLE: the soft deadline could never fire and EVERY
-  # iteration ran to the hard ceiling (720*3 = 2160s) and bailed with
-  # "ingest hard timeout ... all workers likely stale" (19x in the current log).
-  # That warning was pure noise and masked real staleness. 440 is just above
-  # measured per-iteration yield, so the loop now exits because it MET its
-  # target; the deadline goes back to being a safety net. Behavior-neutral by
-  # design (same ~40min period, same games) — deliberately NOT a throughput
-  # change, so it does not confound the live views=5 readout.
   games_per_iter: 440
-  games_per_iter_start: 440   # match games_per_iter; ramp disabled. Live-reloadable.
-  games_per_iter_ramp_iters: 0
-  # 2026-07-24: 0.35 -> 0.50, PAIRED with the in-flight-abandonment fix (PR #224).
-  # This is a SLOT roll, not a completed-game share. Until #224 those two numbers
-  # were wildly different: 65% of slots rolled curriculum but only 16.5% of
-  # COMPLETED games were curriculum, because every FEN-list rewrite restarted the
-  # session and abandoned ~89% of them mid-game (57.9% of ALL started games were
-  # thrown away). With #224 the roll and the realized share converge, so leaving
-  # this at 0.35 would swing the realized curriculum mix 16.5% -> 65% in one step.
-  # 0.50 is the deliberate intermediate. Note it also LOWERS SF load vs today
-  # (curriculum slots 65% -> 50%) while actually finishing those games: the SF
-  # compute was already being spent on them and then discarded.
-  # Prior: 0.35 from 2026-07-23 targeted-SF retry (65% full SF + 90%x3 refutes).
-  selfplay_fraction: 0.50
-  record_fast_ply_value: false  # 2026-07-02: REVERTED true->false (throughput-triple leg 2 killed). Evidence: raw policy top-1 51.5->61.7 never recovered (trunk dilution from 75% value-only rows) + value 72.4->76.6 across the leg's window; ledger entry + revert pool data/salvage/prechange_20260702_ckpt479. LIVE-propagated (~30 min): it is a _RECO_RESTART_KEY, so a change triggers an AUTOMATIC worker-session restart — NOT an operator `train.sh restart` (a live YAML flip DOES take effect; the 07-02 branch-switch incident re-propagated it live). 2026-07-01 (PR #91) history: value-only fast rows, ~4x rows/game.
-  # 2026-07-27 RESTORED — these were ON in June (PR #78, "the June policy win",
-  # net+search E[regret] 56.7 -> 49.6 cp) but ONLY as UNCOMMITTED working-tree
-  # edits, so they were silently reverted and have been OFF ever since. Verified
-  # 2026-07-27: `git log --all -S record_sf_p0_policy -- configs/` finds them in
-  # NO commit on ANY branch, and no live shard carries a has_sf_p0 key.
-  # They record SF's analysis of the net's OWN position, obtained free via a
-  # within-game one-record shift: when two consecutive plies are both stored
-  # 256-sim records, ply (t-1)'s sf_policy IS SF's read of ply t's position.
-  # This is the ONLY move-teacher; policy_sf (w_sf_move) is the OPPONENT's reply
-  # distribution at P1 and explicitly not one. Coverage ~24% of selfplay rows
-  # (needs consecutive full-sim plies). Both are _SELFPLAY_KEYS + _RECO_RESTART_KEYS,
-  # so a live yaml flip propagates via an AUTOMATIC worker-session restart at the
-  # next iteration boundary — no operator restart. Affects NEWLY recorded data
-  # only, phasing in as the ~1.5M window refills (~a day).
-  # PIN THE REALIZED VALUE: code defaults are False (tune/trial_config.py:246-247),
-  # so an absent key here means OFF, not "unchanged".
+  # DELETED games_per_iter_start: ramp_iters is 0 so there is no ramp; start==games_per_iter. trainable_metrics.py:213
+  # DELETED games_per_iter_ramp_iters: 0 = no ramp. trainable_metrics.py:214
+  selfplay_fraction: 0.5
+  record_fast_ply_value: false
   record_sf_p0_policy: true
   record_sf_p0_regret: true
-  selfplay_batch: 384   # 2026-07-02 arrival-stream POC: 256->384 (fatten ready-pool so broker batches grow; RAM headroom 71G). Revert to 256 if pos/s flat or RAM/latency degrades.
-  slot_oversubscribe: 2.0  # 2026-07-12 activation (PR #151, ledger entry): 2x continuous slots so selfplay work stays runnable while curriculum SF moves fly. _RECO_RESTART_KEY (worker-session restart on change). KILL: games/h < 641/h (iter-7 fresh baseline) 2 iters sustained, worker RSS +4G, or broker p95 +20% -> revert to 1.0.
+  selfplay_batch: 384
+  slot_oversubscribe: 2.0
   max_plies: 450
-  history_rep_fix: true  # 2026-06-17: lc0-root repetition-plane correctness fix; affects ~0.2% of positions; net-neutral-to-faster. Propagates as the replay window refills.
-
-  # 2026-07-30: ENABLE the C14b source fix (PR #287, pre-registered in the ledger
-  # 2026-07-29 as "not yet live, flag default OFF"). The 11:09 restart put the
-  # workers on code that DEFINES this key, which was the pre-condition the ledger
-  # deploy note set for adding it here at all (unknown key => whole reload rejected).
-  # Without it a teardown abandons every in-flight game, the survivors are
-  # LENGTH-TRUNCATED, and the PID tightens regret -0.0086..-0.0107 on a winrate
-  # that reads +0.110 too high -- ~88 iterations of progress, on 30% of all rows.
-  # Live proof it was still firing: iter 373 read w/d/l 65/0/1, avg_plies_draw 0.0,
-  # curriculum_winrate_raw 0.985 vs ema 0.568, and booked pid_regret_delta -0.00207.
-  # _RECO_RESTART_KEY: flipping it costs exactly ONE more abandonment, so it is
-  # being flipped INSIDE the window the 11:09 restart already opened rather than
-  # later into clean rows.
-  # VERIFY: outcome_stats.resumed_inflight_games > 0 after the NEXT teardown -- if
-  # it is 0 or absent nothing was resumed and the ledger yardstick measures nothing.
+  history_rep_fix: true
   selfplay_resume_inflight_games: true
-
-  temperature: 0.0       # 2026-05-17: root audit found even tiny final-action temp worsened SF regret; keep exploration in Gumbel/root noise instead.
+  # ⚑ PIN (all 10 temperature* lines). They are INERT in effect -- every start and endgame
+  # is 0.0, so temperature_for_ply returns 0.0 on every branch -- and they are the single
+  # most dangerous deletion in this file: without them `temperature` defaults to 1.0,
+  # `temperature_endgame` to 0.6 and `temperature_decay_moves` to 60. DELETING THESE LINES
+  # TURNS STOCHASTIC PLAY ON. Production selfplay is fully deterministic past move 15
+  # (all temperatures 0.0, gumbel_scale decays to 0 at move 15) and that is load-bearing.
+  temperature: 0.0
   temperature_drop_plies: 0
   temperature_after: 0.0
   temperature_decay_start_move: 20
   temperature_decay_moves: 0
   temperature_endgame: 0.0
-  selfplay_temperature: 0.0  # 2026-05-18: reverted early selfplay sampling after it correlated with regret drift from ~0.18 back toward ~0.19.
+  selfplay_temperature: 0.0
   selfplay_temperature_decay_start_move: 1
   selfplay_temperature_decay_moves: 60
   selfplay_temperature_endgame: 0.0
-
   opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2_no8overlap_uho060110.pgn.zip
   opening_book_max_plies: 4
   opening_book_max_games: 200000
@@ -230,907 +203,546 @@ selfplay:
   opening_book_path_2: /home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip
   opening_book_max_plies_2: 16
   opening_book_max_games_2: 200000
-  opening_book_mix_prob_2: 0.95  # 2026-05-28: favor the stronger/deeper 8-move UHO book; keep 5% shallow 2-move diversity.
-  random_start_plies: 2   # Fallback if book unavailable
-  # --- Blind-spot FEN seeding (PR #108) ACTIVATED 2026-07-06 @ckpt612 ---
-  # Start ~2% of games FROM the 76 historically-misplayed positions (panel v2
-  # MINUS v1; panel v1's 35 rows HELD OUT as the generalization yardstick), net
-  # forced onto the blundering seat so SF refutes the losing move on-board. The
-  # 07-03 probe sweep proved search can't rescue these at any depth — only data
-  # can. Pre-activation baselines @ckpt609 (scratchpad/live_read/): value 75.9,
-  # panel v1 23/35 BLIND (PRIMARY), panel v2 70/113 BLIND (secondary).
-  # 2026-07-08 SCALE-UP: v1 FEN seeding WORKED (v1 BLIND 23->16/35 @ckpt669, sev
-  # +0.26 SIG, value guardrail NS). Now feeding v2 = v1 (76) + 68 deep-SF-VETTED
-  # (4M nodes + 6-man TB, deep-LOST) live-harvested blind spots. v3 = v2 minus 30
-  # LEARNED v1 seeds (net_q<=-0.4 @ckpt678, blindspot_resolution.py) = 46 unsolved
-  # v1 + 68 vetted = 114 seeds, 0 panel-v1 overlap. Dose 0.05 (~0.3 game/seed/iter,
-  # ~2x the validated v1 per-seed rate). 07-08 DIAL-DOWN: 0.22/0.17/0.14 STARVED the
-  # PID curriculum sample (seeded games are short + mostly selfplay-tagged + seeded
-  # curriculum excluded from the PID sample) — 323->64->11 games over 3 iters, breached
-  # the 30 floor at iter 685, so reverted to 0.05 to restore PID control. Poison-safe
-  # (deep-vetted -> in-loop SF labels correct). Baseline @ckpt~683 (value 74.3,
-  # v1 16/35). PRIMARY: v1 BLIND severity holds/improves. SECONDARY: vetted-seed
-  # resolution (retire AWARE). GUARDRAIL/KILL: value_regret paired vs baseline
-  # worse >2cp -> revert to 0.02. WATCH: PID sample (seeded curriculum games
-  # excluded from PID) — if sf_pid games < 30 or airbag trips, dial dose down.
-  # Live-reloadable; revert instantly if value moves.
-  # Live seed list is auto-retired by scripts/blindspot_retire_step.py (versioned
-  # blindspot_fens_retire_<tag>.txt). As of 2026-07-09: retire_720 = 85 FENs
-  # (16 AWARE seeds dropped from retire_700). Dole activation used v3 (115);
-  # retirement shrinks the list without changing the dole mechanism.
-  # 2026-07-10: += 64 cheese-match-mined seeds (retire_732's 80 + 64 new =
-  # 144; see docs/experiment_ledger.md). opening_fen_list_path is
-  # live-reloadable (server republishes the source file every manifest
-  # publish) — edits here (new tranche, auto-retirement, reinstatement)
-  # take effect on the next publish, no restart needed.
-  # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
-  # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
-  # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
+  opening_book_mix_prob_2: 0.95
+  # PIN. Unreachable only because opening_book_prob is 1.0; keeping it means this deletion
+  # is not conditional on another key not moving.
+  random_start_plies: 2
   opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_478.txt
-  opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
+  # DELETED opening_fen_prob: 0.0, and structurally superseded: opening.py:79-88 disables the probabilistic draw entirely while opening_fen_dole_per_iter>0
   opening_fen_net_side_to_move: true
-  # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
-  # Each iter the server hands the WHOLE live seed list to ONE worker poll (durable per-iter
-  # gate); played as SELFPLAY slots only → PID-safe by construction (no curriculum starvation,
-  # the failure mode that capped opening_fen_prob at 0.05). dose 1 = each seed once/iter
-  # (≈85 at retire_720; was ≈115 at dole activation on v3).
-  # selfplay seeded games/iter. Threaded-path delivery wired+verified. Live-reloadable.
-  # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
-  # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
-  # 2026-07-30 16:2x: SEEDING BACK ON at a deliberately small dose (user request).
-  # This reverses the 2026-07-26 kill below. Read that first — the contamination
-  # it cites is REAL and is NOT yet resolved; this is a bounded trial, not a
-  # clearance. What changed: nothing about the pool. What bounds the risk:
-  # max_fraction 0.25 -> 0.08 (see that key), which is ~16% of SELFPLAY at
-  # selfplay_fraction 0.50, i.e. ~35 of ~440 games.
-  # Net-side vetting of a filtered 80-seed subset kept 6, but the PAIRED lift
-  # that would say whether those 6 are blind spots or merely "positions where
-  # most moves lose" is STILL UNMEASURED — three separate defects were found in
-  # that instrument on 2026-07-30 (see scripts/blindspot_netside_vet.py). Do not
-  # cite the "6 vetted seeds" as evidence this pool is clean.
-  # A curated 6-seed list is NOT possible while live: opening_fen_list_path
-  # (line ~269) is rewritten EVERY ITERATION by the harvest/retire pipeline, so
-  # any custom path is clobbered within ~12 min. That is why this runs on the
-  # live pool.
-  # ⚑ REVERTED 2026-07-30 16:37, ~11 min after the enable above, by the
-  # pre-registered rule — BEFORE the change ever reached a worker, so this cost
-  # nothing. The admission gate FAILED:
-  #
-  #   [netvet:net] surveyed=80 blunders=28 expected_if_random=25.60 lift=1.09x
-  #
-  # The net blundered on 28 of 80 seeds; a RANDOM mover would have blundered on
-  # 25.6 of the SAME positions at the SAME depth — a 0.47 sd gap, i.e. chance.
-  # Pre-committed bar was lift >= 2.0 (ledger, 2026-07-30 pre-registration).
-  # This was the BEST case: severe80 is a filtered subset, and
-  # `unplayable_dropped=0` says all 80 were winning positions for the mover.
-  # ⚑⚑ THE ABOVE VERDICT IS RETRACTED (2026-07-30 ~17:00). It was measured on
-  # the WRONG FILE. severe80.txt has ZERO overlap (len(a & b) == 0) with the
-  # live pool data/blindspot_fens_retire_389.txt, and was drawn from the
-  # stream harvest_gate_step.py ALREADY REJECTS. It could not have described
-  # the live pool. Do not cite lift=1.09x for anything.
-  # The gate was also the WRONG INSTRUMENT. blindspot_netside_vet.py asks a
-  # TYPE B question (is the position fine but the net's MOVE losing?) and the
-  # live pool is TYPE A by construction (the net's VALUE says fine, deep SF
-  # says lost) — harvest_gate_step.py keeps on SF at the PRE-move position and
-  # rejected 8963 / kept 2734 on exactly that split. A gate that cannot fire on
-  # the population it guards is not a gate.
-  # RE-SPECIFIED GATE (ledger 5d265ba9b, pre-committed BEFORE the number
-  # existed): LIVE(seed) := net_q >= 0.2 AND sf_q <= -0.5 at 2M nodes, via
-  # scripts/blindspot_value_gap.py, on the LIVE pool.
-  #   MEASURED 2026-07-30: 39 LIVE / 162 scored = 24.1% (95% lower bound 17.9%)
-  # ⇒ passes the pre-committed LIVE >= 15% bar. NOTE this is a LOWER bound: a
-  # further 47/162 sit at net_q in [-0.2, 0.2) with sf_q <= -0.5, which the
-  # documented value-head compression (|net_q| <= 0.456 where |sf_q| = 1.000)
-  # makes arguably Type A too. Threshold kept AS PRE-REGISTERED, not widened
-  # post-hoc.
-  # This key is NOT live-reloadable. It is in worker.py `_RECO_RESTART_KEYS`,
-  # so changing it triggers a graceful selfplay-session restart and a C14b
-  # window (~9-12 contaminated rows, ~-0.01 spurious regret tighten).
-  # ⚑⚑ CORRECTION 2026-07-30 17:31: the claim that the 16:26 enable "never
-  # reached a worker, so the revert cost nothing" is FALSE. The worker log
-  # proves otherwise:
-  #   16:33:08 worker_01  dole: capped seeded games 363+327 -> 19+17 (max 36)
-  #   16:33:08 worker_01  dole: received 363 seed(s) x1 -> live session;
-  #                             sf_refute=17 (frac=0.90 plies=3 iter=1966)
-  #   16:47:19 + 16:47:49  restarting selfplay session
-  #                             [restart_keys=opening_fen_dole_per_iter]
-  # So the 11-minute episode DID dole one iteration and DID cost two session
-  # restarts. I reached the wrong conclusion by grepping for a restart-trigger
-  # line before the revert had propagated, and never re-checked afterward.
-  # Rule: a NEGATIVE log check is only valid if taken AFTER the propagation
-  # deadline, and the dole rides a ~30s manifest poll, not the yaml write.
-  # Useful side effect: this is the cap's first live confirmation --
-  # 0.08 x ~450 games = max 36, and 363+327 candidates were cut to 19+17.
-  # ⚑ ENABLED 2026-07-30 17:30, at iteration boundary 395->396.
-  # Baseline row 395: wdl_regret 0.06889, pid_raw_winrate 0.4413,
-  # curriculum_draw_rate 0.6009, avg_plies_draw 123.39.
-  # Rows 393-395 sit after the 16:47 restart but ARE usable as a baseline,
-  # because the C14b resume fix (deployed 12:31) held across it -- see the
-  # yardstick reading recorded in docs/experiment_ledger.md for 2026-07-30.
-  # Steady state is already reached: plies_draw 121.97 -> 124.16 -> 120.66 ->
-  # 123.39 with NO ramp, vs the pre-fix 11:09 restart which took ~17 iters to
-  # climb 0.00 -> 123. Do NOT read that as licence to trust avg_plies_* as a
-  # contamination detector going forward -- the fix is exactly what makes it
-  # read healthy. Judge the seeding readout on pid_raw_winrate and
-  # curriculum_draw_rate.
-  # KILL: curriculum_draw_rate < 0.30, or value_regret degrading vs the
-  # pre-flip anchor. Revert = this key to 0 (+ opening_fen_prob 0.05).
-  # Revert point: data/salvage/pre_seeding_20260730 (ckpt393, WEIGHTS+OPTIMIZER
-  # ONLY — shards=0, task #75; this is not a full rollback).
-  # READOUT: drop the first 12 rows (C14b). Judge on pid_raw_winrate /
-  # curriculum_draw_rate, NEVER on avg_plies_* — the resume fix makes those
-  # read healthy on contaminated windows.
   opening_fen_dole_per_iter: 1
-  # This is the documented KILL above (dose 0). Rationale: (a) one data-affecting
-  # change per readout window and the LR change owns this one; (b) the pool is
-  # measurably contaminated — of 26 long-stuck seeds, SF rates them median 0.500
-  # at EVERY rung from 300k to 5M nodes (vs 0.35 for seeds the net actually
-  # learned), i.e. they were never blind spots and were consuming dole budget.
-  # See the 2026-07-26 FINDING in docs/experiment_ledger.md.
-  # NOTE do NOT try to disable seeding via opening_fen_dole_max_fraction: on that
-  # key 0 means UNCAPPED, which would cause the dole runaway, not stop it.
-  # opening_fen_prob is already 0.0; opening_fen_sf_refute_frac becomes inert
-  # with no seeded games. Live-reloadable — restore by setting this back to 1.
-  # 2026-07-24 (PR #223, NEW KEY — requires the restart onto that code; adding it
-  # to a running older build makes the strict validator reject the WHOLE reload).
-  # Upper bound on seeded games/iter as a fraction of games_per_iter. The dole
-  # hands the WHOLE list out every iteration, so without this the seeded share is
-  # just pool_size/capacity: the pool grew 141->341 in ~11h and the seeded share
-  # went 81.8% -> 93.4% -> 98.9% -> 100.0%, i.e. ZERO normal-opening selfplay
-  # games. NOTE it bounds a fraction of TOTAL games, while the thing we actually
-  # want to cap is the seeded share of SELFPLAY. With selfplay_fraction 0.50,
-  # selfplay is ~220 of 440 games, so "seeded <= half of selfplay" = 110 games =
-  # 0.25 here. (0.5 would allow 220 seeded = ~100% of selfplay, i.e. exactly the
-  # runaway this cap exists to stop -- the two fractions are NOT the same number.)
-  # Both channels rotate, so nothing in the tail is starved. 0 = uncapped.
-  # 2026-07-30: 0.25 -> 0.08 for the bounded re-enable above. Per the arithmetic
-  # in this comment block, 0.08 of TOTAL games is ~0.16 of SELFPLAY — roughly a
-  # third of the previous ceiling. Still NOT 0: on this key 0 means UNCAPPED.
   opening_fen_dole_max_fraction: 0.08
-  # 2026-07-19: SF-refutation channel on top of selfplay dole — value-blind-spot
-  # lever. Round-robin 50% of the live seed list each iter as short curriculum
-  # games: SF plays the first 3 opponent plies (breaks net-net collusion on
-  # fantasy evals), then the slot hands off to selfplay. Fenlist stays out of
-  # the PID sample. KILL: set both to 0. Ledger entry: "targeted-SF budget reallocation".
-  # Restart-gated (new reco keys + worker code).
   opening_fen_sf_refute_frac: 0.9
   opening_fen_sf_refute_plies: 3
-  # SF-refute opp-row recording — STAGED — do not flip before the SF-refute
-  # 90%×3 retry ledger readout (docs/experiment_ledger.md). full_node_moves: refute SF
-  # MOVE queries skip the 0.25× fast-ply node scale. record_opp_rows: emit a
-  # MAIN-policy training row at each SF-to-move refute position (aux heads
-  # masked). opp_policy_net_blend: blend net visits into that policy target —
-  # >0 is REJECTED at config validation (provider seam unwired). Restart-gated
-  # (OpeningConfig session-fixed + new reco keys).
   sf_refute_full_node_moves: false
   sf_refute_record_opp_rows: false
   sf_refute_opp_policy_net_blend: 0.0
-
-  # 2026-07-08: inline blind-spot harvester COLLECT-ONLY (#124). Finished games
-  # append value-blind positions (net's search says fine, in-loop SF says lost)
-  # as seed lines with real history to <path>.pPID (collect) + .severe.pPID
-  # (auto-feed band). At each monitor cadence, new lines are deep-SF-vetted,
-  # staged, then merged into a versioned live list by blindspot_feed_step.py;
-  # the YAML pointer is validated and repointed automatically. Off = "".
   blindspot_harvest_out_path: /home/josh/projects/chess/data/harvest/blindspot_live.txt
-
   mcts: gumbel
   mcts_simulations: 256
-  mcts_start_simulations: 256  # Full budget from start (KataGo-style: 75% full, 25% fast)
-  playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
+  # ⚑ PIN. Inert ONLY because it equals mcts_simulations. `progressive_mcts` is not
+  # settable from yaml and defaults True, so DELETING THIS LINE DROPS START SIMS 256 -> 50.
+  mcts_start_simulations: 256
+  playout_cap_fraction: 0.25
   fast_simulations: 32
   gumbel_topk: 16
-  # 2026-07-28 C17 DEPLOY (ledger: "READOUT 2 — SETTLED"). LEGACY virtual loss
-  # in the selfplay Gumbel descent. Within one sequential-halving round the tree
-  # cannot update, so every visit allocated to a candidate descends to the SAME
-  # leaf. At the realized live shape -- n_boards ~= 1, because 23.5 of every 24
-  # games per thread are blocked on a pending Stockfish move -- 88.3% of rows at
-  # 256 sims are byte-identical duplicates; 65.9% mix-weighted, and 97% of that
-  # waste is on full plies.
-  #
-  # A 256-sim ply spends 256 forwards to visit 30 distinct positions. At
-  # vloss=1 it visits 242: 8.1x more distinct search information on exactly the
-  # 25% of plies that produce every training target. Measured -7.4 cp on the
-  # target (PR #278). Costs ~26% more GPU calls, which are FREE here because
-  # selfplay is Stockfish-bound, not GPU-bound (sf_block_starved 2699-2986% of
-  # 3200% thread-time).
-  #
-  # LEGACY (the only mode selfplay can select) values the pending visit as a
-  # loss. That pessimism IS the spreading mechanism -- VLOSS_MODE_VIRTUAL_MEAN
-  # is theoretically cleaner but cannot fill a batch, so it is deliberately not
-  # reachable from here. 0 restores the pre-2026-07-28 behaviour.
-  # _RECO_RESTART_KEY: read into SearchConfig once at worker-session start.
   gumbel_vloss_weight: 1
-  # Gumbel value-transform scale for SELFPLAY/RL. Was never written here — it came
-  # from code defaults only, and UCI/match uses a DIFFERENT measured value (0.025,
-  # +301 Elo @8000 sims, mcts/gumbel.py PLAY_SEARCH_DEFAULTS). Do not unify them:
-  # optimal q_scale keys off the TOTAL sim budget, so no value is sim-invariant.
-  # At this 256-sim budget (2026-06-16 puzzle screen, n=1000): 0.1 -> 0.688,
-  # 0.05 -> 0.652, 0.025 -> 0.598 — lowering it HURTS selfplay. Restart-gated
-  # (worker _RECO_RESTART_KEYS).
   gumbel_c_scale: 0.1
-  gumbel_scale: 0.75     # Full selfplay root Gumbel noise scale before decay. mctx default is 1.0; final action temp stays 0.
+  gumbel_scale: 0.75
   gumbel_scale_after: 0.0
   gumbel_scale_decay_start_move: 12
   gumbel_scale_decay_moves: 3
-  curriculum_gumbel_scale: 0.25  # Full SF-curriculum root Gumbel noise; weaker than selfplay to keep labels less noisy.
+  curriculum_gumbel_scale: 0.25
   curriculum_gumbel_scale_after: 0.0
   curriculum_gumbel_scale_decay_start_move: 12
   curriculum_gumbel_scale_decay_moves: 3
-  # INERT on the distributed path — verified 2026-07-27, not merely believed.
-  # worker.py builds the selfplay SearchConfig and never resolves either field
-  # from the reco, and network_turn.py only reads them on the PUCT branch, which
-  # `mcts: gumbel` above makes unreachable. Both keys are in the live-yaml
-  # allowlist, so editing them here is ACCEPTED and does nothing. Values below
-  # match the SearchConfig defaults, so nothing is currently mis-set.
-  # Switching to `mcts: puct` does NOT make these editable: the worker still
-  # never resolves them, so the PUCT branch would read the dataclass defaults
-  # and a yaml edit would still be swallowed — wire them through
-  # build_recommended_worker first. They DO reach the in-trainer gate/eval
-  # matches (trainable_config_ops._play_batch_kwargs reads them off TrialConfig),
-  # which are disabled today at gate_games: 0 / eval_games: 0.
-  # Pinned by tests/test_selfplay_gumbel_batching_plumbing.py.
-  fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes (PUCT only)
-  fpu_at_root: 1.0      # FPU for legacy PUCT root; current Gumbel path uses gumbel_scale root noise.
-
-  sf_policy_temp: 0.012      # 2026-05-23: keep SF-policy sharpness after softening the underlying cp->WDL scores.
-  sf_policy_label_smooth: 0.01  # 2026-05-27: multipv=40 covers most good moves; keep only light legal-tail smoothing.
-  sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
-  sf_wdl_cp_slope: 0.0060        # 2026-05-23: move toward replay-fit slope (~0.0045-0.0055) while staying conservative.
-  sf_wdl_cp_draw_width: 120.0    # Half-width of draw zone in cp; moved toward current-regret replay fit (~130-145).
-  # Exponent of the policy_soft target: p^(1/soft_policy_temp).
-  # 2026-07-26: WAS 3.0 since 2026-03-02, and 3.0 WAS NEVER IN EFFECT. The key
-  # was published by nobody and consumed by nobody in distributed mode, so every
-  # worker built the target at GameConfig's dataclass default of 2.0 — measured
-  # on live shards as a fitted exponent of 0.50000 (rl_loop_audit.md E13). The
-  # plumbing is fixed in this same change, so the yaml value is now real; it is
-  # set to 2.0 because 2.0 is what five months of this net actually trained on
-  # and the point of this change is to make the config honest, not to move the
-  # target. 2.0 -> 3.0 is a separate, data-affecting ledger experiment: it needs
-  # its own entry, yardstick and kill rule before anyone edits this line.
+  # PIN (both). Provably INERT in every Gumbel search (PLAY_PATH_AUDIT F2: worker.py never
+  # resolves them from the reco, and network_turn.py reads them only on the PUCT branch,
+  # which `mcts: gumbel` makes unreachable) -- yet `realized_gumbel()` prints them as
+  # realized config. NEVER SWEEP THEM. Kept because the values equal the worker dataclass
+  # defaults, so the line is a tripwire: if a future PR wires them, the yaml already says
+  # what production ran.
+  fpu_reduction: 1.2
+  fpu_at_root: 1.0
+  sf_policy_temp: 0.012
+  sf_policy_label_smooth: 0.01
+  sf_wdl_use_cp_logistic: true
+  sf_wdl_cp_slope: 0.006
+  sf_wdl_cp_draw_width: 120.0
   soft_policy_temp: 2.0
-
   syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
-  # Ordinary high-volume Stockfish curriculum searches stay on local SSD TBs.
-  # Non-adjudicated <=6-piece play-through roots temporarily switch to
-  # syzygy_path above so Stockfish can use E-drive DTZ for conversion play.
   stockfish_syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5
-  # End games at the first TB-eligible position and use the TB-proven result
-  # as the outcome. Skips MCTS compute on the endgame tail (~25% of replay
-  # positions are in <=7-man range — see the piece-count audit).
   syzygy_adjudicate: true
-  # Fraction of games that actually adjudicate. 0.99 leaves 1% playing
-  # through the endgame so the NN keeps generating endgame samples with
-  # its own labels — guards against losing endgame skill entirely.
   syzygy_adjudicate_fraction: 0.99
-  # Override NN wdl logits at MCTS leaves when TB-eligible (UCI-style
-  # in-tree probing). Pins Q to TB truth for endgame leaves.
   syzygy_in_search: true
-  # Override policy targets with DTZ-optimal moves at TB-eligible positions.
-  # Disabled 2026-04-25: redundant with syzygy_in_search (MCTS already gets
-  # TB-correct moves at eligible leaves) + syzygy_adjudicate (games end at
-  # the TB position, so the rare past-TB tail isn't worth the post-game
-  # rescore path. The path also corrupted ~0.09% of policy_targets when
-  # combined with the 1-legal-move shortcut in run_network_turn (forced
-  # plies were pushed but produced no record, so the syzygy replay's
-  # sample_idx counter overshot the records list, stamping K+P-endgame
-  # overrides on unrelated records). finalize.py was fixed to align by
-  # ply_index, but the simpler answer is to leave the path off.
   syzygy_rescore_policy: false
-
-  # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
   timeout_adjudication_threshold: 0.99
-
-  # 2026-07-26: set to the REALIZED values. The worker never builds a
-  # DiffFocusConfig from the published reco, so selfplay has always run the
-  # dataclass defaults in selfplay/config.py while these lines read the Run-4
-  # sweep winners (4.8 / 3.8 / 4.0 / 0.09) that nobody ever applied. Pinned to
-  # the truth for the same reason as soft_policy_temp above: the day someone
-  # plumbs this key, the old values would have silently become a live,
-  # unregistered data-affecting experiment at the next restart.
-  # Adopting the sweep values is a real experiment — see the ledger entry.
+  # PIN (all 5). The KEYS are decorative -- the worker never builds a DiffFocusConfig from
+  # the published reco, so selfplay runs the dataclass defaults, which these lines now equal.
+  # ⚑ DELETING THEM WOULD NOT DISABLE DIFF-FOCUS. The FEATURE is live as sampling pressure
+  # (audit H2: the entire replay-priority spread, CV 0.94, top decile 31.5% of mass); the
+  # "0.005% of gradient" figure was gradient SHARE only. These lines are the self-
+  # invalidating tripwire rl_loop_audit A7 relies on. Deciding the FEATURE is its own
+  # readout, not a config-rebuild decision.
   diff_focus_enabled: true
   diff_focus_q_weight: 6.0
   diff_focus_pol_scale: 3.5
   diff_focus_slope: 3.0
   diff_focus_min: 0.025
-
+  # PIN (both). Unpublished, pinned equal to the worker dataclass defaults; tripwire value
+  # only. Deleting them is neutral today and stops being neutral the day they are wired.
   categorical_bins: 32
   hlgauss_sigma: 0.04
-  record_lc0_root_input: true  # Store alternate LC0-root x in new shards for later LC0-input fine-tune tests.
+  record_lc0_root_input: true
 
 train:
   optimizer: aurora
-  matrix_optimizer_scope: mlp_out  # Aurora on FFN + attention output; Q/K/V stay AdamW.
+  matrix_optimizer_scope: mlp_out
   matrix_lr_multiplier: 20
-  # 2026-07-26: was `0`, but the live Aurora matrix group has been running at
-  # 0.0001 since ~early June — Optimizer.load_state_dict overwrites every group
-  # hyperparameter from the checkpoint on resume, and weight_decay had no
-  # re-application path, so the yaml value was a permanent silent no-op
-  # (docs/rl_loop_audit.md I13). The re-application now exists, which makes the
-  # yaml authoritative. Set to 0.0001 = WHAT ACTUALLY RAN, so turning the
-  # control surface back on changes nothing today. Changing this value is now a
-  # REAL training change (~6e-8/step decoupled decay at the matrix group's LR)
-  # and needs a ledger entry with a pre-committed yardstick before it goes live.
+  # PIN. Numerically ~0.35% total shrink over 58k steps, but rl_loop_audit I13 showed this
+  # was a BROKEN control surface for 7+ weeks (Optimizer.load_state_dict overwrote it from
+  # the checkpoint every resume) and PR #260 fixed it by pinning the yaml to the realized
+  # 1e-4. Deleting the line re-opens the resume-overwrite trap. Changing the VALUE is now a
+  # real training change and needs its own ledger entry.
   matrix_weight_decay: 0.0001
   aux_weight_decay: 0.0001
   aurora_uw_floor: 0.0
   aurora_pp_iterations: 3
   aurora_pp_beta: 0.25
+  # RESOLVED 2026-08-04 (ledger bf9585789): A8 v2 ABORTED -- SHIP 8. The re-based
+  # instrument-gate leg FAILED and the rig's own offline derivation refuted the re-base
+  # premise (this momentum regime matches ckpt478's: 12.369 vs #327's 12.07). NO outcome
+  # metric was ever read, so 12 has no verdict behind it; the null (PE-8 significant-
+  # subspace ratio 1.0000, ledger 210f6810a) remains pre-declared plausible. The setting
+  # provably DEPLOYS (binary leg 4/4 runs), so a future A8 needs only a sound confirming
+  # leg -- derived offline on ONE shared momentum, not a cross-run column (the live square
+  # sv_ratio column has 22x per-chunk spread; arm and control momenta diverge after step 1).
+  # See open_decisions.md decision 2.
   aurora_polar_steps: 8
   aurora_polar_method: polar_express
   aurora_polar_dtype: fp16
+  # PIN. LOAD-BEARING at 1.01 under the CURRENT (Frobenius) normalization: s < sigma_max is
+  # a measured CLIFF (1.0001 -> 0/16 non-finite; 1.1 -> 16/16 NaN). The interaction rule from
+  # addendum II: Frobenius normalization => safety 1.00 is free; tight sigma_max
+  # normalization => safety 1.01 is load-bearing; never both.
   aurora_polar_safety: 1.01
-  # 2026-07-26: 0.0003 -> 0.00003 for the boot512 restart. THE ROOT CAUSE of the
-  # 512x16 collapse: boot512 was converged at peak_lr 3e-5, and set_peak_lr
-  # rescales EVERY base LR by new/old, so lr 0.0003 started the matrix group
-  # (matrix_lr_multiplier 20) at 6e-3 -- double the 0.003 recorded as
-  # model-destroying. Measured -494 Elo by iter 74. 3e-5 is not merely the
-  # donor's regime, it is the LR under which this net demonstrably GAINED +303
-  # Elo (iters 74->148). PB2-pinned: this yaml edit alone is NOT enough --
-  # experiment_state JSON (newest by FILENAME) must be edited too, then restart.
-  # Guarded by warm_start_lr_max_ratio (PR #247) from here on.
-  lr: 0.00003       # PRIOR 0.0003 — 2026-07-02: REVERTED 0.0001→0.0003 — flat-lower-LR verdict: UNREADABLE (throughput triple landed the same day, perfect confound) and the known-good anchors (49.6/51.5/72.4 @ckpt457) were earned at 0.0003 sqrt_release; return-to-known-good bundle. PB2-pinned: changing needs the experiment_state JSON edit + restart (see memory/ledger). Base LR; Aurora matrix params use matrix_lr_multiplier.
-  batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
-  train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
-  train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
-  # 2026-07-27: 2.5 -> 5.0, PAIRED with the replay-loader fix below. THE BET:
-  # the loop is gradient-STARVED, not unstable. Whole trial to iter 123 =
-  # 6,253 optimizer steps / 3.2M samples = 0.53% of a 600M AlphaZero-scale
-  # budget, and the GPU computed gradients for 3.0% of wall clock. Steps are
-  # EXACTLY views-capped (trainer_steps_done x 512 / replay_positions_ingested
-  # = 2.502-2.552 on every row), so this key, not the loader, is what sets
-  # gradient volume -- the loader fix only makes each step ~3.9x cheaper
-  # (2920 -> ~756 ms) so this raise costs LESS wall clock than 2.5 did:
-  # ~88 steps/iter in ~66s, vs 44 steps in 129s. DOUBLE the gradient at HALF
-  # the training wall clock.
-  # WHY 5.0 AND NOT HIGHER. The loader could now feed ~15 views, and an earlier
-  # draft of this line set 7.5 on the argument that our value/policy targets are
-  # GROUND TRUTH from a fixed external SF (never stale, so the reuse ceiling is
-  # OVERFITTING rather than target staleness). That argument is right about the
-  # mechanism and wrong about the conclusion: it identifies overfitting as the
-  # binding constraint and then ignores it. AlphaZero ~1, KataGo ~4 -- those are
-  # empirical ceilings from loops that demonstrably work. Going 2x past KataGo
-  # on the FIRST attempt, on a loop already believed broken, would add a failure
-  # mode we would then have to disentangle from the one we are chasing.
-  # 5.0 is a FLOOR, not a target: this key is live-tunable, so it can be raised
-  # by yaml edit with no restart once the train/holdout gap has been watched for
-  # a day. The loader keys below get only this one shot -- they are
-  # construction-time.
-  # KILL: train/holdout policy gap widens past ~0.30 (live 0.13-0.18), or the
-  # frozen test_wdl_loss rises >0.026 (4 sigma) over 3 consecutive iterations.
-  # LIVE-TUNABLE -- revert is a yaml edit, no restart.
-  train_views_per_ingested_position: 5.0  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
-  # With ~10k new positions/iter and buffer growing by 2500/iter, each position
-  # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
-  no_amp: false
-  # 2026-07-30: 0.10 -> 0.0 (audit M8 arm C, OPERATOR DECISION — delete the knob
-  # rather than compensate it; arm B, the 1/(1-p) rescale, is deliberately NOT run).
-  # Rationale: never shown to earn its keep, and it created a systematic train/serve
-  # gap — 46.9% of TRAINING rows had >=1 of the 6 classical feature groups zeroed with
-  # no survivor rescale, while 0% of inference rows did, and the 112 LC0 planes are
-  # never dropped. So it shifted the LC0-vs-features balance between train and play.
-  # ⚠ NOT live-reloadable and it LOOKS like it is: this key IS in config_yaml.py's
-  # live allowlist (so a live edit is accepted and does NOT reject the reload) but is
-  # NOT in TRAINER_WEIGHT_KEYS, and self.feature_dropout_p is assigned only in
-  # Trainer.__init__ (trainer.py:1757). Construction-time => needs a RESTART, and a
-  # --resume restores the trial config for construction-time keys, so the restart
-  # alone is not proof. VERIFY on the first new progress.csv row: the reported
-  # feature_dropout_p (trainable_report.py:1317) must read 0.0, not 0.10.
-  # Guardrail (no success criterion by design — this is removal of an unjustified
-  # knob, not a bet on a gain): value_regret --max-positions 0 paired vs the
-  # pre-restart dump worse by >2cp with the CI excluding 0 => restore 0.10.
-  # Revert is NOT instant (construction-time => another restart). Snapshot:
-  # data/salvage/pre_restart_20260730 (iter 368 / ckpt_000367).
-  # Ledger: "feature dropout has no 1/(1-p) rescale (audit M8)".
+  lr: 3.0e-05
+  batch_size: 512
+  # PIN (both). Never read -- 0 of 478 iterations hit the ingest-drought fallback -- but they
+  # ARE the documented drought floor and runaway cap for the views-targeting budget. On the
+  # fresh-window regeneration, ingest droughts are exactly the regime that becomes reachable.
+  train_steps: 800
+  train_window_fraction: 0.04
+  # PRE-REGISTERED 5.0 -> 4.3 (ledger 22891e8cc, 2026-08-02).
+  #   Hypothesis: views/row is at or just above its optimum; 4.3 is inside the same flat
+  #   basin (offline L-wide ladder: 4.33/4.80/5.27 within 0.0007 nats, far below the seed
+  #   floor) and matches KataGo's proven ~4 rather than our own noisy argmin.
+  #   ⚑ THE ENTRY DECLARES ITSELF UNREADABLE: 4.3-vs-5.0 is below the rig's own seed floor.
+  #   This is a change made on PRIOR, not on evidence. There is no success test.
+  #   DECIDING YARDSTICK IS A GUARD, NOT A SUCCESS TEST: realized `train_views_actual` must
+  #   land in [4.0, 4.6] on the first 5 new iterations
+  #     grep -h train_views_actual runs/pbt2_small/tune/*/progress.csv
+  #   KILL: realized views outside [4.0, 4.6], OR `policy_loss` worse by >0.02 nats vs the
+  #   pre-change 5-iteration mean -> revert to 5.0 (live-tunable, no restart).
+  #   Target 4.3 NOT 4.0: 4.0 sits on the plateau's edge and realized views drift from the
+  #   configured knob (live realized 5.013 against a configured 5.0).
+  train_views_per_ingested_position: 4.3
+  # DELETED no_amp: consumed ONLY by the argparse CLI path (run.py:43); the Ray trainable never reads it
+  # PIN + OWED OBSERVABLE. Already 0.0 in the live yaml since 2026-07-30 (audit M8 arm C),
+  # so this package changes NOTHING here -- but the change has never been PROVEN in effect:
+  # the key is construction-time (assigned only in Trainer.__init__, trainer.py:1757) while
+  # sitting in config_yaml.py's LIVE allowlist, so a live edit is accepted and does nothing,
+  # and a --resume restores the trial config for construction-time keys. VERIFY on the first
+  # new progress.csv row: reported `feature_dropout_p` (trainable_report.py:1435) reads 0.0,
+  # not 0.10. Guardrail (no success criterion by design): value_regret --max-positions 0
+  # paired vs the pre-restart dump worse by >2cp with the CI excluding 0 => restore 0.10.
   feature_dropout_p: 0.0
-  resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
-  resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
-  zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). The "median grad norm 1.81, max 3.65" that used to be quoted here is stale by 2.3x — see zclip_max_norm below for the current measurement.
+  # DELETED resid_channel_dropout: 0.0 = off (trainer.py:1832)
+  # DELETED resid_channel_balance_weight: 0.0 = off
+  zclip_z_thresh: 2.0
   zclip_alpha: 0.97
   zclip_clip_factor: 1.0
-  # was 1.0; raised because raw grad norms median ~2.2 meant every step was
-  # hard-clipped, dampening effective LR by ~55%. Z-score clipping still
-  # handles outliers.
-  # RE-MEASURED 2026-07-26 (233 TB samples, steps 56000-58320): median 4.244,
-  # p95 4.941, p99 5.213, max 5.538, 3.43% of samples ABOVE 5.0. Clip rate
-  # 5.15% (adaptive 4.29%, hard 1.29%), mean applied shrink 0.9969. Still a
-  # tail guard, but DRIFTING UP: 250-step bucket means went 3.996 -> 4.816 over
-  # 2320 steps (~11h). The old "hard cap 5.0 inert" claim is false.
-  # PRE-COMMITTED WATCH (rl_loop_audit I11, mirrored as GRAD_NORM_MEDIAN_WATCH
-  # in train/trainer.py): if the windowed MEDIAN grad norm exceeds 4.75
-  # (hard-clip rate ~10%), this cap has stopped being a tail guard and must be
-  # re-set. Watch the per-iteration `grad_norm_median` / `grad_hard_clip_rate`
-  # columns in progress.csv; the trainer also logs a warning when it trips.
-  #
-  # THE WATCH FIRED, AND THE CAP WAS RAISED 5.0 -> 6.5 (2026-07-27 ~08:00,
-  # graceful restart at iter ~122). Ledger: "PRE-REGISTERED (2026-07-27) --
-  # raise zclip_max_norm 5.0 -> 6.5". Pre-change baseline at iter 121:
-  # grad_norm_median 5.536, p95 6.78, HARD-clip rate 0.953. NOTE 6.5 is BELOW
-  # that p95 -- it was chosen when p95 read 6.17, four hours earlier -- so
-  # expect ~5-10% hard-clip on the first row, not ~5%, and a re-bind horizon of
-  # ~16h at the measured +0.012/iter, not two days. Kept at 6.5 anyway: with
-  # #272 live the next move is a yaml edit, so a too-small first step is cheap. The adaptive
-  # z-score clipper was firing on only ~5% of steps -- correct outlier
-  # behaviour -- so this FIXED cap, not zclip's adaptive logic, was doing
-  # essentially all of the clipping. A cap that binds on 89% of steps is a
-  # step-size controller, not a tail guard.
-  #
-  # WHY 6.5: it sits just above the measured p95 (6.17-6.20), so it clips ~5%
-  # of steps -- the rate the adaptive clipper is tuned for, and the smallest
-  # change that restores the intended division of labour. The historically
-  # inert ratio was cap/median ~2.1 (the 384x12 net ran cap 5.0 at median 2.4
-  # with a 0.000 hard-clip rate), which would put the cap near 11 today. 6.5 is
-  # deliberately the conservative end. KNOWN COST: at the measured +0.012/iter
-  # (iters 105-121, t=+3.86) 6.5 re-binds in ~16h -- which is now a yaml edit,
-  # not a restart.
-  #
-  # SHAPE -- read this before fitting anything to this series. Two earlier
-  # revisions of this comment were BOTH wrong, in opposite directions:
-  #   (1) "linear drift +0.0086/iter" -- one line fitted across a level shift.
-  #   (2) "a STEP at iter 96, not a drift" -- right about iters 81-99, WRONG
-  #       about the trial. That window is a plateau partway up a longer ramp.
-  # Full TB reconstruction across all three surviving lineages:
-  #   384x12 @3e-4  06-21..07-11  median 2.36-2.50  FLAT for 20 days
-  #   512x16 @3e-4  07-11..07-25  median 3.12-3.70  flat-with-a-U
-  #   512x16 @3e-5  07-26..now    median 4.08->5.54 RAMP, +0.0079/iter t=6.6
-  # and the ramp is ACCELERATING: +0.0120/iter (t=3.86) over iters 105-121.
-  # This series needs >=40 rows before any slope claim -- a plateau inside a
-  # ramp is the default appearance of a noisy rising series, and reading one as
-  # evidence against the ramp is the mistake that was made here twice.
-  # Today's value is a SUM: +1.3 instantaneous at the 512x16 swap, +0.4
-  # instantaneous at the boot512 restart, +1.25 continuous inside this trial.
-  # The "~2.2" this comment used to quote is a 384x12 number -- stale by
-  # LINEAGE, not by drift; that net never drifted at all.
-  # TB step counters RESET at every lineage change (5fac4 ended at 132810;
-  # both 512x16 trials restart at exactly 56000). Do NOT splice the series.
-  #
-  # LIKELY CAUSE, correlational and NOT established: the 10x LR cut. The one
-  # clean natural experiment in the record is the flat-lower-LR run
-  # (07-01..07-03) where matrix LR moved 6e-3 -> 2e-3 and back with nothing
-  # else changing: median grad norm went 2.49 -> 4.64 -> 2.75, tracking LR
-  # INVERSELY and recovering fully on revert. This trial runs at 10x lower base
-  # LR (3e-5) than either predecessor. So a high clip rate reads as "LR too
-  # high" but every measurement here points the other way. This does NOT
-  # explain the ramp, since LR has been constant throughout it.
-  #
-  # RULED OUT as causes: parameter growth (||theta|| +0.09% over 2824 steps);
-  # any single loss head (across the iter-96 shift every train head moved
-  # <0.5%, |d|<=0.34, while grad norm moved +4.0%, d=4.04); restarts (the two
-  # inside this trial, including the six-PR deploy, each move the median <0.08
-  # across the gap); and a replay-window drain -- the window is pinned at its
-  # 1.5M cap every iteration, so the drain pre-registered as the suspected
-  # cause DOES NOT EXIST.
-  #
-  # NO MEASURABLE DAMAGE so far, and the ruler is sensitive enough for that to
-  # mean something: across a grad-norm shift of +1.74 sd (iters 89-95 vs
-  # 96-101) the FROZEN holdout's test_wdl_loss moved +0.0000 (0.8401 both
-  # sides, sd 0.0079, n=13).
-  #
-  # `grad_hard_clip_rate` is bit-identical to `grad_clip_rate` -- ONE
-  # observation, not two -- and while the median sits near the cap it is a
-  # hypersensitive readout of small location shifts (+4% in location -> +17
-  # points of clip rate). Do not read a moving clip rate as independent
-  # evidence.
-  #
-  # This key is LIVE-RELOADABLE as of PR #272 (Trainer.set_grad_clip_max_norm,
-  # pushed each iteration from trainable.py), so further changes are a yaml
-  # edit that takes effect on the next optimizer step and reverts just as fast.
-  # The 5.0 -> 6.5 change itself still needed a restart: the process predated
-  # #272. REVERT to 5.0 by yaml edit if the ledger's kill rule fires (frozen
-  # test_wdl_loss +>0.032 over 3 consecutive iters, any NaN, or
-  # grad_norm_median >10). The ramp CONTINUING is a pre-committed NON-kill.
-  # SCOPE (changed 2026-07-27): the cap and the adaptive EMA are computed over
-  # the ADAMW PARAMS ONLY. The Aurora group's update is the polar factor of the
-  # gradient (scale-invariant: max|polar(cG)-polar(G)| = 1.6e-07 at c=0.90,
-  # 0.0 at c=0.50), so a norm clip is EXACTLY INERT for it and including it
-  # only inflated the quantity the clip decides on. Measured on
-  # checkpoint_000122 over 8 real batches: ||g|| aurora 3.648, adamw 12.137,
-  # global 12.673 -- the AdamW group carries 91.7% of the global norm^2 on
-  # 71.4% of the params, and global = adamw x 1.044.
-  # EXPECT A ONE-OFF ~4.4% STEP DOWN in `grad_norm_median` / `grad_norm_mean` /
-  # `grad_norm_p95` at the deploy iteration. That is the MEASUREMENT changing,
-  # NOT the run. RESTATED FOR THE LIVE 6.5 CAP (this block was written against
-  # 5.0, before #273 landed 6.5): an AdamW-only 6.5 binds where the global norm
-  # would be ~6.79, i.e. the cap gets slightly LOOSER, not tighter.
-  # ⚠ THE "near-zero effect today" CLAUSE THAT STOOD HERE IS STALE -- it read
-  # "`grad_hard_clip_rate` has been 0.000 since iter 126, so the fixed arm is
-  # not binding at all". That was true when written (126-131 are all 0.000) and
-  # the sf_p0 restore at iter 132 falsified it the same day: the fixed arm went
-  # 0.000 -> 0.176 -> 0.255 -> 0.385 -> 0.430 and is ~0.26 at iter 137. So on
-  # today's numbers this deploy is NOT inert -- a ~4.4% looser effective cap
-  # applied to a ~26%-binding arm is a real change to the update.
-  # It is also probably transient: the elevated tail is the low-coverage
-  # masked-mean artifact (p95 13.20 -> 7.42 over iters 133-137 as sf_p0
-  # coverage grows), so the rate should fall back toward 0.000 on its own.
-  # RULE AT DEPLOY: re-measure `grad_hard_clip_rate` on the 3 iterations
-  # immediately before the restart and state it. Do not carry forward either
-  # the old 0.000 or today's 0.26 -- both are era-specific.
-  # The adaptive z-score arm carries spike protection regardless (rate 0.087,
-  # unchanged across the 5.0->6.5 move).
-  # Do NOT read the step-down as the drift reversing -- compare only within one
-  # scope era; the ledger's per-STEP drift baseline (+0.00044/step) was measured
-  # in the GLOBAL scope and must not be spliced across this deploy. New
-  # columns `grad_norm_aurora` / `grad_norm_adamw` make the split readable
-  # per-iteration instead of via an offline probe.
   zclip_max_norm: 6.5
-
-  w_policy: 1.0             # Pinned: anchor for all other weights
-  w_soft: 1.0               # Conservative soft-policy auxiliary weight while testing plateau behavior.
-  w_future: 0.01            # Keep a tiny auxiliary weight; low-risk compared with full disable.
-  w_wdl: 1.0                # Keep WDL pressure balanced with main policy during target-mix test.
-  w_sf_move: 0.02           # Slightly strengthen SF-policy auxiliary signal without dominating policy.
-  # 2026-07-27 RESTORED, with selfplay.record_sf_p0_{policy,regret} above.
-  # Both were live in June at these values (PR #78) and both lived ONLY as
-  # uncommitted working-tree edits, so both reverted to their code defaults of
-  # 0.0 (train/trainer.py:1033-1034) and the teacher has been OFF since.
-  # Sweep 2026-07-27: of every w_* weight and every record_* flag the code reads,
-  # these four were the ONLY ones absent from this file. Not drift — one feature.
-  # w_sf_own      soft-CE teacher: SF's move distribution for the net's OWN
-  #               position, into policy_own (the head MCTS actually reads).
-  #               Teaches everywhere uniformly. June value 0.1 (~10% grad share).
-  # w_sf_own_regret  minimises E_p[normalized cp-loss vs SF best] under the net's
-  #               own prior, so it AUTO-WEIGHTS by position importance (flat
-  #               positions -> tiny regret -> tiny gradient). June value 0.7,
-  #               chosen for a ~7% grad share = on par with w_sf_own, i.e. a
-  #               decisive test rather than a timid one.
-  # BOTH are masked to has_sf_p0 / has_sf_p0_regret rows, so they are inert
-  # until the recording above phases into the window — safe to set now.
-  # 0.7 was calibrated on the OLD 46M net (m_sf_own_regret ~= 0.079 @ ckpt233);
-  # the 63M net's realized share is unmeasured. RECALIBRATE once coverage >=20%
-  # (task #38). Both are TRAINER_WEIGHT_KEYS => live-reloadable; the KILL is a
-  # yaml edit to 0.0 with no restart.
+  w_policy: 1.0
+  w_soft: 1.0
+  w_future: 0.01
+  w_wdl: 1.0
+  w_sf_move: 0.02
   w_sf_own: 0.1
   w_sf_own_regret: 0.7
-  w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
-  w_categorical: 0.30       # Run 26 default.
-  w_volatility: 0.10        # Pinned: top-5 median from Run 4
+  w_sf_eval: 0.1
+  w_categorical: 0.3
+  w_volatility: 0.1
   w_sf_volatility: 0.05
   w_moves_left: 0.02
-  sf_wdl_frac: 0.50         # Fraction of WDL target blended from SF labels when available.
-  sf_wdl_frac_floor: 0.45   # 2026-07-02 value-ranking exp (BT4 43cp vs our 75.9 on same probe): raise truth-anchor floor 0.35->0.45, cut self-echo below. Live-reload. Revert pair: 0.35/0.35.
-  search_wdl_frac: 0.20     # 2026-07-02 value-ranking exp (rung 1): 0.35->0.20. STALE PREMISE (Codex review): the original rationale — fast-ply rows carry a ~pure net-eval echo at 35% — no longer holds after record_fast_ply_value was reverted to false the same day; with fast rows gone, every remaining row's search_wdl is a genuine MCTS-averaged root WDL, so 0.20 now under-weights legitimate own-search signal (not just self-echo). Re-examine at the rung-1 read: if value ranking regressed, 0.35 may be the better mix now. Yardstick: value_regret vs the 70-76cp band + BT4=43.0 ref. Live-reload. Revert pair: 0.35/0.35.
-  use_adjusted_wdl_target: false  # Opt-in only; regret adjustment applies to the game-outcome fraction, not missing SF/search fallbacks.
-  adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; d95/d98 are per network record, h* are ply windows.
-  adjusted_wdl_regret_scale: 1.0   # For sum/fp16 suffixes, prefer a smaller scale, discounted/horizon source, or positive cap.
-  adjusted_wdl_regret_cap: 0.0     # Q-units; 0 disables cap and can saturate suffix-sum targets.
-  # ⚑ BOTH knobs shape ONLY the auxiliary `sf_eval` head's row mask. They do
-  # NOT touch the WDL value target: its SF component is weighted by
-  # `sf_available * keep` (`losses.py`), which carries neither term. Verified
-  # bit-identical `wdl_ce` under both settings (2026-08-03 train/data audit C1,
-  # pinned by tests/test_sf_wdl_conf_knobs_are_aux_only.py). Names kept as-is
-  # because the live-yaml validator rejects unknown keys -- a rename is a
-  # restart-gated change, not a live one.
-  sf_wdl_conf_power: 1.0    # sf_eval row mask: scale by (1-draw_prob)^power. NOT the value blend.
-  sf_wdl_draw_scale: 0.55   # sf_eval row mask: rescale game-drawn rows. NOT the value blend.
-  sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
-  sf_wdl_temperature: 1.0   # Keep training-time labels unchanged; tune softness in stored cp->WDL formula instead.
-  sf_search_dampen_sf_low: 0.0  # Trust objective SF-low labels when search says winning; final outcomes can reflect curriculum weakness.
-  sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
-
-  accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
-  # 2026-07-26 (PR #247): refuse a warm start whose configured lr exceeds the
-  # donor checkpoint's stored peak_lr by more than this. 0 disables. Requires
-  # code from #247 -- an unknown key rejects the WHOLE live reload.
+  # FLIP sf_wdl_frac: 0.5 -> 0.45
+  #   PIN TO REALIZED. _dynamic_sf_wdl_weight interpolates from this at regret 0.70 down to
+  #   sf_wdl_frac_floor at regret 0.10; realized wdl_regret has never reached 0.10 (max 0.0984) so
+  #   sf_wdl_frac reads 0.45 on 478/478 rows. rl_loop_audit I5 + the A5 rule ('pin a dead key to the
+  #   realized value the same day'). SIDE EFFECT, STATED: this also removes the cliff where one PID
+  #   ease-step past the 0.10 knee would silently start raising the SF share mid-run.
+  #   ⚑ THIS IS BRIEF BLOCKER #5, CLOSED BY PINNING. The measured max wdl_regret 0.0984 sits
+  #   ONE PID ease-step below the 0.10 knee; past it the value target changes with no metric
+  #   watching the distance. With frac == floor == 0.45 the interpolation is the constant
+  #   0.45 and the knee cannot fire. The yaml's 0.50 NEVER RAN in 478/478 iterations.
+  sf_wdl_frac: 0.45
+  # PIN. The FLOOR is the live knob and it is what 478/478 rows actually realized. Realized
+  # blend at iter 478 = 0.35 outcome / 0.45 SF / 0.20 search. The SF component is
+  # LOAD-BEARING: zeroing it crashed winrate 0.64 -> 0.40.
+  sf_wdl_frac_floor: 0.45
+  search_wdl_frac: 0.2
+  use_adjusted_wdl_target: false
+  # DELETED adjusted_wdl_regret_source: downstream of use_adjusted_wdl_target: false; losses.py:420 gate never opens
+  # DELETED adjusted_wdl_regret_scale: downstream of use_adjusted_wdl_target: false
+  # DELETED adjusted_wdl_regret_cap: downstream of use_adjusted_wdl_target: false
+  sf_wdl_conf_power: 1.0
+  sf_wdl_draw_scale: 0.55
+  sf_wdl_floor_at_regret: 0.1
+  # DELETED sf_wdl_temperature: 1.0 is the IDENTITY; losses.py:192 skips the p^(1/T) softening at exactly 1.0
+  # DELETED sf_search_dampen_sf_low: 0.0 = off (trainer.py:1845, losses.py:256)
+  # DELETED sf_search_dampen_sf_high: 0.0 = off (trainer.py:1846, losses.py:257)
+  accum_steps: 1
   warm_start_lr_max_ratio: 2.0
-  warmup_steps: 72   # Run 26 default.
-  lr_eta_min: 0.00001
-  lr_T0: 999999        # Ignored while lr_schedule=sqrt_release; kept for cosine fallback.
-  lr_T_mult: 1
+  warmup_steps: 72
+  lr_eta_min: 1.0e-05
+  # DELETED lr_T0: consumed only by the CosineAnnealingWarmRestarts branch (trainer.py:1881), unreachable at lr_schedule: sqrt_release
+  # DELETED lr_T_mult: same: cosine-branch-only (trainer.py:1882)
   lr_schedule: sqrt_release
   lr_release_cycle_steps: 0
-  lr_release_start_frac: 0.80
-  lr_release_min_scale: 0.1   # 2026-07-02: 1.0→0.1 restored (sqrt_release decays to 0.1x again) — flat-LR experiment reverted with the lr key above.
+  lr_release_start_frac: 0.8
+  lr_release_min_scale: 0.1
   lr_release_shape: sqrt
-  use_compile: true    # 2026-04-27: re-enabled with max-autotune. The earlier "compile destroys trainer" diagnosis turned out to be a prefix bug, not a compile-backward bug — saving under compile created `_orig_mod.`-prefixed checkpoints, then a later unwrapped load silently dropped all 192 keys (no warning) leaving the trainer fresh-init. Workers running max-autotune have been stable through trial f2f58 (raw_wr 0.81/0.59/0.57 across iters 1-3). Both bugs in the chain are now fixed: Trainer.save() strips the prefix, and load_state_dict_tolerant raises on <50% load.
+  use_compile: true
   compile_mode: max-autotune
-  log_level: INFO    # Keep dispatcher/train stats without per-search DEBUG gumbel-profile log overhead.
-  swa_start: -1  # Disabled: SWA averaging hurts early training. Enable after model stabilizes.
+  log_level: INFO
+  # PIN (both). SWA/EMA publishing is DEAD for restart v1 -- H2 fails its pre-registered rule
+  # and FE proved EMA and rehearsal do not compose (ledger 757db3635 / f7194ad40). Keep
+  # swa_start at -1: export_swa publishes the AVERAGED net when swa_start >= 0, it is
+  # CONSTRUCTION-ONLY (a live edit is silently inert), and with SWA on, gates and rulers score
+  # the RAW net while workers play the average (J10). swa_freq is meaningless at -1 but is
+  # exactly the line arm H would flip, so it stays as the pinned twin.
+  swa_start: -1
   swa_freq: 50
 
-puzzle_epd: null
-puzzle_interval: 0     # Disabled — too slow for many parallel trials
-
 tune:
-  min_replay_size: 0  # Tune path trains when replay >= batch_size; keep 0 for no extra floor
-
-  # Disk usage controls
-  # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
-  # Keeping too few checkpoints can cause missing-checkpoint restore errors.
-  tune_num_to_keep: 6               # keep last 6 checkpoints per trial (disk space)
-  tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
-
+  # DELETED min_replay_size: DEAD KEY - config_yaml.py:270 allowlist only, zero consumers
+  tune_num_to_keep: 6
+  tune_keep_last_experiments: 2
   tune_scheduler: gpbt_pl
-  gpbt_inertia_weight: 1.0
-  gpbt_winner_weight: 1.0
-  gpbt_quantile_fraction: 0.25
-  gpbt_resample_probability: 0.20
+  # DELETED gpbt_inertia_weight: cross-trial exploit weight; num_samples is 1 so there is nothing to exploit (harness.py:1159)
+  # DELETED gpbt_winner_weight: cross-trial only; num_samples: 1 (harness.py:1160)
+  # DELETED gpbt_quantile_fraction: cross-trial only; num_samples: 1 (harness.py:1161)
+  # DELETED gpbt_resample_probability: cross-trial only; num_samples: 1 (harness.py:1162)
   num_samples: 1
   max_concurrent_trials: 1
   cpus_per_trial: 1
   gpus_per_trial: 1.0
-  distributed_workers_per_trial: 4  # Shared broker needs more producers to keep the single GPU queue fed.
-  distributed_worker_sf_workers: 8  # 2026-07-18: SMT32 retune; production-shaped A/B +38.2% games/s vs 4/w. sf_nice keeps SF from preempting search/dispatch.
-  distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
+  distributed_workers_per_trial: 4
+  distributed_worker_sf_workers: 8
+  distributed_worker_min_games_per_batch: 200
   distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
-  distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
-  distributed_worker_compile_mode: reduce-overhead  # 2026-07-14: max-autotune's GPU benchmarking hung the compile twice on the flaky WSL bridge (never reached first inference in 20+ min). reduce-overhead compiles in ~1-2min from cache (no autotune benchmark), uses cudagraphs (good for small-batch selfplay), and makes wedge-restarts fast. Revert to max-autotune once the bridge is stable if a throughput readout justifies it.
-  distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
-  distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
+  distributed_worker_use_compile: true
+  distributed_worker_compile_mode: reduce-overhead
+  distributed_worker_inference_fp8: false
+  distributed_worker_threaded: true
   distributed_worker_selfplay_threads: 32
-  distributed_worker_threaded_dispatcher: true   # 2-slot async pipeline (2026-04-29 refactor): +5.9x over ThreadedBatchEvaluator at N=16 producers, parity tests at 1e-5 vs DirectGPUEvaluator. Was false based on 2026-04-28 A/B which used a pre-refactor sync dispatcher AND a bench with main-thread compile that broke cudagraph TLS — both fixed.
-  distributed_worker_dispatcher_batch_wait_ms: 0.0  # 2026-07-19: no fixed local-dispatch wait; 1.008x median throughput after the 576-row bucket. Restart-gated.
+  # PIN. config_yaml.py:225-228 documents it as a DEPRECATED NO-OP deliberately retained so an
+  # old worker binary does not pick its slow fallback during a live reload.
+  distributed_worker_threaded_dispatcher: true
+  distributed_worker_dispatcher_batch_wait_ms: 0.0
   distributed_worker_dispatcher_max_batch: 1190
-  distributed_worker_dispatcher_target_batch: 680  # Live producers underfill 340; 680 has been the best current steady compromise.
-  # distributed_worker_aot_dir: data/aot_models  # INCOMPATIBLE with distributed_worker_threaded: the ThreadedDispatcher compiles on its own thread and ignores AOT artifacts; the launcher drops aot_dir with a warning and emits --compile-inference instead.
+  distributed_worker_dispatcher_target_batch: 680
   distributed_inference_broker_enabled: true
   distributed_inference_shared_broker: false
-  distributed_inference_batch_wait_ms: 20.0  # 2026-07-02 POC B: hard CAP for adaptive mode (was fixed 5.0 = sweep winner; if adaptive_idle_ms reverts to 0, set this back to 5.0)
-  distributed_inference_adaptive_idle_ms: 2.0  # 2026-07-16: 4.0 arm KILLED by offline trace sim (scripts/sim_gather_policy.py): +14ms mean latency, zero rows/s gain — batches already gather all 16 slots; over-waiting just delays them. Sim says idle 1-2ms is within ~2% of the clairvoyant oracle. Restart-gated.
+  distributed_inference_batch_wait_ms: 20.0
+  distributed_inference_adaptive_idle_ms: 2.0
   distributed_inference_max_batch_per_slot: 1190
   distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
-  distributed_inference_compile_mode: reduce-overhead  # 2026-07-14: see distributed_worker_compile_mode — the BROKER's max-autotune first-inference compile is what hung. reduce-overhead avoids the autotune GPU benchmarking that deadlocked on the flaky bridge.
-  distributed_inference_aot_dir: data/aot_models_512  # 2026-07-15 RETRY on fresh bridge (driver 610.74 + reboot): packages ==eager, verified. Prior kill was a bridge-wedge side effect, not a perf/quality failure — watch recover_stall cadence; if clockwork ~100-min wedges return, blank this key + restart. History: 07-15 KILLED (reverted): AOT enabled (07-14 22:36) turned the sporadic WSL dxg host-bridge wedge into a CLOCKWORK ~100-min wedge/recover loop (9 recoveries 07-15, zero healthy stretches vs a 6.5h healthy stretch pre-AOT) — ~90% downtime, no training progress. Loading/replaying 14 AOT cudagraph packages at startup reliably trips the flaky bridge (same class as the max-autotune compile-hang variant). Blank = pure reduce-overhead known-good. Packages kept in data/aot_models_512 for the match/UCI path. See docs/experiment_ledger.md.
-  distributed_pause_selfplay_during_training: false  # Compile done; overlap for speed
-  # 2026-04-29: enable shard prefetch + 1-iter-lagged async test eval. Both
-  # overlap iter-boundary work onto the prior iter's selfplay phase. Saves
-  # ~80-150s/iter (zarr decode) + ~30-50s/iter (test eval). Snapshot in
-  # async_eval reuses trainer's compile mode so shared inductor cache hits.
+  distributed_inference_compile_mode: reduce-overhead
+  distributed_inference_aot_dir: data/aot_models_512
+  distributed_pause_selfplay_during_training: false
   distributed_prefetch_shards: true
   distributed_async_test_eval: true
   distributed_async_test_eval_timeout_s: 120.0
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
-  # 2026-07-24: 720 -> 2700 (45min SOFT deadline; hard ceiling = 3x = 8100s).
-  # Paired with games_per_iter 3520->440. Previously the soft deadline was
-  # unreachable-by-construction and 2160s (hard) was the real operating point;
-  # now the normal exit is "target met" at ~2160s and 2700s only bites in a slow
-  # patch. The hard ceiling is finally reserved for a genuine stall.
   distributed_wait_timeout_seconds: 2700
-  distributed_prev_model_max_fraction: 0.60  # 2026-05-19: raise 50%->60% to reduce alternating stale-discard timeout rows while keeping most data current-model.
-  # 2026-05-28: scaled to the old 3520 target. DELIBERATELY LEFT AT 1870 during
-  # the 2026-07-24 games_per_iter 3520->440 fix: the natural value is
-  # games_per_iter * prev_model_max_fraction = 440*0.60 = 264, but that would
-  # ACTIVATE backpressure (at 1870 it effectively never fires), which is a real
-  # behavior change and would confound the live views=5 readout. Left inert on
-  # purpose. See the ledger entry on stale-game waste (1271 stale vs 459
-  # matching games per iteration) — that is its own experiment, not a drive-by.
+  distributed_prev_model_max_fraction: 0.6
   distributed_stale_pause_target_games: 1870
-  # 2026-07-24: 0.90 -> 0.80. With a REACHABLE target this is now what it was
-  # always meant to be: how short an iteration we accept in a slow patch.
-  # 0.80*440 = 352 games, i.e. at 2700s we take what we have if >=352 rather
-  # than stalling toward the 8100s ceiling.
-  distributed_min_games_fraction: 0.80
+  distributed_min_games_fraction: 0.8
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
   distributed_server_root_override: /home/josh/projects/chess/runs/pbt2_small/server
   tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
-
-  # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
-  # 2026-07-27: 25000 -> 100000 and refresh_interval 1 -> 4. MEASURED against
-  # the live 832-shard window: the ENTIRE training data-loading cost is the
-  # per-batch disk refresh. A pure in-memory batch costs 10 ms; the old config
-  # paid a 1073 ms MEDIAN for the same batch, because refresh_interval: 1 made
-  # every single batch reload 5 x 2000 = 10,000 positions to serve 512 --
-  # 19.5x read amplification, ~437 MB per batch. Worse than the latency: at
-  # that churn a position lived ~2.5 batches in a 25,000 pool while only 512
-  # were drawn per batch, so ~95% of everything read from disk was evicted
-  # BEFORE IT WAS EVER SAMPLED. New values: amplification 4.9x, residence ~40
-  # batches (~0.9 iterations). Memory is 65.6 kB/position measured by RSS, so
-  # 100,000 = 6.6 GB (was 1.6 GB) against ~69 GB free.
-  # THE INTERVAL IS THE LEVER, NOT THE POOL SIZE: at interval 4, cap 25k vs
-  # 200k measured 381 vs 404 ms. The larger pool is here for MIXING (residence),
-  # not speed.
-  # This does NOT by itself buy more gradient. Steps/iteration are VIEWS-capped
-  # (trainer_steps_done x 512 / replay_positions_ingested = 2.502-2.552 on every
-  # row = train_views_per_ingested_position exactly). It makes each step ~3x
-  # cheaper, which is what makes a later views raise affordable -- that key IS
-  # live-tunable, so it is deliberately a SEPARATE change in its own window.
-  # ⚑ THESE THREE KEYS ARE CONSTRUCTION-TIME ONLY. They are not in any
-  # restart-required set, so the validator overlays them every iteration with no
-  # warning, but DiskReplayBuffer reads them once in __init__ and trainable.py
-  # pushes only sf_gap_priority_weight / fast_low_surprise_priority /
-  # diff_focus_{pol_scale,q_weight} to the live buffer. A live edit here does
-  # NOTHING. Sixth instance of the dead-key class. Change them at a RESTART.
   shuffle_buffer_size: 100000
   shuffle_refresh_interval: 4
   shuffle_refresh_shards: 5
-  shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
-  # On PB2 exploit (cross-trial restore), replace most recent local bad data and
-  # import only latest-generation shards from strong sibling trials.
-  exploit_replay_refresh_enabled: true   # Flush old data + copy donor data on exploit
+  shard_size: 2000
+  # ADDED -- PR #312 (MERGED 08-02), pinned at the code default, which is BYTE-IDENTICAL to
+  # today's draw. This is observability + insurance, NOT the experiment.
+  # ⚑ DO NOT FLIP IT AT THIS RESTART. Arm G returned NULL (brief, 08-02): on a FROZEN pool
+  # the 712x recency tilt does not measurably accelerate era forgetting vs uniform at matched
+  # steps (sig at 1 of 4 arm-steps; sign-test p=0.0625 -- suggestive, not confirmatory). The
+  # null licenses only the STATIC form; the live draw operates on a continuously-refilled
+  # window, untested by construction in that rig. G's null REDIRECTS blame to window EXIT
+  # (the proven hinge), so horizon and rehearsal are the primary levers and this is secondary.
+  # Why name an inert key at all: it is CONSTRUCTION-ONLY, and naming it makes the
+  # `[trial] buffer init: ... shard_recency_exponent=` line a checkable value instead of a
+  # default nobody chose. The buffer also prints its realized draw deciles.
+  replay_shard_recency_exponent: 1.0
+  # ⚑⚑ FLIP true -> false. THIS IS BRIEF BLOCKER #4, AND IT FIRES ON EXACTLY THE PLANNED
+  # RESTART. Restoring boot512/salvage into a NEW trial id sets cross_trial_restore
+  # (trainable_init.py:408). trainable_init.py:557 then reads
+  #     if not (restore.cross_trial_restore and tc.exploit_replay_refresh_enabled): return
+  # and, if both are true, _prune_local_shards_keep_fraction(0.0, 0.0) WIPES THE ENTIRE LOCAL
+  # REPLAY DIR (replay_exchange.py:357) and imports the donor's WHOLE window
+  # (replay_exchange.py:380) -- the cross-era window reuse the swap gate priced at -252 Elo,
+  # executed as an unrecorded, config-decided data action.
+  # ⚑ THIS KEY IS THE ONLY KILL SWITCH. `exploit_replay_donor_shards: 0` is NOT enough:
+  # the prune runs UNCONDITIONALLY inside the same function, before the donor_shards check
+  # (replay_exchange.py:358-386), so 0 would still wipe the local dir and merely skip the
+  # import. Verified by reading that function on origin/main, not inferred.
+  # This directly contradicts the base decision ("fresh window regeneration, NOT window
+  # reuse" -- the current window does not pair with boot512), so false is the only value
+  # consistent with the plan. Ledger this as a decided data action, per blocker #4.
+  exploit_replay_refresh_enabled: false
   exploit_replay_skip_newest: 0
-  exploit_replay_donor_shards: -1          # -1 = copy ALL donor shards; 0 = disabled; N = last N shards
+  # PIN (left at -1 on purpose). -1 = copy ALL donor shards, but the branch is now
+  # unreachable: refresh_enabled above is false. Left at its live value so this file changes
+  # exactly one thing here and the revert is a single-line flip back to true.
+  exploit_replay_donor_shards: -1
+  # PIN (the 6 exploit_replay_share_*/top_* lines). Inert at num_samples: 1
+  # (shared_samples_ingested == 0 on 478/478), but their dataclass defaults DIFFER from these
+  # configured values, so deletion is not semantics-neutral on paper.
   exploit_replay_share_top_enabled: true
   exploit_replay_top_k_trials: 3
   exploit_replay_top_within_best_frac: 0.05
   exploit_replay_top_min_metric: 0.0
   exploit_replay_max_unseen_iters_per_source: 1
   exploit_replay_share_fraction: 0.5
-  exploit_replay_local_keep_recent_fraction: 0.0   # Flush ALL old data on exploit
-  exploit_replay_local_keep_older_fraction: 0.0    # Flush ALL old data on exploit
-
-  # PB2: exploit+explore every X iterations (was 20).
-  pb2_perturbation_interval: 8
-
+  exploit_replay_local_keep_recent_fraction: 0.0
+  exploit_replay_local_keep_older_fraction: 0.0
+  # DELETED pb2_perturbation_interval: nothing to perturb: one trial, and pb2_bounds_lr is the degenerate interval [3e-5, 3e-5]
   tune_metric: opponent_strength_ema
   tune_mode: max
+  # ⚑ PIN AT 0 -- AND THIS IS NOT THE GATE. gate_games configures the REMOVED 1-sim vs-SF
+  # gate; anything but 0 RAISES at startup (gate_config_from_dict), which crash-loops under
+  # train.sh's auto-resume. "Promotion gate ON" means the gate_mode block below, not this.
+  gate_games: 0
+  # PIN. Inert companion of the removed gate; the value is what production carried.
+  gate_threshold: 0.5
+  # DELETED gate_interval: no consumer reads tc.gate_interval anywhere in chess_anti_engine/, even with the gate enabled
+  gate_mcts_sims: 1
 
-  # Net gating. The 1-sim vs-Stockfish gate these three keys configured is
-  # REMOVED, not disabled: it scored raw policy against a PID-controlled
-  # opponent whose 0.50 setpoint equals gate_threshold (so the statistic was
-  # pinned to the bar by the controller, not by the model), and rejection
-  # restored the weights while the optimizer kept stepping. That is what froze
-  # the model at iter 2-3 in 2026-03. gate_games at anything but 0 now RAISES
-  # at startup -- "just turn it back on" is not reachable.
+  # ============================================================================
+  # ADDED (8 keys) -- THE ANCHORED PROMOTION GATE, ARMED IN SHADOW MODE.
+  # ============================================================================
+  # chess_anti_engine/tune/promotion_gate.py. All 8 keys are in config_yaml.py's TUNE
+  # allowlist on origin/main (lines 274-276) and are read ONCE at construction by
+  # gate_config_from_dict straight from the config dict -- they are deliberately absent from
+  # TrialConfig so there is only one source of truth.
   #
-  # The replacement is chess_anti_engine/tune/promotion_gate.py: an ANCHORED
-  # comparison of the current published net against the previous one, using the
-  # vs-SF games the loop already ingests, acting on what is PUBLISHED to the
-  # fleet rather than on the training weights. Its knobs are gate_mode /
-  # gate_window_iters / gate_min_iters / gate_min_games_per_side /
-  # gate_demote_delta_elo / gate_demote_step_elo / gate_alpha /
-  # gate_max_hold_iters, all defaulted OFF
-  # in code. They are deliberately NOT listed here yet: adding a key to the
-  # live yaml before the running process is on code that defines it makes the
-  # validator reject the WHOLE reload. Add them at the next restart.
+  # ⚑ THIS IS A FIRST RUN, NOT A RE-ENABLE. The gate path has never executed in production.
+  # Treat every leg as unproven and read the full first-fire checklist before trusting a
+  # column: scratchpad/code_audit_20260803/GATE_AUDIT.md, section "VERIFY ON FIRST FIRE"
+  # (condensed into first_row_checks.md rows G1-G8).
   #
-  # AND THE SHADOW READOUT DOES NOT NEED THEM. decide() fills the
-  # per-iteration sample BEFORE the gate_mode: off check, so all four
-  # gate_sample_* columns are populated at the shipped default. Setting
-  # gate_mode: shadow adds only the rolling-window aggregates -- which the
-  # readout must NOT be keyed to, they overlap ~95% row-to-row -- and re-arms
-  # a ~252 MB export copy every iteration. So the readout runs with no yaml
-  # key, no restart-required key, no copy and nothing to revert. Run it with
-  #   PYTHONPATH=. python3 scripts/gate_shadow_readout.py <trial>/progress.csv
-  # (exit 0 promote / 1 hold / 2 kill / 3 the gate never ran / 4 no such file;
-  # a window shorter than the pre-registered 40 iterations holds, never
-  # promotes) -- that script is
-  # the ledger's deciding rule and the code under test, not a second copy.
+  # WHY IT MAY BE ARMED AT ALL: both gate-blocking PRs merged 2026-08-03 -- #323 (the upload
+  # compactor was writing None for opponent_wdl_regret_limit on 447/447 shards, so the
+  # PID-confound KILL leg was structurally unable to fire) and #324 (per-axis readout).
+  # STILL OWED AT FIRST FIRE, from the brief:
+  #   (1) confound NaN -> finite on the first post-restart ingested rows. #323's deploy
+  #       observable: compacted-shard rate UP ~15.7%, mean shard size DOWN ~17%. An UNCHANGED
+  #       rate means the difficulty key is not splitting -- re-check before trusting the
+  #       confound column at all.
+  #   (2) judge the readout by `n_confound >= 3` in its OUTPUT, NEVER by the exit code (an
+  #       exit code is an OR over axes). Per-axis codes: 5 = confound unmeasured,
+  #       6 = identity unevaluated, 7 = re-derivation refuses. The re-derivation is
+  #       STRUCTURALLY refused on today's data (phase band [0.18, 0.66] vs a 0.06 tolerance);
+  #       OfflineReference constants resolve only via ingest-time attribution POST-restart.
+  #       Do not wait on a re-run.
+  #   (3) the 11 probe_* columns rotate progress.csv, so the readout's 40-row precondition
+  #       restarts (~7.4h). EXPECTED, not a defect.
+  # SHADOW-MODE READOUT: watch `gate_would_demote`, NOT `gate_decision` (== 1 covers four
+  # different situations). Reason codes: 5 demote_regression, 6 shadow_would_demote,
+  # 7 hold_expired, 8 demote_step, 9 shadow_would_demote_step.
   #
-  # NOTE distributed_prev_model_max_fraction: 0.60 below is a CEILING THAT
-  # NEVER BINDS -- distributed_stale_games is 0 on every recent iteration, and
-  # a binding cap would have to discard prev shards into stale_*. The realized
-  # split, measured from 418 processed shard .zattrs over iters 164-219, is
-  # n_cur ~= 197 / n_prev ~= 38 (prev share 16.3%). Anything sized off the 0.60
-  # is wrong, and on the wrong side of the split.
-  #
-  # What it can resolve, so nobody reads it as a ratchet: per-iteration
-  # standard error 45.6 Elo MEASURED, against a loop that gains ~0.02
-  # Elo/iteration. That spread is PURE BINOMIAL NOISE -- standardized
-  # residuals sit at 1.011 where 1.0 is independent binomial, so there is no
-  # anchor-drift variance in it. (An earlier revision of this comment said
-  # "41.5 predicted from binomial alone", implying excess variance. That
-  # comparison used 1/mean(n); the honest per-window figure is 61.1 Elo, so
-  # 45.6 is BELOW binomial, not above.)
-  #
-  # At the default 24-iteration window (~4.5 h) the window se is 9.3 Elo and
-  # the shipped demote line is -45 -> -25. QUOTE THE LINE WITH THE CLAIM:
-  # a sustained -50 Elo/iteration break is caught at 92.5% power in one window
-  # AT -25, and at only 23.9% at -45. It does NOT catch the 2026-06
-  # warm-start class (-6.7 Elo/iteration) at any reachable window or line
-  # (worst-case power 0.29%). It is a regression alarm, not a selection step;
-  # no affordable measurement can select on 0.02 Elo. The slow-bleed job stays
-  # with scripts/daily_gate_ratchet.sh's cumulative vs-frozen-anchor series.
-  #
-  # TIME TO TRIP: an earlier revision of this comment said "a -100/-200 break
-  # trips inside the 8-iteration floor (~1.5 h)". EIGHT IS THE COLD-WINDOW
-  # NUMBER -- the latency from an EMPTY window, which production never has.
-  # From a steady-state 24-row window the 23 healthy pre-break rows sit in the
-  # mean until they age out. Measured, 400 seeds/row:
-  #   -50/iter  median 20 (p90 26) | -100/iter median 12 (p90 15)
-  #   -200/iter median  8 (p90 10) | -300/iter median  6 (p90  8)
-  # So -100 costs a median ~2.4 h in production, not 1.5.
-  #
-  # AND A SINGLE-ITERATION STEP OF ANY MAGNITUDE CANNOT MOVE THAT RULE. The
-  # anchored delta is a FIRST DIFFERENCE (cur minus prev, both re-measured
-  # every iteration), so a level shift of -M Elo -- a bad merge, a broken loss
-  # term, a mis-set LR -- appears in exactly ONE sample. For a window of K
-  # deltas with one -M and the rest 0: mean = -M/K, se = M/K exactly, so
-  # elo_hi = (M/K)(t-1), which is POSITIVE for every t>1 and M CANCELS. At
-  # K=24/alpha=0.05 a -1,000,000 Elo one-shot reads elo_hi = +29,754. Raising
-  # K, lowering alpha or moving the line cannot help.
-  # That is what gate_demote_step_elo is for: a SECOND leg on THIS iteration's
-  # own sample, evaluated before the min_iters window check, OR-ed into demote
-  # only (it can never create a promote). It ships at -125 on the same
-  # false-brake budget as the window line: 0.02-1.31 spurious holds per 8000
-  # null iterations across the admissible arm shapes. It catches a step of
-  # about -195 Elo at 50% power and -249 at 90%, and it does NOT catch a -100
-  # step -- one anchored sample carries 42-64 Elo of binomial noise.
-  #
-  # SHADOW-MODE READOUT: watch gate_would_demote, not gate_decision.
-  # gate_decision == 1 covers FOUR situations (nothing fired; shadow suppressed
-  # a window demote; shadow suppressed a step demote; the hold cap yielded).
-  # gate_would_demote is 1.0 exactly when the demote rule fired, whatever the
-  # mode did with it. gate_reason_code still says which leg:
-  # 5 demote_regression, 6 shadow_would_demote, 7 hold_expired, 8 demote_step,
-  # 9 shadow_would_demote_step.
-  #
-  # AND THE ANCHORED DELTA CARRIES A CONTROLLER TERM. An earlier revision of
-  # this comment inherited the module's claim that both arms face the same
-  # opponent, so the controller's movement would subtract out of the anchored
-  # difference. IT DOES NOT. Model and
-  # difficulty ship in the SAME recommended_worker manifest and are applied
-  # together, so a shard tagged with the previous sha was also played one PID
-  # step behind on wdl_regret/sf_nodes -- old-model-at-new-difficulty is not an
-  # observable state. The offset's SIGN OPPOSES the model change (the PID eases
-  # the opponent when the net weakens), so it MASKS regressions. Measured on
-  # this trial's progress.csv: corr(pid_raw_winrate_t, pid_regret_delta_{t+1})
-  # = -0.303 (n=42), and the implied offset has median |4.96| Elo, p90 20.9,
-  # with 5.9% of healthy iterations exceeding the whole -25 line. The -4.33 Elo
-  # offline bound was measured UNCONDITIONALLY on a healthy loop and does NOT
-  # apply during a break. gate_sample_confound_elo reports the predicted term
-  # next to gate_sample_delta_elo so this is falsifiable from production data.
-  #
-  # AND IF YOU EVER SET gate_mode: enforce, know that the brake is PARTIAL:
-  # a hold puts the fleet on one sha, so cur_games goes to 0 and the gate
-  # observes zero rows that evict real samples from its own window. It then
-  # reads NOT_RUN and releases. Measured: 55-66% of iterations held under a
-  # sustained break, never 100%. That is fail-open, not unsafe, but it is not
-  # what "hold the published model" sounds like.
-  gate_games: 0           # DEAD KEY: must stay 0
-  gate_threshold: 0.50    # DEAD KEY: inert
-  gate_interval: 1        # DEAD KEY: inert
-  gate_mcts_sims: 1       # DEAD KEY: inert
-
-  # For eval: run fixed-strength eval games to get a cleaner metric than train_loss.
-  # Disabled by default to keep the small-model run fast.
+  # NOT enforce, on purpose: under a sustained break `enforce` holds only 55-66% of
+  # iterations (a hold puts the fleet on one sha, cur_games goes to 0, the gate reads NOT_RUN
+  # and releases) -- fail-open, and not what "hold the published model" sounds like. Wave-3
+  # K2/K3 also leave cur/prev attribution noisier than designed, so cur/prev-dependent legs
+  # are DEGRADED until K2 is decided. Moving to enforce is a separate ledger entry.
+  gate_mode: shadow          # 0=off 1=shadow 2=enforce, reported as gate_mode_code
+  # The 7 siblings below are set to promotion_gate.py's own defaults, EXPLICITLY. They are
+  # written out rather than omitted so the realized gate config is in the file rather than in
+  # a dataclass -- the pin-to-realized rule. Changing any of them moves the alarm's operating
+  # point and needs a ledger line.
+  gate_window_iters: 24      # window se 9.3 Elo; per-iteration se is 45.6 Elo MEASURED
+  gate_min_iters: 8          # COLD-window latency only; from a steady 24-row window a
+                             # -50/iter break trips at median 20 iters, -100/iter at 12
+  gate_min_games_per_side: 15
+  gate_demote_delta_elo: -25.0   # catches a sustained -50 Elo/iter at 92.5% power in one
+                                 # window; at -45 only 23.9%. It does NOT catch the 2026-06
+                                 # warm-start class (-6.7 Elo/iter) at ANY reachable window.
+  gate_demote_step_elo: -125.0   # the SECOND leg, on THIS iteration's own sample, OR-ed into
+                                 # demote only. It exists because the window leg is a FIRST
+                                 # DIFFERENCE: a one-shot level break of ANY magnitude gives
+                                 # elo_hi = (M/K)(t-1) > 0 -- M cancels, so a -1,000,000 Elo
+                                 # step reads +29,754. Raising K or lowering alpha cannot help.
+  gate_alpha: 0.05
+  gate_max_hold_iters: 12    # also the anchor's max age; an older anchor is refused
   eval_games: 0
   eval_sf_nodes: 500
   eval_mcts_simulations: 32
-
   holdout_fraction: 0.02
   holdout_capacity: 2000
-  # INERT since the deterministic holdout eval (audit G14): the eval is a full
-  # pass over the frozen set, so the batch count is holdout rows / batch_size
-  # (2000 / 512 = 4, the last one ragged at 464) and nothing reads this value.
-  # Kept because removing a key from the live yaml is a reload risk for no gain;
-  # the realized number of eval batches is 4, not 5.
   test_steps: 5
-
-  # 2026-07-26: 0 -> 2000. The holdout was a conveyor belt, not a ruler:
-  # holdout_capacity 2000 with ~159 new rows/iter turns the set over COMPLETELY
-  # every ~13 iterations, so any test_* comparison spanning longer compares two
-  # different measuring sticks. That is the mechanism behind audit G4/J2 and
-  # behind best-model tracking being dead since iter 286 (it adopted the worse
-  # of two rulers ~0.3 nats apart). Freezing at 2000 makes successive test_*
-  # readings comparable to each other.
+  # ============================================================================
+  # ADDED (5 keys) -- THE ERA-FORGETTING PROBE PAIR (PR #315, MERGED 2026-08-03).
+  # ============================================================================
+  # chess_anti_engine/eval/era_probe.py. All 5 are in config_yaml.py's TUNE allowlist on
+  # origin/main (lines 261-262). This is the leading indicator the 07-31 run did not have:
+  # the -48.6 Elo slide happened behind flat columns, and the forgetting hinge (decay onset
+  # tracking each set's window-EXIT iteration) is the signal that WAS there.
   #
-  # KNOWN COST: a frozen holdout AGES. The replay window turns over ~daily, so
-  # the frozen rows drift out of distribution and the train/holdout gap widens
-  # for reasons that are not overfitting. Accepted trade — the gap's TREND stays
-  # useful even though its ABSOLUTE value stops being interpretable. Kill rule
-  # (ledger): gap widening >0.5 nats within 30 iters means re-freeze
-  # periodically instead. Read at trial construction, so a revert needs a
-  # restart. NOT yet persisted across restarts — each restart re-freezes a new
-  # set, which is still far better than every 13 iterations.
+  # ⚑ ARMING ORDER, AND IT IS NOT THE BRIEF'S ORDER. The brief says "restart onto this code,
+  # only THEN add the 5 keys". That is right about the VALIDATOR (an unknown key rejects the
+  # whole live reload of a RUNNING process) and wrong about the EFFECT: era_probe_path /
+  # _inwindow_path / _rows are CONSTRUCTION-ONLY (trainable_init._init_era_probes runs once
+  # per trial process; trainable_config_ops classifies them as construction-only on purpose,
+  # because a probe added by a live edit yields a column whose early rows are nan and whose
+  # later rows are a different measurement, with nothing marking the seam). Adding them AFTER
+  # the restart therefore arms NOTHING until the restart after that. The correct order is:
+  #   1. build both sets with scripts/build_era_probe_set.py (BEFORE start -- see below)
+  #   2. put these 5 keys in the yaml
+  #   3. restart onto merged origin/main, which defines them, so startup validation passes
+  # This is safe to get wrong in one direction only: load_probe_set NEVER RAISES. A missing
+  # or malformed set prints a reason and costs the run nothing but the column
+  # (trainable_init.py:719-721). So a bad path degrades to "no probe", never to a crash.
+  #
+  # BUILD BOTH LEGS FROM THE PRE-PAUSE WINDOW, BEFORE THE RESTART:
+  #   PYTHONPATH=. python3 scripts/build_era_probe_set.py \
+  #     --shard-dir runs/pbt2_small/tune/<trial>/replay_shards \
+  #     --oldest 40 --rows 2048 --label era --out data/era_probe/era_20260804.npz
+  #   PYTHONPATH=. python3 scripts/build_era_probe_set.py \
+  #     --shard-dir runs/pbt2_small/tune/<trial>/replay_shards \
+  #     --newest 40 --rows 2048 --label inwindow --out data/era_probe/inwindow_20260804.npz
+  # ⚑ UNDER FRESH-WINDOW REGENERATION THE "inwindow" LEG'S NAME LIES ON DAY 1. A fresh window
+  # has no shards at restart, so the newest-40 cut necessarily comes from the OLD lineage and
+  # is out-of-window from iteration 1. It is then the MOST-RECENTLY-EXITED leg, not an
+  # in-window leg, and probe_gap_* measures decay ORDERING by age rather than the in-window
+  # vs out-of-window contrast the column name promises. See open_decisions.md decision 4.
+  # ⚑ Only probe_gap_*'s TREND is interpretable, never its LEVEL. probe_era_* reads in-window
+  # memorisation until those shards exit; the hinge is the TURN at window-exit, and pre-exit
+  # is baseline, not signal.
+  # ⚑ Shard indices COLLIDE across lineages -- never join probe provenance by basename.
+  # The set FREEZES after generation (same convention as build_audit_set.py). Re-cutting the
+  # ERA leg mid-run silently re-rules a column whose header was fixed on row 1.
+  # Named CONCRETELY, not left at "". "" is the OFF value, and an OFF probe is
+  # indistinguishable from a forgotten one. Naming the paths makes the startup line an
+  # observation that can FAIL: `[probe] era set loaded: path=... rows=... digest=...` on
+  # success, `[probe] era: no probe set at <p>` if the build step was skipped.
+  era_probe_path: /home/josh/projects/chess/data/era_probe/era_20260804.npz
+  era_probe_inwindow_path: /home/josh/projects/chess/data/era_probe/inwindow_20260804.npz
+  era_probe_rows: 2048          # construction-only, like the two paths above
+  era_probe_interval: 1         # LIVE-RELOADABLE; <= 0 disables scoring (sets stay loaded,
+                                # columns read nan) -- the throttle for a contended box
+  era_probe_batch_size: 512     # LIVE-RELOADABLE
+
   freeze_holdout_at: 2000
   reset_holdout_on_drift: false
-  drift_threshold: 0.0
+  # DELETED drift_threshold: 0.0 independently disables the branch, and reset_holdout_on_drift is false too (trainable.py:349-351)
   drift_sample_size: 128
-
-  # Binary dimensions: keep pinned during small-model search.
   search_smolgen: false
   search_nla: false
   search_optimizer: false
-  search_optimizer_choices: [cosmos_fast]
+  # DELETED search_optimizer_choices: read at harness.py:1041 but only inside the search_optimizer gate, which is false
+  pb2_bounds_lr: [3.0e-05, 3.0e-05]
 
-  # Expanded PB2 search: opponent_strength stagnated at ~18.7 for 80+ iters
-  # with only lr + w_wdl searched. Open up more dimensions to break plateau.
-  #
-  # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [0.00003, 0.00003]  # 2026-07-26: repinned 0.0003 -> 3e-5 with train.lr for the boot512 restart.
-  # WARNING — THIS KEY OVERRIDES `train.lr`, IT DOES NOT BOUND IT.
-  # _build_mutation_param_space (tune/harness.py) does
-  #     param_space = {**base_config}; param_space[name] = tune.uniform(*bounds)
-  # so a degenerate [x, x] range REPLACES the flattened train.lr with x for
-  # every new trial. On 2026-07-26 the boot512 restart was launched with
-  # train.lr 3e-5 and the trial still came up at lr=0.0003 from this line;
-  # only the warm-start guard (trainable_init.guard_warm_start_lr) caught it.
-  # Change both together, always. Prior: 2026-07-02 re-pinned at 0.0003
-  # (flat-LR revert; scheduler bounds hotpatch on resume).
+
+# ============================================================================
+# DELETIONS CONSIDERED AND DECLINED
+# ============================================================================
+#
+# A dead key is not always a deletable key: deleting a line does not remove behaviour,
+# it substitutes the dataclass default. These were checked and kept.
+#
+# temperature* (10 keys)
+#     inert in effect (all starts and endgames are 0.0 so temperature_for_ply returns 0.0 on
+#     every branch) but NOT deletable: without the lines, temperature defaults to 1.0,
+#     temperature_endgame to 0.6 and temperature_decay_moves to 60 -- deletion turns
+#     stochastic play ON.
+#
+# mcts_start_simulations
+#     inert only because it EQUALS mcts_simulations. progressive_mcts is not settable from
+#     yaml and defaults True, so deleting the line drops start sims to the dataclass default
+#     50.
+#
+# replay_window_growth / replay_window_growth_frac
+#     inert only because the window is pinned at replay_window_max. On a fresh-window restart
+#     they are live from iteration 1, and deleting them gives 10000 / None instead of 20000 /
+#     1.0.
+#
+# random_start_plies
+#     unreachable only because opening_book_prob is 1.0. Keeping it means the deletion is not
+#     conditional on another key not moving.
+#
+# diff_focus_* (5 keys)
+#     unpublished and equal to DiffFocusConfig's defaults, so deleting them changes nothing --
+#     but keeping them pinned is the self-invalidating tripwire rl_loop_audit A7 relies on,
+#     and deleting them would NOT disable diff-focus (H2: it is the source of the whole
+#     replay-priority spread, CV 0.94).
+#
+# fpu_reduction / fpu_at_root / categorical_bins / hlgauss_sigma
+#     same shape: unpublished, pinned equal to the worker dataclass defaults, tripwire value
+#     only.
+#
+# exploit_replay_share_top_enabled / top_k_trials / top_within_best_frac / top_min_metric / max_unseen_iters_per_source / share_fraction
+#     inert at num_samples: 1 (shared_samples_ingested == 0 on 478/478) but their defaults
+#     differ from the configured values, so deletion is not semantics-neutral on paper.
+#
+# train_steps / train_window_fraction
+#     never read (0 of 478 iterations hit the ingest-drought fallback) but they ARE the
+#     documented drought floor and runaway cap. Kept as guards; delete only with a ledger
+#     line.
+#
+# matrix_weight_decay
+#     numerically ~0.35% total shrink over 58k steps, but rl_loop_audit I13 shows the key was
+#     a BROKEN control surface for 7+ weeks and PR #260 fixed it by pinning the yaml to the
+#     realized 1e-4. Deleting re-opens the resume-overwrite trap.
+#
+# distributed_worker_threaded_dispatcher
+#     config_yaml.py:225-228 documents it as a deprecated no-op deliberately retained so an
+#     old worker binary does not pick its slow fallback during a live reload.
+#
+# swa_freq
+#     meaningless while swa_start is -1, but the restart brief's arm H (EMA/SWA published
+#     model) would flip exactly that.
+#
+#
+# ============================================================================
+# ADDED BY THIS PACKAGE (2026-08-04) -- 15 keys, and why each is safe to add
+# ============================================================================
+# salvage_seed_pool_dir: ""         ghost-key purge; the only harmful ghost of the 7
+# gate_mode + 7 gate_* siblings     promotion gate, shadow mode, FIRST RUN
+# era_probe_* (5)                   leading-indicator probe pair (PR #315)
+# replay_shard_recency_exponent     pinned at the byte-identical default (PR #312)
+#
+# All 15 are in chess_anti_engine/utils/config_yaml.py's allowlists ON ORIGIN/MAIN:
+#   _CORE_KEYS               salvage_seed_pool_dir
+#   TUNE section allowlist   gate_mode, gate_window_iters, gate_min_iters,
+#                            gate_min_games_per_side, gate_demote_delta_elo,
+#                            gate_demote_step_elo, gate_alpha, gate_max_hold_iters,
+#                            era_probe_path, era_probe_inwindow_path, era_probe_rows,
+#                            era_probe_interval, era_probe_batch_size,
+#                            replay_shard_recency_exponent
+# The section flattener raises on an unknown key IN A RECOGNIZED SECTION, so every added
+# key must sit in the section whose allowlist names it. They do.
+#
+# ============================================================================
+# VALUES CHANGED BY THIS PACKAGE -- 5, exhaustively
+# ============================================================================
+#   train_views_per_ingested_position   5.0  -> 4.3      PRE-REGISTERED (22891e8cc)
+#   exploit_replay_refresh_enabled      true -> false    FLIP (brief blocker #4)
+#   sf_wdl_frac                         0.50 -> 0.45     FLIP (pin to realized; blocker #5)
+#   sf_nodes                            5000 -> 50000    FLIP (pin to reachable)
+#   feature_dropout_p                   0.0  -> 0.0      NO CHANGE; listed because the brief
+#                                                        names it and it owes an observable
+#
+# ============================================================================
+# DELIBERATELY NOT IN THIS FILE
+# ============================================================================
+#   aurora_polar_steps 8 -> 12        A8 v2 ABORTED (bf9585789) -- ship 8, no verdict for 12
+#   rehearsal / old-era draw mix      FE10 WITHDRAWN (ba0656728) -- data axis closed, raw-publish
+#   EMA / SWA publishing              H2 fails its pre-reg; FE proved no composition
+#   zclip re-point (cap ~12)          B2 REFUTED as the mechanism (<=0.34cp of 8.46);
+#                                     hygiene only, and a fresh restart begins unclipped
+#   recency exponent != 1.0           arm G NULL; do not flip on that evidence
+#   P1 curriculum two-scorer fix      needs its own pre-registration (wave-3, ec8fe626e)
+#   bootstrap_checkpoint repoint      the base-load mechanism is an operator decision
+#   any capacity change               retrain arm CANNOT RESOLVE; "shrink the net" is DEAD

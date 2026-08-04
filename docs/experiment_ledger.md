@@ -32736,3 +32736,76 @@ entry sits ABOVE this one, matching merge order; no existing line was modified
 by the rebase (`git diff origin/main -- docs/experiment_ledger.md` shows
 insertions only). **Not reviewed by its author** — the re-review verdict is
 REQUEST CHANGES and the reviewer gets this delta.
+
+### RESTART (pre-registered bundle) — boot512 --fresh on the audited minimal core: does the fixed loop gain, hold, or degrade? (2026-08-04)
+
+**User-authorized 2026-08-04 ("lets restart and see if it keeps gaining or stops and
+fails"). Launched from `scratchpad/restart_package_20260804/` (verifier: ZERO semantic
+drift) + `restart_brief_20260802.md`. This entry is the bundle's ONE entry per the
+Confounds rule; per-component observables live in the package's `first_row_checks.md`.**
+
+**Hypothesis.** The −48.6 Elo degradation (iter477 − boot512, hash-verified) was produced
+by the data schedule plus unverified-knob accumulation, not by the machinery (teacher
+above student, absorption clean, ruler passes a 250× control). With the audited minimal
+core, the fix set through PR #330, and fresh window regeneration from boot512, the loop
+should AT LEAST not lose to its own starting point — the pre-registered success criterion
+from the base decision (`1e5e2bfab`).
+
+**Base and mechanism (open_decisions 1).** `--fresh` experiment; `bootstrap_checkpoint`
+repointed at boot512 (`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt`) WITH
+`bootstrap_zero_policy_heads: false` as the paired edit (`trainable_init.py:471` zeroes
+trained policy heads otherwise — the package's trap 1). Fresh PID from yaml
+(`wdl_regret_start: 0.20`); exploit-replay refresh DISABLED (the only real kill switch —
+trap 2); 28 deletions + 7 ghost purges take effect (fresh path only). Cleanup dry-run
+simulated pre-launch: live trial 13a9f PROTECTED by both kept experiment-state files;
+only the 60K errored 967b1 stub is deleted.
+
+**The bundle (4 value changes + 15 added keys + the base repoint pair):**
+- `train_views_per_ingested_position` 5.0 → 4.3 — pre-registered `22891e8cc`, own kill
+  band (first 5 rows in [4.0, 4.6]; `policy_loss` worse >0.02 nats vs pre-change 5-iter
+  mean ⇒ revert to 5.0 live).
+- `exploit_replay_refresh_enabled` → false; `sf_wdl_frac` 0.50 → 0.45 (pin to realized;
+  floor==frac ⇒ knee cannot fire); `sf_nodes` 5000 → 50000 (no-op by construction,
+  `pid.py:487` clamps).
+- `gate_mode: shadow` + 7 gate siblings (FIRST RUN of the gate, all legs unproven — G1-G9);
+  5 `era_probe_*` keys with both sets cut from the pre-pause window pre-launch
+  (decision 4: the "inwindow" leg is most-recently-exited for segment 1 — decay ordering
+  by age, NOT an in/out contrast; it becomes a true in-window leg at the NEXT restart);
+  `replay_shard_recency_exponent: 1.0` (pin; arm G null licenses only the static form);
+  `salvage_seed_pool_dir: ""` (purges the −494 Elo ghost pool).
+- `aurora_polar_steps` stays 8 — A8 v2 ABORTED (`bf9585789`), no outcome read, no change
+  without evidence.
+- NOT in the bundle (each with its own reason recorded in open_decisions): rehearsal/EMA
+  (FE10 WITHDRAWN `ba0656728`; data axis closed), cp-ranked sf_policy_target rebuild
+  (SUSTAINED `b260373c5` but data-affecting — queued as the FIRST single-change window
+  post-stabilization), P1/P3/P4/K2/K3, zclip re-point, any LR change.
+
+**Deciding yardstick (ONE).** The arena ratchet vs the boot anchor, actually producing
+games: paired-opening pentanomial Elo(published − boot512), matched sims 32, play shape,
+same instrument as the base-decision arenas (rankings shape-robust per `1e5e2bfab`).
+Read at ~5 days (learning-quality change ⇒ day-plus window, paired CIs).
+- **SUCCESS:** Elo(published − boot512) CI lower bound > 0 — the loop gains.
+- **HOLD (acceptable):** CI spans 0 — the loop at least does not lose to its start;
+  continue, next lever (cp-target) proceeds.
+- **KILL:** CI upper bound < 0 (confirmed losing, the old failure reproduced on the
+  fixed loop) ⇒ pause training, do NOT iterate knobs; the remaining hypothesis space is
+  the target/loop family and the readout moves there.
+Supporting (leading indicators, NOT deciders): `probe_gap_*` TREND (never level),
+grad-norm median + clip rate (warm-state always-clip emergence was the old run's
+signature), test_loss continuity at handover, sf_eval desync detectors
+(both-zero = UNMEASURED not clean).
+
+**Confounds.** Unavoidable bundle: minimal core + views 4.3 + gate shadow first-fire +
+probe pair + exploit-replay off + boot512 fresh-window base, all in one window. Partial
+per-component attribution via each component's own observable (first_row_checks.md);
+anything separable waited. Post-restart winrate rows are +0.110 length-truncation biased
+(drop before fitting ANY trend); #328's `opp_strength_ema` restore is now MERGED — check
+its startup line rather than assuming the re-seed bias. `holdout_generation` bumps ONCE
+at this restart (#326 handover, pins full `44755941fd0bf0c8` / sampled `bbae91591858d35c`,
+neutrality measured loss-bit-identical) — one bump is EXPECTED; per-iteration climbing is
+a separate KILL. Holdout-series records are not comparable across the boundary.
+
+**Revert point.** `data/salvage/pre_restart_20260804` (3.5G, iter478 weights + optimizer
++ PID + 713-shard window manifest) + `hand_copied_state/` (gate_state.json, best.json,
+best/, top-level best.json — T11 hand-copy). The OLD lineage remains intact in trial
+13a9f (protected).
