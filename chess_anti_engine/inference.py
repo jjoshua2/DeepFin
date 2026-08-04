@@ -108,6 +108,21 @@ def require_model_planes(model: torch.nn.Module, channels: int, *, where: str) -
         )
 
 
+def _slot_rows(slot: _InferenceSlot, max_batch: int) -> int:
+    """Rows this broker will actually evaluate for ``slot``.
+
+    ONE definition, used by both the gather loop that evaluates the rows and
+    the serve loop that counts them. They used to differ: the gather clamped to
+    ``max_batch`` while the serve loop summed the raw ``slot.batch_size``, so a
+    client writing a batch_size above the layout's capacity had the excess
+    counted as served throughput and never evaluated. Small and only reachable
+    through a client-side protocol violation, but it is the same
+    "counted at dispatch, not evaluated" defect the rest of task #142 is about,
+    and a guard must share its criterion's instrument.
+    """
+    return max(0, min(int(slot.batch_size), int(max_batch)))
+
+
 def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:
     """Return dense 4672 policy logits for search-time consumers.
 
@@ -2219,7 +2234,7 @@ class SlotBroker:
         # ``request_ids`` was snapshotted by _process_batch before it read any
         # other field of these slots; see the ordering note on the header map.
         for slot, req_id in zip(ready, request_ids, strict=True):
-            bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
+            bsz = _slot_rows(slot, self._layout.max_batch)
             if compact_legal:
                 meta = slot.policy_i32
                 n_legal = max(0, int(meta[0]))
@@ -2716,7 +2731,11 @@ class SlotBroker:
                 if _ARRIVAL_TRACE_ENABLED:
                     self._note_arrival_trace(ready)
                 metrics["batches"] += 1
-                metrics["positions"] += sum(s.batch_size for s in ready)
+  # Read ONCE. FIRST_BATCH_DONE below used to re-read slot.batch_size after
+  # _process_batch, i.e. after any release, so its row count could describe
+  # the client's NEXT request rather than this batch's.
+                dispatched = sum(_slot_rows(s, self._layout.max_batch) for s in ready)
+                metrics["positions"] += dispatched
                 metrics["slots"] += len(ready)
                 self._timing_metrics = metrics
                 # Emit before _process_batch so wait_ms is gather wait only
@@ -2728,12 +2747,23 @@ class SlotBroker:
   # metadata), so subtracting them makes `pos/s` mean rows a model
   # evaluated. batches/slots stay dispatch counts deliberately: they answer
   # "how much did the loop try to batch", which a refusal does not change.
-                metrics["positions"] -= self._process_batch(ready)
-                if not self._first_batch_logged:
+                unanswered = self._process_batch(ready)
+                metrics["positions"] -= unanswered
+  # The boot marker means "this broker has served a batch", and operators
+  # read it as exactly that. It used to print the DISPATCHED row count
+  # unconditionally and set the flag either way, so a broker whose first
+  # batch was released unanswered -- the cold-boot no-model case, the one
+  # this marker is watched for -- still announced FIRST_BATCH_DONE with a
+  # full row count. Now it reports rows actually served, and a wholly
+  # unanswered batch is not a first batch: the flag stays down and the
+  # marker fires on the first batch that really is served. A modelless
+  # broker never prints it, which is the truth and is already accompanied
+  # by the throttled no-model WARNING.
+                served = dispatched - unanswered
+                if served > 0 and not self._first_batch_logged:
                     self._first_batch_logged = True
                     print(
-                        f"[broker] FIRST_BATCH_DONE positions="
-                        f"{sum(s.batch_size for s in ready)} "
+                        f"[broker] FIRST_BATCH_DONE positions={served} "
                         f"slots={len(ready)} "
                         f"since_boot_s={self._since_boot_s():.2f}",
                         flush=True,
@@ -3717,14 +3747,21 @@ class SharedSlotBroker:
     def _process_parallel(self, ready_by_trial: dict[str, list[_InferenceSlot]]) -> int:
         """Process all trials' batches in parallel using per-trial CUDA streams.
 
-        Returns the number of ROWS refused for an unimplemented ``request_mode``.
-        The serve loop counts positions BEFORE calling this, so without the
-        return its pos/s would count rows this broker declined to evaluate --
-        the same "a failure reads as throughput" defect B6 fixed on the client
-        side, in the sibling path.
+        Returns the number of ROWS released UNANSWERED, on either path that
+        can release one: a trial with no model yet, and a request_mode this
+        broker does not implement. The serve loop counts positions BEFORE
+        calling this, so without the return its pos/s would count rows this
+        broker declined to evaluate -- the same "a failure reads as throughput"
+        defect B6 fixed on the client side, in the sibling path.
+
+        The name is ``unanswered_rows`` rather than the original
+        ``refused_rows`` because it stopped meaning "refused for an
+        unimplemented mode" when the no-model path was added to it (task #142
+        re-review): a counter whose name is narrower than its contents is how
+        the missing no-model case survived the first enumeration.
         """
         use_cuda = self.device.startswith("cuda")
-        refused_rows = 0
+        unanswered_rows = 0
 
         # Host-side pack first; H2D + forward sit under the hang watchdog.
         packed: list[tuple[str, list[_InferenceSlot], list[int], list[int], np.ndarray]] = []
@@ -3748,6 +3785,18 @@ class SharedSlotBroker:
                         "slot(s) for retry (NOT answering with zeros)",
                         trial_id, len(ready),
                     )
+                # Counted BEFORE the release, for the reason spelled out on
+                # SlotBroker._process_batch: _STATE_IDLE frees the client to
+                # re-submit into the same shared slot with a different
+                # batch_size, so a read afterwards belongs to the NEXT request.
+                #
+                # This increment was MISSING until the task #142 re-review.
+                # The serve loop counts these rows at dispatch and subtracts
+                # only this return, so a trial whose model had not loaded yet
+                # had every one of its rows reported as served pos/s -- the
+                # fourth instance of the family, in the path that is hardest to
+                # notice because it is the transient one.
+                unanswered_rows += sum(int(s.batch_size) for s in ready)
                 for slot in ready:
                     slot.state = _STATE_IDLE
                 continue
@@ -3773,7 +3822,7 @@ class SharedSlotBroker:
                 n_bad = sum(1 for m in request_modes if m != _MODE_DENSE_F32)
                 for slot, mode in zip(ready, request_modes, strict=True):
                     if mode != _MODE_DENSE_F32:
-                        refused_rows += int(slot.batch_size)
+                        unanswered_rows += int(slot.batch_size)
                         slot.state = _STATE_IDLE
                 # Throttled for the same reason as the no-model branch above:
                 # a released slot comes straight back round the serve loop, so
@@ -3811,7 +3860,7 @@ class SharedSlotBroker:
             packed.append((trial_id, ready, batch_sizes, request_ids, xb))
 
         if not packed:
-            return refused_rows
+            return unanswered_rows
 
         hang_batch = sum(int(xb.shape[0]) for *_, xb in packed)
         # Token kept for the same reason as SlotBroker._process_batch_mode.
@@ -3869,7 +3918,7 @@ class SharedSlotBroker:
             forward_ok = True
         finally:
             self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
-        return refused_rows
+        return unanswered_rows
 
     def serve_forever(self) -> None:
         _batch_count = 0
@@ -3935,8 +3984,11 @@ class SharedSlotBroker:
             for ready in ready_by_trial.values():
                 _batch_count += 1
                 _total_positions += sum(s.batch_size for s in ready)
-  # Rows refused for an unimplemented request_mode were counted above
-  # but never evaluated; subtract them so pos/s means served rows.
+  # Rows released UNANSWERED were counted above but never evaluated;
+  # subtract them so pos/s means served rows. Both release paths in
+  # _process_parallel are in that return: an unimplemented request_mode
+  # AND a trial whose model has not loaded yet. The comment used to name
+  # only the first, which is exactly how the second went unfixed.
             _total_positions -= self._process_parallel(ready_by_trial)
 
   # Periodic metrics

@@ -1,12 +1,24 @@
-"""The production broker must not report unanswered rows as served throughput.
+"""A broker must not report unanswered rows as served throughput.
 
-Task #142, the third and last of the three known instances of the family PR
-#325 named: *a serve loop that counts work at DISPATCH time plus a callee that
-can decline it*. B6 fixed it in ``MultiSlotInferenceClient`` (a timed-out
-request transported nothing yet counted as ``lifetime_positions``) and B6(c) in
+Task #142 and its re-review. The family PR #325 named is *a serve loop that
+counts work at DISPATCH time plus a callee that can decline it*. B6 fixed it in
+``MultiSlotInferenceClient`` (a timed-out request transported nothing yet
+counted as ``lifetime_positions``) and B6(c) in
 ``SharedSlotBroker._process_parallel`` (rows refused for an unimplemented
-``request_mode``). This is the PRODUCTION broker, which the other two are only
-siblings of.
+``request_mode``).
+
+⚑ **"Three known instances" was WRONG, and the way it was wrong is the lesson.**
+This file's first version closed the family on a grep for counter INCREMENTS
+(``+= 1``, ``+= sum``, ...). But the defect IS THE ABSENCE OF AN INCREMENT, so
+that instrument cannot see it -- it can only find sites that already count. The
+enumerating instrument is the sites that RELEASE work
+(``_release_slots_for_retry(``, ``state = _STATE_IDLE``), each checked against
+whether a dispatch-time counter already counted those rows. Re-enumerated that
+way, ``SharedSlotBroker._process_parallel``'s NO-MODEL branch turned out to
+release every one of a trial's slots with no increment at all: instance four,
+found by the reviewer, fixed and tested at the bottom of this file.
+
+The production ``SlotBroker`` is the instance this file was opened for.
 
 ``SlotBroker.serve_forever`` does::
 
@@ -39,7 +51,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -49,9 +61,11 @@ from chess_anti_engine.inference import (
     _MODE_DENSE_F32,
     _MODE_LEGAL_BF16,
     _POLICY_SIZE,
+    _STATE_IDLE,
     _STATE_REQUEST,
     _InferenceSlot,
     BrokerModelUnavailable,
+    SharedSlotBroker,
     SlotBroker,
 )
 
@@ -432,5 +446,244 @@ def test_the_escalating_failure_still_propagates(
         slot.state = _STATE_REQUEST
         with pytest.raises(BrokerModelUnavailable, match="no model loaded"):
             broker._process_batch([slot])
+    finally:
+        broker.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# The FOURTH instance, found by the re-review: SharedSlotBroker's NO-MODEL trial
+#
+# Method lesson, recorded here because this file is where the next reader lands:
+# the first enumeration grepped for counter INCREMENTS (`+= 1`, `+= sum`, ...)
+# and concluded the family was closed. But this defect class IS THE ABSENCE OF
+# AN INCREMENT, so that instrument is blind to it by construction. The
+# enumerating instrument is the sites that RELEASE work --
+# `_release_slots_for_retry(` and `state = _STATE_IDLE` -- each checked for
+# whether a dispatch-time counter already counted those rows.
+# ---------------------------------------------------------------------------
+
+
+class _SharedStubSlot:
+    """Enough of a slot to drive SharedSlotBroker's no-model branch.
+
+    The policy buffer is full width because the served-trial control really
+    does run a forward and scatter the result back; a narrow buffer would fail
+    on the shape rather than on the counting claim.
+    """
+
+    def __init__(self, batch_size: int = 2) -> None:
+        self.state = _STATE_REQUEST
+        self.request_mode = _MODE_DENSE_F32
+        self.request_id = 7
+        self.batch_size = batch_size
+        self.policy = np.zeros((batch_size, _POLICY_SIZE), dtype=np.float32)
+        self.wdl = np.zeros((batch_size, 3), dtype=np.float32)
+        self.input = np.zeros((batch_size, 4), dtype=np.float32)
+
+
+class _SharedWatchdog:
+    """The forward-hang instrument, stubbed to assert it is still driven."""
+
+    def mark_forward_start(self, batch: int) -> int:
+        assert batch >= 0
+        return 1
+
+    def mark_forward_done(self, *, success: bool, token: int) -> None:
+        assert token == 1
+        assert success in (True, False)
+
+
+def _shared_broker(*, with_model: bool) -> SharedSlotBroker:
+    broker = object.__new__(SharedSlotBroker)
+    broker._trial_models = {"t0": _TinyPolicy().eval()} if with_model else {}
+    broker._trial_no_model_warned_at = {}
+    broker._trial_bad_mode_warned_at = {}
+    broker._trial_streams = {}
+    broker._first_inference_done = False
+    broker._hang_watchdog = _SharedWatchdog()  # pyright: ignore[reportAttributeAccessIssue]
+    broker.unsupported_mode_requests = 0
+    broker.device = "cpu"
+    return broker
+
+
+def test_shared_broker_no_model_rows_are_not_counted_as_served() -> None:
+    """RED on this PR's first head: `_process_parallel` returned 0 here.
+
+    `SharedSlotBroker._process_parallel` sets every ready slot of a
+    model-less trial to `_STATE_IDLE` and `continue`s, with no increment. The
+    serve loop counted those rows at dispatch and subtracts only this return,
+    so a trial whose weights had not loaded yet reported every row as served
+    pos/s. Dormant today (`distributed_inference_shared_broker: false`) but on
+    the #322 restart-gated deploy path, so it can go live at a restart.
+    """
+    broker = _shared_broker(with_model=False)
+    slots = [_SharedStubSlot(batch_size=5), _SharedStubSlot(batch_size=3)]
+
+    unanswered = broker._process_parallel({"t0": slots})  # pyright: ignore[reportArgumentType]
+
+    assert [s.state for s in slots] == [_STATE_IDLE, _STATE_IDLE], (
+        "sanity: the no-model branch IS what released these slots"
+    )
+    assert unanswered == 8, (
+        "rows released for a model-less trial were never evaluated; returning "
+        "0 here is the fourth instance of the dispatch-time counting family"
+    )
+
+
+def test_shared_broker_no_model_rows_are_counted_before_the_release() -> None:
+    """Same read-before-release rule as the production broker's path 1."""
+    broker = _shared_broker(with_model=False)
+
+    class _ResubmitOnRelease(_SharedStubSlot):
+        """A client that re-submits the instant its slot goes IDLE."""
+
+        def __setattr__(self, name: str, value: Any) -> None:
+            object.__setattr__(self, name, value)
+            if name == "state" and value == _STATE_IDLE:
+                object.__setattr__(self, "batch_size", 1)
+
+    slots = [_ResubmitOnRelease(batch_size=5)]
+
+    assert broker._process_parallel({"t0": slots}) == 5, (  # pyright: ignore[reportArgumentType]
+        "the count must describe the rows this batch was dispatched with"
+    )
+
+
+def test_shared_broker_still_counts_a_served_trial_as_served() -> None:
+    """Positive control: a trial WITH a model must subtract nothing."""
+    broker = _shared_broker(with_model=True)
+    slots = [_SharedStubSlot(batch_size=4)]
+
+    assert broker._process_parallel(cast("Any", {"t0": slots})) == 0, (
+        "a served trial declines no rows; a pessimistic counter is as wrong "
+        "as the optimistic one it replaced"
+    )
+
+
+def test_shared_broker_counts_only_the_modelless_trial() -> None:
+    """One trial's missing model must not cost another trial its throughput."""
+    broker = _shared_broker(with_model=True)
+    served = [_SharedStubSlot(batch_size=4)]
+    starved = [_SharedStubSlot(batch_size=6)]
+
+    unanswered = broker._process_parallel(
+        cast("Any", {"t0": served, "no_model_trial": starved}),
+    )
+
+    assert unanswered == 6, "only the model-less trial's rows are unanswered"
+    assert starved[0].state == _STATE_IDLE
+    assert served[0].state != _STATE_IDLE
+
+
+# ---------------------------------------------------------------------------
+# The FIFTH instance by mechanism: the FIRST_BATCH_DONE boot marker
+# ---------------------------------------------------------------------------
+
+
+def test_first_batch_done_reports_rows_actually_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    broker = _serving(tmp_path, monkeypatch, num_slots=2)
+    try:
+        _arm_legal(broker, 0, malformed=True, batch_size=4)
+        _arm_legal(broker, 1, malformed=False, batch_size=3)
+
+        _run_one_serve_iteration(broker, monkeypatch)
+
+        out = capsys.readouterr().out
+        assert "FIRST_BATCH_DONE positions=3 " in out, (
+            f"the boot marker must report the 3 rows served, not the 7 "
+            f"dispatched; got:\n{out}"
+        )
+    finally:
+        broker.shutdown()
+
+
+def test_first_batch_done_does_not_fire_on_a_wholly_unanswered_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The marker is read as "this broker is serving". It must not lie.
+
+    Pre-fix, a model-less broker -- the exact cold-boot failure the marker is
+    watched for -- printed FIRST_BATCH_DONE with a full row count on its first
+    batch, then never mentioned it again because the flag was already down.
+    """
+    broker = _modelless(tmp_path, monkeypatch)
+    try:
+        _arm_dense(broker, batch_size=6)
+
+        metrics = _run_one_serve_iteration(broker, monkeypatch)
+
+        out = capsys.readouterr().out
+        assert metrics["batches"] == 1, "sanity: a batch WAS dispatched"
+        assert "FIRST_BATCH_DONE" not in out, (
+            f"a batch in which nothing was served is not a first batch; "
+            f"got:\n{out}"
+        )
+        assert not broker._first_batch_logged, (
+            "the flag must stay down so the marker can still fire on the "
+            "first batch that really is served"
+        )
+    finally:
+        broker.shutdown()
+
+
+def test_first_batch_done_fires_on_the_first_genuinely_served_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Suppressing the marker must not DELETE it -- it moves to the real batch."""
+    broker = _serving(tmp_path, monkeypatch)
+    try:
+        slot = _arm_dense(broker, batch_size=6)
+        # Batch 1: the model is not there yet, so nothing is served.
+        broker._model = None
+        monkeypatch.setattr(SlotBroker, "_ensure_model", lambda _self: None)
+        assert broker._process_batch([slot]) == 6
+        assert not broker._first_batch_logged
+
+        # Batch 2: the model arrived.
+        broker._model = _TinyPolicy().eval()
+        _arm_dense(broker, batch_size=6)
+        _run_one_serve_iteration(broker, monkeypatch)
+
+        out = capsys.readouterr().out
+        assert "FIRST_BATCH_DONE positions=6 " in out, (
+            f"the marker must fire once the broker genuinely serves; got:\n{out}"
+        )
+    finally:
+        broker.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# The clamp: dispatch counted rows the gather would never evaluate
+# ---------------------------------------------------------------------------
+
+
+def test_an_oversized_batch_size_is_not_counted_beyond_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gather clamps to ``max_batch``; the dispatch count must clamp too.
+
+    Found by the release-site re-enumeration as the one site with a THIRD
+    disposition: not a release at all, but still "counted at dispatch, never
+    evaluated". A client that writes a batch_size above the layout capacity had
+    the excess reported as served throughput. Only reachable through a
+    client-side protocol violation, which is why it is small -- and exactly why
+    it survived: nothing on the healthy path can show it.
+
+    ``max_batch_per_slot`` is 8 here, so a slot claiming 12 rows can only ever
+    contribute 8.
+    """
+    broker = _serving(tmp_path, monkeypatch)
+    try:
+        slot = _arm_dense(broker, batch_size=8)
+        slot.batch_size = 12  # over capacity, past _arm_dense's own bound
+
+        metrics = _run_one_serve_iteration(broker, monkeypatch)
+
+        assert metrics["positions"] == 8, (
+            "only the 8 rows the gather can evaluate may be counted; counting "
+            "the claimed 12 reports 4 rows of throughput that never existed"
+        )
     finally:
         broker.shutdown()
