@@ -23947,8 +23947,8 @@ unreachable at 1 GPU), **I5/#136** (eval cache — moot at
 **Review round (2026-08-03, comment 5173120786 — REQUEST CHANGES, then
 addressed).** The independent reviewer reproduced every claim above on a
 fixed-seed checkpoint shared by both arms (stronger than my per-invocation
-random init), swept `limits_from_go` over 336 cells and confirmed **56 cells
-change and every one is `movestogo=1`**, fuzzed 3,021 `position` commands and
+random init), swept `limits_from_go` over 336 cells and confirmed that the cells
+that change are **all `movestogo=1`**, fuzzed 3,021 `position` commands and
 found **0 cases where `main` resolved a real board and this branch changed it**,
 and confirmed on a real 1858-wide head that `_policy_logits_to_full` +
 `move_to_index` is the correct pair. Three additive items came back:
@@ -23981,7 +23981,30 @@ and confirmed on a real 1858-wide head that `_policy_logits_to_full` +
   U4 all over again, introduced by the fix for U3. Baseline arm is now
   bit-identical to `main` (470 ms on the reviewer's 1 s cell), asserted.
 
-Mutation table is now **15/15 caught** (M12–M15 added). Method note for the
-next batch: the mutation harness reverted each mutation with `git checkout --`,
-which silently **discarded a full round of uncommitted edits** in the same
-files. It now restores from an in-memory copy.
+**CORRECTED 2026-08-03 (docs-only, caught by the delta pass).** The sentence
+above originally read *"56 cells change and every one is `movestogo=1`"*. **56
+describes the PRE-N1 head (`089d044c2`), not what ships.** N1 gated the raised
+ceiling on `optimum_fraction > 0`, which removed the off-sentinel half of that
+set. Re-swept the same 336-cell grid across three arms (`origin/main`, the
+pre-N1 head, and the shipped head) rather than adjusting the number by
+argument:
+
+```
+pre-N1 head 089d044c2 : 56 of 336 cells differ from origin/main
+                          movestogo=1, optimum_fraction=0.7 : 28
+                          movestogo=1, optimum_fraction=0.0 : 28
+SHIPPED head c3edb1555: 28 of 336 cells differ from origin/main
+                          movestogo=1, optimum_fraction=0.7 : 28
+```
+
+**Shipped is 28, all of them `movestogo=1` at `optimum_fraction=0.7`; all 168
+off-sentinel cells are bit-identical to `main`.** Quoting a reviewer's
+measurement of an earlier head as if it described the merge candidate is the
+same class of error as this entry's own N2 amendment — a number carried forward
+across a change that invalidated it. Corrected in place with the disclosure.
+
+Mutation table is now **15/15 caught** (M12–M15 added), plus the reviewer's
+M16 pinning the two-counter split. Method note for the next batch: the mutation
+harness reverted each mutation with `git checkout --`, which silently
+**discarded a full round of uncommitted edits** in the same files. It now
+restores from an in-memory copy.
