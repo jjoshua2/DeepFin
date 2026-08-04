@@ -128,6 +128,7 @@ from chess_anti_engine.eval.audit import (
     SOURCE_NAMES,
     criticality_gap,
     expected_and_top1_regret,
+    expected_blunder_rates,
     legal_full_indices,
     load_audit_set,
     move_regrets,
@@ -759,6 +760,136 @@ def candidate_labels(input_encoding: str) -> dict[str, str]:
     return labels
 
 
+def _parse_blunder_taus(spec: str | None) -> tuple[float, ...]:
+    """"50,100,200" -> (50.0, 100.0, 200.0). None/empty -> () (feature OFF).
+
+    Deduplicated and sorted so the report columns and the dump keys are in a
+    stable order no matter how the operator typed them.
+
+    WHOLE CENTIPAWNS ONLY, enforced rather than assumed. A fractional
+    threshold would name its dump key `blunder12.5`, and the dot is a
+    separator in `paired_compare.py`'s dotted `--field` path — so
+    `cand.raw.blunder12.5` resolves to nothing and every joined row is
+    unusable. That failure is loud (the reader exits non-zero) but it happens
+    only after a full GPU scoring pass, so it is rejected here at parse time
+    instead.
+    """
+    if spec is None:
+        return ()
+    out: set[float] = set()
+    for chunk in spec.split(","):
+        text = chunk.strip()
+        if not text:
+            continue
+        try:
+            tau = float(text)
+        except ValueError:
+            raise SystemExit(
+                f"--blunder-taus: {text!r} is not a number (expected cp "
+                f"thresholds like '50,100,200')",
+            ) from None
+        if not np.isfinite(tau) or tau < 0.0:
+            raise SystemExit(
+                f"--blunder-taus: {tau} is not a valid cp threshold "
+                f"(must be finite and >= 0)",
+            )
+        if tau != round(tau):
+            raise SystemExit(
+                f"--blunder-taus: {text!r} must be a whole number of "
+                f"centipawns. A fractional threshold names the dump key "
+                f"'blunder{tau:g}', whose dot paired_compare.py's dotted "
+                f"--field path cannot address, so every paired row would be "
+                f"unusable.",
+            )
+        out.add(tau)
+    return tuple(sorted(out))
+
+
+def _blunder_key(tau: float) -> str:
+    """Per-position dump key for one threshold: 100.0 -> 'blunder100'.
+
+    Flat (not nested under a 'blunder' dict) because the paired reader
+    addresses it as a dotted path: `paired_compare.py --field
+    cand.raw.blunder100`. That same reader is why `_parse_blunder_taus`
+    admits only whole centipawns: a dot in the key would split the path.
+    """
+    return f"blunder{tau:g}"
+
+
+def _aggregate_blunders(
+    rows: list[dict], n_taus: int,
+) -> dict[tuple[str, str], tuple[tuple[float, ...], int]]:
+    """(group, candidate) -> (mean blunder rate per tau, n).
+
+    Separate from ``_aggregate`` on purpose: that function returns the frozen
+    3-tuple every existing caller unpacks, and widening it would change the
+    default reporting path this flag is required not to touch.
+    """
+    groups: dict[tuple[str, str], list[tuple[float, ...]]] = {}
+    for row in rows:
+        for grp in ("overall", PHASE_NAMES[row["phase"]], SOURCE_NAMES[row["source"]]):
+            groups.setdefault((grp, row["cand"]), []).append(row["rates"])
+    return {
+        k: (
+            tuple(
+                float(np.mean([v[i] for v in vals])) for i in range(n_taus)
+            ),
+            len(vals),
+        )
+        for k, vals in groups.items()
+    }
+
+
+def _blunder_section(
+    rows: list[dict],
+    group_names: list[str],
+    labels: dict[str, str],
+    taus: tuple[float, ...],
+) -> str:
+    """The additive report section. EMPTY STRING when the flag was not passed.
+
+    Returning "" rather than an empty table is what keeps the default report
+    byte-identical: the caller concatenates unconditionally.
+    """
+    if not taus or not rows:
+        return ""
+    agg_b = _aggregate_blunders(rows, len(taus))
+    lines = [
+        "| candidate | " + " | ".join(
+            f"{g} (n)" for g in group_names
+        ) + " |",
+        "|" + "---|" * (len(group_names) + 1),
+    ]
+    body: list[str] = []
+    for cand, label in labels.items():
+        for ti, tau in enumerate(taus):
+            cells = []
+            for g in group_names:
+                v = agg_b.get((g, cand))
+                cells.append(
+                    "—" if v is None else f"{100.0 * v[0][ti]:.2f}% ({v[1]})",
+                )
+            body.append(f"| {label} — >{tau:g} cp | " + " | ".join(cells) + " |")
+    if not body:
+        return ""
+    return (
+        "\n## Blunder mass: target probability on moves losing more than N cp\n\n"
+        "**A CONJUGACY-NEUTRAL ruler, and the reason it is here.** The E[regret] "
+        "table above is LINEAR in the per-move cp cost, so among distributions of "
+        "equal entropy its minimizer is exactly the Gibbs distribution in that "
+        "cost. A candidate built as a softmax over cp therefore wins that table by "
+        "construction, and one built over a saturating transform of cp loses it by "
+        "construction — measured 2026-08-04 (ledger `b260373c5`), where the same "
+        "pair swaps places when re-scored in win-probability units. This statistic "
+        "is a 0/1 functional whose fixed-entropy minimizer is two-level, so it is "
+        "conjugate to neither shape, and it reads the quantity collapse-avoidance "
+        "is about: how much mass sits on moves that lose outright.\n\n"
+        "Lower is better. Cells are mean probability mass, in percent.\n\n"
+        + "\n".join(lines + body)
+        + "\n"
+    )
+
+
 def _policy_table(agg: dict, group_names: list[str], labels: dict[str, str]) -> str:
     lines = ["| candidate | " + " | ".join(f"{g} E[regret] / top-1 (n)" for g in group_names) + " |"]
     lines.append("|" + "---|" * (len(group_names) + 1))
@@ -866,12 +997,22 @@ def main() -> None:
                          "the PLAY row (--sims).")
     ap.add_argument("--max-positions", type=int, default=0,
                     help=">0 limits positions (smoke runs)")
+    ap.add_argument("--blunder-taus", type=str, default=None,
+                    help="comma-separated cp thresholds, e.g. '50,100,200'. "
+                         "ADDITIVE: adds a blunder-mass report section and "
+                         "per-candidate 'blunderN' keys to the dump. Omitted "
+                         "(the default) leaves every existing number and the "
+                         "report byte-identical.")
     ap.add_argument("--dump-per-position", type=Path, default=None,
                     help="if set, write one JSONL record per scored position "
                          "(phase, source, criticality gap, per-candidate "
                          "expected/top1 regret) for offline slicing")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
+  # Parsed at PARSE time so a malformed threshold list fails before the model
+  # is loaded. () when the flag is absent, which is what keeps every code path
+  # below identical to the default run.
+    blunder_taus = _parse_blunder_taus(args.blunder_taus)
 
   # Reject at PARSE time, not deep in the run. `_net_candidates` only forwards
   # vloss_mode when vloss_weight > 0, and this script never prints or records
@@ -992,6 +1133,9 @@ def main() -> None:
     root_q = root_q_by_profile["train"]
 
     policy_rows: list[dict] = []
+    # Populated only when --blunder-taus is passed; an empty list makes
+    # `_blunder_section` return "" and the report identical to the default.
+    blunder_rows: list[dict] = []
     per_pos_dump: list[dict] = []
   # Distribution shape per candidate, over the SAME rows the regret table
   # scores. Collected from the same `cands` dict so the stored-form transforms
@@ -1045,6 +1189,16 @@ def main() -> None:
                 "move": legal_ucis[top_i], "p": float(probs[top_i]),
                 "entropy": entropy,
             }
+            if blunder_taus:
+                rates = expected_blunder_rates(probs, regrets, blunder_taus)
+                per_cand[cand].update({
+                    _blunder_key(t): r
+                    for t, r in zip(blunder_taus, rates, strict=True)
+                })
+                blunder_rows.append({
+                    "cand": cand, "phase": pos.phase,
+                    "source": pos.source, "rates": rates,
+                })
         if args.dump_per_position is not None:
             # Criticality = deep-SF gap between the best and 2nd-best listed line
             # (cp). Small gap = quiet position where SF's "best" is near-arbitrary
@@ -1232,6 +1386,7 @@ def main() -> None:
         + "\n\nOutcome column counts only positions whose game continued at "
         "full strength; the v1 audit set has none (handicapped curriculum), "
         "so the column awaits full-strength continuations.\n"
+        + _blunder_section(blunder_rows, group_names, cand_labels, blunder_taus)
     )
     out_path.write_text(report, encoding="utf-8")
     print(f"[audit] report written to {out_path}")
