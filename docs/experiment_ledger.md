@@ -32918,3 +32918,25 @@ search-guard fires; 6 checkpoints. WATCH (not action): grad_norm_median climbed
 run's warm-state emergence, governed by I11's pre-registration; the discriminating read
 is whether the median crosses the 6.5 cap and hard-clip engages. C1 (compactor rate
 signature) still owed at a fuller window.
+
+### 2026-08-04 ~10:0x — CANDIDATE mechanism found for the 00:23 upload wedge (audit finding A4)
+
+The coverage-map audit (tranche 2, `scratchpad/audit_coverage_map_20260804.md`) found, and the
+main session verified by direct read: **`server/app.py:1758` acquires `upload_lock` — a
+`threading.Lock` (`:774`) — inside `async def _upload_shard_impl` (`:1612`)**, with
+`arrays_to_samples` + `acc.add_upload` + the `_try_flush_and_pop` disk flush held under it. A
+threading lock acquired in a coroutine blocks the event-loop thread, so one worker's compaction
+flush stalls EVERY route (lease, health, publish, arena upload) — the server presents as wedged,
+then clears when the flush completes. The two sync-def acquisitions (`:952`, `:1028`) run in the
+FastAPI threadpool and are correct; `:1758` is the only on-loop site and it is the hot path.
+
+Fit to the incident: the trigger profile — concurrent uploads with full accumulators — is exactly
+a cold start on a fresh lineage (every worker fills an empty window and hits
+`compact_target_positions` together), matching the recorded signature (fresh-start stall on the
+upload path, cleared by the revive re-serialising arrivals, cause unestablished).
+
+**Status: CANDIDATE, not a diagnosis.** The 04:00 CORRECTION's "cause UNESTABLISHED" stands until
+a repro fails on current main: fix PR is being authored repro-first (two concurrent flush-sized
+uploads + an event-loop responsiveness probe; if the repro cannot be made to fail, the mechanism
+is refuted and the fix unjustified). Deploy is restart-gated (server restarts with training);
+trial 0f888 keeps current behavior. Task #144.
