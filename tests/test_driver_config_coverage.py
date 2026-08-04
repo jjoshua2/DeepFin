@@ -157,6 +157,15 @@ def test_every_driver_config_read_is_classified(path: Path) -> None:
 
     The failure message names the file and line so the fix is "classify it",
     not "go find it".
+
+    ⚑ THE TWO LEGS ARE NOT EQUAL COVERAGE, and "walks harness.py/run.py" reads
+    as more than the `run` leg provides. `harness.py` contributes ~40 literal
+    reads; `run.py` contributes exactly ONE (`distributed_workers_per_trial`),
+    because its other config touches are `Store`s -- the driver computing
+    derived values into its own dict -- which this walk deliberately ignores.
+    The `run` leg can genuinely fail (verified by injecting an unclassified
+    literal read into it), but it is a denominator of one, so treat it as a
+    tripwire on that file rather than as coverage of it.
     """
     unclassified = [
         f"{path.name}:{lineno} {key}"
@@ -263,8 +272,19 @@ def test_the_classification_sets_do_not_overlap() -> None:
     exempt = {
         ("construction_only", "restart_required"),
         ("driver_launch_fixed", "restart_required"),
-        ("construction_only", "driver_launch_fixed"),
     }
+  # ⚑ AN EXEMPTION MUST BE EARNING ITS KEEP. `construction_only x
+  # driver_launch_fixed` was in this set and its intersection is EMPTY, so it
+  # excused nothing while reading as a documented, considered overlap -- and it
+  # would have gone on silently excusing the pair the day one did appear. A
+  # vacuous exemption is a hole with a comment in front of it, so every pair
+  # named here has to actually overlap today.
+    for a, b in sorted(exempt):
+        assert sets[a] & sets[b], (
+            f"the ({a}, {b}) exemption is VACUOUS -- those sets do not "
+            f"intersect, so it excuses nothing and would silently excuse a "
+            f"future overlap nobody re-justified. Delete it."
+        )
     names = sorted(sets)
     for i, a in enumerate(names):
         for b in names[i + 1:]:
@@ -526,3 +546,89 @@ def test_a_driver_key_reports_launch_fixed_not_wait_for_the_reload() -> None:
     assert "PENDING-RESTART" not in text, "restart is the wrong instruction here"
     assert len(findings) == 2
     assert all("re-run run.py" in f for f in findings), findings
+
+
+def test_the_operator_entry_point_reports_a_driver_key_as_launch_fixed(
+    tmp_path: Path, capsys
+) -> None:
+    """The H5 wiring pin, at the level an OPERATOR actually invokes.
+
+    ⚑ THE EARLIER PIN WAS ONE LAYER TOO DEEP. It drove
+    `classify_config_provenance` and passed the two sets in itself, so it proved
+    the function honours them — and proved nothing about whether anything passes
+    them. The reviewer showed exactly that: deleting `driver_launch_fixed_keys=`
+    and `driver_dual_clock_keys=` from `audit_config_provenance`'s internal call
+    left all five test files green. A kwarg nothing supplies is this codebase's
+    signature defect, and the test written to prevent it could not see it.
+
+    So this drives `audit_config_provenance(rows, yaml, params)` — the function
+    the script's `main` calls — and asserts the operator-visible line. Unwire
+    either kwarg and this goes red.
+
+    BOTH kwargs are exercised, and separately. An earlier revision asserted only
+    on launch-fixed keys, so deleting `driver_dual_clock_keys=` alone left the
+    suite green -- one pin covering two independent wires is one pin short.
+    `tune_num_to_keep` is here to make the second wire load-bearing on its own.
+
+    The row timestamp is deliberately AHEAD of the yaml mtime so the assertions
+    land on the CLEAN-PATH label -- `DRIVER-LAUNCH-FIXED` / `DRIVER-DUAL-CLOCK`,
+    the strings an operator reads when they audit a running trial whose yaml has
+    already been picked up. An earlier version of this docstring justified it by
+    claiming the `yaml_is_newer` branch would pass vacuously; that was WRONG on
+    both counts, measured by the reviewer: that branch is labelled
+    `DRIVER-LAUNCH-FIXED-UNRESOLVED`, so it still carries the classification and
+    would discriminate perfectly well if asserted on. The choice is about which
+    label matters, not about one of them being untestable.
+    """
+    import importlib.util
+    import sys
+    import time
+
+    root = _ROOT.parent
+    spec = importlib.util.spec_from_file_location(
+        "_arc_entry_probe", root / "scripts" / "audit_realized_config.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_arc_entry_probe"] = module
+    spec.loader.exec_module(module)
+
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        "tune:\n"
+        "  distributed_server_port: 45999\n"
+        "  cpus_per_trial: 4\n"
+  # Dual-clock, so `driver_dual_clock_keys=` is load-bearing on its own.
+        "  tune_num_to_keep: 9\n",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "training_iteration": 200,
+            # Ahead of the yaml mtime, so the real branch runs -- see docstring.
+            "timestamp": time.time() + 3600.0,
+            "config": {
+                "distributed_server_port": 45453,
+                "cpus_per_trial": 1,
+                "tune_num_to_keep": 6,
+                "_yaml_config_path": str(yaml_path),
+            },
+        }
+    ]
+
+    findings = module.audit_config_provenance(rows, yaml_path, None)
+    printed = capsys.readouterr().out
+
+    assert "DRIVER-LAUNCH-FIXED distributed_server_port" in printed, printed
+    assert "DRIVER-LAUNCH-FIXED cpus_per_trial" in printed, printed
+  # The second wire. Without this line, deleting `driver_dual_clock_keys=` from
+  # the entry point leaves the whole suite green.
+    assert "DRIVER-DUAL-CLOCK tune_num_to_keep" in printed, printed
+    assert "PENDING-RESTART" not in printed, (
+        "a driver key must not be reported as restart-required: restarting the "
+        "TRIAL does not apply it, only re-running run.py does"
+    )
+    assert len(findings) == 3, findings
+    assert any("re-run run.py" in f for f in findings), findings
+    assert any("TWO clocks" in f for f in findings), findings
