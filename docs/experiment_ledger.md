@@ -24686,3 +24686,119 @@ per iteration inside the ingest wait loop) and its own mutation.
 across the files that touch `distributed_runtime`, `trainable_metrics` or the
 revive path, including `test_distributed_selfplay_backpressure`. **Not reviewed
 by its author** — a separate reviewer follows.
+
+---
+
+## 2026-08-04 — zclip's adaptive EMA is not checkpointed, so every restart re-warms it (PR TBD, task #94)
+
+**Verdict: LIVE-UNREAD.** RESTART-GATED, and one restart later than it looks —
+see the timing note below. Trial 0f888 is unaffected while it runs.
+
+### The defect
+
+`ZClip` keeps its entire adaptive state in four plain attributes —
+`initialized`, `mean`, `var`, and the warmup `buffer` — and `Trainer.save`
+carried none of them. Every restart therefore reconstructed a `ZClip` in the
+constructor at `initialized=False`.
+
+That is not cosmetic. While `initialized` is False, `ZClip.step` returns
+**before `_compute_clip_val` is ever reached** (`zclip.py:183-201`): the
+adaptive branch is structurally unreachable, only the fixed `max_grad_norm`
+cap applies, and after 25 steps the EMA is seeded by `_initialize_ema` from
+whatever those 25 norms happened to be — not from where the previous run's
+distribution actually sat. A run restarted often enough spends a fixed slice of
+every restart in a hard-cap-only regime, and the threshold it converges to is a
+function of each restart's first 25 steps rather than of the run's history.
+
+### ⚑ What this entry does NOT claim
+
+**No learning-quality claim, and no claim about the 0f888 grad-norm picture.**
+The standing measurement is that zclip normalizes essentially every live step to
+the hard cap — clip and hard-clip 1.0 in 67/68 iterations, the whole norm
+distribution above the cap, the adaptive branch firing on 3-9% of steps. In that
+regime a correctly restored EMA changes little, because the `min(adaptive,
+max_grad_norm)` in `_apply_clipping` is taken by the cap either way. This is a
+**state-persistence correctness fix**: a piece of trained state that was being
+silently discarded is now persisted. Anyone reading it as an explanation of the
+adaptive-clip-rate trace is over-reading it, and the yardstick below is
+deliberately a WIRING observation rather than an Elo or loss claim — per the
+standing rule that ~0.02 Elo/iter is below every instrument we own.
+
+### ⚑ Timing — the restore first takes effect at the SECOND restart
+
+`save`/`load` are code, so:
+
+1. a running trial keeps current behaviour;
+2. the **first** restart onto this code reads a checkpoint written by the OLD
+   code, finds no `zclip` key, and warms fresh — identical to today, and it
+   logs so;
+3. that run's saves carry the key, so the **second** restart is the first one
+   that restores.
+
+`zclip/restored == 0.0` on the first restart is correct behaviour, not a broken
+fix. Stated here because "the fix is in and the metric says 0" is exactly the
+reading that gets a working change reverted.
+
+### Yardstick (pre-registered, exact command)
+
+On the second restart after deploy, from the trial's TensorBoard event file:
+
+```
+PYTHONPATH=. python3 -c "
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+a = EventAccumulator('<trial_dir>/tb'); a.Reload()
+print([(s.step, s.value) for s in a.Scalars('zclip/restored')])
+print([(s.step, s.value) for s in a.Scalars('zclip/ema_mean')])
+"
+```
+
+**Success:** `zclip/restored` is `1.0` at the resumed step, and `zclip/ema_mean`
+is within a factor of 2 of the pre-restart iteration's `grad_norm_median` from
+`progress.csv` — i.e. the restored EMA describes the distribution the previous
+run was actually seeing, not a fresh warmup.
+
+**Kill:** `zclip/restored` is `0.0` at the second restart, or the point is
+absent entirely. Absent means this code did not run on the resume path at all,
+which is the failure mode the scalar exists to make visible — it is emitted on
+BOTH branches precisely so that "did not restore" and "did not run" are
+distinguishable.
+
+The log line is the same observation in the other channel:
+`grep 'zclip: restored adaptive EMA' /tmp/chess_training.log`.
+
+### Scope boundaries, each pinned by a test
+
+* **Non-finite EMA is REFUSED, not restored.** Per `_restore_zclip_stats`: one
+  nan in `mean` is permanent — every later `z = (norm - nan) / std` is nan,
+  `nan > z_thresh` is False, `_compute_clip_val` returns None for the rest of
+  the run, and the adaptive clipper is silently off while the fixed cap keeps
+  reporting normally. Before this change **a restart was the thing that cleared
+  it**. Persisting the state is only safe together with the refusal, so the two
+  ship in one commit.
+* **Not restored when the optimizer state was rejected.** That branch fires on a
+  parameter-layout mismatch, and an EMA of gradient norms over a different
+  parameter set does not describe this run. `load` already reinitialises the
+  scheduler there for the same reason.
+* **Not restored on the model-only path** (`_load_model_only`, the PB2
+  cross-optimizer donor). It restores weights and deliberately nothing else.
+* **A checkpoint without the key loads cleanly**, which is guaranteed on every
+  existing checkpoint at first deploy.
+
+`zclip_state_dict` is built from the existing `_zclip_stats_snapshot` rather
+than re-reading `self.zclip`, so "zclip's adaptive state" has one definition in
+the file. A second field list would drift the moment the upstream class grows a
+field, and the failure would be silent — the symptom is just "it re-warms every
+restart", i.e. this bug reappearing with the fix in place. A test asserts the
+save/load round trip reproduces `_zclip_stats_snapshot()` exactly.
+
+### Verification
+
+Red→green: **14 of the 19 new tests fail on `origin/main`** (`0e9afdae6`),
+measured. ⚑ The other 5 are **not** positive controls and are not claimed as
+such: the three non-finite cases, the optimizer-rejection case and the
+model-only case all pass on `origin/main` **vacuously**, because main never
+restores anything, so "the EMA was not restored" is trivially true there. They
+earn their place as boundary pins on this branch, not as evidence against main.
+
+`./scripts/lint.sh` (no args) exit 0. **Not reviewed by its author** — a
+separate reviewer follows.
