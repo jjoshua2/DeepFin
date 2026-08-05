@@ -33572,3 +33572,24 @@ separate reviewer follows.
 - M2 watch, row 1: grad_adaptive_clip_rate = 0.0 (0f888 row 1: 0.051,
   locked 1.0 by iter 3), grad_hard_clip_rate = 0.014, grad_norm_median 4.41.
   Verdict window = iterations 2-10.
+
+## 2026-08-05 02:12 — M2 VERDICT AT FULL LR: ZCLIP LOCK-IN NOT REPLICATED under the boot-hygiene package
+
+- Trial cdb96_00000, iterations 1-12 grad_adaptive_clip_rate:
+  0.000 / 0.006 / 0.212 / 0.248 / 0.164 / 0.136 / 0.145 / 0.186 / 0.109 /
+  0.107 / 0.130 / 0.151 — warmup essentially complete by iter 12
+  (opt_lr_mean 6e-4 group mean). 0f888 at the same point: 1.000 since iter 3
+  (98.9% of its whole run). Readings sit in/near the 0.02-0.20 healthy band
+  13a9f occupied — the pre-committed D1 observable, satisfied WITHOUT D1.
+- grad_norm_median 4.41 -> 5.36 over 12 iters: mild drift, clipping engages
+  on ~13% of steps (0f888: monotone 3.6 -> 8 with 100% clipping). Watch-only.
+- ATTRIBUTION CAVEAT (package, not lever): can't split credit between
+  no-iteration-1-blast (wedge fixes #335/#336 — steps 70 vs 801), warmup
+  spanning the ramp, and healthier early data (regret 0.1 / nodes 75k).
+  The blast-free start makes "the blast seeded the lock-in" the leading
+  account, consistent with M2-downstream-of-M1/M5 from the forensics.
+- D1 (zclip EMA warm-init) and D2 (step cap): NOT needed on this evidence;
+  they stay in the ledger as levers if a future boot regresses.
+- Servo healthy: regret 0.0956 -> 0.0900, raw winrate 0.991 -> 0.944
+  (length-biased, no trend fitting), pid_ema_winrate 0.69 and rising.
+  Next readout: iteration-21 checkpoint bank + prereg arena vs boot512.
