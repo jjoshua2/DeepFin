@@ -771,6 +771,7 @@ def test_every_live_key_is_transplanted() -> None:
         "selfplay_fraction": (0.30, 0.55, lambda st: st.game.selfplay_fraction),
         "sf_fast_ply_node_scale": (0.25, 0.6, lambda st: st.game.sf_fast_ply_node_scale),
         "sf_label_nodes_cap": (0, 100_000, lambda st: st.game.sf_label_nodes_cap),
+        "sf_label_nodes_floor": (0, 700_000, lambda st: st.game.sf_label_nodes_floor),
         "sf_label_escalate_q_gap": (
             0.0, 0.8, lambda st: st.game.sf_label_escalate_q_gap,
         ),
@@ -795,6 +796,29 @@ def test_every_live_key_is_transplanted() -> None:
         applied = WorkerSession._apply_live_reco(session, {**baseline, key: changed})
         assert applied is True
         assert get(session._live_states[0]) == changed, f"live key {key} not transplanted"
+
+
+def test_live_reco_log_line_names_the_label_floor(caplog) -> None:
+    """PR #354 M1/R2: the live-reco log line is the deploy-verification
+    instrument for sf_label_nodes_floor — the knob exists because an 11x
+    teacher cut happened with no log line anywhere, so silently dropping
+    `label_floor=` from the line must fail a test, log line or not."""
+    import logging
+
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._live_states = [_live_state()]
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    with caplog.at_level(logging.INFO):
+        applied = WorkerSession._apply_live_reco(
+            session, {"sf_nodes": 5000, "sf_label_nodes_floor": 700_000},
+        )
+
+    assert applied is True
+    assert any("label_floor=700000" in r.getMessage() for r in caplog.records), (
+        "the live-reco log line no longer reports the label floor"
+    )
 
 
 def test_sf_multipv_change_triggers_restart() -> None:

@@ -1752,6 +1752,7 @@ class WorkerSession:
             selfplay_fraction=new_game.selfplay_fraction,
             sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
             sf_label_nodes_cap=new_game.sf_label_nodes_cap,
+            sf_label_nodes_floor=new_game.sf_label_nodes_floor,
             sf_label_escalate_q_gap=new_game.sf_label_escalate_q_gap,
             sf_label_escalate_nodes=new_game.sf_label_escalate_nodes,
             sf_label_escalate_max_per_game=new_game.sf_label_escalate_max_per_game,
@@ -1895,12 +1896,14 @@ class WorkerSession:
         self._set_sf_nodes(sf_nodes)
         last = states[-1]
         self.log.info(
-            "live reco (%d state(s)): selfplay_fraction=%.3f regret=%s sf_nodes=%d",
+            "live reco (%d state(s)): selfplay_fraction=%.3f regret=%s sf_nodes=%d"
+            " label_floor=%d",
             len(states),
             float(last.game.selfplay_fraction),
             (f"{last.opponent.wdl_regret_limit:.4f}")
             if last.opponent.wdl_regret_limit is not None else "none",
             int(sf_nodes),
+            int(getattr(last.game, "sf_label_nodes_floor", 0) or 0),
         )
         return True
 
@@ -3425,6 +3428,7 @@ class WorkerSession:
     _RECO_LIVE_KEYS = (
         "selfplay_fraction", "opponent_wdl_regret_limit",
         "sf_nodes", "sf_fast_ply_node_scale", "sf_label_nodes_cap",
+        "sf_label_nodes_floor",
   # Label-escalation knobs are read fresh at label-attach time
   # (stockfish_turn._maybe_submit_label_escalation), so they apply live like
   # sf_label_nodes_cap — the experiment can be toggled without a restart.
@@ -3848,6 +3852,9 @@ class WorkerSession:
                     reco, "sf_fast_ply_node_scale", 0.25,
                 ),
                 sf_label_nodes_cap=self._resolve_reco(reco, "sf_label_nodes_cap", 0, int),
+                sf_label_nodes_floor=self._resolve_reco(
+                    reco, "sf_label_nodes_floor", 0, int,
+                ),
                 sf_label_escalate_q_gap=self._resolve_reco(
                     reco, "sf_label_escalate_q_gap", 0.0,
                 ),
@@ -4189,9 +4196,14 @@ class WorkerSession:
   # which is the whole distinction that field exists to make.
         _start_regret, _start_nodes = self._active_difficulty()
         self.log.info(
-            "session-start reco applied: regret=%s sf_nodes=%s",
+            "session-start reco applied: regret=%s sf_nodes=%s label_floor=%d",
             f"{_start_regret:.4f}" if _start_regret is not None else "unknown",
             _start_nodes if _start_nodes is not None else "unknown",
+  # The same _resolve_reco expression the GameConfig build uses, so this line
+  # and the budget the labels actually get cannot disagree. The floor exists
+  # because an 11x teacher cut happened with no log line anywhere; a deploy is
+  # verified by label_floor>0 here plus sf_label_meta[:,0]>=floor in the shards.
+            self._resolve_reco(reco, "sf_label_nodes_floor", 0, int),
         )
         model_sha = self.model_sha
 

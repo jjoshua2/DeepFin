@@ -277,6 +277,7 @@ class TrialConfig:
     sf_move_nodes: int = 0
     sf_fast_ply_node_scale: float = 0.25
     sf_label_nodes_cap: int = 0
+    sf_label_nodes_floor: int = 0
     sf_label_escalate_q_gap: float = 0.0
     sf_label_escalate_nodes: int = 3_000_000
     sf_label_escalate_max_per_game: int = 2
@@ -716,6 +717,7 @@ class TrialConfig:
             sf_move_nodes=int(config.get("sf_move_nodes", 0)),
             sf_fast_ply_node_scale=float(config.get("sf_fast_ply_node_scale", 0.25)),
             sf_label_nodes_cap=int(config.get("sf_label_nodes_cap", 0)),
+            sf_label_nodes_floor=int(config.get("sf_label_nodes_floor", 0)),
             sf_label_escalate_q_gap=float(config.get("sf_label_escalate_q_gap", 0.0)),
             sf_label_escalate_nodes=int(config.get("sf_label_escalate_nodes", 3_000_000)),
             sf_label_escalate_max_per_game=int(

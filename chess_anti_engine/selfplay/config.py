@@ -132,6 +132,21 @@ class GameConfig:
     # budget, and curriculum label reuse (free full-strength move futures) is
     # untouched. See configs/exp_throughput_views.yaml.
     sf_label_nodes_cap: int = 0
+  # Floor for LABEL-ONLY SF queries (default 0 = off), the cap's mirror: raise
+  # label queries to at least this budget, decoupling label QUALITY upward
+  # from the PID-controlled opponent budget. Why it exists: with both knobs at
+  # 0 the teacher rides the PID difficulty knob — the 2026-08-04 fresh restart
+  # started sf_nodes at 50k, silently cutting the label teacher 11x versus the
+  # old lineage's realized ~698k (median depth 8 at MultiPV 40, mate-blind in
+  # sharp positions). The floor pins teacher depth while the PID stays free to
+  # ramp opponent difficulty from anywhere. Cost: label queries no longer get
+  # cheaper when the PID lowers sf_nodes; at ~700k the labels dominate
+  # iteration wall time (that is the old lineage's long-standing cost shape).
+  # Applied after the cap, so on a conflicting config (floor > cap > 0) the
+  # floor wins — __post_init__ warns. Label-escalation re-queries are
+  # unaffected (they have their own budget). Curriculum move queries are never
+  # floored.
+    sf_label_nodes_floor: int = 0
   # Research bet (default 0.0 = off; provable no-op: the gate returns before
   # any engine call and no record field is ever written): adaptive escalation
   # of the SF label on net-vs-label disagreement. When
@@ -252,6 +267,15 @@ class GameConfig:
                 "rationale only holds for cp-logistic labels — enable "
                 "sf_wdl_use_cp_logistic or drop the cap.",
                 int(self.sf_label_nodes_cap),
+            )
+        cap = int(self.sf_label_nodes_cap or 0)
+        floor = int(self.sf_label_nodes_floor or 0)
+        if 0 < cap < floor:
+            _LOG.warning(
+                "sf_label_nodes_floor=%d exceeds sf_label_nodes_cap=%d: the "
+                "floor is applied after the cap and wins, so the cap is "
+                "effectively dead. Drop one of the two.",
+                floor, cap,
             )
 
 
