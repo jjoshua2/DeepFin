@@ -34091,3 +34091,13 @@ separate reviewer follows.
   mid-experiment outage + C14b resumed in-flight games at the boundary.
   RESUME RECOMMENDED (not fresh); awaiting user go per the no-autostart
   rule.
+
+- RESUME AUTHORIZED (user, 2026-08-05 evening, "you can resume if its not
+  gonna mess up arena"): gated auto-resume armed — training restarts ONLY
+  after round-2 arenas AND the round-1 re-runs clear the GPU (~3h), because
+  resuming beside two compiled arenas is the exact 16:48 crash
+  configuration. Arm A continues iters 11-21 from the intact iter-10 state;
+  the iter-21 watcher then banks ckpt_000020 and runs the deciding arena
+  (eager, conc-16, single-arena-beside-training — the proven-safe class).
+  Tier-2 remains gated behind that arena. Also user-specified: minimum
+  password length 8, folded into the PR #358 fix wave.
