@@ -33389,3 +33389,31 @@ separate reviewer follows.
 - Caveat: the OLD lineage also showed an iters-0-25 shock at 698k labels (boot
   forensics, task #122), so part of the early dip may be fresh-boot dynamics.
   The teacher-restored rerun is the discriminator.
+
+## 2026-08-04 ~22:15 — OFFLINE SCREEN VERDICT: shallow teacher is REAL BUT SMALL — does not carry ~100 Elo. The phenomenon is the EARLY-BOOT SHOCK, common to both lineages
+
+- Screen (750 pos, stored-teacher bytes + re-query check, 2M-node SF ruler + Cheese
+  conjugate ruler, dump banked in session scratchpad screen_tb.json): policy
+  E[regret] stored-vs-698k = +7.26cp [+3.65,+11.34] — but lands on policy_sf
+  (w_sf_move 0.02, opponent-reply head, NOT a move-teacher); value label error
+  +0.0163 win-prob under the SF ruler COLLAPSING to +0.0048 [+0.0009,+0.0088]
+  under Cheese (≈70% ruler nepotism; sign test 0.739→0.523), unbiased
+  (−16.6cp [−43.3,+10.2]) = added noise, concentrated in sharp positions
+  (decisive 54 vs 23cp; finds 12/24 forced mates vs deep's 19/24).
+- TWO BRIEF CORRECTIONS (both load-bearing, agent-caught): labels RAMPED
+  (median 91,247, p5 50k, p95 108k — not flat 62k; MultiPV 40 at 50k = median
+  depth 8 is what makes it shallow); a row's label is the P0+1 position (proven
+  60/60 mask check), so a row-position screen would have measured nothing.
+- Verdict on the hypothesis: measurable damage, wrong magnitude and wrong
+  timing — the −96.2 at iter21 predates any cumulative label effect, and the
+  old lineage's comparable iters-0-25 shock AT 698k labels is the control.
+  NOT closed outright (mate-blindness + sharp-position noise are real; earliest
+  stratum worst at +9.3cp); the teacher-restored rerun remains the named
+  discriminator, but the screen predicts it will NOT rescue ~100 Elo.
+- REFRAME: the dominant phenomenon is the FRESH-BOOT EARLY SHOCK (both lineages,
+  both teacher depths, ~first 20-25 iters). Next diagnostic target = what the
+  loop does to a freshly booted net in iters 0-25 (re-read task #122 boot
+  forensics with this lens; the −96→−81→−131 stasis-then-dip shape).
+- Fix routing: sf_label_nodes_floor decoupling knob is STILL worth shipping
+  (cheap; removes the mate-blind/sharp-noise damage and the silent double-duty
+  knob) — but as hygiene, not as the strength lever.
