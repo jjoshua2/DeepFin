@@ -3,21 +3,53 @@ from __future__ import annotations
 import numpy as np
 
 
-_MATE_BASE_CP = 1500.0
-_MATE_DEPTH_BONUS_CP = 20.0
+# Largest magnitude a raw cp score can reach: the shard clamps cp to +/-32000
+# and Stockfish really does emit |cp| ~ 20000 in decisive endgames.
+SF_CP_CLAMP_CP = 32000.0
+
+# The mate band. Every consumer of `mate_to_effective_cp` compares its output
+# DIRECTLY against a raw cp score drawn from the same MultiPV list, so the two
+# bands must not overlap: a base inside the cp range ranks a large non-mating
+# cp line ABOVE a forced mate. The historical base of 1500 did exactly that on
+# 1.34% of live scored rows (a mate-in-3 scoring 2440 against cp-19998
+# decliners), which is what split this mapping in two. Keep
+# `_MATE_BASE_CP - _MATE_MAX_PLIES * _MATE_DEPTH_STEP_CP > SF_CP_CLAMP_CP`;
+# `tests/test_mate_score_single_home.py` pins the inequality.
+_MATE_BASE_CP = 100000.0
+_MATE_DEPTH_STEP_CP = 100.0
+# Distance-to-mate floor. Without it a long enough mate walks down through the
+# cp band and eventually flips sign; SF mates are far shorter than 500 plies,
+# so this is unreachable in practice and exists to keep the ordering total.
+_MATE_MAX_PLIES = 500.0
 
 
 def mate_to_effective_cp(mate_in: int) -> float:
-    """Map a mate-in-N score to a large effective centipawn value.
+    """Map a mate-in-N score to an effective centipawn value that DOMINATES cp.
 
-    Sign(mate_in) carries the side; magnitude grows for shorter mates so
-    `cp_to_wdl` saturates them as decisive. ``mate_in=0`` is treated as
-    `_MATE_BASE_CP` (positive). The returned value is bounded.
+    THE single mate -> score mapping: `selfplay.finalize._sf_move_score` and its
+    C twin in `encoding/_lc0_ext.c` are mirrors of this function, not
+    independent formulas. Sign(mate_in) carries the side, magnitude shrinks
+    with distance to mate so a quicker mate outranks a slower one, and the
+    whole band sits above `SF_CP_CLAMP_CP` so every mate outranks every raw cp
+    score. `cp_to_wdl` saturates the band as decisive.
+
+    ``mate_in=0`` means "no mate" in every stored row and each production
+    caller guards on it before calling; it is mapped to a positive mate here
+    only so the vectorised twin can compute unconditionally under a mask.
     """
     sign = 1.0 if mate_in >= 0 else -1.0
-    plies = abs(int(mate_in))
-    bonus = max(0.0, 50.0 - float(plies)) * _MATE_DEPTH_BONUS_CP
-    return sign * (_MATE_BASE_CP + bonus)
+    plies = min(float(abs(int(mate_in))), _MATE_MAX_PLIES)
+    return sign * (_MATE_BASE_CP - plies * _MATE_DEPTH_STEP_CP)
+
+
+# `np.exp` overflows past ~709.78, and the mate band puts the logistic argument
+# at slope * 100000 = 600 for production slope 0.006 — one slope bump away from
+# a RuntimeWarning on every mate row. Clipping the EXPONENT is bitwise-neutral:
+# below the clip nothing changes, and above it exp is ~1e304 so 1/(1+exp) is
+# 0.0, the same value the overflowed inf produced. Do NOT rewrite this as a
+# branchy stable sigmoid — `cp_to_wdl` and `cp_to_wdl_array` are pinned to
+# bitwise agreement in tests/test_wdl_vectorised.py.
+_EXP_CLIP = 700.0
 
 
 def cp_to_wdl(
@@ -50,8 +82,8 @@ def cp_to_wdl(
         eff_cp = float(cp)
     else:
         raise ValueError("cp_to_wdl needs either cp or mate")
-    p_win = 1.0 / (1.0 + np.exp(-slope * (eff_cp - draw_width_cp)))
-    p_loss = 1.0 / (1.0 + np.exp(-slope * (-eff_cp - draw_width_cp)))
+    p_win = 1.0 / (1.0 + np.exp(np.clip(-slope * (eff_cp - draw_width_cp), -_EXP_CLIP, _EXP_CLIP)))
+    p_loss = 1.0 / (1.0 + np.exp(np.clip(-slope * (-eff_cp - draw_width_cp), -_EXP_CLIP, _EXP_CLIP)))
     p_draw = max(0.0, 1.0 - p_win - p_loss)
     total = p_win + p_loss + p_draw
     return np.array([p_win, p_draw, p_loss], dtype=np.float32) / float(total)
@@ -65,9 +97,8 @@ def mate_to_effective_cp_array(mate_in: np.ndarray) -> np.ndarray:
     """
     m = np.asarray(mate_in)
     sign = np.where(m >= 0, 1.0, -1.0)
-    plies = np.abs(m).astype(np.float64, copy=False)
-    bonus = np.maximum(0.0, 50.0 - plies) * _MATE_DEPTH_BONUS_CP
-    return sign * (_MATE_BASE_CP + bonus)
+    plies = np.minimum(np.abs(m).astype(np.float64, copy=False), _MATE_MAX_PLIES)
+    return sign * (_MATE_BASE_CP - plies * _MATE_DEPTH_STEP_CP)
 
 
 def cp_to_wdl_array(
@@ -89,8 +120,8 @@ def cp_to_wdl_array(
     if slope <= 0.0 or draw_width_cp < 0.0:
         raise ValueError(f"cp_to_wdl requires slope>0 and draw_width_cp>=0, got {slope=} {draw_width_cp=}")
     eff = np.asarray(eff_cp, dtype=np.float64)
-    p_win = 1.0 / (1.0 + np.exp(-slope * (eff - draw_width_cp)))
-    p_loss = 1.0 / (1.0 + np.exp(-slope * (-eff - draw_width_cp)))
+    p_win = 1.0 / (1.0 + np.exp(np.clip(-slope * (eff - draw_width_cp), -_EXP_CLIP, _EXP_CLIP)))
+    p_loss = 1.0 / (1.0 + np.exp(np.clip(-slope * (-eff - draw_width_cp), -_EXP_CLIP, _EXP_CLIP)))
     p_draw = np.maximum(0.0, 1.0 - p_win - p_loss)
     total = p_win + p_loss + p_draw
     stacked = np.stack([p_win, p_draw, p_loss], axis=-1).astype(np.float32, copy=False)

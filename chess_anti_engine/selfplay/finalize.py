@@ -49,6 +49,7 @@ from chess_anti_engine.selfplay.stockfish_turn import (
 from chess_anti_engine.selfplay.seed_manifest import opening_source_code, resolve_seed_ids
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_PAD_ROW, SF_MULTIPV_RAW_MAX
+from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishResult
 from chess_anti_engine.tablebase import (
@@ -1259,15 +1260,19 @@ def _emit_completed_game_batch(
 def _sf_move_score(cp: int, mate: int) -> float | None:
     """Per-move ordering score for SF regret (higher = better for the mover).
 
-    Mate dominates cp: a forced mate in N is ``100000 - N*100`` (quicker mate
-    scores higher), a mate being delivered against the mover is
-    ``-100000 - N*100``. Otherwise the cp score is used directly; a SENTINEL cp
-    with no mate means the row carries no score and is skipped.
+    Mate handling is DELEGATED to `mate_to_effective_cp`, the single mate ->
+    score mapping, so this ordering and the training targets built in
+    `train/target_builder.py` cannot disagree about which move is best. (They
+    used to: this function's mate band dominated cp while the target builder's
+    sat inside it, so on 1.34% of live scored rows the regret target and the
+    policy target named different best moves on the same position and the same
+    head.) `sf_multipv_row_score` in `encoding/_lc0_ext.c` mirrors this
+    arithmetic and `tests/test_native_sf_finalize.py` pins the two together.
+
+    A SENTINEL cp with no mate means the row carries no score and is skipped.
     """
-    if mate > 0:
-        return 100000.0 - float(mate) * 100.0
-    if mate < 0:
-        return -100000.0 - float(mate) * 100.0
+    if mate != 0:
+        return mate_to_effective_cp(int(mate))
     if cp == SF_CP_SENTINEL:
         return None
     return float(cp)

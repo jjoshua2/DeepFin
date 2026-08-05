@@ -44,9 +44,25 @@ from chess_anti_engine.moves.torch_maps import policy_index_remap_table
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL
 from chess_anti_engine.stockfish.wdl import (
     _MATE_BASE_CP,
-    _MATE_DEPTH_BONUS_CP,
+    _MATE_DEPTH_STEP_CP,
+    _MATE_MAX_PLIES,
 )
 from chess_anti_engine.train.target_builder import SfTargetParams
+
+
+def _mate_to_effective_cp_torch(mate: torch.Tensor) -> torch.Tensor:
+    """Batched twin of `stockfish.wdl.mate_to_effective_cp` (float32 out).
+
+    The scalar function stays the definition; this exists only because the
+    cp and logistic branches below both need the fold under a mask, and two
+    hand-inlined copies of one formula is how the mapping split in the first
+    place. `tests/test_mate_score_single_home.py` pins it elementwise to the
+    scalar. Computes unconditionally: ``mate == 0`` rows are masked out by the
+    caller, never read.
+    """
+    sign = torch.where(mate >= 0, 1.0, -1.0)
+    plies = mate.abs().to(torch.float32).clamp_max(_MATE_MAX_PLIES)
+    return sign * (_MATE_BASE_CP - plies * _MATE_DEPTH_STEP_CP)
 
 
 def _row_scores(
@@ -71,12 +87,7 @@ def _row_scores(
         # sf_policy_cp_temp, never sf_policy_temp.
         has_mate = mate != 0
         has_cp = raw[..., 1] != SF_CP_SENTINEL
-        sign = torch.where(mate >= 0, 1.0, -1.0)
-        bonus = (
-            (50.0 - mate.abs().to(torch.float32)).clamp_min(0.0)
-            * _MATE_DEPTH_BONUS_CP
-        )
-        eff = torch.where(has_mate, sign * (_MATE_BASE_CP + bonus), cp)
+        eff = torch.where(has_mate, _mate_to_effective_cp_torch(mate), cp)
         return eff, present & (has_cp | has_mate)
 
     native_ok = (raw[..., 3] >= 0) & (raw[..., 4] >= 0)
@@ -88,9 +99,7 @@ def _row_scores(
     has_mate = mate != 0
     has_cp = raw[..., 1] != SF_CP_SENTINEL
     logistic_ok = has_mate | has_cp
-    sign = torch.where(mate >= 0, 1.0, -1.0)
-    bonus = (50.0 - mate.abs().to(torch.float32)).clamp_min(0.0) * _MATE_DEPTH_BONUS_CP
-    eff = torch.where(has_mate, sign * (_MATE_BASE_CP + bonus), cp)
+    eff = torch.where(has_mate, _mate_to_effective_cp_torch(mate), cp)
     slope = float(params.sf_wdl_cp_slope)
     width = float(params.sf_wdl_cp_draw_width)
     p_win = torch.sigmoid(slope * (eff - width))
