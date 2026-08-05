@@ -139,12 +139,19 @@ def atomic_write(
     Pass ``durable=False`` only for content a crash may simply discard — see
     the module docstring for the measured cost.
 
-    ``mode`` chmods the TMP file, before the rename, so the destination is never
-    visible at the umask default even for an instant. Doing it after the rename
-    would leave exactly the window this parameter exists to close, which is the
-    same defect the ``.password`` write had. Use it for anything an unprivileged
-    local user must not read or, worse, WRITE -- a world-writable ``users.json``
-    is an auth bypass by hash replacement, not merely a disclosure.
+    ``mode`` is the permission the file is CREATED with: the tmp is opened
+    ``O_CREAT | O_EXCL`` at ``mode`` *before* the writer runs, so the secret is
+    never on disk at the umask default for any window at all. chmod-ing the tmp
+    after filling it -- the first version of this parameter -- still left the
+    content readable for the whole write-and-fsync, which for a users.json big
+    enough to fsync is not a theoretical window. Use ``mode`` for anything an
+    unprivileged local user must not read or, worse, WRITE: a world-writable
+    ``users.json`` is an auth bypass by hash replacement, not a disclosure.
+
+    A writer that REPLACES the tmp rather than filling it (``shutil.copy2``
+    copies the source's bits, ``numpy.savez`` creates its own file) brings its
+    own permissions, so the mode is re-applied after the writer returns as well.
+    That second application is a backstop for those writers, not the mechanism.
 
     Raises ``FileNotFoundError`` with an actionable message when the writer did
     not produce ``tmp``, which in practice means it appended an extension and
@@ -154,6 +161,13 @@ def atomic_write(
     tmp = _tmp_path_for(path, preserve_suffix=preserve_suffix)
     replaced = False
     try:
+        if mode is not None:
+  # ⚑ CREATED at `mode`, not chmod'ed afterwards. The tmp holds the same
+  # bytes the destination will, so a tmp at the umask default is the same
+  # exposure as a destination at the umask default -- just briefer. O_EXCL
+  # so a name collision is an error rather than a silent takeover of a file
+  # this call did not create.
+            os.close(os.open(str(tmp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode))
         writer(tmp)
         if not tmp.exists():
             # os.replace would raise FileNotFoundError naming a path the caller
@@ -165,7 +179,9 @@ def atomic_write(
                 f"preserve_suffix=True.",
             )
         if mode is not None:
-  # Before the rename, deliberately -- see the docstring.
+  # Backstop for writers that replace the tmp instead of filling it (see the
+  # docstring). For the fill-in-place writers this is a no-op, and the file
+  # was already correct for the whole of the write.
             os.chmod(str(tmp), mode)
         if durable:
             _fsync_file(tmp)
