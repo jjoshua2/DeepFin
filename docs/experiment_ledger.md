@@ -33895,3 +33895,24 @@ separate reviewer follows.
   −105.6 that lands on the in-vivo anchor.
 - NEXT (already prereg'd + launched): Tier-1 provenance split — chain fired
   13:36, SP retrain running, CU follows; arenas after.
+
+### 2026-08-05 AMENDMENT to the Tier-1 prereg — add arm SP-sub (user design input: equalize pool size/views across arms rather than shrink steps)
+
+- User objection sustained: matched steps on 6x-different pools leaves the CU
+  arm's repetition (30.6 views) unseparated from its row type. Pure
+  matched-views (1-3x per row) is UNREADABLE: 26,414 rows at 3 views = ~155
+  steps, entirely inside warmup 1000, where both live boots showed damage
+  does NOT land (iter-5 level, -15.6 [-60.9,+29.1]).
+- Arm SP-sub: GAME-level random subsample of tier1_sp down to ~26,414 rows
+  (target fraction 26414/158225 = 0.1670, seed 42, whole games kept/dropped
+  so row correlation structure matches CU's whole-game pools; per-shard
+  subsampling, all mtimes preserved). Same command shape, --replay-dir
+  data/offline_replay_screen_cdb96/tier1_sp_sub, --steps 1578.
+- AMENDED READING: primary contrast = CU-full vs SP-sub (identical size,
+  views, steps, schedule; differ only in row type), each also read vs
+  boot512 by the standard rule. SP-full keeps its in-basin absolute reading.
+  If BOTH 26k arms reproduce but SP-full is clean/mild => repetition or
+  pool-size drives it, row type not established. If CU reproduces and SP-sub
+  does not => curriculum rows carry it, repetition exonerated by the matched
+  control. Symmetrically for SP-sub-only.
+- Arena order (serialized, conc-16, same ruler): SP-full, CU-full, SP-sub.
