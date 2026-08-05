@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
+import sys
 from pathlib import Path
 
 from .auth import (
@@ -16,11 +18,49 @@ from .auth import (
 )
 
 
+def _resolve_password(arg: str | None) -> str:
+    """A password from --password-env, the prompt, or --password (discouraged).
+
+    ⚑ `--password` PUTS THE SECRET IN THE PROCESS TITLE. Every account on the
+    box can read it out of `ps auxww` for the lifetime of the call, and shells
+    persist it in history besides. It is kept because scripts use it and
+    breaking them would push people to worse workarounds, but it now warns, and
+    the two safe routes are listed first in `--help`.
+    """
+    if arg is not None:
+        print(
+            "WARNING: --password puts the secret in the process title, where "
+            "`ps auxww` exposes it to every user on this machine, and in your "
+            "shell history. Prefer --password-env NAME, or omit it for a "
+            "prompt.",
+            file=sys.stderr,
+        )
+        return arg
+    return _prompt_password()
+
+
+def _password_from_env(name: str) -> str:
+    value = str(os.environ.get(name, "") or "")
+    if not value.strip():
+  # Hard error, not a prompt fallback: the operator named a source, and
+  # quietly using a different one is how a script "succeeds" with the wrong
+  # credential.
+        raise SystemExit(
+            f"--password-env {name}: that environment variable is empty or "
+            f"unset. Export it in this shell first."
+        )
+    return value
+
+
 def _prompt_password() -> str:
     pw = getpass.getpass("Password: ")
     pw2 = getpass.getpass("Confirm: ")
     if pw != pw2:
         raise SystemExit("passwords do not match")
+    if not pw.strip():
+  # An empty password would hash and store fine, and then authenticate a
+  # client that sends nothing. Refuse at the only place it can be caught.
+        raise SystemExit("refusing to set an empty password")
     return pw
 
 
@@ -32,11 +72,25 @@ def main() -> None:
 
     add = sub.add_parser("add", help="Add a new user")
     add.add_argument("username", type=str)
-    add.add_argument("--password", type=str, default=None, help="Password (omit for interactive prompt)")
+    add.add_argument(
+        "--password-env", type=str, default=None,
+        help="Name of an environment variable holding the password (preferred)",
+    )
+    add.add_argument(
+        "--password", type=str, default=None,
+        help="Password inline. DISCOURAGED: visible in `ps` and shell history",
+    )
 
     sp = sub.add_parser("set-password", help="Change an existing user's password")
     sp.add_argument("username", type=str)
-    sp.add_argument("--password", type=str, default=None, help="Password (omit for interactive prompt)")
+    sp.add_argument(
+        "--password-env", type=str, default=None,
+        help="Name of an environment variable holding the password (preferred)",
+    )
+    sp.add_argument(
+        "--password", type=str, default=None,
+        help="Password inline. DISCOURAGED: visible in `ps` and shell history",
+    )
 
     dis = sub.add_parser("disable", help="Disable a user")
     dis.add_argument("username", type=str)
@@ -50,13 +104,19 @@ def main() -> None:
     db = Path(args.users_db)
 
     if args.cmd == "add":
-        pw = args.password or _prompt_password()
+        pw = (
+            _password_from_env(str(args.password_env))
+            if args.password_env else _resolve_password(args.password)
+        )
         ensure_user(db, username=str(args.username), password=pw)
         print(f"Added user {args.username!r}")
         return
 
     if args.cmd == "set-password":
-        pw = args.password or _prompt_password()
+        pw = (
+            _password_from_env(str(args.password_env))
+            if args.password_env else _resolve_password(args.password)
+        )
         users = load_users(db)
         if str(args.username) not in users:
             raise SystemExit(f"user {args.username!r} not found")
