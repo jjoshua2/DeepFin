@@ -33825,3 +33825,49 @@ separate reviewer follows.
 - Follow-up PR #356 opened (the two a03 round-3 LOW residuals: audit-ruler
   cp-mode coverage + sparse-CE scoreable-mask pin; 4 mutations verified
   RED); a03 review requested.
+
+### 2026-08-05 CORRECTION to the Tier-0 prereg row count + PREREG — TIER-1 PROVENANCE SPLIT (user-approved "should we start tier 1 then while we wait", 08-05)
+
+- CORRECTION (Tier-0): the 104-shard pool holds 184,639 rows, not "~587k".
+  586,688 was the LIVE window size at iter 21, which includes the ~400k
+  fresh-boot regeneration base; the mtime-filtered selection captured the
+  iters-1-21 uploads only. Realized control views 1578*512/184639 = 4.38 —
+  inside the 4.3-5.3 views plateau, so the screen's reading stands; the
+  regeneration base's absence is added to the Confounds list as (e).
+  Interim (30/100 pairs): -113.9 [-199.6, -40.0] — no verdict until 200.
+- TIER-1 QUESTION: which game type carries the poison? Split the SAME
+  184,639 rows by the per-row `is_selfplay` tag (slot-level game type,
+  selfplay_fraction 0.5; verified at state.py:_init_color_and_selfplay_arrays
+  and finalize.py) into two exact-partition pools:
+  * arm SP (selfplay-only): 158,225 rows (85.7%) -> 5.11 views/row (IN basin)
+  * arm CU (curriculum-only): 26,414 rows (14.3%) -> 30.6 views/row (OUT of
+    basin — pre-declared repetition confound; a matched-views CU arm would be
+    ~227 steps, entirely inside warmup 1000, hence unreadable — matched STEPS
+    is the only readable design and the views asymmetry is accepted).
+  Filtered shard copies preserve source mtimes (hot-pool recency draw is
+  mtime-based); empty filtered shards are dropped.
+- Command per arm (identical to Tier-0 control except --replay-dir/--out-dir):
+  PYTHONPATH=. python3 scripts/retarget_retrain.py --config configs/pbt2_small.yaml
+  --checkpoint scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --replay-dir data/offline_replay_screen_cdb96/tier1_<sp|cu>
+  --steps 1578 --batch-size 512 --no-rebuild-sf-targets
+  --out-dir data/offline_replay_screen_cdb96/retrain_tier1_<sp|cu> --variant control:
+  Retrains serialize AFTER the Tier-0 arena frees its GPU slice (OOM lesson
+  12:09); each arm's arena is the SAME prereg ruler (200 games, seed 42,
+  matched_sims 32, conc-16, labels tier1_selfplay_vs_boot512 /
+  tier1_curriculum_vs_boot512).
+- PRE-COMMITTED READING (same rule as Tier-0, per arm): REPRODUCES if
+  Elo <= -50 with CI excluding 0; CLEAN if CI includes 0 and excludes -96.
+  Interpretation matrix: SP-only reproduces + CU clean => selfplay rows carry
+  it (search-visit targets / selfplay value labels); CU-only reproduces + SP
+  clean => curriculum rows carry it (SF-teacher legs); BOTH reproduce =>
+  ubiquitous target-construction defect (shared target builders); BOTH clean
+  while the full mix reproduced => interaction/mixture effect — report as
+  such, no arm verdict.
+- Confounds: (i) CU views 30.6 vs SP 5.11 vs control 4.38 — repetition
+  exonerated only WITHIN 4.3-5.3, so a CU-only reproduction is confounded
+  with repetition and will be stated as "CU rows OR repetition"; (ii) pool
+  sizes differ 6x; (iii) sf_p0 teacher rows exist only on selfplay rows
+  (blindspot_seed_vet memory) — the SP arm carries that leg, CU does not;
+  (iv) both arms inherit Tier-0 confounds (a)-(e) including the missing
+  regeneration base.
