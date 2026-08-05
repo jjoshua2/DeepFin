@@ -771,6 +771,7 @@ def test_every_live_key_is_transplanted() -> None:
         "selfplay_fraction": (0.30, 0.55, lambda st: st.game.selfplay_fraction),
         "sf_fast_ply_node_scale": (0.25, 0.6, lambda st: st.game.sf_fast_ply_node_scale),
         "sf_label_nodes_cap": (0, 100_000, lambda st: st.game.sf_label_nodes_cap),
+        "sf_label_nodes_floor": (0, 700_000, lambda st: st.game.sf_label_nodes_floor),
         "sf_label_escalate_q_gap": (
             0.0, 0.8, lambda st: st.game.sf_label_escalate_q_gap,
         ),

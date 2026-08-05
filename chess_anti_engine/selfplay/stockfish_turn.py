@@ -508,7 +508,14 @@ def _eff_sf_nodes(
     ``for_label`` marks label-only queries (selfplay P1 analysis — never a move
     the opponent plays). When ``game.sf_label_nodes_cap`` > 0 those are capped
     at that budget, decoupling label cost from the PID-ramped opponent budget.
-    Curriculum move queries (``for_move=True``) are never capped.
+    When ``game.sf_label_nodes_floor`` > 0 they are also raised to at least
+    that budget — the floor decouples label QUALITY upward the same way the cap
+    decouples cost downward. Without it the teacher silently rides the PID
+    difficulty knob: the 2026-08-04 fresh restart began at sf_nodes 50k, an 11x
+    teacher cut versus the old lineage's realized ~698k, and nothing said so.
+    The floor is applied after the cap, so on a conflicting config the floor
+    wins (GameConfig.__post_init__ warns). Curriculum move queries
+    (``for_move=True``) get neither.
     """
     if for_move and for_label:
         raise ValueError("_eff_sf_nodes: a query cannot be both a move and a label")
@@ -521,6 +528,9 @@ def _eff_sf_nodes(
         label_cap = int(getattr(state.game, "sf_label_nodes_cap", 0) or 0)
         if label_cap > 0:
             base_nodes = min(base_nodes, label_cap)
+        label_floor = int(getattr(state.game, "sf_label_nodes_floor", 0) or 0)
+        if label_floor > 0:
+            base_nodes = max(base_nodes, label_floor)
     if base_nodes <= 0:
         return None
     # SF-refute MOVE queries can opt out of the fast-ply scale so the punishing

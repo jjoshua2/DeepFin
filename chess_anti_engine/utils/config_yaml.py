@@ -60,7 +60,7 @@ _CORE_KEYS = (
 # The section is just visual grouping — keys use the same names as code.
 _STOCKFISH_KEYS = (
     "stockfish_path", "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
-    "sf_label_nodes_cap",
+    "sf_label_nodes_cap", "sf_label_nodes_floor",
     "sf_label_escalate_q_gap", "sf_label_escalate_nodes",
     "sf_label_escalate_max_per_game",
     "sf_workers", "sf_multipv", "sf_hash_mb", "sf_nice",
