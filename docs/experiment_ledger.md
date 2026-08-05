@@ -33722,3 +33722,46 @@ separate reviewer follows.
   _pv_wdl_score / worker reco RESTART key; proof observation = won-bucket
   sf_policy_target entropy ~1.75 → ~1.0 nats within one window turnover).
   Prereg for that deploy will be its own entry before launch.
+
+## 2026-08-05 PREREG — DEPLOY the cp-ranked SF policy target (sf_policy_score_mode: cp) at the next boot. USER-APPROVED ("Let's try both", 08-05; the M1 half was killed before launch — see the entry above)
+
+- Hypothesis: the fresh-boot collapse and the steady drift are TARGET/LOOP
+  damage, and the dominant candidate defect is the saturating w+0.5d policy
+  score (07-31 screen PASSED; 08-04 conjugacy audit SUSTAINED on neutral
+  rulers: decisive-position blunder mass ~halved). Replacing the soft-CE
+  score with the cp ranking changes what the loop teaches in exactly the
+  positions the loop currently teaches shuffling.
+- Change: PR #355 (sf_policy_score_mode + sf_policy_cp_temp, default wdl =
+  bit-identical). Deploy = merge + restart FRESH from boot512 with the
+  08-04 boot-hygiene package UNCHANGED (teacher floor 700k, regret 0.1,
+  nodes 75k, warmup 1000) + sf_policy_score_mode: cp + sf_policy_cp_temp:
+  16.2. ONE data-affecting change vs restart #2 — the two prior boots
+  (0f888, cdb96) are the paired baselines, both reading −96.2 at iter 21.
+- DECIDING YARDSTICK (boot-shock readout, ~5h of training): bank the
+  iter-21 checkpoint (checkpoint_000020/trainer.pt per label lag) and run
+  the SAME arena as the baselines:
+  PYTHONPATH=. python3 scripts/arena_standard.py --candidate <iter21 bank>
+  --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --mode matched_sims --sims 32 --search-shape training --games 200
+  --seed 42 --label cp_target_iter21_vs_boot512
+  SUCCESS: CI excludes −96.2 on the favorable side (upper bound > −56.7 is
+  suggestive; point estimate > −50 = the target family is implicated and the
+  lever works). NULL: ≈−96 again ⇒ the soft-CE score mode is NOT the binding
+  defect; the cp-rank lever is spent at this dose (w_sf_own 0.1 / 17.1%
+  coverage — the reach caveat from the 07-31 entry stands) — record FAILED,
+  do not re-litigate.
+- FAMILY YARDSTICK unchanged: daily ratchet Elo(published − boot512),
+  SUCCESS CI>0 / KILL CI<0.
+- Deploy proofs on the FIRST session (no verdict before all three):
+  (1) worker log "session-start reco applied: ... score_mode=cp
+  cp_temp=16.20"; (2) mtime-selected NEW shards: won-bucket (|cp|>=300)
+  sf_policy_target mean entropy moves from ~1.75 toward ~1.0 nats within one
+  window turnover; (3) params.json carries both keys.
+- Confounds (pre-declared): (a) policy_sf_loss / m_sf_own series change
+  meaning at the switch — never compare across it; (b) balanced-bucket
+  blunder mass gets WORSE under cp ranking (0.140%→0.391%, 08-04 audit);
+  (c) the boot readout inherits the warmup-1000 schedule, so damage-window
+  timing matches cdb96, not 0f888.
+- Revert: flip sf_policy_score_mode back to wdl + restart (target-only
+  change; the replay window carries ~a day of cp-mode rows after a revert —
+  the standard yaml-revert-is-not-a-rollback caveat applies).
