@@ -33380,3 +33380,12 @@ separate reviewer follows.
   arena in flight (onset timing); (d) fix shape = decouple: a label-nodes floor
   knob (the cap only caps DOWN), restore ~698k labels, resume, judge on daily
   ratchet rows.
+
+## 2026-08-04 ~21:05 — third retro point: Elo(iter21 − boot512) = −96.2 [−141.5, −53.9] — onset is IMMEDIATE
+
+- Trajectory −96 (i21) → −81 (i169) → −131 (i177): compatible with a fast collapse
+  inside the first ~21 iterations then stasis near −100, NOT a slow drift. Matches
+  the shallow-teacher onset prediction (labels 50k flat through i21).
+- Caveat: the OLD lineage also showed an iters-0-25 shock at 698k labels (boot
+  forensics, task #122), so part of the early dip may be fresh-boot dynamics.
+  The teacher-restored rerun is the discriminator.
