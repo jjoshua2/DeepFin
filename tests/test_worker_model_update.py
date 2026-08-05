@@ -798,6 +798,29 @@ def test_every_live_key_is_transplanted() -> None:
         assert get(session._live_states[0]) == changed, f"live key {key} not transplanted"
 
 
+def test_live_reco_log_line_names_the_label_floor(caplog) -> None:
+    """PR #354 M1/R2: the live-reco log line is the deploy-verification
+    instrument for sf_label_nodes_floor — the knob exists because an 11x
+    teacher cut happened with no log line anywhere, so silently dropping
+    `label_floor=` from the line must fail a test, log line or not."""
+    import logging
+
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._live_states = [_live_state()]
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    with caplog.at_level(logging.INFO):
+        applied = WorkerSession._apply_live_reco(
+            session, {"sf_nodes": 5000, "sf_label_nodes_floor": 700_000},
+        )
+
+    assert applied is True
+    assert any("label_floor=700000" in r.getMessage() for r in caplog.records), (
+        "the live-reco log line no longer reports the label floor"
+    )
+
+
 def test_sf_multipv_change_triggers_restart() -> None:
     """Codex #81: sf_multipv is applied only at engine (re)init, so a change
     must restart even when bundled with a live-only sf_nodes update."""

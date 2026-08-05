@@ -249,10 +249,12 @@ def test_curriculum_label_reuse_refused_below_the_floor() -> None:
 
 
 def test_curriculum_label_reuse_kept_when_budget_meets_the_floor() -> None:
-    """The reuse stays free when the PID budget already satisfies the floor."""
+    """The reuse stays free when the PID budget already satisfies the floor —
+    pinned AT the boundary (base == floor), so the guard's `<` cannot drift to
+    `<=` and silently start paying for a query the reuse already covers."""
     state = _state(
         has_policy=True,
-        game=GameConfig(sf_move_nodes=0, sf_label_nodes_floor=50),
+        game=GameConfig(sf_move_nodes=0, sf_label_nodes_floor=100),
     )
     rec = state.samples_per_game[0][0]
 
@@ -261,7 +263,7 @@ def test_curriculum_label_reuse_kept_when_budget_meets_the_floor() -> None:
     attached, failed = flush_async_sf_labels_for_records(state, [rec])
 
     assert (attached, failed) == (1, 0)
-    assert len(state.stockfish.calls) == 1  # reused, base 100 >= floor 50
+    assert len(state.stockfish.calls) == 1  # reused, base 100 == floor 100
 
 
 def test_eff_sf_nodes_label_floor_is_absolute_even_on_fast_plies() -> None:
