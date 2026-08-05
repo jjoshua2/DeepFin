@@ -34057,3 +34057,12 @@ separate reviewer follows.
   3-part coupled change (wdl.py one-home + ruler clamp/invalidations +
   sparse-CE collapse) with no config flag — next-shards-effective, mixed
   window ~a day.
+
+- FAST-RIG WARMUP DEPLOY PROOF (Amendment 2) — PASSED by exclusion, all
+  three fast arms: checkpoint scheduler _last_lr at step 700 = 6.0e-5 =
+  the 10%-of-base end-of-schedule decay floor (identical to the Tier-0
+  control's completed-schedule end state at step 1578). A FAILED override
+  (warmup 1000 > 700 steps) would have ended MID-RAMP at ~4.2e-4, 7x
+  higher. warmup_steps=100 was in effect. Also noted: mix_fast grad-norm
+  median 5.06 tripped the I11 watch line (clip 17.1%/hard 13.1%) — an
+  offline-rig observation, no action; shared across fast arms.
