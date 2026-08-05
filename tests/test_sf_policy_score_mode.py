@@ -461,3 +461,119 @@ def test_trial_config_and_publisher_carry_the_keys() -> None:
 
     assert "sf_policy_score_mode" in SELFPLAY_CONFIG_KEYS
     assert "sf_policy_cp_temp" in SELFPLAY_CONFIG_KEYS
+
+
+def test_audit_ruler_scores_cp_mode_at_the_cp_temp() -> None:
+    """Review residual on F1 (PR #355): the audit-first ruler's cp branch had
+    zero coverage — reverting the scorer, the temp selection, or the whole
+    mode branch in `_sf_soft_distribution` stayed GREEN, which is exactly the
+    F1 defect (the ruler silently audits the OTHER candidate under this
+    name). The fixture's two rows carry EQUAL native wdl, so a scorer revert
+    to `_pv_wdl_score` reads 0.5/0.5; `sf_policy_temp` is set to the
+    production 0.012, so a temp-selection revert saturates to ~1.0. Both
+    fail the 0.98686 analytic pin at atol 1e-3."""
+    from chess_anti_engine.moves.encode import uci_to_policy_index
+    from scripts.audit_targets import _SfSoftParams, _sf_soft_distribution
+
+    a_best = uci_to_policy_index("e2e4", True)
+    a_other = uci_to_policy_index("d2d4", True)
+    assert a_best >= 0
+    assert a_other >= 0
+    rec = {
+        "pvs": [
+            {"move": "e2e4", "cp": 250, "mate": None, "wdl": [500, 300, 200]},
+            {"move": "d2d4", "cp": 180, "mate": None, "wdl": [500, 300, 200]},
+        ]
+    }
+    legal = np.array([a_best, a_other], dtype=np.int64)
+    params = _SfSoftParams(
+        sf_policy_temp=0.012,
+        sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=False,
+        sf_wdl_cp_slope=0.006,
+        sf_wdl_cp_draw_width=120.0,
+        sf_policy_score_mode="cp",
+        sf_policy_cp_temp=16.2,
+    )
+    dist = _sf_soft_distribution(rec, legal, params=params)
+    # candidates cover every legal move, so no smoothing: pure softmax over
+    # [250, 180] cp at temp 16.2 (constant shared with the production-path
+    # tests above)
+    p_best = 1.0 / (1.0 + np.exp(-(250.0 - 180.0) / 16.2))
+    np.testing.assert_allclose(float(dist[0]), p_best, atol=1e-3)
+    np.testing.assert_allclose(float(dist.sum()), 1.0, atol=1e-6)
+
+
+def test_audit_ruler_params_derive_from_the_flat_config() -> None:
+    """The yaml-read leg of the same residual: `main()` built `_SfSoftParams`
+    inline, so deleting the `sf_policy_score_mode` read was invisible to
+    every test. The construction now has one home; drive it."""
+    from scripts.audit_targets import _sf_soft_params_from_flat
+
+    got = _sf_soft_params_from_flat(
+        {"sf_policy_score_mode": "cp", "sf_policy_cp_temp": 7.5}
+    )
+    assert got.sf_policy_score_mode == "cp"
+    assert got.sf_policy_cp_temp == 7.5
+    # absent keys keep the production-shipped defaults (wdl mode: the ruler
+    # must not silently switch modes on a config predating the key)
+    dflt = _sf_soft_params_from_flat({})
+    assert dflt.sf_policy_score_mode == "wdl"
+    assert dflt.sf_policy_cp_temp == 16.2
+
+
+def test_sparse_ce_wdl_only_block_is_unscoreable_in_cp_mode() -> None:
+    """Review residual on the sparse-CE scoreable mask: an all-wdl-only
+    MultiPV block in cp mode must be UNSCOREABLE end to end — the dense
+    rebuild returns None (caller keeps the stored target) and the sparse path
+    takes the bestmove-fallback branch. Dropping `has_cp | has_mate` from the
+    cp branch of `_row_scores` would instead softmax two equal SENTINEL
+    scores into a uniform 0.5/0.5 target; the analytic fallback pin below
+    goes RED on that mutation."""
+    import torch
+
+    from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
+    width = 4672
+    params = SfTargetParams(
+        sf_policy_label_smooth=0.01,
+        sf_policy_score_mode="cp", sf_policy_cp_temp=16.2,
+    )
+    raw = np.full((1, 8, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (100, SF_CP_SENTINEL, 0, 600, 300)   # wdl-only
+    raw[0, 1] = (200, SF_CP_SENTINEL, 0, 450, 320)   # wdl-only
+    legal_idx = np.array([100, 200, 300], dtype=np.int64)
+
+    # dense semantics: no scoreable rows -> None, stored target kept
+    assert rebuild_sf_policy_target(
+        raw[0], legal_indices=legal_idx, policy_size=width, params=params,
+    ) is None
+    # the same block IS scoreable in wdl mode — the mask is mode-driven
+    assert rebuild_sf_policy_target(
+        raw[0], legal_indices=legal_idx, policy_size=width,
+        params=SfTargetParams(sf_policy_label_smooth=0.01),
+    ) is not None
+
+    legal = np.zeros((1, width), np.float32)
+    legal[:, legal_idx] = 1.0
+    torch.manual_seed(0)
+    logits = torch.randn(1, width)
+    batch = {
+        "sf_multipv_raw": torch.from_numpy(raw.astype(np.int32)),
+        "has_sf_multipv_raw": torch.ones(1),
+        "sf_legal_mask": torch.from_numpy(legal),
+        "has_sf_legal_mask": torch.ones(1),
+        "sf_move_index": torch.tensor([100]),
+        "has_sf_move": torch.ones(1),
+    }
+    sparse_ce, ok = sparse_sf_policy_ce(
+        logits, batch, params=params, legal_aligned=batch["sf_legal_mask"],
+    )
+    assert ok.tolist() == [1.0]
+    # analytic fallback: one-hot at sf_move_index, smoothed over the 3-move
+    # legal set (fallback covers 1 of 3 legal -> smoothing applies)
+    lsm = torch.log_softmax(logits.float(), dim=-1)[0]
+    smooth = 0.01
+    expect = -(1.0 - smooth) * lsm[100] - smooth * lsm[legal_idx].mean()
+    torch.testing.assert_close(sparse_ce[0], expect, atol=1e-5, rtol=1e-5)
