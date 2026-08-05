@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 
+from .access import BANS_FILENAME, BanList
 from .auth import (
     UserStats,
     WeakPassword,
@@ -33,6 +34,17 @@ def _resolve_password(arg: str | None, env_name: str | None = None) -> str:
     breaking them would push people to worse workarounds, but it now warns, and
     the two safe routes are listed first in `--help`.
     """
+    if env_name and arg is not None:
+  # ⚑ R1: BOTH FLAGS MEANT ONE OF THEM WAS SILENTLY DISCARDED. `--password X
+  # --password-env Y` exited 0 with the env value, so an operator who believed
+  # they had just set X walked away with Y -- and the account they think they
+  # provisioned does not accept the password they wrote down. Refusing costs a
+  # rerun; guessing which one they meant costs a debugging session.
+        raise SystemExit(
+            "--password and --password-env are mutually exclusive; one of them "
+            "would have been silently ignored. Pass only --password-env NAME "
+            "(preferred: the secret never reaches the process title)."
+        )
     if env_name:
         password = _password_from_env(env_name)
     elif arg is not None:
@@ -109,7 +121,8 @@ def main() -> None:
     )
     add.add_argument(
         "--password", type=str, default=None,
-        help="Password inline. DISCOURAGED: visible in `ps` and shell history",
+        help="Password inline. DISCOURAGED: visible in `ps` and shell history. "
+             "Cannot be combined with --password-env",
     )
 
     sp = sub.add_parser("set-password", help="Change an existing user's password")
@@ -120,7 +133,8 @@ def main() -> None:
     )
     sp.add_argument(
         "--password", type=str, default=None,
-        help="Password inline. DISCOURAGED: visible in `ps` and shell history",
+        help="Password inline. DISCOURAGED: visible in `ps` and shell history. "
+             "Cannot be combined with --password-env",
     )
 
     dis = sub.add_parser("disable", help="Disable a user")
@@ -131,8 +145,63 @@ def main() -> None:
 
     sub.add_parser("list", help="List users")
 
+  # ⚑ BAN, NOT DISABLE. `disable` is for an account this operator created and
+  # controls; `ban` is for a volunteer identity, and it also covers the IP, so
+  # the same person cannot immediately self-register a new name from the same
+  # address under trust-on-first-use.
+    ban = sub.add_parser("ban", help="Ban a username and/or an IP address")
+    ban.add_argument("--username", type=str, default=None)
+    ban.add_argument("--ip", type=str, default=None)
+    ban.add_argument("--reason", type=str, default="", help="Recorded, and shown to the client")
+
+    unban = sub.add_parser("unban", help="Lift a ban")
+    unban.add_argument("--username", type=str, default=None)
+    unban.add_argument("--ip", type=str, default=None)
+
+    sub.add_parser("list-bans", help="Show banned usernames and IPs")
+
     args = ap.parse_args()
     db = Path(args.users_db)
+    bans_path = db.parent / BANS_FILENAME
+
+    if args.cmd in ("ban", "unban"):
+        if not args.username and not args.ip:
+            raise SystemExit(f"{args.cmd}: give --username and/or --ip")
+        bans = BanList.load(bans_path)
+        for value, bucket in ((args.username, bans.usernames), (args.ip, bans.ips)):
+            if not value:
+                continue
+            key = str(value)
+            if args.cmd == "ban":
+                bucket.add(key)
+                if getattr(args, "reason", ""):
+                    bans.notes[key] = str(args.reason)
+            else:
+                bucket.discard(key)
+                bans.notes.pop(key, None)
+        bans.save()
+  # Print the resulting state, not "ok": the operator needs to see that the
+  # ban landed on the identity they meant, and a bare success line is how a
+  # typo'd username reads as a successful ban.
+        print(f"{args.cmd}: users={sorted(bans.usernames)} ips={sorted(bans.ips)}")
+        if args.cmd == "ban":
+            print(
+                "Note: a banned volunteer's ALREADY-UPLOADED shards are not "
+                "touched. Shards carry a `username` attr — see "
+                "docs/operations.md to quarantine them retroactively."
+            )
+        return
+
+    if args.cmd == "list-bans":
+        bans = BanList.load(bans_path)
+        if not bans.usernames and not bans.ips:
+            print(f"no bans ({bans_path})")
+            return
+        for name in sorted(bans.usernames):
+            print(f"user {name}\t{bans.notes.get(name, '')}")
+        for addr in sorted(bans.ips):
+            print(f"ip   {addr}\t{bans.notes.get(addr, '')}")
+        return
 
     if args.cmd == "add":
         pw = _resolve_password(args.password, args.password_env)

@@ -150,3 +150,31 @@ def test_whitespace_is_not_a_password() -> None:
     """Eight spaces clear the length rule and are not a secret."""
     with pytest.raises(WeakPassword):
         check_new_password(" " * 8)
+
+
+def test_both_password_flags_together_are_refused(
+    db: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ R1: ONE OF THE TWO WAS SILENTLY DISCARDED.
+
+    `--password X --password-env Y` exited 0 having used Y. The operator who
+    typed X walks away believing they set it, and the account does not accept
+    the password they wrote down — the accepted-then-ignored shape, with a
+    credential on the other end of it.
+    """
+    monkeypatch.setenv("VOL_PW", "env-password")
+    with pytest.raises(SystemExit) as exc:
+        _run(["add", "volunteer", "--password", "flag-password",
+              "--password-env", "VOL_PW"], db)
+    assert "mutually exclusive" in str(exc.value)
+    assert not db.exists(), "no account may be created from an ambiguous request"
+
+
+def test_each_flag_alone_still_works(db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The refusal must be about the COMBINATION, not about either flag."""
+    monkeypatch.setenv("VOL_PW", "env-password")
+    _run(["add", "from-env", "--password-env", "VOL_PW"], db)
+    _run(["add", "from-flag", "--password", "flag-password"], db)
+    users = load_users(db)
+    assert verify_password("env-password", users["from-env"])
+    assert verify_password("flag-password", users["from-flag"])

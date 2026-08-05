@@ -58,7 +58,7 @@ _SCOPED_CONFIG_NAMES: dict[str, frozenset[str]] = {
 # -- the reviewer demonstrated exactly that with `_k = "unclassified"`. Listing
 # them by line makes a new dynamic read FAIL until someone accounts for it.
 _NON_LITERAL_READS: dict[str, str] = {
-    "harness.py:486": (
+    "harness.py:491": (
         "the opening-book loop: `for cfg_key, flag in (...)` over "
         "opening_book_path / opening_book_path_2, both classified "
         "driver-launch-fixed"
@@ -216,7 +216,7 @@ def test_every_non_literal_driver_read_is_accounted_for() -> None:
     fails here until someone writes down why it may stay dynamic — which is the
     same self-invalidating contract as the literal half.
 
-    The one entry today is real and is a genuine C4/C5 key: `harness.py:486`
+    The one entry today is real and is a genuine C4/C5 key: `harness.py:491`
     reads the two opening-book paths through a loop variable and bakes them into
     the uvicorn command line, so `/v1/opening_book` serves the launch file for
     the life of the server.

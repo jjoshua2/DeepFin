@@ -15,6 +15,13 @@ def main() -> None:
     ap.add_argument("--max-worker-delta-per-rebalance", type=int, default=1)
     ap.add_argument("--upload-compact-shard-size", type=int, default=2000)
     ap.add_argument("--upload-compact-max-age-seconds", type=float, default=90.0)
+  # Default OFF everywhere it can be defaulted: an unset flag must never open
+  # registration, so the closed deployment stays closed if a caller forgets it.
+    ap.add_argument(
+        "--worker-self-register", action="store_true",
+        help="Allow unknown usernames to create an account on first use (TOFU). "
+             "Volunteer deployments only; default off.",
+    )
     args = ap.parse_args()
 
     try:
@@ -39,6 +46,7 @@ def main() -> None:
         server_root=server_root,
         opening_book_path=args.opening_book_path,
         opening_book_path_2=getattr(args, "opening_book_path_2", None),
+        worker_self_register=bool(args.worker_self_register),
         max_upload_mb=int(args.max_upload_mb),
         min_workers_per_trial=int(args.min_workers_per_trial),
         max_worker_delta_per_rebalance=int(args.max_worker_delta_per_rebalance),

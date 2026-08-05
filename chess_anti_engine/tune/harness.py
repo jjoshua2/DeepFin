@@ -479,6 +479,11 @@ def _launch_distributed_server(
         "--upload-compact-max-age-seconds",
         str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
     ]
+  # Flag-gated volunteer registration. Baked into the server command line, so
+  # it is DRIVER-LAUNCH-FIXED (classified in trainable_config_ops) and takes a
+  # full `run.py` restart to change -- not a trial restart, and not a reload.
+    if bool(base_config.get("worker_self_register", False)):
+        cmd.append("--worker-self-register")
     for cfg_key, flag in (
         ("opening_book_path", "--opening-book-path"),
         ("opening_book_path_2", "--opening-book-path-2"),
