@@ -71,10 +71,15 @@ SF_EVAL_BUCKET_NAMES: tuple[str, ...] = (
 
 # The cp axis is clamped here before any comparison. cp_to_wdl saturates: at
 # the production slope a +-1500 cp score is already 0.9999 / 0.0001, so the
-# inverse is numerically meaningless beyond it and a single mate score would
-# otherwise dominate a bucket mean. 1500 is _MATE_BASE_CP, the value
-# mate_to_effective_cp assigns the LONGEST mates, so no real label sits inside
-# the clamp and outside the representable band.
+# inverse is numerically meaningless beyond it and a single decisive score
+# would otherwise dominate a bucket mean.
+#
+# The clamp is set by that saturation point, NOT by the mate band: it used to
+# be justified as "1500 is _MATE_BASE_CP so nothing real lands above it", which
+# was never quite true (SF emits |cp| ~ 20000 in decisive endgames) and is now
+# plainly false — `mate_to_effective_cp` maps mates to ~+/-100000 so that they
+# outrank every raw cp score. Mates and large cp labels both clamp to the rail
+# here, which is the intended behaviour for a bucket mean.
 CP_CLAMP: float = 1500.0
 
 
