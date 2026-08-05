@@ -33633,3 +33633,38 @@ separate reviewer follows.
   SUCCESS CI>0 / KILL CI<0. On today's evidence the target/loop family is
   now the primary suspect for BOTH the boot shock and the −48.6 steady
   drift.
+
+## 2026-08-05 07:10 — ONSET LOCATED: iter5 ≈ boot512 (−15.6 [−60.9, +29.1]); the ~96 Elo accrues in iterations ~5-21
+
+- Onset arena (200 games, same rig as the prereg arena, label
+  onset_iter5_vs_boot512): Elo(iter5 − boot512) = −15.6 [−60.9, +29.1],
+  score 0.4775, pentanomial {WW:16, WD_DW:13, DD_WL:37, LD_DL:14, LL:20}.
+  CI spans zero; essentially disjoint from iter21's [−138.3, −56.7].
+- ELIMINATED: the arena-instrument systematic ("any trained checkpoint of
+  this family reads ~−100") — iter5 is a trained checkpoint (~530 steps)
+  and reads ≈0 on the same instrument, same seed, same openings.
+- WEAKENED: pure M1 cold-optimizer shock — a moments-initialization
+  transient predicts front-loaded damage; the damage instead lands AFTER
+  the early iterations. CONFOUND to keep honest: warmup 1000 held iters
+  1-5 at reduced LR, and full LR arrives ~iter 9-12 — exactly when the
+  damage window opens. So the cleanest surviving account is: TRAINING ON
+  THIS LOOP'S TARGETS AT FULL LR COSTS ROUGHLY −80 ELO PER ~1000 STEPS
+  until it plateaus ~−100, robust to teacher depth, data difficulty, and
+  optimizer regime. The target/loop family is now the dominant suspect for
+  the boot shock AND (at lower rate vs a moving window) the −48.6 steady
+  drift.
+- IN-LOOP BLINDNESS CONFIRMED AGAIN: at iter 33 the servo reads winrate
+  0.68 at regret 0.050 (difficulty already past the old lineage's band) —
+  the net crushes its curriculum opponent while losing 96 Elo of general
+  play. The curriculum winrate measures the handicapped-SF matchup, not
+  play strength.
+- NEXT MEASUREMENT (launched): old lineage 0f888's banked
+  ck_2026-08-04_iter8.pt vs boot512, same rig, label onset_0f888_iter8.
+  0f888 had warmup 72, so its iters 2-8 ran at FULL LR (~900 steps): if
+  damage ∝ LR-weighted steps on-target, 0f888-iter8 should ALREADY read
+  strongly negative; if it reads ≈0, the accrual account needs revision.
+- Intervention decisions (user-gated, for the morning): the surviving
+  levers are target-side — e.g. w_selfplay/loss-weight geometry, the
+  saturating SF policy target (cp-rank replacement, task #155/PR-B prereg),
+  sf_wdl_frac floor-pinning — plus the M1 warm-optimizer-import control.
+  A frozen-training control is now LESS urgent (instrument exonerated).
