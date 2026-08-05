@@ -176,6 +176,17 @@ class GameConfig:
     sf_wdl_use_cp_logistic: bool = False
     sf_wdl_cp_slope: float = 0.010
     sf_wdl_cp_draw_width: float = 60.0
+  # Candidate scoring for the SF POLICY target softmax (labels only — the
+  # curriculum move-selection scores stay w+0.5d, the PID wdl_regret unit).
+  # "wdl": w + 0.5*d, saturates in decisive positions (all moves ~1.0 when
+  # clearly won, so the target cannot rank them). "cp": raw effective
+  # centipawns (mate folded via mate_to_effective_cp), screened 07-31 +
+  # conjugacy-audited 08-04 — decisive-position blunder mass roughly halved.
+  # cp mode softmaxes at sf_policy_cp_temp (CENTIPAWN units; 16.2 matches the
+  # screen's production-sharpness calibration, ~1.18 nats mean entropy) —
+  # sf_policy_temp is win-fraction units and is not used in cp mode.
+    sf_policy_score_mode: str = "wdl"
+    sf_policy_cp_temp: float = 16.2
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
@@ -276,6 +287,19 @@ class GameConfig:
                 "floor is applied after the cap and wins, so the cap is "
                 "effectively dead. Drop one of the two.",
                 floor, cap,
+            )
+        # Hard error, not a warning: a typo'd mode would silently fall back to
+        # "wdl" at every consumer (they all compare == "cp"), reverting the
+        # target change while the config claims it is live.
+        if self.sf_policy_score_mode not in ("wdl", "cp"):
+            raise ValueError(
+                f"sf_policy_score_mode must be 'wdl' or 'cp', got "
+                f"{self.sf_policy_score_mode!r}"
+            )
+        if float(self.sf_policy_cp_temp) <= 0.0:
+            raise ValueError(
+                f"sf_policy_cp_temp must be > 0 (centipawns), got "
+                f"{self.sf_policy_cp_temp!r}"
             )
 
 

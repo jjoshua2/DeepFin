@@ -6,6 +6,7 @@ Default behavior (rebuild_sf_targets=False) is bitwise-unchanged.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, cast
 
 import numpy as np
@@ -1575,10 +1576,10 @@ def test_metric_splat_sources_cannot_collide_in_build_metrics():
     )
 
 
-_SF_TARGET_FIELDS = (
-    "sf_policy_temp", "sf_policy_label_smooth", "sf_wdl_use_cp_logistic",
-    "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
-)
+# Derived, not hardcoded: a new SfTargetParams field (e.g. the 2026-08-05
+# sf_policy_score_mode/sf_policy_cp_temp pair) is pinned automatically —
+# the literal form silently exempted new keys from the one-home invariant.
+_SF_TARGET_FIELDS = tuple(f.name for f in dataclasses.fields(SfTargetParams))
 
 
 def test_sf_target_param_defaults_have_one_home():
