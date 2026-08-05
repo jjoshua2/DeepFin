@@ -34123,3 +34123,28 @@ separate reviewer follows.
   re-running; its gate function is moot for REPRODUCES readings (the rig
   demonstrably expresses damage) and it now serves the views cross-anchor
   (vs Tier-0 -105.6). SP-full re-running behind it.
+
+### ⚑ VERDICTS (2026-08-05 17:42) — ROUND-1 RE-RUNS COMPLETE: the Tier-1 matrix closes clean. Fast rig VALIDATED by its cross-anchor; SP-full REPLICATES SP-sub-fast almost exactly.
+
+- SP-full (selfplay-only FULL pool 158,225 rows, Tier-0 rig b512/1578/w1000):
+  Elo(vs boot512) = -66.8 [-107.7, -27.7], 200 games. REPRODUCES
+  (pre-committed rule: <= -50, CI excl 0). Point estimate lands ON
+  SP-sub-fast's -66.8 [-112.8, -23.1] — the 27k subsample at the fast rig
+  and the full pool at the slow rig agree to the integer. Internal
+  replication across BOTH rig and pool size: the selfplay-row damage
+  (~-67) is real and rig-invariant.
+- MIX-fast (mixed 26,820-row subsample, fast rig b256/700/w100, 6.7 views):
+  -79.5 [-128.4, -33.6]. Serves as the pre-committed views cross-anchor:
+  CI broadly overlaps Tier-0's full-rig -105.6 [-148.1, -66.1] => the
+  fast rig is a valid instrument at ~6.7 views; the CU-fast and
+  SP-sub-fast readings STAND as reported. (Positive-control gate function
+  moot, as pre-declared — the rig demonstrably expresses damage.)
+- Full matrix now: MIX -105.6 (full rig) / -79.5 (fast) · CU -111.4 ·
+  SP -66.8 (both rigs). Consistent ordering: curriculum rows carry the
+  denser damage, selfplay rows a milder but unambiguous dose; the mixture
+  sits between. Arm-vs-arm still not CI-separated — ordering stays
+  SUGGESTIVE, the load-bearing conclusion remains "both reproduce =>
+  shared target construction", discriminated by Tier-2 tonight.
+- Instrument note: all four re-run/fast arenas compiled conc-16 on an idle
+  GPU (~11-min/200 games — the earlier ~75-min timings were contention,
+  not arena cost). Same ruler class as the crashed originals.
