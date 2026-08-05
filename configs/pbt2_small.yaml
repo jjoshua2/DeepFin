@@ -252,6 +252,12 @@ selfplay:
   fpu_reduction: 1.2
   fpu_at_root: 1.0
   sf_policy_temp: 0.012
+  # 2026-08-05 arm A (ledger: cp-rank deploy prereg, PR #355): rank SF policy label
+  # candidates by raw effective cp instead of the saturating w+0.5d squash. cp_temp
+  # 16.2 calibrated offline to ~1.18 nats mean label entropy (screen 08-04). wdl mode
+  # keeps sf_policy_temp; cp mode uses sf_policy_cp_temp — the pair is mode-selected.
+  sf_policy_score_mode: cp
+  sf_policy_cp_temp: 16.2
   sf_policy_label_smooth: 0.01
   sf_wdl_use_cp_logistic: true
   sf_wdl_cp_slope: 0.006
