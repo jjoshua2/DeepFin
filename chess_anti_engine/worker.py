@@ -1896,12 +1896,14 @@ class WorkerSession:
         self._set_sf_nodes(sf_nodes)
         last = states[-1]
         self.log.info(
-            "live reco (%d state(s)): selfplay_fraction=%.3f regret=%s sf_nodes=%d",
+            "live reco (%d state(s)): selfplay_fraction=%.3f regret=%s sf_nodes=%d"
+            " label_floor=%d",
             len(states),
             float(last.game.selfplay_fraction),
             (f"{last.opponent.wdl_regret_limit:.4f}")
             if last.opponent.wdl_regret_limit is not None else "none",
             int(sf_nodes),
+            int(getattr(last.game, "sf_label_nodes_floor", 0) or 0),
         )
         return True
 
@@ -4194,9 +4196,14 @@ class WorkerSession:
   # which is the whole distinction that field exists to make.
         _start_regret, _start_nodes = self._active_difficulty()
         self.log.info(
-            "session-start reco applied: regret=%s sf_nodes=%s",
+            "session-start reco applied: regret=%s sf_nodes=%s label_floor=%d",
             f"{_start_regret:.4f}" if _start_regret is not None else "unknown",
             _start_nodes if _start_nodes is not None else "unknown",
+  # The same _resolve_reco expression the GameConfig build uses, so this line
+  # and the budget the labels actually get cannot disagree. The floor exists
+  # because an 11x teacher cut happened with no log line anywhere; a deploy is
+  # verified by label_floor>0 here plus sf_label_meta[:,0]>=floor in the shards.
+            self._resolve_reco(reco, "sf_label_nodes_floor", 0, int),
         )
         model_sha = self.model_sha
 
