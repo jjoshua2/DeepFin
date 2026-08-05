@@ -33417,3 +33417,42 @@ separate reviewer follows.
 - Fix routing: sf_label_nodes_floor decoupling knob is STILL worth shipping
   (cheap; removes the mate-blind/sharp-noise damage and the silent double-duty
   knob) — but as hygiene, not as the strength lever.
+
+## 2026-08-05 PREREG — FRESH RESTART #2: boot512 --fresh with the teacher RESTORED (sf_label_nodes_floor 700000)
+
+- User decision after the screen verdict: run the named discriminator anyway.
+  Everything else about the launch config matches the 08-04 restart (views 4.3,
+  sf_wdl_frac 0.45, dropout 0, refresh off, boot512 bootstrap, sf_nodes start
+  50k with PID free to ramp) — the ONE data-affecting change vs 08-04 is
+  `sf_label_nodes_floor: 700000` (PR #354), pinning label queries at >=700k
+  nodes (old lineage realized 698,289) while the PID keeps the OPPONENT budget.
+- Hypothesis: restoring teacher depth prevents/reduces the fresh-boot early
+  collapse. The offline screen PREDICTS A NULL on the ~100 Elo question
+  (teacher damage sized at ~+0.005 win-prob conjugate-corrected); this run is
+  the in-vivo test that separates teacher-depth from boot-shock once and for
+  all.
+- DECIDING YARDSTICK (pre-committed): bank the iter-21 checkpoint
+  (`data/ratchet/snapshots/ck_<date>_iter21.pt`), then
+  `PYTHONPATH=. python3 scripts/arena_standard.py --candidate data/ratchet/snapshots/ck_<date>_iter21.pt --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt --mode matched_sims --sims 32 --search-shape training --games 200 --seed 42 --label rerun_iter21_vs_boot512`
+  — identical shape to the 08-04 retro arenas (their JSONL rows in
+  runs/arena_results.jsonl are the authoritative flag record). Baseline to beat:
+  Elo(iter21_0f888 − boot512) = −96.2 [−141.5, −53.9].
+- Verdict rule: TEACHER-RESCUE if the new iter21 CI lies entirely above −53.9
+  (the old CI's upper bound) — teacher depth was a major shock component,
+  contra the screen. NULL if the new point estimate falls inside
+  [−141.5, −53.9] — shock is teacher-independent; investigation stays on the
+  early-boot mechanisms (aae9c diagnosis in flight) and the floor stays as
+  hygiene. Intermediate (CI straddles −53.9): teacher is a MINOR component;
+  size it by the point-estimate gap. Family yardstick unchanged: daily ratchet
+  arena Elo(published − boot512), SUCCESS CI>0 / KILL CI<0.
+- First-row verification owed (config_change_may_not_be_in_effect): stored
+  shard `sf_label_meta[:,0]` >= 700000 on the first new rows, and
+  worker log's realized label-nodes line. A floor that doesn't show in the
+  shard bytes is not deployed.
+- Confounds: (1) this restart also deploys the restart-gated fix PRs
+  #332-#353 (wedge/loop-stall fixes, zclip EMA checkpointing — EMA effective
+  only from the NEXT restart, this boot is still adaptive-1.0/hard-0.0 cold);
+  (2) 700k labels restore the old-lineage cost shape — iteration wall time,
+  games/iter, and views throughput all shift vs 0f888, so throughput-sensitive
+  columns are not comparable across the two fresh boots; (3) reboot cleared
+  the dxg wedge — worker liveness differs from late-0f888.
