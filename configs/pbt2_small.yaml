@@ -550,7 +550,11 @@ tune:
   gate_games: 0
   # PIN. Inert companion of the removed gate; the value is what production carried.
   gate_threshold: 0.5
-  # DELETED gate_interval: no consumer reads tc.gate_interval anywhere in chess_anti_engine/, even with the gate enabled
+  # PIN. Inert companion of the removed gate (no consumer reads tc.gate_interval), kept
+  # at the inert value because tests/test_dead_config_keys.py pins all three gate_*
+  # corpses PRESENT-and-inert in the shipped yaml: deleting a key from a live yaml is
+  # itself a reload risk, so the corpse stays visible instead of vanishing.
+  gate_interval: 1
   gate_mcts_sims: 1
 
   # ============================================================================
