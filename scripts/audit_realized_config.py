@@ -57,7 +57,7 @@ from collections.abc import Callable, Iterable, Mapping
 
 from chess_anti_engine.config_keys import is_inert_dead_config_value
 from chess_anti_engine.tune.result_keys import row_counter, row_counter_opt
-from chess_anti_engine.utils.config_yaml import SELFPLAY_CONFIG_KEYS
+from chess_anti_engine.utils.config_yaml import RECO_STOCKFISH_KEYS, SELFPLAY_CONFIG_KEYS
 from scripts.loop_health import load_rows, parse_outcome_stats
 from scripts.trial_paths import default_run_dir, latest_result_path
 
@@ -918,7 +918,7 @@ def diff_reco_coverage(
     reco: Mapping[str, object],
     flat_cfg: Mapping[str, object],
     *,
-    selfplay_keys: Iterable[str] = SELFPLAY_CONFIG_KEYS,
+    selfplay_keys: Iterable[str] = SELFPLAY_CONFIG_KEYS + RECO_STOCKFISH_KEYS,
 ) -> tuple[list[str], list[str]]:
     """Diff the published reco against the yaml over the UNION of key sets.
 
@@ -932,7 +932,10 @@ def diff_reco_coverage(
     ``selfplay_keys`` is the canonical enumeration of worker-affecting yaml
     keys, so a key that no yaml currently sets is still in the basis — a knob
     that is unpublished AND unset is one yaml edit away from being the next
-    silent no-op, and it should be visible before that edit, not after.
+    silent no-op, and it should be visible before that edit, not after. The
+    default includes ``RECO_STOCKFISH_KEYS``: without them a stockfish key was
+    in the basis only while its own publisher line existed, so the one site
+    this diff exists to guard was the one site it could not see (PR #354 H2).
     """
     report: list[str] = []
     findings: list[str] = []

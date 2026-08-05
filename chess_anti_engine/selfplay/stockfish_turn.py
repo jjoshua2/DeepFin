@@ -508,11 +508,23 @@ def _eff_sf_nodes(
     ``for_label`` marks label-only queries (selfplay P1 analysis — never a move
     the opponent plays). When ``game.sf_label_nodes_cap`` > 0 those are capped
     at that budget, decoupling label cost from the PID-ramped opponent budget.
-    Curriculum move queries (``for_move=True``) are never capped.
+    When ``game.sf_label_nodes_floor`` > 0 they are also raised to at least
+    that budget — the floor decouples label QUALITY upward the same way the cap
+    decouples cost downward. Without it the teacher silently rides the PID
+    difficulty knob: the 2026-08-04 fresh restart began at sf_nodes 50k, an 11x
+    teacher cut versus the old lineage's realized ~698k, and nothing said so.
+    The floor is applied LAST — after the cap (so on a conflicting config the
+    floor wins; GameConfig.__post_init__ warns) and after the fast-ply scale
+    (so the >= floor guarantee holds unconditionally, rather than depending on
+    the has_policy <=> last_net_full invariant maintained in network_turn.py).
+    Curriculum move queries (``for_move=True``) get neither cap nor floor —
+    which is why ``submit_async_sf_labels_from_curriculum_moves`` must refuse
+    to REUSE a move future as a label when its budget is below the floor.
     """
     if for_move and for_label:
         raise ValueError("_eff_sf_nodes: a query cannot be both a move and a label")
     base_nodes = int(state.base_nodes)
+    label_floor = 0
     if for_move:
         move_nodes = int(getattr(state.game, "sf_move_nodes", 0) or 0)
         if move_nodes > 0:
@@ -521,6 +533,7 @@ def _eff_sf_nodes(
         label_cap = int(getattr(state.game, "sf_label_nodes_cap", 0) or 0)
         if label_cap > 0:
             base_nodes = min(base_nodes, label_cap)
+        label_floor = int(getattr(state.game, "sf_label_nodes_floor", 0) or 0)
     if base_nodes <= 0:
         return None
     # SF-refute MOVE queries can opt out of the fast-ply scale so the punishing
@@ -538,7 +551,10 @@ def _eff_sf_nodes(
         fast_scale = 1.0
     else:
         fast_scale = float(getattr(state.game, "sf_fast_ply_node_scale", 0.25))
-    return max(1, round(float(base_nodes) * fast_scale))
+    eff_nodes = max(1, round(float(base_nodes) * fast_scale))
+    if label_floor > 0:
+        eff_nodes = max(eff_nodes, label_floor)
+    return eff_nodes
 
 
 def _sf_syzygy_path_for_slot(state: SelfplayState, idx: int) -> str | None:
@@ -634,8 +650,23 @@ def submit_async_curriculum_move_queries(state: SelfplayState, idxs: list[int]) 
 
 
 def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: list[int]) -> int:
-    """Reuse full-strength curriculum move futures as labels when possible."""
+    """Reuse full-strength curriculum move futures as labels when possible.
+
+    "Possible" means the reused future's budget can serve as the label. A move
+    future runs at ``_eff_sf_nodes(for_move=True)`` — the raw PID budget,
+    which takes neither ``sf_label_nodes_cap`` nor ``sf_label_nodes_floor``.
+    That asymmetry is fine for the cap (not capping a free full-strength
+    future costs nothing) and fatal for the floor (the ">= floor" guarantee
+    would silently fail on every curriculum game — half the fleet on the
+    production config): so when a floor is set and the PID budget is below
+    it, skip the reuse and pay for a fresh floored label query instead. The
+    extra query is the floor's whole point; its cost is recorded in the
+    ledger entry that enables the floor.
+    """
     if int(getattr(state.game, "sf_move_nodes", 0) or 0) > 0:
+        return submit_async_sf_label_queries(state, idxs)
+    label_floor = int(getattr(state.game, "sf_label_nodes_floor", 0) or 0)
+    if label_floor > 0 and int(state.base_nodes) < label_floor:
         return submit_async_sf_label_queries(state, idxs)
     submitted = 0
     max_pending = max(1, int(state.batch_size) * 8)

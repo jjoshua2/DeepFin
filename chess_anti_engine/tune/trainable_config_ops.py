@@ -249,6 +249,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             sf_move_nodes=tc.sf_move_nodes,
             sf_fast_ply_node_scale=tc.sf_fast_ply_node_scale,
             sf_label_nodes_cap=tc.sf_label_nodes_cap,
+            sf_label_nodes_floor=tc.sf_label_nodes_floor,
             sf_label_escalate_q_gap=tc.sf_label_escalate_q_gap,
             sf_label_escalate_nodes=tc.sf_label_escalate_nodes,
             sf_label_escalate_max_per_game=tc.sf_label_escalate_max_per_game,

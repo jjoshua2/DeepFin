@@ -60,7 +60,7 @@ _CORE_KEYS = (
 # The section is just visual grouping — keys use the same names as code.
 _STOCKFISH_KEYS = (
     "stockfish_path", "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
-    "sf_label_nodes_cap",
+    "sf_label_nodes_cap", "sf_label_nodes_floor",
     "sf_label_escalate_q_gap", "sf_label_escalate_nodes",
     "sf_label_escalate_max_per_game",
     "sf_workers", "sf_multipv", "sf_hash_mb", "sf_nice",
@@ -169,6 +169,24 @@ _SELFPLAY_KEYS = (
 # one actually REACHES a distributed worker — see
 # ``scripts/audit_realized_config.py --reco-diff`` (rl_loop_audit A4/A7).
 SELFPLAY_CONFIG_KEYS: tuple[str, ...] = _SELFPLAY_KEYS
+
+# The stockfish-section keys that ride the RECO (published by
+# build_recommended_worker, consumed by the worker's _resolve_reco). Config-
+# coverage instruments (diff_reco_coverage) must include these in their union
+# basis EXPLICITLY: SELFPLAY_CONFIG_KEYS has no stockfish key, so a stockfish
+# key used to enter the basis only via its own presence in the reco — circular,
+# meaning dropping a publisher line silently removed the key from the basis
+# instead of becoming a finding (the E13 failure mode, re-found on
+# sf_label_nodes_floor in PR #354's review, H2). Unpublished stockfish keys
+# (stockfish_path, sf_workers, sf_multipv, ...) are worker LAUNCH config, not
+# reco keys, and deliberately stay out.
+RECO_STOCKFISH_KEYS: tuple[str, ...] = (
+    "sf_nodes", "sf_move_nodes", "sf_fast_ply_node_scale",
+    "sf_label_nodes_cap", "sf_label_nodes_floor",
+    "sf_label_escalate_q_gap", "sf_label_escalate_nodes",
+    "sf_label_escalate_max_per_game",
+    "sf_multipv", "sf_hash_mb",
+)
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
 _MODEL_PASSTHROUGH = (

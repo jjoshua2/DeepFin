@@ -224,6 +224,59 @@ def test_curriculum_move_future_reused_for_label_when_nodes_are_shared() -> None
     assert rec.sf_policy_target is not None
 
 
+def test_curriculum_label_reuse_refused_below_the_floor() -> None:
+    """PR #354 review H1: with sf_move_nodes=0 (production) the curriculum
+    label REUSES the move future, which was submitted for_move and takes
+    neither cap nor floor — so on the production config the floor would
+    silently miss the curriculum half of the fleet's labels. Below the floor
+    the reuse must be refused and a fresh floored label query paid for."""
+    state = _state(
+        has_policy=True,
+        game=GameConfig(sf_move_nodes=0, sf_label_nodes_floor=700_000),
+    )
+    rec = state.samples_per_game[0][0]
+
+    submitted_moves = submit_async_curriculum_move_queries(state, [0])
+    submitted_labels = submit_async_sf_labels_from_curriculum_moves(state, [0])
+    attached, failed = flush_async_sf_labels_for_records(state, [rec])
+
+    assert submitted_moves == 1
+    assert submitted_labels == 1
+    assert (attached, failed) == (1, 0)
+    # Move at the PID budget, label at the floor: two engine calls, no reuse.
+    assert [call["nodes"] for call in state.stockfish.calls] == [100, 700_000]
+    assert rec.sf_policy_target is not None
+
+
+def test_curriculum_label_reuse_kept_when_budget_meets_the_floor() -> None:
+    """The reuse stays free when the PID budget already satisfies the floor —
+    pinned AT the boundary (base == floor), so the guard's `<` cannot drift to
+    `<=` and silently start paying for a query the reuse already covers."""
+    state = _state(
+        has_policy=True,
+        game=GameConfig(sf_move_nodes=0, sf_label_nodes_floor=100),
+    )
+    rec = state.samples_per_game[0][0]
+
+    submit_async_curriculum_move_queries(state, [0])
+    submit_async_sf_labels_from_curriculum_moves(state, [0])
+    attached, failed = flush_async_sf_labels_for_records(state, [rec])
+
+    assert (attached, failed) == (1, 0)
+    assert len(state.stockfish.calls) == 1  # reused, base 100 == floor 100
+
+
+def test_eff_sf_nodes_label_floor_is_absolute_even_on_fast_plies() -> None:
+    """PR #354 review L1: the floor is applied AFTER the fast-ply scale, so
+    the >= floor guarantee cannot be silently multiplied down to floor*0.25.
+    Unreachable in production today (labels only attach to full plies), but
+    the guarantee must not depend on an invariant maintained two modules away
+    in network_turn.py."""
+    state = _eff_state(500_000, last_full=False)
+    state.game.sf_label_nodes_floor = 700_000
+    assert _eff_sf_nodes(state, 0, for_label=True) == 700_000
+
+
 def test_curriculum_label_uses_separate_query_when_move_nodes_are_low() -> None:
     state = _state(has_policy=True, sf_move_nodes=10)
     rec = state.samples_per_game[0][0]
@@ -406,6 +459,33 @@ def test_generic_submit_threads_label_cap() -> None:
     assert state.stockfish.calls[0]["nodes"] == 40
 
 
+def test_generic_submit_threads_label_floor() -> None:
+    """The floor must reach the actual engine query, not just the config: a
+    label query at a PID base budget below the floor (base_nodes=100 here) is
+    raised to the floor. This is the production defect the knob exists for —
+    the 2026-08-04 restart's labels silently rode the 50k opponent budget."""
+    state = _state(has_policy=True, game=GameConfig(sf_label_nodes_floor=700_000))
+
+    submit_sf_queries(state, [0], for_label=True)
+
+    assert state.stockfish.calls[0]["nodes"] == 700_000
+
+
+def test_label_floor_ignores_moves_and_wins_over_cap() -> None:
+    """The floor applies to labels only (curriculum moves keep the PID budget),
+    and on a conflicting config (floor > cap > 0) the floor wins because it is
+    applied after the cap."""
+    game = GameConfig(sf_label_nodes_floor=700_000)
+    state = _state(has_policy=True, game=game)
+    submit_sf_queries(state, [0], for_move=True)
+    assert state.stockfish.calls[0]["nodes"] == 100  # base budget, not floored
+
+    conflicted = GameConfig(sf_label_nodes_cap=40, sf_label_nodes_floor=700_000)
+    state = _state(has_policy=True, game=conflicted)
+    submit_sf_queries(state, [0], for_label=True)
+    assert state.stockfish.calls[0]["nodes"] == 700_000
+
+
 def test_label_cap_warns_when_native_wdl_labels(caplog) -> None:
     """The cap's cost-free rationale assumes cp-logistic labels; the config
     warns when the cap is combined with SF-native WDL labels."""
@@ -417,4 +497,18 @@ def test_label_cap_warns_when_native_wdl_labels(caplog) -> None:
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="chess_anti_engine.selfplay.config"):
         GameConfig(sf_label_nodes_cap=150_000, sf_wdl_use_cp_logistic=True)
+    assert not caplog.records
+
+
+def test_label_floor_over_cap_warns(caplog) -> None:
+    """floor > cap > 0 makes the cap dead (floor is applied after); the config
+    warns so the conflict is visible at construction."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.selfplay.config"):
+        GameConfig(sf_label_nodes_cap=100_000, sf_label_nodes_floor=700_000)
+    assert any("sf_label_nodes_floor" in r.message for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.selfplay.config"):
+        GameConfig(sf_label_nodes_floor=700_000)
     assert not caplog.records

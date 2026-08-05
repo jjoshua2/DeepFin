@@ -34,7 +34,7 @@ from chess_anti_engine.selfplay.config import (
     TemperatureConfig,
 )
 from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
-from chess_anti_engine.utils.config_yaml import SELFPLAY_CONFIG_KEYS
+from chess_anti_engine.utils.config_yaml import RECO_STOCKFISH_KEYS, SELFPLAY_CONFIG_KEYS
 from chess_anti_engine.worker import WorkerSession
 from scripts.audit_realized_config import (
     _RECO_WORKER_DEFAULT,
@@ -293,6 +293,42 @@ def test_production_config_publishes_every_worker_affecting_key() -> None:
         "reco coverage changed. Newly unpublished keys are a defect; a key that "
         "disappeared from _KNOWN_UNPUBLISHED was fixed — update the constant.\n"
         + "\n".join(f"  - {f}" for f in findings)
+    )
+
+
+def test_dropping_a_stockfish_publisher_line_is_a_finding() -> None:
+    """PR #354 review H2: the union basis contained no stockfish key, so a
+    stockfish key entered the basis only via its own presence in the reco —
+    circular. Deleting a publisher line from build_recommended_worker then
+    removed the key from the basis instead of becoming a finding, which is the
+    E13 failure mode this file exists to retire. With RECO_STOCKFISH_KEYS in
+    the default basis, "in the yaml, absent from the reco" must be a finding
+    for every reco-riding stockfish key."""
+    for key in RECO_STOCKFISH_KEYS:
+        _report, findings = diff_reco_coverage({}, {key: 424242})
+        assert any(key in f for f in findings), (
+            f"{key}: set in the yaml, dropped from the reco publisher, and "
+            "diff_reco_coverage reports nothing — the H2 blindness is back"
+        )
+
+
+def test_reco_stockfish_keys_match_what_the_publisher_actually_publishes() -> None:
+    """A stale RECO_STOCKFISH_KEYS would re-open H2 one key at a time: a key
+    published but not enumerated is guarded only by its own publisher line
+    (circular), and a key enumerated but not published would false-alarm.
+    Compare against the real publisher's output, not a copied list."""
+    raw = yaml.safe_load(_PRODUCTION_YAML.read_text(encoding="utf-8"))
+    flat = flatten_yaml_config(raw)
+    reco = _reco_from(flat)
+
+    published_sf = {k for k in reco if k.startswith(("sf_", "stockfish"))}
+    # Selfplay-section sf_* keys (sf_policy_temp, sf_wdl_*, sf_refute_*,
+    # stockfish_syzygy_path) are already in SELFPLAY_CONFIG_KEYS; the
+    # enumeration owes exactly the published keys the basis would otherwise
+    # miss.
+    assert published_sf - set(SELFPLAY_CONFIG_KEYS) == set(RECO_STOCKFISH_KEYS), (
+        "build_recommended_worker's stockfish keys diverged from "
+        "RECO_STOCKFISH_KEYS — update the enumeration in config_yaml.py"
     )
 
 
