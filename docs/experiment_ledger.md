@@ -33964,3 +33964,15 @@ separate reviewer follows.
   Note the arithmetic floor: full-LR dose >= 578 forces views >= 6.57 at
   b256 on a 26.4k pool — going under 6 needs batch <= 224 and was declined
   as more regime deviation than the cross-anchors justify.
+
+- INSTRUMENT NOTE (Amendment 2, pre-declared): the four Tier-1 arenas run
+  --compile on (plain inductor, explicitly NOT reduce-overhead/cudagraphs —
+  arena_standard.py:1243) instead of auto->EAGER. Rationale: the auto
+  threshold's games*sims proxy assumes cold compile; these are ~1.5h runs
+  and the production workers' shared compile cache is warm for this arch.
+  The anchors (-96.2, -105.6) ran EAGER; the numerics delta is symmetric
+  within each run and orders of magnitude below the reading thresholds. Any
+  cross-mode comparison in the verdicts (MIX-fast vs Tier-0) is CI-width
+  coarse. Elo shifts attributable to compile mode are expected ~0; if
+  MIX-fast lands implausibly far from BOTH -105.6 and 0, an eager re-run
+  adjudicates before any verdict.
