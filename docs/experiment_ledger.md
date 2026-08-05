@@ -33916,3 +33916,37 @@ separate reviewer follows.
   does not => curriculum rows carry it, repetition exonerated by the matched
   control. Symmetrically for SP-sub-only.
 - Arena order (serialized, conc-16, same ruler): SP-full, CU-full, SP-sub.
+
+### 2026-08-05 AMENDMENT 2 to the Tier-1 prereg — FAST RIG (user design: cut warmup 1000->100 to reach collapse in fewer steps; views capped ~6)
+
+- Supersedes Amendment 1's arm plan BEFORE any amended arm launched (chain2
+  killed at the gate; nothing trained under Amendment 1's SP-sub-b512 leg).
+  SP-full (b512/1578/warmup-1000, 5.1 views) unchanged and still running;
+  CU-b512 (30.6 views) retrain still banks as a dose-response/fallback
+  checkpoint, arena DEFERRED (30-view repetition could collapse either arm
+  alone — user objection sustained, exposure-memorization memory concurs).
+- Evidence licensing the warmup cut: 0f888 collapsed at warmup 72 (-103.7),
+  cdb96 at warmup 1000 (-96.2) — warmup length does not gate the collapse,
+  it only delays full-LR accumulation.
+- FAST RIG (identical for all three fast arms): batch 256, steps 700,
+  --variant control:warmup_steps=100 => ~600 full-LR steps (Tier-0's
+  reproducing dose was ~578), ~6.7-6.8 views/row. Deploy proof: realized LR
+  ramp in each arm's report must reach peak by ~step 100 (a rig whose
+  override silently failed re-runs, not reinterprets).
+- Arms (all ~26.4-27k rows, game-level subsamples, seed 42, mtimes kept):
+  * MIX-fast: tier1_mix_sub (26,820 rows, selfplay share 0.870 vs source
+    0.857) — POSITIVE CONTROL. GATE: if MIX-fast does not REPRODUCE
+    (<= -50, CI excl 0), the fast rig cannot express the damage —
+    record INSTRUMENT-INSUFFICIENT and fall back to the banked b512 arms
+    with the 30-view caveat; the split arms are then NOT read as clean.
+  * SP-sub-fast: tier1_sp_sub (26,991 rows)
+  * CU-fast: tier1_cu (26,414 rows)
+- READING (gate passed): primary contrast CU-fast vs SP-sub-fast (identical
+  rig, size, views; differ only in row type); each also vs boot512 by the
+  standard rule. Confounds: batch 256 + warmup 100 deviate from the boot
+  regime (absorbed by MIX-fast for existence, shared across split arms for
+  the contrast); masked-mean low-coverage tails are noisier at b256
+  (shared).
+- Arena order (serialized, conc-16, standard ruler, 200 games, seed 42):
+  SP-full (tier1_selfplay_vs_boot512), MIX-fast (tier1_mixfast_vs_boot512),
+  CU-fast (tier1_cufast_vs_boot512), SP-sub-fast (tier1_spsubfast_vs_boot512).
