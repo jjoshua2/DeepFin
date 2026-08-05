@@ -1643,15 +1643,26 @@ def test_worker_reco_defaults_derive_from_sf_target_params():
         assert getattr(game, f) == getattr(d, f), f
 
     # Negative control: the assertions above pass trivially if the worker
-    # ignores the reco entirely, so prove this path is live and reco-driven.
-    bumped = {
-        "sf_nodes": 5000,
-        "sf_policy_temp": d.sf_policy_temp + 0.25,
-        "sf_wdl_cp_slope": d.sf_wdl_cp_slope + 0.5,
-    }
+    # ignores the reco entirely (GameConfig's own dataclass defaults equal
+    # SfTargetParams by the pin above), so prove EVERY field is reco-driven.
+    # Dynamic over _SF_TARGET_FIELDS: deleting any single GameConfig kwarg in
+    # the worker build must fail here — PR #355 review F2 found exactly that
+    # deletion surviving while only two fields were bumped.
+    def _bumped_value(default):
+        if isinstance(default, bool):
+            return not default
+        if isinstance(default, str):
+            return "cp" if default == "wdl" else "wdl"
+        return default + 0.25
+
+    bumped: dict[str, Any] = {"sf_nodes": 5000}
+    for f in _SF_TARGET_FIELDS:
+        bumped[f] = _bumped_value(getattr(d, f))
     cfgs2, _ = WorkerSession._build_selfplay_configs(_bare_session(), bumped)
-    assert cfgs2["game"].sf_policy_temp == d.sf_policy_temp + 0.25
-    assert cfgs2["game"].sf_wdl_cp_slope == d.sf_wdl_cp_slope + 0.5
+    for f in _SF_TARGET_FIELDS:
+        assert getattr(cfgs2["game"], f) == bumped[f], (
+            f"worker GameConfig build dropped reco key {f}"
+        )
 
 
 def test_batch_sf_wdl_logistic_has_no_sentinel_overflow():

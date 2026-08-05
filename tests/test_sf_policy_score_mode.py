@@ -100,25 +100,165 @@ def test_score_params_resolver_picks_temp_by_mode() -> None:
     assert _sf_policy_score_params(legacy) == ("wdl", 0.012)
 
 
-def test_move_selection_call_site_stays_in_wdl_units() -> None:
-    """The curriculum MOVE-selection candidates feed the PID's wdl_regret
-    band, which is defined in win-fraction units — cp mode must never reach
-    that call. Pin the call site itself: the first _collect_sf_pv_candidates
-    call in _process_sf_results (move selection) takes no score-mode kwarg,
-    while the label branch's does."""
+def test_score_mode_reaches_every_label_site_and_never_move_selection() -> None:
+    """Module-wide call-site accounting (PR #355 review F2: one-line kwarg
+    deletions at individual sites survived a narrower version of this test).
+
+    Every _collect_sf_pv_candidates call that feeds a LABEL build must pass
+    the score mode; the single move-selection call must NOT (the PID's
+    wdl_regret band is win-fraction units). Every _build_sf_policy_target
+    label call must take the mode-selected temp, never the raw wdl temp.
+    """
     import inspect
 
     from chess_anti_engine.selfplay import stockfish_turn
 
-    src = inspect.getsource(stockfish_turn._process_sf_results)
-    calls = src.split("_collect_sf_pv_candidates(")[1:]
-    assert len(calls) == 2, "call-site count changed; re-audit score-mode routing"
-    move_call, label_call = calls[0], calls[1]
-    assert "sf_policy_score_mode" not in move_call.split(")")[0], (
+    src = inspect.getsource(stockfish_turn)
+
+    def _call_args(text: str) -> str:
+        """Text of one call's arguments, balanced-paren aware (the calls
+        contain nested bool()/float() casts)."""
+        depth = 1
+        for i, ch in enumerate(text):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return text[:i]
+        raise AssertionError("unbalanced parens in scanned source")
+
+    collect_calls = src.split("_collect_sf_pv_candidates(")
+    # element 0 is pre-text, element 1 follows the def; the rest are calls
+    collect_args = [_call_args(c) for c in collect_calls[2:]]
+    assert len(collect_args) == 4, (
+        f"expected 4 _collect_sf_pv_candidates call sites, found "
+        f"{len(collect_args)} — re-audit score-mode routing at the new site"
+    )
+    with_mode = [a for a in collect_args if "sf_policy_score_mode" in a]
+    without_mode = [a for a in collect_args if "sf_policy_score_mode" not in a]
+    assert len(with_mode) == 3, "a label site dropped the score-mode kwarg"
+    assert len(without_mode) == 1, (
         "move-selection candidates must stay w+0.5d: the PID wdl_regret band "
         "is win-fraction units"
     )
-    assert "sf_policy_score_mode=score_mode" in label_call.split(")")[0]
+
+    build_calls = src.split("_build_sf_policy_target(")
+    build_args = [_call_args(c) for c in build_calls[2:]]
+    assert len(build_args) == 3, (
+        f"expected 3 _build_sf_policy_target call sites, found "
+        f"{len(build_args)} — thread the mode-selected temp at the new site"
+    )
+    for a in build_args:
+        assert "sf_policy_temp=score_temp" in a, (
+            "a label build reverted to a raw temp instead of the "
+            "mode-selected score_temp"
+        )
+
+
+def _label_state_cp(legal: np.ndarray):
+    """Real-path state stub (borrowed from test_stockfish_label_gating) with
+    cp scoring configured at production-adjacent params."""
+    from chess_anti_engine.selfplay.config import GameConfig, OpponentConfig
+    from tests.test_stockfish_label_gating import _state
+
+    state = _state(
+        has_policy=True,
+        legal_indices=legal,
+        game=GameConfig(
+            sf_policy_score_mode="cp",
+            sf_policy_cp_temp=16.2,
+            sf_policy_temp=0.012,
+            sf_policy_label_smooth=0.0,
+        ),
+        opponent=OpponentConfig(wdl_regret_limit=0.0),
+    )
+    state.opening = SimpleNamespace(sf_refute_opp_policy_net_blend=0.0)
+    return state
+
+
+# softmax([250, 180]/16.2) — the analytic cp-mode target. This single number
+# kills both one-line reverts at a site: mode deletion scores the EQUAL wdl
+# arrays below (target ~0.5), temp reversion divides cp by 0.012 (target ~1.0).
+_P_BEST_250_180 = 1.0 / (1.0 + np.exp(-(250.0 - 180.0) / 16.2))
+
+
+def _res_250_180(best: str, other: str):
+    from chess_anti_engine.stockfish.uci import StockfishPV, StockfishResult
+
+    same_wdl = np.array([0.90, 0.05, 0.05], dtype=np.float32)
+    return StockfishResult(
+        bestmove_uci=best,
+        wdl=same_wdl,
+        pvs=[
+            StockfishPV(move_uci=best, wdl=same_wdl, cp=250),
+            StockfishPV(move_uci=other, wdl=same_wdl, cp=180),
+        ],
+    )
+
+
+def test_cp_mode_governs_the_curriculum_gate_label() -> None:
+    """End-to-end through the REAL _process_sf_results label branch."""
+    from chess_anti_engine.moves.encode import uci_to_policy_index
+    from chess_anti_engine.selfplay.stockfish_turn import _process_sf_results
+
+    best, other = "a2a3", "a2a4"
+    b, o = uci_to_policy_index(best, True), uci_to_policy_index(other, True)
+    legal = np.array([b, o], dtype=np.int64)
+    state = _label_state_cp(legal)
+    rec = state.samples_per_game[0][0]
+
+    _process_sf_results(
+        state, [0], results={0: _res_250_180(best, other)},
+        play_curriculum_moves=True, attach_labels=True,
+    )
+
+    assert rec.sf_policy_target is not None
+    np.testing.assert_allclose(
+        float(rec.sf_policy_target[b]), _P_BEST_250_180, atol=1e-3,
+    )
+
+
+def test_cp_mode_governs_the_async_attach_label() -> None:
+    """Same invariant through _process_sf_label_result_for_record — the
+    primary production label path (async selfplay labels + curriculum
+    reuse). Review F2's most important surviving deletion was here."""
+    from chess_anti_engine.moves.encode import uci_to_policy_index
+    from chess_anti_engine.selfplay.stockfish_turn import (
+        _process_sf_label_result_for_record,
+    )
+
+    best, other = "a2a3", "a2a4"
+    b, o = uci_to_policy_index(best, True), uci_to_policy_index(other, True)
+    legal = np.array([b, o], dtype=np.int64)
+    state = _label_state_cp(legal)
+    rec = state.samples_per_game[0][0]
+
+    _process_sf_label_result_for_record(
+        state, rec=rec, res=_res_250_180(best, other), turn=True,
+        legal_indices=legal,
+    )
+
+    assert rec.sf_policy_target is not None
+    np.testing.assert_allclose(
+        float(rec.sf_policy_target[b]), _P_BEST_250_180, atol=1e-3,
+    )
+
+
+def test_cp_mode_governs_the_refute_opp_target_temp() -> None:
+    """_sf_refute_opp_policy_target selects the temp inside the helper —
+    a revert to state.game.sf_policy_temp makes the target one-hot."""
+    from chess_anti_engine.selfplay.stockfish_turn import (
+        _sf_refute_opp_policy_target,
+    )
+
+    legal = np.array([10, 20], dtype=np.int64)
+    state = _label_state_cp(legal)
+    p = _sf_refute_opp_policy_target(
+        state, 0, cand_idxs=[10, 20], cand_scores=[250.0, 180.0],
+        legal_indices=legal,
+    )
+    np.testing.assert_allclose(float(p[10]), _P_BEST_250_180, atol=1e-3)
 
 
 @pytest.mark.parametrize("with_mate", [False, True])
@@ -209,14 +349,20 @@ def test_sparse_ce_matches_dense_soft_ce_in_cp_mode() -> None:
         sf_policy_label_smooth=0.01,
         sf_policy_score_mode="cp", sf_policy_cp_temp=16.2,
     )
+    # Review F3: the first fixture was degenerate — a 2420cp mate row gave an
+    # identical (one-hot) target at cp_temp 16.2 AND at the wdl temp, so
+    # deleting the mode-selected temp stayed green. Row 0's 250-vs-180 pair is
+    # temperature-SENSITIVE (p=0.987 at 16.2, 1.0 at 0.25/0.012); row 1
+    # carries a BOTH-cp-and-mate row so a mate-precedence flip in either the
+    # torch scorer or the numpy rebuild breaks their parity.
     raw = np.full((2, 8, 5), -1, np.int16)
     raw[:, :, 1] = SF_CP_SENTINEL
     raw[0, 0] = (100, 250, 0, 600, 300)
-    raw[0, 1] = (200, -20, 0, 450, 320)
-    raw[0, 2] = (300, SF_CP_SENTINEL, 4, 990, 10)   # mate-in-4
-    raw[0, 3] = (400, SF_CP_SENTINEL, 0, 500, 300)  # wdl-only: unscoreable in cp
-    raw[1, 0] = (150, 60, 0, 700, 200)
-    legal_idx = np.array([100, 150, 200, 300, 400], dtype=np.int64)
+    raw[0, 1] = (200, 180, 0, 450, 320)
+    raw[0, 2] = (400, SF_CP_SENTINEL, 0, 500, 300)  # wdl-only: unscoreable in cp
+    raw[1, 0] = (150, 60, 3, 700, 200)              # cp AND mate: mate wins
+    raw[1, 1] = (160, 40, 0, 650, 250)
+    legal_idx = np.array([100, 150, 160, 200, 400], dtype=np.int64)
     legal = np.zeros((2, width), np.float32)
     legal[:, legal_idx] = 1.0
 
@@ -227,6 +373,15 @@ def test_sparse_ce_matches_dense_soft_ce_in_cp_mode() -> None:
         )
         assert rebuilt is not None
         dense[i] = rebuilt
+
+    # Analytic pin on the rebuild itself (temp 16.2 HARDCODED here): softmax
+    # over [250, 180] then the uncovered-legal smoothing. A temp revert inside
+    # target_builder cannot hide behind torch/numpy agreeing on the mutation.
+    z = np.exp(np.array([250.0, 180.0]) / 16.2)
+    p_best = z[0] / z.sum()
+    smooth = 0.01
+    expect_best = p_best * (1.0 - smooth) + smooth / float(legal_idx.size)
+    np.testing.assert_allclose(float(dense[0, 100]), expect_best, atol=1e-4)
 
     torch.manual_seed(0)
     logits = torch.randn(2, width)
