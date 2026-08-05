@@ -33456,3 +33456,47 @@ separate reviewer follows.
   games/iter, and views throughput all shift vs 0f888, so throughput-sensitive
   columns are not comparable across the two fresh boots; (3) reboot cleared
   the dxg wedge — worker liveness differs from late-0f888.
+
+## 2026-08-05 — BOOT-SHOCK DIAGNOSIS (agent forensics on 0f888 iters 1-25): zclip REGIME LOCK-IN is the lead mechanism; the era probes are BLIND to the lost axis
+
+- Full report + banked assets (progress.csv both lineages, params.json,
+  tfevents, probe harness + readings): session scratchpad
+  `boot_forensics/`. Instruments validated with positive/negative controls
+  before use; snapshot label lag discovered (checkpoint_N holds iteration N+1
+  — every prior banked-snapshot claim should be read with that offset).
+- ⚑⚑ INSTRUMENT FINDING: the era-probe columns DO NOT TRACK PLAY STRENGTH.
+  corr(arena Elo, Δprobe policy E[regret]) = −0.19 across iter21/169/177;
+  iter21 (−96.2 Elo) reads BETTER than boot512 on the probe; the whole effect
+  is 0.09% of the trained→random span. Every "probes flat" note for this
+  episode means UNINFORMATIVE, not "nothing happened". Head attribution on
+  stored rows: per-row policy/value accuracy is NOT where the Elo went
+  (iter21 ≈ boot512 on both heads) — rules out the simple degraded-head
+  story; the damage lives on an axis stored-row rulers do not measure.
+- Timeline: iteration 1 ran 801 optimizer steps (steady median 75; 27.4% of
+  all steps in iters 1-25) over the 400k seeded window, warmup covered 9% of
+  them, 95% unclipped. Iterations 2-3: adaptive clip rate 0.051 → 0.921 →
+  1.000, then 1.000 for 98.9% of ALL 180 iterations, grad-norm median ramping
+  3.60 → 7.96 monotone (EMA chasing, never catching). 13a9f steady state by
+  contrast: adaptive clip mean 0.068, never 1.0. ⚑ `train_views_actual` read
+  a stable 4.30 through the 10.7x step spike — never gate on that column.
+- Mechanism ranking: M2 zclip regime lock-in STRONGEST (timing exact,
+  persistent, explains stasis-not-decay, all-parameter reach, separates the
+  lineages; correlational, confounded with M1 by construction). M1 cold
+  optimizer state STRONG but a transient predicts recovery and there is none.
+  M5 step-count overshoot CONFIRMED as an exposure amplifier. M3 easy-curriculum
+  data real but self-correcting. M4 head asymmetry NOT SUPPORTED.
+- Pre-registerable discriminators for a FUTURE boot (none deployed now — one
+  change per window, and this window belongs to sf_label_nodes_floor):
+  D1 carry zclip EMA across the boot (readout: grad_adaptive_clip_rate in
+  0.02-0.20 by iters 3-10; >=0.95 = fix not in effect). NOTE: PR #334
+  checkpoints the EMA but a FRESH boot has no checkpoint to inherit — D1
+  needs an explicit warm-init or import step, it is NOT free on restart #2.
+  D2 cap iteration-1 step budget at steady state (readout: train_steps_used,
+  NOT train_views_actual). D3 warmup spanning all of iteration 1 (readout:
+  opt_lr_mean below 5.29e-4 for the whole first iteration).
+- Consequence for restart #2 (teacher-floor run): the M2 signature is
+  PREDICTED TO RECUR (cold EMA again). Watch-only columns added to the first
+  rows: grad_adaptive_clip_rate (expect the 0.05 → 1.0 lock-in by iter 3 if
+  M2 replicates), train_steps_used at iteration 1. A second NULL on the
+  teacher yardstick + a replicated M2 signature makes D1 the next
+  pre-registered intervention.
