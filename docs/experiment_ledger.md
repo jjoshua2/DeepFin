@@ -33593,3 +33593,43 @@ separate reviewer follows.
 - Servo healthy: regret 0.0956 -> 0.0900, raw winrate 0.991 -> 0.944
   (length-biased, no trend fitting), pid_ema_winrate 0.69 and rising.
   Next readout: iteration-21 checkpoint bank + prereg arena vs boot512.
+
+## 2026-08-05 05:30 — RESTART #2 ITER-21 ARENA: NULL. Elo(iter21 − boot512) = −96.2 [−138.3, −56.7] — THE COLLAPSE REPLICATED EXACTLY THROUGH THE FULL BOOT-HYGIENE PACKAGE
+
+- Prereg command run as registered (200 games, matched_sims 32, training
+  shape, seed 42, conc-16 concurrent with training). Score 0.3650,
+  pentanomial {WW:3, WD_DW:13, DD_WL:37, LD_DL:21, LL:26}. Point estimate
+  IDENTICAL to the 08-04 retro baseline (−96.2 vs −96.2; different
+  pentanomials, same total score — checked, genuine coincidence, not a
+  caching artifact). CI entirely inside the old [−141.5, −53.9] ⇒ NULL by
+  the pre-committed rule.
+- WHAT THIS ELIMINATES (all verified in effect on this boot, all
+  insufficient, jointly): shallow teacher (labels 700k in shard bytes),
+  easy-start data (regret 0.1 / nodes 75k, winrate off ceiling by iter 20),
+  iteration-1 step blast (70 steps vs 801), unclipped-full-LR early volume
+  (warmup spanned it), zclip regime lock-in (clip rate 0.0-0.25 healthy all
+  21 iters). The screen's prediction (teacher NULL) confirmed in vivo; the
+  M2/M5 story ALSO falsified as the cause of the Elo loss — the optimizer
+  pathology and the strength collapse have now been DISSOCIATED: this boot
+  had a healthy optimizer regime and lost the same 96 Elo.
+- SURVIVING candidates, ranked: (1) THE TRAINING TARGETS/LOOP ITSELF —
+  ~21 iterations of training on this loop's targets costs ~96 Elo under
+  this arena regardless of teacher depth, data difficulty, or optimizer
+  regime (consistent with the cp-rank screen's "the lever is the
+  TARGET/LOOP family" and the old lineage's independent boot shock at 698k
+  labels); (2) M1 cold optimizer moments — the ONE untouched mechanism
+  (fresh Aurora state, step 0); (3) an arena-instrument systematic that
+  makes any early-training checkpoint of this family read ~−100 (weak
+  evidence against: iter-5 ratchet point was POSITIVE +34.9, though 30
+  games is uninformative).
+- Onset timing is now the cheapest discriminator again: iter-5 point
+  positive (uninformative CI) vs iter-21 −96 → damage accrues somewhere in
+  iters ~5-21 OR the iter-5 read is noise. NEXT: 200-game arena on the
+  earliest banked snapshot of THIS lineage to locate onset; then the M1
+  test (warm optimizer import) and/or a frozen-training control (selfplay
+  WITHOUT weight updates for N iters — if strength drops with NO training,
+  the arena/instrument is indicted; if it holds, training is).
+- Family yardstick unchanged: daily ratchet Elo(published − boot512),
+  SUCCESS CI>0 / KILL CI<0. On today's evidence the target/loop family is
+  now the primary suspect for BOTH the boot shock and the −48.6 steady
+  drift.
