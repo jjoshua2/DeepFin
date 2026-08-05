@@ -34066,3 +34066,28 @@ separate reviewer follows.
   higher. warmup_steps=100 was in effect. Also noted: mix_fast grad-norm
   median 5.06 tripped the I11 watch line (clip 17.1%/hard 13.1%) — an
   offline-rig observation, no action; shared across fast arms.
+
+### ⚑ 2026-08-05 16:48 — INCIDENT: trial d2003 DIED at iter 10 (CUDA unknown error) + both round-1 arenas core-dumped. ROOT CAUSE: VRAM exhaustion from PAIRED COMPILED arenas concurrent with training. GPU HEALTHY (fresh CUDA context verified) — NOT the vmbus wedge, no reboot needed.
+
+- Sequence: round-1 arenas (SP-full + MIX-fast, --compile on, conc-16 each)
+  launched paired at ~16:29 under a 5GB-free guard; VRAM climbed to
+  31.2/32.6G; 16:47 trainer hit "CUDA error: unknown error" (retry 1/3
+  failed through), trial ERROR at 16:48:10 after 10 iterations; both
+  arenas Aborted (exit 134) with ZERO games. The 5GB guard was calibrated
+  on EAGER arena footprints; compiled arenas grow past it. My sequencing
+  error — same failure class as the 12:09 OOM, now twice in one day.
+- RULE GOING FORWARD (operational): never pair arenas while training is
+  live; compiled arenas need a >=10G floor; pairing only on an idle GPU.
+- Casualties/survivors: d2003 trainer + workers/server DOWN (iter-10 state
+  intact: checkpoint_000009 banked by Ray, auto-resume available). Chain4
+  proceeded to round 2 (CU-fast + SP-sub-fast) which now runs on the FREE
+  gpu — those two arms are uncompromised. Round-1 arenas RE-QUEUED serial
+  behind round 2 with the 10G floor (rerun logs *_rerun.log). Tier-2 chain
+  unaffected (gated further downstream). iter-21 watcher remains valid
+  across a resume (same trial dir, checkpoint indices continue).
+- ARM A impact: outage from 16:48 until user-approved resume; iters 11-21
+  resume from checkpoint (optimizer/schedule state intact, so damage-window
+  step arithmetic is unchanged). Confound to carry into the iter-21 entry:
+  mid-experiment outage + C14b resumed in-flight games at the boundary.
+  RESUME RECOMMENDED (not fresh); awaiting user go per the no-autostart
+  rule.
