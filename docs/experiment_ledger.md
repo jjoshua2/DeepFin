@@ -33550,3 +33550,25 @@ separate reviewer follows.
   flatten + reject_dead_config_keys on the new code: floor 700000, nodes
   75000, regret_start 0.1, warmup 1000. Deploy proofs and yardstick as
   pre-registered above.
+
+## 2026-08-05 00:40 — RESTART #2 FIRST-ROW READOUT: ALL FOUR PACKAGE LEVERS VERIFIED IN EFFECT; NO ITERATION-1 STEP BLAST
+
+- Trial cdb96_00000, launched 23:57. Row 1 landed ~00:28. Deploy proofs:
+  1. FLOOR: newest replay shards (shard_000016-19, mtime 00:32-00:35)
+     sf_label_meta[:,0] p50 = 700,215-700,238, frac >= 700k = 0.94-0.97
+     (remainder = early-stop mate/TB rows). Worker session-start line:
+     "regret=0.1000 sf_nodes=75000 label_floor=700000". ⚠ Method note: the
+     first shard sampled (c710c59b, p50 108k) was an OLD 0f888 shard picked
+     by NAME sort — always select shards by mtime > launch time.
+  2. REGRET/NODES: realized opponent_wdl_regret_limit = 0.1,
+     opponent_sf_nodes = 75000 on row 1.
+  3. WARMUP: opt_lr_mean = 2.138e-4 vs peak 5.29e-4 — ramp active.
+  4. Views 4.344 in [4.0, 4.6]; window 400,000 -> 408,251 (+8,251 iter 1).
+- ⚑ NO ITERATION-1 STEP BLAST: train_steps_used = 70 (0f888: 801). Reading:
+  the 08-04 blast was largely the UPLOAD WEDGE's doing — ~90 min of stalled
+  uploads landed as one giant first ingest and views-targeting converted it
+  to 801 steps; with #335/#336 deployed the first ingest is normal-sized.
+  D2 (step cap) may be moot; D3 (warmup) is now insurance on top.
+- M2 watch, row 1: grad_adaptive_clip_rate = 0.0 (0f888 row 1: 0.051,
+  locked 1.0 by iter 3), grad_hard_clip_rate = 0.014, grad_norm_median 4.41.
+  Verdict window = iterations 2-10.
