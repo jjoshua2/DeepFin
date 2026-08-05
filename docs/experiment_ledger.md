@@ -33801,3 +33801,27 @@ separate reviewer follows.
 - GPU: cdb96 STOPPED for this screen (user-sanctioned; it was due to be
   replaced by the arm-A restart anyway). Restart onto arm A proceeds after
   PR #355 merges regardless of this screen's outcome.
+
+### 2026-08-05 12:15 — ARM A IS LIVE (trial d2003) + Tier-0 screen status
+
+- PR #355 merged (squash e8ec94bbe) after a03 round-3 CONFIRM on head
+  0d1acf241; CI test+lint green verified against that exact SHA. Live branch
+  synced (git diff HEAD...origin/main EMPTY), no .c/.h changes so no
+  extension rebuild. Arm-A keys committed pre-launch (6e5285751).
+- Trial d2003 launched 12:07 (--fresh from boot512 per the deploy prereg).
+  DEPLOY PROOFS: (1) PASSED — all 4 workers 12:08:10 "session-start reco
+  applied: regret=0.1000 sf_nodes=75000 label_floor=700000 score_mode=cp
+  cp_temp=16.20"; (3) PASSED — params.json carries sf_policy_score_mode=cp
+  + sf_policy_cp_temp=16.2. (2) won-bucket entropy PENDING one window
+  turnover (~1.75 -> ~1.0 nats expected). No verdict before all three.
+- Tier-0 offline replay screen: retrain COMPLETE (control: 1578 steps,
+  1412s, data/offline_replay_screen_cdb96/retrain/control.pt). First arena
+  attempt CRASHED 12:09 — CUDA OOM: the UNCAPPED arena collided with trial
+  d2003's boot-time memory grab (sequencing error, launched 2 min apart;
+  zero games played, no data loss). Relaunched 12:12 at
+  --max-concurrent-games 16 (the ratchet-proven safe config concurrent with
+  training; matched_sims is concurrency-invariant so the ruler is
+  unchanged). PID 206681, log arena_tier0_run2.log.
+- Follow-up PR #356 opened (the two a03 round-3 LOW residuals: audit-ruler
+  cp-mode coverage + sparse-CE scoreable-mask pin; 4 mutations verified
+  RED); a03 review requested.
