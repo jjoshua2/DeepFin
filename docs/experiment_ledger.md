@@ -33765,3 +33765,39 @@ separate reviewer follows.
 - Revert: flip sf_policy_score_mode back to wdl + restart (target-only
   change; the replay window carries ~a day of cp-mode rows after a revert —
   the standard yaml-revert-is-not-a-rollback caveat applies).
+
+## 2026-08-05 PREREG — TIER-0 OFFLINE REPLAY SCREEN: does STORED DATA ALONE recreate the fresh-boot collapse? (user-requested)
+
+- Question: sever the closed loop. Retrain boot512 offline on the EXACT
+  shards cdb96 ingested through iter 21 (104 shards, 424M, ~587k rows,
+  selected by SOURCE mtime <= iter-21 end ts 1785914301; banked at
+  data/offline_replay_screen_cdb96/shards_iter21) for the MATCHED budget
+  (1578 steps = cdb96's realized train_steps_used sum over iters 1-21,
+  batch 512, cold optimizer + warmup 1000 per the live yaml — the same
+  regime the fresh boot ran).
+- Command: PYTHONPATH=. python3 scripts/retarget_retrain.py
+  --config configs/pbt2_small.yaml
+  --checkpoint scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --replay-dir data/offline_replay_screen_cdb96/shards_iter21
+  --steps 1578 --batch-size 512 --no-rebuild-sf-targets
+  --out-dir data/offline_replay_screen_cdb96/retrain --variant control:
+  (--no-rebuild-sf-targets = stored targets exactly as live; ALL heads incl.
+  sf_p0 train as stored.)
+- Yardstick: the standard 200-game arena of the resulting checkpoint vs
+  boot512 (same rig/seed as the boot baselines). PRE-COMMITTED READING:
+  REPRODUCES if Elo <= -50 with CI excluding 0 (the static data/targets are
+  sufficient poison; Tier-1 selfplay-vs-curriculum row split becomes the next
+  screen). FAILS TO REPRODUCE if CI includes 0 and excludes -96 (the damage
+  needs the CLOSED LOOP / something not in stored rows; the ablation ladder
+  shifts to live-loop arms). Intermediate = partial reproduction, judged
+  against the in-vivo -96.2 anchor.
+- Known approximations (Confounds): (a) fixed pool vs the live run's growing
+  window (400k -> 587k over iters 1-21); (b) offline sampler recency
+  weighting operates over the whole pool at once; (c) zclip/EMA state starts
+  fresh (matches the fresh boot); (d) training-only process — no concurrent
+  selfplay load. None of these touched the in-vivo outcome across two boots
+  (blast/no-blast, lock-in/no-lock-in), so they are not expected to gate
+  reproduction.
+- GPU: cdb96 STOPPED for this screen (user-sanctioned; it was due to be
+  replaced by the arm-A restart anyway). Restart onto arm A proceeds after
+  PR #355 merges regardless of this screen's outcome.
