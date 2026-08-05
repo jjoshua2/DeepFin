@@ -33668,3 +33668,29 @@ separate reviewer follows.
   saturating SF policy target (cp-rank replacement, task #155/PR-B prereg),
   sf_wdl_frac floor-pinning — plus the M1 warm-optimizer-import control.
   A frozen-training control is now LESS urgent (instrument exonerated).
+
+## 2026-08-05 08:50 — CROSS-LINEAGE CONFIRMATION: 0f888-iter8 = −103.7 [−150.7, −60.2]. LR-WEIGHTED-STEPS ACCRUAL OF TARGET DAMAGE CONFIRMED ACROSS BOTH LINEAGES
+
+- onset_0f888_iter8_vs_boot512 (200 games, same rig): Elo −103.7
+  [−150.7, −60.2], score 0.3550, pentanomial {WW:8, WD_DW:9, DD_WL:27,
+  LD_DL:29, LL:27}. 0f888 had warmup 72, so its iter 8 carried ~1,430
+  full-LR steps (blast included) — and the collapse was ALREADY COMPLETE.
+- Consolidated onset table (all vs boot512, same instrument, seed 42):
+  0f888 (full LR from step 72): iter8 −103.7 | iter21 −96.2 | iter169
+  −81.4 | iter177 −130.9 → collapse complete by ~1,400 full-LR steps,
+  then plateau. cdb96 (warmup 1000): iter5 −15.6 (mostly reduced-LR
+  steps, ≈ boot512) | iter21 −96.2 → collapse complete once ~1,000+
+  full-LR steps accumulate. ACCOUNT CONFIRMED: training this net on this
+  loop's targets at full LR moves it to a ~−100 Elo attractor within
+  ~1,000-1,500 steps, invariant to teacher depth, opponent difficulty,
+  data-blast size, and optimizer clipping regime. The damage is the
+  DESTINATION, not the transient: the loop equilibrium is ~100 Elo below
+  boot512 under this arena.
+- Interpretive note (not a verdict): the old 13a9f lineage sat at −48.6
+  at iter477 — i.e., its long-run equilibrium was LESS bad than the
+  ~−100 early attractor. Whether that is window-maturation (1.5M mixed
+  window vs a young window) or era drift is an open question the daily
+  ratchet on cdb96 will start answering for free.
+- ALL measurement follow-ups from the NULL are now closed. Remaining
+  moves are TARGET-side interventions + the M1 warm-optimizer control —
+  user decisions, queued for the morning.
