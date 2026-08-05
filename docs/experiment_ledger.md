@@ -33950,3 +33950,17 @@ separate reviewer follows.
 - Arena order (serialized, conc-16, standard ruler, 200 games, seed 42):
   SP-full (tier1_selfplay_vs_boot512), MIX-fast (tier1_mixfast_vs_boot512),
   CU-fast (tier1_cufast_vs_boot512), SP-sub-fast (tier1_spsubfast_vs_boot512).
+
+- ADDENDUM to Amendment 2 (pre-committed BEFORE any fast-arm readout): 6.7
+  views sits above the validated 4.3-5.3 basin. Two built-in cross-anchors
+  decide whether that matters, and the reading rule is fixed now:
+  (1) MIX-fast vs the Tier-0 control (same mixed data, 4.38 views): if
+  MIX-fast CI overlaps -105.6, the fast rig + views add nothing — absolutes
+  are readable. If MIX-fast is decisively worse, the rig inflates damage —
+  ONLY the CU-fast vs SP-sub-fast contrast is read (inflation shared), no
+  absolute verdicts from fast arms.
+  (2) SP-full (5.1 views) vs SP-sub-fast (6.6): same row type; a large gap
+  here corroborates rig/views inflation independently of (1).
+  Note the arithmetic floor: full-LR dose >= 578 forces views >= 6.57 at
+  b256 on a 26.4k pool — going under 6 needs batch <= 224 and was declined
+  as more regime deviation than the cross-anchors justify.
