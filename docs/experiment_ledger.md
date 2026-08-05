@@ -33333,3 +33333,28 @@ earn their place as boundary pins on this branch, not as evidence against main.
 
 `./scripts/lint.sh` (no args) exit 0. **Not reviewed by its author** — a
 separate reviewer follows.
+
+## 2026-08-04 ~20:30 — RETRO STRENGTH READOUT: KILL-SHAPED. Elo(iter177 − boot512) = −130.9 [−175.1, −90.5]; Elo(iter169 − boot512) = −81.4 [−125.4, −39.8]
+
+- First direct strength rows of the 0f888 lineage, measured post-reboot on a FREE GPU
+  (no contention confound): 200 games each, matched_sims 32, training search-shape,
+  paired openings seed 42, reference = the yaml's own bootstrap_checkpoint
+  (boot_snap_recheck_0711_0404.pt). Banked snapshots: ratchet ck_iter177 + the
+  wedge-window iter169 bank. Results in runs/arena_results.jsonl.
+- **Both CIs entirely negative. The audited restart family (views 4.3, sf_wdl_frac
+  0.45 floor, dropout 0, refresh off, fixed pipeline) did NOT fix the degradation —
+  it reproduces FASTER than the old lineage** (old: −48.6 by iter 477; new: −81 by
+  iter 169). Per the pre-committed rule this is the KILL branch: the readout moves to
+  the TARGET/LOOP family (cp-rank policy target, PREREG awaiting sign-off).
+- The in-loop instruments stayed clean while play strength fell: winrate 0.53+ at
+  rising difficulty, era/gap probes flat (no memorization signature), gate shadow ~0
+  (a ±12/iter first-difference instrument cannot see ~−0.5 Elo/iter drift). The
+  degradation is invisible to every training-regime signal we watch — only the
+  anchored arena sees it. Confound note: this is the PLAY regime (net-vs-net,
+  32 sims, cold tree); the training-regime winrate paradox is the same one the old
+  lineage carried.
+- Caveat against over-reading the 169→177 slope: CIs overlap; the LEVEL (both far
+  below zero) is the finding, not the 8-iter delta.
+- Training was DOWN at measurement time (post-reboot). Resume-vs-pivot decision
+  surfaced to the user; pre-registration says the 5-day window decides, but both
+  early rows clear the KILL threshold with margin.
