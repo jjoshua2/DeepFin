@@ -33500,3 +33500,38 @@ separate reviewer follows.
   M2 replicates), train_steps_used at iteration 1. A second NULL on the
   teacher yardstick + a replicated M2 signature makes D1 the next
   pre-registered intervention.
+
+## 2026-08-05 PREREG AMENDMENT — restart #2 is a BOOT-HYGIENE PACKAGE (user-directed): floor 700k + regret start 0.1 + warmup spanning iteration 1
+
+- User call after the boot-shock diagnosis: "start with regret more like .1
+  instead of .2" + more of the bad-start issues addressed. Launch config now
+  carries THREE changes vs the 08-04 boot:
+  1. `sf_label_nodes_floor: 700000` (PR #354) — teacher depth pinned.
+  2. `sf_pid_wdl_regret_start: 0.2 -> 0.1` — construction-only key, armed
+     exactly on a --fresh boot. 0.2 gave winrate 0.97-1.00 for 25 iterations
+     (post-correction ~0.86-0.89, still far above target); 0.1 is the top of
+     the band 0f888's PID actually settled at (0.0689-0.0984), so the servo
+     starts near equilibrium instead of feeding the iteration-1 step blast
+     easy-win data.
+  3. `warmup_steps: 72 -> 1000` (diagnosis D3, the only boot fix needing no
+     new code) — iteration 1 ran 801 optimizer steps with warmup covering 9%;
+     1000 spans the whole first-iteration blast plus slack, so the 95%-
+     unclipped full-LR volume that preceded the zclip lock-in cannot recur at
+     full LR.
+- ATTRIBUTION SACRIFICED KNOWINGLY: the teacher-only discriminator is gone —
+  if iter21 improves we cannot split credit among the three levers (the
+  offline screen + onset timing already predicted the teacher alone is NOT
+  the ~100 Elo). The package question — "does a hygienic boot avoid the
+  shock?" — is the question the user actually wants answered. D1 (warm zclip
+  EMA) and D2 (iter-1 step cap) need code and remain pre-registered for a
+  future boot; if the shock recurs THROUGH this package, they are the next
+  levers and M2 gains standing.
+- Yardstick UNCHANGED: iter21 arena vs boot512 (exact command in the prereg
+  entry above), baseline −96.2 [−141.5, −53.9]. Package-SUCCESS if the new
+  CI lies entirely above −53.9; NULL if the point lands inside the old CI.
+- Per-lever deploy proofs on the first rows: (1) `sf_label_meta[:,0]` >=
+  700000 + `label_floor=700000` in worker logs; (2) realized wdl_regret
+  ~0.1 on row 1 and winrate NOT pinned at ~1.0 by iters 3-5; (3)
+  `opt_lr_mean` well below 5.29e-4 through iteration 1 and `train_steps_used`
+  read directly (never `train_views_actual`). Watch-only M2 columns:
+  `grad_adaptive_clip_rate` (0.05 -> 1.0 lock-in by iter 3 = M2 replicates).
