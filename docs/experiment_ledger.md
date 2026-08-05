@@ -33871,3 +33871,27 @@ separate reviewer follows.
   (blindspot_seed_vet memory) — the SP arm carries that leg, CU does not;
   (iv) both arms inherit Tier-0 confounds (a)-(e) including the missing
   regeneration base.
+
+### ⚑⚑ VERDICT (2026-08-05) — TIER-0 REPRODUCES. STORED DATA ALONE recreates the fresh-boot collapse: Elo(offline-retrained boot512 − boot512) = **−105.6 [−148.1, −66.1]**, 200 games.
+
+- Judged by the pre-committed rule: Elo <= −50 with CI excluding 0 => REPRODUCES.
+  −105.6 clears it decisively, and the CI CONTAINS the in-vivo −96.2 anchor —
+  this is a FULL reproduction, not partial. Pentanomial (candidate POV):
+  WW 5 / WD 8 / DD_WL 34 / LD_DL 29 / LL 24; label
+  tier0_offline_replay_vs_boot512 in runs/arena_results.jsonl.
+- Meaning: the ~−100 attractor does NOT require the closed loop. No PID
+  feedback, no publish cadence, no mid-run distribution shift, no selfplay
+  concurrency — a cold-optimizer retrain of boot512 on the exact stored
+  iters-1-21 rows (184,639; views 4.38, in-basin) at the matched 1578-step
+  budget loses the same ~100 Elo. The poison is IN THE STORED ROWS
+  (data and/or targets as written), which also retroactively strengthens the
+  Tier-0-style interpretation of every offline screen run on this bank.
+- Family routing: eliminates the loop-dynamics half of the TARGET/LOOP
+  family. Live-loop-only arms (e.g. C′ regret-band-in-cp) lose priority as
+  COLLAPSE explanations (they may still matter for steady-state quality);
+  target/data arms (A cp-rank — already live as trial d2003 — B zero SF
+  policy weights, Tier-1 row splits) gain.
+- Confounds (a)-(e) stand as pre-declared; none plausibly manufactures a
+  −105.6 that lands on the in-vivo anchor.
+- NEXT (already prereg'd + launched): Tier-1 provenance split — chain fired
+  13:36, SP retrain running, CU follows; arenas after.
