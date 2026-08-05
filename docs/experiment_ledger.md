@@ -34022,3 +34022,38 @@ separate reviewer follows.
   inherit Tier-0 confounds (a)-(e).
 - Sequencing: retrains + arenas run ONLY after the arm-A iter-21 deciding
   arena completes (it owns the priority slot tonight).
+
+### ⚑⚑ 2026-08-05 — N1 CONFIRMED (task #155 investigation, pre-declared BEFORE the arm-A iter-21 readout): TWO MATE->SCORE FORMULAS TRAIN policy_own IN OPPOSITE DIRECTIONS, and cp mode (live in d2003) is what arms it
+
+- Two formulas, five sites: mate_to_effective_cp (wdl.py:10) folds mates to
+  +/-1500..2480cp — INSIDE the reachable cp band (SF emits ~20000cp in
+  decisive endgames; shard clamp +/-32000) — consumed by the live cp-mode
+  policy scorer (_pv_cp_score), target_builder, sparse_sf_ce (2 inline
+  copies), and the FROZEN AUDIT RULER. _sf_move_score (finalize.py:1258)
+  and its C copy (_lc0_ext.c:1017) use +/-(100000 - N*100) — the correct
+  dominating band — feeding sf_p0_regret.
+- Worked live row (0f888 shard_001187 idx 642): forced mate-in-3 scores
+  2440 under map1 vs 99700 under map2; four cp~19996 moves outrank it in
+  cp mode. sf_p0_policy_t gives the MATE 0.000000; sf_p0_regret gives the
+  mate 0.000 regret and the decliners 1.000 each. Both train policy_own,
+  7:1 (w_sf_own_regret 0.7 vs w_sf_own 0.1) toward map2's view.
+- Frequency (last 40 live shards, 75,356 positions): 14.20% carry a mate
+  line; 1.344% flip best-move between mappings. Negative control: 0/15,325
+  disagreements on mate-free rows. Under the former wdl mode the same row
+  differed ~5e-5 — cp mode is what makes this a POLICY-label defect.
+- N2 corollary: the frozen audit ruler shares map1 and is mate-blind
+  (mate-in-10 scored a 965cp blunder). A fix inflates unclamped audit
+  regret spread 14.1x => the fix MUST co-design a ruler regret clamp and
+  INVALIDATE recorded audit numbers. Full analysis + fix plan (3 coupled
+  parts) in the task-#155 agent report; instruments banked at
+  scratchpad/n1_freq.py + n1_live_worked.py.
+- ARM-A READOUT CONFOUND, PRE-DECLARED (iter-21 arena has NOT run yet):
+  the deployed cp-rank lever mis-ranks mates on ~1.3% of rows. The
+  pre-committed kill rule STANDS for "cp-rank AS DEPLOYED": NULL => FAILED
+  as deployed, no re-litigation of THIS entry. A mate-fixed cp-rank is a
+  NEW experiment requiring its own prereg; a SUCCESS tonight is a success
+  despite this bug (bias is against arm A, not for it).
+- NO deploy action now: arm A owns the window; the unification is a
+  3-part coupled change (wdl.py one-home + ruler clamp/invalidations +
+  sparse-CE collapse) with no config flag — next-shards-effective, mixed
+  window ~a day.
