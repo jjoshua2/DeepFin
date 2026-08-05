@@ -368,13 +368,21 @@ def build_recommended_worker(
         ),
         "sf_multipv": int(config.get("sf_multipv", 1)),
         "sf_hash_mb": int(config.get("sf_hash_mb", 16)),
-  # Defaults for the five SF target-construction keys come from
+  # Defaults for the seven SF target-construction keys come from
   # SfTargetParams — the trainer-side rebuild (target_builder.py) resolves the
   # SAME yaml keys through the same dataclass, so a default that drifted here
   # would make capture-time and rebuilt targets silently disagree on any
   # config that omits the key.
         "sf_policy_temp": float(
             config.get("sf_policy_temp", _SF_TARGET_DEFAULTS.sf_policy_temp)
+        ),
+        "sf_policy_score_mode": str(
+            config.get(
+                "sf_policy_score_mode", _SF_TARGET_DEFAULTS.sf_policy_score_mode
+            )
+        ),
+        "sf_policy_cp_temp": float(
+            config.get("sf_policy_cp_temp", _SF_TARGET_DEFAULTS.sf_policy_cp_temp)
         ),
         "sf_policy_label_smooth": float(
             config.get(

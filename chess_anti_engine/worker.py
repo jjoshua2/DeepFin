@@ -876,6 +876,7 @@ class WorkerSession:
                 "opening_book_prob", "opening_book_max_plies",
                 "opening_book_max_games", "random_start_plies", "sf_nodes",
                 "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
+                "sf_policy_score_mode", "sf_policy_cp_temp",
                 "timeout_adjudication_threshold", "temperature",
                 "temperature_decay_start_move", "temperature_decay_moves",
                 "temperature_endgame",
@@ -3492,6 +3493,7 @@ class WorkerSession:
   # opening sampling, or the volatility-search knobs would silently never reach
   # workers. test_every_reco_field_is_watched guards completeness.
         "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
+        "sf_policy_score_mode", "sf_policy_cp_temp",
         "timeout_adjudication_threshold",
         "max_plies", "mcts", "playout_cap_fraction", "full_ply_pair_fraction",
         "random_start_plies",
@@ -3531,6 +3533,7 @@ class WorkerSession:
     _RESUME_COMPAT_KEYS = (
         "input_history_encoding", "input_extra_features", "history_rep_fix",
         "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
+        "sf_policy_score_mode", "sf_policy_cp_temp",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
         "sf_refute_record_opp_rows", "sf_refute_opp_policy_net_blend",
     )
@@ -3864,13 +3867,22 @@ class WorkerSession:
                 sf_label_escalate_max_per_game=self._resolve_reco(
                     reco, "sf_label_escalate_max_per_game", 2, int,
                 ),
-  # Defaults for the five SF target-construction keys derive from
+  # Defaults for the seven SF target-construction keys derive from
   # SfTargetParams — the trainer-side rebuild resolves the SAME keys through
   # that dataclass (trainer.resolve_sf_target_params), so a default drifting
   # here would silently split capture-time and rebuilt targets whenever a
   # manifest omits the key.
                 sf_policy_temp=self._resolve_reco(
                     reco, "sf_policy_temp", _SF_TARGET_DEFAULTS.sf_policy_temp,
+                ),
+                sf_policy_score_mode=str(
+                    reco.get(
+                        "sf_policy_score_mode",
+                        _SF_TARGET_DEFAULTS.sf_policy_score_mode,
+                    )
+                ),
+                sf_policy_cp_temp=self._resolve_reco(
+                    reco, "sf_policy_cp_temp", _SF_TARGET_DEFAULTS.sf_policy_cp_temp,
                 ),
                 sf_policy_label_smooth=self._resolve_reco(
                     reco,
@@ -4196,7 +4208,8 @@ class WorkerSession:
   # which is the whole distinction that field exists to make.
         _start_regret, _start_nodes = self._active_difficulty()
         self.log.info(
-            "session-start reco applied: regret=%s sf_nodes=%s label_floor=%d",
+            "session-start reco applied: regret=%s sf_nodes=%s label_floor=%d"
+            " score_mode=%s cp_temp=%.2f",
             f"{_start_regret:.4f}" if _start_regret is not None else "unknown",
             _start_nodes if _start_nodes is not None else "unknown",
   # The same _resolve_reco expression the GameConfig build uses, so this line
@@ -4204,6 +4217,18 @@ class WorkerSession:
   # because an 11x teacher cut happened with no log line anywhere; a deploy is
   # verified by label_floor>0 here plus sf_label_meta[:,0]>=floor in the shards.
             self._resolve_reco(reco, "sf_label_nodes_floor", 0, int),
+  # Same rule for the policy-target score mode: its deploy is verified by
+  # score_mode=cp here plus won-bucket sf_policy_target entropy dropping
+  # toward ~1.0 nats within one window turnover. Same expressions as the
+  # GameConfig build above, so log and targets cannot disagree.
+            str(
+                reco.get(
+                    "sf_policy_score_mode", _SF_TARGET_DEFAULTS.sf_policy_score_mode
+                )
+            ),
+            self._resolve_reco(
+                reco, "sf_policy_cp_temp", _SF_TARGET_DEFAULTS.sf_policy_cp_temp,
+            ),
         )
         model_sha = self.model_sha
 

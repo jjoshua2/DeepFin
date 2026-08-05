@@ -235,6 +235,8 @@ class TrialConfig:
 
   # --- SF policy / game ---
     sf_policy_temp: float = 0.25
+    sf_policy_score_mode: str = "wdl"
+    sf_policy_cp_temp: float = 16.2
     sf_policy_label_smooth: float = 0.05
     sf_wdl_use_cp_logistic: bool = False
     sf_wdl_cp_slope: float = 0.010
@@ -655,10 +657,18 @@ class TrialConfig:
             ),
 
   # --- SF policy / game ---
-  # Defaults derive from SfTargetParams, the single home of these five (the
+  # Defaults derive from SfTargetParams, the single home of these seven (the
   # trainer-side rebuild resolves the same yaml keys through it).
             sf_policy_temp=float(
                 config.get("sf_policy_temp", _SF_TARGET_DEFAULTS.sf_policy_temp)
+            ),
+            sf_policy_score_mode=str(
+                config.get(
+                    "sf_policy_score_mode", _SF_TARGET_DEFAULTS.sf_policy_score_mode
+                )
+            ),
+            sf_policy_cp_temp=float(
+                config.get("sf_policy_cp_temp", _SF_TARGET_DEFAULTS.sf_policy_cp_temp)
             ),
             sf_policy_label_smooth=float(
                 config.get(

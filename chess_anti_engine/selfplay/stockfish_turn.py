@@ -34,6 +34,7 @@ from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.wdl import cp_to_wdl as _cp_to_wdl
+from chess_anti_engine.stockfish.wdl import mate_to_effective_cp as _mate_to_effective_cp
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_RAW_MAX
 
 
@@ -807,6 +808,36 @@ def _pv_wdl_score(
     return w_sf + 0.5 * d_sf
 
 
+def _pv_cp_score(pv) -> float | None:
+    """Raw effective centipawns for one MultiPV row (mate folded, NO squash).
+
+    The cp-mode policy-target scorer (``sf_policy_score_mode: cp``): unlike
+    ``_pv_wdl_score`` the value is not passed through a saturating win-fraction
+    transform, so candidate ranking survives in decisive positions where every
+    move's w + 0.5*d is ~1.0. Mate precedence over cp mirrors ``cp_to_wdl``.
+    Softmaxed at ``sf_policy_cp_temp`` (centipawn units, NOT ``sf_policy_temp``).
+    """
+    if pv.mate is not None and pv.mate != 0:
+        return _mate_to_effective_cp(int(pv.mate))
+    if pv.cp is not None:
+        return float(pv.cp)
+    return None
+
+
+def _sf_policy_score_params(game) -> tuple[str, float]:
+    """(score_mode, softmax temp) for the SF policy-target build, from config.
+
+    The temp must be selected by mode HERE, in one place: sf_policy_temp is in
+    win-fraction units (~0.012 live) and sf_policy_cp_temp in centipawns
+    (~16), so feeding one mode the other's temperature produces a degenerate
+    (one-hot or uniform) target, not a slightly-off one.
+    """
+    mode = str(getattr(game, "sf_policy_score_mode", "wdl"))
+    if mode == "cp":
+        return mode, float(game.sf_policy_cp_temp)
+    return mode, float(game.sf_policy_temp)
+
+
 def _collect_sparse_pv_rows(res, *, turn: bool, legal_set: set[int]) -> np.ndarray | None:
     """Raw MultiPV rows (K, 5) int16 in FULL policy space, rank order.
 
@@ -876,20 +907,30 @@ def _collect_sf_pv_candidates(
     sf_wdl_use_cp_logistic: bool = False,
     sf_wdl_cp_slope: float = 0.010,
     sf_wdl_cp_draw_width: float = 60.0,
+    sf_policy_score_mode: str = "wdl",
 ) -> tuple[list[int], list[float]]:
-    """Extract (action_idx, w + 0.5*d) per legal SF MultiPV candidate."""
+    """Extract (action_idx, score) per legal SF MultiPV candidate.
+
+    Score units depend on ``sf_policy_score_mode``: "wdl" → w + 0.5*d
+    (fractions), "cp" → raw effective centipawns (``_pv_cp_score``). The
+    curriculum MOVE-selection caller must stay on "wdl": the PID's
+    ``wdl_regret`` band is defined in win-fraction units.
+    """
     cand_idxs: list[int] = []
     cand_scores: list[float] = []
     for pv in getattr(res, "pvs", None) or []:
         a = uci_to_policy_index(pv.move_uci, _turn)
         if a < 0 or a not in legal_set:
             continue
-        score = _pv_wdl_score(
-            pv,
-            sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
-            sf_wdl_cp_slope=sf_wdl_cp_slope,
-            sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
-        )
+        if sf_policy_score_mode == "cp":
+            score = _pv_cp_score(pv)
+        else:
+            score = _pv_wdl_score(
+                pv,
+                sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
+                sf_wdl_cp_slope=sf_wdl_cp_slope,
+                sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
+            )
         if score is None:
             continue
         cand_idxs.append(a)
@@ -1009,7 +1050,7 @@ def _process_sf_label_result_for_record(
     """
     if legal_indices.size == 0:
         return
-    sf_policy_temp = float(state.game.sf_policy_temp)
+    score_mode, score_temp = _sf_policy_score_params(state.game)
     sf_policy_label_smooth = float(state.game.sf_policy_label_smooth)
     legal_set = {int(x) for x in legal_indices}
 
@@ -1023,6 +1064,7 @@ def _process_sf_label_result_for_record(
         sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
         sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
         sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+        sf_policy_score_mode=score_mode,
     )
     if not cand_idxs:
         # Every MultiPV move was illegal here. On a healthy engine that is a
@@ -1037,7 +1079,7 @@ def _process_sf_label_result_for_record(
     p_sf = _build_sf_policy_target(
         cand_idxs, cand_scores,
         legal_indices=legal_indices,
-        sf_policy_temp=sf_policy_temp,
+        sf_policy_temp=score_temp,
         sf_policy_label_smooth=sf_policy_label_smooth,
     )
     # The attach below is idempotent (skips already-labeled records); only tag
@@ -1329,10 +1371,11 @@ def _sf_refute_opp_policy_target(
     transform the ``policy_sf`` label path uses — then optionally blends the
     net's own visit distribution (``sf_refute_opp_policy_net_blend``).
     """
+    score_temp = _sf_policy_score_params(state.game)[1]
     p_sf = _build_sf_policy_target(
         cand_idxs, cand_scores,
         legal_indices=legal_indices,
-        sf_policy_temp=float(state.game.sf_policy_temp),
+        sf_policy_temp=score_temp,
         sf_policy_label_smooth=float(state.game.sf_policy_label_smooth),
     )
     blend = float(getattr(state.opening, "sf_refute_opp_policy_net_blend", 0.0) or 0.0)
@@ -1373,6 +1416,7 @@ def _emit_sf_refute_opp_record(
         sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
         sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
         sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+        sf_policy_score_mode=_sf_policy_score_params(state.game)[0],
     )
     # This row type never stamps a sparse MultiPV block (no _stamp_sparse_sf_labels
     # below), so unlike the other two sites the stored field cannot be read back —
@@ -1492,7 +1536,7 @@ def _process_sf_results(
     if not idxs:
         return
 
-    sf_policy_temp = float(state.game.sf_policy_temp)
+    score_mode, score_temp = _sf_policy_score_params(state.game)
     sf_policy_label_smooth = float(state.game.sf_policy_label_smooth)
     sf_wdl_use_cp_logistic = bool(state.game.sf_wdl_use_cp_logistic)
     sf_wdl_cp_slope = float(state.game.sf_wdl_cp_slope)
@@ -1530,6 +1574,7 @@ def _process_sf_results(
                 sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
                 sf_wdl_cp_slope=sf_wdl_cp_slope,
                 sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
+                sf_policy_score_mode=score_mode,
             )
             if not label_cand_idxs:
                 label_cand_idxs = [a_idx]
@@ -1537,7 +1582,7 @@ def _process_sf_results(
             p_sf = _build_sf_policy_target(
                 label_cand_idxs, label_cand_scores,
                 legal_indices=legal_indices,
-                sf_policy_temp=sf_policy_temp,
+                sf_policy_temp=score_temp,
                 sf_policy_label_smooth=sf_policy_label_smooth,
             )
             _attach_sf_target_to_last_record(

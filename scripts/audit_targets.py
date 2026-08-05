@@ -149,6 +149,7 @@ from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.utils.git_meta import git_sha
 from chess_anti_engine.selfplay.stockfish_turn import (
     _build_sf_policy_target,
+    _pv_cp_score,
     _pv_wdl_score,
 )
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
@@ -647,6 +648,11 @@ class _SfSoftParams:
     sf_wdl_use_cp_logistic: bool
     sf_wdl_cp_slope: float
     sf_wdl_cp_draw_width: float
+    # Mirrors GameConfig: "cp" scores candidates as raw effective centipawns
+    # at sf_policy_cp_temp. The audit-first ruler must follow the production
+    # score mode or it silently audits the OTHER candidate under this name.
+    sf_policy_score_mode: str = "wdl"
+    sf_policy_cp_temp: float = 16.2
 
 
 class _PvLike:
@@ -670,12 +676,15 @@ def _sf_soft_distribution(
         a = uci_to_policy_index(pv.move_uci, True)
         if a < 0 or a not in legal_set:
             continue
-        score = _pv_wdl_score(
-            pv,
-            sf_wdl_use_cp_logistic=params.sf_wdl_use_cp_logistic,
-            sf_wdl_cp_slope=params.sf_wdl_cp_slope,
-            sf_wdl_cp_draw_width=params.sf_wdl_cp_draw_width,
-        )
+        if params.sf_policy_score_mode == "cp":
+            score = _pv_cp_score(pv)
+        else:
+            score = _pv_wdl_score(
+                pv,
+                sf_wdl_use_cp_logistic=params.sf_wdl_use_cp_logistic,
+                sf_wdl_cp_slope=params.sf_wdl_cp_slope,
+                sf_wdl_cp_draw_width=params.sf_wdl_cp_draw_width,
+            )
         if score is None:
             continue
         cand_idxs.append(a)
@@ -685,7 +694,11 @@ def _sf_soft_distribution(
         cand_scores = [0.0]
     full = _build_sf_policy_target(
         cand_idxs, cand_scores, legal_indices=legal_idxs,
-        sf_policy_temp=params.sf_policy_temp,
+        sf_policy_temp=(
+            params.sf_policy_cp_temp
+            if params.sf_policy_score_mode == "cp"
+            else params.sf_policy_temp
+        ),
         sf_policy_label_smooth=params.sf_policy_label_smooth,
     )
     return full[legal_idxs].astype(np.float64)
@@ -1052,6 +1065,8 @@ def main() -> None:
         sf_wdl_use_cp_logistic=bool(flat.get("sf_wdl_use_cp_logistic", False)),
         sf_wdl_cp_slope=float(flat.get("sf_wdl_cp_slope", 0.010)),
         sf_wdl_cp_draw_width=float(flat.get("sf_wdl_cp_draw_width", 60.0)),
+        sf_policy_score_mode=str(flat.get("sf_policy_score_mode", "wdl")),
+        sf_policy_cp_temp=float(flat.get("sf_policy_cp_temp", 16.2)),
     )
     train_temp = float(flat.get("temperature", 1.0))
     sf_wdl_frac = float(flat.get("sf_wdl_frac", 0.0))
