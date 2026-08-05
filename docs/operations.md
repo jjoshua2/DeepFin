@@ -30,6 +30,57 @@ mid-iteration trial.
 cadenced FEN-panel reads + the seed retire/probation step (log
 `scratchpad/live_read/monitor/`).
 
+## The worker credential
+
+The distributed selfplay server authenticates workers, and it binds `0.0.0.0`. The
+password is **not** in any tracked file — `configs/*.yaml` carries only the username.
+Resolution order (`chess_anti_engine/server/secrets.py`, first hit wins):
+
+1. the environment variable **named by** `distributed_worker_password_env`, if the
+   config sets one — explicit beats ambient, so a stray export cannot outrank it;
+2. `$CAE_WORKER_PASSWORD` — the one-line step for everyone else;
+3. `$CAE_WORKER_PASSWORD_FILE`, else `.secrets/worker_password` (gitignored, must not
+   be group/world readable).
+
+With all of them empty the driver **refuses to start**. That is deliberate: it
+provisions an account, so an empty-password fallback would create a real login on a
+public listener rather than a broken server. The boot log always names the source it
+used:
+
+```
+[run_tune] worker credential source: $CAE_WORKER_PASSWORD
+```
+
+Restarting the live run onto this code is one line:
+
+```bash
+export CAE_WORKER_PASSWORD='...'   # in the shell that runs scripts/train.sh
+```
+
+The value that used to sit in the yaml is **disclosed** — it is in the git history and
+stays there. Rotating it is a separate operator-gated step (task #161).
+
+### Password policy
+
+Passwords must be **at least 8 characters** (user policy, 2026-08-05). Enforced where a
+password is *chosen* — `manage_users add` / `set-password` on all three input routes,
+and volunteer self-registration — never where one is *checked*: `verify_password` is
+untouched, so **existing accounts with shorter passwords keep working**, and raising the
+bar cannot lock the fleet out mid-rotation. The boot path is the deliberate exception:
+a short credential in the environment **warns and still boots**, because a length rule
+that stops production from starting is a worse outage than the weak password it was
+guarding.
+
+```bash
+export WORKER_PW='...'
+PYTHONPATH=. python3 -m chess_anti_engine.server.manage_users add volunteer --password-env WORKER_PW
+```
+
+Use `--password-env`, not `--password`: an inline password is visible in `ps auxww` to
+every account on the box and lands in shell history. `users.json` holds PBKDF2 hashes
+only and is written `0600` regardless of umask — it is writable-equals-auth-bypass, not
+merely readable-equals-disclosure.
+
 ## Salvage — warm-start fresh trials from past checkpoints + replay
 
 ```bash

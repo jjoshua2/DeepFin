@@ -390,7 +390,8 @@ tune:
   distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
   distributed_worker_max_games_per_batch: 512
   distributed_worker_username: josh
-  distributed_worker_password: chess_worker_2026
+  # REMOVED (public repo): the credential comes from $CAE_WORKER_PASSWORD
+  # or .secrets/worker_password. See chess_anti_engine/server/secrets.py.
   distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
   distributed_worker_compile_mode: max-autotune
   distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
