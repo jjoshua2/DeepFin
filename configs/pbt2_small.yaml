@@ -867,20 +867,24 @@ tune:
   # result is every worker up, authenticating, and getting 401. Change it only
   # between runs, and create the user with manage_users.py first.
   distributed_worker_username: josh
-  # FIRST-PROVISIONING-ONLY (audit C3), and unlike the username this one really
-  # is inert. _prepare_distributed_worker_auth gates BOTH the upsert_user call
-  # and the .password file write on `not user_existed`, so against an existing
-  # server root -- every run after the first -- the password reaches no consumer
-  # at any value. Deliberate: an admin rotation via manage_users.py must not be
-  # clobbered by yaml drift, and the password file stays symmetric with the user
-  # record so a worker can never be handed a secret the server does not have.
-  # TO ROTATE, USE manage_users.py; editing this line alone does nothing.
   # ⚑ REMOVED: distributed_worker_password. This file is TRACKED IN A PUBLIC
   # REPOSITORY, so the value that was here is DISCLOSED and stays disclosed in
-  # the git history. The credential now comes from $CAE_WORKER_PASSWORD or the
-  # gitignored .secrets/worker_password -- see chess_anti_engine/server/secrets.py.
-  # Startup REFUSES if neither is set; there is no empty-password fallback.
-  # Rotation itself is a separate, operator-gated step (task #161).
+  # the git history. The credential now comes from $CAE_WORKER_PASSWORD (or the
+  # variable named by distributed_worker_password_env, which wins over it, or
+  # the gitignored .secrets/worker_password) -- see server/secrets.py. Startup
+  # REFUSES if none is set; there is no empty-password fallback, because an
+  # empty one would provision a real login on a 0.0.0.0 listener rather than
+  # fail. Rotation itself is a separate, operator-gated step (task #161).
+  # The provisioning it feeds is FIRST-PROVISIONING-ONLY (audit C3):
+  # _prepare_distributed_worker_auth gates BOTH the upsert_user call and the
+  # .password file write on `not user_existed`, so against an existing server
+  # root -- every run after the first -- changing the secret in the environment
+  # changes nothing on the server. Deliberate: an admin rotation via
+  # manage_users.py must not be clobbered by a stale launch environment, and the
+  # password file stays symmetric with the user record so a worker can never be
+  # handed a secret the server does not have. TO ROTATE, USE manage_users.py.
+  # Passwords set that way must be >= 8 characters; existing shorter ones keep
+  # authenticating (docs/operations.md, "The worker credential").
   distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
   distributed_worker_compile_mode: reduce-overhead  # 2026-07-14: max-autotune's GPU benchmarking hung the compile twice on the flaky WSL bridge (never reached first inference in 20+ min). reduce-overhead compiles in ~1-2min from cache (no autotune benchmark), uses cudagraphs (good for small-batch selfplay), and makes wedge-restarts fast. Revert to max-autotune once the bridge is stable if a throughput readout justifies it.
   distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)

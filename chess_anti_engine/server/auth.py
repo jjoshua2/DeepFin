@@ -82,6 +82,42 @@ def _b64d(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii"))
 
 
+MIN_PASSWORD_LENGTH = 8
+"""Minimum length for a password being SET. User-specified policy, 2026-08-05.
+
+⚑ ENFORCEMENT IS ON SETTING, NOT ON CHECKING. :func:`verify_password` is
+deliberately untouched by this: accounts created before the policy keep
+authenticating with whatever they have, so raising the bar cannot lock the
+fleet out mid-rotation. The bar applies the next time a password is chosen --
+`manage_users add` / `set-password`, and self-registration.
+"""
+
+
+class WeakPassword(ValueError):
+    """A password being SET does not meet :data:`MIN_PASSWORD_LENGTH`."""
+
+
+def check_new_password(password: str) -> None:
+    """Raise :class:`WeakPassword` unless `password` may be SET on an account.
+
+    The single home for the policy: every route that chooses a password --
+    both `manage_users` subcommands across all three input sources, and
+    self-registration -- calls this, so there is one place to read and one
+    place to change. Callers translate it to their own failure mode (a CLI
+    exits, an HTTP route returns 400).
+    """
+    if not password.strip():
+        raise WeakPassword(
+            "refusing an empty (or whitespace-only) password: it hashes and "
+            "stores fine, and then authenticates a client that sends nothing"
+        )
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise WeakPassword(
+            f"password must be at least {MIN_PASSWORD_LENGTH} characters; "
+            f"got {len(password)}"
+        )
+
+
 def _pbkdf2(password: str, *, salt: bytes, iterations: int) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations), dklen=32)
 
@@ -134,7 +170,13 @@ def save_users(path: str | Path, users: dict[str, UserRecord]) -> None:
         d = rec.__dict__.copy()
         d.pop("username", None)
         data[u] = d
-    atomic_write_text(Path(path), json.dumps(data, indent=2, sort_keys=True))
+  # ⚑ 0600, applied to the tmp file BEFORE the rename. This file holds the
+  # PBKDF2 material for every account; at `umask 000` it was created 0666, and a
+  # WORLD-WRITABLE users.json is an auth bypass -- any local user can drop in a
+  # hash they know and log in as anybody. Disclosure is the lesser half.
+    atomic_write_text(
+        Path(path), json.dumps(data, indent=2, sort_keys=True), mode=0o600,
+    )
 
 
 def load_user_stats(path: str | Path) -> dict[str, UserStats]:

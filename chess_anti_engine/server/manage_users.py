@@ -8,6 +8,8 @@ from pathlib import Path
 
 from .auth import (
     UserStats,
+    WeakPassword,
+    check_new_password,
     ensure_user,
     load_user_stats,
     load_users,
@@ -18,8 +20,12 @@ from .auth import (
 )
 
 
-def _resolve_password(arg: str | None) -> str:
+def _resolve_password(arg: str | None, env_name: str | None = None) -> str:
     """A password from --password-env, the prompt, or --password (discouraged).
+
+    THE one home for choosing a password on the CLI: all three sources land
+    here, so the policy check below cannot be routed around by picking a
+    different flag. `add` and `set-password` both call it exactly once.
 
     ⚑ `--password` PUTS THE SECRET IN THE PROCESS TITLE. Every account on the
     box can read it out of `ps auxww` for the lifetime of the call, and shells
@@ -27,7 +33,20 @@ def _resolve_password(arg: str | None) -> str:
     breaking them would push people to worse workarounds, but it now warns, and
     the two safe routes are listed first in `--help`.
     """
-    if arg is not None:
+    if env_name:
+        password = _password_from_env(env_name)
+    elif arg is not None:
+        if not arg.strip():
+  # ⚑ THE REALISTIC ROUTE IS `--password "$WORKER_PW"` WITH THE VARIABLE
+  # UNSET, which the shell expands to an empty string -- so this is a
+  # typo away, not a hypothetical. `check_new_password` would reject it
+  # too; this branch exists only to name the cause, because "must be at
+  # least 8 characters" does not tell you your variable was unset.
+            raise SystemExit(
+                "refusing to set an empty password. `--password \"$VAR\"` with "
+                "VAR unset expands to an empty string; check the variable, or "
+                "use --password-env VAR so an unset variable is an error."
+            )
         print(
             "WARNING: --password puts the secret in the process title, where "
             "`ps auxww` exposes it to every user on this machine, and in your "
@@ -35,8 +54,17 @@ def _resolve_password(arg: str | None) -> str:
             "prompt.",
             file=sys.stderr,
         )
-        return arg
-    return _prompt_password()
+        password = arg
+    else:
+        password = _prompt_password()
+
+    try:
+        check_new_password(password)
+    except WeakPassword as exc:
+  # Policy lives in auth.py so self-registration shares it; the CLI just
+  # translates the refusal into an exit.
+        raise SystemExit(str(exc)) from exc
+    return password
 
 
 def _password_from_env(name: str) -> str:
@@ -53,14 +81,17 @@ def _password_from_env(name: str) -> str:
 
 
 def _prompt_password() -> str:
+    """Read a password interactively. Confirms it; does NOT police it.
+
+    The policy (non-empty, minimum length) is applied once by
+    `_resolve_password`, which is the only caller. An earlier version checked
+    for emptiness here and claimed this was "the only place it can be caught" --
+    it was not, which is exactly how `--password ''` reached `ensure_user`.
+    """
     pw = getpass.getpass("Password: ")
     pw2 = getpass.getpass("Confirm: ")
     if pw != pw2:
         raise SystemExit("passwords do not match")
-    if not pw.strip():
-  # An empty password would hash and store fine, and then authenticate a
-  # client that sends nothing. Refuse at the only place it can be caught.
-        raise SystemExit("refusing to set an empty password")
     return pw
 
 
@@ -104,19 +135,13 @@ def main() -> None:
     db = Path(args.users_db)
 
     if args.cmd == "add":
-        pw = (
-            _password_from_env(str(args.password_env))
-            if args.password_env else _resolve_password(args.password)
-        )
+        pw = _resolve_password(args.password, args.password_env)
         ensure_user(db, username=str(args.username), password=pw)
         print(f"Added user {args.username!r}")
         return
 
     if args.cmd == "set-password":
-        pw = (
-            _password_from_env(str(args.password_env))
-            if args.password_env else _resolve_password(args.password)
-        )
+        pw = _resolve_password(args.password, args.password_env)
         users = load_users(db)
         if str(args.username) not in users:
             raise SystemExit(f"user {args.username!r} not found")

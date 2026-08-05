@@ -114,7 +114,12 @@ def _wait_for_server_ready(
 def _prepare_distributed_worker_auth(
     *, server_root: Path, config: dict | None = None
 ) -> tuple[str, Path]:
-    from chess_anti_engine.server.auth import load_users, upsert_user
+    from chess_anti_engine.server.auth import (
+        WeakPassword,
+        check_new_password,
+        load_users,
+        upsert_user,
+    )
 
     from chess_anti_engine.server.secrets import (
         refuse_config_password,
@@ -141,6 +146,21 @@ def _prepare_distributed_worker_auth(
   # accepted-then-ignored defect this repo keeps paying for.
     password, password_source = resolve_worker_password(cfg)
     print(f"[run_tune] worker credential source: {password_source}", flush=True)
+    try:
+        check_new_password(password)
+    except WeakPassword as exc:
+  # WARN, DO NOT REFUSE, on this one path. The CLI and self-registration
+  # refuse, because there a human is choosing a password and can choose
+  # another. Here the secret already exists in the operator's environment and
+  # the alternative to accepting it is a run that will not boot -- a length
+  # policy that takes production down is a worse outage than the weak
+  # credential it was protecting against. The operator gets told, at the
+  # moment they can act on it, and `manage_users set-password` enforces.
+        print(
+            f"[run_tune] WARNING: the credential in {password_source} is weak "
+            f"({exc}). Rotate it with `manage_users set-password`.",
+            flush=True,
+        )
 
   # First-time provisioning only — if the user already exists, leave
   # their record alone. This preserves the disabled flag (so an operator

@@ -13,10 +13,16 @@ environment or from an untracked file, and a config value is never a secret.**
 
 Resolution order, first hit wins:
 
-1. ``CAE_WORKER_PASSWORD`` — the one-line operator step. Set it in the shell
-   that launches training and nothing else has to change.
-2. the environment variable *named* by ``distributed_worker_password_env`` —
-   for operators who already keep it under another name.
+1. the environment variable *named* by ``distributed_worker_password_env``, if
+   the config sets one. **Explicit beats ambient**: an operator who wrote down
+   where the secret lives has made a decision, and a variable that happens to be
+   exported in the launching shell must not silently outrank it. The reverse
+   order was the first version of this module and it is a quiet-wrong-credential
+   generator — the run starts, authenticates against whatever was ambient, and
+   nothing says which one it used.
+2. ``CAE_WORKER_PASSWORD`` — the one-line operator step for everyone who has not
+   configured a name. Set it in the shell that launches training and nothing
+   else has to change.
 3. ``CAE_WORKER_PASSWORD_FILE``, or the default untracked path
    ``<repo>/.secrets/worker_password`` — a file mode-checked and gitignored.
 
@@ -111,10 +117,8 @@ def resolve_worker_password(
     """
     cfg = config or {}
 
-    direct = str(os.environ.get(WORKER_PASSWORD_ENV, "") or "").strip()
-    if direct:
-        return direct, f"${WORKER_PASSWORD_ENV}"
-
+  # Explicit config-named variable FIRST -- see the module docstring on why the
+  # ambient one must not outrank a decision the operator wrote down.
     named = str(cfg.get("distributed_worker_password_env", "") or "").strip()
     if named:
         value = str(os.environ.get(named, "") or "").strip()
@@ -129,6 +133,10 @@ def resolve_worker_password(
             f"it in the shell that launches training, or unset the config key "
             f"to fall back to ${WORKER_PASSWORD_ENV}."
         )
+
+    direct = str(os.environ.get(WORKER_PASSWORD_ENV, "") or "").strip()
+    if direct:
+        return direct, f"${WORKER_PASSWORD_ENV}"
 
     file_raw = str(os.environ.get(WORKER_PASSWORD_FILE_ENV, "") or "").strip()
     path = Path(file_raw).expanduser() if file_raw else default_worker_password_file(repo_root)

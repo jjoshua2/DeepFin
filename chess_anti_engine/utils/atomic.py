@@ -119,6 +119,7 @@ def atomic_write(
     *,
     preserve_suffix: bool = False,
     durable: bool = True,
+    mode: int | None = None,
 ) -> None:
     """Invoke ``writer(tmp)`` then atomically rename tmp to ``path``.
 
@@ -138,6 +139,13 @@ def atomic_write(
     Pass ``durable=False`` only for content a crash may simply discard — see
     the module docstring for the measured cost.
 
+    ``mode`` chmods the TMP file, before the rename, so the destination is never
+    visible at the umask default even for an instant. Doing it after the rename
+    would leave exactly the window this parameter exists to close, which is the
+    same defect the ``.password`` write had. Use it for anything an unprivileged
+    local user must not read or, worse, WRITE -- a world-writable ``users.json``
+    is an auth bypass by hash replacement, not merely a disclosure.
+
     Raises ``FileNotFoundError`` with an actionable message when the writer did
     not produce ``tmp``, which in practice means it appended an extension and
     ``preserve_suffix=True`` was missing.
@@ -156,6 +164,9 @@ def atomic_write(
                 f"{path.name!r}. A writer that appends its own extension needs "
                 f"preserve_suffix=True.",
             )
+        if mode is not None:
+  # Before the rename, deliberately -- see the docstring.
+            os.chmod(str(tmp), mode)
         if durable:
             _fsync_file(tmp)
         os.replace(str(tmp), str(path))
@@ -172,8 +183,12 @@ def atomic_write_bytes(path: Path, data: bytes, *, durable: bool = True) -> None
 
 def atomic_write_text(
     path: Path, text: str, *, encoding: str = "utf-8", durable: bool = True,
+    mode: int | None = None,
 ) -> None:
-    atomic_write(path, lambda p: p.write_text(text, encoding=encoding), durable=durable)
+    atomic_write(
+        path, lambda p: p.write_text(text, encoding=encoding),
+        durable=durable, mode=mode,
+    )
 
 
 def atomic_copy2(src: Path, dst: Path, *, durable: bool = True) -> None:

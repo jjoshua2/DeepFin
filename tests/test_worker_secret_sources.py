@@ -90,13 +90,33 @@ def test_the_yaml_password_is_ignored_but_never_silently(
     assert refuse_config_password({"distributed_worker_password": ""}) is None
 
 
-def test_the_direct_env_var_wins(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(WORKER_PASSWORD_ENV, "direct")
-    monkeypatch.setenv("SOME_OTHER_NAME", "named")
+def test_an_explicitly_configured_name_beats_the_ambient_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ EXPLICIT CONFIG > AMBIENT ENVIRONMENT, and this test is the pin.
+
+    The first version of this module read `$CAE_WORKER_PASSWORD` first, so an
+    operator who had configured `distributed_worker_password_env: MY_SECRET`
+    got silently authenticated with whatever the launching shell happened to
+    export — a wrong-credential generator that reports success. The order is
+    now: what the config names, then the ambient convenience variable.
+    """
+    monkeypatch.setenv(WORKER_PASSWORD_ENV, "ambient")
+    monkeypatch.setenv("SOME_OTHER_NAME", "explicitly-configured")
     secret, source = resolve_worker_password(
         {"distributed_worker_password_env": "SOME_OTHER_NAME"}
     )
-    assert secret == "direct"
+    assert secret == "explicitly-configured"
+    assert "SOME_OTHER_NAME" in source
+
+
+def test_the_ambient_var_is_used_when_the_config_names_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one-line operator step still works for everyone not configuring a name."""
+    monkeypatch.setenv(WORKER_PASSWORD_ENV, "ambient")
+    secret, source = resolve_worker_password({})
+    assert secret == "ambient"
     assert source == f"${WORKER_PASSWORD_ENV}"
 
 
@@ -256,13 +276,26 @@ def test_no_tracked_config_carries_a_plaintext_password() -> None:
     16 of them, and stripping only `pbt2_small.yaml` would have left 15 copies
     in a public repository while every other test in this file passed.
 
+    ⚑ THE FILE SET COMES FROM `git ls-files`, not a `configs/**` glob. What
+    makes the value disclosed is that it is TRACKED, so the scope of the sweep
+    has to be exactly that: a glob under `configs/` scanned 18 of the 20 tracked
+    yamls and would have gone green on a secret pasted into any yaml outside
+    that directory — a docker-compose file, a CI workflow, an example.
+
     `null` is allowed: it is a schema placeholder, not a secret.
     """
     import re
+    import subprocess
 
     repo_root = Path(__file__).resolve().parents[1]
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "*.yaml", "*.yml"],
+        cwd=repo_root, check=True, capture_output=True, text=True,
+    ).stdout
+    tracked = sorted(repo_root / name for name in listed.split("\0") if name)
+    assert tracked, "git ls-files returned no yaml at all — the sweep is vacuous"
     offenders: list[str] = []
-    for path in sorted((repo_root / "configs").rglob("*.yaml")):
+    for path in tracked:
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             match = re.match(r"\s*distributed_worker_password:\s*(\S.*)$", line)
             if match and match.group(1).strip() not in ("null", "~"):
@@ -288,3 +321,84 @@ def test_the_config_key_stays_in_the_schema_allowlist() -> None:
 
     assert "distributed_worker_password" in _TUNE_KEYS
     assert "distributed_worker_password_env" in _TUNE_KEYS
+
+
+def test_the_credential_source_is_announced_and_names_the_explicit_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ THE PRECEDENCE IS ONLY SAFE IF THE CHOICE IS VISIBLE.
+
+    With two candidate sources present, "which one did it use" must not require
+    reading the source. The log line is the operator's only instrument for
+    that, so it is asserted rather than assumed — an unasserted print is a
+    feature that can be deleted by accident.
+    """
+    from chess_anti_engine.tune.harness import _prepare_distributed_worker_auth
+
+    monkeypatch.setenv(WORKER_PASSWORD_ENV, "ambient-secret")
+    monkeypatch.setenv("MY_WORKER_SECRET", "explicit-secret")
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _prepare_distributed_worker_auth(
+        server_root=server_root,
+        config={
+            "distributed_worker_username": "josh",
+            "distributed_worker_password_env": "MY_WORKER_SECRET",
+        },
+    )
+    out = capsys.readouterr().out
+    assert "worker credential source: $MY_WORKER_SECRET" in out
+    assert f"${WORKER_PASSWORD_ENV}" not in out
+
+
+def test_a_weak_boot_credential_warns_but_still_boots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The deliberate asymmetry: the CLI refuses a short password, the BOOT
+    path only warns.
+
+    Refusing here would mean a minimum-length policy that can stop production
+    from starting on a credential that already works. Pinned as behaviour so
+    the asymmetry is a decision, not a hole someone later "fixes" into an
+    outage.
+    """
+    from chess_anti_engine.tune.harness import _prepare_distributed_worker_auth
+
+    monkeypatch.setenv(WORKER_PASSWORD_ENV, "short7x")
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _prepare_distributed_worker_auth(
+        server_root=server_root,
+        config={"distributed_worker_username": "josh"},
+    )
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "weak" in out
+    assert (server_root / "users.json").exists(), "the run must still boot"
+
+
+def test_users_json_is_0600_regardless_of_the_umask(tmp_path: Path) -> None:
+    """⚑ A WORLD-WRITABLE users.json IS AUTH BYPASS, not disclosure.
+
+    The file holds PBKDF2 material for every account. Readable is bad; WRITABLE
+    is worse — anyone who can write it replaces a hash with one of their own
+    and authenticates as that user. `atomic_write_text` inherited the process
+    umask, so at `umask 000` this file was created 0666.
+
+    The umask is set to 0 deliberately: at the default 022 the file comes out
+    0644 either way and the test would pass without the fix, which is a gate
+    that cannot fail.
+    """
+    import os
+    import stat
+
+    from chess_anti_engine.server.auth import ensure_user
+
+    saved = os.umask(0)
+    try:
+        db = tmp_path / "users.json"
+        ensure_user(db, username="josh", password="a-good-password")
+        mode = stat.S_IMODE(db.stat().st_mode)
+    finally:
+        os.umask(saved)
+    assert mode == 0o600, f"users.json is {mode:04o}, not 0600"
