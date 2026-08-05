@@ -117,13 +117,20 @@ model:
 
 stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
-  # FLIP sf_nodes: 5000 -> 50000
+  # FLIP sf_nodes: 5000 -> 50000; 50000 -> 75000 (2026-08-05 boot-hygiene package).
   #   PIN TO REACHABLE. pid.py:961 uses this as initial_nodes and pid.py:487 immediately clamps it
-  #   into [sf_pid_min_nodes, sf_pid_max_nodes] = [50000, 1000000], so 5000 can never be the node
-  #   count even at cold boot. The published reco reads 698289 (the PID's live base_nodes).
-  sf_nodes: 50000
+  #   into [sf_pid_min_nodes, sf_pid_max_nodes] = [50000, 1000000]. 75000 = the fresh-boot
+  #   OPPONENT start (user call: 50k was too weak alongside regret 0.2 — winrate pinned ~1.0
+  #   for 25 iters). sf_pid_min_nodes stays 50000: this is a start, not a new floor.
+  sf_nodes: 75000
   sf_move_nodes: 0
   sf_label_nodes_cap: 0
+  # 2026-08-05 boot-hygiene package (PR #354): pin LABEL queries at >= 700k nodes — the old
+  # lineage's realized teacher depth (698,289). Without it labels ride the PID opponent
+  # budget: the 08-04 fresh boot silently cut the teacher 11x. Decouples teacher depth
+  # from the difficulty servo; deploy proof = sf_label_meta[:,0] >= 700000 in new shards
+  # + label_floor=700000 in worker logs.
+  sf_label_nodes_floor: 700000
   sf_workers: 4
   sf_nice: 19
   sf_multipv: 40
@@ -135,14 +142,14 @@ stockfish:
   sf_pid_min_games_for_adjust: 30
   sf_pid_min_nodes: 50000
   sf_pid_max_nodes: 1000000
-  # ⚑ PIN, AND IT STOPS BEING INERT AT THIS RESTART. Construction-only: it only matters on a
-  # FRESH PID start, which is exactly what a --fresh experiment does (the three-restart-mode
-  # table: PID state is "fresh from yaml" only in that column). Every prior restart resumed
-  # pid_state.json, so 0.20 has been dormant. On a fresh start it sets the opening difficulty
-  # -- and remember PID regret runs BACKWARDS: higher regret = WEAKER SF = easier. 0.20 is
-  # far easier than the 0.0689-0.0984 the run actually settled at, i.e. a deliberate easy
-  # start that the controller then tightens.
-  sf_pid_wdl_regret_start: 0.2
+  # ⚑ Construction-only: matters only on a FRESH PID start (the three-restart-mode table:
+  # PID state is "fresh from yaml" only in that column); resumes read pid_state.json.
+  # PID regret runs BACKWARDS: higher regret = WEAKER SF = easier. FLIP 0.2 -> 0.1
+  # (2026-08-05 boot-hygiene package): 0.2 held winrate at 0.97-1.00 for 25 iterations
+  # while iteration 1 blasted 801 mostly-unclipped steps on that easy-win data; 0.1 is
+  # the top of the band the 0f888 PID actually settled at (0.0689-0.0984), so the servo
+  # starts near equilibrium.
+  sf_pid_wdl_regret_start: 0.1
   sf_pid_wdl_regret_min: 0.0075
   sf_pid_wdl_regret_max: 0.7
   sf_pid_wdl_regret_stage_end: 0.0075
@@ -383,7 +390,12 @@ train:
   # DELETED sf_search_dampen_sf_high: 0.0 = off (trainer.py:1846, losses.py:257)
   accum_steps: 1
   warm_start_lr_max_ratio: 2.0
-  warmup_steps: 72
+  # FLIP 72 -> 1000 (2026-08-05 boot-hygiene package, diagnosis D3): iteration 1 of a fresh
+  # boot runs ~800 optimizer steps (views-targeting over the seeded window) and 72 covered
+  # 9% of them — the rest ran at full LR, 95% unclipped, before the zclip EMA had history.
+  # 1000 spans the whole first-iteration blast plus slack. Deploy proof: opt_lr_mean well
+  # below peak through iteration 1. Negligible effect at steady state (~88 steps/iter).
+  warmup_steps: 1000
   lr_eta_min: 1.0e-05
   # DELETED lr_T0: consumed only by the CosineAnnealingWarmRestarts branch (trainer.py:1881), unreachable at lr_schedule: sqrt_release
   # DELETED lr_T_mult: same: cosine-branch-only (trainer.py:1882)

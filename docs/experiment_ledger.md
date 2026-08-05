@@ -33535,3 +33535,18 @@ separate reviewer follows.
   `opt_lr_mean` well below 5.29e-4 through iteration 1 and `train_steps_used`
   read directly (never `train_views_actual`). Watch-only M2 columns:
   `grad_adaptive_clip_rate` (0.05 -> 1.0 lock-in by iter 3 = M2 replicates).
+
+## 2026-08-05 — PACKAGE LEVER 4 (user-directed) + LAUNCH
+
+- Added at user direction before launch: `sf_nodes: 50000 -> 75000` — the
+  fresh-boot OPPONENT start (pid.py initial_nodes; sf_pid_min_nodes stays
+  50000, it is a start not a floor). Rationale: 50k + regret 0.2 gave the
+  0.97-1.00 winrate plateau; 75k + regret 0.1 starts the opponent near the
+  servo's settled operating point on both axes.
+- PR #354 merged (independent review: round 1 REQUEST CHANGES — H1 curriculum
+  reuse bypassed the floor on the production config, H2 reco publisher
+  unguarded; round 2 CONFIRM after fixes; R1/R2 residual test pins applied).
+  Live branch merged to origin/main (three-dot empty), yaml validated through
+  flatten + reject_dead_config_keys on the new code: floor 700000, nodes
+  75000, regret_start 0.1, warmup 1000. Deploy proofs and yardstick as
+  pre-registered above.
