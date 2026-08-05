@@ -33988,3 +33988,37 @@ separate reviewer follows.
   reads 700017/700405/... — the 700k teacher floor is live in labels.
 - The iter-21 deciding arena (vs the paired -96.2 baselines) may now be
   judged when it runs; no proof debt outstanding.
+
+## 2026-08-05 PREREG — TIER-2 LOSS-COMPONENT ABLATION on the Tier-0 rig: WHICH LOSS LEG carries the stored-row poison? (queued behind the arm-A iter-21 arena)
+
+- Question: Tier-0 proved the stored rows recreate the collapse (-105.6).
+  Tier-1 splits by ROW TYPE; this splits by LOSS COMPONENT on the FULL mixed
+  pool. Also serves as the OFFLINE SCREEN FOR ARM B (zero SF policy
+  weights) — a positive readout replaces a 6h live boot with a 2h screen.
+- Rig: EXACTLY the Tier-0 control (boot512, shards_iter21 184,639 rows,
+  b512, 1578 steps, config warmup 1000, --no-rebuild-sf-targets), one
+  invocation, three --variant arms sharing one shard scan:
+  * t2_nosfpol:  w_sf_move=0,w_sf_own=0,w_sf_own_regret=0   (ARM B offline —
+    self-visit policy + soft + all value legs kept)
+  * t2_novisit:  w_policy=0,w_soft=0                        (SF policy legs
+    kept; kills the dominant 2.0-weight self-visit teacher + soft policy)
+  * t2_valueonly: w_policy=0,w_soft=0,w_sf_move=0,w_sf_own=0,w_sf_own_regret=0
+    (no policy gradients at all; tests the ~27% value share in isolation)
+- Command: PYTHONPATH=. python3 scripts/retarget_retrain.py --config
+  configs/pbt2_small.yaml --checkpoint <boot512> --replay-dir
+  data/offline_replay_screen_cdb96/shards_iter21 --steps 1578 --batch-size
+  512 --no-rebuild-sf-targets --out-dir
+  data/offline_replay_screen_cdb96/retrain_tier2 --variant t2_nosfpol:...
+  --variant t2_novisit:... --variant t2_valueonly:...
+- Yardstick: standard 200-game arena per arm vs boot512 (matched_sims 32,
+  seed 42, conc-16, compile on per the Tier-1 instrument note). ANCHOR =
+  Tier-0 control -105.6 [-148.1, -66.1].
+- PRE-COMMITTED READING per arm: COLLAPSE PERSISTS if Elo <= -50 CI excl 0
+  (the removed leg is NOT necessary); DAMAGE GONE if CI incl 0 (the removed
+  leg is NECESSARY for the collapse); intermediate = partial contributor.
+  t2_valueonly persisting => the value target alone can do it. Confounds:
+  removing a leg changes gradient mix/scale (zclip renormalizes); loss-leg
+  weights interact with the causal split (~73% policy / ~27% value); arms
+  inherit Tier-0 confounds (a)-(e).
+- Sequencing: retrains + arenas run ONLY after the arm-A iter-21 deciding
+  arena completes (it owns the priority slot tonight).
