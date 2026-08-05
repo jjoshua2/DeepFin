@@ -34101,3 +34101,25 @@ separate reviewer follows.
   (eager, conc-16, single-arena-beside-training — the proven-safe class).
   Tier-2 remains gated behind that arena. Also user-specified: minimum
   password length 8, folded into the PR #358 fix wave.
+
+### ⚑⚑ VERDICTS (2026-08-05 17:11) — TIER-1 SPLIT PAIR: BOTH row types REPRODUCE at matched rig/size/views. The poison is in what they SHARE — the target construction — not in either game type.
+
+- CU-fast (curriculum-only, 26,414 rows, 6.8 views, b256/700/w100):
+  Elo(vs boot512) = -111.4 [-155.0, -70.9], 200 games. REPRODUCES
+  (pre-committed rule: <= -50, CI excl 0). 14% of the data recreates the
+  FULL-scale collapse.
+- SP-sub-fast (selfplay-only, 26,991 rows, 6.6 views, same rig):
+  -66.8 [-112.8, -23.1]. REPRODUCES by the rule; milder point estimate.
+- Arm-vs-arm contrast: 44.6 Elo gap, NOT CI-separated (diff ~45 +/- 61) —
+  "curriculum denser poison per-row" is SUGGESTIVE ONLY; do not cite as
+  established.
+- Matrix reading (pre-committed): BOTH reproduce => ubiquitous
+  target-construction defect. Sharpened by teacher asymmetry: sf_p0 rides
+  ONLY selfplay rows, opponent-reply policy_sf rides curriculum games —
+  the arms share the SEARCH-VISIT policy target + VALUE labels + builder
+  machinery. Tier-2 (t2_novisit / t2_valueonly / t2_nosfpol) is now the
+  discriminating screen and runs tonight as prereg'd.
+- Gate status: MIX-fast (positive control) crashed in the 16:48 OOM and is
+  re-running; its gate function is moot for REPRODUCES readings (the rig
+  demonstrably expresses damage) and it now serves the views cross-anchor
+  (vs Tier-0 -105.6). SP-full re-running behind it.
