@@ -193,6 +193,59 @@ def test_cp_mode_ignores_native_wdl_only_rows() -> None:
     assert float(rebuilt[200]) < 0.05
 
 
+def test_sparse_ce_matches_dense_soft_ce_in_cp_mode() -> None:
+    """The train-time sparse-CE path (sf_policy_sparse_ce, default OFF) builds
+    the target from sf_multipv_raw with its own torch scorer. If it ignored
+    the score mode, flipping sparse CE on under cp mode would silently train
+    against a DIFFERENT target than the stored one — the capture/loss
+    divergence class the dense-parity tests exist for."""
+    import torch
+
+    from chess_anti_engine.train.losses import soft_cross_entropy
+    from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
+    width = 4672
+    params = SfTargetParams(
+        sf_policy_label_smooth=0.01,
+        sf_policy_score_mode="cp", sf_policy_cp_temp=16.2,
+    )
+    raw = np.full((2, 8, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (100, 250, 0, 600, 300)
+    raw[0, 1] = (200, -20, 0, 450, 320)
+    raw[0, 2] = (300, SF_CP_SENTINEL, 4, 990, 10)   # mate-in-4
+    raw[0, 3] = (400, SF_CP_SENTINEL, 0, 500, 300)  # wdl-only: unscoreable in cp
+    raw[1, 0] = (150, 60, 0, 700, 200)
+    legal_idx = np.array([100, 150, 200, 300, 400], dtype=np.int64)
+    legal = np.zeros((2, width), np.float32)
+    legal[:, legal_idx] = 1.0
+
+    dense = np.zeros((2, width), np.float32)
+    for i in range(2):
+        rebuilt = rebuild_sf_policy_target(
+            raw[i], legal_indices=legal_idx, policy_size=width, params=params,
+        )
+        assert rebuilt is not None
+        dense[i] = rebuilt
+
+    torch.manual_seed(0)
+    logits = torch.randn(2, width)
+    batch = {
+        "sf_multipv_raw": torch.from_numpy(raw.astype(np.int32)),
+        "has_sf_multipv_raw": torch.ones(2),
+        "sf_legal_mask": torch.from_numpy(legal),
+        "has_sf_legal_mask": torch.ones(2),
+        "sf_move_index": torch.tensor([100, 150]),
+        "has_sf_move": torch.ones(2),
+    }
+    dense_ce = soft_cross_entropy(logits, torch.from_numpy(dense))
+    sparse_ce, ok = sparse_sf_policy_ce(
+        logits, batch, params=params, legal_aligned=batch["sf_legal_mask"],
+    )
+    assert ok.tolist() == [1.0, 1.0]
+    torch.testing.assert_close(sparse_ce, dense_ce, atol=1e-5, rtol=1e-5)
+
+
 def test_score_mode_is_validated_everywhere() -> None:
     from chess_anti_engine.selfplay.config import GameConfig
 

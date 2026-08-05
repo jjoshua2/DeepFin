@@ -64,6 +64,21 @@ def _row_scores(
     d = raw[..., 4].to(torch.float32)
     present = raw[..., 0] >= 0
 
+    if params.sf_policy_score_mode == "cp":
+        # Raw effective centipawns, no squash — replicates
+        # target_builder._batch_row_scores' cp branch (mate precedence, wdl-only
+        # rows unscoreable). The caller must pair these scores with
+        # sf_policy_cp_temp, never sf_policy_temp.
+        has_mate = mate != 0
+        has_cp = raw[..., 1] != SF_CP_SENTINEL
+        sign = torch.where(mate >= 0, 1.0, -1.0)
+        bonus = (
+            (50.0 - mate.abs().to(torch.float32)).clamp_min(0.0)
+            * _MATE_DEPTH_BONUS_CP
+        )
+        eff = torch.where(has_mate, sign * (_MATE_BASE_CP + bonus), cp)
+        return eff, present & (has_cp | has_mate)
+
     native_ok = (raw[..., 3] >= 0) & (raw[..., 4] >= 0)
     native_score = (w + 0.5 * d) / 1000.0
 
@@ -133,7 +148,12 @@ def sparse_sf_policy_ce(
     # which would silently consume ~70% of the 1e-5 dense-parity test
     # budget; float64 keeps that margin for catching real bugs, at the
     # cost of ~12K double ops per 256-batch (unmeasurable).
-    temp = max(1e-6, float(params.sf_policy_temp))
+    temp = max(
+        1e-6,
+        float(params.sf_policy_cp_temp)
+        if params.sf_policy_score_mode == "cp"
+        else float(params.sf_policy_temp),
+    )
     z = torch.where(ok, scores.double() / temp, scores.new_full((), -torch.inf, dtype=torch.float64))
     z = z - z.amax(dim=-1, keepdim=True).clamp_min(-1e30)  # stable even for all-masked rows
     expz = torch.where(ok, z.exp(), z.new_zeros(()))
