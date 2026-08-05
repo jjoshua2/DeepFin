@@ -655,6 +655,21 @@ class _SfSoftParams:
     sf_policy_cp_temp: float = 16.2
 
 
+def _sf_soft_params_from_flat(flat: dict) -> _SfSoftParams:
+    """Flattened run config → ruler params. One home for the yaml read so the
+    score-mode wiring is testable — F1 was exactly this read going missing
+    while the ruler kept scoring the OTHER candidate under the same name."""
+    return _SfSoftParams(
+        sf_policy_temp=float(flat.get("sf_policy_temp", 0.25)),
+        sf_policy_label_smooth=float(flat.get("sf_policy_label_smooth", 0.05)),
+        sf_wdl_use_cp_logistic=bool(flat.get("sf_wdl_use_cp_logistic", False)),
+        sf_wdl_cp_slope=float(flat.get("sf_wdl_cp_slope", 0.010)),
+        sf_wdl_cp_draw_width=float(flat.get("sf_wdl_cp_draw_width", 60.0)),
+        sf_policy_score_mode=str(flat.get("sf_policy_score_mode", "wdl")),
+        sf_policy_cp_temp=float(flat.get("sf_policy_cp_temp", 16.2)),
+    )
+
+
 class _PvLike:
     """Adapter so cached shallow-SF rows feed the live _pv_wdl_score."""
 
@@ -1059,15 +1074,7 @@ def main() -> None:
         print(f"[audit] GPU memory capped at fraction {args.gpu_mem_fraction}")
 
     flat = flatten_run_config_defaults(load_yaml_file(args.config))
-    sf_params = _SfSoftParams(
-        sf_policy_temp=float(flat.get("sf_policy_temp", 0.25)),
-        sf_policy_label_smooth=float(flat.get("sf_policy_label_smooth", 0.05)),
-        sf_wdl_use_cp_logistic=bool(flat.get("sf_wdl_use_cp_logistic", False)),
-        sf_wdl_cp_slope=float(flat.get("sf_wdl_cp_slope", 0.010)),
-        sf_wdl_cp_draw_width=float(flat.get("sf_wdl_cp_draw_width", 60.0)),
-        sf_policy_score_mode=str(flat.get("sf_policy_score_mode", "wdl")),
-        sf_policy_cp_temp=float(flat.get("sf_policy_cp_temp", 16.2)),
-    )
+    sf_params = _sf_soft_params_from_flat(flat)
     train_temp = float(flat.get("temperature", 1.0))
     sf_wdl_frac = float(flat.get("sf_wdl_frac", 0.0))
     search_wdl_frac = float(flat.get("search_wdl_frac", 0.0))
