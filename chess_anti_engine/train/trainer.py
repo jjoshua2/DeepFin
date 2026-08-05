@@ -1433,7 +1433,7 @@ def resolve_sf_target_params(config: dict) -> SfTargetParams:
     defect shape where a live edit lands in a value the constructor never saw.
 
     Defaults come FROM THE DATACLASS, not from a re-hardcoded copy: the same
-    five yaml keys are also read by `tune/distributed_runtime.py` (worker
+    seven yaml keys are also read by `tune/distributed_runtime.py` (worker
     manifest), `worker.py` (reco resolution) and `tune/trial_config.py`, all
     of which now derive from `SfTargetParams` too, and
     `test_sf_target_param_defaults_have_one_home` pins the `GameConfig` /
@@ -1453,6 +1453,12 @@ def resolve_sf_target_params(config: dict) -> SfTargetParams:
         sf_wdl_cp_slope=float(config.get("sf_wdl_cp_slope", d.sf_wdl_cp_slope)),
         sf_wdl_cp_draw_width=float(
             config.get("sf_wdl_cp_draw_width", d.sf_wdl_cp_draw_width)
+        ),
+        sf_policy_score_mode=str(
+            config.get("sf_policy_score_mode", d.sf_policy_score_mode)
+        ),
+        sf_policy_cp_temp=float(
+            config.get("sf_policy_cp_temp", d.sf_policy_cp_temp)
         ),
     )
 

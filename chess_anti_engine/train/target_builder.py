@@ -29,6 +29,7 @@ from chess_anti_engine.replay.shard import SF_CP_SENTINEL
 from chess_anti_engine.stockfish.wdl import (
     cp_to_wdl,
     cp_to_wdl_array,
+    mate_to_effective_cp,
     mate_to_effective_cp_array,
 )
 from chess_anti_engine.train.targets import (
@@ -48,6 +49,23 @@ class SfTargetParams:
     sf_wdl_use_cp_logistic: bool = False
     sf_wdl_cp_slope: float = 0.010
     sf_wdl_cp_draw_width: float = 60.0
+    # "wdl" scores candidates as w + 0.5*d (a saturating squash of cp — every
+    # move in a clearly won position scores ~1.0, so the softmax cannot rank
+    # them); "cp" scores raw effective centipawns (mate folded via
+    # mate_to_effective_cp) so the ranking survives in decisive positions.
+    # "cp" uses sf_policy_cp_temp (centipawn units); "wdl" uses sf_policy_temp
+    # (win-fraction units) — the two scales differ by ~3 orders of magnitude.
+    sf_policy_score_mode: str = "wdl"
+    sf_policy_cp_temp: float = 16.2
+
+    def __post_init__(self) -> None:
+        # Same hard error as GameConfig.__post_init__: every consumer branches
+        # on == "cp", so a typo'd mode would silently score as "wdl".
+        if self.sf_policy_score_mode not in ("wdl", "cp"):
+            raise ValueError(
+                f"sf_policy_score_mode must be 'wdl' or 'cp', got "
+                f"{self.sf_policy_score_mode!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -70,15 +88,24 @@ def _softmax(x: np.ndarray) -> np.ndarray:
 def _row_score(
     cp: int, mate: int, wdl_w: int, wdl_d: int, params: SfTargetParams,
 ) -> float | None:
-    """w + 0.5*d for one MultiPV row — mirrors stockfish_turn._pv_wdl_score.
+    """Candidate score for one MultiPV row — mirrors stockfish_turn's scorers.
 
-    Logistic path: cp/mate → normalized (w, d, l). Native path: the stored
-    permille wdl rescaled to fractions — the live path scores fractions
-    (_parse_wdl normalizes), and sf_policy_temp's softmax is scale-sensitive,
-    so reproducing the live fraction scale exactly is the point.
+    cp mode: raw effective centipawns (mate folded), no squash — mirrors
+    stockfish_turn._pv_cp_score. wdl mode: w + 0.5*d, mirroring
+    _pv_wdl_score. Logistic path: cp/mate → normalized (w, d, l). Native
+    path: the stored permille wdl rescaled to fractions — the live path
+    scores fractions (_parse_wdl normalizes), and sf_policy_temp's softmax is
+    scale-sensitive, so reproducing the live fraction scale exactly is the
+    point.
     """
     has_cp = cp != SF_CP_SENTINEL
     has_mate = mate != 0
+    if params.sf_policy_score_mode == "cp":
+        if has_mate:
+            return mate_to_effective_cp(mate)
+        if has_cp:
+            return float(cp)
+        return None
     if params.sf_wdl_use_cp_logistic and (has_cp or has_mate):
         wdl = cp_to_wdl(
             cp if has_cp else None,
@@ -120,8 +147,13 @@ def rebuild_sf_policy_target(
     if not idxs:
         return None
 
+    temp = (
+        float(params.sf_policy_cp_temp)
+        if params.sf_policy_score_mode == "cp"
+        else float(params.sf_policy_temp)
+    )
     p_top = _softmax(
-        np.array(scores, dtype=np.float64) / max(1e-6, float(params.sf_policy_temp))
+        np.array(scores, dtype=np.float64) / max(1e-6, temp)
     ).astype(np.float32, copy=False)
     p_sf = np.zeros((int(policy_size),), dtype=np.float32)
     for a, p in zip(idxs, p_top, strict=True):
@@ -186,6 +218,16 @@ def _batch_row_scores(
     wdl_d = raw[..., 4]
 
     valid = move >= 0
+
+    if params.sf_policy_score_mode == "cp":
+        has_cp = cp != SF_CP_SENTINEL
+        has_mate = mate != 0
+        # cp_to_wdl gives mate precedence over cp; mirror that with a select.
+        scores = np.where(
+            has_mate, mate_to_effective_cp_array(mate), cp.astype(np.float64),
+        )
+        return scores, np.asarray(valid & (has_cp | has_mate))
+
     native_ok = (wdl_w >= 0) & (wdl_d >= 0)
     scores = (wdl_w.astype(np.float64) + 0.5 * wdl_d.astype(np.float64)) / 1000.0
 
@@ -257,7 +299,12 @@ def rebuild_sf_policy_targets_batch(
     # That -inf → +0.0 identity is what keeps masked slots out of the result;
     # no re-zeroing after the exp is needed (scores are bounded, so no
     # scoreable slot can produce a nan/inf that would escape the mask).
-    z = scores / max(1e-6, float(params.sf_policy_temp))
+    temp = (
+        float(params.sf_policy_cp_temp)
+        if params.sf_policy_score_mode == "cp"
+        else float(params.sf_policy_temp)
+    )
+    z = scores / max(1e-6, temp)
     z = np.where(scoreable, z, -np.inf)
     zmax = np.max(z, axis=1, keepdims=True)
     zmax = np.where(np.isfinite(zmax), zmax, 0.0)  # all-masked rows: keep exp finite
