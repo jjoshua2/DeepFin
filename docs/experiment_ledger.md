@@ -33358,3 +33358,25 @@ separate reviewer follows.
 - Training was DOWN at measurement time (post-reboot). Resume-vs-pivot decision
   surfaced to the user; pre-registration says the 5-day window decides, but both
   early rows clear the KILL threshold with margin.
+
+## 2026-08-04 ~20:50 — ⚑⚑ THE KILL READOUT IS CONFOUNDED: the restart silently cut the TEACHER 11× (user hypothesis, mechanism + numbers confirmed)
+
+- `_eff_sf_nodes` (stockfish_turn.py:493): label queries run at `base_nodes` — the
+  PID-ramped OPPONENT budget — and production `sf_label_nodes_cap: 0` means no
+  decoupling. The nodes knob is BOTH the difficulty axis and the teacher axis.
+- Measured from both lineages' progress.csv: OLD labels flat at 698,289 nodes;
+  NEW labels mean 61,875 (50k start → 116k peak). Policy teacher, the 0.45 SF
+  value-blend component, and refute labels all moved together, ~11× shallower.
+- Consequence: the −81/−131 rows do NOT cleanly indict the target/loop family —
+  the pre-registered readout's implicit "same teacher" assumption was broken at
+  launch ([[invalid_verdicts_from_unwired_features]] shape: the family was never
+  tested in its intended condition). Also candidate-explains: degradation FASTER
+  than old lineage; all in-loop signals healthy (net fit its shallow targets).
+- NOT explained: the old lineage's own −48.6 at 698k labels. Teacher depth is a
+  candidate for the delta, not the base phenomenon.
+- Next: (a) DONE — realized-depth measurement above; (b) offline label-quality
+  screen: relabel a sample of new-lineage positions at ~698k and score stored
+  50k targets vs deep targets on the frozen audit ruler; (c) iter21-vs-boot512
+  arena in flight (onset timing); (d) fix shape = decouple: a label-nodes floor
+  knob (the cap only caps DOWN), restore ~698k labels, resume, judge on daily
+  ratchet rows.
