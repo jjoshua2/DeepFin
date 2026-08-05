@@ -33694,3 +33694,31 @@ separate reviewer follows.
 - ALL measurement follow-ups from the NULL are now closed. Remaining
   moves are TARGET-side interventions + the M1 warm-optimizer control —
   user decisions, queued for the morning.
+
+## 2026-08-05 — KILLED BEFORE LAUNCH: M1 warm-optimizer-import boot control (user-caught). The intervention decays ~35 half-lives before the damage window opens
+
+- The proposed control: fresh boot from boot512 weights + import the optimizer
+  moments banked with those weights (boot_snap_recheck_0711_0404.pt `opt`, step
+  56000), everything else identical to restart #2; a non-null vs cdb96's −96.2
+  would have promoted M1 (cold optimizer moments).
+- Kill reason (structural, no run needed): the production aurora optimizer's
+  ONLY state is `momentum_buffer` (verified on the snapshot: 481 entries, no
+  second moments, no persistent polar/PP state). `aurora_momentum: 0.95` ⇒
+  half-life ln2/ln(1/0.95) ≈ 13.5 steps. Restart #2's damage window opens at
+  full LR (~step 1000, iters ~9-12, warmup_steps 1000); by then an imported
+  buffer is attenuated 0.95^1000 ≈ 5e-23 — the arm and its control are
+  bit-identical where the damage happens. The experiment cannot discriminate.
+- Confirming evidence already in hand: the iter-5 arena (−15.6 [−60.9, +29.1],
+  ~530 all-warmup steps) shows the genuinely-cold-moments period did no
+  measurable damage. M1 required the damage to be front-loaded; it is not.
+- M1 is hereby ELIMINATED as a candidate for the boot shock — not by a run but
+  by timescale arithmetic + the onset arena. The surviving cause list is now
+  the TARGET/LOOP family alone (plus the weak arena-systematic residual).
+  Credit: the kill question ("warmup is supposed to stabilize that regardless")
+  was the user's.
+- Consequence: the next boot window goes 100% to the cp-rank policy-target
+  deploy (07-31 screen PASSED, 08-04 conjugacy audit SUSTAINED-WITH-CAVEAT;
+  deploy spec at :17529-17550 — new score-mode key through SfTargetParams /
+  _pv_wdl_score / worker reco RESTART key; proof observation = won-bucket
+  sf_policy_target entropy ~1.75 → ~1.0 nats within one window turnover).
+  Prereg for that deploy will be its own entry before launch.
