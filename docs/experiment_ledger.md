@@ -33976,3 +33976,15 @@ separate reviewer follows.
   coarse. Elo shifts attributable to compile mode are expected ~0; if
   MIX-fast lands implausibly far from BOTH -105.6 and 0, an eager re-run
   adjudicates before any verdict.
+
+### 2026-08-05 16:20 — ARM A DEPLOY PROOFS ALL THREE PASSED (trial d2003, iter ~6)
+
+- (2) won-bucket (|sf_label_meta[:,2]| >= 300) sf_policy_target mean entropy:
+  d2003 cp-mode 1.025 nats (14,486 rows, 93 shards) vs cdb96 wdl-mode 1.706
+  nats (13,370 rows, 104 shards) — the prereg predicted ~1.75 -> ~1.0. The
+  cp-rank target is demonstrably ranking decisive positions the saturating
+  score could not. (1) worker log score_mode=cp cp_temp=16.20 and (3)
+  params.json both passed at 12:08. Bonus: sf_label_meta[:,0] on new rows
+  reads 700017/700405/... — the 700k teacher floor is live in labels.
+- The iter-21 deciding arena (vs the paired -96.2 baselines) may now be
+  judged when it runs; no proof debt outstanding.
