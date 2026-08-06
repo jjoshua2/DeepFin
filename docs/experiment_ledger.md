@@ -34306,3 +34306,61 @@ separate reviewer follows.
   relaunch until an offline arm's arena CI vs boot512 includes or exceeds 0.
   The relaunch then carries the full restart-gated wave: #360 (+cp mode
   commit + ruler re-baseline + C rebuild), #364, #332-336, #161 rotation.
+
+### ⚑⚑ VERDICT (2026-08-06 11:07) — TIER-3 COMPLETE: GAME-OUTCOME LABEL IS THE WORST POISON; AUX VALUE HEADS CARRY ~121 ELO OF DAMAGE; noaux ARM'S CI TOUCHES 0 — FIRST NEAR-NON-DESTRUCTIVE OFFLINE ARM
+
+- Rig per prereg ca09cb38c (idle GPU: 4 retrains 60min, arenas ~9min each).
+  Deploy proof: retarget report records every override; wdl_loss traces
+  diverge per blend (gameonly 0.544 / sfonly 0.770 / searchonly 0.810).
+  All arms value-only (five policy weights zero). Elo vs boot512, 200g:
+    t3_sfonly     (pure SF cp-logistic)   −72.2 [−114.2, −32.3]
+    t3_gameonly   (pure game outcome)    −235.4 [−289.9, −189.6]
+    t3_searchonly (pure search WDL)      −145.1 [−194.4, −100.9]
+    t3_noaux      (blend, aux heads off)  −36.6 [ −84.9, +10.3]
+- By the pre-committed rules:
+    LOCALIZATION SUCCESS — multiple non-overlapping CI pairs
+      (gameonly vs sfonly; gameonly vs noaux; searchonly vs noaux).
+    CARRIERS: t3_gameonly (worse than the t2_valueonly anchor itself) and
+      t3_searchonly. t3_sfonly is NOT a carrier (CI misses the anchor's
+      band; point −72.2) — the SF cp-logistic label is the LEAST damaging
+      source. Ordering: game ≪ search ≪ sf.
+    t3_noaux: does not formally CLEAR THE ANCHOR (CI lower −84.9 vs the
+      −66.1 bar) but its CI INCLUDES 0 — best arm ever measured on this
+      rig (previous best t2_nosfpol −75.9) and a near-miss on the offline
+      exit criterion.
+- Paired contrast with Tier-2: t2_valueonly (blend + aux) −157.7 vs
+  t3_noaux (blend − aux) −36.6, identical rig/seed/pool ⇒ the aux value
+  heads w_sf_eval + w_categorical account for ~121 Elo of the damage in
+  the value-only setting. Consistent with the standing HL-Gauss
+  edge-truncation suspect (A20 — the categorical head is the HL-Gauss
+  head), now with an arena-sized effect attached.
+- Mechanism reading: fresh-boot selfplay game outcomes (vs servo-weakened
+  SF) are the most toxic value signal; engine-derived labels are mildest.
+  The 0.35 game fraction in the production blend and the aux heads
+  together plausibly compose most of the −157.7.
+- Confound notes: sfonly/searchonly rows lacking labels fall back to game
+  outcome inside their terms (dilution toward game); w_future/w_moves_left
+  active in all arms (constant, unsplit).
+
+### ⚑ PREREG (2026-08-06) — TIER-4: AUX-HEAD SPLIT + BEST-COMBINATION ARMS (offline rig; chasing the CI≥0 exit criterion)
+
+- Same rig/ruler as Tier-3 (boot512, shards_iter21, b512/1578, cold opt,
+  arena 200g seed 42 conc-16 compiled, Elo vs boot512). All arms keep the
+  five policy weights at zero. Arms:
+    t4_auxsplit_sfeval  production blend, w_sf_eval=0 (categorical ON)
+    t4_auxsplit_cat     production blend, w_categorical=0 (sf_eval ON)
+    t4_noaux_sfonly     aux off + sf_wdl_frac=1.0, search_wdl_frac=0.0
+    t4_noaux_nogame     aux off + sf_wdl_frac=0.69, search_wdl_frac=0.31
+                        (game removed; sf:search ratio 0.45:0.20 kept)
+- Pre-committed rules:
+    Aux attribution (arms 1-2): an arm with point ≤ −100 and CI
+      overlapping t2_valueonly [−205.3,−115.0] ⇒ the head still ON in that
+      arm carries the aux damage. An arm with CI overlapping t3_noaux's
+      [−84.9,+10.3] and point > −60 ⇒ the head turned OFF in that arm was
+      the carrier. Both intermediate ⇒ damage is shared/additive.
+    Combination arms (3-4): SUCCESS = CI includes 0 (meets the offline
+      exit criterion, ledger 363050e5e); STRONG = CI lower bound ≥ 0;
+      BEATS t3_noaux = point ≥ 0. KILL branch: neither combo improves on
+      t3_noaux ⇒ next split is w_future/w_moves_left + a 2×-steps
+      trajectory arm on t3_noaux.
+- ETA ~1.5h on the idle GPU, gated behind the running ck102 arena.
