@@ -35052,3 +35052,31 @@ prior-shaped completed-Q fallback mass); scale-0 negative control reads exactly
 ("+301 Elo @8k") — the play path was independently tuned to the shape argmin;
 production selfplay shares the linear root fallback (c_visit_root/c_scale_root
 unset), so the probe is on the training-target path.
+
+### 2026-08-06 — EXTERNAL REVIEW of the sigma-bound analysis: corrections ACCEPTED (28c27fb8a amended)
+
+1. sigma = c_scale×(c_visit + MAX PER-MOVE VISITS), not total sims. Measured 2.9
+   nats at 0.025 ⇒ maxN≈66 under halving. All prereg thresholds must come from
+   measured visit patterns; never reason from the simulation budget.
+2. Relative lift between moves a,b is s·(Q̄a−Q̄b) ⇒ an equal-Q deep-tail
+   discovery gets ZERO lift at ANY scale. The transform preserves prior odds
+   among equal-Q moves BY DESIGN (one-step improvement has no reason to reward
+   equal alternatives). Support replenishment is a DIFFERENT OBJECTIVE from the
+   paper's theorem — that, not constant size, is why no second channel exists.
+   "Ceiling never binds at 1.0" holds only for positive-Q-advantage discoveries.
+3. Mixture guarantee requires the merit component restricted to
+   {visited, Q ≥ V^π} (exact-value theorem; estimated-Q = motivation + empirical
+   safeguard, same limitation as the base theorem). A GATED prior-relief floor
+   (visited AND Q_LCB > V) is also Appendix-C-admissible; mixture still preferred
+   (λ-bounded damage, no discontinuity, annealable as support recovers).
+4. Probe metric upgraded: per discovered move compute the RESIDUAL BARRIER
+   R_a = (z_best − z_a) − s·(Q̄a − Q̄best); R_a predicts target-mass acquisition
+   directly. Judge config-only candidates on R_a distributions, not global range.
+5. Play path stays at (0.025, 32) untouched regardless of training-target choice
+   — training-target and root-play transforms are separable requirements.
+6. One-parameter resolution acceptance bar RAISED: nonzero earned mass is
+   insufficient; requires (a) increased prior support in the NEXT net, (b)
+   retention across a generation, (c) no teacher-KL/concentration damage, (d) no
+   elevated false-promotion rate under deeper verification, (e) equal-dose arena
+   non-regression. BT4-tolerates-0.1 remains a HYPOTHESIS for annealing, not
+   established.
