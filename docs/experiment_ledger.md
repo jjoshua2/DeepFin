@@ -34713,3 +34713,25 @@ separate reviewer follows.
   reflects budget; but the lc0 target's flatness comes from visit
   statistics, ours from a barely-perturbed prior. The screen tests
   whether SHAPE (not provenance) is what matters.
+
+### ⚑ PREREG (2026-08-06) — TIER-6 (queued behind Phase-2): direction-falsification probe + recipe fast-baseline
+
+- Fast harness (800/w500, validated e10ab7c45), iter21 pool, ruler
+  unchanged (200g seed 42 conc-16 compiled vs boot512). Arms:
+    t6_dirtest  recipe of record + lr=3.0e-06 (0.1x production 3.0e-05).
+                ASYMMETRIC by design: at 0.1x LR the displacement is
+                tiny, so it can only FAIL decisively — CI-clean negative
+                ⇒ the recipe's target DIRECTION is condemned (no dose/
+                transient excuse). CI including 0 = consistent-with-
+                sound, NOT proof (200g cannot resolve small positives).
+    t6_base800  recipe of record at production lr, 800/w500 — the
+                wave's internal baseline + the recipe's dose-curve point
+                (vs t4_noaux_nogame −15.6 @1578 and t3f_noaux −6.9
+                @800 without the blend fix).
+- Also records the integration map for the day's findings: (a) soft-
+  target-on-main-head arm needs a small rig patch (train policy_own on
+  policy_soft_target) — next wave after the patch; (b) the (c_scale,
+  topk) shape-matched candidate from the lc0-probe agent is a DATA-GEN
+  change: it enters via a small fresh-gen batch or the live relaunch
+  config, not the stored-shard rig; (c) training-on-lc0-data control is
+  an explicitly UNTESTED ASSUMPTION, triggered only if Phase-2 FAILS.
