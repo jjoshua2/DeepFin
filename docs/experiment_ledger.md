@@ -34788,3 +34788,43 @@ target's higher entropy level.
 
 Queue now: p2_2view arena → confirm500 (better arm, seed 1337) → Tier-6
 (t6_dirtest, t6_base800) → Tier-7 (two arms).
+
+### 2026-08-06 — p2_2view NEGATIVE (dose effect confirmed at scale); confirm500 RUNNING; lc0-adapter agent results (review in flight)
+
+**Phase-2 arm 2:** `p2_2view` (same recipe, 5600 steps ≈ 2 views): **Elo −36.6
+[−78.7, +4.4]**. Doubling passes over the same fixed pool flips +22.6 → −36.6 —
+the strongest direct evidence yet for the noise×repetition mechanism (549c063e1):
+the second view is where the game-correlated label noise gets memorised. Curve
+verdict per prereg: NOT absorbing — plateau-and-degrade. **Better arm = p2_1view;
+its CI upper (+68.8) > 0 ⇒ confirm500 fired 16:25 (seed 1337, 500g)** per
+aca505d22. Ops note: the first Tier-6 chain survived its wrapper kill as an
+orphan and stole the GPU slot 16:17–16:24 (running-scripts-keep-the-old-file);
+killed mid-retrain, no results read from it; requeued v2 chain will redo Tier-6
+cleanly.
+
+**lc0-adapter probe (branch `diag/lc0-net-in-our-search`, 5fbb98b0f, worktree
+agent; INDEPENDENT REVIEW IN FLIGHT — findings PROVISIONAL until it lands):**
+- **Latent defect found on main:** `onnx/load.py::build_lc0_policy_remap` is a
+  static table but the true our-1858↔Leela-1858 correspondence is board-dependent
+  (46/1858 slots agree; back-rank slide-vs-=N overload + king-takes-rook
+  castling). Mis-maps ≥1 legal move in 9.3% of positions (worst case: BT4 O-O
+  prior read as 0.0034 instead of 0.4045). Blast radius: ONLY foreign lc0 nets
+  through OnnxChessNet — no training run affected — but any PAST lc0-through-4672
+  policy reading is invalid.
+- Fix on branch: board-aware `moves/leela_index.py` + 7 tests (reference derived
+  from the move, not our tables). Gates: index correspondence 55,586 legal moves
+  0 mismatch; round-trip 59/60 exact (repetition-plane synthetic-history
+  exception); mate-in-1 sane. Startpos gate was LOOSENED mid-run (0.75→0.5
+  mainstream mass; self-flagged) — reviewer asked to judge.
+- lc0 training planes are FILE-REVERSED (bit j = file 7−j%8); proven by castling
+  legality + BT4-vs-stored-target agreement 43/60 (naive read: 3/60 ≈ chance).
+- **Shape sweep (BT4 via onnxruntime CPU, 60 matched positions, 32 sims, cached
+  evals, 36 configs):** BT4's RAW PRIOR already matches lc0's target entropy
+  (KL 0.03–0.13); every increase of `gumbel_c_scale` moves the improved policy
+  monotonically AWAY from lc0's shape in all three phases. Production c_scale
+  0.1 is 2–7× worse KL than the per-phase argmin (opening 0.025, middle 0.05,
+  endgame 0.0-boundary). **`gumbel_topk` is INERT at 32 sims** — sequential
+  halving caps candidates at ceil(sims/2)=16, so topk 16/32/218 are bit-identical
+  (540/540); only topk 8 differs. Caveat (author's own): KL-to-lc0 is a SHAPE
+  diagnostic, not an objective (different net, 800-visit target, Dirichlet
+  noise); any c_scale retune needs its own prereg on our yardstick.
