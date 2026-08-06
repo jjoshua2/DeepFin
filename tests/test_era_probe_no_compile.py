@@ -24,11 +24,16 @@ from __future__ import annotations
 import importlib
 from typing import Any, cast
 
+import chess
 import numpy as np
 import pytest
 import torch
 
 from chess_anti_engine.eval import era_probe as ep
+from chess_anti_engine.eval import puzzles
+from chess_anti_engine.eval.puzzles import Puzzle, PuzzleSuite
+from chess_anti_engine.moves import move_to_index
+from chess_anti_engine.moves.encode import MODEL_POLICY_SIZE, compact_policy_index
 from chess_anti_engine.tune import trainable_phases
 from chess_anti_engine.tune.trainable_phases import _run_era_probes_if_due
 from chess_anti_engine.tune.trial_config import TrialConfig
@@ -208,6 +213,84 @@ def test_the_unwrap_reaches_an_uncompiled_module_at_every_nesting(depth: str) ->
         # AveragedModel deep-copies at init, so identity only holds when it is
         # not in the chain; the type check above is the assertion there.
         assert inner is net
+
+
+# ---------------------------------------------------------------------------
+# the same rule, one call site over: puzzle eval
+
+
+class _PuzzleNet(torch.nn.Module):
+    """Stub carrying both heads and the encoding attributes puzzle eval reads.
+
+    ``encode_position_for_model`` refuses to guess the input encoding
+    (rl_loop_audit M11), and ``OptimizedModule`` forwards attribute access to
+    ``_orig_mod``, so declaring them here covers the compiled case too.
+    """
+
+    def __init__(self, *, move_idx: int) -> None:
+        super().__init__()
+        self.lin = torch.nn.Linear(1, 1)
+        self.move_idx = move_idx
+        self.input_history_encoding = "lc0_root_legacy_meta"
+        self.input_extra_features = "v2_threats"
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        n = int(x.shape[0])
+        policy = torch.zeros((n, MODEL_POLICY_SIZE), dtype=torch.float32)
+        policy[:, self.move_idx] = 100.0
+        return {"policy_own": policy, "wdl": torch.zeros((n, 3), dtype=torch.float32)}
+
+
+@pytest.mark.parametrize(
+    ("fn_name", "n_puzzles", "batch_size"),
+    [("run_policy_sequence_eval", 3, 2), ("run_value_head_puzzle_eval", 1, 8)],
+)
+def test_puzzle_eval_forwards_run_eager_on_a_compiled_model(
+    fn_name: str, n_puzzles: int, batch_size: int,
+) -> None:
+    """MUTATION: score through ``model`` instead of ``eager_module(model)`` in
+    ``eval/puzzles.py`` — the counter then reads >= 1 and the marker records
+    ``is_compiling() is True``.
+
+    Same defect class as the era probe, one call site over: both functions
+    chunk at ``batch_size`` with a SHORT FINAL CHUNK, which is exactly the new
+    shape that sent the trainer's compiled model into a cudagraph capture. The
+    parameters give each path at least two distinct shapes (3 boards at batch 2
+    -> 2 then 1; 20 legal moves at batch 8 -> 8, 8, 4).
+
+    ⚑ The marker asserts on ``torch.compiler.is_compiling()``, NOT on the
+    shapes it saw: dynamo executes a patched forward while TRACING it, so a
+    shape-only marker passes on the compiled path too and is not an
+    instrument.
+    """
+    board = chess.Board()
+    best = chess.Move.from_uci("e2e4")
+    net = _PuzzleNet(move_idx=compact_policy_index(move_to_index(best, board)))
+    counter = _CompileCounter()
+    compiled = cast("torch.nn.Module", torch.compile(net, backend=counter))
+
+    seen: list[bool] = []
+    orig_forward = net.forward
+
+    def _marked(x: torch.Tensor) -> dict[str, torch.Tensor]:
+        seen.append(bool(torch.compiler.is_compiling()))
+        return orig_forward(x)
+
+    net.forward = _marked
+    suite = PuzzleSuite(
+        puzzles=[Puzzle(board=board.copy(), best_moves=[best]) for _ in range(n_puzzles)],
+        name="epd",
+    )
+    try:
+        result = getattr(puzzles, fn_name)(
+            compiled, suite, device="cpu", batch_size=batch_size)
+    finally:
+        net.forward = orig_forward
+
+    assert seen, "the puzzle eval never ran a forward — the test proves nothing"
+    assert not any(seen), f"a puzzle forward ran under a tracer: {seen}"
+    assert counter.n == 0, f"puzzle eval compiled {counter.n} graph(s)"
+    assert result.total == n_puzzles
 
 
 # ---------------------------------------------------------------------------

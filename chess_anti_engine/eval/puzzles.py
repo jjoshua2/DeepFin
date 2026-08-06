@@ -474,8 +474,19 @@ def run_policy_sequence_eval(
     user step (any move that delivers checkmate is accepted at the final
     step, per Lichess scoring). Forced opponent replies are pushed
     automatically. Argmax over legal-masked policy logits, no search.
+
+    The forward runs on the EAGER module. A compiled model handed in here is
+    entered once per ``batch_size`` chunk with a short final one, which is the
+    same new-shape cudagraph capture that wedged the era probes — and a capture
+    that fails takes every later capture in the process with it. See
+    ``eval/era_probe.eager_module``.
     """
+    # Local import: era_probe pulls in the replay stack and the loss module,
+    # ~3.8s that every `from chess_anti_engine.eval import ...` would pay.
+    from chess_anti_engine.eval.era_probe import eager_module
+
     model.eval()
+    module = eager_module(model)
     total = len(suite)
     correct_flags = [False] * total
 
@@ -494,7 +505,7 @@ def run_policy_sequence_eval(
             chunk = boards[start:start + batch_size]
             xs = np.stack([encode_position_for_model(model, b) for b in chunk])
             x = torch.from_numpy(xs).to(device, non_blocking=True)
-            out = model(x)
+            out = module(x)
             pol_logits = (out["policy_own"] if isinstance(out, dict) and "policy_own" in out
                           else out["policy"]).float().cpu().numpy()
             for j, b in enumerate(chunk):
@@ -561,8 +572,15 @@ def run_value_head_puzzle_eval(
 
     This is independent of the policy head; results test value-head
     correctness only.
+
+    The forward runs on the EAGER module, for the reason given in
+    :func:`run_policy_sequence_eval`.
     """
+    # Local import: see run_policy_sequence_eval.
+    from chess_anti_engine.eval.era_probe import eager_module
+
     model.eval()
+    module = eager_module(model)
     total = len(suite)
     correct_flags = [False] * total
 
@@ -590,7 +608,7 @@ def run_value_head_puzzle_eval(
     for start in range(0, pos_count, batch_size):
         end = min(start + batch_size, pos_count)
         x = torch.from_numpy(np.stack(flat_x[start:end])).to(device, non_blocking=True)
-        out = model(x)
+        out = module(x)
         wdl_logits = out["wdl"] if isinstance(out, dict) else out[1]
         wdl_p = torch.softmax(wdl_logits, dim=-1).float().cpu().numpy()
         # After-push board is opponent's POV: P_opp(L) - P_opp(W) = mover's signed value.
