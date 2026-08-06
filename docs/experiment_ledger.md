@@ -34364,3 +34364,33 @@ separate reviewer follows.
       t3_noaux ⇒ next split is w_future/w_moves_left + a 2×-steps
       trajectory arm on t3_noaux.
 - ETA ~1.5h on the idle GPU, gated behind the running ck102 arena.
+
+### GOAL AMENDMENT (2026-08-06, user-directed) — THE BAR IS A GAIN, NOT DAMAGE-ZERO
+
+- User: "we should be gaining elo not minimizing elo loss. our RL loop will
+  never work unless we can gain elo with new data." Adopted. The 363050e5e
+  exit criterion (CI includes 0) is downgraded to a MILESTONE; the relaunch
+  bar is a demonstrated GAIN: an offline-trained net whose arena CI vs its
+  own initialization is STRICTLY > 0.
+- Why a gain should be possible on this data (not wishful): the value
+  teacher is measurably ABOVE the head (handicapped 700k-node SF beats
+  iter478 by +6.7cp-equiv, ledger 07-31), i.e. the labels contain signal
+  the net has not absorbed; and search visit targets are the classic
+  policy-improvement operator. What Tiers 2-4 do is strip the components
+  that DESTROY that signal in transit.
+- Phase-2 design (prereg to be written after Tier-4 reads out):
+  1. Take the least-destructive label recipe from Tier-4.
+  2. Restore the FULL loss around it — policy legs come back (Tier-2
+     showed policy training is protective; value-only was an isolation
+     device, never the recipe).
+  3. Scale the two axes an 1578-step screen cannot see: train longer
+     (3-5x steps, arena at checkpoints -> absorption curve, does it climb
+     or plateau at 0?) and/or a bigger pool assembled from banked shards
+     under the winning label recipe.
+  4. Resolution: certifying a small gain needs more than 200 games
+     (CI half-width ~±45); the gain arena runs 1000+ games (~±20) — cheap
+     on an idle GPU (~45-55min).
+- KILL reading if phase-2 plateaus at ~0 despite clean labels: the stored
+  pool contains no net-usable above-net signal — the problem moves from
+  "labels poisoned" to "data has no teaching signal", pointing at label
+  depth/coverage (BT4-distill direction), not the loop.
