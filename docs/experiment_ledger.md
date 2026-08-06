@@ -35026,3 +35026,29 @@ The two mechanisms are SEPARATE and compound: (1) support truncation after move
 Relaunch-bundle candidates (each needs own prereg): c_scale 0.025, topk 32,
 late-game gumbel_scale > 0 (e.g. 0.25). Offline principle tests: Tier-7 (soft-as-
 main, running) + Tier-11 epsilon-floor (proposed, not prereg'd).
+
+### 2026-08-06 — SIGMA BOUND: c_scale-down and noise-restore PULL AGAINST EACH OTHER (agent, 013452d36)
+
+Code-derived bound: the completed-Q term is min-max normalised to [0,1] then
+multiplied by sigma = c_scale×(c_visit+max_visit), so Q can move a move's
+improved-policy logit by AT MOST sigma nats. At c_scale 0.1/256 sims ≈ 15 nats
+headroom; at the shape-argmin 0.025 ≈ 2.9 nats. Late-game noise-promoted
+candidates sit a MEASURED 8-11 nats below the top move in prior (smoke, deepest-
+new median/p95) ⇒ **at 0.025 a discovered-good move structurally CANNOT earn
+target mass** (smoke earned-new mass 0.000 = the bound, not sample noise).
+So the relaunch package as sketched (0.025 + late-game noise) is internally
+inconsistent: one parameter controls BOTH within-support sharpness (wants small)
+AND the discovery-reward ceiling (wants large). Prereg HELD until the queued
+probe maps the trade (runs/gumbel_scale_probe.md; scale grid × the corrected
+metrics). Candidate resolutions, in order of surgery: intermediate c_scale
+(~0.05-0.1); accept 0.1 (replenishment over shape); transform change decoupling
+reward ceiling from sharpness (root-log transform exists in-tree).
+Probe hygiene (agent): metric-1 as originally specified SATURATES (deterministic
+top-32 already exits the prior's p>1e-3 support in 85/75/25% of positions at
+scale 0) — headline metric re-based to replenishment RELATIVE to the scale-0
+candidate set; earned mass summed over candidates only (non-candidates carry
+prior-shaped completed-Q fallback mass); scale-0 negative control reads exactly
+0.000/0.000/0.000. Corroboration: PLAY_SEARCH_DEFAULTS is ALREADY (0.025, 32)
+("+301 Elo @8k") — the play path was independently tuned to the shape argmin;
+production selfplay shares the linear root fallback (c_visit_root/c_scale_root
+unset), so the probe is on the training-target path.
