@@ -34473,3 +34473,28 @@ separate reviewer follows.
   retarget_retrain.py:30-33) — so the two-stage policy is screen-at-800
   then RE-RUN borderline arms at full budget, not resume.
 - Cost ~35 min queued behind Tier-4's last arena.
+
+### DATA FORENSICS (2026-08-06 ~12:20) — CPU-only audit of shards_iter21 (184,639 rows): ONE confirmed defect (categorical, above), everything else CLEAN
+
+- CLEAN (instruments in the loss's own frames): outcome POV consistency
+  0/9,455 games violated; corr(sf_q, search_q) identical by ply parity
+  (0.9549/0.9542 — no side-to-move sign bug); NaN count 0 across all
+  float targets; illegal mass 0.0 in policy_target / policy_soft /
+  sf_policy (t+1 frame) / future_policy (t+2 frame) / sf_p0 (t frame);
+  moves_left ∈ [0.002, 0.996], no negatives; future_sf_regret_sum p99
+  0.4, no inf; sf label coverage 97.3%, future coverage 97.8%.
+- sf_p0_regret fill convention verified sane: best move 0.0 (median 1
+  zero-regret legal move/row), evaluated alternatives scaled, illegal/
+  unevaluated 0.5–1.0 — inert under the masked softmax.
+- sf_multipv_raw col1 min = −32768 on 48.5% of entries = int16 padding
+  sentinel for unused PV slots (48 slots vs ~34 legal moves), not mate
+  overflow.
+- INSTRUMENT ERRATUM (recorded per the wrong-frame rule): first pass
+  measured sf_p0_policy_target against sf_legal_mask (t+1) and read 90.9%
+  "illegal" — sf_p0 lives in the t frame per losses.py:597-601 and reads
+  0.0 there. The measured-frame must be the loss's frame.
+- OPEN QUESTION for the searchonly result: search_wdl tracks SF closely
+  (corr 0.955, draw mass 0.244) yet t3_searchonly read −145 vs sfonly
+  −72. Candidate: the saturated tail (13.6% of rows |q|>0.95 — near-one-
+  hot search values) and/or self-referential error (search_wdl derives
+  from the net's own value head). Not yet a claim; a Tier-5+ question.
