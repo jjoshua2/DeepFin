@@ -35115,3 +35115,16 @@ separation (dbd4acc97): the shape axis is closed at TRAINING time — what remai
 is generation-time (search config + support replenishment through the loop).
 Deploy proof was positive (ACTIVE prints 2/2; policy CE at soft-entropy level in
 retrain_tier7.log). Tier-10 (categorical repair) is the last offline arm.
+
+### 2026-08-06 — Sweep program COMPLETE (4 reports on diag/lc0-net-in-our-search); 32-sim refinement
+
+Internal control PASSED: the c_scale=0 search row reproduces the standalone raw
+prior exactly (KL and entropy identical to 3 decimals) — pipeline validated.
+Refinement: at 32 sims, search can at best NOT DAMAGE the prior's shape (argmin
+c_scale→0-0.01); genuine shape improvement over the raw prior exists only in
+MIDDLEGAMES at 256 sims (0.848→0.676). Opening slightly worsens (0.696→0.769),
+endgame flat. "Lower c_scale" mostly buys back damage rather than adding shape.
+Reports: runs/{ournet_probe_256,lc0_probe_256,ournet_probe_32,lc0_adapter_probe}.md.
+Residual-barrier probe running (started 19:52, ~hours). Two human decisions
+parked: legacy-retirement test triage (~150 tests, stash@{0}); the earned-mass
+prereg threshold vs the 2.9-nat cap.
