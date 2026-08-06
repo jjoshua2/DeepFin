@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -37,14 +38,17 @@ from typing import Any
 import chess
 import numpy as np
 
-from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding import encode_position, encode_positions_batch
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS
 from chess_anti_engine.encoding.lc0 import (
     LC0_FULL,
     fill_lc0_history_repeat,
     lc0_gather_context_from_planes,
 )
+from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.mcts import gumbel as gumbel_mod
 from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
+from chess_anti_engine.moves import policy_batch_to_full_if_needed
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, move_to_index
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_MOVE_STRS
 from chess_anti_engine.moves.leela_index import (
@@ -65,6 +69,50 @@ PIECE_ORDER = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, 
 _BIT_TO_SQUARE = np.array(
     [chess.square(7 - (j % 8), j // 8) for j in range(64)], dtype=np.int64,
 )
+
+
+# ── the adapters ───────────────────────────────────────────────────────────────
+
+class PlaneEvalCache:
+    """Memoise (policy, wdl) on the EXACT encoded input.
+
+    A (c_scale, topk) sweep re-walks the same trees over the same positions, so
+    nearly every leaf recurs. Keying on the encoded planes rather than on a FEN
+    is what makes that safe: two boards that encode identically are identical
+    inputs to the net by construction, history and metadata included.
+    """
+
+    def __init__(self, *, enabled: bool = True) -> None:
+        self._store: dict[bytes, tuple[np.ndarray, np.ndarray]] | None = {} if enabled else None
+        self.hits = 0
+        self.misses = 0
+        self.net_calls = 0
+
+    def run(
+        self,
+        planes: np.ndarray,
+        forward: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        n = planes.shape[0]
+        if self._store is None:
+            self.misses += n
+            self.net_calls += 1
+            return forward(planes)
+        keys = [hashlib.blake2b(planes[i].tobytes(), digest_size=16).digest() for i in range(n)]
+        todo = [i for i, k in enumerate(keys) if k not in self._store]
+        self.hits += n - len(todo)
+        self.misses += len(todo)
+        if todo:
+            pol, wdl = forward(np.ascontiguousarray(planes[todo]))
+            self.net_calls += 1
+            for j, i in enumerate(todo):
+                self._store[keys[i]] = (np.asarray(pol[j]).copy(), np.asarray(wdl[j]).copy())
+        first = self._store[keys[0]]
+        out_pol = np.empty((n, *first[0].shape), dtype=np.float32)
+        out_wdl = np.empty((n, *first[1].shape), dtype=np.float32)
+        for i, k in enumerate(keys):
+            out_pol[i], out_wdl[i] = self._store[k]
+        return out_pol, out_wdl
 
 
 # ── the adapter ────────────────────────────────────────────────────────────────
@@ -97,10 +145,19 @@ class Lc0OnnxEvaluator:
         self._in = self._sess.get_inputs()[0].name
         self._pol_out: str | None = None
         self._wdl_out: str | None = None
-        self._cache: dict[bytes, tuple[np.ndarray, np.ndarray]] | None = {} if cache else None
-        self.hits = 0
-        self.misses = 0
-        self.net_calls = 0
+        self._cache = PlaneEvalCache(enabled=cache)
+
+    @property
+    def hits(self) -> int:
+        return self._cache.hits
+
+    @property
+    def misses(self) -> int:
+        return self._cache.misses
+
+    @property
+    def net_calls(self) -> int:
+        return self._cache.net_calls
 
     def _resolve_outputs(self) -> tuple[str, str]:
         pol, wdl = self._pol_out, self._wdl_out
@@ -116,7 +173,6 @@ class Lc0OnnxEvaluator:
     def _run_net(self, planes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         pol_name, wdl_name = self._resolve_outputs()
         pol, wdl = self._sess.run([pol_name, wdl_name], {self._in: planes})
-        self.net_calls += 1
         return np.asarray(pol, dtype=np.float32), np.asarray(wdl, dtype=np.float32)
 
     def evaluate_encoded(
@@ -125,26 +181,10 @@ class Lc0OnnxEvaluator:
         del relations
         planes = np.ascontiguousarray(np.asarray(x, dtype=np.float32)[:, : LC0_FULL.num_planes])
         planes = fill_lc0_history_repeat(planes)
-        n = planes.shape[0]
-        pol_leela = np.empty((n, COMPACT_POLICY_SIZE), dtype=np.float32)
-        wdl_raw = np.empty((n, 3), dtype=np.float32)
+        pol_leela, wdl_raw = self._cache.run(planes, self._run_net)
 
-        if self._cache is None:
-            pol_leela, wdl_raw = self._run_net(planes)
-            self.misses += n
-        else:
-            keys = [hashlib.blake2b(planes[i].tobytes(), digest_size=16).digest() for i in range(n)]
-            todo = [i for i, k in enumerate(keys) if k not in self._cache]
-            self.hits += n - len(todo)
-            self.misses += len(todo)
-            if todo:
-                p, w = self._run_net(planes[todo])
-                for j, i in enumerate(todo):
-                    self._cache[keys[i]] = (p[j].copy(), w[j].copy())
-            for i, k in enumerate(keys):
-                pol_leela[i], wdl_raw[i] = self._cache[k]
-
-        pawn_mask, castling = lc0_gather_context_from_planes(planes)
+        pawn_mask, castling = lc0_gather_context_from_planes(
+            planes, input_history_encoding=self.input_history_encoding)
         pol_ours = np.take_along_axis(
             pol_leela, leela_gather_indices(pawn_mask, castling), axis=1,
         )
@@ -154,13 +194,77 @@ class Lc0OnnxEvaluator:
             np.abs(wdl_raw.sum(axis=-1) - 1.0).max() < 0.1,
         )
         wdl = np.log(np.clip(wdl_raw, 1e-9, None)) if is_probs else wdl_raw
-        return pol_ours, wdl.astype(np.float32)
+        return policy_batch_to_full_if_needed(pol_ours, fill_value=-1e9), wdl.astype(np.float32)
 
     def raw_eval(self, board: chess.Board) -> tuple[np.ndarray, np.ndarray]:
-        """(policy over OUR compact 1858, WDL probabilities) for one board."""
+        """(policy over the 4672 action space, WDL probabilities) for one board."""
         x = encode_position(board, add_features=False, input_history_encoding="lc0_root")
         pol, wdl_log = self.evaluate_encoded(x[None, ...])
         return pol[0], np.exp(wdl_log[0])
+
+
+class OurNetEvaluator:
+    """The same contract for OUR production net, straight off a checkpoint.
+
+    No policy remap: our net already emits the compact-1858 order the search
+    expects, which is exactly why the Leela arm needed one. The encoding fields
+    are read OFF the checkpoint rather than assumed, so a checkpoint trained
+    with a different history layout cannot be silently fed the wrong planes.
+    """
+
+    def __init__(self, checkpoint: str | Path, *, device: str = "cpu", cache: bool = True):
+        from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+
+        self.path = str(Path(checkpoint).expanduser().resolve())
+        model = load_model_from_checkpoint(self.path, device=device)
+        model.eval()
+        self.model = model
+        self.input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
+        self.input_extra_features = str(
+            getattr(model, "input_extra_features", EXTRA_FEATURES_V2_THREATS),
+        )
+        self.use_dynamic_relations = bool(getattr(model, "use_dynamic_relations", False))
+        self.policy_encoding = str(getattr(model, "policy_encoding", "lc0_1858"))
+        self._inner = LocalModelEvaluator(model, device=device, use_amp=False)
+        self._cache = PlaneEvalCache(enabled=cache)
+        # Unique storage, never sum(numel()) — weight tying double-counts (CLAUDE.md).
+        by_storage = {
+            v.untyped_storage().data_ptr(): v.numel() for v in model.state_dict().values()
+        }
+        self.n_params = int(sum(by_storage.values()))
+
+    @property
+    def hits(self) -> int:
+        return self._cache.hits
+
+    @property
+    def misses(self) -> int:
+        return self._cache.misses
+
+    @property
+    def net_calls(self) -> int:
+        return self._cache.net_calls
+
+    def _run_net(self, planes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return self._inner.evaluate_encoded(planes, None)
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # arch says use_dynamic_relations=False; asserted in main()
+        planes = np.ascontiguousarray(np.asarray(x, dtype=np.float32))
+        return self._cache.run(planes, self._run_net)
+
+    def raw_eval(self, board: chess.Board) -> tuple[np.ndarray, np.ndarray]:
+        """(policy over the 4672 action space, WDL probabilities) for one board."""
+        x = encode_positions_batch(
+            [board], add_features=True,
+            input_history_encoding=self.input_history_encoding,
+            input_extra_features=self.input_extra_features,
+        )
+        pol, wdl = self.evaluate_encoded(x)
+        w = np.exp(wdl[0] - wdl[0].max())
+        return pol[0], w / w.sum()
 
 
 # ── lc0 v6 record decoding ─────────────────────────────────────────────────────
@@ -293,7 +397,8 @@ def gate_index_correspondence(boards: list[chess.Board], log: list[str]) -> bool
         if not any(b.legal_moves):
             continue
         planes = encode_position(b, add_features=False, input_history_encoding="lc0_root")
-        gather = leela_gather_indices(*lc0_gather_context_from_planes(planes))[0]
+        gather = leela_gather_indices(*lc0_gather_context_from_planes(
+            planes, input_history_encoding="lc0_root"))[0]
         for mv in b.legal_moves:
             ref = leela_index_for_move(b, mv)
             got = int(gather[compact_index_for_move(b, mv)])
@@ -314,31 +419,47 @@ def gate_index_correspondence(boards: list[chess.Board], log: list[str]) -> bool
 
 
 def gate_round_trip(records: list[Lc0Record], log: list[str]) -> bool:
-    exact = piece_exact = 0
+    """PASS = every plane the decoder claims to reconstruct comes back exactly.
+
+    The PASS set is the 96 piece planes AND the 8 aux planes 104-111 — the aux
+    block is what ``castling_from_lc0_planes`` reads, so exempting it would
+    leave exactly the bytes a context bug lives in untested. The 8 repetition
+    planes are reported but EXEMPT: lc0 counts repetitions over the whole game
+    and the decoded stack is 7 plies, so a genuine repetition older than the
+    window is unreconstructable, not a decoder error.
+    """
+    scored = [p for p in range(104) if p % 13 != 12] + list(range(104, LC0_FULL.num_planes))
+    rep_planes = [p for p in range(104) if p % 13 == 12]
+    exact = scored_exact = rep_exact = 0
     notes: list[str] = []
     for i, rec in enumerate(records):
         enc = encode_position(rec.board, add_features=False, input_history_encoding="lc0_root")
         if np.array_equal(enc, rec.planes_ref):
             exact += 1
+        if np.array_equal(enc[scored], rec.planes_ref[scored]):
+            scored_exact += 1
         else:
-            diff = [p for p in range(LC0_FULL.num_planes) if not np.array_equal(enc[p], rec.planes_ref[p])]
+            diff = [p for p in scored if not np.array_equal(enc[p], rec.planes_ref[p])]
             if len(notes) < 5:
-                notes.append(f"    record {i} ({rec.src}) differs on planes {diff}")
-        pieces = [p for p in range(104) if p % 13 != 12]
-        if np.array_equal(enc[pieces], rec.planes_ref[pieces]):
-            piece_exact += 1
+                notes.append(f"    record {i} ({rec.src}) differs on scored planes {diff}")
+        if np.array_equal(enc[rep_planes], rec.planes_ref[rep_planes]):
+            rep_exact += 1
+        elif len(notes) < 8:
+            diff = [p for p in rep_planes if not np.array_equal(enc[p], rec.planes_ref[p])]
+            notes.append(f"    record {i} ({rec.src}) differs on EXEMPT repetition planes {diff}")
     n = len(records)
     log.append(f"- GATE round-trip encoder(decoder(planes)) == planes: "
-               f"all 112 planes exact on {exact}/{n}; the 96 piece planes exact on {piece_exact}/{n} "
-               f"— {'PASS' if piece_exact == n else 'FAIL'}")
+               f"96 piece + 8 aux planes exact on {scored_exact}/{n} (the PASS criterion); "
+               f"all 112 including repetition planes on {exact}/{n}; repetition planes alone "
+               f"{rep_exact}/{n} (exempt) — {'PASS' if scored_exact == n else 'FAIL'}")
     log.extend(notes)
-    return piece_exact == n
+    return scored_exact == n
 
 
-def _topk_report(pol_compact: np.ndarray, board: chess.Board, k: int = 6) -> list[tuple[str, float]]:
+def _topk_report(pol_full: np.ndarray, board: chess.Board, k: int = 6) -> list[tuple[str, float]]:
     moves = list(board.legal_moves)
-    idx = np.array([compact_index_for_move(board, m) for m in moves], dtype=np.int64)
-    lg = pol_compact[idx].astype(np.float64)
+    idx = np.array([move_to_index(m, board) for m in moves], dtype=np.int64)
+    lg = pol_full[idx].astype(np.float64)
     p = np.exp(lg - lg.max())
     p /= p.sum()
     order = np.argsort(-p)[:k]
@@ -422,7 +543,7 @@ def _install_root_capture(sink: list[RootDump]) -> Any:
 
 
 def search_one(
-    pos: Position, ev: Lc0OnnxEvaluator, cfg: GumbelConfig, seed: int,
+    pos: Position, ev: Any, cfg: GumbelConfig, seed: int,
 ) -> tuple[np.ndarray, RootDump | None]:
     sink: list[RootDump] = []
     original = _install_root_capture(sink)
@@ -434,6 +555,43 @@ def search_one(
     finally:
         gumbel_mod._build_improved_policy_for_board = original
     return probs[0], (sink[0] if sink else None)
+
+
+def raw_prior_rows(
+    ev: Any, positions: list[Position], boards: list[chess.Board], cfg: GumbelConfig,
+) -> list[dict[str, float]]:
+    """The net's masked prior, with no search at all.
+
+    This is the c_scale=0 row computed directly, and it is the number that
+    decides whether a sweep over the value transform can fix target shape: if
+    the prior is already far sharper than lc0's target, lowering c_scale only
+    converges the search target onto that sharper prior.
+    """
+    xs = encode_positions_batch(
+        boards, add_features=True,
+        input_history_encoding=cfg.input_history_encoding,
+        input_extra_features=cfg.input_extra_features,
+    )
+    pol, _wdl = ev.evaluate_encoded(xs)
+    pol_full = policy_batch_to_full_if_needed(
+        np.asarray(pol, dtype=np.float32), fill_value=-1e9,
+    )
+    rows: list[dict[str, float]] = []
+    for i, pos in enumerate(positions):
+        lg = pol_full[i][pos.full_idx].astype(np.float64)
+        p = np.exp(lg - lg.max())
+        p /= p.sum()
+        lc0 = pos.lc0_target
+        mask = lc0 > 0
+        rows.append({
+            "phase": float(pos.phase),
+            "entropy": entropy(p),
+            "support": float(int((p > 1e-3).sum())),
+            "maxp": float(p.max()),
+            "kl": float((lc0[mask] * np.log(lc0[mask] / np.clip(p[mask], 1e-12, None))).sum()),
+            "top1_agree": float(int(np.argmax(p) == np.argmax(lc0))),
+        })
+    return rows
 
 
 def position_metrics(pos: Position, probs_full: np.ndarray) -> dict[str, float]:
@@ -460,7 +618,15 @@ def position_metrics(pos: Position, probs_full: np.ndarray) -> dict[str, float]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--onnx", default="data/lc0/onnx/BT4-it332-vanilla-winner.onnx")
-    ap.add_argument("--matched", type=Path, required=True, help="matched60.npz")
+    ap.add_argument("--our-checkpoint", default=None,
+                    help="score OUR production net from this checkpoint instead of the "
+                         "Leela ONNX net; encoding fields are read off the checkpoint")
+    ap.add_argument("--matched", type=Path, default=Path("tests/data/lc0_matched60.npz"),
+                    help="60 lc0 v6 training records (20 per phase) with their stored "
+                         "policy targets; tracked so this probe is reproducible")
+    ap.add_argument("--positions-per-phase", type=int, default=0,
+                    help="cap positions per phase (0 = all). The cap keeps the FIRST n "
+                         "of each phase in file order, so two runs share the same subset.")
     ap.add_argument("--sims", type=int, default=32)
     ap.add_argument("--warm-mult", type=int, default=2)
     # c_scale 0.0 makes the value transform vanish, so the "improved" policy IS
@@ -468,22 +634,42 @@ def main() -> None:
     ap.add_argument("--c-scales", type=float, nargs="+",
                     default=[0.0, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0])
     ap.add_argument("--topks", type=int, nargs="+", default=[8, 16, 32, 218])
+    ap.add_argument("--sims-ladder", type=int, nargs="*", default=[],
+                    help="after the grid, re-run TWO param configs (production and the "
+                         "grid's compromise argmin) at each of these sim budgets. Shares "
+                         "the grid's eval cache, so the lower rungs nest inside it.")
     ap.add_argument("--gumbel-scale", type=float, default=0.75)
     ap.add_argument("--seed", type=int, default=20260806)
     ap.add_argument("--out", type=Path, default=Path("runs/lc0_adapter_probe.md"))
     ap.add_argument("--root-dump", type=Path, default=Path("runs/lc0_adapter_roots.npz"))
     args = ap.parse_args()
 
-    net_sha = hashlib.sha256(Path(args.onnx).read_bytes()).hexdigest()
-    log: list[str] = ["# lc0-net-in-our-search probe", "",
-                      f"- net: `{args.onnx}`",
+    our_net = args.our_checkpoint is not None
+    net_path = args.our_checkpoint if our_net else args.onnx
+    net_sha = hashlib.sha256(Path(net_path).read_bytes()).hexdigest()
+    log: list[str] = [f"# {'our-net' if our_net else 'lc0-net'}-in-our-search probe", "",
+                      f"- net: `{net_path}`",
                       f"- net sha256: `{net_sha}`",
                       f"- matched set: `{args.matched}`",
                       f"- search: {args.sims} sims, gumbel_scale {args.gumbel_scale}, "
                       f"seed {args.seed} (re-seeded per position, so configs are paired)", ""]
     t0 = time.time()
-    ev = Lc0OnnxEvaluator(args.onnx, providers=("CPUExecutionProvider",))
-    log.append(f"- ONNX session up in {time.time() - t0:.1f}s (CPU provider)")
+    ev: Any
+    if our_net:
+        ev = OurNetEvaluator(args.our_checkpoint, device="cpu")
+        if ev.use_dynamic_relations:
+            raise SystemExit(
+                "checkpoint sets use_dynamic_relations=True; this probe does not build "
+                "relation matrices, and passing None would silently change the net's input",
+            )
+        log.append(f"- checkpoint loaded in {time.time() - t0:.1f}s (CPU), "
+                   f"{ev.n_params:,} params by unique storage")
+        log.append(f"- encoding read OFF the checkpoint: history `{ev.input_history_encoding}`, "
+                   f"extras `{ev.input_extra_features}`, policy `{ev.policy_encoding}` "
+                   f"(NOT assumed — a mismatch here feeds the net the wrong planes)")
+    else:
+        ev = Lc0OnnxEvaluator(args.onnx, providers=("CPUExecutionProvider",))
+        log.append(f"- ONNX session up in {time.time() - t0:.1f}s (CPU provider)")
 
     records = decode_records(args.matched)
     log.append("")
@@ -509,10 +695,34 @@ def main() -> None:
     ok_idx = gate_index_correspondence(corr_boards, log)
     ok_net = gate_net_sanity(ev, log)
     log.append("")
+    if our_net:
+        log.append("- net-sanity thresholds are calibrated on a ~3500-Elo reference net; for OUR "
+                   "net they are INFORMATIONAL, not a pass/fail on the adapter. The adapter gates "
+                   "that do bind are round-trip and index-correspondence, and neither involves "
+                   "the net.")
     log.append(f"- gate summary: round-trip {'PASS' if ok_rt else 'FAIL'}, "
                f"index-correspondence {'PASS' if ok_idx else 'FAIL'}, "
-               f"net sanity {'PASS' if ok_net else 'FAIL'}")
+               f"net sanity {'PASS' if ok_net else 'FAIL'}"
+               f"{' (informational)' if our_net else ''}")
     positions = build_positions(records, log)
+    if args.positions_per_phase > 0:
+        kept: list[Position] = []
+        for ph in range(3):
+            kept += [p for p in positions if p.phase == ph][: args.positions_per_phase]
+        positions = kept
+        log.append(f"- position subset: first {args.positions_per_phase} per phase in file order "
+                   f"= {len(positions)} positions (same subset for every net, so the two "
+                   f"tables stay paired)")
+    history_boards = [p.board for p in positions]
+    if our_net:
+        # Frozen-ruler convention: our rulers (audit_targets, value_regret) score
+        # FEN-only inputs, so the history frames are empty rather than filled.
+        # The records DO carry 7 real plies; using them would measure a different
+        # regime than every other number we have on this net. Side check below.
+        positions = [replace(p, board=chess.Board(p.board.fen())) for p in positions]
+        log.append("- our-net inputs are FEN-ONLY (stackless board -> empty history frames), "
+                   "matching the frozen rulers. History is NOT invented; the decoded 7-ply "
+                   "history is used only for the side check below.")
     if not (ok_rt and ok_idx):
         log.append("")
         log.append("**A prerequisite gate FAILED — the search numbers below are not meaningful.**")
@@ -520,11 +730,40 @@ def main() -> None:
     base_cfg = GumbelConfig(
         simulations=args.sims, topk=16, c_scale=0.1, gumbel_scale=args.gumbel_scale,
         add_noise=True, temperature=0.0,
-        input_history_encoding="lc0_root", input_extra_features="v1",
+        input_history_encoding=str(ev.input_history_encoding),
+        input_extra_features=str(ev.input_extra_features),
     )
 
+    # ── raw prior: the shape the search starts from, before any value transform ─
+    log.append("")
+    log.append("## Raw prior (no search)")
+    log.append("")
+    log.append("| input | phase | median H (nats) | median support | median max-p | "
+               "median KL(lc0‖prior) | top1 agree |")
+    log.append("|---|---|---|---|---|---|---|")
+    prior_variants: list[tuple[str, list[chess.Board]]] = [
+        ("FEN-only" if our_net else "as fed to the search", [p.board for p in positions]),
+    ]
+    if our_net:
+        prior_variants.append(("decoded 7-ply history", history_boards))
+    for name, boards in prior_variants:
+        rows_p = raw_prior_rows(ev, positions, boards, base_cfg)
+        for ph in range(3):
+            sel = [r for r in rows_p if int(r["phase"]) == ph]
+            if not sel:
+                continue
+            log.append(f"| {name} | {PHASE_NAMES[ph]} | {median([r['entropy'] for r in sel]):.3f} | "
+                       f"{median([r['support'] for r in sel]):.1f} | "
+                       f"{median([r['maxp'] for r in sel]):.3f} | "
+                       f"{median([r['kl'] for r in sel]):.3f} | "
+                       f"{np.mean([r['top1_agree'] for r in sel]):.2f} |")
+
     # ── warm pass: one generous search per position fills the eval cache ───────
-    warm_cfg = replace(base_cfg, topk=256, simulations=args.sims * args.warm_mult)
+    # Warm at the TOP of everything we will run (grid sims and the ladder's
+    # highest rung) with topk unbounded, so every later, smaller search walks a
+    # subset of an already-evaluated tree.
+    warm_sims = max([args.sims, *args.sims_ladder]) * args.warm_mult
+    warm_cfg = replace(base_cfg, topk=256, simulations=warm_sims)
     t0 = time.time()
     run_gumbel_root_many(
         None, [p.board for p in positions], device="cpu",
@@ -575,8 +814,9 @@ def main() -> None:
         same = sum(1 for r in rows if r["topk"] == topk
                    and ref.get((r["c_scale"], r["pi"])) == r["our_entropy"])
         total = sum(1 for r in rows if r["topk"] == topk)
-        log.append(f"- topk={topk} vs topk=16: bit-identical search output on {same}/{total} "
-                   f"(position, c_scale) pairs "
+        log.append(f"- topk={topk} vs topk=16: identical target entropy to float64 on "
+                   f"{same}/{total} (position, c_scale) pairs — a proxy for an unchanged "
+                   f"search, not a distribution-level comparison "
                    f"[candidates are capped at ceil(sims/2)={max(2, (args.sims + 1) // 2)}]")
 
     if dumps:
@@ -664,10 +904,97 @@ def main() -> None:
             log.append(f"- **argmin-KL {PHASE_NAMES[ph]}**: c_scale={c_scale}, topk={topk} "
                        f"(median KL {kl:.3f})")
 
+    # Which axis moves shape more? Spread of the per-phase median KL along each
+    # axis with the other held at its best value.
+    log.append("")
+    for ph in range(3):
+        by_cfg = {
+            (c, k): median([r["kl"] for r in rows
+                            if r["phase"] == ph and r["topk"] == k
+                            and abs(r["c_scale"] - c) < 1e-12])
+            for c in args.c_scales for k in args.topks
+        }
+        by_cfg = {k: v for k, v in by_cfg.items() if not np.isnan(v)}
+        if not by_cfg:
+            continue
+        (bc, bk) = min(by_cfg, key=lambda kk: by_cfg[kk])
+        along_c = [by_cfg[(c, bk)] for c in args.c_scales if (c, bk) in by_cfg]
+        along_k = [by_cfg[(bc, k)] for k in args.topks if (bc, k) in by_cfg]
+        log.append(f"- axis spread {PHASE_NAMES[ph]} (median KL, other axis at its best): "
+                   f"c_scale {min(along_c):.3f}–{max(along_c):.3f} "
+                   f"(range {max(along_c) - min(along_c):.3f}) vs "
+                   f"topk {min(along_k):.3f}–{max(along_k):.3f} "
+                   f"(range {max(along_k) - min(along_k):.3f})")
+
+    # ── sims ladder at two param configs ─────────────────────────────────────
+    if args.sims_ladder:
+        totals: dict[tuple[float, int], float] = {}
+        for c_scale in args.c_scales:
+            for topk in args.topks:
+                per_phase = [
+                    median([r["kl"] for r in rows if r["phase"] == ph and r["topk"] == topk
+                            and abs(r["c_scale"] - c_scale) < 1e-12])
+                    for ph in range(3)
+                ]
+                if any(np.isnan(v) for v in per_phase):
+                    continue
+                totals[(c_scale, topk)] = float(sum(per_phase))
+        compromise = min(totals, key=lambda kk: totals[kk]) if totals else (0.05, 32)
+        phase_argmins = {PHASE_NAMES[ph]: best[ph][1] for ph in range(3) if ph in best}
+        agree = len(set(phase_argmins.values())) == 1
+        ladder_cfgs = [(0.1, 16)]
+        if compromise != (0.1, 16):
+            ladder_cfgs.append(compromise)
+
+        log.append("")
+        log.append("## Sims ladder (two param configs)")
+        log.append("")
+        log.append(f"- per-phase argmins {'AGREE' if agree else 'DISAGREE'}: {phase_argmins}")
+        log.append(f"- compromise config = argmin of the SUM of the three per-phase median KLs "
+                   f"= c_scale {compromise[0]}, topk {compromise[1]} (sum {totals.get(compromise, float('nan')):.3f})")
+        log.append(f"- ladder runs: {ladder_cfgs} at sims {sorted(args.sims_ladder)}")
+
+        ladder_rows: list[dict[str, Any]] = []
+        t0 = time.time()
+        for sims in sorted(args.sims_ladder):
+            for c_scale, topk in ladder_cfgs:
+                before = ev.misses
+                cfg = replace(base_cfg, simulations=sims, c_scale=c_scale, topk=topk)
+                for pi, pos in enumerate(positions):
+                    probs, _dump = search_one(pos, ev, cfg, args.seed + pi)
+                    m = position_metrics(pos, probs)
+                    m.update(sims=sims, c_scale=c_scale, topk=topk, phase=pos.phase, pi=pi)
+                    ladder_rows.append(m)
+                print(f"[ladder] sims={sims} c_scale={c_scale} topk={topk} done "
+                      f"({ev.misses - before} cache misses)", flush=True)
+        log.append(f"- ladder took {time.time() - t0:.1f}s")
+        log.append("")
+        log.append("| sims | c_scale | topk | phase | median H (nats) | median support | "
+                   "median max-p | median KL(lc0‖ours) | top1 agree |")
+        log.append("|---|---|---|---|---|---|---|---|---|")
+        for sims in sorted(args.sims_ladder):
+            for c_scale, topk in ladder_cfgs:
+                for ph in range(3):
+                    sel = [r for r in ladder_rows if r["sims"] == sims and r["topk"] == topk
+                           and r["phase"] == ph and abs(r["c_scale"] - c_scale) < 1e-12]
+                    if not sel:
+                        continue
+                    log.append(
+                        f"| {sims} | {c_scale} | {topk} | {PHASE_NAMES[ph]} | "
+                        f"{median([r['our_entropy'] for r in sel]):.3f} | "
+                        f"{median([r['our_support'] for r in sel]):.1f} | "
+                        f"{median([r['our_maxp'] for r in sel]):.3f} | "
+                        f"{median([r['kl'] for r in sel]):.3f} | "
+                        f"{np.mean([r['top1_agree'] for r in sel]):.2f} |")
+
     text = "\n".join(log) + "\n"
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(text)
     print(text)
+    # A gate that cannot fail the process is not a gate: the adapter gates decide
+    # whether any number above means anything, so they decide the exit code.
+    if not (ok_rt and ok_idx):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
