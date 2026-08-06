@@ -35101,3 +35101,17 @@ target mass — the gated mixture moves from "follow-up refinement" toward
 sims) is the decider: if frac(R<0) is ~0 at (0.025, all scales), the mixture PR
 gates the restart; if the near-tail clears, launch config-only and build the
 mixture behind it.
+
+### 2026-08-06 — TIER-7 VERDICT (prereg ef67a2960 + two-arm amendment): NULL — training-time shape substitution does not rescue
+
+Same rig/pool/steps/seed as t6_base800 (−45.4 [−89.5, −2.8]):
+- t7_softmain (soft target as main, w_soft 1.0): **−56.1 [−102.8, −11.3]**
+- t7_softmain_nosoft (same + w_soft=0, double-weight control): **−36.6 [−80.1, +5.8]**
+Both arms statistically indistinguishable from the recipe baseline; the reviewer's
+double-weight confound reads ~19 points in the expected direction but is not
+significant. VERDICT: swapping the lc0-shaped soft target in as the main policy
+target does NOT improve Elo on stored data. Combined with the BT4 two-defect
+separation (dbd4acc97): the shape axis is closed at TRAINING time — what remains
+is generation-time (search config + support replenishment through the loop).
+Deploy proof was positive (ACTIVE prints 2/2; policy CE at soft-entropy level in
+retrain_tier7.log). Tier-10 (categorical repair) is the last offline arm.
