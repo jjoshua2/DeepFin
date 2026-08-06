@@ -34285,3 +34285,24 @@ separate reviewer follows.
   run beside live training (load); ruler class identical across arms.
 - ETA: ~2.7h retrain (4 arms paired) + 4×~45min arenas ≈ 6h, gated on
   memory floors beside the live d2003 trainer.
+
+### OPS (2026-08-06 09:28) — d2003 STOPPED BY USER DECISION; program pivots to OFFLINE-FIRST
+
+- User call: the live loop is not gaining (iter-21 row −92.5, no lineage has
+  ever recovered above its boot) and the offline rig has localized the defect
+  to the value labels — stop burning GPU on live data-gen and iterate offline
+  until an arm demonstrably GAINS vs boot512, then relaunch with the fix.
+- Stack stopped via train.sh stop: 4 workers drained cleanly, 1846 in-flight
+  games suspended (resumable), GPU freed (30.9G). Lineage d2003 ends at
+  ~iter 103; final banked weights data/ratchet/snapshots/
+  ck_20260806_d2003_checkpoint_000102 (656M, full trainer.pt + pid_state).
+- Task #143's ~5-day ratchet yardstick is SUPERSEDED by this decision (no
+  5-day window will exist). The lineage's second and final strength row is
+  the already-queued ck102-vs-boot512 arena (200g, seed 42, ruler class
+  identical to the Tier waves) — reads out after Tier-3's arenas.
+- Tier-3 (prereg ca09cb38c) now runs on an idle GPU: ETA collapses from ~6h
+  to ~2h (arena ~11min/200g idle vs ~45min beside training).
+- Offline-first exit criterion (restates the Tier-3 prereg gate): NO live
+  relaunch until an offline arm's arena CI vs boot512 includes or exceeds 0.
+  The relaunch then carries the full restart-gated wave: #360 (+cp mode
+  commit + ruler re-baseline + C rebuild), #364, #332-336, #161 rotation.
