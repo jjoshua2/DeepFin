@@ -35080,3 +35080,24 @@ unset), so the probe is on the training-target path.
    elevated false-promotion rate under deeper verification, (e) equal-dose arena
    non-regression. BT4-tolerates-0.1 remains a HYPOTHESIS for annealing, not
    established.
+
+### 2026-08-06 — BT4 256-GRID: the two defects SEPARATE; my annealing hypothesis REFUTED
+
+BT4 (healthy prior) replicates ALL THREE config findings: argmin c_scale 0.025 in
+every phase; c_scale dominates topk 10-25×; at c_scale 0.1 shape degrades
+MONOTONICALLY with budget (BT4 opening KL 0.108→0.654 across 32→800 sims) and is
+flat at 0.025. ⇒ **budget-dependent over-sharpening is a SEARCH-CONFIG defect,
+universal across nets — c_scale 0.025 is the correct setting for a healthy prior
+too.** My "0.025 is rehab scaffolding, anneal back to 0.1 after support recovers"
+hypothesis (98600239d) is REFUTED — 0.025 is launch AND equilibrium.
+The residual floor is OURS ALONE: at the shared argmin BT4 sits at KL 0.06-0.16,
+we sit at 0.59-0.77 (7-10×, matching the 9-15 vs 20-34 support gap). No search
+config touches it — prior-support defect, target/loop family.
+CONSEQUENCE FOR THE BUNDLE: c_scale 0.025 + topk 32 confirmed as launch values on
+two-net evidence; but at 0.025 the Q-lift cap (~2.9 nats vs 8-11 deficits) means
+gumbel_scale restoration alone likely CANNOT make deep-tail discoveries earn
+target mass — the gated mixture moves from "follow-up refinement" toward
+"required for support recovery." Overnight probe grid (residual barriers at 256
+sims) is the decider: if frac(R<0) is ~0 at (0.025, all scales), the mixture PR
+gates the restart; if the near-tail clears, launch config-only and build the
+mixture behind it.
