@@ -34647,3 +34647,24 @@ separate reviewer follows.
   with displacement; at small doses even the semi-clean recipe is
   near-harmless (noaux −6.9). Keeps the tiny-LR direction test relevant
   for separating direction from dynamics.
+
+### ⚑⚑ VERDICT (2026-08-06 ~14:10) — TIER-5 RUNG 0: THE LITERAL AZ RECIPE FAILS ON OUR STORED SELFPLAY DATA — the divergence from lc0 is UPSTREAM of the loss
+
+- Rig per prereg f2993b989 (1578/w1000, tier1_sp selfplay-only pool):
+    t5_az   (visit policy + game-outcome value) −135.0 [−182.6, −91.7]
+    t5_az_q (visit policy + search-WDL value)    −81.4 [−123.0, −41.9]
+- Pre-committed reading: t5_az CI-clean NEGATIVE ⇒ the PROVEN loss
+  composition fails on OUR selfplay data ⇒ the divergence from the
+  known-good recipe is in DATA GENERATION (and/or the cold-optimizer
+  retrain regime), not in the loss we bolt on top. NET-VS-NET outcomes
+  are toxic here even though the same label family demonstrably works
+  for lc0/AZ.
+- Coherence checks: t5_az ≈ "gameonly + policy" and reads +100 vs
+  t3_gameonly (−235) — policy training protective yet again, same
+  magnitude. t5_az_q beats t5_az by ~54 — search values above outcomes
+  as the value source, consistent with Tier-4's blend result.
+- Prime suspects for WHY our selfplay outcomes differ from lc0's:
+  blind-spot SEEDED games (mid-game seed FENs = artificial positions
+  with systematically weird outcomes), temperature/diversity of 32-sim
+  games, 16-rows/game outcome correlation, adjudication. Next: CPU
+  split of outcome-label quality by opening_source_code (running).
