@@ -34735,3 +34735,26 @@ separate reviewer follows.
   change: it enters via a small fresh-gen batch or the live relaunch
   config, not the stored-shard rig; (c) training-on-lc0-data control is
   an explicitly UNTESTED ASSUMPTION, triggered only if Phase-2 FAILS.
+
+### ⚑ PREREG (2026-08-06) — TIER-7 (queued behind Tier-6): THE SOFT-SHAPE SCREEN — does training the search-facing head on the lc0-shaped target help?
+
+- Hypothesis (from the real-lc0 comparison, 5fd8f3f12): our policy_target
+  is ~2.4x sharper than lc0's; the stored policy_soft_target already has
+  lc0's entropy (1.443 vs their 1.399). If target SHAPE matters, serving
+  the soft target to the MAIN policy head should read >= the recipe
+  baseline.
+- Rig: fast harness (800/w500), iter21 pool, ruler unchanged. New rig
+  knob `rig_policy_from_soft=1` (commit 25a552896, default off, smoke-
+  tested: swap only where has_policy_soft, loud abort on soft-less
+  pools, delegation verified; deploy proof = per-arm ACTIVE print +
+  overrides record). VERDICT IS PROVISIONAL until an independent review
+  of 25a552896 confirms the wrapper (reviewer != author rule; review
+  agent dispatched this session).
+- Arms: t7_softmain = recipe of record + rig_policy_from_soft=1;
+  baseline = Tier-6's t6_base800 (same wave family, same budget).
+- Pre-committed rules: HELPS = t7_softmain point > t6_base800 point AND
+  CI overlapping-or-better (200g cannot CI-separate small effects; a
+  point win routes the soft shape into the Phase-2 recipe for the next
+  big-pool run). HURTS = CI-clean below t6_base800. Either way this only
+  screens SHAPE-VIA-STORED-TARGET; the data-gen shape fix (c_scale/
+  topk) is decided by the lc0-probe agent's surface, not this arm.
