@@ -34964,3 +34964,42 @@ tuning per user directive 08-06.
   legal moves independent of root noise, so the decay cannot distort targets.
   Drift-geometry (58bbdd97c) independently found no composition narrowing.
   DECAY IS NOT A SUSPECT for target shape.
+
+### 2026-08-06 — OUR-NET 256-SIM SWEEP (adapter agent, runs/ournet_probe_256.md): SUPPORT CEILING FOUND
+
+Premise correction: our prior is NOT sharper than lc0's in entropy (H 1.58-1.74 vs
+lc0 targets 1.39-1.89) — it is NARROWER: **support 10-15 moves vs lc0's 20-34**,
+i.e. near-zero mass on ~2/3 of legal moves. KL(lc0‖our prior) 0.57-0.85 vs
+KL(lc0‖BT4 prior) 0.03-0.13.
+- c_scale dominates topk ~10× (KL range 1.3-3.6 vs 0.1-0.25); topk binds at 256
+  but saturates at 32. Per-phase argmin ≈ **(c_scale 0.025, topk 32)** all phases.
+- **Sims ladder at production (0.1,16): shape degrades MONOTONICALLY with budget,
+  no plateau** — 800-sim target entropy collapses to 0.35-0.69 nats. At
+  (0.025,32): FLAT across 32→800 sims (KL ~0.77 opening at every rung). More
+  search at production c_scale actively drives targets AWAY from lc0's shape.
+- **Mechanism: the SUPPORT CEILING.** Gumbel's improved policy can only
+  redistribute mass among moves the prior admits — target support never exceeds
+  prior support (~9-12). A support-narrow prior therefore produces support-narrow
+  targets, which train the prior narrower: a one-way ratchet with NO
+  support-replenishing mechanism in our loop (no Dirichlet noise, no target
+  floor). lc0/AZ inject root Dirichlet every position; KataGo forces playouts.
+  This is a concrete, previously-unnamed member of the TARGET/LOOP family and a
+  candidate mechanism for long-run narrowing. c_scale tuning halves the
+  divergence (1.79→0.77) but CANNOT fix the residual — that is prior-intrinsic.
+- Consequences: (a) Tier-7 (soft-as-main) is now doubly loaded — the soft target's
+  wider shape is exactly a support-replenishment test on existing data; (b)
+  (0.025, 32) enters the relaunch-bundle candidate list, own prereg required;
+  (c) NEW candidate arm (Tier-11, not yet prereg'd): epsilon-mix a uniform-over-
+  legal floor into stored policy targets (Dirichlet-in-expectation) — offline
+  support-replenishment screen on the bank. Caveats per agent: shape-vs-lc0 is a
+  diagnostic not a strength claim; lc0 targets carry Dirichlet tail inflation.
+
+Housekeeping: review items 1-3 CLOSED on the branch (400d39c4d) — load.py now
+WIRED to leela_index (static remap deleted), castling reader takes explicit
+layout + reviewer's test, matched60 committed, goalpost change recorded. Legacy-
+layout retirement: production-side deletion complete but STASHED uncommitted
+(stash@{0} + patch in agent scratchpad) — blocked on ~hundreds of tests that pass
+literal "legacy"; per-site default decision recorded (normalize(None)→
+lc0_root_legacy_meta for leaf calls + require_lc0_history_encoding() raising at
+plumbing boundaries). param-count test proven unaffected (infer_input_planes
+takes only input_extra_features).
