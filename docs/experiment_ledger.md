@@ -34207,3 +34207,36 @@ separate reviewer follows.
   edge truncation candidate). If it does NOT reproduce, the collapse
   needs policy training but no specific leg — a redundant-cause reading
   across policy legs, discriminated further only by pairwise ablations.
+
+### ⚑⚑ VERDICT (2026-08-06 01:55) — TIER-2 COMPLETE: THE VALUE LABELS ALONE ARE SUFFICIENT TO REPRODUCE THE COLLAPSE. No policy leg is necessary; value-only is the WORST arm.
+
+- Final table (all: boot512, full shards_iter21, b512/1578/w1000, compiled
+  conc-16 seed 42, 200 games, Elo vs boot512):
+    full mix (Tier-0 anchor)              −105.6 [−148.1, −66.1]
+    t2_nosfpol  (SF policy legs off)       −75.9 [−117.1, −36.6]
+    t2_novisit  (visit+soft legs off)     −115.2 [−160.2, −73.7]
+    t2_valueonly (ALL policy legs off)    −157.7 [−205.3, −115.0]
+- Pre-registered reading: t2_valueonly REPRODUCES ⇒ the VALUE TARGET is
+  implicated — training ONLY the value heads on these rows produces a
+  collapse at least as large as the full loss. No policy family is
+  necessary (arms 1-2), and the monotone ordering (less policy training ⇒
+  more damage) says policy training was partially PROTECTIVE, not causal.
+  (valueonly-vs-anchor CIs overlap at the edge — "worse than full mix" is
+  strong-suggestive; "reproduces without any policy training" is the
+  CI-clean, load-bearing conclusion.)
+- Convergent with the standing value-target findings: the value target is
+  ABOVE the head yet compressed (handicapped teacher +6.7cp-equiv,
+  sf_wdl_frac floor-pinned 0.45), HL-Gauss edge truncation candidate
+  (A20, ~⅓ of gap), and the boot-shock family's insensitivity to every
+  policy-side lever tried (arm A cp-rank NULL, teacher hygiene NULL).
+- Joint session synthesis: arm A NULL + t2_nosfpol REPRODUCES = two
+  independent instruments exonerating the SF policy teacher for the
+  collapse; Tier-1 already showed both game types carry it; Tier-2 now
+  locates it in the VALUE labels of the stored rows.
+- NEXT (needs its own prereg, user decision): value-side ablation screen
+  on this SAME validated offline rig — candidate arms: sf_wdl_frac
+  floor unpinned/raised, HL-Gauss edge-truncation fix, w_wdl-only vs
+  +sf_eval/categorical aux heads, cp-logistic slope. The rig is cheap
+  (~2h retrain + ~45min arena per arm beside training) and burns no boot.
+- Confound line: arenas beside live training (load); ruler class identical
+  across all arms and anchor, differences are arm-vs-arm on shared inputs.
