@@ -34828,3 +34828,37 @@ agent; INDEPENDENT REVIEW IN FLIGHT — findings PROVISIONAL until it lands):**
   (540/540); only topk 8 differs. Caveat (author's own): KL-to-lc0 is a SHAPE
   diagnostic, not an objective (different net, 800-visit target, Dirichlet
   noise); any c_scale retune needs its own prereg on our yardstick.
+
+### 2026-08-06 — lc0-adapter review verdict: REQUEST CHANGES, all substantive claims CONFIRMED
+
+Independent review (separate agent, own instruments) of 5fbb98b0f: every finding in
+5fbf/5fd8f3f12's provisional entry UPGRADED to confirmed —
+- permutation verified against reviewer's own reference (7,976 positions / 243,071
+  legal moves, 0 mismatches);
+- `onnx/load.py::build_lc0_policy_remap` defect reproduced index-level on unmodified
+  main (e1g1 read from Leela's slide slot instead of e1h1; a7a8 read as a7a8q);
+  reviewer's sample reads 7.9% of positions affected vs author's 9.3% — sampling
+  difference, same phenomenon. Blast radius confirmed: zero runtime users of
+  OnnxChessNet outside onnx/ — no training path affected. NOTE: the branch does
+  NOT fix load.py itself (commit subject overstates); decision routed to author.
+- test anti-circularity confirmed (reference from chess.Move, not our tables); 7/7 pass;
+- decoder file-reversal confirmed both legs (kings 17+19/21 vs 0/21 naive;
+  top-move agreement 42/60 reviewer vs 43/60 author — one-position comment
+  discrepancy, chance ~1/33 either way);
+- cache-key soundness (position-only, no config leak) and the ceil(sims/2)=16
+  candidate cap verified against gumbel.py:710-711 — the topk-inert-at-32-sims
+  result is a theorem of the implementation.
+Three change requests routed back to the author agent: (1) BLOCKING — guard
+`castling_from_lc0_planes` on plane layout (silently wrong on `legacy`); (2) decide
+the load.py wiring explicitly; (3) commit the matched-set generator + record the
+0.75→0.5 startpos-gate loosening in the frozen doc. Lint gate on the branch: clean
+repo-wide (after C-ext build; note lint.sh is red in any never-built worktree).
+
+**Sweep program in flight (user-directed):** production data-gen budget is 256 sims
+(fast plies write no rows), where the halving cap is 128 — so topk 16 BINDS there
+and the 32-sim "topk inert" result does NOT transfer. Author agent now running, CPU
+only: (a) our-net (boot512) 32-sim grid; (b) PRIMARY 256-sim grid, both nets,
+c_scale {0.025,0.05,0.1,0.25} × topk {8,16,32,64,128}; (c) sims ladder
+{32,64,128,256,+512/800 if affordable} at production params + argmin candidate —
+800 = lc0's own target budget. Shape diagnostics only; any production change needs
+its own prereg on our arena yardstick.
