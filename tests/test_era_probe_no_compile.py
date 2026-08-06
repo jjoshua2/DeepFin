@@ -257,6 +257,9 @@ def test_a_raising_probe_warns_once_and_does_not_propagate(
     second = cap.out + cap.err
     assert second.count("[probe] WARNING") == 1, second
     assert "Traceback (most recent call last)" not in second, second
+    # Leave the process-wide flag as the module defines it, so this test
+    # cannot couple to any other through import order.
+    trainable_phases._PROBE_TRACEBACK_PRINTED = False
 
 
 def test_the_probe_failure_handler_does_not_wrap_the_training_step() -> None:
