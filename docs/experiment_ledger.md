@@ -34566,3 +34566,60 @@ separate reviewer follows.
   policy is a good teacher; recycling search VALUES into the value
   target is the hazard. Consistent with policy-training-protective
   (Tier-2) and the whole value-side localization.
+
+### ⚑⚑ VERDICT (2026-08-06 12:58) — TIER-4: PREDICTION CONFIRMED (categorical is the main aux carrier); BEST ARM EVER = noaux + game-outcome REMOVED, CI comfortably includes 0
+
+- Elo vs boot512, 200g, rig per prereg 2b550f6be:
+    t4_auxsplit_sfeval (cat ON,  sf_eval off)  −109.5 [−161.5, −61.8]
+    t4_auxsplit_cat    (cat OFF, sf_eval on)    −68.6 [−111.0, −28.2]
+    t4_noaux_sfonly    (aux off, pure SF)       −65.0 [−111.7, −20.6]
+    t4_noaux_nogame    (aux off, sf.69/srch.31) −15.6 [ −57.8, +26.1]
+- Pre-registered prediction (1be7120e0, committed before readout):
+  CONFIRMED in direction — the categorical-ON arm reads deep (point ≤
+  −100, CI overlaps the t2_valueonly band) ⇒ by the pre-committed rule
+  the CATEGORICAL head carries the aux damage. Partial nuance: cat-off
+  recovered to −68.6, not all the way to t3_noaux (−36.6), and its point
+  misses the >−60 clause ⇒ w_sf_eval contributes a smaller share too.
+  Both aux heads harm; categorical ~2-3x worse. The mechanism entry
+  (edge-spike outcome head at w=0.3) stands.
+- SURPRISE against my reading, worth stating: pure-SF label (−65.0) is
+  NOT the best blend — keeping search WDL as a ~31% minority component
+  (nogame, −15.6) reads ~50 Elo better (CIs overlap; ordering only).
+  "Trust its policy, don't eat its values" over-simplified: search
+  values as a MINORITY blend component look useful; as a majority or
+  solo source they were toxic (t3_searchonly −145). Game outcome
+  removal is the unambiguous win.
+- By the prereg rules: t4_noaux_nogame = SUCCESS (CI includes 0, upper
+  +26.1) — the 363050e5e milestone is MET; the bdc2928fb GAIN bar
+  (CI > 0) is not yet. RECIPE OF RECORD for Phase-2:
+  sf_wdl_frac=0.69, search_wdl_frac=0.31 (game 0), w_sf_eval=0,
+  w_categorical=0.
+
+### ⚑ PREREG (2026-08-06) — PHASE-2 GAIN ATTEMPT: recipe of record + full protective policy loss + the 713-shard clean bank
+
+- Hypothesis: with the poison removed (game outcome + aux heads) and the
+  protective policy legs restored, training boot512 on the LARGE clean
+  pool produces a measurable GAIN (the labels provably sit above the
+  head; the screens only ever used an 8x-smaller pool at 4+ views).
+- Pool: data/salvage/pre_restart_20260804/seeds/slot_000/replay_shards —
+  713 quarantine-PASSED shards (~1.43M rows), old-lineage window ~iters
+  404-478, deep-teacher (~698k-node) SF labels, post-C17.
+- Loss: production config PLUS overrides = value recipe of record
+  (sf 0.69 / search 0.31 / game 0, aux heads 0) + SF POLICY legs OFF
+  (w_sf_move=0, w_sf_own=0, w_sf_own_regret=0 — the only direct test,
+  t2_nosfpol, read them net-negative) + visit/soft/future/moves_left at
+  production. Confound line: recipe was screened on the iter21 pool;
+  Phase-2 changes pool+steps together — acceptable because the verdict
+  is ABSOLUTE (CI vs boot512), not anchor-paired.
+- Arms (separate cold runs, absorption curve): p2_1view (2800 steps ≈ 1
+  view of 1.43M) and p2_2view (5600 steps). Arena each at 200g first;
+  then the better arm re-arenas at 1000 games (~±20 Elo).
+- Pre-committed rules: GAIN PROVEN = 1000-game CI entirely > 0 ⇒ relaunch
+  planning begins (with its own live-translation prereg). PARTIAL =
+  1000g CI includes 0 with point > 0 ⇒ extend steps/pool (absorption
+  curve rising) or accept plateau. FAIL = point ≤ 0 at 1000g ⇒ the
+  stored pool carries no net-usable above-net signal at this recipe ⇒
+  pivot to label depth/coverage (BT4-distill direction) and the
+  t5_az/rung-1 line. Curve reading: p2_2view > p2_1view = absorbing;
+  equal/worse = plateau at the pool's information ceiling.
+- Queue: behind tier5az. ETA ~3h of GPU after it starts.
