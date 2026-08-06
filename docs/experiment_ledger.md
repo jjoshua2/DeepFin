@@ -35003,3 +35003,26 @@ literal "legacy"; per-site default decision recorded (normalize(None)→
 lc0_root_legacy_meta for leaf calls + require_lc0_history_encoding() raising at
 plumbing boundaries). param-count test proven unaffected (infer_input_planes
 takes only input_extra_features).
+
+### 2026-08-06 — ERRATUM to 091cbae18 + TWO-MECHANISM ACCOUNT of target narrowing (user hypotheses CONFIRMED in code)
+
+ERRATUM: 091cbae18 said "DECAY IS NOT A SUSPECT for target shape — gumbel_scale
+affects only the PLAYED move." WRONG. `_select_top_m_with_gumbel` (gumbel.py:694,
+:703 `scale = gumbel_scale if add_noise else 0.0`) uses gumbel_scale to pick the
+CANDIDATE SET: with scale 0 (production after move ~15) candidates are the
+deterministic prior top-k, so a low-prior move can never be visited and can never
+earn mass in the improved-policy target. The Gumbel paper drops Dirichlet BECAUSE
+the noise's unbounded tails take over the support-replenishment job; our decay
+closes that valve for every position after move 15 (the majority of rows). The
+exoneration's reasoning ("target independent of noise") holds only conditional on
+the visited set, which the noise determines.
+Mechanism 2 (also user-diagnosed): `sigma = c_scale × (c_visit + max_visit)`
+(gumbel.py:321-322) — sigma grows LINEARLY with budget. mctx's value_scale=0.1
+default was calibrated at tens of sims; at 256 sims effective sigma is several
+times the calibration point. Explains the monotone budget degradation at (0.1,16)
+and the budget-flatness of (0.025,32) (≈ calibration-regime sigma at 256 sims).
+The two mechanisms are SEPARATE and compound: (1) support truncation after move
+15 (valve closed), (2) within-support over-sharpening ∝ budget.
+Relaunch-bundle candidates (each needs own prereg): c_scale 0.025, topk 32,
+late-game gumbel_scale > 0 (e.g. 0.25). Offline principle tests: Tier-7 (soft-as-
+main, running) + Tier-11 epsilon-floor (proposed, not prereg'd).
