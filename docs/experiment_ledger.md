@@ -34633,3 +34633,17 @@ separate reviewer follows.
   excludes 0 either way, verdict FINAL; (d) if it includes 0, extend
   ONCE by 500 more (third seed) and judge on the pooled 1000 — no
   further extensions, so optional stopping cannot fish for significance.
+
+### VERDICT (2026-08-06 13:35) — FAST HARNESS VALIDATED: the 800-step screen reproduces the 1578-step verdicts
+
+- t3f_gameonly @800/w500: −137.0 [−187.9, −91.2]  (1578 ref −235.4)
+  t3f_noaux    @800/w500:   −6.9 [ −50.8, +36.7]  (1578 ref  −36.6)
+- Pre-committed rule (e1d6af66e): ordering kept AND CI-separated
+  (gameonly upper −91.2 < noaux lower −50.8) ⇒ VALIDATED. Adopted:
+  future screens default to 800/w500 + one internal baseline arm per
+  wave; full 1578 reserved for borderline arms.
+- Bonus observation: damage is DOSE-DEPENDENT — both arms read ~40-60%
+  of their 1578-step magnitude at half the steps. The poison accumulates
+  with displacement; at small doses even the semi-clean recipe is
+  near-harmless (noaux −6.9). Keeps the tiny-LR direction test relevant
+  for separating direction from dynamics.
