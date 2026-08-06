@@ -34170,3 +34170,24 @@ separate reviewer follows.
 - Trial d2003 stays LIVE past iter 21 (standing task #143 ratchet
   yardstick unaffected). Tier-2 loss-leg ablation chain fires now, gated
   on this arena's append line.
+
+### ⚑⚑ VERDICT (2026-08-06 00:20) — TIER-2 ARM 1 (t2_nosfpol): damage SURVIVES with ALL SF policy legs removed ⇒ SF POLICY TARGETS EXONERATED as the necessary cause
+
+- Rig: Tier-0 exactly (boot512, full shards_iter21 pool, b512/1578/w1000,
+  --no-rebuild-sf-targets), w_sf_move=0 w_sf_own=0 w_sf_own_regret=0.
+  Arena (compiled conc-16 seed 42, 200 games): Elo(vs boot512) =
+  **−75.9 [−117.1, −36.6]**. Anchor −105.6 [−148.1, −66.1].
+- Pre-committed rule: DAMAGE GONE (CI incl 0) = removed leg necessary.
+  CI decisively excludes 0 ⇒ NOT GONE ⇒ the SF policy teacher (sf_p0,
+  opponent-reply policy_sf, regret weighting — all of it) is NOT required
+  to reproduce the collapse.
+- Joint reading with arm A (same session): cp-rank as deployed didn't
+  move the boot shock, AND removing the legs it reranks doesn't move the
+  offline collapse. Two independent instruments now point away from the
+  SF policy target family for THIS defect. (The mate fix #360 remains
+  correct on its own merits — its case is steady-state quality, not the
+  collapse.)
+- Remaining suspects by prereg: search-visit policy targets (t2_novisit,
+  arena next) and value labels (t2_valueonly, last). If t2_valueonly
+  reproduces, the value target is implicated with policy legs entirely
+  absent.
