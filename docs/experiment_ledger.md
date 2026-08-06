@@ -34240,3 +34240,48 @@ separate reviewer follows.
   (~2h retrain + ~45min arena per arm beside training) and burns no boot.
 - Confound line: arenas beside live training (load); ruler class identical
   across all arms and anchor, differences are arm-vs-arm on shared inputs.
+
+### ⚑ PREREG (2026-08-06) — TIER-3: VALUE-LABEL SOURCE DECOMPOSITION — which component of the WDL blend carries the collapse?
+
+- Context: Tier-2 proved the VALUE labels alone reproduce the collapse
+  (t2_valueonly −157.7, worst arm). The trained WDL target is a 3-way
+  blend (yaml: sf_wdl_frac 0.45 / search_wdl_frac 0.20 / game 0.35).
+  This wave decomposes it. It doubles as the "prove offline training
+  works" gate: until some offline arm stops losing to its own
+  initialization on our own labels, no live/RL intervention is worth
+  compute — an arm with CI including 0 is the existence proof and the
+  anti-collapse candidate for the next live prereg.
+- Rig: IDENTICAL to Tier-2 (boot512, full shards_iter21, b512/1578 steps,
+  cold optimizer, seed via config, --no-rebuild-sf-targets), 4 variants in
+  one paired retarget_retrain run; arena_standard vs boot512, matched_sims
+  32, --search-shape training, 200 games, seed 42, conc-16, compile on.
+- Arms (ALL include the five policy weights = 0, matching t2_valueonly):
+    t3_sfonly     sf_wdl_frac=1.0, search_wdl_frac=0.0  (pure SF cp-logistic)
+    t3_gameonly   sf_wdl_frac=0.0, search_wdl_frac=0.0  (pure game outcome)
+    t3_searchonly sf_wdl_frac=0.0, search_wdl_frac=1.0  (pure search WDL)
+    t3_noaux      production blend, w_sf_eval=0, w_categorical=0
+                  (tests the aux value heads the blend arms cannot see)
+- Wiring: overrides flow retarget_retrain.py config.update ->
+  trainer_kwargs_from_config (trainer.py:1560-1561) -> losses.py:701-762;
+  offline rig has no PID, so the override IS the realized value. Proof
+  recorded per-arm in retarget_report.json `overrides`; cross-arm wdl-loss
+  divergence in final_metrics is the in-effect signal.
+- Pre-committed decision rules (per arm, Elo vs boot512, 95% CI):
+    CARRIER: CI overlaps t2_valueonly [−205.3, −115.0] AND point ≤ −100.
+    CLEARS THE ANCHOR: CI lower bound > −66.1 (entirely above the
+      full-mix anchor's CI). Strong success: CI includes 0.
+    LOCALIZATION SUCCESS: ≥1 pair of arms with non-overlapping CIs.
+    KILL (no localization): all four arms' CIs mutually overlap ⇒ the
+      mechanism is common target construction (HL-Gauss mapping / value
+      head training itself), NOT the label source ⇒ next prereg is the
+      HL-Gauss edge-truncation fix arm.
+- Confounds: (a) convexity caveat — single-source arms may each read
+  worse than the blend without contradiction; the readout is ORDERING
+  among arms, not absolute-vs-blend. (b) arms 1-3 still carry SF signal
+  via aux heads w_sf_eval/w_categorical (constant across arms; arm 4
+  covers that family). (c) rows lacking SF/search labels fall back to
+  game outcome INSIDE the sf/search terms (losses.py:751-762) — pure-
+  source arms are diluted toward game_oh on label-absent rows. (d) arenas
+  run beside live training (load); ruler class identical across arms.
+- ETA: ~2.7h retrain (4 arms paired) + 4×~45min arenas ≈ 6h, gated on
+  memory floors beside the live d2003 trainer.
