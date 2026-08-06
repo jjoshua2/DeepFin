@@ -245,6 +245,12 @@ def _run_puzzle_eval_if_due(
     }
 
 
+# One full probe traceback per PROCESS. A wedged probe fails identically every
+# iteration for the rest of the session, so the second traceback carries no
+# information the first did not — only the one-line warning repeats.
+_PROBE_TRACEBACK_PRINTED: bool = False
+
+
 def _run_era_probes_if_due(
     model: torch.nn.Module,
     probes: dict[str, ProbeSet],
@@ -266,31 +272,43 @@ def _run_era_probes_if_due(
     sets) that is 8 forwards against ~88 full training steps. ``probe_ms`` is
     published so the bound is checkable on the row rather than argued here.
 
-    Failure is non-fatal and LOUD. A probe that raises must not take down a
-    training iteration — but a probe that silently stops reporting is the exact
-    failure mode this instrument exists to end, so the exception is printed
-    with its traceback and the columns fall back to nan (visibly absent),
-    never to a stale value.
+    Failure is non-fatal and VISIBLE, but no longer a traceback storm. A probe
+    that raises must not take down a training iteration — but a probe that
+    silently stops reporting is the exact failure mode this instrument exists
+    to end, so the columns fall back to nan (visibly absent), never to a stale
+    value, and every failing iteration prints exactly ONE warning line naming
+    each failed label and its exception TYPE. The full traceback is printed
+    once per process, on the first failure: a wedged probe repeats every
+    iteration for the rest of the session (live 2026-08-05: ~60 traceback
+    frames per iteration, indefinitely), which buries the log the operator
+    needs to diagnose anything else.
     """
     if not probes or int(tc.era_probe_interval) <= 0:
         return probe_metric_defaults()
     if int(iteration_zero_based) % int(tc.era_probe_interval) != 0:
         return probe_metric_defaults()
+    global _PROBE_TRACEBACK_PRINTED
     readings: dict[str, ProbeReading] = {}
+    failures: list[str] = []
     for label, probe in probes.items():
         try:
             readings[label] = score_probe_set(
                 model, probe, device=device, batch_size=tc.era_probe_batch_size,
             )
-        except Exception:
-            print(
-                f"[probe] {label}: scoring RAISED at iteration "
-                f"{int(iteration_zero_based) + 1}; probe_{label}_* read nan for "
-                f"this row (the probe is an instrument, not a training input — "
-                f"the iteration is unaffected)",
-                flush=True,
-            )
-            traceback.print_exc()
+        except Exception as exc:
+            failures.append(f"{label}: {type(exc).__name__}: {exc}")
+            if not _PROBE_TRACEBACK_PRINTED:
+                _PROBE_TRACEBACK_PRINTED = True
+                traceback.print_exc()
+    if failures:
+        print(
+            f"[probe] WARNING: scoring RAISED at iteration "
+            f"{int(iteration_zero_based) + 1} for {len(failures)} set(s) "
+            f"[{'; '.join(failures)}]; those probe_* columns read nan for this "
+            f"row (the probe is an instrument, not a training input — the "
+            f"iteration is unaffected)",
+            flush=True,
+        )
     return probe_metrics(readings)
 
 

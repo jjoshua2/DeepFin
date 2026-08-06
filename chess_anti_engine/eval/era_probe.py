@@ -88,9 +88,10 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -456,6 +457,73 @@ def load_probe_set(
     )
 
 
+def eager_module(model: torch.nn.Module) -> torch.nn.Module:
+    """Peel ``torch.compile`` / SWA wrappers off ``model``, innermost wins.
+
+    The probe is an auxiliary eval running INSIDE the trainer process, and the
+    trainer's ``self.model`` is the ``torch.compile`` ``OptimizedModule``
+    (``train/compile_probe.py: apply_compile`` rebinds it). Calling that
+    wrapper at a shape the training step never uses sends the probe into
+    inductor for a fresh cudagraph capture, and a capture that fails does not
+    fail alone: it leaves ``cudagraph_trees`` mid-recording and every later
+    capture in the process dies with ``beginAllocateToPool: already recording
+    to mempool_id`` (live 2026-08-05, trial d2003 — CUBLAS threw
+    ``CUBLAS_STATUS_INTERNAL_ERROR`` mid-capture and both probes were dead for
+    the rest of the session). Scoring the eager module is not a workaround for
+    that CUBLAS error; it is the rule that an instrument must not be able to
+    mutate the trainer's compile state at all.
+
+    Unwrapping is by ATTRIBUTE, never by name-munging: ``AveragedModel`` nests
+    the compiled module (``module._orig_mod.*``), so the wrappers come off one
+    layer at a time until a module with neither attribute is left. An object
+    that is not wrapped is returned unchanged, which is the CPU/test path and
+    the ``use_compile: off`` path.
+    """
+    seen: set[int] = set()
+    cur = model
+    while id(cur) not in seen:
+        seen.add(id(cur))
+        inner = getattr(cur, "_orig_mod", None)
+        if not isinstance(inner, torch.nn.Module) and isinstance(
+            cur, torch.optim.swa_utils.AveragedModel,
+        ):
+            # AveragedModel.forward delegates to .module, so descending is
+            # weight-identical and is the only way to reach a nested _orig_mod.
+            inner = getattr(cur, "module", None)
+        if not isinstance(inner, torch.nn.Module):
+            break
+        cur = inner
+    return cur
+
+
+def _probe_forward_eager(module: torch.nn.Module, x: torch.Tensor) -> Any:
+    """One probe forward, fenced off from dynamo.
+
+    Belt to :func:`eager_module`'s braces, and the ORDER matters. The unwrap is
+    what makes capture structurally impossible — there is no compiled callable
+    left to enter. The disable wrapper alone would NOT have fixed the bug:
+    ``OptimizedModule.__call__`` installs its own dynamo context, so a
+    ``torch.compiler.disable``d caller still compiles it (measured on CPU with
+    a counting backend, and pinned by
+    ``tests/test_era_probe_no_compile.py::test_the_decorator_alone_does_not_save_us``).
+    What the wrapper buys is that dynamo cannot trace INTO the eager module
+    if the
+    probe is ever called from a compiled frame, so a future caller cannot
+    reintroduce the wedge by wrapping its own loop.
+    """
+    return module(x)
+
+
+# Applied as a call rather than a decorator, and re-annotated: torch declares
+# ``disable`` as returning a one-argument callable, so the decorator form makes
+# every call site a type error that could only be silenced with a suppression
+# whose validity tracks the installed torch stubs.
+_probe_forward: Callable[[torch.nn.Module, torch.Tensor], Any] = cast(
+    "Callable[[torch.nn.Module, torch.Tensor], Any]",
+    torch.compiler.disable(_probe_forward_eager),
+)
+
+
 @torch.inference_mode()
 def score_probe_set(
     model: torch.nn.Module,
@@ -484,6 +552,10 @@ def score_probe_set(
     had nothing to do with the net. It also means the probe's ABSOLUTE level is
     not the number the trainer's own loss sees — the probe is for the trend and
     for the era/in-window contrast, and neither depends on that offset.
+
+    The forward runs on the EAGER module (see :func:`eager_module`) — never on
+    the trainer's compiled wrapper, which the probe's row-cap shape would send
+    into a fresh cudagraph capture.
     """
     t0 = time.perf_counter()
     n = int(probe.n_rows)
@@ -491,6 +563,11 @@ def score_probe_set(
     if n <= 0:
         return ProbeReading()
 
+    module = eager_module(model)
+    # eval()/train() stay on the object the CALLER handed us: OptimizedModule
+    # registers _orig_mod as a submodule, so the mode change reaches the same
+    # parameters either way, and restoring the wrapper's own flag keeps the
+    # trainer's view of its model exactly as it was.
     was_training = bool(model.training)
     model.eval()
     pol_sum = 0.0
@@ -502,7 +579,7 @@ def score_probe_set(
             stop = min(n, start + bs)
             chunk = {k: v[start:stop] for k, v in probe.arrays.items()}
             batch = collate_arrays(chunk, device=device)
-            out = model(batch["x"])
+            out = _probe_forward(module, batch["x"])
             logits = out["policy"] if "policy" in out else out.get("policy_own")
             if logits is None:
                 raise KeyError("model outputs carry neither 'policy' nor 'policy_own'")
