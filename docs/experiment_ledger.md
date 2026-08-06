@@ -34688,3 +34688,28 @@ separate reviewer follows.
   dependence (half the steps = roughly half the damage). Phase-2's big-
   pool 1-2 view design is the indirect test; the direct test (gameonly
   @1view-big vs @5views-small) is a Tier-6 candidate if needed.
+
+### ⚑⚑ FINDING (2026-08-06 ~15:00) — REAL LC0 DATA COMPARISON: OUR POLICY TARGETS ARE ~2.4x SHARPER THAN LC0'S; THE LC0-SHAPED TARGET ALREADY EXISTS IN OUR ROWS AS policy_soft_target
+
+- Method: 80MB prefix of test80 tar (training-run1-test80-20240401-0017),
+  119 games / 13,115 positions, v6 records parsed (record 8356, version
+  6 verified). Same stats as measured on tier1_sp.
+- lc0: entropy p50 1.399 nats, max-prob p50 0.562, one-hot 1.3%,
+  support p50 30, ~110 stored rows/game, opening-bucket entropy 1.69.
+  OURS: 0.588 / 0.822 / 21.9% / 25.
+- Reading: a ~3500-Elo net (test80) trains on FLATTER targets than our
+  ~2000-Elo net. Our sharpness ≈ prior sharpness (c_scale 0.1 means Q
+  barely tempers the prior; prior temp already flagged overconfident) —
+  self-reinforcement risk: sharp target -> sharper prior -> sharper
+  target. Diversity/duplication REFUTED as the divergence (0.02% dup
+  rows, 0 duplicate trajectories); shape mismatch is the live suspect.
+- policy_soft_target median entropy 1.443 ≈ lc0's 1.399 — the lc0-shaped
+  target is ALREADY STORED per row. Cheapest screen: offline arm
+  training the MAIN policy head on the soft target (needs a small
+  retarget-rig option; heads are hard-wired to their own targets).
+  Data-gen levers for rung 1 if the screen reads well: raise c_scale
+  toward paper default / prior temp / pi' temperature.
+- Caveat: test80 is PUCT-800 vs our Gumbel-32 — shape difference partly
+  reflects budget; but the lc0 target's flatness comes from visit
+  statistics, ours from a barely-perturbed prior. The screen tests
+  whether SHAPE (not provenance) is what matters.
