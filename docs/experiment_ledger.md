@@ -34897,3 +34897,15 @@ cost: ~1.4M rows × ~70ms CPU batch-1, parallelizes across cores (~2-3h) or subs
 contention). Full prereg (exact commands, kill/success thresholds, confounds incl.
 "BT4 prior may be conjugate to nothing in our eval battery" check) REQUIRED before
 launch per protocol — this entry is direction, not authorization.
+
+### 2026-08-06 — Tier-8 (BT4 distillation) WITHDRAWN as strategy by user decision
+
+User verdict on f8ec96297: distilling an lc0-family net is a solved, off-mission
+path — it manufactures a generic net and dilutes anti-SF specialization, which is
+the project's identity. Tier-8 will NOT be prereg'd or launched. BT4's role stays
+diagnostic-only: shape ruler for the sweep program + host-a-foreign-net correctness
+proof (leela_index). The gain thesis reverts to making OUR loop's data compound:
+(1) generation-time shape (c_scale/topk/sims sweeps), (2) training-time shape
+(Tier-7 soft-as-main), (3) recipe pooled-1000 relaunch bar, (4) rebuilt target
+construction for the vs-SF curriculum (Tier-1: the toxin was construction, not
+game type).
