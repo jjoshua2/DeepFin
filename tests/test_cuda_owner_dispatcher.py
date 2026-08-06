@@ -104,14 +104,31 @@ def test_supports_inplace_api_wrappers_query_inner() -> None:
         dispatcher.close()
 
 
+class _Encoding:
+    """Stands in for the model, the object that declares the encoding.
+
+    ``EncodedEvalCache`` namespaces its keys by encoding version, so it must
+    be told which encoding it is caching; these stub evaluators wrap nothing
+    that could answer.
+    """
+
+    input_extra_features = "v2_threats"
+    input_history_encoding = "legacy"
+    policy_encoding = "lc0_1858"
+    use_dynamic_relations = False
+
+
 def test_supports_inplace_api_composes_through_cache_and_nesting() -> None:
     dispatcher = CUDAOwnerDispatcher(ThreadSafeGPUDispatcher(_OwnerInner()))
     try:
-        cached = EncodedEvalCache(dispatcher, max_entries=16)
+        cached = EncodedEvalCache(
+            dispatcher, max_entries=16, encoding_source=_Encoding(),
+        )
         assert supports_inplace_api(cached) is True
     finally:
         dispatcher.close()
     cached_slotless = EncodedEvalCache(
         ThreadSafeGPUDispatcher(_SlotlessInner()), max_entries=16,
+        encoding_source=_Encoding(),
     )
     assert supports_inplace_api(cached_slotless) is False
