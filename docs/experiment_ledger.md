@@ -34922,3 +34922,29 @@ optimistic tail. The 612c07782 FAIL pivot (BT4 distill) was WITHDRAWN by the use
 (95ba2cfe0); the gain program is now the innovations track: repaired-KataGo-aux +
 surprise weighting (rig), Gumbel shape/params from the sweeps (data-gen), window
 policy (relaunch). Task #166 CLOSED on this verdict.
+
+### 2026-08-06 — PREREG Tier-10: REPAIRED categorical head (the lc0/KataGo-faithful aux arm)
+
+Hypothesis: the categorical head hurt (Tier-4: cat-ON −109.5 vs cat-OFF −68.6)
+because its TARGET was broken — raw ternary outcome + HL-Gauss edge clip
+(1be7120e0) — not because distributional value auxiliaries are bad; lc0/KataGo
+evidence says a properly-targeted aux HELPS value learning. The repair needs no
+new code: `rebuild_categorical_target_in_arrays` (target_builder.py:757) mirrors
+live finalize and is enabled by flat keys (trainer.py:1498-1501).
+Arms (retarget rig, 800 steps/warmup 500, shards_iter21 pool, cold optimizer,
+RECIPE base = sf_wdl_frac=0.69,search_wdl_frac=0.31,w_sf_eval=0,w_sf_move=0,
+w_sf_own=0,w_sf_own_regret=0):
+- `t10_catfix`:  RECIPE + w_categorical=0.3, rebuild_categorical_target=true,
+  categorical_blend_frac=0.69, categorical_search_blend_frac=0.31
+  (mirrors the recipe's value blend into the categorical target; outcome weight 0)
+- `t10_catfix_low`: same with w_categorical=0.1
+Yardstick: standard 200g arena vs boot512 (seed 42, matched_sims 32, training
+shape, conc 16, compile on). Baseline for comparison: t6_base800 (identical rig,
+categorical OFF) — reads out tonight.
+Pre-committed rules: SUCCESS = better t10 arm point > t6_base800 point AND its CI
+upper > +20 (aux must ADD, not just not-hurt). KILL (defect re-armed) = t10 point
+< t6_base800 point − 25. Anything between = NULL, aux head stays out of the
+relaunch bundle. Confound: none new — same pool/steps/seed as t6_base800.
+Optional arm 3 (only if SUCCESS): extract lc0's exact categorical constants
+(bins/support/smoothing/target value) from lc0 source and match them — copying
+tuning per user directive 08-06.
