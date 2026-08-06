@@ -204,6 +204,48 @@ def _parse_variant(spec: str) -> tuple[str, dict]:
     return name, overrides
 
 
+class _SoftPolicyAsMainBuffer:
+    """Rig-only buffer view: serve ``policy_soft_target`` as the MAIN policy target.
+
+    Screens the lc0-shape hypothesis (ledger 2026-08-06: our policy_target is
+    ~2.4x sharper than real lc0 training targets, while the stored
+    ``policy_soft_target`` already matches lc0's entropy) without touching
+    production code: the trainer sees batches whose ``policy_target`` IS the
+    soft target, so the search-facing head trains on the lc0-shaped
+    distribution. Rows lacking a soft target keep their hard target —
+    ``has_policy`` stays authoritative for masking; ``has_policy_soft`` only
+    gates the swap. Activated per-variant via ``rig_policy_from_soft=1``
+    (popped before the config reaches the Trainer).
+    """
+
+    def __init__(self, inner: DiskReplayBuffer):
+        self._inner = inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    def __len__(self) -> int:
+        return len(self._inner)
+
+    def sample_batch_arrays(self, batch_size: int, **kw) -> dict:
+        arrs = self._inner.sample_batch_arrays(batch_size, **kw)
+        soft = arrs.get("policy_soft_target")
+        hard = arrs.get("policy_target")
+        has_soft = arrs.get("has_policy_soft")
+        if soft is None or hard is None or has_soft is None:
+            raise SystemExit(
+                "rig_policy_from_soft=1 but the sampled batch lacks "
+                "policy_soft_target/has_policy_soft — this pool predates soft "
+                "targets, so the arm would silently train on hard targets"
+            )
+        swapped = hard.copy()
+        mask = has_soft.astype(bool)
+        swapped[mask] = soft[mask].astype(swapped.dtype, copy=False)
+        out = dict(arrs)
+        out["policy_target"] = swapped
+        return out
+
+
 def _run_variant(
     *,
     name: str,
@@ -224,6 +266,9 @@ def _run_variant(
     config = dict(base_config)
     config["rebuild_sf_targets"] = bool(rebuild_sf_targets)
     config.update(overrides)
+    # Rig-only knob: never a Trainer/TrialConfig key, so pop it here. The
+    # override stays recorded in the summary's `overrides` for deploy proof.
+    rig_policy_from_soft = bool(config.pop("rig_policy_from_soft", 0))
 
     import torch
 
@@ -395,8 +440,13 @@ def _run_variant(
                 "(wrong --replay-dir, or plane-count mismatch with the "
                 "checkpoint arch)"
             )
+        train_buf: Any = buf
+        if rig_policy_from_soft:
+            print(f"[retarget-{name}] rig_policy_from_soft ACTIVE: main policy "
+                  "target served from policy_soft_target (soft-shape screen)")
+            train_buf = _SoftPolicyAsMainBuffer(buf)
         t0 = time.time()
-        metrics = trainer.train_steps(cast(Any, buf), batch_size=int(batch_size), steps=int(steps))
+        metrics = trainer.train_steps(train_buf, batch_size=int(batch_size), steps=int(steps))
         duration = time.time() - t0
     finally:
         buf.close()
