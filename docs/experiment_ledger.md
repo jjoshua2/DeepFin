@@ -34403,3 +34403,44 @@ separate reviewer follows.
   verdict: the live loop as configured neither gains nor recovers.
 - The d2003 lineage is now fully documented: boot 0 → iter21 −92.5 →
   iter103 −86.9. Banked weights: ck_20260806_d2003_checkpoint_000102.
+
+### ⚑⚑ MECHANISM (2026-08-06 12:00) — THE CATEGORICAL HEAD IS AN UNBLENDED GAME-OUTCOME HEAD AT WEIGHT 0.3; ITS HL-GAUSS TARGET IS AN EDGE-SPIKE FOR 76% OF ROWS
+
+- Read directly off the stored pool (184,639 rows, CPU, no arena):
+  outcome dist W .434 / D .241 / L .325; mean HL-Gauss edge-bin mass
+  0.669; 75.9% of rows carry >0.5 of categorical target mass in the two
+  edge bins. Outright outcome-vs-SF contradictions are RARE (0.23% at
+  |q|>0.8) — mislabeling is not the story; the story is target
+  construction:
+- Chain of custody: configs/pbt2_small.yaml has NO categorical_blend_frac
+  key ⇒ categorical_target_value() takes its documented default path and
+  returns the RAW TERNARY GAME OUTCOME (targets.py:69 "byte-identical to
+  the legacy behaviour"); hlgauss_target() then clips value ±1 onto the
+  support boundary [−1,1] (targets.py:23), truncating half the Gaussian
+  and renormalizing ⇒ an edge spike (~2/3 mass in the last bin — matches
+  the measured 0.669 exactly, and the 75.9% matches W+L=75.9% of rows).
+  And w_categorical = 0.3 (yaml:367) — 3x the default 0.10, twice
+  w_sf_eval, 30% of the main head's weight.
+- UNIFICATION: Tier-3's two findings are ONE defect. The "aux head damage"
+  (~121 Elo) and the "game outcome is the worst label" (−235) meet in the
+  categorical head: it trains the shared trunk on 100% game outcome (the
+  most toxic source) in a saturated encoding at weight 0.3, while the main
+  WDL head at least dilutes outcome to a 0.35 blend fraction. Effective
+  outcome weight in the loss is w_wdl*0.35 + w_categorical*1.0 =
+  0.35 + 0.30 — the loop has been training on game outcome at ~2x the
+  weight the yaml appears to say. Corrects audit A20's "~1/3 of gap"
+  framing: edge truncation is not an edge case, it is the COMMON case.
+- PRE-REGISTERED PREDICTION (arenas for Tier-4 have NOT read out at
+  commit time; retrain in progress): t4_auxsplit_cat (w_categorical=0,
+  sf_eval ON) recovers most of the ~121 Elo and lands near t3_noaux
+  (−36.6 band); t4_auxsplit_sfeval (w_sf_eval=0, categorical ON) stays
+  deep, near the t2_valueonly band. If the arenas read the OPPOSITE, the
+  mechanism above is wrong and w_sf_eval is condemned instead.
+- Fix options this licenses (post-Tier-4 prereg): (a) w_categorical=0;
+  (b) keep the head but rebuild its target BLENDED — the knob and the
+  offline rebuild path already exist (categorical_blend_frac +
+  rebuild_categorical_target_in_arrays, target_builder.py:757) and were
+  shipped exactly for this screen; (c) encoding fix: clamp the value to
+  ±(1−3σ) or widen support so ±1 cannot saturate. (b)+(c) preserve the
+  head's distributional-RL value if it has any; Tier-5 can race (a) vs
+  (b)+(c) directly on stored shards.
