@@ -344,6 +344,10 @@ def _make_evaluator_factory(
         if eval_cache_entries > 0:
             evaluator = EncodedEvalCache(
                 evaluator, max_entries=int(eval_cache_entries),
+  # The model, not the evaluator stack: it is what declares the
+  # encoding, and reading it live means a reload behind the
+  # evaluator cannot serve entries built under the old one.
+                encoding_source=models[0],
             )
         _warmup_evaluator(
             warm_target, n_walkers=nw, walker_gather=walker_gather,
