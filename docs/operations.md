@@ -164,6 +164,15 @@ verified against what was just stored: **losing the race is an ordinary sign-in,
 free pass.** Two workers deployed with the same shared credential both get in; a client
 racing a name with a different password gets 401 and is charged a failed sign-in.
 
+**`users.json` is locked across processes.** `manage_users` and the server both write it
+(the server only for self-registration), so every read-modify-write takes an `flock` on
+`users.json.lock` first. Without it, a `manage_users disable` landing inside a
+registration was written back out of the copy loaded before it — the CLI exited 0 and the
+revoked worker kept uploading. If the lock is held past 10s the server answers **503
+`users db busy, retry`** rather than writing unlocked, and the CLI says which pid holds
+it. The kernel releases an `flock` when its holder dies, so there is no stale lock to
+clear after a crash.
+
 A corrupt or wrong-shaped `bans.json` **fails open** — nobody is banned — because a LAN
 fleet must not lose its server to a bad ban file. It now logs a WARNING saying so; an
 absent file stays silent, since that is the normal case.
@@ -185,6 +194,10 @@ minutes (cleared by a success, so a worker that fixes its credential is not held
 out by its own retries). These are in-memory and therefore depend on uvicorn
 staying single-process — see the A18 note; adding uvicorn workers would silently
 multiply every limit by the worker count.
+
+**A quarantined shard's `.reason.txt`** now carries the server's machine-readable
+`reason_code` after the human reason (`... (reason_code=worker_too_old)`), so a rejection
+can be classified without parsing prose that is free to change.
 
 ### Banning someone
 

@@ -1164,6 +1164,8 @@ def create_app(
         load_user_stats,
         load_users,
         save_users,
+        UsersDbBusy,
+        users_db_lock,
         migrate_user_stats,
         record_upload,
         save_user_stats,
@@ -1917,10 +1919,17 @@ def create_app(
   # a 400 so the client is told what to fix rather than looping on 401.
         check_new_password(password)
         salt_b64, hash_b64, iterations = hash_password(password)
-  # Under `stats_write_lock` because this is a read-modify-write on users.json,
-  # and A18's real precondition is single EXECUTION CONTEXT: these routes run in
-  # the threadpool, so two simultaneous registrations would otherwise lose one.
-        with stats_write_lock:
+  # TWO locks, and each covers what the other cannot. `stats_write_lock`
+  # serialises this process's threadpool workers -- A18's real precondition is
+  # single EXECUTION CONTEXT, so two simultaneous registrations would otherwise
+  # lose one. `users_db_lock` serialises against the OPERATOR'S CLI, a separate
+  # process that `stats_write_lock` cannot see: without it, `manage_users
+  # disable` landing inside this read-modify-write is written back out of the
+  # copy loaded before it, and the revoked worker keeps uploading (#343 §6,
+  # which self-registration made reachable by making the server a writer again).
+  # Order is fixed -- threading lock first, then file lock -- and the CLI takes
+  # only the file lock, so no inversion is possible.
+        with stats_write_lock, users_db_lock(users_path):
             users = load_users(users_path)
             existing = users.get(username)
             if existing is None:
@@ -1996,9 +2005,18 @@ def create_app(
                 status_code=429, detail=str(exc), headers={"Retry-After": "60"},
             ) from exc
 
+  # ⚑ DISABLED BEFORE THE KDF (#343 finding B). Checking `disabled` only
+  # after `verify()` meant a revoked account presenting a WRONG password paid
+  # a full ~50ms PBKDF2 on every request -- there is no negative caching -- so
+  # revoking an abusive client made it MORE expensive to serve, not less. It
+  # leaks nothing new: disabled already answered 403 whether the password was
+  # right or wrong, so the reply is identical, only cheaper.
+        known = auth_cache.users().get(username)
+        if known is not None and known.disabled:
+            raise HTTPException(status_code=403, detail="user disabled")
+
         rec = auth_cache.verify(username, str(creds.password))
         if rec is None:
-            known = auth_cache.users().get(username)
             if known is None:
                 if not self_register_enabled:
                     access_guard.note_auth_failure(ip)
@@ -2009,6 +2027,16 @@ def create_app(
                     raise HTTPException(
                         status_code=429, detail=str(exc),
                         headers={"Retry-After": "3600"},
+                    ) from exc
+                except UsersDbBusy as exc:
+  # 503, not 500: the operator's CLI is mid-write, which is transient by
+  # construction. A worker retries its next poll for free. Refusing to
+  # write unlocked is the point -- proceeding would be the lost update
+  # this lock exists to prevent.
+                    _log.warning("registration deferred: %s", exc)
+                    raise HTTPException(
+                        status_code=503, detail="users db busy, retry",
+                        headers={"Retry-After": "5"},
                     ) from exc
                 except _RegistrationRaceLost as exc:
   # Indistinguishable from any other wrong password, on purpose: 401 and
@@ -2029,8 +2057,6 @@ def create_app(
                     raise HTTPException(
                         status_code=400, detail=f"cannot register: {exc}",
                     ) from exc
-            elif known.disabled:
-                raise HTTPException(status_code=403, detail="user disabled")
             else:
                 access_guard.note_auth_failure(ip)
                 raise HTTPException(status_code=401, detail="bad password")
