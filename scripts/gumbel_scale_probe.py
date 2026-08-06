@@ -61,6 +61,10 @@ class Root:
     qvalues: np.ndarray
     played: int
     candidates: np.ndarray
+    log_pri: np.ndarray  # prior logits over `actions`
+    qbar: np.ndarray  # min-max-normalized completed Q in [0,1], over `actions`
+    sigma: float  # realized sigma from the MEASURED max per-move visits
+    max_visit: float  # the measured max per-move visit count sigma was built from
 
 
 def _pct(values: list[float], q: float) -> float:
@@ -108,13 +112,22 @@ def search_root(pos: Position, ev: Any, cfg: GumbelConfig, seed: int) -> tuple[n
         pri = st.priors
         legal = np.nonzero(pri > 0)[0].astype(np.int64)
         qvalues = np.zeros(legal.size, dtype=np.float64)
+        visits = np.zeros(legal.size, dtype=np.float64)
         for i, a in enumerate(legal):
             ch = st.root.children.get(int(a))
             n = 0 if ch is None else int(ch.N)
+            visits[i] = float(n)
             qvalues[i] = (-ch.W / n) if (ch is not None and n > 0) else float(root_q)
         played = int(st.remaining[0]) if st.remaining else -1
         cands = np.array(sorted(st.candidates or []), dtype=np.int64)
-        sink.append(Root(legal, qvalues, played, cands))
+        qbar, sigma = _qbar_and_sigma(
+            priors=pri[legal], visits=visits, qvalues=qvalues, root_q=float(root_q), cfg=cfg,
+        )
+        sink.append(Root(
+            legal, qvalues, played, cands,
+            np.log(np.maximum(pri[legal], 1e-12)), qbar, sigma,
+            float(visits.max(initial=0.0)),
+        ))
         return original(st, root_q=root_q, cfg=cfg, rng=rng)
 
     gumbel_mod._build_improved_policy_for_board = wrapper
@@ -126,6 +139,50 @@ def search_root(pos: Position, ev: Any, cfg: GumbelConfig, seed: int) -> tuple[n
     finally:
         gumbel_mod._build_improved_policy_for_board = original
     return probs[0], (sink[0] if sink else None)
+
+
+def _qbar_and_sigma(
+    *, priors: np.ndarray, visits: np.ndarray, qvalues: np.ndarray,
+    root_q: float, cfg: GumbelConfig,
+) -> tuple[np.ndarray, float]:
+    """Split the root value transform into normalized Q-bar and the sigma scale.
+
+    Replicates ``_completed_q_transform``'s min-max normalisation (its lines
+    435-447) and ``_root_sigma_scale``, then ASSERTS that ``sigma * qbar``
+    reproduces production's transform output. Without that assert this is a
+    re-derivation that could silently drift from the code it claims to measure.
+
+    ``sigma`` uses the MEASURED max per-move visit count, never the sim budget:
+    sequential halving concentrates visits, so max_visit is far below the budget
+    and using the budget would overstate the barrier the Q term can clear.
+    """
+    prior = np.maximum(np.asarray(priors, dtype=np.float64), np.finfo(np.float64).tiny)
+    q = np.asarray(qvalues, dtype=np.float64)
+    v = np.asarray(visits, dtype=np.float64)
+    visited = v > 0.0
+    sum_visits = float(v.sum())
+    sum_probs = float(prior[visited].sum()) if visited.any() else 0.0
+    weighted_q = (
+        float((prior[visited] * q[visited] / sum_probs).sum())
+        if sum_probs > 0.0 and np.isfinite(sum_probs) else float(root_q)
+    )
+    mixed = (float(root_q) + sum_visits * weighted_q) / (sum_visits + 1.0)
+    completed = np.where(visited, q, mixed)
+    lo, hi = float(completed.min()), float(completed.max())
+    qbar = (completed - lo) / max(hi - lo, 1e-8)
+    sigma = float(gumbel_mod._root_sigma_scale(max_visit=int(v.max(initial=0.0)), cfg=cfg))
+
+    ref = gumbel_mod._completed_q_transform(
+        actions=np.arange(prior.size, dtype=np.int64), priors=prior, visits=v,
+        qvalues=q, raw_value=float(root_q), cfg=cfg,
+        sigma_factor=1.0, fpu_penalty=0.0, root=True,
+    )
+    if not np.allclose(sigma * qbar, ref, atol=1e-8, rtol=1e-6):
+        raise AssertionError(
+            "sigma*qbar does not reproduce _completed_q_transform: the residual "
+            "barrier would be computed against a transform production does not use",
+        )
+    return qbar, sigma
 
 
 def prior_rows(ev: Any, positions: list[Position], cfg: GumbelConfig) -> list[np.ndarray]:
@@ -200,20 +257,23 @@ def selection_metrics(
 
 def search_metrics(
     ev: Any, priors: list[np.ndarray], positions: list[Position], cfg: GumbelConfig, *,
-    scales: list[float], topk: int, sims: int, draws: int, seed: int, log: list[str],
-) -> dict[tuple[float, int], dict[str, float]]:
-    """Metrics 3 and 4: earned target mass and played-move cost. Needs trees."""
-    acc: dict[tuple[float, int], dict[str, list[float]]] = {}
+    scales: list[float], c_scales: list[float], topk: int, sims: int, draws: int,
+    seed: int, log: list[str],
+) -> dict[tuple[float, float, int], dict[str, float]]:
+    """Residual barrier, earned target mass and played-move cost. Needs trees.
+
+    Keyed by (gumbel_scale, c_scale, phase). The candidate SET does not depend on
+    c_scale (selection is prior + noise + topk only), so the no-noise baseline
+    set is shared; the search dynamics and the transform do depend on it, so
+    every c_scale gets its own searches.
+    """
+    acc: dict[tuple[float, float, int], dict[str, list[float]]] = {}
     t0 = time.time()
     zero = np.zeros(1)
     for pos_i, (p, pos) in enumerate(zip(priors, positions, strict=True)):
         log_pri = np.log(np.maximum(p, 1e-12))
         in_support = p > 1e-3
         full_of_local = pos.full_idx
-        # No-noise reference: scale 0 is deterministic, so one run is the baseline.
-        _probs0, root0 = search_root(pos, ev, _with(cfg, gumbel_scale=0.0), seed + pos_i)
-        ref_action = root0.played if root0 is not None else -1
-        ref_q = _q_of(root0, ref_action)
         base_full = {
             int(full_of_local[i])
             for i in candidate_set(
@@ -221,39 +281,72 @@ def search_metrics(
                 sim_budget=sims,
             ).tolist()
         }
-        for scale in scales:
-            slot = acc.setdefault((scale, pos.phase), {
-                "earned_new": [], "earned_outside": [], "flip": [], "qdef": [],
-            })
-            for d in range(draws):
-                probs, root = search_root(
-                    pos, ev, _with(cfg, gumbel_scale=scale),
-                    seed + 7919 * (d + 1) + pos_i,
-                )
-                if root is None or root.candidates.size == 0:
-                    continue
-                # Normalise over ALL legal moves (the improved policy's own
-                # normalisation), then sum only the candidate slots of interest.
-                local = probs[full_of_local].astype(np.float64)
-                tot = local.sum()
-                if tot > 0:
-                    local = local / tot
-                cand_local = np.array(
-                    [int(np.flatnonzero(full_of_local == int(a))[0]) for a in root.candidates],
-                    dtype=np.int64,
-                )
-                is_new = np.array(
-                    [int(a) not in base_full for a in root.candidates], dtype=bool,
-                )
-                slot["earned_new"].append(float(local[cand_local[is_new]].sum()))
-                out_cand = cand_local[~in_support[cand_local]]
-                slot["earned_outside"].append(float(local[out_cand].sum()))
-                flip = float(root.played != ref_action)
-                slot["flip"].append(flip)
-                q = _q_of(root, root.played)
-                if flip and not np.isnan(q) and not np.isnan(ref_q):
-                    slot["qdef"].append(float(ref_q - q))
-        if (pos_i + 1) % 5 == 0:
+        for c_scale in c_scales:
+            cfg_c = _with(cfg, c_scale=c_scale)
+            # No-noise reference: scale 0 is deterministic, so one run per c_scale.
+            _probs0, root0 = search_root(
+                pos, ev, _with(cfg_c, gumbel_scale=0.0), seed + pos_i,
+            )
+            ref_action = root0.played if root0 is not None else -1
+            ref_q = _q_of(root0, ref_action)
+            for scale in scales:
+                slot = acc.setdefault((scale, c_scale, pos.phase), {
+                    "earned_new": [], "earned_outside": [], "flip": [], "qdef": [],
+                    "R": [], "R_neg": [], "dq": [], "equalq": [],
+                    "R_pos_adv": [], "R_pos_adv_neg": [], "sigma": [], "maxn": [],
+                })
+                # scale 0 is deterministic: one draw is the whole distribution.
+                n_draws = 1 if scale <= 0.0 else draws
+                for d in range(n_draws):
+                    probs, root = search_root(
+                        pos, ev, _with(cfg_c, gumbel_scale=scale),
+                        seed + 7919 * (d + 1) + pos_i,
+                    )
+                    if root is None or root.candidates.size == 0:
+                        continue
+                    # Normalise over ALL legal moves (the improved policy's own
+                    # normalisation), then sum only the candidate slots.
+                    local = probs[full_of_local].astype(np.float64)
+                    tot = local.sum()
+                    if tot > 0:
+                        local = local / tot
+                    cand_local = np.array(
+                        [int(np.flatnonzero(full_of_local == int(a))[0])
+                         for a in root.candidates], dtype=np.int64,
+                    )
+                    is_new = np.array(
+                        [int(a) not in base_full for a in root.candidates], dtype=bool,
+                    )
+                    slot["earned_new"].append(float(local[cand_local[is_new]].sum()))
+                    out_cand = cand_local[~in_support[cand_local]]
+                    slot["earned_outside"].append(float(local[out_cand].sum()))
+                    slot["sigma"].append(root.sigma)
+                    slot["maxn"].append(root.max_visit)
+
+                    # Residual barrier for each noise-promoted candidate.
+                    best = int(np.argmax(root.log_pri))
+                    for a in root.candidates[is_new]:
+                        hit = np.flatnonzero(root.actions == int(a))
+                        if not hit.size:
+                            continue
+                        j = int(hit[0])
+                        dq = float(root.qbar[j] - root.qbar[best])
+                        barrier = float(root.log_pri[best] - root.log_pri[j])
+                        r = barrier - root.sigma * dq
+                        slot["R"].append(r)
+                        slot["R_neg"].append(float(r < 0.0))
+                        slot["dq"].append(dq)
+                        slot["equalq"].append(float(abs(dq) < 0.05))
+                        if dq > 0.05:  # positive-advantage discoveries only
+                            slot["R_pos_adv"].append(r)
+                            slot["R_pos_adv_neg"].append(float(r < 0.0))
+
+                    flip = float(root.played != ref_action)
+                    slot["flip"].append(flip)
+                    q = _q_of(root, root.played)
+                    if flip and not np.isnan(q) and not np.isnan(ref_q):
+                        slot["qdef"].append(float(ref_q - q))
+        if (pos_i + 1) % 3 == 0:
             log.append(f"  [search] {pos_i + 1}/{len(positions)} positions "
                        f"({time.time() - t0:.0f}s, {ev.misses} misses)")
             print(log[-1], flush=True)
@@ -264,9 +357,19 @@ def search_metrics(
             "flip": _mean(s["flip"]),
             "qdef": _mean(s["qdef"]),
             "n_flip": float(len(s["qdef"])),
+            "R_med": _pct(s["R"], 50), "R_p10": _pct(s["R"], 10),
+            "R_p90": _pct(s["R"], 90), "R_neg": _mean(s["R_neg"]),
+            "n_promoted": float(len(s["R"])),
+            "equalq": _mean(s["equalq"]), "dq_med": _pct(s["dq"], 50),
+            "R_adv_med": _pct(s["R_pos_adv"], 50),
+            "R_adv_neg": _mean(s["R_pos_adv_neg"]),
+            "n_adv": float(len(s["R_pos_adv"])),
+            "sigma": _mean(s["sigma"]), "maxn": _mean(s["maxn"]),
         }
         for key, s in acc.items()
     }
+
+
 
 
 def _q_of(root: Root | None, action: int) -> float:
@@ -282,7 +385,10 @@ def main() -> None:
     ap.add_argument("--matched", default="tests/data/lc0_matched60.npz")
     ap.add_argument("--scales", type=float, nargs="+",
                     default=[0.0, 0.1, 0.25, 0.5, 0.75, 1.0])
-    ap.add_argument("--c-scale", type=float, default=0.025)
+    ap.add_argument("--c-scale", type=float, default=0.025,
+                    help="c_scale for the selection-only metrics table")
+    ap.add_argument("--c-scales", type=float, nargs="+", default=[0.025, 0.05, 0.1],
+                    help="c_scales swept for the residual-barrier / search metrics")
     ap.add_argument("--topk", type=int, default=32)
     ap.add_argument("--sims", type=int, default=256)
     ap.add_argument("--select-draws", type=int, default=512)
@@ -351,8 +457,8 @@ def main() -> None:
         print(log[-1], flush=True)
 
     srch = search_metrics(
-        ev, sub_pri, sub_pos, cfg, scales=args.scales, topk=args.topk, sims=args.sims,
-        draws=args.search_draws, seed=args.seed, log=log,
+        ev, sub_pri, sub_pos, cfg, scales=args.scales, c_scales=args.c_scales,
+        topk=args.topk, sims=args.sims, draws=args.search_draws, seed=args.seed, log=log,
     )
 
     nan = float("nan")
@@ -360,22 +466,44 @@ def main() -> None:
         log.append("")
         log.append(f"## {name}")
         log.append("")
+        log.append("Selection only (c_scale-independent — the candidate set is prior + "
+                   "noise + topk).")
+        log.append("")
         log.append("| gumbel_scale | replenish rate (new vs no-noise) | mean #new cands | "
-                   "deepest cand med/p95 (nats below top) | deepest NEW cand med/p95 | "
-                   "earned mass on new cands | earned mass outside p>1e-3 | "
-                   "played-move flip rate | mean Q deficit when flipped |")
-        log.append("|---|---|---|---|---|---|---|---|---|")
+                   "deepest cand med/p95 (nats below top) | deepest NEW cand med/p95 |")
+        log.append("|---|---|---|---|---|")
         for scale in args.scales:
             s = sel.get((scale, ph), {})
-            r = srch.get((scale, ph), {})
             log.append(
                 f"| {scale} | {s.get('new_rate', nan):.3f} | {s.get('n_new', nan):.2f} | "
                 f"{s.get('deepest_med', nan):.2f} / {s.get('deepest_p95', nan):.2f} | "
-                f"{s.get('deepest_new_med', nan):.2f} / {s.get('deepest_new_p95', nan):.2f} | "
-                f"{r.get('earned_new', nan):.3e} | {r.get('earned_outside', nan):.3e} | "
-                f"{r.get('flip', nan):.3f} | "
-                f"{r.get('qdef', nan):+.4f} (n={r.get('n_flip', 0):.0f}) |"
+                f"{s.get('deepest_new_med', nan):.2f} / {s.get('deepest_new_p95', nan):.2f} |"
             )
+        log.append("")
+        log.append("Residual barrier R = (z_best - z_a) - sigma*(Qbar_a - Qbar_best) over "
+                   "noise-promoted candidates. R < 0 predicts the move can take the "
+                   "improved-policy argmax from the prior leader. `equal-Q` = "
+                   "|dQbar| < 0.05: lift is sigma*dQbar, so these get ~zero lift at ANY "
+                   "sigma and are structurally unreachable by a one-parameter config.")
+        log.append("")
+        log.append("| c_scale | gumbel_scale | sigma (measured maxN) | R med (p10/p90) | "
+                   "frac R<0 | frac equal-Q | R med, +adv only | frac R<0, +adv only | "
+                   "n promoted | earned mass on new | flip rate | mean Q deficit when flipped |")
+        log.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for c_scale in args.c_scales:
+            for scale in args.scales:
+                r = srch.get((scale, c_scale, ph), {})
+                log.append(
+                    f"| {c_scale} | {scale} | {r.get('sigma', nan):.2f} "
+                    f"(N={r.get('maxn', nan):.0f}) | "
+                    f"{r.get('R_med', nan):+.2f} ({r.get('R_p10', nan):+.2f}/"
+                    f"{r.get('R_p90', nan):+.2f}) | {r.get('R_neg', nan):.3f} | "
+                    f"{r.get('equalq', nan):.3f} | {r.get('R_adv_med', nan):+.2f} | "
+                    f"{r.get('R_adv_neg', nan):.3f} | "
+                    f"{r.get('n_promoted', 0):.0f} (adv {r.get('n_adv', 0):.0f}) | "
+                    f"{r.get('earned_new', nan):.3e} | {r.get('flip', nan):.3f} | "
+                    f"{r.get('qdef', nan):+.4f} (n={r.get('n_flip', 0):.0f}) |"
+                )
         log.append("")
         log.append("- SATURATING control, do NOT read as the valve — "
                    "P(any candidate outside prior p>1e-3): " + ", ".join(
