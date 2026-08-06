@@ -34191,3 +34191,19 @@ separate reviewer follows.
   arena next) and value labels (t2_valueonly, last). If t2_valueonly
   reproduces, the value target is implicated with policy legs entirely
   absent.
+
+### ⚑⚑ VERDICT (2026-08-06 01:47) — TIER-2 ARM 2 (t2_novisit): damage SURVIVES with search-visit + soft policy legs removed
+
+- Same rig; w_policy=0 w_soft=0 (sf legs retained). Arena 200 games:
+  Elo(vs boot512) = **−115.2 [−160.2, −73.7]**. Anchor −105.6.
+- Rule: DAMAGE GONE (CI incl 0) = removed leg necessary ⇒ NOT GONE.
+  The MCTS visit-count policy target and policy_soft are NOT required to
+  reproduce the collapse either.
+- Running tally: nosfpol −75.9, novisit −115.2 — NO single policy family
+  is necessary. The discriminator is now t2_valueonly (ALL five policy
+  weights zero, pure value training, arena next): if it reproduces, the
+  VALUE LABELS alone are sufficient to carry the collapse, consistent
+  with the standing value-target findings (compressed target, HL-Gauss
+  edge truncation candidate). If it does NOT reproduce, the collapse
+  needs policy training but no specific leg — a redundant-cause reading
+  across policy legs, discriminated further only by pairwise ablations.
