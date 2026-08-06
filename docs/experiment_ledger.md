@@ -34758,3 +34758,33 @@ separate reviewer follows.
   big-pool run). HURTS = CI-clean below t6_base800. Either way this only
   screens SHAPE-VIA-STORED-TARGET; the data-gen shape fix (c_scale/
   topk) is decided by the lc0-probe agent's surface, not this arm.
+
+### 2026-08-06 — Phase-2 first arm POSITIVE; Tier-7 review CONFIRM + two-arm amendment
+
+**Phase-2 (prereg 612c07782 + aca505d22), 200g screen, arm 1 of 2:**
+- `p2_1view` (recipe of record, 2800 steps ≈ 1 view over the 713-shard clean bank):
+  **Elo +22.6 [−22.8, +68.8]** vs boot512 — the first positive point estimate any
+  retrain arm has produced on this ruler. CI upper > 0 ⇒ the pre-registered 500-game
+  fresh-seed (1337) confirm arena is ARMED; it fires on the better of the two arms
+  once `p2_2view` reads out (arena running now). Confirm chain inserted AHEAD of
+  Tier-6 in the GPU queue.
+
+**Tier-7 rig patch review (25a552896+65a4a3a61): CONFIRM** (independent reviewer,
+REVIEWER ≠ AUTHOR). Wrapper verified on the training path (`train_steps` →
+`sample_batch_arrays`, trainer.py:3376-3403); flag plumbing and swap semantics
+verified; `--rebuild-sf-targets` cannot overwrite `policy_target` (reviewer
+corrected my premise: its CLI default is True, not False — harmless here).
+Two interpretation caveats, recorded against ef67a2960:
+1. On swapped rows the MAIN and SOFT heads train on the same distribution with
+   production `w_soft: 1.0` ⇒ the soft-shaped gradient is effectively
+   double-weighted. **Amendment: Tier-7 becomes two arms** —
+   `t7_softmain` (recipe + `rig_policy_from_soft=1`) and
+   `t7_softmain_nosoft` (same + `w_soft=0`), isolating the shape effect on the
+   main head alone. Same judge, same kill rules as ef67a2960.
+2. `soft_policy_min_tv > 0` would zero the soft-head loss on swapped rows —
+   currently 0.0/off, no action.
+Deploy proofs unchanged: `ACTIVE` print per arm + policy_loss CE at the soft
+target's higher entropy level.
+
+Queue now: p2_2view arena → confirm500 (better arm, seed 1337) → Tier-6
+(t6_dirtest, t6_base800) → Tier-7 (two arms).
