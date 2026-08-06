@@ -34948,3 +34948,19 @@ relaunch bundle. Confound: none new — same pool/steps/seed as t6_base800.
 Optional arm 3 (only if SUCCESS): extract lc0's exact categorical constants
 (bins/support/smoothing/target value) from lc0 source and match them — copying
 tuning per user directive 08-06.
+
+### 2026-08-06 — PROVENANCE of two Gumbel settings (user, this session) + transform fidelity check
+
+- `gumbel_c_scale: 0.1` is mctx's OWN default (`qtransform_completed_by_mix_value
+  (value_scale=0.1)`), not a drift from the paper's c_scale=1.0; our
+  `_completed_q_transform` (gumbel.py:408) is a faithful port (mix-value
+  completion, min-max rescale, value_scale semantics). The BT4 sweep argmin
+  (0.025-0.05) pulls BELOW 0.1, not toward 1.0 — the our-net 256-sim sweep is the
+  decider; any change is tuning, not defect repair.
+- `gumbel_scale` decay to 0 after move ~15 was a MEASURED decision: user verified
+  positions dedup by move 15, so root exploration noise adds no diversity there.
+  Load-bearing exoneration: gumbel_scale affects only the PLAYED move — the
+  stored improved-policy target is computed from priors+completed-Q over all
+  legal moves independent of root noise, so the decay cannot distort targets.
+  Drift-geometry (58bbdd97c) independently found no composition narrowing.
+  DECAY IS NOT A SUSPECT for target shape.
