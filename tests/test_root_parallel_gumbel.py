@@ -68,6 +68,9 @@ class _DeterministicStubEvaluator:
         self, max_batch: int = 64, planes: int = 146, sleep_s: float = 0.0,
     ) -> None:
         self.calls = 0
+        # Rows, not calls: an equal-compute comparison between two search
+        # regimes needs the number of positions evaluated.
+        self.rows = 0
         self._sleep_s = float(sleep_s)
         self._lock = threading.Lock()
         self._bufs = [
@@ -83,6 +86,7 @@ class _DeterministicStubEvaluator:
     ) -> tuple[np.ndarray, np.ndarray, None]:
         with self._lock:
             self.calls += 1
+            self.rows += int(bsz)
         if self._sleep_s > 0.0:
             time.sleep(self._sleep_s)
         pol = np.empty((bsz, 4672), dtype=np.float32)

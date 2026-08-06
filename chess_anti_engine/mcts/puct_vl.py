@@ -121,6 +121,25 @@ class PucvChunker:
     def cache_stats(self) -> PucvEvalCacheStats | None:
         return None if self._cache is None else self._cache.stats()
 
+    @property
+    def vloss_mode(self) -> int:
+        """Pending accounting actually used by this chunker's descents.
+
+        Read off the instance rather than the config that built it: callers
+        that flip the mode on a live pool need an observation of the object
+        the descent runs on, not of the value they passed in.
+        """
+        return self._vloss_mode
+
+    def set_vloss_mode(self, mode: int) -> None:
+        """Switch pending accounting between legacy (0) and virtual-mean (1).
+
+        Caller holds the search barrier — ``batch_descend_puct`` reads the
+        mode per batch, so a mid-search flip would split one tree's descents
+        across two regimes.
+        """
+        self._vloss_mode = 1 if int(mode) == 1 else 0
+
     def run(
         self,
         tree: MCTSTree,

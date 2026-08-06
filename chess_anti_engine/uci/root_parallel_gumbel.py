@@ -62,7 +62,8 @@ Deliberate v1 deviations (all pre-recorded in the design):
   NOT the classic non-root deterministic completed-Q argmax descent. This is
   the single-GPU-validated parallel gather regime; per-candidate outcomes
   therefore differ from classic per-sim, while every root decision is exact
-  for the outcomes produced. Pending accounting defaults to virtual-mean.
+  for the outcomes produced. Pending accounting follows the UCI
+  ``PUCVPendingMode`` option and defaults to legacy (audit W3).
 - ``s = 1`` evaluator groups only; late-phase budget splitting when
   survivors < groups is ON by default (``split_idle_groups``; co-owned
   survivor arenas under VL — not bit-identical to exclusive serial
@@ -223,11 +224,18 @@ class RootParallelGumbelConfig:
     fpu_at_root: float = 0.0
     fpu_reduction: float = 1.2
     vloss_weight: int = 3
-    # Pending accounting for the intra-candidate batched descents. Defaults to
-    # virtual-mean (design §2: the mild single-GPU-validated regime). v1 pins
-    # this independently of the UCI PUCVPendingMode default (which is legacy
-    # for the pucv pool).
-    vloss_mode: int = 1
+    # Pending accounting for the intra-candidate batched descents. Legacy (0),
+    # matching every other batched-VL path's default and the UCI
+    # `PUCVPendingMode` option that now feeds this field
+    # (`SearchWorker.install_root_parallel_gumbel`).
+    # Virtual-mean (1) gives a pending, zero-visit child q_parent == parent_Q
+    # exactly — no pessimism at all — and counts its prior into
+    # `visited_policy`, which raises the FPU penalty on its untouched
+    # siblings (`_mcts_tree.c` tree_select_child, VLOSS_MODE_VIRTUAL_MEAN).
+    # Both push the next descent back onto the leaf already in flight: at this
+    # config's own shape, 2048 sims explored 15,865 distinct nodes under mode 1
+    # against 42,020 under mode 0 for identical evaluator rows (audit W3).
+    vloss_mode: int = 0
     # When True (default), late phases with fewer candidates than groups
     # shard survivor budgets so idle GPUs keep working (design §2). Root
     # decisions stay sequential-halving; only the concurrent VL interleaving
@@ -281,6 +289,15 @@ class RootParallelGumbelStats:
     elapsed_seconds: float = 0.0
     phases: tuple[RootParallelPhase, ...] = ()
     group_sims: tuple[int, ...] = ()
+    # Pending accounting each group's chunker actually descended with, read
+    # off the live chunkers (-1 = group not yet constructed). `nodes`/`nps`
+    # are simulation counts and are invariant to this, so without it the
+    # difference between exploring 42k and 16k positions for the same budget
+    # is invisible from outside the search (audit W3).
+    vloss_mode: tuple[int, ...] = ()
+    # Distinct tree nodes at the end of the chunk — the quantity `nodes` is
+    # routinely mistaken for.
+    tree_nodes: int = 0
 
 
 @dataclass
@@ -460,6 +477,30 @@ class RootParallelGumbelPool:
         with self._stats_lock:
             return self._last_stats
 
+    def realized_vloss_mode(self) -> tuple[int, ...]:
+        """Pending accounting per group, read off the live ``PucvChunker``s.
+
+        ``-1`` for a group whose chunker has not been built (only possible
+        after a failed init). This is the observation that distinguishes
+        "the knob was set" from "the descent used it".
+        """
+        return tuple(
+            -1 if ch is None else int(ch.vloss_mode) for ch in self._chunkers
+        )
+
+    def set_vloss_mode(self, mode: int) -> None:
+        """Re-point every group's chunker at ``mode`` (0 legacy, 1 virtual-mean).
+
+        Mutating ``self._cfg`` alone would not reach the search: each group
+        builds its ``PucvChunker`` once, in its own worker thread, at pool
+        construction. Caller holds the search barrier.
+        """
+        mode = 1 if int(mode) == 1 else 0
+        self._cfg.vloss_mode = mode
+        for chunker in self._chunkers:
+            if chunker is not None:
+                chunker.set_vloss_mode(mode)
+
     # --- root preparation (single-threaded, before any chunk) ----------------
 
     def prepare_root(
@@ -602,6 +643,8 @@ class RootParallelGumbelPool:
                         survivor_actions=survivor,
                     ),),
                     group_sims=tuple(0 for _ in range(self._cfg.n_groups)),
+                    vloss_mode=self.realized_vloss_mode(),
+                    tree_nodes=int(st.tree.node_count()),
                 )
             return float(st.finished_value), int(st.finished_action)
 
@@ -655,7 +698,9 @@ class RootParallelGumbelPool:
                 self._info_cb(
                     f"rpg phase={phase_index} open cands={n_cands} "
                     f"vpa={open_vpa} sims={sims_done} "
-                    f"survivors={len(remaining)} budget_left={budget}"
+                    f"survivors={len(remaining)} budget_left={budget} "
+                    f"vloss_mode={self.realized_vloss_mode()} "
+                    f"tree_nodes={st.tree.node_count()}"
                     f"{' STOPPED' if stopped else ''}"
                 )
             phase_index += 1
@@ -668,6 +713,8 @@ class RootParallelGumbelPool:
                         elapsed_seconds=time.perf_counter() - started,
                         phases=tuple(phases),
                         group_sims=tuple(self._group_sims),
+                        vloss_mode=self.realized_vloss_mode(),
+                        tree_nodes=int(st.tree.node_count()),
                     )
                 return value, int(best)
 
@@ -700,7 +747,10 @@ class RootParallelGumbelPool:
                 self._info_cb(
                     f"rpg phase={phase_index} cands={n_cands} vpa={vpa} "
                     f"sims={sims_done} survivors={len(remaining)} "
-                    f"budget_left={budget}{' STOPPED' if stopped else ''}"
+                    f"budget_left={budget} "
+                    f"vloss_mode={self.realized_vloss_mode()} "
+                    f"tree_nodes={st.tree.node_count()}"
+                    f"{' STOPPED' if stopped else ''}"
                 )
             phase_index += 1
             if stopped:
@@ -714,6 +764,8 @@ class RootParallelGumbelPool:
                 elapsed_seconds=time.perf_counter() - started,
                 phases=tuple(phases),
                 group_sims=tuple(self._group_sims),
+                vloss_mode=self.realized_vloss_mode(),
+                tree_nodes=int(st.tree.node_count()),
             )
         return value, int(best)
 
