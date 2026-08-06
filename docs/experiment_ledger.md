@@ -34148,3 +34148,25 @@ separate reviewer follows.
 - Instrument note: all four re-run/fast arenas compiled conc-16 on an idle
   GPU (~11-min/200 games — the earlier ~75-min timings were contention,
   not arena cost). Same ruler class as the crashed originals.
+
+### ⚑⚑ VERDICT (2026-08-05 21:08) — ARM A (cp-rank sf_p0 target) iter-21 arena: NULL ⇒ FAILED-AS-DEPLOYED
+
+- Deciding yardstick (prereg'd): Elo(d2003 iter21 − boot512), eager conc-16
+  seed 42, 200 games, baseline-identical ruler. Result: **−92.5
+  [−138.8, −49.2]** (pentanomial 7/11/34/19/29, score 0.3700).
+- Rule application: the CI contains −96 and the point estimate sits on the
+  attractor — this is the NULL branch. The three boots now read −96.2
+  (unhygienic) / −96.2 (full-hygiene) / −92.5 (cp-rank): the iter-21 boot
+  shock is INSENSITIVE to the sf_p0 scoring mode as deployed.
+- Deploy proofs all passed pre-readout (score_mode=cp in worker log both
+  sessions, won-bucket entropy 1.706→1.025, params.json, teacher ≈700k),
+  so this is a verdict about the EFFECT, not the wiring.
+- Pre-declared confound (stands, no re-litigation): the N1 mate fold
+  biases AGAINST arm A — cp mode gave forced mates 0.000000 target mass
+  on 1.34% best-move-flip rows. The mate fix is MERGED (PR #360,
+  a84aaf8) but deploy-gated and NOT in d2003. A mate-fixed cp-rank is a
+  NEW experiment with its own prereg; tomorrow's boot decision belongs to
+  the user.
+- Trial d2003 stays LIVE past iter 21 (standing task #143 ratchet
+  yardstick unaffected). Tier-2 loss-leg ablation chain fires now, gated
+  on this arena's append line.
