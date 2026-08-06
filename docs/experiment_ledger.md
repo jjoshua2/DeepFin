@@ -34862,3 +34862,19 @@ c_scale {0.025,0.05,0.1,0.25} × topk {8,16,32,64,128}; (c) sims ladder
 {32,64,128,256,+512/800 if affordable} at production params + argmin candidate —
 800 = lc0's own target budget. Shape diagnostics only; any production change needs
 its own prereg on our arena yardstick.
+
+### 2026-08-06 — confirm500 STRADDLES: −3.5 [−31.4, +24.4] → pre-registered pooled-1000 extension fired
+
+`p2_1view` confirm arena (500g, fresh seed 1337): **Elo −3.5 [−31.4, +24.4]**,
+score 0.4950. Dead straddle — neither GAIN PROVEN nor FAIL. Per aca505d22 the ONE
+allowed extension fired: 500g at a third seed (7777), verdict = pooled 1000 games
+(seeds 1337+7777; the seed-42 screen games are NOT pooled — they selected the arm).
+Reading so far: seed-42's +22.6 looks like the optimistic tail of a ~0±25 effect;
+the three readings (+22.6 / −3.5 / pending) are consistent with a net that is
+approximately AT its initialization strength after 2800 recipe steps — i.e. the
+recipe stops the collapse (vs −86 to −235 for every pre-recipe arm) but has not yet
+demonstrated gain. Queue after ext: tier6 arenas (orphan retrain's arms banked),
+tier7 two-arm. Ops: two orphaned chains (tier6 v2, tier7 v1) found running from
+wrapper-kills — killed by script pid; tier6's orphan retrain output KEPT (arms
+identical to prereg); rule going forward: kill chains by `pgrep -f "^/bin/bash
+<abs-path>"`, never the launcher pid.
