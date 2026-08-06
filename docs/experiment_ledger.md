@@ -34544,3 +34544,25 @@ separate reviewer follows.
   found 3 wiring defects there; c_puct/fpu_* knobs are inert-but-printed
   in Gumbel searches). Literal PUCT replication requires its own
   correctness audit FIRST, and only if Gumbel-800 data also fails.
+
+### INSTRUMENT READING (2026-08-06 ~12:45) — THE GUMBEL IMPROVED-POLICY TARGET IS NEAR-SF-QUALITY; THE SUSPECT HALF OF SEARCH IS ITS VALUES, NOT ITS MOVE-CHOOSING
+
+- User worry: oddities in Gumbel itself / the values it uses / target
+  shape. CPU-measured on the 37,619 stored rows carrying sf_p0_regret:
+    shape: policy_target is the completed-Q improved policy, NOT raw
+      32-sim visits (median support 25 actions, p90 40, median entropy
+      0.588 nats; 21.9% effectively one-hot).
+    quality on the SF ruler (expected normalized cp-regret, 0 = SF best):
+      policy_target 0.0506 (median 0.0090) vs uniform-legal 0.3128 —
+      an 83.8% improvement; top-1 agrees with SF's best move 54.1%.
+  Caveats: sf_p0_regret is an SF-conjugate ruler (fine for an oddity
+  check, not an arm verdict); unevaluated legal moves carry 0.5-1.0
+  penalty fill, which inflates the uniform baseline somewhat.
+- Joint reading with Tier-3: the search's MOVE-RANKING is healthy (near-
+  SF expected regret) while its VALUES as training labels are toxic
+  (t3_searchonly −145 despite corr 0.955 to SF; 13.6% saturated |q|>0.95
+  tail; self-referential — search values are the net's own value head
+  averaged through the tree). "Gumbel oddity" resolves to: the improved
+  policy is a good teacher; recycling search VALUES into the value
+  target is the hazard. Consistent with policy-training-protective
+  (Tier-2) and the whole value-side localization.
