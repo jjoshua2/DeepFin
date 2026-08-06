@@ -76,7 +76,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
-from typing import Any, cast
+from typing import Any
 import json
 import time
 from pathlib import Path
