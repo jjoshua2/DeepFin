@@ -34668,3 +34668,23 @@ separate reviewer follows.
   with systematically weird outcomes), temperature/diversity of 32-sim
   games, 16-rows/game outcome correlation, adjudication. Next: CPU
   split of outcome-label quality by opening_source_code (running).
+
+- FOLLOW-UP (14:35, CPU split by opening_source_code on tier1_sp):
+  SEEDED GAMES EXONERATED for the AZ-arm toxicity — codes 2/3 (blind-
+  spot/seeded) are only 3.3% of rows, and their outcome labels are the
+  CLEANEST (corr(out,sf) 0.90-0.92 vs 0.682 for standard games) because
+  the seed positions are already decided at game start (mean |sf_q|
+  0.76-0.82 at earliest ply, 64-70% > 0.8 — confirming seeds start in
+  won/lost territory, which makes outcomes PREDICTABLE, not noisy).
+  Standard-opening games (96.7% of rows) carry the noise: corr 0.682,
+  i.e. outcomes are honest ternary samples of genuinely uncertain
+  positions.
+- SURVIVING MECHANISM for "outcomes work for lc0 but poison us":
+  game-correlated noise x repetition. 152,954 rows share only 6,285
+  independent outcomes (24.3 rows/game); the 1578-step rig passes ~808k
+  samples = ~5.3 views, so the value head sees each game's single noisy
+  outcome ~5 times and memorises the noise. Lc0 trains at ~1 view on
+  effectively unlimited fresh games. Consistent with fastcal's dose-
+  dependence (half the steps = roughly half the damage). Phase-2's big-
+  pool 1-2 view design is the indirect test; the direct test (gameonly
+  @1view-big vs @5views-small) is a Tier-6 candidate if needed.
