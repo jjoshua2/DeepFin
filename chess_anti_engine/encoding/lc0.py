@@ -625,6 +625,54 @@ LC0_HISTORY_FRAMES = 8
 LC0_PLANES_PER_FRAME = 13
 
 
+def _as_plane_batch(planes: np.ndarray) -> np.ndarray:
+    x = np.asarray(planes)
+    if x.ndim == 3:
+        x = x[None, ...]
+    if x.ndim != 4 or x.shape[-2:] != (8, 8):
+        raise ValueError(f"expected (B, P, 8, 8) planes; got {np.shape(planes)}")
+    return x
+
+
+def pawn_mask_from_lc0_planes(planes: np.ndarray) -> np.ndarray:
+    """(B, 64) bool: side-to-move pawns by ORIENTED square, read off plane 0.
+
+    Plane 0 of every LC0 layout here is "our pawns" in the live frame, written
+    as ``out[p, rank, file]`` in side-to-move-oriented coordinates (the rank
+    flip for black is baked into the plane write). So flattening gives exactly
+    ``rank * 8 + file`` = the oriented square index used by the policy
+    encoding.
+    """
+    x = _as_plane_batch(planes)
+    return x[:, 0].reshape(x.shape[0], 64) > 0.0
+
+
+def castling_from_lc0_planes(planes: np.ndarray) -> np.ndarray:
+    """(B, 2) bool: side-to-move (kingside, queenside) rights from the aux planes.
+
+    The ``lc0_root`` metadata block writes us-queenside at
+    ``root_metadata_base`` and us-kingside at ``+1``.
+    """
+    x = _as_plane_batch(planes)
+    base = LC0_FULL.root_metadata_base
+    if x.shape[1] <= base + 1:
+        raise ValueError(f"planes must carry the aux block (> {base + 1}); got {x.shape[1]}")
+    return np.stack(
+        [x[:, base + 1, 0, 0] > 0.0, x[:, base, 0, 0] > 0.0], axis=1,
+    )
+
+
+def lc0_gather_context_from_planes(planes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(pawn_mask, castling)`` — the two bits of board context the Leela
+    policy remap needs, both read straight off the network input.
+
+    Feeds :func:`chess_anti_engine.moves.leela_index.leela_gather_indices`,
+    which cannot disambiguate the shared back-rank promotion slots (pawn vs
+    slide) or the castling slots (Leela spells O-O as ``e1h1``) without them.
+    """
+    return pawn_mask_from_lc0_planes(planes), castling_from_lc0_planes(planes)
+
+
 def fill_lc0_history_repeat(planes: np.ndarray) -> np.ndarray:
     """Replicate lc0's empty-history fill (``encoder.cc: history[idx<0?0:idx]``).
 
