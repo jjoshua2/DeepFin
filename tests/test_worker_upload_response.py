@@ -9,7 +9,11 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.replay.shard import ShardMeta, save_local_shard_arrays
-from chess_anti_engine.worker import WorkerSession, _upload_response_allows_pending_delete
+from chess_anti_engine.worker import (
+    WorkerSession,
+    _upload_response_allows_pending_delete,
+    _upload_response_rejection_reason,
+)
 
 
 @dataclass
@@ -316,3 +320,35 @@ def test_a_healthy_poll_logs_nothing(caplog) -> None:
         for _ in range(5):
             assert WorkerSession._poll_manifest(session) is not None
     assert [r.getMessage() for r in caplog.records] == []
+
+
+def test_the_rejection_reason_carries_the_machine_readable_code():
+    """#344 finding: `reason_code` had ZERO consumers in the repo.
+
+    The server emits it so a monitor can switch on a stable token while the
+    prose stays free to change, and the worker quarantined on the prose alone —
+    a field nobody reads is one refactor from being deleted as dead, and its
+    absence would be noticed by nobody. Threading it into the reason string
+    puts it in the `.reason.txt` sidecar and the worker's warning, which are
+    the two places a person actually looks after a rejection.
+    """
+    reason = _upload_response_rejection_reason(
+        _Resp(200, {
+            "stored": False, "rejected": True,
+            "reason": "worker too old for this trial", "reason_code": "worker_too_old",
+        }),
+    )
+    assert reason is not None
+    assert "worker too old for this trial" in reason, "the prose must come first"
+    assert "reason_code=worker_too_old" in reason
+
+
+def test_a_rejection_without_a_code_is_unchanged():
+    """Older servers, and the generic path, send no code. The reason must not
+    grow a `reason_code=None` tail that a human then has to ignore."""
+    reason = _upload_response_rejection_reason(
+        _Resp(200, {"stored": False, "rejected": True, "reason": "protocol mismatch"}),
+    )
+    assert reason == "protocol mismatch"
+    bare = _upload_response_rejection_reason(_Resp(200, {"stored": False, "rejected": True}))
+    assert bare == "server rejected shard"

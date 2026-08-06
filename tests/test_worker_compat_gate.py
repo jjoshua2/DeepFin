@@ -261,6 +261,15 @@ def test_healthy_manifest_still_enforces_and_still_admits(tmp_path: Path) -> Non
     assert old.json().get("rejected") is True, old.text
 
     current = _upload(client, headers=_headers(version="9.9.9"))
+  # ⚑ THE STATUS IS THE DISCRIMINATOR, and asserting it is the point of this
+  # line. `reason_code is None` alone was satisfied by a gate stuck permanently
+  # CLOSED, because the 503 body has no reason_code either -- the review flagged
+  # exactly that. The suggested tightening was `stored is True`, which is not
+  # available here: this fixture's payload is not a loadable shard, so an
+  # ADMITTED upload is still refused downstream by the shard reader. That is the
+  # gate doing its job and the reader doing its own. A stuck-closed gate answers
+  # 503 and never reaches the reader at all, so the status separates them.
+    assert current.status_code == 200, current.text
     assert current.json().get("reason_code") is None, current.text
 
 
