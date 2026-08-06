@@ -34878,3 +34878,22 @@ tier7 two-arm. Ops: two orphaned chains (tier6 v2, tier7 v1) found running from
 wrapper-kills — killed by script pid; tier6's orphan retrain output KEPT (arms
 identical to prereg); rule going forward: kill chains by `pgrep -f "^/bin/bash
 <abs-path>"`, never the launcher pid.
+
+### 2026-08-06 — DIRECTION: Tier-8 BT4-prior policy distillation (design intent, full prereg before launch)
+
+Rationale (user + session analysis): the −100 boot losses were information-free
+destruction; symmetric gain requires a teacher that KNOWS more than the student.
+The 713-shard bank's search targets are self-generated (~+32cp over own prior) —
+p2_1view/2view showed ~0±25 Elo is all it holds at 1 view, negative at 2. The one
+massively-stronger policy teacher we can now run correctly is BT4 (adapter branch:
+onnxruntime + board-aware leela_index mapping, prior confirmed well-calibrated on
+the lc0 comparison). Design: relabel `policy_target` (and/or a blend leg) on the
+clean bank with BT4's prior via our-planes→board→lc0-planes→BT4→lc0_1858 gather;
+retrain with the RECIPE OF RECORD value target (sf 0.69 / search 0.31, aux off) —
+VALUE distillation stays FORBIDDEN per the proven offline-distill value trap.
+Ruler: standard 200g screen vs boot512 → aca505d22 sequential confirm. Labeling
+cost: ~1.4M rows × ~70ms CPU batch-1, parallelizes across cores (~2-3h) or subset
+300k first. Execution owner: adapter agent AFTER its sweep amendments finish (CPU
+contention). Full prereg (exact commands, kill/success thresholds, confounds incl.
+"BT4 prior may be conjugate to nothing in our eval battery" check) REQUIRED before
+launch per protocol — this entry is direction, not authorization.
