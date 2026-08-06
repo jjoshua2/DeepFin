@@ -34394,3 +34394,12 @@ separate reviewer follows.
   pool contains no net-usable above-net signal — the problem moves from
   "labels poisoned" to "data has no teaching signal", pointing at label
   depth/coverage (BT4-distill direction), not the loop.
+
+### CLOSING ROW (2026-08-06 11:17) — d2003 LINEAGE FINAL: ck102 (~iter 103) = −86.9 [−131.4, −45.0] vs boot512
+
+- Statistically identical to the iter-21 shock row (−92.5 [−138.8, −49.2]):
+  ~80 further iterations of live RL produced ZERO recovery — flat on the
+  collapse floor. Confirms the stop decision (363050e5e) and the family
+  verdict: the live loop as configured neither gains nor recovers.
+- The d2003 lineage is now fully documented: boot 0 → iter21 −92.5 →
+  iter103 −86.9. Banked weights: ck_20260806_d2003_checkpoint_000102.
