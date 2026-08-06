@@ -45,6 +45,56 @@ from chess_anti_engine.server.auth import (
 _REPO = Path(__file__).resolve().parents[1]
 
 
+_WAITING_MARKER = "waiting for the users-db lock"
+
+
+def _spawn_cli_disable(db: Path, username: str) -> subprocess.Popen[str]:
+    """`manage_users disable` as the operator runs it: a separate PROCESS.
+
+    A thread would prove nothing — the bug is precisely that a threading lock
+    cannot see another process, so the test has to cross that boundary.
+    """
+    return subprocess.Popen(
+        [sys.executable, "-m", "chess_anti_engine.server.manage_users",
+         "--users-db", str(db), "disable", username],
+        cwd=str(_REPO), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env={**os.environ, "PYTHONPATH": str(_REPO)},
+    )
+
+
+def _await_blocked_on_the_lock(handle: subprocess.Popen[str], *, timeout_s: float = 120.0) -> None:
+    """Block until the child is OBSERVABLY waiting on the users-db lock.
+
+    ⚑ THE HANDSHAKE IS THE CONTENTION ITSELF, and this replaces a `time.sleep`
+    that made the whole gate a coin flip. The sleep had to cover the child's
+    cold start — interpreter plus imports, measured at 0.62-1.05s on this box
+    against a 1.0s sleep — so when the child was slow its write landed AFTER
+    the racing write instead of inside it, and the assertions passed for the
+    wrong reason. The reviewer measured 40% escape on the exact defect this
+    file names. Widening the sleep only moves the boundary to a slower machine.
+
+    The child announces contention on its first failed acquisition, so seeing
+    that line means it is past startup, past argparse, and parked on the lock —
+    which is the state the test needs and the only one it accepts. If the line
+    never arrives, that is a failure, not a reason to continue.
+    """
+    assert handle.stderr is not None
+    deadline = time.monotonic() + timeout_s
+    seen: list[str] = []
+    while time.monotonic() < deadline:
+        line = handle.stderr.readline()
+        if not line:
+            break
+        seen.append(line)
+        if _WAITING_MARKER in line:
+            return
+    handle.kill()
+    raise AssertionError(
+        "the CLI never reported waiting on the users-db lock, so the interleave "
+        f"under test never happened. stderr so far: {seen!r}"
+    )
+
+
 def test_an_operator_disable_survives_a_concurrent_server_registration(
     tmp_path: Path,
 ) -> None:
@@ -69,16 +119,14 @@ def test_an_operator_disable_survives_a_concurrent_server_registration(
         salt_b64, hash_b64, iterations = hash_password("bob-password")
         with users_db_lock(db):
             users = load_users(db)
-  # The operator acts inside this window. Launched from in here so it is
-  # guaranteed to arrive while the lock is held; not joined here, because
-  # with the lock working it cannot finish until we let go.
-            handle = subprocess.Popen(
-                [sys.executable, "-m", "chess_anti_engine.server.manage_users",
-                 "--users-db", str(db), "disable", "alice"],
-                cwd=str(_REPO), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, env={**os.environ, "PYTHONPATH": str(_REPO)},
-            )
-            time.sleep(1.0)
+  # The operator acts inside this window. Launched from in here so it
+  # cannot arrive before the lock is taken, and then WAITED FOR until it
+  # is observably blocked on that lock -- no sleep, so a slow cold start
+  # cannot let its write land after ours and pass this test for the wrong
+  # reason. Not joined here: with the lock working it cannot finish until
+  # the enclosing `with` releases.
+            handle = _spawn_cli_disable(db, "alice")
+            _await_blocked_on_the_lock(handle)
             users["bob"] = UserRecord(
                 username="bob", salt_b64=salt_b64, hash_b64=hash_b64,
                 iterations=iterations,
@@ -112,22 +160,17 @@ def test_the_cli_and_the_server_cannot_hold_the_lock_at_once(tmp_path: Path) -> 
     db = tmp_path / "users.json"
     ensure_user(db, username="alice", password="alice-password")
 
-    started = time.monotonic()
     with users_db_lock(db):
-        handle = subprocess.Popen(
-            [sys.executable, "-m", "chess_anti_engine.server.manage_users",
-             "--users-db", str(db), "disable", "alice"],
-            cwd=str(_REPO), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env={**os.environ, "PYTHONPATH": str(_REPO)},
-        )
-        time.sleep(1.5)
+        handle = _spawn_cli_disable(db, "alice")
+  # Reaching this line at all is the assertion: the child said it is waiting
+  # on the lock, which it can only say because the lock is held here.
+        _await_blocked_on_the_lock(handle)
         assert handle.poll() is None, (
             "the CLI completed while this process held the users-db lock — the "
             "lock is not being taken on the CLI side"
         )
     handle.communicate(timeout=120)
     assert handle.returncode == 0
-    assert time.monotonic() - started >= 1.5
     assert load_users(db)["alice"].disabled is True
 
 

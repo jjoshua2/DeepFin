@@ -388,12 +388,28 @@ def users_db_lock(
   # credential file and inherits its blast radius if a mode is ever added.
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     deadline = time.monotonic() + float(timeout_s)
+    announced = False
     try:
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except OSError:
+                if not announced:
+  # ⚑ SAY WHY, ONCE, THE MOMENT WE START WAITING. The operator-visible
+  # symptom of contention is `manage_users` sitting there doing nothing,
+  # and the only thing that can explain it is this line -- the holder's
+  # pid is recorded in the lock file and nowhere else. Emitted on first
+  # contention rather than at the deadline, because a CLI that pauses for
+  # ten seconds and THEN explains itself has already been killed.
+                    announced = True
+                    with contextlib.suppress(Exception):
+                        _log.warning(
+                            "waiting for the users-db lock %s, held by pid %s",
+                            lock_path,
+                            os.pread(fd, 64, 0).decode("utf-8", "replace").strip()
+                            or "unknown",
+                        )
                 if time.monotonic() >= deadline:
                     holder = ""
                     with contextlib.suppress(Exception):
