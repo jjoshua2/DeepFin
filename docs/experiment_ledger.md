@@ -34623,3 +34623,13 @@ separate reviewer follows.
   t5_az/rung-1 line. Curve reading: p2_2view > p2_1view = absorbing;
   equal/worse = plateau at the pool's information ceiling.
 - Queue: behind tier5az. ETA ~3h of GPU after it starts.
+
+- AMENDMENT (2026-08-06, user): the Phase-2 confirm arena is SEQUENTIAL,
+  not a flat 1000. Rules pre-committed: (a) the confirm arena runs ONLY
+  if the better arm's 200g screen CI upper bound > 0 — a deep-negative
+  screen (the usual −60..−90 outcome) is its own verdict and gets no
+  extra games; (b) confirm = 500 games at a NEW seed (different openings
+  add information; replaying seed 42 would not); (c) if the 500g CI
+  excludes 0 either way, verdict FINAL; (d) if it includes 0, extend
+  ONCE by 500 more (third seed) and judge on the pooled 1000 — no
+  further extensions, so optional stopping cannot fish for significance.
