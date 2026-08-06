@@ -34498,3 +34498,42 @@ separate reviewer follows.
   −72. Candidate: the saturated tail (13.6% of rows |q|>0.95 — near-one-
   hot search values) and/or self-referential error (search_wdl derives
   from the net's own value head). Not yet a claim; a Tier-5+ question.
+
+### ⚑ PREREG (2026-08-06) — TIER-5 RUNG 0: THE AZ/LC0-RECIPE CONTROL — does the PROVEN loss composition work on our own stored selfplay games?
+
+- User-proposed debugging paradigm: bisect against the known-good
+  AlphaZero/Lc0 recipe instead of debugging our recipe in a vacuum. The
+  ladder: rung 0 = AZ loss on stored selfplay rows (free, this prereg);
+  rung 1 = fresh net-vs-net data at ~800-node search from our own stack
+  (data-gen on the idle GPU); rung 2 = cross-stack tests (lc0 net in our
+  exe / our net on lc0-style data) only if rungs 0-1 fail to localize.
+- Rig: offline rig at 1578/w1000 (anchored budget; the 800-step harness
+  is used only if fastcal validated by launch time — it did not gate this
+  entry). Pool = $D/tier1_sp (selfplay-only rows, 104 shards, already
+  built for Tier-1). Arena 200g seed 42 conc-16 compiled vs boot512.
+- Arms (both zero out EVERYTHING the AZ recipe lacks: w_soft, w_sf_move,
+  w_sf_own, w_sf_own_regret, w_sf_eval, w_categorical, w_future,
+  w_moves_left, w_sf_volatility; keep w_policy=1.0, w_wdl=1.0):
+    t5_az    value = pure game outcome (sf_wdl_frac=0, search_wdl_frac=0)
+             — the literal AZ loss: visit-count policy CE + outcome value.
+    t5_az_q  value = pure search WDL (sf_wdl_frac=0, search_wdl_frac=1.0)
+             — the Lc0 value-blend/root-Q analog.
+- Pre-committed reading:
+    t5_az CI includes/exceeds 0 ⇒ MACHINERY VALIDATED: trainer, arch,
+      optimizer, and search-visit targets can execute the proven recipe;
+      the defect lives entirely in the extra apparatus (SF opponent
+      servo, aux heads, blend) — fix by subtraction.
+    t5_az CI-clean NEGATIVE ⇒ the proven loss composition FAILS on our
+      stored selfplay data ⇒ the divergence from Lc0 is upstream of the
+      loss: data-generation regime (32-sim Gumbel games, temperature/
+      noise schedule, adjudication, 16 rows/game outcome correlation,
+      4.3 views vs Lc0's ~1) or optimizer regime ⇒ rung 1 (800-node
+      fresh data) becomes the deciding experiment.
+    t5_az vs t5_az_q ordering: which value source is less harmful ON
+      PURE SELFPLAY ROWS (no servo-biased curriculum outcomes in pool).
+- Note on the user's "SF as target didn't work" reading: as of this
+  entry SF is the LEAST harmful label source measured (−72 with aux
+  heads still on; the clean SF-only arm t4_noaux_sfonly is in flight).
+  The "high agreement yet lost Elo" observation was the SEARCH label
+  (corr 0.955 to SF, −145) — agreement-on-average does not preclude
+  training damage from the disagreeing tail.
