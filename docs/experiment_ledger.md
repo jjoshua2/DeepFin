@@ -34909,3 +34909,16 @@ proof (leela_index). The gain thesis reverts to making OUR loop's data compound:
 (Tier-7 soft-as-main), (3) recipe pooled-1000 relaunch bar, (4) rebuilt target
 construction for the vs-SF curriculum (Tier-1: the toxin was construction, not
 game type).
+
+### 2026-08-06 — PHASE-2 FINAL (pooled 1000): Elo −0.35 [−19.5, +18.8] — NULL AT ZERO
+
+Extension arena (seed 7777, 500g): +2.8 [−23.4, +29.0]. Pooled with confirm
+(seed 1337): pentanomial WW77/WD83/DD179/LD84/LL77, score 0.4995, **Elo −0.35
+[−19.5, +18.8]**. By the letter of 612c07782 (point ≤ 0) this is FAIL; the
+substantive reading is NULL AT ZERO with a ±19 ruler: the recipe of record holds
+the net exactly at its initialization through 2800 steps — collapse fully stopped,
+zero gain extracted from the fixed 713-shard bank. Seed-42's +22.6 was the
+optimistic tail. The 612c07782 FAIL pivot (BT4 distill) was WITHDRAWN by the user
+(95ba2cfe0); the gain program is now the innovations track: repaired-KataGo-aux +
+surprise weighting (rig), Gumbel shape/params from the sweeps (data-gen), window
+policy (relaunch). Task #166 CLOSED on this verdict.
