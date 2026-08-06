@@ -34537,3 +34537,10 @@ separate reviewer follows.
   The "high agreement yet lost Elo" observation was the SEARCH label
   (corr 0.955 to SF, −145) — agreement-on-average does not preclude
   training damage from the disagreeing tail.
+
+- RUNG-1 CONSTRAINT (2026-08-06, user): the "lc0-way" data-gen rung must
+  use the AUDITED Gumbel path at ~800 sims, NOT the PUCT/PUCV path — that
+  path is under-tested precisely because production is Gumbel (W3/PR #362
+  found 3 wiring defects there; c_puct/fpu_* knobs are inert-but-printed
+  in Gumbel searches). Literal PUCT replication requires its own
+  correctness audit FIRST, and only if Gumbel-800 data also fails.
