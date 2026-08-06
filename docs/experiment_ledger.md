@@ -34444,3 +34444,32 @@ separate reviewer follows.
   ±(1−3σ) or widen support so ±1 cannot saturate. (b)+(c) preserve the
   head's distributional-RL value if it has any; Tier-5 can race (a) vs
   (b)+(c) directly on stored shards.
+
+### ⚑ PREREG (2026-08-06) — FAST-HARNESS CALIBRATION: does the 800-step screen reproduce the 1578-step verdicts?
+
+- User-proposed harness validation, run ONCE: re-run the two most extreme
+  known arms at half budget and check the answer survives. If it does,
+  every future screen runs ~2/3 the wall clock and 1578 is reserved for
+  borderline arms.
+- Fast-harness definition: --steps 800, warmup_steps=500 override (at the
+  production w1000 an 800-step run would sit entirely inside LR warmup —
+  fewer steps would silently confound with lower LR). All else identical
+  to the Tier rigs (boot512, shards_iter21, b512, cold opt, arena 200g
+  seed 42 conc-16 compiled vs boot512).
+- Arms: t3f_gameonly (value-only, sf_wdl_frac=0, search_wdl_frac=0) and
+  t3f_noaux (value-only, w_sf_eval=0, w_categorical=0). Their 1578-step
+  references: −235.4 [−289.9,−189.6] and −36.6 [−84.9,+10.3] — 199 Elo
+  apart, CI-separated by ~105.
+- Pre-committed rule: fast harness VALIDATED iff at 800 steps the pair
+  keeps its ordering AND stays CI-separated (gameonly upper < noaux
+  lower). Then: future waves default to 800/w500 with one internal
+  baseline arm per wave; a full-budget re-run is required only for
+  borderline arms (CI straddling a decision boundary). NOT validated ⇒
+  keep 1578 and stop tuning the harness (user rule: the fix matters more
+  than the instrument).
+- Note for the "run the other half" idea: resuming a 800-step arm for the
+  remaining 778 is NOT equivalent to a straight 1578 run (the rig
+  deliberately resets to a cold optimizer + fresh warmup on every start,
+  retarget_retrain.py:30-33) — so the two-stage policy is screen-at-800
+  then RE-RUN borderline arms at full budget, not resume.
+- Cost ~35 min queued behind Tier-4's last arena.
