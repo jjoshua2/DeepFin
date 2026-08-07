@@ -35128,3 +35128,29 @@ Reports: runs/{ournet_probe_256,lc0_probe_256,ournet_probe_32,lc0_adapter_probe}
 Residual-barrier probe running (started 19:52, ~hours). Two human decisions
 parked: legacy-retirement test triage (~150 tests, stash@{0}); the earned-mass
 prereg threshold vs the 2.9-nat cap.
+
+### 2026-08-06 — TIER-10 VERDICT (prereg 39e61de46): NULL — repaired categorical does not help; aux stays OUT. OFFLINE PROGRAM CLOSED.
+
+Deploy proof POSITIVE (CPU replication of the trainer's rebuild path on this
+pool's sampled batches: fields all present, 511/512 rows modified, edge-bin mass
+0.713→0.172 — the 1be7120e0 defect signature removed; rig log itself prints
+nothing, noted for future rigs).
+- t10_catfix (w_cat 0.3, blended 0.69/0.31): **−47.2 [−93.7, −2.3]**
+- t10_catfix_low (w_cat 0.1): **−61.4 [−103.2, −21.4]**
+- baseline t6_base800 (cat OFF): −45.4 [−89.5, −2.8]
+Better arm ≈ baseline exactly (Δ −1.8; bar was point > baseline AND CI upper >
++20); low arm −16 vs baseline (KILL bar −25 not reached). VERDICT: NULL — the
+REPAIRED distributional aux neither helps nor re-arms the damage on stored data.
+Per prereg: categorical head stays OUT of the relaunch bundle; lc0-constants
+arm 3 does not fire. The broken form hurt (Tier-4 −109.5); the repaired form is
+merely inert here — consistent with aux value being a live-loop/fresh-data
+property if it exists at all (KataGo's evidence is from a working loop).
+
+**EVENING TABLE (all 800 steps, shards_iter21 pool, seed 42, vs boot512;
+placebo zero-point +22.6):** dirtest +22.6 | base800 −45.4 | softmain −56.1 |
+softmain_nosoft −36.6 | catfix −47.2 | catfix_low −61.4. Every recipe-variant
+arm is statistically identical to baseline: NOTHING trainable on stored data
+moves Elo at this dose. The offline rig's discriminating power is EXHAUSTED —
+remaining hypotheses are all generation-time. GPU paused for the evening (user);
+next: overnight barrier probe → tomorrow consumers-of-changed-fields audit,
+MultiPV path check, deploy-proof battery, relaunch prereg.
