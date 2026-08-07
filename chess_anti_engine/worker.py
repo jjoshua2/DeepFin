@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, overload
 from collections.abc import Callable
 
+import chess
 import numpy as np
 import torch
 
@@ -34,7 +35,8 @@ from chess_anti_engine.broker_hang import (
     resolve_worker_boot_hang_abort_seconds,
 )
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
+from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.inference import (
     AOTEvaluator,
     DirectGPUEvaluator,
@@ -4195,6 +4197,110 @@ class WorkerSession:
             self._pending_sf_refute = []
             return self._live_dole_queue, self._live_sf_refute_queue
 
+    def _await_broker_ready(self, cfgs: dict) -> None:
+        """Block session start until the inference broker answers one probe.
+
+        Broker mode only. A freshly launched broker ``torch.compile``s the
+        model on its FIRST forward (``SlotBroker._process_batch`` logs it as
+        "first inference (includes kernel compile)"; there is no broker-side
+        warmup forward), which takes ~1-2 min under reduce-overhead — longer
+        than the client's 30s request timeout. Selfplay threads spawned into
+        that window die on their first ``evaluate_legal_bf16`` call and are
+        never respawned (futures are joined only at session end), which cost
+        4/32 threads per worker on live trial 379f6 (-12.5% selfplay capacity
+        for the whole session, 2026-08-06).
+
+        The probe TRIGGERS the compile rather than waiting out an independent
+        one, and one probe is enough because the compiled model is broker-
+        process-level (one ``self._model`` behind every slot), not per-slot.
+        It is sent through the production transport (same
+        ``evaluate_legal_bf16`` mode as ``run_gumbel_many_c``) so it compiles
+        the same legal-policy forward the session will use, with the session's
+        own encoding config.
+
+        The per-attempt timeout stays the client's 30s — it is a deliberate
+        wedge detector — and only the OVERALL budget is new:
+        ``CAE_WORKER_BROKER_WARMUP_TIMEOUT_S``, default 240, deliberately
+        below the 300s selfplay stall watchdog. On exhaustion the session
+        proceeds with today's behavior — a warmup gate must never turn a
+        slow-but-recovering broker into a full worker outage.
+        """
+        client = self.inference_client
+        if client is None:
+            return
+        raw = os.environ.get("CAE_WORKER_BROKER_WARMUP_TIMEOUT_S", "240").strip()
+        try:
+            timeout_s = float(raw)
+        except ValueError:
+            timeout_s = 240.0
+  # ⚑ Same rule as the stall watchdog: print the REALIZED value, so "240 in
+  # force" and "exported value rejected, using 240" stay distinguishable.
+            self.log.warning(
+                "CAE_WORKER_BROKER_WARMUP_TIMEOUT_S=%r is not a number; using "
+                "the default %.1fs instead. The value you exported is NOT in "
+                "effect", raw, timeout_s,
+            )
+        if timeout_s <= 0.0:
+            self.log.info(
+                "broker warmup gate DISABLED (realized timeout_s=%.1f)", timeout_s,
+            )
+            return
+
+  # Probe input: the standard starting position under the SESSION's encoding
+  # config, with legal-move metadata built the way the production caller
+  # builds it (full 4672 action ids; see gumbel_c.py's evaluate_legal_bf16
+  # call). The bf16-bits transport matches _MODE_LEGAL_BF16.
+        game_cfg = cfgs["game"]
+        board = chess.Board()
+        x = encode_positions_batch(
+            [board],
+            input_history_encoding=str(game_cfg.input_history_encoding),
+            input_extra_features=str(game_cfg.input_extra_features),
+        )
+        xb = torch.from_numpy(x).to(torch.bfloat16).view(torch.uint16).numpy()
+        legal_flat = np.ascontiguousarray(legal_move_indices(board), dtype=np.int32)
+        legal_counts = np.array([int(legal_flat.shape[0])], dtype=np.int32)
+
+        t0 = time.monotonic()
+        deadline = t0 + timeout_s
+        attempts = 0
+        while True:
+            if self._stop_fn():
+                return  # shutdown/task change — the session itself will bail
+            attempts += 1
+            try:
+                client.evaluate_legal_bf16(xb, legal_flat, legal_counts)
+            except TimeoutError:
+  # Legitimate warmup, not a stall: keep the session watchdog fed even
+  # though the gate runs before _selfplay_session_active is set — the
+  # progress note costs nothing and survives a future reordering.
+                self._note_selfplay_progress()
+                if time.monotonic() >= deadline:
+                    self.log.error(
+                        "broker not ready after %.0fs (%d probe attempt(s), "
+                        "CAE_WORKER_BROKER_WARMUP_TIMEOUT_S=%r) -- starting "
+                        "selfplay threads anyway; expect thread deaths",
+                        time.monotonic() - t0, attempts, raw,
+                    )
+                    return
+                continue
+            except Exception as exc:
+  # Anything but a timeout is not "still compiling". Proceed and let the
+  # session-level machinery (_dispatch_selfplay_one_shard's reset/retry)
+  # see the same failure unchanged, rather than teaching this gate a
+  # second error protocol it would apply before the session exists.
+                self.log.warning(
+                    "broker warmup probe failed with a non-timeout error after "
+                    "%d attempt(s): %s -- proceeding to session start", attempts, exc,
+                )
+                return
+  # The deploy proof future sessions grep for.
+            self.log.info(
+                "broker ready after %.1fs (%d probe attempt(s))",
+                time.monotonic() - t0, attempts,
+            )
+            return
+
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
   # Do not start a session we have already been told to shut down. `run()`'s
@@ -4288,6 +4394,13 @@ class WorkerSession:
   # The SAME object is handed to play_batch (single path) or every thread (threaded
   # path), and mid-session doles refill it in place via _periodic_manifest_poll.
         fen_dole_queue, fen_sf_refute_queue = self._promote_pending_dole()
+
+  # Broker path only: gate BEFORE any selfplay thread is spawned (both the
+  # threaded and single dispatch paths race the broker's first-forward
+  # compile), and BEFORE _selfplay_session_active is set, so the stall
+  # watchdog cannot count a legitimate warmup as a stalled session.
+        if self.inference_client is not None:
+            self._await_broker_ready(cfgs)
 
         t0 = time.time()
         self._saw_completed_game = False
