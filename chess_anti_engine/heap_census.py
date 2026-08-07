@@ -96,7 +96,7 @@ def _malloc_info_summary() -> dict[str, int] | None:
     Root-level ``<total>``/``<system>`` elements are the cross-arena totals;
     the per-arena copies are nested inside ``<heap>`` and skipped by only
     walking direct children. Large allocations that glibc serves via mmap are
-    NOT in these numbers — they show up only in ``anon_kb``.
+    not in ``system_kb``/``allocated_kb``; they are reported as ``mmap_kb``.
     """
     try:
         libc = ctypes.CDLL("libc.so.6", use_errno=True)
