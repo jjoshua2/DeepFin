@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 import chess
 import numpy as np
@@ -183,6 +183,24 @@ class CompletedGameBatch:
     outcome_stats: dict[str, int] = field(default_factory=dict)
 
 
+@overload
+def _owned(arr: np.ndarray) -> np.ndarray: ...
+@overload
+def _owned(arr: None) -> None: ...
+
+
+def _owned(arr: np.ndarray | None) -> np.ndarray | None:
+    """Return ``arr`` owning its data, copying only when it is a view.
+
+    A record that stores a row view (``batch[j]``) keeps the WHOLE parent
+    batch array alive until the record's game finalizes — for the (N, 175,
+    8, 8) eval batches that is up to ~50 MB pinned per stored 44.8 KB row.
+    """
+    if arr is None or arr.base is None:
+        return arr
+    return arr.copy()
+
+
 class _NetRecord:
     """Per-ply sample record.  Uses ``__slots__`` to avoid dict overhead."""
     __slots__ = (
@@ -267,20 +285,30 @@ class _NetRecord:
     is_sf_refute_opp: bool
 
     def __init__(
-        self, x, policy_probs, net_wdl_est, search_wdl_est,
+        self, x: np.ndarray, policy_probs: np.ndarray,
+        net_wdl_est: np.ndarray, search_wdl_est: np.ndarray,
         pov_color, ply_index, has_policy, priority,
-        sample_weight, keep_prob, legal_mask=None,
-        sf_policy_target=None, sf_move_index=None, sf_wdl=None,
-        x_lc0_root=None, relations=None,
+        sample_weight, keep_prob, legal_mask: np.ndarray | None = None,
+        sf_policy_target: np.ndarray | None = None, sf_move_index=None,
+        sf_wdl: np.ndarray | None = None,
+        x_lc0_root: np.ndarray | None = None,
+        relations: np.ndarray | None = None,
         priority_policy_kl=None, priority_q_delta=None,
         gumbel_policy_diag=None, move_offset=-1, pos_hash=0,
     ):
-        self.x = x
-        self.policy_probs = policy_probs
-        self.net_wdl_est = net_wdl_est
-        self.search_wdl_est = search_wdl_est
-        self.x_lc0_root = x_lc0_root
-        self.relations = relations
+        # Every array field is stored OWNED (see _owned): callers pass rows of
+        # (N, ...) batch arrays (`c_x[j]`, `xs_batch[j]`, broker-response
+        # rows), and a stored view pins its whole parent batch until this
+        # record's game finalizes. 2026-08-07: with ~16 slots x hundreds of
+        # in-flight plies that pinned tens of GB per worker and OOM-killed the
+        # trainer. The x_lc0_root call sites already copied for exactly this
+        # reason; this makes the record itself enforce it.
+        self.x = _owned(x)
+        self.policy_probs = _owned(policy_probs)
+        self.net_wdl_est = _owned(net_wdl_est)
+        self.search_wdl_est = _owned(search_wdl_est)
+        self.x_lc0_root = _owned(x_lc0_root)
+        self.relations = _owned(relations)
         self.pov_color = pov_color
         self.ply_index = ply_index
         self.move_offset = int(move_offset)
@@ -291,10 +319,10 @@ class _NetRecord:
         self.priority_q_delta = priority_q_delta
         self.sample_weight = sample_weight
         self.keep_prob = keep_prob
-        self.legal_mask = legal_mask
-        self.sf_policy_target = sf_policy_target
+        self.legal_mask = _owned(legal_mask)
+        self.sf_policy_target = _owned(sf_policy_target)
         self.sf_move_index = sf_move_index
-        self.sf_wdl = sf_wdl
+        self.sf_wdl = _owned(sf_wdl)
         self.sf_wdl_original = None
         self.sf_multipv_raw = None
         self.sf_label_meta = None
