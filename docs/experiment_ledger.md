@@ -35567,3 +35567,31 @@ is ~±4cp. A live effect smaller than that would not have passed this screen, by
 (the audit-first rule kills candidates that cannot prove themselves offline). Any
 re-attempt needs a NEW prereg with a bigger dose or a sharper instrument, not a re-read
 of this one.
+
+### 2026-08-07 — VERDICT: worker OOM root cause = _NetRecord view pinning; fix deployed, ratchet gone
+
+Root cause (PR #369, merged, live at the 17:15 restart, merge e4cc79ff4): every
+`_NetRecord` stored bare numpy ROW VIEWS into the per-turn eval batch arrays
+(`c_x[j]` / `xs_batch[j]` etc., selfplay/network_turn.py), pinning the whole
+(N,175,8,8) parent batch (up to ~53MB) per stored 44.8KB row until the record's game
+finalized. Fix: `_owned()` choke point in `_NetRecord.__init__` (copy iff view), with
+a negative-controlled regression test that fails on pre-fix code.
+
+Deciding readout (per-minute RSS logger, `data/oom_20260807/rss_log.csv`, single-change
+restart — no MALLOC_ARENA_MAX):
+- pre-fix   (uncapped):     5.9GB@379s → 8.35GB@920s → 12.4GB@2060s → ~18GB/worker at the 12:22 raylet kill (~1.5-2GB/h ratchet)
+- pre-fix   (arena-capped): 8-8.8GB@360s → ~11.6GB@1741s (cap changed nothing → fragmentation refuted)
+- post-fix: ~10GB by 1735s then FLAT 10.0-10.8GB through 4617s (77 min), residual slope ≤~0.4GB/h
+
+Verdict: the ratchet component is gone; the ~10GB plateau is steady-state footprint
+(in-flight records now owned copies; 32 threads × 24 in-flight games). This is a
+MEMORY-LEAK fix, NOT a correctness fix — reviewer confirmed batch buffers are freshly
+allocated per call, so views were pinned but never corrupted. Attribution note: SF
+children read 5.6-6.5GB RSS each but are ~96% Shared_Clean syzygy mmap counted 32×;
+real SF anon is ~78MB/proc. The leak was python-worker anon heap only.
+
+Residual watch: ≤0.4GB/h creep vs measurement noise — discriminated by the flag-gated
+in-process heap census (PR #370, reviewed+CI-green, merge pending approval): arm ONE
+worker via work-dir flag file + SIGTERM recycle (revive resumes suspended games; model
+lives in the broker so no compile). memray attach is BANNED on this host: gdb-injected
+malloc call took SIGILL in worker_00 (18:34, worker survived, verified producing after).
