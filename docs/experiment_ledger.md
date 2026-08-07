@@ -35540,3 +35540,30 @@ Open defect: worker RSS growth ~1.7 GB/h/worker must be root-caused (candidates:
 upload path accumulation, eval-cache growth, game-record retention on the resumed
 in-flight path — none confirmed). Restart is NOT mitigation, it is a ~2-day fuse.
 Per the standing rule I am not restarting training without user input.
+
+### 2026-08-07 — VERDICT: terminal-outcome stage-1 screen = KILL (both arms), stage 2 does not launch
+
+Chain ran 14:03–15:28 on the 713-shard clean bank (control / conservative 7,2,sf_frac 0
+/ aggressive 7,2,sf_frac 0.5; 2800 steps @ 512 each, shared seed + shard pool; artifacts
+`data/offline_replay_screen_cdb96/retrain_termout/`). In-effect proof from the rig's own
+`retarget_report.json`: control `wdl_terminal_outcome_frac` 0.0 / 0 rows; cons 0.0117 /
+86,343 rows; aggr 0.0246 / 86,343 rows — lever live in both arms, dead in control, and
+both lever arms touched the identical row set.
+
+Deciding yardstick (paired value_regret, batch 128, fen_only, per-position dumps,
+10k-resample bootstrap; delta = control − arm, >0 = arm better):
+endgame  cons +1.24 [−2.93, +5.53] · aggr −0.44 [−4.48, +3.21]
+midgame  cons −0.68 [−2.81, +1.07] · aggr −0.44 [−2.31, +1.17]
+cons-vs-aggr endgame −1.68 [−5.45, +1.27].
+
+Pre-committed rule: endgame CI>0 to pass → **both arms KILL (CI includes 0)**. No
+middlegame harm; the sf_frac axis question resolves as "aggressive buys nothing over
+conservative". Production stays default-off; the PR #368 code remains merged and
+harmless (bit-identical off, shipped test).
+
+Honest caveat, not a verdict escape: the realized dose was small — mean transferred
+weight 0.012 of the value target over 4.7% of rows, and the screen's endgame resolution
+is ~±4cp. A live effect smaller than that would not have passed this screen, by design
+(the audit-first rule kills candidates that cannot prove themselves offline). Any
+re-attempt needs a NEW prereg with a bigger dose or a sharper instrument, not a re-read
+of this one.
