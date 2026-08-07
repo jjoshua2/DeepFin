@@ -35350,3 +35350,21 @@ RULER RE-BASELINE (subagent, banked data/ruler_baselines_20260806/, both exit
 - Note: audit_targets' internal RL-search row already runs the bundle's
   c_scale 0.025 (reads live yaml) — recorded as part of this baseline's ruler
   identity.
+
+### 2026-08-07 00:35 — DEPLOY PROOF BATTERY: 14/14 PASS (trial 379f6, first-shard evidence)
+
+scripts/relaunch_proof_battery.py against the first compacted server shards +
+params.json + live server:
+- SHARD EVIDENCE: sf_multipv non-pad PV rows p95=6 median=6; label nodes
+  median 150,094 (p10 150,011 / p90 150,169 — floor AND cap live);
+  is_selfplay 0.725 over 1,428 rows (trending to 0.8; early-completion
+  transient per the length-truncation rule).
+- LAUNCH CONFIG: c_scale 0.025 / topk 32 / sims 256 / gumbel 1.0→0.5 /
+  multipv 6 / floor 150k / cap 200k / sp_frac 0.8 all exact;
+  sf_fast_ply_node_scale correctly ABSENT (dataclass default 0.25).
+- #161: live server answers HTTP 401 to the burned chess_worker_2026 over
+  HTTP Basic on /v1/lease_trial — old credential DEAD end-to-end.
+Battery corrections in this pass (constants → user-locked 150k/200k; absent-
+key semantics; real endpoint — 404 was "no auth verdict", not a rejection).
+Every training-affecting bundle key is now PROVEN in effect on the production
+path. config_change_may_not_be_in_effect: SATISFIED for this restart.
