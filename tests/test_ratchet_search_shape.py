@@ -839,7 +839,12 @@ def test_a_new_checkpoint_does_not_buy_a_second_arena_the_same_day(tmp_path) -> 
 
 
 def test_both_series_still_split_the_budget(tmp_path) -> None:
-    """The other direction: two live series must still get half each."""
+    """The other direction: two live series must still get half each.
+
+    The budget is pinned to 30 minutes so the assertion tests the SPLIT
+    invariant, not the script's default BUDGET_MIN (which is a tuning
+    value and has changed before — 30 -> 90 on 2026-08-07).
+    """
     root = _sandbox(tmp_path)
     snaps = root / "data" / "ratchet" / "snapshots"
     snaps.mkdir(parents=True)
@@ -847,7 +852,7 @@ def test_both_series_still_split_the_budget(tmp_path) -> None:
     old.write_text("an older, genuinely different net")
     os.utime(old, (1, 1))
 
-    rc, out = _run_ratchet(root)
+    rc, out = _run_ratchet(root, "--max-minutes", "30")
     assert rc == 0, out
     calls = (root / "arena_calls.txt").read_text().splitlines()
     assert len(calls) == 2, f"both series should have run: {calls}"
