@@ -43,7 +43,8 @@ def test_census_once_records_all_views(tmp_path: Path) -> None:
     assert line["rss_kb"] > 0
     assert line["anon_kb"] > 0
     assert line["gc_objects"] > 1000
-    assert line["gc_top"] and isinstance(line["gc_top"][0][0], str)
+    assert line["gc_top"]
+    assert isinstance(line["gc_top"][0][0], str)
     malloc = line["malloc"]
     assert malloc is not None
     assert malloc["system_kb"] >= malloc["allocated_kb"] >= 0
