@@ -35368,3 +35368,18 @@ Battery corrections in this pass (constants → user-locked 150k/200k; absent-
 key semantics; real endpoint — 404 was "no auth verdict", not a rejection).
 Every training-affecting bundle key is now PROVEN in effect on the production
 path. config_change_may_not_be_in_effect: SATISFIED for this restart.
+
+## 2026-08-07 — DEPLOY: PR #365 broker-warmup gate via train.sh restart (ops, not a training-quality experiment)
+
+**Change:** PR #365 (merged, squash 4cd6dfb64): `_await_broker_ready` probe gate in `_run_selfplay`, broker path, before `_selfplay_session_active = True`. Fixes the measured compile-window thread deaths (4/32 threads per worker died at first-compile on the 08-06 relaunch = −12.5% selfplay capacity, never respawned). Gate is ON by default (env `CAE_WORKER_BROKER_WARMUP_TIMEOUT_S`, default 240; 0 disables). Independent review: APPROVE-WITH-NITS (PR comment), nits folded in. CI green.
+
+**Deploy:** `train.sh restart` (stop → start, auto-RESUME — never `--fresh`) on the live 379f6 trial, AFTER checkpoint_000020 is banked so the iter-21 boot-shock arena checkpoint comes from the uninterrupted boot. Restart also restores the 4 dead threads per worker.
+
+**Pre-committed verification (first new session, same day):**
+1. `grep "broker ready after"` in each worker log — line MUST exist (gate ran on the production path).
+2. `grep "selfplay thread .* died"` — MUST be zero in the new session.
+3. F1 disambiguation (reviewer finding): ready wait <5s on a freshly launched broker AND any thread deaths ⇒ probe was AOT-short-circuited — gate needs a production-batch-shaped probe; file immediately.
+4. `outcome_stats.resumed_inflight_games > 0` on teardown of the old session (resume path exercised).
+FAIL on any ⇒ the gate did not take effect; do NOT count this deploy as done.
+
+**Confounds:** restart transient (post-restart winrate biased high — drop post-restart rows per standing rule); +12.5% selfplay capacity from thread recovery changes games/h vs the first-day baseline — note when reading day-1 throughput.
