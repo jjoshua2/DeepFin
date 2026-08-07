@@ -35498,3 +35498,18 @@ drop post-restart winrate rows per the length-truncation rule); HL-Gauss edge
 truncation (A20) — ±1 outcome targets push on the truncated edge, so part of any null
 may be head-side, note before judging; one-data-affecting-change-per-window applies to
 the enabling restart.
+
+### 2026-08-07 amendment to the terminal-outcome prereg — three-arm stage-1 screen
+
+User call: the conservative cap (outcome ≤ search's 0.31 share) is a design guess, and
+this axis is offline-screenable — so let the rig decide instead of tuning live. New key
+`wdl_terminal_outcome_sf_frac` (default 0.0 = SF untouched) lets the outcome also take
+part of the SF share near-terminal. Stage 1 now runs THREE arms on the clean bank:
+control / conservative (7, 2, sf_frac 0) / aggressive (7, 2, sf_frac 0.5 → at d≤2:
+SF 0.345, search 0, outcome 0.655). Deciding rule unchanged (paired value_regret
+endgame slice, CI>0 to pass; middlegame slice worsening = kill) plus arm selection:
+aggressive must BEAT conservative with paired CI>0 to be chosen, ties go to
+conservative (smallest change that captures the effect). Production enable remains
+whichever single arm wins, at a user-authorized restart only. Confound note: the
+aggressive arm bends the load-bearing-SF rule on ~1.2% of rows (d≤2) — the rig screen
+is exactly the instrument that is allowed to test that safely.
