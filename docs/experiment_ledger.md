@@ -35513,3 +35513,30 @@ conservative (smallest change that captures the effect). Production enable remai
 whichever single arm wins, at a user-authorized restart only. Confound note: the
 aggressive arm bends the load-bearing-SF rule on ~1.2% of rows (d≤2) — the rig screen
 is exactly the instrument that is allowed to test that safely.
+
+## 2026-08-07 — OUTAGE: trainer OOM-killed at 12:22, run DOWN pending user-authorized restart
+
+At 12:22:23 Ray's raylet killed the training actor for node memory pressure and the
+tuner exited (full traceback + Ray memory report banked at
+`data/oom_20260807/chess_training_oom.log`; /tmp copy is reboot-volatile). Root cause
+per the raylet's own memory report: the FOUR selfplay worker processes had ballooned to
+**~18 GB RSS EACH (~72 GB of the node's 98 GB)**; the trainer actor (6.8 GB) was the
+process Ray could kill. Workers had been up 10.4 h — since the 01:56 stop/resume
+(`logfile_restart_20260807.txt`, which also discarded 4 workers' in-flight games) — so
+this is ~1.7 GB/h/worker of growth, a leak or unbounded accumulation, not a spike:
+iter 151 completed normally at 12:18 (302 s, ingest healthy, desync 0.0). Minor
+concurrent RAM users (bt4 goldcheck 1.26 GB, blindspot_retire_step 1.25 GB) are noise
+at this scale. Aftermath: server shut down cleanly with the teardown; the inference
+broker (PID 1996441) is ORPHANED and idle-spinning ~82% CPU — kill it at restart.
+Last checkpoint = iter 151 (holds iter-152 state per the ckpt_N gotcha).
+
+Impact on open readouts: the ~iter-220 milestone slips by the outage length; the regret
+trend fit gains a gap and post-restart rows must be dropped per the length-truncation
+rule; tonight's ratchet run needs training back up to matter. The stage-1
+terminal-outcome rig screen is UNAFFECTED (offline, RAM headroom 73 GB free after the
+workers died).
+
+Open defect: worker RSS growth ~1.7 GB/h/worker must be root-caused (candidates: replay
+upload path accumulation, eval-cache growth, game-record retention on the resumed
+in-flight path — none confirmed). Restart is NOT mitigation, it is a ~2-day fuse.
+Per the standing rule I am not restarting training without user input.
