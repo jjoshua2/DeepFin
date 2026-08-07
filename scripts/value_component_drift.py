@@ -46,7 +46,13 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-_DEFAULT_GLOB = "runs/pbt2_small/server/trials/*/*/_compacted/*.zarr"
+# One TRIAL, resolved to the newest at runtime (see _default_glob). A glob over
+# trials/*/ sweeps every lineage into one mtime ordering, so bucket 0 becomes
+# "the oldest lineage" and the table reads as a trend that never happened —
+# observed live 2026-08-07: endgame E|d| looked like it ROSE 0.085 -> 0.114
+# across buckets purely because bucket 0 was another net's data.
+_TRIALS_ROOT = "runs/pbt2_small/server/trials"
+_SHARD_SUFFIX = "*/_compacted/*.zarr"
 _PHASES = (("opening", 25, 33), ("middlegame", 13, 25), ("endgame", 0, 13))
 
 
@@ -57,6 +63,14 @@ class _Cell:
     signed_mean: float
     p90: float
     corr: float
+
+
+def _default_glob() -> str:
+    """Shard glob for the newest (mtime) trial dir — one lineage, not all."""
+    trials = sorted(glob.glob(os.path.join(_TRIALS_ROOT, "*/")), key=os.path.getmtime)
+    if not trials:
+        return os.path.join(_TRIALS_ROOT, "*", _SHARD_SUFFIX)
+    return os.path.join(trials[-1], _SHARD_SUFFIX)
 
 
 def _expectation(wdl: np.ndarray) -> np.ndarray:
@@ -110,8 +124,9 @@ def _cell(e_search: np.ndarray, e_sf: np.ndarray) -> _Cell:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Track search-value vs SF-label divergence across shard history, by phase.")
-    ap.add_argument("--shard-glob", default=_DEFAULT_GLOB,
-                    help="glob for shard .zarr dirs; sorted by mtime for bucketing")
+    ap.add_argument("--shard-glob", default=None,
+                    help="glob for shard .zarr dirs; sorted by mtime for bucketing "
+                         "(default: newest trial dir only — mixing trials fakes a trend)")
     ap.add_argument("--time-buckets", type=int, default=3,
                     help="number of equal shard-count buckets across history")
     ap.add_argument("--rows-per-bucket", type=int, default=6000,
@@ -122,10 +137,12 @@ def main() -> int:
                     help="append per-cell rows here for longitudinal tracking")
     args = ap.parse_args()
 
-    paths = sorted(glob.glob(args.shard_glob), key=os.path.getmtime)
+    shard_glob = args.shard_glob or _default_glob()
+    paths = sorted(glob.glob(shard_glob), key=os.path.getmtime)
     if not paths:
-        print(f"no shards match {args.shard_glob}", file=sys.stderr)
+        print(f"no shards match {shard_glob}", file=sys.stderr)
         return 1
+    print(f"shard glob: {shard_glob}")
     print(f"{len(paths)} shards; {args.time_buckets} buckets; "
           f"sampling <= {args.shards_per_bucket} shards / {args.rows_per_bucket} rows each")
 
