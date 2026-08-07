@@ -46,7 +46,7 @@
 # THE DAY'S BUDGET IS ATTEMPTS x --max-minutes, NOT UNBOUNDED. A zero-row run
 # exits non-zero so ratchet_loop.sh retries instead of stamping the day done —
 # but "retry until it works" against a failure that reproduces is a GPU retry
-# storm, not a retry. At BUDGET_MIN=30 and a 600s poll that is ~18 GPU-hours a
+# storm, not a retry. At BUDGET_MIN=90 and a 600s poll that is ~54 GPU-hours a
 # day, spent by the same script whose header blames a 4h32m arena for an 82%
 # throughput loss, and it is self-reinforcing: contention makes runs produce no
 # complete pairs, no pairs makes the loop retry, the retry adds contention. So:
@@ -93,7 +93,14 @@ SIMS=32
 CONC=16
 # Hard total wall-clock budget for the whole job, split across the series that
 # actually run. See the header: the budget is fixed, the CI floats.
-BUDGET_MIN=30
+#
+# 2026-08-07: 30 -> 90, paired with compiled inference below. At 30 eager the
+# instrument was starved into uselessness: the 08-06/08-07 rows finished 23/200
+# games in their 725s share (9-18 complete pairs, CI half-widths of 150-300
+# Elo), which cannot answer the 5-7 day gain question the ratchet exists for.
+# Compiled at conc 16 a 200-game series takes ~40 min (measured twice on
+# 2026-08-07 beside live training), so 90 min covers both series at full n.
+BUDGET_MIN=90
 REPORT_EVERY=16
 SNAP_DIR=data/ratchet/snapshots
 LOG=data/ratchet/ratchet.csv
@@ -407,13 +414,21 @@ run_arena () {   # $1=reference  $2=series-label
     # the C search or in checkpoint loading still has to be killed from outside.
     local inner=$(( budget - 45 ))
     [ "$inner" -lt 30 ] && inner=30
+    # `--compile on` (2026-08-07, was --no-compile): ~3x games per GPU-minute by
+    # reusing the training torchinductor cache (arena_standard's default cache
+    # dir). Eager was the starvation mechanism — 23/200 games inside a 725s
+    # share. Safety history that motivated eager still holds where it applied:
+    # the 2026-06-18 OOM was a 256-sim arena; this is 32 sims at conc 16, run
+    # twice at 200 games beside live training on 2026-08-07 without incident.
+    # Compiled arenas need ~10GB free; if training's footprint ever grows to
+    # make that tight, drop back to --no-compile rather than lowering CONC.
     timeout -k 20 "${budget}s" \
         python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \
         --mode matched_sims --search-shape "$SHAPE" --sims "$SIMS" --games "$GAMES" \
         --max-concurrent-games "$CONC" --report-every "$REPORT_EVERY" \
         --max-seconds "$inner" \
-        --no-compile --device cuda --seed 42 \
+        --compile on --device cuda --seed 42 \
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
     local rc=$?
     # The token recorded for this series if no row comes out of the log below.
