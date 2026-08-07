@@ -28,6 +28,7 @@ import torch
 if TYPE_CHECKING:
     import requests
 
+from chess_anti_engine.heap_census import maybe_start_heap_census
 from chess_anti_engine.broker_hang import (
     WORKER_HANG_ABORT_EXIT_CODE,
     BrokerHangWatchdog,
@@ -857,6 +858,10 @@ class WorkerSession:
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.uploaded_dir.mkdir(parents=True, exist_ok=True)
         self.resume_dir.mkdir(parents=True, exist_ok=True)
+  # Leak-diagnosis census (2026-08-07 worker OOM): default off. Armed per
+  # worker by a flag file in this durable work dir, so one revived worker can
+  # be instrumented without touching the rest of the fleet or the driver.
+        maybe_start_heap_census(work_dir)
         self.arena_pending_dir.mkdir(parents=True, exist_ok=True)
         self.arena_uploaded_dir.mkdir(parents=True, exist_ok=True)
         self.arena_rejected_dir.mkdir(parents=True, exist_ok=True)
