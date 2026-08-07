@@ -216,7 +216,7 @@ selfplay:
   # PIN. Unreachable only because opening_book_prob is 1.0; keeping it means this deletion
   # is not conditional on another key not moving.
   random_start_plies: 2
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_16.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_133.txt
   # DELETED opening_fen_prob: 0.0, and structurally superseded: opening.py:79-88 disables the probabilistic draw entirely while opening_fen_dole_per_iter>0
   opening_fen_net_side_to_move: true
   opening_fen_dole_per_iter: 1
@@ -266,7 +266,11 @@ selfplay:
   sf_wdl_cp_draw_width: 120.0
   soft_policy_temp: 2.0
   syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
-  stockfish_syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5
+  # 2026-08-07: aligned with syzygy_path (was syzygy_3-4-5 alone). NOTE the
+  # dir names lie: syzygy_3-4-5 also holds all 365 six-man WDL files, so SF
+  # has probed 6-man WDL in search all along — this change only adds 6-man
+  # DTZ (root ranking + 50-move-exact conversion), which lives in syzygy_6.
+  stockfish_syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
   syzygy_adjudicate: true
   syzygy_adjudicate_fraction: 0.99
   syzygy_in_search: true
