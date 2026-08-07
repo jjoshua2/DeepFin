@@ -35383,3 +35383,11 @@ path. config_change_may_not_be_in_effect: SATISFIED for this restart.
 FAIL on any ⇒ the gate did not take effect; do NOT count this deploy as done.
 
 **Confounds:** restart transient (post-restart winrate biased high — drop post-restart rows per standing rule); +12.5% selfplay capacity from thread recovery changes games/h vs the first-day baseline — note when reading day-1 throughput.
+
+**VERDICT 2026-08-07 ~02:05 (same session): DEPLOY VERIFIED — all 4 pre-committed checks PASS.**
+1. "broker ready after 1.6–2.1s (1 probe attempt(s))" in ALL FOUR worker logs at 01:57:40 — gate ran on the production path.
+2. Zero "selfplay thread died" since restart (01:56); historical death waves hit within ~2 min of session start, window passed.
+3. F1: ready was sub-5s BUT with zero deaths, so no AOT-short-circuit escape occurred on this boot. Note the pre-restart logs revealed a SECOND death wave at 00:42:58 (~16 more threads, mid-session recycle) — old-session capacity loss was worse than the −12.5% first reported; the gate covers every session start, which is exactly the case that fired at 00:42.
+4. `selfplay resume totals: resumed=568` (worker_03 alone; discarded=0) — resume path exercised, no drain transient.
+
+Iter-21 boot-shock arena LAUNCHED 02:04 from banked checkpoint_000020 copy (data/ckpt20_iter21_arena/), 200g seed 42 matched_sims 32 --search-shape training vs boot_snap_recheck_0711_0404.pt, out data/iter21_bootshock/. Reading rule (pre-committed 08-06): ≈−96 = boot-shock attractor persists under the reduced-SF bundle; ≈0/positive = escaped. Single 200g CI ±~45 separates the two.
