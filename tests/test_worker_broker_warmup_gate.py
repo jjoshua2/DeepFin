@@ -250,6 +250,27 @@ def test_gate_passes_a_non_timeout_error_to_the_session(
     log.error.assert_not_called()
 
 
+def test_gate_skips_loudly_on_unexpected_cfgs_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cfgs dict without the production "game" key (a test stub today, a
+    changed cfg shape tomorrow) must not crash session start: the gate skips
+    with a loud warning and dispatch is still reached (the gate returns
+    normally, and tests/test_selfplay_resume.py drives the real _run_selfplay
+    through dispatch with exactly such a stub)."""
+    monkeypatch.delenv("CAE_WORKER_BROKER_WARMUP_TIMEOUT_S", raising=False)
+    clock = _FakeTime()
+    client = _FakeClient(clock, timeouts=0)
+    session, log, _ = _session(client, clock, monkeypatch)
+
+    session._await_broker_ready({"opening": object()})  # no "game": must not raise
+
+    assert client.calls == []  # probe construction failed before any request
+    log.warning.assert_called_once()
+    assert "broker warmup gate SKIPPED" in log.warning.call_args.args[0]
+    log.error.assert_not_called()
+
+
 def test_gate_bails_on_stop_before_probing(monkeypatch: pytest.MonkeyPatch) -> None:
     """A shutdown requested mid-warmup must not be held up by probe attempts."""
     monkeypatch.delenv("CAE_WORKER_BROKER_WARMUP_TIMEOUT_S", raising=False)
@@ -281,8 +302,8 @@ def test_gate_only_runs_on_the_broker_path() -> None:
     on inference_client, and the method itself refuses a clientless session."""
     src = inspect.getsource(WorkerSession._run_selfplay)
     gate = src.index("self._await_broker_ready(cfgs)")
-    guard = src.rindex("if self.inference_client is not None:", 0, gate)
-    assert guard != -1
+    guard = src.index("if self.inference_client is not None:")
+    assert guard < gate
 
     session = object.__new__(WorkerSession)
     cast("Any", session).inference_client = None

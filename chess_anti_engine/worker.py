@@ -4216,7 +4216,13 @@ class WorkerSession:
         It is sent through the production transport (same
         ``evaluate_legal_bf16`` mode as ``run_gumbel_many_c``) so it compiles
         the same legal-policy forward the session will use, with the session's
-        own encoding config.
+        own encoding config. Caveat: on an AOT-covered broker (``aot_dir``
+        with the probe's padded bucket in the package set) the probe may be
+        served by a pre-compiled AOT model without triggering torch.compile
+        at all — then the gate degrades to a cheap readiness check. The
+        "broker ready after N.Ns" wait time is the observable that
+        disambiguates: ~compile-scale N means the probe did the warmup,
+        sub-second N means the broker was already fast to serve.
 
         The per-attempt timeout stays the client's 30s — it is a deliberate
         wedge detector — and only the OVERALL budget is new:
@@ -4249,17 +4255,29 @@ class WorkerSession:
   # Probe input: the standard starting position under the SESSION's encoding
   # config, with legal-move metadata built the way the production caller
   # builds it (full 4672 action ids; see gumbel_c.py's evaluate_legal_bf16
-  # call). The bf16-bits transport matches _MODE_LEGAL_BF16.
-        game_cfg = cfgs["game"]
-        board = chess.Board()
-        x = encode_positions_batch(
-            [board],
-            input_history_encoding=str(game_cfg.input_history_encoding),
-            input_extra_features=str(game_cfg.input_extra_features),
-        )
-        xb = torch.from_numpy(x).to(torch.bfloat16).view(torch.uint16).numpy()
-        legal_flat = np.ascontiguousarray(legal_move_indices(board), dtype=np.int32)
-        legal_counts = np.array([int(legal_flat.shape[0])], dtype=np.int32)
+  # call). The bf16-bits transport matches _MODE_LEGAL_BF16. Construction is
+  # guarded: a cfgs shape this gate does not expect (a changed key, a test
+  # stub) must degrade to a loud skip, never a crash -- the gate protecting
+  # session start must not be able to become the thing that breaks it.
+        try:
+            game_cfg = cfgs["game"]
+            board = chess.Board()
+            x = encode_positions_batch(
+                [board],
+                input_history_encoding=str(game_cfg.input_history_encoding),
+                input_extra_features=str(game_cfg.input_extra_features),
+            )
+            xb = torch.from_numpy(x).to(torch.bfloat16).view(torch.uint16).numpy()
+            legal_flat = np.ascontiguousarray(
+                legal_move_indices(board), dtype=np.int32,
+            )
+            legal_counts = np.array([int(legal_flat.shape[0])], dtype=np.int32)
+        except Exception as exc:
+            self.log.warning(
+                "broker warmup gate SKIPPED: probe construction failed (%s); "
+                "threads spawn without warmup", exc,
+            )
+            return
 
         t0 = time.monotonic()
         deadline = t0 + timeout_s
