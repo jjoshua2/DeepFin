@@ -1322,6 +1322,18 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
         trainer.adjusted_wdl_regret_scale = float(config["adjusted_wdl_regret_scale"])
     if "adjusted_wdl_regret_cap" in config:
         trainer.adjusted_wdl_regret_cap = float(config["adjusted_wdl_regret_cap"])
+    # Terminal-proximal outcome share. Pushed here so a live yaml edit reaches
+    # the trained target at the next iteration instead of waiting for a
+    # restart; `moves_left_max_plies` deliberately does NOT ride along (see the
+    # Trainer constructor -- it re-interprets rows already in the window).
+    if "wdl_terminal_outcome_plies" in config:
+        trainer.wdl_terminal_outcome_plies = int(config["wdl_terminal_outcome_plies"])
+    if "wdl_terminal_outcome_full_plies" in config:
+        trainer.wdl_terminal_outcome_full_plies = int(
+            config["wdl_terminal_outcome_full_plies"]
+        )
+    if "wdl_terminal_outcome_sf_frac" in config:
+        trainer.wdl_terminal_outcome_sf_frac = float(config["wdl_terminal_outcome_sf_frac"])
     if "resid_channel_dropout" in config:
         drop = max(0.0, min(0.95, float(config["resid_channel_dropout"])))
         trainer.resid_channel_dropout = drop
