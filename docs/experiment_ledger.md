@@ -35316,3 +35316,37 @@ credential rotated** (32-char secret; users.json hash + server .password file +
 .secrets/worker_password all symmetric, 0600, gitignored; old
 chess_worker_2026 verified DEAD against the store). First-shard proof battery:
 scripts/relaunch_proof_battery.py (negative controls verified on the old bank).
+
+### 2026-08-07 00:15 — RELAUNCH BOOT REPORT (trial 379f6) + RULER RE-BASELINE BANKED (#360 obligation closed)
+
+BOOT: trial train_trial_379f6_00000 live 23:51, all 4 workers authenticated
+under the ROTATED credential (password-file path) and playing. First realized
+proof, from the workers' own session-start line: `regret=0.1000 sf_nodes=75000
+label_floor=150000 score_mode=cp cp_temp=16.20` — floor 150k + cp mode LIVE.
+Remaining keys (cap/multipv/sp_frac/gumbel) get their proof from the first
+shard via scripts/relaunch_proof_battery.py (watcher armed).
+
+KNOWN-PATTERN STARTUP LOSS, quantified: at 23:52:51 (broker compile window)
+each worker lost exactly 4 selfplay threads to 30s inference-broker timeouts
+(16 total). Worker code confirms dead threads are logged but NEVER respawned
+(worker.py:4052 _run_one_thread) — each worker runs 28/32 threads for the
+session, ~12.5% selfplay capacity. Phase stats corroborate (~2880% total_thread
+≈ 28.8 threads). Fix available: SIGTERM → graceful suspend → driver revive →
+resume (wired, worker.py:1170), compile cache now warm — but killing live
+worker processes needs operator action (permission-gated this session).
+OPERATOR DECISION: bounce the 4 workers one at a time, or accept −12.5%
+selfplay throughput until the next natural session restart.
+
+RULER RE-BASELINE (subagent, banked data/ruler_baselines_20260806/, both exit
+0, training undisturbed): post-#360 + cp-mode baselines on boot512 —
+- audit_targets (v1 frozen set, 2k subset, batch 64 PINNED, fen_only): raw
+  policy E[regret]/top-1 = 74.9/53.5 cp; PLAY 32-sim 53.6/52.3; SF MultiPV
+  soft 22.9/19.2; production training target 62.2/50.4.
+- value_regret (batch 128 PINNED — CLI default is 256, must pass explicitly):
+  70.8 cp overall TB-excluded (n=1723); endgame 81.4 / middlegame 53.9.
+- ⚑ These must NOT be diffed against pre-#360 anchors (old mate fold, other
+  batch/subset) — apparent shifts are the ruler change itself. Pair future
+  readings against the banked per-position dumps via scripts/paired_compare.py.
+- Note: audit_targets' internal RL-search row already runs the bundle's
+  c_scale 0.025 (reads live yaml) — recorded as part of this baseline's ruler
+  identity.
