@@ -790,6 +790,17 @@ class TrainMetrics:
     sf_search_agree_frac: float = 0.0
     sf_search_disagree_sf_low_frac: float = 0.0
     sf_search_disagree_sf_high_frac: float = 0.0
+  # Terminal-proximal outcome transfer (train/losses.py). `_frac` is the mean
+  # weight moved onto the recorded game outcome over ALL batch rows (off the
+  # SEARCH component, plus the SF component only when
+  # `wdl_terminal_outcome_sf_frac` is raised off 0.0); `_rows` is how many rows
+  # received any. Both are exactly 0.0
+  # while `wdl_terminal_outcome_plies` is 0, so a non-zero `_frac` is the proof
+  # the knob reached the trained target — the config value alone is not. Read
+  # them together: `_frac == 0` with `_rows == 0` cannot distinguish the knob
+  # being off from a batch holding no near-terminal rows.
+    wdl_terminal_outcome_frac: float = 0.0
+    wdl_terminal_outcome_rows: float = 0.0
     sf_move_acc_top5: float = 0.0
     policy_own_acc_top1: float = 0.0
     policy_own_acc_top5: float = 0.0
@@ -1093,6 +1104,12 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "sf_wdl_orphaned_frac": ("sf_wdl_orphaned_rows", "sf_wdl_rows"),
     "sf_eval_pv_orphan_frac": ("sf_eval_pv_orphan_rows", "sf_eval_pv_checked_rows"),
     "sf_eval_pv_checked_frac": ("sf_eval_pv_checked_rows", "batch_rows"),
+  # Terminal-proximal outcome transfer. Row-weighted like the pairs above: the
+  # near-terminal share of a batch swings, so a mean of per-batch means would
+  # be the wrong estimator. Denominator is ALL batch rows, which makes the
+  # column read as "share of the value target moved onto the outcome" rather
+  # than "average taper among the rows that got one".
+    "wdl_terminal_outcome_frac": ("wdl_terminal_outcome_weight_sum", "batch_rows"),
 }
 
 # TrainMetrics field -> the compute_loss scalar reported VERBATIM, with no
@@ -1112,6 +1129,11 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
     "policy_loss_phase_n_open": "policy_rows_phase_open",
     "policy_loss_phase_n_mid": "policy_rows_phase_mid",
     "policy_loss_phase_n_end": "policy_rows_phase_end",
+  # How many rows the terminal-proximal transfer actually touched this
+  # iteration — `wdl_terminal_outcome_frac`'s companion count, for the same
+  # reason the phase losses carry theirs: a rate of 0.0 over 0 eligible rows
+  # is unmeasured, not clean.
+    "wdl_terminal_outcome_rows": "wdl_terminal_outcome_rows",
 }
 
 # The compute_loss scalars consumed by ``_ratio_metric_kwargs`` and
@@ -1568,6 +1590,15 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "adjusted_wdl_regret_source": str(config.get("adjusted_wdl_regret_source", "sum")),
         "adjusted_wdl_regret_scale": _f("adjusted_wdl_regret_scale", 1.0),
         "adjusted_wdl_regret_cap": _f("adjusted_wdl_regret_cap", 0.0),
+        "wdl_terminal_outcome_plies": _f("wdl_terminal_outcome_plies", 0, int),
+        "wdl_terminal_outcome_full_plies": _f("wdl_terminal_outcome_full_plies", 2, int),
+        "wdl_terminal_outcome_sf_frac": _f("wdl_terminal_outcome_sf_frac", 0.0),
+  # The SELFPLAY ply cap, not a training knob — `moves_left` is stored as
+  # plies-remaining divided by it, so the terminal-proximal transfer cannot
+  # recover a ply distance without the same number the writers used. Default
+  # matches `TrialConfig.max_plies` / `GameConfig.max_plies` (240); production
+  # sets 450.
+        "moves_left_max_plies": _f("max_plies", 240, int),
     }
     if log_dir is not None:
         kw["log_dir"] = log_dir
@@ -1661,6 +1692,10 @@ class Trainer:
         adjusted_wdl_regret_source: str = "sum",
         adjusted_wdl_regret_scale: float = 1.0,
         adjusted_wdl_regret_cap: float = 0.0,
+        wdl_terminal_outcome_plies: int = 0,
+        wdl_terminal_outcome_full_plies: int = 2,
+        wdl_terminal_outcome_sf_frac: float = 0.0,
+        moves_left_max_plies: float = 0.0,
         tb_log_interval: int = 10,
         prefetch_batches: bool = True,
         model_config: ModelConfig | None = None,
@@ -2048,6 +2083,16 @@ class Trainer:
         self.adjusted_wdl_regret_source = str(adjusted_wdl_regret_source)
         self.adjusted_wdl_regret_scale = float(adjusted_wdl_regret_scale)
         self.adjusted_wdl_regret_cap = float(adjusted_wdl_regret_cap)
+  # Terminal-proximal outcome share of the value target (train/losses.py).
+  # `moves_left_max_plies` is NOT a knob of its own: it is the selfplay
+  # `max_plies` cap the stored `moves_left` field was normalized by, and it is
+  # captured at construction rather than pushed live because changing the cap
+  # mid-run would retroactively re-interpret every row already in the replay
+  # window. Do not move the cap while the transfer is on.
+        self.wdl_terminal_outcome_plies = int(wdl_terminal_outcome_plies)
+        self.wdl_terminal_outcome_full_plies = int(wdl_terminal_outcome_full_plies)
+        self.wdl_terminal_outcome_sf_frac = float(wdl_terminal_outcome_sf_frac)
+        self.moves_left_max_plies = float(moves_left_max_plies)
 
   # Data augmentation: mirror positions left-right (files) with given probability.
         self.mirror_prob = float(mirror_prob)
@@ -2349,6 +2394,10 @@ class Trainer:
             "adjusted_wdl_regret_source": self.adjusted_wdl_regret_source,
             "adjusted_wdl_regret_scale": self.adjusted_wdl_regret_scale,
             "adjusted_wdl_regret_cap": self.adjusted_wdl_regret_cap,
+            "wdl_terminal_outcome_plies": self.wdl_terminal_outcome_plies,
+            "wdl_terminal_outcome_full_plies": self.wdl_terminal_outcome_full_plies,
+            "wdl_terminal_outcome_sf_frac": self.wdl_terminal_outcome_sf_frac,
+            "moves_left_max_plies": self.moves_left_max_plies,
             "sf_sparse_params": self.sf_target_params if self.sf_policy_sparse_ce else None,
         }
 

@@ -529,8 +529,31 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `loss` bit-identical at 7.238113220214844, and the ONLY field that differs is
 # `sf_eval_pv_checked_frac` (0.0 -> 0.9975), which is the new instrument coming
 # alive. Records stay comparable across the handover.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:44755941fd0bf0c8"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:bbae91591858d35c"
+# Moved again 2026-08-07 by the terminal-proximal outcome share of the WDL
+# target: `_loss_kwargs` is IN the closure (a property, covered deliberately --
+# the dict it builds decides what `compute_loss` is even given) and it gains
+# three entries, `wdl_terminal_outcome_plies` / `_full_plies` / `_sf_frac` plus
+# `moves_left_max_plies`. That frame is in BOTH lists, so both ids move.
+#   full_pass  44755941fd0bf0c8 -> 78aaaf430abf66f1
+#   sampled    bbae91591858d35c -> afbf4cc1de454249
+#
+# SEVENTH declared false positive, MEASURED the same way as the sixth. The
+# feature is DEFAULT OFF (`wdl_terminal_outcome_plies: 0`, in no config), and
+# off it takes the untouched blend expressions verbatim. The control: the same
+# 96-row synthetic batch (all optional fields present, `moves_left` populated,
+# sf 0.69 / search 0.31, sf_low dampening 0.35) through `origin/main`'s
+# `compute_loss` and through this branch's -- all 50 returned scalars BITWISE
+# equal, `total` 16.45402717590332 both sides, no key dropped, the only
+# difference being two new always-zero instrument keys
+# (`wdl_terminal_outcome_weight_sum` / `_rows`) which reach only the
+# observation fields `wdl_terminal_outcome_frac` / `_rows` and never `total`.
+# The control can fail: the same batch with the knob at the planned production
+# 7/2 moves `wdl_ce`, `blended_wdl_ce`, `total` and the wdl phase splits.
+# `tests/test_wdl_terminal_outcome.py` pins the off-path equality against a
+# verbatim transcription of `main`'s blend so it cannot drift back unnoticed.
+# Records stay comparable across the handover.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:78aaaf430abf66f1"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:afbf4cc1de454249"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

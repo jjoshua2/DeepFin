@@ -380,6 +380,79 @@ def _get_mask(batch: dict[str, torch.Tensor], key: str, *, default: float = 0.0)
     return torch.full((batch["x"].shape[0],), default, device=batch["x"].device)
 
 
+def terminal_outcome_transfer_taper(
+    batch: dict[str, torch.Tensor],
+    *,
+    plies: int,
+    full_plies: int,
+    max_plies: float,
+) -> torch.Tensor | None:
+    """Per-row taper for the terminal-proximal outcome transfer.
+
+    Returns a ``(B, 1)`` float32 tensor in ``[0, 1]`` — a FRACTION of whatever
+    the realized blend fracs are at this step, never an absolute weight, so the
+    caller cannot accidentally pin the transfer to a stale 0.31. Returns
+    ``None`` when the feature is off (``plies <= 0``) or the batch carries no
+    ``moves_left`` field at all, which is the caller's signal to take the
+    untouched blend path bit-for-bit.
+
+    Why the outcome near the terminal: measured offline over 149k rows
+    (2026-08-07), the game outcome's noise as a value label ramps with
+    plies-to-terminal — sd ~0.10 at d=1-2, 0.22 at d=5-6, crossing the search
+    component's own noise at d~6-7, 0.77 deep. Within a few plies of the end
+    the outcome is the CLEANEST of the three estimators, crisper even than the
+    deliberately-soft cp-logistic SF label; far from the end it is the
+    catastrophic noise that carried a value collapse, which is why the GLOBAL
+    ``game_frac`` stays 0 and this transfer is strictly local to small ``d``.
+
+    ``d`` (plies to terminal) is recovered from the stored ``moves_left``
+    field, which ``selfplay/finalize.py`` writes as
+    ``(total_plies_played - ply_index) / max_plies`` — the divisor is the
+    CONFIGURED PLY CAP, not the game's own length, so ``max_plies`` must be
+    the cap the rows were WRITTEN under (production: 450). It is stored
+    float16, whose quantization puts the reconstruction just off an integer,
+    hence ``round``.
+
+    The taper is ``clamp((plies - d) / (plies - full_plies), 0, 1)``: ``d <=
+    full_plies`` transfers the whole eligible share, ``d >= plies`` transfers
+    nothing. ``full_plies >= plies`` degenerates to the step function that
+    formula tends to.
+
+    ⚑ WHICH share the caller applies this to is the caller's decision, and by
+    default it is the SEARCH share only. The SF share is load-bearing
+    supervision (zeroing it crashed winrate 0.64 -> 0.40) and moves only when
+    ``wdl_terminal_outcome_sf_frac`` is deliberately raised off 0.0.
+    """
+    if int(plies) <= 0:
+        return None
+    moves_left = batch.get("moves_left")
+    if moves_left is None:
+        return None
+    divisor = float(max_plies)
+    if divisor <= 0.0:
+        raise ValueError(
+            "terminal-proximal outcome transfer is enabled "
+            f"(wdl_terminal_outcome_plies={int(plies)}) but moves_left_max_plies "
+            f"is {divisor!r}. `moves_left` is normalized by the selfplay ply cap, "
+            "so without it the plies-to-terminal distance cannot be recovered — "
+            "pass the run's `max_plies` rather than guessing a divisor."
+        )
+    plies_f = float(int(plies))
+    full = float(min(max(int(full_plies), 0), int(plies)))
+    span = plies_f - full
+    d = torch.round(moves_left.to(torch.float32) * divisor)
+    if span <= 0.0:
+        taper = (d < plies_f).to(torch.float32)
+    else:
+        taper = ((plies_f - d) / span).clamp(0.0, 1.0)
+  # Rows whose shard never carried `moves_left` have no `d` — they keep the
+  # unchanged blend rather than being treated as d=0 (the field defaults to
+  # 0.0, which would otherwise read as "terminal" and hand them the FULL
+  # transfer, the worst possible failure direction).
+    has_moves_left = _get_mask(batch, "has_moves_left").to(torch.float32)
+    return (taper * has_moves_left).unsqueeze(1)
+
+
 def _compute_sf_wdl_mask(
     *,
     net_mask: torch.Tensor,
@@ -519,6 +592,10 @@ def compute_loss(
     adjusted_wdl_regret_source: str = "sum",
     adjusted_wdl_regret_scale: float = 1.0,
     adjusted_wdl_regret_cap: float = 0.0,
+    wdl_terminal_outcome_plies: int = 0,
+    wdl_terminal_outcome_full_plies: int = 2,
+    wdl_terminal_outcome_sf_frac: float = 0.0,
+    moves_left_max_plies: float = 0.0,
     soft_policy_min_tv: float = 0.0,
     sf_sparse_params: SfTargetParams | None = None,
 ) -> dict[str, torch.Tensor]:
@@ -528,6 +605,20 @@ def compute_loss(
     whose soft target is within that total-variation distance of the hard
     target (they're a deterministic retempering of the same distribution —
     see scripts/probe_policy_targets.py). 0.0 keeps current behavior exactly.
+
+    ``wdl_terminal_outcome_plies`` (0 = OFF, and bit-identical to the blend
+    without this feature) moves part of the SEARCH share of the value target
+    onto the recorded game outcome for rows within that many plies of the
+    game's end; ``wdl_terminal_outcome_full_plies`` is the distance at or below
+    which the whole search share moves. ``moves_left_max_plies`` is the
+    selfplay ply cap the ``moves_left`` field was normalized by and is
+    REQUIRED once the feature is on — see ``terminal_outcome_transfer_taper``.
+
+    ``wdl_terminal_outcome_sf_frac`` (default 0.0 — the SF share is then never
+    touched at any ``d``) is the fraction of the SF share the outcome may
+    ADDITIONALLY take, on the same taper. It exists for the offline screen's
+    aggressive arm; the SF component is load-bearing supervision, so raising it
+    is a training-target experiment in its own right.
 
     ``sf_sparse_params`` switches the ``policy_sf`` loss to sparse CE over
     gathered log-probs (train/sparse_sf_ce.py) for rows carrying sparse
@@ -747,19 +838,60 @@ def compute_loss(
     )
     sf_effective = sf_available * keep
     sf_effective_b = sf_effective.unsqueeze(1)
+  # Terminal-proximal outcome: within `wdl_terminal_outcome_plies` of the end,
+  # part of the SEARCH share (and, only when `wdl_terminal_outcome_sf_frac` is
+  # raised off its 0.0 default, part of the SF share) is handed to the recorded
+  # game outcome, which is the lower-noise estimator there — see
+  # `terminal_outcome_transfer_taper`. The global `game_frac` is untouched and
+  # every component still sums to 1 per row, so the blend does too.
+  #
+  # ⚑ The SF share is LOAD-BEARING supervision. `wdl_terminal_outcome_sf_frac`
+  # exists for an OFFLINE screen arm and defaults to 0.0, which leaves the SF
+  # weight exactly at the realized `sf_wdl_frac` at every `d`.
+    terminal_taper = terminal_outcome_transfer_taper(
+        batch,
+        plies=int(wdl_terminal_outcome_plies),
+        full_plies=int(wdl_terminal_outcome_full_plies),
+        max_plies=float(moves_left_max_plies),
+    )
     if sf_wdl_probs is not None:
-        target += sf_wdl_frac_f * (
+        sf_component = (
             sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * blend_fallback_target
         )
     else:
-        target += sf_wdl_frac_f * blend_fallback_target
+        sf_component = blend_fallback_target
     search_available_b = search_available.unsqueeze(1)
     if search_wdl_probs is not None:
-        target += search_wdl_frac_f * (
+        search_component = (
             search_available_b * search_wdl_probs + (1.0 - search_available_b) * blend_fallback_target
         )
     else:
-        target += search_wdl_frac_f * blend_fallback_target
+        search_component = blend_fallback_target
+    if terminal_taper is None:
+  # Bit-identical to the pre-feature blend: same expressions, same order.
+        target += sf_wdl_frac_f * sf_component
+        target += search_wdl_frac_f * search_component
+        terminal_outcome_weight_sum = torch.zeros((), device=search_available.device)
+        terminal_outcome_rows = torch.zeros((), device=search_available.device)
+    else:
+  # Both transfers ride the SAME taper and are taken off the REALIZED fracs at
+  # this step (the SF one is PID-recomputed every iteration), never off a
+  # hard-coded share.
+        sf_transfer_frac = min(1.0, max(0.0, float(wdl_terminal_outcome_sf_frac)))
+        sf_outcome_w = (sf_wdl_frac_f * sf_transfer_frac) * terminal_taper
+        search_outcome_w = search_wdl_frac_f * terminal_taper
+        terminal_outcome_w = sf_outcome_w + search_outcome_w
+        target += (sf_wdl_frac_f - sf_outcome_w) * sf_component
+        target += (search_wdl_frac_f - search_outcome_w) * search_component
+        target += terminal_outcome_w * game_oh
+  # Proof-of-effect columns. `wdl_terminal_outcome_frac` is the mean weight
+  # this actually moved onto the outcome across ALL batch rows — it is exactly
+  # 0.0 while the knob is off, so a non-zero value is the observation that the
+  # config reached the trained target. Read it with its row count: the frac
+  # alone cannot tell "knob off" from "no near-terminal rows".
+        terminal_outcome_flat = terminal_outcome_w.squeeze(1)
+        terminal_outcome_weight_sum = terminal_outcome_flat.sum()
+        terminal_outcome_rows = (terminal_outcome_flat > 0.0).to(torch.float32).sum()
     blended_wdl_ce = soft_cross_entropy(outputs["wdl"], target.detach())
 
     has_moves_left = _get_mask(batch, "has_moves_left")
@@ -955,6 +1087,13 @@ def compute_loss(
         **split_losses,
         "frac_is_selfplay": masked_mean(is_sp_bool, has_is_sp),
         "frac_tagged": masked_mean(has_is_sp, net_mask),
+  # Terminal-proximal outcome transfer (see the blend site above). Emitted as
+  # a SUM + a row COUNT, not as per-batch means, for the same reason as the
+  # sf_p0 pair: the trainer accumulates them over every microbatch and divides
+  # once, so the published fraction is row-weighted. Both are exactly 0.0 while
+  # `wdl_terminal_outcome_plies` is 0.
+        "wdl_terminal_outcome_weight_sum": terminal_outcome_weight_sum,
+        "wdl_terminal_outcome_rows": terminal_outcome_rows,
         "sf_search_agree_frac": sf_search_agree_frac,
         "sf_search_disagree_sf_low_frac": sf_search_disagree_sf_low_frac,
         "sf_search_disagree_sf_high_frac": sf_search_disagree_sf_high_frac,
