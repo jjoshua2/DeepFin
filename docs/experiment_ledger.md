@@ -35391,3 +35391,10 @@ FAIL on any ⇒ the gate did not take effect; do NOT count this deploy as done.
 4. `selfplay resume totals: resumed=568` (worker_03 alone; discarded=0) — resume path exercised, no drain transient.
 
 Iter-21 boot-shock arena LAUNCHED 02:04 from banked checkpoint_000020 copy (data/ckpt20_iter21_arena/), 200g seed 42 matched_sims 32 --search-shape training vs boot_snap_recheck_0711_0404.pt, out data/iter21_bootshock/. Reading rule (pre-committed 08-06): ≈−96 = boot-shock attractor persists under the reduced-SF bundle; ≈0/positive = escaped. Single 200g CI ±~45 separates the two.
+
+**VERDICT 2026-08-07 02:47 — ITER-21 BOOT-SHOCK ARENA: ATTRACTOR ESCAPED (pre-committed rule, same session).**
+ckpt_000020 (iter 21, reduced-SF bundle) vs boot512, 200g/100 pairs, seed 42, matched_sims 32, --search-shape training:
+**Elo +1.7, 95% CI [−41.1, +44.6]**, score 0.5025, pentanomial WW16/WD15/DD-WL38/LD16/LL15. Artifact: data/iter21_bootshock/arena_iter21_vs_boot512.json (also appended to runs/arena_results.jsonl).
+Reading rule was: ≈−96 = attractor persists, ≈0/+ = escaped. All three previous fresh boots read ≈−96 at iter 21 on this ruler; −96 is excluded by >2 CI half-widths. The bundle's iter-21 net is LEVEL with its own boot weights instead of 96 Elo below — the early-training value collapse that defined every prior boot did not occur under the reduced-SF bundle.
+What this verdict is NOT: proof of GAIN. Level-with-boot at iter 21 says the damage mechanism is gone; the deciding yardstick for gain remains the daily ratchet Elo(published − boot512) pooled, CI>0 within 5–7 days per prereg ed9de8ee9 (early absolute points must beat the ~+20 seed-42 placebo zero-point).
+Confounds: none material — checkpoint predates the 01:56 restart (uninterrupted boot); same ruler class as the historical −96 readings.
