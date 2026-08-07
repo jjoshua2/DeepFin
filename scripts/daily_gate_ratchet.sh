@@ -46,10 +46,12 @@
 # THE DAY'S BUDGET IS ATTEMPTS x --max-minutes, NOT UNBOUNDED. A zero-row run
 # exits non-zero so ratchet_loop.sh retries instead of stamping the day done —
 # but "retry until it works" against a failure that reproduces is a GPU retry
-# storm, not a retry. At BUDGET_MIN=30 and a 600s poll that is ~18 GPU-hours a
-# day, spent by the same script whose header blames a 4h32m arena for an 82%
-# throughput loss, and it is self-reinforcing: contention makes runs produce no
-# complete pairs, no pairs makes the loop retry, the retry adds contention. So:
+# storm, not a retry. At BUDGET_MIN=90 an unbounded serial retry loop would be
+# ~21.6 GPU-hours a day (the attempts cap below bounds the real spend at
+# MAX_ATTEMPTS x 90min = 4.5), spent by the same script whose header blames a
+# 4h32m arena for an 82% throughput loss, and it is self-reinforcing:
+# contention makes runs produce no complete pairs, no pairs makes the loop
+# retry, the retry adds contention. So:
 #
 #   * every run that reaches the arena appends one row to data/ratchet/attempts.csv
 #     (date,iter,attempt,rc,rows,reason) — ATTEMPTED is recorded separately from
@@ -93,7 +95,14 @@ SIMS=32
 CONC=16
 # Hard total wall-clock budget for the whole job, split across the series that
 # actually run. See the header: the budget is fixed, the CI floats.
-BUDGET_MIN=30
+#
+# 2026-08-07: 30 -> 90, paired with compiled inference below. At 30 eager the
+# instrument was starved into uselessness: the 08-06/08-07 rows finished 23/200
+# games in their 725s share (9-18 complete pairs, CI half-widths of 150-300
+# Elo), which cannot answer the 5-7 day gain question the ratchet exists for.
+# Compiled at conc 16 a 200-game series takes ~40 min (measured twice on
+# 2026-08-07 beside live training), so 90 min covers both series at full n.
+BUDGET_MIN=90
 REPORT_EVERY=16
 SNAP_DIR=data/ratchet/snapshots
 LOG=data/ratchet/ratchet.csv
@@ -407,13 +416,37 @@ run_arena () {   # $1=reference  $2=series-label
     # the C search or in checkpoint loading still has to be killed from outside.
     local inner=$(( budget - 45 ))
     [ "$inner" -lt 30 ] && inner=30
+    # Compiled inference (2026-08-07, was --no-compile): ~3x games per
+    # GPU-minute by reusing the shared arena compile cache (torchinductor
+    # entries from prior --compile on arena runs). Eager was the starvation
+    # mechanism — 23/200 games inside a 725s share. Evidence a compiled
+    # 32-sim/conc-16 200-game arena coexists with live training:
+    # data/iter21_bootshock/arena_iter21_vs_boot512.json (2026-08-07
+    # 02:04-02:47, training up since 01:57) and data/milestone_arenas/.
+    #
+    # The VRAM floor is CHECKED, not advisory. 2026-08-05: two compiled
+    # conc-16 arenas beside training outgrew a 5GB launch guard and killed
+    # the live trainer. One-arena-at-a-time is structural here (series are
+    # sequential); the other half of that rule is the ~10GB free floor,
+    # below which this run degrades to eager rather than gambling the
+    # trainer. nvidia-smi absent/unparseable counts as below the floor.
+    local free_mib
+    free_mib=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1)
+    local compile_arg="--compile on"
+    case "$free_mib" in
+        ''|*[!0-9]*) compile_arg="--no-compile" ;;
+        *) [ "$free_mib" -lt 10240 ] && compile_arg="--no-compile" ;;
+    esac
+    if [ "$compile_arg" = "--no-compile" ]; then
+        echo "[ratchet] free VRAM ${free_mib:-unknown}MiB below the 10240MiB compile floor — running eager"
+    fi
     timeout -k 20 "${budget}s" \
         python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \
         --mode matched_sims --search-shape "$SHAPE" --sims "$SIMS" --games "$GAMES" \
         --max-concurrent-games "$CONC" --report-every "$REPORT_EVERY" \
         --max-seconds "$inner" \
-        --no-compile --device cuda --seed 42 \
+        $compile_arg --device cuda --seed 42 \
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
     local rc=$?
     # The token recorded for this series if no row comes out of the log below.

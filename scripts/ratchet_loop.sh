@@ -37,10 +37,11 @@ STATE=data/ratchet/last_run_date
 # means "today has no reading and asking again cannot produce one". They are
 # separate files on purpose: collapsing them would either stamp a dead day as
 # done (the silent hole the exit-1 path exists to prevent) or leave the day
-# retrying every $POLL seconds forever. A 30-minute 16-concurrent arena every
-# ~40 minutes is ~18 GPU-hours/day spent by the observer on the training it is
-# supposed to be observing, and it is self-reinforcing: contention -> no
-# complete pairs -> no row -> retry -> more contention.
+# retrying every $POLL seconds forever. A 90-minute 16-concurrent arena
+# retried back-to-back is ~21.6 GPU-hours/day spent by the observer on the
+# training it is supposed to be observing (the attempts cap bounds the real
+# spend at 4.5), and it is self-reinforcing: contention -> no complete pairs
+# -> no row -> retry -> more contention.
 GIVEUP_STATE=data/ratchet/last_giveup_date
 LOG=scratchpad/ratchet_loop.log
 POLL="${RATCHET_POLL:-600}"
