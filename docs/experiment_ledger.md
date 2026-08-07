@@ -35154,3 +35154,77 @@ moves Elo at this dose. The offline rig's discriminating power is EXHAUSTED —
 remaining hypotheses are all generation-time. GPU paused for the evening (user);
 next: overnight barrier probe → tomorrow consumers-of-changed-fields audit,
 MultiPV path check, deploy-proof battery, relaunch prereg.
+
+### 2026-08-06 — RESIDUAL-BARRIER PROBE FINAL: config-only launch; MIXTURE NOT JUSTIFIED (zero occupancy of its gate). + Consumers-of-changed-fields audit.
+
+Probe complete (runs/gumbel_scale_probe.md, 2150s, 60 positions × 512 selection
+draws; 24 positions × 12 search draws × 6 scales at 256 sims, c_scale
+{0.025,0.05,0.1}). Read against the pre-committed decision rule (28c27fb8a,
+17092b6ec):
+
+- **frac(R<0) = 0.000 in all 54 cells.** R medians +11 to +17 nats vs sigma
+  2.7–13.2 — no noise-promoted candidate can ever take the improved-policy
+  argmax from the prior leader.
+- **n promoted with positive Q-advantage = 0 in every cell** (up to 86
+  promoted/cell), and **frac equal-Q = 0.000** — the gated mixture's
+  ρ ⊆ {visited, Q ≥ V^π} has ZERO occupancy in the entire sample. A mixture
+  would be inert as gated, and harmful un-gated (it would inject moves the net's
+  own Q rates ≥0.05 worse).
+- Earned target mass on noise-new candidates: 1e-6..1e-9 — nil at any scale.
+- The selection valve is SATURATING anyway: with topk 32 > support 9–15, the
+  deterministic top-32 already exits the prior's p>1e-3 support on 100% of
+  opening rows, 95% middlegame, 30–35% endgame. **The candidate set was never
+  the binding constraint** — the transform's prior-odds preservation plus the
+  absence (per the net's Q) of Q-advantaged tail moves is.
+- Late-game noise's only measurable effect is played-move flips at a Q cost
+  (middlegame flip rate 0.43–0.57 at scale ≥0.5, mean deficit +0.06–0.10;
+  endgame ~neutral). Support-replenishment as a rationale for late noise is
+  DEAD; late noise buys trajectory diversity only.
+
+**DECISION (per the pre-committed rule): config-only relaunch — c_scale 0.025,
+topk 32, sims 256. The gated-mixture PR is NOT built now** (gate occupancy 0%);
+it can be revisited only if a future probe on a stronger value head shows
+ρ-occupancy > 0. gumbel_scale schedule: start 1.0 (canonical), decay to a low
+late value — evidence supports anything in [0, 0.5] with lower slightly better
+for played-move quality; user's 0.5 instinct is fine and low-cost. Noise applies
+ONLY to full plies (network_turn.py:920 hardcodes 0.0 on fast plies), so the
+schedule touches ~25% of plies.
+
+CAVEAT in flight: the probe's Q is the net's own value head at 1–2 visits — a
+blind value head cannot see a discovery. Ground-truth check running (CPU):
+stored `sf_p0_regret` (deep-SF MultiPV-40 per-move cp-regret at the row's own
+position) vs boot512's prior support on 3000 bank rows — decides whether the
+narrow prior actually hides SF-good moves at all. If ~none, the support ceiling
+deflates entirely; if many, replenishment is real but must come from the live
+loop, not the target transform (same relaunch either way).
+
+**CONSUMERS-OF-CHANGED-FIELDS AUDIT (bundle keys, code-read):**
+- `sf_label_nodes_floor/cap` (worker live keys, stockfish_turn.py:494): labels
+  = fast-scale(min(PID base_nodes, cap)) then max(·, floor). **The floor alone
+  does NOT bound cost from above** — labels ride PID base_nodes above the
+  floor, and the old lineage's PID ramp reached ~500k. Bundle must set BOTH:
+  floor ~100k AND cap ~150k (cap requires sf_wdl_use_cp_logistic=true — already
+  production; GameConfig warns if floor>cap; both keys live-reloadable).
+- `sf_multipv` 40→6: RESTART key (applied only at engine (re)init,
+  worker.py:3443 — fine, the bundle deploys at a restart). Desync detector is
+  width-safe (presence of sf_multipv_raw, not width). SF_MULTIPV_RAW_MAX=48 ≥ 6
+  fine. sf-policy label smoothing branch flips to "uncovered" on most rows —
+  inert while SF policy legs are 0, noted for any future re-enable.
+  **REAL CONSEQUENCE: the PID airbag's easing range is capped.** The opponent's
+  regret-band move draws from the SAME MultiPV list
+  (_process_sf_results→_push_curriculum_opponent_move, stockfish_turn.py:1622):
+  at width 6, even infinite regret yields uniform-over-top-6 — a much stronger
+  floor-difficulty than uniform-over-40-within-band. Combined with nodes
+  700k→~100k the net effect on realized difficulty is unmodeled. → prereg WATCH
+  item: winrate + regret-at-clamp on the first day; if winrate pins low with
+  regret pegged at max, the easing ceiling is binding and multipv (or nodes)
+  is the release valve.
+- `selfplay_fraction` 0.5→0.8: live key, clean plumbing
+  (state.py:448/:756/:1039); opening.py:76 note — seeds land on ~sp_frac of
+  slots, so dole pacing shifts with the fraction (informational).
+- gumbel keys (`gumbel_scale`, `gumbel_scale_after`, decay start/moves +
+  curriculum_* variants): all RESTART keys, wired end-to-end
+  (network_turn.py:237 _scheduled_gumbel_scale); no new yaml keys needed — the
+  1.0→0.5 schedule uses existing keys, validator-safe.
+- All four families are in _RECO_WATCH_KEYS; completeness guarded by
+  test_every_reco_field_is_watched.
