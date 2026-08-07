@@ -35409,3 +35409,17 @@ Next probe (today, cp-resolution): paired audit_targets + value_regret on ckpt-1
 - Reading: ~8cp prior improvement in ~12h is the FIRST measurable learning of the new lineage — the old lineage's prior DEGRADED on this same ruler. Invisible to ±35-Elo arenas by construction; consistent with a real but modest Elo slope. Dumps: data/ruler_ckpt119_20260807/.
 
 **TARGET-SHAPE CHECK, fresh shards vs old bank (selfplay rows, all-phase aggregate; ply split unavailable in stored fields):** new (0.025/topk32/256 sims) entropy med 0.94 (q25 0.39, q75 1.52), support med 11 (5–18), top1 med 0.66; old bank (0.1/topk16) entropy 0.56 (0.10–1.03), support 8 (3–13), top1 0.84. lc0 refs: entropy 1.58–1.74, support 20–34. Verdict: markedly softer/wider than the old recipe (over-sharpening gone), still narrower than lc0 — the residual is the PRIOR's own support (goldcheck: hides no gold per SF), not the search transform.
+
+## 2026-08-07 — PREREG: lc0-judged goldcheck (independent-judge retest of the support ceiling)
+
+**Hypothesis:** the 08-06 "narrow prior hides no gold" verdict (2bf22e962) is SF-conjugate: sf_p0_regret cannot see moves SF misjudges — exactly the anti-SF channel. BT4 at a deep budget is a strong independent judge; if BT4-preferred moves are systematically OUTSIDE our net's top-32, the support ceiling is re-opened on the lc0 axis even though it is closed on the SF axis.
+
+**Method (one screen, no training change):** same 2,975 goldcheck bank rows (directly comparable per-position to the SF verdict). BT4-it332 via the diag/lc0-net-in-our-search adapter, our batched Gumbel search at c_scale 0.025 / topk 32 / 800 sims (BT4's own argmin per the 08-06 sweeps; 800 ≈ user-requested depth). Record per row: BT4 best move + root Q per move; our boot512 prior top-32 (already banked in the goldcheck dump); SF best + sf_p0_regret (stored).
+
+**Metrics + pre-committed reading:**
+1. frac(BT4-best outside our top-32) — SF analogue was 0.0–0.1%. **>2% overall re-opens the support question on the lc0 axis; ≤0.5% = CLOSED on both axes.**
+2. Disagreement set (BT4-best ≠ SF-best): its size, our coverage of BT4-best inside it, and SF-judged regret of those BT4 moves (high SF regret + BT4 preference = anti-SF candidate signature). **Coverage <90% on this subset = the mixture probe gets re-evaluated for the hole-finding channel.**
+3. lc0-judged support regret: BT4 Q(BT4-best) − max BT4 Q(move ∈ our top-32), reported in win% (BT4 units, NOT cp — do not mix with SF numbers).
+In-between readings = record, no action, revisit with ckpt-119's prior swapped in as a follow-up.
+
+**Confounds:** BT4 judged via OUR search shape (mitigated: 0.025/32 is BT4's own argmin); Q units incommensurate with cp; single BT4 net = one judge, not ground truth — a 2-of-3 judges framing (SF + BT4) is the standard this feeds.
