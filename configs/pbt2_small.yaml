@@ -475,7 +475,6 @@ tune:
   distributed_worker_compile_mode: reduce-overhead  # 2026-07-14: max-autotune's GPU benchmarking hung the compile twice on the flaky WSL bridge (never reached first inference in 20+ min). reduce-overhead compiles in ~1-2min from cache (no autotune benchmark), uses cudagraphs (good for small-batch selfplay), and makes wedge-restarts fast. Revert to max-autotune once the bridge is stable if a throughput readout justifies it.
   distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
   distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
->>>>>>> origin/main
   distributed_worker_selfplay_threads: 32
   # PIN. config_yaml.py:225-228 documents it as a DEPRECATED NO-OP deliberately retained so an
   # old worker binary does not pick its slow fallback during a live reload.
