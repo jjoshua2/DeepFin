@@ -35265,3 +35265,54 @@ high SF-regret and is invisible to this ruler BY CONSTRUCTION. Today the loop's
 reward structure is SF-derived, so this does not change the relaunch; it
 becomes relevant only if/when we hunt moves SF underrates (the blind-spot/seed
 channel, judged by the Cheese tail per standing rule).
+
+### 2026-08-06 — PREREG + LAUNCH: REDUCED-SF RELAUNCH BUNDLE (user-authorized "launch now"; values locked by user this session)
+
+HYPOTHESIS: collapse is solved (recipe pooled-1000 = −0.35±19 at zero); offline
+axis exhausted (all arms NULL); the remaining defect family is generation-time
+starvation + mis-tuned search. Feeding the fixed loop several-fold more fresh
+games under the corrected search config yields ratchet Elo gain over boot512.
+
+BUNDLE (ONE experiment, judged as a package; all values verified through the
+validator flatten post-edit):
+- Labels: sf_label_nodes_floor 700k→150k AND sf_label_nodes_cap 0→200k
+  (floor+cap both required — labels = max(min(PID nodes, cap), floor));
+  sf_multipv 40→6 (user sweet spot; airbag-ceiling watch below).
+- Mix: selfplay_fraction 0.5→0.8; sf_fast_ply_node_scale stays 0.25
+  (dataclass default — not in yaml, default = desired value).
+- Search (training): gumbel_c_scale 0.1→0.025, gumbel_topk 16→32, sims 256;
+  gumbel_scale 0.75→1.0, gumbel_scale_after 0.0→0.5 (existing decay keys,
+  moves 12–15); curriculum_gumbel_scale 0.25→1.0 / after 0.0→0.5 (uniform
+  schedule both game types — the canonical-scale rationale is game-type
+  independent; noted as a bundled choice, not separately evidenced).
+- Losses (recipe of record): w_sf_move/w_sf_own/w_sf_own_regret/w_sf_eval/
+  w_categorical all →0.0; sf_wdl_frac 0.45→0.69 (+floor 0.69),
+  search_wdl_frac 0.2→0.31. sf_policy_score_mode: cp (already deployed).
+- Dose: train_views_per_ingested_position stays 4.3 (measured plateau).
+  warmup_steps stays 1000. Boot: boot512 --fresh (bootstrap_checkpoint
+  already points at boot_snap_recheck_0711_0404.pt; revert point = that
+  banked artifact + ck_20260806_d2003_checkpoint_000102).
+
+DECIDING YARDSTICK (ONE): daily ratchet arena Elo(published − boot512), fixed
+seed, matched_sims, pooled across the window.
+- SUCCESS: CI > 0 within 5–7 days. KILL: CI < 0 at day 5–7 → pre-committed
+  pivot to pure-selfplay bootstrap. Straddle at day 7: one 3-day extension;
+  second straddle = KILL for the bundle-as-package.
+- Absolute early points must beat the seed-42 placebo zero-point (~+20 for
+  near-clones), not zero.
+
+WATCH (not verdicts): PID winrate + regret-at-clamp day 1 (multipv 6 caps the
+airbag at uniform-over-top-6; release valves = width up or nodes down);
+train_steps_used; desync presence rate (healthy = exactly 0.0000); gate shadow.
+
+CONFOUNDS: everything changes at once, deliberately (user-agreed). Interior
+attribution (SF value at all? multipv 6 vs 1?) deferred to post-gain ablations
+on tagged rows. Consumers audit of every key: ledger 082489713.
+
+DEPLOY RECORD (this session): origin/main merged (fba1fce5a; conflict resolved
+to main's secrets-out-of-yaml side; stray marker fixed 21dd2b985 — validator
+flatten passes); C-ext rebuilt (_lc0_ext.c changed in merge); **#161 EXECUTED:
+credential rotated** (32-char secret; users.json hash + server .password file +
+.secrets/worker_password all symmetric, 0600, gitignored; old
+chess_worker_2026 verified DEAD against the store). First-shard proof battery:
+scripts/relaunch_proof_battery.py (negative controls verified on the old bank).

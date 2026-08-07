@@ -124,16 +124,18 @@ stockfish:
   #   for 25 iters). sf_pid_min_nodes stays 50000: this is a start, not a new floor.
   sf_nodes: 75000
   sf_move_nodes: 0
-  sf_label_nodes_cap: 0
-  # 2026-08-05 boot-hygiene package (PR #354): pin LABEL queries at >= 700k nodes — the old
-  # lineage's realized teacher depth (698,289). Without it labels ride the PID opponent
-  # budget: the 08-04 fresh boot silently cut the teacher 11x. Decouples teacher depth
-  # from the difficulty servo; deploy proof = sf_label_meta[:,0] >= 700000 in new shards
-  # + label_floor=700000 in worker logs.
-  sf_label_nodes_floor: 700000
+  sf_label_nodes_cap: 200000
+  # 2026-08-06 reduced-SF bundle (user-authorized): labels pinned to [150k, 200k] via
+  # floor+cap TOGETHER — labels = max(min(PID base_nodes, cap), floor) (stockfish_turn.py
+  # _eff_sf_nodes), so the floor alone cannot bound cost from above (the old PID ramp
+  # reached ~500k). Evidence the cheap teacher is safe: the 08-04 boot ran ~91k labels for
+  # a generation with measured damage +0.005 (conjugate-corrected). Cap requires
+  # sf_wdl_use_cp_logistic (true). Deploy proof = sf_label_meta[:,0] median in
+  # [135k, 230k] on new shards (scripts/relaunch_proof_battery.py).
+  sf_label_nodes_floor: 150000
   sf_workers: 4
   sf_nice: 19
-  sf_multipv: 40
+  sf_multipv: 6
   sf_hash_mb: 17
   sf_pid_enabled: true
   sf_pid_target_winrate: 0.5
@@ -178,7 +180,7 @@ selfplay:
   games_per_iter: 440
   # DELETED games_per_iter_start: ramp_iters is 0 so there is no ramp; start==games_per_iter. trainable_metrics.py:213
   # DELETED games_per_iter_ramp_iters: 0 = no ramp. trainable_metrics.py:214
-  selfplay_fraction: 0.5
+  selfplay_fraction: 0.8
   record_fast_ply_value: false
   record_sf_p0_policy: true
   record_sf_p0_regret: true
@@ -232,15 +234,15 @@ selfplay:
   mcts_start_simulations: 256
   playout_cap_fraction: 0.25
   fast_simulations: 32
-  gumbel_topk: 16
+  gumbel_topk: 32
   gumbel_vloss_weight: 1
-  gumbel_c_scale: 0.1
-  gumbel_scale: 0.75
-  gumbel_scale_after: 0.0
+  gumbel_c_scale: 0.025
+  gumbel_scale: 1.0
+  gumbel_scale_after: 0.5
   gumbel_scale_decay_start_move: 12
   gumbel_scale_decay_moves: 3
-  curriculum_gumbel_scale: 0.25
-  curriculum_gumbel_scale_after: 0.0
+  curriculum_gumbel_scale: 1.0
+  curriculum_gumbel_scale_after: 0.5
   curriculum_gumbel_scale_decay_start_move: 12
   curriculum_gumbel_scale_decay_moves: 3
   # PIN (both). Provably INERT in every Gumbel search (PLAY_PATH_AUDIT F2: worker.py never
@@ -360,11 +362,11 @@ train:
   w_soft: 1.0
   w_future: 0.01
   w_wdl: 1.0
-  w_sf_move: 0.02
-  w_sf_own: 0.1
-  w_sf_own_regret: 0.7
-  w_sf_eval: 0.1
-  w_categorical: 0.3
+  w_sf_move: 0.0
+  w_sf_own: 0.0
+  w_sf_own_regret: 0.0
+  w_sf_eval: 0.0
+  w_categorical: 0.0
   w_volatility: 0.1
   w_sf_volatility: 0.05
   w_moves_left: 0.02
@@ -378,12 +380,12 @@ train:
   #   ONE PID ease-step below the 0.10 knee; past it the value target changes with no metric
   #   watching the distance. With frac == floor == 0.45 the interpolation is the constant
   #   0.45 and the knee cannot fire. The yaml's 0.50 NEVER RAN in 478/478 iterations.
-  sf_wdl_frac: 0.45
+  sf_wdl_frac: 0.69
   # PIN. The FLOOR is the live knob and it is what 478/478 rows actually realized. Realized
   # blend at iter 478 = 0.35 outcome / 0.45 SF / 0.20 search. The SF component is
   # LOAD-BEARING: zeroing it crashed winrate 0.64 -> 0.40.
-  sf_wdl_frac_floor: 0.45
-  search_wdl_frac: 0.2
+  sf_wdl_frac_floor: 0.69
+  search_wdl_frac: 0.31
   use_adjusted_wdl_target: false
   # DELETED adjusted_wdl_regret_source: downstream of use_adjusted_wdl_target: false; losses.py:420 gate never opens
   # DELETED adjusted_wdl_regret_scale: downstream of use_adjusted_wdl_target: false
