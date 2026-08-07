@@ -35228,3 +35228,40 @@ loop, not the target transform (same relaunch either way).
   1.0→0.5 schedule uses existing keys, validator-safe.
 - All four families are in _RECO_WATCH_KEYS; completeness guarded by
   test_every_reco_field_is_watched.
+
+### 2026-08-06 — GROUND TRUTH vs DEEP SF: THE NARROW PRIOR IS NOT HIDING GOLD. Support ceiling DEFLATED as a strength concern; config-only relaunch fully vindicated.
+
+The barrier probe's "zero discoveries" used the net's own Q (a blind value head
+cannot see a discovery). This check replaces the ruler with stored deep-SF
+truth: `sf_p0_regret` (per-move cp-regret at the row's own position, MultiPV-40
+teacher labels, best=0, cap 1000cp) vs boot512's prior on 2,975 bank rows
+(shards_iter21, stratified across all 104 shards; 1,826 fully-measured rows
+i.e. every legal move SF-scored). Banked:
+data/offline_replay_screen_cdb96/sf_tail_goldcheck_20260806.{py,out} (CPU-only).
+
+- **Alignment control PASSED** (required before reading anything): the row's
+  own policy_target argmax has SF-regret mean 46.8cp / median 0.0cp vs a random
+  legal move's 817cp — the field belongs to this row's position.
+- **SF's best move is outside the net's top-32 prior in 0.0–0.1% of rows**
+  (fully-measured: 0.000 at every ply bucket; all-rows: 0.001). At `gumbel_topk
+  32` the candidate set ~always contains SF's best move.
+- SF's best outside the p>1e-3 "support": only ~2% of rows — and still inside
+  top-32, so still searched.
+- A ≤20cp-regret move outside top-32 exists in 0.2–0.5% of rows (≤50cp:
+  0.4–1.6%); 99.5% of the prior mass of ≤20cp moves is inside the support.
+- The ~24% of rows with a ≤50cp move outside the p>1e-3 set are NOT blind
+  spots: those moves are inside top-32 (out-T32≤50cp ≈ 0.004), i.e. candidates.
+
+READ: the support/KL floor vs lc0 (0.59–0.77) is a SHAPE/STYLE difference, not
+blindness to good moves — everything the current reward structure could reward
+is within candidate reach at (0.025, 32, 256). The support-replenishment
+program (mixture, noise valves, Dirichlet) is CLOSED on ground truth, not just
+on the net's Q. Combined with the barrier probe: config-only relaunch, no
+search-side code changes.
+
+HONEST CAVEAT (mission-level, not a hedge on the above): sf_p0_regret is gold
+per SF'S OWN judgment. An anti-SF exploit move that SF misjudges would carry
+high SF-regret and is invisible to this ruler BY CONSTRUCTION. Today the loop's
+reward structure is SF-derived, so this does not change the relaunch; it
+becomes relevant only if/when we hunt moves SF underrates (the blind-spot/seed
+channel, judged by the Cheese tail per standing rule).
