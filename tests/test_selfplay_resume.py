@@ -1086,7 +1086,10 @@ def test_record_without_replay_bookkeeping_is_not_persisted(
     from chess_anti_engine.moves import POLICY_SIZE
     from chess_anti_engine.selfplay.state import _NetRecord
 
-    tracked: dict[str, int] = {"move_offset": 0, "pos_hash": 12345}
+    # dict[str, Any]: only ever holds move_offset/pos_hash ints, but pyright
+    # checks a ** unpack against EVERY keyword param, including the
+    # ndarray-typed ones.
+    tracked: dict[str, Any] = {"move_offset": 0, "pos_hash": 12345}
     del tracked[untracked]  # left at its "not tracked" default
     game = _game_config()
     state = _fresh_state(game, batch_size=1)
