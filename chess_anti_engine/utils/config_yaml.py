@@ -230,6 +230,13 @@ _TRAIN_KEYS = (
     "sf_wdl_frac_floor", "sf_wdl_floor_at_regret",
     "use_adjusted_wdl_target", "adjusted_wdl_regret_source",
     "adjusted_wdl_regret_scale", "adjusted_wdl_regret_cap",
+    # Terminal-proximal outcome share of the WDL target (train/losses.py).
+    # `wdl_terminal_outcome_plies: 0` is OFF and the code default. The ply cap
+    # these distances are measured against is the SELFPLAY `max_plies` key --
+    # deliberately not duplicated here, since `moves_left` is normalized by
+    # whatever the writers used and a second copy could disagree with it.
+    "wdl_terminal_outcome_plies", "wdl_terminal_outcome_full_plies",
+    "wdl_terminal_outcome_sf_frac",
 )
 
 # tune section: all 1:1 passthrough.

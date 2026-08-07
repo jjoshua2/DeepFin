@@ -881,6 +881,12 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # and must never be summed with it.
     "sf_wdl_degenerate_frac": 0.0, "sf_wdl_orphaned_frac": 0.0,
     "sf_eval_pv_orphan_frac": 0.0, "sf_eval_pv_checked_frac": 0.0,
+  # Terminal-proximal outcome share of the value target. Exactly 0.0 while
+  # `wdl_terminal_outcome_plies` is 0 (the default), so a non-zero value is the
+  # proof the knob reached the trained target -- the echoed config value is
+  # not. Read with `wdl_terminal_outcome_rows`: at 0.0 the frac cannot tell the
+  # knob being off from a batch with no near-terminal rows.
+    "wdl_terminal_outcome_frac": 0.0, "wdl_terminal_outcome_rows": 0.0,
   # SF target rebuild coverage (train.rebuild_sf_targets). 0.0 with the flag
   # off; non-zero is the proof the flip reached the batch pipeline. The
   # masked_p0/_volatility pair are PRE-mask presence fractions — the outage
@@ -977,6 +983,9 @@ def _train_metrics_dict(metrics) -> dict:
         "sf_wdl_orphaned_frac": float(metrics.sf_wdl_orphaned_frac),
         "sf_eval_pv_orphan_frac": float(metrics.sf_eval_pv_orphan_frac),
         "sf_eval_pv_checked_frac": float(metrics.sf_eval_pv_checked_frac),
+        # Terminal-proximal outcome transfer -- see the defaults table above.
+        "wdl_terminal_outcome_frac": float(metrics.wdl_terminal_outcome_frac),
+        "wdl_terminal_outcome_rows": float(metrics.wdl_terminal_outcome_rows),
         # Rebuild coverage. `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`
         # is a Stockfish-DESYNC signal, not a coverage cost: both divide by all
         # batch rows and a healthy labelled row always carries both fields, so
