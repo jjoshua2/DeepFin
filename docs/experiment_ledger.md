@@ -35456,3 +35456,45 @@ Sanity controls: exact row-identity reproduction of the 2,975-row goldcheck samp
 (alignment to 0.1cp), 32-vs-800-sims stability 84%, FEN reconstruction 2975/2975.
 Confound note: two mid-run ONNX-arena OOMs (rows 888/1008) fixed by batch bucketing;
 JSONL verified gap-free, no per-position effect.
+
+## 2026-08-07 — PREREG: terminal-proximal outcome share in the wdl blend (RESTART-GATED, not live)
+
+**Hypothesis.** Within ~7 plies of the game's end the recorded outcome is the cleanest
+value estimator available — cleaner than the search component it would displace and
+crisper than the deliberately-soft cp-logistic SF label — so transferring the SEARCH
+share (never the load-bearing SF share) to the outcome, tapered to zero by 7 plies,
+improves endgame value quality without re-admitting the deep-game outcome noise that
+carried the value collapse.
+
+**Calibration (banked `data/terminal_outcome_calibration_20260807/`, 149k rows, newest
+80 shards of 379f6).** Outcome-vs-blend disagreement ramps ~0.033 E-score/ply:
+0.043 at d1–2 vs the search component's 0.078 on the same rows; per-distance crossover
+at d≈6–7; 0.65+ deep (the collapse channel — global game_frac stays 0). Three-cornered
+hat decomposition: sd(outcome) 0.10→0.77 across d; SF's apparent near-terminal noise
+(~0.13) is cp-logistic label softness, not misjudgment; far-field sd(search) estimates
+are biased low by outcome↔search error correlation (net played its own game) — near-
+terminal region, where the decision lives, is the trustworthy zone. TB-provable (≤6-man)
+rows are only ~0.3% of near-terminal volume — the case rests on generic near-terminal
+reliability, not TB exactness. Volume touched (d≤6): 4.7% of rows.
+
+**Mechanism.** New keys `wdl_terminal_outcome_plies` (0=off; production plan 7) and
+`wdl_terminal_outcome_full_plies` (2). w(d) = realized_search_frac × clamp((7−d)/5,0,1)
+transferred search→outcome (one-hot from `wdl_target`); d from `moves_left`×max_plies
+(rounded; has_moves_left=0 rows unchanged). SF share untouched at every d; default-off
+bit-identity is a shipped test. PR by Opus author agent, independent review to follow.
+
+**Stage 1 — offline screen (BEFORE any live enable; audit-first rule).** Rig arm on the
+713-shard clean bank, lever-on (7/2) vs control, same recipe as the tier-2/3 screens.
+Deciding yardstick: paired value_regret (pinned batch 128, fen_only, seed 0), endgame
+slice. SUCCESS: endgame slice improves, paired CI>0. KILL: endgame CI includes 0 or
+middlegame slice worsens with CI<0. No stage-2 without stage-1 pass.
+**Stage 2 — live enable at the next user-authorized restart** (never mid-run: new keys
+freeze live reloads). Yardstick: existing milestone paired value_regret endgame slice +
+value_component_drift endgame trend; KILL: middlegame value slice degrades beyond its
+paired CI at the first milestone, or endgame drift E|d| rises >0.02 over its banked
+day-one trajectory for 2 consecutive readings.
+**Confounds.** Fresh-boot shock at the enabling restart (use conjugate-ruler pairing,
+drop post-restart winrate rows per the length-truncation rule); HL-Gauss edge
+truncation (A20) — ±1 outcome targets push on the truncated edge, so part of any null
+may be head-side, note before judging; one-data-affecting-change-per-window applies to
+the enabling restart.
