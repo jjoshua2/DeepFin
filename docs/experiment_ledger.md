@@ -35432,3 +35432,27 @@ In-between readings = record, no action, revisit with ckpt-119's prior swapped i
 **Housekeeping flag (not done):** the 365 six-man WDL files are duplicated on disk across the two dirs (~68G waste). Dedup is a separate operator decision — both copies are live-mapped today.
 
 **VERIFIED 11:02 (same session): 6-man DTZ config IN EFFECT** — all workers logged `restarting selfplay session [restart_keys=stockfish_syzygy_path]` at 11:01, gracefully recycled (warmup gate 0.0s, broker hot, zero deaths), engines rebuilt via the syzygy_changed init branch with the two-dir path. First real-world exercise of PR #365's gate on a mid-process recycle: clean.
+
+## 2026-08-07 — VERDICT: lc0-judged goldcheck — support ceiling CLOSED on the lc0 axis (prereg e18cafc80)
+
+Judged strictly by the pre-committed thresholds; artifacts in `data/lc0_goldcheck_20260807/`.
+
+- **Metric 1 — frac(BT4-best outside our top-32): 1/2975 = 0.03%** (threshold: >2% re-opens
+  support axis; ≤0.5% closes both). Far under the close bar. The single miss (row 2750,
+  ply 63) is a SHARED blind spot — BT4-best = SF-best there — not an lc0-only channel.
+  SF analogue on the same rows: 2/2975 = 0.07%.
+- **Metric 2 — coverage on the BT4≠SF disagreement set: 1284/1284 = 100%** (threshold:
+  <90% re-opens the mixture probe). Disagreement set was large (43.2% of rows), so this
+  is a real test, and coverage was total.
+- **Metric 3 — lc0-judged support regret: median/p90 = 0.000/0.000 BT4-win%**, frac>0.02
+  = 0.03% (same single row).
+
+**Verdict: CLOSED, both judges.** The prior's top-32 contains the best move of a much
+stronger, stylistically independent judge (BT4-it332 @ 800 sims, adapter-verified)
+essentially always — including the anti-SF-flavored tail (BT4 prefers moves SF rates
+≥100cp worse in ~10% of disagreements; every such move already inside our top-32).
+The KL-floor-vs-lc0 is confirmed as SHAPE, not blindness; gated-mixture stays shelved.
+Sanity controls: exact row-identity reproduction of the 2,975-row goldcheck sample
+(alignment to 0.1cp), 32-vs-800-sims stability 84%, FEN reconstruction 2975/2975.
+Confound note: two mid-run ONNX-arena OOMs (rows 888/1008) fixed by batch bucketing;
+JSONL verified gap-free, no per-position effect.
