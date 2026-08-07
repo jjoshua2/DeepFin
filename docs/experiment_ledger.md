@@ -35423,3 +35423,10 @@ Next probe (today, cp-resolution): paired audit_targets + value_regret on ckpt-1
 In-between readings = record, no action, revisit with ckpt-119's prior swapped in as a follow-up.
 
 **Confounds:** BT4 judged via OUR search shape (mitigated: 0.025/32 is BT4's own argmin); Q units incommensurate with cp; single BT4 net = one judge, not ground truth — a 2-of-3 judges framing (SF + BT4) is the standard this feeds.
+
+## 2026-08-07 — CONFIG: SF gets 6-man DTZ (stockfish_syzygy_path aligned with syzygy_path, 6e3d8ee4c)
+
+**Finding first:** the dir names lie — data/syzygy_3-4-5 contains the full 3-4-5 set (145 WDL + 145 DTZ) PLUS all 365 six-man WDL files. So SF has probed 6-man WDL in search since forever; "SF only has 5-man" was false. Inventory verified by piece-count histogram: 6-man set in data/syzygy_6 is complete (365 rtbw + 365 rtbz, 151G).
+**Change:** stockfish_syzygy_path now lists both dirs → SF additionally gets 6-man DTZ (root move ranking + 50-move-exact conversion in ≤6-man positions). Expected effect: SMALL (search-probe WDL, the label-quality driver, was already in effect); sharpens SF's endgame root play as opponent and label PVs at TB roots. Takes effect at next worker session recycle (restart-class reco key, engine reinit; warmup gate covers it).
+**Confound note:** lands inside the reduced-SF bundle's readout window; effect judged small (DTZ-only delta). Recorded here per rule 4. Watch: PID winrate dip in endgame-heavy curriculum cells would be the visible signature; the PID absorbs it by design.
+**Housekeeping flag (not done):** the 365 six-man WDL files are duplicated on disk across the two dirs (~68G waste). Dedup is a separate operator decision — both copies are live-mapped today.
