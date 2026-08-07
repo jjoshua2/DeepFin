@@ -58,7 +58,7 @@ _SCOPED_CONFIG_NAMES: dict[str, frozenset[str]] = {
 # -- the reviewer demonstrated exactly that with `_k = "unclassified"`. Listing
 # them by line makes a new dynamic read FAIL until someone accounts for it.
 _NON_LITERAL_READS: dict[str, str] = {
-    "harness.py:442": (
+    "harness.py:491": (
         "the opening-book loop: `for cfg_key, flag in (...)` over "
         "opening_book_path / opening_book_path_2, both classified "
         "driver-launch-fixed"
@@ -191,7 +191,12 @@ def test_the_walk_actually_finds_the_driver_reads() -> None:
     """
     harness_keys = _config_keys_read_by(_HARNESS)
     assert len(harness_keys) >= 30, f"only found {len(harness_keys)} keys in harness.py"
-    for key in ("distributed_server_port", "cpus_per_trial", "distributed_worker_password"):
+    for key in ("distributed_server_port", "cpus_per_trial", "distributed_worker_username"):
+  # `distributed_worker_password` was the third probe until the credential
+  # moved to $CAE_WORKER_PASSWORD. It is deliberately no longer read from the
+  # config AT ALL, so probing for it would pin the defect back into place.
+  # `distributed_worker_username` is the right replacement: same call site,
+  # same function, and still a genuine config read.
         assert key in harness_keys, f"{key} not found by the AST walk"
     assert "distributed_workers_per_trial" in _config_keys_read_by(_RUN)
 
@@ -211,7 +216,7 @@ def test_every_non_literal_driver_read_is_accounted_for() -> None:
     fails here until someone writes down why it may stay dynamic — which is the
     same self-invalidating contract as the literal half.
 
-    The one entry today is real and is a genuine C4/C5 key: `harness.py:442`
+    The one entry today is real and is a genuine C4/C5 key: `harness.py:491`
     reads the two opening-book paths through a loop variable and bakes them into
     the uvicorn command line, so `/v1/opening_book` serves the launch file for
     the life of the server.
@@ -386,9 +391,12 @@ def test_the_username_is_not_inert_and_is_not_classified_as_inert() -> None:
     assert "distributed_worker_username" in driver_dual_clock_config_keys()
     assert "distributed_worker_username" not in driver_launch_fixed_config_keys()
     # ...and the yaml must not carry the round-1 claim next to it.
+  # Sliced AROUND the username line rather than between it and the password
+  # line: the password line is gone, so the old end-marker no longer exists and
+  # `.index` raised instead of asserting.
     yaml_text = (_ROOT.parent / "configs" / "pbt2_small.yaml").read_text(encoding="utf-8")
-    block = yaml_text[yaml_text.index("distributed_worker_username") - 1400:]
-    block = block[: block.index("distributed_worker_password:")]
+    at = yaml_text.index("distributed_worker_username")
+    block = yaml_text[max(0, at - 1400): at + 400]
     assert "changes nothing, forever" not in block
 
 

@@ -186,6 +186,18 @@ class _LeaseAssignBusy(RuntimeError):
     """
 
 
+class _RegistrationRaceLost(RuntimeError):
+    """A first-connect lost the TOFU race AND its password does not match.
+
+    ⚑ RAISED RATHER THAN RETURNED, deliberately. The bug this class exists to
+    make impossible was a `return existing` whose comment said "fall through to
+    normal verification": the caller assigned the record, found it not disabled,
+    and authenticated a client whose password had never been checked against
+    anything. A returned record is indistinguishable from a verified one at the
+    call site; an exception cannot be accidentally treated as success.
+    """
+
+
 class _LeaseAssignLock:
     """Cross-process mutual exclusion for lease assignment, with a STALENESS test.
 
@@ -1100,6 +1112,7 @@ def create_app(
     upload_compact_max_age_seconds: float = 90.0,
     max_upload_positions: int = DEFAULT_MAX_SHARD_POSITIONS,
     max_upload_uncompressed_bytes: int = DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES,
+    worker_self_register: bool = False,
 ):
     """Create the HTTP server.
 
@@ -1118,6 +1131,7 @@ def create_app(
             File,
             Header,
             HTTPException,
+            Request,
             UploadFile,
         )
         from fastapi.responses import FileResponse, JSONResponse
@@ -1129,6 +1143,9 @@ def create_app(
   # Export these types into globals() so file upload endpoints work under Pydantic v2.
         globals()["UploadFile"] = UploadFile
         globals()["HTTPBasicCredentials"] = HTTPBasicCredentials
+  # Same reason as the two above: `_auth_user`'s `request: Request` annotation
+  # is resolved from module globals under `from __future__ import annotations`.
+        globals()["Request"] = Request
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "FastAPI server requires optional dependencies. Install with: pip install -e '.[server]'"
@@ -1136,9 +1153,19 @@ def create_app(
 
     from chess_anti_engine.replay.shard import load_shard_arrays
 
+    from .access import BANS_FILENAME, AccessGuard, BannedIdentity, RateLimited
+    from .auth import UserRecord as _UserRecord
     from .auth import (
         VerifiedCredentialCache,
+        WeakPassword,
+        check_new_password,
+        hash_password,
+        verify_password,
         load_user_stats,
+        load_users,
+        save_users,
+        UsersDbBusy,
+        users_db_lock,
         migrate_user_stats,
         record_upload,
         save_user_stats,
@@ -1166,6 +1193,22 @@ def create_app(
   # authenticated request behind every upload's stats write, which is a worse
   # version of the problem this cache is fixing.
     auth_cache = VerifiedCredentialCache(users_path)
+  # Bans + per-IP throttling. `bans.json` sits beside users.json in the server
+  # root (under runs/, so untracked) and is re-read when it changes, so
+  # `manage_users.py ban` in another process takes effect on the next request
+  # rather than at the next restart.
+    access_guard = AccessGuard(root / BANS_FILENAME)
+  # ⚑ FLAG-GATED, DEFAULT OFF. Today's deployment is a closed LAN fleet with one
+  # shared credential and must keep behaving exactly as it does; the flag flips
+  # when the server is opened to volunteers. Captured at construction, so it is
+  # server-restart-gated -- see the note on the yaml key.
+    self_register_enabled = bool(worker_self_register)
+  # `_log`, not `log`: the create_app-local logger is bound further down.
+    _log.info(
+        "worker self-registration is %s",
+        "ENABLED (unknown usernames will create accounts)" if self_register_enabled
+        else "disabled (unknown usernames are refused)",
+    )
   # Per-user upload counters, split out of `users.json` so an accepted shard
   # never rewrites a credential. Migration runs once at startup and is a no-op
   # once the stats file exists; it assigns rather than adds, so a repeat cannot
@@ -1841,26 +1884,186 @@ def create_app(
 
     basic = HTTPBasic()
 
-    def _auth_user(creds: HTTPBasicCredentials = Depends(basic)) -> str:
+    def _client_ip(request: Request | None) -> str:
+        """The peer address, or "" when there is no client (ASGI test transport).
+
+        Deliberately NOT X-Forwarded-For: this server is reached directly, so
+        trusting a client-supplied header would let anyone forge past an IP ban
+        and reset their own rate-limit bucket. If a reverse proxy is ever put in
+        front, this is the ONE function that changes -- and it must gain a
+        trusted-proxy allowlist in the same commit.
+        """
+        client = getattr(request, "client", None) if request is not None else None
+        return str(getattr(client, "host", "") or "")
+
+    def _register_new_user(username: str, password: str, ip: str):
+        """Trust-on-first-use: the first client to claim a name gets it.
+
+        Returns a record ONLY when this caller may authenticate as it -- either
+        it created the account, or it lost the race and its password verifies
+        against the winner's stored record. Every other outcome raises.
+
+        No reset flow, by design -- a volunteer who forgets their password just
+        registers a new name. That deletes the entire account-recovery surface,
+        which is the part of a volunteer auth system that actually gets abused.
+
+        The password is stored ONLY as PBKDF2 material, through the same
+        `hash_password` the admin path uses. There is no branch here that can
+        write plaintext.
+        """
+        access_guard.check_registration_allowed(ip)
+  # ⚑ THE POLICY IS SHARED WITH THE ADMIN CLI, not re-implemented here. A
+  # volunteer choosing their own password is exactly the route where a
+  # minimum length has to hold, and a second copy of the rule is a second
+  # place for it to drift. Raises WeakPassword; `_auth_user` turns that into
+  # a 400 so the client is told what to fix rather than looping on 401.
+        check_new_password(password)
+        salt_b64, hash_b64, iterations = hash_password(password)
+  # TWO locks, and each covers what the other cannot. `stats_write_lock`
+  # serialises this process's threadpool workers -- A18's real precondition is
+  # single EXECUTION CONTEXT, so two simultaneous registrations would otherwise
+  # lose one. `users_db_lock` serialises against the OPERATOR'S CLI, a separate
+  # process that `stats_write_lock` cannot see: without it, `manage_users
+  # disable` landing inside this read-modify-write is written back out of the
+  # copy loaded before it, and the revoked worker keeps uploading (#343 §6,
+  # which self-registration made reachable by making the server a writer again).
+  # Order is fixed -- threading lock first, then file lock -- and the CLI takes
+  # only the file lock, so no inversion is possible.
+        with stats_write_lock, users_db_lock(users_path):
+            users = load_users(users_path)
+            existing = users.get(username)
+            if existing is None:
+                users[username] = _UserRecord(
+                    username=username, salt_b64=salt_b64, hash_b64=hash_b64,
+                    iterations=iterations,
+                )
+                save_users(users_path, users)
+                record, won = users[username], True
+            else:
+                record, won = existing, False
+
+        if not won:
+  # ⚑ LOST THE RACE => VERIFY, NEVER TRUST. Another first-connect created
+  # this name microseconds ago, and nothing has yet checked that THIS
+  # client's password matches the credential that got stored. Returning the
+  # record here -- which is what the previous version did, under a comment
+  # claiming it "fell through to normal verification" -- authenticates
+  # whatever password lost the race. With N clients racing one name, one
+  # registers and N-1 are let in on passwords the server rejected, while the
+  # registration quota is charged once because only the winner reaches
+  # `note_registration`. The loser is an ordinary sign-in from here on.
+            auth_cache.invalidate()
+            if not verify_password(password, record):
+                _log.info(
+                    "first-connect for %r from %s lost the registration race and "
+                    "its password does not match the stored credential",
+                    username, ip or "?",
+                )
+                raise _RegistrationRaceLost(username)
+            return record
+
+        access_guard.note_registration(ip)
+        auth_cache.invalidate()
+        _log.info(
+            "registered new worker account %r from %s (trust-on-first-use)",
+            username, ip or "?",
+        )
+        return record
+
+    def _auth_user(
+        request: Request, creds: HTTPBasicCredentials = Depends(basic),
+    ) -> str:
         """Authenticate, without re-running PBKDF2 on a credential we already
         checked. See `VerifiedCredentialCache` for why that is sound and for
         what it deliberately does not cache (rejections).
 
-        The rejection ORDER is unchanged: unknown user -> 401, disabled -> 403,
-        bad password -> 401. `disabled` is read from the current record, so
-        revoking a user takes effect on their next request.
+        Order, and every step of it is load-bearing:
+
+        1. BANS FIRST, before any credential work. A banned identity must not be
+           able to spend the server's PBKDF2 budget, and it must lose every
+           authenticated route at once rather than each route remembering.
+        2. the per-IP failed-sign-in throttle, so an open port is not a free
+           guessing oracle.
+        3. the normal cached verification.
+        4. ONLY if the username is unknown AND self-registration is on, TOFU.
+
+        With the flag off, step 4 does not exist and the rejection order is
+        exactly what it was: unknown -> 401, disabled -> 403, bad password ->
+        401. That equivalence is the thing to test, not the flag parsing.
         """
-        rec = auth_cache.verify(str(creds.username), str(creds.password))
+        username = str(creds.username)
+        ip = _client_ip(request)
+        try:
+            access_guard.check_not_banned(username=username, ip=ip)
+            access_guard.check_auth_attempt_allowed(ip)
+        except BannedIdentity as exc:
+  # 403, not 401: a 401 reads as "your password is wrong" and invites a
+  # retry loop; 403 tells the client to stop.
+            raise HTTPException(status_code=403, detail=f"banned: {exc}") from exc
+        except RateLimited as exc:
+            raise HTTPException(
+                status_code=429, detail=str(exc), headers={"Retry-After": "60"},
+            ) from exc
+
+  # ⚑ DISABLED BEFORE THE KDF (#343 finding B). Checking `disabled` only
+  # after `verify()` meant a revoked account presenting a WRONG password paid
+  # a full ~50ms PBKDF2 on every request -- there is no negative caching -- so
+  # revoking an abusive client made it MORE expensive to serve, not less. It
+  # leaks nothing new: disabled already answered 403 whether the password was
+  # right or wrong, so the reply is identical, only cheaper.
+        known = auth_cache.users().get(username)
+        if known is not None and known.disabled:
+            raise HTTPException(status_code=403, detail="user disabled")
+
+        rec = auth_cache.verify(username, str(creds.password))
         if rec is None:
-            known = auth_cache.users().get(str(creds.username))
             if known is None:
-                raise HTTPException(status_code=401, detail="unknown user")
-            if known.disabled:
-                raise HTTPException(status_code=403, detail="user disabled")
-            raise HTTPException(status_code=401, detail="bad password")
+                if not self_register_enabled:
+                    access_guard.note_auth_failure(ip)
+                    raise HTTPException(status_code=401, detail="unknown user")
+                try:
+                    rec = _register_new_user(username, str(creds.password), ip)
+                except RateLimited as exc:
+                    raise HTTPException(
+                        status_code=429, detail=str(exc),
+                        headers={"Retry-After": "3600"},
+                    ) from exc
+                except UsersDbBusy as exc:
+  # 503, not 500: the operator's CLI is mid-write, which is transient by
+  # construction. A worker retries its next poll for free. Refusing to
+  # write unlocked is the point -- proceeding would be the lost update
+  # this lock exists to prevent.
+                    _log.warning("registration deferred: %s", exc)
+                    raise HTTPException(
+                        status_code=503, detail="users db busy, retry",
+                        headers={"Retry-After": "5"},
+                    ) from exc
+                except _RegistrationRaceLost as exc:
+  # Indistinguishable from any other wrong password, on purpose: 401 and
+  # a charge against the failed-sign-in quota. A distinct status here
+  # would tell an attacker that the name was claimed in the last
+  # millisecond, and leaving the charge off would make racing a name a
+  # free way to guess at it.
+                    access_guard.note_auth_failure(ip)
+                    raise HTTPException(
+                        status_code=401, detail="bad password",
+                    ) from exc
+                except WeakPassword as exc:
+  # 400, not 401: the credential is not wrong, it is unacceptable, and a
+  # 401 would send the volunteer into a retry loop with the same password.
+  # No `note_auth_failure` -- refusing a weak password is not a failed
+  # sign-in attempt, and counting it would let a typo-prone volunteer
+  # throttle themselves out.
+                    raise HTTPException(
+                        status_code=400, detail=f"cannot register: {exc}",
+                    ) from exc
+            else:
+                access_guard.note_auth_failure(ip)
+                raise HTTPException(status_code=401, detail="bad password")
         if rec.disabled:
             raise HTTPException(status_code=403, detail="user disabled")
-        return str(creds.username)
+        access_guard.note_auth_success(ip)
+        return username
 
     def _record_bad_shard_report(
         trial_id: str | None,

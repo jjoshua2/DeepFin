@@ -832,10 +832,13 @@ class Engine:
         self._options.pucv_pending_mode = normalized
         self._worker.set_pucv_vloss_mode(1 if normalized == "virtual-mean" else 0)
         if self._options.search_parallel == "gumbel":
-            # RPG pins virtual-mean independently of PUCVPendingMode; nothing
-            # to reinstall, but don't let a stale use_multi_gpu_pucv flag
-            # replace the Gumbel pool.
-            pass
+            # set_pucv_vloss_mode re-points the live RPG chunkers, so no
+            # reinstall is needed — but don't let a stale use_multi_gpu_pucv
+            # flag replace the Gumbel pool either. Report what the descent
+            # will actually use, not what was requested.
+            realized = self._worker.realized_rpg_vloss_mode()
+            if realized is not None:
+                _println(f"info string RPG vloss_mode={realized}")
         elif self._options.use_multi_gpu_pucv:
             # Pool config changed (vloss_mode); reinstall only — primary stays.
             self._install_multi_gpu_pucv_pool()
@@ -910,7 +913,8 @@ class Engine:
             f"(groups={len(factories)} gather={gather} "
             f"open_vpa={self._options.rpg_open_vpa} "
             f"min_vpa={self._options.rpg_min_vpa} "
-            f"min_keep={self._options.rpg_min_keep})",
+            f"min_keep={self._options.rpg_min_keep} "
+            f"vloss_mode={self._worker.realized_rpg_vloss_mode()})",
         )
         return True
 

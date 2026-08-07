@@ -234,15 +234,33 @@ def legal_full_indices(board: chess.Board) -> tuple[list[str], np.ndarray]:
     return ucis, np.asarray(idxs, dtype=np.int64)
 
 
+# Per-move regret cap, in cp. Mirrors `SF_OWN_REGRET_CAP_CP` in
+# selfplay/finalize.py, which caps the training-side regret target at the same
+# 1000cp for the same reason.
+#
+# WHY: `mate_to_effective_cp` puts mates around +/-100000, so on the 8.1% of
+# audit positions that carry a mate line an UNCAPPED regret is ~97000cp and a
+# mean over positions stops measuring move quality and starts measuring
+# "did this position contain a mate". Uncapped, unifying the mate mapping moved
+# the audit set's mean per-position regret spread 146.8 -> 2063.4 cp (14.1x)
+# off 7.6% of positions while the median moved 69.9 -> 75.0. Beyond ~1000cp the
+# position is decided and further cp is not a meaningful quality difference,
+# which is the same judgement `SF_OWN_REGRET_CAP_CP` encodes.
+AUDIT_REGRET_CAP_CP = 1000.0
+
+
 def move_regrets(
     pos: AuditPosition, legal_ucis: list[str],
 ) -> np.ndarray:
-    """Per-legal-move deep-SF regret in cp (best_cp - cp(move), >= 0).
+    """Per-legal-move deep-SF regret in cp, clamped to `AUDIT_REGRET_CAP_CP`.
 
     Moves the deep MultiPV did not list get the regret of the WORST listed
     line as a floor — a lower bound on their true regret, biased optimistic
     for bad distributions. With MultiPV >= 10 at 1M nodes the unlisted mass
     of any sane candidate is tiny; the bound is reported, not hidden.
+
+    The cap is what keeps this a MEAN over positions rather than a mate
+    detector — see `AUDIT_REGRET_CAP_CP`.
     """
     worst_listed = min(pos.move_cp.values())
     floor = pos.best_cp - worst_listed
@@ -250,7 +268,7 @@ def move_regrets(
     for i, uci in enumerate(legal_ucis):
         cp = pos.move_cp.get(uci)
         out[i] = (pos.best_cp - cp) if cp is not None else floor
-    return np.maximum(out, 0.0)
+    return np.clip(out, 0.0, AUDIT_REGRET_CAP_CP)
 
 
 def expected_and_top1_regret(

@@ -261,6 +261,22 @@ def test_healthy_manifest_still_enforces_and_still_admits(tmp_path: Path) -> Non
     assert old.json().get("rejected") is True, old.text
 
     current = _upload(client, headers=_headers(version="9.9.9"))
+  # ⚑ THE STATUS IS THE DISCRIMINATOR, and asserting it is the point of this
+  # line. `reason_code is None` alone was satisfied by a gate stuck permanently
+  # CLOSED, because the 503 body has no reason_code either -- the review flagged
+  # exactly that. A stuck-closed gate answers 503 and never reaches the shard
+  # reader, so the status separates admitted from refused-by-the-gate, which is
+  # the distinction this test exists to make.
+  #
+  # `stored is True` was offered as the stronger form and is DECLINED, on the
+  # axis rather than the effort: it asserts the SHARD READER's verdict, not the
+  # gate's. Getting it needs a loadable fixture built with
+  # `save_local_shard_arrays`, which pins this gate test to the shard schema --
+  # the sibling fixture that does this still writes 146 input planes, while
+  # production has been 175 (`v2_threats`) for a long time. A compat-gate test
+  # that goes red when the input encoding changes, on a fixture quietly a
+  # generation behind, is worse than one that asserts exactly the gate.
+    assert current.status_code == 200, current.text
     assert current.json().get("reason_code") is None, current.text
 
 

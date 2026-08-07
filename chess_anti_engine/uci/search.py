@@ -618,9 +618,11 @@ class SearchWorker:
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
-            # vloss_mode stays at the config default (virtual-mean): the design pins
-            # the intra-candidate regime; the pucv pool's PUCVPendingMode default
-            # (legacy) deliberately does not leak in here.
+            # Same PUCVPendingMode the pucv pool reads. RPG used to pin
+            # virtual-mean here regardless, so an operator reading `legacy` off
+            # the UCI option was reading a knob this pool never consulted —
+            # while its descents re-walked the in-flight leaf (audit W3).
+            vloss_mode=self._pucv_vloss_mode,
             split_idle_groups=multi,
             min_vpa=min_vpa_r,
             open_vpa=open_r,
@@ -687,6 +689,17 @@ class SearchWorker:
         self._pucv = self._build_pucv() if self._use_pucv else None
         self.reset_tree()
 
+    def realized_rpg_vloss_mode(self) -> tuple[int, ...] | None:
+        """Per-group pending accounting the installed RPG pool descends with.
+
+        ``None`` when no pool is installed. Sourced from the live chunkers, so
+        it answers "did PUCVPendingMode reach the search" rather than "what was
+        the pool configured with".
+        """
+        if self._rpg_pool is None:
+            return None
+        return self._rpg_pool.realized_vloss_mode()
+
     def last_root_parallel_gumbel_stats(self) -> RootParallelGumbelStats | None:
         """Return stats from the most recent root-parallel Gumbel chunk."""
         if self._rpg_pool is None:
@@ -699,6 +712,11 @@ class SearchWorker:
         ``0`` keeps legacy absolute virtual-loss scoring. ``1`` uses
         virtual-mean pending samples during batched PUCT selection. The
         walker-pool path is unchanged because it uses the single-leaf C API.
+
+        Reaches all three batched consumers: the single-thread chunker (rebuilt),
+        the multi-GPU pucv pool (reads ``_cfg`` per job) and the root-parallel
+        Gumbel pool (whose per-group chunkers are built once at pool
+        construction, so its config alone would not reach the descent).
         """
         mode = 1 if int(mode) == 1 else 0
         if mode == self._pucv_vloss_mode:
@@ -708,6 +726,8 @@ class SearchWorker:
             self._pucv = self._build_pucv()
         if self._pucv_pool is not None:
             self._pucv_pool._cfg.vloss_mode = mode
+        if self._rpg_pool is not None:
+            self._rpg_pool.set_vloss_mode(mode)
         self.reset_tree()
 
     def set_use_pucv(self, enabled: bool, *, gather: int | None = None) -> None:

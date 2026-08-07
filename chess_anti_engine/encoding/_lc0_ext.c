@@ -1014,8 +1014,24 @@ static inline int sf_multipv_row_score(const npy_int16 *row, int cp_sentinel,
     const int cp = (int)row[1];
     const int mate = (int)row[2];
     if (move_idx < 0 || (mate == 0 && cp == cp_sentinel)) return 0;
-    if (mate > 0) *score_out = 100000.0 - (double)mate * 100.0;
-    else if (mate < 0) *score_out = -100000.0 - (double)mate * 100.0;
+    if (mate != 0) {
+        /* EXACT mirror of chess_anti_engine.stockfish.wdl.mate_to_effective_cp,
+         * the single mate -> score mapping (base 100000, step 100/ply, plies
+         * floored at 500 so a long mate cannot walk down into the +/-32000 cp
+         * band and flip sign). Change both or neither.
+         *
+         * Pinned in two places, because one is not enough: the regret vector
+         * this feeds is a DIFFERENCE capped at 1000cp, so it can see the step
+         * and the floor (test_native_sf_finalize.py) but NOT the base — a
+         * shared offset cancels in every difference, and moving 100000 to
+         * 90000 here leaves every regret bit-identical. The base is pinned
+         * against the Python constant at source level by
+         * test_mate_score_single_home.py::
+         * test_c_mirror_literals_match_the_python_constants. */
+        double plies = (double)(mate > 0 ? mate : -mate);
+        if (plies > 500.0) plies = 500.0;
+        *score_out = (mate > 0 ? 1.0 : -1.0) * (100000.0 - plies * 100.0);
+    }
     else *score_out = (double)cp;
     return 1;
 }

@@ -13,6 +13,7 @@ These tests pin the three ways the deploy could silently not happen:
 """
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 
 import numpy as np
@@ -503,6 +504,14 @@ def test_audit_ruler_scores_cp_mode_at_the_cp_temp() -> None:
     np.testing.assert_allclose(float(dist[0]), p_best, atol=1e-3)
     np.testing.assert_allclose(float(dist.sum()), 1.0, atol=1e-6)
 
+    # #356 review follow-up: the assertions above only exercise cp mode, so a
+    # mutation forcing the ruler ALWAYS to cp would stay green. The same
+    # fixture in wdl mode reads the EQUAL native wdl rows as a 0.5/0.5 tie —
+    # the both-directions property the sparse-CE mask test already has.
+    wdl_params = dataclasses.replace(params, sf_policy_score_mode="wdl")
+    wdl_dist = _sf_soft_distribution(rec, legal, params=wdl_params)
+    np.testing.assert_allclose(float(wdl_dist[0]), 0.5, atol=1e-3)
+
 
 def test_audit_ruler_params_derive_from_the_flat_config() -> None:
     """The yaml-read leg of the same residual: `main()` built `_SfSoftParams`
@@ -520,6 +529,19 @@ def test_audit_ruler_params_derive_from_the_flat_config() -> None:
     dflt = _sf_soft_params_from_flat({})
     assert dflt.sf_policy_score_mode == "wdl"
     assert dflt.sf_policy_cp_temp == 16.2
+
+    # #356 review follow-up: the ruler's fallback literals are a SECOND COPY
+    # of the SfTargetParams defaults, and they bind on today's production
+    # config (flatten copies only keys the yaml sets). The reads stay
+    # literals — "wdl" must remain frozen, not follow the dataclass — so pin
+    # EQUALITY for every shared field instead: drift on either side fails CI.
+    d = SfTargetParams()
+    shared = {f.name for f in dataclasses.fields(SfTargetParams)} & {
+        f.name for f in dataclasses.fields(type(dflt))
+    }
+    assert shared  # the pin must never degrade to a vacuous loop
+    for name in sorted(shared):
+        assert getattr(dflt, name) == getattr(d, name), name
 
 
 def test_sparse_ce_wdl_only_block_is_unscoreable_in_cp_mode() -> None:

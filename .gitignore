@@ -63,3 +63,10 @@ scripts/fuzz/cboard_fuzz
 scripts/fuzz/corpus/
 scripts/fuzz/crash-*
 crash-*
+
+# Credentials. ⚑ NEVER TRACK A SECRET -- this repo is public, and a secret
+# committed once stays in the history after any edit (see server/secrets.py).
+.secrets/
+*.password
+.env
+.env.*

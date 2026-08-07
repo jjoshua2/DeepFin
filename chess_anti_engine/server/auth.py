@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import dataclasses
+import fcntl
 import hashlib
 import hmac
 import json
@@ -9,6 +11,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -82,6 +85,42 @@ def _b64d(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii"))
 
 
+MIN_PASSWORD_LENGTH = 8
+"""Minimum length for a password being SET. User-specified policy, 2026-08-05.
+
+⚑ ENFORCEMENT IS ON SETTING, NOT ON CHECKING. :func:`verify_password` is
+deliberately untouched by this: accounts created before the policy keep
+authenticating with whatever they have, so raising the bar cannot lock the
+fleet out mid-rotation. The bar applies the next time a password is chosen --
+`manage_users add` / `set-password`, and self-registration.
+"""
+
+
+class WeakPassword(ValueError):
+    """A password being SET does not meet :data:`MIN_PASSWORD_LENGTH`."""
+
+
+def check_new_password(password: str) -> None:
+    """Raise :class:`WeakPassword` unless `password` may be SET on an account.
+
+    The single home for the policy: every route that chooses a password --
+    both `manage_users` subcommands across all three input sources, and
+    self-registration -- calls this, so there is one place to read and one
+    place to change. Callers translate it to their own failure mode (a CLI
+    exits, an HTTP route returns 400).
+    """
+    if not password.strip():
+        raise WeakPassword(
+            "refusing an empty (or whitespace-only) password: it hashes and "
+            "stores fine, and then authenticates a client that sends nothing"
+        )
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise WeakPassword(
+            f"password must be at least {MIN_PASSWORD_LENGTH} characters; "
+            f"got {len(password)}"
+        )
+
+
 def _pbkdf2(password: str, *, salt: bytes, iterations: int) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations), dklen=32)
 
@@ -134,7 +173,13 @@ def save_users(path: str | Path, users: dict[str, UserRecord]) -> None:
         d = rec.__dict__.copy()
         d.pop("username", None)
         data[u] = d
-    atomic_write_text(Path(path), json.dumps(data, indent=2, sort_keys=True))
+  # ⚑ 0600, applied to the tmp file BEFORE the rename. This file holds the
+  # PBKDF2 material for every account; at `umask 000` it was created 0666, and a
+  # WORLD-WRITABLE users.json is an auth bypass -- any local user can drop in a
+  # hash they know and log in as anybody. Disclosure is the lesser half.
+    atomic_write_text(
+        Path(path), json.dumps(data, indent=2, sort_keys=True), mode=0o600,
+    )
 
 
 def load_user_stats(path: str | Path) -> dict[str, UserStats]:
@@ -240,7 +285,16 @@ def migrate_user_stats(users_path: str | Path, stats_path: str | Path) -> int:
         u: {k: val for k, val in v.items() if k not in _LEGACY_STAT_KEYS}
         for u, v in raw.items() if isinstance(v, dict)
     }
-    atomic_write_text(users_p, json.dumps(stripped, indent=2, sort_keys=True))
+  # ⚑ mode=0o600, matching `save_users`. This is the one other writer of the
+  # credential file, and it rewrites the WHOLE of it: without the mode it
+  # re-created users.json at the umask default, so a server whose credential
+  # file was correctly 0600 came back from this one-time migration at 0644 --
+  # or 0666 under `umask 000` -- and a world-WRITABLE users.json is an auth
+  # bypass by hash replacement. A migration that silently widens permissions is
+  # worse than one that fails.
+    atomic_write_text(
+        users_p, json.dumps(stripped, indent=2, sort_keys=True), mode=0o600,
+    )
     _log.info(
         "migrated upload counters for %d user(s) out of %s into %s; the "
         "credential file is no longer written by uploads",
@@ -283,6 +337,100 @@ def record_upload(
         m["last_upload_at_unix"] = now
 
 
+USERS_DB_LOCK_SUFFIX = ".lock"
+_USERS_DB_LOCK_TIMEOUT_S = 10.0
+
+
+class UsersDbBusy(RuntimeError):
+    """The users-DB lock was held past the deadline. Raised, never bypassed."""
+
+
+@contextlib.contextmanager
+def users_db_lock(
+    users_path: str | Path, *, timeout_s: float = _USERS_DB_LOCK_TIMEOUT_S,
+) -> Generator[None]:
+    """Cross-process mutual exclusion for a read-modify-write of `users.json`.
+
+    ⚑ THE THREADING LOCK IS NOT ENOUGH, AND THE GAP IS NEWLY REACHABLE. Until
+    self-registration landed, the server never wrote `users.json` in steady
+    state -- the upload counters had moved to their own file -- so `manage_users`
+    was the only writer and an unlocked read-modify-write could not lose
+    anything. TOFU registration made the SERVER a writer again, and it is a
+    different PROCESS from the operator's CLI, which `stats_write_lock` cannot
+    see. Measured before this guard existed, with the operator disabling an
+    account during a registration:
+
+        alice.disabled = False   (operator set it True)
+        LOST UPDATE: the revocation was silently reverted
+
+    That is the dangerous direction: the server writes back the copy it loaded
+    before the disable, and a revoked worker keeps uploading. The reverse
+    interleave loses a just-registered account instead, which is merely
+    annoying. Both are the same bug.
+
+    `flock` rather than an O_EXCL lock file, and the difference is the whole
+    reason A17 needed a staleness test: the kernel drops an flock when the
+    holder dies, so a crashed process cannot leave a lock nobody can clear.
+    There is nothing to steal and no staleness heuristic to get wrong.
+
+    Blocks up to `timeout_s`, then raises `UsersDbBusy` rather than proceeding
+    unlocked -- an RMW that gives up on the lock and writes anyway is the
+    original bug with extra steps. Callers in a request path turn that into a
+    503; the CLI turns it into a message naming the other holder.
+
+    A18: this is a blocking file lock, so it must only ever be taken from a
+    sync (threadpool) context, never from the event loop.
+    """
+    path = Path(users_path)
+    lock_path = path.with_name(path.name + USERS_DB_LOCK_SUFFIX)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+  # 0600: the lock's mere existence is not a secret, but it sits beside the
+  # credential file and inherits its blast radius if a mode is ever added.
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    deadline = time.monotonic() + float(timeout_s)
+    announced = False
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if not announced:
+  # ⚑ SAY WHY, ONCE, THE MOMENT WE START WAITING. The operator-visible
+  # symptom of contention is `manage_users` sitting there doing nothing,
+  # and the only thing that can explain it is this line -- the holder's
+  # pid is recorded in the lock file and nowhere else. Emitted on first
+  # contention rather than at the deadline, because a CLI that pauses for
+  # ten seconds and THEN explains itself has already been killed.
+                    announced = True
+                    with contextlib.suppress(Exception):
+                        _log.warning(
+                            "waiting for the users-db lock %s, held by pid %s",
+                            lock_path,
+                            os.pread(fd, 64, 0).decode("utf-8", "replace").strip()
+                            or "unknown",
+                        )
+                if time.monotonic() >= deadline:
+                    holder = ""
+                    with contextlib.suppress(Exception):
+                        holder = os.pread(fd, 64, 0).decode("utf-8", "replace").strip()
+                    raise UsersDbBusy(
+                        f"{lock_path} held by pid {holder or 'unknown'} for more "
+                        f"than {timeout_s:g}s; refusing to write {path.name} "
+                        f"unlocked"
+                    ) from None
+                time.sleep(0.02)
+        with contextlib.suppress(Exception):
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
+        yield
+    finally:
+        with contextlib.suppress(Exception):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        with contextlib.suppress(Exception):
+            os.close(fd)
+
+
 def ensure_user(
     users_path: str | Path,
     *,
@@ -290,19 +438,22 @@ def ensure_user(
     password: str,
     disabled: bool = False,
 ) -> None:
-    users = load_users(users_path)
-    if username in users:
-        raise ValueError(f"user {username!r} already exists")
-
+  # ⚑ HASH OUTSIDE THE LOCK. PBKDF2 at 200k iterations is ~50ms; holding a
+  # cross-process lock across it would serialise the KDF between the server
+  # and the CLI for no benefit -- only the load-mutate-save has to be atomic.
     salt_b64, hash_b64, iterations = hash_password(password)
-    users[username] = UserRecord(
-        username=username,
-        salt_b64=salt_b64,
-        iterations=iterations,
-        hash_b64=hash_b64,
-        disabled=bool(disabled),
-    )
-    save_users(users_path, users)
+    with users_db_lock(users_path):
+        users = load_users(users_path)
+        if username in users:
+            raise ValueError(f"user {username!r} already exists")
+        users[username] = UserRecord(
+            username=username,
+            salt_b64=salt_b64,
+            iterations=iterations,
+            hash_b64=hash_b64,
+            disabled=bool(disabled),
+        )
+        save_users(users_path, users)
 
 
 def upsert_user(
@@ -318,24 +469,26 @@ def upsert_user(
     file and this function does not touch it, so a password change cannot zero
     a contributor's upload history by forgetting a field.
     """
-    users = load_users(users_path)
     salt_b64, hash_b64, iterations = hash_password(password)
-    users[username] = UserRecord(
-        username=username,
-        salt_b64=salt_b64,
-        iterations=iterations,
-        hash_b64=hash_b64,
-        disabled=bool(disabled),
-    )
-    save_users(users_path, users)
+    with users_db_lock(users_path):
+        users = load_users(users_path)
+        users[username] = UserRecord(
+            username=username,
+            salt_b64=salt_b64,
+            iterations=iterations,
+            hash_b64=hash_b64,
+            disabled=bool(disabled),
+        )
+        save_users(users_path, users)
 
 
 def set_disabled(users_path: str | Path, *, username: str, disabled: bool) -> None:
-    users = load_users(users_path)
-    if username not in users:
-        raise ValueError(f"unknown user {username!r}")
-    users[username].disabled = bool(disabled)
-    save_users(users_path, users)
+    with users_db_lock(users_path):
+        users = load_users(users_path)
+        if username not in users:
+            raise ValueError(f"unknown user {username!r}")
+        users[username].disabled = bool(disabled)
+        save_users(users_path, users)
 
 
 @dataclass(frozen=True)

@@ -431,3 +431,32 @@ def test_users_returns_a_defensive_copy(tmp_path: Path) -> None:
     assert "u" in third, "a caller emptied the cache through a HIT-path result"
     assert "intruder" not in third, "a caller injected a credential through a HIT"
     assert cache.verify("u", "p") is not None
+
+
+def test_a_disabled_account_costs_no_pbkdf2_even_with_a_wrong_password(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#343 finding B: revoking an account made it MORE expensive to serve.
+
+    `disabled` was consulted only after `verify()`, and there is deliberately no
+    negative caching, so a revoked client presenting a wrong password bought a
+    full ~50ms PBKDF2 out of a threadpool token on EVERY request — precisely the
+    accounts an operator has already decided are abusive. Before the auth cache
+    landed, that check came first and cost nothing.
+
+    Nothing is leaked by restoring the order: `disabled` answered 403 whether
+    the password was right or wrong, so the reply is byte-identical and only
+    the price changed. Both passwords are asserted for exactly that reason.
+    """
+    server_root = tmp_path / "server"
+    _seed(server_root)
+    set_disabled(server_root / "users.json", username="u", disabled=True)
+    client = _client(server_root)
+    counter = _Pbkdf2Counter(monkeypatch)
+
+    for password in ("p", "definitely-wrong"):
+        assert _ping(client, password=password).status_code == 403, password
+    assert counter.calls == 0, (
+        f"a disabled account spent {counter.calls} PBKDF2 run(s); a revoked "
+        "client can still buy ~50ms of threadpool per request"
+    )

@@ -114,20 +114,52 @@ def _wait_for_server_ready(
 def _prepare_distributed_worker_auth(
     *, server_root: Path, config: dict | None = None
 ) -> tuple[str, Path]:
-    from chess_anti_engine.server.auth import load_users, upsert_user
+    from chess_anti_engine.server.auth import (
+        WeakPassword,
+        check_new_password,
+        load_users,
+        upsert_user,
+    )
+
+    from chess_anti_engine.server.secrets import (
+        refuse_config_password,
+        resolve_worker_password,
+    )
 
     cfg = config or {}
     username = str(cfg.get("distributed_worker_username", "") or "").strip()
-    password = str(cfg.get("distributed_worker_password", "") or "").strip()
-    password_env = str(cfg.get("distributed_worker_password_env", "") or "").strip()
-    if not password and password_env:
-        password = str(os.environ.get(password_env, "") or "").strip()
-
-    if not username or not password:
+  # ⚑ THE YAML IS NOT A CREDENTIAL SOURCE ANY MORE. `distributed_worker_password`
+  # is read here only to say out loud that it is being ignored -- it is a
+  # tracked file in a public repo, so a value there is disclosed and must not
+  # become the secret again after a rotation. See server/secrets.py.
+    nag = refuse_config_password(cfg)
+    if nag:
+        print(f"[run_tune] {nag}", flush=True)
+    if not username:
         raise RuntimeError(
-            "distributed_worker_username and either distributed_worker_password or "
-            "distributed_worker_password_env must be set. Add a user first: "
+            "distributed_worker_username must be set. Add a user first: "
             "python -m chess_anti_engine.server.manage_users add <username>"
+        )
+  # Raises MissingWorkerSecret when nothing holds one. Deliberately NOT caught:
+  # provisioning an account with an empty secret on a 0.0.0.0 listener is worse
+  # than refusing to start, and a silent empty-password fallback is exactly the
+  # accepted-then-ignored defect this repo keeps paying for.
+    password, password_source = resolve_worker_password(cfg)
+    print(f"[run_tune] worker credential source: {password_source}", flush=True)
+    try:
+        check_new_password(password)
+    except WeakPassword as exc:
+  # WARN, DO NOT REFUSE, on this one path. The CLI and self-registration
+  # refuse, because there a human is choosing a password and can choose
+  # another. Here the secret already exists in the operator's environment and
+  # the alternative to accepting it is a run that will not boot -- a length
+  # policy that takes production down is a worse outage than the weak
+  # credential it was protecting against. The operator gets told, at the
+  # moment they can act on it, and `manage_users set-password` enforces.
+        print(
+            f"[run_tune] WARNING: the credential in {password_source} is weak "
+            f"({exc}). Rotate it with `manage_users set-password`.",
+            flush=True,
         )
 
   # First-time provisioning only — if the user already exists, leave
@@ -147,11 +179,23 @@ def _prepare_distributed_worker_auth(
   # yaml password is stale; rewriting it would cause workers to read the
   # stale value and fail auth against the live users.json.
     if not user_existed and not password_file.exists():
-        password_file.write_text(password + "\n", encoding="utf-8")
+  # Create 0600 BEFORE the secret is in it. Writing then chmod'ing leaves a
+  # window where the file is world-readable at the prevailing umask, which on
+  # a shared box is the whole disclosure this change exists to stop.
         try:
-            password_file.chmod(0o600)
+            fd = os.open(str(password_file), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
         except OSError:
-            pass  # Windows / non-POSIX filesystem — chmod is best-effort
+  # Non-POSIX filesystem: fall back rather than refuse to provision, but say
+  # so -- a silently world-readable credential is what we are avoiding.
+            print(
+                f"[run_tune] WARNING: could not create {password_file} with mode "
+                f"0600; the worker credential may be readable by other users",
+                flush=True,
+            )
+            password_file.write_text(password + "\n", encoding="utf-8")
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(password + "\n")
     return username, password_file
 
 
@@ -435,6 +479,11 @@ def _launch_distributed_server(
         "--upload-compact-max-age-seconds",
         str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
     ]
+  # Flag-gated volunteer registration. Baked into the server command line, so
+  # it is DRIVER-LAUNCH-FIXED (classified in trainable_config_ops) and takes a
+  # full `run.py` restart to change -- not a trial restart, and not a reload.
+    if bool(base_config.get("worker_self_register", False)):
+        cmd.append("--worker-self-register")
     for cfg_key, flag in (
         ("opening_book_path", "--opening-book-path"),
         ("opening_book_path_2", "--opening-book-path-2"),

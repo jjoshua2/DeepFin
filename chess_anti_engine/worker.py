@@ -197,7 +197,19 @@ def _upload_response_allows_pending_delete(response: Any) -> bool:
 
 
 def _upload_response_rejection_reason(response: Any) -> str | None:
-    """Return the terminal server rejection reason for a shard upload, if any."""
+    """Return the terminal server rejection reason for a shard upload, if any.
+
+    ⚑ CARRIES `reason_code` THROUGH, which is what gives that field a consumer.
+    The server added it so a monitor could switch on a stable token while the
+    human prose stays free to change, and at the time nothing in the repo read
+    it -- one refactor from being a field nobody reads, and the way to notice
+    its absence is to put it somewhere a person looks. The string returned here
+    is what lands in the `.reason.txt` beside the quarantined shard and in the
+    worker's warning line, so the code now reaches both.
+
+    Appended rather than substituted: the prose is the part an operator reads
+    first, and replacing it with `6` would be a worse artifact than no code.
+    """
     if int(getattr(response, "status_code", 0)) != 200:
         return None
     try:
@@ -207,7 +219,9 @@ def _upload_response_rejection_reason(response: Any) -> str | None:
     if not isinstance(body, dict) or not bool(body.get("rejected", False)):
         return None
     reason = body.get("reason")
-    return str(reason) if reason is not None else "server rejected shard"
+    text = str(reason) if reason is not None else "server rejected shard"
+    code = body.get("reason_code")
+    return f"{text} (reason_code={code})" if code is not None else text
 
 
 def _quarantine_rejected_pending_shard(shard_path: Path, reason: str) -> Path:
