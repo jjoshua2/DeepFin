@@ -113,6 +113,12 @@ start() {
     # anti-flap cooldown after every auto-recovery and the "re-stall within
     # cooldown -> NEEDS HUMAN" escalation could never trigger.
     rm -f /tmp/chess_watchdog_state.json
+    # Re-arm the transition-only alerter too: without this the next genuine
+    # CRASHED/STALLED after a restart would be swallowed as "same state as last
+    # time I alerted" and never reach $ALERTF. A de-duplicating alerter that is
+    # not reset on start is an alerter that goes silent exactly once — on the
+    # first failure after a restart.
+    rm -f /tmp/chess_watchdog_last_alert
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
     # Inductor compile parallelism — without these, autotune is single-threaded
     # and uses ~6% of available CPU. COMPILE_THREADS parallelizes codegen
