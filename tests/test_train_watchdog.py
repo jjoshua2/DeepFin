@@ -452,6 +452,30 @@ def test_main_cli_crashed(tmp_path: Path, capsys) -> None:
     assert "\n" not in out
 
 
+def test_main_cli_stopped_when_the_marker_exists(tmp_path: Path, capsys) -> None:
+    """--stop-marker must REACH the verdict, not merely be parsed and dropped.
+
+    Paired with test_main_cli_crashed: identical arguments except that this
+    marker file EXISTS. Without the pair, `main()` could hardcode the default
+    marker path and every CLI test would still pass — the flag would be
+    accepted and silently ignored, which is this codebase's signature defect.
+    """
+    marker = tmp_path / "intentional_stop"
+    marker.write_text("")
+    pidfile = tmp_path / "missing.pid"
+    code = wd.main([
+        "--pidfile", str(pidfile),
+        "--work-dir", str(tmp_path / "run"),
+        "--state", str(tmp_path / "state.json"),
+        "--stop-marker", str(marker),
+        "--stall-minutes", "90",
+    ])
+    assert code == wd.EXIT_STOPPED
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("watchdog: STOPPED")
+    assert "\n" not in out
+
+
 def test_main_cli_ok_growth(tmp_path: Path, capsys) -> None:
     pidfile = tmp_path / "t.pid"
     pidfile.write_text(f"{os_getpid()}\n")

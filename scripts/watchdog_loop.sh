@@ -37,6 +37,15 @@
 # unsuppressed non-OK TRANSITION (fail-soft, invoked here — NOT via
 # train_watchdog.py --notify-cmd, which fires on every check and would
 # reintroduce exactly the per-poll spam this loop now suppresses).
+#
+# THE DEDUPE MUST NEVER BE ABLE TO SILENCE THE ALERTER. De-duplicating is one
+# `!=` away from muting, so two properties are load-bearing and both are tested:
+#   * The dedupe key is armed ONLY after the append to $ALERTF succeeds, so an
+#     undelivered alert is retried rather than deduped away.
+#   * Output the watchdog was never supposed to emit (empty — it was SIGKILLed;
+#     or a traceback) gets a SYNTHESIZED state, so it can neither collide with
+#     the empty initial key nor build a multi-line one. A broken watchdog is the
+#     loudest case, not the quietest.
 set -u
 # WATCHDOG_ROOT / WATCHDOG_MAX_ITERS and the four path overrides below are TEST
 # SEAMS, not operator knobs (same convention as ratchet_common.sh). Without them
@@ -48,7 +57,7 @@ MARKER="${WATCHDOG_MARKER:-/tmp/chess_training.intentional_stop}"
 LOGF="${WATCHDOG_LOGF:-scratchpad/watchdog.log}"
 ALERTF="${WATCHDOG_ALERTF:-scratchpad/watchdog_alerts.log}"
 STATEF="${WATCHDOG_STATEF:-/tmp/chess_watchdog_state.json}"
-RECOVER_STAMP=/tmp/chess_watchdog_last_recover
+RECOVER_STAMP="${WATCHDOG_RECOVER_STAMP:-/tmp/chess_watchdog_last_recover}"
 MAX_ITERS="${WATCHDOG_MAX_ITERS:-0}"   # 0 = run forever (production)
 WATCHDOG_EVERY="${WATCHDOG_EVERY:-600}"
 AUTO_RECOVER="${WATCHDOG_AUTO_RECOVER:-1}"
@@ -60,10 +69,61 @@ EXIT_STALLED=3
 # an alert, and nobody read it. Transition-only makes each line mean "something
 # changed" — which is the only thing worth waking someone for.
 LAST_ALERT_F="${WATCHDOG_LAST_ALERT_F:-/tmp/chess_watchdog_last_alert}"
+# The AUTO-RECOVER-SUPPRESSED escalation dedupes on its own key: it is a
+# different piece of news from the STALLED verdict that produced it, but a
+# persisting stall inside the cooldown must not re-say it every 10 minutes
+# either. Both keys clear together when the state goes back to OK.
+LAST_ESCALATE_F="${WATCHDOG_LAST_ESCALATE_F:-/tmp/chess_watchdog_last_escalate}"
 
 stamp(){ date '+%m-%d %H:%M:%S'; }
-# "watchdog: CRASHED pid=... rows=..." -> "CRASHED". Field 2 of the line.
-state_of(){ printf '%s' "$1" | awk '{print $2}'; }
+
+# "watchdog: CRASHED pid=... rows=..." -> "CRASHED". Field 2 of the FIRST line:
+# on an unhandled traceback $LINE is multi-line and a bare '{print $2}' would
+# build a multi-line "state" that can never compare equal to anything.
+# An empty state means the watchdog itself produced nothing (SIGKILL, interpreter
+# death before main()). That is the MOST alarming case, so it must not fall
+# through to the empty-string default and silently match the "" initial value of
+# the dedupe key -- that would suppress this poll AND, since nothing gets
+# written, every poll after it. Synthesize a state instead.
+state_of(){
+    local s
+    s=$(printf '%s' "$1" | awk 'NR==1{print $2}')
+    [ -n "$s" ] || s="UNPARSEABLE-rc$2"
+    printf '%s' "$s"
+}
+
+# Append to $ALERTF iff $2 (the dedupe key) differs from what $1 holds, and arm
+# the key ONLY once the append has actually landed. Arming on a failed append
+# (disk full on the repo partition, $ALERTF's directory gone -- $ALERTF and the
+# key file are on DIFFERENT filesystems) would dedupe away an episode that was
+# never delivered: an alert accepted and then silently dropped, which is the
+# exact defect class this file exists to fix. Returns 0 iff a line was written.
+alert_once(){
+    local keyf="$1" key="$2" msg="$3" last=""
+    [ -f "$keyf" ] && last=$(cat "$keyf" 2>/dev/null || echo "")
+    [ "$key" = "$last" ] && return 1
+    # ONE LINE PER ALERT is the file's whole contract -- "every line here is
+    # news". A traceback would otherwise land as N lines and read as N alerts.
+    # $LOGF keeps the unflattened text.
+    msg=$(printf '%s' "$msg" | tr '\n' ' ')
+    echo "$(stamp) $msg" >> "$ALERTF" || return 1
+    printf '%s' "$key" > "$keyf"
+    return 0
+}
+
+# Notifier dispatch, kept at PARITY with train_watchdog.py's maybe_notify /
+# _looks_like_shell: a multi-word command or pipeline goes through a shell, a
+# bare executable path is exec'd directly (so a path containing spaces still
+# works). Moving notification out of --notify-cmd must not quietly narrow what
+# WATCHDOG_NOTIFY_CMD accepts -- `notify-send training` is the form the tool's
+# own docstring advertises, and "$cmd" "$msg" would look for an executable
+# literally named "notify-send training" and fail into /dev/null.
+notify(){
+    case "$1" in
+        *[\ \|\;\&\>\<\`\$]*) sh -c "$1 \"\$0\"" "$2" ;;
+        *)                    "$1" "$2" ;;
+    esac
+}
 
 ITER=0
 while true; do
@@ -75,20 +135,22 @@ while true; do
     RC=$?
     echo "$(stamp) $LINE" >> "$LOGF"
 
-    STATE=$(state_of "$LINE")
-    LAST_ALERT=""; [ -f "$LAST_ALERT_F" ] && LAST_ALERT=$(cat "$LAST_ALERT_F" 2>/dev/null || echo "")
+    STATE=$(state_of "$LINE" "$RC")
+    # A silent watchdog still has to say something, or the alert line is a bare
+    # timestamp and the reader learns nothing about why.
+    MSG="$LINE"
+    [ -n "$MSG" ] || MSG="watchdog: $STATE (the watchdog itself produced no output; rc=$RC)"
+
     if [ "$RC" -ne 0 ] && [ ! -f "$MARKER" ]; then
-        if [ "$STATE" != "$LAST_ALERT" ]; then
-            echo "$(stamp) $LINE" >> "$ALERTF"
-            printf '%s' "$STATE" > "$LAST_ALERT_F"
+        if alert_once "$LAST_ALERT_F" "$STATE" "$MSG"; then
             if [ -n "${WATCHDOG_NOTIFY_CMD:-}" ]; then
                 # Fail-soft: a broken notifier must never kill the watchdog.
-                "$WATCHDOG_NOTIFY_CMD" "$LINE" >/dev/null 2>&1 || true
+                notify "$WATCHDOG_NOTIFY_CMD" "$MSG" >/dev/null 2>&1 || true
             fi
         fi
     else
         # Back to OK (or a deliberate stop): re-arm so the NEXT episode alerts.
-        [ -n "$LAST_ALERT" ] && rm -f "$LAST_ALERT_F"
+        rm -f "$LAST_ALERT_F" "$LAST_ESCALATE_F"
     fi
 
     # ── auto-recovery on confirmed STALLED (wedged-but-alive) ────────────
@@ -96,7 +158,12 @@ while true; do
         now=$(date +%s)
         last=0; [ -f "$RECOVER_STAMP" ] && last=$(cat "$RECOVER_STAMP" 2>/dev/null || echo 0)
         if [ $((now - last)) -lt "$RECOVER_COOLDOWN_S" ]; then
-            echo "$(stamp) AUTO-RECOVER SUPPRESSED (re-stall within cooldown ${RECOVER_COOLDOWN_S}s of last recovery) — NEEDS HUMAN: $LINE" >> "$ALERTF"
+            # Deduped like any other alert: a stall that persists through the 2h
+            # cooldown is ONE piece of news, not one per poll. Un-gated, this
+            # branch alone reproduced the 27-identical-lines pattern the rest of
+            # this file exists to kill.
+            alert_once "$LAST_ESCALATE_F" "SUPPRESSED-$STATE" \
+                "AUTO-RECOVER SUPPRESSED (re-stall within cooldown ${RECOVER_COOLDOWN_S}s of last recovery) — NEEDS HUMAN: $MSG" || true
         else
             echo "$(stamp) AUTO-RECOVER FIRING (STALLED, no marker): $LINE" | tee -a "$LOGF" >> "$ALERTF"
             echo "$now" > "$RECOVER_STAMP"
