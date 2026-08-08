@@ -35729,3 +35729,59 @@ REUSABLE ruler axis for every future target change, rather than a single config 
 
 Does NOT change: the arena row (+88.7 Elo, CI excludes zero) and the value-regret
 endgame delta (+11.37 [+1.84, +21.29]) are independent of this confound.
+
+### 2026-08-08 — REJECTED BEFORE LAUNCH: `c_scale` is the wrong lever for over-sharpening
+
+Proposed in-session ("adjust c_scale to fight over-sharpening"). Rejected on the
+decomposition below, computed from the two banked audit dumps (n=2000 paired).
+
+| | conf | acc | gap | entropy |
+|---|---|---|---|---|
+| boot512 NET prior | 0.5236 | 0.4705 | +0.0531 | 1.3948 |
+| boot512 after SEARCH | 0.5950 | 0.4820 | +0.1130 | 1.1875 |
+| *search adds* | *+0.0714* | *+0.0115* | *+0.0599* | *-0.2072* |
+| iter331 NET prior | 0.6194 | 0.4695 | +0.1499 | 1.1026 |
+| iter331 after SEARCH | 0.6616 | 0.4890 | +0.1726 | 0.9804 |
+| *search adds* | *+0.0421* | *+0.0195* | *+0.0226* | *-0.1222* |
+
+Attribution of the target's overconfidence-gap growth (+0.0595 total):
+**net prior +0.0968 (163%); search -0.0373 (-63%, i.e. the search OFFSET part of it).**
+
+**The search is the component that IMPROVED.** Its sharpening got more efficient:
+boot512 spent 0.207 nats of entropy for +1.15pp accuracy; iter331 spends 0.122 nats for
++1.95pp. `c_scale` is a SEARCH knob; lowering it would shrink the healthy contribution
+and pull the stored target CLOSER to an overconfident prior — worsening calibration.
+Do not re-propose without first re-running this decomposition.
+
+**MECHANISM (hypothesis, falsifiable): a CONFIDENCE RATCHET.** Search emits a target
+more confident than the prior (+7.1pp at boot512, +4.2pp at iter331); the net trains CE
+toward it; the next prior is sharper; repeat. Nothing in the loop pushes back on
+confidence, because CE rewards matching the target's sharpness and the target inherits
+the prior's sharpness plus a search increment. Consistent with "policy head memorises
+the window". **Falsifiable prediction: target entropy keeps declining while accuracy
+stays flat.** Two points exist (1.1875 -> 0.9804 nats, acc 0.4820 -> 0.4890); a third
+read tests it. If entropy flattens or accuracy rises with it, the ratchet story is dead.
+
+**LEVER SHAPE (analysis, no launch).** The lever is TRAINING-side, not search-side. But
+a single global constant CANNOT be the fix, because the miscalibration is two-signed:
+gap by confidence bin = -0.133 (p<0.3), +0.118, +0.136, +0.291, +0.268 (p>=0.9). Any
+one-parameter global family (a constant temperature, or a constant uniform-mix eps)
+moves every bin the SAME direction, so it must worsen the low bin to fix the high one.
+What fits is a monotone CONFIDENCE-DEPENDENT map — cheapest is a per-position
+temperature solved against a fitted reliability curve (T<1 where under-confident, T>1
+where over). Temperature also PRESERVES MOVE ORDERING exactly, which is the property we
+want: the evidence says confidence is broken, not ranking.
+Uniform mixing is additionally disfavoured on semantics: calibrating the top bin needs
+eps~0.28, which spreads ~0.013 onto each of ~18 legal moves the search never visited
+(mean 21.2 legal, target eff. support 3.52). LC0's target is a VISIT distribution and is
+exactly zero on unvisited moves, so mixing breaks the very anchor being proposed.
+
+**Pre-registration blockers for the target-softening lever (all three must be closed):**
+1. CIRCULARITY — fitting the calibration map on the audit set and scoring calibration on
+   the audit set fits noise. Requires a held-out split or a different fit source.
+2. ECE-optimal is NOT strength-optimal. Offline yields a CANDIDATE; the live paired A/B
+   is still required. Do not promote on ECE alone.
+3. Calibrating the stored TARGET is not the same as calibrating the NET, and the gap
+   lives in the prior. The propagation is the hypothesis, not a given.
+TOOLING GAP: the per-position dumps carry `p`/`entropy`/regrets but NOT the full
+distributions, so no offline retempering fit can run until the dump is extended.
