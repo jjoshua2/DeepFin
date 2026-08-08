@@ -35595,3 +35595,86 @@ in-process heap census (PR #370, reviewed+CI-green, merge pending approval): arm
 worker via work-dir flag file + SIGTERM recycle (revive resumes suspended games; model
 lives in the broker so no compile). memray attach is BANNED on this host: gdb-injected
 malloc call took SIGILL in worker_00 (18:34, worker survived, verified producing after).
+
+### 2026-08-08 — VERDICT: first POSITIVE paired ruler readout of the reduced-SF lineage (iter331 vs boot512)
+
+Both frozen offline rulers re-read on `checkpoint_000331` (copied out of the tune dir to
+`data/ruler_reads_20260808/trainer.pt`, size-verified 685323131 B — Ray prunes live
+checkpoints), paired against the 2026-08-06 boot512 dumps with `scripts/paired_compare.py`.
+Canonical pinned invocations, batch 64 (audit) / 128 (value), `--gpu-mem-fraction 0.15`,
+nice 10, strictly sequential. Code state: live branch `ops/live-20260725`.
+
+**Policy — `audit_targets`, paired n=2000 (+ = iter331 better):**
+
+| candidate | boot512 | iter331 | paired delta | 95% CI | verdict |
+|---|---|---|---|---|---|
+| a) net raw policy | 74.89 | 64.72 | **+10.17** | [+8.06, +12.29] | iter331 better |
+| d) production TRAINING target (256 sims) | 62.15 | 56.73 | **+5.42** | [+2.95, +7.95] | iter331 better |
+| b) PLAY search (32 sims) | 53.56 | 50.36 | +3.20 | [-1.30, +7.79] | ns |
+| c) SF MultiPV soft target | 22.94 | 22.94 | +0.00 | [+0.00, +0.00] | 100% tied |
+
+Row (c) is net-independent and came back bit-identical with 100% of positions tied —
+that is the RULER-IDENTITY NEGATIVE CONTROL for this readout: the ruler did not change
+and the join is correct, so the other deltas are not measurement drift.
+Per-phase, both significant rows hold: raw endgame +9.56 [+6.79,+12.33] / middlegame
++11.40 [+8.33,+14.62]; training target endgame +6.68 [+3.15,+10.28] / middlegame
++2.91 [+0.65,+5.08].
+
+**The stored TRAINING TARGET improving is the load-bearing result** — that is the loop
+improving the data it feeds itself, not merely the net improving on fixed data. Target
+shape sharpened: entropy 1.1875 -> 0.9804, mean top-1 0.5950 -> 0.6616, eff. support
+4.170 -> 3.524.
+
+**Value — `value_regret`, paired n=1723 (TB-excluded default):** OVERALL 70.78 -> 65.48,
+delta +5.31 [-1.20, +11.89] ns; **endgame +11.37 [+1.84, +21.29] SIGNIFICANT**;
+middlegame -4.27 [-12.90, +3.78] ns (worse in sign). The endgame-up / middlegame-flat-
+or-down split has now been seen TWICE. That makes the terminal-proximal outcome re-add
+pre-registerable, but it is NOT fired in this window: it would confound the first arena
+row whose CI excludes zero (2026-08-08 ratchet, iter 249, +88.7 Elo [+18.0, +167.6]).
+
+Three independent instruments (arena Elo, policy regret, value endgame regret) now agree
+in sign for the first time on this lineage.
+
+**PROXY CALIBRATION (new, useful for cadence design).** Per-position correlation of the
+boot512->iter331 DELTA between rows — a proxy is only useful if it reproduces the verdict,
+so correlate deltas, not absolute regret:
+
+| proxy -> target | delta r | abs r | mean delta |
+|---|---|---|---|
+| e) fast-ply 32 sims, RL shape -> d) 256 sims | **+0.707** | +0.940 | +6.72 vs +5.42 |
+| a) raw policy -> d) 256 sims | +0.609 | +0.926 | +10.17 vs +5.42 |
+| b) PLAY 32 sims -> d) 256 sims | **+0.194** | +0.687 | +3.20 vs +5.42 |
+
+**SEARCH SHAPE DOMINATES SIM COUNT.** Both (b) and (e) are 32-sim rows; (e) shares the RL
+shape (linear root) and tracks the 256-sim target well, (b) uses the PLAY shape (log root)
+and is nearly useless as a proxy. "32 sims proxies 256 sims" is TRUE only at fixed root
+transform. Raw policy is a serviceable direction proxy but OVERSTATES the gain ~1.9x
+(search compensates for a weaker prior) — never quote its magnitude for the target row.
+
+**COST (measured, answers the standing concurrency question).** `value_regret` 24s;
+full `audit_targets` **4.4 min** (2000 positions, ~640k net evals, ~2400 evals/s batched).
+Both are below the resolution of iteration-time noise (238 +/- 12 s), so neither needs
+rationing and neither justifies a trimmed-candidate mode. NOTE: the earlier claim that
+the 2026-08-06 baselines ran "with live training undisturbed" is RETRACTED as
+unverifiable — those runs finished ~7 min after the 23:51 relaunch while training was
+still booting, and no progress rows covering that window survive.
+
+**INCIDENT (same session, must be read with the cost number above).** The FIRST attempt at
+this audit wedged in the WSL2 GPU driver: main thread parked in `dxgvmb_send_sync_msg`,
+8m39s CPU across 4h37m wall, zero dump rows. `nvidia-smi` hung (exit 124) for the whole
+period and recovered within seconds of the process dying. On release the driver returned
+corrupt accounting — `Process 2937357 has 17179869184.00 GiB memory in use` (uint64
+overflow) — and the run died on a spurious CUDA OOM with 29.65 GiB actually free, plus
+`CUDA warning: unknown error (function ~CUDAEvent)`. ~1 minute later (~11:25) the
+production inference broker exited with **code=-6 (SIGABRT)** mid-iteration and was
+auto-relaunched by the trial (`[trial] inference broker exited (code=-6) ... relaunching`);
+iteration 401 ran long while it recompiled. Workers recovered to 4246-4292 pos/s.
+Temporal association is strong but causation is NOT proven — recorded as an association.
+Same wedge family as the 2026-08-07 19:00 outage (`dxgk: process_completion_packet: did
+not find packet to complete`), which killed training instead of a ruler.
+**Standing mitigation: every offline ruler invocation is now wrapped in `timeout 3600`.**
+A wedge that costs 20 minutes is an annoyance; one that costs 4h37m silently eats a
+readout window and may take the broker with it.
+
+Artifacts: `data/ruler_reads_20260808/{audit_targets_iter331_run2.log,
+value_regret_iter331.log, audit_targets_iter331_dump.jsonl, value_regret_iter331_dump.jsonl}`.
