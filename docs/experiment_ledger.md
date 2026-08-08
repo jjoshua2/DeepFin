@@ -35678,3 +35678,54 @@ readout window and may take the broker with it.
 
 Artifacts: `data/ruler_reads_20260808/{audit_targets_iter331_run2.log,
 value_regret_iter331.log, audit_targets_iter331_dump.jsonl, value_regret_iter331_dump.jsonl}`.
+
+### 2026-08-08 — AMENDMENT to the readout above: the gain is CONFIDENCE, not demonstrated RANKING
+
+Raised in-session and confirmed on the same banked dumps. **E[regret] mechanically
+rewards sharpness** (`E[regret] = sum_m p(m)*regret(m)`, so moving mass onto an
+already-correct top move lowers it with no ranking change). Both arms sharpened
+massively between boot512 and iter331, so the headline deltas are confounded:
+
+| metric | delta (A-B) | 95% CI | verdict |
+|---|---|---|---|
+| train target E[regret] | +5.42 | [+2.95, +7.95] | significant |
+| train target **top-1** (sharpness-invariant) | +0.88 | [-3.74, +5.43] | **ns**, 77.4% tied |
+| train target entropy | -0.21 nats | [-0.22, -0.19] | sharpened in 76.0% of rows |
+| raw policy E[regret] | +10.17 | [+8.06, +12.29] | significant |
+| raw policy **top-1** | **-1.48 (worse)** | [-6.18, +3.15] | ns, 78.6% tied |
+| raw policy entropy | -0.29 nats | [-0.31, -0.28] | sharpened in 81.2% of rows |
+
+**Corrected reading:** the improvement is real as "the target puts more mass on a move
+that was already its argmax" — a genuinely better distribution to sample from — but it
+does NOT establish improved move ORDERING. The sentence "the loop is improving the data
+it feeds itself" in the entry above overstates what the instrument shows; read it as
+improved target CONFIDENCE. Honest counter-caveat, so this is not overcorrected: top-1
+is low-power here (it only moves when the argmax flips; ~78% of rows tied, CIs ~+/-5cp),
+so it cannot establish that the gain is spurious either. **Neither metric alone can
+adjudicate a comparison in which sharpness changed.**
+
+**METHOD RULE (new, applies to every future policy-target comparison).** When two arms
+differ in sharpness, report E[regret] AND top-1 AND entropy/eff-support together, and
+prefer a MATCHED-SHARPNESS comparison: retemper both arms to a common entropy before
+scoring, so the contrast answers "at equal confidence, which ranks better". This is the
+policy-side analogue of a lesson already paid for on the value side — native
+`UCI_ShowWDL` beats cp-logistic against a deep-SF ruler and is the WORSE teacher,
+because a near-one-hot target teaches over-confidence (`docs/model_heads.md`; the
+cp-logistic label is deliberately soft). Chasing sharpness against a deep-SF ruler is a
+known failure mode, and the policy head is not immune ("policy head memorises the
+window"). Related: the existing "paired contrasts: EXPECTED regret, never top-1" rule is
+NOT repealed — top-1 remains too noisy to lead with; it is a CONFOUND CHECK, not the
+headline.
+
+**Open measurement this creates (higher value than the root-transform screen):** anchor
+target sharpness on a recipe known to work — measure the entropy / effective support of
+real **LC0 TRAINING DATA** (root VISIT distributions with Dirichlet root noise and
+early-move temperature), NOT an LC0 net's policy output, which is a different object and
+is the thing our stack can already load. Ours currently sits at entropy 0.9804 nats,
+eff. support 3.524, mean top-1 0.6616. Whether that is above or below the LC0 recipe is
+UNMEASURED — no number for it exists in this repo, do not assume one. Establishing it
+converts "maintain LC0-like sharpness" from a principle into a threshold and yields a
+REUSABLE ruler axis for every future target change, rather than a single config verdict.
+
+Does NOT change: the arena row (+88.7 Elo, CI excludes zero) and the value-regret
+endgame delta (+11.37 [+1.84, +21.29]) are independent of this confound.
