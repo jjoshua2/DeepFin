@@ -35896,3 +35896,54 @@ Beside live training the same job truncated at **79/200** in its share. So the o
 window is not merely safer (no contention, no wedge exposure, and two arena-induced
 training OOMs already on record) — it is ~2.5x more games in LESS wall time. The 90-min
 budget is now generous rather than binding; `BUDGET_MIN` needs no increase.
+
+### 2026-08-08 — PRE-COMMITMENT (armed, not launched): confidence-ratchet trigger
+
+No change is being made to the live run. This entry exists so the decision rule is FIXED
+BEFORE the data that will decide it, per the protocol.
+
+**Why not fire the calibration lever now.** The loop is gaining (+66.8 Elo vs anchor,
+CI excludes 0, n=200). Elo is a LAGGING indicator here and is currently value-driven;
+calibration is the LEADING one. Firing now would put a second data-affecting change on
+top of the first configuration that has worked, destroying attribution for both.
+
+**Why not simply wait.** The ratchet mechanism predicts COMPOUNDING: a sharper prior
+makes a sharper target, which narrows search and the data behind it, until the policy
+stops finding improvements. The documented endpoint is "policy head memorises the
+window", already hit once on this project. By the time Elo turns over the confound is
+baked into a day-plus of replay window.
+
+**Baseline (2 points; the metrics fall out of the `audit_targets` dump already run each
+readout, so tracking costs NOTHING extra):**
+
+| | boot512 | iter331 |
+|---|---|---|
+| target entropy (nats) | 1.1875 | 0.9804 |
+| target accuracy (argmax == deep-SF best) | 0.4820 | 0.4890 |
+| overconfidence gap (conf - acc) | +0.1130 | +0.1726 |
+| ECE (5 bins, weighted) | 0.1336 | 0.1980 |
+
+**FIRE the target-softening lever if:** the next TWO reads continue entropy DECLINING
+while accuracy stays FLAT (paired CI on accuracy includes 0).
+**KILL the confidence-ratchet hypothesis if:** entropy FLATTENS (|delta| <= 0.02 nats
+between consecutive reads) or accuracy RISES with a paired CI excluding 0.
+Two points cannot distinguish a ratchet from a one-off transient — this rule exists to
+make the third and fourth points decide it, either way.
+
+**PARALLEL PREP (not data-affecting, no restart, needs a reviewer who is not the author):**
+extend the per-position dump to carry FULL DISTRIBUTIONS. Today it carries only
+`p`/`entropy`/regrets, so NO offline retempering fit can run — the instrument for the
+lever does not exist yet. Build it while the trigger is pending so a fired trigger does
+not spend its first session building tooling.
+
+**Reminder of the shape constraint already established:** no single global constant can
+fix this. The miscalibration is TWO-SIGNED (gap -0.133 at p<0.3, +0.268 at p>=0.9), so a
+constant temperature or a constant uniform-mix eps must worsen the low bin to fix the
+high one. The candidate family is a monotone CONFIDENCE-DEPENDENT map (per-position
+temperature solved against a fitted reliability curve), which also preserves move
+ordering exactly — the property we want, since ranking is not the thing shown broken.
+
+**Also owed (from the outage entry):** verify whether the watchdog's 90-min flat-clock
+was actually running during the 11:39-16:11 outage. If it was up and did not fire, that
+is a GUARD THAT CANNOT FIRE — this codebase's signature defect, and more important than
+the outage itself.
