@@ -44,7 +44,7 @@ sys.exit(codes[state])
 
 def _run(tmp_path: Path, plan: list[str], *, marker: bool = False,
          notify: str | None = None, auto_recover: bool = False,
-         alertf: str = "scratchpad/wd_alerts.log",
+         alertf: str = "scratchpad/wd_alerts.log", cooldown: int | None = None,
          ) -> tuple[list[str], list[str]]:
     """Drive the real loop for len(plan) polls; return (alert_lines, log_lines)."""
     root = tmp_path / "root"
@@ -77,6 +77,8 @@ def _run(tmp_path: Path, plan: list[str], *, marker: bool = False,
         WATCHDOG_RECOVER_STAMP=str(tmp_path / "last_recover"),
         WATCHDOG_AUTO_RECOVER="1" if auto_recover else "0",
     )
+    if cooldown is not None:
+        env["RECOVER_COOLDOWN_S"] = str(cooldown)
     if notify is not None:
         env["WATCHDOG_NOTIFY_CMD"] = notify
 
@@ -199,7 +201,7 @@ def test_a_traceback_yields_one_single_line_state(tmp_path: Path) -> None:
     assert "ValueError: boom" in alerts[0], "the flattened line keeps the detail"
     key = (tmp_path / "last_alert").read_text()
     assert "\n" not in key, f"dedupe key is multi-line: {key!r}"
-    assert key == "(most", key  # field 2 of the traceback's first line
+    assert key.startswith("UNPARSEABLE-rc"), key  # non-contract output
 
 
 def test_a_failed_append_is_retried_not_deduped_away(tmp_path: Path) -> None:
@@ -236,3 +238,49 @@ def test_auto_recover_escalation_is_deduped_too(tmp_path: Path) -> None:
         + "\n".join(suppressed)
     )
     assert "NEEDS HUMAN" in suppressed[0]
+
+
+def test_a_new_stall_episode_re_escalates_without_ever_reaching_ok(
+    tmp_path: Path,
+) -> None:
+    """The escalate key must clear on a new PRIMARY episode, not only on OK.
+
+    STALLED -> CRASHED -> STALLED never touches OK. The second stall re-alerts
+    (different primary state), but if the escalate key still holds the FIRST
+    stall's value the higher-severity "auto-recovery cannot fix this" line is
+    deduped away — the loudest signal lost in the case where things are getting
+    worse, not better.
+    """
+    alerts, _ = _run(tmp_path, ["STALLED"] * 3 + ["CRASHED"] + ["STALLED"] * 3,
+                     auto_recover=True)
+    suppressed = [ln for ln in alerts if "AUTO-RECOVER SUPPRESSED" in ln]
+    assert len(suppressed) == 2, (
+        "second stall episode never re-escalated:\n" + "\n".join(alerts)
+    )
+
+
+def test_each_auto_recover_firing_is_its_own_alert(tmp_path: Path) -> None:
+    """FIRING dedupes per event, not per state — two recoveries are two alerts.
+
+    FIRING is deliberately NOT deduped -- the cooldown stamp already bounds it
+    to once per window, so each line is a distinct event. Cooldown 0 here to get
+    two firings inside one test second; in production they are >=2h apart.
+    """
+    alerts, _ = _run(tmp_path, ["STALLED", "OK", "STALLED"], auto_recover=True,
+                     cooldown=0)
+    firing = [ln for ln in alerts if "AUTO-RECOVER FIRING" in ln]
+    assert len(firing) == 2, "\n".join(alerts)
+
+
+def test_unparseable_output_does_not_key_on_a_traceback_word(tmp_path: Path) -> None:
+    """Two different watchdog crashes must not collapse into one episode.
+
+    Trusting field 2 of any line keys `Traceback (most recent call last):` on
+    "(most", which is both meaningless to an incident responder and shared by
+    every traceback the tool could ever emit.
+    """
+    _run(tmp_path, ["TRACEBACK"] * 2)
+    key = (tmp_path / "last_alert").read_text()
+    assert key.startswith("UNPARSEABLE-rc"), (
+        f"non-contract output keyed on a traceback word: {key!r}"
+    )

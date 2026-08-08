@@ -85,9 +85,14 @@ stamp(){ date '+%m-%d %H:%M:%S'; }
 # through to the empty-string default and silently match the "" initial value of
 # the dedupe key -- that would suppress this poll AND, since nothing gets
 # written, every poll after it. Synthesize a state instead.
+#
+# Field 2 is only meaningful when the line IS the tool's contract. Trusting it
+# unconditionally keys a traceback on "(most" (from "Traceback (most recent call
+# last):"), so two DIFFERENT watchdog crashes collapse into one episode and the
+# key left in /tmp tells an incident responder nothing.
 state_of(){
-    local s
-    s=$(printf '%s' "$1" | awk 'NR==1{print $2}')
+    local s=""
+    case "$1" in watchdog:*) s=$(printf '%s' "$1" | awk 'NR==1{print $2}') ;; esac
     [ -n "$s" ] || s="UNPARSEABLE-rc$2"
     printf '%s' "$s"
 }
@@ -98,23 +103,32 @@ state_of(){
 # key file are on DIFFERENT filesystems) would dedupe away an episode that was
 # never delivered: an alert accepted and then silently dropped, which is the
 # exact defect class this file exists to fix. Returns 0 iff a line was written.
+# The ONLY writer to $ALERTF, so every alert in this file is checked and
+# flattened by construction. ONE LINE PER ALERT is the file's whole contract --
+# "every line here is news" -- and a traceback would otherwise land as N lines
+# and read as N alerts. $LOGF keeps the unflattened text. Returns non-zero if
+# the line did not land, so no caller can record "delivered" for an alert that
+# was not.
+alert_write(){
+    local msg
+    msg=$(printf '%s' "$1" | tr '\n' ' ')
+    echo "$(stamp) $msg" >> "$ALERTF"
+}
+
 alert_once(){
     local keyf="$1" key="$2" msg="$3" last=""
     [ -f "$keyf" ] && last=$(cat "$keyf" 2>/dev/null || echo "")
     [ "$key" = "$last" ] && return 1
-    # ONE LINE PER ALERT is the file's whole contract -- "every line here is
-    # news". A traceback would otherwise land as N lines and read as N alerts.
-    # $LOGF keeps the unflattened text.
-    msg=$(printf '%s' "$msg" | tr '\n' ' ')
-    echo "$(stamp) $msg" >> "$ALERTF" || return 1
+    alert_write "$msg" || return 1
     printf '%s' "$key" > "$keyf"
     return 0
 }
 
 # Notifier dispatch, kept at PARITY with train_watchdog.py's maybe_notify /
 # _looks_like_shell: a multi-word command or pipeline goes through a shell, a
-# bare executable path is exec'd directly (so a path containing spaces still
-# works). Moving notification out of --notify-cmd must not quietly narrow what
+# bare executable path is exec'd directly. A path CONTAINING a space is
+# unsupported by both paths -- it matches the metachar class and then word-splits
+# in the shell. Moving notification out of --notify-cmd must not quietly narrow what
 # WATCHDOG_NOTIFY_CMD accepts -- `notify-send training` is the form the tool's
 # own docstring advertises, and "$cmd" "$msg" would look for an executable
 # literally named "notify-send training" and fail into /dev/null.
@@ -143,6 +157,12 @@ while true; do
 
     if [ "$RC" -ne 0 ] && [ ! -f "$MARKER" ]; then
         if alert_once "$LAST_ALERT_F" "$STATE" "$MSG"; then
+            # A NEW primary episode makes the escalation news again. Clearing it
+            # only on the OK branch is not enough: STALLED -> CRASHED -> STALLED
+            # never touches OK, so the second stall would re-alert but its
+            # higher-severity "auto-recovery cannot fix this" line would be
+            # deduped away against the first stall's key.
+            rm -f "$LAST_ESCALATE_F"
             if [ -n "${WATCHDOG_NOTIFY_CMD:-}" ]; then
                 # Fail-soft: a broken notifier must never kill the watchdog.
                 notify "$WATCHDOG_NOTIFY_CMD" "$MSG" >/dev/null 2>&1 || true
@@ -150,6 +170,12 @@ while true; do
         fi
     else
         # Back to OK (or a deliberate stop): re-arm so the NEXT episode alerts.
+        # Clearing LAST_ESCALATE_F here is REDUNDANT and deliberately kept: every
+        # route to a new escalation now passes through a new primary alert, which
+        # clears it above, so no test can distinguish this line's presence (its
+        # mutation survives, by design). It is the belt to that braces -- if the
+        # primary path is ever restructured, the invariant "the escalate key never
+        # outlives its primary episode" still holds at the OK boundary.
         rm -f "$LAST_ALERT_F" "$LAST_ESCALATE_F"
     fi
 
@@ -165,7 +191,15 @@ while true; do
             alert_once "$LAST_ESCALATE_F" "SUPPRESSED-$STATE" \
                 "AUTO-RECOVER SUPPRESSED (re-stall within cooldown ${RECOVER_COOLDOWN_S}s of last recovery) — NEEDS HUMAN: $MSG" || true
         else
-            echo "$(stamp) AUTO-RECOVER FIRING (STALLED, no marker): $LINE" | tee -a "$LOGF" >> "$ALERTF"
+            # NOT deduped: the cooldown stamp below already bounds this to once
+            # per $RECOVER_COOLDOWN_S, so every FIRING line is by construction a
+            # distinct event. It goes through alert_write only for the CHECKED
+            # append -- the previous `tee -a … >> "$ALERTF"` could drop the alert
+            # silently while the stamp below still armed, which is the same
+            # accept-then-drop shape as the two blocking bugs above.
+            echo "$(stamp) AUTO-RECOVER FIRING (STALLED, no marker): $LINE" >> "$LOGF"
+            alert_write "AUTO-RECOVER FIRING (STALLED, no marker): $MSG" \
+                || echo "$(stamp) WARN: FIRING alert could not be appended to $ALERTF" >> "$LOGF"
             echo "$now" > "$RECOVER_STAMP"
             # Run recovery to completion before the next poll (it restarts the stack).
             bash scripts/recover_stall.sh >> "$LOGF" 2>&1
