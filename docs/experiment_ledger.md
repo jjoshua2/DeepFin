@@ -35785,3 +35785,57 @@ exactly zero on unvisited moves, so mixing breaks the very anchor being proposed
    lives in the prior. The propagation is the hypothesis, not a given.
 TOOLING GAP: the per-position dumps carry `p`/`entropy`/regrets but NOT the full
 distributions, so no offline retempering fit can run until the dump is extended.
+
+### 2026-08-08 — CORRECTION + C-path verification: the target NEVER zeroes a legal move
+
+**RETRACTED from the entry above:** the claim that uniform mixing would "spread mass onto
+moves the search never visited" was an INFERENCE from low effective support (3.52), not a
+measurement, and it is WRONG. Verified in the PRODUCTION C path (`gumbel_c.py:1324-1356`,
+the path selfplay actually runs — the Python `gumbel.py` reference agrees):
+
+```
+legal = np.nonzero(pri > 0)[0]            # ALL legal moves
+    else: completed_q[j] = root_q_i       # unvisited -> ROOT's Q, not zero/-inf
+          visits[j]      = 0.0
+logits_imp   = log(max(pri[legal],1e-12)) + _completed_q_transform(..., root=True)
+probs[legal] = _softmax(logits_imp)       # every legal move gets POSITIVE mass
+```
+
+Low effective support means CONCENTRATED mass, not ABSENT mass. No legal move is ever
+assigned zero policy, in either implementation, including the high-branching tail.
+The shape objection to uniform mixing (it cannot fit a TWO-SIGNED miscalibration) is
+unaffected and still stands; only the "teaches unvisited moves" objection is withdrawn.
+
+**SUPPORT vs VISITS — the distinction that survives.** Root candidates are
+`m = min(topk=32, n_legal, m_cap)` (`gumbel.py:711`). Measured on the audit set
+(mean 21.2 legal, median 20, max 60): **n_legal <= 32 in 82.9%** of positions (every legal
+move is a visited candidate) and **> 32 in 17.1%**. In that tail, some legal moves get ZERO
+visits and are ranked purely by the net's prior via the `root_q` fallback — search never
+corrects them.
+
+**Observation (SUGGESTIVE, n=342, no bootstrap CIs computed — do NOT cite as established):**
+
+| bucket | ckpt | conf | acc | gap |
+|---|---|---|---|---|
+| n_legal <= 32 (n=1658) | boot512 | 0.6000 | 0.4807 | +0.1193 |
+| | iter331 | 0.6685 | **0.4934 (+1.3pp)** | +0.1751 |
+| n_legal > 32 (n=342) | boot512 | 0.5707 | 0.4883 | +0.0824 |
+| | iter331 | 0.6280 | **0.4678 (-2.1pp)** | +0.1602 |
+
+Where search covers every legal move, accuracy ROSE with the confidence. Where it cannot,
+accuracy FELL 2.1pp while confidence rose 5.7pp — confidence up, skill down. Gap growth is
+also larger in the tail (+0.078 vs +0.056) from a lower base. Consistent with the
+confidence-ratchet mechanism being worst where search cannot correct the prior, but
+underpowered as recorded; a bucket-split with paired CIs is owed before it is a finding.
+
+**Candidate lever (NOT pre-registered, NOT free): raise `topk` so every legal move gets a
+visit.** Sequential halving splits the budget: at 256 sims topk=32 gives ~1.6 first-round
+visits per candidate; topk=64 (needed to cover max n_legal=60) gives ~0.67 — under one
+visit each. Coverage in 17.1% of positions is bought with depth in the 83% where coverage
+is already complete. Price it offline before proposing. Note root evals are already padded
+to 32-row buckets, so a topk change also moves the batching shape.
+
+**Scope reminder for every number in these three entries:** production trains ONLY on the
+full 256-sim plies. The fast 32-sim plies carry NO policy target (`finalize.py` drops
+them), so row (e) `train_fast` is a MEASUREMENT proxy only and never a training target.
+All target analysis above is row (d), the 256-sim production target.
