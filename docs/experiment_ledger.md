@@ -35839,3 +35839,60 @@ to 32-row buckets, so a topk change also moves the batching shape.
 full 256-sim plies. The fast 32-sim plies carry NO policy target (`finalize.py` drops
 them), so row (e) `train_fast` is a MEASUREMENT proxy only and never a training target.
 All target analysis above is row (d), the 256-sim production target.
+
+### 2026-08-08 — OUTAGE (4h32m) + the first FULL-POWER ratchet: +66.8 Elo vs boot512
+
+**OUTAGE.** Training died 11:39, restarted 16:11 (PID 3191137, resumed from
+`checkpoint_000399`). Iterations 401+ lost; last banked row is iter 400 @ 11:23.
+Cascade, all downstream of the wedged `audit_targets` releasing the dxg channel:
+
+```
+11:24:25  wedged ruler dies - corrupt accounting + "CUDA warning: unknown error"
+~11:25    inference broker SIGABRT (code=-6); trial auto-relaunches it
+11:2x     trial actor: "Transient CUDA error (attempt 1/3), retrying: CUDA error: unknown error"
+11:38:03  last worker log line
+11:39:18  node marked dead, GCS SIGTERM, raylet shutdown (CLEAN exit, NOT an OOM kill)
+```
+
+The trial exhausted its 3 CUDA retries, errored, and Ray shut the run down. This
+UPGRADES the earlier entry's "strong temporal association, causation NOT proven" —
+the same `CUDA error: unknown error` signature appears in the trainer, and the chain is
+four coherent steps from one wedged observer. Still short of proof; recorded as a
+strongly-evidenced cascade. **Second GPU-wedge outage in 17 hours** (cf. 08-07 19:00),
+both with a GPU-consuming observer present. Post-outage GPU was CLEAN: `nvidia-smi -L`
+rc=0, fresh-process CUDA kernel OK, 30.1/31.8 GiB free, ZERO D-state processes — i.e.
+the recoverable variant, not the restart-blocking one.
+**OPERATOR MISS, recorded deliberately:** the stall was visible at 11:40 and was not
+re-checked for four hours. A "I'll flag it if the next iteration is slow" intention is
+not a monitor. The watchdog's 90-min flat-clock should have caught this — whether it was
+running is NOT established and is owed a check.
+
+**RATCHET — run OFFLINE in the outage window, and it is the first full-n reading.**
+
+| series | Elo | 95% CI | score | games |
+|---|---|---|---|---|
+| **vs_boot512** (iter399) | **+66.8** | **[+24.5, +111.2]** | 0.5950 | **200** |
+| vs_prev (iter399 vs iter249) | +19.1 | [-26.8, +65.8] | 0.5275 | **200** |
+
+Both series reached the full 200 games for the FIRST time. Supersedes this morning's
+iter249 vs_boot512 (+88.7 [+18.0, +167.6], n=76): same direction, CI half-width 43 vs 75,
+heavy overlap — the n=200 row is the trustworthy one and the point estimate moved DOWN.
+Day-over-day is directionally positive but underpowered across 150 iterations.
+
+**This reading is NOT subject to the sharpness confound** that qualified the policy-regret
+verdict: it is decided by game outcomes, not by a distribution scored against a deep-SF
+ruler. It is the load-bearing strength evidence for this lineage.
+
+**RECONCILIATION of the day's three instruments.** Arena Elo UP (+66.8, CI excludes 0);
+value regret endgame UP (+11.37, CI excludes 0); policy ACCURACY FLAT (+0.7pp target,
+-0.1pp raw, both ns) with confidence +7-10pp. Coherent: `wdl` is the only value head MCTS
+evaluates with, so value improvement converts to play strength while the policy prior
+inflates confidence without improving ranking. The loop IS gaining strength; the gain is
+NOT coming from the policy head's move ordering.
+
+**OPERATIONAL FINDING — schedule ratchets into pause windows, do not run them beside
+training.** Uncontended, the full two-series 2x200-game job took **~35 min** (15:36-16:11).
+Beside live training the same job truncated at **79/200** in its share. So the offline
+window is not merely safer (no contention, no wedge exposure, and two arena-induced
+training OOMs already on record) — it is ~2.5x more games in LESS wall time. The 90-min
+budget is now generous rather than binding; `BUDGET_MIN` needs no increase.
