@@ -47,6 +47,28 @@ Stockfish work per game fell by roughly 4–9x. The bottleneck moved.
 
 ### 1b. The selfplay threads are now search-bound (MEASURED)
 
+> **Provenance, per figure — the two halves of this subsection do NOT have the
+> same standing.**
+>
+> - **The worker-log lines below (`network=…%`, `sf_block_starved=0.0%`,
+>   `pending_excluded_avg`, and the "368 of 368 lines" count) are
+>   single-author, single-day measurements and are NOT re-verifiable from this
+>   repository.** The selfplay clients run on LAN worker hosts; there is no
+>   selfplay-client process on the training box and no local file in the tree or
+>   in `/tmp/chess_training.log` contains the string `sf_block_starved`
+>   (checked; no match). A later reader cannot reproduce them without shell
+>   access to the workers. **Mark them read, not confirmed.**
+> - **The throughput figure IS reproducible, and has been reproduced from a
+>   second, independent instrument.** The **6,161 games/h** below comes from
+>   *compacted-shard filename counters*. Summing `total_games_ingested` over the
+>   same iterations (626–649) in
+>   `runs/pbt2_small/tune/train_trial_379f6_00000_…/result.json` — the trainer's
+>   own ingest counter, which never touches shard filenames — gives **12,576
+>   games** over the window `2026-08-09 09:27:41 → 11:31:31` (2.0639 h, iter
+>   625's completion timestamp to iter 649's) = **6,093 games/h**, 1.1% apart.
+>   The 2.4x over the 2,561 baseline is the claim §1 rests on, and it survives
+>   both instruments; nothing here depends on the exact figure.
+
 `selfplay phase stats`, all four live workers. `sf_block_starved` reads
 **exactly `0.0%` in all 368 of worker_00's phase-stat lines** — its entire
 ~6.4-hour life since the 05:29 start, no exceptions:
@@ -68,8 +90,10 @@ at `chess_anti_engine/selfplay/manager.py:131-135` — i.e. our MCTS, including
 its GPU waits. So **~98% of selfplay thread-time is now inside our own search,
 and none of it is blocked on Stockfish.** Throughput confirms the effect:
 6,161 games/h over the last 2h (12,145 games / 1.97h from compacted-shard
-filename counters) against the 2,561 games/h baseline in
-`docs/sf_cpu_cost_split.md` §3b — **2.4x**.
+filename counters; **6,093 games/h** from the trainer's independent
+`total_games_ingested` counter over the same iterations — see the provenance box
+above) against the 2,561 games/h baseline in `docs/sf_cpu_cost_split.md` §3b —
+**2.4x**.
 
 Taken alone this says "search is now the bottleneck, go optimise it."
 
@@ -155,12 +179,27 @@ Established facts:
   `--minimum-kldgain-per-node=0.000050` at the default interval means *stop once
   the root visit distribution moves less than 100 × 5e-5 = **0.005 nats** between
   consecutive 100-node checkpoints*.
+- ⚑ **`0.000050` is NOT the upstream default — the feature ships OFF.** An
+  earlier revision of this section called the value "sourced" while citing
+  nothing for it. Fetched from upstream, `src/mcts/stoppers/common.cc` at
+  `v0.30.0`:
+  `options->Add<FloatOption>(kMinimumKLDGainPerNodeId, 0.0f, 1.0f) = 0.0f;` —
+  **default `0.0f`, i.e. the stopper never fires unless a training/self-play
+  config sets it.** (`0.0f, 1.0f` is the option's range; the trailing `= 0.0f`
+  is the default.) The same file gives
+  `options->Add<IntOption>(kKLDGainAverageIntervalId, 1, 10000000) = 100;`, so
+  the **100** above IS a real default. `0.000050` is the order of magnitude used
+  by lc0 *training* runs, not an engine default; **no source is cited for it
+  here, so treat it as illustrative** and re-derive the 0.005-nat figure against
+  whatever threshold an actual proposal adopts.
 - Firing stops the entire search.
 
 **NOT established:** how often it actually triggers in T80, and the realized
 node-count distribution it produces. No lc0 selfplay telemetry was available to
-this analysis and none is quoted. The threshold value `0.000050` and the flag
-semantics are sourced; everything about its *realized* behaviour is not.
+this analysis and none is quoted. The `ShouldStop` mechanics and the
+`kKLDGainAverageIntervalId = 100` default are sourced verbatim from upstream;
+the `0.000050` threshold is not (see above), and everything about the feature's
+*realized* behaviour is not.
 
 ---
 
@@ -524,30 +563,98 @@ finding of this section:
 > is already implemented and already tuned, but it currently ships only on the
 > PLAY path.
 
-⚑ **And it cannot currently reach the selfplay path at all.** `network_turn.py:784-796`
+⚑ **And it cannot currently reach the selfplay path at all.** `network_turn.py:783-797`
 constructs its `GumbelConfig` with an explicit field list — `simulations`, `topk`,
 `temperature`, `c_scale`, `add_noise`, `gumbel_scale`, the encodings, and the three
 volatility knobs. `c_visit_root`, `c_scale_root` and `q_visit_exp_root` are **never
-passed**, so they sit at their `GumbelConfig` sentinels (`-1`, `-1`, `99.0`) and the
-linear transform is selected at both sites. Setting them in the yaml today would
-change nothing: there is no plumbing from `SearchConfig` to the search. That is the
-"knob that never reaches the worker" pattern, and closing it is a prerequisite task
-in its own right — roughly `SearchConfig` → reco → worker → `network_turn.py`, plus
-the yaml validator.
+passed**, so they sit at their `GumbelConfig` sentinels (`gumbel.py:193` `-1.0`,
+`:202` `-1.0`, `:203` `99.0`), `gumbel.py:339-343` falls back to
+`c_visit`/`c_scale`/`q_visit_exp`, and the linear transform is selected at both
+sites. `SearchConfig` (`selfplay/config.py`) has no such fields at all — the only
+`root` knob it carries is `fpu_at_root`. That is the "knob that never reaches the
+worker" pattern, and closing it is a prerequisite task in its own right — roughly
+`SearchConfig` → reco → worker → `network_turn.py`, plus the yaml validator.
+
+⚠ **And do NOT reach for the yaml as a shortcut. An earlier revision of this
+paragraph said "setting them in the yaml today would change nothing." That is
+false, and it is the more dangerous of the two errors** — it reads as a safety
+clearance for an edit that wedges the live run. None of the three names is in
+`_SELFPLAY_KEYS`, so `_check_unknown("selfplay", …)` (`utils/config_yaml.py:472`
+→ `:373-378`) **raises**, and because the live-yaml validator is all-or-nothing
+(§9), the rejection takes the WHOLE reload with it: every other key silently
+freezes at its last-accepted value while the file on disk looks correct.
+Demonstrated through the real loader on a scratchpad **copy** of the live config
+(`configs/pbt2_small.yaml` from the live tree, md5 `ce5eaf96…`; the live file was
+never written):
+
+```
+baseline load OK; gumbel_c_scale = 0.025
+  gumbel_c_scale_root: REJECTED -> ValueError: Unknown keys in yaml 'selfplay:' section: ['gumbel_c_scale_root']. …
+  c_scale_root:        REJECTED -> ValueError: Unknown keys in yaml 'selfplay:' section: ['c_scale_root']. …
+  q_visit_exp_root:    REJECTED -> ValueError: Unknown keys in yaml 'selfplay:' section: ['q_visit_exp_root']. …
+```
+
+So the knob is **unplumbed AND unaddable**: the log root cannot be switched on
+from the yaml, and attempting it costs a frozen reload rather than a no-op. The
+only correct route is the plumbing task above, deployed at a restart onto code
+that defines the keys (§9), with the validator's `_SELFPLAY_KEYS` extended in the
+same change.
 
 ### 7d. …and that prerequisite is itself a bigger experiment
 
 Two reasons it cannot be waved through:
 
-1. **`c_scale` is measured to be sim-specific and the project has a test
-   enforcing it.** `gumbel.py:56-67`: *"the optimal q_scale keys off the TOTAL
-   sim budget, so no single value is sim-invariant and each deployment gets its
-   own measured optimum"*, with the measurement attached — selfplay @256 sims:
-   `c_scale` 0.1 → 0.688 puzzle accuracy, 0.05 → 0.652, 0.025 → 0.598.
-   `tests/test_selfplay_gumbel_c_scale.py` fails if anyone unifies the two
-   values. **A ~9 percentage-point spread from mis-tuning σ is larger than
-   anything the reallocation plausibly buys.** A variable-node scheme runs most
-   positions at a `c_scale` tuned for a budget they are not using.
+1. **`c_scale` is measured to be sim-specific.** `gumbel.py:56-67`: *"the optimal
+   q_scale keys off the TOTAL sim budget, so no single value is sim-invariant and
+   each deployment gets its own measured optimum"*, with the measurement attached
+   — selfplay @256 sims (2026-06-16 puzzle screen, n=1000): `c_scale` 0.1 → 0.688
+   accuracy, 0.05 → 0.652, 0.025 → 0.598, *"Lowering it HURTS the RL regime."*
+   **A ~9 percentage-point spread from mis-tuning σ is larger than anything the
+   reallocation plausibly buys.** A variable-node scheme runs most positions at a
+   `c_scale` tuned for a budget they are not using.
+
+   > ⚑⚑ **The premise is violated by production RIGHT NOW, and an earlier
+   > revision of this paragraph asserted the opposite.** It said the project
+   > "has a test enforcing it," implying per-deployment tuning is in force. It is
+   > not. **Live selfplay runs `gumbel_c_scale: 0.025` at 256 sims — the 0.598
+   > rung, the worst of the three, ~9.0 accuracy points below the pinned value on
+   > a direct n=1000 measurement at our own sim budget.** This document already
+   > computes every σ figure in §7a/§7c at 0.025 and calls it "the live config";
+   > this box reconciles that with §7d. Verified read-only on the live tree:
+   > `configs/pbt2_small.yaml:254 → gumbel_c_scale: 0.025`, and
+   > `flatten_run_config_defaults` on a copy of that file returns `0.025`.
+   >
+   > **The guard test is correct and structurally cannot fire.**
+   > `tests/test_selfplay_gumbel_c_scale.py:156-170` asserts
+   > `flat["gumbel_c_scale"] == SELFPLAY_GUMBEL_C_SCALE` (= `0.1`,
+   > `gumbel.py:67`) over `PRODUCTION_CONFIG = "configs/pbt2_small.yaml"` — i.e.
+   > over whatever tree it is run from. Executed both ways
+   > (`PYTHONPATH=. python3 -m pytest tests/test_selfplay_gumbel_c_scale.py`):
+   >
+   > | branch | committed `gumbel_c_scale` | pin test |
+   > |---|---|---|
+   > | `origin/main` — what CI builds | `0.1` (yaml `:451`) | **12 passed** |
+   > | `ops/live-20260725` — what production LOADS | `0.025` (yaml `:254`) | **10 passed, 2 FAILED** (`assert 0.025 == 0.1`) |
+   >
+   > The test never runs against the file production loads, because the whole
+   > divergence lives on the live branch and CI only ever sees `main`
+   > ([[ci_gate_reports_into_a_void]] × [[live_yaml_diverged_from_main_608_968]]).
+   > **So "a test enforcing it" is exactly the defect class this repo names as its
+   > signature: a gate that cannot fail for the configuration that matters.**
+   >
+   > **Scheduled remediation, NOT yet applied.** The live ledger's
+   > *"PRE-REGISTRATION 2026-08-09 — search authority: `gumbel_c_scale` 0.025 ->
+   > 0.1"* (with Amendment 9) moves `gumbel_c_scale` back to `0.1` at the next
+   > restart, which restores the pin and turns both failures green. At the time
+   > this section was written **it has not happened** — production is still on
+   > 0.025. That entry lives in the live branch's `docs/experiment_ledger.md`;
+   > `main`'s copy does not yet contain it.
+   >
+   > **Direction of the correction: this HARDENS the NO-GO, it does not soften
+   > it.** σ mis-tuning is not a hypothetical cost that variable-node search
+   > would introduce — it is a present condition already paying the 9pp, and
+   > variable-node search would spread it across an uncontrolled distribution of
+   > budgets instead of one knowable offset.
 2. **The ledger has already been burned by exactly this.** Ledger §"Confound 1"
    records a sims ladder invalidated because `c_scale` was held fixed across
    rungs, and a −52.5 Elo result that did not survive the shape correction
@@ -699,7 +806,10 @@ production path never goes through a CLI.
 
 Also required regardless of scheme: **the live-yaml validator is
 all-or-nothing.** New config keys need a restart onto code that defines them, or
-the whole reload is rejected.
+the whole reload is rejected. §7c demonstrates this against the live config for
+the three root knobs specifically — all three raise
+`ValueError: Unknown keys in yaml 'selfplay:' section`, so adding one to the live
+yaml freezes every subsequent reload rather than being the no-op it looks like.
 
 ---
 
@@ -836,9 +946,17 @@ production, and can be pre-registered as a single-knob experiment.
 ## 13. What could NOT be established
 
 - **How often lc0's KLD stopper actually fires in T80**, and the realized node
-  distribution it produces. The flag semantics and the exact computation are
-  sourced verbatim (§2); its realized behaviour is not, and nothing in this
-  document depends on it.
+  distribution it produces. The `ShouldStop` computation and the
+  `kldgain-average-interval = 100` default are sourced verbatim (§2); the
+  stopper's realized behaviour is not, and nothing in this document depends on
+  it. **Nor is the `0.000050` threshold sourced** — upstream's default is `0.0f`
+  (feature off); see §2.
+- **§1b's worker-log figures** (`network=…%`, `sf_block_starved=0.0%`,
+  `pending_excluded_avg`). Single-author reads off LAN worker hosts, not
+  reproducible from this repository — no selfplay-client process and no
+  `sf_block_starved` string anywhere in the local tree. The throughput half of
+  §1b *was* cross-checked against a second instrument (6,161 shard-counter vs
+  6,093 `total_games_ingested`); the CPU-share lines were not.
 - **What our own KLD-gain trajectory would look like.** Not derivable from
   banked shards — no visit counts, no per-round snapshots, no realized sim count
   (§10). No modelled number is offered in place of the measurement.
