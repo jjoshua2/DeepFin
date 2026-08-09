@@ -66,6 +66,7 @@ from chess_anti_engine.mcts.gumbel import (
     _gumbel,
     _policy_logits_to_full,
     _softmax,
+    policy_temp_active,
     _wdl_to_q,
     gumbel_policy_diagnostics,
     volatility_search_enabled,
@@ -597,7 +598,7 @@ def run_gumbel_root_many_c(
         and _has_input_bf16
         and not _inplace
         and not cfg.compute_relations
-        and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
+        and not policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
     )
     _root_eval_legal = (
         [_root_legal_indices_for_eval(i) for i in range(n_boards)]
@@ -1162,7 +1163,7 @@ def run_gumbel_root_many_c(
             # untempered while root/dense priors are tempered. policy_temp is a
             # rare experiment knob (production=1.0), so fall back to the
             # tempering-aware path when it's set rather than re-pack BF16.
-            and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
+            and not policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
         )
   # The gate above is correct, but its PRICE was invisible at the config
   # surface: setting policy_temp to anything but 1.0 costs ~1.9x end-to-end
@@ -1177,7 +1178,7 @@ def run_gumbel_root_many_c(
             and not cfg.compute_relations
             and hasattr(tree, "get_pending_legal_indices")
             and hasattr(tree, "continue_gumbel_sims_legal_bf16")
-            and float(getattr(cfg, "policy_temp", 1.0)) != 1.0
+            and policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
             and not _LEGAL_BF16_TEMP_WARNED
         ):
             _log.warning(

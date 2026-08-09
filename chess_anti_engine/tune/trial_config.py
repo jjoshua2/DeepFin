@@ -48,6 +48,19 @@ def _nonnegative_float(value: Any, *, name: str) -> float:
     return val
 
 
+def _positive_float(value: Any, *, name: str) -> float:
+    """Strictly positive. Used where 0 would be silently swallowed downstream.
+
+    ``mcts.gumbel.apply_policy_temp`` treats ``policy_temp <= 0`` as a no-op, so
+    a mis-typed 0 would be accepted and then ignored --- the exact silent-ignore
+    failure the plumbing tests exist to prevent. Reject it at load instead.
+    """
+    val = float(value)
+    if not math.isfinite(val) or val <= 0.0:
+        raise ValueError(f"{name} must be finite and > 0, got {value!r}")
+    return val
+
+
 def _at_least_one_float(value: Any, *, name: str) -> float:
     val = float(value)
     if not math.isfinite(val) or val < 1.0:
@@ -174,6 +187,9 @@ class TrialConfig:
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
     gumbel_topk: int = 16
+  # lc0 PolicyTemperature on the SELFPLAY search prior; 1.0 = no-op.
+  # See SearchConfig.gumbel_policy_temp for the cost note.
+    gumbel_policy_temp: float = 1.0
   # C17 batching knobs. Carried here so the gate/eval matches built by
   # _play_batch_kwargs search the SAME way distributed selfplay does; without
   # them those matches silently ran the 56%-duplicate vloss_weight=0 arm while
@@ -568,6 +584,9 @@ class TrialConfig:
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),
             gumbel_topk=max(1, int(config.get("gumbel_topk", 16))),
+            gumbel_policy_temp=_positive_float(
+                config.get("gumbel_policy_temp", 1.0), name="gumbel_policy_temp",
+            ),
             gumbel_target_batch=max(0, int(config.get("gumbel_target_batch", 0))),
             gumbel_vloss_weight=max(0, int(config.get("gumbel_vloss_weight", 0))),
             volatility_q_scale=float(config.get("volatility_q_scale", 0.0)),

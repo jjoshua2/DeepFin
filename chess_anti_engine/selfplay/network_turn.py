@@ -69,6 +69,7 @@ from chess_anti_engine.selfplay.state import (
     SelfplayState,
     _NetRecord,
 )
+from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
 from chess_anti_engine.selfplay.temperature import temperature_for_ply
 
 
@@ -249,6 +250,38 @@ def _scheduled_gumbel_scale(search, *, move_number: int, curriculum: bool = Fals
         decay_start=int(search.gumbel_scale_decay_start_move),
         decay_moves=int(search.gumbel_scale_decay_moves),
         move_number=move_number,
+    )
+
+
+def build_selfplay_gumbel_config(
+    *, search: SearchConfig, game: GameConfig, simulations: int,
+) -> GumbelConfig:
+    """The SearchConfig -> GumbelConfig mapping production selfplay searches with.
+
+    Module-level and public on purpose. It used to be an inline expression
+    inside ``run_network_turn._run_mcts_group``, which is a closure inside a
+    600-line function: nothing outside could call it, so every test of "does
+    this knob reach the search" had to read the SOURCE instead of running it.
+    An AST test cannot tell a wired field from one assigned to a constant, and
+    "accepted then silently ignored" is this codebase's signature defect. With
+    the mapping addressable, a test can build the config the production path
+    builds and watch a real search change.
+    """
+    return GumbelConfig(
+        simulations=int(simulations),
+        topk=int(search.gumbel_topk),
+        temperature=0.0,
+        policy_temp=float(search.gumbel_policy_temp),
+        c_scale=float(search.gumbel_c_scale),
+        add_noise=True,
+        gumbel_scale=1.0,
+        input_history_encoding=game.input_history_encoding,
+        input_extra_features=game.input_extra_features,
+        policy_encoding=game.policy_encoding,
+        compute_relations=bool(game.record_relations),
+        volatility_q_scale=float(search.volatility_q_scale),
+        volatility_fpu=float(search.volatility_fpu),
+        volatility_anchor=float(search.volatility_anchor),
     )
 
 
@@ -780,20 +813,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 float(per_game_gumbel_scale[j])
                 for j in group
             ] if per_game_gumbel_scale is not None else [float(search.gumbel_scale) for _ in group]
-            gumbel_cfg = GumbelConfig(
-                simulations=int(sim_count),
-                topk=int(search.gumbel_topk),
-                temperature=0.0,
-                c_scale=float(search.gumbel_c_scale),
-                add_noise=True,
-                gumbel_scale=1.0,
-                input_history_encoding=state.game.input_history_encoding,
-                input_extra_features=state.game.input_extra_features,
-                policy_encoding=state.game.policy_encoding,
-                compute_relations=bool(state.game.record_relations),
-                volatility_q_scale=float(search.volatility_q_scale),
-                volatility_fpu=float(search.volatility_fpu),
-                volatility_anchor=float(search.volatility_anchor),
+            gumbel_cfg = build_selfplay_gumbel_config(
+                search=search, game=state.game, simulations=int(sim_count),
             )
             if volatility_search_enabled(gumbel_cfg):
                 warn_volatility_python_path()
@@ -951,4 +972,4 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         )
 
 
-__all__ = ["run_network_turn"]
+__all__ = ["build_selfplay_gumbel_config", "run_network_turn"]

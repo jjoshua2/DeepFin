@@ -205,6 +205,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             fpu_reduction=tc.fpu_reduction,
             fpu_at_root=tc.fpu_at_root,
             gumbel_topk=tc.gumbel_topk,
+            gumbel_policy_temp=tc.gumbel_policy_temp,
             gumbel_target_batch=tc.gumbel_target_batch,
             gumbel_vloss_weight=tc.gumbel_vloss_weight,
             gumbel_c_scale=tc.gumbel_c_scale,
