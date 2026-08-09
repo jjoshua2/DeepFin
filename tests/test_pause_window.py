@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -243,13 +244,38 @@ def test_it_refuses_when_a_marker_is_already_present(tmp_path: Path) -> None:
 
 
 def test_the_resume_baseline_is_taken_before_the_drain(tmp_path: Path) -> None:
-    """`resumed_inflight_games` is a TOTAL, so without a pre-drain count of
-    selfplay_resume/ it cannot be attributed to this drain -- the gap in the
-    2026-08-09 run, where 224 resumed against 93 banked."""
+    """The drain does not know what was already in the resume dirs.
+
+    ⚑ NOT because `resumed_inflight_games` is a total -- an earlier version of
+    this docstring said so and it is wrong. `finalize.py` increments it once per
+    FINALIZED game that carried `resumed_from_disk`, so it is per-ingest and
+    decays as the backlog clears (0 on every row through iter 567 on 2026-08-09,
+    then 224, 456, 477, ... 1, back to 0 at iter 586: 2,963 games against 93
+    banked). Nothing can be subtracted from a file count. The baseline is worth
+    taking because it bounds how much of that backlog PRE-EXISTED, which is the
+    only way the 32x gap could ever be explained.
+
+    ⚑ AND IT MUST BE TAKEN BEFORE THE DRAIN, which the old assertions could not
+    see: they only checked that the count was printed and that it said 3, and
+    both survive the block being moved after the drain -- the files are still
+    there. Two things fix that. The pkill stub now ADDS files, the way a real
+    suspend does, so a post-drain baseline reports 8 rather than 3; and the
+    baseline line must appear before the marker is even set.
+    """
     work, bin_dir, _ = _sandbox(tmp_path, workers=True)
     d = work / "server" / "trials" / TRIAL_ID / "workers" / "worker_00" / "selfplay_resume"
     for i in range(3):
         (d / f"g{i}.npz").write_bytes(b"x")
+    # The drain banks in-flight games INTO this directory; a baseline taken
+    # after it would count them as though they had been there all along.
+    (bin_dir / "pkill").write_text(
+        (bin_dir / "pkill").read_text().replace(
+            "exit 0\n",
+            f'for i in 3 4 5 6 7; do : > "{d}/banked_$i.npz"; done\nexit 0\n',
+        ),
+    )
+    (bin_dir / "pkill").chmod(0o755)
+
     proc = _ack_after(work / "tune", 2.0)
     try:
         r = _run(work, bin_dir, "true")
@@ -257,8 +283,17 @@ def test_the_resume_baseline_is_taken_before_the_drain(tmp_path: Path) -> None:
         proc.wait()
     assert r.returncode == 0, r.stderr
     assert "BEFORE drain" in r.stdout
-    assert re.search(r"selfplay_resume\s+3", r.stdout), (
-        f"pre-drain resume count not reported:\n{r.stdout}"
+    assert re.search(r"selfplay_resume\s+3\b", r.stdout), (
+        "the resume baseline reports a count taken AFTER the drain banked its "
+        f"games (expected 3, the pre-drain state):\n{r.stdout}"
+    )
+    assert "selfplay_resume 8" not in r.stdout, (
+        f"the baseline block ran after the drain:\n{r.stdout}"
+    )
+    # Ordering, independently of the count: the baseline is taken before
+    # ANYTHING is signalled, so it cannot follow the marker.
+    assert r.stdout.index("BEFORE drain") < r.stdout.index("marker set"), (
+        f"the baseline was taken after production was parked:\n{r.stdout}"
     )
 
 
@@ -537,4 +572,307 @@ def test_a_never_refreshed_ack_aborts_FAST_instead_of_holding_the_marker(
     assert elapsed < 60, (
         f"took {elapsed:.0f}s -- it waited on CAE_PAUSE_ACK_TIMEOUT (600) rather "
         "than the short stale-ack clock, so production stays parked"
+    )
+
+
+# ── NB4: the worker log-file parse, and its THREE outcomes ───────────────────
+# The parse was `grep -A1 -- '--log-file' | tail -1`, a weaker reimplementation
+# of train.sh:266's anchored `awk '/^--log-file$/{getline; print; exit}'`. It is
+# weaker three ways -- it matches any argv element CONTAINING the string,
+# `-A1` prints the line after EVERY match so `tail -1` silently takes the last,
+# and a failed parse writes nothing to $OFFSETS -- and all three end in the same
+# place: the suspend-evidence block is skipped ENTIRELY, so a window in which
+# nothing was banked prints exactly what a clean one prints.
+
+_SUSPEND = "selfplay resume: suspended games=93 records=6378 skipped=0"
+
+
+def _worker_with_argv(tmp_path: Path, *extra: str) -> int:
+    """A real process whose /proc/<pid>/cmdline carries `extra`. Returns its pid.
+
+    Real, because the parse reads /proc -- a stub could only test a paraphrase
+    of the thing under test.
+
+    ⚑ DOUBLE-FORKED ON PURPOSE. As a direct child of pytest it would sit as an
+    unreaped ZOMBIE after the drain kills it, `kill -0` on a zombie SUCCEEDS,
+    and the script's survived-SIGTERM gate would fire on every one of these
+    tests. Backgrounded from a bash that then exits, it is reparented to init
+    and really does disappear.
+    """
+    pidfile = tmp_path / f"worker_{len(extra)}_{abs(hash(extra)) % 10**6}.pid"
+    subprocess.run(
+        ["bash", "-c",
+         'python3 -c "import time; time.sleep(300)" '
+         f'{shlex.join(extra)} & echo $! > {shlex.quote(str(pidfile))}'],
+        check=True,
+    )
+    return int(pidfile.read_text().strip())
+
+
+def _reap(pid: int) -> None:
+    try:
+        os.kill(pid, 9)
+    except ProcessLookupError:
+        pass
+
+
+def _drain_stub(bin_dir: Path, tmp_path: Path, victim: int, *, append_to: Path | None = None):
+    """pgrep reports `victim`; pkill really kills it and appends the suspend
+    line to `append_to`, the way a worker's own handler writes it."""
+    (bin_dir / "pgrep").write_text(
+        "#!/bin/sh\n"
+        f'if [ ! -f "{tmp_path}/killed" ]; then echo {victim}; exit 0; fi\nexit 1\n',
+    )
+    write = f'printf "%s\\n" "{_SUSPEND}" >> "{append_to}"\n' if append_to else ""
+    (bin_dir / "pkill").write_text(
+        f'#!/bin/sh\n{write}kill -TERM {victim} 2>/dev/null\ntouch "{tmp_path}/killed"\nexit 0\n',
+    )
+    for f in ("pgrep", "pkill"):
+        (bin_dir / f).chmod(0o755)
+
+
+def test_the_log_file_parse_is_anchored_like_train_sh(tmp_path: Path) -> None:
+    """⚑ THE MUTATION-KILLER, and it needs the flags in THIS order.
+
+    With `--log-file <path> --log-file-level debug`, `grep -A1 -- '--log-file'`
+    matches BOTH elements and `tail -1` returns "debug" -- not a file, so the
+    offset is dropped and the whole evidence block silently disappears. The
+    anchored awk stops at the first exact `--log-file` and returns the path.
+    (Reverse the two flags and the loose parse happens to work, which is why an
+    order-blind test would not have caught this.)
+    """
+    logf = tmp_path / "worker.log"
+    logf.write_text("old generation, from an hours-old reco restart\n" + _SUSPEND + "\n")
+    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
+    victim = _worker_with_argv(tmp_path, "--log-file", str(logf), "--log-file-level", "debug")
+    _drain_stub(bin_dir, tmp_path, victim, append_to=logf)
+
+    proc = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "true")
+    finally:
+        proc.wait()
+        _reap(victim)
+
+    assert r.returncode == 0, r.stderr
+    assert "banked: suspended games=93 records=6378 skipped=0" in r.stdout, (
+        f"the log-file parse missed the worker's log:\n{r.stdout}"
+    )
+    # The offset is load-bearing too: the SAME line exists before the drain, and
+    # reading the whole file would report an hours-old restart as this drain's
+    # proof. One match, not two.
+    assert r.stdout.count("banked: suspended games=93") == 1, r.stdout
+
+
+def test_a_worker_with_no_log_file_says_so_LOUDLY(tmp_path: Path) -> None:
+    """worker.py defaults --log-file to None and every volunteer launch in
+    README.md omits it, so this is reachable in normal use. train.sh calls it a
+    THIRD state ("no evidence to read"), not a loss -- and the failure mode
+    being fixed is that it printed NOTHING, which is what success looks like."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
+    victim = _worker_with_argv(tmp_path, "--log-file-level", "debug")
+    _drain_stub(bin_dir, tmp_path, victim)
+
+    proc = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "true")
+    finally:
+        proc.wait()
+        _reap(victim)
+
+    assert r.returncode == 0, r.stderr
+    assert "no --log-file in its argv" in r.stdout, (
+        f"a worker with no log path was passed over in silence:\n{r.stdout}"
+    )
+    assert "NO suspend evidence available" in r.stdout, (
+        f"nothing could be read and the run reported it like a clean one:\n{r.stdout}"
+    )
+
+
+def test_a_missing_log_file_is_distinguished_from_a_missing_flag(tmp_path: Path) -> None:
+    """train.sh keeps these apart and so must this: one is a launch that never
+    asked for a log, the other is a log that has gone missing under us."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
+    victim = _worker_with_argv(tmp_path, "--log-file", str(tmp_path / "not_there.log"))
+    _drain_stub(bin_dir, tmp_path, victim)
+
+    proc = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "true")
+    finally:
+        proc.wait()
+        _reap(victim)
+
+    assert r.returncode == 0, r.stderr
+    assert "log file does not exist" in r.stdout, r.stdout
+    assert "no --log-file in its argv" not in r.stdout, (
+        f"the two failure states were collapsed into one:\n{r.stdout}"
+    )
+    assert "NO suspend evidence available" in r.stdout, r.stdout
+
+
+# ── NB8c: an interrupt must tear down the JOB'S PROCESS GROUP ────────────────
+
+
+def test_an_interrupt_kills_the_jobs_GRANDCHILDREN_too(tmp_path: Path) -> None:
+    """⚑ ONE SIGTERM TO THE DIRECT CHILD IS NOT A TEARDOWN.
+
+    The job is `bash daily_gate_ratchet.sh`, which runs the arena under
+    `timeout`. Signalling only the child kills the wrapper shell and leaves the
+    ARENA running: the marker is then released, training resumes onto a GPU that
+    still has a 16-concurrent arena on it, and 600s later the next poll opens a
+    second window and a SECOND arena -- which CLAUDE.md forbids outright
+    (paired/compiled arenas OOMed training twice).
+
+    So the handler kills the process group and WAITS for it. The grandchild here
+    stands in for the arena.
+
+    ⚑ AND IT MUST BE PROMPT, which is why the deadline below is asserted.
+    Mutating the group SIGTERM back to a single `kill -TERM "$CHILD"` SURVIVED
+    the first version of this test: the escalation path is group-scoped too, so
+    the grandchild still died -- a full `CAE_PAUSE_JOB_KILL_TIMEOUT` later, with
+    production parked throughout. The timeout is therefore set well ABOVE the
+    time this assertion allows, so "it got there in the end via SIGKILL" fails.
+    """
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    gc_pid_file = tmp_path / "grandchild.pid"
+    job = f'sleep 300 & echo $! > "{gc_pid_file}"; wait'
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CAE_PAUSE_POLL_SECONDS"] = "1"
+    env["CAE_PAUSE_ALLOW_NO_WORKERS"] = "1"
+    env["CAE_PAUSE_JOB_KILL_TIMEOUT"] = "90"
+    p = subprocess.Popen(
+        [str(SCRIPT), "--work-dir", str(work), "--trial-id", TRIAL_ID,
+         "--", "bash", "-c", job],
+        env=env, cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + ACK_WAIT
+        while not (work / "tune" / "pause.txt").exists():
+            assert time.monotonic() < deadline, "marker never appeared"
+            time.sleep(0.2)
+        (work / "tune" / f".paused_{TRIAL_ID}.ack").write_text(
+            f"trial={TRIAL_ID} next_iter=7\n",
+        )
+        deadline = time.monotonic() + ACK_WAIT
+        while not gc_pid_file.exists():
+            assert time.monotonic() < deadline, "the job never started"
+            time.sleep(0.2)
+        gc = int(gc_pid_file.read_text().strip())
+
+        p.terminate()
+        torn_down = time.monotonic()
+        p.wait(timeout=30)
+        elapsed = time.monotonic() - torn_down
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+
+    assert elapsed < 25, (
+        f"the teardown took {elapsed:.0f}s with CAE_PAUSE_JOB_KILL_TIMEOUT=90: "
+        "the SIGTERM did not reach the job's process group and it was the "
+        "SIGKILL escalation that eventually got there, with production parked "
+        "for the whole wait"
+    )
+    assert not (work / "tune" / "pause.txt").exists(), "interrupted holding the marker"
+    # Give the group kill a moment to be reaped, then insist it is gone.
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        try:
+            os.kill(gc, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.2)
+    else:
+        os.kill(gc, 9)
+        pytest.fail(
+            f"the job's grandchild {gc} outlived the interrupt: training was "
+            "resumed with the arena still running",
+        )
+
+
+# ── The trial id, and the work dir ───────────────────────────────────────────
+
+
+def test_an_unparseable_trial_dir_is_refused_immediately(tmp_path: Path) -> None:
+    """⚑ `sed` PRINTS ITS INPUT UNCHANGED WHEN THE PATTERN DOES NOT MATCH.
+
+    So a trial-dir naming change does not fail the parse, it returns the whole
+    directory name as the "trial id". The ack path becomes
+    `.paused_train_trial_....ack`, which nothing will ever write, and the script
+    waits out the FULL ACK_TIMEOUT holding the marker before dying with a
+    message about the trial not parking. This asserts both halves: the right
+    message, and that it costs nothing (an unvalidated build would sit on the
+    600s clock below).
+    """
+    work = tmp_path / "runs" / "x"
+    tune = work / "tune"
+    (tune / "train_trial_nonsense").mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pgrep").write_text("#!/bin/sh\necho 424242\nexit 0\n")
+    (bin_dir / "pkill").write_text("#!/bin/sh\nexit 0\n")
+    for f in ("pgrep", "pkill"):
+        (bin_dir / f).chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CAE_PAUSE_POLL_SECONDS"] = "1"
+    env["CAE_PAUSE_ACK_TIMEOUT"] = "600"
+    started = time.monotonic()
+    r = subprocess.run(
+        [str(SCRIPT), "--work-dir", str(work), "--", "true"],
+        capture_output=True, text=True, timeout=90, env=env, cwd=REPO, check=False,
+    )
+    elapsed = time.monotonic() - started
+
+    assert r.returncode != 0
+    assert "could not parse a trial id" in r.stderr, r.stderr
+    assert elapsed < 30, (
+        f"took {elapsed:.0f}s: it accepted the garbage id and waited on "
+        "CAE_PAUSE_ACK_TIMEOUT for an ack nothing will ever write"
+    )
+    assert not (work / "tune" / "pause.txt").exists(), "parked production for nothing"
+
+
+def test_a_well_formed_trial_dir_still_resolves(tmp_path: Path) -> None:
+    """The positive control for the validation above: a real trial-dir name
+    must still resolve, or the guard is just a refusal to work."""
+    work, bin_dir, calls = _sandbox(tmp_path, workers=True)
+    proc = _ack_after(work / "tune", 2.0)
+    try:
+        env_free = subprocess.run(
+            [str(SCRIPT), "--work-dir", str(work), "--", "true"],
+            capture_output=True, text=True, timeout=90, cwd=REPO, check=False,
+            env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                 "CAE_PAUSE_POLL_SECONDS": "1"},
+        )
+    finally:
+        proc.wait()
+    assert env_free.returncode == 0, env_free.stderr
+    assert f"trial={TRIAL_ID}" in env_free.stdout, env_free.stdout
+    assert calls.read_text().strip().startswith("pkill ack:"), calls.read_text()
+
+
+def test_the_default_work_dir_matches_the_ratchets_single_source() -> None:
+    """⚑ A THIRD HARDCODED DEFAULT IS HOW THE TREES DIVERGE.
+
+    `ratchet_common.sh` exists because ratchet_loop.sh and daily_gate_ratchet.sh
+    had drifted on exactly this and wrote a row whose iter column named a
+    checkpoint from the other tree. This script is a third participant; the loop
+    now passes --work-dir explicitly (NB2), but the default is still reachable
+    by hand, and a default that points at a tree nobody trains in would refuse
+    every window with "no such tune dir".
+    """
+    ours = re.findall(r'^WORK_DIR="([^"]+)"', SCRIPT.read_text(), re.M)
+    common = (REPO / "scripts" / "ratchet_common.sh").read_text()
+    theirs = re.findall(r'^WORK_DIR="\$\{TRAIN_WORK_DIR:-([^}]+)\}"', common, re.M)
+    assert len(ours) == 1, f"pause_window.sh no longer defines WORK_DIR once: {ours}"
+    assert len(theirs) == 1, f"ratchet_common.sh no longer defines WORK_DIR once: {theirs}"
+    assert ours == theirs, (
+        f"pause_window.sh defaults to {ours} while the ratchet's single source "
+        f"says {theirs}: a hand-run window would pause the wrong tree"
     )

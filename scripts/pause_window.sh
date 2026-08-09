@@ -2,12 +2,34 @@
 # Run a command with live training PAUSED and the selfplay workers DRAINED.
 #
 # WHY THIS EXISTS. Measured 2026-08-09 (docs/experiment_ledger.md, "the ack-gated
-# pause window"): the nightly ratchet run BESIDE training truncated at 106/200
-# games and returned a CI spanning zero -- an unreadable result -- while
-# iterations stretched 245s -> 611s. The identical series inside a pause window
-# got 200/200 in ~21 min. The offline window is not merely safer; it is ~2.5x
-# more games in LESS wall time, because the arena and selfplay contend for the
-# same CPU (Stockfish is ~95% of loop cost).
+# pause window"), one series, same snapshots, same argv but for --label, from
+# runs/arena_results.jsonl:
+#
+#             label                                games  wall     Elo (95% CI)
+#   beside    ratchet_2026-08-09_iter514_vs_prev    106    2520.3s  -46.2 [-108.1,+13.0]
+#   parked    pausewindow_2026-08-09_iter514_vs_prev 200   1160.1s  -31.4 [ -73.8,+10.2]
+#
+# 1.89x the games in 0.46x the wall time = 4.1x games/second, because the arena
+# and selfplay contend for the same CPU (Stockfish is ~95% of loop cost). The
+# contended run hit its --max-seconds budget at 53/100 opening pairs, so it
+# reported at HALF the resolution it was configured for (+/-60.5 Elo against
+# +/-42.0); the point is the truncation, not the sign -- both readings are
+# nulls.
+#
+# ⚑ AN EARLIER REVISION OF THIS HEADER SAID "~2.5x more games ... iterations
+# stretched 245s -> 611s ... recovered to 297s the moment it ended". None of
+# those three survives its source. 200/106 is 1.89x, not 2.5x; 611.3s (iter 518)
+# is not the peak, which was 1628.0s (iter 520); and the first post-arena
+# iteration was 350.3s, with ~250s not reached again until iter 534, ~50 min
+# later. The measured numbers are above and in the ledger entry.
+#
+# WHAT THE PAUSE COSTS, in the loop's own currency (result.json, same trial):
+# the window is ONE stretched iteration -- iter 568, 1732.5s, against a 293.6s
+# local baseline -- so 4.9 iterations of training are lost for a complete
+# 200-game row. Running beside training instead cost 15.1 (iters 517-523: 7
+# iterations in 5651.5s where the 256.2s baseline fits 22.1) and still
+# truncated. Parking is the CHEAPER of the two, which is not the intuitive
+# direction and is why the arithmetic is in the ledger.
 #
 # THE ORDER IS THE WHOLE TRICK, and each step exists because the obvious
 # version is silently wrong:
@@ -75,10 +97,12 @@ MARKER="$TUNE_DIR/pause.txt"
 # ⚑ DUPLICATED FROM scripts/train.sh ON PURPOSE, AND PINNED EQUAL BY A TEST.
 # train.sh's stop() defines it as `local wpat='...'` inside a function, so it
 # cannot be sourced, and extracting it here at runtime would make this script
-# depend on train.sh's formatting. tests/test_pause_window.sh::worker pattern
+# depend on train.sh's formatting.
+# tests/test_pause_window.py::test_the_worker_pattern_matches_train_sh_exactly
 # asserts the two literals are byte-identical, which is the same guarantee
-# `test_the_worker_pattern_is_defined_once` gives inside train.sh.
-# `--` is REQUIRED for pgrep/pkill: the pattern begins with `-m`.
+# tests/test_train_sh_worker_drain.py::
+# test_the_worker_pattern_is_defined_once_and_used_by_both_passes gives inside
+# train.sh. `--` is REQUIRED for pgrep/pkill: the pattern begins with `-m`.
 WORKER_PATTERN='-m chess_anti_engine\.worker( |$)'
 
 log() { echo "[pause-window] $*"; }
@@ -94,10 +118,23 @@ resolve_trial_id() {
     # `.paused_<trial_id>.ack` is written next to the marker. The trial id is the
     # middle of `train_trial_<id>_<n>_<params>_<date>`; take it from the most
     # recently modified trial dir unless the caller named one.
-    local newest
+    #
+    # ⚑ A FAILED PARSE MUST NOT BE A TRIAL ID. `sed` prints its input unchanged
+    # when the pattern does not match, so a directory this regex does not
+    # recognise yields the whole `train_trial_...` name -- which then becomes
+    # `.paused_train_trial_....ack`, a file the trial will never write, and the
+    # script waits out the full ACK_TIMEOUT holding the marker before dying with
+    # a message about the trial not parking. That is the expensive way to
+    # discover a naming change, so the shape is checked here, before the marker.
+    # Two mutations this pins: deleting the validation, and breaking the regex
+    # (`[^_]+_[0-9]+` -> `.*`, which matches and returns garbage).
+    local newest id
     newest="$(ls -1dt "$TUNE_DIR"/train_trial_* 2>/dev/null | head -1 || true)"
     [ -n "$newest" ] || die "no train_trial_* under $TUNE_DIR; pass --trial-id"
-    basename "$newest" | sed -E 's/^train_trial_([^_]+_[0-9]+)_.*$/\1/'
+    id="$(basename "$newest" | sed -E 's/^train_trial_([^_]+_[0-9]+)_.*$/\1/')"
+    printf '%s\n' "$id" | grep -Eq '^[A-Za-z0-9]+_[0-9]+$' \
+        || die "could not parse a trial id out of '$(basename "$newest")' (got '$id') -- the trial-dir naming has changed; pass --trial-id"
+    printf '%s\n' "$id"
 }
 
 [ -d "$TUNE_DIR" ] || die "no such tune dir: $TUNE_DIR"
@@ -149,15 +186,50 @@ fi
 pg_rc=0
 WORKER_PIDS="$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null)" || pg_rc=$?
 [ "$pg_rc" -lt 2 ] || die "pgrep failed (rc=$pg_rc) -- the worker pattern is broken, so the drain would silently match nothing"
-OFFSETS="$(mktemp)"; RESUME_BEFORE="$(mktemp)"
-cleanup_tmp() { rm -f "$OFFSETS" "$RESUME_BEFORE"; }
+OFFSETS="$(mktemp)"; OFFSET_WHY="$(mktemp)"; RESUME_BEFORE="$(mktemp)"
+cleanup_tmp() { rm -f "$OFFSETS" "$OFFSET_WHY" "$RESUME_BEFORE"; }
 
 if [ -n "$WORKER_PIDS" ]; then
     for pid in $WORKER_PIDS; do
-        lf="$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -A1 -- '--log-file' | tail -1 || true)"
-        [ -n "$lf" ] && [ -f "$lf" ] && printf '%s %s\n' "$lf" "$(stat -c%s "$lf")" >> "$OFFSETS"
+        # ⚑ THE ANCHORED PARSE, COPIED FROM train.sh:266 -- and its THREE
+        # STATES, which matter more than the parse. An earlier revision used
+        # `grep -A1 -- '--log-file' | tail -1`, which is weaker three ways: it
+        # matches `--log-file-level` and any argv element merely CONTAINING the
+        # string, `-A1` prints the line after every match so `tail -1` silently
+        # picks the last, and on no match it prints nothing -- indistinguishable
+        # from a match whose file was missing. All three land in the same place:
+        # $OFFSETS stays empty, the evidence block below is skipped ENTIRELY,
+        # and a window in which nothing was banked looks exactly like a clean
+        # one. train.sh's comment is explicit that a failed parse must be
+        # "wrong-but-loud", so the reason is recorded per worker and printed.
+        #
+        # `--log-file` and its value are always distinct argv elements
+        # (distributed_runtime.py appends them as two list items and Popen gets
+        # a LIST), so `--log-file=X` cannot occur; if it were ever LAST,
+        # `getline` fails at EOF and awk re-prints `--log-file`, which then
+        # fails the `[ -f ]` and degrades to could-not-verify.
+        lf="$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null \
+              | awk '/^--log-file$/{getline; print; exit}')" || lf=""
+        if [ -z "$lf" ]; then
+            # worker.py defaults --log-file to None and every volunteer launch
+            # in README.md omits it, so this is reachable in normal use. There
+            # is no evidence to read: a THIRD state, not a loss.
+            printf '%s no --log-file in its argv\n' "$pid" >> "$OFFSET_WHY"
+        elif [ ! -f "$lf" ]; then
+            printf '%s log file does not exist: %s\n' "$pid" "$lf" >> "$OFFSET_WHY"
+        elif ! sz="$(stat -c%s "$lf" 2>/dev/null)"; then
+            printf '%s offset capture failed for %s\n' "$pid" "$lf" >> "$OFFSET_WHY"
+        else
+            printf '%s %s\n' "$lf" "$sz" >> "$OFFSETS"
+        fi
     done
     log "workers: $(echo "$WORKER_PIDS" | tr '\n' ' ')"
+    if [ -s "$OFFSET_WHY" ]; then
+        log "WARNING: no pre-drain log offset for $(wc -l < "$OFFSET_WHY") worker(s);"
+        log "         their suspend evidence CANNOT be read, so a drain that banked"
+        log "         nothing will look the same as one that banked everything:"
+        sed 's/^/  pid /' "$OFFSET_WHY" | while read -r l; do log "$l"; done
+    fi
 elif [ "${CAE_PAUSE_ALLOW_NO_WORKERS:-0}" = "1" ]; then
     log "no selfplay workers matched, and CAE_PAUSE_ALLOW_NO_WORKERS=1 -- proceeding"
 else
@@ -170,11 +242,14 @@ else
     die "no selfplay workers matched '$WORKER_PATTERN' -- refusing to pause. Either the fleet is down (set CAE_PAUSE_ALLOW_NO_WORKERS=1 and re-run) or the pattern has drifted from the workers' argv"
 fi
 
-# ⚑ COUNT THE RESUME DIRS FIRST. `outcome_stats.resumed_inflight_games` is the
-# only proof the banked games came BACK (falling file counts are equally
-# consistent with resume.py's stale-file cleanup). But the counter is a total,
-# so without this baseline it cannot be attributed to THIS drain -- exactly the
-# gap in the 2026-08-09 run, where 224 resumed against 93 banked.
+# ⚑ COUNT THE RESUME DIRS FIRST, because the drain does not know what was
+# already there. On 2026-08-09 the window banked 93 games, and the rows after it
+# carried 2,963 `resumed_inflight_games` in total -- 32x more. The counter is
+# per-finalized-game (see the closing note), so those are distinct games, which
+# means the resume dirs were already holding a large backlog that this drain did
+# not create and cannot take credit for. That gap is still UNEXPLAINED, and it
+# is unexplainable without this line: a count taken after the fact cannot say
+# what a count taken before would have.
 find "$WORK_DIR/server/trials/$TRIAL_ID/workers" -maxdepth 2 -name selfplay_resume -type d \
     -exec sh -c 'printf "%s %s\n" "$1" "$(ls -1 "$1" 2>/dev/null | wc -l)"' _ {} \; \
     > "$RESUME_BEFORE" 2>/dev/null || true
@@ -201,9 +276,40 @@ release() {
 # operator already tried to stop. The job therefore runs in the background under
 # `wait` (interruptible), and this handler tears it down before releasing.
 # tests/test_pause_window.py::...interrupted pins it; it FAILED before this.
+#
+# ⚑ THE WHOLE PROCESS GROUP, AND THEN WAIT FOR IT. One SIGTERM to the direct
+# child is not a teardown: the job is `bash daily_gate_ratchet.sh`, which runs
+# the arena under `timeout`, so the signal reaches the wrapper shell and the
+# ARENA SURVIVES. Releasing the marker then resumes training beside a live
+# 16-concurrent arena, and 600s later the next poll opens a second window and a
+# SECOND arena -- which CLAUDE.md forbids outright (paired/compiled arenas OOMed
+# training twice). `set -m` before the launch puts the job in its own process
+# group whose pgid IS $CHILD, so `kill -TERM -$CHILD` reaches the grandchildren;
+# then we WAIT, and escalate to SIGKILL, before letting training back on the GPU.
+# Bounded by CAE_PAUSE_JOB_KILL_TIMEOUT so a job that ignores both cannot hold
+# the marker forever -- the marker is released either way, and the group's
+# survival is reported.
+JOB_KILL_TIMEOUT="${CAE_PAUSE_JOB_KILL_TIMEOUT:-30}"
+kill_job_group() {
+    [ -n "$CHILD" ] || return 0
+    kill -TERM -- "-$CHILD" 2>/dev/null || kill -TERM "$CHILD" 2>/dev/null || true
+    local waited=0
+    while kill -0 -- "-$CHILD" 2>/dev/null; do
+        if [ "$waited" -ge "$JOB_KILL_TIMEOUT" ]; then
+            log "job group $CHILD survived SIGTERM after ${waited}s -- SIGKILL"
+            kill -KILL -- "-$CHILD" 2>/dev/null || true
+            sleep 1
+            kill -0 -- "-$CHILD" 2>/dev/null &&
+                log "WARNING: job group $CHILD is STILL alive; training resumes beside it"
+            return 0
+        fi
+        sleep 1; waited=$((waited + 1))
+    done
+    log "job group $CHILD is down after ~${waited}s"
+}
 on_signal() {
     log "interrupted -- stopping the job and resuming training"
-    [ -n "$CHILD" ] && kill -TERM "$CHILD" 2>/dev/null || true
+    kill_job_group
     release
     exit 130
 }
@@ -274,10 +380,19 @@ if [ -n "$WORKER_PIDS" ]; then
     done
     [ -z "$survivors" ] || die "worker(s)$survivors survived SIGTERM after ${DRAIN_TIMEOUT}s -- NOT running the job; the measurement would be contended and indistinguishable from a clean one"
 
-    # Evidence, read from the pre-drain offsets. ⚑ It MUST be read here, before
-    # the marker clears: a revived worker TRUNCATES its log file (measured
-    # 1.2MB -> 1,560 bytes on 2026-08-09), so after the resume there is nothing
-    # left to read and a check placed there reports a false failure.
+    # Evidence, read from the pre-drain offsets. ⚑ IT MUST BE READ HERE, BEFORE
+    # THE MARKER CLEARS -- but not for the reason an earlier revision gave. It
+    # claimed "a revived worker TRUNCATES its log file (1.2MB -> 1,560 bytes)".
+    # It does not: `logging.FileHandler` opens in APPEND mode (worker.py), and
+    # `_rotate_worker_logs` (tune/distributed_runtime.py) RENAMES the previous
+    # generation to `worker.log.1` before the replacement process can open
+    # anything -- that rotation exists precisely because something did truncate
+    # in place during the 2026-08-04 cold start, and it was never identified.
+    # The consequence is the same and the conclusion was right: after the revive
+    # the path recorded above is a FRESH file, our byte offset is past its end,
+    # and a check placed after the resume reads nothing and reports a healthy
+    # drain as a failure. The evidence is not lost, it just moves to
+    # `worker.log.1`, which is not where we are looking.
     if [ -s "$OFFSETS" ]; then
         while read -r f off; do
             line="$(tail -c "+$((off + 1))" "$f" 2>/dev/null | grep -m1 'selfplay resume: suspended games=' || true)"
@@ -287,14 +402,28 @@ if [ -n "$WORKER_PIDS" ]; then
                 log "  WARNING: no suspend line from $(basename "$(dirname "$f")") -- games may have been DISCARDED"
             fi
         done < "$OFFSETS"
+    else
+        # ⚑ SILENCE HERE IS THE FAILURE. Every worker's offset capture failed
+        # (reasons printed above), so there is no evidence either way -- which
+        # must not be reported by printing nothing, because that is also what a
+        # clean window looks like.
+        log "  NO suspend evidence available: not one worker had a readable pre-drain"
+        log "  log offset, so whether the in-flight games were BANKED or DISCARDED"
+        log "  is unknown for this window."
     fi
 fi
 
 # ── The job ──────────────────────────────────────────────────────────────────
+# `set -m` gives the background job its own process group (pgid == $!), which is
+# what makes the group kill in on_signal reach the arena rather than only the
+# wrapper shell. It is switched back off immediately: monitor mode also changes
+# how this shell reports job status, and nothing after this needs it.
 log "running: $*"
 set +e
+set -m
 "$@" &
 CHILD=$!
+set +m
 wait "$CHILD"
 rc=$?
 set -e
@@ -304,11 +433,33 @@ log "command exited rc=$rc"
 release
 trap - EXIT INT TERM
 
+# ⚑ NAME THE QUANTITY YOU PRINTED. An earlier revision said "compare against the
+# baseline above", where the baseline above is FILE COUNTS under
+# selfplay_resume/ and the thing to compare is `resumed_inflight_games` -- a
+# different quantity, in different units, which the next sentence then said file
+# counts cannot substitute for. Worse, it called that key "a TOTAL". It is not:
+# `finalize.py` increments it once per FINALIZED game that carried
+# `resumed_from_disk`, so it is per-ingest and DECAYS as the backlog clears
+# (measured 2026-08-09 around the window: 0 on every row through iter 567, then
+# 224, 456, 477, 454, 399 ... 1, reaching 0 at iter 586). Nothing can be
+# subtracted from a pre-drain file count; the readable signal is the SHAPE.
 cat <<EOF
-[pause-window] done. To confirm the banked games came BACK, read the FIRST new
-[pause-window] result.json row and compare against the baseline above:
-[pause-window]   outcome_stats.resumed_inflight_games   (must be > 0)
-[pause-window] Falling file counts under selfplay_resume/ are NOT proof: they are
-[pause-window] equally consistent with resume.py's stale-file cleanup.
+[pause-window] done. Two DIFFERENT things were printed above; do not mix them.
+[pause-window]
+[pause-window] 1. "selfplay_resume/ BEFORE drain" is a FILE COUNT per worker dir,
+[pause-window]    taken before anything was signalled. It is a baseline for the
+[pause-window]    files, and it is NOT comparable to any result.json counter.
+[pause-window] 2. "banked: suspended games=N records=M skipped=K" is what each
+[pause-window]    worker reported writing on its way out.
+[pause-window]
+[pause-window] To confirm those games came BACK, read the trial's result.json:
+[pause-window]   grep -o 'resumed_inflight_games=[0-9]*' <trial>/result.json | tail -20
+[pause-window] It is a PER-ITERATION count (once per finalized game that was
+[pause-window] resumed from disk), not a running total. The proof is the shape: 0
+[pause-window] on the rows before this window, non-zero from the first row after
+[pause-window] it, decaying back to 0 as the backlog finishes. A first post-window
+[pause-window] row of 0 means the banked games did NOT come back.
+[pause-window] Falling file counts under selfplay_resume/ are NOT proof either way:
+[pause-window] they are equally consistent with resume.py's stale-file cleanup.
 EOF
 exit "$rc"

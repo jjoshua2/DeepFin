@@ -13,9 +13,25 @@
 # vmbus wedge (memory: wsl2-gpu-vmbus-wedge-signature): the trainer wedges alive
 # and `train.sh stop` can't help because ray stop needs the dead GPU.
 #
+# ABANDONED-PAUSE RECOVERY (exit 5, added 2026-08-09 with scripts/pause_window.sh).
+# A held pause.txt makes the stall path structurally unreachable: `decide()`
+# returns PAUSED-HELD whenever the loop is flat AND a marker exists, and STALLED
+# requires no marker — so a wrapper that dies holding one parks production until
+# a human notices, and no amount of waiting turns it into an exit 3. The nightly
+# pause window makes that failure a live possibility rather than a thought
+# experiment, so the watchdog now separates the two cases and this loop clears
+# ONLY the recoverable one. Deliberately NOT recover_stall.sh: nothing is
+# wedged, so SIGKILLing a healthy stack to delete one file would be the more
+# destructive fix. The marker is removed and the trial resumes at its next
+# `pause_poll_seconds`.
+#
 # Guards that keep this from fighting the operator or flapping:
-#   * ONLY STALLED (exit 3) triggers recovery — STOPPED (exit 1, PID gone) never
-#     does, so a manual `kill` / deliberate stop is left alone (could be intended).
+#   * ONLY STALLED (exit 3) triggers the force-recovery — STOPPED (exit 1, PID
+#     gone) never does, so a manual `kill` / deliberate stop is left alone.
+#   * Only a marker that NAMES ITS OWNER (`pid=`, written by pause_window.sh)
+#     can be cleared, and the removal re-checks that here rather than trusting
+#     the parsed verdict line — an operator's graceful_restart.py marker carries
+#     no pid and must outlive any bound we could pick.
 #   * The intentional-stop marker suppresses recovery entirely.
 #   * Anti-flap: after a recovery, refuse to auto-recover again for
 #     $RECOVER_COOLDOWN_S (default 2h) — a re-stall that soon means restart isn't
@@ -25,16 +41,29 @@
 # Optional: WATCHDOG_NOTIFY_CMD is invoked with the status line on every
 # unsuppressed non-OK check (fail-soft, inside train_watchdog.py --notify-cmd).
 set -u
-cd /home/josh/projects/chess
-MARKER=/tmp/chess_training.intentional_stop
+# WATCHDOG_ROOT and the three /tmp paths below are TEST SEAMS, not operator
+# knobs (the same contract ratchet_common.sh states for RATCHET_ROOT). Without
+# them nothing can execute this loop's body, and the abandoned-pause branch
+# would be pinned only by reading it — while a test that ran the loop unseamed
+# would clobber the LIVE watchdog's flatness state in /tmp and could be
+# suppressed by a real intentional-stop marker on the same machine.
+cd "${WATCHDOG_ROOT:-/home/josh/projects/chess}" || exit 2
+MARKER="${WATCHDOG_STOP_MARKER:-/tmp/chess_training.intentional_stop}"
 LOGF=scratchpad/watchdog.log
 ALERTF=scratchpad/watchdog_alerts.log
-STATEF=/tmp/chess_watchdog_state.json
-RECOVER_STAMP=/tmp/chess_watchdog_last_recover
+STATEF="${WATCHDOG_STATE:-/tmp/chess_watchdog_state.json}"
+RECOVER_STAMP="${WATCHDOG_RECOVER_STAMP:-/tmp/chess_watchdog_last_recover}"
 WATCHDOG_EVERY="${WATCHDOG_EVERY:-600}"
 AUTO_RECOVER="${WATCHDOG_AUTO_RECOVER:-1}"
 RECOVER_COOLDOWN_S="${RECOVER_COOLDOWN_S:-7200}"
 EXIT_STALLED=3
+EXIT_PAUSE_ABANDONED=5
+# --once runs a single check and exits with it; the scheduled invocation from
+# scripts/train.sh passes no arguments.
+ONCE=0
+[ "${1:-}" = "--once" ] && ONCE=1
+
+mkdir -p scratchpad
 
 stamp(){ date '+%m-%d %H:%M:%S'; }
 
@@ -63,5 +92,28 @@ while true; do
         fi
     fi
 
+    # ── clear an ABANDONED pause marker (wrapper died holding it) ────────
+    # No cooldown: this removes one file and cannot restart anything, so the
+    # anti-flap reasoning that guards recover_stall.sh does not apply. It is
+    # also self-limiting — once the marker is gone the trial resumes, rows
+    # grow, and the verdict is OK.
+    if [ "$AUTO_RECOVER" = 1 ] && [ "$RC" = "$EXIT_PAUSE_ABANDONED" ] && [ ! -f "$MARKER" ]; then
+        pm=$(printf '%s\n' "$LINE" | sed -n 's/.* pause_txt=\([^ ]*\).*/\1/p')
+        # ⚑ RE-CHECK `pid=` HERE. The verdict already required a self-identifying
+        # marker, but this is the line that DELETES, and it must not depend on a
+        # sed of a human-readable status string having parsed the right path. An
+        # operator's graceful_restart.py marker ("graceful restart in progress")
+        # has no pid= and can never pass this.
+        if [ -n "$pm" ] && [ -f "$pm" ] && grep -q 'pid=[0-9]' "$pm"; then
+            echo "$(stamp) CLEARING ABANDONED PAUSE MARKER $pm — held: $(tr '\n' ' ' < "$pm"): $LINE" \
+                | tee -a "$LOGF" >> "$ALERTF"
+            rm -f "$pm"
+        else
+            echo "$(stamp) PAUSE-ABANDONED but the marker was not clearable (parsed path='$pm') — NEEDS HUMAN: $LINE" \
+                | tee -a "$LOGF" >> "$ALERTF"
+        fi
+    fi
+
+    [ "$ONCE" -eq 1 ] && exit "$RC"
     sleep "$WATCHDOG_EVERY"
 done

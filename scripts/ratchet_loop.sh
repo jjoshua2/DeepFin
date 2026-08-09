@@ -151,9 +151,19 @@ poll_once () {
     #
     # Every trappable failure path inside the wrapper releases the marker, so a
     # wrapper failure degrades to the old contended behaviour rather than
-    # parking production. The residual is SIGKILL, which no trap can catch —
-    # `train.sh start` clears stale markers, and the trainer watchdog alerts on
-    # a stalled loop.
+    # parking production. The residual is SIGKILL, which no trap can catch.
+    # Three things cover it, and the third exists because of this PR:
+    #   * `train.sh start` clears stale markers;
+    #   * the marker records `pid=` and `started=`, so an operator can tell "the
+    #     ratchet is running" from "a dead window parked production";
+    #   * `train_watchdog.py` returns PAUSE-ABANDONED (exit 5) for a marker whose
+    #     named owner is gone, and `watchdog_loop.sh` removes it.
+    # ⚑ THAT THIRD ONE IS NEW, AND THE CLAIM IT REPLACES WAS FALSE. This comment
+    # used to say "the trainer watchdog alerts on a stalled loop". It alerts, but
+    # it could not RECOVER: `decide()` returns PAUSED-HELD whenever a marker is
+    # present and STALLED requires `pause_txt is None`, so with the marker held
+    # the exit-3 branch `watchdog_loop.sh` recovers on was unreachable by
+    # construction, and so was `recover_stall.sh`'s `rm -f ... pause.txt`.
     # Set CAE_RATCHET_PAUSE_WINDOW=0 to go back to running beside training.
     #
     # ⚑ THE PRESENCE TEST IS NOT DEFENSIVE PADDING — WITHOUT IT THE SENTENCE

@@ -24802,3 +24802,218 @@ earn their place as boundary pins on this branch, not as evidence against main.
 
 `./scripts/lint.sh` (no args) exit 0. **Not reviewed by its author** — a
 separate reviewer follows.
+
+---
+
+## 2026-08-09 — the ack-gated pause window: the nightly ratchet runs with training PARKED (PR #374, ops)
+
+**Status: LIVE-UNREAD.** Default ON. Not a training-target change — it changes
+when the daily strength ratchet takes the GPU, and therefore how much training
+the observer eats. It gets an entry because it is a data-affecting change to the
+production loop (it parks selfplay for ~35 min/day) and because
+`scripts/pause_window.sh` and `tests/test_pause_window.py` both cite this entry
+by name.
+
+### Hypothesis
+
+The daily ratchet and selfplay contend for the same CPU (Stockfish is ~95% of
+loop cost), and the contention is expensive in BOTH directions: the arena
+truncates against its `--max-seconds` budget, and training iterations stretch.
+Running the whole ratchet inside a pause window — training parked, selfplay
+drained — buys a full-resolution arena row for FEWER lost training iterations
+than running it beside training costs.
+
+The second half is the non-obvious one and is the whole reason the default is
+ON. The intuitive accounting says parking is strictly worse: parked iterations
+are 100% lost, contended ones only slowed. That is wrong, and the measurement
+below is why.
+
+### The measurement (2026-08-09, supervised, n=1 window)
+
+Both readouts are the SAME series — same candidate/reference snapshots, same
+seed 42, same `--sims 32 --games 200 --max-concurrent-games 16 --no-compile`,
+differing only in `--label`. Source: `runs/arena_results.jsonl`.
+
+| | label | games | wall | Elo (95% CI) | half-width |
+|---|---|---|---|---|---|
+| beside training | `ratchet_2026-08-09_iter514_vs_prev` | **106/200** | 2520.3s | −46.2 [−108.1, +13.0] | 60.5 |
+| pause window | `pausewindow_2026-08-09_iter514_vs_prev` | **200/200** | 1160.1s | −31.4 [−73.8, +10.2] | 42.0 |
+
+**1.89× the games in 0.46× the wall time = 4.10× games/second.** The contended
+run hit its budget at 53/100 opening pairs (`truncated: true`), so it reported
+at 53% of the resolution it was configured for. ⚑ Both readouts are NULLS and
+both CIs span zero; "unreadable" here means TRUNCATED, not "spans zero". 115
+iterations at the standing ~0.02 Elo/iter is far below what n=200 resolves, so a
+null is the expected result and is not evidence about the loop.
+
+Park 135s, drain 55s, 93 games / 6,378 records banked with `skipped=0`.
+
+### ⚑ Numbers in the earlier script header that do NOT survive their source
+
+Recorded because the header asserted them and nothing in the repo could check
+them. All three are now corrected in `scripts/pause_window.sh`:
+
+* **"~2.5× more games"** — 200/106 is **1.89×**. The 2.5× is not reproducible
+  from either artifact; the defensible throughput statement is 4.10× games/s.
+* **"iterations stretched 245s → 611s"** — 611.3s (iter 518) is not the peak.
+  The pre-arena median was 247.8s and the peak was **1628.0s** (iter 520).
+* **"recovered to 297s the moment it ended"** — it did not. The first post-arena
+  iteration was 350.3s (iter 524) and ~250s was not seen again until iter 534,
+  roughly 50 minutes later. 297.6s is iter 516, which is BEFORE the arena.
+
+### The cost accounting the PR was missing: ITERATIONS LOST PER READABLE ROW
+
+From `result.json` of `train_trial_379f6_00000_..._2026-08-06_23-51-06`, same
+trial, same day, `time_this_iter_s` and `train_steps_used`.
+
+**Beside training** (the 08-09 ratchet, two series, 00:11:48 → 01:46:04):
+
+```
+local baseline, iters 508-516 : 2305.9s / 9 iters = 256.2 s/iter (751 steps)
+contended,      iters 517-523 : 5651.5s / 7 iters (455.8, 611.3, 735.9,
+                                1628.0, 533.6, 866.0, 820.9), 681 steps
+5651.5 / 256.2 = 22.1 iterations would have fitted;  7 ran
+```
+
+⇒ **15.1 iterations lost** (1,160 optimizer steps). Recovery is not free either:
+iters 524-533 took 3048.6s where the baseline fits 11.9, a further ~1.9, so
+**~17 including recovery.** Delivered: 2 rows, one of them truncated at 53%.
+
+**Parked** (the same evening's re-run, one series):
+
+```
+local baseline, iters 559-567 : 2642.7s / 9 iters = 293.6 s/iter
+the window     , iter  568    : 1732.5s / 1 iter (park + drain + 1160.1s arena)
+1732.5 / 293.6 = 5.90 iterations would have fitted;  1 ran
+```
+
+⇒ **4.9 iterations lost** for one complete 200-game row. No relaunch penalty is
+visible: iter 569 was 230.1s, FASTER than the pre-window baseline.
+
+**What the default-ON configuration will actually cost.** The loop wraps BOTH
+series in one window. Uncontended, `vs_prev` took 1160.1s (`--no-compile`) and
+`vs_boot512` took 645.4s (`--compile on`, measured 2026-08-08 16:10 while
+training was down between iters 400 and 401 — uncontended, but NOT through this
+wrapper, so treat it as an estimate). 1805.5s + 135s park + 55s drain ≈
+**2000s ≈ 33 min**, i.e. **6.8 iterations** at 293.6 s/iter, for TWO complete
+rows.
+
+| | iterations lost | full-resolution rows | **lost per readable row** |
+|---|---|---|---|
+| beside training (measured) | 15.1 (17 with recovery) | 1 of 2 | **15.1** |
+| pause window, both series (projected) | 6.8 | 2 | **3.4** |
+
+### DECISION: default ON. Kept.
+
+Parking costs **less than half** what contention costs *and* is the only one of
+the two that reliably returns a row at its designed resolution. The reviewer's
+objection — "a daily observer that eats half a day of the training it observes
+is worse than no observer", `daily_gate_ratchet.sh:32-38` — is honoured by this
+change rather than violated by it: the observer's appetite goes DOWN, from ~15
+iterations to ~7. The intuition that parking must be worse fails because
+contention does not merely slow the arena, it stretches training iterations
+~2.9× for 94 minutes, which is a bigger bill than 33 minutes of zero.
+
+⚠ **n=1, and the projection is not a measurement.** The 6.8 is arithmetic over
+one measured window plus one uncontended arena that did not go through the
+wrapper. The yardstick below is what turns it into a measurement.
+
+### Yardstick (pre-registered, ONE deciding command)
+
+After the first FIVE unattended nights, on the live trial:
+
+```bash
+PYTHONPATH=. python3 - <<'PY'
+import json, datetime, pathlib
+t = sorted(pathlib.Path("runs/pbt2_small/tune").glob("train_trial_*"))[-1]
+rows = [json.loads(l) for l in (t/"result.json").open() if l.strip()]
+w = [(d["training_iteration"], d["time_this_iter_s"]) for d in rows]
+med = sorted(x[1] for x in w[-200:])[len(w[-200:])//2]
+for i, s in w:
+    if s > 3 * med:
+        print(f"iter {i}: {s:.0f}s  = {s/med:.1f} baseline iterations lost")
+PY
+jq -r 'select(.label|startswith("ratchet_"))|[.ts,.label,.games,.truncated,.duration_s]|@tsv' \
+   runs/arena_results.jsonl | tail -10
+```
+
+**SUCCESS** (keep default ON): every night's ratchet appears as **≤ 2 stretched
+iterations** whose total is **≤ 9 baseline iterations**, AND **≥ 8 of the 10
+rows** (2/night × 5) have `truncated: false`.
+
+**KILL** (flip `CAE_RATCHET_PAUSE_WINDOW` to default 0, in the same session):
+either the nightly window costs **> 12 baseline iterations** — at which point it
+is no cheaper than the contention it replaces and the 3.4 above was wrong — or
+**< 6 of 10 rows** are untruncated, which means parking did not buy the
+resolution that is the entire justification.
+
+**Also a kill, independently:** any night where `data/ratchet/pause_window_fails`
+reaches the `CAE_RATCHET_PAUSE_MAX_FAILS` cap twice in five days. The wrapper
+falling back to contended readings on a schedule is worse than not wrapping.
+
+### Confounds
+
+* One data-affecting change in this window: nothing else in this PR touches
+  training. But the pause DOES change the data — ~33 min/night of no selfplay,
+  and a fleet suspend/resume cycle per night. If a later readout blames a
+  selfplay-composition change dated after 2026-08-09, this is in the frame.
+* `resumed_inflight_games` after the window summed to **2,963** across iters
+  568-585 (0 on every row from 515 through 567, then 224, 456, 477, 454, 399,
+  … 1, back to 0 at iter 586) against **93 games banked** by the drain. ⚑ The
+  PR called this counter "a total" and inferred the resume dirs held ~131 games.
+  Both are wrong: `finalize.py:485-488` increments it once per FINALIZED game
+  carrying `resumed_from_disk`, so these are 2,963 DISTINCT games and the
+  counter is per-ingest, not cumulative. The 32× gap is **UNEXPLAINED**. The
+  pre-drain `selfplay_resume/` baseline the wrapper now takes is what would
+  explain it; until a window runs with that baseline recorded, the attribution
+  of banked→resumed is not established. Do not cite 224 as "this drain resumed
+  224 games".
+
+### Scope boundaries (each pinned by a test in `tests/test_pause_window.py`)
+
+* The drain is a **gate**: `pgrep` rc≥2 is fatal, zero matched workers refuses
+  BEFORE the marker, a worker surviving SIGTERM aborts the job.
+* A wrapper failure exits **3**, outside the ratchet's 0/1/5 vocabulary, and the
+  loop falls back to a contended reading after `CAE_RATCHET_PAUSE_MAX_FAILS=2`
+  so a day still gets measured.
+* The ack gate tests **freshness by mtime**, never existence, and never deletes
+  an ack — `graceful_restart.py` uses acks as its primary pause detector.
+* An interrupt kills the job's **process group** and waits for it. One SIGTERM
+  to the direct child leaves the arena alive, and the next poll would open a
+  second one — which CLAUDE.md forbids outright.
+
+### The watchdog interaction, and what this change does about it
+
+`train_watchdog.decide()` returned PAUSED-HELD whenever the loop was flat and a
+`pause.txt` existed, STALLED required `pause_txt is None`, and
+`watchdog_loop.sh:53` recovers only on rc==3. So while ANY marker was held,
+auto-recovery was **structurally unable to fire** and `recover_stall.sh:31` —
+the one line that removes a marker — was unreachable. This PR makes a held
+marker a nightly event, so "production is parked" and "the ratchet is running"
+became the same alert.
+
+Fixed rather than documented-around: the marker records `pid=` and `started=`,
+the watchdog returns a new **PAUSE-ABANDONED (exit 5)** for a marker that NAMES
+ITS OWNER whose owner is gone (or which has been held past
+`--pause-max-minutes`, default 180 = 30 min ack wait + `BUDGET_MIN=90` plus
+headroom), and `watchdog_loop.sh` removes exactly that marker. ⚑ The gate is
+"the marker names its owner", never the age: `graceful_restart.py` writes prose
+with no `pid=`, and an operator's pause must outlast any bound. Deliberately NOT
+`recover_stall.sh`: nothing is wedged, so SIGKILLing a healthy stack to delete
+one file is the more destructive fix.
+
+### ⚑ MERGING DOES NOT DEPLOY THIS
+
+`train.sh:156-159` starts `ratchet_loop.sh` once, only when `pgrep` finds none,
+and `stop()` never stops it — and a long-running bash keeps the file it was
+launched with. After merge, the live loop runs the OLD ratchet_loop.sh with no
+window until someone kills it. Procedure and the observation that proves it took
+effect are in `docs/operations.md` ("The nightly pause window"). Nothing here
+has been deployed.
+
+### Verification
+
+`tests/test_pause_window.py` (28) + `tests/test_train_watchdog.py` (45) pass;
+`./scripts/lint.sh` with no arguments is clean apart from the 132
+`reportMissingModuleSource` errors an unbuilt-C-extension worktree always emits.
+Mutation results are in the PR conversation, survivors included.

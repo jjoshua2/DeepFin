@@ -28,7 +28,78 @@ mid-iteration trial.
 `scripts/watchdog_loop.sh` — stall detection with auto-recovery (confirmed stall →
 `scripts/recover_stall.sh`; log `scratchpad/watchdog.log`); `scripts/monitor_fen.sh` —
 cadenced FEN-panel reads + the seed retire/probation step (log
-`scratchpad/live_read/monitor/`).
+`scratchpad/live_read/monitor/`); `scripts/ratchet_loop.sh` — the daily strength
+ratchet (log `scratchpad/ratchet_loop.log`).
+
+## The nightly pause window
+
+`scripts/pause_window.sh <cmd>` runs a job with the trial parked and selfplay drained,
+and `scripts/ratchet_loop.sh` wraps the whole daily ratchet in one. Measured 2026-08-09
+(ledger: "the ack-gated pause window"): 1.89× the arena games in 0.46× the wall time,
+and it costs the loop ~7 iterations against ~15 for the same ratchet run beside
+training. Default ON; `CAE_RATCHET_PAUSE_WINDOW=0` opts out.
+
+The **order is the mechanism**: snapshot each worker log's byte offset → touch
+`pause.txt` → **wait for `.paused_<trial>.ack`** → SIGTERM the workers → run → clear the
+marker. `_revive_fleet` runs inside the ingest phase, so it is inert only while the
+trial is parked; draining before the ack just gets the fleet relaunched and the window
+silently measures a contended machine.
+
+### ⚑ Merging does not deploy it
+
+`train.sh:156-159` starts `ratchet_loop.sh` **once**, only if `pgrep` finds none, and
+`stop()` never stops it. A long-running bash keeps the file it was launched with, so
+after a merge the live loop keeps running the OLD script — no window — until it is
+replaced. `train.sh restart` does **not** help: the loop is still running, so the
+`pgrep` guard skips it.
+
+```bash
+pgrep -af 'scripts/ratchet_loop.sh'          # find the running loop
+kill <pid>                                   # plain TERM; it holds no state
+setsid nohup bash scripts/ratchet_loop.sh < /dev/null > /dev/null 2>&1 &
+pgrep -af 'scripts/ratchet_loop.sh'          # exactly one, new pid
+```
+
+Kill it **between** polls, not while a ratchet is running (`tail scratchpad/ratchet_loop.log`
+for `starting daily ratchet`); killing it mid-ratchet orphans the arena and can leave the
+pause marker held.
+
+**The observation that proves it took effect** — a `pgrep` showing a new pid proves only
+that a process restarted. Wait for the next ratchet and require **both**:
+
+```bash
+grep -n '\[pause-window\]' scratchpad/ratchet_loop.log | tail -20
+grep -n 'pause marker(s) detected' /tmp/chess_training.log | tail -3
+```
+
+The first is the wrapper announcing itself; the second is the **trial's own** line saying
+it saw the marker and parked. Neither alone is proof: the wrapper logs before it knows
+whether anything parked, and the trial's line also appears for an operator pause.
+
+### Env knobs
+
+All default sane; none is set in production.
+
+| variable | default | what it does |
+|---|---|---|
+| `CAE_RATCHET_PAUSE_WINDOW` | `1` | `0` runs the ratchet beside training (the pre-2026-08-09 behaviour). |
+| `CAE_RATCHET_PAUSE_MAX_FAILS` | `2` | Wrapper failures (exit 3) tolerated per calendar day before the loop stops asking for a window and takes the contended reading, so the day still gets measured. State: `data/ratchet/pause_window_fails`. |
+| `CAE_PAUSE_ACK_TIMEOUT` | `1800` | Seconds to wait for `.paused_<trial>.ack` after setting the marker. On timeout it aborts **without draining** — draining with revive live is worse than not trying. |
+| `CAE_PAUSE_STALE_ACK_TIMEOUT` | `180` | The shorter clock used when an ack for this trial already exists. That case provably cannot resolve (`_wait_if_paused` guards on an `announced` flag and will not re-ack), so waiting the full 1800s is 30 min of parked production per poll. |
+| `CAE_PAUSE_DRAIN_TIMEOUT` | `180` | Seconds to wait for the workers to exit after SIGTERM. A survivor **aborts the job** rather than running it beside a live worker. |
+| `CAE_PAUSE_POLL_SECONDS` | `5` | Poll interval for both waits. |
+| `CAE_PAUSE_ALLOW_NO_WORKERS` | `0` | `1` proceeds when `pgrep` matches no workers. By default that **refuses**, before the marker: a fleet that is down and a pattern that has drifted from the workers' argv look identical here, and the second means the job runs against a full fleet and is filed as uncontended. |
+| `CAE_PAUSE_JOB_KILL_TIMEOUT` | `30` | Seconds to wait after SIGTERMing the job's **process group** on an interrupt, before escalating to SIGKILL. The group, not the child: the job is a shell running the arena under `timeout`, and signalling only the child leaves the arena running. |
+
+### A marker held by a dead window
+
+`train_watchdog.py` reports `PAUSE-ABANDONED` (exit 5) for a marker that names its owner
+(`pid=`, written by `pause_window.sh`) whose owner is gone, or which has been held past
+`--pause-max-minutes` (default 180). `watchdog_loop.sh` then removes that marker — and
+only that kind: `graceful_restart.py`'s marker carries no `pid=` and is never touched,
+however old. `WATCHDOG_AUTO_RECOVER=0` disables this along with stall recovery. To
+inspect one by hand, `cat runs/pbt2_small/tune/pause.txt` — it names the pid, the start
+time, and the job.
 
 ## The worker credential
 
