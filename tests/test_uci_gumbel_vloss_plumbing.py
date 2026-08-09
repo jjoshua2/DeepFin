@@ -62,7 +62,52 @@ def _bare_worker(*, vloss_weight: int, minibatch: int = 0) -> SearchWorker:
     w._last_gumbel_action_idx = None
     w._minibatch_size = int(minibatch)
     w._vloss_weight = int(vloss_weight)
+    # Mirrors `SearchWorker.__init__`'s unconditional default. NOT a `getattr`
+    # fallback at the read site: the real search must never quietly substitute a
+    # noise scale nobody set, so 0.0 lives at construction on both sides.
+    w._root_noise_scale = 0.0
     return w
+
+
+def test_the_bare_worker_sets_every_field_the_chunk_reads() -> None:
+    """The fixture is a hand-maintained mirror; this is what stops it drifting.
+
+    ``_bare_worker`` bypasses ``__init__``, so a new ``self._x`` read added to
+    ``_run_gumbel_chunk`` surfaces as an ``AttributeError`` inside four
+    unrelated virtual-loss tests -- which is how ``_root_noise_scale`` (PR #377)
+    turned into four red tests that named neither the field nor the fixture.
+    Failing here instead names the missing field directly.
+
+    This checks the TEST DOUBLE, not the product: every real construction path
+    goes through ``__init__``, which sets these unconditionally.
+    """
+    # Parsed from the MODULE, not `inspect.getsource(method)`: a method's source
+    # is indented, and this file's comments sit at column 2 -- below the code --
+    # so `textwrap.dedent` cannot straighten it either.
+    module = ast.parse(inspect.getsource(search_mod))
+    fn = next(
+        node for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_gumbel_chunk"
+    )
+    reads = {
+        node.attr
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+        and node.attr.startswith("_")
+    }
+    worker = _bare_worker(vloss_weight=3)
+    missing = sorted(
+        name for name in reads
+        if not hasattr(worker, name) and not hasattr(type(worker), name)
+    )
+    assert not missing, (
+        f"_run_gumbel_chunk reads {missing} but _bare_worker never sets them. "
+        "Add them to the fixture with the same default __init__ uses -- do NOT "
+        "add a getattr fallback in search.py, which would let a real search run "
+        "on a value nobody set."
+    )
 
 
 def _capture_chunk_kwargs(monkeypatch: Any, worker: SearchWorker) -> dict[str, Any]:
