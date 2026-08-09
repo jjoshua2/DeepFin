@@ -168,12 +168,52 @@ resolve_trial_id() {
     # discover a naming change, so the shape is checked here, before the marker.
     # Two mutations this pins: deleting the validation, and breaking the regex
     # (`[^_]+_[0-9]+` -> `.*`, which matches and returns garbage).
+    # ⚑ N7: POPULATED-PREFERRED, THEN THE DATA FILE'S MTIME -- the SAME rule as
+    # `train_watchdog.newest_trial_dir` and `trial_paths._trial_sort_key`, not a
+    # third "latest" of this file's own devising.
+    #
+    # This was `ls -1dt`, i.e. DIRECTORY mtime, and the directory's mtime is not
+    # evidence that a trial is alive: it moves whenever ANY entry is created or
+    # removed inside it, so Ray writing `checkpoint_NNNNNN/` under a trial --
+    # or a stray touch, an rsync, a log rotation -- floats a dead trial above
+    # the live one. The cost is not small: the wrong id gives an ACK path
+    # nothing will ever write, so the script holds the marker for the full
+    # CAE_PAUSE_ACK_TIMEOUT (1800s) and does it again on the next poll, twice,
+    # before the fail cap stops it.
+    #
+    # ⚑ THE REASON THIS IS FIXED HERE AND NOT DEFERRED: it is B2's defect in a
+    # second place. B2 was a trial selector that silently picked a DEAD trial
+    # and returned plausible, stationary numbers, and it too was "bounded and
+    # logged" right up until someone executed it. A selector must be
+    # DEMONSTRATED to track the live artefact, not merely to return one --
+    # `test_the_trial_selector_prefers_the_populated_trial_over_a_touched_one`
+    # is that demonstration.
+    #
+    # rank 1 = has result.json/progress.csv, rank 0 = has neither; then that
+    # file's mtime; then the name, matching `max()` on the same 3-tuple.
+    # ⚑ `%.9Y`, NOT `%Y`. Whole-second mtimes make two trials written in the same
+    # second compare EQUAL, and the comparison then falls through to the name --
+    # so which trial is "live" would be decided alphabetically. `newest_trial_dir`
+    # compares float `st_mtime`, so `%Y` is also a silent divergence between the
+    # two implementations of one rule. LC_ALL=C so the decimal point is a dot.
     local newest id
-    newest="$(ls -1dt "$TUNE_DIR"/train_trial_* 2>/dev/null | head -1 || true)"
+    newest="$(
+        for d in "$TUNE_DIR"/train_trial_*/; do
+            [ -d "$d" ] || continue
+            rank=0; m=0
+            for f in result.json progress.csv; do
+                if [ -f "$d$f" ]; then
+                    m="$(stat -c %.9Y "$d$f" 2>/dev/null || echo 0)"; rank=1; break
+                fi
+            done
+            [ "$rank" -eq 1 ] || m="$(stat -c %.9Y "$d" 2>/dev/null || echo 0)"
+            printf '%s %s %s\n' "$rank" "$m" "$(basename "$d")"
+        done | LC_ALL=C sort -k1,1nr -k2,2nr -k3,3r | head -1 | cut -d' ' -f3-
+    )"
     [ -n "$newest" ] || die "no train_trial_* under $TUNE_DIR; pass --trial-id"
-    id="$(basename "$newest" | sed -E 's/^train_trial_([^_]+_[0-9]+)_.*$/\1/')"
+    id="$(printf '%s\n' "$newest" | sed -E 's/^train_trial_([^_]+_[0-9]+)_.*$/\1/')"
     printf '%s\n' "$id" | grep -Eq '^[A-Za-z0-9]+_[0-9]+$' \
-        || die "could not parse a trial id out of '$(basename "$newest")' (got '$id') -- the trial-dir naming has changed; pass --trial-id"
+        || die "could not parse a trial id out of '$newest' (got '$id') -- the trial-dir naming has changed; pass --trial-id"
     printf '%s\n' "$id"
 }
 

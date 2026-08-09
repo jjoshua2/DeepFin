@@ -1276,3 +1276,186 @@ def test_the_ledgers_yardstick_selects_the_trial_by_data_not_by_name(
         f"its verdict all describe a run that stopped days ago.\n{r.stdout}"
     )
     assert "d2003" not in r.stdout, r.stdout
+
+
+# ── N7: the trial selector must TRACK THE LIVE TRIAL, not merely return one ──
+# B2 was a "latest trial" selector that silently picked a DEAD trial and
+# returned plausible, stationary numbers; it was bounded and logged right up
+# until someone executed it. `resolve_trial_id` was the same shape with a
+# different wrong rule -- DIRECTORY mtime, which moves whenever any entry is
+# created or removed inside the directory, so Ray writing `checkpoint_NNNNNN/`
+# under a dead trial floats it above the live one. Picking wrong costs a full
+# CAE_PAUSE_ACK_TIMEOUT (1800s) of parked production per poll, twice, before the
+# fail cap stops it.
+#
+# So these do not assert "it returned an id". They build trees where the WRONG
+# rule has a clear preference, and require the live trial to win anyway.
+
+_TRIAL_SUFFIX = "_0_lr=0.0000_2026-01-01_00-00-00"
+
+
+def _selector_sandbox(tmp_path: Path, live: str, dead: str):
+    """A tune dir with two trials; returns (work, bin_dir, live_dir, dead_dir).
+
+    ⚑ THE LIVE TRIAL IS NAMED TO SORT *BEFORE* THE DEAD ONE (`aaa..` vs `zzz..`),
+    so the selector's final name tiebreak actively pulls toward the WRONG answer.
+    The first version of these fixtures used `live..`/`dead..`, which sorts the
+    right way -- and with `stat -c %Y`'s whole-second mtimes the two files tied,
+    so the name decided and three mutations of the mtime ranking SURVIVED. A
+    fixture must not encode the answer it is checking.
+    """
+    work = tmp_path / "runs" / "x"
+    tune = work / "tune"
+    live_d = tune / f"train_trial_{live}{_TRIAL_SUFFIX}"
+    dead_d = tune / f"train_trial_{dead}{_TRIAL_SUFFIX}"
+    for d in (dead_d, live_d):
+        d.mkdir(parents=True)
+    (work / "server" / "trials" / live / "workers" / "worker_00" / "selfplay_resume").mkdir(
+        parents=True,
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pgrep").write_text("#!/bin/sh\nexit 1\n")
+    (bin_dir / "pkill").write_text("#!/bin/sh\nexit 0\n")
+    for f in ("pgrep", "pkill"):
+        (bin_dir / f).chmod(0o755)
+    return work, bin_dir, live_d, dead_d
+
+
+def _resolve(work: Path, bin_dir: Path, live_id: str):
+    """Run the real script with NO --trial-id, acking as `live_id` would.
+
+    End-to-end on purpose: if the selector picks the other trial, the ack it
+    waits for is one nothing will ever write, and it dies on the clock -- which
+    is exactly the production failure, not a paraphrase of it.
+    """
+    ack = work / "tune" / f".paused_{live_id}.ack"
+    writer = subprocess.Popen(
+        ["sh", "-c", f'sleep 2; echo "trial={live_id} next_iter=7" > "{ack}"'],
+    )
+    try:
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}:{env['PATH']}"
+        env["CAE_PAUSE_POLL_SECONDS"] = "1"
+        env["CAE_PAUSE_ALLOW_NO_WORKERS"] = "1"
+        env["CAE_PAUSE_ACK_TIMEOUT"] = "12"
+        return subprocess.run(
+            [str(SCRIPT), "--work-dir", str(work), "--", "true"],
+            capture_output=True, text=True, timeout=90, env=env, cwd=REPO, check=False,
+        )
+    finally:
+        writer.wait()
+
+
+def test_the_trial_selector_prefers_the_populated_trial_over_a_touched_one(
+    tmp_path: Path,
+) -> None:
+    """⚑ The `ls -1dt` case, minimal. The dead trial has NO data and the NEWEST
+    directory mtime — which is what a checkpoint dir appearing under it does."""
+    work, bin_dir, live_d, dead_d = _selector_sandbox(tmp_path, "aaa11_00000", "zzz91_00000")
+    (live_d / "result.json").write_text('{"training_iteration": 900}\n')
+    time.sleep(1.1)
+    (dead_d / "checkpoint_000001").mkdir()      # bumps the DIRECTORY mtime
+    assert dead_d.stat().st_mtime > live_d.stat().st_mtime, "fixture does not test anything"
+
+    r = _resolve(work, bin_dir, "aaa11_00000")
+
+    assert "trial=aaa11_00000" in r.stdout, (
+        "the selector picked the trial with no data because its DIRECTORY was "
+        f"touched more recently; the ack it waits for will never be written.\n{r.stdout}"
+    )
+    assert r.returncode == 0, f"it never parked -- wrong trial id:\n{r.stdout}\n{r.stderr}"
+
+
+def test_the_trial_selector_prefers_FRESH_DATA_over_a_fresher_directory(
+    tmp_path: Path,
+) -> None:
+    """⚑ The realistic case, and the one directory mtime gets exactly backwards:
+    BOTH trials are populated, the dead one's DIRECTORY is newer (Ray created a
+    checkpoint dir under it), the live one's DATA is newer. Ranking by directory
+    mtime picks the dead trial; ranking by the data file picks the live one."""
+    work, bin_dir, live_d, dead_d = _selector_sandbox(tmp_path, "aaa22_00000", "zzz92_00000")
+    (dead_d / "result.json").write_text('{"training_iteration": 104}\n')
+    time.sleep(1.1)
+    (live_d / "result.json").write_text('{"training_iteration": 900}\n')   # newest DATA
+    time.sleep(1.1)
+    (dead_d / "checkpoint_000002").mkdir()                                 # newest DIR
+    assert dead_d.stat().st_mtime > live_d.stat().st_mtime
+    assert (live_d / "result.json").stat().st_mtime > (dead_d / "result.json").stat().st_mtime
+
+    r = _resolve(work, bin_dir, "aaa22_00000")
+
+    assert "trial=aaa22_00000" in r.stdout, (
+        "the selector ranked by directory mtime: it chose the trial that stopped "
+        f"writing data, and would hold the marker for the full ack timeout.\n{r.stdout}"
+    )
+    assert r.returncode == 0, f"it never parked -- wrong trial id:\n{r.stdout}\n{r.stderr}"
+
+
+def test_the_trial_selector_matches_the_watchdogs_rule_on_the_same_tree(
+    tmp_path: Path,
+) -> None:
+    """⚑ ONE RULE, TWO IMPLEMENTATIONS, PINNED EQUAL — the technique this PR
+    already used for the worker pattern and for the marker format.
+
+    `train_watchdog.newest_trial_dir` is the Python original; this is a bash
+    re-implementation of it. Agreement is asserted on a tree built to separate
+    them (populated-vs-not AND data-mtime-vs-dir-mtime at once), so the two
+    cannot drift into disagreeing about which trial is live.
+    """
+    work, _bin, live_d, dead_d = _selector_sandbox(tmp_path, "aaa33_00000", "zzz93_00000")
+    empty = work / "tune" / f"train_trial_zzz99_00000{_TRIAL_SUFFIX}"
+    empty.mkdir()                                            # newest of all, no data
+    (dead_d / "progress.csv").write_text("h\n1\n")
+    time.sleep(1.1)
+    (live_d / "result.json").write_text('{"training_iteration": 900}\n')
+    time.sleep(1.1)
+    (dead_d / "checkpoint_000003").mkdir()
+
+    theirs = _WATCHDOG.newest_trial_dir(work / "tune")
+    assert theirs is not None
+    r = _resolve(work, _bin, "aaa33_00000")
+
+    ours = re.search(r"trial=(\S+)", r.stdout)
+    assert ours is not None, r.stdout
+    assert theirs.name.startswith(f"train_trial_{ours.group(1)}_"), (
+        f"pause_window.sh selected {ours.group(1)} while "
+        f"train_watchdog.newest_trial_dir selected {theirs.name}: two rules for "
+        "'the live trial', which is how one of them comes to be wrong unnoticed"
+    )
+    assert ours.group(1) == "aaa33_00000", r.stdout
+
+
+def test_two_trials_written_in_the_SAME_SECOND_are_still_ordered(
+    tmp_path: Path,
+) -> None:
+    """⚑ `stat -c %Y` IS WHOLE SECONDS, and a restart writes both trials' first
+    rows well inside one second. With `%Y` they tie, the comparison falls
+    through to the NAME, and which trial counts as live is decided
+    alphabetically — while `newest_trial_dir` compares float `st_mtime` and gets
+    it right, so the two implementations of one rule silently disagree.
+
+    Disclosed as a survivor first: the other selector tests use 1.1s gaps, which
+    makes them blind to exactly this. `%.9Y` was justified by parity with the
+    Python rule and by nothing executable until this test existed.
+    """
+    probe_a, probe_b = tmp_path / "a", tmp_path / "b"
+    probe_a.write_text("x")
+    time.sleep(0.05)
+    probe_b.write_text("x")
+    if probe_a.stat().st_mtime == probe_b.stat().st_mtime:
+        pytest.skip("filesystem has 1-second mtime granularity; nothing to order")
+
+    work, bin_dir, live_d, dead_d = _selector_sandbox(tmp_path, "aaa44_00000", "zzz94_00000")
+    (dead_d / "result.json").write_text('{"training_iteration": 104}\n')
+    time.sleep(0.05)                       # same whole second, later nanosecond
+    (live_d / "result.json").write_text('{"training_iteration": 900}\n')
+    assert (live_d / "result.json").stat().st_mtime > (dead_d / "result.json").stat().st_mtime
+
+    r = _resolve(work, bin_dir, "aaa44_00000")
+
+    assert "trial=aaa44_00000" in r.stdout, (
+        "two trials written in the same second tied, so the name decided which "
+        f"one was 'live' — and the name was chosen to be wrong.\n{r.stdout}"
+    )
+    assert r.returncode == 0, f"it never parked -- wrong trial id:\n{r.stdout}\n{r.stderr}"
