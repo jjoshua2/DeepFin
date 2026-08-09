@@ -145,6 +145,25 @@ PLAY_SEARCH_TARGET_BATCH = 0
 class GumbelConfig:
     simulations: int = 50
     topk: int = 16
+    # Give EVERY legal move one root evaluation before sequential halving starts.
+    #
+    # Why: a legal move that is not a Gumbel candidate is never visited, so the
+    # improved-policy softmax gives it ``completed_q = root_q`` -- the SAME constant
+    # for every unvisited move. Its target logit is then ``log(prior) + f(root_q)``
+    # with an identical second term, so the target's ranking over that tail is
+    # PURELY THE NET PRIOR. CE trains the net toward its own prior there: a fixed
+    # point a wrongly-low prior can never leave. Measured on the live window,
+    # 11.2% of legal moves (38.7% of positions, n_legal > topk) are in that tail.
+    #
+    # These evaluations are IN ADDITION to ``simulations``, not carved out of it
+    # (~+1.17% root evals at 256 sims). Widening ``topk`` to ``legal.size`` instead
+    # would pay for tail coverage out of the survivors' visits, which is a different
+    # experiment and confounds this one.
+    #
+    # No-op whenever every legal move is already a candidate, i.e.
+    # ``n_legal <= min(topk, (simulations + 1) // 2)`` -- at 256 sims that is
+    # n_legal <= 32, which must stay BIT-IDENTICAL to the flag being off.
+    root_expand_all: bool = False
     temperature: float = 1.0
     # Prior temperature on the policy-head logits before they seed the tree
     # (logits/policy_temp). >1 softens the prior, <1 sharpens it; 1.0 = no-op.
@@ -817,6 +836,46 @@ def _collect_forced_leaves_round(
     return leaf_nodes, leaf_paths
 
 
+def _expand_all_legal_round(
+    *,
+    states: list[_BoardSearchState],
+    cfg: GumbelConfig,
+) -> tuple[list[Node], list[list[Node]]]:
+    """Round 0: force ONE visit down every legal move that is not a Gumbel candidate.
+
+    Mirrors ``_collect_forced_leaves_round`` but walks the NON-candidate tail exactly
+    once each, and deliberately does not touch ``budget_remaining`` -- see
+    ``GumbelConfig.root_expand_all`` for why these evals are additive rather than
+    carved out of the halving budget.
+
+    Candidates are skipped because halving visits them anyway; re-walking them here
+    would hand the top moves a free extra visit and silently change the very ranking
+    the flag is supposed to leave alone.
+    """
+    leaf_nodes: list[Node] = []
+    leaf_paths: list[list[Node]] = []
+    for st in states:
+        if st.finished_probs is not None or st.candidates is None:
+            continue
+        cand = {int(a) for a in st.candidates}
+        # ``priors`` is post-terminal-draw-masking, the same array the improved
+        # policy reads its legal set from, so the tail here is exactly the tail
+        # that gets root_q in the target.
+        for a in np.nonzero(st.priors > 0.0)[0]:
+            action = int(a)
+            if action in cand:
+                continue
+            leaf, path, terminal_value = _collect_forced_leaf(
+                root=st.root, forced_action=action, cfg=cfg,
+            )
+            if terminal_value is not None:
+                _backprop(path, float(terminal_value))
+            elif leaf is not None:
+                leaf_nodes.append(leaf)
+                leaf_paths.append(path)
+    return leaf_nodes, leaf_paths
+
+
 def _halve_remaining_for_board(
     st: _BoardSearchState,
     *,
@@ -1025,6 +1084,12 @@ def run_gumbel_root_many(
         if root_vols is not None:
             st.root.vol = float(root_vols[i])
         states.append(st)
+
+  # ── 2b. Root expansion: one eval for every legal move (additive) ─────────
+    if bool(cfg.root_expand_all):
+        expand_nodes, expand_paths = _expand_all_legal_round(states=states, cfg=cfg)
+        if expand_nodes:
+            _evaluate_and_backprop_leaves(expand_nodes, expand_paths, leaf_eval, cfg)
 
   # ── 3. Sequential halving with real subtree simulations ──────────────────
     while True:
