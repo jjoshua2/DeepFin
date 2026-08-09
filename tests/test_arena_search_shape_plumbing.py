@@ -20,6 +20,7 @@ printed and stored in the JSONL record.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 import re
 import sys
@@ -38,7 +39,7 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.selfplay import match as match_mod
-from chess_anti_engine.selfplay.config import SearchConfig
+from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
 from scripts.arena_standard import (
     SEARCH_SHAPES,
     SideSearch,
@@ -57,6 +58,99 @@ from scripts.arena_standard import (
 # budget and the move-selection/noise policy come from arena flags. Everything
 # else production sets from config has to be carried by the training shape.
 _ARENA_OWNED_GUMBEL_FIELDS = {"simulations", "temperature", "add_noise", "gumbel_scale"}
+
+# Sentinel values handed to the production SearchConfig -> GumbelConfig mapping.
+# Every GumbelConfig default is <= 99 apart from cpuct_base (38739), so nothing
+# in the 701+ band can match by coincidence; ``_sentinel_search_config`` asserts
+# that rather than trusting it.
+_SENTINEL_BASE = 701
+# Passed as ``simulations=``, which the arena owns; must not be a sentinel.
+_PROBE_SIMULATIONS = 37
+
+
+def _sentinel_search_config() -> tuple[SearchConfig, dict[float, str]]:
+    """A ``SearchConfig`` whose every numeric field carries a unique sentinel.
+
+    Returns the config and the sentinel -> attribute-name inverse map, so a
+    ``GumbelConfig`` field holding a sentinel identifies the ``search`` knob
+    that fed it.
+    """
+    base = SearchConfig()
+    replacements: dict[str, Any] = {}
+    by_sentinel: dict[float, str] = {}
+    for offset, field in enumerate(dataclasses.fields(SearchConfig)):
+        current = getattr(base, field.name)
+        if isinstance(current, bool) or not isinstance(current, (int, float)):
+            continue
+        sentinel = _SENTINEL_BASE + offset
+        replacements[field.name] = type(current)(sentinel)
+        by_sentinel[float(sentinel)] = field.name
+
+    assert len(by_sentinel) == len(replacements), "the sentinels must be unique"
+    defaults = {
+        float(getattr(GumbelConfig(), f.name))
+        for f in dataclasses.fields(GumbelConfig)
+        if isinstance(getattr(GumbelConfig(), f.name), (int, float))
+        and not isinstance(getattr(GumbelConfig(), f.name), bool)
+    }
+    assert not defaults & set(by_sentinel), "a sentinel collides with a GumbelConfig default"
+    assert float(_PROBE_SIMULATIONS) not in by_sentinel
+    return dataclasses.replace(base, **replacements), by_sentinel
+
+
+def _selfplay_gumbel_fields_driven_by_search() -> dict[str, str]:
+    """GumbelConfig field -> SearchConfig attribute, proved by CALLING the mapping.
+
+    This used to parse ``network_turn.run_network_turn`` for an inline
+    ``GumbelConfig(...)``. That construction is now the module-level, public
+    ``build_selfplay_gumbel_config``, made addressable precisely so a test could
+    invoke it — and invoking it is strictly stronger than parsing it: an AST
+    scan cannot tell a field wired to ``search.x`` from one wired to a constant,
+    and "a value accepted and then silently ignored" is this repo's signature
+    defect. A field that comes back carrying its knob's sentinel has been
+    observed to flow, at runtime, through the production mapping.
+    """
+    from chess_anti_engine.selfplay import network_turn
+
+    search, by_sentinel = _sentinel_search_config()
+    cfg = network_turn.build_selfplay_gumbel_config(
+        search=search, game=GameConfig(), simulations=_PROBE_SIMULATIONS,
+    )
+    driven: dict[str, str] = {}
+    for field in dataclasses.fields(GumbelConfig):
+        value = getattr(cfg, field.name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        attr = by_sentinel.get(float(value))
+        if attr is not None:
+            driven[field.name] = attr
+    return driven
+
+
+def _search_attrs_the_mapping_mentions() -> set[str]:
+    """Every ``search.<attr>`` the production mapping's own source NAMES.
+
+    The counterpart to the call above: the call proves what flows, this proves
+    what was meant to. A knob named here but missing from the call's result is
+    exactly the accepted-then-ignored shape — mangled en route, or overwritten
+    by a constant.
+    """
+    from chess_anti_engine.selfplay import network_turn
+
+    src = inspect.getsource(network_turn.build_selfplay_gumbel_config)
+    mentioned: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "GumbelConfig":
+            continue
+        for kw in node.keywords:
+            if not kw.arg:
+                continue
+            match = re.search(r"\bsearch\.(\w+)", ast.unparse(kw.value))
+            if match:
+                mentioned.add(match.group(1))
+    return mentioned
 
 
 class _DummyModel(torch.nn.Module):
@@ -358,36 +452,38 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
 def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> None:
     """Drift guard: a NEW yaml-driven search knob must reach the arena too.
 
-    Reads the ``GumbelConfig(...)`` production selfplay builds
-    (``network_turn.py``) and takes every field it fills from ``search.*`` —
-    not just ``search.gumbel_*``: the same call is also fed
-    ``search.volatility_q_scale/_fpu/_anchor``, and a narrower scan would call
-    itself a coverage guard while missing three knobs.
+    Builds the ``GumbelConfig`` production selfplay searches with — by CALLING
+    ``network_turn.build_selfplay_gumbel_config``, the real mapping — and takes
+    every field it fills from ``search.*``: not just ``search.gumbel_*``, since
+    the same call is also fed ``search.volatility_q_scale/_fpu/_anchor`` and a
+    narrower scan would call itself a coverage guard while missing three knobs.
 
     A field the training shape does not carry passes only if production's value
     for it equals the ``GumbelConfig`` default, i.e. omitting it is provably a
     no-op TODAY. Turning such a knob on in the yaml fails this test, which is
     the intent: the arena would otherwise keep measuring the old shape.
     """
-    from chess_anti_engine.selfplay import network_turn
-
-    src = inspect.getsource(network_turn.run_network_turn)
-    config_driven: dict[str, str] = {}
-    for node in ast.walk(ast.parse(src)):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-            continue
-        if node.func.id != "GumbelConfig":
-            continue
-        for kw in node.keywords:
-            if not kw.arg:
-                continue
-            match = re.search(r"\bsearch\.(\w+)", ast.unparse(kw.value))
-            if match:
-                config_driven[kw.arg] = match.group(1)
+    config_driven = _selfplay_gumbel_fields_driven_by_search()
 
     assert len(config_driven) >= 5, (
         f"only {sorted(config_driven)} found in network_turn's GumbelConfig -- "
         "the selfplay search construction moved; re-point this test"
+    )
+    # What the mapping NAMES must equal what it CARRIES. A knob named but not
+    # carried never reaches the search at all, so its absence from the
+    # inertness verdict below would be silent rather than loud.
+    mentioned = _search_attrs_the_mapping_mentions()
+    assert mentioned == set(config_driven.values()), (
+        f"build_selfplay_gumbel_config names {sorted(mentioned)} but only "
+        f"{sorted(set(config_driven.values()))} reach the returned GumbelConfig"
+    )
+    # Named explicitly because the verdict below is a verdict about the fields
+    # in `config_driven`: a knob that quietly drops out of the mapping also
+    # drops out of the thing this test certifies, and would pass by absence.
+    # gumbel_policy_temp is the newest one and the one a live change moves.
+    assert "gumbel_policy_temp" in config_driven.values(), (
+        "gumbel_policy_temp no longer reaches the selfplay GumbelConfig -- "
+        "either the knob is dead or this test stopped covering it"
     )
     search = production_selfplay_search_config()
     pinned = set(resolve_search_shape("training").gumbel) | _ARENA_OWNED_GUMBEL_FIELDS
