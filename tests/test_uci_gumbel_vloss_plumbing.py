@@ -79,7 +79,18 @@ def test_the_bare_worker_sets_every_field_the_chunk_reads() -> None:
     Failing here instead names the missing field directly.
 
     This checks the TEST DOUBLE, not the product: every real construction path
-    goes through ``__init__``, which sets these unconditionally.
+    goes through ``__init__``, which sets these unconditionally. The only
+    production construction is ``uci/__main__.py``'s.
+
+    Scope, stated because an earlier version of this claim was wrong in a way
+    that stopped people looking: there are **four** ``__init__``-bypassing
+    constructions in the tree, not one --
+    ``tests/test_uci_batch_margin.py:23``, this file's :52, and
+    ``tests/test_uci_time_manager.py`` :299 and :346 (the latter two via
+    ``object.__new__``). ``search.py``'s ``getattr(self, "_rpg_pool", None)``
+    exists for them. This guard covers only ``_run_gumbel_chunk``'s fixture;
+    the other three do not reach that method, so they are out of its scope
+    rather than silently covered by it.
     """
     # Parsed from the MODULE, not `inspect.getsource(method)`: a method's source
     # is indented, and this file's comments sit at column 2 -- below the code --
