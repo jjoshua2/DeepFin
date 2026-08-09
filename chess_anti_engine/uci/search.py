@@ -844,10 +844,35 @@ class SearchWorker:
         classic Gumbel chunk `dataclasses.replace`s it per call, so a plain
         assignment IS live there. The PUCT helpers (walker pool / PucvChunker /
         multi-GPU pool / RPG) copy c_puct & friends at CONSTRUCTION time, so
-        those need a rebuild — `Engine` drives that through
-        `_reinstall_configured_search_path`, the same way `CPuct` already did.
+        for those the assignment alone is inert and something must rebuild
+        them: `Engine._sync_cpuct_to_worker` routes RPG to
+        `_reinstall_rpg_if_active`, the multi-GPU pool to
+        `_install_multi_gpu_pucv_pool`, and walker / single-thread PucvChunker
+        to `rebuild_puct_helpers` below.
         """
         setattr(self._cfg, field, value)
+
+    def rebuild_puct_helpers(self) -> None:
+        """Re-materialize the helpers that snapshot c_puct & friends at build.
+
+        The walker pool copies the family into its own `WalkerPoolConfig` and
+        `PucvChunker` copies it into `_c_puct` / `_fpu_red` / `_cpuct_*`, both
+        at CONSTRUCTION. Writing `_cfg.c_puct` therefore does not reach either
+        descent, which is the "accepted, certified realized, and then ignored"
+        failure this whole option surface exists to prevent — and it is worse
+        than dead, because the stale value silently lands later on the next
+        command that happens to rebuild (`VLossWeight`, `MaxBatch`, ...).
+
+        Deliberately does NOT reset the tree. c_puct / fpu_reduction steer only
+        FUTURE selection and leave the accumulated Q/N meaning what they meant,
+        unlike a `vloss_mode` or `vloss_weight` change; `_sync_cpuct_to_worker`
+        already rescales the live tree in place for the same reason.
+        """
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+            self._walker_pool = self._build_walker_pool(self._n_walkers)
+        if self._pucv is not None:
+            self._pucv = self._build_pucv()
 
     def set_root_noise_scale(self, scale: float) -> None:
         """Root Gumbel-noise strength for match play. 0 = deterministic.

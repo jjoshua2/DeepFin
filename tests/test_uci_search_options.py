@@ -25,6 +25,7 @@ harness is noisy rather than because the knob works.
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 import re
 
 import chess
@@ -95,23 +96,38 @@ class _DetEval:
         return (h @ self._p).astype(np.float32), (h @ self._v).astype(np.float32)
 
 
-def _make_engine(*, threads: int = 1) -> Engine:
+def _make_engine(
+    *,
+    threads: int = 1,
+    evaluator: _DetEval | None = None,
+    cfg_over: dict[str, float] | None = None,
+) -> Engine:
     planes = input_plane_count("v2_threats")
     worker = SearchWorker(
-        _DetEval(planes),
+        _DetEval(planes) if evaluator is None else evaluator,
         device="cpu",
         gumbel_cfg=dataclasses.replace(
             GumbelConfig(
                 simulations=256, add_noise=False, temperature=0.0,
                 input_extra_features="v2_threats",
             ),
-            **PLAY_SEARCH_DEFAULTS,
+            **{**PLAY_SEARCH_DEFAULTS, **(cfg_over or {})},
         ),
         chunk_sims=256,
         n_walkers=threads,
         vloss_weight=3,
     )
-    return Engine(worker=worker, options=EngineOptions(threads=threads))
+    options = EngineOptions(threads=threads)
+  # Copy worker -> options exactly as `_build_engine` does. Without it the
+  # harness diverges from production in a way that MAKES ITS OWN FINDINGS:
+  # EngineOptions defaults to the PLAY_PUCT values (c_puct 1.75, fpu 0.33,
+  # cpuct_factor 3.89) while GumbelConfig's own defaults are 2.5 / 1.2 / 0.0,
+  # so `_sync_cpuct_to_worker`'s three-field mirror would silently move c_puct
+  # as a side effect of setting FpuReduction — an artifact of the rig, not of
+  # the engine, which `__main__` cannot produce.
+    for opt in SEARCH_OPTIONS:
+        options.set_search_value(opt.field, worker.realized_search_values()[opt.field])
+    return Engine(worker=worker, options=options)
 
 
 def _setoption(engine: Engine, line: str) -> None:
@@ -132,8 +148,21 @@ def _signature(engine: Engine) -> tuple[int, int, tuple[int, ...]]:
     change which leaves get expanded deeper in the tree while leaving the root
     counts identical at 2048 sims. Judged on root visits alone all three would
     have read INERT — a wrong verdict produced by the instrument, not the code.
-    Node count sees them (8045 -> 8018 / 8042 / 8068) and the null control
-    still does not move it.
+    Node count sees them, and the null control still does not move it.
+
+    No node-count literals here on purpose: an earlier revision quoted four,
+    and two reviewers on two boxes could reproduce none of them. Anything that
+    changes the evaluator, the plane count or the C tree's growth policy moves
+    every one, so a number frozen in a docstring rots into a false claim about
+    the instrument. Re-derive instead, in one command:
+
+        PYTHONPATH=. python3 -c "import tests.test_uci_search_options as T; \\
+          print(T._run()[1], [T._run((f'setoption name QVisitExp value {v}',))[1] \\
+                              for v in (0, 0.5, 2)])"
+
+    The property that must hold — node count moves while the root visit vector
+    does not — is enforced by the `_SETOPTION_EFFECT_CELLS` table below and by
+    `test_gumbel_shape_option_changes_the_search`, not by these numbers.
     """
     engine.dispatch(parse_command(f"position fen {FEN}"))
     engine.dispatch(parse_command(f"go nodes {NODES}"))
@@ -634,12 +663,206 @@ def test_topk_is_live_on_both_gumbel_paths_and_dead_on_the_puct_ones() -> None:
 
 
 def test_the_puct_family_is_live_exactly_where_a_puct_descent_runs() -> None:
+    """The PREDICATE half of the [LIVE] claim, and only that half.
+
+    This asks `inert_reason` what it thinks and never asks the search, so on
+    its own it is exactly the kind of self-certifying assertion this file
+    exists to distrust: it passed while a `setoption` provably could not
+    deliver any of these four on `walker` or `pucv`. The behavioural half is
+    `test_the_puct_family_reaches_the_pucv_descent_through_a_setoption` and
+    `test_a_puct_setoption_rebuilds_the_walker_pool_the_threads_read`.
+    """
     values = {o.field: o.default for o in SEARCH_OPTIONS}
     for name in ("cpuct", "cpuctfactor", "cpuctbase", "fpureduction"):
         opt = OPTIONS_BY_NAME[name]
         assert inert_reason(opt, "gumbel", values) is not None
         for path in ("walker", "pucv", "pucv_pool", "rpg"):
             assert inert_reason(opt, path, values) is None
+
+
+# --- a [LIVE] claim must be true of a setoption, not only of the CLI ---------
+#
+# `searchconfig` certifies CPuct / CPuctFactor / CPuctBase / FpuReduction as
+# [LIVE] on `walker` (the SHIPPED default -- `--walkers default=2`) and on
+# `pucv`. Both of those descents read the family off a config they snapshot at
+# CONSTRUCTION, so until `rebuild_puct_helpers` existed the certification was
+# false in the direction this whole surface exists to prevent: the engine
+# printed "FpuReduction set to 9.0" and `FpuReduction = 9.0 [LIVE]` while the
+# live `PucvChunker._fpu_red` was still 1.2 and the search was byte-identical.
+#
+# Worse than dead: the dropped value LANDED LATER, on the next unrelated
+# command that rebuilt (`VLossWeight`), so the tree moved 40% on a command that
+# had nothing to do with it.
+
+
+class _DetAsyncEval(_DetEval):
+    """`_DetEval` plus the 2-slot inplace-async API `PucvChunker` requires.
+
+    The pucv path is single-threaded (CPU/GPU overlap, not parallelism), so
+    unlike the walker pool it IS reproducible -- which is what makes a real
+    before/after search comparison possible on a PUCT descent at all.
+    `test_the_pucv_harness_is_deterministic` is the precondition.
+    """
+
+    def __init__(self, planes: int, max_batch: int = 512) -> None:
+        super().__init__(planes)
+        self.n_slots = 2
+        self._bufs = [
+            np.zeros((max_batch, planes, 8, 8), dtype=np.float32) for _ in range(2)
+        ]
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        return self._bufs[slot][:bsz]
+
+    def evaluate_inplace_async(self, bsz: int, *, slot: int = 0):
+        pol, wdl = self.evaluate_encoded(self._bufs[slot][:bsz])
+        return pol, wdl, None
+
+
+def _make_pucv_engine(cfg_over: dict[str, float] | None = None) -> Engine:
+    """Engine whose realized search path is `pucv`, asserted not assumed."""
+    planes = input_plane_count("v2_threats")
+    engine = _make_engine(
+        threads=1, evaluator=_DetAsyncEval(planes), cfg_over=cfg_over,
+    )
+    _setoption(engine, "setoption name VLGather value 32")
+    _setoption(engine, "setoption name UseVL value true")
+    assert engine._worker.realized_search_path() == "pucv", (
+        f"harness did not reach the pucv path: "
+        f"{engine._worker.realized_search_path()}"
+    )
+    return engine
+
+
+def _run_pucv(
+    lines: tuple[str, ...] = (), cfg_over: dict[str, float] | None = None,
+) -> tuple[int, int, tuple[int, ...]]:
+    engine = _make_pucv_engine(cfg_over)
+    try:
+        for line in lines:
+            _setoption(engine, line)
+        return _signature(engine)
+    finally:
+        engine._worker.close()
+
+
+def test_the_pucv_harness_is_deterministic() -> None:
+    assert _run_pucv() == _run_pucv()
+
+
+@pytest.mark.parametrize(
+    ("field", "name", "value"),
+    [
+        ("fpu_reduction", "FpuReduction", "9.0"),
+        ("fpu_reduction", "FpuReduction", "-9.0"),
+        ("c_puct", "CPuct", "99.0"),
+        ("c_puct", "CPuct", "0.0001"),
+    ],
+)
+def test_the_puct_family_reaches_the_pucv_descent_through_a_setoption(
+    field: str, name: str, value: str,
+) -> None:
+    """A `setoption` must produce the SAME search the CLI value produces.
+
+    Three arms, and the order matters — resolution before threshold:
+
+    1. NULL/base: the pucv search at the shipped value.
+    2. POSITIVE CONTROL: the same value delivered at CONSTRUCTION. If this does
+       not move the signature the ruler is blind to the knob and arm 3 proves
+       nothing, so it is asserted rather than assumed.
+    3. THE CLAIM: the value delivered through `parse_command` -> `dispatch` ->
+       `setoption`, with no other command in between, must reproduce arm 2
+       exactly. `!=` base is not enough — landing on a THIRD signature would
+       mean the option reached the descent as some other number.
+    """
+    base = _run_pucv()
+    built = _run_pucv(cfg_over={field: float(value)})
+    assert built != base, (
+        f"instrument is blind to {field}={value}: the construction-time value "
+        f"gives the same signature as the default, so this test could not "
+        f"distinguish a working setoption from a dropped one"
+    )
+    via_option = _run_pucv((f"setoption name {name} value {value}",))
+    assert via_option == built, (
+        f"{name} {value} is certified [LIVE] on pucv but the setoption did not "
+        f"produce the search the same value produces at construction: "
+        f"setoption={via_option} construction={built} base={base}"
+    )
+
+
+def test_a_puct_setoption_lands_now_and_not_on_a_later_unrelated_command() -> None:
+    """The latent half: a dropped value that arrives later is worse than dead.
+
+    Before the fix, `FpuReduction 9.0` left the chunker at 1.2 and an unrelated
+    `VLossWeight 4` three commands later silently installed it — the operator
+    sees the knob do nothing, then sees the engine change its mind. So assert
+    the live object the descent reads carries the value IMMEDIATELY, with no
+    intervening command, and that a later unrelated rebuild changes nothing
+    about it.
+    """
+    engine = _make_pucv_engine()
+    try:
+        _setoption(engine, "setoption name FpuReduction value 9.0")
+        chunker = engine._worker._pucv
+        assert chunker is not None
+        assert chunker._fpu_red == pytest.approx(9.0), (
+            f"PucvChunker still descends on fpu_reduction={chunker._fpu_red} "
+            f"after the engine reported FpuReduction set to 9.0"
+        )
+        _setoption(engine, "setoption name VLossWeight value 4")
+        later = engine._worker._pucv
+        assert later is not None
+        assert later._fpu_red == pytest.approx(9.0)
+    finally:
+        engine._worker.close()
+
+
+def test_a_puct_setoption_rebuilds_the_walker_pool_the_threads_read() -> None:
+    """Same claim on `walker`, the SHIPPED default (`--walkers default=2`).
+
+    Structural rather than a signature diff, and deliberately so: the walker
+    pool races N threads onto one tree, so its node count and visit vector are
+    not reproducible and a diff there would be uninterpretable (same reason as
+    `test_gumbel_option_is_reported_inert_on_the_walker_pool`). What IS exact
+    is the object the descent reads — `walker_pool.py` pulls `c_puct`,
+    `fpu_reduction`, `cpuct_factor` and `cpuct_base` off `self._cfg` inside the
+    descent — so assert every one of the four certified-[LIVE] fields on that
+    config, and that it is a genuinely rebuilt object rather than the stale one.
+    """
+    engine = _make_engine(threads=2)
+    try:
+        pool = engine._worker._walker_pool
+        assert pool is not None
+        assert engine._worker.realized_search_path() == "walker"
+        before = pool._cfg
+        for line in (
+            "setoption name FpuReduction value -9.0",
+            "setoption name CPuct value 99.0",
+            "setoption name CPuctFactor value 7.0",
+            "setoption name CPuctBase value 12345.0",
+        ):
+            _setoption(engine, line)
+        after = engine._worker._walker_pool
+        assert after is not None
+        cfg = after._cfg
+        assert cfg is not before, (
+            "the walker pool was never rebuilt, so its threads still descend "
+            "on the configuration they were constructed with"
+        )
+        assert (
+            cfg.c_puct, cfg.fpu_reduction, cfg.cpuct_factor, cfg.cpuct_base,
+        ) == pytest.approx((99.0, -9.0, 7.0, 12345.0)), (
+            f"walker descent config is {cfg} after four setoptions the engine "
+            f"reported as reaching the live search"
+        )
+  # Stated as a gap, not papered over: `rpg` needs >= 2 devices with evaluator
+  # factories, so neither this file nor any reviewer could drive it
+  # behaviourally. Its rebuild path (`_reinstall_rpg_if_active`) and
+  # `pucv_pool`'s (`_install_multi_gpu_pucv_pool`) are covered only by the
+  # structural `test_realized_search_path_mirrors_the_dispatch_branch_order`
+  # and by inspection.
+    finally:
+        engine._worker.close()
 
 
 # --- a NO EFFECT claim must be true of the TRANSITION, not of an arm --------
@@ -805,6 +1028,45 @@ def test_searchconfig_counts_branch_pinned_apart_from_inert(
     # registry default. The STATUS is what this test is about.
     assert re.search(r"searchconfig CPuct = \S+ \[INERT\]", out)
     assert "1 branch-pinned" in out
+
+
+def test_the_documented_searchconfig_summary_is_the_one_the_engine_prints(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`docs/operations.md`'s example must be output, not a recollection of it.
+
+    It shipped saying `15 live, 4 inert` — the pre-BRANCH format, with a count
+    that no build produces. A documented readback an operator uses to prove
+    their config is worth nothing if the doc and the engine disagree about how
+    many parameters are even reaching the search, so pin the doc line to the
+    live one rather than re-proofreading it.
+    """
+    engine = _make_engine()
+    try:
+        capsys.readouterr()
+        engine.dispatch(parse_command("searchconfig"))
+        out = capsys.readouterr().out
+    finally:
+        engine._worker.close()
+
+    live = re.search(r"searchconfig (\d+ live, \d+ branch-pinned, \d+ inert) "
+                     r"on path=gumbel", out)
+    assert live is not None, out
+
+    doc = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "docs" / "operations.md"
+    ).read_text(encoding="utf-8")
+    documented = re.findall(
+        r"searchconfig (\d+ live, \d+ branch-pinned, \d+ inert) on path=gumbel",
+        doc,
+    )
+    assert documented, "docs/operations.md no longer shows a searchconfig summary"
+    for shown in documented:
+        assert shown == live.group(1), (
+            f"docs/operations.md documents 'searchconfig {shown} on "
+            f"path=gumbel'; the engine prints '{live.group(1)}'"
+        )
 
 
 # --- audit_targets --gumbel passthrough --------------------------------------

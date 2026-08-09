@@ -1180,13 +1180,20 @@ class Engine:
         tree = getattr(self._worker, "_tree", None)
         if tree is not None:
             tree.set_cpuct_scaling(cfg.cpuct_factor, cfg.cpuct_base)
-        # Rebuild multi-GPU / VL helpers that cache c_puct at install time.
+        # Rebuild every helper that CACHES the family at construction time.
+        # One branch per realized path, in `realized_search_path()` order, so a
+        # path cannot be reported [LIVE] with nothing here to make it so. The
+        # walker pool and the single-thread PucvChunker used to fall off the
+        # end of this chain -- `set_use_pucv(True)` early-returns when pucv is
+        # already on, and there was no walker branch at all -- so on the
+        # SHIPPED default (Threads=2 -> walker) four options `searchconfig`
+        # certifies as [LIVE] could not be moved by a `setoption`.
         if self._options.search_parallel == "gumbel":
             self._reinstall_rpg_if_active(reason="CPuct")
         elif self._options.use_multi_gpu_pucv:
             self._install_multi_gpu_pucv_pool()
-        elif bool(getattr(self._worker, "_use_pucv", False)):
-            self._worker.set_use_pucv(True, gather=self._options.vl_gather)
+        else:
+            self._worker.rebuild_puct_helpers()
 
     def _reinstall_configured_search_path(
         self, *, after_leaving_gumbel: bool = False,

@@ -276,7 +276,8 @@ info string searchconfig path=gumbel (classic single-thread Gumbel (Threads=1, U
 info string searchconfig PolicyTemperature = 1.0 [LIVE]
 info string searchconfig CScale = 0.025 [LIVE]
 info string searchconfig CPuct = 1.75 [INERT] — CPuct does not reach the gumbel path (...)
-info string searchconfig 15 live, 4 inert on path=gumbel
+info string searchconfig QVisitExpRoot = -1.0 [BRANCH] — every value < 0 is the same search: ...
+info string searchconfig 14 live, 1 branch-pinned, 4 inert on path=gumbel
 ```
 
 The path is read off the **live worker**, not off the options: `UseVL true`
@@ -336,10 +337,42 @@ address `GumbelConfig` fields directly; the UCI side follows lc0's CamelCase.
 `searchconfig` reports this one `[BRANCH]`, counted separately from `[INERT]`.
 The distinction is load-bearing and was got wrong once already.
 
+- `[LIVE]` means **a `setoption` you send right now changes the next search** —
+  not merely that the path *would* read the field if it were rebuilt. See
+  "A `[LIVE]` row is a promise about `setoption`" below; it was false for four
+  rows on the default path, and it is a test now.
 - `[INERT]` means **the path cannot read this option at all** — `CPuct` under
   classic Gumbel. No value of it matters, and no companion knob rescues it.
 - `[BRANCH]` means **the option does reach the search and does change it**, but
   the current value sits inside a branch whose members are all equivalent.
+
+#### A `[LIVE]` row is a promise about `setoption`, not about the CLI
+
+Four of the paths run a PUCT descent that reads `CPuct` / `CPuctFactor` /
+`CPuctBase` / `FpuReduction` off a config **snapshotted when the helper was
+built** — `WalkerPoolConfig` at pool construction, `PucvChunker._c_puct` /
+`._fpu_red` at chunker construction. Assigning the shared `GumbelConfig` field
+therefore does *not* reach those two descents, so `Engine._sync_cpuct_to_worker`
+rebuilds whichever helper is installed: `_reinstall_rpg_if_active` for `rpg`,
+`_install_multi_gpu_pucv_pool` for `pucv_pool`, and
+`SearchWorker.rebuild_puct_helpers` for `walker` and `pucv`.
+
+That last branch did not exist until 2026-08-09, and on the **shipped default**
+(`--walkers default=2` → `walker`) the engine printed `FpuReduction set to 9.0`
+and `searchconfig FpuReduction = 9.0 [LIVE]` while the pool kept descending on
+`1.2`. Worse than dead: the dropped value landed **later**, whenever the next
+unrelated option happened to rebuild — on the `pucv` path a subsequent
+`VLossWeight 4` moved the tree `7024 → 4269` because an `FpuReduction` from
+three commands earlier finally took effect, with no readback showing the
+difference.
+
+The guard is behavioural, not a predicate check:
+`test_the_puct_family_reaches_the_pucv_descent_through_a_setoption` requires a
+`setoption` to produce the **same** search the value produces at construction
+(with the construction-time delivery asserted first, so a blind ruler cannot
+pass it), and deleting either rebuild branch turns it red. `rpg` cannot be
+driven behaviourally without ≥2 devices and is a stated gap, covered by
+inspection only.
 
 `QVisitExpRoot` is the second kind, and its arms are exact — read off the C, no
 threshold, nothing fitted:
