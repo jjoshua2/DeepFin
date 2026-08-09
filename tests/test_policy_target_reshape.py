@@ -293,26 +293,72 @@ def test_the_max_scaling_does_not_change_the_result_where_it_was_already_safe() 
         ), f"temp={temp}: the max-scaling changed the result"
 
 
-def test_the_trainer_refuses_a_bad_temperature_at_CONSTRUCTION() -> None:
-    """⚑ MUTATION SURVIVOR (review N3): deleting the construction-time check in
-    `Trainer.__init__` left all 285 tests green.
+class _TinyPolicyModel(torch.nn.Module):
+    """Smallest thing `Trainer.__init__` accepts -- the constructor only needs
+    parameters to build optimizer groups from, and the validation under test
+    runs before anything touches the model."""
 
-    Its comment promises the trial fails at STARTUP rather than inside the
-    first training step. Nothing observed that, so the promise was unenforced.
-    """
-    import inspect
+    def __init__(self) -> None:
+        super().__init__()
+        self.head = torch.nn.Linear(4, 3)
 
-    from chess_anti_engine.train import trainer as trainer_mod
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        del x
+        return {
+            "policy": self.head.weight[:1],
+            "wdl": torch.zeros((1, 3), dtype=torch.float32, device=self.head.weight.device),
+        }
 
-    src = inspect.getsource(trainer_mod.Trainer.__init__)
-    assert "retemper_main_policy_target(" in src, (
-        "Trainer.__init__ no longer validates policy_target_temp at construction; "
-        "a bad yaml value now first raises inside the training step, after the "
-        "trial has started and taken the GPU"
+
+def _trainer(tmp_path, **kwargs):  # noqa: ANN001, ANN003, ANN202  (test-local rig)
+    from chess_anti_engine.train.trainer import Trainer
+
+    return Trainer(
+        _TinyPolicyModel(), device="cpu", lr=1e-3, optimizer="adamw",
+        use_amp=False, log_dir=tmp_path, tb_log_interval=1000,
+        prefetch_batches=False, **kwargs,
     )
-  # And the validation it delegates to must actually reject something --
-  # otherwise the call site is present but inert. 0.0 divides by zero and a
-  # negative exponent inverts the target's ordering while still summing to 1.
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, 0.001, float("inf"), float("nan")])
+def test_the_trainer_refuses_a_bad_temperature_at_CONSTRUCTION(tmp_path, bad: float) -> None:  # noqa: ANN001
+    """⚑ MUTATION SURVIVOR (review N3, and again at the #375 merge): the
+    previous version of this test only `inspect.getsource`-grepped
+    `Trainer.__init__` for the string ``retemper_main_policy_target(``.
+
+    A grep for a call is not an observation of its EFFECT. Mutating the call's
+    argument from ``temp=self.policy_target_temp`` to ``temp=1.0`` -- which
+    validates a constant and therefore accepts every yaml value there is --
+    left the whole file green (28 passed), because the string was still
+    present and the separate helper-rejects-bad-values loop below still ran on
+    a directly-supplied bad temp. The knob was accepted and silently ignored,
+    which is this codebase's signature defect.
+
+    So construct the real `Trainer` and require the bad value to be REFUSED
+    THERE. Its comment promises the trial fails at STARTUP rather than inside
+    the first training step, once the GPU is taken; that promise is now
+    enforced by the only thing that can enforce it.
+    """
+    with pytest.raises(ValueError, match="policy_target_temp must be finite"):
+        _trainer(tmp_path, policy_target_temp=bad)
+
+
+def test_the_trainer_accepts_a_good_temperature_and_it_reaches_compute_loss(tmp_path) -> None:  # noqa: ANN001
+    """The other half of the mutation: refusing everything would also pass the
+    test above. A good value must survive construction AND arrive at the
+    training-step `compute_loss` call -- while the eval ruler stays pinned."""
+    t = _trainer(tmp_path, policy_target_temp=1.30)
+
+    assert t.policy_target_temp == pytest.approx(1.30)
+    assert t._loss_kwargs["policy_target_temp"] == pytest.approx(1.30)
+    assert t._eval_loss_kwargs["policy_target_temp"] == 1.0
+
+
+def test_the_validation_helper_rejects_rather_than_being_an_inert_call_site(
+) -> None:
+    """The delegated check itself. 0.0 divides by zero, a negative exponent
+    inverts the target's ordering while still summing to 1, and non-finite
+    values propagate silently."""
     for bad in (0.0, -1.0, float("inf"), float("nan")):
         with pytest.raises(ValueError, match="policy_target_temp must be finite"):
             retemper_main_policy_target(torch.ones(1, 2) / 2, temp=bad)

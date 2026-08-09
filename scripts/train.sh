@@ -113,6 +113,17 @@ start() {
     # anti-flap cooldown after every auto-recovery and the "re-stall within
     # cooldown -> NEEDS HUMAN" escalation could never trigger.
     rm -f /tmp/chess_watchdog_state.json
+    # Re-arm the transition-only alerter too. The loop clears these itself on its
+    # first OK poll, so this only matters in the case that actually bites: a start
+    # that FAILS before any OK poll happens. There the stored key still says
+    # CRASHED, the immediate re-crash reads as "same state as last time I
+    # alerted", and the alert is swallowed. A de-duplicating alerter that is not
+    # reset on start goes silent exactly once — on the first failure after a
+    # restart, i.e. the one worth hearing about.
+    # These paths are the defaults in scripts/watchdog_loop.sh
+    # (WATCHDOG_LAST_ALERT_F / WATCHDOG_LAST_ESCALATE_F); the env overrides there
+    # are test seams and are never set in production.
+    rm -f /tmp/chess_watchdog_last_alert /tmp/chess_watchdog_last_escalate
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
     # Inductor compile parallelism — without these, autotune is single-threaded
     # and uses ~6% of available CPU. COMPILE_THREADS parallelizes codegen
