@@ -36976,3 +36976,51 @@ may still separate the two, but that has not been demonstrated on live rows eith
 TO USE.* Amendment 3 pinned `phi=1e-2` on a discrimination ratio while the only control that
 had ever been run was at `phi=1e-3` — a different cell, and as it turns out one of the few
 where the metric works at all.
+
+### AMENDMENT 5 (2026-08-09) — CONFOUNDS: the confirmed `policy_temp` side-channel, and the 1.9x figure is dead
+
+**⚑⚑ `gumbel_policy_temp` CHANGES WHICH ROWS EXIST, not merely their targets.** Chain confirmed
+on the production path by the PR #379 author at my request (I recorded an inferred version of
+this earlier; this is the traced one, and it corrects it):
+
+1. `network_turn.py:508` hands `c_process_ply` the **UNTEMPERED** `pol_logits_full` —
+   `apply_policy_temp` returns `pol / pt`, a NEW array, so the caller's copy is never mutated —
+   alongside the **TEMPERED** `probs_arr`.
+2. `_mcts_tree.c` derives `kl` from that pair, then
+   `difficulty = q_surprise*q_weight + kl*pol_scale`,
+   `keep_prob = clamp(df_min, 1, difficulty*slope)`; writes `priority_out=difficulty` (:4864),
+   `priority_policy_kl_out=kl` (:4865), `keep_out=keep_prob` (:4866).
+3. **Two downstream effects, both moving together:** `keep_prob` → `finalize.py:910` **DROPS**
+   policy rows with probability `1 - keep_prob` (row SURVIVAL); `priority` (which embeds
+   `kl*pol_scale`) → `disk_buffer.py:732` **replay SAMPLING WEIGHT**.
+
+Because the reference prior stays untempered while the search output softens, **`kl` rises
+monotonically in T**, so raising `policy_temp` simultaneously raises the deciding yardstick
+(`priority_policy_kl`), re-admits rows that diff-focus was dropping, and re-weights replay
+sampling. This compounds Amendment 4's B2 — there the selection moved because `c_scale` raises
+KL; here it moves again because `policy_temp` does.
+
+**⚑ CORRECTION to what I recorded from the review:** `sample_weight` is **NOT** diff-focus
+derived. It is the **soft-resign weight** (`_compute_resign_weights`,
+`network_turn.py:451-464`, driven by consecutive low-winrate plies). It gets conflated with
+`keep_prob` because both gate the same `if` block at `finalize.py:908-911`.
+**CONFOUNDS reads: `keep_prob` (row survival) + `priority` (sampling weight). NOT
+`sample_weight`.**
+
+**⚑⚑ THE "~1.9x bf16 COST" IS FALSE — MEASURED.** `policy_temp != 1.0` disables the
+compact-legal bf16 leaf transport, and the code comment claimed ~1.9x end-to-end. The broker
+measurement is **0.87–1.01x, NON-MONOTONE, inside ±13% noise** — i.e. no detectable cost. The
+1.9x came from a direct-evaluator path that has no bf16 transport to lose in the first place.
+The figure has been removed from the `gumbel_c.py` warning and replaced with provenance.
+⇒ **The games/h objection to `T=1.5` is withdrawn**, and the proposed "temper at the source to
+keep bf16 enabled" optimisation is **NOT needed** — it would buy a cost that does not exist.
+This is [[check_the_resource_is_binding]]: the resource was never binding.
+
+**⚑ ARENA YARDSTICK DISCONTINUITY (new, from PR #379 fix 1).** `resolve_search_shape("training")`
+now carries `policy_temp`, so arenas follow `gumbel_policy_temp` automatically. This is correct
+— without it, `--search-shape training` would have measured **T=1.0** while the live run ran
+1.5, silently. But it means **the first arena run after the yaml flip measures a different
+search shape than every arena before it.** No existing arena result is re-based (production's
+1.0 is exactly `GumbelConfig().policy_temp`, so today it is a bit-identical no-op), but any
+pre/post arena comparison across the flip is comparing two shapes. Note it beside any arena
+number quoted in this readout window.
