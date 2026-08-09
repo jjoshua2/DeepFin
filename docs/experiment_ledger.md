@@ -35947,3 +35947,80 @@ ordering exactly — the property we want, since ranking is not the thing shown 
 was actually running during the 11:39-16:11 outage. If it was up and did not fire, that
 is a GUARD THAT CANNOT FIRE — this codebase's signature defect, and more important than
 the outage itself.
+
+---
+
+## 2026-08-08 PRE-REG (offline screen, NOT launched): exhaustive round-1 root expansion
+
+**Status: PRE-REGISTERED, nothing implemented, nothing live.** Threshold committed BEFORE
+the screen is written, per the audit-first rule in `docs/eval_protocol.md`.
+
+**Trigger.** Not the one we started from. The proposal arrived as "give every legal move
+an eval so it stops getting zero target mass". That rationale is REFUTED and is recorded
+here so it is not re-argued: stored `policy_target` is **float16**, its smallest nonzero
+value is exactly 5.960e-08 (fp16 smallest subnormal), 7.8% of nonzeros sit clamped on
+that floor, and 64% of rows have >=1 legal move underflowed to exactly 0 (mean 4.9
+moves/row, 17.5% of legal). But the mass involved is ~3e-7 per row. In CE a target entry
+of 6e-8 contributes ~6e-7 against the top move's ~0.65. Zeroing it changes no gradient.
+**The fp16 underflow is real and immaterial. Not worth a PR.**
+
+**The real mechanism (this is the hypothesis).** `gumbel_c.py:1333-1341`: every legal move
+that is not a visited root candidate gets `completed_q = root_q_i` -- the SAME constant
+for all of them. Their target logits are `log(prior) + f(root_q)` with an IDENTICAL
+second term, so their ranking among themselves is **purely the net prior, with zero
+search correction**. Measured against the live window (9,924 stored rows sampled across
+all 814 shards):
+
+| quantity | value |
+|---|---|
+| mean legal moves | 26.66 |
+| positions with `n_legal > gumbel_topk(32)` | **38.7%** |
+| among those, mean tail ranked by prior alone | **7.7 moves** |
+| all legal moves receiving no search opinion | **11.2%** |
+| extra root evals to give every legal move one | **+1.17%** |
+
+This is the same bucket where the 08-08 audit read found accuracy DEGRADING (-2.1pp,
+n=342, no CI). It is also where the prior's overconfidence is unopposed: the 08-08
+decomposition put 163% of the target's overconfidence growth in the prior with search
+OFFSETTING it (-63%), and for this tail the offsetting term is structurally absent.
+
+**Yardstick (ONE, exact).** Regenerate the production training target on the FROZEN
+deep-SF audit set with and without exhaustive round-1 expansion, paired per position:
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint data/ruler_reads_20260808/trainer.pt \
+      --audit-set <frozen set> --batch-size 64 \
+      --dump scratchpad/rootexp_{off,on}.jsonl
+
+Judge on **TOP-1 regret (sharpness-invariant)**, reporting E[regret] alongside but NOT
+deciding on it -- E[regret] rewards sharpness and has already produced one wrong verdict
+in this campaign (08-08 AMENDMENT).
+
+**Pre-committed thresholds.**
+- **SUCCESS:** on the `n_legal > 32` subset, top-1 regret improves by **>= 1.0 cp** with a
+  paired 95% CI excluding 0.
+- **KILL:** no significant improvement on that subset, OR any significant regression
+  overall.
+- **NEGATIVE CONTROL, and this one is structural:** on `n_legal <= 32` every legal move is
+  ALREADY a root candidate and every candidate gets >=1 visit under sequential halving, so
+  the change is a literal no-op there. The two arms must come back **BIT-IDENTICAL** on
+  that subset. If they do not, the implementation altered something it was not supposed
+  to and NO number from the screen is trustworthy. Ships as a test.
+
+**Only if the screen passes** does anything else happen: prereg for the live arm, C
+implementation, independent review (REVIEWER != AUTHOR), `build_production_extensions.py`
+rebuild, restart-gated deploy, one readout window to itself.
+
+**Confounds:** none live -- this is offline against a frozen ruler. The screen uses a
+Python-path implementation if that is cheaper to write; that is acceptable HERE because
+the measurement is target QUALITY vs a frozen ruler, not throughput (where the Python
+path is known to be under-credited). Before deploy, diff the measured file against
+production's.
+
+**Context this sits in:** the loop is at a fixed point. Frozen probe regret is flat over
+the last 100 iters (era +0.0002/100it, in-window -0.0003/100it) against an exponential
+asymptote fitted at 0.0703 (95% CI [0.0701,0.0705]) -- 95% of the way spent, and 5% is
+NOT reachable by waiting. The teacher beats the student by only +5.46 cp [+1.46,+9.46] on
+top-1 with 88% ties. Window is REFUTED as the cause: full since iter 149, composition
+stationary across all 10 age deciles (G11 ok), out-of-window minus in-window probe gap
+SHRANK 0.00274 -> 0.00077. The lever has to be the target.
