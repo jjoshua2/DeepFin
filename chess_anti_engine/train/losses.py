@@ -312,11 +312,28 @@ _POLICY_TARGET_TEMP_MIN = 0.5
 def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> torch.Tensor:
     """Flatten the MAIN policy target by a temperature. IDENTITY at ``temp == 1.0``.
 
-    The knob exists because the target was measured (2026-08-08) to carry far more
-    CONFIDENCE than INFORMATION: 256 sims of search improve ranking concordance over
-    the net's own prior by only +0.0077 [+0.0065, +0.0088] while dropping entropy
-    1.185 -> 1.104 nats. Every term in the target is a function of the net, so CE
-    against it converges to a fixed point — the plateau.
+    ⚑ THE MECHANISM IS UNPROVEN AND THIS IS PLUMBING ONLY. An earlier revision of this
+    docstring motivated the knob with the fixed point: the target was measured
+    (2026-08-08) to carry far more CONFIDENCE than INFORMATION — 256 sims of search
+    improve ranking concordance over the net's own prior by only +0.0077
+    [+0.0065, +0.0088] while dropping entropy 1.185 -> 1.104 nats — and every term in
+    the target is a function of the net, so CE against it converges to a fixed point.
+    **That argument does not survive, and it does not survive because of this
+    transform.** ``p ** (1/T)`` is a deterministic monotone function of the same
+    target, so the retempered target is ALSO entirely a function of the net; it adds
+    exactly zero information and leaves ``KL(target‖prior)`` — the standing finding's
+    training signal — unchanged. A knob cannot break a self-reference by reshaping one
+    side of it. See the ledger entry and
+    memory `kl_target_prior_is_the_training_signal`.
+
+    What is left is a DIFFERENT and narrower mechanism, which is what this actually is:
+    label smoothing. It does not add information; it reduces the overconfidence
+    pressure on the fitted solution, which is a claim about optimisation and
+    calibration rather than about the information content of the target. That claim is
+    plausible and UNTESTED here. Nothing in this PR measures it, so nothing downstream
+    should cite this docstring as evidence for it — the entry in
+    docs/experiment_ledger.md carries the hypothesis, the single deciding yardstick and
+    the kill threshold, and no arm may run at ``temp != 1.0`` without it.
 
     ``temp`` > 1 flattens (``p ** (1/temp)``, renormalised); < 1 sharpens. It
     deliberately does NOT resurrect zeros: a zero stays zero under a power, and the
@@ -324,12 +341,27 @@ def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> tor
     not the goal. The goal is to stop asserting near-certainty AMONG THE MOVES THAT
     CARRY MASS.
 
-    ⚑ THIS RESHAPES WHAT THE MODEL IS TRAINED ON, so it also moves the FLOOR of any CE
-    computed against it — a retempered target has higher entropy, and CE's minimum IS
-    that entropy, so `policy_ce` rises by ~0.62 nats at temp 1.3 for an unchanged model.
-    `Trainer._eval_loss_kwargs` therefore pins temp to 1.0 for holdout/EMA eval, so the
-    eval CE stays a fixed ruler across arms. Anything else scoring this target must do
-    the same or say plainly that its number is arm-relative.
+    ⚑ THIS RESHAPES WHAT THE MODEL IS TRAINED ON, so it moves the FLOOR of any CE
+    computed against it: ``CE = H(target) + KL(target‖model)``, and flattening raises
+    ``H``. The DIRECTION of the total is NOT fixed — flattening can lower ``KL`` by
+    more than it raises ``H``, and on a randomly-initialised fixture `policy_ce` was
+    measured to FALL (4.17504 -> 4.17148 at temp 1.3, review #2). Do not quote a
+    magnitude without naming the model and fixture it was measured on. The argument for
+    the eval pin needs only that the ruler MOVES, which it does in either direction:
+    `Trainer._eval_loss_kwargs` pins temp to 1.0 for holdout/EMA eval so the eval CE
+    stays a fixed ruler across arms. Anything else scoring this target must do the same
+    or say plainly that its number is arm-relative.
+
+    ⚑ SECOND EFFECT, and it is not on the ``policy_own`` head. ``compute_loss``
+    reassigns ``pol_target`` to the retempered target BEFORE the ``soft_policy_min_tv``
+    gate is computed from it, so this temperature also decides which rows the
+    ``policy_soft`` head trains on: a flatter hard target sits closer to the soft one,
+    the TV falls below the threshold, and the row is dropped (measured kept_frac
+    1.000 -> 0.000 across temp 1.0 -> 1.3 on a fixture straddling the threshold; see
+    tests/test_policy_target_reshape.py). Latent while ``soft_policy_min_tv`` is 0.0 in
+    the production config, and note the asymmetry if both are ever on: the eval pin
+    fixes the temperature but NOT ``soft_policy_min_tv``, so training and eval would
+    mask different row sets for that head.
 
     ⚑ NOT expressible as a loss weight. Soft CE is LINEAR in the target, so mixing a
     second distribution into the target is identical to adding a weighted CE term

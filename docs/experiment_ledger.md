@@ -262,6 +262,88 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-09, PR #373) — `policy_target_temp`: a temperature on the MAIN policy target
+
+**Status: code merged default-off; NO arm has run. This entry exists so one can.**
+The PR is bitwise-identical to `main` on the training path at the default
+(`temp == 1.0`, 52/52 scalars equal, verified in two processes by an independent
+reviewer), so merging it is not a launch and rule 1 does not gate the merge. It
+gates the first arm at `temp != 1.0`.
+
+### ⚑ THE MECHANISM I AM *NOT* CLAIMING
+
+The knob was originally motivated by the fixed point — the target is a function
+of the net, so CE against it self-distils and plateaus (asymptote 0.0703). **That
+motivation is withdrawn, and this entry must not be read as testing it.**
+`p ** (1/T)` is a deterministic monotone function of the same target, so the
+retempered target is *also* entirely a function of the net. It adds zero
+information and leaves `KL(target‖prior)` — the standing finding's actual
+training signal — exactly unchanged. Softening the STORED target at training
+time cannot break the self-reference; that is memory
+`kl_target_prior_is_the_training_signal` and it has not been refuted.
+
+### THE HYPOTHESIS I *AM* PRE-REGISTERING
+
+Label smoothing. Not "more information in the target", but "less overconfidence
+pressure on the fitted solution" — a claim about the optimum the loss selects,
+not about the target's information content. Our targets are ~2× sharper than
+lc0's (entropy **0.924**, 2.52 effective moves, vs lc0 1.39–1.89 / 4.0–6.6), and
+the 08-08 readout found the policy "gain" was **confidence inflation**: both arms
+sharpened, ACCURACY FLAT, ECE worse. If over-sharpness is costing anything, a
+flatter target should show up as better *ranking* at unchanged or better
+calibration.
+
+**H1:** at `policy_target_temp` 1.5, argmax agreement with deep SF on the frozen
+audit set improves, i.e. mean **top1 regret falls by ≥ 3.0 cp** vs the paired
+`temp = 1.0` control.
+
+### THE ONE DECIDING YARDSTICK (exact command)
+
+```
+PYTHONPATH=. python3 scripts/audit_targets.py \
+  --checkpoint data/salvage/<label>/checkpoint --config configs/pbt2_small.yaml \
+  --audit-set data/audit_set_v1.jsonl --sims 256 --device cuda \
+  --gpu-mem-fraction 0.25 --batch-size 64 --seed 0
+```
+Read the **`top1`** column. Run it on the arm checkpoint and on the paired
+control checkpoint from the same iteration.
+
+**Why `top1` and not the obvious two.** ⚑ `policy_ce` is DISQUALIFIED: this knob
+moves the CE floor by construction (`CE = H(target) + KL(target‖model)`), so an
+unchanged model reads a different number — the arm would be scored on a ruler it
+edited. ⚑ `expected` regret (`E[regret]` under the policy) is DISQUALIFIED the
+other way: it rewards sharpness, so it is biased *against* a flattening arm and a
+null would be unreadable. `top1` depends only on WHICH move is argmax, so it is
+invariant to any monotone reshape of the target and is conjugate to neither arm.
+It is also the audit-first rule from `docs/eval_protocol.md`: score against the
+frozen deep-SF set before spending training compute.
+
+### PRE-COMMITTED THRESHOLDS
+
+- **SUCCESS:** paired top1 regret improves by **≥ 3.0 cp** with a 95% CI
+  excluding 0. Then, and only then, an arena leg is justified.
+- **KILL:** top1 regret **worsens by ≥ 2.0 cp**, or the CI spans 0 after the
+  window below. Revert the yaml key and record FAILED the same session.
+- **NULL is a verdict here.** Given the mechanism note above, a null is the
+  *expected* outcome and must be recorded as one — not carried as "deferred".
+
+### WINDOW, CONFOUNDS, GUARDS
+
+- This is a learning-quality change ⇒ **day-plus window, paired CIs** (protocol
+  rule 3). It is NOT readable in 5 iterations.
+- **One data-affecting change per window.** Nothing else touching the policy
+  target may be live. Confounds line to be filled at launch.
+- ⚑ **`soft_policy_min_tv` MUST stay 0.0 for the duration.** The temperature also
+  re-gates the `policy_soft` head (the TV gate is computed from the retempered
+  target; measured kept_frac 1.000 → 0.000), so with both on, the arm is two
+  interventions and the entry is void.
+- Restart-gated (`construction_only`), so the arm starts at a restart boundary
+  and the replay window still holds ~a day of rows made at the old shape. Snapshot
+  a revert point before launching (protocol rule 2).
+- Eval is pinned to `temp = 1.0` in `Trainer._eval_loss_kwargs`, so `test_loss`
+  and the holdout ruler stay comparable across arms. Do not undo that to "see the
+  arm's own CE" — that is the ruler-moves-with-the-arm defect.
+
 ## PRE-REGISTERED (2026-07-31, WRITTEN BEFORE THE RUN) — the VALUE-HEAD SWAP: is the value head causally upstream of the training-target degradation?
 
 **Status at write time: rig built, ZERO numbers seen.** Offline, forward-only,

@@ -2430,15 +2430,18 @@ class Trainer:
     def _eval_loss_kwargs(self) -> dict[str, Any]:
         """``_loss_kwargs`` with the policy-target RESHAPE pinned off.
 
-        ⚑ THE RULER MUST NOT MOVE WITH THE ARM. `policy_target_temp` raises the
-        target's entropy, and the minimum of a cross-entropy IS the target's
-        entropy, so an unchanged model reads ~+0.62 nats of `policy_ce` at temp
-        1.3 purely from the reshape. Sharing `_loss_kwargs` between the training
-        step and the holdout/EMA eval would therefore make every arm-vs-baseline
-        CE comparison a comparison of two different rulers -- the exact defect
-        docs/experiment_ledger.md logs as "a ruler change must invalidate its
-        records". Eval scores the model against the target the shards ACTUALLY
-        carry, identically in every arm.
+        ⚑ THE RULER MUST NOT MOVE WITH THE ARM. `policy_target_temp` reshapes
+        the target `policy_ce` is measured against, and `CE = H(target) +
+        KL(target||model)`, so an UNCHANGED model reads a different `policy_ce`
+        purely from the reshape. The direction is model-dependent -- flattening
+        raises `H` but can lower `KL` by more, and it has been measured falling
+        on a random-logit fixture -- so no magnitude is quoted here; the pin
+        needs only that the number MOVES. Sharing `_loss_kwargs` between the
+        training step and the holdout/EMA eval would therefore make every
+        arm-vs-baseline CE comparison a comparison of two different rulers --
+        the exact defect docs/experiment_ledger.md logs as "a ruler change must
+        invalidate its records". Eval scores the model against the target the
+        shards ACTUALLY carry, identically in every arm.
 
         Only the target-SHAPE knob is pinned. Loss WEIGHTS stay as configured:
         they scale a term without redefining it, so they leave the per-term

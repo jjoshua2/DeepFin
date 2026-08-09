@@ -9,10 +9,15 @@ asserted only that "the numbers changed", and six semantic mutants survived it.
    production change.
 2. **Zeros stay zero.** The moves this target zeroes were measured to lose a
    median 538cp; flattening must move mass WITHIN the support, never onto them.
-3. **The eval ruler does not move with the arm.** CE's floor is the target's
-   entropy, so retempering raises ``policy_ce`` for an unchanged model. If the
-   holdout eval used the reshaped target, every arm-vs-baseline comparison
-   would be two different rulers. ``Trainer._eval_loss_kwargs`` pins it off.
+3. **The eval ruler does not move with the arm.** ``CE = H(target) +
+   KL(target||model)``, and retempering changes both, so an UNCHANGED model
+   reads a different ``policy_ce``. The direction is model-dependent -- it has
+   been measured falling on a random-logit fixture -- so the tests below assert
+   that the ruler MOVES, and quote a magnitude only for the one fixture where
+   the sign is forced (a perfectly-fit model, where KL starts at 0 and can only
+   rise). If the holdout eval used the reshaped target, every arm-vs-baseline
+   comparison would be two different rulers. ``Trainer._eval_loss_kwargs``
+   pins it off.
 """
 from __future__ import annotations
 
@@ -160,12 +165,22 @@ class _Head(torch.nn.Module):
 
 def test_retempering_moves_the_ce_floor_which_is_why_eval_pins_it_off() -> None:
     """THE RULER TEST. Same model, same rows, two temperatures -- ``policy_ce``
-    moves by ~0.6 nats. That is the target's entropy changing, not the model.
+    moves. That is the target changing, not the model.
 
-    This is the property that makes sharing ``_loss_kwargs`` between the
-    training step and the holdout eval a defect: an arm trained at temp 1.3
-    would report a worse CE than its control while being an identical model,
-    and the offline rig prints exactly that number.
+    ⚑ REVIEW NOTE 4: the DIRECTION is not a property of the transform.
+    ``CE = H(target) + KL(target||model)``; flattening raises ``H`` but can
+    lower ``KL`` by more, and on a random-logit fixture `policy_ce` was measured
+    to FALL. The sign is forced HERE, and only here, because the model is
+    constructed to emit ``log(target)`` exactly: ``KL`` starts at 0, so it can
+    only rise, and ``H`` rises too. Any magnitude quoted for this knob has to
+    name the model and fixture it came from -- an earlier revision of the
+    docstrings stated "~+0.62 nats at temp 1.3" unconditionally, which is a
+    property of a well-fit model on a sharp target rather than of the code.
+
+    The eval pin needs only the weaker claim, which is what makes sharing
+    ``_loss_kwargs`` between the training step and the holdout eval a defect:
+    an arm trained at temp 1.3 reports a DIFFERENT CE from its control while
+    being an identical model, and the offline rig prints exactly that number.
     """
     pol = _target([[0.55, 0.25, 0.12, 0.08, 0.0, 0.0, 0.0, 0.0]])
     model = _Head(torch.log(pol[0].clamp_min(1e-30)))
@@ -184,6 +199,10 @@ def test_retempering_moves_the_ce_floor_which_is_why_eval_pins_it_off() -> None:
     assert pure == pytest.approx(_entropy(pol[0]), abs=1e-4), (
         "a model emitting log(target) should read CE == the target's entropy"
     )
+  # `>` and not `!=`: on THIS fixture the model is exactly log(target), so KL
+  # is 0 at temp 1.0 and strictly positive at 1.3 while H also rises. The
+  # inequality is therefore a real prediction here -- it is not a claim that
+  # retempering raises CE in general.
     assert warm > pure + 0.05, (
         f"retempering must move the CE floor for it to be a ruler hazard: "
         f"{pure:.4f} -> {warm:.4f}"
@@ -367,3 +386,195 @@ def test_the_validation_helper_rejects_rather_than_being_an_inert_call_site(
     for bad in (0.0, -1.0, float("inf"), float("nan")):
         with pytest.raises(ValueError, match="policy_target_temp must be finite"):
             retemper_main_policy_target(torch.ones(1, 2) / 2, temp=bad)
+
+
+# ── The yaml -> Trainer seam ────────────────────────────────────────────────
+#
+# ⚑ REVIEW FINDING 1 (independent review #2). Every test above hands the
+# temperature straight to `Trainer(...)` as a kwarg, so the ONE seam that
+# carries it in production -- the yaml -- had no coverage at all. The reviewer
+# mutated `trainer_kwargs_from_config` to keep the literal `config.get` (so the
+# startup-only derivation instrument still sees the read) while DISCARDING its
+# value, and 180 tests passed. That instrument observes that a read EXISTS,
+# never that its value is USED, which is a grep for a call standing in for an
+# observation of its effect -- the same defect the constructor test above was
+# rewritten to close, one layer further out.
+#
+# The failure it leaves open is the expensive one: `policy_target_temp: 1.5`
+# validates, survives `_check_unknown`, reads back correctly from the trial's
+# own config dict and from `scripts/audit_realized_config.py` (which reads the
+# overlay, not the consumer) -- and the arm trains at 1.0. The null result gets
+# attributed to the hypothesis instead of to the wiring.
+
+
+def _flat_from_yaml_train_section(**train_overrides: object) -> dict[str, object]:
+    """The production yaml, with `train:` overrides, through the real flattener."""
+    import yaml as _yaml
+
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    repo = Path(__file__).resolve().parent.parent
+    cfg = _yaml.safe_load((repo / "configs" / "pbt2_small.yaml").read_text(encoding="utf-8"))
+    cfg.setdefault("train", {}).update(train_overrides)
+    return flatten_run_config_defaults(cfg)
+
+
+def test_a_yaml_temperature_REACHES_the_trainer_and_the_training_step(
+    tmp_path: Path,
+) -> None:
+    """The whole chain, on the production config: yaml `train:` section ->
+    `flatten_run_config_defaults` -> `trainer_kwargs_from_config` -> `Trainer`
+    -> the `_loss_kwargs` that `_run_optimizer_step` splats into `compute_loss`.
+
+    Each hop is asserted separately so a break says WHICH hop dropped it.
+    """
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+
+    flat = _flat_from_yaml_train_section(policy_target_temp=1.30)
+    assert flat["policy_target_temp"] == pytest.approx(1.30), "the flattener dropped it"
+
+    ctor = trainer_kwargs_from_config(flat, log_dir=tmp_path)
+    assert ctor["policy_target_temp"] == pytest.approx(1.30), (
+        "trainer_kwargs_from_config read the key but did not carry its VALUE; "
+        "the arm would train at the default while its config reads 1.30"
+    )
+
+    t = _trainer(tmp_path, policy_target_temp=ctor["policy_target_temp"])
+    assert t.policy_target_temp == pytest.approx(1.30)
+    assert t._loss_kwargs["policy_target_temp"] == pytest.approx(1.30)
+  # ...and the ruler still does not move with the arm at the far end of the chain.
+    assert t._eval_loss_kwargs["policy_target_temp"] == 1.0
+
+
+def test_the_production_yaml_carries_no_temperature_today(tmp_path: Path) -> None:
+    """The negative half: a value that arrives must have COME from the yaml.
+
+    Asserting only the 1.30 case would also pass if `trainer_kwargs_from_config`
+    hardcoded 1.30. The shipped config has no `policy_target_temp`, so the same
+    chain must yield exactly the identity default -- which is also the claim
+    that merging this PR cannot perturb the live run.
+    """
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+
+    import yaml as _yaml
+
+    repo = Path(__file__).resolve().parent.parent
+    raw = _yaml.safe_load((repo / "configs" / "pbt2_small.yaml").read_text(encoding="utf-8"))
+    assert "policy_target_temp" not in (raw.get("train") or {}), (
+        "the production config now sets policy_target_temp -- that is a live "
+        "training-target change and needs a ledger entry, not a test update"
+    )
+
+    flat = _flat_from_yaml_train_section()
+    assert "policy_target_temp" not in flat
+    assert trainer_kwargs_from_config(flat, log_dir=tmp_path)["policy_target_temp"] == 1.0
+
+
+def test_a_bad_yaml_temperature_fails_at_STARTUP_through_the_real_chain(
+    tmp_path: Path,
+) -> None:
+    """The constructor guard, reached the way an operator would reach it."""
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+
+    ctor = trainer_kwargs_from_config(
+        _flat_from_yaml_train_section(policy_target_temp=0.001), log_dir=tmp_path,
+    )
+    with pytest.raises(ValueError, match="policy_target_temp must be finite"):
+        _trainer(tmp_path, policy_target_temp=ctor["policy_target_temp"])
+
+
+# ── Second effect: the temperature re-gates the policy_soft head ────────────
+#
+# ⚑ REVIEW NOTE 3 (independent review #2). `compute_loss` reassigns `pol_target`
+# to the RETEMPERED target before the `soft_policy_min_tv` gate is computed from
+# it, so the temperature also decides which rows the `policy_soft` head trains
+# on. Latent in production (`soft_policy_min_tv: 0.0` in pbt2_small.yaml, and
+# the knob appears only in configs/exp_soft_policy_divergent_only.yaml), but
+# real the day the two are on together -- and asymmetric, because
+# `_eval_loss_kwargs` pins the temperature and NOT `soft_policy_min_tv`, so
+# training and eval would mask different row sets for that head.
+
+
+def _soft_gate_batch(hard: torch.Tensor, soft: torch.Tensor) -> dict[str, torch.Tensor]:
+    return {
+        "x": torch.zeros((1, 1, 1, 1)),
+        "policy_t": hard,
+        "policy_soft_t": soft,
+        "has_policy": torch.ones((1,)),
+        "has_policy_soft": torch.ones((1,)),
+        "is_network_turn": torch.ones((1,)),
+        "wdl_t": torch.zeros((1,), dtype=torch.long),
+    }
+
+
+@pytest.mark.parametrize(("temp", "expected_kept"), [(1.0, 1.0), (1.3, 0.0)])
+def test_the_temperature_regates_the_soft_policy_head(
+    temp: float, expected_kept: float,
+) -> None:
+    """The gate compares the SOFT target against the retempered HARD one, so
+    moving the hard one moves the TV and flips the mask.
+
+    The fixture makes the soft target a retempering of the hard target -- which
+    is the case the gate exists for -- and puts the threshold between the two
+    TVs, so nothing but `policy_target_temp` differs between the arms.
+    """
+    hard = _target([[0.55, 0.25, 0.12, 0.08]])
+    soft = retemper_main_policy_target(hard, temp=1.25)
+
+    tv_at = {
+        t: float(0.5 * (retemper_main_policy_target(hard, temp=t) - soft).abs().sum())
+        for t in (1.0, 1.3)
+    }
+    threshold = 0.5 * (tv_at[1.0] + tv_at[1.3])
+    assert tv_at[1.3] < threshold < tv_at[1.0], (
+        f"fixture no longer straddles the threshold: {tv_at}"
+    )
+
+    out = {
+        "policy": torch.zeros((1, 4)),
+        "policy_soft": torch.zeros((1, 4)),
+        "wdl": torch.zeros((1, 3)),
+    }
+    losses = compute_loss(
+        out, _soft_gate_batch(hard, soft),
+        soft_policy_min_tv=threshold, policy_target_temp=temp,
+        w_sf_move=0.0, w_sf_eval=0.0, w_categorical=0.0,
+        w_volatility=0.0, w_moves_left=0.0,
+    )
+    assert float(losses["soft_mask_kept_frac"]) == pytest.approx(expected_kept), (
+        "policy_target_temp changed which rows the policy_soft head trains on"
+    )
+
+
+def test_the_soft_gate_is_untouched_when_the_temperature_is_the_default() -> None:
+    """THE CONTROL for the note above: default-off must not re-gate anything.
+
+    Without this, the parametrised test would also pass if the gate were broken
+    in some temperature-independent way."""
+    hard = _target([[0.55, 0.25, 0.12, 0.08]])
+    soft = retemper_main_policy_target(hard, temp=1.25)
+    out = {
+        "policy": torch.zeros((1, 4)),
+        "policy_soft": torch.zeros((1, 4)),
+        "wdl": torch.zeros((1, 3)),
+    }
+    batch = _soft_gate_batch(hard, soft)
+
+  # Written out twice rather than splatted: not passing the key at all is
+  # `main`'s behaviour (which has no such parameter), and passing it at its
+  # default must be the same gate.
+    absent = float(compute_loss(
+        out, batch, soft_policy_min_tv=0.03, w_sf_move=0.0, w_sf_eval=0.0,
+        w_categorical=0.0, w_volatility=0.0, w_moves_left=0.0,
+    )["soft_mask_kept_frac"])
+    explicit = float(compute_loss(
+        out, batch, soft_policy_min_tv=0.03, w_sf_move=0.0, w_sf_eval=0.0,
+        w_categorical=0.0, w_volatility=0.0, w_moves_left=0.0,
+        policy_target_temp=1.0,
+    )["soft_mask_kept_frac"])
+
+    assert absent == pytest.approx(explicit)
+    assert absent == pytest.approx(1.0), (
+        "the fixture's TV is above the threshold at the default, so the "
+        "default-off arm must keep the row"
+    )

@@ -606,7 +606,17 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # Nothing the best-model comparison reads (`test_loss` and the per-head losses)
 # changed on either side, so records stay comparable across the handover.
 PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:f41625e40b98e987"
+  # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
+  # name was false: production NEVER runs the sampled ruler. `trainable_phases`
+  # calls `eval_full_pass` (and the async path with `full_pass=True`), and
+  # `eval_steps` appears only in scripts/offline_replay_epoch.py. `steps=5` is
+  # `sampled`'s OWN default, not a production budget -- and the name asserting
+  # otherwise is part of why a previous PR pinned this at steps=0 and called it
+  # production. It is still worth pinning: it is the pre-PR-277 instrument, and
+  # it hashes a slightly different frame set (it covers
+  # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
+  # so it catches drift in a frame the production pin cannot see.
+PRE_PR277_SAMPLED_RULER = "v1:sampled:f41625e40b98e987"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
@@ -642,4 +652,4 @@ def test_the_production_ruler_id_is_pinned() -> None:
     ) == PRODUCTION_FULL_PASS_RULER
     assert Trainer.eval_ruler_id_for(
         batch_size=512, steps=5, mirror_prob=0.0, full_pass=False,
-    ) == PRODUCTION_SAMPLED_RULER
+    ) == PRE_PR277_SAMPLED_RULER
