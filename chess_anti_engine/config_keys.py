@@ -24,8 +24,6 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "sf_search_dampen_sf_low",
     "sf_search_dampen_sf_high",
     "soft_policy_min_tv",
-    "policy_target_temp",
-    "policy_target_sf_blend",
 )
 
 

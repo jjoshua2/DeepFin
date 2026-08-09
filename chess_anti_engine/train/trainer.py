@@ -92,6 +92,7 @@ from .losses import (
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    retemper_main_policy_target,
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
@@ -1570,8 +1571,12 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_policy": _f("w_policy", 1.0),
         "w_soft": _f("w_soft", 0.5),
         "soft_policy_min_tv": _f("soft_policy_min_tv", 0.0),
-        "policy_target_temp": _f("policy_target_temp", 1.0),
-        "policy_target_sf_blend": _f("policy_target_sf_blend", 0.0),
+  # Spelled as a literal `config.get` rather than `_f(...)` DELIBERATELY:
+  # tests/test_startup_only_config_keys.py derives the startup-only set from
+  # literal config reads, and a key read through the `_f` helper is invisible
+  # to it. Declaring this one startup-only while the instrument cannot see it
+  # would be exactly the hand-override that file's docstring forbids.
+        "policy_target_temp": float(config.get("policy_target_temp", 1.0)),
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
@@ -1673,7 +1678,6 @@ class Trainer:
         w_soft: float = 0.5,
         soft_policy_min_tv: float = 0.0,
         policy_target_temp: float = 1.0,
-        policy_target_sf_blend: float = 0.0,
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
@@ -2060,8 +2064,12 @@ class Trainer:
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)
         self.soft_policy_min_tv = float(soft_policy_min_tv)
+  # Validated HERE, at construction, so a bad yaml value fails the trial's
+  # startup instead of raising (or silently inverting the target) inside the
+  # first training step. `retemper_main_policy_target` re-checks it, because a
+  # test or the offline rig can call the helper without a Trainer.
         self.policy_target_temp = float(policy_target_temp)
-        self.policy_target_sf_blend = float(policy_target_sf_blend)
+        retemper_main_policy_target(torch.ones(1, 2), temp=self.policy_target_temp)
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
@@ -2388,7 +2396,6 @@ class Trainer:
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
             "soft_policy_min_tv": self.soft_policy_min_tv,
             "policy_target_temp": self.policy_target_temp,
-            "policy_target_sf_blend": self.policy_target_sf_blend,
             "w_wdl": self.w_wdl, "w_sf_move": self.w_sf_move, "w_sf_eval": self.w_sf_eval,
             "w_categorical": self.w_categorical, "w_volatility": self.w_volatility,
             "w_sf_volatility": self.w_sf_volatility, "w_moves_left": self.w_moves_left,
@@ -2408,6 +2415,27 @@ class Trainer:
             "moves_left_max_plies": self.moves_left_max_plies,
             "sf_sparse_params": self.sf_target_params if self.sf_policy_sparse_ce else None,
         }
+
+    @property
+    def _eval_loss_kwargs(self) -> dict[str, Any]:
+        """``_loss_kwargs`` with the policy-target RESHAPE pinned off.
+
+        ⚑ THE RULER MUST NOT MOVE WITH THE ARM. `policy_target_temp` raises the
+        target's entropy, and the minimum of a cross-entropy IS the target's
+        entropy, so an unchanged model reads ~+0.62 nats of `policy_ce` at temp
+        1.3 purely from the reshape. Sharing `_loss_kwargs` between the training
+        step and the holdout/EMA eval would therefore make every arm-vs-baseline
+        CE comparison a comparison of two different rulers -- the exact defect
+        docs/experiment_ledger.md logs as "a ruler change must invalidate its
+        records". Eval scores the model against the target the shards ACTUALLY
+        carry, identically in every arm.
+
+        Only the target-SHAPE knob is pinned. Loss WEIGHTS stay as configured:
+        they scale a term without redefining it, so they leave the per-term
+        columns (`policy_ce`, `wdl_ce`, ...) comparable, and pinning them would
+        make `total` stop matching the trained objective.
+        """
+        return {**self._loss_kwargs, "policy_target_temp": 1.0}
 
     def _amp_context(self):
         # Pinned to bf16: training has no GradScaler, so an FP16 fallback
@@ -3247,7 +3275,7 @@ class Trainer:
             with self._amp_context():
                 _rel = batch.get("relations")
                 out = eval_model(batch["x"], relations=_rel) if _rel is not None else eval_model(batch["x"])
-                losses = compute_loss(out, batch, **self._loss_kwargs)
+                losses = compute_loss(out, batch, **self._eval_loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)
             for k, v in scalars.items():

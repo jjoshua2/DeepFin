@@ -237,6 +237,13 @@ _TRAIN_KEYS = (
     # whatever the writers used and a second copy could disagree with it.
     "wdl_terminal_outcome_plies", "wdl_terminal_outcome_full_plies",
     "wdl_terminal_outcome_sf_frac",
+    # Temperature on the MAIN policy target. Deliberately NOT in
+    # `TRAINER_WEIGHT_KEYS`, which is the every-iteration live-push list and the
+    # salvage-donor overlay list: this is not a loss WEIGHT, it re-interprets rows
+    # already in the window, exactly like `wdl_terminal_outcome_plies` above.
+    # Startup-only, so a mid-run edit warns instead of silently re-shaping the
+    # target under a half-finished readout window.
+    "policy_target_temp",
 )
 
 # tune section: all 1:1 passthrough.
