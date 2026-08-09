@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.script_loading import load_script_module
+
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "pause_window.sh"
 TRAIN_SH = REPO / "scripts" / "train.sh"
@@ -324,8 +326,19 @@ def test_it_does_not_leave_the_marker_behind_when_interrupted(tmp_path: Path) ->
     ack.write_text(f"trial={TRIAL_ID} next_iter=7\n")
     time.sleep(3)
     p.terminate()
-    p.wait(timeout=30)
+    rc = p.wait(timeout=30)
     assert not (work / "tune" / "pause.txt").exists(), "interrupted while holding the marker"
+  # ⚑ 130, NOT the wrapper-failure code. This is the ONE path where the EXIT
+  # trap is still armed while a status other than a setup failure is in flight,
+  # so it is the only place the `PHASE=job` guard is observable -- deleting
+  # `PHASE=job` SURVIVED every other test, because the normal path disarms the
+  # trap with `trap - EXIT` before exiting. An interrupt reported as "the
+  # wrapper failed" would be counted against CAE_RATCHET_PAUSE_MAX_FAILS and
+  # would disable the window for the rest of the day, for an operator Ctrl-C.
+    assert rc == 130, (
+        f"an interrupt exited {rc}; 130 is the documented interrupt status and "
+        "anything else is read by the loop as a wrapper failure"
+    )
 
 
 def test_the_ratchet_does_not_wrap_its_own_arenas() -> None:
@@ -876,3 +889,390 @@ def test_the_default_work_dir_matches_the_ratchets_single_source() -> None:
         f"pause_window.sh defaults to {ours} while the ratchet's single source "
         f"says {theirs}: a hand-run window would pause the wrong tree"
     )
+
+
+def test_a_worker_REVIVED_during_the_ack_wait_stops_the_job(tmp_path: Path) -> None:
+    """⚑ B1: THE OTHER HALF OF THE DRAIN GATE, and the half that runs the arena.
+
+    The baseline pids are captured BEFORE the marker and before an ack wait that
+    can run `CAE_PAUSE_ACK_TIMEOUT` (1800s default). `_revive_fleet` lives inside
+    the ingest phase, so it is live for exactly that wait: a worker that dies and
+    comes back there has a pid in NO baseline. With the gate checking only the
+    baseline, every baseline pid is dead, the survivor check finds nothing, and
+    the job runs beside a live selfplay worker with rc=0 -- which
+    `ratchet_outcome` then stamps as a clean strength reading.
+
+    An independent reviewer reproduced precisely this against the real script.
+    The drain-wait loop even PRINTS `workers still alive after Ns` first, and the
+    old gate never consulted it: a value accepted and then ignored.
+
+    The stub reproduces the revive: `pgrep` reports the OLD pid until `pkill`
+    runs, and a NEW live pid forever after. `pkill` signals nothing, so the
+    revived worker ignores SIGTERM the way a wedged one would.
+    """
+    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
+    revived = subprocess.Popen(["sleep", "120"])
+    try:
+        (bin_dir / "pgrep").write_text(
+            "#!/bin/sh\n"
+            f'if [ -f "{tmp_path}/killed" ]; then echo {revived.pid}; exit 0; fi\n'
+            "echo 424242\nexit 0\n",
+        )
+        (bin_dir / "pkill").write_text(
+            f'#!/bin/sh\ntouch "{tmp_path}/killed"\nexit 0\n',
+        )
+        for f in ("pgrep", "pkill"):
+            (bin_dir / f).chmod(0o755)
+
+        ran = tmp_path / "the_arena_ran"
+        ack = _ack_after(work / "tune", 2.0)
+        try:
+            r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="2")
+        finally:
+            ack.wait()
+    finally:
+        revived.terminate()
+        revived.wait()
+
+    assert not ran.exists(), (
+        "THE JOB RAN BESIDE A LIVE WORKER. The baseline pid died, so the "
+        "survivor check passed, and the worker revived during the ack wait was "
+        "never looked for -- a contended arena, about to be filed as clean"
+    )
+    assert r.returncode != 0, "an undrained fleet exited 0"
+    assert "still match" in r.stderr, r.stderr
+    assert not (work / "tune" / "pause.txt").exists(), "died holding the marker"
+
+
+def test_a_pgrep_usage_error_AFTER_the_drain_is_also_fatal(tmp_path: Path) -> None:
+    """The post-drain pgrep needs its status checked for the same reason the
+    pre-drain one does: rc>=2 means the pattern is broken, so "nothing matched"
+    is not a measurement of anything."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
+    (bin_dir / "pgrep").write_text(
+        "#!/bin/sh\n"
+        f'if [ -f "{tmp_path}/killed" ]; then echo "pgrep: invalid option" >&2; exit 2; fi\n'
+        "echo 424242\nexit 0\n",
+    )
+    (bin_dir / "pkill").write_text(f'#!/bin/sh\ntouch "{tmp_path}/killed"\nexit 0\n')
+    for f in ("pgrep", "pkill"):
+        (bin_dir / f).chmod(0o755)
+
+    ran = tmp_path / "ran"
+    ack = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="2")
+    finally:
+        ack.wait()
+
+    assert r.returncode != 0
+    assert "after the drain" in r.stderr, r.stderr
+    assert not ran.exists(), "ran the job on an unverifiable drain"
+
+
+# ── B3: the producer/consumer contract, ROUND-TRIPPED ────────────────────────
+# `pause_window.sh` WRITES `pid=<n> started=<iso>`; `train_watchdog.py` READS it
+# with `_PAUSE_OWNER_RE`. Every `pid=` elsewhere in this suite is a literal typed
+# into a test file, so the two halves were pinned only by both files happening to
+# contain the same four characters. An independent reviewer's mutant changing
+# `pid=%s` to `owner=%s` IN THE SCRIPT ALONE survived all 166 tests -- and it
+# makes every abandoned window PERMANENTLY unrecoverable (unowned marker =>
+# `_abandoned_reason` returns None => PAUSED-HELD forever => production parked
+# until a human notices). Same defect class as the worker pattern, which this PR
+# already closed with a byte-identity test; the same technique was available here
+# and was not used.
+#
+# So: run the real script far enough to create a real marker, then hand that file
+# to the real consumer. No literal is shared between the two sides.
+
+_WATCHDOG = load_script_module("train_watchdog.py", "train_watchdog_contract")
+
+
+def test_the_marker_the_script_writes_is_one_the_watchdog_can_own(tmp_path: Path) -> None:
+    """The whole PAUSE-ABANDONED mechanism in one round trip."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    marker = work / "tune" / "pause.txt"
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CAE_PAUSE_POLL_SECONDS"] = "1"
+    env["CAE_PAUSE_ALLOW_NO_WORKERS"] = "1"
+    p = subprocess.Popen(
+        [str(SCRIPT), "--work-dir", str(work), "--trial-id", TRIAL_ID,
+         "--", "sleep", "60"],
+        env=env, cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + ACK_WAIT
+        while not marker.exists():
+            assert p.poll() is None, "the script exited before writing a marker"
+            assert time.monotonic() < deadline, "marker never appeared"
+            time.sleep(0.2)
+        text = marker.read_text()
+        mtime = marker.stat().st_mtime
+    finally:
+        p.terminate()
+        p.wait(timeout=60)
+
+    # 1. The consumer finds an owner in what the producer wrote.
+    owner, age = _WATCHDOG.parse_pause_marker(text, mtime=mtime, now=time.time())
+    assert owner is not None, (
+        f"the watchdog cannot find an owner in the marker the script writes; "
+        f"every abandoned window is now permanently unrecoverable.\n{text!r}"
+    )
+    # 2. And that owner is the process that actually held it.
+    assert owner == p.pid, (
+        f"the marker names pid {owner} but the window was pid {p.pid}; the "
+        f"watchdog would judge liveness of the wrong process.\n{text!r}"
+    )
+    # 3. `started=` parses, so the age bound has a clock. (mtime is the
+    #    fallback, so a broken `started=` would hide behind it here -- pass a
+    #    deliberately wrong mtime and require the answer to come from the text.)
+    _, age_from_text = _WATCHDOG.parse_pause_marker(
+        text, mtime=mtime - 86_400, now=time.time(),
+    )
+    assert age_from_text is not None, "`started=` did not parse and no mtime fallback"
+    assert age_from_text < 60, (
+        f"`started=` did not parse, so the age fell back to the (deliberately "
+        f"day-old) mtime: {age_from_text} minutes"
+    )
+
+    # 4. The verdict a LIVE window produces, from that real marker: hands off.
+    snap = _WATCHDOG.ProgressSnapshot(
+        pid=os.getpid(), pid_alive=True, pause_txt=str(marker),
+        rows=10, rows_prev=10, minutes_flat=5.0,
+        pause_owner_pid=owner, pause_owner_alive=True, pause_age_minutes=age,
+    )
+    assert _WATCHDOG.decide(snap, stall_minutes=90.0).state == _WATCHDOG.STATE_PAUSED_HELD
+
+    # 5. ...and the verdict once its owner is gone (the script is dead now).
+    dead = _WATCHDOG.ProgressSnapshot(
+        pid=os.getpid(), pid_alive=True, pause_txt=str(marker),
+        rows=10, rows_prev=10, minutes_flat=5.0,
+        pause_owner_pid=owner,
+        pause_owner_alive=_WATCHDOG.pid_is_alive(owner),
+        pause_age_minutes=age,
+    )
+    assert _WATCHDOG.decide(dead, stall_minutes=90.0).state == (
+        _WATCHDOG.STATE_PAUSE_ABANDONED
+    ), "a marker whose window has exited is not recoverable; it will be held forever"
+
+
+def test_the_watchdogs_owner_pattern_matches_what_the_script_prints() -> None:
+    """The static half, in the same shape as
+    `test_the_worker_pattern_matches_train_sh_exactly`: the regex must match the
+    literal `printf` format, so a rename on either side is a red test rather
+    than a silently unrecoverable window."""
+    fmt = re.findall(r"printf '(pause_window\.sh [^']*)\\n'", SCRIPT.read_text())
+    assert len(fmt) == 1, f"the marker is no longer written by one printf: {fmt}"
+    rendered = fmt[0].replace("%s", "12345", 1)
+    assert _WATCHDOG._PAUSE_OWNER_RE.search(rendered), (
+        f"train_watchdog._PAUSE_OWNER_RE cannot read the marker format "
+        f"pause_window.sh writes: {fmt[0]!r}"
+    )
+
+
+def test_the_wrapper_failure_code_is_not_in_the_ratchets_vocabulary() -> None:
+    """⚑ N2: THE SECOND INSTANCE OF THE EXIT-5 COLLISION, found the same way.
+
+    The wrapper's `die` code was 3, justified by a comment claiming "the
+    ratchet's vocabulary is 0 / 1 / 5". `ratchet_common.sh` -- the file that
+    comment was paraphrasing -- says in as many words: *"5 avoids 1 (retryable),
+    2 (usage), 3 (the arena's own no-pairs status)"*. 3 was already spoken for.
+    Latent (`daily_gate_ratchet.sh` returns exactly 0/1/2/5 today), but it is the
+    identical mistake as claiming exit 5 after #371 had taken it for CRASHED: a
+    code chosen by reading part of the space.
+
+    The taken set is DERIVED FROM THE FILES, not restated here, so a status
+    someone adds later cannot silently collide with this one. Mutating
+    `PAUSE_WINDOW_FAILED_RC` to 1 -- which makes every routine RETRY (the
+    "checkpoint not ready yet" path every fresh restart passes through) count as
+    a pause-window failure, silently disabling the window for the rest of the day
+    after two polls -- fails here.
+    """
+    common = (REPO / "scripts" / "ratchet_common.sh").read_text()
+    loop = (REPO / "scripts" / "ratchet_loop.sh").read_text()
+    script = SCRIPT.read_text()
+
+    retry = int(re.findall(r"^RATCHET_EXIT_RETRY=(\d+)", common, re.M)[0])
+    no_retry = int(re.findall(r"^RATCHET_EXIT_NO_RETRY=(\d+)", common, re.M)[0])
+    # The codes ratchet_common.sh's own comment names as already spoken for.
+    documented = {int(n) for n in re.findall(r"^# 5 avoids .*", common, re.M)[0:1]
+                  for n in re.findall(r"(\d+) \(", re.findall(r"^# 5 avoids .*", common, re.M)[0])}
+    ours = int(re.findall(r"^WRAPPER_FAILED_RC=(\d+)", script, re.M)[0])
+    theirs = int(re.findall(r"^PAUSE_WINDOW_FAILED_RC=(\d+)", loop, re.M)[0])
+
+    assert ours == theirs, (
+        f"pause_window.sh dies with {ours} but ratchet_loop.sh counts {theirs}: "
+        "a wrapper failure would be filed as an ordinary ratchet failure and "
+        "dodge CAE_RATCHET_PAUSE_MAX_FAILS entirely"
+    )
+    taken = {0, retry, no_retry, 2} | documented
+    assert ours not in taken, (
+        f"the wrapper's failure code {ours} is already taken: "
+        f"{sorted(taken)} (0=rows written, {retry}=RETRY, {no_retry}=NO_RETRY, "
+        f"2=usage/cd, plus ratchet_common.sh's own 'avoids' list). This is how "
+        "exit 5 collided with CRASHED"
+    )
+    assert documented, "ratchet_common.sh's 'avoids' comment no longer parses; re-point this test"
+
+
+def test_a_setup_failure_reports_the_wrapper_code_not_the_ratchets_retry(
+    tmp_path: Path,
+) -> None:
+    """⚑ N4. Under `set -e`, a `mktemp`/`stat` failure before the marker exits 1
+    — the ratchet's RETRY — so the loop logs "FAILED, retry next poll", does NOT
+    count it against `CAE_RATCHET_PAUSE_MAX_FAILS`, and churns every 600s until
+    midnight. The fail cap exists to bound exactly that.
+
+    Forced here by making `mktemp` fail, which is the real-world case (full
+    /tmp) rather than a paraphrase of it.
+    """
+    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
+    (bin_dir / "mktemp").write_text("#!/bin/sh\necho 'mktemp: failed' >&2\nexit 1\n")
+    (bin_dir / "mktemp").chmod(0o755)
+
+    ran = tmp_path / "ran"
+    r = _run(work, bin_dir, "touch", str(ran))
+
+    expected = int(re.findall(r"^WRAPPER_FAILED_RC=(\d+)", SCRIPT.read_text(), re.M)[0])
+    assert r.returncode == expected, (
+        f"a setup failure exited {r.returncode}, not {expected}; the loop reads "
+        "that as the ratchet's own retryable status and never counts it against "
+        f"the fail cap.\n{r.stderr}"
+    )
+    assert not ran.exists()
+    assert not (work / "tune" / "pause.txt").exists()
+
+
+def test_it_does_not_clear_a_marker_that_is_no_longer_ours(tmp_path: Path) -> None:
+    """⚑ N6. `rm -f "$MARKER"` unconditionally means an operator who replaces the
+    marker DURING our window — the obvious way to hold the pause past the arena —
+    silently loses their pause when the job ends. The marker names its owner
+    exactly so this is decidable. Leaving a pause up is recoverable; resuming
+    against the operator's stated intent is not."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    marker = work / "tune" / "pause.txt"
+    mine = tmp_path / "replaced"
+    job = f'cat "{marker}" > "{mine}"; echo "operator holds this" > "{marker}"'
+
+    proc = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "bash", "-c", job)
+    finally:
+        proc.wait()
+
+    assert r.returncode == 0, r.stderr
+    assert "pid=" in mine.read_text(), "the window's own marker had no owner line"
+    assert marker.exists(), (
+        "the operator's replacement marker was deleted: their deliberate pause "
+        f"ended the moment our job did.\n{r.stdout}"
+    )
+    assert marker.read_text() == "operator holds this\n"
+    assert "no longer ours" in r.stdout, f"it went quietly:\n{r.stdout}"
+
+
+def test_it_still_clears_its_OWN_marker(tmp_path: Path) -> None:
+    """The positive control for the guard above. If the ownership check is
+    wrong in the other direction the script leaves production parked on every
+    run, which is the one unrecoverable mistake it exists to avoid."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    proc = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "true")
+    finally:
+        proc.wait()
+    assert r.returncode == 0, r.stderr
+    assert not (work / "tune" / "pause.txt").exists(), (
+        f"the window did not clear its own marker: production stays parked\n{r.stdout}"
+    )
+    assert "marker cleared" in r.stdout
+
+
+def test_a_failure_AFTER_the_marker_also_reports_the_wrapper_code(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE OTHER SIDE OF THE TRAP HANDOFF, and it was a surviving mutant.
+
+    `trap release EXIT` REPLACES the setup trap, so a `set -e` death between the
+    marker and the job would release the marker correctly and then report 1 —
+    the ratchet's RETRY — dodging `CAE_RATCHET_PAUSE_MAX_FAILS` exactly as N4
+    describes. The first version of this fix composed the two traps
+    (`release_then_remap`) but only tested the setup half, so deleting the remap
+    from the composite SURVIVED.
+
+    Forced with a read-only tune dir, which is the reachable real case (a full
+    or read-only filesystem): every pre-flight check passes, and then
+    `printf > "$MARKER"` fails.
+    """
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    tune = work / "tune"
+    ran = tmp_path / "ran"
+    tune.chmod(0o555)
+    try:
+        r = _run(work, bin_dir, "touch", str(ran))
+    finally:
+        tune.chmod(0o755)
+
+    expected = int(re.findall(r"^WRAPPER_FAILED_RC=(\d+)", SCRIPT.read_text(), re.M)[0])
+    assert not ran.exists(), "the job ran despite the marker never being written"
+    assert r.returncode == expected, (
+        f"a failure after the trap handoff exited {r.returncode}, not {expected}: "
+        "the loop reads that as the ratchet's own retryable status and it never "
+        f"counts against the fail cap.\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    )
+    assert not (tune / "pause.txt").exists(), "left a marker behind"
+
+
+def test_the_ledgers_yardstick_selects_the_trial_by_data_not_by_name(
+    tmp_path: Path,
+) -> None:
+    """⚑ B2: THE PRE-REGISTERED YARDSTICK WAS A GATE THAT COULD NOT FAIL.
+
+    It selected the trial with `sorted(glob("train_trial_*"))[-1]` —
+    LEXICOGRAPHIC. Against the live tune dir `'3' < 'd'`, so it read the dead
+    `train_trial_d2003_..._2026-08-05` (last row 08-06) rather than the live
+    `379f6`: the median came from a cold-start trial, it reported 7 stretched
+    iterations on night ONE, and its output was STATIONARY — five nights produce
+    byte-identical results, so the kill rule could not fire in either direction.
+    Found by an independent reviewer EXECUTING it.
+
+    CLAUDE.md protocol #1 requires that command, so it is extracted from the
+    ledger and RUN here against a fixture built to punish the old selector: the
+    live trial sorts FIRST by name and is newest by data.
+    """
+    ledger = (REPO / "docs" / "experiment_ledger.md").read_text()
+    block = re.search(
+        r"### Yardstick \(pre-registered, ONE deciding command\).*?```bash\n"
+        r"PYTHONPATH=\. python3 - <<'PY'\n(.*?)\nPY\n```",
+        ledger, re.S,
+    )
+    assert block is not None, "the yardstick's code block no longer parses; re-point this test"
+    code = block.group(1)
+
+    tune = tmp_path / "runs" / "pbt2_small" / "tune"
+    # '3...' sorts BEFORE 'd...', so lexicographic selection picks the dead one.
+    live = tune / "train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06"
+    dead = tune / "train_trial_d2003_00000_0_lr=0.0000_2026-08-05_12-07-56"
+    for d in (dead, live):
+        d.mkdir(parents=True)
+    (dead / "result.json").write_text(
+        '{"training_iteration": 1, "time_this_iter_s": 500.0, "timestamp": 1000000}\n',
+    )
+    time.sleep(0.02)
+    (live / "result.json").write_text(
+        '{"training_iteration": 900, "time_this_iter_s": 250.0, "timestamp": 2000000}\n',
+    )
+    (tmp_path / "runs").mkdir(exist_ok=True)
+    (tmp_path / "runs" / "arena_results.jsonl").write_text("")
+
+    r = subprocess.run(
+        ["python3", "-c", code], cwd=tmp_path,
+        capture_output=True, text=True, timeout=120, check=False,
+    )
+    assert r.returncode == 0, f"the pre-registered command does not run:\n{r.stderr}"
+    assert "379f6" in r.stdout, (
+        "the yardstick selected the DEAD trial: its median, its threshold and "
+        f"its verdict all describe a run that stopped days ago.\n{r.stdout}"
+    )
+    assert "d2003" not in r.stdout, r.stdout

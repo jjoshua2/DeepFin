@@ -31,9 +31,19 @@ The marker itself carries the discriminator: ``pause_window.sh`` writes
 ``pid=<n> started=<iso>``, and ``graceful_restart.py`` writes prose with no
 ``pid=``. So ONLY a self-identifying marker can be judged abandoned — an
 operator's marker is never touched, whatever its age — and the criteria are
-"the owning process is gone" or "held past ``--pause-max-minutes``" (one window
-is bounded by the ack wait, 30 min, plus ``daily_gate_ratchet.sh``'s
-``BUDGET_MIN=90``; the default 180 leaves 50% headroom).
+"the owning process is gone" or "held past ``--pause-max-minutes``".
+
+⚑ ``--pause-max-minutes`` IS COUPLED TO ``daily_gate_ratchet.sh``'s
+``BUDGET_MIN``, ACROSS TWO FILES, WITH NOTHING BUT THIS PARAGRAPH PINNING IT.
+A window is bounded by ``CAE_PAUSE_ACK_TIMEOUT`` (30 min) plus ``BUDGET_MIN``
+(90 — a deadline for the WHOLE invocation shared by both series, not per
+series), so 120 against the default 180 leaves 50% headroom. **Raising this past
+~150 makes the age branch fire on a HEALTHY window**, because the age criterion
+applies even when the owner is alive: the watchdog would delete a live window's
+marker and resume training beside a running 16-concurrent compiled arena, which
+is the documented double-OOM cause (CLAUDE.md: one arena at a time). If
+``BUDGET_MIN`` rises, this must rise with it — and if it does not, the failure is
+silent in the dangerous direction.
 """
 from __future__ import annotations
 

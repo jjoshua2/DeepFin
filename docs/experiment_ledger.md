@@ -24891,17 +24891,32 @@ the window     , iter  568    : 1732.5s / 1 iter (park + drain + 1160.1s arena)
 visible: iter 569 was 230.1s, FASTER than the pre-window baseline.
 
 **What the default-ON configuration will actually cost.** The loop wraps BOTH
-series in one window. Uncontended, `vs_prev` took 1160.1s (`--no-compile`) and
-`vs_boot512` took 645.4s (`--compile on`, measured 2026-08-08 16:10 while
-training was down between iters 400 and 401 — uncontended, but NOT through this
-wrapper, so treat it as an estimate). 1805.5s + 135s park + 55s drain ≈
-**2000s ≈ 33 min**, i.e. **6.8 iterations** at 293.6 s/iter, for TWO complete
-rows.
+series in one window. Uncontended, `vs_boot512` took 645.4s (`--compile on`,
+measured 2026-08-08 16:10 while training was down between iters 400 and 401 —
+uncontended, but NOT through this wrapper, so treat it as an estimate).
+
+⚑ **BUILD IT FROM THE MEASUREMENT, NOT FROM THE PARTS.** An earlier version of
+this row summed components — 135s park + 55s drain + 1160.1s + 645.4s ≈ 1995s →
+6.8 — and in doing so dropped **382s (22%)** of its own measured overhead. The
+window iteration was **1732.5s** for park + drain + a 1160.1s arena, i.e. 382s
+more than those parts account for: the fleet relaunch (model reload, AOT
+compile, re-lease), which is real, was measured, and does not appear in any
+component. Rebuilt on the one number actually observed:
+
+```
+(1732.5 + 645.4) / 293.6 = 8.10 baseline iterations of wall time
+                       1 iteration actually ran
+                    ⇒ 7.1 lost, for TWO complete rows
+```
 
 | | iterations lost | full-resolution rows | **lost per readable row** |
 |---|---|---|---|
 | beside training (measured) | 15.1 (17 with recovery) | 1 of 2 | **15.1** |
-| pause window, both series (projected) | 6.8 | 2 | **3.4** |
+| pause window, both series (projected) | **7.1** | 2 | **3.55** |
+
+The decision is unchanged (3.55 ≪ 15.1), but a projection assembled from parts
+rather than from the measurement is the exact arithmetic the yardstick above
+exists to replace — and that yardstick was itself broken. Both are fixed here.
 
 ### DECISION: default ON. Kept.
 
@@ -24914,38 +24929,119 @@ iterations to ~7. The intuition that parking must be worse fails because
 contention does not merely slow the arena, it stretches training iterations
 ~2.9× for 94 minutes, which is a bigger bill than 33 minutes of zero.
 
-⚠ **n=1, and the projection is not a measurement.** The 6.8 is arithmetic over
+⚠ **n=1, and the projection is not a measurement.** The 7.1 is arithmetic over
 one measured window plus one uncontended arena that did not go through the
 wrapper. The yardstick below is what turns it into a measurement.
 
 ### Yardstick (pre-registered, ONE deciding command)
 
-After the first FIVE unattended nights, on the live trial:
+⚑ **THE FIRST VERSION OF THIS BLOCK WAS A GATE THAT COULD NOT FAIL, and it was
+the one command CLAUDE.md protocol #1 requires.** It selected the trial with
+`sorted(glob("train_trial_*"))[-1]`, which is LEXICOGRAPHIC: `'3' < 'd'`, so it
+picked the dead `train_trial_d2003_..._2026-08-05` (104 rows, last row 08-06)
+rather than the live `379f6`. Three consequences, each fatal: the median came
+from a cold-start trial (524.5s, so the threshold was 1573s); it reported 7
+stretched iterations on night ONE, before any window had run; and its output was
+**stationary** — five nights produce byte-identical results, because the trial it
+reads stopped appending three days ago. The kill rule could not fire in either
+direction. Found by an independent reviewer EXECUTING it against the live tune
+dir. Recorded rather than quietly replaced, because a pre-registered yardstick
+that cannot move is worse than none: it looks like evidence.
+
+Two further defects the rewrite fixes: the `3 × median` threshold **missed the
+contended shoulder** (on 08-09 it catches iters 520/522/523 but not 517-519 at
+455.8/611.3/735.9s, so it under-reports the very case it must catch), and
+per-iteration thresholding cannot separate one night's ratchet from another's.
+The episode is therefore bounded by the arena's OWN artefacts.
+
+After the first FIVE unattended nights:
 
 ```bash
 PYTHONPATH=. python3 - <<'PY'
-import json, datetime, pathlib
-t = sorted(pathlib.Path("runs/pbt2_small/tune").glob("train_trial_*"))[-1]
-rows = [json.loads(l) for l in (t/"result.json").open() if l.strip()]
-w = [(d["training_iteration"], d["time_this_iter_s"]) for d in rows]
-med = sorted(x[1] for x in w[-200:])[len(w[-200:])//2]
-for i, s in w:
-    if s > 3 * med:
-        print(f"iter {i}: {s:.0f}s  = {s/med:.1f} baseline iterations lost")
+import json, datetime, pathlib, statistics
+
+# NEWEST BY DATA, never sorted(). Mirrors train_watchdog.newest_trial_dir:
+# a trial with data outranks an empty one, then most recent write wins.
+def newest(p):
+    for n in ("result.json", "progress.csv"):
+        f = p / n
+        if f.is_file():
+            return (1, f.stat().st_mtime)
+    return (0, p.stat().st_mtime)
+
+tune = pathlib.Path("runs/pbt2_small/tune")
+t = max((p for p in tune.glob("train_trial_*") if p.is_dir()), key=newest)
+print("TRIAL:", t.name)
+
+iters = []
+for line in (t / "result.json").open():
+    if not line.strip():
+        continue
+    d = json.loads(line)
+    if d.get("timestamp") is None:
+        continue
+    iters.append((d["training_iteration"], d["timestamp"] - d["time_this_iter_s"],
+                  d["timestamp"], d["time_this_iter_s"]))
+
+# The episode comes from the ARENA's own rows, not from a threshold on
+# iteration time: [ts - duration_s, ts] per arena, unioned. Rows predating the
+# `truncated` key are skipped rather than defaulted.
+days = {}
+for line in open("runs/arena_results.jsonl"):
+    if not line.strip():
+        continue
+    a = json.loads(line)
+    if not str(a.get("label", "")).startswith("ratchet_"):
+        continue
+    if a.get("duration_s") is None or a.get("truncated") is None:
+        continue
+    end = datetime.datetime.fromisoformat(a["ts"]).timestamp()
+    day = datetime.datetime.fromtimestamp(end).date().isoformat()
+    days.setdefault(day, []).append((end - a["duration_s"], end, bool(a["truncated"])))
+
+print(f"{'date':12s} {'in':>3s} {'base_s':>7s} {'LOST':>6s} {'full-res rows':>13s}")
+for day in sorted(days)[-5:]:
+    ivs = days[day]
+    inw = [x for x in iters if any(x[2] > lo and x[1] < hi for lo, hi, _ in ivs)]
+    out = [x for x in iters
+           if datetime.datetime.fromtimestamp(x[2]).date().isoformat() == day
+           and x not in inw]
+    if not inw or not out:
+        print(f"{day:12s}  -- no overlap; investigate before reading anything else")
+        continue
+    med = statistics.median([x[3] for x in out])          # that night's OWN baseline
+    lost = sum(x[3] for x in inw) / med - len(inw)
+    full = sum(1 for _, _, trunc in ivs if not trunc)
+    print(f"{day:12s} {len(inw):3d} {med:7.1f} {lost:6.1f} {full:13d}   "
+          f"iters {inw[0][0]}-{inw[-1][0]}")
 PY
-jq -r 'select(.label|startswith("ratchet_"))|[.ts,.label,.games,.truncated,.duration_s]|@tsv' \
-   runs/arena_results.jsonl | tail -10
 ```
 
-**SUCCESS** (keep default ON): every night's ratchet appears as **≤ 2 stretched
-iterations** whose total is **≤ 9 baseline iterations**, AND **≥ 8 of the 10
-rows** (2/night × 5) have `truncated: false`.
+⚑ **Proof it moves, run read-only against the live tree on 2026-08-09** — three
+DIFFERENT nights, and it selects `379f6` (the live trial) rather than `d2003`:
+
+```
+TRIAL: train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06
+date          in  base_s   LOST full-res rows
+2026-08-07     3   250.9    2.5             0   iters 9-11
+2026-08-08     4   240.5   12.9             2   iters 254-257
+2026-08-09     8   254.3   15.4             0   iters 516-523
+```
+
+The 08-09 row is the contended ratchet this change exists to replace, and 15.4
+independently reproduces the 15.1 derived by hand above from a different
+method — which is the cross-check the first version could not offer.
+
+**SUCCESS** (keep default ON): each of the five nights reports **LOST ≤ 9**, AND
+**≥ 8 of the 10 rows** (2/night × 5) are full-resolution. On the measurement
+above, a parked night should land near 6-7.
 
 **KILL** (flip `CAE_RATCHET_PAUSE_WINDOW` to default 0, in the same session):
-either the nightly window costs **> 12 baseline iterations** — at which point it
-is no cheaper than the contention it replaces and the 3.4 above was wrong — or
-**< 6 of 10 rows** are untruncated, which means parking did not buy the
-resolution that is the entire justification.
+any **two** nights report **LOST > 12** — at which point parking is no cheaper
+than the contention it replaces and the 3.55 above was wrong — or **< 6 of 10
+rows** are full-resolution, which means parking did not buy the resolution that
+is the entire justification. Note the 08-09 contended baseline scores 15.4, so
+this rule demonstrably CAN fire: it fires on the status quo.
 
 **Also a kill, independently:** any night where `data/ratchet/pause_window_fails`
 reaches the `CAE_RATCHET_PAUSE_MAX_FAILS` cap twice in five days. The wrapper
@@ -25017,7 +25113,25 @@ that applies without conflict is not evidence that two changes compose.
 `train.sh:156-159` starts `ratchet_loop.sh` once, only when `pgrep` finds none,
 and `stop()` never stops it — and a long-running bash keeps the file it was
 launched with. After merge, the live loop runs the OLD ratchet_loop.sh with no
-window until someone kills it. Procedure and the observation that proves it took
+window until someone kills it.
+
+⚑ **AND THE ORDER OF THE TWO RESTARTS MATTERS.** The loops keep their old text,
+but everything they INVOKE (`train_watchdog.py`, `pause_window.sh`,
+`daily_gate_ratchet.sh`) is re-exec'd every poll and flips immediately. So the
+moment the tree carries this change you get a NEW `train_watchdog.py` returning
+exit 6 driven by an OLD `watchdog_loop.sh` with no exit-6 branch: an abandoned
+window is alerted on and NEVER CLEARED — the precise failure the branch was
+added to fix. Restart `watchdog_loop.sh` BEFORE `ratchet_loop.sh`, or the new
+nightly failure mode is armed with its recovery disabled.
+
+⚑ The live branch is also **1 commit behind main, missing `28bff3df5` (#371)**
+itself, and its running `watchdog_loop.sh` is a hand-reduced THIRD version
+(+12/−113 vs main: #371's seams but none of its `alert_write`/`alert_once`
+machinery). So the live tree's uncommitted edits must be reconciled BEFORE the
+merge — and never with `git checkout --` or `git stash`, which CLAUDE.md bans
+here and which would discard the watchdog that is currently running.
+
+Full procedure, both halves, and the per-half log line that proves it took
 effect are in `docs/operations.md` ("The nightly pause window"). Nothing here
 has been deployed.
 

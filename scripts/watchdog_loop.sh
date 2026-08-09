@@ -243,10 +243,24 @@ while true; do
         # has no pid= and can never pass this.
         if [ -n "$pm" ] && [ -f "$pm" ] && grep -q 'pid=[0-9]' "$pm"; then
             held=$(tr '\n' ' ' < "$pm")
-            echo "$(stamp) CLEARING ABANDONED PAUSE MARKER $pm — held: $held" >> "$LOGF"
-            alert_write "CLEARING ABANDONED PAUSE MARKER $pm — held: $held: $MSG" \
-                || echo "$(stamp) WARN: clearing alert could not be appended to $ALERTF" >> "$LOGF"
             rm -f "$pm"
+            # ⚑ N9: SAY WHAT WAS ACTUALLY CLEARED. `find_pause_txt` prefers the
+            # root marker and we re-parse and remove that ONE path, but
+            # `_resolve_pause_marker_paths` also honours per-trial
+            # `train_trial_*/pause.txt`. With a second marker present the trial
+            # stays parked while the alert said "CLEARING" -- fail-safe (the next
+            # verdict is PAUSED-HELD again) but the alert overstated it, and an
+            # operator reading "cleared" and seeing no resume looks in the wrong
+            # place. Count what is left and name it.
+            still=$(ls -1 "$(dirname "$pm")"/pause.txt \
+                          "$(dirname "$pm")"/train_trial_*/pause.txt 2>/dev/null | wc -l)
+            if [ "$still" -gt 0 ]; then
+                alert_write "CLEARED abandoned pause marker $pm (held: $held) but $still OTHER pause marker(s) REMAIN — the trial stays PARKED: $MSG" \
+                    || echo "$(stamp) WARN: clearing alert could not be appended to $ALERTF" >> "$LOGF"
+            else
+                alert_write "CLEARING ABANDONED PAUSE MARKER $pm — held: $held: $MSG" \
+                    || echo "$(stamp) WARN: clearing alert could not be appended to $ALERTF" >> "$LOGF"
+            fi
         else
             alert_write "PAUSE-ABANDONED but the marker was not clearable (parsed path='$pm') — NEEDS HUMAN: $MSG" \
                 || echo "$(stamp) WARN: not-clearable alert could not be appended" >> "$LOGF"

@@ -106,13 +106,53 @@ MARKER="$TUNE_DIR/pause.txt"
 WORKER_PATTERN='-m chess_anti_engine\.worker( |$)'
 
 log() { echo "[pause-window] $*"; }
-# ⚑ EXIT 3 IS "THE WRAPPER FAILED", AND IT IS DISTINCT ON PURPOSE. The job's own
-# status is passed through untouched at the end, and the ratchet's vocabulary is
-# 0 / RATCHET_EXIT_RETRY=1 / RATCHET_EXIT_NO_RETRY=5. Sharing 1 with the ratchet
-# made "I could not pause" indistinguishable from "the arena produced no rows",
-# so a wrapper that could never park read as an ordinary retryable failure and
-# came back every poll until midnight. 2 stays reserved for usage.
-die() { echo "[pause-window] ERROR: $*" >&2; exit 3; }
+# ⚑ EXIT 7 IS "THE WRAPPER FAILED", AND IT IS DISTINCT ON PURPOSE. The job's own
+# status is passed through untouched at the end. Sharing 1 with the ratchet made
+# "I could not pause" indistinguishable from "the arena produced no rows", so a
+# wrapper that could never park read as an ordinary retryable failure and came
+# back every poll until midnight.
+#
+# ⚑ AND IT WAS 3, WHICH WAS ALREADY TAKEN. The justification used to read "the
+# ratchet's vocabulary is 0 / 1 / 5" -- but `ratchet_common.sh`, the ratchet
+# family's OWN single source, says in as many words: "5 avoids 1 (retryable),
+# 2 (usage), 3 (the arena's own no-pairs status)". 3 was spoken for, in the file
+# this script's comment was paraphrasing. Latent rather than live today
+# (`daily_gate_ratchet.sh` returns exactly 0/1/2/5), but it is the identical
+# mistake as claiming exit 5 after #371 had taken it for CRASHED: a code picked
+# by reading part of the space. 7 is checked against every producer in the
+# family -- 0, 1 RETRY, 2 usage/cd, 3 arena no-pairs, 5 NO_RETRY, 130 interrupt.
+# `tests/test_pause_window.py::test_the_wrapper_failure_code_is_not_in_the_ratchets_vocabulary`
+# derives the taken set FROM THOSE FILES rather than restating it here, so the
+# next code someone adds cannot silently collide.
+WRAPPER_FAILED_RC=7
+die() { echo "[pause-window] ERROR: $*" >&2; exit "$WRAPPER_FAILED_RC"; }
+
+# ⚑ A `set -e` DEATH BEFORE THE MARKER MUST ALSO REPORT "WRAPPER FAILED".
+# `mktemp` failing (full /tmp) or a `stat` erroring exits 1 under `set -e`, and 1
+# is the ratchet's RETRY: the loop logs "FAILED, retry next poll", does NOT count
+# it against CAE_RATCHET_PAUSE_MAX_FAILS, and churns every 600s until midnight.
+# Nothing is parked at that point, so the cost is retry noise -- but the fail cap
+# exists precisely to bound that, and a failure that dodges the cap is outside
+# the cost control this PR added. PHASE is what keeps the remap off the job's own
+# status: once the job runs, its rc is passed through verbatim.
+PHASE=setup
+# ⚑ THE STATUS MUST BE PASSED IN WHEN THIS IS NOT THE FIRST THING THE TRAP RUNS.
+# As a bare `trap remap_setup_failure EXIT`, `$?` IS the script's exit status.
+# Composed as `release; remap_setup_failure`, `$?` is RELEASE's status -- which
+# is 0 on every path -- so the remap silently never fired. A guard that cannot
+# fire, in the function whose entire job is to stop a failure being mislabelled.
+# Caught by `test_a_failure_AFTER_the_marker_also_reports_the_wrapper_code`,
+# written only because the mutation of the composite SURVIVED.
+remap_setup_failure() {
+    local rc="${1:-$?}"
+    [ "$PHASE" = "setup" ] || return 0
+    case "$rc" in
+        0|2|"$WRAPPER_FAILED_RC") return 0 ;;
+    esac
+    echo "[pause-window] ERROR: died during setup with rc=$rc (set -e) -- reporting $WRAPPER_FAILED_RC so the loop counts it against CAE_RATCHET_PAUSE_MAX_FAILS instead of retrying all day" >&2
+    exit "$WRAPPER_FAILED_RC"
+}
+trap remap_setup_failure EXIT
 
 resolve_trial_id() {
     # `.paused_<trial_id>.ack` is written next to the marker. The trial id is the
@@ -265,8 +305,24 @@ CHILD=""
 release() {
     if [ "$released" -eq 0 ]; then
         released=1
-        rm -f "$MARKER"
-        log "marker cleared -- training resumes at the next poll"
+        # ⚑ N6: ONLY REMOVE A MARKER THAT IS STILL OURS. `rm -f "$MARKER"`
+        # unconditionally means an operator who `touch`es the root marker by hand
+        # DURING our window (to hold the pause past the arena, the obvious thing
+        # to do) silently loses their pause the moment the job ends. The marker
+        # names its owner precisely so this is decidable; check it. If it is not
+        # ours we leave it and say so -- training stays parked, which is the
+        # operator's stated intent and is recoverable, whereas resuming against
+        # their wishes is not.
+        if [ ! -e "$MARKER" ]; then
+            log "marker already gone -- nothing to clear"
+        elif grep -q "pid=$$\b" "$MARKER" 2>/dev/null; then
+            rm -f "$MARKER"
+            log "marker cleared -- training resumes at the next poll"
+        else
+            log "WARNING: $MARKER is no longer ours (pid=$$ not in it) -- LEAVING IT."
+            log "         Someone replaced it during our window; training stays"
+            log "         PARKED until they clear it. Contents: $(tr -d '\n' < "$MARKER" 2>/dev/null)"
+        fi
     fi
     cleanup_tmp
 }
@@ -313,7 +369,12 @@ on_signal() {
     release
     exit 130
 }
-trap release EXIT
+# ⚑ THE REMAP SURVIVES THE HANDOFF. `trap release EXIT` REPLACES the setup trap,
+# so without this composite a `set -e` death between the marker and the job would
+# release correctly and then report 1 -- back to the uncapped retry N4 describes.
+# `release` first (the marker is the unrecoverable part), remap second.
+release_then_remap() { local rc=$?; release; remap_setup_failure "$rc"; }
+trap release_then_remap EXIT
 trap on_signal INT TERM
 
 # ⚑ THE MARKER SAYS WHO HOLDS IT AND SINCE WHEN. Nothing in the trainer parses
@@ -338,6 +399,14 @@ if [ "$PREEXISTING_ACK" = "1" ]; then
     deadline="${CAE_PAUSE_STALE_ACK_TIMEOUT:-180}"
 fi
 
+# ⚑ N8: THIS GUARD DEPENDS ON SUB-SECOND TIMESTAMPS, and that is unpinned by
+# anything but this comment. `-ot` is STRICTLY older, so at EQUAL mtimes
+# `[ ! -ot ]` reads FRESH -- i.e. a stale ack written in the same timestamp tick
+# as our marker would be accepted. Unreachable at the nanosecond granularity
+# bash+ext4 give here (measured: a 12ms difference resolves correctly), but
+# reachable on any 1-second-granularity filesystem (some network mounts, some
+# container overlays). If this ever runs somewhere like that, compare with an
+# explicit epoch-nanosecond `stat -c %Y`/`%.9Y` instead of `-ot`.
 ack_is_fresh() {
     [ -e "$ACK" ] || return 1
     [ ! "$ACK" -ot "$MARKER" ]   # mtime >= marker's; `-ot` is strictly older
@@ -368,17 +437,44 @@ if [ -n "$WORKER_PIDS" ]; then
     done
     log "drained after ~${drained}s"
 
-    # ⚑ THE DRAIN IS A GATE, NOT A BEST EFFORT. Checked against the pids taken
-    # at baseline rather than by re-running pgrep, so a pattern that stopped
-    # matching cannot report a clean drain. A worker that ignored SIGTERM still
-    # holds its server lease and still plays; running the job beside it buys
-    # the full production pause and delivers the contended measurement this
-    # script exists to prevent -- then stamps the day as read.
+    # ⚑ THE DRAIN IS A GATE, NOT A BEST EFFORT -- AND IT NEEDS BOTH HALVES.
+    #
+    # Half 1, the BASELINE pids: a pattern that stopped matching cannot report a
+    # clean drain, because these pids are checked with `kill -0` and not with
+    # pgrep at all.
+    #
+    # Half 2, a FRESH pgrep: the baseline was taken at line ~187, BEFORE the
+    # marker and before an ack wait that can run CAE_PAUSE_ACK_TIMEOUT (1800s
+    # default). The trial is still running its current iteration for all of that
+    # wait, and `_revive_fleet` sits inside `_ingest_distributed_selfplay` -- so
+    # revive is live PRECISELY DURING THE WAIT. A worker that dies and is
+    # revived there gets a NEW pid, which is in no baseline. Baseline pids all
+    # dead + a revived worker alive and ignoring SIGTERM => half 1 finds nothing
+    # => the job runs beside a live selfplay worker, rc=0, and `ratchet_outcome`
+    # stamps the day as a clean strength reading. That is the exact outcome this
+    # gate exists to prevent, and an independent reviewer reproduced it against
+    # the real script: "workers still alive after 3s" ... "command exited rc=0"
+    # ... "JOB RAN BESIDE THE LIVE WORKER: True".
+    #
+    # ⚑ The loop above ALREADY SAW IT -- it printed "workers still alive" and
+    # then `break`ed into a gate that never consulted the fact. A value accepted
+    # and then silently ignored, which is this codebase's signature defect.
+    #
+    # Neither half subsumes the other: half 1 covers "the pattern drifted", half
+    # 2 covers "a worker appeared after the baseline", and half 2 is the one
+    # that runs the arena. rc>=2 is fatal here for the same reason it is at
+    # baseline; rc==0 (still matching) is fatal too.
     survivors=""
     for pid in $WORKER_PIDS; do
         kill -0 "$pid" 2>/dev/null && survivors="$survivors $pid"
     done
+
+    post_rc=0
+    STILL_MATCHING="$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null)" || post_rc=$?
+    [ "$post_rc" -lt 2 ] || die "pgrep failed (rc=$post_rc) after the drain -- the worker pattern is broken, so 'no workers left' is unverifiable; NOT running the job"
+
     [ -z "$survivors" ] || die "worker(s)$survivors survived SIGTERM after ${DRAIN_TIMEOUT}s -- NOT running the job; the measurement would be contended and indistinguishable from a clean one"
+    [ -z "$STILL_MATCHING" ] || die "worker(s) $(echo "$STILL_MATCHING" | tr '\n' ' ')still match '$WORKER_PATTERN' after ${DRAIN_TIMEOUT}s -- NOT running the job. These are NOT in the pre-marker baseline, so they were revived during the ack wait (revive is live until the trial parks); the measurement would be contended and would be filed as clean"
 
     # Evidence, read from the pre-drain offsets. ⚑ IT MUST BE READ HERE, BEFORE
     # THE MARKER CLEARS -- but not for the reason an earlier revision gave. It
@@ -419,6 +515,7 @@ fi
 # wrapper shell. It is switched back off immediately: monitor mode also changes
 # how this shell reports job status, and nothing after this needs it.
 log "running: $*"
+PHASE=job
 set +e
 set -m
 "$@" &

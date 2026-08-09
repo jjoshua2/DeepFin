@@ -53,7 +53,15 @@ GIVEUP_STATE=data/ratchet/last_giveup_date
 # day of repeatedly parking production and measuring nothing.
 PAUSE_FAIL_STATE=data/ratchet/pause_window_fails
 PAUSE_MAX_FAILS="${CAE_RATCHET_PAUSE_MAX_FAILS:-2}"
-PAUSE_WINDOW_FAILED_RC=3
+# ⚑ MUST EQUAL pause_window.sh's WRAPPER_FAILED_RC, and must not collide with
+# any status daily_gate_ratchet.sh can return. It was 3, which ratchet_common.sh
+# already documents as "the arena's own no-pairs status" -- the same class of
+# mistake as the exit-5/CRASHED collision, found the same way (by reading the
+# file the comment was paraphrasing). A test derives the taken set from those
+# files rather than restating it, and mutating this constant to 1 -- which would
+# make every routine RETRY count as a pause-window failure and silently disable
+# the window for the rest of the day after two polls -- now fails.
+PAUSE_WINDOW_FAILED_RC=7
 LOG=scratchpad/ratchet_loop.log
 POLL="${RATCHET_POLL:-600}"
 # Skip the first N iterations after a restart: a freshly-restarted trial spends
@@ -139,12 +147,19 @@ poll_once () {
     # between the run and the `ratchet_outcome` call would otherwise clobber
     # `$?` and turn every outcome into a success.
     # ⚑ RUN THE WHOLE RATCHET INSIDE ONE PAUSE WINDOW, not beside training.
-    # Measured 2026-08-09: beside training the lineage series truncated at
-    # 106/200 with a CI spanning zero — an unreadable result — while iterations
-    # stretched 245s -> 611s. The same series in a pause window got 200/200 in
-    # ~21 min. Wrapping HERE rather than inside daily_gate_ratchet.sh pauses
-    # ONCE for both series (matching the ~35 min 2x200 measurement) and keeps
-    # the wrapper's chatter out of the per-arena logs the outcome parser reads.
+    # Measured 2026-08-09 (same snapshots, same seed, same argv but for --label;
+    # runs/arena_results.jsonl): beside training the lineage series truncated at
+    # 106/200 games in 2520.3s, reporting at 53% of its configured resolution.
+    # The same series in a pause window got 200/200 in 1160.1s. Cost to the loop,
+    # from result.json: 15.1 iterations lost beside training against 7.1 parked.
+    # Wrapping HERE rather than inside daily_gate_ratchet.sh pauses ONCE for both
+    # series and keeps the wrapper's chatter out of the per-arena logs the
+    # outcome parser reads.
+    # ⚑ This comment used to say "iterations stretched 245s -> 611s ... 200/200
+    # in ~21 min". Those are the RETRACTED figures (pause_window.sh:19-24): the
+    # pre-arena median was 247.8s and the peak 1628.0s, not 611.3s. The
+    # retraction was written into two files and missed this third one -- which is
+    # why the sweep is now `grep -rn '245s\|2\.5x\|611s' scripts/ docs/`.
     #
     # The `paused` guard above has already run, so this cannot collide with an
     # operator's own pause: we only ever set the marker after finding none.
