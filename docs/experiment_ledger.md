@@ -36654,3 +36654,82 @@ The root LOG transform is also excluded: it is 17x the linear root at 256 sims (
 and equivalent to `c_scale` ~0.45, past the 0.4 turnover -- and paired log-vs-linear was ns
 (-4.29 [-11.46, +2.88]). Functional FORM remains untested; those arms only separated
 magnitude.
+
+### AMENDMENT (same session, 2026-08-09) — the yardstick I just pre-registered CANNOT BE READ
+
+Caught by running it before trusting it. Two independent reasons, both fatal, and one of
+them is a new production finding.
+
+**1. `priority_policy_kl` is not an iteration metric.** It is a per-row OPTIONAL shard field
+(`replay/shard.py:142`, `_F16`, presence flag `has_priority_policy_kl`), not a key in
+`result.json`. The command I wrote reads `result.json`. It would have raised `KeyError` on
+first use -- the cheapest possible failure, and only because I ran it.
+
+**2. ⚑⚑ THE FIELD IS ABSENT FROM EVERY PRODUCTION SHARD.** Verified by a RECURSIVE walk of
+the newest shard (`shard_000172.zarr`, 21 arrays; the only `priority*` key is `priority`),
+and by a membership scan across all 10 shards on disk: **0 of 10 carry
+`priority_policy_kl`.**
+⚠ My FIRST scan was itself a bad instrument -- it printed `sorted(keys)[:8]` and checked only
+the root group, so it could not have seen a nested or late-alphabetical key. The 0/10 result
+is from the corrected recursive version. Do not cite the first pass.
+
+**CONSEQUENCE -- a new signature defect, mechanism NOT yet established.**
+`configs/pbt2_small.yaml:301-305` has `diff_focus_enabled: true` and
+`diff_focus_pol_scale: 3.5`, and `replay/disk_buffer.py:856` gates on
+`if self.diff_focus_pol_scale > 0 and "priority_policy_kl" in arrs and
+"has_priority_policy_kl" in arrs:` -- **a branch conditioned on the presence of the very
+field that is never written, so the diff-focus POLICY term is silently inert in
+production.** The value is assigned at `selfplay/network_turn.py:527` (C path) and `:658`
+(Python path) and passed at `finalize.py:1056`, so it is dropped somewhere between the record
+and the shard. **Establishing where is owed before any diff-focus claim is made.** This is
+NOT a consequence of this bundle and predates it.
+
+**3. AND SO THE 0.0264 BASELINE IS RETRACTED.** "Production's own stored
+`priority_policy_kl`, median 0.0264 / mean 0.1309" cannot have come from production shards,
+because production shards do not carry the field. It is a rig number of unestablished
+provenance, not a production-stored one, and it must not be used as a baseline. The
+competing 0.007 is from the harness that read entropy 0.629 against production's ~0.92 and is
+also void. **The best available estimate of KL(target||prior) at the live `c_scale` is 0.067**
+(PR #381's rig, frozen audit set, n=800) -- from the rig that came closest to the control,
+which still missed it by +0.053 nats. Treat it as a within-rig anchor for PAIRED deltas only.
+
+### CORRECTED yardstick
+
+**KL is not observable live.** The shards store neither the prior nor the KL, so KL can only
+come from an offline re-run rig. The live readout can see only ENTROPY. Splitting accordingly:
+
+**(A) LIVE, deciding, from `result.json` -- fields verified present on iter 667:**
+
+    PYTHONPATH=. python3 - <<'EOF'
+    import json, statistics as st
+    d="runs/pbt2_small/tune/train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06"
+    rows=[json.loads(l) for l in open(d+"/result.json") if l.strip()]
+    FIRST=None   # training_iteration of the FIRST row under the new config
+    w=[r for r in rows if r.get("training_iteration",0)>=FIRST+3][:6]
+    print("n:", len(w))
+    print("data_policy_entropy      median:", st.median([r["data_policy_entropy"] for r in w]))
+    print("gumbel_policy_entropy_mean median:", st.median([r["gumbel_policy_entropy_mean"] for r in w]))
+    print("gumbel_policy_eff_moves_mean median:", st.median([r["gumbel_policy_eff_moves_mean"] for r in w]))
+    EOF
+
+Baselines measured on the live trial 2026-08-09: `data_policy_entropy` last-10 mean
+**0.900** (iter 667 = 0.910); `gumbel_policy_entropy_mean` **1.0635, sd 0.01606`;
+`gumbel_policy_eff_moves_mean` last-10 **4.196**.
+
+- **SUCCESS:** `data_policy_entropy` median **>= 0.90** (the entropy bill is repaid) AND
+  `gumbel_policy_entropy_mean` up by **>= +0.20** (both knobs took effect).
+- **KILL:** `data_policy_entropy` median **< 0.75** (net sharpening -- the bundle failed at
+  its own arithmetic).
+- **PLUMBING FAILURE (not a verdict):** `gumbel_policy_entropy_mean` moves **< +0.10**
+  (~6 sd). Re-check deployment, do not record a verdict.
+- Anything else INDETERMINATE, hold for a second window.
+
+**(B) OFFLINE, confirmatory, PAIRED pre-vs-post on banked shards** using PR #381's probe at
+the same settings, reporting KL(target||prior) and change quality vs deep SF. **Paired
+within-rig delta only** -- the rig misses its own harness control by +0.053 nats, so no
+absolute KL from it is admissible. Gate it on reproducing the STORED target first.
+
+**The generalisable rule, which cost nothing here only because the command was run:**
+**an exact command is not a yardstick until it has been EXECUTED and produced a number.**
+Every field it names must be shown to exist in the artefact it reads -- and the check that
+shows it must itself be non-truncating and recursive.
