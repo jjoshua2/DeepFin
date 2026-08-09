@@ -273,6 +273,62 @@ def _coerce_override(cfg_field_default: object, value: float) -> float | int | b
     return float(value)
 
 
+def _assert_overrides_dispatched(
+  # `GumbelConfig` is imported inside the functions that need it (module import
+  # time is on the critical path for every `--help`), so it is not a name this
+  # signature can reference.
+    cfgs: dict[str, object],
+    profiles: dict[str, _SearchProfile],
+    *,
+    requested: tuple[tuple[str, float], ...],
+) -> None:
+    """THE guard. Conditioned on what the OPERATOR ASKED FOR, never on what survived.
+
+    The version this replaced ran ``if p.overrides:`` and nothing else, so it
+    was conditioned on the very value that goes missing: deleting
+    ``gumbel_overrides=gumbel_overrides`` from ``main()``'s
+    ``build_search_profiles`` call left every profile with ``overrides=()``,
+    the loop body never executed, and the whole audit ran the DEFAULT search
+    shape under a header that said otherwise. That mutant passed 141 tests.
+    A guard that can only fire when the value is present cannot detect the
+    value going absent -- it is this repo's signature defect wearing the
+    costume of the fix for it.
+
+    ``requested`` comes from ``parse_gumbel_overrides``, i.e. straight off the
+    command line, and travels to here beside the profiles rather than through
+    them. So an override dropped anywhere in between is a MISMATCH here rather
+    than a quietly empty loop.
+    """
+    if requested:
+      # `--gumbel` is a PLAY-row flag (`--gumbel-training-rows` adds the two
+      # training rows on top); the PLAY row therefore always carries it, and
+      # "the PLAY row does not" is exactly the dropped-keyword signature.
+        play = profiles.get("search")
+        if play is None or tuple(play.overrides) != tuple(requested):
+            asked = " ".join(f"{k}={v}" for k, v in requested)
+            got = (
+                "no PLAY profile at all" if play is None
+                else (" ".join(f"{k}={v}" for k, v in play.overrides) or "nothing")
+            )
+            raise SystemExit(
+                f"[audit] --gumbel {asked} was parsed but the PLAY profile "
+                f"carries {got}. The override was dropped between the command "
+                "line and the search profile — the run would report the "
+                "DEFAULT search shape under a header naming your values. "
+                "Refusing to run."
+            )
+    for name, p in profiles.items():
+        if p.overrides:
+            _assert_overrides_realized(
+                cfgs[name], p.overrides, where=_CANDIDATE_NAMES[name],
+            )
+            print(
+                f"[audit] {_CANDIDATE_NAMES[name]}: --gumbel realized "
+                + " ".join(f"{k}={getattr(cfgs[name], k)}" for k, _ in p.overrides),
+                flush=True,
+            )
+
+
 def _assert_overrides_realized(cfg, overrides, *, where: str) -> None:
     """Fail loudly if an override did not land on the config the search reads.
 
@@ -385,6 +441,35 @@ _VALUE_NAMES = {
 }
 
 
+def profiles_for_audit(
+    args, flat: dict[str, object],
+) -> tuple[dict[str, _SearchProfile], tuple[tuple[str, float], ...]]:
+    """Parse ``--gumbel`` and build the search profiles in ONE place.
+
+    The point is that there is no keyword left for ``main()`` to forget. The
+    request and the profiles are derived from the same ``args`` here and handed
+    back together, so the "operator asked for it" and "the search got it" halves
+    cannot be wired independently -- which is precisely how
+    ``gumbel_overrides=gumbel_overrides`` went missing from the
+    ``build_search_profiles`` call and stayed invisible to the whole suite.
+
+    Being a real function rather than a stretch of ``main()`` is also what makes
+    it testable: ``tests/test_audit_gumbel_override_dispatch.py`` drives it with
+    a stub ``args`` and no checkpoint, so the wiring has a test that does not
+    need an hour of Stockfish.
+    """
+    requested = parse_gumbel_overrides(args.gumbel)
+    profiles = build_search_profiles(
+        flat,
+        play_sims=int(args.sims),
+        play_topk=(int(args.gumbel_topk) if args.gumbel_topk is not None else None),
+        rl_sims_override=(int(args.rl_sims) if args.rl_sims else None),
+        gumbel_overrides=requested,
+        override_training_rows=bool(args.gumbel_training_rows),
+    )
+    return profiles, requested
+
+
 def _wdl_softmax(logits: np.ndarray) -> np.ndarray:
     """Row-wise softmax of raw WDL logits, as `network_turn.py` does.
 
@@ -445,6 +530,11 @@ def _net_candidates(
     batch_size: int,
     seed: int,
     profiles: dict[str, _SearchProfile],
+  # Required, and deliberately WITHOUT a default: the expectation this function
+  # checks its profiles against must not be omissible, or the guard degrades to
+  # the `if p.overrides:` no-op it replaced. Callers that pass no `--gumbel`
+  # spell it `()`.
+    requested_gumbel_overrides: tuple[tuple[str, float], ...],
     policy_temp: float = 1.0,
     syzygy_path: str | None = None,
     target_batch: int = 0,
@@ -534,18 +624,11 @@ def _net_candidates(
         return cfg
 
     cfgs = {name: _build(p) for name, p in profiles.items()}
-  # Guard the DISPATCH, not the CLI: this is the object each runner is about to
-  # be handed, so an override that survives to here survives into the search.
-    for name, p in profiles.items():
-        if p.overrides:
-            _assert_overrides_realized(
-                cfgs[name], p.overrides, where=_CANDIDATE_NAMES[name],
-            )
-            print(
-                f"[audit] {_CANDIDATE_NAMES[name]}: --gumbel realized "
-                + " ".join(f"{k}={getattr(cfgs[name], k)}" for k, _ in p.overrides),
-                flush=True,
-            )
+  # Guard the DISPATCH, not the CLI: these are the objects each runner is about
+  # to be handed, so an override that survives to here survives into the search.
+    _assert_overrides_dispatched(
+        cfgs, profiles, requested=requested_gumbel_overrides,
+    )
   # Volatility-aware search exists ONLY on the Python path; selfplay drops to
   # it when either flag is set. Always calling the C path would silently score
   # the baseline search and report it as the configured training target -- the
@@ -1208,7 +1291,11 @@ def main() -> None:
     blunder_taus = _parse_blunder_taus(args.blunder_taus)
   # Same reasoning: a bad --gumbel key must not surface after the checkpoint
   # has loaded and Stockfish has spent an hour labelling.
-    gumbel_overrides = parse_gumbel_overrides(args.gumbel)
+  # Fail-fast only: a bad --gumbel key must surface here, not after the
+  # checkpoint has loaded and SF has spent an hour labelling. The value is NOT
+  # kept -- `profiles_for_audit` re-derives it from `args` below, so there is no
+  # variable in `main()` that a later edit can forget to forward.
+    parse_gumbel_overrides(args.gumbel)
     if args.dump_distributions and args.dump_per_position is None:
         raise SystemExit(
             "--dump-distributions needs --dump-per-position (it adds a field "
@@ -1293,12 +1380,7 @@ def main() -> None:
     from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
 
     full_share = float(flat.get("playout_cap_fraction", 1.0))
-    profiles = build_search_profiles(
-        flat, play_sims=int(args.sims), play_topk=(int(args.gumbel_topk) if args.gumbel_topk is not None else None),
-        rl_sims_override=(int(args.rl_sims) if args.rl_sims else None),
-        gumbel_overrides=gumbel_overrides,
-        override_training_rows=bool(args.gumbel_training_rows),
-    )
+    profiles, gumbel_overrides = profiles_for_audit(args, flat)
     rl_c_scale = profiles["train"].c_scale
     rl_sims = profiles["train"].sims
     rl_fast_sims = profiles["train_fast"].sims
@@ -1317,7 +1399,8 @@ def main() -> None:
     raw_probs, search_by_profile, root_q_by_profile, root_wdl = _net_candidates(
         boards, checkpoint=args.checkpoint, device=args.device,
         batch_size=int(args.batch_size), seed=int(args.seed),
-        profiles=profiles, policy_temp=float(args.policy_temp),
+        profiles=profiles, requested_gumbel_overrides=gumbel_overrides,
+        policy_temp=float(args.policy_temp),
         syzygy_path=sz_path or None,
         target_batch=int(args.target_batch),
         vloss_weight=int(args.vloss_weight),
