@@ -36813,3 +36813,79 @@ present on iter 667 and that part was correct.
 has been EXECUTED and produced a number — **and until the artefact it read has been shown to
 be the LIVE one by its mtime.** Both of my first two attempts produced confident, plausible,
 wrong output. Executing them is what caught both.
+
+### AMENDMENT 3 (2026-08-09) — the separability table's THIRD COLUMN IS FALSIFIED
+
+The bundle (`gumbel_c_scale` 0.025 → 0.1 **+** `gumbel_policy_temp` 1.0 → 1.5) was justified by
+the two knobs having **separable signatures**, so the shards could attribute them post-hoc:
+
+| | KL(target‖prior) | H(target) | rare-move coverage |
+|---|---|---|---|
+| `c_scale` up | up | DOWN | ~~**flat**~~ **FALSE** |
+| `policy_temp` up | up | UP | up |
+
+`scripts/rare_sound_move_coverage.py` (PR #382) now MEASURES that third column instead of
+predicting it. **`c_scale` is not flat in coverage — it is large, and it changes SIGN.**
+400 audit positions, 256 sims, position-paired, `tau=25cp`, `rho=0.01`, 95% cluster bootstrap:
+
+| `phi` | `c_scale` 0.025→0.1 | `policy_temp` 1.0→1.5 | bundle |
+|---|---|---|---|
+| 1e-4 | **−0.138** [−0.183, −0.098] | +0.112 [+0.076, +0.151] | **−0.006 [−0.050, +0.039] ns** |
+| 1e-3 | **−0.182** [−0.234, −0.131] | +0.256 [+0.208, +0.304] | +0.071 [+0.017, +0.124] |
+| 7e-3 | −0.062 [−0.096, −0.030] | +0.421 [+0.365, +0.479] | +0.203 |
+| 1e-2 | **+0.032** [+0.015, +0.053] | +0.382 [+0.326, +0.444] | +0.247 |
+
+**Mechanism — why the prediction was wrong.** `mcts/gumbel.py::_build_improved_policy_for_board`
+builds the improved policy over **EVERY LEGAL MOVE**, not over the Gumbel candidate set. So
+`sigma` reaches every entry of the stored target and **no mass floor is sigma-invariant**. The
+prediction assumed `policy_temp` alone controls support because it alone changes which moves
+become candidates — but candidate selection does not bound the target's support, and at
+`gumbel_topk: 32` it does not even bind in ~60% of positions.
+
+**⚑⚑ THE TRAP, AND WHY THIS HAD TO BE PINNED BEFORE THE READOUT.** At `phi = 1e-4` the two
+halves **CANCEL to a null** (−0.006, ns). Reading coverage there would have reported *"nothing
+happened"* while **both knobs fired hard in opposite directions** — a blind ruler of exactly
+the kind logged in [[compute_instrument_resolution_before_the_threshold]]. With four `phi`
+values on the table and no pin, picking one after seeing the data is a garden of forking paths.
+
+**PINNED NOW, BEFORE ANY LIVE ROW EXISTS: attribution is read at `phi = 1e-2` ONLY**, with
+`tau = 25cp`, `rho = 0.01`. At that floor `c_scale` moves coverage ~12x less than
+`policy_temp` (+0.032 vs +0.382), so it is the one cell where coverage still discriminates.
+A bundle delta **≥ +0.15** at `phi = 1e-2` is unreachable by `c_scale` alone and therefore
+attributes the move to `policy_temp`.
+
+**Coverage is the ATTRIBUTION instrument, not the deciding yardstick.** SUCCESS / KILL /
+PLUMBING-FAILURE remain exactly as in Amendment 2 (`priority_policy_kl` + `data_policy_entropy`).
+Amendment 3 changes only how the bundle is decomposed afterwards.
+
+**Live baseline** (40 newest shards BY MTIME, newest `shard_003811.zarr` 2026-08-09 14:49,
+4516 pairs): coverage **0.8131 / 0.5819 / 0.2143 / 0.1455** at `phi` 1e-4 / 1e-3 / 7e-3 / 1e-2.
+
+**Resolution, computed BEFORE the threshold:** 95% half-width on live shards **0.012** at
+`phi`=1e-2 (0.018 at 1e-3); audit rig 0.019 at 1e-2. The `policy_temp` effect is 4-30x the
+floor. ~50 audit positions resolve the `policy_temp` half at `phi`=1e-2.
+
+**Negative control PASSES and ships as a test:** 8000 live rows at `phi`=1e-3, real **0.5819**
+→ target-shuffled **0.3891 [0.3740, 0.4047]** against a chance base rate of **0.3217**.
+
+**Alignment re-verified empirically** (`--check-alignment`, 40 live shards): `sf_p0_regret`
+scores moves legal in THIS row at **1.0000** (n=5243); `sf_multipv_raw` ids are legal only
+**0.1007** of the time, confirming it belongs to the PREVIOUS ply. The script uses
+`sf_p0_regret`.
+
+**Two standing caveats on this instrument.**
+1. `sf_p0_regret` exists on only **23.5%** of net-turn policy rows (it needs two consecutive
+   full plies), which is the sample-size constraint on the shard rig. The script aborts below
+   a 5% presence floor.
+2. Production `sf_multipv` is now **6**, so "sound" on shards is drawn from ≤6 scored moves,
+   while the audit rig has MultiPV ≥10 at ≥1M nodes. **The two rigs are NOT comparable in
+   LEVEL — only within-rig deltas are admissible.**
+
+⚠ The isolation arms above were measured at 256 sims on the frozen audit set, i.e. OFF-POLICY
+for a live run. The `phi`=1e-2 discrimination claim should be re-checked at the deployed sim
+count before the flat cell is leaned on for a verdict.
+
+**The reusable rule:** a predicted signature is a hypothesis, not a property. This table sat in
+a pre-registration for a day reading as fact; one measurement falsified a third of it. **Measure
+the discriminator before you rely on it to discriminate** — and had the bundle deployed first,
+the null at `phi`=1e-4 would have looked like a clean negative result.
