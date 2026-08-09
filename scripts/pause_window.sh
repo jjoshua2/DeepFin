@@ -147,7 +147,18 @@ remap_setup_failure() {
     local rc="${1:-$?}"
     [ "$PHASE" = "setup" ] || return 0
     case "$rc" in
-        0|2|"$WRAPPER_FAILED_RC") return 0 ;;
+        # ⚑ 130 IS AN INTERRUPT, NOT A FAILURE, AND IT IS THE COMMON ONE.
+        # `PHASE` only leaves `setup` when the JOB starts, so everything before
+        # that -- including the ack wait, which is bounded by
+        # CAE_PAUSE_ACK_TIMEOUT (1800s), is the longest phase by far, and is
+        # exactly when an operator reaches for Ctrl-C -- was being remapped to
+        # "the wrapper failed". A human interrupt or a systemd timeout would
+        # then count against CAE_RATCHET_PAUSE_MAX_FAILS, and two of them trip
+        # the ledger's third KILL criterion without the mechanism having failed
+        # once. `on_signal` normalises both SIGINT and SIGTERM to 130, so this
+        # one value covers every trappable interrupt; an untrapped fatal signal
+        # kills bash without running this trap at all.
+        0|2|130|"$WRAPPER_FAILED_RC") return 0 ;;
     esac
     echo "[pause-window] ERROR: died during setup with rc=$rc (set -e) -- reporting $WRAPPER_FAILED_RC so the loop counts it against CAE_RATCHET_PAUSE_MAX_FAILS instead of retrying all day" >&2
     exit "$WRAPPER_FAILED_RC"
@@ -189,7 +200,7 @@ resolve_trial_id() {
     # `test_the_trial_selector_prefers_the_populated_trial_over_a_touched_one`
     # is that demonstration.
     #
-    # rank 1 = has result.json/progress.csv, rank 0 = has neither; then that
+    # rank 1 = has result.json or progress.csv, rank 0 = neither; then that
     # file's mtime; then the name, matching `max()` on the same 3-tuple.
     # ⚑ `%.9Y`, NOT `%Y`. Whole-second mtimes make two trials written in the same
     # second compare EQUAL, and the comparison then falls through to the name --
@@ -211,9 +222,17 @@ resolve_trial_id() {
         done | LC_ALL=C sort -k1,1nr -k2,2nr -k3,3r | head -1 | cut -d' ' -f3-
     )"
     [ -n "$newest" ] || die "no train_trial_* under $TUNE_DIR; pass --trial-id"
-    id="$(printf '%s\n' "$newest" | sed -E 's/^train_trial_([^_]+_[0-9]+)_.*$/\1/')"
+    trial_id_from "$newest"
+}
+
+# The ONE parse, shared by the selector above and by --trial-id, so a caller
+# that hands us a directory name and a caller that hands us an id cannot end up
+# waiting on two different ack files. Accepts either form.
+trial_id_from() {   # $1 = `train_trial_<id>_<n>_...` or already `<id>`
+    local id
+    id="$(printf '%s\n' "$1" | sed -E 's#/+$##; s#^.*/##; s/^train_trial_([^_]+_[0-9]+)_.*$/\1/')"
     printf '%s\n' "$id" | grep -Eq '^[A-Za-z0-9]+_[0-9]+$' \
-        || die "could not parse a trial id out of '$newest' (got '$id') -- the trial-dir naming has changed; pass --trial-id"
+        || die "could not parse a trial id out of '$1' (got '$id') -- the trial-dir naming has changed; pass --trial-id"
     printf '%s\n' "$id"
 }
 
@@ -223,7 +242,17 @@ resolve_trial_id() {
 # on the marker: whichever finished first would resume training under the other.
 [ ! -e "$MARKER" ] || die "$MARKER already exists -- another pause window is active"
 
-[ -n "$TRIAL_ID" ] || TRIAL_ID="$(resolve_trial_id)"
+# ⚑ NORMALISE, don't trust. `ratchet_loop.sh` passes the trial DIRECTORY NAME so
+# that it and this script cannot disagree about which trial is live (that
+# disagreement is real: the loop's `iter`/`ck_ready`/snapshot came from its own
+# selector while we parked whichever trial ours chose). Both forms are accepted
+# and both go through the one parse, so "the caller named a trial" and "we found
+# one" cannot produce different ack paths.
+if [ -n "$TRIAL_ID" ]; then
+    TRIAL_ID="$(trial_id_from "$TRIAL_ID")"
+else
+    TRIAL_ID="$(resolve_trial_id)"
+fi
 ACK="$TUNE_DIR/.paused_${TRIAL_ID}.ack"
 log "trial=$TRIAL_ID  marker=$MARKER  ack=$(basename "$ACK")"
 

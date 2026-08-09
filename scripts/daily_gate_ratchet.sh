@@ -210,7 +210,7 @@ today=$(date +%F)
 # correct reading of all three is "not yet", which is exactly what
 # $RATCHET_EXIT_RETRY means to the loop: do not stamp the day, ask again next
 # poll.
-trial=$(ls -td "$WORK_DIR"/tune/train_trial_*/ 2>/dev/null | head -1)
+trial=$(ratchet_newest_trial_dir)
 if [ -z "$trial" ]; then
     echo "[ratchet] no trial dir under $WORK_DIR — nothing to measure YET" >&2
     exit "$RATCHET_EXIT_RETRY"

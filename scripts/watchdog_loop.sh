@@ -24,7 +24,8 @@
 # vmbus wedge (memory: wsl2-gpu-vmbus-wedge-signature): the trainer wedges alive
 # and `train.sh stop` can't help because ray stop needs the dead GPU.
 #
-# ABANDONED-PAUSE RECOVERY (exit 5, added 2026-08-09 with scripts/pause_window.sh).
+# ABANDONED-PAUSE RECOVERY (exit 6, added 2026-08-09 with scripts/pause_window.sh;
+# 5 is CRASHED, taken by #371 -- see EXIT_PAUSE_ABANDONED below).
 # A held pause.txt makes the stall path structurally unreachable: `decide()`
 # returns PAUSED-HELD whenever the loop is flat AND a marker exists, and STALLED
 # requires no marker — so a wrapper that dies holding one parks production until
@@ -94,6 +95,10 @@ LAST_ALERT_F="${WATCHDOG_LAST_ALERT_F:-/tmp/chess_watchdog_last_alert}"
 # persisting stall inside the cooldown must not re-say it every 10 minutes
 # either. Both keys clear together when the state goes back to OK.
 LAST_ESCALATE_F="${WATCHDOG_LAST_ESCALATE_F:-/tmp/chess_watchdog_last_escalate}"
+# And the abandoned-pause branch dedupes on its own key too, for the same
+# reason: a marker that cannot be removed is ONE piece of news, not one per
+# poll. Keyed on outcome+path, so a different marker still alerts immediately.
+LAST_CLEAR_F="${WATCHDOG_LAST_CLEAR_F:-/tmp/chess_watchdog_last_clear}"
 
 stamp(){ date '+%m-%d %H:%M:%S'; }
 
@@ -243,27 +248,45 @@ while true; do
         # has no pid= and can never pass this.
         if [ -n "$pm" ] && [ -f "$pm" ] && grep -q 'pid=[0-9]' "$pm"; then
             held=$(tr '\n' ' ' < "$pm")
-            rm -f "$pm"
-            # ⚑ N9: SAY WHAT WAS ACTUALLY CLEARED. `find_pause_txt` prefers the
-            # root marker and we re-parse and remove that ONE path, but
-            # `_resolve_pause_marker_paths` also honours per-trial
-            # `train_trial_*/pause.txt`. With a second marker present the trial
-            # stays parked while the alert said "CLEARING" -- fail-safe (the next
-            # verdict is PAUSED-HELD again) but the alert overstated it, and an
-            # operator reading "cleared" and seeing no resume looks in the wrong
-            # place. Count what is left and name it.
-            still=$(ls -1 "$(dirname "$pm")"/pause.txt \
-                          "$(dirname "$pm")"/train_trial_*/pause.txt 2>/dev/null | wc -l)
-            if [ "$still" -gt 0 ]; then
-                alert_write "CLEARED abandoned pause marker $pm (held: $held) but $still OTHER pause marker(s) REMAIN — the trial stays PARKED: $MSG" \
-                    || echo "$(stamp) WARN: clearing alert could not be appended to $ALERTF" >> "$LOGF"
+            # ⚑ BRANCH ON THE rm, AND DEDUPE. If the removal fails (read-only or
+            # full filesystem, EPERM on a sticky dir) the old code still wrote
+            # "CLEARED abandoned pause marker" -- a message asserting something
+            # that did not happen -- and it wrote it EVERY POLL forever, because
+            # this is the one branch that bypasses `alert_once`. That is #371's
+            # 27-identical-lines behaviour reintroduced in the branch added by
+            # the PR that cites #371. Reproduced: 4 identical lines on an
+            # unwritable tune dir. Keyed on the marker path, so a genuinely new
+            # abandoned window still alerts.
+            if rm -f "$pm" 2>/dev/null && [ ! -e "$pm" ]; then
+                # ⚑ N9: SAY WHAT WAS ACTUALLY CLEARED. `find_pause_txt` prefers
+                # the root marker and we re-parse and remove that ONE path, but
+                # `_resolve_pause_marker_paths` also honours per-trial
+                # `train_trial_*/pause.txt`. With a second marker present the
+                # trial stays parked while the alert said "CLEARING" --
+                # fail-safe (the next verdict is PAUSED-HELD again) but the
+                # alert overstated it, and an operator reading "cleared" and
+                # seeing no resume looks in the wrong place. Count what is left
+                # and name it.
+                still=$(ls -1 "$(dirname "$pm")"/pause.txt \
+                              "$(dirname "$pm")"/train_trial_*/pause.txt 2>/dev/null | wc -l)
+                echo "$(stamp) CLEARED abandoned pause marker $pm — held: $held" >> "$LOGF"
+                if [ "$still" -gt 0 ]; then
+                    alert_once "$LAST_CLEAR_F" "cleared-partial:$pm" \
+                        "CLEARED abandoned pause marker $pm (held: $held) but $still OTHER pause marker(s) REMAIN — the trial stays PARKED: $MSG" || true
+                else
+                    alert_once "$LAST_CLEAR_F" "cleared:$pm" \
+                        "CLEARED ABANDONED PAUSE MARKER $pm — held: $held: $MSG" || true
+                fi
             else
-                alert_write "CLEARING ABANDONED PAUSE MARKER $pm — held: $held: $MSG" \
-                    || echo "$(stamp) WARN: clearing alert could not be appended to $ALERTF" >> "$LOGF"
+                # NOT cleared. Say that, once, rather than claiming success at
+                # every poll for as long as the filesystem stays unwritable.
+                echo "$(stamp) FAILED to remove abandoned pause marker $pm" >> "$LOGF"
+                alert_once "$LAST_CLEAR_F" "rm-failed:$pm" \
+                    "COULD NOT REMOVE abandoned pause marker $pm (held: $held) — production stays PARKED and this needs a human: $MSG" || true
             fi
         else
-            alert_write "PAUSE-ABANDONED but the marker was not clearable (parsed path='$pm') — NEEDS HUMAN: $MSG" \
-                || echo "$(stamp) WARN: not-clearable alert could not be appended" >> "$LOGF"
+            alert_once "$LAST_CLEAR_F" "unclearable:$pm" \
+                "PAUSE-ABANDONED but the marker was not clearable (parsed path='$pm') — NEEDS HUMAN: $MSG" || true
         fi
     fi
 

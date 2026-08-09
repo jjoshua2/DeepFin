@@ -110,7 +110,7 @@ All default sane; none is set in production.
 | variable | default | what it does |
 |---|---|---|
 | `CAE_RATCHET_PAUSE_WINDOW` | `1` | `0` runs the ratchet beside training (the pre-2026-08-09 behaviour). |
-| `CAE_RATCHET_PAUSE_MAX_FAILS` | `2` | Wrapper failures (exit 3) tolerated per calendar day before the loop stops asking for a window and takes the contended reading, so the day still gets measured. State: `data/ratchet/pause_window_fails`. |
+| `CAE_RATCHET_PAUSE_MAX_FAILS` | `2` | Wrapper failures (**exit 7** — 3 is the arena's no-pairs status per `ratchet_common.sh`) tolerated per calendar day before the loop stops asking for a window and takes the contended reading, so the day still gets measured. State: `data/ratchet/pause_window_fails`. |
 | `CAE_PAUSE_ACK_TIMEOUT` | `1800` | Seconds to wait for `.paused_<trial>.ack` after setting the marker. On timeout it aborts **without draining** — draining with revive live is worse than not trying. |
 | `CAE_PAUSE_STALE_ACK_TIMEOUT` | `180` | The shorter clock used when an ack for this trial already exists. That case provably cannot resolve (`_wait_if_paused` guards on an `announced` flag and will not re-ack), so waiting the full 1800s is 30 min of parked production per poll. |
 | `CAE_PAUSE_DRAIN_TIMEOUT` | `180` | Seconds to wait for the workers to exit after SIGTERM. A survivor **aborts the job** rather than running it beside a live worker. |

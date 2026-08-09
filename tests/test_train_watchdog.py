@@ -840,7 +840,7 @@ def test_the_loop_clears_a_marker_whose_owner_is_gone(tmp_path: Path) -> None:
     out = _run_loop_once(root, tmp_path)
 
     assert not marker.exists(), f"the abandoned marker survived:\n{out}"
-    assert "CLEARING ABANDONED PAUSE MARKER" in out, out
+    assert "CLEARED" in out, out
     assert not recovered.exists(), (
         "it force-recovered a healthy stack: nothing was wedged, one file needed "
         "deleting, and recover_stall.sh SIGKILLs the whole run"
@@ -856,7 +856,7 @@ def test_the_loop_does_NOT_clear_an_operators_marker(tmp_path: Path) -> None:
 
     assert marker.exists(), f"an operator's pause was deleted by the watchdog:\n{out}"
     assert "PAUSED-HELD" in out, out
-    assert "CLEARING" not in out, out
+    assert "CLEARED" not in out, out
     assert not recovered.exists()
 
 
@@ -956,3 +956,44 @@ def test_a_CRASHED_trainer_does_not_get_its_pause_marker_tidied_away(tmp_path: P
     )
     assert "CLEARING ABANDONED PAUSE MARKER" not in out, out
     assert not recovered.exists()
+
+
+def test_a_marker_it_CANNOT_remove_is_not_reported_as_cleared_every_poll(
+    tmp_path: Path,
+) -> None:
+    """⚑ #2: THE ONE BRANCH THAT BYPASSED `alert_once`, ASSERTING SOMETHING THAT
+    DID NOT HAPPEN.
+
+    If `rm -f` fails — read-only or full filesystem, EPERM on a sticky dir — the
+    old code still wrote "CLEARED abandoned pause marker", and wrote it every
+    poll for as long as the condition lasted. That is exactly the
+    27-identical-lines behaviour #371 exists to kill, reintroduced by the PR
+    that cites #371, in a message that was also false.
+
+    Both halves are asserted: the outcome is named honestly, and it is said
+    ONCE.
+    """
+    root, marker, _ = _loop_sandbox(
+        tmp_path, f"pause_window.sh pid={DEAD_PID} started=2026-08-09T05:03:54\n",
+    )
+    tune = marker.parent
+    tune.chmod(0o555)                     # the rm will fail; the marker survives
+    try:
+        out = _run_loop_once(root, tmp_path)
+        alerts = (tmp_path / "watchdog_alerts.log")
+        alert_text = alerts.read_text() if alerts.exists() else ""
+    finally:
+        tune.chmod(0o755)
+
+    assert marker.exists(), "fixture broken: the marker was removable after all"
+    assert "COULD NOT REMOVE" in out, (
+        f"a failed removal was not surfaced:\n{out}"
+    )
+    assert "CLEARED ABANDONED" not in out, (
+        f"it claimed to have cleared a marker that is still there:\n{out}"
+    )
+  # `_run_loop_once` runs TWO polls, and the condition persists across both.
+    assert alert_text.count("COULD NOT REMOVE") == 1, (
+        "the un-removable marker was alerted on every poll -- the "
+        f"27-identical-lines behaviour, in the branch that skipped alert_once:\n{alert_text}"
+    )

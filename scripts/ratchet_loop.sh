@@ -115,7 +115,7 @@ poll_once () {
     [ "$(cat "$STATE" 2>/dev/null)" = "$today" ] && return 0
     [ "$(cat "$GIVEUP_STATE" 2>/dev/null)" = "$today" ] && return 0
 
-    trial=$(ls -td "$WORK_DIR"/tune/train_trial_*/ 2>/dev/null | head -1)
+    trial=$(ratchet_newest_trial_dir)
     [ -n "$trial" ] || return 0
     ck=$(ls -td "$trial"checkpoint_* 2>/dev/null | head -1)
     [ -n "$ck" ] || return 0
@@ -213,12 +213,18 @@ poll_once () {
         # pause and drain the PRODUCTION run while the ratchet measured the other
         # tree. `test_neither_script_can_disagree_with_the_other` enumerates only
         # two scripts and cannot see it.
-        bash scripts/pause_window.sh --work-dir "$WORK_DIR" -- bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
+        # ⚑ PASS THE TRIAL, not just the work dir. Without it the wrapper runs
+        # its own selector and can resolve a DIFFERENT trial from the one whose
+        # `iter`, `ck_ready` and snapshot this poll is built on -- so production
+        # gets parked to measure a trial that is not the one being parked. They
+        # now agree by construction: one selection, passed down.
+        bash scripts/pause_window.sh --work-dir "$WORK_DIR" --trial-id "$(basename "$trial")" \
+            -- bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
     else
         bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
     fi
     rc=$?
-    # Count the WRAPPER's own failures, and only those: exit 3 is reserved for
+    # Count the WRAPPER's own failures, and only those: exit 7 is reserved for
     # them (pause_window.sh:die), so a ratchet that legitimately returned RETRY
     # or NO_RETRY cannot burn the budget that exists to stop production being
     # parked for nothing.

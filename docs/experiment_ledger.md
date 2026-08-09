@@ -24954,7 +24954,9 @@ contended shoulder** (on 08-09 it catches iters 520/522/523 but not 517-519 at
 per-iteration thresholding cannot separate one night's ratchet from another's.
 The episode is therefore bounded by the arena's OWN artefacts.
 
-After the first FIVE unattended nights:
+After the first FIVE unattended nights, run from the live run's root (the paths
+`runs/pbt2_small/tune` and `runs/arena_results.jsonl` are relative to it; from
+anywhere else it dies on an empty `max()` rather than reporting anything):
 
 ```bash
 PYTHONPATH=. python3 - <<'PY'
@@ -24983,8 +24985,8 @@ for line in (t / "result.json").open():
     iters.append((d["training_iteration"], d["timestamp"] - d["time_this_iter_s"],
                   d["timestamp"], d["time_this_iter_s"]))
 
-# The episode comes from the ARENA's own rows, not from a threshold on
-# iteration time: [ts - duration_s, ts] per arena, unioned. Rows predating the
+# The episode comes from the ARENA's own rows, not a threshold on iteration
+# time: [ts - duration_s, ts] per arena, unioned. Rows predating the
 # `truncated` key are skipped rather than defaulted.
 days = {}
 for line in open("runs/arena_results.jsonl"):
@@ -24996,56 +24998,102 @@ for line in open("runs/arena_results.jsonl"):
     if a.get("duration_s") is None or a.get("truncated") is None:
         continue
     end = datetime.datetime.fromisoformat(a["ts"]).timestamp()
-    day = datetime.datetime.fromtimestamp(end).date().isoformat()
+    day = datetime.datetime.fromtimestamp(end).date()
     days.setdefault(day, []).append((end - a["duration_s"], end, bool(a["truncated"])))
 
-print(f"{'date':12s} {'in':>3s} {'base_s':>7s} {'LOST':>6s} {'full-res rows':>13s}")
-for day in sorted(days)[-5:]:
-    ivs = days[day]
+# ⚑ FIVE CALENDAR NIGHTS, not `sorted(days)[-5:]`. A night on which no ratchet
+# ran has no key at all, so slicing the keys silently pulls in an earlier,
+# pre-change, contended day and reports it as one of the five.
+last = max(days) if days else datetime.date.today()
+window = [last - datetime.timedelta(days=i) for i in range(4, -1, -1)]
+
+print(f"{'date':12s} {'in':>3s} {'base_s':>7s} {'LOST':>6s} {'full-res/rows':>13s}")
+for day in window:
+    ivs = days.get(day)
+    if not ivs:
+        print(f"{day.isoformat():12s}   -- NO RATCHET ROW for this night --")
+        continue
     inw = [x for x in iters if any(x[2] > lo and x[1] < hi for lo, hi, _ in ivs)]
     out = [x for x in iters
-           if datetime.datetime.fromtimestamp(x[2]).date().isoformat() == day
-           and x not in inw]
+           if datetime.datetime.fromtimestamp(x[2]).date() == day and x not in inw]
+    full = sum(1 for _, _, trunc in ivs if not trunc)
     if not inw or not out:
-        print(f"{day:12s}  -- no overlap; investigate before reading anything else")
+        print(f"{day.isoformat():12s}   -- no overlap with training iterations; "
+              f"{full}/{len(ivs)} full-res. INVESTIGATE before reading anything else")
         continue
     med = statistics.median([x[3] for x in out])          # that night's OWN baseline
     lost = sum(x[3] for x in inw) / med - len(inw)
-    full = sum(1 for _, _, trunc in ivs if not trunc)
-    print(f"{day:12s} {len(inw):3d} {med:7.1f} {lost:6.1f} {full:13d}   "
-          f"iters {inw[0][0]}-{inw[-1][0]}")
+    print(f"{day.isoformat():12s} {len(inw):3d} {med:7.1f} {lost:6.1f} "
+          f"{full:>6d}/{len(ivs):<6d}  iters {inw[0][0]}-{inw[-1][0]}")
 PY
 ```
 
-⚑ **Proof it moves, run read-only against the live tree on 2026-08-09** — three
-DIFFERENT nights, and it selects `379f6` (the live trial) rather than `d2003`:
+⚑ **Proof it moves — VERBATIM output, run read-only against the live tree on
+2026-08-09.** Nothing elided: the two `no overlap` lines are real and are what
+the window looks like when the arenas of a night belong to a PREVIOUS trial.
 
 ```
 TRIAL: train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06
-date          in  base_s   LOST full-res rows
-2026-08-07     3   250.9    2.5             0   iters 9-11
-2026-08-08     4   240.5   12.9             2   iters 254-257
-2026-08-09     8   254.3   15.4             0   iters 516-523
+date          in  base_s   LOST full-res/rows
+2026-08-05     -- no overlap with training iterations; 0/2 full-res. INVESTIGATE before reading anything else
+2026-08-06     -- no overlap with training iterations; 0/1 full-res. INVESTIGATE before reading anything else
+2026-08-07     3   250.9    2.5      0/1       iters 9-11
+2026-08-08     4   240.5   12.9      2/3       iters 254-257
+2026-08-09     8   261.5   14.7      0/2       iters 516-523
 ```
 
-The 08-09 row is the contended ratchet this change exists to replace, and 15.4
-independently reproduces the 15.1 derived by hand above from a different
-method — which is the cross-check the first version could not offer.
+Three things this shows that a described check could not. It selects `379f6`,
+the live trial, rather than `d2003`. It **moves** — 2.5, 12.9, 14.7 — so the
+rule can fire in either direction, and it fires on the status quo (14.7 and 12.9
+against a KILL bar of 12). And the 08-09 row is the contended ratchet this
+change exists to replace: **14.7 independently reproduces the 15.1 derived by
+hand above from a completely different method** (per-iteration wall time against
+a local median, versus arena-bounded episodes), which is the cross-check the
+first version could not offer.
 
-**SUCCESS** (keep default ON): each of the five nights reports **LOST ≤ 9**, AND
-**≥ 8 of the 10 rows** (2/night × 5) are full-resolution. On the measurement
+⚑ **The 08-09 row is computed from a file that is still being appended to, so it
+DRIFTS.** LOST has read 15.4, then 15.0 (an independent reviewer), then 14.7;
+re-running the block above a few minutes after the paste moved `base_s` 261.5 →
+261.6, because iterations completing tonight keep re-centering tonight's own
+baseline median. Read the current night as "about 15", not as a constant. This
+does not weaken the rule: the SUCCESS bar (≤9) and the KILL bar (>12) are set
+far enough from ~15 and from the projected ~7 that a ±0.7 wobble cannot decide
+either, and a night stops moving once it is no longer the current one.
+
+⚑ **The three outcomes are EXHAUSTIVE.** An earlier version left LOST in (9, 12]
+with 6-7 full-resolution rows matching neither rule, i.e. a pre-registered
+decision procedure with a hole in it — which is a slower version of a gate that
+cannot fail, because the reading then gets argued rather than applied.
+
+**SUCCESS** (keep default ON): every night in the window reports **LOST ≤ 9**,
+AND **≥ 8 of the 10 rows** (2/night × 5) are full-resolution. On the measurement
 above, a parked night should land near 6-7.
 
 **KILL** (flip `CAE_RATCHET_PAUSE_WINDOW` to default 0, in the same session):
-any **two** nights report **LOST > 12** — at which point parking is no cheaper
-than the contention it replaces and the 3.55 above was wrong — or **< 6 of 10
-rows** are full-resolution, which means parking did not buy the resolution that
-is the entire justification. Note the 08-09 contended baseline scores 15.4, so
-this rule demonstrably CAN fire: it fires on the status quo.
+**two or more** nights report **LOST > 12** — at which point parking is no
+cheaper than the contention it replaces and the 3.55 above was wrong — **or**
+fewer than **6 of 10** rows are full-resolution, which means parking did not buy
+the resolution that is the entire justification.
+
+**INCONCLUSIVE** (anything else — one bad night, or 6-7 good rows): run **five
+more nights** and apply the same rule to the second window. Do NOT read it as a
+pass; "no kill" is not "success", and the ledger's own standing rule is that a
+deferred verdict is not a verdict. If the second window is also inconclusive,
+that is a KILL by default: a change whose benefit cannot be demonstrated in ten
+nights is not paying for the complexity.
+
+A night reported as `NO RATCHET ROW` does not count toward the five — extend the
+window instead. A night reported as `no overlap` is a defect in the readout, not
+a result; investigate before reading any other row.
 
 **Also a kill, independently:** any night where `data/ratchet/pause_window_fails`
 reaches the `CAE_RATCHET_PAUSE_MAX_FAILS` cap twice in five days. The wrapper
 falling back to contended readings on a schedule is worse than not wrapping.
+⚑ That counter is exercised end-to-end by
+`test_the_pause_fail_cap_counts_up_and_then_stops_asking` — it previously
+incremented in code that no test executed, which is a KILL criterion reading a
+number nothing proved ever moved.
+
 
 ### Confounds
 
@@ -25069,7 +25117,8 @@ falling back to contended readings on a schedule is worse than not wrapping.
 
 * The drain is a **gate**: `pgrep` rc≥2 is fatal, zero matched workers refuses
   BEFORE the marker, a worker surviving SIGTERM aborts the job.
-* A wrapper failure exits **3**, outside the ratchet's 0/1/5 vocabulary, and the
+* A wrapper failure exits **7**, outside every status the ratchet family
+  produces (0, 1 RETRY, 2 usage, 3 the arena's no-pairs, 5 NO_RETRY), and the
   loop falls back to a contended reading after `CAE_RATCHET_PAUSE_MAX_FAILS=2`
   so a day still gets measured.
 * The ack gate tests **freshness by mtime**, never existence, and never deletes

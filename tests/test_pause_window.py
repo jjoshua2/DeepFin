@@ -403,8 +403,14 @@ def test_the_loop_routes_the_whole_ratchet_through_the_window_by_default(tmp_pat
     assert rc == 0, f"the poll must still succeed through the wrapper:\n{out}"
   # Repo-RELATIVE, like `ratchet_common.sh`'s own `${TRAIN_WORK_DIR:-runs/pbt2_small}`:
   # the wrapper inherits the cwd that ratchet_common.sh already cd'd into.
+  # ⚑ AND --trial-id, WHICH IS LOAD-BEARING. Without it the wrapper runs its own
+  # selector and can resolve a DIFFERENT trial from the one this poll's `iter`,
+  # `ck_ready` and snapshot came from -- production parked to measure a trial
+  # that is not the one being parked. The value is the directory the LOOP chose,
+  # so the two agree by construction rather than by both being right.
     assert _pause_calls(calls) == [
-        "--work-dir runs/pbt2_small -- bash scripts/daily_gate_ratchet.sh",
+        "--work-dir runs/pbt2_small --trial-id train_trial_x "
+        "-- bash scripts/daily_gate_ratchet.sh",
     ], (
         f"the wrapper was invoked {_pause_calls(calls)!r}; it must wrap the whole "
         f"ratchet exactly once:\n{out}"
@@ -1459,3 +1465,297 @@ def test_two_trials_written_in_the_SAME_SECOND_are_still_ordered(
         f"one was 'live' — and the name was chosen to be wrong.\n{r.stdout}"
     )
     assert r.returncode == 0, f"it never parked -- wrong trial id:\n{r.stdout}\n{r.stderr}"
+
+
+# ── #3: the fail cap, which is one of the ledger's three KILL criteria ───────
+# `data/ratchet/pause_window_fails` is read at ratchet_loop.sh:190, written at
+# :224-231, and consulted at :171 to stop asking for a window after
+# CAE_RATCHET_PAUSE_MAX_FAILS. Nothing executed any of it: deleting the counting
+# left every test green, and no test file so much as named the state file. A
+# KILL rule that reads a counter nothing proves ever increments is this PR's own
+# subject turned on the PR -- so the counter is now driven end to end, through
+# the real loop, with a wrapper that really does fail.
+
+_FAILING_STUB = """#!/usr/bin/env bash
+# Records the call, then fails the way pause_window.sh's `die` does.
+printf '%s\\n' "$*" >> "$PAUSE_CALLS"
+exit 7
+"""
+
+
+def _fails_file(root: Path) -> str:
+    p = root / "data" / "ratchet" / "pause_window_fails"
+    return p.read_text().strip() if p.exists() else ""
+
+
+def test_the_pause_fail_cap_counts_up_and_then_stops_asking(tmp_path: Path) -> None:
+    """⚑ THE CAP, EXECUTED. Three polls against a wrapper that always exits 7:
+    the first two are counted and produce no row, and the THIRD gives up on the
+    window and takes the contended reading, so the day still gets measured.
+
+    Without this the day would retry every 600s until midnight, setting and
+    holding the marker each time, and `loop_health.ratchet_gap_alerts()` keys on
+    attempts.csv so it would be invisible too.
+    """
+    from tests.test_ratchet_search_shape import _csv_rows, _run_one_poll
+
+    root, calls = _ratchet_sandbox(tmp_path, wrapper=True)
+    stub = root / "scripts" / "pause_window.sh"
+    stub.write_text(_FAILING_STUB)
+    stub.chmod(0o755)
+    env = {"PAUSE_CALLS": str(calls), "CAE_RATCHET_PAUSE_MAX_FAILS": "2"}
+
+    rc1, out1 = _run_one_poll(root, env=env)
+    assert rc1 != 0, f"a wrapper that exits 7 must not read as success:\n{out1}"
+    assert _csv_rows(root) == [], f"a row was written despite no ratchet running:\n{out1}"
+    assert _fails_file(root).endswith(" 1"), (
+        f"the first wrapper failure was not counted: {_fails_file(root)!r}\n{out1}"
+    )
+
+    rc2, out2 = _run_one_poll(root, env=env)
+    assert rc2 != 0, (
+        f"the SECOND wrapper failure read as success, so the day would look "
+        f"measured while no ratchet ran:\n{out2}"
+    )
+    assert _fails_file(root).endswith(" 2"), (
+        f"the counter did not increment on the second failure: {_fails_file(root)!r}\n{out2}"
+    )
+    assert len(_pause_calls(calls)) == 2, _pause_calls(calls)
+
+    # Third poll: the cap is reached, so the loop stops asking for a window.
+    rc3, out3 = _run_one_poll(root, env=env)
+    assert rc3 == 0, f"the capped poll must still measure the day:\n{out3}"
+    assert len(_pause_calls(calls)) == 2, (
+        f"it asked for a window after the cap: {_pause_calls(calls)}\n{out3}"
+    )
+    assert "for the rest of" in out3, f"the fallback must be loud:\n{out3}"
+    assert len(_csv_rows(root)) == 1, f"the contended reading was not taken:\n{out3}"
+
+
+def test_a_successful_window_clears_the_fail_counter(tmp_path: Path) -> None:
+    """The other direction, or the cap is a one-way ratchet that eventually
+    disables the window permanently on a run that has since recovered."""
+    from tests.test_ratchet_search_shape import _run_one_poll
+
+    root, calls = _ratchet_sandbox(tmp_path, wrapper=True)
+    stub = root / "scripts" / "pause_window.sh"
+    stub.write_text(_FAILING_STUB)
+    stub.chmod(0o755)
+    env = {"PAUSE_CALLS": str(calls), "CAE_RATCHET_PAUSE_MAX_FAILS": "5"}
+    _run_one_poll(root, env=env)
+    assert _fails_file(root).endswith(" 1")
+
+    stub.write_text(_PAUSE_STUB)          # the wrapper works again
+    stub.chmod(0o755)
+    rc, out = _run_one_poll(root, env=env)
+
+    assert rc == 0, out
+    assert _fails_file(root) == "", (
+        f"a successful window left the failure count standing: {_fails_file(root)!r}\n{out}"
+    )
+
+
+def test_only_the_WRAPPERS_failures_are_counted_against_the_cap(tmp_path: Path) -> None:
+    """⚑ The reason the wrapper's exit code had to leave the ratchet's
+    vocabulary. A ratchet that legitimately returns RETRY (exit 1 — the
+    "checkpoint has no trainer.pt yet" path every fresh restart passes through)
+    must NOT burn the budget that exists to stop production being parked for
+    nothing. With the codes shared, two ordinary retries disabled the window for
+    the rest of the day."""
+    from tests.test_ratchet_search_shape import _run_one_poll
+
+    root, calls = _ratchet_sandbox(tmp_path, wrapper=True)
+    stub = root / "scripts" / "pause_window.sh"
+    # Runs the job, which fails the way a no-pairs ratchet does: RETRY, not 7.
+    stub.write_text(_PAUSE_STUB)
+    stub.chmod(0o755)
+
+    rc, out = _run_one_poll(
+        root, mode="nopairs", env={"PAUSE_CALLS": str(calls)},
+    )
+
+    assert rc != 0, out
+    assert _fails_file(root) == "", (
+        f"a retryable RATCHET failure was counted against the PAUSE budget: "
+        f"{_fails_file(root)!r}\n{out}"
+    )
+
+
+def test_all_three_trial_selectors_agree_on_the_same_tree(tmp_path: Path) -> None:
+    """⚑ #4: N7 WAS FIXED IN ONE PLACE OUT OF THREE, WHICH WAS WORSE THAN NOT
+    FIXING IT.
+
+    `ratchet_loop.sh` and `daily_gate_ratchet.sh` still used `ls -td`, and the
+    loop's `ck_ready` read that unfixed selector thirty lines above the fixed
+    one in the same file. So under exactly the scenario N7 documents, the
+    wrapper parked the LIVE trial while `iter`, `MIN_ITER`, `ck_ready` and the
+    snapshot all came from the DEAD one: production parked to measure a trial
+    that is not the one being parked. Latent only because today's mtimes happen
+    to order correctly.
+
+    The rule now lives once, in `ratchet_common.sh` — the file that exists
+    precisely because these two scripts had drifted on which tree to read. This
+    asserts the shell function and the Python original agree on a tree built to
+    separate them.
+    """
+    tune = tmp_path / "runs" / "pbt2_small" / "tune"
+    live = tune / "train_trial_aaa55_00000_0_lr=0.0000_2026-01-01_00-00-00"
+    dead = tune / "train_trial_zzz95_00000_0_lr=0.0000_2026-01-01_00-00-00"
+    for d in (dead, live):
+        d.mkdir(parents=True)
+    (dead / "result.json").write_text('{"training_iteration": 104}\n')
+    time.sleep(1.1)
+    (live / "result.json").write_text('{"training_iteration": 900}\n')
+    time.sleep(1.1)
+    (dead / "checkpoint_000009").mkdir()        # newest DIRECTORY, dead trial
+    assert dead.stat().st_mtime > live.stat().st_mtime, "fixture does not test anything"
+
+    common = REPO / "scripts" / "ratchet_common.sh"
+    r = subprocess.run(
+        ["bash", "-c",
+         f'RATCHET_ROOT={shlex.quote(str(tmp_path))} . {shlex.quote(str(common))}; '
+         "ratchet_newest_trial_dir"],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    picked = Path(r.stdout.strip().rstrip("/")).name
+
+    theirs = _WATCHDOG.newest_trial_dir(tune)
+    assert theirs is not None
+    assert picked == theirs.name, (
+        f"ratchet_common.sh picked {picked} while train_watchdog.newest_trial_dir "
+        f"picked {theirs.name}: two rules for 'the live trial'"
+    )
+    assert picked == live.name, (
+        f"the shared selector chose the trial that stopped writing data ({picked}); "
+        "the ratchet would snapshot a dead checkpoint and the wrapper would park "
+        "a different trial from the one being measured"
+    )
+
+
+def test_the_SHARED_selector_orders_two_trials_written_in_the_same_second(
+    tmp_path: Path,
+) -> None:
+    """⚑ DISCLOSED SURVIVOR, then closed. Mutating `%.9Y` -> `%Y` in
+    `ratchet_common.sh` survived the whole suite.
+
+    `test_two_trials_written_in_the_SAME_SECOND_are_still_ordered` covers
+    `pause_window.sh:resolve_trial_id` and only that — it goes through
+    `_resolve`. But the copy that `ratchet_loop.sh` and `daily_gate_ratchet.sh`
+    actually call is `ratchet_newest_trial_dir`, and every test touching it used
+    1.1s gaps, which whole-second mtimes order correctly. So the sub-second
+    resolution was justified by a comment on the production path and pinned only
+    on the wrapper path — the same one-of-N gap that #4 exists to close, one
+    level down.
+
+    A restart writes both trials' first rows well inside one second.
+    """
+    probe_a, probe_b = tmp_path / "pa", tmp_path / "pb"
+    probe_a.write_text("x")
+    time.sleep(0.05)
+    probe_b.write_text("x")
+    if probe_a.stat().st_mtime == probe_b.stat().st_mtime:
+        pytest.skip("filesystem has 1-second mtime granularity; nothing to order")
+
+    tune = tmp_path / "runs" / "pbt2_small" / "tune"
+    live = tune / "train_trial_aaa66_00000_0_lr=0.0000_2026-01-01_00-00-00"
+    dead = tune / "train_trial_zzz96_00000_0_lr=0.0000_2026-01-01_00-00-00"
+    for d in (dead, live):
+        d.mkdir(parents=True)
+    (dead / "result.json").write_text('{"training_iteration": 104}\n')
+    time.sleep(0.05)                       # same whole second, later nanosecond
+    (live / "result.json").write_text('{"training_iteration": 900}\n')
+    same_second = int((dead / "result.json").stat().st_mtime) == int(
+        (live / "result.json").stat().st_mtime
+    )
+    if not same_second:
+        pytest.skip("the two writes straddled a second boundary; retry")
+
+    common = REPO / "scripts" / "ratchet_common.sh"
+    r = subprocess.run(
+        ["bash", "-c",
+         f'RATCHET_ROOT={shlex.quote(str(tmp_path))} . {shlex.quote(str(common))}; '
+         "ratchet_newest_trial_dir"],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    assert Path(r.stdout.strip().rstrip("/")).name == live.name, (
+        "two trials written in the same second tied on whole-second mtime, so "
+        "the NAME decided which one is live -- and the name was chosen to be "
+        f"wrong. Got {r.stdout.strip()!r}. ratchet_common.sh needs `stat -c %.9Y`"
+    )
+
+
+def test_neither_ratchet_script_still_ranks_trials_by_directory_mtime() -> None:
+    """The static half. `ls -td` on a trial glob is the removed rule; a
+    re-introduction anywhere in the family is a red test, not a latent
+    disagreement waiting for the mtimes to line up badly.
+
+    ⚑ Includes `ratchet_common.sh`: it is where the rule now lives, so it is the
+    one file where a regression would be invisible to the two call sites.
+    """
+    for name in ("ratchet_loop.sh", "daily_gate_ratchet.sh", "pause_window.sh",
+                 "ratchet_common.sh"):
+        text = (REPO / "scripts" / name).read_text()
+        offenders = [
+            ln for ln in text.splitlines()
+            if "train_trial_" in ln and re.search(r"\bls\s+-[a-z]*t", ln)
+            and not ln.lstrip().startswith("#")
+        ]
+        assert not offenders, (
+            f"{name} ranks trials by DIRECTORY mtime again: {offenders}. "
+            "Use ratchet_newest_trial_dir (or resolve_trial_id) -- a directory's "
+            "mtime moves when Ray creates a checkpoint dir under a DEAD trial"
+        )
+
+
+def test_an_interrupt_during_the_ACK_WAIT_is_not_a_wrapper_failure(
+    tmp_path: Path,
+) -> None:
+    """⚑ #1: THE LONGEST PHASE WAS THE ONE THAT REPORTED WRONG.
+
+    `PHASE` only leaves `setup` when the JOB starts, so the ack wait — bounded
+    by `CAE_PAUSE_ACK_TIMEOUT`, 1800s by default, and by far the likeliest
+    moment for an operator to reach for Ctrl-C — was inside the remap. A human
+    interrupt or a systemd timeout therefore exited 7, counted against
+    `CAE_RATCHET_PAUSE_MAX_FAILS`, and two of them could trip the ledger's third
+    KILL criterion without the mechanism having failed once.
+
+    The existing interrupt test pins the same property only AFTER the job has
+    started, which is the short phase and the unlikely one.
+    """
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["CAE_PAUSE_POLL_SECONDS"] = "1"
+    env["CAE_PAUSE_ALLOW_NO_WORKERS"] = "1"
+    env["CAE_PAUSE_ACK_TIMEOUT"] = "600"
+    ran = tmp_path / "ran"
+    p = subprocess.Popen(
+        [str(SCRIPT), "--work-dir", str(work), "--trial-id", TRIAL_ID,
+         "--", "touch", str(ran)],
+        env=env, cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + ACK_WAIT
+        while not (work / "tune" / "pause.txt").exists():
+            assert p.poll() is None, "the script exited before parking"
+            assert time.monotonic() < deadline, "marker never appeared"
+            time.sleep(0.2)
+        time.sleep(1.5)          # squarely inside the ack wait; no ack is ever written
+        p.terminate()
+        rc = p.wait(timeout=60)
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+
+    wrapper_rc = int(re.findall(r"^WRAPPER_FAILED_RC=(\d+)", SCRIPT.read_text(), re.M)[0])
+    assert rc != wrapper_rc, (
+        f"an interrupt during the ack wait reported {rc} = 'the wrapper failed'. "
+        "Two operator Ctrl-Cs would disable the window for the day and could "
+        "trip a pre-registered KILL criterion with nothing having gone wrong"
+    )
+    assert rc == 130, f"an interrupt must report 130, got {rc}"
+    assert not ran.exists(), "the job ran despite the interrupt"
+    assert not (work / "tune" / "pause.txt").exists(), "interrupted holding the marker"
