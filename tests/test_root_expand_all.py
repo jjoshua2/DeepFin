@@ -19,14 +19,25 @@ import pytest
 from chess_anti_engine.mcts.gumbel import GumbelConfig, run_gumbel_root_many
 from chess_anti_engine.moves import POLICY_SIZE
 
-# 20 legal moves (<= topk 32, flag must be inert) vs 48 (> topk, flag must act).
+# 20 legal moves (<= topk 32, flag must be inert) vs 45 (> topk, flag must act).
+# Neither position has a legal move leading to a terminal node -- asserted in the
+# premise test -- so every tail move costs exactly one NET EVALUATION and the
+# eval-count assertions below can demand EXACT equality rather than a bound.
 NARROW = chess.Board()
 WIDE = chess.Board("r3k2r/pppq1ppp/2npbn2/1B2p1B1/3PP1b1/2N2N2/PPPQ1PPP/R3K2R w KQkq - 0 1")
-# SIMS must keep m_cap = (SIMS+1)//2 STRICTLY ABOVE topk, or topk and the cap
-# coincide and "widen m to legal.size" (variant A) becomes indistinguishable from
-# the real thing -- a mutation that survived exactly this way at SIMS=64.
-# Production runs 256 (m_cap 128); 128 keeps the same ordering at half the cost.
-SIMS = 128
+# Root candidates are m = max(2, min(topk, n_legal, m_cap)) with
+# m_cap = (sims+1)//2 (gumbel.py:710), so WHICH of the three binds depends on the
+# sim budget. Only the two production budgets are tested:
+#
+#   sims 256 (FULL plies, the ones we train on): m_cap 128, so topk(32) binds
+#   sims  32 (FAST plies):                       m_cap  16, so m_cap binds and the
+#                                                prior-only tail is LARGER
+#
+# Intermediate budgets are deliberately not used. At sims=64 m_cap == topk == 32
+# and the two constraints coincide, which makes "widen m to legal.size" (variant A)
+# indistinguishable from correct behaviour -- a mutation survived exactly that way.
+SIMS = 256
+SIMS_FAST = 32
 TOPK = 32
 
 
@@ -63,10 +74,10 @@ class _DetEval:
         return pol, wdl
 
 
-def _run(board: chess.Board, *, expand: bool):
+def _run(board: chess.Board, *, expand: bool, sims: int = SIMS):
     ev = _DetEval()
     cfg = GumbelConfig(
-        simulations=SIMS, topk=TOPK, add_noise=False, root_expand_all=expand,
+        simulations=sims, topk=TOPK, add_noise=False, root_expand_all=expand,
     )
     probs, actions, values, _masks = run_gumbel_root_many(
         None, [board.copy()], device="cpu", rng=np.random.default_rng(0),
@@ -75,13 +86,29 @@ def _run(board: chess.Board, *, expand: bool):
     return probs[0], int(actions[0]), float(values[0]), ev
 
 
-def test_premise_narrow_fits_in_topk_and_wide_does_not() -> None:
-    """Without this both behaviour tests below could pass vacuously."""
+def test_premise_the_two_production_budgets_bind_differently() -> None:
+    """Pin which term of the three-way min binds, per budget.
+
+    Without this the behaviour tests could pass vacuously, and a future change to
+    topk or the budgets could silently move the tests into the degenerate regime
+    where m_cap == topk and variant A stops being detectable.
+    """
+    assert (SIMS + 1) // 2 > TOPK, "at 256 sims topk must bind, not m_cap"
+    assert (SIMS_FAST + 1) // 2 < TOPK, "at 32 sims m_cap must bind, not topk"
     assert NARROW.legal_moves.count() <= min(TOPK, (SIMS + 1) // 2)
     assert WIDE.legal_moves.count() > min(TOPK, (SIMS + 1) // 2)
-    assert (SIMS + 1) // 2 > TOPK, (
-        "m_cap must not coincide with topk, or variant A is untestable here"
-    )
+    # At the fast budget even the narrow position has a prior-only tail.
+    assert NARROW.legal_moves.count() > min(TOPK, (SIMS_FAST + 1) // 2)
+    # No legal move ends the game, so tail moves are never satisfied by a terminal
+    # backprop instead of a net eval. This is what licenses `extra == tail`; drop it
+    # and the counts below would have to become bounds, which a PARTIAL expansion
+    # silently passes (a mutation truncating the tail survived exactly that way).
+    for board in (NARROW, WIDE):
+        for mv in board.legal_moves:
+            board.push(mv)
+            over = board.is_game_over()
+            board.pop()
+            assert not over
 
 
 def test_noop_when_every_legal_move_is_already_a_candidate() -> None:
@@ -120,7 +147,11 @@ def test_extra_evaluations_are_additive_and_bounded_by_the_tail() -> None:
     tail = WIDE.legal_moves.count() - min(TOPK, (SIMS + 1) // 2)
     extra = on_ev.rows - off_ev.rows
     assert extra > 0, "variant A detected: no additional evaluations were spent"
-    assert extra <= tail, f"spent {extra} extra evals for a tail of only {tail}"
+    assert extra == tail, (
+        f"expected EXACTLY one eval per prior-only move ({tail}), got {extra}: "
+        "fewer means the tail is being truncated and some legal moves still have "
+        "no search opinion; more means candidates are being re-walked"
+    )
 
 
 def test_flag_off_reproduces_itself_exactly() -> None:
@@ -137,3 +168,21 @@ def test_probs_stay_a_normalised_distribution() -> None:
         p, _, _, _ = _run(WIDE, expand=expand)
         assert p.min() >= 0.0
         assert float(p.sum()) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_fast_ply_budget_is_the_regime_where_m_cap_binds() -> None:
+    """At 32 sims m_cap(16) binds below topk(32), so even NARROW has a tail.
+
+    Production fast plies run here. They are not trained on directly, but they
+    still build the tree the full-ply target is read from, so the flag must behave
+    sanely in this regime rather than only in the one we happen to measure.
+    """
+    off_p, _, _, off_ev = _run(NARROW, expand=False, sims=SIMS_FAST)
+    on_p, _, _, on_ev = _run(NARROW, expand=True, sims=SIMS_FAST)
+    assert not np.array_equal(off_p, on_p), (
+        "at the fast budget m_cap binds, so NARROW has non-candidates and the "
+        "flag must act -- if it did not, the tail is being computed off topk alone"
+    )
+    tail = NARROW.legal_moves.count() - min(TOPK, (SIMS_FAST + 1) // 2)
+    extra = on_ev.rows - off_ev.rows
+    assert extra == tail, f"expected exactly {tail} extra evals, got {extra}"
