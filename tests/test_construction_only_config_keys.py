@@ -115,6 +115,12 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
         "chess_anti_engine/run.py",
     },
     "sf_pid_enabled": {"chess_anti_engine/tune/trainable.py"},
+    # Read ONCE into `Trainer._loss_kwargs` at construction, so a live yaml edit
+    # cannot reach the loss without a restart — declared startup-only for that
+    # reason. It reshapes the TRAINING TARGET, so a mid-run change would also
+    # split a readout window across two different targets with nothing in the
+    # metrics able to say where the split fell.
+    "policy_target_temp": {"chess_anti_engine/train/trainer.py"},
     # `_resolve_pause_marker_paths`, which the startup block calls once.
     "pause_file": {"chess_anti_engine/tune/trainable_config_ops.py"},
 }
