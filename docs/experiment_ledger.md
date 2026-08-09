@@ -37302,3 +37302,67 @@ nets. Both are [[a_gate_that_cannot_fail]].
 filter, it is the hypothesis.* Before trusting a cell chosen by a control, correlate the control's
 margin against the effect being attributed. At +0.785 here, "passes the control" and "shows the
 effect" were nearly the same statement, and the grid search was choosing the answer.
+
+### AMENDMENT 11 (2026-08-09) — the two knobs' entropy effects are NOT ADDITIVE, and the bundle may net to ~ZERO softening
+
+From the PR #379 re-review, which built its own harness at the exact production kwarg set and
+production shape (256 sims / topk 32 / c_scale 0.025) rather than reading the code.
+
+**Measured improved-policy entropy vs `policy_temp`** (reviewer's fixture):
+
+| T | 0.5 | 1.0 | 1.2 | **1.5** | 2.0 |
+|---|---|---|---|---|---|
+| H | 1.1021 | **1.9991** | 2.2130 | **2.4833** | 2.7143 |
+
+**And the interaction, which is the finding:** `c_scale` 0.025 -> 0.1 costs **−0.29 nats at T=1.0**
+but **−0.40 nats at T=1.5**. The knobs are **sub-additive in the direction that hurts us**:
+flattening the prior gives `sigma·Q̄` more room to re-concentrate, so the sharpening arm bites
+HARDER once the softening arm is on.
+
+⇒ **The bundle's net is not the +0.149 that Amendment 7's table implies.** On these numbers it is
+roughly `+0.375 … +0.484` minus `0.40` = **approximately ZERO**, and the sign is not reliable.
+
+## What this changes
+
+**The honest description of the experiment is no longer "raise search authority AND soften."**
+It is **"raise search authority at approximately CONSTANT target entropy."** That is arguably a
+*cleaner* isolation — it removes entropy as a confound from the search-authority question — but it
+is **not** the thing the softening rationale asked for, and Amendment 7 should be read with that
+correction. **The entropy bill goes largely unpaid at T=1.5.**
+
+**Decision, and the reasoning, recorded rather than buried:** proceed at **T=1.5**.
+- lc0 trains at **1.36-2.20**, so 1.5 is the conservative end of a range someone else has
+  validated; 2.0 is a materially bigger jump on an axis we have never run live.
+- `c_scale` 0.1 is a REVERT to a pinned optimum measured at our own sim count (Amendment 9), so
+  the bundle's downside is bounded by a configuration the repo already believes in.
+- If the readout comes back with target entropy FLAT and no strength change, **T=2.0 is the
+  pre-committed follow-up**, not a new hypothesis. On the table above it buys ~+0.715 against
+  `c_scale`'s −0.40..−0.45, netting ~+0.27 — i.e. it is the first setting that actually pays the
+  bill.
+
+**⚑ Do not convert any number in this amendment into sigma of `gumbel_policy_entropy_mean`.**
+Amendment 8 applies: this is a THIRD population (the reviewer's fixture's improved-policy
+entropy, H≈2.0 at production shape) and is not the stored-target population (0.924) nor the live
+all-records metric (1.0578). Its transferable content is the **SIGN and the INTERACTION**, not the
+magnitudes.
+
+## Two corrections to the review's third blocker
+
+1. **"The repo yaml differs on `gumbel_topk` (16 vs 32) and `gumbel_scale` (0.75 vs 1.0), so a
+   restart moves four search knobs"** — the divergence is REAL (verified: live 32/1.0, main
+   16/0.75) but it does **not** apply to this procedure. We fast-forward `main` INTO live; the
+   merged config blob is byte-identical to live's (`893220d21` both sides), so those two knobs do
+   not move. The hazard is restarting **ONTO** main, which is a different operation and is already
+   the standing prohibition. **Exactly two search knobs move.**
+2. **"`gumbel_policy_temp` is the ONLY data-affecting change this window"** — correct as filed,
+   that line is now FALSE and is superseded by Amendment 7. `c_scale` moves in the same window by
+   design.
+
+**Also owed and now stated:** the diff-focus `keep_prob` + `priority` side-channel (Amendment 5) is
+driven by BOTH knobs and belongs on the CONFOUNDS line, where it had been agreed in-thread but
+never written down.
+
+**The transferable rule:** *two levers measured one-at-a-time do not add.* Before quoting a
+bundle's net effect as the sum of its arms, measure the arms AT EACH OTHER'S SETTINGS. Here the
+cross-term was 38% of the smaller arm and flipped the predicted net from clearly-positive to
+indistinguishable-from-zero.
