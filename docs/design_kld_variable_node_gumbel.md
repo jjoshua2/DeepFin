@@ -75,6 +75,13 @@ Taken alone this says "search is now the bottleneck, go optimise it."
 
 ### 1c. …but the box has no headroom to convert that into games
 
+> **Provenance: NOT independently verified.** The CPU/GPU figures in this
+> subsection are single-sample author measurements of a live box whose load
+> composition changes between iterations; they were not re-sampled by a second
+> reader and no raw capture was banked. They are load-bearing for the §1
+> "binding resource" conclusion, so re-measure before quoting them — and note
+> the standing warning that "SF ≈ 95% of loop cost" went stale exactly this way.
+
 `/proc/stat` over a 20-second sample: **92.0% busy, 8.0% idle** across 32 cores.
 Per-class CPU (three `ps` samples, 4s apart, stable to ±10%):
 
@@ -158,6 +165,13 @@ semantics are sourced; everything about its *realized* behaviour is not.
 ---
 
 ## 3. The reallocation case, and it is genuinely strong (MEASURED)
+
+> **Provenance: NOT independently verified.** The 111k-row `priority_policy_kl`
+> table below is a single author-run aggregation and the dump was not banked, so
+> no one has re-derived it from the shards. The *mechanism* citations
+> (`_mcts_tree.c:4834-4839`, the per-row storage) have been checked by a second
+> reader; the *numbers* have not. Treat the distribution as indicative until a
+> banked dump exists — per the ledger's "bank the dump, not just the number".
 
 At fixed total budget, the question is whether some positions are absorbing sims
 that buy nothing. **Every shard row stores the instrument that answers this.**
@@ -303,9 +317,21 @@ Survivor `max_visit` = 59; 256 sims spent exactly.
 > §11 already leans on this same mechanism as the precedent for mid-search
 > budget zeroing.
 >
-> Note it is **C-path only**: the Python mirror (`gumbel.py:1030-1051`) has no
-> solved-root check at all, so the two paths disagree on this. Production
-> selfplay runs the C path, so the exception is live in production.
+> Note it is **C-path only, and the disagreement is total**: `grep solved` on
+> `gumbel.py` returns **zero hits** — the Python search has no solved-root
+> concept at all, not merely a weaker one. Production selfplay runs the C path,
+> so the exception is live in production and absent from the reference
+> implementation.
+>
+> **A second C/Python parity break sits in the same loop:** `halving_div` is
+> never *read* on the Python path. It exists as a `GumbelConfig` field
+> (`gumbel.py:186`) but the Python round counter hardcodes
+> `rounds_left = ceil(log2(len(rem)))` (`gumbel.py:1048`), while the C walks
+> `while (tmp > 1) { rounds_left++; tmp = (tmp + div - 1) / div; }`
+> (`_mcts_tree.c:1411-1413`). The two agree only at `div == 2` — the shipped
+> value — so any experiment that moves `HalvingDiv` and compares the paths is
+> comparing two different schedules. Worth knowing before anyone uses the
+> Python path as the oracle for a C change.
 
 **The consequence is fatal to the proposal as stated.** For an unsolved root the
 visit vector at any point in the search is a function of
@@ -403,6 +429,12 @@ else:
     m_cap = max(2, (sim_budget + 1) // 2)
     m = max(2, int(min(int(topk), int(legal.size), int(m_cap))))
 ```
+
+**The C driver production actually runs applies the identical cap** —
+`gumbel_c.py:851-852`, `m_cap = max(2, (_game_budget + 1) // 2)` then
+`m = min(topk, legal_idx.size, m_cap)`. Citing only the Python line would leave
+the floor below looking like a property of the reference implementation rather
+than of the shipped one.
 
 With `gumbel_topk: 32`, `m_cap` binds at **sims ≤ 63**, and at sims = 64 exactly
 `m_cap == topk == 32` — the coincidence that has already hidden a search variant
@@ -557,16 +589,49 @@ its **input is our net's raw winrate against SF**, regulated to
 > `configs/pbt2_small.yaml:95` on `main` → `0.50`; the live tree's copy → `0.5`.
 > The controller is sitting on its setpoint, and that setpoint is 0.50.
 >
-> **The argument below is unaffected, and that is worth stating explicitly**
-> rather than leaving the reader to re-derive it. The setpoint enters the
-> control law only as a subtrahend — `err = self.ema_winrate - self.target`
-> (`pid.py:800`) — so the negative feedback that erases the outcome signal
-> exists for *any* target. Nothing downstream divides by the setpoint either:
-> there is no division by `target_winrate`, `self.target`, or a literal `0.6`
-> anywhere in `chess_anti_engine/` or `scripts/`. The only other use is seeding
-> `ema_winrate` to the target at construction (`pid.py:527`), which is an
-> initial condition, not a yardstick. §8's conclusion therefore holds at 0.50,
-> at 0.60, and at any setpoint the yaml might carry later.
+> **§8's conclusion survives the correction, but only one of the two supporting
+> arguments does. Both are stated here, because an earlier revision claimed the
+> stronger one and it is false.**
+>
+> **Holds — the control law is setpoint-invariant.** The setpoint enters the
+> loop only as a subtrahend: `err = self.ema_winrate - self.target`
+> (`pid.py:800`). The negative feedback that erases the outcome signal exists
+> for *any* target, so §8's conclusion — winrate is a *controlled* variable and
+> therefore cannot serve as a yardstick — holds at 0.50, at 0.60, and at
+> whatever the yaml carries next. That is the argument the section needs, and it
+> is sufficient on its own.
+>
+> **⚑ Does NOT hold — "nothing downstream divides by the setpoint".** That claim
+> was made here and is **false**. `tune/trainable_metrics.py:179-181` divides by
+> it:
+>
+> ```python
+> target = max(0.01, float(pid_target_winrate))
+> winrate_factor = max(0.5, min(1.0, max(0.0, float(ema_winrate)) / target))
+> return difficulty * winrate_factor
+> ```
+>
+> The `max(0.01, ...)` clamp is the tell — you only guard a divisor. It is wired
+> to the real setpoint at `tune/trainable_phases.py:756`
+> (`pid_target_winrate=tc.sf_pid_target_winrate`).
+>
+> **Consequence: the reported difficulty metric is not setpoint-invariant.** At
+> the live `pid_ema_winrate` (0.4976, iteration 686) the factor is 0.9952 at
+> target 0.50 and 0.8293 at 0.60 — the **same run scores 16.7% lower** purely
+> from the setpoint. So a difficulty/strength number is comparable across
+> setpoints only if the setpoint is quoted with it; a cross-era comparison that
+> spans the 2026-06-29 change is measuring partly the change itself.
+>
+> **Why the original grep missed it, so the next reader does not repeat it:**
+> the divisor is a *renamed local* (`target`) fed by a *differently named*
+> parameter (`pid_target_winrate`). Grepping `target_winrate`, `self.target`, or
+> `0.6` finds nothing at that site. The lesson generalises — a value's
+> reachability cannot be established by grepping the name it has at its source.
+>
+> Other setpoint reads, for completeness: `ema_winrate` is seeded to the target
+> at construction (`pid.py:527`), an initial condition rather than a yardstick,
+> and **four** `_seed_lever_history(..., target_wr=self.target)` sites
+> (`pid.py:586`, `:587`, `:745`, `:747`) — an earlier revision cited only one.
 
 Variable sims never touches a PID lever, so there is no direct coupling. The
 coupling is through the winrate channel and it is worse than a direct one:
