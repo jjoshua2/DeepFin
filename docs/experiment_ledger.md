@@ -37246,3 +37246,59 @@ two files agree, but only until they diverge again.
 FILE it read.* A config-pinning test is only as good as the config it opens, and in a repo where
 the production config lives on a branch CI never builds, "the test passes" and "production obeys
 the pin" are unrelated statements.
+
+### AMENDMENT 10 (2026-08-09) — RETRACTING Amendment 7's one-sided coverage rule
+
+Amendment 7 listed three things the bundle readout CAN and CANNOT establish. **The second one is
+now withdrawn.** The PR #382 re-review killed it on four independent grounds, each executed:
+
+> ~~**CAN (one-sided):** coverage `Δ >= +0.05` at `tau=50 rho=0.05 phi=2e-2` ⇒ `policy_temp` fired.~~
+
+1. **The threshold sits INSIDE the CI of the effect it must detect.** Bundle coverage delta is
+   **+0.0765 [+0.0469, +0.1058]** and the rule fires at **+0.05**. A rule whose trigger point lies
+   within its own effect's interval decides on noise.
+2. **The harness's own bias at that cell is the size of the effect.** Arm A *is* production's
+   shape, so `stored − A` is pure harness error: measured **+0.0450 [+0.0036, +0.0886]** (the PR's
+   own bank says +0.0571). Compare `c_scale` **−0.0593**, whose SIGN carries the entire
+   attribution. Across the bank's 128 cells, **|harness error| >= |c_scale effect| in 46/128**.
+3. **The two selection criteria are the same variable.** corr(control margin, |d_c|/|d_T|) =
+   **+0.785**, and the two surviving cells sit at the **6th and 10th percentile** of control
+   strength among the 81 that pass. The survivor is the last cell before the crossing the
+   docstring itself says makes the metric unusable. That is
+   [[never_condition_a_control_on_its_own_outcome]] one level up — at CELL SELECTION rather than
+   row selection.
+4. **The PASS has no resolution.** Row-resampling the survivor's control margin gives
+   **+2.06 ± 1.39, 95% [−0.06, +5.18]** — **22% of draws FAIL the gate.**
+
+Plus a fifth that is fatal on its own: **every quoted CI is a PAIRED-RIG CI, and the live readout
+is UNPAIRED ACROSS TIME.** Carrying a paired offline interval onto an unpaired live comparison is
+the forbidden between-rig transfer [[a8_polar_steps_aborted_cross_run_ratio]].
+
+**What survives, and what this changes about the deploy.**
+
+| check | status |
+|---|---|
+| Plumbing in-effect: `gumbel_policy_temp=1.5 tempered=True` in the worker log (`worker.py:4458`), and `gumbel_c_scale 0.1` in the published reco | **STANDS** — this is the one that matters |
+| `gumbel_policy_entropy_mean` off baseline 1.0578 by >= +0.10 (6.6 sigma, sd 0.0152) | **STANDS** (Amendment 8: clean denominator) |
+| Coverage one-sided rule | **RETRACTED** |
+| Decompose a null into per-knob contributions | still **CANNOT** (unchanged) |
+
+**This does not weaken the case for deploying the bundle — it strengthens it.** The coverage rule
+was the last remaining reason to prefer the unbundled arm, and it is now void. Combined with
+Amendment 9 (`c_scale` 0.025 -> 0.1 is a REVERT to a pinned optimum measured at our own sim count,
+not an experimental arm), the bundle is **one revert plus one genuine experiment**. There was
+never as much attribution at stake as Amendment 6 priced in.
+
+**A separate defect the same review found, and it is the house signature:** the harness's fidelity
+check is *called* a gate and **cannot fail** — no threshold, no abort, not read by any verdict.
+Driven to `sims 2 / topk 2 / c_scale 5.0 / T 8.0 / gumbel_scale 4.0`, fidelity craters to argmax
+0.54 / TV 0.72 and the script still prints `PASS +19.57` and exits 0 — **the broken shape passes
+the negative control HARDER than the honest one** (+19.57 vs +1.56). Also inert: the
+stale-reference-prior guard, because `model_step`/`model_sha256` are `None` on all 8 newest live
+shards, so `read_stats.model_steps == []` and `--compare-to` can never refuse across producing
+nets. Both are [[a_gate_that_cannot_fail]].
+
+**The transferable rule:** *a selection rule correlated with the outcome it selects on is not a
+filter, it is the hypothesis.* Before trusting a cell chosen by a control, correlate the control's
+margin against the effect being attributed. At +0.785 here, "passes the control" and "shows the
+effect" were nearly the same statement, and the grid search was choosing the answer.
