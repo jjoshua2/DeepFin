@@ -304,6 +304,11 @@ def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torc
     return -(target_probs * F.log_softmax(logits, dim=-1)).sum(dim=-1)
 
 
+# Smallest accepted `policy_target_temp`. Not a numerical limit (see the guard
+# in the function) -- a typo catcher, set well below any value we would use.
+_POLICY_TARGET_TEMP_MIN = 0.5
+
+
 def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> torch.Tensor:
     """Flatten the MAIN policy target by a temperature. IDENTITY at ``temp == 1.0``.
 
@@ -332,16 +337,44 @@ def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> tor
     transform is not, which is why this one needs code and an SF blend does not.
     """
     t = float(temp)
-    if not (t > 0.0) or t == float("inf"):
+  # ⚑ THE FLOOR IS ASYMMETRIC ON PURPOSE, and it is a policy choice rather than
+  # a numerical necessity — the max-scaling below already makes any positive
+  # temperature safe. It exists because the two directions FAIL DIFFERENTLY:
+  # over-flattening drives the target toward uniform, which raises `policy_ce`
+  # loudly and gets noticed; over-sharpening drives it toward one-hot, which
+  # LOWERS the CE floor to zero, so a typo reads as the loss improving. Review
+  # found `policy_target_temp: 0.001` doing exactly that. Intended use is >= 1
+  # (lc0 trains at 1.36-2.20) or a little below, so 0.5 sits well clear of any
+  # value we would deliberately set and can only catch mistakes.
+  # `not (t >= MIN)` also catches NaN, which compares False against everything.
+    if not (t >= _POLICY_TARGET_TEMP_MIN) or t == float("inf"):
         raise ValueError(
-            f"policy_target_temp must be finite and > 0, got {temp!r}. It is an exponent "
-            "denominator: 0 divides by zero inside the training step and a negative value "
-            "inverts the target's ordering while still summing to 1, so neither fails loudly."
+            f"policy_target_temp must be finite and >= {_POLICY_TARGET_TEMP_MIN}, got "
+            f"{temp!r}. It is an exponent denominator: 0 divides by zero, a negative "
+            "value inverts the target's ordering while still summing to 1, and a small "
+            "positive value collapses the target toward one-hot -- which lowers "
+            "`policy_ce` and so reads as the loss improving. None of them fail loudly."
         )
     if t == 1.0:
         return pol_target
-    out = pol_target.clamp_min(0.0) ** (1.0 / t)
-    return out / out.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+  # ⚑ DIVIDE BY THE ROW MAX BEFORE THE EXPONENT. The obvious `p ** (1/t)`
+  # underflows: review found that `policy_target_temp: 0.001` -- a plausible
+  # typo -- drove every entry of a broad target to 0 in fp32. The renormalise
+  # then divided 0 by a clamped denominator instead of raising, so the target
+  # was all-zero, `policy_ce` was EXACTLY 0.0, and the policy head trained on
+  # nothing while the loss read as perfect. Eval is pinned to temp 1.0, so the
+  # holdout could not see it either.
+  #
+  # Scaling by the max first makes that impossible rather than merely illegal:
+  # the largest entry is exactly 1.0 after the power, so the pre-normalise sum
+  # is >= 1.0 at every temperature and no epsilon clamp can ever bind. The
+  # result is unchanged where the naive form was already safe (max abs diff
+  # 1.2e-7 at t=0.5/1.3/2.2 -- float32 rounding), and extreme sharpening now
+  # degrades to a ONE-HOT target instead of an empty one. A power transform is
+  # scale-free, so dividing by a positive constant cannot change the output.
+    scaled = pol_target.clamp_min(0.0)
+    peak = scaled.amax(dim=-1, keepdim=True).clamp_min(1e-30)
+    return normalize_distribution((scaled / peak) ** (1.0 / t))
 
 
 def align_policy_target(target: torch.Tensor, width: int) -> torch.Tensor:

@@ -238,3 +238,81 @@ def test_the_pinned_kwargs_override_only_the_target_shape() -> None:
     assert {k: v for k, v in pinned.items() if k != "policy_target_temp"} == {
         "w_policy": 1.0, "w_sf_own": 0.1,
     }
+
+
+# ── The underflow the max-scaling makes impossible ──────────────────────────
+
+
+@pytest.mark.parametrize("temp", [0.5, 0.9, 1.3, 2.2, 10.0, 1000.0])
+def test_no_temperature_can_empty_the_target(temp: float) -> None:
+    """⚑ REVIEW FINDING B1, and the reason for the max-scaling.
+
+    `policy_target_temp: 0.001` -- a plausible typo -- used to drive every entry
+    of a broad target to 0 in fp32 via `p ** 1000`. The renormalise divided by a
+    clamped denominator instead of raising, so the target was ALL-ZERO,
+    `policy_ce` was exactly 0.0, and the policy head trained on nothing while
+    the loss read as PERFECT. The holdout could not see it either, because eval
+    is pinned to temp 1.0.
+
+    The naive form fails here by construction: the broadest realistic target is
+    ~uniform over the 1858 compact moves, and (1/t)*log10(1858) exceeds fp32's
+    38-decade normal range for any t below ~0.086.
+    """
+    broad = torch.full((1, 1858), 1.0 / 1858)
+    naive = broad ** (1.0 / temp)
+
+    out = retemper_main_policy_target(broad, temp=temp)
+    assert torch.isfinite(out).all()
+    assert float(out.sum()) == pytest.approx(1.0, abs=1e-5), (
+        f"temp={temp} produced a target summing to {float(out.sum())!r}; the "
+        f"naive p**(1/t) summed to {float(naive.sum()):.3e}"
+    )
+    assert float(out.max()) > 0.0, "the target has no mass anywhere"
+
+
+@pytest.mark.parametrize("bad", [0.001, 0.05, 0.49])
+def test_a_temperature_below_the_floor_is_refused(bad: float) -> None:
+    """The floor is a typo catcher, not a numerical limit -- the max-scaling
+    already makes these safe. It exists because over-SHARPENING fails quietly:
+    a one-hot target has entropy 0, so `policy_ce` falls, and the mistake reads
+    as the loss improving. Over-flattening raises CE and gets noticed."""
+    with pytest.raises(ValueError, match="policy_target_temp must be finite"):
+        retemper_main_policy_target(torch.ones(1, 4) / 4, temp=bad)
+
+
+def test_the_max_scaling_does_not_change_the_result_where_it_was_already_safe() -> None:
+    """The scaling must be a NUMERICS fix, not a behaviour change. A power
+    transform is scale-free, so dividing by a positive constant first cannot
+    move the output -- assert that rather than trusting the algebra."""
+    peaked = torch.tensor([[0.7, 0.2, 0.07, 0.03]])
+    for temp in (0.5, 1.3, 2.2):
+        naive = peaked ** (1.0 / temp)
+        naive = naive / naive.sum(dim=-1, keepdim=True)
+        assert torch.allclose(
+            retemper_main_policy_target(peaked, temp=temp), naive, atol=1e-6,
+        ), f"temp={temp}: the max-scaling changed the result"
+
+
+def test_the_trainer_refuses_a_bad_temperature_at_CONSTRUCTION() -> None:
+    """⚑ MUTATION SURVIVOR (review N3): deleting the construction-time check in
+    `Trainer.__init__` left all 285 tests green.
+
+    Its comment promises the trial fails at STARTUP rather than inside the
+    first training step. Nothing observed that, so the promise was unenforced.
+    """
+    import inspect
+
+    from chess_anti_engine.train import trainer as trainer_mod
+
+    src = inspect.getsource(trainer_mod.Trainer.__init__)
+    assert "retemper_main_policy_target(" in src, (
+        "Trainer.__init__ no longer validates policy_target_temp at construction; "
+        "a bad yaml value now first raises inside the training step, after the "
+        "trial has started and taken the GPU"
+    )
+  # And the validation it delegates to must actually reject something --
+  # otherwise the call site is present but inert. 0.0 divides by zero and a
+  # negative exponent inverts the target's ordering while still summing to 1.
+    for bad in (0.0, -1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="policy_target_temp must be finite"):
+            retemper_main_policy_target(torch.ones(1, 2) / 2, temp=bad)
