@@ -703,3 +703,91 @@ def test_the_production_ctor_dict_reaches_Trainer_UNMODIFIED() -> None:
                 f"line {line}: {ctor_name}.{node.func.attr}(...) mutates the "
                 f"config-derived kwargs before they reach Trainer()"
             )
+
+
+# ── The startup log line: the ONLY artifact naming the realized temperature ──
+#
+# ⚑ Ledger F2 (PR #373 independent review): the entry pre-declares UNRESOLVED as
+# the expected outcome, and in this repo a null with no in-effect proof is void.
+# Nothing a running trial emitted named the realized `policy_target_temp`:
+# `params.json` is the LAUNCH config, and `scripts/audit_targets.py`'s
+# "production training target" row is rebuilt from the flat `temperature` key --
+# the selfplay SAMPLING temperature -- so it reads identically in both arms.
+# `Trainer.__init__` now prints the value it actually installed.
+#
+# These tests are written to KILL a hard-coded line. A guard that cannot fire is
+# worse than none, so a mutant printing any constant must turn at least one of
+# them red, and the null control (deleting the line entirely) must too.
+
+
+def _startup_temp_line(capsys: pytest.CaptureFixture[str]) -> str:
+    lines = [
+        ln for ln in capsys.readouterr().out.splitlines()
+        if ln.startswith("[trainer] policy_target_temp=")
+    ]
+    assert len(lines) == 1, (
+        "Trainer.__init__ must emit exactly one realized-temperature line; got "
+        f"{len(lines)}. Deleting it makes the arm's in-effect proof unobservable."
+    )
+    return lines[0]
+
+
+@pytest.mark.parametrize("temp", [1.0, 1.2, 1.5, 2.2, 0.75])
+def test_the_startup_line_reports_the_REALIZED_temperature_not_a_constant(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], temp: float,
+) -> None:
+    """⚑ THE MUTANT THIS EXISTS FOR: printing a literal (`policy_target_temp=1`,
+    or the yaml's value re-read instead of `self.policy_target_temp`). The value
+    is parsed back out of the emitted text and compared to the attribute that
+    `_loss_kwargs` actually hands to `compute_loss`, over five temperatures, so
+    NO single constant can satisfy the parametrization.
+    """
+    t = _trainer(tmp_path, policy_target_temp=temp)
+    line = _startup_temp_line(capsys)
+
+    printed = float(line.split("policy_target_temp=")[1].split()[0])
+    assert printed == pytest.approx(temp), (
+        f"the startup line says {printed} but the Trainer installed "
+        f"{t.policy_target_temp} -- the operator cannot tell which arm ran"
+    )
+    assert printed == pytest.approx(t._loss_kwargs["policy_target_temp"]), (
+        "the line must report the value that reaches compute_loss, not a "
+        "separately-derived one"
+    )
+
+
+@pytest.mark.parametrize(("temp", "active"), [(1.0, False), (1.2, True), (0.75, True)])
+def test_the_startup_line_reports_reshape_active_from_the_SHARED_predicate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], temp: float, active: bool,
+) -> None:
+    """`reshape_active` must agree with the predicate `retemper_main_policy_target`
+    itself gates on -- a guard has to share the criterion's instrument. Asserted
+    against the OBSERVED early return (identity of the returned object), not
+    against a re-statement of `!= 1.0`, so a mutant that changes one and not the
+    other is caught.
+    """
+    _trainer(tmp_path, policy_target_temp=temp)
+    line = _startup_temp_line(capsys)
+    printed = line.split("reshape_active=")[1].split()[0]
+    assert printed == str(active)
+
+    probe = _target([[0.7, 0.2, 0.07, 0.03]])
+    observed_active = retemper_main_policy_target(probe, temp=temp) is not probe
+    assert observed_active is active, "fixture disagrees with the real early return"
+    assert printed == str(observed_active), (
+        "the log line's reshape_active disagrees with whether the transform "
+        "actually ran -- the claim and the arithmetic have drifted apart"
+    )
+
+
+def test_the_startup_line_fires_for_the_CONTROL_arm_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A line emitted only at `temp != 1.0` would make the control arm's log
+    indistinguishable from a build that predates the knob, so `1.0` observed in
+    the log would prove nothing. The default must print too."""
+    _trainer(tmp_path)
+    line = _startup_temp_line(capsys)
+    assert "policy_target_temp=1 " in line
+    assert "reshape_active=False" in line
+    assert "eval_pinned_temp=1" in line

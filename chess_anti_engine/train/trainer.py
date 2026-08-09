@@ -92,6 +92,7 @@ from .losses import (
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    policy_target_temp_active,
     retemper_main_policy_target,
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
@@ -2080,6 +2081,28 @@ class Trainer:
   # test or the offline rig can call the helper without a Trainer.
         self.policy_target_temp = float(policy_target_temp)
         retemper_main_policy_target(torch.ones(1, 2), temp=self.policy_target_temp)
+  # ⚑ THE ONLY ARTIFACT THAT NAMES THE REALIZED TARGET TEMPERATURE. Everything
+  # else a reader might reach for reports a DIFFERENT number: `params.json` is
+  # the LAUNCH config (and says nothing about what the constructor accepted),
+  # and `scripts/audit_targets.py`'s "production training target" row is
+  # rebuilt from the flat `temperature` key -- the selfplay SAMPLING
+  # temperature, an unrelated knob -- so it reads identically whether or not
+  # this one is live. Without this line an arm whose value never reached
+  # `compute_loss` is indistinguishable from one whose did reach it, which is this
+  # codebase's signature defect (a value accepted and then silently ignored).
+  # UNCONDITIONAL on purpose: the control arm's `1.0` has to be a positive
+  # record, not an absent line that could equally mean "old code".
+  # `reshape_active` comes from `policy_target_temp_active`, the same predicate
+  # `retemper_main_policy_target` gates its early return on, so the claim and
+  # the arithmetic cannot drift apart.
+  # print(), NOT logging.info() -- the trial actor installs no logging handler,
+  # so an INFO record is discarded; see the export_swa comment below.
+        print(
+            f"[trainer] policy_target_temp={self.policy_target_temp:.6g} "
+            f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
+            "eval_pinned_temp=1",
+            flush=True,
+        )
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)

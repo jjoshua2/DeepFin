@@ -309,6 +309,22 @@ def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torc
 _POLICY_TARGET_TEMP_MIN = 0.5
 
 
+def policy_target_temp_active(temp: float) -> bool:
+    """True when ``policy_target_temp`` will actually reshape the target.
+
+    THE single definition of "the reshape is on". ``retemper_main_policy_target``
+    below gates its early return on this, and ``Trainer.__init__``'s realized-value
+    log line reports it, so the arithmetic and the operator-facing claim cannot
+    drift apart: a guard has to share the criterion's instrument or it is guarding
+    a different question.
+
+    No validation here -- an out-of-range temperature is rejected by
+    ``retemper_main_policy_target`` (and, for the live path, by ``Trainer.__init__``
+    calling it at construction). This predicate answers only "does it bite".
+    """
+    return float(temp) != 1.0
+
+
 def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> torch.Tensor:
     """Flatten the MAIN policy target by a temperature. IDENTITY at ``temp == 1.0``.
 
@@ -387,7 +403,7 @@ def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> tor
             "positive value collapses the target toward one-hot -- which lowers "
             "`policy_ce` and so reads as the loss improving. None of them fail loudly."
         )
-    if t == 1.0:
+    if not policy_target_temp_active(t):
         return pol_target
   # ⚑ DIVIDE BY THE ROW MAX BEFORE THE EXPONENT. The obvious `p ** (1/t)`
   # underflows: review found that `policy_target_temp: 0.001` -- a plausible
