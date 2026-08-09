@@ -26,16 +26,26 @@ replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/1
 replay_window_max: 1500000   # 2026-07-04: RECOVERY BANKED @ckpt524 (raw top-1 −1.7 and endgame value +1.3 vs ckpt457, both CIs include 0; value 72.15 ≈ the 72.4 known-good) → cap raised 800k→1.5M per the pre-committed plan. NOT back to 3M: 1.5M keeps data-path experiment clocks ~2 days instead of ~5. History: 2026-07-03 3M→800k→250k one-iteration eviction of the fast-ply-contaminated band→800k. Live-reloadable; shrink via enforce_window.
 replay_window_growth_frac: 1.0   # 2026-07-03: retain ALL new (clean) positions while regrowing post deep-cut (~482k @iter524). DROP TO 0.10 when the window reaches ~1.5M cap (~2 days at ~13.5k/iter). Prior: 0.10 (2026-05-28, grow slowly / retain ~10%).
 replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset.
-# DELETED replay_sf_gap_priority_weight: 0 disables the branch (disk_buffer.py:635 needs >0); replay_pmass_gap_share==0.0 on 478/478 rows; experiment #104 KILLED (rl_loop_audit H2)
+# DELETED replay_sf_gap_priority_weight: 0 disables the branch (replay/disk_buffer.py:864 needs >0);
+#   consumer default matches (tune/trial_config.py:774 .get(...,0.0)). Experiment #104 KILLED at the
+#   ckpt559 readout -- do NOT re-enable at w=30; baselines and kill evidence in
+#   docs/experiment_ledger.md (rl_loop_audit H2)
 
 # Bootstrap: train initial net on all random games, then discard from window
-# DELETED bootstrap_dir: DEAD KEY - appears only in the config_yaml.py:44 allowlist, zero consumers in chess_anti_engine/
+# DELETED bootstrap_dir: not consumed by the training loop; the one consumer is
+#   scripts/train_bootstrap.py:85, which reads flatten_run_config_defaults(yaml) -- NOT run.py's
+#   argparse-resolved config -- so an absent key falls to that line's literal 'data/bootstrap',
+#   exactly the deleted value. (run.py's own resolution would give None; nothing reads it there)
 bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v5_iter239.pt  # os=334, reg=0.375
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
-# DELETED bootstrap_max_positions: DEAD KEY - config_yaml.py:46 allowlist only, zero consumers
-# DELETED bootstrap_train_steps: DEAD KEY - config_yaml.py:46 allowlist only, zero consumers
-# DELETED shared_shards_dir: None, and ABSENT from the realized iter-478 config entirely
+# DELETED bootstrap_max_positions: DEAD KEY - repo-wide grep outside tests finds only the
+#   utils/config_yaml.py:46 allowlist
+# DELETED bootstrap_train_steps: DEAD KEY - repo-wide grep outside tests finds only the
+#   utils/config_yaml.py:46 allowlist
+# DELETED shared_shards_dir: null was never resolved in the first place --
+#   flatten_run_config_defaults drops None, and the consumer defaults to None anyway
+#   (tune/trial_config.py:783 _get(...,None))
 # salvage_seed_pool_dir: intentionally omitted — set via CLI --salvage-seed-pool-dir.
 # If set here, the live YAML reload at trainable.py:68 clobbers any CLI-provided value.
 salvage_restore_donor_config: false   # Disabled: use GPBT-sampled LR (0.0003) not donor's 0.001
@@ -62,7 +72,8 @@ model:
   smolgen_relation_norm: none
   smolgen_relation_coeff_norm: none
   smolgen_relation_scale: none
-  # DELETED use_nla: False; the NLA attention variant is off and its search flag (tune.search_nla) is off too
+  # DELETED use_nla: the NLA attention variant is off; consumer default matches
+  #   (model/__init__.py:113 .get('use_nla',False)) and its search flag tune.search_nla is off too
   input_pos_encoding: arc_adapter  # Zero-init square geometry adapter; safe warmstart from current best.
   qkv_projection: split  # Split fused QKV for Aurora scope control; tolerant loader migrates old fused weights.
   use_deepnorm: true  # Epoch-4 candidate topology.
@@ -158,8 +169,14 @@ selfplay:
   # design (same ~40min period, same games) — deliberately NOT a throughput
   # change, so it does not confound the live views=5 readout.
   games_per_iter: 440
-  # DELETED games_per_iter_start: ramp_iters is 0 so there is no ramp; start==games_per_iter. trainable_metrics.py:213
-  # DELETED games_per_iter_ramp_iters: 0 = no ramp. trainable_metrics.py:214
+  # ⚑ RETAINED, do not delete: --games-per-iter-start has argparse default 0 (run.py:562),
+  #   so removing this key does NOT fall back to games_per_iter -- it resolves to 0, and the
+  #   defensive fallback at tune/trial_config.py:551 is structurally unreachable because the
+  #   key is always materialised. games_per_iter_ramp_iters is NOT restart-required, so a live
+  #   yaml edit arming the ramp would then give 1 game in the first iteration instead of 440.
+  #   This is the one key of the audited set that is NOT safe to delete.
+  games_per_iter_start: 440   # match games_per_iter; ramp disabled. Live-reloadable.
+  games_per_iter_ramp_iters: 0
   # 2026-07-24: 0.35 -> 0.50, PAIRED with the in-flight-abandonment fix (PR #224).
   # This is a SLOT roll, not a completed-game share. Until #224 those two numbers
   # were wildly different: 65% of slots rolled curriculum but only 16.5% of
@@ -267,7 +284,11 @@ selfplay:
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
   opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_478.txt
-  # DELETED opening_fen_prob: 0.0, and structurally superseded: opening.py:79-88 disables the probabilistic draw entirely while opening_fen_dole_per_iter>0
+  # DELETED opening_fen_prob: 0.0, and structurally superseded -- selfplay/opening.py:574 requires
+  #   opening_fen_prob>0 for the probabilistic draw, while seeding now runs through the deterministic
+  #   server dole (opening_fen_dole_per_iter). Consumer defaults match (tune/trial_config.py:642,
+  #   worker.py:3843, both .get(...,0.0)). REVERT POINT PRESERVED: a kill of the dole restores this
+  #   key at 0.05
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
   # Each iter the server hands the WHOLE live seed list to ONE worker poll (durable per-iter
@@ -603,7 +624,8 @@ train:
   train_views_per_ingested_position: 5.0  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
-  # DELETED no_amp: consumed ONLY by the argparse CLI path (run.py:43); the Ray trainable never reads it
+  # DELETED no_amp: consumed only where the argparse value is read (run.py:45 use_amp = not no_amp);
+  #   argparse default False equals the deleted value, so use_amp stays True
   # 2026-07-30: 0.10 -> 0.0 (audit M8 arm C, OPERATOR DECISION — delete the knob
   # rather than compensate it; arm B, the 1/(1-p) rescale, is deliberately NOT run).
   # Rationale: never shown to earn its keep, and it created a systematic train/serve
@@ -624,8 +646,10 @@ train:
   # data/salvage/pre_restart_20260730 (iter 368 / ckpt_000367).
   # Ledger: "feature dropout has no 1/(1-p) rescale (audit M8)".
   feature_dropout_p: 0.0
-  # DELETED resid_channel_dropout: 0.0 = off (trainer.py:1832)
-  # DELETED resid_channel_balance_weight: 0.0 = off
+  # DELETED resid_channel_dropout: 0.0 = off (model/transformer.py:1176 needs >0); consumer default
+  #   matches (train/trainer.py:1543 _f(...,0.0))
+  # DELETED resid_channel_balance_weight: 0.0 = off (model/transformer.py:1148); consumer default
+  #   matches (train/trainer.py:1544 _f(...,0.0))
   zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). The "median grad norm 1.81, max 3.65" that used to be quoted here is stale by 2.3x — see zclip_max_norm below for the current measurement.
   zclip_alpha: 0.97
   zclip_clip_factor: 1.0
@@ -791,9 +815,13 @@ train:
   sf_wdl_frac_floor: 0.45   # 2026-07-02 value-ranking exp (BT4 43cp vs our 75.9 on same probe): raise truth-anchor floor 0.35->0.45, cut self-echo below. Live-reload. Revert pair: 0.35/0.35.
   search_wdl_frac: 0.20     # 2026-07-02 value-ranking exp (rung 1): 0.35->0.20. STALE PREMISE (Codex review): the original rationale — fast-ply rows carry a ~pure net-eval echo at 35% — no longer holds after record_fast_ply_value was reverted to false the same day; with fast rows gone, every remaining row's search_wdl is a genuine MCTS-averaged root WDL, so 0.20 now under-weights legitimate own-search signal (not just self-echo). Re-examine at the rung-1 read: if value ranking regressed, 0.35 may be the better mix now. Yardstick: value_regret vs the 70-76cp band + BT4=43.0 ref. Live-reload. Revert pair: 0.35/0.35.
   use_adjusted_wdl_target: false  # Opt-in only; regret adjustment applies to the game-outcome fraction, not missing SF/search fallbacks.
-  # DELETED adjusted_wdl_regret_source: downstream of use_adjusted_wdl_target: false; losses.py:420 gate never opens
+  # DELETED adjusted_wdl_regret_source: downstream of use_adjusted_wdl_target: false -- the
+  #   train/losses.py:771 gate never opens; consumer default matches (train/trainer.py:1600
+  #   .get(...,'sum'))
   # DELETED adjusted_wdl_regret_scale: downstream of use_adjusted_wdl_target: false
+  #   (train/losses.py:771); consumer default matches (train/trainer.py:1601 _f(...,1.0))
   # DELETED adjusted_wdl_regret_cap: downstream of use_adjusted_wdl_target: false
+  #   (train/losses.py:771); consumer default matches (train/trainer.py:1602 _f(...,0.0))
   # ⚑ BOTH knobs shape ONLY the auxiliary `sf_eval` head's row mask. They do
   # NOT touch the WDL value target: its SF component is weighted by
   # `sf_available * keep` (`losses.py`), which carries neither term. Verified
@@ -804,9 +832,12 @@ train:
   sf_wdl_conf_power: 1.0    # sf_eval row mask: scale by (1-draw_prob)^power. NOT the value blend.
   sf_wdl_draw_scale: 0.55   # sf_eval row mask: rescale game-drawn rows. NOT the value blend.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
-  # DELETED sf_wdl_temperature: 1.0 is the IDENTITY; losses.py:192 skips the p^(1/T) softening at exactly 1.0
-  # DELETED sf_search_dampen_sf_low: 0.0 = off (trainer.py:1845, losses.py:256)
-  # DELETED sf_search_dampen_sf_high: 0.0 = off (trainer.py:1846, losses.py:257)
+  # DELETED sf_wdl_temperature: 1.0 is the IDENTITY -- train/losses.py:501 skips the p^(1/T)
+  #   softening at exactly 1.0; consumer default matches (train/trainer.py:1596 _f(...,1.0))
+  # DELETED sf_search_dampen_sf_low: 0.0 = off (train/losses.py:836 multiplies by it); consumer
+  #   default matches (train/trainer.py:1597 _f(...,0.0))
+  # DELETED sf_search_dampen_sf_high: 0.0 = off (train/losses.py:837 multiplies by it); consumer
+  #   default matches (train/trainer.py:1598 _f(...,0.0))
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
   # 2026-07-26 (PR #247): refuse a warm start whose configured lr exceeds the
@@ -815,8 +846,13 @@ train:
   warm_start_lr_max_ratio: 2.0
   warmup_steps: 72   # Run 26 default.
   lr_eta_min: 0.00001
-  # DELETED lr_T0: consumed only by the CosineAnnealingWarmRestarts branch (trainer.py:1881), unreachable at lr_schedule: sqrt_release
-  # DELETED lr_T_mult: same: cosine-branch-only (trainer.py:1882)
+  # DELETED lr_T0: read ONLY by the CosineAnnealingWarmRestarts branch (train/trainer.py:2137),
+  #   unreachable at lr_schedule: sqrt_release. DRIFT: resolves to the argparse default 5000, not
+  #   999999 (train/trainer.py:1549) -- re-add before ever setting lr_schedule back to cosine.
+  #   Constructor-only and lr_schedule is restart-required, so no live path reaches it
+  # DELETED lr_T_mult: same cosine-only branch (train/trainer.py:2137). DRIFT: resolves to the
+  #   argparse default 2, not 1 (train/trainer.py:1550) -- re-add before ever setting lr_schedule back
+  #   to cosine
   lr_schedule: sqrt_release
   lr_release_cycle_steps: 0
   lr_release_start_frac: 0.80
@@ -832,7 +868,8 @@ puzzle_epd: null
 puzzle_interval: 0     # Disabled — too slow for many parallel trials
 
 tune:
-  # DELETED min_replay_size: DEAD KEY - config_yaml.py:270 allowlist only, zero consumers
+  # DELETED min_replay_size: DEAD KEY - repo-wide grep outside tests finds only the
+  #   utils/config_yaml.py:301 allowlist
 
   # Disk usage controls
   # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
@@ -845,10 +882,18 @@ tune:
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
   tune_scheduler: gpbt_pl
-  # DELETED gpbt_inertia_weight: cross-trial exploit weight; num_samples is 1 so there is nothing to exploit (harness.py:1159)
-  # DELETED gpbt_winner_weight: cross-trial only; num_samples: 1 (harness.py:1160)
-  # DELETED gpbt_quantile_fraction: cross-trial only; num_samples: 1 (harness.py:1161)
-  # DELETED gpbt_resample_probability: cross-trial only; num_samples: 1 (harness.py:1162)
+  # DELETED gpbt_inertia_weight: cross-trial exploit weight (tune/harness.py:1208). Dead at
+  #   num_samples: 1 -- Ray's PopulationBasedTraining._quantiles() returns ([],[]) for a single trial,
+  #   so the lower quantile is always empty and no exploit ever runs. Resolves unchanged at 1.0
+  # DELETED gpbt_winner_weight: cross-trial only (tune/harness.py:1209); dead at num_samples: 1
+  #   (empty lower quantile). Resolves unchanged at 1.0
+  # DELETED gpbt_quantile_fraction: cross-trial only (tune/harness.py:1210); read only inside the
+  #   len(trials)>1 branch, so dead at num_samples: 1. Resolves unchanged at 0.25
+  # DELETED gpbt_resample_probability: cross-trial only (tune/harness.py:1211); its only reader is
+  #   GPBTPairwiseScheduler._get_new_config (tune/gpbt.py:174), reached only for a trial in the LOWER
+  #   QUANTILE -- and Ray 2.53.0's PopulationBasedTraining._quantiles() returns ([],[]) whenever
+  #   len(trials)<=1, which gpbt.py does not override. Unconditionally dead at num_samples: 1. DRIFT:
+  #   resolves to the argparse default 0.05, not 0.20 -- re-add before raising num_samples above 1
   num_samples: 1
   max_concurrent_trials: 1
   # LAUNCH-FIXED (audit C2): read once into tune.Tuner's resource spec. Neither
@@ -999,7 +1044,9 @@ tune:
   exploit_replay_local_keep_older_fraction: 0.0    # Flush ALL old data on exploit
 
   # PB2: exploit+explore every X iterations (was 20).
-  # DELETED pb2_perturbation_interval: nothing to perturb: one trial, and pb2_bounds_lr is the degenerate interval [3e-5, 3e-5]
+  # DELETED pb2_perturbation_interval: nothing to perturb at num_samples: 1, and the only searched
+  #   key is the degenerate interval pb2_bounds_lr: [3e-5, 3e-5]. DRIFT: resolves to the argparse
+  #   default 10, not 8 (tune/harness.py:1143) -- re-add before raising num_samples above 1
 
   tune_metric: opponent_strength_ema
   tune_mode: max
@@ -1154,14 +1201,20 @@ tune:
   # set, which is still far better than every 13 iterations.
   freeze_holdout_at: 2000
   reset_holdout_on_drift: false
-  # DELETED drift_threshold: 0.0 independently disables the branch, and reset_holdout_on_drift is false too (trainable.py:349-351)
+  # DELETED drift_threshold: 0.0 independently disables the branch (tune/trainable.py:512 needs
+  #   >0.0) and reset_holdout_on_drift is false too; consumer default matches
+  #   (tune/trial_config.py:790 .get(...,0.0)). Resolves unchanged at 0.0
   drift_sample_size: 128
 
   # Binary dimensions: keep pinned during small-model search.
   search_smolgen: false
   search_nla: false
   search_optimizer: false
-  # DELETED search_optimizer_choices: read at harness.py:1041 but only inside the search_optimizer gate, which is false
+  # DELETED search_optimizer_choices: read at tune/harness.py:1090 but only under the
+  #   search_optimizer gate, which is false -- and the value is inert even if that gate opens:
+  #   cosmos_fast is not in the allowed set ['nadamw','adamw','muon','aurora','soap'], so it filters
+  #   to empty and BOTH ['cosmos_fast'] and the argparse default None return that same allowed list.
+  #   DRIFT: resolves to None
 
   # Expanded PB2 search: opponent_strength stagnated at ~18.7 for 80+ iters
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
