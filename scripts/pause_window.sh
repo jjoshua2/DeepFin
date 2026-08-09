@@ -32,8 +32,11 @@
 # untested and adjacent to the A17 lease-steal defect.
 set -euo pipefail
 
-REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-
+# ⚑ EVERY PATH BELOW IS RELATIVE TO THE CALLER'S CWD, deliberately. An earlier
+# revision computed a REPO_ROOT and never used it, which reads as "this script
+# anchors itself" while it does not. It does not `cd` because its caller may
+# legitimately point it at another tree with --work-dir; `ratchet_common.sh`
+# has already cd'd to the repo by the time ratchet_loop.sh invokes it.
 WORK_DIR="runs/pbt2_small"
 TRIAL_ID=""
 ACK_TIMEOUT="${CAE_PAUSE_ACK_TIMEOUT:-1800}"
@@ -79,7 +82,13 @@ MARKER="$TUNE_DIR/pause.txt"
 WORKER_PATTERN='-m chess_anti_engine\.worker( |$)'
 
 log() { echo "[pause-window] $*"; }
-die() { echo "[pause-window] ERROR: $*" >&2; exit 1; }
+# ⚑ EXIT 3 IS "THE WRAPPER FAILED", AND IT IS DISTINCT ON PURPOSE. The job's own
+# status is passed through untouched at the end, and the ratchet's vocabulary is
+# 0 / RATCHET_EXIT_RETRY=1 / RATCHET_EXIT_NO_RETRY=5. Sharing 1 with the ratchet
+# made "I could not pause" indistinguishable from "the arena produced no rows",
+# so a wrapper that could never park read as an ordinary retryable failure and
+# came back every poll until midnight. 2 stays reserved for usage.
+die() { echo "[pause-window] ERROR: $*" >&2; exit 3; }
 
 resolve_trial_id() {
     # `.paused_<trial_id>.ack` is written next to the marker. The trial id is the
@@ -105,12 +114,25 @@ log "trial=$TRIAL_ID  marker=$MARKER  ack=$(basename "$ACK")"
 # `_clear_pause_acks` runs in a `finally`, which a hard kill skips, so the tune
 # dir really does accumulate `.paused_<old_trial>.ack` files (one was found on
 # 2026-08-09). A wait that polls for "an ack exists" is satisfied INSTANTLY and
-# kills the workers while revive is still live. We poll for THIS trial's ack --
-# and if one is already sitting there before we have even asked for a pause, it
-# is stale by construction, so remove it rather than trust it.
+# kills the workers while revive is still live.
+#
+# ⚑ AND DO NOT DELETE IT. An earlier revision removed a pre-existing ack as
+# "stale by construction". It is not: window A can release the marker while the
+# trial is still parked (it only re-reads at `pause_poll_seconds`, production
+# default 60), so a LIVE ack sits there. Deleting it destroys the signal
+# `graceful_restart.py` uses as its PRIMARY pause detector, and the trial never
+# rewrites it because `_wait_if_paused` guards on an `announced` flag.
+#
+# The correct test is FRESHNESS, and it already exists 300 lines away:
+# `graceful_restart.py:_pause_ack_files` counts only acks touched at/after the
+# pause request. Same rule here -- accept an ack whose mtime is at least our
+# marker's, never one older, and never remove anything.
+PREEXISTING_ACK=0
 if [ -e "$ACK" ]; then
-    log "removing a PRE-EXISTING ack for this trial id (stale: no pause requested yet)"
-    rm -f "$ACK"
+    PREEXISTING_ACK=1
+    log "NOTE: an ack for this trial already exists (mtime $(stat -c%y "$ACK" 2>/dev/null)):"
+    log "      $(tr -d '\n' < "$ACK" 2>/dev/null)"
+    log "      it will be IGNORED unless the trial re-acks after our marker."
 fi
 
 # ── Baselines, taken BEFORE anything is signalled ────────────────────────────
@@ -118,7 +140,15 @@ fi
 # drain: `selfplay resume: suspended games=` is also emitted by every in-session
 # reco restart, so grepping the whole log finds an hours-old line and reads it as
 # proof that THIS drain worked.
-WORKER_PIDS="$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null || true)"
+# ⚑ pgrep's EXIT STATUS IS THE DIFFERENCE BETWEEN "no workers" AND "my pattern
+# is broken", and `|| true` erased it. 0 = matched, 1 = no match, >=2 = usage
+# or operational error -- which is exactly what a dropped `--` produces
+# (`pgrep -f "-m chess..."` => "invalid option -- 'm'", rc 2). Swallowed, that
+# reads as "nothing to drain", the job runs beside a full fleet, and the
+# contended arena is recorded as a clean strength row.
+pg_rc=0
+WORKER_PIDS="$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null)" || pg_rc=$?
+[ "$pg_rc" -lt 2 ] || die "pgrep failed (rc=$pg_rc) -- the worker pattern is broken, so the drain would silently match nothing"
 OFFSETS="$(mktemp)"; RESUME_BEFORE="$(mktemp)"
 cleanup_tmp() { rm -f "$OFFSETS" "$RESUME_BEFORE"; }
 
@@ -128,8 +158,16 @@ if [ -n "$WORKER_PIDS" ]; then
         [ -n "$lf" ] && [ -f "$lf" ] && printf '%s %s\n' "$lf" "$(stat -c%s "$lf")" >> "$OFFSETS"
     done
     log "workers: $(echo "$WORKER_PIDS" | tr '\n' ' ')"
+elif [ "${CAE_PAUSE_ALLOW_NO_WORKERS:-0}" = "1" ]; then
+    log "no selfplay workers matched, and CAE_PAUSE_ALLOW_NO_WORKERS=1 -- proceeding"
 else
-    log "WARNING: no selfplay workers matched -- nothing to drain"
+    # ⚑ NOT A WARNING. While training runs there are always workers, so zero
+    # matches means either they are gone (and the caller should know) or they
+    # are alive under an argv this pattern no longer recognises. The second is
+    # indistinguishable from the first here, and it is the expensive one: the
+    # job runs against a full fleet and the result is filed as uncontended.
+    # Refuse BEFORE the marker, so the cost of being wrong is zero.
+    die "no selfplay workers matched '$WORKER_PATTERN' -- refusing to pause. Either the fleet is down (set CAE_PAUSE_ALLOW_NO_WORKERS=1 and re-run) or the pattern has drifted from the workers' argv"
 fi
 
 # ⚑ COUNT THE RESUME DIRS FIRST. `outcome_stats.resumed_inflight_games` is the
@@ -172,17 +210,44 @@ on_signal() {
 trap release EXIT
 trap on_signal INT TERM
 
-touch "$MARKER"
+# ⚑ THE MARKER SAYS WHO HOLDS IT AND SINCE WHEN. Nothing in the trainer parses
+# it (`_resolve_pause_marker_paths` tests existence only), so this costs
+# nothing -- and a held marker is the one state an operator has to diagnose
+# from outside. `train_watchdog.decide()` reports PAUSED-HELD whenever a marker
+# is present and the loop is flat, and this PR makes that a NIGHTLY event; the
+# content is what tells "the ratchet is running" apart from "a dead window
+# parked production", which the verdict alone cannot.
+{ printf 'pause_window.sh pid=%s started=%s\n' "$$" "$(date -Is)"
+  printf 'job=%s\n' "$*"; } > "$MARKER"
 log "marker set; waiting up to ${ACK_TIMEOUT}s for the trial to park"
 
+# ⚑ WHEN A PRE-EXISTING ACK IS PRESENT, FAIL FAST INSTEAD OF HOLDING FOR HALF
+# AN HOUR. The likely cause is the NB1 case above: a previous window released
+# while the trial was still inside its park, so the trial will not re-ack and
+# no amount of waiting produces one. Holding the default 1800s marker through
+# that is 30 minutes of parked production per poll. Bounded to
+# CAE_PAUSE_STALE_ACK_TIMEOUT, and the message names the cause.
+deadline="$ACK_TIMEOUT"
+if [ "$PREEXISTING_ACK" = "1" ]; then
+    deadline="${CAE_PAUSE_STALE_ACK_TIMEOUT:-180}"
+fi
+
+ack_is_fresh() {
+    [ -e "$ACK" ] || return 1
+    [ ! "$ACK" -ot "$MARKER" ]   # mtime >= marker's; `-ot` is strictly older
+}
+
 waited=0
-while [ ! -e "$ACK" ]; do
-    if [ "$waited" -ge "$ACK_TIMEOUT" ]; then
-        die "no ack after ${ACK_TIMEOUT}s -- NOT draining (revive would relaunch the workers)"
+while ! ack_is_fresh; do
+    if [ "$waited" -ge "$deadline" ]; then
+        if [ "$PREEXISTING_ACK" = "1" ]; then
+            die "no ack NEWER than our marker after ${deadline}s, and a stale one is present -- the trial is probably still parked inside another window's pause and will not re-ack. NOT draining"
+        fi
+        die "no ack after ${deadline}s -- NOT draining (revive would relaunch the workers)"
     fi
     sleep "$POLL"; waited=$((waited + POLL))
 done
-log "PARKED after ~${waited}s: $(cat "$ACK" 2>/dev/null | tr -d '\n')"
+log "PARKED after ~${waited}s: $(tr -d '\n' < "$ACK" 2>/dev/null)"
 
 # ── Drain ────────────────────────────────────────────────────────────────────
 if [ -n "$WORKER_PIDS" ]; then
@@ -190,12 +255,24 @@ if [ -n "$WORKER_PIDS" ]; then
     drained=0
     while [ -n "$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null || true)" ]; do
         if [ "$drained" -ge "$DRAIN_TIMEOUT" ]; then
-            log "WARNING: workers still alive after ${DRAIN_TIMEOUT}s; continuing anyway"
+            log "workers still alive after ${DRAIN_TIMEOUT}s"
             break
         fi
         sleep "$POLL"; drained=$((drained + POLL))
     done
     log "drained after ~${drained}s"
+
+    # ⚑ THE DRAIN IS A GATE, NOT A BEST EFFORT. Checked against the pids taken
+    # at baseline rather than by re-running pgrep, so a pattern that stopped
+    # matching cannot report a clean drain. A worker that ignored SIGTERM still
+    # holds its server lease and still plays; running the job beside it buys
+    # the full production pause and delivers the contended measurement this
+    # script exists to prevent -- then stamps the day as read.
+    survivors=""
+    for pid in $WORKER_PIDS; do
+        kill -0 "$pid" 2>/dev/null && survivors="$survivors $pid"
+    done
+    [ -z "$survivors" ] || die "worker(s)$survivors survived SIGTERM after ${DRAIN_TIMEOUT}s -- NOT running the job; the measurement would be contended and indistinguishable from a clean one"
 
     # Evidence, read from the pre-drain offsets. ⚑ It MUST be read here, before
     # the marker clears: a revived worker TRUNCATES its log file (measured

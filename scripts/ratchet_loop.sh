@@ -43,6 +43,17 @@ STATE=data/ratchet/last_run_date
 # spend at 4.5), and it is self-reinforcing: contention -> no complete pairs
 # -> no row -> retry -> more contention.
 GIVEUP_STATE=data/ratchet/last_giveup_date
+# Consecutive pause-window failures, as "<date> <count>". A wrapper that cannot
+# park (wedged trial, long iteration, a drain that refuses) is NOT a ratchet
+# verdict, so `ratchet_outcome` neither stamps the day nor gives up on it -- it
+# just retries, every $POLL, setting and holding the marker each time. That is
+# invisible too: `loop_health.ratchet_gap_alerts()` keys on attempts.csv, which
+# never gets a row. After $PAUSE_MAX_FAILS the loop stops asking for a window
+# and takes the contended reading instead, because a noisy measurement beats a
+# day of repeatedly parking production and measuring nothing.
+PAUSE_FAIL_STATE=data/ratchet/pause_window_fails
+PAUSE_MAX_FAILS="${CAE_RATCHET_PAUSE_MAX_FAILS:-2}"
+PAUSE_WINDOW_FAILED_RC=3
 LOG=scratchpad/ratchet_loop.log
 POLL="${RATCHET_POLL:-600}"
 # Skip the first N iterations after a restart: a freshly-restarted trial spends
@@ -100,6 +111,17 @@ poll_once () {
     [ -n "$trial" ] || return 0
     ck=$(ls -td "$trial"checkpoint_* 2>/dev/null | head -1)
     [ -n "$ck" ] || return 0
+    # ⚑ Ray creates `checkpoint_NNNNNN/` before writing into it, and
+    # `daily_gate_ratchet.sh` treats that as a cheap RETRY -- its comment calls
+    # it "a live race that every fresh restart passes through" and says these
+    # paths cost NO GPU and are not counted against the day's attempts. Note it
+    # here so the WINDOW can be skipped below; the ratchet still runs, because
+    # the loop surfacing its retryable status is an existing contract
+    # (`test_nothing_to_measure_yet_is_retryable_not_a_finished_day`). What we
+    # refuse to do is pay a park plus a four-worker relaunch (model reload, AOT
+    # compile, re-lease) for a callee that will exit immediately.
+    local ck_ready=0
+    [ -f "$ck/trainer.pt" ] && ck_ready=1
     iter=$(ratchet_iter_from_checkpoint "$ck")
     [ "${iter:-0}" -ge "$MIN_ITER" ] 2>/dev/null || return 0
 
@@ -142,9 +164,17 @@ poll_once () {
     # asking again. CI caught it (three tests, rc=127) because the test sandbox
     # copies only the scripts it names. "Degrades to the old behaviour" has to
     # be a branch, not a hope.
-    local pause_ok=0
+    local pause_ok=0 pause_fails=0
+    read -r fail_day pause_fails < "$PAUSE_FAIL_STATE" 2>/dev/null || true
+    [ "${fail_day:-}" = "$today" ] || pause_fails=0
     if [ "${CAE_RATCHET_PAUSE_WINDOW:-1}" = "1" ]; then
-        if [ -r scripts/pause_window.sh ]; then
+        if [ "${pause_fails:-0}" -ge "$PAUSE_MAX_FAILS" ] 2>/dev/null; then
+            log "pause window failed ${pause_fails}x today (cap $PAUSE_MAX_FAILS)" \
+                "-- running BESIDE training for the rest of $today so the day still gets a reading"
+        elif [ "$ck_ready" = "0" ]; then
+            log "checkpoint has no trainer.pt yet -- running the ratchet WITHOUT a window;" \
+                "it exits retryable at no GPU cost, and a park here buys nothing"
+        elif [ -r scripts/pause_window.sh ]; then
             pause_ok=1
         else
             log "WARNING: scripts/pause_window.sh not readable — running the ratchet" \
@@ -152,11 +182,27 @@ poll_once () {
         fi
     fi
     if [ "$pause_ok" = "1" ]; then
-        bash scripts/pause_window.sh -- bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
+        # ⚑ PASS THE WORK DIR. `ratchet_common.sh` exists because the loop and the
+        # ratchet had drifted on exactly this; the wrapper is a THIRD participant
+        # with its own hardcoded default, so with TRAIN_WORK_DIR set it would
+        # pause and drain the PRODUCTION run while the ratchet measured the other
+        # tree. `test_neither_script_can_disagree_with_the_other` enumerates only
+        # two scripts and cannot see it.
+        bash scripts/pause_window.sh --work-dir "$WORK_DIR" -- bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
     else
         bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
     fi
     rc=$?
+    # Count the WRAPPER's own failures, and only those: exit 3 is reserved for
+    # them (pause_window.sh:die), so a ratchet that legitimately returned RETRY
+    # or NO_RETRY cannot burn the budget that exists to stop production being
+    # parked for nothing.
+    if [ "$pause_ok" = "1" ] && [ "$rc" = "$PAUSE_WINDOW_FAILED_RC" ]; then
+        echo "$today $((pause_fails + 1))" > "$PAUSE_FAIL_STATE"
+        log "pause window FAILED (rc=$rc), $((pause_fails + 1))/$PAUSE_MAX_FAILS for $today"
+    elif [ "$pause_ok" = "1" ]; then
+        rm -f "$PAUSE_FAIL_STATE"
+    fi
     ratchet_outcome "$rc" "$today"
     return "$rc"
 }

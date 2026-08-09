@@ -54,11 +54,19 @@ def _sandbox(tmp_path: Path, *, workers: bool = False) -> tuple[Path, Path, Path
         f'if [ "{int(workers)}" = "1" ] && [ ! -f "{tmp_path}/killed" ]; then echo 424242; exit 0; fi\n'
         "exit 1\n",
     )
-    # The assertion that matters: was the ack present AT THE MOMENT we killed?
+    # ⚑ RECORD THE ACK'S CONTENT, NOT ITS EXISTENCE.
+    # This stub used to ask only `[ -e "$ack" ]`. That is the same defect the
+    # script it tests exists to prevent, one level up: with the stale-ack
+    # removal DELETED, the pre-existing ack satisfies the wait instantly, pkill
+    # fires immediately, and an existence check still sees an ack and writes
+    # "pkill after_ack" -- the exact string the passing assertion demanded. A
+    # reviewer deleted `pause_window.sh:111-114` and the test SURVIVED.
+    # The content distinguishes them: the trial's real ack says `next_iter=7`,
+    # every stale one planted below says something else.
     (bin_dir / "pkill").write_text(
         "#!/bin/sh\n"
-        f'if [ -e "{ack}" ]; then echo "pkill after_ack" >> "{calls}"; '
-        f'else echo "pkill BEFORE_ack" >> "{calls}"; fi\n'
+        f'if [ -e "{ack}" ]; then echo "pkill ack:$(tr -d \'\\n\' < "{ack}")" >> "{calls}"; '
+        f'else echo "pkill NO_ack" >> "{calls}"; fi\n'
         f'touch "{tmp_path}/killed"\n'
         "exit 0\n",
     )
@@ -71,6 +79,13 @@ def _run(work: Path, bin_dir: Path, *cmd: str, timeout: int = 90, **kw: str):
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["CAE_PAUSE_POLL_SECONDS"] = "1"
+  # Most sandboxes here run with `workers=False` because what they exercise is
+  # the marker/ack/trap machinery, not the drain. Zero matched workers is now a
+  # REFUSAL (a pattern that stopped matching is indistinguishable from a fleet
+  # that is down, and the expensive reading is the wrong one), so those cases
+  # opt out explicitly. A caller passing this key wins -- the gate's own tests
+  # set it to "0" to exercise the default.
+    env["CAE_PAUSE_ALLOW_NO_WORKERS"] = "1"
     env.update(kw)
     return subprocess.run(
         [str(SCRIPT), "--work-dir", str(work), "--trial-id", TRIAL_ID, "--", *cmd],
@@ -131,7 +146,7 @@ def test_the_drain_never_starts_before_the_trial_has_parked(tmp_path: Path) -> N
     finally:
         proc.wait()
     assert r.returncode == 0, r.stderr
-    assert calls.read_text().strip() == "pkill after_ack", (
+    assert calls.read_text().strip() == f"pkill ack:trial={TRIAL_ID} next_iter=7", (
         f"the drain raced the pause: {calls.read_text()!r}"
     )
 
@@ -152,17 +167,25 @@ def test_a_stale_ack_from_a_DIFFERENT_trial_does_not_satisfy_the_wait(
     finally:
         proc.wait()
     assert r.returncode == 0, r.stderr
-    assert calls.read_text().strip() == "pkill after_ack", (
-        "a foreign trial's stale ack was accepted as this trial's park signal"
+    assert calls.read_text().strip() == f"pkill ack:trial={TRIAL_ID} next_iter=7", (
+        f"a foreign trial's stale ack was accepted as this trial's park signal: "
+        f"{calls.read_text()!r}"
     )
 
 
-def test_a_preexisting_ack_for_this_trial_is_discarded_not_trusted(
+def test_a_preexisting_ack_for_this_trial_is_ignored_until_it_is_refreshed(
     tmp_path: Path,
 ) -> None:
     """Same trap, harder case: the stale ack carries OUR trial id, so an
-    id-aware poll still fires instantly. It is stale by construction -- no pause
-    has been requested yet -- so it must be removed before the wait begins."""
+    id-aware poll still fires instantly.
+
+    ⚑ IGNORED, NOT DELETED. An earlier revision removed it as "stale by
+    construction". It is not stale by construction -- a previous window can
+    release the marker while the trial is still parked, leaving a LIVE ack, and
+    deleting that destroys the signal `graceful_restart.py` uses as its primary
+    pause detector. The rule is freshness (mtime >= our marker's), the same one
+    `_pause_ack_files` already applies.
+    """
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
     (work / "tune" / f".paused_{TRIAL_ID}.ack").write_text("trial=old next_iter=1\n")
     proc = _ack_after(work / "tune", 4.0)
@@ -171,8 +194,14 @@ def test_a_preexisting_ack_for_this_trial_is_discarded_not_trusted(
     finally:
         proc.wait()
     assert r.returncode == 0, r.stderr
-    assert calls.read_text().strip() == "pkill after_ack", (
-        "a pre-existing ack for this trial was trusted instead of discarded"
+    recorded = calls.read_text().strip()
+    assert recorded == f"pkill ack:trial={TRIAL_ID} next_iter=7", (
+        f"a pre-existing ack for this trial was trusted instead of discarded: {recorded!r}"
+    )
+  # Explicit, because this is the assertion the earlier existence-only version
+  # could not make: the ack the drain saw must be the FRESH one.
+    assert "next_iter=1" not in recorded, (
+        "the drain fired on the STALE ack -- the removal at pause_window.sh:111 is inert"
     )
 
 
@@ -244,6 +273,10 @@ def test_it_does_not_leave_the_marker_behind_when_interrupted(tmp_path: Path) ->
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["CAE_PAUSE_POLL_SECONDS"] = "1"
+  # This test builds its own Popen rather than going through `_run`, so it
+  # needs the same opt-out: what it exercises is the signal trap, and the
+  # no-worker refusal would fire before the marker ever appears.
+    env["CAE_PAUSE_ALLOW_NO_WORKERS"] = "1"
     p = subprocess.Popen(
         [str(SCRIPT), "--work-dir", str(work), "--trial-id", TRIAL_ID, "--", "sleep", "60"],
         env=env, cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -289,6 +322,7 @@ _PAUSE_STUB = """#!/usr/bin/env bash
 # Records its argv, then runs the job, so the assertion is about what the loop
 # actually invoked rather than about the text of the loop.
 printf '%s\\n' "$*" >> "$PAUSE_CALLS"
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
 [ "$1" = "--" ] && shift
 "$@"
 """
@@ -319,7 +353,11 @@ def test_the_loop_routes_the_whole_ratchet_through_the_window_by_default(tmp_pat
     rc, out = _run_one_poll(root, env={"PAUSE_CALLS": str(calls)})
 
     assert rc == 0, f"the poll must still succeed through the wrapper:\n{out}"
-    assert _pause_calls(calls) == ["-- bash scripts/daily_gate_ratchet.sh"], (
+  # Repo-RELATIVE, like `ratchet_common.sh`'s own `${TRAIN_WORK_DIR:-runs/pbt2_small}`:
+  # the wrapper inherits the cwd that ratchet_common.sh already cd'd into.
+    assert _pause_calls(calls) == [
+        "--work-dir runs/pbt2_small -- bash scripts/daily_gate_ratchet.sh",
+    ], (
         f"the wrapper was invoked {_pause_calls(calls)!r}; it must wrap the whole "
         f"ratchet exactly once:\n{out}"
     )
@@ -356,3 +394,147 @@ def test_the_window_can_be_switched_off(tmp_path: Path) -> None:
     assert rc == 0, out
     assert _pause_calls(calls) == [], f"the window ran despite being switched off:\n{out}"
     assert len(_csv_rows(root)) == 1, f"the ratchet must still run beside training:\n{out}"
+
+
+# ── The drain as a GATE ──────────────────────────────────────────────────────
+# Review finding: draining nothing exited 0. The wrapper then paid the full
+# production pause and handed back exactly the contended arena it exists to
+# prevent -- and `ratchet_outcome` stamped the day, so the row was filed as a
+# clean strength reading. Three ways in, three gates.
+
+
+def test_a_pgrep_usage_error_is_not_read_as_no_workers(tmp_path: Path) -> None:
+    """`|| true` erased pgrep's status. A dropped `--` makes the pattern look
+    like options (`pgrep -f "-m chess..."` => "invalid option -- 'm'", rc 2),
+    which then reads as "nothing to drain" -- the mutation a reviewer made,
+    which SURVIVED because the stubs ignored their arguments. rc>=2 is now
+    fatal, and it fires before the marker is ever touched."""
+    work, bin_dir, calls = _sandbox(tmp_path, workers=True)
+    (bin_dir / "pgrep").write_text(
+        "#!/bin/sh\necho \"pgrep: invalid option -- 'm'\" >&2\nexit 2\n",
+    )
+    (bin_dir / "pgrep").chmod(0o755)
+
+    ran = tmp_path / "ran"
+    r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_ALLOW_NO_WORKERS="0")
+
+    assert r.returncode != 0, "a broken worker pattern was accepted"
+    assert "pattern is broken" in r.stderr, r.stderr
+    assert not ran.exists(), "the job ran without any drain having happened"
+    assert not (work / "tune" / "pause.txt").exists(), "production was parked for nothing"
+    assert not calls.exists(), "pkill was called despite pgrep failing"
+
+
+def test_zero_matched_workers_refuses_before_touching_the_marker(tmp_path: Path) -> None:
+    """While training runs there are always workers. Zero matches means the
+    fleet is down OR the pattern has drifted from its argv, and only the
+    caller can tell which -- so refuse, and refuse BEFORE the pause so being
+    wrong costs nothing. `CAE_PAUSE_ALLOW_NO_WORKERS=1` is the way to say
+    "I know, run it anyway"."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    ran = tmp_path / "ran"
+    r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_ALLOW_NO_WORKERS="0")
+
+    assert r.returncode != 0
+    assert "no selfplay workers matched" in r.stderr, r.stderr
+    assert not ran.exists()
+    assert not (work / "tune" / "pause.txt").exists(), (
+        "refused, but only after parking production"
+    )
+
+
+def test_a_worker_that_survives_sigterm_stops_the_job(tmp_path: Path) -> None:
+    """The other half of the same gate. A worker that ignores SIGTERM still
+    holds its server lease and still plays; the old code logged "continuing
+    anyway" and ran the job beside it. The check reads the pids taken at
+    BASELINE rather than re-running pgrep, so a pattern that stopped matching
+    cannot report a clean drain either."""
+    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
+  # A real process, so `kill -0` has something true to say. pkill is stubbed,
+  # so nothing actually signals it -- which is precisely the case under test.
+    victim = subprocess.Popen(["sleep", "120"])
+    (bin_dir / "pgrep").write_text(f"#!/bin/sh\necho {victim.pid}\nexit 0\n")
+    (bin_dir / "pgrep").chmod(0o755)
+
+    ran = tmp_path / "ran"
+    ack = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="2")
+    finally:
+        ack.wait()
+        victim.terminate()
+        victim.wait()
+
+    assert r.returncode != 0, "an undrained fleet was treated as drained"
+    assert "survived SIGTERM" in r.stderr, r.stderr
+    assert not ran.exists(), "the job ran beside a live worker"
+    assert not (work / "tune" / "pause.txt").exists(), "died holding the marker"
+
+
+def test_the_double_dash_is_required_by_the_REAL_pgrep() -> None:
+    """⚑ PINS THE PREMISE THE STUB CANNOT.
+
+    The gate above proves "rc>=2 aborts". That is only worth having if a
+    realistic mistake actually produces rc>=2, and the stubs in this file
+    ignore their arguments -- which is exactly why a reviewer's mutation
+    dropping `--` SURVIVED the whole suite. So ask the real binary.
+
+    The pattern begins with `-m`, so without the separator pgrep parses it as
+    options. Run against the actual `WORKER_PATTERN` this script uses, not a
+    paraphrase of it.
+    """
+    pattern = re.findall(r"^WORKER_PATTERN='([^']+)'", SCRIPT.read_text(), re.M)[0]
+
+    without = subprocess.run(
+        ["pgrep", "-f", pattern], capture_output=True, text=True, check=False,
+    )
+    assert without.returncode >= 2, (
+        "pgrep tolerated a leading-dash pattern without `--`; the abort this "
+        f"suite relies on would never fire (rc={without.returncode})"
+    )
+    assert "invalid option" in without.stderr, without.stderr
+
+    with_sep = subprocess.run(
+        ["pgrep", "-f", "--", pattern], capture_output=True, text=True, check=False,
+    )
+    assert with_sep.returncode in (0, 1), (
+        "with `--` pgrep must either match (0) or not match (1), never error: "
+        f"rc={with_sep.returncode} {with_sep.stderr!r}"
+    )
+
+
+def test_a_never_refreshed_ack_aborts_FAST_instead_of_holding_the_marker(
+    tmp_path: Path,
+) -> None:
+    """⚑ NB1, BOUNDED. Window A releases the marker while the trial is still
+    inside `_wait_if_paused` (it re-reads only every `pause_poll_seconds`,
+    production default 60). Window B then finds a live ack that will never be
+    rewritten, because `_wait_if_paused` guards on an `announced` flag.
+
+    Freshness alone would make B hold the marker for the full
+    `CAE_PAUSE_ACK_TIMEOUT` -- 1800s of parked production, per poll, all day.
+    So a pre-existing ack shortens the deadline and the message names the
+    cause. The test proves BOTH: it aborts, and it aborts on the short clock.
+    """
+    work, bin_dir, calls = _sandbox(tmp_path, workers=True)
+    (work / "tune" / f".paused_{TRIAL_ID}.ack").write_text(
+        f"trial={TRIAL_ID} next_iter=1\n",
+    )
+    ran = tmp_path / "ran"
+
+    started = time.monotonic()
+    r = _run(
+        work, bin_dir, "touch", str(ran),
+        CAE_PAUSE_STALE_ACK_TIMEOUT="3", CAE_PAUSE_ACK_TIMEOUT="600",
+    )
+    elapsed = time.monotonic() - started
+
+    assert r.returncode != 0
+    assert "will not re-ack" in r.stderr, r.stderr
+    assert not ran.exists(), "ran the job on a pause it never confirmed"
+    assert not calls.exists(), "drained on a stale ack"
+    assert not (work / "tune" / "pause.txt").exists(), "aborted holding the marker"
+    assert elapsed < 60, (
+        f"took {elapsed:.0f}s -- it waited on CAE_PAUSE_ACK_TIMEOUT (600) rather "
+        "than the short stale-ack clock, so production stays parked"
+    )
