@@ -720,19 +720,22 @@ def test_the_root_exponent_is_inert_at_the_shipped_play_defaults() -> None:
     # Shipped: q_visit_exp_root = -1.0, the LOG branch.
     assert values["q_visit_exp_root"] == float(PLAY_SEARCH_DEFAULTS["q_visit_exp_root"])
     why = inert_reason(opt, "gumbel", values)
-    assert why is not None and "only the SIGN" in why
+    assert why is not None
+    assert "only the SIGN" in why
 
     # ...and moving it to the power branch does not rescue it at CScaleRoot=7.
     values["q_visit_exp_root"] = 1.0
     why = inert_reason(opt, "gumbel", values)
-    assert why is not None and "saturated" in why
+    assert why is not None
+    assert "saturated" in why
 
     # >=90 is the "use QVisitExp at the root too" sentinel, so every value in
     # [90, 99] is one search -- a third exact sub-case, not a power exponent.
     values["q_visit_exp_root"] = 98.0
     values["q_visit_exp"] = -1.0
     why = inert_reason(opt, "gumbel", values)
-    assert why is not None and "sentinel" in why
+    assert why is not None
+    assert "sentinel" in why
 
 
 def test_the_root_exponent_arm_can_still_report_live() -> None:

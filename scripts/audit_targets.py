@@ -116,6 +116,7 @@ import dataclasses
 import json
 import threading
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -276,8 +277,9 @@ def _coerce_override(cfg_field_default: object, value: float) -> float | int | b
 def _assert_overrides_dispatched(
   # `GumbelConfig` is imported inside the functions that need it (module import
   # time is on the critical path for every `--help`), so it is not a name this
-  # signature can reference.
-    cfgs: dict[str, object],
+  # signature can reference. `Mapping` rather than `dict` because dict's value
+  # type is INVARIANT: `dict[str, GumbelConfig]` is not a `dict[str, object]`.
+    cfgs: Mapping[str, object],
     profiles: dict[str, _SearchProfile],
     *,
     requested: tuple[tuple[str, float], ...],

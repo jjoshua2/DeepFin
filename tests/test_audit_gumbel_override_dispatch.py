@@ -32,10 +32,10 @@ from scripts import audit_targets as at
 
 def _args(**over: Any) -> SimpleNamespace:
     """The `main()` arguments `profiles_for_audit` actually reads."""
-    base = dict(
-        gumbel=["policy_temp=2.2"], sims=64, gumbel_topk=None, rl_sims=None,
-        gumbel_training_rows=False,
-    )
+    base: dict[str, Any] = {
+        "gumbel": ["policy_temp=2.2"], "sims": 64, "gumbel_topk": None,
+        "rl_sims": None, "gumbel_training_rows": False,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
