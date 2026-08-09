@@ -40,7 +40,8 @@ supported on the Gumbel CANDIDATE set, which only ``policy_temp`` moves -- but
 ``mcts/gumbel.py::_build_improved_policy_for_board`` (and the production C
 driver) build the improved policy over EVERY legal move, handing unvisited
 moves the root's completed-Q. So sigma reaches every entry of the target and no
-mass floor ``phi`` is sigma-invariant.
+mass floor ``phi`` is sigma-invariant. That mechanism finding stands and is the
+reason the axis was worth building.
 
 ⚑⚑ AND THE FLOOR THAT LOOKS FLATTEST IS THE FLOOR WHERE THE METRIC INVERTS.
 Raising ``phi`` makes the ``c_scale`` term smaller, but past a crossing the
@@ -67,30 +68,84 @@ at 256 sims / topk 32 / gumbel_scale 0.5, position-paired, tau=25cp, rho=0.01;
 SD the wrong way and its ``c_scale`` term is POSITIVE, so a rise there is
 produced by either knob and attributes to neither.
 
-WHAT SURVIVES: A ONE-SIDED READING AT A CONTROL-PASSING CELL. Searching all 128
-(tau, rho, phi) cells with >= 50 pairs on the live rig: 81 pass the control, 39
-are c_scale-quiet, and **2 are both** -- ``rho = 0.05, phi = 2e-2`` at tau 25
-and 50. The best of them (largest denominator, strongest control):
+⚑⚑⚑ THERE IS NO ATTRIBUTION RULE. THIS IS AN INSTRUMENT, NOT A VERDICT.
 
-    tau=50, rho=0.05, phi=2e-2   pairs 928
-      control    stored +5.88 SD / re-searched +2.28 SD          PASS
-      c_scale    -0.0593 [-0.0833, -0.0350]     <- LOWERS coverage
-      policy_temp +0.2381 [+0.2096, +0.2667]    <- RAISES it
-      bundle      +0.0765 [+0.0469, +0.1058]
+An earlier revision of this file recommended a ONE-SIDED rule at
+``tau=50, rho=0.05, phi=2e-2``: ``c_scale`` lowers coverage there (-0.0593)
+while ``policy_temp`` raises it (+0.2381), so a POSITIVE bundle delta was said
+to be reachable only through ``policy_temp``. **That rule is RETRACTED** (PR
+#382 re-review; ledger Amendment 10). Four measurements killed it, each
+reproducible from this file:
 
-``c_scale`` is not flat there either (|d_c| is a quarter of |d_T|), but its SIGN
-is protective: ``c_scale`` alone can only push coverage DOWN, so a POSITIVE
-bundle delta is reachable only via ``policy_temp``. That asymmetry, not
-flatness, is the whole attribution:
+1. **The instrument's bias is the size of the effect.** Arm A *is* production's
+   shape, so ``stored - A`` is pure harness error. It is now computed and
+   printed for every cell (``print_paired``'s ``biasA`` column). On 200 fresh
+   live rows at production's shape it runs +0.1165 [+0.0485,+0.1887] at
+   ``(25, 0.01, 1e-2)`` and +0.0100 [-0.0347,+0.0552] at the pinned cell --
+   whose CI half-width alone (~0.045) is 76% of the ``|c_scale|`` effect
+   (0.0593) whose SIGN was the entire attribution. A reviewer's independent
+   200 rows put the pinned cell's bias at +0.0450 [+0.0036,+0.0886] and the
+   600-row bank at +0.0571. Across the bank's 128 cells |bias| >= |c_scale
+   effect| in 46.
+2. **The two selection criteria are one variable.** ``attribution_scan``
+   measures corr(control margin, ``|d_c|/|d_T|``) = **+0.785** over the bank
+   and **+0.859** over the fresh 16-cell run. Soundness proxies Q and
+   ``c_scale`` is the gain on Q, so a cell is quiet exactly where the control
+   is weak. The two "survivors" sat at the 6th and 10th percentile of control
+   strength among the 81 passers: the boundary, not a regime.
+3. **The PASS had no resolution.** Row-resampling the pinned cell's control
+   margin gives +2.06 +/- 1.39, 95% [-0.06, +5.18], with 22% of draws FAILING
+   the >= +1.0 gate. The verdict is now read off that interval (see
+   ``CoverageCell.verdict``), and on the fresh run the pinned cell reads
+   **+3.15 [+0.41, +5.12] -> null**, not PASS. Under the shipped verdict
+   ``attribution_scan`` finds **0** cells that are both control-PASS and
+   ``c_scale``-quiet, against 2 under the old point-estimate gate.
+4. **Every CI in this file is a POSITION-PAIRED CI.** They describe two search
+   shapes scored on THE SAME ROWS. The live readout is pre-bundle shards versus
+   post-bundle shards -- different positions, different games, and a population
+   re-composed by ``diff_focus`` as a monotone function of the KL the bundle
+   raises. None of these intervals transfer to that comparison; carrying one
+   across is the forbidden between-rig transfer.
 
-  * ``delta >= +0.05`` at that cell  ==>  ``policy_temp`` fired.
-  * ``delta <= 0``  ==>  **INDETERMINATE, never "policy_temp did not fire".**
-    The halves have opposite signs and partially cancel -- the measured bundle
-    (+0.077) is only a third of the ``policy_temp`` half (+0.238).
+WHAT THE INSTRUMENT IS FOR, THEN. Reporting coverage on a stated population
+with its own null, its own interval, and its own bias printed beside every
+number -- so that a future claim about the target's support can be judged.
+It does NOT decompose a bundle into per-knob contributions, and no cell of it
+should be pinned as a decision rule without redoing all four checks above.
 
-Read it with these caveats or not at all: at rho = 0.05 "rare" is barely below
-uniform (1/27 ~ 0.037), the two crossings move with sim count and position mix,
-and the arms must be re-run at the deployed shape before the numbers are reused.
+RESOLUTION AND BIAS, MEASURED BEFORE ANY THRESHOLD (200 live rows, production
+shape, 2026-08-09; the full 16-cell table is in the PR):
+
+    cell                        coverage   control margin      harness bias
+    tau=50 rho=0.05 phi=1e-3      0.7324   +14.42 [+7.2,+16.6]  -0.0334
+    tau=50 rho=0.05 phi=2e-2      0.2575    +3.15 [+0.4, +5.1]  +0.0100
+    tau=50 rho=0.01 phi=1e-2      0.0245    -7.80 [-8.1, -3.3]  +0.1043
+
+THE FIDELITY GATE ABORTS -- see ``FidelityTolerance``. Production tier
+(argmax >= 0.75, TV <= 0.20) applies when the run's shape is
+``PRODUCTION_SEARCH_SHAPE``; a floor (0.65 / 0.35) applies to every run. The
+harness clears the production tier on three independent windows: 0.8133/0.1423
+(600 rows, banked), 0.8550/0.1221 (a reviewer's 200), 0.8200/0.1500 (200 fresh
+rows here). **The failure mode that voided the earlier c_scale entropy sweep is
+genuinely absent** -- that sweep predicted entropy 1.40 where production stores
+0.92, whereas a reviewer's independent 200-row check put this harness within
++0.0127 +/- 0.0154 SE (ns) of production's own stored entropy. Driven to ``sims 2 / topk 2 / c_scale 5.0 / T 8.0 /
+gumbel_scale 4.0`` it now measures 0.4500 / 0.7586 and EXITS 1 with no cells
+printed; the previous revision printed ``PASS +19.57`` and exited 0.
+
+⚑ ``gumbel_scale`` IS MEASURABLY INERT HERE, AND THAT IS WORTH RECORDING so
+nobody re-does it. On a FROZEN 8-shard window with ``--row-keys`` pinning the
+identical 200 rows, 0.5 vs 1.0 moves coverage by at most **0.0123** across 16
+cells and by **exactly 0.0000** at the cell the retracted rule pinned
+(``tau=50, rho=0.05, phi=2e-2``); fidelity 0.8200/0.1500 vs 0.8200/0.1488.
+Wiring it to the C path was correct; it corrected nothing.
+
+⚑ PRODUCING-NET PROVENANCE IS ABSENT ON LIVE SHARDS, and the guard now says so
+instead of passing. ``ShardMeta.model_step`` / ``model_sha256`` are None on
+every shard the trial writes, because ``DiskReplayBuffer._flush_shard_arrays``
+calls ``save_local_shard_arrays`` with no ``meta``. ``--compare-to`` REFUSES on
+absent provenance unless ``--allow-missing-shard-provenance`` is passed, which
+prints an UNVERIFIABLE banner and is banked.
 
 ⚑ THE POPULATION MOVES WITH THE KNOB. ``diff_focus`` drops ~20% of policy rows
 with a keep probability that rises in ``KL(prior||improved)`` -- exactly what
@@ -119,10 +174,12 @@ THREE MODES, ONE METRIC.
     ``--policy-temp`` / ``--gumbel-scale``. Coverage is a bounded, steeply
     non-linear function of phi, so derivatives measured on one rig do not
     transfer to another operating point -- the arms have to run where the
-    readout runs. Fidelity against production's STORED target is printed every
-    run and is the gate: measured 0.81 argmax agreement / 0.14 mean TV at the
-    live shape, with the residual coming from the frozen reference checkpoint
-    and from the history planes a decoded board cannot carry.
+    readout runs. Fidelity against production's STORED target is checked every
+    run and ABORTS outside ``FidelityTolerance`` -- 0.8200 argmax / 0.1500 TV
+    measured at the live shape on 200 fresh rows, with the residual coming from
+    the frozen reference checkpoint and from the history planes a decoded board
+    cannot carry. An OFF-production arm additionally needs a production-shape
+    ``--compare-to`` or ``--calibration``.
 
 ``--mode simulate`` (frozen deep-SF audit positions)
     Same metric against the audit set's >=1M-node MultiPV labels. Better
@@ -131,14 +188,23 @@ THREE MODES, ONE METRIC.
     derivative to the live rig.
 
 ``--compare-to <banked.json>`` differences two arms with an exact row-key
-equality check first; ``--out`` banks the per-row vectors so any cell can be
-re-scored later without re-searching.
+equality check first, refuses across different (or UNKNOWN) producing nets, and
+prints each cell's harness bias beside its delta; ``--out`` banks the per-row
+vectors AND the row keys, and ``--row-keys`` re-pins a later run to exactly
+those rows, so a banked arm stays recomputable while its shards are on disk.
+``--scan-bank`` recomputes the control-PASS / c_scale-quiet / both counts over a
+banked multi-arm file, by a criterion that lives in ``attribution_scan`` rather
+than in prose.
 
 CONTROLS ARE ATTACHED TO EVERY CELL, ALWAYS. ``--control-seeds`` (default 12)
 permutes the target within each row's legal moves and reports the shuffle's own
-mean and SD beside the cell, plus ``(coverage - shuffled)/sd`` and a
-PASS/null/INVERTED verdict. The shuffle distribution is the null; ``base_rate``
-pools differently and is printed as indicative only. ``--shuffle prior``
+mean and SD beside the cell, plus ``(coverage - shuffled)/sd`` AND that margin's
+own 95% position-cluster interval. ⚑ The PASS/null/INVERTED verdict is read off
+the INTERVAL, never the point: a margin of +3.15 whose lower bound is +0.41 is
+``null``. With ``--control-bootstrap 0`` no cell can be stamped PASS at all --
+it reads ``no-res``, because an unresolved gate is not a passed one. The shuffle
+distribution is the null; ``base_rate`` pools differently and is indicative
+only. ``--shuffle prior``
 permutes the prior instead, so ``rare`` becomes a size-matched random subset.
 ``tests/test_rare_sound_move_coverage.py`` ships both shuffles, the inversion,
 and the cluster bootstrap as assertions.
@@ -149,15 +215,30 @@ Usage::
         --mode shards --checkpoint data/ruler_reads_20260808/trainer.pt \\
         --replay-dir /abs/path/to/<trial>/replay_shards --shards 40
 
+    # the CALIBRATION arm: production's shape, so its `stored - A` bias is
+    # pure harness error and it certifies every arm compared against it.
     PYTHONPATH=. python3 scripts/rare_sound_move_coverage.py \\
         --mode research --checkpoint data/ruler_reads_20260808/trainer.pt \\
-        --replay-dir /abs/path/to/<trial>/replay_shards --shards 12 \\
-        --max-rows 600 --sims 256 --topk 32 --gumbel-scale 0.5 \\
-        --c-scale 0.1 --policy-temp 1.0 --out arm_B.json \\
-        --compare-to arm_A.json
+        --replay-dir /abs/path/to/<trial>/replay_shards --shards 8 \\
+        --max-rows 200 --sims 256 --topk 32 --gumbel-scale 0.5 \\
+        --c-scale 0.025 --policy-temp 1.0 --out arm_A.json
 
-Banked evidence for every number above:
-``data/rare_sound_move_coverage/live_arms_20260809.json``.
+    # an arm, pinned to arm A's exact rows and certified by it
+    PYTHONPATH=. python3 scripts/rare_sound_move_coverage.py \\
+        --mode research --checkpoint data/ruler_reads_20260808/trainer.pt \\
+        --replay-dir /abs/path/to/<trial>/replay_shards --shards 8 \\
+        --row-keys arm_A.json --sims 256 --topk 32 --gumbel-scale 0.5 \\
+        --c-scale 0.1 --policy-temp 1.0 --out arm_B.json \\
+        --compare-to arm_A.json --allow-missing-shard-provenance
+
+    # recompute the retracted headline from the artifact
+    PYTHONPATH=. python3 scripts/rare_sound_move_coverage.py \\
+        --scan-bank data/rare_sound_move_coverage/live_arms_20260809.json
+
+Banked evidence for the 600-row arm table above:
+``data/rare_sound_move_coverage/live_arms_20260809.json``. ⚑ It predates the
+control interval and the bias column, so its cells carry NO resolution;
+``--scan-bank`` reports 0 interval-based passes over it for that reason.
 """
 
 from __future__ import annotations
@@ -257,6 +338,16 @@ class CoverageCell:
     shuffled_mean: float = float("nan")
     shuffled_sd: float = float("nan")
     control_seeds: int = 0
+    # ⚑ THE VERDICT'S OWN RESOLUTION. `control_margin` is a point estimate and
+    # the first version of this script stamped a categorical PASS/INVERTED off
+    # it against a hard >= 1.0. A reviewer row-resampled the cell the ledger had
+    # pinned and got margin +2.06 +/- 1.39, 95% [-0.06, +5.18] -- 22% of draws
+    # FAIL the gate the cell was reported as passing. A threshold read off an
+    # estimate whose own noise is 1.4 SD is not a gate, so the interval is now
+    # computed by the same POSITION-cluster bootstrap as the coverage CI and the
+    # verdict is taken from the INTERVAL, never from the point.
+    margin_ci_lo: float = float("nan")
+    margin_ci_hi: float = float("nan")
 
     @property
     def control_margin(self) -> float:
@@ -270,9 +361,29 @@ class CoverageCell:
             return float("nan")
         return (self.coverage - self.shuffled_mean) / self.shuffled_sd
 
+    def verdict(self, min_sds: float = 1.0) -> str:
+        """PASS / INVERTED / null / no-res / no-ctrl, decided on the INTERVAL.
+
+        ``no-ctrl``  the shuffle produced no usable null at this cell.
+        ``no-res``   a null exists but no interval was computed for it, so the
+                     cell has no resolution and CANNOT be stamped PASS. Absence
+                     of an interval reads as "unknown", never as "fine".
+        ``PASS``     the margin's 95% LOWER bound clears ``min_sds``.
+        ``INVERTED`` its UPPER bound is below ``-min_sds``.
+        ``null``     the interval straddles the thresholds: indeterminate.
+        """
+        if not math.isfinite(self.control_margin):
+            return "no-ctrl"
+        if not (math.isfinite(self.margin_ci_lo) and math.isfinite(self.margin_ci_hi)):
+            return "no-res"
+        if self.margin_ci_lo >= min_sds:
+            return "PASS"
+        if self.margin_ci_hi <= -min_sds:
+            return "INVERTED"
+        return "null"
+
     def passes_control(self, min_sds: float = 1.0) -> bool:
-        m = self.control_margin
-        return bool(math.isfinite(m) and m >= min_sds)
+        return self.verdict(min_sds) == "PASS"
 
 
 def _row_pair_counts(
@@ -316,35 +427,98 @@ def coverage_cells(
     return out
 
 
+def _cell_row_counts(
+    rows: list[RowVectors], cell: CoverageCell,
+) -> np.ndarray:
+    """(n, 2) array of per-row (pairs, covered) for one cell."""
+    out = np.empty((len(rows), 2), dtype=np.float64)
+    for i, row in enumerate(rows):
+        p, c, _nl, _no = _row_pair_counts(row, cell.tau_cp, cell.rho, cell.phi)
+        out[i, 0] = float(p)
+        out[i, 1] = float(c)
+    return out
+
+
+def _margin_interval(
+    real: np.ndarray, sh: np.ndarray, *, resamples: int, seed: int,
+) -> tuple[float, float]:
+    """95% POSITION-cluster bootstrap interval for the control margin.
+
+    ``real`` is (n, 2) of per-row (pairs, covered); ``sh`` is (S, n, 2), the
+    same for each shuffle seed. One bootstrap draw resamples POSITIONS once and
+    re-scores the real arm and every shuffle seed on that SAME draw, so the
+    margin's numerator and denominator move together exactly as they do in the
+    reported number. Resampling them independently would understate the
+    correlation and hand back an interval that is too narrow -- the specific
+    error that made the point estimate look decisive.
+    """
+    n_seeds, n_rows, _ = sh.shape
+    if n_seeds < 2 or n_rows < 2 or resamples <= 0:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    # Multinomial resample WEIGHTS rather than index arrays: the weights
+    # contract against (n, S) in one matmul, where fancy-indexing (S, B, n)
+    # would allocate seeds x resamples x rows and blow up on the full grid.
+    w = rng.multinomial(n_rows, np.full(n_rows, 1.0 / n_rows), size=int(resamples))
+    w = w.astype(np.float64)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        real_cov = np.where(
+            (w @ real[:, 0]) > 0.0, (w @ real[:, 1]) / np.maximum(w @ real[:, 0], 1e-12),
+            np.nan,
+        )
+        sh_pairs = w @ sh[:, :, 0].T          # (B, S)
+        sh_cov = np.where(
+            sh_pairs > 0.0, (w @ sh[:, :, 1].T) / np.maximum(sh_pairs, 1e-12), np.nan,
+        )
+        mu = np.nanmean(sh_cov, axis=1)
+        sd = np.nanstd(sh_cov, axis=1, ddof=1)
+        margin = np.where(sd > 0.0, (real_cov - mu) / np.maximum(sd, 1e-12), np.nan)
+    margin = margin[np.isfinite(margin)]
+    if margin.size < 2:
+        return float("nan"), float("nan")
+    return float(np.percentile(margin, 2.5)), float(np.percentile(margin, 97.5))
+
+
 def attach_controls(
     rows: list[RowVectors], cells: list[CoverageCell], *, seeds: int, seed0: int,
-    what: str = "target",
+    what: str = "target", resamples: int = 0,
 ) -> None:
-    """Fill every cell's ``shuffled_mean`` / ``shuffled_sd`` IN PLACE.
+    """Fill every cell's null AND the null's own interval, IN PLACE.
 
     Run over the whole grid, not one cell. The control is cell-local: the
     association coverage is named for holds at a small mass floor and INVERTS at
     a large one, so a control read at one cell says nothing about another. This
     function exists so a cell can never be reported without its own null.
+
+    ``resamples`` > 0 additionally bootstraps the margin over POSITIONS and
+    fills ``margin_ci_lo/hi``. With it at 0 no cell can be stamped PASS: the
+    verdict is taken from the interval and a missing interval is ``no-res``.
     """
     if seeds <= 0:
         return
-    per_seed = np.empty((len(cells), int(seeds)), dtype=np.float64)
-    for s in range(int(seeds)):
-        sh = shuffled_rows(rows, what=what, seed=seed0 + 1000 * (s + 1))
-        for i, cell in enumerate(cells):
-            pairs = covered = 0
-            for row in sh:
-                p, c, _nl, _no = _row_pair_counts(row, cell.tau_cp, cell.rho, cell.phi)
-                pairs += p
-                covered += c
-            per_seed[i, s] = (covered / pairs) if pairs else np.nan
+    # Built once and reused for every cell. Only the permuted vector is a new
+    # array -- the other three are shared references -- so S copies of the row
+    # list cost S x n x L floats, not S x the whole population.
+    sh_sets = [
+        shuffled_rows(rows, what=what, seed=seed0 + 1000 * (s + 1))
+        for s in range(int(seeds))
+    ]
     for i, cell in enumerate(cells):
-        vals = per_seed[i][np.isfinite(per_seed[i])]
+        real = _cell_row_counts(rows, cell)
+        sh = np.stack([_cell_row_counts(rs, cell) for rs in sh_sets])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            tot_pairs = sh[:, :, 0].sum(axis=1)
+            per_seed = np.where(
+                tot_pairs > 0.0,
+                sh[:, :, 1].sum(axis=1) / np.maximum(tot_pairs, 1e-12),
+                np.nan,
+            )
+        vals = per_seed[np.isfinite(per_seed)]
         cell.control_seeds = int(vals.size)
         cell.shuffled_mean = float(vals.mean()) if vals.size else float("nan")
-        cell.shuffled_sd = (
-            float(vals.std(ddof=1)) if vals.size > 1 else float("nan")
+        cell.shuffled_sd = float(vals.std(ddof=1)) if vals.size > 1 else float("nan")
+        cell.margin_ci_lo, cell.margin_ci_hi = _margin_interval(
+            real, sh, resamples=int(resamples), seed=seed0 + 7919 * (i + 1),
         )
 
 
@@ -644,6 +818,54 @@ def assert_population(stats: ShardReadStats, *, min_sf_p0_rate: float) -> None:
             )
 
 
+def assert_same_producing_net(
+    stats: ShardReadStats, prov_a: dict[str, object], *, allow_missing: bool,
+) -> None:
+    """Refuse to difference two arms produced by DIFFERENT nets -- or by UNKNOWN ones.
+
+    ⚑ ABSENT PROVENANCE MUST NOT READ AS "FINE". The previous version recorded
+    ``model_step`` / ``model_sha256`` and claimed ``--compare-to`` would refuse
+    across producing nets. It cannot: the trial's ``replay_shards`` are written
+    by ``DiskReplayBuffer._flush_shard_arrays``, which calls
+    ``save_local_shard_arrays`` with no ``meta``, so every ``ShardMeta`` field
+    is None (verified on the live shards 2026-08-09). ``model_steps`` came back
+    ``[]`` and the check silently passed. That is the house defect exactly: a
+    value accepted and then ignored.
+
+    So the guard now REFUSES when the identity is unknown on either side, and
+    the escape hatch is explicit, printed, and banked. Fixing the data instead
+    means populating ``ShardMeta`` at ``disk_buffer.py:1580``, which is an
+    ingest-path change and out of scope for a diagnostic script.
+    """
+    steps_b = sorted(set(stats.model_steps))
+    read_a = prov_a.get("read_stats")
+    steps_a = sorted(set(read_a.get("model_steps", []))) if isinstance(read_a, dict) else []
+    if not steps_a or not steps_b:
+        if allow_missing:
+            print(
+                "[provenance] ⚑ UNVERIFIABLE: the shards carry no producing-net id "
+                f"(arm A model_steps={steps_a or 'ABSENT'}, this run="
+                f"{steps_b or 'ABSENT'}). Proceeding only because "
+                "--allow-missing-shard-provenance was given; this comparison is "
+                "NOT proved to be against one producing net."
+            )
+            return
+        raise SystemExit(
+            "refusing to difference two arms whose producing net is UNKNOWN: "
+            f"arm A model_steps={steps_a or 'ABSENT'}, this run="
+            f"{steps_b or 'ABSENT'}. The trial's replay shards are written by "
+            "DiskReplayBuffer._flush_shard_arrays with no ShardMeta, so model_step "
+            "and model_sha256 are None on every one of them. Absent provenance is "
+            "not evidence of a match. Pass --allow-missing-shard-provenance to "
+            "proceed on the record that this is unverified."
+        )
+    if steps_a != steps_b:
+        raise SystemExit(
+            f"refusing to difference arms produced by different nets: arm A "
+            f"model_steps={steps_a}, this run={steps_b}"
+        )
+
+
 def _compact_logits(pol: np.ndarray, compact_to_full: np.ndarray) -> np.ndarray:
     """Model policy output -> the shard's compact (lc0_1858) column space."""
     if pol.shape[1] == compact_to_full.shape[0]:
@@ -667,13 +889,51 @@ class ResearchSpec:
     ``pre_wdl_logits``. Only the CHILDREN are re-encoded from a board decoded
     out of the planes, which has an empty move stack -- so their history planes
     are lost. ``fidelity_*`` reports the agreement between the re-searched
-    target and the STORED one at the live shape, which is the gate: a harness
-    that cannot reproduce the stored target is not measuring production.
+    target and the STORED one at the live shape, and ``FidelityTolerance``
+    turns it into a gate that ABORTS -- see that class for the two tiers and
+    the exact numbers.
     """
 
     shape: SimShape
     sims: int
     syzygy_path: str | None = None
+
+
+@dataclass(frozen=True)
+class FidelityTolerance:
+    """The fidelity gate's thresholds. ⚑ THIS ABORTS. It is not a printout.
+
+    The first version of this script called fidelity "the gate" in a docstring
+    and then only ``print``ed it: no threshold, no abort, no verdict read it.
+    Driven to ``sims 2 / topk 2 / c_scale 5.0 / T 8.0 / gumbel_scale 4.0`` the
+    harness cratered to argmax 0.54 / TV 0.72 and still printed ``PASS +19.57``
+    and exited 0 -- the broken shape beat the honest one's +1.56, because a
+    shuffle control cannot tell you whether you are searching production's
+    search [[a_gate_that_cannot_fail]].
+
+    TWO TIERS, because "disagrees with the stored target" means two different
+    things depending on the shape being searched:
+
+    * ``floor_*`` applies to EVERY research run. Below it the re-search is not
+      a perturbation of production's search at all. Calibrated from the widest
+      legitimate arm in ``live_arms_20260809.json`` -- the bundle arm E
+      (c_scale 0.1, T 1.5) at argmax 0.7433 / TV 0.2094 -- with headroom, and
+      well clear of the broken shape's 0.5400 / 0.7245.
+    * ``prod_*`` applies only when the run's shape IS ``PRODUCTION_SEARCH_SHAPE``.
+      That run is the CALIBRATION: it is the one asserting the harness
+      reproduces production, so it is held to the measured value (arm A: 0.8133
+      argmax / 0.1423 TV over 600 rows) rather than to the floor.
+
+    An off-production arm additionally has to be PAIRED against a
+    production-shape arm (``--compare-to``) or accompanied by
+    ``--calibration``; see ``assert_calibrated``. An arm measured by a harness
+    that was never shown to reproduce production is a number about the harness.
+    """
+
+    floor_min_argmax: float = 0.65
+    floor_max_tv: float = 0.35
+    prod_min_argmax: float = 0.75
+    prod_max_tv: float = 0.20
 
 
 @dataclass
@@ -684,14 +944,53 @@ class ResearchFidelity:
     argmax_agree: int = 0
     tv_sum: float = 0.0
 
+    @property
+    def argmax_rate(self) -> float:
+        return (self.argmax_agree / self.n) if self.n else float("nan")
+
+    @property
+    def mean_tv(self) -> float:
+        return (self.tv_sum / self.n) if self.n else float("nan")
+
     def report(self) -> str:
         if self.n == 0:
             return "fidelity: no rows scored"
         return (
             f"fidelity vs STORED target: argmax agreement "
-            f"{self.argmax_agree / self.n:.4f}, mean TV {self.tv_sum / self.n:.4f} "
-            f"(n={self.n})"
+            f"{self.argmax_rate:.4f}, mean TV {self.mean_tv:.4f} (n={self.n})"
         )
+
+    def assert_within(
+        self, tol: FidelityTolerance, *, is_production_shape: bool,
+    ) -> None:
+        """Abort unless the re-search is close enough to production's target.
+
+        Raises ``SystemExit`` -- the run must not proceed to print cells,
+        because every number after this point would be scored on a target the
+        production loop never stored.
+        """
+        if self.n == 0:
+            raise SystemExit(
+                "fidelity gate: no rows were scored against the stored target, so "
+                "the re-search was never checked against production -- aborting"
+            )
+        lo = tol.prod_min_argmax if is_production_shape else tol.floor_min_argmax
+        hi = tol.prod_max_tv if is_production_shape else tol.floor_max_tv
+        tier = "PRODUCTION-SHAPE" if is_production_shape else "floor"
+        bad = []
+        if not (self.argmax_rate >= lo):
+            bad.append(f"argmax agreement {self.argmax_rate:.4f} < {lo:.4f}")
+        if not (self.mean_tv <= hi):
+            bad.append(f"mean TV {self.mean_tv:.4f} > {hi:.4f}")
+        if bad:
+            raise SystemExit(
+                f"FIDELITY GATE FAILED ({tier} tier, n={self.n}): " + "; ".join(bad)
+                + ". The re-searched target is not a perturbation of the target "
+                "production stored on these rows, so a coverage number computed "
+                "from it describes this harness and not the training loop. "
+                "Aborting instead of printing a cell whose control can still say "
+                "PASS -- the shuffle control is blind to this failure."
+            )
 
 
 def read_shard_rows(
@@ -705,6 +1004,8 @@ def read_shard_rows(
     stats: ShardReadStats,
     research: ResearchSpec | None = None,
     fidelity: ResearchFidelity | None = None,
+    want_keys: list[str] | None = None,
+    stored_out: list[RowVectors] | None = None,
 ) -> list[RowVectors]:
     """Live shard rows -> RowVectors, with the prior from the stored ``x``.
 
@@ -716,7 +1017,14 @@ def read_shard_rows(
 
     With ``research`` set, the ``target`` is replaced by a FRESH Gumbel search
     at that shape instead of the stored one, which is how the isolation arms are
-    run on the live population.
+    run on the live population; ``stored_out`` then receives the SAME rows
+    carrying production's STORED target, so the harness's own bias can be
+    measured in coverage units on the identical positions.
+
+    ``want_keys`` pins the read to an exact set of ``shard:index`` keys and
+    aborts if any is missing, which is the only way a banked arm stays
+    reproducible: the newest-by-mtime window rolls every few minutes and two
+    runs a quarter of an hour apart already draw disjoint rows.
     """
     import torch
     import zarr
@@ -740,8 +1048,15 @@ def read_shard_rows(
     searcher = _ResearchRunner(research, device=device, evaluator=evaluator,
                                hist=ck_hist) if research is not None else None
 
+    wanted: set[str] | None = set(want_keys) if want_keys is not None else None
+    wanted_bases = (
+        {k.split(":", 1)[0] for k in wanted} if wanted is not None else None
+    )
+
     rows: list[RowVectors] = []
     for path in reversed(sel.paths):
+        if wanted_bases is not None and os.path.basename(path) not in wanted_bases:
+            continue
         z = zarr.open(path, mode="r")
         assert_required_fields(z, path)
         attrs = dict(z.attrs)
@@ -761,6 +1076,11 @@ def read_shard_rows(
         keep = net_policy & has_reg
         stats.rows_with_sf_p0 += int(keep.sum())
         idx = np.nonzero(keep)[0]
+        if wanted is not None:
+            idx = np.asarray(
+                [i for i in idx.tolist() if f"{base}:{int(i)}" in wanted],
+                dtype=idx.dtype,
+            )
         if idx.size == 0:
             continue
 
@@ -817,22 +1137,60 @@ def read_shard_rows(
                     tgt_full = fresh
                 reg_row = regret[k]
                 scored_full = _scored_mask_from_regret(reg_row)
+                prior = e / s
+                row_key = f"{base}:{int(idx[k])}"
                 rows.append(RowVectors(
-                    prior=e / s,
+                    prior=prior,
                     target=tgt_full[lm],
                     regret_cp=reg_row[lm] * SF_OWN_REGRET_CAP_CP,
                     scored=scored_full[lm],
-                    key=f"{base}:{int(idx[k])}",
+                    key=row_key,
                 ))
-                if max_rows and len(rows) >= max_rows:
+                if stored_out is not None:
+                    # The SAME row with production's own target. Only `target`
+                    # differs, so `stored - research` is position-paired with
+                    # nothing else varying: it is the harness's OWN bias, and
+                    # arm A is production's shape, which makes it pure error.
+                    stored_out.append(RowVectors(
+                        prior=prior,
+                        target=target[k][lm],
+                        regret_cp=reg_row[lm] * SF_OWN_REGRET_CAP_CP,
+                        scored=scored_full[lm],
+                        key=row_key,
+                    ))
+                if max_rows and wanted is None and len(rows) >= max_rows:
                     break
-            if max_rows and len(rows) >= max_rows:
+            if max_rows and wanted is None and len(rows) >= max_rows:
                 break
-        if max_rows and len(rows) >= max_rows:
+        if max_rows and wanted is None and len(rows) >= max_rows:
             break
 
+    if wanted is not None:
+        order = {k: i for i, k in enumerate(want_keys or [])}
+        missing = sorted(wanted - {r.key for r in rows})
+        if missing:
+            raise SystemExit(
+                f"{len(missing)} of {len(wanted)} pinned row keys are not in the "
+                f"selected shards (first: {missing[0]!r}). The newest-by-mtime "
+                "window rolls, so a banked arm becomes unreproducible once its "
+                "shards age out; widen --shards or accept that the arm cannot be "
+                "recomputed -- refusing to silently score a different population"
+            )
+        paired = sorted(zip(rows, stored_out or [None] * len(rows), strict=True),
+                        key=lambda pair: order[pair[0].key])
+        rows = [p[0] for p in paired]
+        if stored_out is not None:
+            stored_out[:] = [p[1] for p in paired if p[1] is not None]
+
     stats.rows_used = len(rows)
-    assert_population(stats, min_sf_p0_rate=min_sf_p0_rate)
+    if wanted is None:
+        assert_population(stats, min_sf_p0_rate=min_sf_p0_rate)
+    else:
+        print(
+            f"[shards] pinned to {len(wanted)} banked row keys; the population "
+            "guard is not applicable (the denominator is fixed by the keys) and "
+            "a missing key aborts instead"
+        )
     if not rows:
         raise SystemExit("no usable rows: every selected row lacked a legal mask")
     return rows
@@ -1026,6 +1384,130 @@ class SimShape:
         return csr * (cvr + mv)
 
 
+# ⚑ THE SHAPE THE READ SHARDS WERE PRODUCED AT, hardcoded because THE SHARDS DO
+# NOT RECORD IT. `DiskReplayBuffer._flush_shard_arrays` calls
+# `save_local_shard_arrays(path, arrs=arrs)` with no `meta`, so every field of
+# `ShardMeta` -- `model_step`, `model_sha256`, `run_id` -- is None on the trial's
+# `replay_shards` (verified 2026-08-09 on the 3 newest live shards: the only
+# non-None attrs are version/positions/encodings/history_rep_fix). There is
+# therefore nothing in the data to read production's search shape off, and the
+# fidelity gate needs it to know whether a run is the CALIBRATION or an ARM.
+#
+# ⚑ SOURCED FROM THE **LIVE** YAML, WHICH IS NOT THIS REPO'S YAML. Read
+# 2026-08-09 off `/home/josh/projects/chess/configs/pbt2_small.yaml` on the
+# running branch: `gumbel_c_scale 0.025`, `gumbel_topk 32`,
+# `gumbel_scale_after 0.5`, `mcts_simulations 256`, and no `gumbel_policy_temp`
+# key at all, i.e. 1.0. The in-repo `configs/pbt2_small.yaml` says
+# `gumbel_topk 16 / gumbel_c_scale 0.1 / gumbel_scale_after 0.0` -- the live
+# yaml and main have diverged (608 of 968 keys), so a test that pinned this
+# constant to the in-repo config would pin it to a search NOBODY IS RUNNING.
+# `gumbel_scale` is the DECAYED 0.5, not the 1.0 opening value, because 88.9%
+# of stored policy rows are at ply >= 30.
+#
+# ⚑ NOTHING IN-BAND CAN CATCH THIS GOING STALE, and that is a limitation, not
+# an oversight: the shards record no shape (see `assert_same_producing_net`).
+# What DOES catch it is the production tier of the fidelity gate. A
+# bundle-sized shape mismatch between the harness and the stored target moves
+# fidelity by more than the tier allows -- banked arm E (c_scale 0.1, T 1.5 vs
+# a target stored at 0.025/1.0) lands at argmax 0.7433 / TV 0.2094, failing
+# both 0.75 and 0.20. So if production moves and this constant does not, the
+# CALIBRATION RUN FAILS rather than silently mis-tiering. Declare a moved
+# production shape with `--production-shape` instead of editing this.
+PRODUCTION_SEARCH_SHAPE: dict[str, float] = {
+    "c_scale": 0.025,
+    "policy_temp": 1.0,
+    "topk": 32.0,
+    "gumbel_scale": 0.5,
+}
+PRODUCTION_SIMS = 256
+
+
+def is_production_shape(
+    shape: SimShape, sims: int, *, declared: dict[str, float] | None = None,
+) -> bool:
+    """Is this run the calibration arm rather than an experimental arm?"""
+    ref = declared or PRODUCTION_SEARCH_SHAPE
+    return (
+        math.isclose(shape.c_scale, ref["c_scale"])
+        and math.isclose(shape.policy_temp, ref["policy_temp"])
+        and int(shape.topk) == int(ref["topk"])
+        and math.isclose(shape.gumbel_scale, ref["gumbel_scale"])
+        and int(sims) == int(ref.get("sims", PRODUCTION_SIMS))
+    )
+
+
+def parse_production_shape(spec: str) -> dict[str, float]:
+    """``c_scale,policy_temp,topk,gumbel_scale,sims`` -> the reference shape."""
+    parts = _parse_floats(spec)
+    if len(parts) != 5:
+        raise SystemExit(
+            "--production-shape takes exactly 5 numbers: "
+            f"c_scale,policy_temp,topk,gumbel_scale,sims (got {len(parts)})"
+        )
+    return {
+        "c_scale": parts[0], "policy_temp": parts[1], "topk": parts[2],
+        "gumbel_scale": parts[3], "sims": parts[4],
+    }
+
+
+def assert_calibrated(
+    *, this_shape: SimShape, this_sims: int, other: dict[str, object] | None,
+    other_label: str, declared: dict[str, float] | None = None,
+) -> None:
+    """An off-production arm may only be reported next to a calibration arm.
+
+    ``other`` is the provenance of the arm this run is being differenced
+    against (or of an explicit ``--calibration`` dump). At least one of the two
+    must be ``PRODUCTION_SEARCH_SHAPE`` with a fidelity that cleared the gate,
+    otherwise the pair is two unvalidated searches and their difference is a
+    property of the harness.
+    """
+    if is_production_shape(this_shape, this_sims, declared=declared):
+        return
+    if other is None:
+        raise SystemExit(
+            "refusing to report an off-production arm with no calibration: this "
+            f"run's shape (c_scale={this_shape.c_scale}, T={this_shape.policy_temp}, "
+            f"topk={this_shape.topk}, gumbel_scale={this_shape.gumbel_scale}, "
+            f"sims={this_sims}) is not PRODUCTION_SEARCH_SHAPE, so its fidelity "
+            "against the stored target measures the ARM, not the harness. Pair it "
+            "with a production-shape arm via --compare-to, or name one with "
+            "--calibration."
+        )
+    sh = other.get("shape")
+    if not isinstance(sh, dict):
+        raise SystemExit(
+            f"{other_label} carries no search shape in its provenance, so it "
+            "cannot serve as the calibration arm -- aborting"
+        )
+    other_shape = SimShape(
+        c_scale=float(sh.get("c_scale", float("nan"))),
+        policy_temp=float(sh.get("policy_temp", float("nan"))),
+        topk=int(sh.get("topk", -1)),
+        gumbel_scale=float(sh.get("gumbel_scale", float("nan"))),
+    )
+    other_sims = int(float(str(other.get("sims", -1))))
+    if not is_production_shape(other_shape, other_sims, declared=declared):
+        raise SystemExit(
+            f"neither arm is the production shape: this run is "
+            f"(c_scale={this_shape.c_scale}, T={this_shape.policy_temp}) and "
+            f"{other_label} is (c_scale={other_shape.c_scale}, "
+            f"T={other_shape.policy_temp}, sims={other_sims}). Their difference "
+            "is not anchored to a search anyone runs -- aborting"
+        )
+    fid = other.get("fidelity")
+    if not isinstance(fid, dict) or not int(fid.get("n", 0)):
+        raise SystemExit(
+            f"{other_label} is the production shape but banked no fidelity, so "
+            "nothing shows the harness reproduced the stored target -- aborting"
+        )
+    ref = ResearchFidelity(
+        n=int(fid.get("n", 0)), argmax_agree=int(fid.get("argmax_agree", 0)),
+        tv_sum=float(fid.get("tv_sum", 0.0)),
+    )
+    ref.assert_within(FidelityTolerance(), is_production_shape=True)
+
+
 def simulate_rows(
     *,
     checkpoint: str,
@@ -1159,7 +1641,7 @@ def print_cells(cells: list[CoverageCell], *, title: str) -> None:
     print(f"\n=== {title} ===")
     print(f"{'tau_cp':>7} {'rho':>7} {'phi':>8} {'pairs':>7} {'rows':>6} "
           f"{'coverage':>9} {'95% CI':>17} {'shuffled':>9} {'sd':>7} "
-          f"{'CONTROL':>9} {'verdict':>9} {'chance*':>8}")
+          f"{'CONTROL':>9} {'ctrl 95% CI':>17} {'verdict':>9} {'chance*':>8}")
     for c in cells:
         ci = (
             f"[{c.ci_lo:.4f},{c.ci_hi:.4f}]"
@@ -1170,19 +1652,18 @@ def print_cells(cells: list[CoverageCell], *, title: str) -> None:
         sd = f"{c.shuffled_sd:.4f}" if math.isfinite(c.shuffled_sd) else "     --"
         margin = c.control_margin
         marg = f"{margin:+9.2f}" if math.isfinite(margin) else "       --"
-        if not math.isfinite(margin):
-            verdict = "no-ctrl"
-        elif margin >= 1.0:
-            verdict = "PASS"
-        elif margin <= -1.0:
-            verdict = "INVERTED"
-        else:
-            verdict = "null"
+        mci = (
+            f"[{c.margin_ci_lo:+.2f},{c.margin_ci_hi:+.2f}]"
+            if math.isfinite(c.margin_ci_lo) else "                 "
+        )
         print(f"{c.tau_cp:7.0f} {c.rho:7.3f} {c.phi:8.1e} {c.n_pairs:7d} "
               f"{c.n_rows:6d} {cov:>9} {ci:>17} {sh:>9} {sd:>7} {marg} "
-              f"{verdict:>9} {c.base_rate:8.4f}")
+              f"{mci:>17} {c.verdict():>9} {c.base_rate:8.4f}")
     print("* `chance` is a POOLING-MISMATCHED reference and is indicative only; "
           "the null is `shuffled`.")
+    print("  The verdict is read off the control's 95% INTERVAL, never its point "
+          "estimate: `no-res` means a null exists but was not resolved, and it is "
+          "not a PASS.")
 
 
 def print_paired(
@@ -1194,19 +1675,31 @@ def print_paired(
     seed: int,
     label_a: str,
     label_b: str,
+    bias: dict[tuple[float, float, float], float] | None = None,
 ) -> list[dict[str, object]]:
     """Paired A->B deltas per cell, carrying each cell's control verdict along.
 
     A delta at a cell whose control is INVERTED is printed with its verdict
     rather than suppressed, because the number is still real -- it just cannot
     be attributed to sound-move coverage.
+
+    ⚑ ``bias`` IS THE INSTRUMENT'S RESOLUTION AND IT IS PRINTED BESIDE EVERY
+    DELTA. It is ``coverage(stored) - coverage(arm at production's shape)`` on
+    the SAME rows, i.e. pure harness error, and at the cell this script's
+    earlier revision pinned it was **larger than the effect whose SIGN carried
+    the whole attribution**. A cell where ``|bias| >= |delta|`` is marked
+    ``UNRESOLVED``: the rig cannot resolve production's own target there to
+    better than the thing it is being asked to measure. Computing the CI and
+    not the bias is how an instrument gets declared sharp while being wrong
+    [[compute_instrument_resolution_before_the_threshold]].
     """
     assert_paired(rows_a, rows_b)
     print(f"\n=== paired delta {label_a} -> {label_b} "
           f"({len(rows_a)} paired positions) ===")
     print(f"{'tau_cp':>7} {'rho':>7} {'phi':>8} {'cov_A':>8} {'cov_B':>8} "
-          f"{'delta':>9} {'95% CI':>19} {'ctrl_A':>8}")
+          f"{'delta':>9} {'95% CI':>19} {'ctrl_A':>8} {'biasA':>8} {'resolved':>10}")
     out: list[dict[str, object]] = []
+    n_unresolved = 0
     for c in cells:
         a = coverage_cells(
             rows_a, taus_cp=(c.tau_cp,), rhos=(c.rho,), phis=(c.phi,),
@@ -1220,14 +1713,157 @@ def print_paired(
         )
         m = c.control_margin
         ctrl = f"{m:+8.2f}" if math.isfinite(m) else "      --"
+        bz = (bias or {}).get((c.tau_cp, c.rho, c.phi), float("nan"))
+        bstr = f"{bz:+8.4f}" if math.isfinite(bz) else "      --"
+        if math.isfinite(bz) and math.isfinite(d):
+            resolved = "yes" if abs(d) > abs(bz) else "UNRESOLVED"
+            n_unresolved += int(resolved != "yes")
+        else:
+            resolved = "no-bias"
         print(f"{c.tau_cp:7.0f} {c.rho:7.3f} {c.phi:8.1e} {a:8.4f} {b:8.4f} "
-              f"{d:+9.4f} [{lo:+.4f},{hi:+.4f}] {ctrl}")
+              f"{d:+9.4f} [{lo:+.4f},{hi:+.4f}] {ctrl} {bstr} {resolved:>10}")
         out.append({
             "tau_cp": c.tau_cp, "rho": c.rho, "phi": c.phi,
             "coverage_a": a, "coverage_b": b, "delta": d, "ci_lo": lo, "ci_hi": hi,
-            "control_margin_a": m,
+            "control_margin_a": m, "harness_bias_a": bz, "resolved": resolved,
         })
+    if bias:
+        print(f"[bias] {n_unresolved}/{len(cells)} cells have |harness bias| >= "
+              "|delta|: at those the rig cannot resolve production's own stored "
+              "target to better than the effect being attributed")
     return out
+
+
+@dataclass(frozen=True)
+class AttributionScan:
+    """Whether ANY cell is both honest (control passes) and quiet in ``c_scale``.
+
+    ⚑ THIS EXISTS BECAUSE THE ANSWER IS NO, AND THE PR SAID SO IN PROSE.
+    An earlier revision reported "81 pass the control, 39 are c_scale-quiet, 2
+    are both" with the word "quiet" appearing exactly once in the repository --
+    in a docstring. A reviewer had to guess the definition and found five
+    plausible ones giving 9/37/39/64/94 quiet cells and 0/0/2/20/81 survivors:
+    the whole conclusion turned on a choice the text never stated. A number no
+    one can recompute is not a result, so the criterion is now a function with
+    an explicit ``quiet_ratio`` and a test.
+
+    ``corr_margin_ratio`` is the reason the survivors were never a regime:
+    "passes the control" and "is quiet in c_scale" are the SAME VARIABLE.
+    Soundness is a proxy for Q and ``c_scale`` is the gain on Q, so the control
+    is strong exactly where ``c_scale`` bites. Taking the argmax over a grid of
+    that tension is selecting on the hypothesis
+    [[never_condition_a_control_on_its_own_outcome]], one level up from row
+    selection.
+    """
+
+    quiet_ratio: float
+    min_pairs: int
+    n_cells: int
+    n_pass_point: int      # the OLD criterion: point margin >= min_sds
+    n_pass_ci: int         # the criterion now shipped: 95% LOWER bound >= min_sds
+    n_quiet: int
+    n_both_point: int
+    n_both_ci: int
+    corr_margin_ratio: float
+    both_point: list[tuple[float, float, float]]
+
+    def report(self) -> str:
+        return (
+            f"[scan] {self.n_cells} cells with >= {self.min_pairs} pairs; quiet "
+            f"criterion |d_c| <= {self.quiet_ratio:g} * |d_T|\n"
+            f"[scan] control PASS: {self.n_pass_point} by POINT margin, "
+            f"{self.n_pass_ci} by 95% LOWER bound\n"
+            f"[scan] c_scale-quiet: {self.n_quiet}\n"
+            f"[scan] BOTH: {self.n_both_point} (point) / {self.n_both_ci} (lower "
+            f"bound)\n"
+            f"[scan] corr(control margin, |d_c|/|d_T|) = "
+            f"{self.corr_margin_ratio:+.3f}  <- the two criteria are one variable\n"
+            f"[scan] cells that are both (point): {self.both_point}"
+        )
+
+
+def attribution_scan(
+    cells: list[CoverageCell],
+    *,
+    deltas_c: dict[tuple[float, float, float], float],
+    deltas_t: dict[tuple[float, float, float], float],
+    quiet_ratio: float = 0.25,
+    min_pairs: int = 50,
+    min_sds: float = 1.0,
+) -> AttributionScan:
+    """Count control-passing / c_scale-quiet / both, by a criterion IN CODE."""
+    margins: list[float] = []
+    ratios: list[float] = []
+    n_pass_point = n_pass_ci = n_quiet = n_both_point = n_both_ci = 0
+    both_point: list[tuple[float, float, float]] = []
+    n_cells = 0
+    for cell in cells:
+        key = (cell.tau_cp, cell.rho, cell.phi)
+        if cell.n_pairs < min_pairs or key not in deltas_c or key not in deltas_t:
+            continue
+        d_c, d_t = deltas_c[key], deltas_t[key]
+        if not (math.isfinite(d_c) and math.isfinite(d_t)) or d_t == 0.0:
+            continue
+        n_cells += 1
+        margin = cell.control_margin
+        ratio = abs(d_c) / abs(d_t)
+        quiet = ratio <= quiet_ratio
+        passes_point = bool(math.isfinite(margin) and margin >= min_sds)
+        passes_ci = cell.passes_control(min_sds)
+        n_pass_point += int(passes_point)
+        n_pass_ci += int(passes_ci)
+        n_quiet += int(quiet)
+        if quiet and passes_point:
+            n_both_point += 1
+            both_point.append(key)
+        n_both_ci += int(quiet and passes_ci)
+        if math.isfinite(margin):
+            margins.append(margin)
+            ratios.append(ratio)
+    corr = float("nan")
+    if len(margins) > 2:
+        corr = float(np.corrcoef(np.asarray(margins), np.asarray(ratios))[0, 1])
+    return AttributionScan(
+        quiet_ratio=float(quiet_ratio), min_pairs=int(min_pairs), n_cells=n_cells,
+        n_pass_point=n_pass_point, n_pass_ci=n_pass_ci, n_quiet=n_quiet,
+        n_both_point=n_both_point, n_both_ci=n_both_ci, corr_margin_ratio=corr,
+        both_point=both_point,
+    )
+
+
+def scan_bank(
+    path: Path, *, ref_arm: str, c_arm: str, t_arm: str, quiet_ratio: float,
+    min_pairs: int,
+) -> AttributionScan:
+    """Run ``attribution_scan`` over a banked multi-arm JSON.
+
+    The bank is ``{arms: {label: {cells: [...]}}, paired_vs_A: {label: [...]}}``.
+    Cells banked before the control interval existed carry no
+    ``margin_ci_lo/hi``, so their interval-based verdict is ``no-res`` and
+    ``n_pass_ci`` is 0 -- which is the point: THE BANKED VERDICTS HAD NO
+    RESOLUTION, and that is why they are not reproduced here as passes.
+    """
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    arms = payload.get("arms", {})
+    paired = payload.get("paired_vs_A", {})
+    for label, where in ((ref_arm, arms), (c_arm, paired), (t_arm, paired)):
+        if label not in where:
+            raise SystemExit(f"{path} has no arm {label!r} (have {sorted(where)})")
+    cells = [
+        CoverageCell(**{k: v for k, v in c.items() if k in CoverageCell.__annotations__})
+        for c in arms[ref_arm]["cells"]
+    ]
+
+    def _deltas(label: str) -> dict[tuple[float, float, float], float]:
+        return {
+            (float(r["tau_cp"]), float(r["rho"]), float(r["phi"])): float(r["delta"])
+            for r in paired[label]
+        }
+
+    return attribution_scan(
+        cells, deltas_c=_deltas(c_arm), deltas_t=_deltas(t_arm),
+        quiet_ratio=quiet_ratio, min_pairs=min_pairs,
+    )
 
 
 def read_diff_focus(progress_csv: str) -> dict[str, float]:
@@ -1277,13 +1913,15 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    # Not `required=True` only so `--scan-bank` can run without them; every
+    # other path checks for them explicitly and aborts.
     ap.add_argument("--mode", choices=("shards", "research", "simulate"),
-                    required=True,
+                    default=None,
                     help="shards: score production's STORED target. research: "
                          "re-search the same live rows at an explicit shape "
                          "(the isolation arms, on the live population). "
                          "simulate: search frozen deep-SF audit positions.")
-    ap.add_argument("--checkpoint", required=True,
+    ap.add_argument("--checkpoint", default=None,
                     help="trainer.pt / checkpoint dir supplying the REFERENCE PRIOR")
     ap.add_argument("--replay-dir", default=None,
                     help="ABSOLUTE path to the LIVE trial's replay_shards (mode=shards)")
@@ -1326,6 +1964,52 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--control-seeds", type=int, default=12,
                     help="shuffle seeds per cell for the negative control; 0 "
                          "disables it, which means reporting a cell with no null")
+    ap.add_argument("--control-bootstrap", type=int, default=500,
+                    help="POSITION-cluster resamples for the control MARGIN's own "
+                         "95%% interval. The PASS/INVERTED verdict is read off "
+                         "that interval; at 0 no cell can be stamped PASS")
+    ap.add_argument("--fidelity-min-argmax", type=float,
+                    default=FidelityTolerance().floor_min_argmax,
+                    help="ABORT floor on argmax agreement with the STORED target, "
+                         "applied to every research run")
+    ap.add_argument("--fidelity-max-tv", type=float,
+                    default=FidelityTolerance().floor_max_tv,
+                    help="ABORT ceiling on mean TV against the STORED target")
+    ap.add_argument("--fidelity-prod-min-argmax", type=float,
+                    default=FidelityTolerance().prod_min_argmax,
+                    help="tighter argmax floor applied when the run's shape IS "
+                         "PRODUCTION_SEARCH_SHAPE, i.e. when it is the calibration")
+    ap.add_argument("--fidelity-prod-max-tv", type=float,
+                    default=FidelityTolerance().prod_max_tv,
+                    help="tighter TV ceiling for the calibration run")
+    ap.add_argument("--production-shape", default=None,
+                    help="c_scale,policy_temp,topk,gumbel_scale,sims of the search "
+                         "that PRODUCED the shards being read. Defaults to "
+                         "PRODUCTION_SEARCH_SHAPE, read off the LIVE yaml (which "
+                         "is not this repo's yaml). Declare it when production "
+                         "moves; nothing in the shards records it")
+    ap.add_argument("--calibration", type=Path, default=None,
+                    help="a banked production-shape dump that certifies this "
+                         "harness; required for an off-production arm that is not "
+                         "already paired against a production-shape --compare-to")
+    ap.add_argument("--allow-missing-shard-provenance", action="store_true",
+                    help="proceed with --compare-to even though the shards carry "
+                         "no producing-net id. Prints an UNVERIFIABLE banner and "
+                         "is recorded in the dump; absent provenance is never "
+                         "treated as a match on its own")
+    ap.add_argument("--row-keys", type=Path, default=None,
+                    help="pin the read to the `shard:index` keys in a banked dump "
+                         "(reads `row_keys`, or `per_row[].key`). Aborts if any "
+                         "key has aged out of the window")
+    ap.add_argument("--scan-bank", type=Path, default=None,
+                    help="recompute the control-PASS / c_scale-quiet / both counts "
+                         "over a banked multi-arm JSON and exit")
+    ap.add_argument("--scan-ref-arm", default="A")
+    ap.add_argument("--scan-c-arm", default="B")
+    ap.add_argument("--scan-t-arm", default="D")
+    ap.add_argument("--scan-quiet-ratio", type=float, default=0.25,
+                    help="a cell is `c_scale-quiet` when |d_c| <= ratio * |d_T|")
+    ap.add_argument("--scan-min-pairs", type=int, default=50)
     ap.add_argument("--shuffle", choices=("none", "target", "prior"), default="none",
                     help="score the SHUFFLED rows as the primary output (the "
                          "control is already attached to every cell without this)")
@@ -1355,6 +2039,47 @@ def load_dump(path: Path) -> tuple[list[RowVectors], dict[str, object]]:
     return rows, dict(payload.get("provenance", {}))
 
 
+def load_provenance(path: Path) -> dict[str, object]:
+    """A banked dump's provenance, without requiring its per-row vectors.
+
+    ``--calibration`` only needs the shape and the fidelity, so it must not
+    fail on a summary-only bank the way ``load_dump`` would.
+    """
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    prov = payload.get("provenance")
+    if not isinstance(prov, dict):
+        raise SystemExit(f"{path} carries no `provenance` block")
+    return dict(prov)
+
+
+def load_row_keys(path: Path) -> list[str]:
+    """Row keys from a banked dump: top-level ``row_keys`` or ``per_row[].key``."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    keys = payload.get("row_keys")
+    if not keys:
+        keys = [str(r.get("key", "")) for r in payload.get("per_row", [])]
+    keys = [k for k in (str(k) for k in keys) if k]
+    if not keys:
+        raise SystemExit(
+            f"{path} carries no row keys (neither `row_keys` nor `per_row[].key`), "
+            "so the arm it describes cannot be reproduced"
+        )
+    return keys
+
+
+def _bias_map(prov: dict[str, object]) -> dict[tuple[float, float, float], float]:
+    """The banked per-cell harness bias of an arm, keyed by cell."""
+    rows = prov.get("harness_bias")
+    if not isinstance(rows, list):
+        return {}
+    out: dict[tuple[float, float, float], float] = {}
+    for r in rows:
+        if isinstance(r, dict):
+            out[(float(r["tau_cp"]), float(r["rho"]), float(r["phi"]))] = float(
+                r["bias"])
+    return out
+
+
 def _build_shape(args: argparse.Namespace) -> SimShape:
     return SimShape(
         c_scale=float(args.c_scale), policy_temp=float(args.policy_temp),
@@ -1366,6 +2091,15 @@ def _build_shape(args: argparse.Namespace) -> SimShape:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.scan_bank is not None:
+        print(scan_bank(
+            args.scan_bank, ref_arm=args.scan_ref_arm, c_arm=args.scan_c_arm,
+            t_arm=args.scan_t_arm, quiet_ratio=float(args.scan_quiet_ratio),
+            min_pairs=int(args.scan_min_pairs),
+        ).report())
+        return 0
+    if not args.mode or not args.checkpoint:
+        raise SystemExit("--mode and --checkpoint are required unless --scan-bank")
     taus = _parse_floats(args.taus)
     rhos = _parse_floats(args.rhos)
     phis = _parse_floats(args.phis)
@@ -1402,6 +2136,13 @@ def main(argv: list[str] | None = None) -> int:
               "population moves with the knob, so record it for any A/B")
 
     fens: list[str] = []
+    stored_rows: list[RowVectors] | None = None
+    stats = ShardReadStats()
+    is_prod = False
+    declared_prod = (
+        parse_production_shape(args.production_shape)
+        if args.production_shape else None
+    )
     if args.mode in ("shards", "research"):
         if not args.replay_dir:
             raise SystemExit(f"--mode {args.mode} requires --replay-dir (ABSOLUTE path)")
@@ -1420,27 +2161,58 @@ def main(argv: list[str] | None = None) -> int:
             provenance["alignment"] = al
         research = None
         fid = None
+        tol = FidelityTolerance(
+            floor_min_argmax=float(args.fidelity_min_argmax),
+            floor_max_tv=float(args.fidelity_max_tv),
+            prod_min_argmax=float(args.fidelity_prod_min_argmax),
+            prod_max_tv=float(args.fidelity_prod_max_tv),
+        )
         if args.mode == "research":
             shape = _build_shape(args)
             research = ResearchSpec(
                 shape=shape, sims=int(args.sims), syzygy_path=args.syzygy_path,
             )
             fid = ResearchFidelity()
+            stored_rows = []
+            is_prod = is_production_shape(shape, int(args.sims), declared=declared_prod)
             provenance["shape"] = asdict(shape)
             provenance["sims"] = args.sims
+            provenance["is_production_shape"] = is_prod
+            provenance["production_shape_assumed"] = (
+                declared_prod or dict(
+                    PRODUCTION_SEARCH_SHAPE, sims=float(PRODUCTION_SIMS))
+            )
+            ref = declared_prod or PRODUCTION_SEARCH_SHAPE
+            print("[research] production shape ASSUMED c_scale="
+                  f"{ref['c_scale']} T={ref['policy_temp']} topk={int(ref['topk'])} "
+                  f"gumbel_scale={ref['gumbel_scale']} "
+                  f"sims={int(ref.get('sims', PRODUCTION_SIMS))} -- the shards do "
+                  "NOT record it; if the live yaml has moved, declare it with "
+                  "--production-shape")
+            provenance["fidelity_tolerance"] = asdict(tol)
             print(f"[research] re-searching LIVE rows at c_scale={shape.c_scale} "
                   f"T={shape.policy_temp} gumbel_scale={shape.gumbel_scale} "
                   f"topk={shape.topk} sims={args.sims} "
                   f"syzygy={'on' if args.syzygy_path else 'OFF'}")
             print(f"[research] root sigma span at max_visit=59: "
                   f"{shape.root_sigma_span(59.0):.3f} nats")
-        stats = ShardReadStats()
+            print("[research] fidelity GATE: "
+                  + (f"PRODUCTION-SHAPE tier -- argmax >= {tol.prod_min_argmax:.2f}, "
+                     f"TV <= {tol.prod_max_tv:.2f} (this run IS the calibration)"
+                     if is_prod else
+                     f"floor tier -- argmax >= {tol.floor_min_argmax:.2f}, "
+                     f"TV <= {tol.floor_max_tv:.2f} (off-production arm; it also "
+                     "needs a production-shape --compare-to or --calibration)"))
+        want_keys = load_row_keys(args.row_keys) if args.row_keys else None
+        if want_keys is not None:
+            provenance["row_keys_from"] = str(args.row_keys)
         t0 = time.perf_counter()
         rows = read_shard_rows(
             sel, checkpoint=args.checkpoint, device=args.device,
             batch_size=args.batch_size, max_rows=args.max_rows,
             min_sf_p0_rate=args.min_sf_p0_rate, stats=stats,
-            research=research, fidelity=fid,
+            research=research, fidelity=fid, want_keys=want_keys,
+            stored_out=stored_rows,
         )
         print(f"[shards] rows total {stats.rows_total}, net-turn policy "
               f"{stats.rows_net_policy}, with sf_p0_regret {stats.rows_with_sf_p0} "
@@ -1453,9 +2225,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[shards] producing net model_step "
                   f"{min(stats.model_steps)}..{max(stats.model_steps)}; reference "
                   f"prior from {args.checkpoint}")
+        else:
+            print("[provenance] producing-net id ABSENT on every selected shard "
+                  "(ShardMeta.model_step / model_sha256 are None because "
+                  "DiskReplayBuffer._flush_shard_arrays writes no meta). This "
+                  "readout cannot be proved to come from one producing net.")
         if fid is not None:
             print(f"[research] {fid.report()} in {time.perf_counter() - t0:.1f}s")
             provenance["fidelity"] = asdict(fid)
+            fid.assert_within(tol, is_production_shape=is_prod)
         provenance["read_stats"] = asdict(stats)
         title = (f"coverage over {len(rows)} live shard rows"
                  + (" [RE-SEARCHED]" if research is not None else ""))
@@ -1491,14 +2269,49 @@ def main(argv: list[str] | None = None) -> int:
             resamples=int(args.bootstrap), seed=int(args.seed),
         )
         cell.ci_lo, cell.ci_hi = lo, hi
-    attach_controls(rows, cells, seeds=int(args.control_seeds), seed0=int(args.seed))
+    attach_controls(rows, cells, seeds=int(args.control_seeds), seed0=int(args.seed),
+                    resamples=int(args.control_bootstrap))
     print_cells(cells, title=title)
-    n_pass = sum(1 for c in cells if c.passes_control())
-    n_inv = sum(1 for c in cells if math.isfinite(c.control_margin)
-                and c.control_margin <= -1.0)
-    print(f"[control] {n_pass}/{len(cells)} cells PASS, {n_inv} INVERTED")
+    counts: dict[str, int] = {}
+    for c in cells:
+        counts[c.verdict()] = counts.get(c.verdict(), 0) + 1
+    print("[control] " + ", ".join(
+        f"{k} {counts[k]}" for k in sorted(counts)) + f" (of {len(cells)} cells)")
+
+    # ⚑ THE HARNESS'S OWN BIAS, IN THE UNITS OF THE THING IT MEASURES. Computed
+    # here, before any threshold is applied to any delta, because the CI was
+    # computed for the earlier revision and the bias was not -- and the bias
+    # turned out to be the larger of the two at the cell that got pinned.
+    bias_map: dict[tuple[float, float, float], float] = {}
+    bias_rows: list[dict[str, object]] = []
+    if stored_rows:
+        kind = (
+            "CALIBRATION: production shape, so this is PURE HARNESS ERROR"
+            if is_prod else "off-production arm: this is arm effect + error"
+        )
+        print(f"\n=== harness bias: stored - re-searched, {len(rows)} paired rows "
+              f"({kind}) ===")
+        print(f"{'tau_cp':>7} {'rho':>7} {'phi':>8} {'bias':>9} {'95% CI':>19}")
+        for c in cells:
+            d, lo, hi = paired_delta_ci(
+                rows, stored_rows, tau_cp=c.tau_cp, rho=c.rho, phi=c.phi,
+                resamples=int(args.bootstrap), seed=int(args.seed),
+            )
+            bias_map[(c.tau_cp, c.rho, c.phi)] = d
+            bias_rows.append({"tau_cp": c.tau_cp, "rho": c.rho, "phi": c.phi,
+                              "bias": d, "ci_lo": lo, "ci_hi": hi})
+            print(f"{c.tau_cp:7.0f} {c.rho:7.3f} {c.phi:8.1e} {d:+9.4f} "
+                  f"[{lo:+.4f},{hi:+.4f}]")
+        provenance["harness_bias"] = bias_rows
 
     paired: list[dict[str, object]] = []
+    if args.calibration is not None:
+        prov_cal = load_provenance(args.calibration)
+        assert_calibrated(
+            this_shape=_build_shape(args), this_sims=int(args.sims),
+            other=prov_cal, other_label=str(args.calibration.name),
+            declared=declared_prod,
+        )
     if args.compare_to is not None:
         rows_a, prov_a = load_dump(args.compare_to)
         ck_a = str(prov_a.get("checkpoint", ""))
@@ -1507,9 +2320,23 @@ def main(argv: list[str] | None = None) -> int:
                 f"refusing to compare readouts taken against different reference "
                 f"priors: arm A used {ck_a!r}, this run used {args.checkpoint!r}"
             )
+        assert_same_producing_net(
+            stats, prov_a,
+            allow_missing=bool(args.allow_missing_shard_provenance),
+        )
+        provenance["provenance_unverified"] = bool(
+            args.allow_missing_shard_provenance
+        )
+        if args.mode == "research" and args.calibration is None:
+            assert_calibrated(
+                this_shape=_build_shape(args), this_sims=int(args.sims),
+                other=prov_a, other_label=str(args.compare_to.name),
+                declared=declared_prod,
+            )
         paired = print_paired(
             rows_a, rows, cells=cells, resamples=int(args.bootstrap),
             seed=int(args.seed), label_a=str(args.compare_to.name), label_b="this run",
+            bias=_bias_map(prov_a),
         )
 
     if args.out is not None:
@@ -1517,6 +2344,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = {
             "provenance": provenance,
             "n_rows": len(rows),
+            "row_keys": [row.key for row in rows],
             "cells": [asdict(c) for c in cells],
             "paired": paired,
             "per_row": [
