@@ -37148,3 +37148,51 @@ discontinuity from PR #379 fix 1.
 **The transferable rule:** *an arm whose plausible outcomes all lead to the same next action is
 not worth a readout window.* Check that BEFORE optimising the arm for attribution quality —
 attribution is only valuable on outcomes that would change what you do next.
+
+### AMENDMENT 8 (2026-08-09) — the two entropies are DIFFERENT POPULATIONS, and only one is a clean in-effect instrument
+
+Caught while re-reading the bundle's in-effect baseline. Amendment 7's table quotes ΔH(target)
+of **−0.226** (`c_scale`) and **+0.375** (`policy_temp`), and the live in-effect metric is
+`gumbel_policy_entropy_mean`. **Those are not the same quantity and the coefficients must not be
+applied to that metric.** The tell was arithmetic: the live metric reads **1.0578** while the
+"our targets are ~2x sharper than lc0's" finding measured H(target) = **0.924**.
+
+| | `gumbel_policy_entropy_mean` | H(stored target) |
+|---|---|---|
+| population | **ALL `_NetRecord`s, pre-drop** | banked STORED rows |
+| denominator | `gumbel_policy_diag_n` | rows actually written to shards |
+| `keep_prob` / `sample_weight` gated? | **NO** | **YES** |
+| fast (playout-capped) plies included? | yes | no — dropped |
+| measured | **1.0578**, sd **0.0152** (iters 662-721) | 0.924 (67,783 banked rows) |
+
+**Established by call graph, not by name:** `_compute_gumbel_policy_game_stats(records)` is called
+with the full per-game record list (`finalize.py:1471-1474` and `:1490-1494`), whereas the
+`sample_weight` and `keep_prob` drops (`finalize.py:909-911`) happen inside the sample-BUILDING
+loop that produces `game_samples`. `_compute_diff_focus_game_stats(records, game_samples)` takes
+both lists; the gumbel-policy one takes only `records`. **The population difference fully explains
+1.0578 vs 0.924 without either number being wrong.**
+
+## Consequences for the bundle's deployment check
+
+1. **`gumbel_policy_entropy_mean` is the CLEAN in-effect instrument** precisely because its
+   denominator is *not* gated by `keep_prob` — the Amendment 5 side-channel that BOTH knobs drive.
+   This is [[never_condition_a_control_on_its_own_outcome]] satisfied by construction.
+   Re-read baseline **1.0578**, sd **0.0152** (last 60 iters; sd is stable at 0.0152-0.0164 across
+   30/60/120-iteration windows, and the prereg's 1.0635 sits only −0.4 sd away, so the prereg
+   number stands). The **+0.10 nats / 6.6 sigma** bar is the in-effect gate and it is SOUND.
+2. **⚑ Do NOT quote −0.226 / +0.375 as predictions for `gumbel_policy_entropy_mean`.** They were
+   derived on the stored-target population. Amendment 7's table is correct about the SIGNS and
+   about H(target); a prior draft of this session's arithmetic converted them to sigma-multiples
+   of the live metric (+24.7 sigma etc.) — **that conversion is void** and no magnitude
+   prediction for the live metric is pre-registered.
+3. **H(stored target) is NOT a clean signature instrument**, because both knobs move it by TWO
+   routes: the reshape itself, and the change in WHICH rows survive `keep_prob`. Report it, but
+   never as sole evidence of which knob fired.
+4. The one-sided coverage rule (`Δ >= +0.05` at `tau=50 rho=0.05 phi=2e-2` ⇒ `policy_temp` fired)
+   is unaffected — it is a paired same-row comparison.
+
+**The transferable rule:** *two metrics with the same word in their name are not the same
+measurement.* Before comparing a live metric against a banked coefficient, establish that both
+were computed over the same POPULATION — check the denominator's call graph, not the metric's
+name. A ~13% level difference (1.058 vs 0.924) was the only visible symptom, and it is exactly the
+size that reads as ordinary drift.
