@@ -37086,3 +37086,65 @@ follow-up costs a yaml reload rather than another restart.
 **Coverage's role is demoted accordingly:** it is no longer an attribution instrument. It
 becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read at
 `tau=50 rho=0.05 phi=2e-2` only, with `Δ <= 0` explicitly not a negative.
+
+### AMENDMENT 7 (2026-08-09) — REVERSING AMENDMENT 6: deploy BOTH knobs after all
+
+**Amendment 6's unbundling decision is WITHDRAWN.** Josh's objection is correct and it defeats
+the reasoning I used:
+
+> *"if it hurts us or does not much we won't learn much since it doesn't have softening yet"*
+
+**The `c_scale`-only arm is not a clean single-variable test — it is a test of a configuration
+we already have reason to believe is harmful on a known axis.** `c_scale` 0.1 alone lowers
+target entropy ~0.226 nats, taking the stored target from **~0.92 to ~0.69** against lc0's
+**1.39-1.89** [[training_temp_exceeds_strength_optimal_temp]] — i.e. from ~2x sharper than lc0
+to **~3x sharper**, moving FURTHER along the axis independently identified as the defect.
+
+⇒ A null or a regression from that arm is **ambiguous between "search authority does not help"
+and "the sharpening ate the gain"**, and the response to either reading is to run the pair. The
+single-knob arm therefore costs a full readout window and returns us to the bundle. That is the
+[[most_experiments_here_are_unfalsifiable]] filter applied to my own proposal: an arm whose
+plausible outcomes do not change the next action is not worth a window.
+
+**Amendment 6 also over-priced the attribution loss.** If the bundle WORKS we keep both knobs
+and attribution changes no decision; decomposition only becomes decision-relevant if it FAILS,
+which is exactly when the single-knob arm should be run. **Correct order: test the believed-best
+configuration first, decompose on failure.** Amendment 6 inverted that.
+
+**⚑ CORRECTION to Amendment 6's own summary:** it said separability was lost "on every axis."
+That overstates it. **The ENTROPY signature was never falsified** — only the coverage column
+was (Amendment 3 / Amendment 4). It stands as a DEPLOYMENT check with measured coefficients:
+
+| knob | ΔH(target) |
+|---|---|
+| `c_scale` 0.025 → 0.1 | **−0.226** |
+| `policy_temp` 1.0 → 1.5 | **+0.375** |
+| bundle (predicted net) | **~+0.15** |
+
+## RESTORED DESIGN — the bundle, with honest instruments
+
+Deploy **`gumbel_c_scale` 0.025 → 0.1 AND `gumbel_policy_temp` 1.0 → 1.5** in one restart.
+
+**SUCCESS / KILL remain Amendment 2's**, with Amendment 4's B2 correction: compute the median
+`priority_policy_kl` only on rows where `keep_prob` saturates at 1.0, so the diff-focus
+selection effect cannot move the denominator.
+
+**What we can and cannot conclude, stated before launch:**
+- **CAN (deployment):** both knobs fired — realized ΔH(target) consistent with ~+0.15 net, and
+  `gumbel_policy_entropy_mean` off its baseline by >= +0.10 (**measured** sd 0.0162 over the
+  last 60 iters ⇒ 6.2 sigma; +0.375 nats would be 23.2 sigma).
+- **CAN (one-sided):** coverage `Δ >= +0.05` at `tau=50 rho=0.05 phi=2e-2` ⇒ `policy_temp`
+  fired. **`Δ <= 0` proves NOTHING** (Amendment 6's table).
+- **CANNOT:** decompose a null or a regression into per-knob contributions. **Pre-committed
+  response to a null/regression: run `c_scale` 0.1 ALONE as the decomposition arm** — by then
+  it is decision-relevant, which is precisely what it is not today.
+
+**Confounds carried forward:** Amendment 5's `keep_prob` (row survival) + `priority` (sampling
+weight) side-channel, driven by BOTH knobs; the restart itself (boot shock, +0.110 post-restart
+winrate bias, drain transients, holdout ruler death); PR #375's ruler-ID change and
+`progress.csv` rotation riding along with the reconciliation; the arena search-shape
+discontinuity from PR #379 fix 1.
+
+**The transferable rule:** *an arm whose plausible outcomes all lead to the same next action is
+not worth a readout window.* Check that BEFORE optimising the arm for attribution quality —
+attribution is only valuable on outcomes that would change what you do next.
