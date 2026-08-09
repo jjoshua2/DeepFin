@@ -36075,3 +36075,57 @@ target's TAIL distribution. It will not move the argmax, and the loop's problem 
 +5.46 cp teacher-student gap on a net that already tracks its target closely. A rho win
 is necessary, not sufficient; the confirming instrument is the arena or the ratchet, not
 this screen.
+
+### AMENDMENT 2 (same session, still BEFORE any screen ran): THE FROZEN AUDIT SET
+### STRUCTURALLY CANNOT SCREEN THIS CHANGE. Screen withdrawn.
+
+Checked whether the replacement yardstick was computable before building the screen.
+It is not, and the reason is structural rather than fixable by picking a third metric.
+
+The frozen ruler is MultiPV 10: it scores **exactly 10 moves per position** (mean
+listed 9.41 over the whole set, 10.00 on the subset that matters). The tail this
+change acts on is by definition the LOW-PRIOR moves. SF lists its BEST moves, which
+the net's prior mostly also ranks high. Measured on `checkpoint_000331` over all 1,702
+audit positions with `n_legal > 32`:
+
+| quantity | value |
+|---|---|
+| ruler-listed moves examined | 17,020 |
+| ... falling OUTSIDE the net's top-32 | **133 (0.78%)** |
+| positions with >= 1 scorable tail move | **101 / 1702 (5.9%)** |
+| mean scorable tail moves per position | 0.078 |
+
+Spearman rho needs >= 2 scored tail moves in a position; almost every one of the 101
+has exactly 1. **The primary metric is undefined on essentially the whole set.** Third
+instance this session of a ruler chosen before checking it can resolve the effect
+(E[regret] vs sharpness; the top-1 threshold; the sims-64 test regime). The pattern is
+now explicit enough to be a method rule: COMPUTE THE INSTRUMENT'S RESOLUTION ON THE
+ACTUAL DATA BEFORE COMMITTING A THRESHOLD TO IT.
+
+**This is also evidence AGAINST the change, not just against the screen.** 99.22% of
+SF's top-10 moves are already inside the net's top-32. So the moves that exhaustive
+expansion would newly evaluate are, by the deep ruler's own judgement, almost always
+bad ones. The mechanism (target ranking the tail by prior alone, unopposed) is real and
+verified in code, but the measurable upside is small. Caveat in both directions: the
+ruler only lists 10, so a move SF ranks 11th-20th could be decent and buried, and we
+cannot see it -- that is exactly the blind spot, and it is unmeasurable with this set.
+
+**Options, none launched:**
+1. Re-label a subset with MultiPV = n_legal to score the whole move list. Definitive,
+   creates a NEW ruler version for those rows (`docs/eval_protocol.md`: the set freezes;
+   re-labelling is a ruler change and invalidates prior records for those positions).
+2. Narrow to a sign test on the 133 observations: does expansion raise target mass on
+   ruler-endorsed moves the prior buried? Cheap, tests the MECHANISM, proves nothing
+   about strength, n=133.
+3. Skip offline entirely, go live with an arena/ratchet readout -- but the ledger's own
+   rule (~0.02 Elo/iter vs a ~2.74 Elo/DAY instrument) says do not, absent a >=5-8
+   Elo/day prior.
+4. **KILL on cost-of-evidence.** The upside we can see is 0.78% of ruler-endorsed moves;
+   the change is restart-gated, data-affecting, and costs a readout window.
+
+**Recommendation: (1) on ~500 positions if the lever is wanted, else (4).** Not (3):
+spending a readout window on a change whose visible upside is under 1% of scored moves
+is exactly the unfalsifiable-experiment trap.
+
+**PR #372 stands as reviewed code with the flag default OFF and no config plumbing.**
+It is correct and tested; it is simply not yet justified. No revert needed.
