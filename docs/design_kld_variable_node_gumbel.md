@@ -686,9 +686,27 @@ its **input is our net's raw winrate against SF**, regulated to
 > `params_json_is_the_launch_config`, `dead_config_keys_pin_to_realized`).
 > Its provenance is exactly two places:
 > `pid.py:442` (`target_winrate: float = 0.60`) and `pid.py:962`
-> (`config.get("sf_pid_target_winrate", 0.60)`). It *was* the yaml value, set
-> in `00d1197` (2026-04-15), and was lowered later — 0.58 → 0.575 (2026-05-29)
-> → **0.50** (2026-06-29).
+> (`config.get("sf_pid_target_winrate", 0.60)`). It *was* the yaml value, and
+> was lowered in **five** steps, not three. Measured by reading
+> `configs/pbt2_small.yaml` out of every `origin/main` commit that touched it
+> and printing the value each time it changed:
+>
+> | commit | date | `sf_pid_target_winrate` |
+> |---|---|---|
+> | `00d11976d` | 2026-04-15 | **0.60** — the key is introduced; its parent's copy of the file has no `sf_pid*` key at all |
+> | `863e64734` | 2026-04-17 | **0.57** ⚑ *the rung an earlier revision of this box omitted* |
+> | `08b6bca46` | 2026-04-29 | 0.58 |
+> | `c74d87537` | 2026-05-30 | 0.575 |
+> | `dfff03701` | 2026-07-01 | **0.50** |
+>
+> ⚑ **Two dates, and the load-bearing one is the yaml's, not git's.** The
+> comment on `configs/pbt2_small.yaml:95` self-reports *"2026-06-29: 0.575→0.50"*
+> and *"2026-05-29: 0.58→0.575"*, but those changes were **committed** 2026-07-01
+> and 2026-05-30 — the live-edit-then-commit pattern
+> ([[uncommitted_live_yaml_edits_lose_proven_wins]]). The 2026-06-29 date is
+> load-bearing for the cross-era warning below, so use the yaml's date for "when
+> the run changed" and git's for "when the tree changed"; they are up to two days
+> apart and they are not interchangeable.
 >
 > Realized, verified read-only on the live trial `train_trial_379f6_00000`
 > (iteration 677): `params.json` → `sf_pid_target_winrate = 0.5`,
@@ -700,13 +718,42 @@ its **input is our net's raw winrate against SF**, regulated to
 > arguments does. Both are stated here, because an earlier revision claimed the
 > stronger one and it is false.**
 >
-> **Holds — the control law is setpoint-invariant.** The setpoint enters the
-> loop only as a subtrahend: `err = self.ema_winrate - self.target`
-> (`pid.py:800`). The negative feedback that erases the outcome signal exists
-> for *any* target, so §8's conclusion — winrate is a *controlled* variable and
-> therefore cannot serve as a yardstick — holds at 0.50, at 0.60, and at
-> whatever the yaml carries next. That is the argument the section needs, and it
-> is sufficient on its own.
+> **Holds — the control law is setpoint-invariant.** The negative feedback that
+> erases the outcome signal exists for *any* target, so §8's conclusion —
+> winrate is a *controlled* variable and therefore cannot serve as a yardstick —
+> holds at 0.50, at 0.60, and at whatever the yaml carries next. That is the
+> argument the section needs, and it is sufficient on its own.
+>
+> ⚑ **But NOT because "the setpoint enters the loop only as a subtrahend."** An
+> earlier revision of this box said that, citing `pid.py:800`
+> (`err = self.ema_winrate - self.target`) alone. **It is not literally true**,
+> and in a box whose entire subject is *"an enumeration you trusted was
+> incomplete"*, leaving the enumeration incomplete is the wrong look. Traced
+> through the call graph rather than grepped, the setpoint reaches the levers on
+> a second path with a different algebraic role:
+>
+> `pid.py:848` and `:887` both pass `target_wr=self.target` into `_step_lever`
+> (`:202`) — one for the regret lever, one for the nodes lever. Inside, it *is*
+> a subtrahend at `:215-216` (`err = target_wr - raw_wr`,
+> `ema_err = target_wr - ema_wr`). But `_step_lever` also hands it to
+> `_fit_inverse_lever_diagnostics` at `:275-281`, which at **`pid.py:84`**
+> computes:
+>
+> ```python
+> predicted_value=(target_wr - a) / b,
+> ```
+>
+> — an inverse-regression solve against the fitted intercept `a` and slope `b`.
+> The setpoint is the *abscissa* there: it sets the lever's predicted target
+> **position**, not merely the sign and size of an error. That is an affine map,
+> not a shift.
+>
+> **The conclusion is unaffected** — `(target_wr − a)/b` still aims the lever at
+> whatever winrate the setpoint names, which is exactly what "winrate is a
+> regulated variable" means, and it is monotone in the setpoint for any
+> valid-sign `b` (the fit rejects wrong-sign slopes at `:81`). So the invariance
+> argument stands; only the word *"only"* was wrong. Stated because the correct
+> version is the one a future reader will cite.
 >
 > **⚑ Does NOT hold — "nothing downstream divides by the setpoint".** That claim
 > was made here and is **false**. `tune/trainable_metrics.py:179-181` divides by
@@ -735,10 +782,22 @@ its **input is our net's raw winrate against SF**, regulated to
 > `0.6` finds nothing at that site. The lesson generalises — a value's
 > reachability cannot be established by grepping the name it has at its source.
 >
-> Other setpoint reads, for completeness: `ema_winrate` is seeded to the target
-> at construction (`pid.py:527`), an initial condition rather than a yardstick,
-> and **four** `_seed_lever_history(..., target_wr=self.target)` sites
-> (`pid.py:586`, `:587`, `:745`, `:747`) — an earlier revision cited only one.
+> **The complete enumeration of setpoint reads**, so nobody has to rebuild it a
+> third time. Every site is `self.target` unless noted; verified by
+> `grep -n "target_wr\|self\.target" chess_anti_engine/stockfish/pid.py`:
+>
+> | site | role |
+> |---|---|
+> | `pid.py:800` `err = self.ema_winrate - self.target` | subtrahend — the top-level control error |
+> | `pid.py:848`, `:887` → `_step_lever(target_wr=self.target, …)` | the regret lever and the nodes lever, respectively |
+> | `pid.py:215-216` `err = target_wr - raw_wr` / `ema_err = target_wr - ema_wr` | subtrahend, inside `_step_lever` |
+> | `pid.py:275-281` → `_fit_inverse_lever_diagnostics(target_wr=…)` → **`:84`** `(target_wr - a) / b` | **abscissa of an inverse fit — NOT a subtrahend** |
+> | `tune/trainable_metrics.py:179-181` | **divisor** (above) |
+> | `pid.py:527` | `ema_winrate` seeded to the target at construction — an initial condition, not a yardstick |
+> | `pid.py:586`, `:587`, `:745`, `:747` | four `_seed_lever_history(…, target_wr=self.target)` sites (`:944`, appending `(value, target_wr, se)` at `:955`) |
+>
+> Revision history of this list, because it is the point: one site → four sites
+> → seven, across three passes. Each pass believed it was complete.
 
 Variable sims never touches a PID lever, so there is no direct coupling. The
 coupling is through the winrate channel and it is worse than a direct one:
@@ -826,11 +885,23 @@ real measurement and it establishes the reallocation headroom.
   per-round snapshots, and no realized sim count. There is no intermediate state
   to difference.
 - Even if visits *were* stored, §5 says the trajectory would be the schedule.
-- **The realized sim count is not stored.** The corpus is 100% full-ply
-  (playout-capped rows are dropped at `finalize.py`), so every stored row is a
-  256-sim row and there is no within-corpus sim contrast to exploit. A
-  variable-node deploy would need this field added *before* launch, or it would
-  be unmeasurable after the fact.
+- **The realized sim count is not stored.** The corpus is 100% full-ply, so
+  every stored row is a 256-sim row and there is no within-corpus sim contrast
+  to exploit. The drop is pinned to a line rather than to the file: the gate is
+  `finalize.py:912` — `if not row_has_policy and not keep_fast_plies: continue`,
+  whose own comment at **`:913`** reads *"Fast-ply (playout-capped) records are
+  dropped by default"* — and `keep_fast_plies` is set one loop up at
+  **`finalize.py:888`**:
+
+  ```python
+  keep_fast_plies = bool(getattr(state.game, "record_fast_ply_value", False))
+  ```
+
+  with live `record_fast_ply_value: false` (live yaml `:196`; `main`'s copy
+  `:175`), so the default branch
+  is the one production takes. A variable-node deploy would need the realized
+  sim count added as a stored field *before* launch, or it would be unmeasurable
+  after the fact.
 
 Any number purporting to be "the fraction of our searches that would stop early"
 would therefore be **modelled, not measured**, and this document does not
@@ -853,46 +924,97 @@ however clever, can rescue it.
 
 This is decidable offline, with no training compute, and the audit-first rule in
 `docs/eval_protocol.md` requires it before any training-target candidate spends
-compute. Sketch (do not run concurrently with a 256+ sim arena; use
-`--gpu-mem-fraction`):
+compute. Five literal invocations, one per rung (do not run concurrently with a
+256+ sim arena; `--gpu-mem-fraction` is what keeps it off the trainer's memory):
 
-```
-PYTHONPATH=. python3 scripts/audit_targets.py \
-    --checkpoint <banked ckpt> --max-positions 2000 \
-    --sims {64,128,256,512,1024} --gumbel-topk 32 \
-    --gpu-mem-fraction 0.15 \
-    --dump-per-position <dump_sims_N.jsonl>
+```bash
+for N in 64 128 256 512 1024; do
+  PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint <banked ckpt> --max-positions 2000 \
+      --sims "$N" --rl-sims "$N" \
+      --gpu-mem-fraction 0.15 \
+      --dump-per-position "dump_sims_${N}.jsonl"
+done
 ```
 
-Three things must be true of the run for it to mean anything:
+> ⚑ **An earlier revision wrote `--sims {64,128,256,512,1024}`. That command
+> cannot run.** `audit_targets.py:960` is
+> `ap.add_argument("--sims", type=int, default=256)` — a single int. Bash
+> brace-expands the literal to `--sims 64 128 256 512 1024`, and argparse
+> rejects it. Executed:
+>
+> ```
+> $ PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint … --sims 64 128 256 512 1024
+> audit_targets.py: error: unrecognized arguments: 128 256 512 1024
+> EXIT=2
+> ```
+>
+> The loop above was checked to parse: with the same flags it runs past argparse
+> and fails only on the audit-set file, i.e. every flag is accepted.
+
+Four things must be true of the run for it to mean anything:
 
 1. **`--dump-per-position` is mandatory.** The pooled mean cannot answer a
    convexity question and cannot test the reallocation hypothesis. What is
    needed is the *per-position* curve, paired across rungs
    (`scripts/paired_compare.py --join-key key`).
-2. **Pin the live shape explicitly.** `arena_standard.py`'s `--search-shape
-   training` reads `production_selfplay_search_config()` from the yaml, so it
-   tracks live (`c_scale` 0.025, `topk` 32) — but the *comments* in
-   `arena_standard.py:72-74` and `docs/eval_protocol.md:35-37` still say
-   `c_scale 0.1, topk 16`, which is stale. Read the realized knobs the script
-   prints at startup; do not trust the docstring.
-3. **The `c_scale` confound is unavoidable and must be labelled.** Holding
+2. ⚑ **`--sims` and `--rl-sims` ladder DIFFERENT rows — and an earlier revision
+   set only `--sims`, which is the wrong one for the training question.**
+   `audit_targets.py:1124` passes `args.sims` in as `play_sims`, and `:247` uses
+   it for the **PLAY** profile only; the **training** rows take their budget
+   from `--rl-sims` (declared `:1019`, plumbed `:1125` → applied `:224-225` →
+   consumed by the `_rl` builder at `:228`). Setting `--sims` alone ladders the play
+   shape and leaves every training row pinned at the yaml's
+   `mcts_simulations`. Both are set above, deliberately — see (3).
+   For the same reason **`--gumbel-topk` does not pin the training shape
+   either**: `:1124` routes it to `play_topk`, and since
+   `PLAY_SEARCH_DEFAULTS["topk"]` is already `32` (`gumbel.py:86-93`),
+   `--gumbel-topk 32` was a literal no-op. It has been dropped rather than left
+   in looking load-bearing. The training rows' `topk` comes from the yaml.
+3. **Both roots come out of the SAME invocation — the ladder does not need to be
+   run twice.** Every `audit_targets` run emits both profiles:
+   `cand.search` is `b) net + Gumbel search (PLAY settings)`
+   (`_CANDIDATE_NAMES:160-166`), which is the **LOG** root — `c_scale_root 7.0`,
+   `q_visit_exp_root -1.0` from `PLAY_SEARCH_DEFAULTS` at `:256-257` — while
+   `cand.train` is `d) production training target (full sims)`, built from
+   `GumbelConfig()`'s sentinels at `:232` and therefore the **LINEAR** root with
+   `c_scale`/`topk` read live from the yaml. The script prints which is which at
+   startup (`:1130-1135`; the root is decided on **`:1134`**, literally
+   `root={'log' if prof.q_visit_exp_root < 0 else 'linear'}`) — read that line,
+   it is the in-effect check.
+4. **The `c_scale` confound is unavoidable and must be labelled.** Holding
    `c_scale` fixed across a sims ladder is the exact confound the ledger records
    ("Confound 1"). Under the live *linear* root it cannot be avoided — σ is
-   supposed to move with the budget. **So the ladder should be run twice: once
-   with the live linear root, once with the log root of §7c.** The linear run
-   measures what a naive deploy would do; the log run measures the sims→quality
-   curve with σ held ~constant, which is the one that actually answers the
-   convexity question. Running only the linear ladder would repeat a known
-   mistake.
+   supposed to move with the budget, which is the whole of §7a. The linear
+   (`cand.train`) curve therefore measures what a naive deploy would do; the log
+   (`cand.search`) curve measures sims→quality with σ held ~constant, and that
+   is the one that answers the convexity question. ⚠ The two are **not** an
+   isolated root comparison — the log row also differs in `c_scale` (0.025 vs
+   the yaml's) and `topk`. Read each curve against itself across rungs; do not
+   difference them against each other.
+
+> **On "read the realized knobs, not the docstring":** the comments at
+> `arena_standard.py:74-75` describe the training shape as `c_scale 0.1, topk 16`
+> — and an earlier revision cited `:72-74`, which is wrong, because `:72-73` is
+> the *play* shape and only `:74-75` is training. More usefully, that comment is
+> **not stale against the committed config** — `main`'s yaml says `gumbel_c_scale:
+> 0.1` (`:451`) and `gumbel_topk: 16` (`:422`), exactly as written. It is stale
+> only against the **live** yaml (0.025 / 32, `:254` / `:252`), which is the §7d
+> divergence again. And `production_selfplay_search_config()`
+> (`arena_standard.py:181`) "tracks live" only in the sense its own docstring
+> gives at `:192-193` — *"Reads the config in THIS tree; run the arena from the
+> live tree to price the live run."* Run it from a `main` worktree and it prices
+> `main`. `docs/eval_protocol.md:35-37` carries the same committed-config text
+> and is exact as cited.
 
 **Pre-committed decision rule:** if the paired per-position `cand.search.exp`
 curve is concave over [64, 1024] under the log root — i.e. the 256→1024 gain is
 no larger than the 64→256 loss — **the idea is dead and this document is closed
 with a FAILED verdict.** No search-side code, no ledger entry, no live change.
 
-**Cost:** four extra `audit_targets` runs at ~4.4 min each. That is the entire
-price of a permanent answer.
+**Cost:** five rungs, of which 256 is the standing baseline, so four extra
+`audit_targets` runs at ~4.4 min each — and each one yields both the log and the
+linear curve. That is the entire price of a permanent answer.
 
 ---
 
