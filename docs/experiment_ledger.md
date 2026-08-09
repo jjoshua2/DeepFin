@@ -36733,3 +36733,82 @@ absolute KL from it is admissible. Gate it on reproducing the STORED target firs
 **an exact command is not a yardstick until it has been EXECUTED and produced a number.**
 Every field it names must be shown to exist in the artefact it reads -- and the check that
 shows it must itself be non-truncating and recursive.
+
+### AMENDMENT 2 (same session) — the AMENDMENT was wrong: I read a DEAD shard directory
+
+**Retracting most of Amendment 1.** I scanned `runs/pbt2_small/replay_shards/` — a top-level
+directory whose newest file is dated **2026-04-14**, four months dead. The LIVE trial's
+shards are at
+`runs/pbt2_small/replay/train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06/replay_shards/`
+(**815 shards**, newest `shard_003753.zarr`, **85 arrays**). `losses.py:32` states the real
+path in a comment; I did not read it before scanning.
+
+**This is [[sorted_glob_picks_the_dead_trial]] committed a second time — by me, in the same
+commit in which I was writing about instrument discipline.** The generalisable rule stands
+and now has a second instance: *"latest" must be demonstrated to track the live artefact.*
+An `ls` that returns files is not evidence they are the right files. **Check an mtime.**
+
+**What is actually true, measured on the newest LIVE shard (2000 policy rows):**
+
+| field | value |
+|---|---|
+| `priority_policy_kl` presence on policy rows | **100.0%** |
+| median | **0.0239** |
+| mean | **0.1198** |
+| p90 | **0.2845** |
+
+**RETRACTED from Amendment 1:**
+- ~~"the field is absent from every production shard"~~ — it is present at 100%.
+- ~~"the diff-focus POLICY term is silently inert in production"~~ — **NO SUCH DEFECT.**
+  `disk_buffer.py:856`'s guard finds the field and fires. Withdraw this entirely; it was
+  never a finding.
+- ~~"the 0.0264 baseline is retracted"~~ — **UN-retracted.** My independent re-measurement on
+  a different live shard gives **0.0239 / 0.1198** against the reported 0.0264 / 0.1309.
+  Those agree. The agent was reading production's stored field, exactly as it said.
+
+**STANDS from Amendment 1:** `priority_policy_kl` is a per-row SHARD field, NOT a
+`result.json` key, so the originally pre-registered command would still have raised
+`KeyError`. The yardstick did need fixing — just not for the reasons Amendment 1 gave.
+
+### FINAL yardstick (supersedes both prior versions)
+
+**(A) OFFLINE-from-live-shards, deciding.** Point at the LIVE trial's replay_shards by
+ABSOLUTE path, take the newest N shards by **mtime**, and print the shard basename and its
+mtime so a dead directory announces itself:
+
+    PYTHONPATH=. python3 - <<'EOF'
+    import glob, os, zarr, numpy as np, datetime as dt
+    D=("runs/pbt2_small/replay/"
+       "train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06/replay_shards")
+    sh=sorted(glob.glob(D+"/shard_*.zarr"), key=os.path.getmtime)[-8:]
+    print("newest:", os.path.basename(sh[-1]),
+          dt.datetime.fromtimestamp(os.path.getmtime(sh[-1])))  # ⚑ FAIL if not today
+    kl=[]; npol=0; nhas=0
+    for s in sh:
+        z=zarr.open(s,mode="r")
+        hp=np.asarray(z["has_policy"][:],dtype=bool)
+        sel=np.asarray(z["has_priority_policy_kl"][:],dtype=bool)&hp
+        npol+=int(hp.sum()); nhas+=int(sel.sum())
+        kl.append(np.asarray(z["priority_policy_kl"][:],dtype=np.float64)[sel])
+    a=np.concatenate(kl)
+    print("presence %.1f%%  median %.4f  mean %.4f" % (100*nhas/npol, np.median(a), a.mean()))
+    EOF
+
+**Baseline (live, 2026-08-09): presence 100.0%, median 0.0239, mean 0.1198.**
+⚑ **Presence < 99% aborts the readout** — a dropped field would otherwise silently change the
+denominator.
+
+- **SUCCESS:** median `priority_policy_kl` **>= 0.10** (from 0.0239) AND live
+  `data_policy_entropy` median **>= 0.90** (from 0.900).
+- **KILL:** `data_policy_entropy` median **< 0.75** (net sharpening).
+- **PLUMBING FAILURE, not a verdict:** median KL **< 0.05**, or `gumbel_policy_entropy_mean`
+  moves **< +0.10** off its 1.0635 (sd 0.01606) baseline.
+- Otherwise INDETERMINATE; hold one more window.
+
+**(B) LIVE entropy from `result.json`** as in Amendment 1 — those three fields were verified
+present on iter 667 and that part was correct.
+
+**The rule, now with two instances behind it:** an exact command is not a yardstick until it
+has been EXECUTED and produced a number — **and until the artefact it read has been shown to
+be the LIVE one by its mtime.** Both of my first two attempts produced confident, plausible,
+wrong output. Executing them is what caught both.
