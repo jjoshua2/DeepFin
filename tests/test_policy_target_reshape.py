@@ -419,29 +419,51 @@ def _flat_from_yaml_train_section(**train_overrides: object) -> dict[str, object
     return flatten_run_config_defaults(cfg)
 
 
+@pytest.mark.parametrize("temp", [1.30, 2.20])
 def test_a_yaml_temperature_REACHES_the_trainer_and_the_training_step(
-    tmp_path: Path,
+    tmp_path: Path, temp: float,
 ) -> None:
     """The whole chain, on the production config: yaml `train:` section ->
     `flatten_run_config_defaults` -> `trainer_kwargs_from_config` -> `Trainer`
     -> the `_loss_kwargs` that `_run_optimizer_step` splats into `compute_loss`.
 
     Each hop is asserted separately so a break says WHICH hop dropped it.
+
+    ⚑ TWO VALUES, and 2.20 is not decoration (review #2, S1). Pinning a single
+    value only proves the chain is identity AT that value: a silent
+    `min(1.5, ...)` clamp inside `trainer_kwargs_from_config` passed a
+    1.30-only test with 176 green, while truncating 2.20 -- which is inside the
+    1.36-2.20 lc0 range this knob's own docstring cites as the intended
+    operating range. A clamp is exactly the "accepted then quietly altered"
+    shape, and one sample point cannot see it.
+
+    ⚑ THE CTOR DICT IS SPLATTED WHOLE (review #2, S2). Production does
+    `Trainer(model, model_config=..., **trainer_ctor)` at
+    tune/trainable.py:759. An earlier version of this test re-extracted the one
+    key it cared about and hand-built a Trainer from it, which left the SPLAT
+    uncovered: `trainer_ctor.pop("policy_target_temp", None)` immediately
+    before that line survived with 176 green. Only device/lr/amp and the
+    prefetch thread are overridden here, for a CPU test process.
     """
-    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+    from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 
-    flat = _flat_from_yaml_train_section(policy_target_temp=1.30)
-    assert flat["policy_target_temp"] == pytest.approx(1.30), "the flattener dropped it"
+    flat = _flat_from_yaml_train_section(policy_target_temp=temp)
+    assert flat["policy_target_temp"] == pytest.approx(temp), "the flattener dropped it"
 
-    ctor = trainer_kwargs_from_config(flat, log_dir=tmp_path)
-    assert ctor["policy_target_temp"] == pytest.approx(1.30), (
-        "trainer_kwargs_from_config read the key but did not carry its VALUE; "
-        "the arm would train at the default while its config reads 1.30"
+    ctor = trainer_kwargs_from_config(
+        {**flat, "device": "cpu", "no_amp": True, "lr": 1e-3}, log_dir=tmp_path,
+    )
+    assert ctor["policy_target_temp"] == pytest.approx(temp), (
+        "trainer_kwargs_from_config read the key but did not carry its VALUE "
+        f"unchanged at {temp} (got {ctor['policy_target_temp']!r}); the arm "
+        "would train at some other temperature while its config reads correct"
     )
 
-    t = _trainer(tmp_path, policy_target_temp=ctor["policy_target_temp"])
-    assert t.policy_target_temp == pytest.approx(1.30)
-    assert t._loss_kwargs["policy_target_temp"] == pytest.approx(1.30)
+    ctor["prefetch_batches"] = False
+    t = Trainer(_TinyPolicyModel(), **ctor)
+
+    assert t.policy_target_temp == pytest.approx(temp)
+    assert t._loss_kwargs["policy_target_temp"] == pytest.approx(temp)
   # ...and the ruler still does not move with the arm at the far end of the chain.
     assert t._eval_loss_kwargs["policy_target_temp"] == 1.0
 
@@ -449,12 +471,12 @@ def test_a_yaml_temperature_REACHES_the_trainer_and_the_training_step(
 def test_the_production_yaml_carries_no_temperature_today(tmp_path: Path) -> None:
     """The negative half: a value that arrives must have COME from the yaml.
 
-    Asserting only the 1.30 case would also pass if `trainer_kwargs_from_config`
-    hardcoded 1.30. The shipped config has no `policy_target_temp`, so the same
-    chain must yield exactly the identity default -- which is also the claim
-    that merging this PR cannot perturb the live run.
+    Asserting only the set cases would also pass if `trainer_kwargs_from_config`
+    hardcoded one of them. The shipped config has no `policy_target_temp`, so
+    the same chain must yield exactly the identity default -- which is also the
+    claim that merging this PR cannot perturb the live run.
     """
-    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+    from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 
     import yaml as _yaml
 
@@ -467,20 +489,30 @@ def test_the_production_yaml_carries_no_temperature_today(tmp_path: Path) -> Non
 
     flat = _flat_from_yaml_train_section()
     assert "policy_target_temp" not in flat
-    assert trainer_kwargs_from_config(flat, log_dir=tmp_path)["policy_target_temp"] == 1.0
+
+    ctor = trainer_kwargs_from_config(
+        {**flat, "device": "cpu", "no_amp": True, "lr": 1e-3}, log_dir=tmp_path,
+    )
+    assert ctor["policy_target_temp"] == 1.0
+    ctor["prefetch_batches"] = False
+    assert Trainer(_TinyPolicyModel(), **ctor)._loss_kwargs["policy_target_temp"] == 1.0
 
 
 def test_a_bad_yaml_temperature_fails_at_STARTUP_through_the_real_chain(
     tmp_path: Path,
 ) -> None:
-    """The constructor guard, reached the way an operator would reach it."""
-    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+    """The constructor guard, reached the way an operator would reach it --
+    through the same whole-dict splat production uses."""
+    from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 
     ctor = trainer_kwargs_from_config(
-        _flat_from_yaml_train_section(policy_target_temp=0.001), log_dir=tmp_path,
+        {**_flat_from_yaml_train_section(policy_target_temp=0.001),
+         "device": "cpu", "no_amp": True, "lr": 1e-3},
+        log_dir=tmp_path,
     )
+    ctor["prefetch_batches"] = False
     with pytest.raises(ValueError, match="policy_target_temp must be finite"):
-        _trainer(tmp_path, policy_target_temp=ctor["policy_target_temp"])
+        Trainer(_TinyPolicyModel(), **ctor)
 
 
 # ── Second effect: the temperature re-gates the policy_soft head ────────────
@@ -578,3 +610,96 @@ def test_the_soft_gate_is_untouched_when_the_temperature_is_the_default() -> Non
         "the fixture's TV is above the threshold at the default, so the "
         "default-off arm must keep the row"
     )
+
+
+def test_the_production_ctor_dict_reaches_Trainer_UNMODIFIED() -> None:
+    """⚑ REVIEW #2, S2. The test above splats a ctor dict, but it is a dict the
+    TEST built. Production builds its own at tune/trainable.py and splats that
+    one, and nothing observed the gap between the two: inserting
+    ``trainer_ctor.pop("policy_target_temp", None)`` immediately before
+    ``Trainer(model, model_config=model_cfg, **trainer_ctor)`` survived the
+    whole battery, because no test executes that line.
+
+    ``train_trial`` is a Ray entry point -- it wants a cluster, a GPU, a replay
+    buffer and a checkpoint before it reaches this statement -- so there is no
+    runtime observation available at unit-test cost. This asserts the invariant
+    on the source instead, and deliberately asserts an ABSENCE OF TAMPERING
+    rather than the presence of a call: the thing that went wrong last time was
+    a grep for a call standing in for its effect, and a decorative `.pop` would
+    satisfy a presence check while defeating the wiring.
+
+    The invariant: the name bound by ``trainer_kwargs_from_config(...)`` is
+    splatted into ``Trainer(...)`` with ``**``, and BETWEEN those two points
+    nothing rebinds it, deletes from it, subscript-assigns into it, or calls a
+    mutating method on it. Any of those is a knob silently dropped on the way
+    to the consumer.
+    """
+    import ast
+    import inspect
+
+    from chess_anti_engine.tune import trainable as trainable_mod
+
+    tree = ast.parse(inspect.getsource(trainable_mod))
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "train_trial"
+    )
+    body = list(ast.walk(fn))
+
+  # 1. Find the binding `<name> = trainer_kwargs_from_config(...)`.
+    binds = [
+        n for n in body
+        if isinstance(n, ast.Assign)
+        and isinstance(n.value, ast.Call)
+        and getattr(n.value.func, "id", None) == "trainer_kwargs_from_config"
+    ]
+    assert len(binds) == 1, f"expected exactly one ctor-dict binding, found {len(binds)}"
+    assert isinstance(binds[0].targets[0], ast.Name)
+    ctor_name = binds[0].targets[0].id
+    bind_line = binds[0].lineno
+
+  # 2. Find `Trainer(..., **<name>)` and require the splat.
+    calls = [
+        n for n in body
+        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "Trainer"
+    ]
+    assert len(calls) == 1, f"expected exactly one Trainer(...) call, found {len(calls)}"
+    splatted = [
+        k.value.id for k in calls[0].keywords
+        if k.arg is None and isinstance(k.value, ast.Name)
+    ]
+    assert ctor_name in splatted, (
+        f"Trainer() no longer splats {ctor_name!r}; the config-derived kwargs "
+        f"are not reaching the constructor"
+    )
+    use_line = calls[0].lineno
+
+  # 3. Nothing may touch it in between.
+    for node in body:
+        line = getattr(node, "lineno", None)
+        if line is None or not (bind_line < line < use_line):
+            continue
+        if isinstance(node, ast.Assign):
+            for tgt in ast.walk(node):
+                if isinstance(tgt, ast.Name) and tgt.id == ctor_name and isinstance(
+                    tgt.ctx, ast.Store,
+                ):
+                    raise AssertionError(f"line {line}: {ctor_name} rebound before Trainer()")
+                if isinstance(tgt, ast.Subscript) and getattr(
+                    tgt.value, "id", None,
+                ) == ctor_name and isinstance(tgt.ctx, ast.Store):
+                    raise AssertionError(f"line {line}: {ctor_name}[...] assigned before Trainer()")
+        if isinstance(node, ast.Delete):
+            for tgt in node.targets:
+                if getattr(getattr(tgt, "value", None), "id", None) == ctor_name:
+                    raise AssertionError(f"line {line}: del from {ctor_name} before Trainer()")
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and getattr(node.func.value, "id", None) == ctor_name
+            and node.func.attr in {"pop", "clear", "update", "setdefault", "popitem"}
+        ):
+            raise AssertionError(
+                f"line {line}: {ctor_name}.{node.func.attr}(...) mutates the "
+                f"config-derived kwargs before they reach Trainer()"
+            )

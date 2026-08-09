@@ -294,38 +294,126 @@ flatter target should show up as better *ranking* at unchanged or better
 calibration.
 
 **H1:** at `policy_target_temp` 1.5, argmax agreement with deep SF on the frozen
-audit set improves, i.e. mean **top1 regret falls by ≥ 3.0 cp** vs the paired
-`temp = 1.0` control.
+audit set improves — paired mean **`cand.raw.top1` falls**, with the 95% CI
+excluding 0, vs the `temp = 1.0` control on the same rows.
+
+⚑ **No effect SIZE is asserted, deliberately.** The instrument's resolution is
+~10 cp (derived below) and I have no prior that says the effect is that large;
+naming a smaller number would only pre-commit to a threshold the ruler cannot
+reach. If the honest answer is "this screen cannot see it", that is the result.
 
 ### THE ONE DECIDING YARDSTICK (exact command)
 
-```
-PYTHONPATH=. python3 scripts/audit_targets.py \
-  --checkpoint data/salvage/<label>/checkpoint --config configs/pbt2_small.yaml \
-  --audit-set data/audit_set_v1.jsonl --sims 256 --device cuda \
-  --gpu-mem-fraction 0.25 --batch-size 64 --seed 0
-```
-Read the **`top1`** column. Run it on the arm checkpoint and on the paired
-control checkpoint from the same iteration.
+⚑ **This section was rewritten 2026-08-09 after a reviewer EXECUTED the first
+version of it.** The original named a command that emits no CI, read a "`top1`
+column" that does not exist, used off-anchor settings, and set thresholds
+arithmetically unreachable against this file's own measured noise floor. Every
+one of those was invisible until someone ran it. The rule that follows from that
+is already in this file — *compute the instrument's resolution before the
+threshold* — and it was not followed.
 
-**Why `top1` and not the obvious two.** ⚑ `policy_ce` is DISQUALIFIED: this knob
-moves the CE floor by construction (`CE = H(target) + KL(target‖model)`), so an
-unchanged model reads a different number — the arm would be scored on a ruler it
-edited. ⚑ `expected` regret (`E[regret]` under the policy) is DISQUALIFIED the
-other way: it rewards sharpness, so it is biased *against* a flattening arm and a
-null would be unreadable. `top1` depends only on WHICH move is argmax, so it is
-invariant to any monotone reshape of the target and is conjugate to neither arm.
-It is also the audit-first rule from `docs/eval_protocol.md`: score against the
-frozen deep-SF set before spending training compute.
+**Two reads per arm. Both take a per-position dump; the verdict is the PAIRED
+comparison of the dumps, never the stdout tables.**
+
+1. ANCHOR / sanity (canonical line from the Yardsticks table, so the numbers sit
+   on the 49.6 / 51.5 cp @ckpt457 anchor):
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <ckpt> \
+  --sims 32 --batch-size 64 --gpu-mem-fraction 0.15 \
+  --max-positions 2000 --seed 0 --sf-effort low
+```
+
+2. VERDICT dump, on the FULL frozen set (`--max-positions 0` = all 4000 rows —
+   the extra rows are the only lever this instrument has on its own CI):
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <ckpt> \
+  --sims 32 --batch-size 64 --gpu-mem-fraction 0.15 \
+  --max-positions 0 --seed 0 --sf-effort low \
+  --dump-per-position data/audit_dumps/<arm|ctrl>.jsonl
+```
+
+3. THE VERDICT ITSELF:
+```
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  data/audit_dumps/ctrl.jsonl data/audit_dumps/arm.jsonl \
+  --join-key key --field cand.raw.top1 --label-a ctrl --label-b arm
+```
+
+**The exact field is `cand.raw.top1`** — a dotted path into the DUMP, in cp. It
+is not a stdout column and must not be confused with two things that are:
+`audit_targets` prints top-1 regret only as half of a combined
+`E[regret] / top-1` cell in the policy table, and it separately prints a **`mean
+top-1` column that is top-1 MASS**, not regret — which a flattening arm lowers
+BY CONSTRUCTION and which would therefore read as "worse" for a reason that has
+nothing to do with move quality. Reading that column would be the fifth blind
+ruler in a week.
+
+⚑ `cand.raw` is the net's raw policy, so **the verdict field does not depend on
+`--sims` at all** — no Gumbel re-search noise enters it. `--sims 32` is retained
+only so the other rows of the same run stay comparable to the anchor.
+
+### RESOLUTION FIRST, THEN THE THRESHOLDS
+
+This file's measured paired 95% CI half-width for **audit raw top-1 is ±9.8 cp at
+n=2000** (2026-07-02 retro-read; 72% exact ties). Everything below is derived
+from that number rather than chosen:
+
+```
+SE(n=2000)  = 9.8 / 1.96                       = 5.00 cp
+SE(n)       = 5.00 * sqrt(2000/n)
+half-width(n=4000) = 1.96 * 5.00/sqrt(2)       = ±6.93 cp
+MDE @ n=4000, CI-excludes-0 (~50% power)       = 6.9 cp
+MDE @ n=4000, 80% power (2.802*SE)             = 9.9 cp
+```
+
+**⚑ WHY THE FIRST VERSION OF THIS ENTRY WAS VOID.** It pre-committed SUCCESS at
+"≥3.0 cp with CI excluding 0" and KILL at "worsens by ≥2.0 cp, or the CI spans
+0". A TRUE effect of exactly 3.0 cp on the full set returns
+**3.0 ± 6.93 = [−3.9, +9.9]**, which spans 0 — so the true effect trips the KILL
+clause and SUCCESS is arithmetically unreachable. The 2.0 cp point-delta kill is
+separately forbidden by the Yardsticks paragraph above, which states that fixed
+±2 cp thresholds sit below every measured floor and that a verdict needs the CI
+to exclude zero, not a point delta.
+
+**n required to resolve a given effect** (`n = 2000·(9.8/δ)²`, and ×2.04 for 80%
+power):
+
+| true effect | n for CI to exclude 0 | n for 80% power | vs the frozen 4000-row set |
+|---|---|---|---|
+| 2 cp | 48,020 | 98,140 | 12.0× / 24.5× |
+| 3 cp | 21,342 | 43,618 | 5.3× / 10.9× |
+| 5 cp | 7,683 | 15,702 | 1.9× / 3.9× |
+| 7 cp | 3,920 | 8,011 | 1.0× / 2.0× |
+| 10 cp | 1,921 | 3,926 | 0.5× / 1.0× |
+
+**The audit set FREEZES after generation (new sampling = new version), so 4000
+rows is the ceiling and ~10 cp is the smallest effect this screen can honestly
+claim to detect.** A few-cp effect — the size originally imagined — is NOT
+observable on this instrument at any threshold. That is a property of the ruler,
+not of the hypothesis, and it must be stated before the run rather than
+discovered after it.
 
 ### PRE-COMMITTED THRESHOLDS
 
-- **SUCCESS:** paired top1 regret improves by **≥ 3.0 cp** with a 95% CI
-  excluding 0. Then, and only then, an arena leg is justified.
-- **KILL:** top1 regret **worsens by ≥ 2.0 cp**, or the CI spans 0 after the
-  window below. Revert the yaml key and record FAILED the same session.
-- **NULL is a verdict here.** Given the mechanism note above, a null is the
-  *expected* outcome and must be recorded as one — not carried as "deferred".
+Point deltas are DESCRIPTIVE ONLY. The verdict is the paired bootstrap CI on
+`cand.raw.top1`, arm vs control, same rows, same ruler:
+
+- **SUCCESS:** CI excludes 0 on the BETTER side (arm's top-1 regret lower).
+  Design MDE at 80% power is **9.9 cp**, so this is a screen for a LARGE effect.
+- **KILL:** CI excludes 0 on the WORSE side. Revert the yaml key and record
+  FAILED the same session.
+- **UNRESOLVED (the expected outcome):** CI contains 0. This is a VERDICT and is
+  recorded as one — but it is **not evidence of absence**, because the table
+  above shows anything under ~7 cp is invisible here. It closes the arm on this
+  instrument and does not license "temperature does nothing".
+
+**NEGATIVE CONTROL, required before the verdict is read:** two dumps of the SAME
+checkpoint, paired the same way, must give a CI containing 0. Verified while
+writing this entry (n=60 smoke, same checkpoint, same seed): paired delta
+**+0.00 [+0.00 .. +0.00], 100% tied** — the join, the field path and the ruler
+guard all work end to end. Note `paired_compare` refuses to compare dumps made
+with different `input_encoding` / `batch_size`, so the two arms must use
+identical audit settings.
 
 ### WINDOW, CONFOUNDS, GUARDS
 
