@@ -36889,3 +36889,90 @@ count before the flat cell is leaned on for a verdict.
 a pre-registration for a day reading as fact; one measurement falsified a third of it. **Measure
 the discriminator before you rely on it to discriminate** — and had the bundle deployed first,
 the null at `phi`=1e-4 would have looked like a clean negative result.
+
+### AMENDMENT 4 (2026-08-09) — RETRACTING AMENDMENT 3's PIN, and a confound on the PRIMARY yardstick
+
+Independent review of PR #382 (posted at `#issuecomment-5233512682`) **falsifies the
+`phi = 1e-2` attribution pin** I set in Amendment 3, and surfaces a selection effect that
+touches the deciding yardstick, not merely the attribution one. Amendment 3's pin is
+**WITHDRAWN**. Coverage is NOT a usable attribution instrument today.
+
+**⚑⚑ B1 — THE PINNED CELL FAILS THE SCRIPT'S OWN NEGATIVE CONTROL, IN THE WRONG DIRECTION.**
+The control had only ever been run at `phi = 1e-3`. Run at the pinned cell (8-20 shuffle seeds):
+
+| cell | real | target-shuffled | chance |
+|---|---|---|---|
+| `phi=1e-2`, `tau=25`, `rho=0.01` | **0.1304** | **0.2331 ± 0.0095** | 0.1961 |
+| `phi=1e-3`, `tau=25`, `rho=0.01` | 0.5780 | 0.3893 ± 0.0109 | 0.3137 |
+
+**The shuffle BEATS the real metric by +0.103 (~11 shuffle-SDs), and the real value sits
+BELOW chance.** Not noise: the shuffle wins in **9 of 16** `(tau, rho)` cells at `phi=1e-2` —
+the entire `rho <= 0.02` region — and the sign only flips at `rho = 0.05`. Interpretation: at
+that floor the statistic measures how well the target keeps rare moves **rare**, with
+soundness entering **NEGATIVELY**. It therefore cannot key off `policy_temp`, because both
+knobs flatten the target through the same channel. **A metric a shuffle beats is not measuring
+the association it names** [[shuffle_the_labels_negative_control]].
+
+**⚑⚑ B2 — `diff_focus` RE-COMPOSES THE STORED POPULATION AS A FUNCTION OF THE VERY KL THE
+BUNDLE RAISES. THIS HITS THE DECIDING YARDSTICK, NOT JUST ATTRIBUTION.** Verified on the
+production C path:
+
+    keep_prob = clamp(3 * (6 * q_surprise + 3.5 * KL(prior || improved)), 0.025, 1)
+
+and `finalize.py:910` drops the row. Live now: `keep_limited_frac 0.387`, `keep_rate 0.796`.
+Raising KL raises `keep_prob` for every row, re-admitting **~15% of rows drawn entirely from
+the low-KL, low-coverage tail**. So the bundle changes WHICH ROWS EXIST, as a monotone
+function of the treatment.
+
+Consequence for Amendment 2's SUCCESS rule (median `priority_policy_kl` >= 0.10): the stored
+population is *already* KL-selected, and the treatment dilutes it with previously-excluded
+low-KL rows. The measured median is therefore **not a clean estimate of the KL shift** — the
+bias is toward UNDER-reading the effect, which makes a PASS still meaningful but a
+FAIL/INDETERMINATE uninterpretable. **This must be carried as a Confound on the primary
+readout, and the yardstick should be recomputed on a population not selected by KL** (e.g.
+restrict to `keep_prob` saturated at 1.0, where selection cannot vary).
+The only population guard in place (`sf_p0_regret` presence rate) is a WITHIN-population ratio
+and is structurally blind to this — a gate that cannot fail [[a_gate_that_cannot_fail]].
+
+**⚑ B3 — THE 12x RATIO IS A BETWEEN-RIG TRANSFER THE LEDGER'S OWN CAVEAT FORBIDS.** Live
+coverage falls **0.8218 -> 0.1304** across `phi` 1e-4 -> 1e-2 (~-0.15 per e-fold). A `+0.382`
+`policy_temp` delta is **arithmetically impossible** from a 0.1304 baseline, so the audit rig
+sits far up the curve and its `c_scale` zero-crossing has no reason to land at the same `phi`
+live. Amendment 3 stated the two rigs are not comparable in level and then reasoned across
+them anyway, one paragraph later.
+
+**⚑ B4 — AMENDMENT 3's HEADLINE TABLE IS NOT REPRODUCIBLE FROM THE PR.** `paired_delta_ci` is
+**never called by `main()`**, there is no compare CLI, and no banked artifact exists on disk.
+Every number in the falsifying table came from a harness that is not in the PR, so **the arm
+isolation and the `phi=1e-4` cancellation could not be verified by the reviewer.** The
+FEN-pairing assertion the docstring promises is also absent. Amendment 3's table stands as
+UNVERIFIED pending the harness landing with its dump banked
+[[bank_the_dump_not_just_the_number]].
+
+**⚑ B5 — the calibration rig is off-policy beyond the caveat already stated.** `SimShape`
+hardcodes `gumbel_scale=1.0` with no flag, while live decays to **0.5 from move 15** and
+**88.9% of stored rows are at ply >= 30**; and it runs `tb_probe=None` against live
+`syzygy_in_search: true`.
+
+**What survived attack, and is worth keeping:** the ply alignment reproduces (`sf_p0_regret`
+1.0000 legal, n=5090; `sf_multipv_raw` 0.1039, n=22904) **and the encoding is consistent** —
+`sf_multipv_raw`'s move column is compact-remapped, so 0.1039 is real ply misalignment, not a
+4672-vs-1858 artifact. The **23.5% `sf_p0_regret` slice is NOT outcome-conditioned** (target
+entropy 0.9736 vs 0.9910; `n_legal` 26.80 vs 26.98 against its complement) — the selection
+worry is answered. Shard selection is mtime-based and mutation-proved. The cluster bootstrap
+is genuinely by position, though an unclustered mutation passes all 20 tests, so it is
+unguarded. Bare `./scripts/lint.sh` exit 0.
+
+**STATUS: the bundle has NO working post-hoc attribution instrument.** Since separable
+signatures were the stated justification for bundling two knobs in one restart, this is a
+decision point, not a detail. Options, to be decided before launch:
+(a) land the compare harness + a `phi`/`rho` cell that PASSES its negative control, then pin;
+(b) deploy and accept that `c_scale` and `policy_temp` cannot be separated afterwards;
+(c) deploy one knob.
+**Entropy signatures (Amendment 3, column 2) remain opposite and are unaffected by B1** — they
+may still separate the two, but that has not been demonstrated on live rows either.
+
+**The reusable rule, third instance today:** *run the negative control AT THE CELL YOU INTEND
+TO USE.* Amendment 3 pinned `phi=1e-2` on a discrimination ratio while the only control that
+had ever been run was at `phi=1e-3` — a different cell, and as it turns out one of the few
+where the metric works at all.
