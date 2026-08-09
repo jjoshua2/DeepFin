@@ -36441,3 +36441,72 @@ different things. Do not mix them.
 `soften` (`policy_target_temp=1.30`, needs PR #373 merged), `sfblend` → **`w_sf_own=0.10`**
 (no code), `control`. Thresholds, arena command, n, seed and the null-is-a-kill rule are
 unchanged.
+
+## 2026-08-09 (05:0x-05:3x) — OPERATIONAL: the ack-gated pause window, executed and measured
+
+The 08-08 entry recorded that an uncontended ratchet is **~2.5x more games in LESS wall
+time**, and then nothing was wired up, so the 08-09 ratchet ran beside training again and
+**truncated the lineage series at 106/200 with a CI spanning zero** — an unreadable
+result, caused entirely by contention. Iterations stretched **245s -> 611s** across it and
+recovered to **297s** the moment it finished, which is the contention proof.
+
+**Re-ran that same series inside a deliberate pause window. Full n, same direction:**
+
+| run | games | Elo iter514 vs iter399 | CI |
+|---|---|---|---|
+| beside training | 106/200 | −46.2 | [−108.1, +13.0] |
+| **pause window** | **200/200** | **−31.4** | **[−73.8, +10.2]** |
+
+**VERDICT on the readout: no detectable strength change iter399 -> iter514.** A null on a
+full sample, NOT a loss. Consistent with the plateau: 115 iterations at ~0.02 Elo/iter is
+far below what n=200 resolves (+/-43 Elo). Do not read −31.4 as a regression.
+
+### The procedure that worked (ORDER IS THE WHOLE TRICK)
+
+1. Snapshot each worker log's BYTE OFFSET.
+2. `touch <work_dir>/tune/pause.txt`.
+3. **Wait for `.paused_<trial_id>.ack`** — NOT a timer, and NOT "an ack exists".
+4. `pkill -TERM -f -- '-m chess_anti_engine\.worker( |$)'`.
+5. Run the job on a free machine.
+6. `rm pause.txt`.
+
+**Why the ack gate is load-bearing:** `_wait_if_paused` (`tune/trainable.py:998`) parks at
+the TOP of the iteration, and `_revive_fleet` is called INSIDE
+`_ingest_distributed_selfplay` (`trainable_phases.py:1082`). So revive is inert only while
+parked. SIGTERM before the ack and the driver simply relaunches the workers mid-ingest.
+
+**Measured cost:** park 135s (bounded by one iteration); drain 55s; 93 games / 6,378
+records banked with `skipped=0`; arena 200 games in ~21 min; total pause ~26 min. The
+spanning iteration 568 shows 1733s, as expected.
+
+**Resume CONFIRMED, not assumed:** `outcome_stats.resumed_inflight_games=224` on iter 568
+and all four `selfplay_resume/` dirs empty. Falling file counts alone would NOT have proven
+this — `resume.py` also has a stale-file cleanup path, so "files disappeared" is equally
+consistent with deletion. The counter is the discriminator.
+
+### Three traps this run exposed, all of which would silently break a codified version
+
+- ⚑ **A STALE ACK FROM A DEAD TRIAL SITS IN THE TUNE DIR.**
+  `.paused_4c17c_00000.ack` was present from a trial that died while parked (the clear runs
+  in a `finally`, which a hard kill skips). Any wait that polls for "an ack" rather than
+  `.paused_<live_trial_id>.ack` returns TRUE INSTANTLY and kills the workers while revive
+  is still live — a guard that cannot fail.
+- ⚑ **REVIVED WORKERS TRUNCATE THEIR LOG FILES** (1.2MB -> 1,560 bytes). The suspend
+  evidence exists only BEFORE the resume, so offsets must be snapshotted pre-drain and read
+  pre-resume. Reading after would find nothing and report a false failure.
+- ⚑ **`selfplay_resume/` IS UNDER `runs/<run>/server/trials/<trial>/workers/`**, not the
+  Ray artifacts dir the worker's `--log-file` points at. Checking the artifacts path
+  reports `0 files` on a perfectly healthy drain. (My own first check did exactly this.)
+
+### Baseline I failed to take
+
+`resumed_inflight_games=224` exceeds the 93 games this drain banked, so the dirs almost
+certainly already held ~131 games from an earlier event. I did not count the resume dirs
+BEFORE draining, so the attribution is inferred, not measured. **Count them first next
+time** — otherwise the resume counter cannot be tied to the drain that produced it.
+
+### NOT done, deliberately
+
+`daily_gate_ratchet.sh` is UNCHANGED. One clean manual run does not justify an unattended
+cron that pauses production, and the three traps above are exactly what a codified version
+has to get right. Codify only after a second clean run, with the traps as its tests.
