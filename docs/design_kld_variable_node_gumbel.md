@@ -287,10 +287,31 @@ search starts:
 
 Survivor `max_visit` = 59; 256 sims spent exactly.
 
-**The consequence is fatal to the proposal as stated.** The root visit vector at
-any point in the search is a function of `(budget, m, halving_div, round, rep)`
-and nothing else. The *position* influences only **which** candidates survive,
-never **how many visits** any of them gets. Therefore:
+> **⚑ One exception, and it is the only position-dependent spend that already
+> exists.** `gss_begin_round` zeroes `budget_remaining[i]` outright when the
+> root is **solved** — `t->solved[rid] != SOLVED_UNKNOWN`, i.e. terminal or
+> tablebase-resolved (`_mcts_tree.c:1396-1401`) — and the comment says why:
+> "the result of search is known, every additional sim is wasted GPU work."
+> Such a root spends **fewer than 256 sims**, and whether it does is a property
+> of the position. So the staircase below is the schedule for an *unsolved*
+> root, which is the overwhelming majority of selfplay roots but not all of
+> them.
+>
+> This does not rescue the proposal — a solved root is exactly the case where
+> no KL signal is needed, and the saving is already taken — but it does mean
+> "spend is position-independent" is false as an unqualified statement, and
+> §11 already leans on this same mechanism as the precedent for mid-search
+> budget zeroing.
+>
+> Note it is **C-path only**: the Python mirror (`gumbel.py:1030-1051`) has no
+> solved-root check at all, so the two paths disagree on this. Production
+> selfplay runs the C path, so the exception is live in production.
+
+**The consequence is fatal to the proposal as stated.** For an unsolved root the
+visit vector at any point in the search is a function of
+`(budget, m, halving_div, round, rep)` and nothing else. The *position*
+influences only **which** candidates survive, never **how many visits** any of
+them gets. Therefore:
 
 - **Within a round**, all survivors accrue visits in lockstep. The normalized
   visit distribution stays flat over the survivors, and lc0's
@@ -518,14 +539,42 @@ count must be stored per row** — it currently is not (§10).
 The controller (`chess_anti_engine/stockfish/pid.py`) drives two levers, both
 Stockfish-side — `wdl_regret` (direction −1) and `sf_nodes` (direction +1) — and
 its **input is our net's raw winrate against SF**, regulated to
-`target_winrate = 0.60`.
+`target_winrate = 0.50`.
+
+> **⚑ An earlier revision of this section said 0.60. That number is the CODE
+> DEFAULT, never the realized setpoint** — the recurring trap of reading a
+> default as a live value (`docs/rl_loop_audit.md` method rules; memory
+> `params_json_is_the_launch_config`, `dead_config_keys_pin_to_realized`).
+> Its provenance is exactly two places:
+> `pid.py:442` (`target_winrate: float = 0.60`) and `pid.py:962`
+> (`config.get("sf_pid_target_winrate", 0.60)`). It *was* the yaml value, set
+> in `00d1197` (2026-04-15), and was lowered later — 0.58 → 0.575 (2026-05-29)
+> → **0.50** (2026-06-29).
+>
+> Realized, verified read-only on the live trial `train_trial_379f6_00000`
+> (iteration 677): `params.json` → `sf_pid_target_winrate = 0.5`,
+> `pid_ema_winrate = 0.4918`, `pid_raw_winrate = 0.500`. Config side:
+> `configs/pbt2_small.yaml:95` on `main` → `0.50`; the live tree's copy → `0.5`.
+> The controller is sitting on its setpoint, and that setpoint is 0.50.
+>
+> **The argument below is unaffected, and that is worth stating explicitly**
+> rather than leaving the reader to re-derive it. The setpoint enters the
+> control law only as a subtrahend — `err = self.ema_winrate - self.target`
+> (`pid.py:800`) — so the negative feedback that erases the outcome signal
+> exists for *any* target. Nothing downstream divides by the setpoint either:
+> there is no division by `target_winrate`, `self.target`, or a literal `0.6`
+> anywhere in `chess_anti_engine/` or `scripts/`. The only other use is seeding
+> `ema_winrate` to the target at construction (`pid.py:527`), which is an
+> initial condition, not a yardstick. §8's conclusion therefore holds at 0.50,
+> at 0.60, and at any setpoint the yaml might carry later.
 
 Variable sims never touches a PID lever, so there is no direct coupling. The
 coupling is through the winrate channel and it is worse than a direct one:
 
 - A scheme that degrades the played move (§6a) lowers winrate. The PID reads
   that as "Stockfish is too strong" and **raises regret / lowers nodes** — a
-  weaker opponent, which pushes winrate back to 0.60.
+  weaker opponent, which pushes winrate back to the setpoint (0.50 today; the
+  mechanism is the feedback, not the number).
 - **So the controller actively erases the outcome signal.** Winrate is not a
   yardstick for this experiment; it is the controlled variable. Any readout that
   watches winrate is watching a quantity the loop is regulating, and it cannot
