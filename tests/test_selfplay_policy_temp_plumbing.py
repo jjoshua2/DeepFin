@@ -179,11 +179,17 @@ def test_search_output_softens_when_the_configured_temperature_rises() -> None:
 
 
 def test_sharpening_moves_the_other_way() -> None:
-    """T<1 must SHARPEN. A gate stuck 'on' would soften in both directions."""
+    """T<1 must SHARPEN. A gate stuck 'on' would soften in both directions.
+
+    The 0.05 margin matters as much as the direction: with a bare ``<`` this
+    test PASSES against an ``apply_policy_temp`` neutered to a no-op, because
+    float noise alone satisfies a strict inequality between two means that are
+    supposed to be identical. Same margin as the softening twin above.
+    """
     ent_flat, _p1, _m1, _e1 = _search_entropies(1.0)
     ent_sharp, _p2, _m2, _e2 = _search_entropies(0.4)
 
-    assert float(ent_sharp.mean()) < float(ent_flat.mean()), (
+    assert float(ent_sharp.mean()) < float(ent_flat.mean()) - 0.05, (
         f"policy_temp=0.4 did not sharpen: {ent_flat.mean():.4f} -> "
         f"{ent_sharp.mean():.4f} nats"
     )

@@ -74,6 +74,12 @@ def _sentinel_search_config() -> tuple[SearchConfig, dict[float, str]]:
     Returns the config and the sentinel -> attribute-name inverse map, so a
     ``GumbelConfig`` field holding a sentinel identifies the ``search`` knob
     that fed it.
+
+    ⚑ Numeric fields only — a bool has no room for a sentinel. All six knobs the
+    mapping carries today are numeric, but a future BOOL ``SearchConfig`` knob
+    wired into ``GumbelConfig`` would land in ``_search_attrs_the_mapping_mentions``
+    and NOT here, and fail the equality spuriously. Give it a sentinel by another
+    means rather than deleting the assertion.
     """
     base = SearchConfig()
     replacements: dict[str, Any] = {}
@@ -465,25 +471,39 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
     """
     config_driven = _selfplay_gumbel_fields_driven_by_search()
 
-    assert len(config_driven) >= 5, (
-        f"only {sorted(config_driven)} found in network_turn's GumbelConfig -- "
-        "the selfplay search construction moved; re-point this test"
+    # PER-FIELD pins, not a count. A `len(...) >= N` floor lets any ONE knob be
+    # silently hard-coded as long as another is added, which is how the first
+    # version of this re-pointing ended up WEAKER than the AST test it replaced:
+    # the mapping carries six fields, the floor said five, so hard-coding
+    # `c_scale` passed here while still failing on `main`. Every entry below is
+    # a knob whose value must be OBSERVED to flow (see the helper: sentinel in,
+    # sentinel out), so hard-coding any one of them fails this line by name.
+    assert set(config_driven.values()) == {
+        "gumbel_topk",
+        "gumbel_policy_temp",
+        "gumbel_c_scale",
+        "volatility_q_scale",
+        "volatility_fpu",
+        "volatility_anchor",
+    }, (
+        f"the selfplay search is driven by {sorted(set(config_driven.values()))}; "
+        "if that is a deliberate change, update this set and check the arena's "
+        "training shape still carries every knob production sets"
     )
-    # What the mapping NAMES must equal what it CARRIES. A knob named but not
-    # carried never reaches the search at all, so its absence from the
-    # inertness verdict below would be silent rather than loud.
+    # Separately: what the mapping NAMES must equal what it CARRIES.
+    #
+    # ⚑ This does NOT catch a hard-coded field. Both sides derive from the same
+    # source, so deleting `search.x` from the call deletes it from `mentioned`
+    # too and the equality passes vacuously — the set assertion above is what
+    # catches that. What this DOES catch is the named-but-mangled case
+    # (`float(search.gumbel_policy_temp) * 0.0 + 1.0`), where the source still
+    # reads as wired and the value still does not arrive. That case is invisible
+    # to any source-reading test, which is the whole reason the mapping was made
+    # callable.
     mentioned = _search_attrs_the_mapping_mentions()
     assert mentioned == set(config_driven.values()), (
         f"build_selfplay_gumbel_config names {sorted(mentioned)} but only "
         f"{sorted(set(config_driven.values()))} reach the returned GumbelConfig"
-    )
-    # Named explicitly because the verdict below is a verdict about the fields
-    # in `config_driven`: a knob that quietly drops out of the mapping also
-    # drops out of the thing this test certifies, and would pass by absence.
-    # gumbel_policy_temp is the newest one and the one a live change moves.
-    assert "gumbel_policy_temp" in config_driven.values(), (
-        "gumbel_policy_temp no longer reaches the selfplay GumbelConfig -- "
-        "either the knob is dead or this test stopped covering it"
     )
     search = production_selfplay_search_config()
     pinned = set(resolve_search_shape("training").gumbel) | _ARENA_OWNED_GUMBEL_FIELDS
@@ -560,7 +580,7 @@ def test_the_realized_view_is_not_just_the_override_dict() -> None:
     """A sparse override dict is what made the old runs unreadable."""
     side = resolve_search_shape("training")
 
-    assert set(side.gumbel) == {"c_scale", "topk"}
+    assert set(side.gumbel) == {"c_scale", "topk", "policy_temp"}
     assert set(side.realized_gumbel()) >= set(PLAY_SEARCH_DEFAULTS)
     # A knob the training shape never overrode still resolves to its realized
     # value (the GumbelConfig default), which is the point of the view.

@@ -894,7 +894,7 @@ class WorkerSession:
         if not bool(args.allow_overrides):
             _server_managed_keys = [
                 "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
-                "fast_simulations", "gumbel_topk", "gumbel_policy_temp",
+                "fast_simulations", "gumbel_topk",
                 "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
                 "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
                 "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",

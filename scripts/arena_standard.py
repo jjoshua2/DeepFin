@@ -260,6 +260,13 @@ def resolve_search_shape(shape: str) -> SideSearch:
             gumbel={
                 "c_scale": float(search.gumbel_c_scale),
                 "topk": int(search.gumbel_topk),
+                # Carried even while production runs the 1.0 no-op: the moment
+                # the yaml raises it, `--search-shape training` would otherwise
+                # keep searching at T=1.0 and every arena — the Cheese-tail
+                # yardstick included — would measure a prior sharper than the
+                # one the live run trains on. `match.py` applies this dict via
+                # `dataclasses.replace`, so it reaches the arena search directly.
+                "policy_temp": float(search.gumbel_policy_temp),
             },
             vloss_weight=int(search.gumbel_vloss_weight),
             target_batch=int(search.gumbel_target_batch),
