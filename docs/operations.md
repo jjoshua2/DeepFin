@@ -311,7 +311,7 @@ with, not a retyped constant.
 | `CScaleRoot` | string | -1 – 1000 | 7.0 | gumbel, rpg | root-only c_scale; <0 = use `CScale` |
 | `CVisitRoot` | string | -1 – 1e5 | 900.0 | gumbel, rpg | root-only c_visit; <0 = use `CVisit` |
 | `QVisitExp` | string | 0 – 2 | 1.0 | gumbel; rpg only if `QVisitExpRoot >= 90` | descent exponent on max_visit |
-| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg — but **reported INERT at the shipped defaults**, see below | <0 = log root (sim-invariant); ≥90 = use `QVisitExp` |
+| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg — reported **`[BRANCH]`**, not INERT; see below | <0 = log root (sim-invariant); ≥90 = use `QVisitExp` |
 | `QVisitFloor` | string | -1 – 1e4 | -1.0 | gumbel; rpg only if `QVisitExpRoot >= 0` | additive (decoupled) transform floor; <0 = legacy coupled |
 | `QGlobalScale` | check | — | false | gumbel | scale descent transform by the ROOT max child-visit |
 | `HalvingDiv` | spin | 2 – 8 | 2 | gumbel, rpg | sequential-halving divisor |
@@ -331,51 +331,56 @@ names with the underscores removed and CamelCased (`c_scale` → `CScale`,
 a UCI config by transliteration. The arena keeps snake_case because those flags
 address `GumbelConfig` fields directly; the UCI side follows lc0's CamelCase.
 
-### `QVisitExpRoot` is inert at the shipped play shape — and says so
+### `QVisitExpRoot` is branch-pinned, not inert — and the readback says which
 
-`searchconfig` reports this one `INERT` out of the box. That is not a wiring
-bug; it is the measurement. At the shipped `CScaleRoot=7` / `CVisitRoot=900`
-the knob is **byte-identically unobservable** — same best move, same tree size,
-same root visit distribution — at every value tried (0, 0.5, 1, 2, 98, −10)
-against a deterministic evaluator at 2048 nodes.
+`searchconfig` reports this one `[BRANCH]`, counted separately from `[INERT]`.
+The distinction is load-bearing and was got wrong once already.
 
-The root sequential-halving cut ranks on
-`gumbel + log_prior + q_scale·(q̂ − min_q)/(max_q − min_q)`
-(`_mcts_tree.c:1505-1524`), so the completed-Q term spans exactly `q_scale`
-while the prior term's span is capped by the C's own `1e-12` prior clip
-(`:1512`) at `log(1e12) = 27.6` nats. Three things follow, and each is a
-separate arm of `inert_reason`:
+- `[INERT]` means **the path cannot read this option at all** — `CPuct` under
+  classic Gumbel. No value of it matters, and no companion knob rescues it.
+- `[BRANCH]` means **the option does reach the search and does change it**, but
+  the current value sits inside a branch whose members are all equivalent.
 
-- **`< 0` (the shipped `-1.0`)** — the log branch is
-  `CScaleRoot·log1p(CVisitRoot + max_visit)` (`:1498`). The exponent does not
-  appear in that expression at all; only its **sign** chose the branch. Every
-  negative value is one search. Exact, position-independent.
-- **`>= 90`** — the "use `QVisitExp` at the root too" sentinel (`:3947`). Every
-  value in [90, 99] is one search.
-- **`0 … 90`** — the exponent enters only as `max_visit^exp` *added to*
-  `CVisitRoot`. Reported inert once `q_scale` provably exceeds the 27.6-nat
-  prior span, because the cut then orders purely by completed Q and the
-  transform's shape cannot re-rank. At the shipped scale that lower bound is
-  `7 × 901 = 6307`.
+`QVisitExpRoot` is the second kind, and its arms are exact — read off the C, no
+threshold, nothing fitted:
 
-Measured crossover on the harness position: `CScaleRoot` 2.0 (q_scale 13.6)
-observable, 3.0 (20.4) not. The shipped 7.0 sits at 47.6 (log) / 6307 (power).
-Lowering `CVisitRoot` to 0–1 makes the exponent observable again, which is what
-`test_the_root_exponent_arm_can_still_report_live` pins.
+| current value | what the C does | what is pinned |
+|---|---|---|
+| `< 0` (the shipped `-1.0`) | log root: `CScaleRoot·log1p(CVisitRoot + max_visit)` (`_mcts_tree.c:1498`) | the expression **does not contain the exponent**; only its sign chose the branch, so every negative value is one search |
+| `>= 90` | "use `QVisitExp` at the root too" sentinel (`:3947`) | every value in [90, 99] is one search |
+| `0 … 90` | power root: `CScaleRoot·(CVisitRoot + max_visit^exp)` (`:1500-1504`) | the exponent is *added to* `CVisitRoot`, so at `CVisitRoot >> max_visit^exp` it moves `q_scale` very little |
 
-**The bound is deliberately conservative, and under-fires.** 27.6 is derived
-from the C's prior clip, not fitted to the sweep, so near the boundary the
-report still says LIVE where the search is in fact unmoved (`CScaleRoot=0.01` /
-`CVisitRoot=900` is such a cell). That is the safe direction: the arm never
-calls a working knob dead.
-`test_an_inert_root_exponent_verdict_implies_an_unobservable_search` asserts
-only the implication that matters — INERT ⇒ byte-identical search — against
-real searches, so the verdict and its criterion share an instrument.
+**Crossing a boundary changes the search, and the engine must never call that
+"no effect".** At `CScaleRoot=0.05`, `QVisitExpRoot -1.0 → 1.0` moves the best
+root action 306 → 553 and the tree 8037 → 7764.
 
-Making the knob *observable* instead would mean moving the tuned
-`CScaleRoot`/`CVisitRoot` play defaults. That is a play-strength change needing
-an arena readout and a ledger entry, not something a UCI-surface change should
-smuggle in.
+#### ⚑ A withdrawn claim, recorded because it was wrong in the dangerous direction
+
+An earlier revision of this section reported `QVisitExpRoot` `[INERT]` using a
+`q_scale`-versus-prior-span bound, and claimed the bound "under-fires rather
+than over-fires" and "never calls a working knob dead". **Both claims were
+false.** The engine printed `NO EFFECT on the live search` for the 306 → 553
+transition above; the reverse direction printed *"Only crossing to >= 0 can
+change anything"* having just crossed from `>= 0`.
+
+The mechanism, for anyone tempted to retune rather than remove such a bound: two
+root transforms differ **only** by the scalar `q_scale` — the normalized
+`u = (q − min_q)/(max_q − min_q)` is identical between them. So a candidate pair
+flips exactly when `−Δlog_prior/Δu` falls between the two `q_scale` values, and
+`Δu` can be arbitrarily small on near-tied Q. No readback-time bound can rule
+that out, which is why the heuristic was deleted rather than retuned, and why
+every arm above is an exact statement about what the C reads.
+
+The measurements that motivated the bound are still true and still useful, just
+not as a predicate: at the shipped `CScaleRoot=7 / CVisitRoot=900` the crossing
+is byte-identical on the harness position, and lowering `CScaleRoot` to 2.0 or
+below makes it observable. Treat that as "this knob is hard to move at the
+shipped root scale", not as "this knob is dead".
+
+`tests/test_uci_search_options.py::test_a_no_effect_report_implies_the_search_did_not_move`
+pins the implication on the message the operator actually sees, over cells that
+**cross** arm boundaries as well as ones that stay inside them — the all-within-arm
+cell list is precisely why the original defect passed its own calibration test.
 
 **Two knobs deliberately have no UCI option:**
 

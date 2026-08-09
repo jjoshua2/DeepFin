@@ -20,6 +20,7 @@ from collections.abc import Callable
 import chess
 
 from chess_anti_engine.mcts.search_options import (
+    branch_note,
     OPTIONS_BY_NAME,
     PATH_DESCRIPTIONS,
     SEARCH_OPTIONS,
@@ -697,9 +698,22 @@ class Engine:
         self._options.set_search_value(opt.field, parsed)
         self._apply_search_option(opt, parsed)
         path = self._worker.realized_search_path()
-        why = inert_reason(opt, path, self._worker.realized_search_values())
+        values = self._worker.realized_search_values()
+        why = inert_reason(opt, path, values)
         if why is None:
-            _println(f"info string {opt.name} set to {parsed}")
+  # Reaches the search. It may still be pinned inside a branch whose members
+  # are all equivalent — say so, but do NOT say "no effect": this setoption may
+  # have just CROSSED a branch boundary and changed the played move. Claiming
+  # otherwise is the same defect as a silently-ignored knob, sign-flipped.
+            note = branch_note(opt, path, values)
+            if note is None:
+                _println(f"info string {opt.name} set to {parsed}")
+            else:
+                _println(
+                    f"info string {opt.name} set to {parsed} — reaches the live "
+                    f"search; {note}. Use `searchconfig` to see every realized "
+                    "value."
+                )
             return
   # Accepted (a GUI must not see an error for a legal option) but never
   # silent: this is the exact shape of the c_puct-under-Gumbel defect.
@@ -799,10 +813,16 @@ class Engine:
         for name, value, status, why in realized_rows(path, values):
             suffix = f" — {why}" if why else ""
             _println(f"info string searchconfig {name} = {value} [{status}]{suffix}")
-        inert = sum(1 for _, _, s, _ in realized_rows(path, values) if s == "INERT")
+        rows = realized_rows(path, values)
+        inert = sum(1 for _, _, s, _ in rows if s == "INERT")
+  # `BRANCH` is counted apart from `INERT` on purpose: an operator proving
+  # their config must not read "this parameter is not reaching the search"
+  # (CPuct under Gumbel) off the same number as "you cannot vary it without
+  # crossing its branch boundary" (QVisitExpRoot at its shipped -1.0).
+        branch = sum(1 for _, _, s, _ in rows if s == "BRANCH")
         _println(
-            f"info string searchconfig {len(SEARCH_OPTIONS) - inert} live, "
-            f"{inert} inert on path={path}"
+            f"info string searchconfig {len(rows) - inert - branch} live, "
+            f"{branch} branch-pinned, {inert} inert on path={path}"
         )
 
   # ─── setoption handlers ────────────────────────────────────────────────────

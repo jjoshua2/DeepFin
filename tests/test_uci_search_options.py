@@ -41,7 +41,10 @@ from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.mcts.search_options import (
     OPTIONS_BY_NAME,
     SEARCH_OPTIONS,
+    SEARCH_PATHS,
+    branch_note,
     inert_reason,
+    realized_rows,
 )
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.uci.engine import Engine, EngineOptions
@@ -639,117 +642,169 @@ def test_the_puct_family_is_live_exactly_where_a_puct_descent_runs() -> None:
             assert inert_reason(opt, path, values) is None
 
 
-# --- the root exponent is reported INERT where it demonstrably does nothing ---
+# --- a NO EFFECT claim must be true of the TRANSITION, not of an arm --------
 
-# (label, setoptions, exponent A, exponent B). Every cell is a real search.
-_ROOT_EXP_CELLS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
-    ("shipped CScaleRoot=7, log -> power", (), "-1.0", "1.0"),
-    ("shipped CScaleRoot=7, within power", (), "0", "2"),
-    ("CScaleRoot=0.05, within power",
-     ("setoption name CScaleRoot value 0.05",), "0", "2"),
-    # The de-saturated cell: c_visit_root no longer swamps max_visit**exp.
-    ("CVisitRoot=0 CScaleRoot=1.0, within power",
-     ("setoption name CVisitRoot value 0", "setoption name CScaleRoot value 1.0"),
-     "0", "2"),
+# (label, context applied to both arms, option, value A, value B).
+#
+# The bug this table exists for: `inert_reason` answered "are all values inside
+# this arm equivalent?" while `Engine._set_search_option` used the answer to
+# assert "this setoption had no effect". They diverge on any setoption that
+# CROSSES an arm boundary, and the engine then printed `NO EFFECT on the live
+# search` for a command that changed its own move. The first two rows are that
+# case, in both directions -- the reverse one printed "Only crossing to >= 0 can
+# change anything" having just crossed from >= 0.
+#
+# The old cell list was all within-arm, which is exactly why it passed.
+_SETOPTION_EFFECT_CELLS: tuple[tuple[str, tuple[str, ...], str, str, str], ...] = (
+    ("QVisitExpRoot CROSS-ARM at CScaleRoot=0.05, LOG -> POWER",
+     ("setoption name CScaleRoot value 0.05",), "QVisitExpRoot", "-1.0", "1.0"),
+    ("QVisitExpRoot CROSS-ARM at CScaleRoot=0.05, POWER -> LOG",
+     ("setoption name CScaleRoot value 0.05",), "QVisitExpRoot", "1.0", "-1.0"),
+    ("QVisitExpRoot CROSS-ARM at the shipped CScaleRoot=7",
+     (), "QVisitExpRoot", "-1.0", "1.0"),
+    ("QVisitExpRoot within the LOG arm", (), "QVisitExpRoot", "-1.0", "-10"),
+    ("QVisitExpRoot within the POWER arm", (), "QVisitExpRoot", "0", "2"),
+    ("QVisitExpRoot into the >=90 sentinel", (), "QVisitExpRoot", "98", "95"),
+    # A genuinely unreachable knob: NO EFFECT here must stay true.
+    ("CPuct under classic Gumbel", (), "CPuct", "1.75", "9.5"),
 )
+
+
+def _apply_and_observe(
+    context: tuple[str, ...], option: str, value: str,
+    capsys: pytest.CaptureFixture[str],
+) -> tuple[str, tuple[int, int, tuple[int, ...]]]:
+    """Set one option through the real dispatch; return (its info string, search)."""
+    engine = _make_engine()
+    try:
+        for line in context:
+            _setoption(engine, line)
+        capsys.readouterr()
+        _setoption(engine, f"setoption name {option} value {value}")
+        message = "".join(
+            line for line in capsys.readouterr().out.splitlines(keepends=True)
+            if option in line
+        )
+        return message, _signature(engine)
+    finally:
+        engine._worker.close()
 
 
 @pytest.mark.parametrize(
-    ("label", "context", "exp_a", "exp_b"), _ROOT_EXP_CELLS,
-    ids=[c[0] for c in _ROOT_EXP_CELLS],
+    ("label", "context", "option", "value_a", "value_b"), _SETOPTION_EFFECT_CELLS,
+    ids=[c[0] for c in _SETOPTION_EFFECT_CELLS],
 )
-def test_an_inert_root_exponent_verdict_implies_an_unobservable_search(
-    label: str, context: tuple[str, ...], exp_a: str, exp_b: str,
+def test_a_no_effect_report_implies_the_search_did_not_move(
+    label: str, context: tuple[str, ...], option: str,
+    value_a: str, value_b: str, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """CALIBRATION. The verdict and the criterion must share an instrument.
+    """THE deciding test, and it is on the CLAIM the engine actually makes.
 
-    `QVisitExpRoot` was reported `[LIVE]` while being byte-identically
-    unobservable at the shipped `CScaleRoot=7` across 0 / 0.5 / 1 / 2 / 98 / -10
-    -- a knob an operator could sweep for a whole tournament against a number
-    that never moved. The predicate that now reports it INERT is only worth
-    having if its verdict tracks a real search, so this asserts the implication
-    that must never break:
+    The previous version asserted `inert_reason(...) is not None => identical
+    search`, which is a statement about a predicate. The operator never sees the
+    predicate; they see `NO EFFECT on the live search`. So the implication that
+    has to hold is:
 
-        INERT  =>  the two exponents give a byte-identical search.
+        the engine printed NO EFFECT  =>  the search is byte-identical.
 
-    The converse is deliberately NOT asserted. `_ROOT_PRIOR_SPAN_NATS` is a
-    conservative bound derived from the C's 1e-12 prior clip rather than fitted
-    to a sweep, so the arm under-fires near the boundary: at CScaleRoot=0.01 /
-    CVisitRoot=900 it still says LIVE where the search is in fact unmoved. That
-    is the safe direction -- it never calls a working knob dead.
+    Cross-arm cells are included precisely because the old list had none.
     """
-    def _verdict_and_signature(exp: str):
-        engine = _make_engine()
-        try:
-            for line in (*context, f"setoption name QVisitExpRoot value {exp}"):
-                _setoption(engine, line)
-            worker = engine._worker
-            why = inert_reason(
-                OPTIONS_BY_NAME["qvisitexproot"],
-                worker.realized_search_path(),
-                worker.realized_search_values(),
-            )
-            return why, _signature(engine)
-        finally:
-            engine._worker.close()
+    _, sig_a = _apply_and_observe(context, option, value_a, capsys)
+    message, sig_b = _apply_and_observe(context, option, value_b, capsys)
 
-    why_a, sig_a = _verdict_and_signature(exp_a)
-    why_b, sig_b = _verdict_and_signature(exp_b)
-
-    if why_a is not None and why_b is not None:
+    if "NO EFFECT" in message:
         assert sig_a == sig_b, (
-            f"{label}: reported INERT ({why_a}) but the search MOVED between "
-            f"QVisitExpRoot={exp_a} and {exp_b}. The report is calling a live "
-            "knob dead, which is worse than the [LIVE] it replaced."
-        )
-    else:
-        assert sig_a != sig_b, (
-            f"{label}: reported LIVE but the search is byte-identical between "
-            f"QVisitExpRoot={exp_a} and {exp_b}."
+            f"{label}: the engine reported NO EFFECT for "
+            f"{option}={value_b} but the search MOVED: {sig_a[:2]} vs "
+            f"{sig_b[:2]}. A knob that took effect and was reported as ignored "
+            "is the same defect as one silently dropped, sign-flipped.\n"
+            f"message: {message.strip()}"
         )
 
 
-def test_the_root_exponent_is_inert_at_the_shipped_play_defaults() -> None:
-    """The specific complaint: `[LIVE]` for something that does nothing.
+def test_the_reviewer_cross_arm_case_reports_honestly_and_moves_the_search(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Named regression for the exact reproduction that blocked this PR.
 
-    Both arms, at the values the engine actually ships with.
+    `CScaleRoot 0.05`, `QVisitExpRoot -1.0 -> 1.0`: best root action 306 -> 553,
+    tree 8037 -> 7764, and the engine used to call it NO EFFECT.
+    """
+    context = ("setoption name CScaleRoot value 0.05",)
+    _, sig_log = _apply_and_observe(context, "QVisitExpRoot", "-1.0", capsys)
+    message, sig_pow = _apply_and_observe(context, "QVisitExpRoot", "1.0", capsys)
+
+    assert sig_log != sig_pow, (
+        "harness precondition: this transition must move the search, otherwise "
+        "the test cannot detect a false NO EFFECT"
+    )
+    assert "NO EFFECT" not in message
+    assert "reaches the live search" in message
+
+
+def test_the_shipped_root_exponent_is_branch_pinned_not_inert() -> None:
+    """`QVisitExpRoot = -1.0` selects the shipped LOG root transform.
+
+    Reporting it INERT, in the same column as `CPuct` (which genuinely cannot
+    reach this path), told an operator proving their config that a load-bearing
+    parameter was doing nothing.
     """
     values = {o.field: o.default for o in SEARCH_OPTIONS}
     opt = OPTIONS_BY_NAME["qvisitexproot"]
-
-    # Shipped: q_visit_exp_root = -1.0, the LOG branch.
     assert values["q_visit_exp_root"] == float(PLAY_SEARCH_DEFAULTS["q_visit_exp_root"])
-    why = inert_reason(opt, "gumbel", values)
-    assert why is not None
-    assert "only the SIGN" in why
 
-    # ...and moving it to the power branch does not rescue it at CScaleRoot=7.
-    values["q_visit_exp_root"] = 1.0
-    why = inert_reason(opt, "gumbel", values)
-    assert why is not None
-    assert "saturated" in why
+    assert inert_reason(opt, "gumbel", values) is None
+    note = branch_note(opt, "gumbel", values)
+    assert note is not None
+    assert "every value < 0 is the same search" in note
 
-    # >=90 is the "use QVisitExp at the root too" sentinel, so every value in
-    # [90, 99] is one search -- a third exact sub-case, not a power exponent.
-    values["q_visit_exp_root"] = 98.0
-    values["q_visit_exp"] = -1.0
-    why = inert_reason(opt, "gumbel", values)
-    assert why is not None
-    assert "sentinel" in why
+    rows = {name: (status, why) for name, _, status, why in realized_rows("gumbel", values)}
+    assert rows["QVisitExpRoot"][0] == "BRANCH"
+    assert rows["CPuct"][0] == "INERT"
 
 
-def test_the_root_exponent_arm_can_still_report_live() -> None:
-    """A gate that cannot fail is not a gate.
+def test_the_branch_note_is_exact_and_tracks_the_current_value() -> None:
+    """Each arm is read off the C, so the note must follow the value it is about.
 
-    Lowering CVisitRoot out of the regime where it swamps `max_visit**exp` must
-    flip the verdict back to LIVE, on both Gumbel paths.
+    Also a gate-can-fail check: an option with no branch structure must get no
+    note on any path.
     """
+    opt = OPTIONS_BY_NAME["qvisitexproot"]
+    for value, expected in (
+        (-1.0, "every value < 0"), (-10.0, "every value < 0"),
+        (0.0, "the power branch"), (2.0, "the power branch"),
+        (98.0, "every value in [90, 99]"),
+    ):
+        values = {o.field: o.default for o in SEARCH_OPTIONS}
+        values["q_visit_exp_root"] = value
+        for path in ("gumbel", "rpg"):
+            note = branch_note(opt, path, values)
+            assert note is not None, (path, value)
+            assert expected in note, (path, value, note)
+
     values = {o.field: o.default for o in SEARCH_OPTIONS}
-    values["q_visit_exp_root"] = 1.0
-    values["c_visit_root"] = 0.0
-    values["c_scale_root"] = 1.0
-    for path in ("gumbel", "rpg"):
-        assert inert_reason(OPTIONS_BY_NAME["qvisitexproot"], path, values) is None
+    for name in ("topk", "cscale", "policytemperature", "halvingdiv"):
+        for path in SEARCH_PATHS:
+            assert branch_note(OPTIONS_BY_NAME[name], path, values) is None
+
+
+def test_searchconfig_counts_branch_pinned_apart_from_inert(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The readback's summary line must not fold the two together."""
+    engine = _make_engine()
+    try:
+        capsys.readouterr()
+        engine.dispatch(parse_command("searchconfig"))
+        out = capsys.readouterr().out
+    finally:
+        engine._worker.close()
+
+    assert "QVisitExpRoot = -1.0 [BRANCH]" in out
+    # Value not pinned: the harness's realized CPuct is GumbelConfig's, not the
+    # registry default. The STATUS is what this test is about.
+    assert re.search(r"searchconfig CPuct = \S+ \[INERT\]", out)
+    assert "1 branch-pinned" in out
 
 
 # --- audit_targets --gumbel passthrough --------------------------------------

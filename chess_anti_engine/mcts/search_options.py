@@ -267,45 +267,56 @@ SEARCH_OPTIONS: tuple[SearchOption, ...] = (
 OPTIONS_BY_NAME: Mapping[str, SearchOption] = {o.lower: o for o in SEARCH_OPTIONS}
 
 
-# The root score the sequential-halving cut ranks on (`_mcts_tree.c:1505-1524`):
-#
-#     score = gumbel + log_prior + q_scale * (q_hat - min_q) / (max_q - min_q)
-#
-# The completed-Q term therefore spans exactly `q_scale`, while the prior term's
-# span is bounded by the C's own prior clip: `log_prior` is `log(max(p, 1e-12))`
-# (:1512), so no two root candidates can differ by more than log(1e12) nats.
-# Once `q_scale` exceeds that, the Q term outranges every prior gap the C can
-# represent and the root ordering is pure completed-Q -- at which point the
-# transform's SHAPE, which is all QVisitExpRoot selects, cannot re-rank anything.
-#
-# Derived from the source, NOT fitted to a sweep: it is a conservative bound, so
-# the arm under-fires rather than over-fires (it will still say LIVE just below
-# saturation). Measured on the harness position, the real crossover is lower --
-# CScaleRoot 2.0 (q_scale 13.6) observable, 3.0 (20.4) not -- and the shipped
-# CScaleRoot=7 sits at 47.6 (log) / 6307 (power), far inside.
-_ROOT_PRIOR_SPAN_NATS = 27.63  # log(1 / 1e-12)
+def branch_note(
+    option: SearchOption, path: str, values: Mapping[str, object],
+) -> str | None:
+    """Why the CURRENT value cannot be varied without leaving its branch.
 
+    **This is not inertness, and the difference is load-bearing.** A knob with a
+    branch note DOES reach the search and DOES change it — but only by crossing
+    a boundary, not by moving within the branch it currently sits in. Conflating
+    the two produced a real defect: `inert_reason` answered "are all values
+    inside this arm equivalent?" while `Engine._set_search_option` used the
+    answer to assert "this setoption had no effect", so at `CScaleRoot=0.05`
+    moving `QVisitExpRoot` from -1.0 to 1.0 printed `NO EFFECT on the live
+    search` while the best root action went 306 -> 553 and the tree 8037 ->
+    7764. The mirror printed "Only crossing to >= 0 can change anything" having
+    just crossed from >= 0.
 
-def _power_root_q_scale_lower_bound(values: Mapping[str, object]) -> float:
-    """Smallest `q_scale` the POWER root branch can produce, over max_visit >= 1.
-
-    PRECONDITION: `0 <= q_visit_exp_root < 90`. The caller's two earlier arms
-    return for the log branch (< 0) and the "use QVisitExp" sentinel (>= 90), so
-    this is the only branch left and `_mcts_tree.c:1500-1504` reduces to
-    `c_scale_root * (cvr + max_visit**exp)`. Handling the other branch here as
-    well would be unreachable code that no test could kill.
-
-    The `c_scale_root < 0 -> c_scale` (:3946) and `c_visit_root < 0 -> c_visit`
-    (:1487) sentinels are real here and are mirrored. `max_visit >= 1` with
-    `exp >= 0` gives `max_visit**exp >= 1`, which is what makes this a bound.
+    Every arm here is **exact and read off the C source** — no thresholds, no
+    saturation heuristic, nothing fitted to a sweep. The previous attempt used a
+    `q_scale`-vs-prior-span bound and claimed it "under-fires rather than
+    over-fires"; that claim was false. Two root transforms differ only by the
+    scalar `q_scale` (the normalized `u = (q-min)/(max-min)` is identical), so a
+    pair of candidates flips whenever `-dlog_prior/du` falls between the two
+    `q_scale` values. `du` can be arbitrarily small on near-tied Q, so no
+    readback-time bound can rule a flip out. The heuristic was removed rather
+    than retuned.
     """
-    csr = _num(values, "c_scale_root")
-    if csr < 0.0:
-        csr = _num(values, "c_scale")
-    cvr = _num(values, "c_visit_root")
-    if cvr < 0.0:
-        cvr = _num(values, "c_visit")
-    return csr * (cvr + 1.0)
+    if path not in option.live_in or option.field != "q_visit_exp_root":
+        return None
+    raw = _num(values, "q_visit_exp_root")
+    if raw >= 90.0:
+        return (
+            "every value in [90, 99] is the same search: >= 90 is the 'use "
+            "QVisitExp at the root too' sentinel (_mcts_tree.c:3947). Setting "
+            "it below 90 gives the root its own exponent and DOES change the "
+            "search"
+        )
+    if raw < 0.0:
+        return (
+            "every value < 0 is the same search: the LOG root transform is "
+            "q_scale = CScaleRoot*log1p(CVisitRoot+max_visit) "
+            "(_mcts_tree.c:1498), which does not contain the exponent at all — "
+            "only its SIGN chose the branch. Crossing to >= 0 selects the power "
+            "branch and CAN change the search"
+        )
+    return (
+        "the power branch: the exponent enters as max_visit**exp ADDED to "
+        "CVisitRoot (_mcts_tree.c:1500-1504), so at CVisitRoot >> max_visit**exp "
+        "it moves q_scale very little. Crossing to < 0 selects the log branch "
+        "and CAN change the search"
+    )
 
 
 def inert_reason(option: SearchOption, path: str, values: Mapping[str, object]) -> str | None:
@@ -316,41 +327,19 @@ def inert_reason(option: SearchOption, path: str, values: Mapping[str, object]) 
     below are the knobs whose reachability depends on ANOTHER knob's value, so
     a static per-path table would be wrong in exactly the direction that
     matters (it would call a dead knob live).
+
+    Every arm is a fact about what the C **reads**, so a non-None answer means
+    NO value of the option changes the search. That is the question
+    `Engine._set_search_option` asks before printing `NO EFFECT`, and it is why
+    "all values within the current branch are equivalent" belongs in
+    `branch_note` instead — see its docstring for the defect that came of
+    answering the wrong one.
     """
     if path not in option.live_in:
         return (
             f"{option.name} does not reach the {path} path "
             f"({PATH_DESCRIPTIONS.get(path, path)})"
         )
-    # QVisitExpRoot on EVERY Gumbel path (both arms are about the root
-    # transform, which `rpg` runs too), so this sits above the rpg-only block.
-    if option.field == "q_visit_exp_root":
-        raw = _num(values, "q_visit_exp_root")
-        if raw >= 90.0:
-            return (
-                "QVisitExpRoot >= 90 is the 'use QVisitExp at the root too' "
-                "sentinel (_mcts_tree.c:3947), so every value in [90, 99] is "
-                "the same search and the root exponent is whatever QVisitExp "
-                "says. Set it below 90 to give the root its own exponent"
-            )
-        if raw < 0.0:
-            return (
-                "the LOG root transform reads only the SIGN of QVisitExpRoot: "
-                "q_scale = CScaleRoot*log1p(CVisitRoot+max_visit) "
-                "(_mcts_tree.c:1498) does not contain the exponent at all, so "
-                "every value < 0 is the same search. Only crossing to >= 0 "
-                "(the power branch) can change anything"
-            )
-        bound = _power_root_q_scale_lower_bound(values)
-        if bound > _ROOT_PRIOR_SPAN_NATS:
-            return (
-                f"the root ranking is saturated: q_scale >= {bound:.1f} spans "
-                f"more than the {_ROOT_PRIOR_SPAN_NATS:.1f} nats the C's 1e-12 "
-                "prior clip allows between root candidates, so the halving cut "
-                "orders purely by completed Q and the transform's shape cannot "
-                "re-rank. Lower CScaleRoot/CVisitRoot to make it observable"
-            )
-        return None
     if path != "rpg":
         return None
     # Root-parallel Gumbel runs Gumbel ONLY at the root: the intra-candidate
@@ -376,17 +365,33 @@ def _num(values: Mapping[str, object], key: str) -> float:
 def realized_rows(
     path: str, values: Mapping[str, object],
 ) -> list[tuple[str, str, str, str]]:
-    """``(name, value, LIVE|INERT, reason)`` for every registered option.
+    """``(name, value, LIVE|INERT|BRANCH, reason)`` for every registered option.
 
     This is the readback an operator uses to prove what the engine ran. It
-    reports INERT rather than omitting the row — a missing row is
-    indistinguishable from an unsupported build — and it never prints a value
-    as realized when the path could not act on it.
+    reports a row for every option rather than omitting the dead ones — a
+    missing row is indistinguishable from an unsupported build — and it never
+    prints a value as realized when the path could not act on it.
+
+    Three statuses, because two conflated them into a wrong answer:
+
+    ``INERT``   the path cannot read this option at all. ``CPuct`` under Gumbel.
+                No value of it, and no change to any companion knob short of
+                switching search path, makes it matter.
+    ``BRANCH``  the option DOES reach the search and DOES change it, but the
+                current value is inside a branch whose members are all
+                equivalent. Filing this under ``INERT`` told an operator that a
+                load-bearing parameter was doing nothing — ``QVisitExpRoot =
+                -1.0`` is what selects the shipped log root transform.
+    ``LIVE``    varying it can change the search.
     """
     rows: list[tuple[str, str, str, str]] = []
     for opt in SEARCH_OPTIONS:
         raw = values.get(opt.field, None)
         shown = "n/a" if raw is None else _fmt(raw)  # pyright: ignore[reportArgumentType]
         why = inert_reason(opt, path, values)
-        rows.append((opt.name, shown, "LIVE" if why is None else "INERT", why or ""))
+        if why is not None:
+            rows.append((opt.name, shown, "INERT", why))
+            continue
+        note = branch_note(opt, path, values)
+        rows.append((opt.name, shown, "BRANCH" if note else "LIVE", note or ""))
     return rows
