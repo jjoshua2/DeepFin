@@ -36226,3 +36226,55 @@ there. Related but not identical to the 08-08 top-1 teacher-vs-student read (+5.
 88% ties). Instrument: join `audit_targets` visit distributions with these per-move cp
 values and score concordance, mass-weighted and unweighted. Sanctioned tool, small
 batch, `--gpu-mem-fraction`. NOT pre-registered yet.
+
+## 2026-08-08 (night) — 256 SIMS OF SEARCH BUY +0.77pp OF RANKING ACCURACY AND −0.081 NATS OF ENTROPY
+
+**The stall, stated mechanically.** Paired, same 400 positions, both arms scored against
+the same banked SF MultiPV-40 @50k ruler. Training shape read off the live yaml (sims
+256, topk 32, c_scale 0.025, vloss_weight 1, add_noise=False as in `audit_targets`).
+GPU capped at fraction 0.25, batch 16. Repro `scratchpad/search_vs_prior_ranking.py`.
+
+Pairwise concordance vs SF's cp ordering (0.5 = chance):
+
+| region | net prior | 256-sim search | delta |
+|---|---|---|---|
+| within top-32, unweighted | 0.7821 | 0.7898 | **+0.0077** |
+| within top-32, mass-weighted | 0.8908 | 0.9058 | +0.0150 |
+| all legal, unweighted | 0.8017 | 0.8011 | −0.0006 |
+| all legal, mass-weighted | 0.9019 | 0.9156 | +0.0137 |
+
+Paired delta within top-32: **+0.0077, bootstrap 95% CI [+0.0065, +0.0088]**, search
+better in 75.3% of positions. Real, and tiny.
+
+**Entropy: prior 1.1851 → search 1.1039 nats.** Top-1 agreement 92%.
+
+**So the target adds 0.77pp of ranking accuracy and 0.081 nats of confidence.** The net
+is being taught to be substantially MORE SURE about an ordering that is BARELY BETTER.
+That is the confidence-inflation finding of the same morning (entropy −0.21/−0.29 nats,
+accuracy flat, ECE worse) traced to its origin: it is not a training-dynamics artifact,
+it is what the target literally contains. And it is the plateau: with the teacher this
+close to the student, CE against it converges to a fixed point, which is the fitted
+asymptote 0.0703.
+
+**This closes the search-side axis.** More sims, different c_scale, root expansion,
+mixture gates — all of them tune a teacher whose entire informational advantage is
+0.77pp. Nothing on that axis can be worth 5-8 Elo/day
+(memory: most-experiments-here-are-unfalsifiable).
+
+**Implication for the intervention.** Every term in the target is a function of the net
+(prior, completed_q, root_q), so the loop cannot lift itself. The lever must inject a
+signal from OUTSIDE the net↔search loop, or stop teaching unearned confidence. The two
+candidates, one to be chosen and pre-registered separately (one data-affecting change
+per readout window):
+
+- **A. Blend the SF soft label into the MAIN policy target.** Largest measured upside
+  (+30.35cp [+24.95, +35.75] vs the trained target on top-1) and it is genuinely
+  external. Confounds: SF label scored by an SF ruler (needs an lc0/BT4 conjugate
+  ruler); lists only ~9 of ~21 legal moves; `policy_sf` upweighting previously HURT
+  (different head -- opponent reply -- so a caution, not a refutation).
+- **B. Stop the target sharpening the net past its information content.** Directly
+  targets the measured defect and is config-side and cheap to revert, but it adds no
+  information -- it only slows convergence to the fixed point and keeps the prior wide
+  enough for Gumbel to sample new moves.
+
+NOT pre-registered. No live change made.
