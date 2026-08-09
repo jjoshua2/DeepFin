@@ -552,8 +552,23 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `tests/test_wdl_terminal_outcome.py` pins the off-path equality against a
 # verbatim transcription of `main`'s blend so it cannot drift back unnoticed.
 # Records stay comparable across the handover.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:78aaaf430abf66f1"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:afbf4cc1de454249"
+# EIGHTH declared false positive, MEASURED. `_build_metrics` is in both closures
+# and gained a `_den` helper plus two kwargs (`policy_own_acc_rows`,
+# `policy_future_acc_rows`), so both ids move. The control: `origin/main`'s
+# `trainer.py` loaded as a second module inside the real package, and its
+# `_build_metrics` called with byte-identical `sums`, `acc_sums` and `n` beside
+# this branch's. All 98 fields main's `TrainMetrics` declares came back
+# BITWISE EQUAL; the branch adds exactly two, both pure denominators
+# (256.0 / 12.0 for the seeded pairs). `_den` reads `acc_sums[name][1]` — the
+# same tensor `_acc` already divides by — so it cannot perturb a numerator, and
+# no loss field is reachable from it. The control can fail: the same call at
+# `n=4.0` instead of `3.0` moves `loss`.
+# Nothing the best-model comparison reads (`test_loss` and the per-head losses)
+# changed, so records stay comparable across the handover.
+#   full_pass  78aaaf430abf66f1 -> 079f56e31e6b9501
+#   sampled    afbf4cc1de454249 -> 4ca17596e4a59a90
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:079f56e31e6b9501"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:4ca17596e4a59a90"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
