@@ -33,6 +33,7 @@ falls through to classic Gumbel):
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from collections.abc import Mapping
 
@@ -267,6 +268,55 @@ SEARCH_OPTIONS: tuple[SearchOption, ...] = (
 OPTIONS_BY_NAME: Mapping[str, SearchOption] = {o.lower: o for o in SEARCH_OPTIONS}
 
 
+# The root score the sequential-halving cut ranks on (`_mcts_tree.c:1505-1524`):
+#
+#     score = gumbel + log_prior + q_scale * (q_hat - min_q) / (max_q - min_q)
+#
+# The completed-Q term therefore spans exactly `q_scale`, while the prior term's
+# span is bounded by the C's own prior clip: `log_prior` is `log(max(p, 1e-12))`
+# (:1512), so no two root candidates can differ by more than log(1e12) nats.
+# Once `q_scale` exceeds that, the Q term outranges every prior gap the C can
+# represent and the root ordering is pure completed-Q -- at which point the
+# transform's SHAPE, which is all QVisitExpRoot selects, cannot re-rank anything.
+#
+# Derived from the source, NOT fitted to a sweep: it is a conservative bound, so
+# the arm under-fires rather than over-fires (it will still say LIVE just below
+# saturation). Measured on the harness position, the real crossover is lower --
+# CScaleRoot 2.0 (q_scale 13.6) observable, 3.0 (20.4) not -- and the shipped
+# CScaleRoot=7 sits at 47.6 (log) / 6307 (power), far inside.
+_ROOT_PRIOR_SPAN_NATS = 27.63  # log(1 / 1e-12)
+
+
+def _effective_root_exp(values: Mapping[str, object]) -> float:
+    """`q_visit_exp_root`, resolving the >=90 "use the descent exponent" sentinel.
+
+    Mirrors `_mcts_tree.c:3947` exactly. Reading the raw field instead would
+    call `QVisitExpRoot=98` a power root even when `QVisitExp` is negative.
+    """
+    raw = _num(values, "q_visit_exp_root")
+    return raw if raw < 90.0 else _num(values, "q_visit_exp")
+
+
+def _root_q_scale_lower_bound(values: Mapping[str, object]) -> float:
+    """Smallest `q_scale` the ROOT transform can produce, over max_visit >= 1.
+
+    Mirrors the two branches at `_mcts_tree.c:1497-1504`, including the
+    `c_scale_root < 0 -> c_scale` (:3946) and `c_visit_root < 0 -> c_visit`
+    (:1487) sentinels. Both branches are increasing in `max_visit`, so
+    substituting its floor of 1 gives the bound.
+    """
+    csr = _num(values, "c_scale_root")
+    if csr < 0.0:
+        csr = _num(values, "c_scale")
+    cvr = _num(values, "c_visit_root")
+    if cvr < 0.0:
+        cvr = _num(values, "c_visit")
+    if _effective_root_exp(values) < 0.0:
+        return csr * math.log1p(cvr + 1.0)
+    # exp >= 0 and max_visit >= 1 give max_visit**exp >= 1.
+    return csr * (cvr + 1.0)
+
+
 def inert_reason(option: SearchOption, path: str, values: Mapping[str, object]) -> str | None:
     """Why ``option`` cannot affect a search on ``path``, or None if it can.
 
@@ -281,6 +331,35 @@ def inert_reason(option: SearchOption, path: str, values: Mapping[str, object]) 
             f"{option.name} does not reach the {path} path "
             f"({PATH_DESCRIPTIONS.get(path, path)})"
         )
+    # QVisitExpRoot on EVERY Gumbel path (both arms are about the root
+    # transform, which `rpg` runs too), so this sits above the rpg-only block.
+    if option.field == "q_visit_exp_root":
+        raw = _num(values, "q_visit_exp_root")
+        if raw >= 90.0:
+            return (
+                "QVisitExpRoot >= 90 is the 'use QVisitExp at the root too' "
+                "sentinel (_mcts_tree.c:3947), so every value in [90, 99] is "
+                "the same search and the root exponent is whatever QVisitExp "
+                "says. Set it below 90 to give the root its own exponent"
+            )
+        if raw < 0.0:
+            return (
+                "the LOG root transform reads only the SIGN of QVisitExpRoot: "
+                "q_scale = CScaleRoot*log1p(CVisitRoot+max_visit) "
+                "(_mcts_tree.c:1498) does not contain the exponent at all, so "
+                "every value < 0 is the same search. Only crossing to >= 0 "
+                "(the power branch) can change anything"
+            )
+        bound = _root_q_scale_lower_bound(values)
+        if bound > _ROOT_PRIOR_SPAN_NATS:
+            return (
+                f"the root ranking is saturated: q_scale >= {bound:.1f} spans "
+                f"more than the {_ROOT_PRIOR_SPAN_NATS:.1f} nats the C's 1e-12 "
+                "prior clip allows between root candidates, so the halving cut "
+                "orders purely by completed Q and the transform's shape cannot "
+                "re-rank. Lower CScaleRoot/CVisitRoot to make it observable"
+            )
+        return None
     if path != "rpg":
         return None
     # Root-parallel Gumbel runs Gumbel ONLY at the root: the intra-candidate

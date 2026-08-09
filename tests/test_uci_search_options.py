@@ -198,6 +198,10 @@ def test_a_cosmetic_option_changes_nothing() -> None:
 # quietly dropping the option is the point: "no probe value moved it" would
 # otherwise have read as "the plumbing is broken".
 #
+# `searchconfig` now REPORTS that inertness rather than printing [LIVE] over it
+# — see `inert_reason`'s q_visit_exp_root arms and the calibration test
+# `test_an_inert_root_exponent_verdict_implies_an_unobservable_search` below.
+#
 # `GumbelScale` is absent: it is nondeterministic by construction and has its
 # own test.
 _MOVES_THE_SEARCH: tuple[tuple[str, str, tuple[str, ...]], ...] = (
@@ -633,6 +637,116 @@ def test_the_puct_family_is_live_exactly_where_a_puct_descent_runs() -> None:
         assert inert_reason(opt, "gumbel", values) is not None
         for path in ("walker", "pucv", "pucv_pool", "rpg"):
             assert inert_reason(opt, path, values) is None
+
+
+# --- the root exponent is reported INERT where it demonstrably does nothing ---
+
+# (label, setoptions, exponent A, exponent B). Every cell is a real search.
+_ROOT_EXP_CELLS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+    ("shipped CScaleRoot=7, log -> power", (), "-1.0", "1.0"),
+    ("shipped CScaleRoot=7, within power", (), "0", "2"),
+    ("CScaleRoot=0.05, within power",
+     ("setoption name CScaleRoot value 0.05",), "0", "2"),
+    # The de-saturated cell: c_visit_root no longer swamps max_visit**exp.
+    ("CVisitRoot=0 CScaleRoot=1.0, within power",
+     ("setoption name CVisitRoot value 0", "setoption name CScaleRoot value 1.0"),
+     "0", "2"),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "context", "exp_a", "exp_b"), _ROOT_EXP_CELLS,
+    ids=[c[0] for c in _ROOT_EXP_CELLS],
+)
+def test_an_inert_root_exponent_verdict_implies_an_unobservable_search(
+    label: str, context: tuple[str, ...], exp_a: str, exp_b: str,
+) -> None:
+    """CALIBRATION. The verdict and the criterion must share an instrument.
+
+    `QVisitExpRoot` was reported `[LIVE]` while being byte-identically
+    unobservable at the shipped `CScaleRoot=7` across 0 / 0.5 / 1 / 2 / 98 / -10
+    -- a knob an operator could sweep for a whole tournament against a number
+    that never moved. The predicate that now reports it INERT is only worth
+    having if its verdict tracks a real search, so this asserts the implication
+    that must never break:
+
+        INERT  =>  the two exponents give a byte-identical search.
+
+    The converse is deliberately NOT asserted. `_ROOT_PRIOR_SPAN_NATS` is a
+    conservative bound derived from the C's 1e-12 prior clip rather than fitted
+    to a sweep, so the arm under-fires near the boundary: at CScaleRoot=0.01 /
+    CVisitRoot=900 it still says LIVE where the search is in fact unmoved. That
+    is the safe direction -- it never calls a working knob dead.
+    """
+    def _verdict_and_signature(exp: str):
+        engine = _make_engine()
+        try:
+            for line in (*context, f"setoption name QVisitExpRoot value {exp}"):
+                _setoption(engine, line)
+            worker = engine._worker
+            why = inert_reason(
+                OPTIONS_BY_NAME["qvisitexproot"],
+                worker.realized_search_path(),
+                worker.realized_search_values(),
+            )
+            return why, _signature(engine)
+        finally:
+            engine._worker.close()
+
+    why_a, sig_a = _verdict_and_signature(exp_a)
+    why_b, sig_b = _verdict_and_signature(exp_b)
+
+    if why_a is not None and why_b is not None:
+        assert sig_a == sig_b, (
+            f"{label}: reported INERT ({why_a}) but the search MOVED between "
+            f"QVisitExpRoot={exp_a} and {exp_b}. The report is calling a live "
+            "knob dead, which is worse than the [LIVE] it replaced."
+        )
+    else:
+        assert sig_a != sig_b, (
+            f"{label}: reported LIVE but the search is byte-identical between "
+            f"QVisitExpRoot={exp_a} and {exp_b}."
+        )
+
+
+def test_the_root_exponent_is_inert_at_the_shipped_play_defaults() -> None:
+    """The specific complaint: `[LIVE]` for something that does nothing.
+
+    Both arms, at the values the engine actually ships with.
+    """
+    values = {o.field: o.default for o in SEARCH_OPTIONS}
+    opt = OPTIONS_BY_NAME["qvisitexproot"]
+
+    # Shipped: q_visit_exp_root = -1.0, the LOG branch.
+    assert values["q_visit_exp_root"] == float(PLAY_SEARCH_DEFAULTS["q_visit_exp_root"])
+    why = inert_reason(opt, "gumbel", values)
+    assert why is not None and "only the SIGN" in why
+
+    # ...and moving it to the power branch does not rescue it at CScaleRoot=7.
+    values["q_visit_exp_root"] = 1.0
+    why = inert_reason(opt, "gumbel", values)
+    assert why is not None and "saturated" in why
+
+    # >=90 is the "use QVisitExp at the root too" sentinel, so every value in
+    # [90, 99] is one search -- a third exact sub-case, not a power exponent.
+    values["q_visit_exp_root"] = 98.0
+    values["q_visit_exp"] = -1.0
+    why = inert_reason(opt, "gumbel", values)
+    assert why is not None and "sentinel" in why
+
+
+def test_the_root_exponent_arm_can_still_report_live() -> None:
+    """A gate that cannot fail is not a gate.
+
+    Lowering CVisitRoot out of the regime where it swamps `max_visit**exp` must
+    flip the verdict back to LIVE, on both Gumbel paths.
+    """
+    values = {o.field: o.default for o in SEARCH_OPTIONS}
+    values["q_visit_exp_root"] = 1.0
+    values["c_visit_root"] = 0.0
+    values["c_scale_root"] = 1.0
+    for path in ("gumbel", "rpg"):
+        assert inert_reason(OPTIONS_BY_NAME["qvisitexproot"], path, values) is None
 
 
 # --- audit_targets --gumbel passthrough --------------------------------------
