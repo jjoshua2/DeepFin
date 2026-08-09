@@ -36184,3 +36184,45 @@ re-measured on live rows before any target-shape change is pre-registered.
 per-move cp values and ask how much target mass sits on the moves within 50cp. That
 needs the sanctioned tool at small batch with `--gpu-mem-fraction`, not a hand-rolled
 256-sim run.
+
+### AMENDMENT (same night) — re-scored on RANKING ACCURACY, which is the right metric
+
+The entry above judged the tail by "cp within X of best". That is an imposed threshold,
+the same error this session logged three times against rulers. Re-scored as **pairwise
+concordance of the net prior against SF's cp ordering** (0.5 = chance), same 1,200
+positions, same MultiPV-40 ruler:
+
+| region | concordance |
+|---|---|
+| all legal | 0.807 |
+| cross-boundary (tail vs candidate pairs) | **0.898** |
+| within candidates (top-32) | 0.784 |
+| **within tail** | **0.600** |
+
+**The boundary is well placed** (0.898) — the prior does know tail moves are worse.
+**But the ordering INSIDE the tail is near-chance (0.600)**, and because every tail move
+carries the same `completed_q`, that prior ordering IS the target there. The target
+asserts a confident ranking over ~11% of legal moves that is barely better than a coin
+flip. The user's structural objection is CORRECT and the previous entry's framing could
+not see it.
+
+Separation is likewise not clean: 10.2% of (tail, candidate) pairs are inverted, 90.3%
+of positions contain at least one inversion, and a mean 6.58 candidates are worse than
+the best tail move (best tail move ranks 26.3 of ~36, vs 33 if the tail were strictly
+worst). Restricting the comparison to prior-top-4/8/16 — a proxy for the moves that
+actually carry target mass — collapses the inversion rate to 0.83%/1.55%/3.11%, so the
+mis-ordering does not reach the moves that matter.
+
+**What does NOT change:** the tail carries mean 6.2e-5 of target mass, so the CE
+gradient on those coordinates is negligible. A near-noise ordering at ~0 weight is a
+defect in the target's CONTENT but not in its EFFECT, and root expansion's authority is
+bounded at +/-1.88 logits (6.5x) — not enough to move a 1e-7 move regardless. Root
+expansion stays KILLED, now for the right reason: it would improve the ordering of moves
+that carry no weight.
+
+**The well-posed successor question:** does the 256-sim search improve pairwise
+concordance over the raw prior WITHIN the top-32, where the mass is? Prior is 0.784
+there. Related but not identical to the 08-08 top-1 teacher-vs-student read (+5.46cp,
+88% ties). Instrument: join `audit_targets` visit distributions with these per-move cp
+values and score concordance, mass-weighted and unweighted. Sanctioned tool, small
+batch, `--gpu-mem-fraction`. NOT pre-registered yet.
