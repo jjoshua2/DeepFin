@@ -269,6 +269,7 @@ _SENTINELS: dict[str, tuple[str, object]] = {
     "full_ply_pair_fraction": ("full_ply_pair_fraction", 0.41),
     "fast_simulations": ("fast_simulations", 13),
     "gumbel_topk": ("gumbel_topk", 7),
+    "gumbel_policy_temp": ("gumbel_policy_temp", 1.63),
     "gumbel_target_batch": ("gumbel_target_batch", 3),
     "gumbel_vloss_weight": ("gumbel_vloss_weight", 2),
     "gumbel_c_scale": ("gumbel_c_scale", 0.077),
