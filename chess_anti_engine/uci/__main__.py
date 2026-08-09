@@ -36,6 +36,7 @@ from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_VLOSS_WEIGHT,
     GumbelConfig,
 )
+from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
 
 from .engine import Engine, EngineOptions, _emit_info_string, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
@@ -527,6 +528,15 @@ def _build_engine(
   # dropping). Verified no-op/improvement 256->16k, fixes the 32k reversal.
     c_scale_root: float = 7.0,
     q_visit_exp_root: float = -1.0,
+  # Search-time policy-prior temperature (UCI `PolicyTemperature`). 1.0 is a
+  # no-op; it had no plumbing here at all before, which is why no play-path
+  # config could set it. != 1.0 costs ~1.9x end-to-end search — see the option
+  # table in docs/operations.md.
+    policy_temp: float = 1.0,
+    halving_div: int = 2,
+  # Root Gumbel-noise strength (UCI `GumbelScale`). 0 = the deterministic
+  # search every prior build ran.
+    root_noise_scale: float = 0.0,
     n_walkers: int,
     vloss_weight: int,
     walker_gather: int,
@@ -564,6 +574,8 @@ def _build_engine(
             q_global_scale=q_global_scale,
             c_scale_root=c_scale_root,
             q_visit_exp_root=q_visit_exp_root,
+            policy_temp=policy_temp,
+            halving_div=halving_div,
             add_noise=False,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
@@ -577,9 +589,16 @@ def _build_engine(
         pucv_vloss_mode=pucv_vloss_mode,
         eval_cache_entries=eval_cache_entries,
     )
+    worker.set_root_noise_scale(root_noise_scale)
     # Same default Engine applies when options is None; resolved here too so
     # the RPG install below reads concrete knobs.
     opts = options if options is not None else EngineOptions()
+  # Advertise what was BUILT, not what EngineOptions happens to default to.
+  # These knobs arrive as CLI args and land on the worker; the handshake reads
+  # EngineOptions. Copying worker -> options here makes the worker the single
+  # direction of truth, so `--c-scale 0.3` can never be advertised as 0.025.
+    for _opt in SEARCH_OPTIONS:
+        opts.set_search_value(_opt.field, worker.realized_search_values()[_opt.field])
     engine = Engine(
         worker,
         rebuild_evaluator=rebuild_evaluator,
@@ -707,6 +726,28 @@ def main() -> int:
                         "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
                         "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
     p.add_argument("--c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="Gumbel c_visit constant (default: 50.0)")
+    p.add_argument(
+        "--policy-temp", type=float, default=float(PLAY_SEARCH_DEFAULTS["policy_temp"]),
+        help="search-time temperature on the policy PRIOR (logits/T) before it "
+             "seeds the tree. >1 softens, <1 sharpens, 1.0 (default) = no-op. "
+             "Also UCI `PolicyTemperature`, range 0.5-5.0. COSTS ~1.9x search "
+             "time when != 1.0 (disables the compact-legal bf16 leaf transport). "
+             "NOT policy_target_temp, which is a training-time knob on the "
+             "policy TARGET and never runs during play.",
+    )
+    p.add_argument(
+        "--halving-div", type=int, default=2,
+        help="Gumbel sequential-halving divisor: each round keeps "
+             "ceil(n_cands/div). 2 = standard halving (default). Also UCI "
+             "`HalvingDiv`.",
+    )
+    p.add_argument(
+        "--gumbel-scale", type=float, default=0.0,
+        help="root Gumbel-noise strength for match play (default 0.0 = the "
+             "deterministic search every prior build ran). >0 re-enables root "
+             "noise at that strength for opening diversity. Also UCI "
+             "`GumbelScale`.",
+    )
   # PUCT-descent knobs (walker pool / multi-GPU PUCV). They do NOT reach the
   # Gumbel search -- see mcts.gumbel.INERT_GUMBEL_KNOBS -- which is why their
   # defaults come from PLAY_PUCT_DEFAULTS and not PLAY_SEARCH_DEFAULTS.
@@ -1034,6 +1075,9 @@ def main() -> int:
                 c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
                 q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
                 c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
+                policy_temp=float(args.policy_temp),
+                halving_div=int(args.halving_div),
+                root_noise_scale=float(args.gumbel_scale),
                 n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
                 walker_gather=walker_gather,
                 pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,

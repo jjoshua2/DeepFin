@@ -67,6 +67,7 @@ from chess_anti_engine.mcts.gumbel import (
     _policy_logits_to_full,
     _softmax,
     _wdl_to_q,
+    assert_c_path_can_run,
     gumbel_policy_diagnostics,
     volatility_search_enabled,
 )
@@ -462,6 +463,12 @@ def run_gumbel_root_many_c(
   # because this is the choke point EVERY C-path consumer goes through —
   # selfplay, training-time eval and UCI all land on this function.
     _report_guard_health()
+  # Same reasoning, for the OTHER silent-null shape: a GumbelConfig field this
+  # path does not implement. Guarding the dispatch boundary rather than each
+  # caller's CLI is the point — the CLI is not what chooses the C path, and a
+  # caller that grew a python-only knob would otherwise get a clean, wrong,
+  # perfectly reproducible measurement. See PY_ONLY_GUMBEL_KNOBS.
+    assert_c_path_can_run(cfg, where="run_gumbel_root_many_c")
     if int(vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
         # `tree_gumbel_select_child` (_mcts_tree.c:2941-2944) mirrors
         # `tree_select_child`'s VIRTUAL_MEAN accounting for the CHILD term and

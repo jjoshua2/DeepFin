@@ -240,6 +240,205 @@ If the shards are already in the replay window, the window ages them out on its
 own schedule — quarantining stops them being re-drawn and re-shared, it does not
 un-train them.
 
+## UCI search options (match play)
+
+The engine (`python -m chess_anti_engine.uci`) exposes its search parameters as
+UCI options, so a TCEC-style config, cutechess-cli, or Arena can set them
+without a code change. Every option below is also a CLI flag on the same
+module; the UCI name and the flag set the same field.
+
+**The rule this surface is built around: an option that cannot take effect is
+never silently accepted.** The engine has five search paths and most knobs are
+live on only some of them — `c_puct` and the `fpu_*` family are structurally
+inert in a Gumbel search (`GumbelConfig.full_tree=True` makes the PUCT descent
+unreachable), and the Gumbel shape knobs are equally inert on the PUCT walker
+pool. So a `setoption` that lands on a knob the *live* path cannot read is
+accepted, applied to the config, and reported:
+
+```
+info string CPuct set to 2.5 — NO EFFECT on the live search: CPuct does not
+reach the gumbel path (classic single-thread Gumbel ...). Use `searchconfig`
+to see every realized value.
+```
+
+### Reading back what the engine actually used
+
+```
+searchconfig
+```
+
+A non-spec command (no GUI sends it) that dumps every registered parameter with
+its realized value and a LIVE/INERT verdict for the path that will actually
+run:
+
+```
+info string searchconfig path=gumbel (classic single-thread Gumbel (Threads=1, UseVL off, 1 device))
+info string searchconfig PolicyTemperature = 1.0 [LIVE]
+info string searchconfig CScale = 0.025 [LIVE]
+info string searchconfig CPuct = 1.75 [INERT] — CPuct does not reach the gumbel path (...)
+info string searchconfig 15 live, 4 inert on path=gumbel
+```
+
+The path is read off the **live worker**, not off the options: `UseVL true`
+against an evaluator without the slot API is accepted and then falls through to
+classic Gumbel, and an options-derived answer would report a path that never
+ran. Values come from `SearchWorker.realized_search_values()` — the same
+objects the search reads.
+
+### Which path is live
+
+| path | selected by | search |
+|---|---|---|
+| `gumbel` | `Threads 1`, `UseVL false`, one device | classic single-thread Gumbel C |
+| `rpg` | `SearchParallel gumbel` + ≥2 devices | root-parallel Gumbel; Gumbel at the root, PUCT below it |
+| `walker` | `Threads >1` | PUCT walker pool |
+| `pucv` | `UseVL true` (+ slot-API evaluator) | single-thread batched-VL PUCT |
+| `pucv_pool` | `UseMultiGpuPUCV true` + ≥2 devices | multi-GPU shared-tree PUCT |
+
+### The options
+
+Floats use `type string` (UCI has no float type — lc0's `PolicyTemperature`
+convention) and are parsed and range-checked by the engine; an out-of-range or
+unparseable value is refused with an `info string` and the previous value is
+kept. Defaults are advertised from the value the worker was actually built
+with, not a retyped constant.
+
+| option | type | range | default | live on | notes |
+|---|---|---|---|---|---|
+| `PolicyTemperature` | string | 0.5 – 5.0 | 1.0 | gumbel, rpg | prior temperature (logits/T); >1 softens. **Costs search time when ≠ 1.0 — see below.** |
+| `CScale` | string | 1e-4 – 100 | 0.025 | gumbel; rpg only if `CScaleRoot < 0` | descent value-transform scale |
+| `CVisit` | string | 0 – 1e5 | 50.0 | gumbel; rpg only if `CVisitRoot < 0` | descent transform floor |
+| `CScaleRoot` | string | -1 – 1000 | 7.0 | gumbel, rpg | root-only c_scale; <0 = use `CScale` |
+| `CVisitRoot` | string | -1 – 1e5 | 900.0 | gumbel, rpg | root-only c_visit; <0 = use `CVisit` |
+| `QVisitExp` | string | 0 – 2 | 1.0 | gumbel; rpg only if `QVisitExpRoot >= 90` | descent exponent on max_visit |
+| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg | <0 = log root (sim-invariant); ≥90 = use `QVisitExp` |
+| `QVisitFloor` | string | -1 – 1e4 | -1.0 | gumbel; rpg only if `QVisitExpRoot >= 0` | additive (decoupled) transform floor; <0 = legacy coupled |
+| `QGlobalScale` | check | — | false | gumbel | scale descent transform by the ROOT max child-visit |
+| `HalvingDiv` | spin | 2 – 8 | 2 | gumbel, rpg | sequential-halving divisor |
+| `Topk` | spin | 2 – 256 | 32 | gumbel, rpg | root candidates |
+| `GumbelScale` | string | 0 – 5 | 0.0 | gumbel, rpg | root Gumbel-noise strength; 0 = deterministic |
+| `ChunkSims` | spin | 32 – 1048576 | 2048 | all | sims per search chunk |
+| `VLossWeight` | spin | 0 – 64 | 3 | all | virtual loss on in-flight leaves |
+| `MinibatchSize` | spin | 0 – 8192 | 0 | **gumbel only** | C-side leaf-flush target; 0 = C default |
+| `CPuct` | string | 1e-4 – 100 | 1.75 | walker, pucv, pucv_pool, rpg | PUCT exploration constant |
+| `CPuctFactor` | string | 0 – 100 | 3.89 | walker, pucv, pucv_pool, rpg | 0 = fixed CPuct |
+| `CPuctBase` | string | 1 – 1e9 | 38739.0 | walker, pucv, pucv_pool, rpg | log((N+base)/base) |
+| `FpuReduction` | string | -10 – 10 | 0.33 | walker, pucv, pucv_pool, rpg | first-play-urgency reduction |
+
+Names match `scripts/arena_standard.py --cand-gumbel` / `--ref-gumbel` field
+names with the underscores removed and CamelCased (`c_scale` → `CScale`,
+`q_visit_exp_root` → `QVisitExpRoot`), so a shape tuned in an arena transfers to
+a UCI config by transliteration. The arena keeps snake_case because those flags
+address `GumbelConfig` fields directly; the UCI side follows lc0's CamelCase.
+
+**Two knobs deliberately have no UCI option:**
+
+- `gumbel_scale_after` (and the `*_decay_*` schedule around it) is a **selfplay**
+  knob. It lives on `selfplay.SearchConfig` and is applied by
+  `selfplay/network_turn.py::_scheduled_gumbel_scale` from the game's move
+  number. Nothing in the UCI engine reads it, and a UCI move has no "move
+  number in a training game" to schedule against. Use `GumbelScale` for a flat
+  match-play noise level.
+- `policy_target_temp` is a **training-time** temperature on the policy TARGET.
+  It never runs during play. It is not the same knob as `PolicyTemperature`,
+  and exposing it would invite exactly that confusion.
+
+### The cost of `PolicyTemperature != 1.0`
+
+`policy_temp != 1.0` disables the compact-legal bf16 leaf transport — the C
+bf16 leaf softmax has no temperature hook — so leaves fall back to dense
+float32 4672-wide. `mcts/gumbel_c.py` warns once per process when this fires.
+
+The `~1.9x end-to-end` figure in that warning comes from the 2026-08-03
+play-path audit (1.63s → 3.12s, 40 searches × 8 boards × 256 sims, CPU).
+**It was NOT reproduced when this option shipped, and the attempt is worth
+recording because it shows what such a measurement needs.**
+
+A naive `T=1.0` vs `T=1.5` comparison is confounded: a different temperature
+searches a different tree, so the two arms do not do the same work. Comparing
+`T=1.0` against `T=1.0+1e-7` removes that — numerically identical priors, but
+the `!= 1.0` transport gate still trips. Measured that way against a numpy CPU
+stand-in evaluator, at the same 40 × 8 × 256 shape: **0.97x, i.e. nothing.**
+
+That 0.97x is a fact about the harness, not evidence against 1.9x. A numpy
+stand-in computes the dense policy for every leaf in *both* arms, so the thing
+the compact path saves — never materialising or transferring 4672 floats per
+leaf — does not exist to be saved. Only an evaluator with the real bf16 legal
+transport can price it.
+
+So: treat 1.9x as an unverified upper bound, and **measure on the target
+evaluator before running a `PolicyTemperature` sweep at a tournament time
+control.** The warning fires once per process, so a match log will tell you the
+fallback engaged; what it costs is hardware-specific.
+
+### Setting search parameters in `audit_targets.py`
+
+`scripts/audit_targets.py` scores target candidates against the frozen audit
+set. Its search shape is now overridable:
+
+```bash
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <ckpt> \
+    --gumbel policy_temp=2.2 --gumbel topk=8,halving_div=4 \
+    --dump-per-position runs/audit_T2.2.jsonl [--dump-distributions]
+```
+
+- Keys are **raw `GumbelConfig` field names**, identical to
+  `arena_standard.py --cand-gumbel` / `--ref-gumbel`, so a shape moves between
+  the two by copy-paste. The UCI engine CamelCases the same fields
+  (`c_scale` → `CScale`); that is the only naming difference in the repo.
+- `c_puct` / `cpuct_factor` / `cpuct_base` / `fpu_reduction` are **refused**,
+  same as in the arena: inert in a Gumbel search.
+- The override applies to the **PLAY row (b)** only. `--gumbel-training-rows`
+  extends it to rows (d)/(e); it is off by default because those rows describe
+  the target production actually stores.
+- **Guarded at the dispatch, not the CLI.** After the `GumbelConfig` is built
+  it is asserted field-by-field against what was asked for, and the run aborts
+  if anything failed to plumb. This is not theoretical: `_SearchProfile` has a
+  fixed field list, so before this guard an override for any field outside it
+  (e.g. `halving_div`) would have parsed, printed in the header, and been
+  dropped — a flawless null. The realized values are echoed as
+  `[audit] b) net + Gumbel search (PLAY settings): --gumbel realized policy_temp=2.2`.
+
+`--dump-per-position` records, per position and per candidate, the chosen move
+plus two **paired per-position booleans**: `top1_agree` (chosen move is among
+the deep-SF co-best set) and `out_of_top10` (chosen move is outside the deep-SF
+top 10, or `null` when the MultiPV list is shorter than 10 and the question
+cannot be asked). They are computed once here rather than left to each caller,
+because tie handling and short lists are exactly where two reimplementations
+would silently disagree. The record also carries `sf_top1` / `sf_top10` (the
+reference they were judged against) and the `gumbel_overrides` in force.
+`--dump-distributions` adds each candidate's full `{uci: p}` over legal moves.
+
+**Positive control for `policy_temp`** — the knob most likely to be silently
+dropped, because 1.0 is a no-op so any plumbing bug looks exactly like "no
+effect". Driven through this exact path (32 positions, sims 256, PLAY shape,
+`add_noise=False` as the script runs it), against a numpy stand-in evaluator:
+
+| T | ΔH raw prior | ΔH search output | reference (real net, noise ON) |
+|---|---|---|---|
+| 1.36 | +0.171 | +0.061 | +0.196 |
+| 1.50 | +0.210 | +0.087 | +0.266 |
+| 2.20 | +0.312 | +0.215 | +0.430 |
+| 3.00 | +0.356 | +0.078 | +0.612 |
+
+**Read the prior column first.** It is monotone and unambiguous: the knob
+reaches the priors. The search-output column is smaller and *non-monotone* —
+it peaks at T=2.2 and falls back at T=3.0 — because the completed-Q transform
+re-sharpens whatever prior it is handed, and past some flatness the search
+output stops tracking the prior at all. That is the same offsetting effect
+already measured in this repo ("163% of the policy gain was the net prior;
+search offset it"). So **a small search-output ΔH is not evidence the knob was
+dropped**, and a control that looked only at the search output would have
+produced a false negative at T=3.0.
+
+Magnitudes here run roughly half the real-net reference: a random-projection
+stand-in has a much flatter prior to begin with (H = 3.26 nats over ~30 legal
+moves), so the same T moves it less. Re-run on a real checkpoint before
+quoting an absolute number.
+
+ΔH ≈ 0 in the **prior** column means the knob is being dropped between the CLI
+and the search — find where before reporting any number from that run.
+
 ## Static analysis
 
 `./scripts/lint.sh <paths>` — default gate is ruff + basedpyright + vulture, a few
