@@ -116,7 +116,27 @@ poll_once () {
     # succeeded. Capture the status into a local FIRST: any command inserted
     # between the run and the `ratchet_outcome` call would otherwise clobber
     # `$?` and turn every outcome into a success.
-    bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
+    # ⚑ RUN THE WHOLE RATCHET INSIDE ONE PAUSE WINDOW, not beside training.
+    # Measured 2026-08-09: beside training the lineage series truncated at
+    # 106/200 with a CI spanning zero — an unreadable result — while iterations
+    # stretched 245s -> 611s. The same series in a pause window got 200/200 in
+    # ~21 min. Wrapping HERE rather than inside daily_gate_ratchet.sh pauses
+    # ONCE for both series (matching the ~35 min 2x200 measurement) and keeps
+    # the wrapper's chatter out of the per-arena logs the outcome parser reads.
+    #
+    # The `paused` guard above has already run, so this cannot collide with an
+    # operator's own pause: we only ever set the marker after finding none.
+    #
+    # Every trappable failure path releases the marker, so a wrapper failure
+    # degrades to the old contended behaviour rather than parking production.
+    # The residual is SIGKILL, which no trap can catch — `train.sh start` clears
+    # stale markers, and the trainer watchdog alerts on a stalled loop.
+    # Set CAE_RATCHET_PAUSE_WINDOW=0 to go back to running beside training.
+    if [ "${CAE_RATCHET_PAUSE_WINDOW:-1}" = "1" ]; then
+        bash scripts/pause_window.sh -- bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
+    else
+        bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
+    fi
     rc=$?
     ratchet_outcome "$rc" "$today"
     return "$rc"
