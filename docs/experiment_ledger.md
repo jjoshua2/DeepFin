@@ -36129,3 +36129,58 @@ is exactly the unfalsifiable-experiment trap.
 
 **PR #372 stands as reviewed code with the flag default OFF and no config plumbing.**
 It is correct and tested; it is simply not yet justified. No revert needed.
+
+## 2026-08-08 (night) — MEASUREMENT: are the moves the target zeroes actually bad? YES
+
+**Question (user):** "we shouldn't train so many moves to 0% because they probably
+aren't all 0% win chance." Concerns the MASS the target assigns, not the argmax — a
+different claim from the one the withdrawn root-expansion screen addressed.
+
+**Instrument:** `data/audit_set_v1.jsonl.shallow_sf.jsonl` — banked SF **MultiPV 40 @
+50k nodes**, i.e. WIDER but SHALLOWER than the frozen ruler (MultiPV 10 @ >=1M).
+NOT comparable to any frozen-set record; used only to separate "loses a little" from
+"loses a lot", which 50k nodes resolves. Restricted to the 2,291 positions where
+MultiPV 40 covers EVERY legal move (n_legal 33-40); mate-containing positions dropped
+rather than cp-folded (known mate<->cp contradiction, N1/N2). 1,200 sampled.
+Checkpoint `data/ruler_reads_20260808/trainer.pt` (lc0_root_legacy_meta/v2_threats/
+lc0_1858). Repro: `scratchpad/zeroed_move_quality.py`.
+
+At 256 sims topk(32) binds, so the prior-only tail is exactly the legal moves outside
+the net's top-32 prior — obtainable from ONE forward pass, no search, so this did not
+put 256-sim GPU work next to the live trainer.
+
+**Result — the premise is REFUTED for the prior-only tail (5,154 moves):**
+
+| | cp loss vs best |
+|---|---|
+| tail (outside top-32 prior) | mean 552, p10 **278**, median **538**, p90 843 |
+| candidates (top-32 prior) | mean 248, median 175, p90 568 |
+
+Only **0.19%** of tail moves are within 50cp of best and **1.2%** within 100cp. The
+BEST tail move in a position has median loss 435cp; only **0.58%** of positions have
+any tail move within 50cp. Tail prior mass: mean 6.2e-5, median 1.3e-7. Zeroing them
+is approximately correct, and root expansion would be buying evaluations of moves that
+lose ~5 pawns.
+
+**But the same run reframes the concern rather than closing it.** Per position there
+are on average **5.71 moves within 50cp** of best (median 4; 10.9 within 100cp), and
+the net's prior already puts **73.5% mean / 87.2% median** of its mass on them, with
+top-1 prior 0.618 mean. The prior's mass allocation is sound. So the open question is
+not the tail — it is whether the SEARCH TARGET, which is sharper than the prior,
+concentrates past those ~4-6 near-best moves and drags the net with it. That is
+exactly the shape of the 08-08 confidence-inflation finding (entropy -0.21/-0.29 nats,
+accuracy flat +0.7pp/-0.1pp, ECE worse).
+
+**Verdict:** root expansion KILLED on evidence, not on cost-of-evidence — the moves it
+would evaluate are measurably worthless. A uniform-over-legal target floor aimed at the
+tail is ALSO not indicated by this data.
+
+**Limitation, stated:** the audit set is a curated SF-blindspot set, not a sample of
+live selfplay positions. The tail result is strong enough (median 538cp) that
+representativeness is unlikely to reverse it, but the near-best-move counts should be
+re-measured on live rows before any target-shape change is pre-registered.
+
+**Next, if pursued:** join `audit_targets` search-visit distributions with these
+per-move cp values and ask how much target mass sits on the moves within 50cp. That
+needs the sanctioned tool at small batch with `--gpu-mem-fraction`, not a hand-rolled
+256-sim run.
