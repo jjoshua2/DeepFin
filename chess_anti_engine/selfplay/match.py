@@ -14,6 +14,7 @@ from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_DEFAULTS,
+    py_only_knobs_set,
     run_gumbel_root_many,
     volatility_search_enabled,
     warn_volatility_python_path,
@@ -153,6 +154,19 @@ def pick_moves_for_boards(
         if volatility_search_enabled(gumbel_cfg):
             warn_volatility_python_path()
         if _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg):
+            py_only = py_only_knobs_set(gumbel_cfg)
+            if py_only:
+                # Mirror of the C-only guard below. These have no C implementation,
+                # so dispatching would run a plain search while the caller records
+                # the knob as realized -- a reproducible null that reads as a
+                # measurement. Fail instead of measuring nothing.
+                raise ValueError(
+                    f"{', '.join(py_only)}: set on a search that dispatches to the "
+                    "C tree, which does not implement it (mcts.gumbel."
+                    "PY_ONLY_GUMBEL_KNOBS). The value would be silently dropped and "
+                    "the run would return a flawless null. Implement it in "
+                    "_mcts_tree.c, or force the Python path, before measuring it."
+                )
             result = _run_gumbel_root_many_c(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
                 allow_terminal_root_shortcuts=True,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from dataclasses import fields as dataclass_fields
 from typing import Literal, overload
 
 import chess
@@ -112,6 +113,16 @@ INERT_GUMBEL_KNOBS: frozenset[str] = frozenset(
     {"c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction"}
 )
 
+# GumbelConfig fields implemented ONLY by the Python search in this module, with no
+# equivalent in the C tree (``mcts/_mcts_tree.c``). Production selfplay and every
+# arena take the C path whenever the extension is importable, which it always is, so
+# setting one of these and measuring the result would produce a flawless null: the
+# knob is accepted, echoed back as "realized", and then dropped on the floor. That is
+# this codebase's signature defect, so it is refused at both ends -- ``match.py``
+# raises rather than dispatch to C with one set, and ``arena_standard.py`` refuses it
+# on the command line. Removing a name from here REQUIRES implementing it in C.
+PY_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset({"root_expand_all"})
+
 # Lc0 classic-search defaults (Oct 2025 engine flags page) for the UCI engine's
 # PUCT descent -- the walker pool and the multi-GPU PUCV pool, which really do
 # consume these. NOT a Gumbel surface: do not merge back into
@@ -155,14 +166,28 @@ class GumbelConfig:
     # point a wrongly-low prior can never leave. Measured on the live window,
     # 11.2% of legal moves (38.7% of positions, n_legal > topk) are in that tail.
     #
-    # These evaluations are IN ADDITION to ``simulations``, not carved out of it
-    # (~+1.17% root evals at 256 sims). Widening ``topk`` to ``legal.size`` instead
-    # would pay for tail coverage out of the survivors' visits, which is a different
-    # experiment and confounds this one.
+    # These evaluations are IN ADDITION to ``simulations``, not carved out of it.
+    # Widening ``topk`` to ``legal.size`` instead would pay for tail coverage out of
+    # the survivors' visits, which is a different experiment and confounds this one.
+    # The cost is REGIME-DEPENDENT, because the tail is what the budget does not
+    # already cover: ~+1.2% root evals at 256 sims (m_cap 128, topk binds), but
+    # ~+88% at the 32-sim fast-ply budget (m_cap 16 binds, so the tail is far
+    # larger). Any production wiring must decide whether it fires on fast plies at
+    # all -- they emit no policy training row, so there the cost buys nothing for
+    # the target this flag exists to fix.
+    #
+    # What it does NOT leave alone: ``_completed_q_transform`` min-max renormalises
+    # over ALL legal moves, so giving the tail real Q values rescales the softmax
+    # for the 32 candidates too, and can change the played move. It is confined to
+    # the phase-4 target only in the sense that SEARCH EFFORT is unchanged -- the
+    # halving rounds are bit-identical (that is why the call sits after phase 3).
     #
     # No-op whenever every legal move is already a candidate, i.e.
     # ``n_legal <= min(topk, (simulations + 1) // 2)`` -- at 256 sims that is
     # n_legal <= 32, which must stay BIT-IDENTICAL to the flag being off.
+    #
+    # NOT IMPLEMENTED IN THE C PATH (``gumbel_c.py``), which is what production and
+    # every arena actually run: see ``PY_ONLY_GUMBEL_KNOBS``.
     root_expand_all: bool = False
     temperature: float = 1.0
     # Prior temperature on the policy-head logits before they seed the tree
@@ -374,6 +399,21 @@ def _root_sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
 def volatility_search_enabled(cfg: GumbelConfig) -> bool:
     """True when any volatility-aware search mechanism is switched on."""
     return float(cfg.volatility_q_scale) != 0.0 or float(cfg.volatility_fpu) != 0.0
+
+
+def py_only_knobs_set(cfg: GumbelConfig) -> list[str]:
+    """Names in ``PY_ONLY_GUMBEL_KNOBS`` this config moved off their default.
+
+    Callers about to dispatch to the C tree use this to refuse rather than drop the
+    knob: see ``PY_ONLY_GUMBEL_KNOBS``. Compared against the dataclass default rather
+    than a hardcoded falsy test so that a knob whose default is later changed does
+    not silently stop being reported.
+    """
+    defaults = {f.name: f.default for f in dataclass_fields(GumbelConfig)}
+    return sorted(
+        name for name in PY_ONLY_GUMBEL_KNOBS
+        if getattr(cfg, name) != defaults[name]
+    )
 
 
 _volatility_python_path_warned = False
@@ -841,16 +881,16 @@ def _expand_all_legal_round(
     states: list[_BoardSearchState],
     cfg: GumbelConfig,
 ) -> tuple[list[Node], list[list[Node]]]:
-    """Round 0: force ONE visit down every legal move that is not a Gumbel candidate.
+    """Force ONE visit down every legal move that is not a Gumbel candidate.
 
     Mirrors ``_collect_forced_leaves_round`` but walks the NON-candidate tail exactly
     once each, and deliberately does not touch ``budget_remaining`` -- see
     ``GumbelConfig.root_expand_all`` for why these evals are additive rather than
     carved out of the halving budget.
 
-    Candidates are skipped because halving visits them anyway; re-walking them here
-    would hand the top moves a free extra visit and silently change the very ranking
-    the flag is supposed to leave alone.
+    Candidates are skipped because halving has already visited them; re-walking them
+    here would hand the top moves a free extra visit, which is a strength change
+    rather than the target change this flag is testing.
     """
     leaf_nodes: list[Node] = []
     leaf_paths: list[list[Node]] = []
@@ -1085,12 +1125,6 @@ def run_gumbel_root_many(
             st.root.vol = float(root_vols[i])
         states.append(st)
 
-  # ── 2b. Root expansion: one eval for every legal move (additive) ─────────
-    if bool(cfg.root_expand_all):
-        expand_nodes, expand_paths = _expand_all_legal_round(states=states, cfg=cfg)
-        if expand_nodes:
-            _evaluate_and_backprop_leaves(expand_nodes, expand_paths, leaf_eval, cfg)
-
   # ── 3. Sequential halving with real subtree simulations ──────────────────
     while True:
         active = [
@@ -1131,6 +1165,18 @@ def run_gumbel_root_many(
                 0, int(budget_remaining[bi] - visits_per_action[bi] * len(rem)),
             )
             _halve_remaining_for_board(st, root_q=float(root_qs[bi]), cfg=cfg)
+
+  # ── 3b. Root expansion: one eval for every legal move (additive) ─────────
+    # AFTER halving, deliberately. Halving re-reads _completed_q_transform, which
+    # min-max renormalises over ALL legal moves, so a tail carrying real Q values
+    # would change which candidates survive each round -- a search change dressed
+    # up as a target change. Running it here leaves every halving round bit-for-bit
+    # identical to the flag being off (tests/test_root_expand_all.py pins the eval
+    # batch sequence) and confines the effect to the phase-4 target.
+    if bool(cfg.root_expand_all):
+        expand_nodes, expand_paths = _expand_all_legal_round(states=states, cfg=cfg)
+        if expand_nodes:
+            _evaluate_and_backprop_leaves(expand_nodes, expand_paths, leaf_eval, cfg)
 
   # ── 4. Build improved policies + legal masks ─────────────────────────────
     probs_out: list[np.ndarray] = []

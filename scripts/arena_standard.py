@@ -277,7 +277,11 @@ def apply_search_overrides(
     """Layer per-side CLI overrides on top of a resolved shape."""
     import dataclasses
 
-    from chess_anti_engine.mcts.gumbel import INERT_GUMBEL_KNOBS, GumbelConfig
+    from chess_anti_engine.mcts.gumbel import (
+        INERT_GUMBEL_KNOBS,
+        PY_ONLY_GUMBEL_KNOBS,
+        GumbelConfig,
+    )
 
     fields = {f.name for f in dataclasses.fields(GumbelConfig)}
     gumbel = dict(base.gumbel)
@@ -307,6 +311,18 @@ def apply_search_overrides(
                 "makes unreachable (play-path audit 2026-08-03 F2; repro "
                 "scratchpad/code_audit_20260803/repro_inert_knobs.py). A Swiss "
                 "over it would return a flat null and read as a measurement."
+            )
+        if k in PY_ONLY_GUMBEL_KNOBS:
+            # Same failure shape as INERT, different mechanism: this one WOULD
+            # change a search, but only the Python one, and an arena takes the C
+            # path. It would be echoed back by `realized_gumbel` and written to
+            # the JSONL as though it had been in effect.
+            raise SystemExit(
+                f"--*-gumbel: {k!r} is implemented only in the Python search and "
+                "is refused. Arenas dispatch to the C tree (mcts._mcts_tree), "
+                "which drops it silently while the run records it as realized "
+                "(mcts.gumbel.PY_ONLY_GUMBEL_KNOBS). Implement it in "
+                "_mcts_tree.c before measuring it."
             )
         gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
         extra.append(part)
