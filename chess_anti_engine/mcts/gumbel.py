@@ -160,10 +160,11 @@ def assert_c_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
     if not offenders:
         return
     raise ValueError(
-        f"{where}: {', '.join(offenders)} are implemented only by the Python "
-        "Gumbel path (run_gumbel_root_many); run_gumbel_root_many_c would drop "
-        "them silently and return a search that looks like a clean null. Zero "
-        "them, or route to the Python path (see PY_ONLY_GUMBEL_KNOBS)."
+        f"{where}: {', '.join(offenders)} are Python-path only; call "
+        "run_gumbel_root_many (mcts/gumbel.py) instead. The C path has no code "
+        "for them, so it would drop them silently and return a search that "
+        "looks like a clean null. Zero them, or route to the Python path "
+        "(see PY_ONLY_GUMBEL_KNOBS)."
     )
 
 # Lc0 classic-search defaults (Oct 2025 engine flags page) for the UCI engine's

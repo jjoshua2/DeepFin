@@ -257,6 +257,45 @@ def test_root_noise_scale_reaches_the_search_and_zero_stays_deterministic() -> N
     )
 
 
+def test_root_noise_is_mirrored_into_the_shared_config_for_rpg() -> None:
+    """The second half of GumbelScale, which the classic-path test cannot see.
+
+    Root-parallel Gumbel needs >= 2 devices, so its behaviour is not testable
+    here. What IS testable is the mechanism: RPG reads `add_noise` /
+    `gumbel_scale` off the SHARED GumbelConfig by reference at candidate-
+    selection time, so `set_root_noise_scale` has to write them there too or
+    the option is a silent null on that path — with no warning, because the
+    registry declares it live on `rpg`.
+
+    A mutation that drops the mirror survived the behavioural suite; this is
+    the test that kills it. Both halves are asserted: that the worker writes
+    the fields, and that RPG is what reads them (source-level, since a
+    two-device search is unavailable).
+    """
+    import inspect
+
+    from chess_anti_engine.uci import root_parallel_gumbel as rpg
+
+    engine = _make_engine()
+    try:
+        _setoption(engine, "setoption name GumbelScale value 1.5")
+        cfg = engine._worker._cfg
+        assert cfg.add_noise is True
+        assert cfg.gumbel_scale == pytest.approx(1.5)
+
+        _setoption(engine, "setoption name GumbelScale value 0")
+        assert engine._worker._cfg.add_noise is False
+    finally:
+        engine._worker.close()
+
+    src = inspect.getsource(rpg)
+    assert "self._gcfg.add_noise" in src, (
+        "RPG no longer reads add_noise off the shared config — re-decide "
+        "whether GumbelScale is still live on the rpg path in SEARCH_OPTIONS"
+    )
+    assert "self._gcfg.gumbel_scale" in src
+
+
 # --- inert options are never silently accepted -------------------------------
 
 

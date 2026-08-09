@@ -69,7 +69,6 @@ from chess_anti_engine.mcts.gumbel import (
     _wdl_to_q,
     assert_c_path_can_run,
     gumbel_policy_diagnostics,
-    volatility_search_enabled,
 )
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
@@ -467,7 +466,13 @@ def run_gumbel_root_many_c(
   # path does not implement. Guarding the dispatch boundary rather than each
   # caller's CLI is the point — the CLI is not what chooses the C path, and a
   # caller that grew a python-only knob would otherwise get a clean, wrong,
-  # perfectly reproducible measurement. See PY_ONLY_GUMBEL_KNOBS.
+  # perfectly reproducible measurement.
+  #
+  # This REPLACED a hand-written `if volatility_search_enabled(cfg): raise`
+  # that sat a few lines below. Two guards for one rule is worse than one: the
+  # hand-written one named the two fields it knew about, so a THIRD python-only
+  # field would have been added to `GumbelConfig` and silently dropped here.
+  # `PY_ONLY_GUMBEL_KNOBS` is the named set both this and the dispatchers read.
     assert_c_path_can_run(cfg, where="run_gumbel_root_many_c")
     if int(vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
         # `tree_gumbel_select_child` (_mcts_tree.c:2941-2944) mirrors
@@ -487,17 +492,6 @@ def run_gumbel_root_many_c(
             "(the FPU for unvisited children) with legacy virtual-loss pessimism "
             "(play-path audit 2026-08-03, F4). Use vloss_mode=0 until the C "
             "parent branch is mirrored."
-        )
-    if volatility_search_enabled(cfg):
-        # Fail loud rather than silently searching without the volatility
-        # bias: this entry point does not implement volatility_q_scale /
-        # volatility_fpu. The dispatchers (selfplay network_turn, match
-        # pick_moves_for_boards) route to run_gumbel_root_many when any
-        # flag is on; a direct caller reaching here has bypassed them.
-        raise ValueError(
-            "volatility-aware Gumbel search is Python-path only; call "
-            "run_gumbel_root_many (mcts/gumbel.py) when volatility_q_scale/"
-            "volatility_fpu are non-zero"
         )
     _t_init = 0.0
     _t_prepare = 0.0
