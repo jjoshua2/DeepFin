@@ -257,7 +257,8 @@ def _build_uci_to_idx() -> dict[str, int]:
     the move). Point every "...n" promotion at its bare slot. That bare slot is
     shared with a non-pawn slide to the same square, but that is
     position-disjoint under legal masking (a 7th-rank pawn promotes; a piece
-    there slides) — see onnx/load.py::build_lc0_policy_remap.
+    there slides) — resolved with board context in
+    :mod:`chess_anti_engine.moves.leela_index`.
     """
     idx = {m: i for i, m in enumerate(LC0_1858_MOVE_STRS)}
     for m in LC0_1858_MOVE_STRS:
