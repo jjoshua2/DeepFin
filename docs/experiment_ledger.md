@@ -36344,3 +36344,100 @@ absolute trajectories differ from live; `sf_p0_policy_target`/`sf_volatility_tar
 masked in every arm under target rebuild, identically, so deltas stay paired.
 
 **Status: PREREG ONLY. Knobs not yet implemented, nothing launched.**
+
+## AMENDMENT 2026-08-09 to the PREREG above — the `sfblend` arm is RETRACTED and re-specified as `w_sf_own`, and the CE ruler is fixed
+
+Independent review of PR #373 (author did not self-review) found the `sfblend` arm as
+pre-registered would have measured something other than what it claimed. **Nothing had
+been launched**, so this is a pre-launch correction, not a retracted verdict.
+
+### B1 — the arm was reading the WRONG target
+
+`sf_policy_t` is the **OPPONENT's reply distribution**, queried at P1 after the net's
+move and POV-flipped. It belongs to a different position in a different legal space
+(`replay/sample.py:73` — separate `legal_mask` and `sf_legal_mask`;
+`docs/model_heads.md:14`; CLAUDE.md's own non-obvious-facts list). The reviewer measured
+**83.6% mean / 87.5% median of its support illegal at P0**, with at least one illegal
+index in **100%** of positions.
+
+It would not have crashed. `masked_base` adds `-1e9` to illegal logits and soft-CE's
+gradient is `softmax − target`, so the gradient stays bounded (norm 0.417 in the
+reviewer's worked case) while `policy_ce` reads ~3e8 and the head is pushed, every step,
+toward moves that cannot be played. **A "sfblend is worse" verdict would have been a fake
+negative about a target that was never the SF label for that position.**
+
+### The re-specification: `w_sf_own`, not a new knob
+
+**Soft cross-entropy is LINEAR in the target.** `CE(q, (1−w)p + w·s)` is exactly
+`(1−w)·CE(q,p) + w·CE(q,s)`. So blending a distribution into the target is a
+re-parameterisation of adding a weighted CE term against it — and that term already
+exists: `w_sf_own` trains `policy_own` (the head MCTS reads) against
+`sf_p0_policy_target`, the **same-position** SF label, masked to `has_sf_p0`, with its
+own `m_sf_own` metric. `losses.py:742` says so in prose: *"Same legal space as the main
+policy."*
+
+The new knob was therefore duplication whose only distinguishing feature was the defect.
+It is **removed from PR #373**, which now ships `policy_target_temp` alone. The arm
+becomes **config-only, no code**.
+
+**Dose.** Production is `w_policy: 1.0`, `w_sf_own: 0.0`. `m_policy` is a masked mean
+over net rows; `m_sf_own` over `has_sf_p0` rows only — **coverage 0.2304** (live trial
+`379f6`, iter 516, `has_sf_p0_frac`). So on a labelled row the SF teacher's weight
+relative to the self target is `(w_sf_own / w_policy) / coverage = 4.35 × w_sf_own`:
+
+| `w_sf_own` | equivalent target-blend on a labelled row |
+|---|---|
+| 0.069 | 0.30 — matches the pre-registered dose exactly |
+| **0.10** | **0.43** |
+
+**Screening at `w_sf_own: 0.10`**, a deliberate increase over the pre-registered 0.30,
+recorded here BEFORE launch. Two reasons: `w_sf_own` **adds** a term rather than shrinking
+the self target, so it is the weaker intervention at equal arithmetic dose; and 0.10 is
+the value that was live on the 13a9f lineage and was lost at the 08-06 relaunch because it
+was never committed to the yaml (`uncommitted_live_yaml_edits_lose_proven_wins`), so this
+also re-screens a setting the loop used to have.
+
+⚑ **The whole screen must run with `--no-rebuild-sf-targets`.** `rebuild_sf_targets` is
+forced ON by default in the rig, and it masks `has_sf_p0` **unconditionally**
+(`target_builder.py:703,739` — `CROSS_PLY_SF_FLAGS`), which would make this arm a silent
+no-op. The flag is global, not variant-overridable, so all three arms take it. That is
+strictly better anyway: neither arm is an SF-target param or a sampling knob, so stored
+targets are exactly what live training consumes. **This supersedes the "masked in every
+arm" sentence in the prereg's Confounds line.**
+
+### B2 — the ruler moved with the arm
+
+`_loss_kwargs` fed BOTH the training step and the holdout/EMA eval. The minimum of a
+cross-entropy **is** the target's entropy, so retempering raises `policy_ce` by **~0.62
+nats at T=1.30 for an unchanged model** (reviewer's arithmetic on a net that predicts the
+target exactly: 2.1781 → 2.7968). Every arm-vs-baseline CE comparison would have been two
+different rulers — `a_ruler_change_must_invalidate_its_records`, and the rig prints
+exactly that number in `final_metrics`.
+
+Fixed in PR #373: `Trainer._eval_loss_kwargs` pins the target reshape off for eval and
+changes nothing else. Loss WEIGHTS stay as configured, deliberately — pinning those would
+make eval's `total` stop matching the trained objective.
+
+**The deciding yardstick was already the paired arena, so the prereg's verdict rule is
+unaffected.** What this fixes is the diagnostics: `policy_ce` is now comparable across
+arms. ⚠ `scripts/holdout_policy_screen.py:207` builds the target WITHOUT the reshape, so
+under a non-default `policy_target_temp` that script and the in-trainer holdout measure
+different things. Do not mix them.
+
+### Also fixed pre-launch (non-blocking findings)
+
+- **Validation.** `policy_target_temp` was accepted at `0.0` (ZeroDivisionError *inside*
+  the training step, one iteration after a live push), negative (inverts the target's
+  ordering while still summing to 1.0), and non-finite. All refused at the boundary.
+- **Not a loss weight.** Moved out of `TRAINER_WEIGHT_KEYS` — that list is pushed onto the
+  trainer every iteration and copied wholesale by the salvage-donor overlay
+  (`trainable_init.py:320`). It re-interprets rows already in the window, the same class as
+  `wdl_terminal_outcome_plies`, so it is now **startup-only** and a mid-run edit warns.
+- **Tests.** The first version's own claims did not hold: 6 of 14 mutants survived it,
+  including deleting the gate its docstring called "the part worth reviewing hardest".
+  Rewritten; all 8 applicable mutants now die, with a surviving null control.
+
+**Status: still PREREG ONLY. Nothing launched, no live change, no restart.** Arms now:
+`soften` (`policy_target_temp=1.30`, needs PR #373 merged), `sfblend` → **`w_sf_own=0.10`**
+(no code), `control`. Thresholds, arena command, n, seed and the null-is-a-kill rule are
+unchanged.
