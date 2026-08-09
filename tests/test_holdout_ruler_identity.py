@@ -552,8 +552,34 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `tests/test_wdl_terminal_outcome.py` pins the off-path equality against a
 # verbatim transcription of `main`'s blend so it cannot drift back unnoticed.
 # Records stay comparable across the handover.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:78aaaf430abf66f1"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:afbf4cc1de454249"
+# EIGHTH declared false positive, MEASURED — and the strongest form of the
+# claim available here: the eval measurement is invariant to the new knob for
+# EVERY config value, not merely at its default.
+#
+# `_compute_metrics` is in both closures and its source changed: it now splats
+# `_eval_loss_kwargs` (`{**_loss_kwargs, "policy_target_temp": 1.0}`) instead of
+# `_loss_kwargs`. That pin is the reason the id can be declared safe. CE's floor
+# IS the target's entropy, so retempering the target raises `policy_ce` for an
+# UNCHANGED model; letting `policy_target_temp` reach the holdout would make the
+# frozen ruler move with the arm under test. Because eval always passes 1.0, and
+# `main` passes no key at all (`compute_loss` defaults to 1.0), the two are the
+# same call for every possible yaml.
+#
+# The control: `origin/main`'s `losses.py` loaded as a second module inside the
+# real package, and its `compute_loss` run beside this branch's on one 96-row
+# synthetic batch. All 52 returned scalars BITWISE EQUAL, `total`
+# 18.18108367919922 both sides. The control can fail: the same batch at
+# `policy_target_temp=1.3` moves exactly five keys — `policy_ce`, the three
+# `policy_loss_phase_*` splits, and `total` — which is also the direct evidence
+# that the knob does something when it is NOT pinned off.
+#   full_pass  78aaaf430abf66f1 -> a76f440cdb36b72f
+#   sampled    afbf4cc1de454249 -> 9f80a4cda2da0069
+#
+# ⚑ PR #375 moves this same pin from the same base. Whichever merges second
+# must recompute both ids on the MERGED tree — a stale pin here fires a
+# best-model handover for a measurement that never changed.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:a76f440cdb36b72f"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:9f80a4cda2da0069"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
