@@ -573,13 +573,13 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `policy_loss_phase_*` splits, and `total` — which is also the direct evidence
 # that the knob does something when it is NOT pinned off.
 #   full_pass  78aaaf430abf66f1 -> a76f440cdb36b72f
-#   sampled    afbf4cc1de454249 -> 9f80a4cda2da0069
+#   sampled    afbf4cc1de454249 -> 20696c6766732998
 #
 # ⚑ PR #375 moves this same pin from the same base. Whichever merges second
 # must recompute both ids on the MERGED tree — a stale pin here fires a
 # best-model handover for a measurement that never changed.
 PRODUCTION_FULL_PASS_RULER = "v1:full_pass:a76f440cdb36b72f"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:9f80a4cda2da0069"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:20696c6766732998"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
