@@ -33,7 +33,6 @@ falls through to classic Gumbel):
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from collections.abc import Mapping
 
@@ -287,23 +286,18 @@ OPTIONS_BY_NAME: Mapping[str, SearchOption] = {o.lower: o for o in SEARCH_OPTION
 _ROOT_PRIOR_SPAN_NATS = 27.63  # log(1 / 1e-12)
 
 
-def _effective_root_exp(values: Mapping[str, object]) -> float:
-    """`q_visit_exp_root`, resolving the >=90 "use the descent exponent" sentinel.
+def _power_root_q_scale_lower_bound(values: Mapping[str, object]) -> float:
+    """Smallest `q_scale` the POWER root branch can produce, over max_visit >= 1.
 
-    Mirrors `_mcts_tree.c:3947` exactly. Reading the raw field instead would
-    call `QVisitExpRoot=98` a power root even when `QVisitExp` is negative.
-    """
-    raw = _num(values, "q_visit_exp_root")
-    return raw if raw < 90.0 else _num(values, "q_visit_exp")
+    PRECONDITION: `0 <= q_visit_exp_root < 90`. The caller's two earlier arms
+    return for the log branch (< 0) and the "use QVisitExp" sentinel (>= 90), so
+    this is the only branch left and `_mcts_tree.c:1500-1504` reduces to
+    `c_scale_root * (cvr + max_visit**exp)`. Handling the other branch here as
+    well would be unreachable code that no test could kill.
 
-
-def _root_q_scale_lower_bound(values: Mapping[str, object]) -> float:
-    """Smallest `q_scale` the ROOT transform can produce, over max_visit >= 1.
-
-    Mirrors the two branches at `_mcts_tree.c:1497-1504`, including the
-    `c_scale_root < 0 -> c_scale` (:3946) and `c_visit_root < 0 -> c_visit`
-    (:1487) sentinels. Both branches are increasing in `max_visit`, so
-    substituting its floor of 1 gives the bound.
+    The `c_scale_root < 0 -> c_scale` (:3946) and `c_visit_root < 0 -> c_visit`
+    (:1487) sentinels are real here and are mirrored. `max_visit >= 1` with
+    `exp >= 0` gives `max_visit**exp >= 1`, which is what makes this a bound.
     """
     csr = _num(values, "c_scale_root")
     if csr < 0.0:
@@ -311,9 +305,6 @@ def _root_q_scale_lower_bound(values: Mapping[str, object]) -> float:
     cvr = _num(values, "c_visit_root")
     if cvr < 0.0:
         cvr = _num(values, "c_visit")
-    if _effective_root_exp(values) < 0.0:
-        return csr * math.log1p(cvr + 1.0)
-    # exp >= 0 and max_visit >= 1 give max_visit**exp >= 1.
     return csr * (cvr + 1.0)
 
 
@@ -350,7 +341,7 @@ def inert_reason(option: SearchOption, path: str, values: Mapping[str, object]) 
                 "every value < 0 is the same search. Only crossing to >= 0 "
                 "(the power branch) can change anything"
             )
-        bound = _root_q_scale_lower_bound(values)
+        bound = _power_root_q_scale_lower_bound(values)
         if bound > _ROOT_PRIOR_SPAN_NATS:
             return (
                 f"the root ranking is saturated: q_scale >= {bound:.1f} spans "
