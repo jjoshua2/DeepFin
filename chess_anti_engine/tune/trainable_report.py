@@ -853,16 +853,28 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # `wdl_onehot_loss` is the hard-label diagnostic (no gradient).
     "wdl_loss": 0.0, "blended_wdl_loss": 0.0, "wdl_onehot_loss": 0.0,
     "sf_move_loss": 0.0, "sf_move_acc": 0.0, "sf_eval_loss": 0.0,
-  # ⚑ `sf_move_acc` scores `policy_sf` -- the OPPONENT-REPLY head, which
-  # production leaves untrained (`w_sf_move: 0.0`), so its drift is an
-  # untrained head under a moving trunk, NOT a progress signal. The four
-  # below score the heads that are actually trained and, for policy_own,
-  # actually read by MCTS. They were computed every iteration since the
-  # accuracy stats landed and reached nothing; "is ranking improving?"
-  # is the question the 2026-08-08 fixed-point finding turns on, and it
-  # was being answered off E[regret], which rewards sharpness.
+  # ⚑ `sf_move_acc` scores `policy_sf` -- the OPPONENT-REPLY head, whose
+  # weight `w_sf_move` the live branch parks at 0.0 (origin/main still says
+  # 0.02; grep the yaml rather than trusting either number here). At 0.0 its
+  # drift is an untrained head under a moving trunk, NOT a progress signal.
+  # The four below score heads that ARE trained; they were computed every
+  # iteration since the accuracy stats landed and reached nothing, so "is
+  # ranking improving?" -- the question the 2026-08-08 fixed-point finding
+  # turns on -- was answered off E[regret], which rewards sharpness.
+  #
+  # ⚑ THE TWO ARE NOT EQUALLY TRUSTWORTHY, and neither is a fixed-point test.
+  # `policy_own` is the clean one: same-position target, same head MCTS reads.
+  # `policy_future` inherits `rl_loop_audit` D18 -- it is masked by
+  # `future_legal_mask`, the legal moves of a position TWO plies ahead, which
+  # is not derivable from this row's input, so part of what it scores is that
+  # leak rather than the head. And `policy_own`'s TRAIN row measures agreement
+  # with search(net) on rows the net was fitted to: at a self-referential fixed
+  # point that saturates by construction. The generalisation reading is the
+  # `test_` twin.
     "policy_own_acc_top1": 0.0, "policy_own_acc_top5": 0.0,
+    "policy_own_acc_rows": 0.0,
     "policy_future_acc_top1": 0.0, "policy_future_acc_top5": 0.0,
+    "policy_future_acc_rows": 0.0,
     "sf_search_agree_frac": 0.0,
     "sf_search_disagree_sf_low_frac": 0.0,
     "sf_search_disagree_sf_high_frac": 0.0,
@@ -963,8 +975,10 @@ def _train_metrics_dict(metrics) -> dict:
         "sf_move_acc": float(metrics.sf_move_acc),
         "policy_own_acc_top1": float(metrics.policy_own_acc_top1),
         "policy_own_acc_top5": float(metrics.policy_own_acc_top5),
+        "policy_own_acc_rows": float(metrics.policy_own_acc_rows),
         "policy_future_acc_top1": float(metrics.policy_future_acc_top1),
         "policy_future_acc_top5": float(metrics.policy_future_acc_top5),
+        "policy_future_acc_rows": float(metrics.policy_future_acc_rows),
         "sf_eval_loss": float(metrics.sf_eval_loss),
         "categorical_loss": float(metrics.categorical_loss),
         "volatility_loss": float(metrics.volatility_loss),
@@ -1115,7 +1129,9 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_wdl_loss", "test_wdl_onehot_loss",
     "test_sf_move_loss", "test_sf_move_acc", "test_sf_eval_loss",
     "test_policy_own_acc_top1", "test_policy_own_acc_top5",
+    "test_policy_own_acc_rows",
     "test_policy_future_acc_top1", "test_policy_future_acc_top5",
+    "test_policy_future_acc_rows",
     "test_categorical_loss", "test_volatility_loss", "test_sf_volatility_loss",
     "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
     "test_policy_loss_selfplay", "test_policy_loss_curriculum",
@@ -1198,8 +1214,10 @@ def _test_and_drift_dict(
             "test_sf_move_acc": tm.sf_move_acc,
             "test_policy_own_acc_top1": float(tm.policy_own_acc_top1),
             "test_policy_own_acc_top5": float(tm.policy_own_acc_top5),
+            "test_policy_own_acc_rows": float(tm.policy_own_acc_rows),
             "test_policy_future_acc_top1": float(tm.policy_future_acc_top1),
             "test_policy_future_acc_top5": float(tm.policy_future_acc_top5),
+            "test_policy_future_acc_rows": float(tm.policy_future_acc_rows),
             "test_sf_eval_loss": tm.sf_eval_loss,
             "test_categorical_loss": tm.categorical_loss,
             "test_volatility_loss": tm.volatility_loss,

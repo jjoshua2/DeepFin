@@ -802,10 +802,20 @@ class TrainMetrics:
     wdl_terminal_outcome_frac: float = 0.0
     wdl_terminal_outcome_rows: float = 0.0
     sf_move_acc_top5: float = 0.0
+  # Policy move-ordering accuracy, and its DENOMINATOR. An accuracy divides by
+  # the number of rows carrying the head's target (`has_policy` / `has_future`),
+  # and on an empty denominator `_acc` returns 0.0 — which for an accuracy is
+  # the WORST attainable value, not a null. Without `_rows` alongside it, "the
+  # policy head ranks nothing correctly" and "no row in this batch had a policy
+  # target" are the same published number. `policy_future` is the live risk:
+  # `has_future` is false for rows near the end of a game, so a batch can
+  # legitimately hold none.
     policy_own_acc_top1: float = 0.0
     policy_own_acc_top5: float = 0.0
+    policy_own_acc_rows: float = 0.0
     policy_future_acc_top1: float = 0.0
     policy_future_acc_top5: float = 0.0
+    policy_future_acc_rows: float = 0.0
     train_time_s: float = 0.0
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
@@ -2471,12 +2481,21 @@ class Trainer:
                 return 0.0
             return float(num.item()) / den_f
 
+  # The denominator `_acc` divided by, published so a 0.0 accuracy can be told
+  # apart from an absent one. Same accumulated tensor `_acc` reads, so this is
+  # one extra sync per head, not an extra reduction.
+        def _den(name: str) -> float:
+            val = acc_sums.get(name)
+            return 0.0 if val is None else float(val[1].item())
+
         return TrainMetrics(
             **_loss_sums_to_metric_kwargs(sums, n),  # dict[str,float] splat covers int fields (step counters) at runtime
             sf_move_acc=_acc("sf_move_acc"),
             sf_move_acc_top5=_acc("sf_move_acc_top5"),
             policy_own_acc_top1=_acc("policy_own_acc_top1"),
             policy_own_acc_top5=_acc("policy_own_acc_top5"),
+            policy_own_acc_rows=_den("policy_own_acc_top1"),
+            policy_future_acc_rows=_den("policy_future_acc_top1"),
             policy_future_acc_top1=_acc("policy_future_acc_top1"),
             policy_future_acc_top5=_acc("policy_future_acc_top5"),
             **extras,
