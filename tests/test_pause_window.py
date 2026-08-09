@@ -260,19 +260,99 @@ def test_it_does_not_leave_the_marker_behind_when_interrupted(tmp_path: Path) ->
     assert not (work / "tune" / "pause.txt").exists(), "interrupted while holding the marker"
 
 
-def test_the_ratchet_loop_runs_the_whole_job_inside_one_window() -> None:
+def test_the_ratchet_does_not_wrap_its_own_arenas() -> None:
     """The wrapper belongs around the WHOLE ratchet, not around each arena.
 
     Two reasons, both load-bearing: one pause covers both series (the ~35 min
     2x200 measurement), and `daily_gate_ratchet.sh` writes each arena's stdout
     to a log whose `[arena] Elo:` lines an outcome parser reads -- wrapper
-    chatter inside that redirect would be parsed as arena output.
+    chatter inside that redirect would be parsed as arena output. The three
+    tests below execute the loop's side of this; only the negative (the ratchet
+    must NOT wrap itself) has no run to observe it.
     """
-    loop = (REPO / "scripts" / "ratchet_loop.sh").read_text()
-    assert "scripts/pause_window.sh -- bash scripts/daily_gate_ratchet.sh" in loop
-    assert 'CAE_RATCHET_PAUSE_WINDOW:-1' in loop, "the window must default ON"
     ratchet = (REPO / "scripts" / "daily_gate_ratchet.sh").read_text()
     assert "pause_window.sh" not in ratchet, (
         "the ratchet wraps its own arenas: that pauses twice and pollutes the "
         "per-arena logs the outcome parser reads"
     )
+
+
+# ── The loop's routing, EXECUTED ─────────────────────────────────────────────
+# These replace a source-text assertion that `ratchet_loop.sh` CONTAINS the
+# string "pause_window.sh -- bash scripts/daily_gate_ratchet.sh". It was green
+# while the wiring was broken: `bash <missing script>` exits 127, the loop read
+# that as an ordinary ratchet failure, and three tests in
+# test_ratchet_search_shape.py went red in CI. A grep for the call cannot see
+# whether the call WORKS.
+
+_PAUSE_STUB = """#!/usr/bin/env bash
+# Records its argv, then runs the job, so the assertion is about what the loop
+# actually invoked rather than about the text of the loop.
+printf '%s\\n' "$*" >> "$PAUSE_CALLS"
+[ "$1" = "--" ] && shift
+"$@"
+"""
+
+
+def _ratchet_sandbox(tmp_path: Path, *, wrapper: bool):
+    """A ratchet sandbox, optionally carrying a stub pause_window.sh."""
+    from tests.test_ratchet_search_shape import _sandbox
+
+    root = _sandbox(tmp_path)
+    calls = root / "pause_calls.txt"
+    if wrapper:
+        stub = root / "scripts" / "pause_window.sh"
+        stub.write_text(_PAUSE_STUB)
+        stub.chmod(0o755)
+    return root, calls
+
+
+def _pause_calls(calls: Path) -> list[str]:
+    return calls.read_text().splitlines() if calls.exists() else []
+
+
+def test_the_loop_routes_the_whole_ratchet_through_the_window_by_default(tmp_path: Path) -> None:
+    """Default ON, ONE window, and the whole ratchet inside it."""
+    from tests.test_ratchet_search_shape import _csv_rows, _run_one_poll
+
+    root, calls = _ratchet_sandbox(tmp_path, wrapper=True)
+    rc, out = _run_one_poll(root, env={"PAUSE_CALLS": str(calls)})
+
+    assert rc == 0, f"the poll must still succeed through the wrapper:\n{out}"
+    assert _pause_calls(calls) == ["-- bash scripts/daily_gate_ratchet.sh"], (
+        f"the wrapper was invoked {_pause_calls(calls)!r}; it must wrap the whole "
+        f"ratchet exactly once:\n{out}"
+    )
+    assert len(_csv_rows(root)) == 1, f"the row must still be written:\n{out}"
+
+
+def test_a_missing_wrapper_degrades_to_running_beside_training(tmp_path: Path) -> None:
+    """⚑ THE CI REGRESSION. `bash <missing>` exits 127, which `ratchet_outcome`
+    reads as an ordinary failure -- so the day gets no strength row, no give-up
+    stamp, and a retry every poll until midnight. The comment in the loop
+    promised this "degrades to the old contended behaviour"; until the presence
+    test existed, it did not. Loud, and still measured."""
+    from tests.test_ratchet_search_shape import _csv_rows, _loop_state, _run_one_poll
+
+    root, calls = _ratchet_sandbox(tmp_path, wrapper=False)
+    rc, out = _run_one_poll(root, env={"PAUSE_CALLS": str(calls)})
+
+    assert rc == 0, f"a missing wrapper must not cost the day's reading:\n{out}"
+    assert len(_csv_rows(root)) == 1, f"the ratchet must still have run:\n{out}"
+    assert _loop_state(root)[0] != "", f"the day must be stamped as read:\n{out}"
+    assert "not readable" in out, f"the degradation must be LOUD:\n{out}"
+
+
+def test_the_window_can_be_switched_off(tmp_path: Path) -> None:
+    """CAE_RATCHET_PAUSE_WINDOW=0 is the documented escape hatch; a flag that
+    cannot be observed to turn anything off is not an escape hatch."""
+    from tests.test_ratchet_search_shape import _csv_rows, _run_one_poll
+
+    root, calls = _ratchet_sandbox(tmp_path, wrapper=True)
+    rc, out = _run_one_poll(
+        root, env={"PAUSE_CALLS": str(calls), "CAE_RATCHET_PAUSE_WINDOW": "0"},
+    )
+
+    assert rc == 0, out
+    assert _pause_calls(calls) == [], f"the window ran despite being switched off:\n{out}"
+    assert len(_csv_rows(root)) == 1, f"the ratchet must still run beside training:\n{out}"

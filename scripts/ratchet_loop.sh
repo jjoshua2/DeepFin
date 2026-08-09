@@ -127,12 +127,31 @@ poll_once () {
     # The `paused` guard above has already run, so this cannot collide with an
     # operator's own pause: we only ever set the marker after finding none.
     #
-    # Every trappable failure path releases the marker, so a wrapper failure
-    # degrades to the old contended behaviour rather than parking production.
-    # The residual is SIGKILL, which no trap can catch — `train.sh start` clears
-    # stale markers, and the trainer watchdog alerts on a stalled loop.
+    # Every trappable failure path inside the wrapper releases the marker, so a
+    # wrapper failure degrades to the old contended behaviour rather than
+    # parking production. The residual is SIGKILL, which no trap can catch —
+    # `train.sh start` clears stale markers, and the trainer watchdog alerts on
+    # a stalled loop.
     # Set CAE_RATCHET_PAUSE_WINDOW=0 to go back to running beside training.
+    #
+    # ⚑ THE PRESENCE TEST IS NOT DEFENSIVE PADDING — WITHOUT IT THE SENTENCE
+    # ABOVE IS FALSE. `bash <missing-script>` exits 127, which `ratchet_outcome`
+    # reads as an ordinary ratchet failure: no row, no give-up stamp, and a
+    # retry every $POLL until midnight. So the one thing that cannot find the
+    # wrapper loses the whole day's strength measurement AND spends the day
+    # asking again. CI caught it (three tests, rc=127) because the test sandbox
+    # copies only the scripts it names. "Degrades to the old behaviour" has to
+    # be a branch, not a hope.
+    local pause_ok=0
     if [ "${CAE_RATCHET_PAUSE_WINDOW:-1}" = "1" ]; then
+        if [ -r scripts/pause_window.sh ]; then
+            pause_ok=1
+        else
+            log "WARNING: scripts/pause_window.sh not readable — running the ratchet" \
+                "BESIDE training; expect ~half the games and a CI that may span zero"
+        fi
+    fi
+    if [ "$pause_ok" = "1" ]; then
         bash scripts/pause_window.sh -- bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
     else
         bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
