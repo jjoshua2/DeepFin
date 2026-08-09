@@ -1570,6 +1570,8 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_policy": _f("w_policy", 1.0),
         "w_soft": _f("w_soft", 0.5),
         "soft_policy_min_tv": _f("soft_policy_min_tv", 0.0),
+        "policy_target_temp": _f("policy_target_temp", 1.0),
+        "policy_target_sf_blend": _f("policy_target_sf_blend", 0.0),
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
@@ -1670,6 +1672,8 @@ class Trainer:
         w_policy: float = 1.0,
         w_soft: float = 0.5,
         soft_policy_min_tv: float = 0.0,
+        policy_target_temp: float = 1.0,
+        policy_target_sf_blend: float = 0.0,
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
@@ -2056,6 +2060,8 @@ class Trainer:
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)
         self.soft_policy_min_tv = float(soft_policy_min_tv)
+        self.policy_target_temp = float(policy_target_temp)
+        self.policy_target_sf_blend = float(policy_target_sf_blend)
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
@@ -2381,6 +2387,8 @@ class Trainer:
             "w_policy": self.w_policy, "w_soft": self.w_soft, "w_future": self.w_future,
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
             "soft_policy_min_tv": self.soft_policy_min_tv,
+            "policy_target_temp": self.policy_target_temp,
+            "policy_target_sf_blend": self.policy_target_sf_blend,
             "w_wdl": self.w_wdl, "w_sf_move": self.w_sf_move, "w_sf_eval": self.w_sf_eval,
             "w_categorical": self.w_categorical, "w_volatility": self.w_volatility,
             "w_sf_volatility": self.w_sf_volatility, "w_moves_left": self.w_moves_left,

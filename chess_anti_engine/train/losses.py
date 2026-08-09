@@ -304,6 +304,50 @@ def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torc
     return -(target_probs * F.log_softmax(logits, dim=-1)).sum(dim=-1)
 
 
+def reshape_main_policy_target(
+    pol_target: torch.Tensor,
+    *,
+    batch: dict[str, torch.Tensor],
+    width: int,
+    temp: float,
+    sf_blend: float,
+) -> torch.Tensor:
+    """Retemper and/or SF-blend the MAIN policy target. Identity at (1.0, 0.0).
+
+    Both knobs exist because the target was measured (2026-08-08) to carry far more
+    CONFIDENCE than INFORMATION: 256 sims of search improve ranking concordance over
+    the net's own prior by +0.0077 [+0.0065, +0.0088] while dropping entropy 1.185 ->
+    1.104 nats. Every term in the target is a function of the net, so CE against it
+    converges to a fixed point.
+
+    ``temp`` > 1 flattens the target (``p ** (1/temp)``, renormalised). It deliberately
+    does NOT resurrect zeros: a zero stays zero under a power, and the moves the target
+    zeroes were measured to lose a median 538cp, so raising them is not the goal. The
+    goal is to stop asserting near-certainty AMONG THE MOVES THAT CARRY MASS.
+
+    ``sf_blend`` > 0 mixes in the SF label, the one signal available that is not a
+    function of the net. It is **gated on ``has_sf_policy``**: a row whose SF target is
+    absent carries an all-zero vector, and blending that in would silently scale the
+    row's real target toward zero — a corrupted target that no loss curve would reveal.
+    Rows without the label keep their pure target, exactly.
+    """
+    if float(temp) == 1.0 and float(sf_blend) == 0.0:
+        return pol_target
+    out = pol_target
+    if float(sf_blend) != 0.0:
+        sf_raw = batch.get("sf_policy_t")
+        if sf_raw is not None:
+            sf_t = align_policy_target(sf_raw, width)
+            # (B, 1) so the gate broadcasts over the move axis, and .to(out) so an
+            # int8/uint8 presence flag cannot silently integer-truncate the mix.
+            gate = _get_mask(batch, "has_sf_policy").to(out.dtype).reshape(-1, 1)
+            w = float(sf_blend) * gate
+            out = (1.0 - w) * out + w * sf_t
+    if float(temp) != 1.0:
+        out = out.clamp_min(0.0) ** (1.0 / float(temp))
+    return out / out.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+
+
 def align_policy_target(target: torch.Tensor, width: int) -> torch.Tensor:
     """Return a policy target in the same action encoding width as logits.
 
@@ -597,6 +641,8 @@ def compute_loss(
     wdl_terminal_outcome_sf_frac: float = 0.0,
     moves_left_max_plies: float = 0.0,
     soft_policy_min_tv: float = 0.0,
+    policy_target_temp: float = 1.0,
+    policy_target_sf_blend: float = 0.0,
     sf_sparse_params: SfTargetParams | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute multi-head training loss.
@@ -646,6 +692,13 @@ def compute_loss(
     masked_base = _apply_legal_mask(base_policy_logits)
 
     pol_target = align_policy_target(batch["policy_t"], int(base_policy_logits.shape[-1]))
+    pol_target = reshape_main_policy_target(
+        pol_target,
+        batch=batch,
+        width=int(base_policy_logits.shape[-1]),
+        temp=float(policy_target_temp),
+        sf_blend=float(policy_target_sf_blend),
+    )
     pol_ce = soft_cross_entropy(masked_base, pol_target)
     zero_loss = torch.zeros_like(pol_ce)
     has_policy = _get_mask(batch, "has_policy", default=1.0)
