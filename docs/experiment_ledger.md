@@ -37196,3 +37196,53 @@ measurement.* Before comparing a live metric against a banked coefficient, estab
 were computed over the same POPULATION — check the denominator's call graph, not the metric's
 name. A ~13% level difference (1.058 vs 0.924) was the only visible symptom, and it is exactly the
 size that reads as ordinary drift.
+
+### AMENDMENT 9 (2026-08-09) — the `c_scale` arm is a REVERT of an unreviewed regression, and CI is structurally blind to it
+
+Surfaced by the PR #378 re-review and then EXECUTED here. It changes how the bundle's `c_scale`
+arm should be described, and it is a live defect in its own right.
+
+**1. Production has been running the WORST measured rung.** `mcts/gumbel.py:56-66` is the single
+source of truth and carries a measurement at *exactly our sim count*:
+
+> selfplay @256 sims (2026-06-16 puzzle screen, n=1000): **0.1 -> 0.688** accuracy,
+> 0.05 -> 0.652, **0.025 -> 0.598. Lowering it HURTS the RL regime.**
+
+`SELFPLAY_GUMBEL_C_SCALE = 0.1` is the pin. Live has run **0.025 at 256 sims** since `ed9de8ee9`
+flipped it — **~9.0 accuracy points below the pinned value, on a direct n=1000 measurement at our
+own sim budget.**
+
+**2. The guard exists, is correct, and cannot fire.** `tests/test_selfplay_gumbel_c_scale.py`
+asserts `flat["gumbel_c_scale"] == SELFPLAY_GUMBEL_C_SCALE` on `PRODUCTION_CONFIG`. Executed
+just now:
+
+| branch | committed `gumbel_c_scale` | pin test |
+|---|---|---|
+| `origin/main` — what CI runs | **0.1** | passes |
+| `ops/live-20260725` — what production LOADS | **0.025** | **FAILS x2** (`assert 0.025 == 0.1`) |
+
+The test is not broken. **It is never run against the file production actually loads**, because
+the whole divergence lives on the live branch and CI only ever sees `main`.
+[[ci_gate_reports_into_a_void]] x [[live_yaml_diverged_from_main_608_968]] = a green gate over a
+violated pin, for the entire life of the divergence.
+
+**3. Consequence for Amendment 7.** The `c_scale` 0.025 -> 0.1 arm is **not primarily an
+experiment** — it is a revert to a pinned, measured optimum, and the bundle's real novelty is
+`policy_temp`. Two things follow:
+- The offline paired evidence quoted earlier (−5.64 cp [−10.21, −1.07], n=800) is now the
+  *weaker* of two independent supports; the n=1000 puzzle screen at our sim count is the stronger.
+- Deploying the bundle turns two currently-RED tests GREEN on the live branch. **That is a
+  required post-restart check**: run `PYTHONPATH=. python3 -m pytest
+  tests/test_selfplay_gumbel_c_scale.py` IN THE LIVE TREE and require 0 failures. It is a
+  file-level check, not an in-effect check — it does not replace the worker-log proof.
+
+**4. The residual defect is NOT closed by the bundle.** Setting `c_scale` to 0.1 makes this
+particular pin true again; it does nothing about the fact that **no CI gate reads the live yaml**.
+Any of the other 600+ diverged lines can violate a pin the same way and stay green. Filed as a
+follow-up, and note the honest scope: reconciling live -> main removes THIS instance by making the
+two files agree, but only until they diverge again.
+
+**The transferable rule:** *before citing a passing test as evidence about production, check which
+FILE it read.* A config-pinning test is only as good as the config it opens, and in a repo where
+the production config lives on a branch CI never builds, "the test passes" and "production obeys
+the pin" are unrelated statements.
