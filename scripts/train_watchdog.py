@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Training-health watchdog: one detect-and-report check per invocation.
 
-Detects STOPPED / PAUSED-HELD / PAUSE-ABANDONED / STALLED / OK for the live
-train.sh-managed run. Never signals, deletes, restarts, or resumes — read-only
-report only.
+Detects CRASHED / STOPPED / PAUSED-HELD / PAUSE-ABANDONED / STALLED / OK for
+the live train.sh-managed run. Never signals, deletes, restarts, or resumes —
+read-only report only.
 
 Usage (cron / loop):
   PYTHONPATH=. python3 scripts/train_watchdog.py
   PYTHONPATH=. python3 scripts/train_watchdog.py --stall-minutes 90
   PYTHONPATH=. python3 scripts/train_watchdog.py --notify-cmd 'notify-send training'
 
-Exit codes: 0=OK, 1=STOPPED, 2=PAUSED-HELD, 3=STALLED, 4=ERROR,
-5=PAUSE-ABANDONED.
+Exit codes: 0=OK, 1=STOPPED, 2=PAUSED-HELD, 3=STALLED, 4=ERROR, 5=CRASHED,
+6=PAUSE-ABANDONED.
+STOPPED vs CRASHED both mean 'no live PID' and differ only by whether
+train.sh's intentional-stop marker is present (see --stop-marker).
 Stdout is always exactly one ``watchdog: ...`` line (or ERROR on failure).
 
 ⚑ WHY PAUSE-ABANDONED EXISTS (2026-08-09, the ack-gated pause window).
@@ -58,13 +60,30 @@ DEFAULT_LOG = Path("/tmp/chess_training.log")
 DEFAULT_WORK_DIR = Path(os.environ.get("TRAIN_WORK_DIR", "runs/pbt2_small"))
 DEFAULT_STALL_MINUTES = 90.0
 DEFAULT_PAUSE_MAX_MINUTES = 180.0
+# Touched by `train.sh stop` BEFORE it kills, removed by `train.sh start`. Its
+# presence is the ONLY thing separating a deliberate stop from a crash: both
+# leave no PID. Before 2026-08-08 both reported STOPPED, so a crash that killed
+# the process was indistinguishable from the operator stopping for the evening
+# — the 4h32m outage that day went unnoticed for exactly that reason.
+DEFAULT_STOP_MARKER = Path("/tmp/chess_training.intentional_stop")
 
 EXIT_OK = 0
 EXIT_STOPPED = 1
 EXIT_PAUSED_HELD = 2
 EXIT_STALLED = 3
 EXIT_ERROR = 4
-EXIT_PAUSE_ABANDONED = 5
+# New in 2026-08-08. Appended, never renumbered: watchdog_loop.sh switches on
+# EXIT_STALLED by value for auto-recovery, and any consumer treating "non-zero"
+# as "needs attention" keeps working unchanged.
+EXIT_CRASHED = 5
+# ⚑ 6, NOT 5. This branch was written against a main that stopped at 4 and it
+# claimed 5, which #371 had already taken for CRASHED. Two states sharing an
+# exit code is the same defect one level up from the one this state exists to
+# fix: watchdog_loop.sh would have cleared a pause marker on a CRASHED verdict.
+# Caught by reading origin/main, not by any test here -- a merge conflict would
+# have shown the collision only if both sides had touched the same LINE, and
+# they did not.
+EXIT_PAUSE_ABANDONED = 6
 
 STATE_OK = "OK"
 STATE_STOPPED = "STOPPED"
@@ -72,6 +91,7 @@ STATE_PAUSED_HELD = "PAUSED-HELD"
 STATE_PAUSE_ABANDONED = "PAUSE-ABANDONED"
 STATE_STALLED = "STALLED"
 STATE_ERROR = "ERROR"
+STATE_CRASHED = "CRASHED"
 
 # `pid=<n>` anywhere in the marker, on a word boundary. Written by
 # scripts/pause_window.sh; graceful_restart.py's marker deliberately has none.
@@ -90,7 +110,11 @@ class ProgressSnapshot:
     minutes_flat: float
     trial_dir: str | None = None
     progress_file: str | None = None
-    # Present only for a SELF-IDENTIFYING marker (one carrying `pid=`). A
+    # True when train.sh's intentional-stop marker exists. Defaults False so a
+    # caller that forgets to supply it reports CRASHED rather than silently
+    # downgrading a real crash to a benign stop: the safe default is the loud one.
+    intentional_stop: bool = False
+    # Present only for a SELF-IDENTIFYING pause marker (one carrying `pid=`). A
     # marker without an owner line is an operator's and is never judged
     # abandoned, so both stay None and the verdict is PAUSED-HELD as before.
     pause_owner_pid: int | None = None
@@ -145,7 +169,7 @@ def decide(
 ) -> Verdict:
     """Pure state machine: snapshot in, verdict out. No I/O.
 
-    Check order: STOPPED → PAUSE-ABANDONED → PAUSED-HELD → STALLED → OK.
+    Check order: CRASHED/STOPPED → PAUSE-ABANDONED → PAUSED-HELD → STALLED → OK.
     Flatness is ``rows`` not greater than ``rows_prev`` (or no prior rows).
     PAUSED-HELD requires pause.txt AND flat progress (the boundary-hold case
     appends no rows; mtime is untrustworthy because Ray metadata syncs).
@@ -154,6 +178,13 @@ def decide(
     ``pause_max_minutes``) — the only pause a machine may safely clear.
     STALLED is flat without pause for longer than ``stall_minutes``.
     Within the stall window (or after growth), the result is OK.
+
+    A dead/absent PID splits on ``intentional_stop``: with the marker it is a
+    deliberate STOPPED (the operator ran `train.sh stop`), without it the
+    process died on its own and the verdict is CRASHED. Both are non-zero, so
+    every existing "non-OK" consumer is unaffected; only the label and the
+    exit code differ, which is what makes a crash legible in the log after
+    the fact instead of looking identical to an evening off.
     """
     details: dict[str, Any] = {
         "pid": snap.pid if snap.pid is not None else "none",
@@ -174,7 +205,9 @@ def decide(
         details["pause_age_min"] = f"{snap.pause_age_minutes:.1f}"
 
     if snap.pid is None or not snap.pid_alive:
-        return Verdict(STATE_STOPPED, EXIT_STOPPED, details)
+        if snap.intentional_stop:
+            return Verdict(STATE_STOPPED, EXIT_STOPPED, details)
+        return Verdict(STATE_CRASHED, EXIT_CRASHED, details)
 
     flat = snap.rows_prev is not None and snap.rows <= snap.rows_prev
     # First observation (no prior state): not flat — arm the clock, report OK.
@@ -412,13 +445,20 @@ def build_snapshot(
     pidfile: Path,
     work_dir: Path,
     state_path: Path,
+    stop_marker: Path,
     now: float | None = None,
     pid_alive_fn: Callable[[int], bool] = pid_is_alive,
 ) -> tuple[ProgressSnapshot, PersistedState]:
-    """Gather filesystem observations + compute flatness vs persisted state."""
+    """Gather filesystem observations + compute flatness vs persisted state.
+
+    ``stop_marker`` is REQUIRED rather than defaulted: a caller that silently
+    got the production ``/tmp`` path would make tests depend on whether the
+    operator happens to have training stopped right now.
+    """
     now = time.time() if now is None else now
     pid = read_pid(pidfile)
     alive = bool(pid is not None and pid_alive_fn(pid))
+    intentional = stop_marker.exists()
 
     tune_dir = work_dir / "tune"
     pause = find_pause_txt(tune_dir)
@@ -455,6 +495,7 @@ def build_snapshot(
         minutes_flat=minutes_flat,
         trial_dir=trial_name,
         progress_file=progress_file,
+        intentional_stop=intentional,
         pause_owner_pid=owner_pid,
         pause_owner_alive=owner_alive,
         pause_age_minutes=pause_age,
@@ -532,6 +573,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Minutes of flat progress before STALLED (default: {DEFAULT_STALL_MINUTES:g})",
     )
     ap.add_argument(
+        "--stop-marker",
+        type=Path,
+        default=DEFAULT_STOP_MARKER,
+        help=(
+            "train.sh intentional-stop marker. Present + dead PID = STOPPED "
+            f"(deliberate); absent + dead PID = CRASHED (default: {DEFAULT_STOP_MARKER})"
+        ),
+    )
+    ap.add_argument(
         "--pause-max-minutes",
         type=float,
         default=DEFAULT_PAUSE_MAX_MINUTES,
@@ -570,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
             pidfile=args.pidfile,
             work_dir=work_dir,
             state_path=state_path,
+            stop_marker=args.stop_marker,
         )
         verdict = decide(
             snap,

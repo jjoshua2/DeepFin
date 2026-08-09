@@ -24993,7 +24993,7 @@ marker a nightly event, so "production is parked" and "the ratchet is running"
 became the same alert.
 
 Fixed rather than documented-around: the marker records `pid=` and `started=`,
-the watchdog returns a new **PAUSE-ABANDONED (exit 5)** for a marker that NAMES
+the watchdog returns a new **PAUSE-ABANDONED (exit 6)** for a marker that NAMES
 ITS OWNER whose owner is gone (or which has been held past
 `--pause-max-minutes`, default 180 = 30 min ack wait + `BUDGET_MIN=90` plus
 headroom), and `watchdog_loop.sh` removes exactly that marker. ⚑ The gate is
@@ -25001,6 +25001,16 @@ headroom), and `watchdog_loop.sh` removes exactly that marker. ⚑ The gate is
 with no `pid=`, and an operator's pause must outlast any bound. Deliberately NOT
 `recover_stall.sh`: nothing is wedged, so SIGKILLing a healthy stack to delete
 one file is the more destructive fix.
+
+⚑ **The exit code was 5 and had to move to 6.** This branch was cut from a main
+that stopped at `EXIT_ERROR = 4`; PR #371 landed `EXIT_CRASHED = 5` on main
+while it was open. Two states on one exit code would have made
+`watchdog_loop.sh` try to clear a pause marker on a CRASHED verdict — the same
+"one signal, two meanings" defect this state exists to remove, one level up.
+⚑ **Git did not surface it.** The two sides appended to the same *block* but not
+the same *line*, so `git merge` resolved that hunk cleanly; it was caught by
+reading `origin/main` after noticing unrelated edits in the live tree. A merge
+that applies without conflict is not evidence that two changes compose.
 
 ### ⚑ MERGING DOES NOT DEPLOY THIS
 

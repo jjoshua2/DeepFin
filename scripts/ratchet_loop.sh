@@ -156,7 +156,7 @@ poll_once () {
     #   * `train.sh start` clears stale markers;
     #   * the marker records `pid=` and `started=`, so an operator can tell "the
     #     ratchet is running" from "a dead window parked production";
-    #   * `train_watchdog.py` returns PAUSE-ABANDONED (exit 5) for a marker whose
+    #   * `train_watchdog.py` returns PAUSE-ABANDONED (exit 6) for a marker whose
     #     named owner is gone, and `watchdog_loop.sh` removes it.
     # ⚑ THAT THIRD ONE IS NEW, AND THE CLAIM IT REPLACES WAS FALSE. This comment
     # used to say "the trainer watchdog alerts on a stalled loop". It alerts, but

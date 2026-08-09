@@ -93,7 +93,7 @@ All default sane; none is set in production.
 
 ### A marker held by a dead window
 
-`train_watchdog.py` reports `PAUSE-ABANDONED` (exit 5) for a marker that names its owner
+`train_watchdog.py` reports `PAUSE-ABANDONED` (exit **6** — 5 is `CRASHED`, taken by #371) for a marker that names its owner
 (`pid=`, written by `pause_window.sh`) whose owner is gone, or which has been held past
 `--pause-max-minutes` (default 180). `watchdog_loop.sh` then removes that marker — and
 only that kind: `graceful_restart.py`'s marker carries no `pid=` and is never touched,
