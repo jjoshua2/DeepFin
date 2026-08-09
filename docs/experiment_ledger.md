@@ -37366,3 +37366,41 @@ never written down.
 bundle's net effect as the sum of its arms, measure the arms AT EACH OTHER'S SETTINGS. Here the
 cross-term was 38% of the smaller arm and flipped the predicted net from clearly-positive to
 indistinguishable-from-zero.
+
+### AMENDMENT 12 (2026-08-09) — every replay shard is written with NULL provenance
+
+Surfaced by PR #382's rework and confirmed here by reading the call site.
+`DiskReplayBuffer._flush_shard_arrays` (`replay/disk_buffer.py:1580`) calls
+
+```python
+saved_path = save_local_shard_arrays(path, arrs=arrs)     # <-- no meta=
+```
+
+while `save_local_shard_arrays` (`replay/shard.py:1495-1500`) takes
+`meta: ShardMeta | dict | None = None`. **So `ShardMeta` is None on every shard this path
+writes** — `model_step` and `model_sha256` included. Independently corroborated: all 8 newest live
+shards report `model_step is None`, so `read_stats.model_steps == []`.
+
+**Consequences, in order of importance:**
+
+1. **No shard can be attributed to the net that produced it.** This is a standing blind spot in
+   the data pipeline, not a diagnostic-script problem.
+2. It is why #382's stale-reference-prior guard was inert: `--compare-to` had nothing to compare,
+   so absent provenance read as "fine". [[a_gate_that_cannot_fail]] with an unusual root cause —
+   the guard was written correctly against a field that is never populated.
+3. **Bears on the open prev-model-share question** (16.3% -> 56.5%, cause NOT established). The
+   composition itself is measurable from SERVER-side counters (`n_cur`/`n_prev`,
+   `distributed_stale_games`), which is how the drift was found — but the per-shard attribution
+   that would let us reconstruct history from the bank does not exist. Any retrospective
+   "which net made this data" analysis is impossible on shards already written, and will stay
+   impossible until `meta=` is passed.
+
+**Not fixed here, and deliberately.** Populating `meta` is a data-pipeline change; the protocol's
+one-data-affecting-change-per-window rule puts it behind the search-authority readout. Filed
+rather than done. Note the asymmetry when it IS done: it fixes shards written AFTERWARD only —
+the existing window can never be back-filled, so the sooner it lands the less history is lost.
+
+**The transferable rule:** *a guard against a field can be perfectly correct and still never fire,
+if nothing ever writes the field.* Reviewing the guard proves nothing; check the WRITER. The
+question is not "does this code compare provenance correctly" but "is provenance ever non-null on
+the production path".
