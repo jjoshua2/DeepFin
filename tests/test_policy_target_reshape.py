@@ -17,11 +17,14 @@ asserted only that "the numbers changed", and six semantic mutants survived it.
 from __future__ import annotations
 
 import math
+from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
 
 from chess_anti_engine.train.losses import compute_loss, retemper_main_policy_target
+from chess_anti_engine.train.trainer import Trainer
 
 WIDTH = 8
 
@@ -310,9 +313,7 @@ class _TinyPolicyModel(torch.nn.Module):
         }
 
 
-def _trainer(tmp_path, **kwargs):  # noqa: ANN001, ANN003, ANN202  (test-local rig)
-    from chess_anti_engine.train.trainer import Trainer
-
+def _trainer(tmp_path: Path, **kwargs: Any) -> Trainer:
     return Trainer(
         _TinyPolicyModel(), device="cpu", lr=1e-3, optimizer="adamw",
         use_amp=False, log_dir=tmp_path, tb_log_interval=1000,
@@ -321,7 +322,9 @@ def _trainer(tmp_path, **kwargs):  # noqa: ANN001, ANN003, ANN202  (test-local r
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, 0.001, float("inf"), float("nan")])
-def test_the_trainer_refuses_a_bad_temperature_at_CONSTRUCTION(tmp_path, bad: float) -> None:  # noqa: ANN001
+def test_the_trainer_refuses_a_bad_temperature_at_CONSTRUCTION(
+    tmp_path: Path, bad: float,
+) -> None:
     """⚑ MUTATION SURVIVOR (review N3, and again at the #375 merge): the
     previous version of this test only `inspect.getsource`-grepped
     `Trainer.__init__` for the string ``retemper_main_policy_target(``.
@@ -343,7 +346,9 @@ def test_the_trainer_refuses_a_bad_temperature_at_CONSTRUCTION(tmp_path, bad: fl
         _trainer(tmp_path, policy_target_temp=bad)
 
 
-def test_the_trainer_accepts_a_good_temperature_and_it_reaches_compute_loss(tmp_path) -> None:  # noqa: ANN001
+def test_the_trainer_accepts_a_good_temperature_and_it_reaches_compute_loss(
+    tmp_path: Path,
+) -> None:
     """The other half of the mutation: refusing everything would also pass the
     test above. A good value must survive construction AND arrive at the
     training-step `compute_loss` call -- while the eval ruler stays pinned."""
