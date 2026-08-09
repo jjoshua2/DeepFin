@@ -37024,3 +37024,65 @@ search shape than every arena before it.** No existing arena result is re-based 
 1.0 is exactly `GumbelConfig().policy_temp`, so today it is a bit-identical no-op), but any
 pre/post arena comparison across the flip is comparing two shapes. Note it beside any arena
 number quoted in this readout window.
+
+### AMENDMENT 6 (2026-08-09) — DECISION: DEPLOY ONE KNOB. "Honest" and "flat" are disjoint.
+
+PR #382's rework (`6b63a9266`) answers Amendment 4's open question, and the answer is
+structural rather than a tuning miss.
+
+**The negative control now runs at EVERY cell.** On live shards (`tau=25 rho=0.01`, 16 seeds)
+the control PASSES at `phi <= 3e-3` (+7.3 SD at 1e-3, +1.2 at 3e-3) and **INVERTS from 5e-3
+up** (−2.5 at 7e-3, −4.1 at 1e-2, −5.3 at 2e-2). Isolation arms were re-run **on the live
+population at the live shape** (`--mode research`, same shard rows, stored `x` planes as
+`pre_pol_logits`, `gumbel_scale 0.5`, 256 sims, topk 32, 600 paired rows; harness fidelity vs
+production's stored target **0.8133 argmax / 0.1423 TV**, legal-mismatch **0/600**):
+
+| `phi` | control | verdict | `c_scale` 0.025→0.1 | `policy_temp` 1.0→1.5 |
+|---|---|---|---|---|
+| 1e-3 | +9.04 | PASS | −0.183 [−0.233,−0.135] | +0.286 [+0.234,+0.338] |
+| 3e-3 | +1.37 | PASS | −0.149 [−0.203,−0.098] | +0.367 [+0.315,+0.422] |
+| 5e-3 | −6.02 | INVERTED | −0.044 [−0.080,−0.006] | +0.441 [+0.387,+0.500] |
+| 1e-2 | −9.53 | INVERTED | **+0.031** [+0.006,+0.058] | +0.413 [+0.356,+0.469] |
+
+**⚑⚑ THE CONTROL CROSSING (~5e-3) SITS BELOW THE `c_scale` ZERO-CROSSING (~8e-3), SO THE
+HONEST CELLS AND THE FLAT CELLS DO NOT OVERLAP.** The mechanism: **soundness is a Q-proxy and
+`c_scale` is the gain on Q**, so anything that responds to soundness must respond to
+`c_scale`. This is not fixable by search — 128 cells with >=50 pairs: 81 pass the control, 39
+are `c_scale`-quiet, **2 are both**, and those sit at `rho=0.05` where "rare" (0.05) is barely
+below uniform (1/27 ~ 0.037).
+
+Best survivor, `tau=50 rho=0.05 phi=2e-2` (928 pairs, control +5.9 SD): `c_scale` **−0.0593**
+[−0.0833,−0.0350], `policy_temp` **+0.2381** [+0.2096,+0.2667], bundle **+0.0765**. It is a
+**one-sided** rule: `Δ >= +0.05` ⇒ `policy_temp` fired; **`Δ <= 0` is INDETERMINATE, never
+"policy_temp did not fire"** — the halves cancel and the bundle is a third of the T-only
+effect.
+
+## DECISION: the bundle is UNBUNDLED. Deploy `gumbel_c_scale` 0.025 -> 0.1 ALONE.
+
+A one-sided instrument cannot carry the attribution the bundle was justified by. Combined with
+Amendment 5 (both knobs move `keep_prob`/`priority`, so BOTH confound the deciding yardstick
+through the same channel), bundling now costs attribution on every axis and buys only one
+restart. Reasons for `c_scale` as the single arm, in order:
+
+1. **It is a violated pin, not a preference.** `SELFPLAY_GUMBEL_C_SCALE = 0.1` is the library's
+   declared selfplay optimum and `tests/test_selfplay_gumbel_c_scale.py` FAILS today with
+   `assert 0.025 == 0.1`, twice. Those two failures turning green is a free deployment proof.
+2. **It has offline paired quality evidence**; `policy_temp`'s live effect has none.
+   PR #381, n=800 paired: 0.025→0.1 is **−5.64 cp [−10.21, −1.07]** better.
+3. **It raises the actual training signal ~5.7x** — KL(target‖prior) 0.067 -> 0.380 — and KL,
+   not entropy, is the signal [[kl_target_prior_is_the_training_signal]].
+4. **One knob = one source for the `keep_prob`/`priority` confound**, instead of two.
+
+⚠ **The known cost, stated rather than hidden:** `c_scale` 0.1 alone LOWERS target entropy
+~0.226 nats (~0.92 -> ~0.69), and our targets are already ~2x sharper than lc0's. That was the
+entire reason for pairing it with `policy_temp` (+0.375). **We accept it for this window**
+because entropy is not the training signal and KL is; if the readout shows a sharpening
+failure, `policy_temp` 1.5 is the pre-sized, already-plumbed follow-up arm — and it will then
+be attributable, because it will be alone.
+
+**`gumbel_policy_temp` still ships in the yaml at its no-op default 1.0** (PR #379), so the
+follow-up costs a yaml reload rather than another restart.
+
+**Coverage's role is demoted accordingly:** it is no longer an attribution instrument. It
+becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read at
+`tau=50 rho=0.05 phi=2e-2` only, with `Δ <= 0` explicitly not a negative.
