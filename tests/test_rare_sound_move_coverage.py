@@ -9,6 +9,8 @@ that stays known is if CI re-runs it.
 from __future__ import annotations
 
 import importlib.util
+import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -51,6 +53,7 @@ def _row(
         target=np.asarray(target, dtype=np.float64),
         regret_cp=np.asarray(regret_cp, dtype=np.float64),
         scored=np.asarray([True] * n if scored is None else scored, dtype=bool),
+        key="row0",
     )
 
 
@@ -131,15 +134,16 @@ def _synthetic_rows(n_rows: int = 300, seed: int = 7) -> list:
                                  rng.uniform(400.0, 900.0, size=6)])
         rows.append(rsmc.RowVectors(
             prior=prior, target=target, regret_cp=regret,
-            scored=np.ones(12, dtype=bool),
+            scored=np.ones(12, dtype=bool), key=f"row{len(rows)}",
         ))
     return rows
 
 
-def test_shuffling_the_target_collapses_coverage_to_the_base_rate() -> None:
+def test_shuffling_the_target_collapses_coverage_towards_chance() -> None:
     """THE negative control. Permuting the target within the row destroys its
-    association with soundness and rarity; coverage must fall to the chance
-    level ``P(target >= phi)`` over legal moves."""
+    association with soundness and rarity, so coverage must fall towards
+    chance. The NULL is the shuffle's own distribution (``shuffled_mean`` /
+    ``shuffled_sd``); ``base_rate`` pools differently and is indicative only."""
     rows = _synthetic_rows()
     real = rsmc.coverage_cells(rows, taus_cp=(25.0,), rhos=(0.01,), phis=(1e-3,))[0]
     shuffled = rsmc.coverage_cells(
@@ -149,9 +153,15 @@ def test_shuffling_the_target_collapses_coverage_to_the_base_rate() -> None:
 
     assert real.n_pairs == shuffled.n_pairs, "the shuffle must not move the denominator"
     assert real.coverage > 0.95
-    # 3 of 12 legal moves clear the floor, so chance is 0.25.
+    # The NULL is the shuffle's own distribution, not `base_rate`. `base_rate`
+    # pools over all rows while shuffled coverage is pairs-weighted over the
+    # rows that HAVE a sound-and-rare move, so on real data the two differ by
+    # more than any tolerance worth asserting (measured live: 0.3893 vs 0.3137,
+    # a 0.0756 pooling gap that an earlier 0.06 tolerance here silently blessed).
+    # Here the synthetic rows are homogeneous, so the two agree loosely -- and
+    # even that is asserted only as an order-of-magnitude sanity check.
     assert shuffled.base_rate == pytest.approx(0.25)
-    assert abs(shuffled.coverage - shuffled.base_rate) < 0.06
+    assert abs(shuffled.coverage - shuffled.base_rate) < 0.10
     assert real.coverage - shuffled.coverage > 0.5
 
 
@@ -199,6 +209,50 @@ def test_bootstrap_ci_brackets_the_point_estimate_and_widens_with_fewer_rows() -
     assert (hi_small - lo_small) > (hi_big - lo_big)
 
 
+def test_bootstrap_clusters_on_positions_not_on_moves() -> None:
+    """⚑ The resolution claim rests on CLUSTERING, and this is its only guard.
+
+    Replacing the cluster bootstrap with a move-level i.i.d. binomial resample
+    passed all the other tests, because "the CI brackets the point estimate and
+    widens with fewer rows" is true of any sane bootstrap. This one is built to
+    separate them: every row is INTERNALLY PERFECTLY CORRELATED (all its
+    sound-and-rare moves are funded, or none are), and half the rows are funded.
+    A position-clustered bootstrap then sees an effective n of 40 rows; a
+    move-level bootstrap sees 40 * 12 = 480 independent draws and reports a CI
+    roughly sqrt(12) times too narrow.
+    """
+    rng = np.random.default_rng(17)
+    rows = []
+    for i in range(40):
+        n = 13
+        prior = np.concatenate([[0.90], np.full(n - 1, 0.10 / (n - 1))])
+        funded = i % 2 == 0
+        target = np.full(n, 1e-9)
+        target[0] = 0.9
+        if funded:
+            target[1:] = 0.1 / (n - 1)   # every rare move funded, together
+        regret = np.concatenate([[0.0], rng.uniform(0.0, 20.0, size=n - 1)])
+        rows.append(rsmc.RowVectors(
+            prior=prior, target=target, regret_cp=regret,
+            scored=np.ones(n, dtype=bool), key=f"row{i}",
+        ))
+    kw = {"tau_cp": 25.0, "rho": 0.01, "phi": 1e-3}
+    lo, hi, _sd = rsmc.bootstrap_ci(rows, resamples=4000, seed=5, **kw)
+    clustered_width = hi - lo
+
+    cell = rsmc.coverage_cells(rows, taus_cp=(25.0,), rhos=(0.01,), phis=(1e-3,))[0]
+    # The i.i.d. move-level 95% interval on the SAME pooled counts.
+    p = cell.coverage
+    iid_width = 2 * 1.96 * math.sqrt(p * (1.0 - p) / cell.n_pairs)
+
+    assert cell.n_pairs == 40 * 12
+    assert clustered_width > 2.0 * iid_width, (
+        f"clustered CI width {clustered_width:.4f} is not materially wider than "
+        f"the i.i.d. move-level width {iid_width:.4f} -- the bootstrap has "
+        "stopped clustering by position"
+    )
+
+
 def test_paired_delta_is_zero_and_tight_for_identical_arms() -> None:
     rows = _synthetic_rows(n_rows=200, seed=9)
     delta, lo, hi = rsmc.paired_delta_ci(
@@ -211,9 +265,33 @@ def test_paired_delta_is_zero_and_tight_for_identical_arms() -> None:
 
 def test_paired_delta_rejects_unequal_arms() -> None:
     rows = _synthetic_rows(n_rows=8)
-    with pytest.raises(ValueError, match="equal-length arms"):
+    with pytest.raises(ValueError, match="equal-length"):
         rsmc.paired_delta_ci(
             rows, rows[:4], tau_cp=25.0, rho=0.01, phi=1e-3, resamples=10, seed=1,
+        )
+
+
+def test_paired_delta_refuses_arms_that_describe_different_positions() -> None:
+    """The promise that two arms are checked for identical ordering was, in the
+    first version of this script, only a docstring: nothing read the keys."""
+    rows = _synthetic_rows(n_rows=6)
+    other = list(reversed(rows))
+    with pytest.raises(ValueError, match="different positions"):
+        rsmc.paired_delta_ci(
+            rows, other, tau_cp=25.0, rho=0.01, phi=1e-3, resamples=10, seed=1,
+        )
+
+
+def test_paired_delta_refuses_arms_with_unset_keys() -> None:
+    rows = _synthetic_rows(n_rows=4)
+    keyless = [
+        rsmc.RowVectors(prior=r.prior, target=r.target, regret_cp=r.regret_cp,
+                        scored=r.scored)
+        for r in rows
+    ]
+    with pytest.raises(ValueError, match="unset row keys"):
+        rsmc.paired_delta_ci(
+            keyless, keyless, tau_cp=25.0, rho=0.01, phi=1e-3, resamples=10, seed=1,
         )
 
 
@@ -353,3 +431,107 @@ def test_sim_shape_resolves_the_root_sentinels() -> None:
 def test_parser_requires_a_replay_dir_for_shard_mode() -> None:
     with pytest.raises(SystemExit, match="requires --replay-dir"):
         rsmc.main(["--mode", "shards", "--checkpoint", "x.pt"])
+
+
+# ---------------------------------------------------------------------------
+# The control is attached to EVERY cell, and cells can INVERT
+# ---------------------------------------------------------------------------
+
+
+def test_attach_controls_marks_a_good_cell_pass_and_an_inverted_cell_inverted() -> None:
+    """⚑ The failure that produced this test: the control was run at one cell
+    and the pin was placed at another.
+
+    The synthetic rows fund the sound-rare moves at 0.045, so a floor BELOW
+    that finds them (PASS) and a floor ABOVE it cannot (the shuffle, which can
+    land the row's 0.90 mass on a rare move, then scores higher -- INVERTED).
+    """
+    rows = _synthetic_rows(n_rows=200, seed=5)
+    cells = rsmc.coverage_cells(
+        rows, taus_cp=(25.0,), rhos=(0.01,), phis=(1e-3, 1e-1),
+    )
+    rsmc.attach_controls(rows, cells, seeds=8, seed0=3)
+
+    good, bad = cells[0], cells[1]
+    assert good.control_seeds == 8
+    assert good.shuffled_sd > 0.0
+    assert good.passes_control()
+    assert good.control_margin > 1.0
+    assert not bad.passes_control()
+    assert bad.control_margin < -1.0, (
+        "the high floor must INVERT: the metric scores below its own shuffle"
+    )
+
+
+def test_attach_controls_is_a_no_op_at_zero_seeds() -> None:
+    rows = _synthetic_rows(n_rows=10)
+    cells = rsmc.coverage_cells(rows, taus_cp=(25.0,), rhos=(0.01,), phis=(1e-3,))
+    rsmc.attach_controls(rows, cells, seeds=0, seed0=1)
+    assert cells[0].control_seeds == 0
+    assert not cells[0].passes_control()
+    assert not math.isfinite(cells[0].control_margin)
+
+
+# ---------------------------------------------------------------------------
+# diff_focus: the population moves with the knob
+# ---------------------------------------------------------------------------
+
+
+def test_read_diff_focus_returns_the_last_row_with_the_columns(tmp_path: Path) -> None:
+    csv_path = tmp_path / "progress.csv"
+    csv_path.write_text(
+        "training_iteration,diff_focus_keep_rate,diff_focus_keep_limited_frac,"
+        "diff_focus_keep_prob_mean\n"
+        "700,0.7962,0.3874,0.7959\n"
+        "701,0.8100,0.3500,0.8090\n",
+        encoding="utf-8",
+    )
+    got = rsmc.read_diff_focus(str(csv_path))
+    assert got["training_iteration"] == pytest.approx(701.0)
+    assert got["diff_focus_keep_rate"] == pytest.approx(0.8100)
+    assert got["diff_focus_keep_limited_frac"] == pytest.approx(0.3500)
+
+
+def test_read_diff_focus_reports_unmeasured_rather_than_guessing() -> None:
+    assert rsmc.read_diff_focus("/nonexistent/progress.csv") == {}
+
+
+# ---------------------------------------------------------------------------
+# CLI guards
+# ---------------------------------------------------------------------------
+
+
+def test_main_rejects_a_tau_at_or_above_the_regret_cap() -> None:
+    """At tau >= the 1000cp cap the `scored` mask is wrong, because a capped
+    move is indistinguishable from the unscored fill."""
+    with pytest.raises(SystemExit, match="SF_OWN_REGRET_CAP_CP"):
+        rsmc.main([
+            "--mode", "shards", "--checkpoint", "x.pt",
+            "--replay-dir", "/tmp/nope", "--taus", "25,1000",
+        ])
+
+
+def test_main_requires_a_replay_dir_for_research_mode() -> None:
+    with pytest.raises(SystemExit, match="requires --replay-dir"):
+        rsmc.main(["--mode", "research", "--checkpoint", "x.pt"])
+
+
+def test_load_dump_round_trips_keys(tmp_path: Path) -> None:
+    rows = _synthetic_rows(n_rows=3)
+    payload = {
+        "provenance": {"checkpoint": "c.pt"},
+        "per_row": [
+            {
+                "key": r.key, "prior": r.prior.tolist(), "target": r.target.tolist(),
+                "regret_cp": r.regret_cp.tolist(),
+                "scored": r.scored.astype(int).tolist(),
+            }
+            for r in rows
+        ],
+    }
+    p = tmp_path / "arm.json"
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    back, prov = rsmc.load_dump(p)
+    assert [r.key for r in back] == [r.key for r in rows]
+    assert prov["checkpoint"] == "c.pt"
+    rsmc.assert_paired(rows, back)

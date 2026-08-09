@@ -34,36 +34,74 @@ the network's raw policy, never against the tempered prior the search used.
 Defining rarity on the tempered prior would make the metric move under T by
 construction -- the ruler would be made of the thing it measures.
 
-⚑ COVERAGE IS **NOT** FLAT IN ``c_scale``, AND THE FLOOR ``phi`` DECIDES THE
-SIGN. The prereg's table asserts flatness. That would hold if the stored target
-were supported on the Gumbel CANDIDATE set, which only ``policy_temp`` moves --
-but ``mcts/gumbel.py::_build_improved_policy_for_board`` builds the improved
-policy over EVERY legal move, handing unvisited moves the root's completed-Q.
-So sigma reaches every entry of the target and ``phi`` is not sigma-invariant.
+⚑ COVERAGE IS **NOT** FLAT IN ``c_scale`` ANYWHERE ITS OWN CONTROL PASSES.
+The prereg's table asserts flatness. That would hold if the stored target were
+supported on the Gumbel CANDIDATE set, which only ``policy_temp`` moves -- but
+``mcts/gumbel.py::_build_improved_policy_for_board`` (and the production C
+driver) build the improved policy over EVERY legal move, handing unvisited
+moves the root's completed-Q. So sigma reaches every entry of the target and no
+mass floor ``phi`` is sigma-invariant.
 
-Measured through ``--mode simulate``, 400 frozen audit positions at 256 sims,
-position-paired, tau=25cp, rho=0.01 (95% bootstrap CI over positions):
+⚑⚑ AND THE FLOOR THAT LOOKS FLATTEST IS THE FLOOR WHERE THE METRIC INVERTS.
+Raising ``phi`` makes the ``c_scale`` term smaller, but past a crossing the
+statistic stops measuring what its name says: the shuffle CONTROL beats the
+real value, i.e. sound-and-rare moves clear the floor LESS often than a random
+legal move in the same position. The two crossings are ordered against us --
+the control inverts BELOW the ``c_scale`` zero-crossing -- so there is no cell
+that is both honest and flat. This was found by a reviewer, on the cell the
+ledger had pinned, and it is why every cell now carries its own control.
 
-    phi     c_scale 0.025->0.1     policy_temp 1.0->1.5    bundle (both)
-    1e-4    -0.138 [-0.183,-0.098] +0.112 [+0.076,+0.151]  -0.006 [-0.050,+0.039] ns
-    1e-3    -0.182 [-0.234,-0.131] +0.256 [+0.208,+0.304]  +0.071 [+0.017,+0.124]
-    7e-3    -0.062 [-0.096,-0.030] +0.421 [+0.365,+0.479]  +0.203 [+0.149,+0.262]
-    1e-2    +0.032 [+0.015,+0.053] +0.382 [+0.326,+0.444]  +0.247 [+0.194,+0.303]
+Measured on the LIVE rig (``--mode research``: 600 real shard rows re-searched
+at 256 sims / topk 32 / gumbel_scale 0.5, position-paired, tau=25cp, rho=0.01;
+95% cluster bootstrap over positions; control = 16-seed target shuffle):
 
-The ``c_scale`` term is strongly NEGATIVE at a small floor, crosses zero
-between phi 7e-3 and 1e-2, and is mildly positive above. At **phi = 1e-2** the
-``c_scale`` half moves coverage 12x less than the ``policy_temp`` half, so that
-is the cell to read the bundle on: a bundle delta at or above ~+0.15 there is
-not reachable by ``c_scale`` alone. At phi = 1e-4 the two halves CANCEL to a
-null -- reading the bundle there would report "nothing happened" while both
-knobs fired, which is the exact failure this axis was added to prevent.
+    phi    cov   ctrl(SD)  verdict    c_scale 0.025->0.1   policy_temp 1.0->1.5
+    1e-4  0.867   +13.98   PASS       -0.196 [-0.250,-0.147] +0.109 [+0.072,+0.145]
+    1e-3  0.606    +9.04   PASS       -0.183 [-0.233,-0.135] +0.286 [+0.234,+0.338]
+    3e-3  0.367    +1.37   PASS       -0.149 [-0.203,-0.098] +0.367 [+0.315,+0.422]
+    5e-3  0.186    -6.02   INVERTED   -0.044 [-0.080,-0.006] +0.441 [+0.387,+0.500]
+    7e-3  0.115    -8.33   INVERTED   -0.012 [-0.044,+0.018] +0.422 [+0.366,+0.479]
+    1e-2  0.040    -9.53   INVERTED   +0.031 [+0.006,+0.058] +0.413 [+0.356,+0.469]
 
-That near-flat cell is a CANCELLATION, not a structural invariance. It depends
-on the sim count and the position mix, so re-run the two isolation arms at the
-deployed shape before trusting it -- do not carry the number across a config
-change.
+**phi = 1e-2 at rho = 0.01 is UNSAFE and is not a pin.** Its control runs -9.5
+SD the wrong way and its ``c_scale`` term is POSITIVE, so a rise there is
+produced by either knob and attributes to neither.
 
-TWO MODES, ONE METRIC.
+WHAT SURVIVES: A ONE-SIDED READING AT A CONTROL-PASSING CELL. Searching all 128
+(tau, rho, phi) cells with >= 50 pairs on the live rig: 81 pass the control, 39
+are c_scale-quiet, and **2 are both** -- ``rho = 0.05, phi = 2e-2`` at tau 25
+and 50. The best of them (largest denominator, strongest control):
+
+    tau=50, rho=0.05, phi=2e-2   pairs 928
+      control    stored +5.88 SD / re-searched +2.28 SD          PASS
+      c_scale    -0.0593 [-0.0833, -0.0350]     <- LOWERS coverage
+      policy_temp +0.2381 [+0.2096, +0.2667]    <- RAISES it
+      bundle      +0.0765 [+0.0469, +0.1058]
+
+``c_scale`` is not flat there either (|d_c| is a quarter of |d_T|), but its SIGN
+is protective: ``c_scale`` alone can only push coverage DOWN, so a POSITIVE
+bundle delta is reachable only via ``policy_temp``. That asymmetry, not
+flatness, is the whole attribution:
+
+  * ``delta >= +0.05`` at that cell  ==>  ``policy_temp`` fired.
+  * ``delta <= 0``  ==>  **INDETERMINATE, never "policy_temp did not fire".**
+    The halves have opposite signs and partially cancel -- the measured bundle
+    (+0.077) is only a third of the ``policy_temp`` half (+0.238).
+
+Read it with these caveats or not at all: at rho = 0.05 "rare" is barely below
+uniform (1/27 ~ 0.037), the two crossings move with sim count and position mix,
+and the arms must be re-run at the deployed shape before the numbers are reused.
+
+⚑ THE POPULATION MOVES WITH THE KNOB. ``diff_focus`` drops ~20% of policy rows
+with a keep probability that rises in ``KL(prior||improved)`` -- exactly what
+the bundle raises -- so the rows that stop being discarded are the lowest-KL,
+lowest-coverage ones. ``--progress-csv`` records ``diff_focus_keep_rate`` and
+``keep_limited_frac`` with every readout; a delta taken across a change in them
+is confounded and must be reported as such. ``assert_population`` cannot see
+this: the ``sf_p0_regret`` RATE is taken inside the same population and is
+invariant to a uniform keep_prob shift.
+
+THREE MODES, ONE METRIC.
 
 ``--mode shards`` (the production readout)
     Reads LIVE replay shards by absolute path, newest-first BY MTIME, and
@@ -76,20 +114,34 @@ TWO MODES, ONE METRIC.
     is ``sf_p0_regret`` -- NOT ``sf_multipv_raw``, which describes a different
     position (verified here: see ``--check-alignment``).
 
-``--mode simulate`` (the discriminating experiment)
-    Runs the real C Gumbel search over frozen deep-SF audit positions at an
-    explicit ``--c-scale`` / ``--policy-temp`` and scores the SAME coverage on
-    the improved policy the search returns. Two arms differing only in
-    ``c_scale`` measure the flatness claim; two differing only in
-    ``policy_temp`` measure the effect the live readout has to detect.
+``--mode research`` (the isolation arms, ON THE LIVE POPULATION)
+    The same live rows, re-searched at an explicit ``--c-scale`` /
+    ``--policy-temp`` / ``--gumbel-scale``. Coverage is a bounded, steeply
+    non-linear function of phi, so derivatives measured on one rig do not
+    transfer to another operating point -- the arms have to run where the
+    readout runs. Fidelity against production's STORED target is printed every
+    run and is the gate: measured 0.81 argmax agreement / 0.14 mean TV at the
+    live shape, with the residual coming from the frozen reference checkpoint
+    and from the history planes a decoded board cannot carry.
 
-CONTROLS. ``--shuffle target`` permutes the stored target within each row's
-legal moves, destroying its association with both soundness and rarity while
-preserving the legal set and the target's own marginal. Coverage must collapse
-to the base rate ``P(target >= phi)`` over legal moves. ``--shuffle prior``
+``--mode simulate`` (frozen deep-SF audit positions)
+    Same metric against the audit set's >=1M-node MultiPV labels. Better
+    soundness labels than production's MultiPV 6, different position
+    distribution -- useful for mechanism, NOT for transferring a level or a
+    derivative to the live rig.
+
+``--compare-to <banked.json>`` differences two arms with an exact row-key
+equality check first; ``--out`` banks the per-row vectors so any cell can be
+re-scored later without re-searching.
+
+CONTROLS ARE ATTACHED TO EVERY CELL, ALWAYS. ``--control-seeds`` (default 12)
+permutes the target within each row's legal moves and reports the shuffle's own
+mean and SD beside the cell, plus ``(coverage - shuffled)/sd`` and a
+PASS/null/INVERTED verdict. The shuffle distribution is the null; ``base_rate``
+pools differently and is printed as indicative only. ``--shuffle prior``
 permutes the prior instead, so ``rare`` becomes a size-matched random subset.
-A metric that survives either shuffle is measuring something structural.
-``tests/test_rare_sound_move_coverage.py`` ships both as assertions.
+``tests/test_rare_sound_move_coverage.py`` ships both shuffles, the inversion,
+and the cluster bootstrap as assertions.
 
 Usage::
 
@@ -98,9 +150,14 @@ Usage::
         --replay-dir /abs/path/to/<trial>/replay_shards --shards 40
 
     PYTHONPATH=. python3 scripts/rare_sound_move_coverage.py \\
-        --mode simulate --checkpoint data/ruler_reads_20260808/trainer.pt \\
-        --audit-set data/audit_set_v1.jsonl --positions 400 \\
-        --c-scale 0.1 --policy-temp 1.0 --sims 256
+        --mode research --checkpoint data/ruler_reads_20260808/trainer.pt \\
+        --replay-dir /abs/path/to/<trial>/replay_shards --shards 12 \\
+        --max-rows 600 --sims 256 --topk 32 --gumbel-scale 0.5 \\
+        --c-scale 0.1 --policy-temp 1.0 --out arm_B.json \\
+        --compare-to arm_A.json
+
+Banked evidence for every number above:
+``data/rare_sound_move_coverage/live_arms_20260809.json``.
 """
 
 from __future__ import annotations
@@ -158,6 +215,10 @@ class RowVectors:
     target: np.ndarray      # (L,) float64, the stored/searched improved policy
     regret_cp: np.ndarray   # (L,) float64, cp behind SF's best (0 = SF's best)
     scored: np.ndarray      # (L,) bool
+    # Stable identity of the underlying POSITION, so two arms can be proved to
+    # describe the same rows before anything is differenced. A paired delta
+    # between arms that silently drew different positions measures the draw.
+    key: str = ""
 
     def __post_init__(self) -> None:
         n = int(self.prior.shape[0])
@@ -181,9 +242,37 @@ class CoverageCell:
     n_covered: int        # ... of which the target funds at >= phi
     n_rows: int           # positions contributing at least one pair
     coverage: float
-    base_rate: float      # P(target >= phi) over ALL legal moves, the chance level
+    # ⚑ INDICATIVE ONLY, never the null. `base_rate` is `#legal>=phi / #legal`
+    # pooled over ALL rows, while coverage is restricted to rows that HAVE a
+    # sound-and-rare move and is weighted by their pair counts. The two pool
+    # differently, so a gap between them is a pooling artefact and not evidence.
+    # THE NULL IS `shuffled_mean` -- the shuffle's own distribution.
+    base_rate: float
     ci_lo: float = float("nan")
     ci_hi: float = float("nan")
+    # The negative control, evaluated AT THIS CELL. Never at one cell and
+    # assumed for the rest: at phi=1e-2 the control inverts on live data while
+    # at phi=1e-3 it passes, and reading one and pinning the other is how the
+    # 2026-08-09 phi=1e-2 pin came to be made against an inverted control.
+    shuffled_mean: float = float("nan")
+    shuffled_sd: float = float("nan")
+    control_seeds: int = 0
+
+    @property
+    def control_margin(self) -> float:
+        """``coverage - shuffled_mean`` in units of the shuffle's own SD.
+
+        Positive means the metric beats its null in the direction its name
+        claims. Negative means the association it is named for runs BACKWARDS
+        at this cell and no delta measured here can be attributed to soundness.
+        """
+        if not (math.isfinite(self.shuffled_mean) and self.shuffled_sd > 0.0):
+            return float("nan")
+        return (self.coverage - self.shuffled_mean) / self.shuffled_sd
+
+    def passes_control(self, min_sds: float = 1.0) -> bool:
+        m = self.control_margin
+        return bool(math.isfinite(m) and m >= min_sds)
 
 
 def _row_pair_counts(
@@ -227,6 +316,38 @@ def coverage_cells(
     return out
 
 
+def attach_controls(
+    rows: list[RowVectors], cells: list[CoverageCell], *, seeds: int, seed0: int,
+    what: str = "target",
+) -> None:
+    """Fill every cell's ``shuffled_mean`` / ``shuffled_sd`` IN PLACE.
+
+    Run over the whole grid, not one cell. The control is cell-local: the
+    association coverage is named for holds at a small mass floor and INVERTS at
+    a large one, so a control read at one cell says nothing about another. This
+    function exists so a cell can never be reported without its own null.
+    """
+    if seeds <= 0:
+        return
+    per_seed = np.empty((len(cells), int(seeds)), dtype=np.float64)
+    for s in range(int(seeds)):
+        sh = shuffled_rows(rows, what=what, seed=seed0 + 1000 * (s + 1))
+        for i, cell in enumerate(cells):
+            pairs = covered = 0
+            for row in sh:
+                p, c, _nl, _no = _row_pair_counts(row, cell.tau_cp, cell.rho, cell.phi)
+                pairs += p
+                covered += c
+            per_seed[i, s] = (covered / pairs) if pairs else np.nan
+    for i, cell in enumerate(cells):
+        vals = per_seed[i][np.isfinite(per_seed[i])]
+        cell.control_seeds = int(vals.size)
+        cell.shuffled_mean = float(vals.mean()) if vals.size else float("nan")
+        cell.shuffled_sd = (
+            float(vals.std(ddof=1)) if vals.size > 1 else float("nan")
+        )
+
+
 def bootstrap_ci(
     rows: list[RowVectors],
     *,
@@ -268,6 +389,34 @@ def bootstrap_ci(
     )
 
 
+def assert_paired(rows_a: list[RowVectors], rows_b: list[RowVectors]) -> None:
+    """Both arms must describe the SAME positions in the SAME order.
+
+    The docstring promise that two arms are "checked for identical ordering
+    before any delta is taken" was, in the first version of this script, only a
+    promise: nothing read the keys. Every paired path now goes through here.
+    """
+    if len(rows_a) != len(rows_b):
+        raise ValueError(
+            f"paired arms must be equal-length, got {len(rows_a)} and {len(rows_b)}"
+        )
+    keys_a = [r.key for r in rows_a]
+    keys_b = [r.key for r in rows_b]
+    if any(k == "" for k in keys_a) or any(k == "" for k in keys_b):
+        raise ValueError(
+            "paired arms carry unset row keys; refusing to difference two arms "
+            "that cannot be proved to describe the same positions"
+        )
+    if keys_a != keys_b:
+        first = next(
+            i for i, (a, b) in enumerate(zip(keys_a, keys_b, strict=True)) if a != b
+        )
+        raise ValueError(
+            f"paired arms describe different positions: row {first} is "
+            f"{keys_a[first]!r} in arm A and {keys_b[first]!r} in arm B"
+        )
+
+
 def paired_delta_ci(
     rows_a: list[RowVectors],
     rows_b: list[RowVectors],
@@ -282,12 +431,11 @@ def paired_delta_ci(
 
     Both lists must describe the same positions in the same order -- the only
     admissible comparison between two search shapes, since an unpaired contrast
-    is dominated by which positions each arm happened to draw.
+    is dominated by which positions each arm happened to draw. That is not a
+    convention the caller is asked to honour: ``assert_paired`` enforces it on
+    the row keys before anything is differenced.
     """
-    if len(rows_a) != len(rows_b):
-        raise ValueError(
-            f"paired_delta_ci needs equal-length arms, got {len(rows_a)} and {len(rows_b)}"
-        )
+    assert_paired(rows_a, rows_b)
     stats = np.empty((len(rows_a), 4), dtype=np.float64)
     for i, (ra, rb) in enumerate(zip(rows_a, rows_b, strict=True)):
         pa, ca, _n, _o = _row_pair_counts(ra, tau_cp, rho, phi)
@@ -339,12 +487,12 @@ def shuffled_rows(
         if what == "target":
             out.append(RowVectors(
                 prior=row.prior, target=row.target[perm],
-                regret_cp=row.regret_cp, scored=row.scored,
+                regret_cp=row.regret_cp, scored=row.scored, key=row.key,
             ))
         else:
             out.append(RowVectors(
                 prior=row.prior[perm], target=row.target,
-                regret_cp=row.regret_cp, scored=row.scored,
+                regret_cp=row.regret_cp, scored=row.scored, key=row.key,
             ))
     return out
 
@@ -418,7 +566,18 @@ class ShardReadStats:
     rows_net_policy: int = 0
     rows_with_sf_p0: int = 0
     rows_used: int = 0
+    # Every reason a selected row can still fail to become a RowVectors. Counted
+    # so `rows_used` is never a number whose shortfall has no explanation.
+    dropped_no_legal: int = 0
+    dropped_degenerate_prior: int = 0
+    dropped_undecodable: int = 0
+    dropped_legal_mismatch: int = 0
     field_present: dict[str, int] = field(default_factory=dict)
+    # Identity of the net that PRODUCED the shards, distinct from the frozen
+    # reference checkpoint that supplies the prior. Two readouts taken against
+    # different producing nets are not the same measurement.
+    model_steps: list[int] = field(default_factory=list)
+    model_sha_prefixes: list[str] = field(default_factory=list)
 
 
 def assert_required_fields(z: object, path: str) -> None:
@@ -492,6 +651,49 @@ def _compact_logits(pol: np.ndarray, compact_to_full: np.ndarray) -> np.ndarray:
     return pol[:, compact_to_full]
 
 
+@dataclass(frozen=True)
+class ResearchSpec:
+    """Re-search live shard positions at an explicit shape.
+
+    WHY THIS EXISTS. The audit-set rig (``--mode simulate``) prices the knobs on
+    a different position distribution and lands at a different point of a
+    steeply non-linear, bounded curve: live coverage falls 0.82 -> 0.13 across
+    phi 1e-4 -> 1e-2, so a +0.38 delta measured on the audit rig is not even
+    arithmetically available live. Derivatives do not transfer between rigs, and
+    the isolation arms therefore have to be run on the LIVE population.
+
+    The root is exact: the network is evaluated on the shard's own stored ``x``
+    planes and those logits are handed to the search as ``pre_pol_logits`` /
+    ``pre_wdl_logits``. Only the CHILDREN are re-encoded from a board decoded
+    out of the planes, which has an empty move stack -- so their history planes
+    are lost. ``fidelity_*`` reports the agreement between the re-searched
+    target and the STORED one at the live shape, which is the gate: a harness
+    that cannot reproduce the stored target is not measuring production.
+    """
+
+    shape: SimShape
+    sims: int
+    syzygy_path: str | None = None
+
+
+@dataclass
+class ResearchFidelity:
+    """How well the re-search reproduces production's stored target."""
+
+    n: int = 0
+    argmax_agree: int = 0
+    tv_sum: float = 0.0
+
+    def report(self) -> str:
+        if self.n == 0:
+            return "fidelity: no rows scored"
+        return (
+            f"fidelity vs STORED target: argmax agreement "
+            f"{self.argmax_agree / self.n:.4f}, mean TV {self.tv_sum / self.n:.4f} "
+            f"(n={self.n})"
+        )
+
+
 def read_shard_rows(
     sel: ShardSelection,
     *,
@@ -501,19 +703,26 @@ def read_shard_rows(
     max_rows: int,
     min_sf_p0_rate: float,
     stats: ShardReadStats,
+    research: ResearchSpec | None = None,
+    fidelity: ResearchFidelity | None = None,
 ) -> list[RowVectors]:
     """Live shard rows -> RowVectors, with the prior from the stored ``x``.
 
     The prior is a forward pass on the planes production searched with, so it
-    is exact up to checkpoint drift: nothing is decoded back to a board and no
-    history is lost. The checkpoint's declared encodings are checked against
-    each shard's, because a mismatch would feed the net planes it never saw.
+    is exact up to reference-checkpoint drift: nothing is decoded back to a
+    board and no history is lost. The checkpoint's declared encodings are
+    checked against each shard's, because a mismatch would feed the net planes
+    it never saw.
+
+    With ``research`` set, the ``target`` is replaced by a FRESH Gumbel search
+    at that shape instead of the stored one, which is how the isolation arms are
+    run on the live population.
     """
     import torch
     import zarr
 
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY
+    from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, POLICY_SIZE
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
     model = load_model_from_checkpoint(checkpoint, device=device)
@@ -528,11 +737,20 @@ def read_shard_rows(
     evaluator = LocalModelEvaluator(model, device=device)
     compact_to_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)
 
+    searcher = _ResearchRunner(research, device=device, evaluator=evaluator,
+                               hist=ck_hist) if research is not None else None
+
     rows: list[RowVectors] = []
     for path in reversed(sel.paths):
         z = zarr.open(path, mode="r")
         assert_required_fields(z, path)
-        assert_encodings(dict(z.attrs), ck_hist=ck_hist, ck_pol=ck_pol, path=path)
+        attrs = dict(z.attrs)
+        assert_encodings(attrs, ck_hist=ck_hist, ck_pol=ck_pol, path=path)
+        if attrs.get("model_step") is not None:
+            stats.model_steps.append(int(attrs["model_step"]))
+        if attrs.get("model_sha256"):
+            stats.model_sha_prefixes.append(str(attrs["model_sha256"])[:12])
+        base = os.path.basename(path)
 
         has_policy = np.asarray(z["has_policy"][:]).astype(bool)
         is_net = np.asarray(z["is_network_turn"][:]).astype(bool)
@@ -562,26 +780,49 @@ def read_shard_rows(
         for start in range(0, idx.size, batch_size):
             sl = slice(start, start + batch_size)
             with torch.no_grad():
-                pol, _wdl = evaluator.evaluate_encoded(xs[sl])
+                pol, wdl = evaluator.evaluate_encoded(xs[sl])
+            pol = np.asarray(pol, dtype=np.float32)
             logits = _compact_logits(np.asarray(pol, dtype=np.float64), compact_to_full)
+            searched: dict[int, np.ndarray] | None = None
+            if searcher is not None:
+                searched = searcher.run(
+                    xs[sl], pol, np.asarray(wdl, dtype=np.float32),
+                    legal[sl], compact_to_full, POLICY_SIZE, stats,
+                )
             for j in range(logits.shape[0]):
                 k = start + j
                 lm = legal[k]
                 if not lm.any():
+                    stats.dropped_no_legal += 1
                     continue
                 lg = logits[j][lm]
                 lg = lg - lg.max()
                 e = np.exp(lg)
                 s = float(e.sum())
                 if not math.isfinite(s) or s <= 0.0:
+                    stats.dropped_degenerate_prior += 1
                     continue
+                tgt_full = target[k]
+                if searched is not None:
+                    if j not in searched:
+                        continue
+                    fresh = searched[j]
+                    if fidelity is not None:
+                        fidelity.n += 1
+                        a = tgt_full[lm]
+                        b = fresh[lm]
+                        if a.size and int(np.argmax(a)) == int(np.argmax(b)):
+                            fidelity.argmax_agree += 1
+                        fidelity.tv_sum += 0.5 * float(np.abs(a - b).sum())
+                    tgt_full = fresh
                 reg_row = regret[k]
                 scored_full = _scored_mask_from_regret(reg_row)
                 rows.append(RowVectors(
                     prior=e / s,
-                    target=target[k][lm],
+                    target=tgt_full[lm],
                     regret_cp=reg_row[lm] * SF_OWN_REGRET_CAP_CP,
                     scored=scored_full[lm],
+                    key=f"{base}:{int(idx[k])}",
                 ))
                 if max_rows and len(rows) >= max_rows:
                     break
@@ -595,6 +836,102 @@ def read_shard_rows(
     if not rows:
         raise SystemExit("no usable rows: every selected row lacked a legal mask")
     return rows
+
+
+class _ResearchRunner:
+    """Decodes shard rows back to boards and re-searches them at one shape."""
+
+    def __init__(
+        self, spec: ResearchSpec, *, device: str, evaluator: object, hist: str,
+    ) -> None:
+        from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+        self.spec = spec
+        self.device = device
+        self.evaluator = evaluator
+        self.hist = hist
+        self.rng = np.random.default_rng(20260809)
+        self.tb_probe = None
+        if spec.syzygy_path:
+            from chess_anti_engine.tablebase import SyzygyProbe
+
+            self.tb_probe = SyzygyProbe(spec.syzygy_path)
+        sh = spec.shape
+        self.cfg = GumbelConfig(
+            simulations=int(spec.sims), topk=int(sh.topk), temperature=0.0,
+            policy_temp=float(sh.policy_temp), c_scale=float(sh.c_scale),
+            c_visit=float(sh.c_visit), c_visit_root=float(sh.c_visit_root),
+            c_scale_root=float(sh.c_scale_root), q_visit_exp=float(sh.q_visit_exp),
+            q_visit_exp_root=float(sh.q_visit_exp_root),
+            halving_div=int(sh.halving_div), add_noise=bool(sh.add_noise),
+            gumbel_scale=float(sh.gumbel_scale), input_history_encoding=hist,
+        )
+
+    def run(
+        self,
+        xs: np.ndarray,
+        pol: np.ndarray,
+        wdl: np.ndarray,
+        legal: np.ndarray,
+        compact_to_full: np.ndarray,
+        policy_size: int,
+        stats: ShardReadStats,
+    ) -> dict[int, np.ndarray]:
+        """{batch index -> compact improved policy} for the decodable rows.
+
+        A row is skipped when the planes do not decode to a valid position, or
+        when the decoded board's legal moves disagree with the shard's stored
+        ``legal_mask``. That second check is the one that matters: it proves the
+        board handed to the search is the position the row is about, instead of
+        assuming the plane decoder and the stored mask agree.
+        """
+        from chess_anti_engine.eval.audit import decode_board_from_planes
+        from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+        from chess_anti_engine.moves import policy_batch_to_full_if_needed
+        from chess_anti_engine.moves.encode import legal_move_indices
+
+        boards = []
+        keep_j: list[int] = []
+        for j in range(xs.shape[0]):
+            board = decode_board_from_planes(
+                np.asarray(xs[j], dtype=np.float32), input_history_encoding=self.hist,
+            )
+            if board is None or board.is_game_over():
+                stats.dropped_undecodable += 1
+                continue
+            full_idx = np.asarray(legal_move_indices(board), dtype=np.int64)
+            compact_mask = np.zeros((legal.shape[1],), dtype=bool)
+            lookup = np.full((policy_size,), -1, dtype=np.int64)
+            lookup[compact_to_full] = np.arange(compact_to_full.shape[0])
+            hit = lookup[full_idx]
+            compact_mask[hit[hit >= 0]] = True
+            if not np.array_equal(compact_mask, legal[j]):
+                stats.dropped_legal_mismatch += 1
+                continue
+            boards.append(board)
+            keep_j.append(j)
+        if not boards:
+            return {}
+
+        full_pol = pol
+        if full_pol.shape[1] != policy_size:
+            full_pol = policy_batch_to_full_if_needed(
+                full_pol, policy_encoding="lc0_1858", fill_value=-1e9,
+            )
+        sel_pol = np.ascontiguousarray(full_pol[np.asarray(keep_j)], dtype=np.float32)
+        sel_wdl = np.ascontiguousarray(wdl[np.asarray(keep_j)], dtype=np.float32)
+        result = run_gumbel_root_many_c(
+            model=None, boards=boards, device=self.device, rng=self.rng,
+            cfg=self.cfg, evaluator=self.evaluator,  # pyright: ignore[reportArgumentType]
+            pre_pol_logits=sel_pol, pre_wdl_logits=sel_wdl,
+            tb_probe=self.tb_probe, vloss_weight=int(self.spec.shape.vloss_weight),
+            target_batch=0,
+        )
+        probs_b = result[0]
+        out: dict[int, np.ndarray] = {}
+        for i, j in enumerate(keep_j):
+            out[j] = np.asarray(probs_b[i], dtype=np.float64)[compact_to_full]
+        return out
 
 
 def check_alignment(sel: ShardSelection, max_rows: int) -> dict[str, float]:
@@ -699,6 +1036,7 @@ def simulate_rows(
     device: str,
     batch_size: int,
     seed: int,
+    syzygy_path: str | None = None,
 ) -> tuple[list[RowVectors], list[str]]:
     """Search real positions at ``shape``; score coverage on what search returns.
 
@@ -748,6 +1086,12 @@ def simulate_rows(
 
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 
+    tb_probe = None
+    if syzygy_path:
+        from chess_anti_engine.tablebase import SyzygyProbe
+
+        tb_probe = SyzygyProbe(syzygy_path)
+
     boards = [chess.Board(p.fen) for p in all_pos]
     rows: list[RowVectors] = []
     fens: list[str] = []
@@ -772,7 +1116,7 @@ def simulate_rows(
             )
         result = run_gumbel_root_many_c(
             model=None, boards=list(chunk), device=device, rng=search_rng,
-            cfg=cfg, evaluator=evaluator, tb_probe=None,
+            cfg=cfg, evaluator=evaluator, tb_probe=tb_probe,
             vloss_weight=int(shape.vloss_weight), target_batch=0,
         )
         probs_b = result[0]
@@ -792,6 +1136,7 @@ def simulate_rows(
                 target=tgt,
                 regret_cp=move_regrets(pos, ucis),
                 scored=np.array([u in pos.move_cp for u in ucis], dtype=bool),
+                key=pos.key,
             ))
             fens.append(pos.fen)
     return rows, fens
@@ -803,17 +1148,125 @@ def simulate_rows(
 
 
 def print_cells(cells: list[CoverageCell], *, title: str) -> None:
+    """Every cell with its OWN negative control beside it.
+
+    ``CONTROL`` is ``(coverage - shuffled) / sd_shuffled``. ``PASS`` means the
+    metric beats its null in the direction its name claims; ``INVERTED`` means
+    the shuffle scores HIGHER, i.e. at that cell soundness enters with a
+    negative sign and no delta measured there can be read as sound-move
+    coverage. Cells are never reported without this column.
+    """
     print(f"\n=== {title} ===")
     print(f"{'tau_cp':>7} {'rho':>7} {'phi':>8} {'pairs':>7} {'rows':>6} "
-          f"{'coverage':>9} {'95% CI':>17} {'chance':>7}")
+          f"{'coverage':>9} {'95% CI':>17} {'shuffled':>9} {'sd':>7} "
+          f"{'CONTROL':>9} {'verdict':>9} {'chance*':>8}")
     for c in cells:
         ci = (
             f"[{c.ci_lo:.4f},{c.ci_hi:.4f}]"
             if math.isfinite(c.ci_lo) else "                 "
         )
         cov = f"{c.coverage:.4f}" if math.isfinite(c.coverage) else "     nan"
+        sh = f"{c.shuffled_mean:.4f}" if math.isfinite(c.shuffled_mean) else "      --"
+        sd = f"{c.shuffled_sd:.4f}" if math.isfinite(c.shuffled_sd) else "     --"
+        margin = c.control_margin
+        marg = f"{margin:+9.2f}" if math.isfinite(margin) else "       --"
+        if not math.isfinite(margin):
+            verdict = "no-ctrl"
+        elif margin >= 1.0:
+            verdict = "PASS"
+        elif margin <= -1.0:
+            verdict = "INVERTED"
+        else:
+            verdict = "null"
         print(f"{c.tau_cp:7.0f} {c.rho:7.3f} {c.phi:8.1e} {c.n_pairs:7d} "
-              f"{c.n_rows:6d} {cov:>9} {ci:>17} {c.base_rate:7.4f}")
+              f"{c.n_rows:6d} {cov:>9} {ci:>17} {sh:>9} {sd:>7} {marg} "
+              f"{verdict:>9} {c.base_rate:8.4f}")
+    print("* `chance` is a POOLING-MISMATCHED reference and is indicative only; "
+          "the null is `shuffled`.")
+
+
+def print_paired(
+    rows_a: list[RowVectors],
+    rows_b: list[RowVectors],
+    *,
+    cells: list[CoverageCell],
+    resamples: int,
+    seed: int,
+    label_a: str,
+    label_b: str,
+) -> list[dict[str, object]]:
+    """Paired A->B deltas per cell, carrying each cell's control verdict along.
+
+    A delta at a cell whose control is INVERTED is printed with its verdict
+    rather than suppressed, because the number is still real -- it just cannot
+    be attributed to sound-move coverage.
+    """
+    assert_paired(rows_a, rows_b)
+    print(f"\n=== paired delta {label_a} -> {label_b} "
+          f"({len(rows_a)} paired positions) ===")
+    print(f"{'tau_cp':>7} {'rho':>7} {'phi':>8} {'cov_A':>8} {'cov_B':>8} "
+          f"{'delta':>9} {'95% CI':>19} {'ctrl_A':>8}")
+    out: list[dict[str, object]] = []
+    for c in cells:
+        a = coverage_cells(
+            rows_a, taus_cp=(c.tau_cp,), rhos=(c.rho,), phis=(c.phi,),
+        )[0].coverage
+        b = coverage_cells(
+            rows_b, taus_cp=(c.tau_cp,), rhos=(c.rho,), phis=(c.phi,),
+        )[0].coverage
+        d, lo, hi = paired_delta_ci(
+            rows_a, rows_b, tau_cp=c.tau_cp, rho=c.rho, phi=c.phi,
+            resamples=resamples, seed=seed,
+        )
+        m = c.control_margin
+        ctrl = f"{m:+8.2f}" if math.isfinite(m) else "      --"
+        print(f"{c.tau_cp:7.0f} {c.rho:7.3f} {c.phi:8.1e} {a:8.4f} {b:8.4f} "
+              f"{d:+9.4f} [{lo:+.4f},{hi:+.4f}] {ctrl}")
+        out.append({
+            "tau_cp": c.tau_cp, "rho": c.rho, "phi": c.phi,
+            "coverage_a": a, "coverage_b": b, "delta": d, "ci_lo": lo, "ci_hi": hi,
+            "control_margin_a": m,
+        })
+    return out
+
+
+def read_diff_focus(progress_csv: str) -> dict[str, float]:
+    """Last row's `diff_focus_keep_rate` / `keep_limited_frac` from progress.csv.
+
+    ⚑ THE POPULATION MOVES WITH THE KNOB. `diff_focus` drops policy rows with
+    probability `max(df_min, min(1, difficulty*df_slope))` where `difficulty`
+    includes `kl * df_pol_scale` and `kl` is `KL(prior||improved)` -- exactly
+    what the bundle is expected to raise. So raising search authority ALSO
+    re-admits the lowest-KL rows, which are the lowest-coverage rows. A coverage
+    delta taken across a change in these two numbers is confounded by
+    re-composition of the stored population, and `assert_population`'s
+    `sf_p0_regret` RATE cannot see it: that ratio is taken inside the same
+    population and is invariant to a uniform keep_prob shift.
+
+    Returned so both readouts can record it and the delta can be refused when it
+    moved. Empty dict when the file or the columns are absent -- reported as
+    UNMEASURED rather than silently treated as unchanged.
+    """
+    import csv
+
+    wanted = ("diff_focus_keep_rate", "diff_focus_keep_limited_frac",
+              "diff_focus_keep_prob_mean", "training_iteration")
+    try:
+        with open(progress_csv, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+    except OSError:
+        return {}
+    for row in reversed(rows):
+        vals: dict[str, float] = {}
+        for k in wanted:
+            raw = row.get(k, "")
+            try:
+                vals[k] = float(raw)
+            except (TypeError, ValueError):
+                continue
+        if "diff_focus_keep_rate" in vals:
+            return vals
+    return {}
 
 
 def _parse_floats(spec: str) -> tuple[float, ...]:
@@ -824,7 +1277,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--mode", choices=("shards", "simulate"), required=True)
+    ap.add_argument("--mode", choices=("shards", "research", "simulate"),
+                    required=True,
+                    help="shards: score production's STORED target. research: "
+                         "re-search the same live rows at an explicit shape "
+                         "(the isolation arms, on the live population). "
+                         "simulate: search frozen deep-SF audit positions.")
     ap.add_argument("--checkpoint", required=True,
                     help="trainer.pt / checkpoint dir supplying the REFERENCE PRIOR")
     ap.add_argument("--replay-dir", default=None,
@@ -835,12 +1293,27 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--min-sf-p0-rate", type=float, default=0.05,
                     help="abort if sf_p0_regret is present on fewer than this "
                          "fraction of net-turn policy rows (baseline 0.228)")
+    ap.add_argument("--progress-csv", default=None,
+                    help="the trial's progress.csv; its diff_focus_keep_rate / "
+                         "keep_limited_frac are recorded with the readout because "
+                         "the stored population moves with the knob being measured")
     ap.add_argument("--audit-set", default="data/audit_set_v1.jsonl")
     ap.add_argument("--positions", type=int, default=400)
     ap.add_argument("--sims", type=int, default=256)
     ap.add_argument("--c-scale", type=float, default=0.025)
     ap.add_argument("--policy-temp", type=float, default=1.0)
     ap.add_argument("--topk", type=int, default=32)
+    # Live realized values, not dataclass defaults: gumbel_scale decays
+    # 1.0 -> 0.5 across moves 12-15 and 88.9% of stored rows are at ply >= 30,
+    # so 1.0 is the OPENING regime and 0.5 is the regime the data comes from.
+    ap.add_argument("--gumbel-scale", type=float, default=1.0,
+                    help="root Gumbel perturbation scale; live decays to 0.5 from "
+                         "move 15, which is the regime ~89%% of stored rows sit in")
+    ap.add_argument("--c-visit", type=float, default=50.0)
+    ap.add_argument("--halving-div", type=int, default=2)
+    ap.add_argument("--vloss-weight", type=int, default=1)
+    ap.add_argument("--syzygy-path", default=None,
+                    help="tablebase dir; live runs syzygy_in_search: true")
     ap.add_argument("--no-noise", action="store_true",
                     help="disable the root Gumbel perturbation (selfplay runs it ON)")
     ap.add_argument("--device", default="cuda")
@@ -850,13 +1323,45 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--rhos", default=",".join(str(v) for v in DEFAULT_RHOS))
     ap.add_argument("--phis", default=",".join(str(v) for v in DEFAULT_PHIS))
     ap.add_argument("--bootstrap", type=int, default=2000)
+    ap.add_argument("--control-seeds", type=int, default=12,
+                    help="shuffle seeds per cell for the negative control; 0 "
+                         "disables it, which means reporting a cell with no null")
     ap.add_argument("--shuffle", choices=("none", "target", "prior"), default="none",
-                    help="negative control: permute one vector within each row")
+                    help="score the SHUFFLED rows as the primary output (the "
+                         "control is already attached to every cell without this)")
     ap.add_argument("--check-alignment", action="store_true",
                     help="mode=shards: prove which SF field describes this row")
+    ap.add_argument("--compare-to", type=Path, default=None,
+                    help="a banked --out JSON to treat as arm A; this run is arm "
+                         "B. Row keys must match exactly or the run aborts.")
     ap.add_argument("--out", type=Path, default=None,
-                    help="write the cells + provenance as JSON")
+                    help="write the cells + provenance + per-row vectors as JSON")
     return ap
+
+
+def load_dump(path: Path) -> tuple[list[RowVectors], dict[str, object]]:
+    """Re-materialise a banked ``--out`` dump as rows + its provenance."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = [
+        RowVectors(
+            prior=np.asarray(r["prior"], dtype=np.float64),
+            target=np.asarray(r["target"], dtype=np.float64),
+            regret_cp=np.asarray(r["regret_cp"], dtype=np.float64),
+            scored=np.asarray(r["scored"], dtype=bool),
+            key=str(r.get("key", "")),
+        )
+        for r in payload["per_row"]
+    ]
+    return rows, dict(payload.get("provenance", {}))
+
+
+def _build_shape(args: argparse.Namespace) -> SimShape:
+    return SimShape(
+        c_scale=float(args.c_scale), policy_temp=float(args.policy_temp),
+        topk=int(args.topk), c_visit=float(args.c_visit),
+        halving_div=int(args.halving_div), vloss_weight=int(args.vloss_weight),
+        add_noise=not args.no_noise, gumbel_scale=float(args.gumbel_scale),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -864,16 +1369,42 @@ def main(argv: list[str] | None = None) -> int:
     taus = _parse_floats(args.taus)
     rhos = _parse_floats(args.rhos)
     phis = _parse_floats(args.phis)
+    # `_scored_mask_from_regret` drops a covered move that already sat at the
+    # 1000cp cap, which is only harmless while no threshold can reach it.
+    bad = [t for t in taus if t >= SF_OWN_REGRET_CAP_CP]
+    if bad:
+        raise SystemExit(
+            f"--taus {bad} is at or above SF_OWN_REGRET_CAP_CP="
+            f"{SF_OWN_REGRET_CAP_CP:.0f}: at that threshold the `scored` mask is "
+            "wrong, because capped moves are indistinguishable from the "
+            "unscored fill. Use a threshold below the cap."
+        )
 
     provenance: dict[str, object] = {
         "mode": args.mode, "checkpoint": args.checkpoint, "seed": args.seed,
         "shuffle": args.shuffle, "taus_cp": list(taus), "rhos": list(rhos),
-        "phis": list(phis),
+        "phis": list(phis), "control_seeds": int(args.control_seeds),
     }
+    if args.progress_csv:
+        df = read_diff_focus(args.progress_csv)
+        provenance["diff_focus"] = df
+        if df:
+            print(f"[diff_focus] iter {df.get('training_iteration', float('nan')):.0f} "
+                  f"keep_rate {df.get('diff_focus_keep_rate', float('nan')):.4f} "
+                  f"keep_limited_frac "
+                  f"{df.get('diff_focus_keep_limited_frac', float('nan')):.4f} "
+                  "-- a delta taken across a change in these is confounded by "
+                  "population re-composition")
+        else:
+            print("[diff_focus] UNMEASURED (no readable progress.csv columns)")
+    else:
+        print("[diff_focus] UNMEASURED (--progress-csv not given); the stored "
+              "population moves with the knob, so record it for any A/B")
 
-    if args.mode == "shards":
+    fens: list[str] = []
+    if args.mode in ("shards", "research"):
         if not args.replay_dir:
-            raise SystemExit("--mode shards requires --replay-dir (ABSOLUTE path)")
+            raise SystemExit(f"--mode {args.mode} requires --replay-dir (ABSOLUTE path)")
         sel = select_shards(args.replay_dir, args.shards)
         print(f"[shards] {args.replay_dir}")
         print(f"[shards] {sel.describe()}")
@@ -887,25 +1418,52 @@ def main(argv: list[str] | None = None) -> int:
             print("[align] sf_multipv_raw  moves  legal in THIS row: "
                   f"{al['sf_multipv_raw_legal_frac']:.4f} (n={al['sf_multipv_raw_moves']:.0f})")
             provenance["alignment"] = al
+        research = None
+        fid = None
+        if args.mode == "research":
+            shape = _build_shape(args)
+            research = ResearchSpec(
+                shape=shape, sims=int(args.sims), syzygy_path=args.syzygy_path,
+            )
+            fid = ResearchFidelity()
+            provenance["shape"] = asdict(shape)
+            provenance["sims"] = args.sims
+            print(f"[research] re-searching LIVE rows at c_scale={shape.c_scale} "
+                  f"T={shape.policy_temp} gumbel_scale={shape.gumbel_scale} "
+                  f"topk={shape.topk} sims={args.sims} "
+                  f"syzygy={'on' if args.syzygy_path else 'OFF'}")
+            print(f"[research] root sigma span at max_visit=59: "
+                  f"{shape.root_sigma_span(59.0):.3f} nats")
         stats = ShardReadStats()
+        t0 = time.perf_counter()
         rows = read_shard_rows(
             sel, checkpoint=args.checkpoint, device=args.device,
             batch_size=args.batch_size, max_rows=args.max_rows,
             min_sf_p0_rate=args.min_sf_p0_rate, stats=stats,
+            research=research, fidelity=fid,
         )
         print(f"[shards] rows total {stats.rows_total}, net-turn policy "
               f"{stats.rows_net_policy}, with sf_p0_regret {stats.rows_with_sf_p0} "
               f"({100 * stats.rows_with_sf_p0 / max(1, stats.rows_net_policy):.1f}%), "
-              f"used {stats.rows_used}")
+              f"used {stats.rows_used}; dropped no-legal {stats.dropped_no_legal}, "
+              f"degenerate-prior {stats.dropped_degenerate_prior}, "
+              f"undecodable {stats.dropped_undecodable}, "
+              f"legal-mismatch {stats.dropped_legal_mismatch}")
+        if stats.model_steps:
+            print(f"[shards] producing net model_step "
+                  f"{min(stats.model_steps)}..{max(stats.model_steps)}; reference "
+                  f"prior from {args.checkpoint}")
+        if fid is not None:
+            print(f"[research] {fid.report()} in {time.perf_counter() - t0:.1f}s")
+            provenance["fidelity"] = asdict(fid)
         provenance["read_stats"] = asdict(stats)
-        title = f"coverage over {len(rows)} live shard rows"
+        title = (f"coverage over {len(rows)} live shard rows"
+                 + (" [RE-SEARCHED]" if research is not None else ""))
     else:
-        shape = SimShape(
-            c_scale=float(args.c_scale), policy_temp=float(args.policy_temp),
-            topk=int(args.topk), add_noise=not args.no_noise,
-        )
+        shape = _build_shape(args)
         print(f"[sim] c_scale={shape.c_scale} policy_temp={shape.policy_temp} "
-              f"topk={shape.topk} sims={args.sims} noise={shape.add_noise}")
+              f"topk={shape.topk} sims={args.sims} noise={shape.add_noise} "
+              f"gumbel_scale={shape.gumbel_scale}")
         print(f"[sim] root sigma span at max_visit=59: "
               f"{shape.root_sigma_span(59.0):.3f} nats")
         t0 = time.perf_counter()
@@ -913,6 +1471,7 @@ def main(argv: list[str] | None = None) -> int:
             checkpoint=args.checkpoint, audit_set=args.audit_set,
             positions=args.positions, sims=args.sims, shape=shape,
             device=args.device, batch_size=args.batch_size, seed=args.seed,
+            syzygy_path=args.syzygy_path,
         )
         print(f"[sim] {len(rows)} positions searched in {time.perf_counter() - t0:.1f}s")
         provenance["shape"] = asdict(shape)
@@ -932,7 +1491,26 @@ def main(argv: list[str] | None = None) -> int:
             resamples=int(args.bootstrap), seed=int(args.seed),
         )
         cell.ci_lo, cell.ci_hi = lo, hi
+    attach_controls(rows, cells, seeds=int(args.control_seeds), seed0=int(args.seed))
     print_cells(cells, title=title)
+    n_pass = sum(1 for c in cells if c.passes_control())
+    n_inv = sum(1 for c in cells if math.isfinite(c.control_margin)
+                and c.control_margin <= -1.0)
+    print(f"[control] {n_pass}/{len(cells)} cells PASS, {n_inv} INVERTED")
+
+    paired: list[dict[str, object]] = []
+    if args.compare_to is not None:
+        rows_a, prov_a = load_dump(args.compare_to)
+        ck_a = str(prov_a.get("checkpoint", ""))
+        if ck_a and ck_a != str(args.checkpoint):
+            raise SystemExit(
+                f"refusing to compare readouts taken against different reference "
+                f"priors: arm A used {ck_a!r}, this run used {args.checkpoint!r}"
+            )
+        paired = print_paired(
+            rows_a, rows, cells=cells, resamples=int(args.bootstrap),
+            seed=int(args.seed), label_a=str(args.compare_to.name), label_b="this run",
+        )
 
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -940,8 +1518,10 @@ def main(argv: list[str] | None = None) -> int:
             "provenance": provenance,
             "n_rows": len(rows),
             "cells": [asdict(c) for c in cells],
+            "paired": paired,
             "per_row": [
                 {
+                    "key": row.key,
                     "prior": row.prior.tolist(),
                     "target": row.target.tolist(),
                     "regret_cp": row.regret_cp.tolist(),
