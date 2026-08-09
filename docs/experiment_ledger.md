@@ -36278,3 +36278,69 @@ per readout window):
   enough for Gumbel to sample new moves.
 
 NOT pre-registered. No live change made.
+
+## PREREG 2026-08-08 (night) — OFFLINE SCREEN: two levers against the fixed point
+
+**Motivation (measured, same night):** 256 sims of search improve ranking concordance
+over the raw net prior by **+0.0077 [+0.0065, +0.0088]** within top-32 while dropping
+entropy **1.185 → 1.104 nats**. The target teaches more confidence than information.
+Every term in it is a function of the net, so the search-side axis is closed.
+
+**Both arms are OFFLINE (`scripts/retarget_retrain.py`). No live change. No restart.**
+
+### Arms
+
+- **`soften`** — new key `policy_target_temp` (default **1.0 = bit-identical no-op**).
+  Main policy target is retempered `p' ∝ p^(1/T)` over its existing support, then
+  renormalized. Screen value **T = 1.30**. Zeros stay zero: tonight's measurement says
+  the zeroed moves lose a median 538cp, so resurrecting them is NOT the intent —
+  the intent is to stop asserting near-certainty among the moves that do carry mass.
+- **`sfblend`** — new key `policy_target_sf_blend` (default **0.0 = bit-identical
+  no-op**). `p' = (1-w)·policy_t + w·sf_policy_t`, renormalized. Screen value
+  **w = 0.30**. **GATED on `has_sf_policy`**: a row without an SF label must keep its
+  pure target. Blending an absent (all-zero) target would zero the row — that is the
+  failure this repo keeps finding, so the gate is the load-bearing part and gets its
+  own test.
+- **`control`** — same rig, same seed, both keys at their defaults. REQUIRED: the rig
+  must regenerate its own baseline; comparisons against a previously-banked number are
+  invalid here (`async_sync_path_moves_the_training_target`).
+
+### Deciding yardstick — ONE, and conjugate to NEITHER arm
+
+Paired arena, candidate vs the `control` arm's checkpoint, **matched_sims 32**,
+`--search-shape training`, fixed seed 42, **n = 400 games**, ONE ARENA AT A TIME
+(concurrent/compiled arenas have OOMed training twice):
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --cand runs/retarget/<arm>.pt --ref runs/retarget/control.pt \
+  --games 400 --seed 42 --matched-sims 32 --search-shape training \
+  --concurrency 16 --gpu-mem-fraction 0.25 \
+  --out data/screen_20260808/<arm>_vs_control.jsonl
+```
+
+Game outcomes are unconfounded by both interventions. **Concordance-vs-SF is explicitly
+NOT the deciding metric**: arm `sfblend` trains on SF labels and an SF ruler would be
+conjugate to it, which is the exact trap logged three times today. Concordance and
+entropy ARE recorded per arm as diagnostics, flagged as SF-biased toward `sfblend`.
+
+### Pre-committed thresholds
+
+- **PROMOTE to a live prereg**: arm beats `control` by **≥ +15 Elo with the 95% CI
+  excluding 0**. (At n=400 the CI half-width is ~±32 Elo, so this bar demands a
+  genuinely large offline effect — deliberately, because a small one cannot be
+  resolved here and chasing it would be the unfalsifiability trap.)
+- **KILL**: arm is **≤ −15 Elo** with CI excluding 0, or its CI spans 0. A null is a
+  KILL at this stage, not a "run it longer".
+- **NO PARTIAL CREDIT** from the diagnostics. If arena says null, the arm dies even if
+  concordance improved.
+
+### Confounds
+
+Two arms share a readout window but touch DIFFERENT keys and are each compared to the
+SAME `control`, so they are independent contrasts, not an overlap. They must NOT be
+combined into one arm without its own entry. Rig caveats inherited: cold optimizer, so
+absolute trajectories differ from live; `sf_p0_policy_target`/`sf_volatility_target`
+masked in every arm under target rebuild, identically, so deltas stay paired.
+
+**Status: PREREG ONLY. Knobs not yet implemented, nothing launched.**
