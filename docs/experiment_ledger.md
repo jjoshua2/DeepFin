@@ -36024,3 +36024,54 @@ NOT reachable by waiting. The teacher beats the student by only +5.46 cp [+1.46,
 top-1 with 88% ties. Window is REFUTED as the cause: full since iter 149, composition
 stationary across all 10 age deciles (G11 ok), out-of-window minus in-window probe gap
 SHRANK 0.00274 -> 0.00077. The lever has to be the target.
+
+### AMENDMENT (same session, BEFORE the screen was written or run): the yardstick I
+### pre-committed above CANNOT DETECT THIS CHANGE. Replacing it.
+
+Derived the escape bound before implementing, and it invalidates the threshold. Root
+sigma is `c_scale * (c_visit + max_visit)` with `q_visit_exp=1.0`, `c_visit=50`,
+`c_scale=0.025`, and `completed` normalized to [0,1], so Q moves a logit by at most that
+scale. At a representative `max_visit=100`, sigma = 3.75.
+
+Unvisited moves TODAY are not at zero Q credit -- they get `completed = mixed_value`,
+i.e. roughly MID-range. So the change moves a tail move from mid to its true normalized
+Q: a swing of +/- 1.88 logits, i.e. **up to 6.5x target mass in EITHER direction**.
+
+| consequence | value |
+|---|---|
+| tail move needs this prior to overtake p_top=0.65 | **> 10%** |
+| actual tail-move priors | **< 1%** |
+| so: does the argmax move? | **almost never** |
+| a move at 1e-5 becomes | 6.5e-5 (representable, gets gradient) |
+| a move at 1e-8 becomes | 6.5e-8 (**still under the fp16 floor**) |
+
+**Therefore the SUCCESS threshold above ("top-1 improves >= 1.0 cp") is structurally
+unreachable even if the change works perfectly.** Running that screen would have killed
+a working change on a metric that cannot see it. This is the same class of error as
+judging policy on E[regret] (08-08 AMENDMENT) -- picking a ruler before checking it can
+resolve the effect.
+
+**REPLACEMENT YARDSTICK.** The change re-ranks the TAIL, so measure the tail:
+
+- **PRIMARY (deciding):** per-position Spearman rho between assigned target probability
+  and true deep-SF cp loss, computed OVER THE PREVIOUSLY-UNVISITED MOVES ONLY, paired
+  across arms. **SUCCESS: mean rho improves >= 0.05 with a paired 95% CI excluding 0.**
+  Sharpness-invariant by construction (rank correlation), which E[regret] is not.
+- **SECONDARY (reported, not deciding):** top-1 and E[regret], both expected to be ~flat.
+- **PRE-COMMITTED PREDICTION, as an implementation guard:** top-1 changes in **< 2%** of
+  positions. If the argmax moves a LOT, the implementation is wrong -- it is redistributing
+  search budget away from the top moves (variant A) rather than adding round-1 evals
+  (variant B). A large top-1 swing FAILS the screen regardless of its sign.
+- **KILL:** rho does not improve significantly, OR E[regret]/top-1 REGRESS significantly,
+  OR the bit-identical control on `n_legal <= 32` fails.
+
+**Variant locked: (B).** Exhaustive round 1 (one eval per legal move) THEN top-32
+sequential halving on the remaining budget, costing +1.17% root evals. NOT (A)
+(`m = legal.size`), which would split the same 256 sims over ~40 candidates and pay for
+tail coverage out of top-move depth -- that confounds the screen irrecoverably.
+
+**Honest scope limit, recorded now so it is not oversold later.** This improves the
+target's TAIL distribution. It will not move the argmax, and the loop's problem is a
++5.46 cp teacher-student gap on a net that already tracks its target closely. A rho win
+is necessary, not sufficient; the confirming instrument is the arena or the ratchet, not
+this screen.
