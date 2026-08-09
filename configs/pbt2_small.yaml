@@ -1,4 +1,16 @@
-# RESTART PROPOSAL -- NOT A LIVE CONFIG. Do not point train.sh at this file.
+# THIS IS THE LIVE PRODUCTION CONFIG. train.sh IS pointed at this file, and the running
+# trial re-reads it every iteration.
+#
+# It BEGAN life as the 2026-08-04 restart proposal (header below), was deployed at that
+# restart and again at the 2026-08-06 reduced-SF relaunch, and the "NOT A LIVE CONFIG /
+# do not point train.sh at this file" banner was left behind. Corrected 2026-08-09 after
+# it caused a reviewer to block PR #380 on the belief that main was being handed an
+# undeployed proposal. Verified at correction time: the live process is
+# `chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune --resume` (pid
+# 3191137) and the trial's params.json carries this file's gumbel_c_scale 0.025 /
+# gumbel_topk 32 / mcts_simulations 256 / selfplay_fraction 0.8.
+#
+# Original 08-04 provenance, still accurate as history:
 # Written 2026-08-04 (restart package). Living context: scratchpad/restart_brief_20260802.md
 # -- this file EXECUTES that brief's keep/drop table; it does not replace it.
 #
@@ -194,7 +206,10 @@ selfplay:
   # most dangerous deletion in this file: without them `temperature` defaults to 1.0,
   # `temperature_endgame` to 0.6 and `temperature_decay_moves` to 60. DELETING THESE LINES
   # TURNS STOCHASTIC PLAY ON. Production selfplay is fully deterministic past move 15
-  # (all temperatures 0.0, gumbel_scale decays to 0 at move 15) and that is load-bearing.
+  # (all temperatures 0.0) and that is load-bearing. NOTE: gumbel_scale does NOT decay to 0
+  # -- it goes 1.0 -> gumbel_scale_after 0.5 across moves 12..15 and stays at 0.5 for the
+  # rest of the game, so ROOT NOISE IS ON ALL GAME. (Corrected 2026-08-09; the old "decays
+  # to 0 at move 15" claim was wrong and is a standing confound for any search readout.)
   temperature: 0.0
   temperature_drop_plies: 0
   temperature_after: 0.0
@@ -216,7 +231,7 @@ selfplay:
   # PIN. Unreachable only because opening_book_prob is 1.0; keeping it means this deletion
   # is not conditional on another key not moving.
   random_start_plies: 2
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_656.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_664.txt
   # DELETED opening_fen_prob: 0.0, and structurally superseded: opening.py:79-88 disables the probabilistic draw entirely while opening_fen_dole_per_iter>0
   opening_fen_net_side_to_move: true
   opening_fen_dole_per_iter: 1
