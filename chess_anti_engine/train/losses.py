@@ -306,10 +306,21 @@ def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torc
 
 # Accepted `policy_target_temp` range. NEITHER endpoint is a numerical limit
 # (see the guard in the function) -- both are typo catchers, set clear of any
-# value we would deliberately use. lc0 trains at 1.36-2.20; the offline screen's
-# arm is 1.5 and `scripts/retarget_retrain.py`'s reachability probe uses 0.5/2.0,
-# so [0.5, 4.0] cannot refuse a value anyone would set on purpose while still
-# catching the decimal-point class of mistake (`15` for `1.5`).
+# value we would deliberately use: the offline screen's arm is 1.5,
+# `scripts/retarget_retrain.py`'s reachability probe uses 0.5/2.0, and lc0's
+# `--policy-softmax-temp` has run at 1.36-2.20, so [0.5, 4.0] cannot refuse a
+# value anyone would set on purpose while still catching the decimal-point class
+# of mistake (`15` for `1.5`).
+#
+# ⚑ THAT lc0 RANGE IS NOT A TRAINING-TARGET TEMPERATURE, and it is cited here
+# only as evidence that numbers of this MAGNITUDE are ones a person sets on
+# purpose -- never as a recommended value for THIS knob. `--policy-softmax-temp`
+# is a SEARCH-TIME PRIOR temperature: it softens the net's policy output before
+# the tree uses it as a prior, leaving the training target untouched. Our direct
+# analogue of it is `gumbel_policy_temp` (production 1.5, against lc0's current
+# default 1.45), which is a different knob in a different file. THIS constant
+# bounds a power transform applied to the STORED target at training time. Both
+# get written down as "T=1.5" and they are not the same T.
 _POLICY_TARGET_TEMP_MIN = 0.5
 _POLICY_TARGET_TEMP_MAX = 4.0
 

@@ -550,11 +550,17 @@ def _run_variant(
     finally:
         buf.close()
 
+  # ⚑ DIRECT ATTRIBUTE READS, NOT `getattr(..., 0.0)`. Both fields are
+  # non-optional on `TrainMetrics`, and the 0.0 defaults these used to carry made
+  # `_assert_draws_unchanged` a gate that could not fail: delete or rename either
+  # field upstream and BOTH arms would read 0.0, so the guard would compare
+  # `0.0 == 0.0`, return silently, and certify a sweep whose pairing it had not
+  # checked. An AttributeError here is the correct outcome -- it is loud, it is
+  # at the top of the run rather than at the end, and a de-pairing guard that
+  # cannot observe its own inputs is worth less than no guard at all.
     draws = {
-        "batches_drawn": float(getattr(metrics, "batches_drawn", 0.0)),
-        "transient_cuda_retry_batches": float(
-            getattr(metrics, "transient_cuda_retry_batches", 0.0),
-        ),
+        "batches_drawn": float(metrics.batches_drawn),
+        "transient_cuda_retry_batches": float(metrics.transient_cuda_retry_batches),
     }
   # Arm 1 DEFINES the reference, exactly as it does for the shard pool -- but a
   # retry in arm 1 is still fatal, because the reference sequence would already

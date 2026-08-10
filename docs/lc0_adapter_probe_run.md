@@ -27,6 +27,16 @@ broad, so a tighter bar tests lc0's taste rather than this adapter — is in the
 gate's own comment, but it is a post-hoc threshold and should be read as one.
 The mate-in-1 and index-correspondence gates were NOT touched.
 
+**RESOLVED — the mass threshold is gone, the number is not.** A post-hoc bar
+cleared by 3.8% has no discriminating power left, so `gate_net_sanity` no longer
+scores mainstream mass at all: it PRINTS the realized value alongside the
+original >0.75 bar and this loosening, with no PASS/FAIL attached. The startpos
+verdict now rests only on the clauses that can still fail — top-1 among
+e4/d4/Nf3/c4, and |W-L| < 0.15. Nothing changes about the exit code, which has
+always been decided by round-trip and index-correspondence alone and never read
+`ok_net`. Any earlier "net sanity PASS" in this file therefore included a term
+that could not fail; read it accordingly.
+
 - net: `/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx`
 - net sha256: `1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0`
 - matched set: `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/lc0data/matched60.npz`

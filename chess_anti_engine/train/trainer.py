@@ -1097,7 +1097,35 @@ class TrainMetrics:
   # additive with defaults, neither read by the best-model comparison or the
   # promotion gate. The benefit is that a transient CUDA retry -- previously a
   # `logging.warning` on a thousand-line console and nothing else -- becomes a
-  # recorded fact. That is worth having live regardless of this PR's knob.
+  # recorded fact.
+  #
+  # ⚑ "RECORDED" MEANS THE RAY RESULT ROW, NOT `_log_metrics`. As merged, these
+  # two reached only TensorBoard, whose event files rotate per Ray session --
+  # the same non-sink that forced the grad-norm family to be promoted. They are
+  # published by `_train_metrics_dict` in tune/trainable_report.py, which
+  # enumerates report columns BY NAME (there is no `asdict` pass-through), so a
+  # field added here and not added there is computed every step and read by
+  # nobody.
+  #
+  # ⚑ WHAT IS GUARDED, EXACTLY -- three separate things, because a claim that
+  # blurs them is the false confidence this pair exists to remove:
+  #   * the COLUMN exists: `_train_metrics_dict` emits both keys, and
+  #     `_TRAIN_METRIC_DEFAULTS` declares them so the row is never ragged;
+  #   * the column carries the METRIC's value, not a literal (a key wired to a
+  #     constant 0.0 passes any membership check and reads as a healthy run);
+  #   * the SOURCE is real: `train_steps` below sets them from
+  #     `batch_iter.consumed` and the retry accumulator, asserted against
+  #     `steps * accum_steps` at two different `accum_steps` -- one value cannot
+  #     tell `batches_drawn` apart from `train_steps_done`.
+  # All three live in `tests/test_trainable_report.py`. Each was a surviving
+  # mutant before it was written.
+  #
+  # The offline consumer, `scripts/retarget_retrain.py`, reads both DIRECTLY.
+  # It used to read them through `getattr(metrics, ..., 0.0)`, which made its
+  # de-pairing `SystemExit` a gate that could not fail: delete either field and
+  # both arms read 0.0, so the check compared `0.0 == 0.0` and passed. Renaming
+  # or removing a field now raises there instead of certifying an unchecked
+  # sweep -- keep it that way.
     batches_drawn: float = 0.0
     transient_cuda_retry_batches: float = 0.0
 

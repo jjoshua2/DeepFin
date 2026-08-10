@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from chess_anti_engine.train.trainer import TrainMetrics
+import numpy as np
+import pytest
+
+from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
+from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.replay import ReplayBuffer
+from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.train.trainer import TrainMetrics, Trainer
 from chess_anti_engine.tune.trainable_report import (
     _STATUS_COLS,
     _TRAIN_METRIC_DEFAULTS,
@@ -91,6 +99,120 @@ def test_train_metrics_dict_promotes_grad_norm_clip_rate_and_operating_lr() -> N
     assert got["grad_norm_samples"] == 233
     assert got["opt_lr_mean"] == 5.306e-4
     assert got["opt_lr_max"] == 6e-4
+
+
+def test_the_draw_provenance_counters_reach_the_result_row_not_just_tensorboard() -> None:
+    """PR #373 added `batches_drawn` / `transient_cuda_retry_batches` to
+    `TrainMetrics` and called them "worth having live" -- but
+    `_train_metrics_dict` enumerates report columns BY NAME, so neither
+    appeared in the Ray result row. Computed every step, read by nobody.
+
+    `_log_metrics` does splat every field to TensorBoard, which is exactly the
+    non-sink the grad-norm family was promoted out of: the event files rotate
+    per Ray session, so no ledger yardstick can cite them.
+
+    Asserting on the VALUES, not on membership: a column wired to a literal 0.0
+    (or to the wrong metric) is the same defect wearing the right key. A retry
+    count of 3 has to arrive as 3.
+    """
+    got = _train_metrics_dict(
+        _metrics(batches_drawn=1603.0, transient_cuda_retry_batches=3.0)
+    )
+
+    assert got["batches_drawn"] == 1603.0
+    assert got["transient_cuda_retry_batches"] == 3.0
+
+
+def test_a_retry_free_iteration_publishes_zero_rather_than_omitting_the_column() -> None:
+    """The healthy value is 0.0 and it must still be PUBLISHED. Ray fixes the
+    CSV header from the first row, so a counter emitted only on the iterations
+    that happened to retry makes every clean iteration read as missing rather
+    than as "no retry" -- and the whole point of the counter is that a clean run
+    is distinguishable from an unrecorded one."""
+    clean = _train_metrics_dict(_metrics())
+
+    assert clean["transient_cuda_retry_batches"] == 0.0
+    assert _TRAIN_METRIC_DEFAULTS["transient_cuda_retry_batches"] == 0.0
+    assert _TRAIN_METRIC_DEFAULTS["batches_drawn"] == 0.0
+
+
+_PLANES = 146
+
+
+def _draw_provenance_sample() -> ReplaySample:
+    x = np.zeros((_PLANES, 8, 8), dtype=np.float32)
+    policy = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    policy[0] = 1.0
+    return ReplaySample(
+        x=x, policy_target=policy, wdl_target=1, priority=1.0,
+        has_policy=True, is_network_turn=True,
+    )
+
+
+def _train_steps_on_a_tiny_cpu_buffer(
+    tmp_path: Path, *, accum_steps: int, steps: int, batch_size: int,
+) -> TrainMetrics:
+    cfg = TransformerConfig(
+        in_planes=_PLANES, embed_dim=32, num_layers=1, num_heads=2,
+        use_smolgen=False, use_nla=False,
+    )
+    trainer = Trainer(
+        ChessNet(cfg), device="cpu", lr=1e-4, log_dir=tmp_path / f"tb{accum_steps}",
+        use_amp=False, feature_dropout_p=0.0, swa_start=-1, accum_steps=accum_steps,
+    )
+    buf = ReplayBuffer(64, rng=np.random.default_rng(0))
+    for _ in range(32):
+        buf.add(_draw_provenance_sample())
+    return trainer.train_steps(buf, batch_size=batch_size, steps=steps)
+
+
+@pytest.mark.parametrize("accum_steps", [1, 3])
+def test_batches_drawn_counts_the_microbatches_train_steps_actually_pulled(
+    tmp_path: Path, accum_steps: int,
+) -> None:
+    """The SOURCE, not the column. The two tests below pin that
+    `_train_metrics_dict` publishes these; nothing pinned that
+    `Trainer.train_steps` computes them, so replacing both with a literal 0.0
+    at the `_build_metrics` call left every test in the repo green while the
+    published column reported a constant forever -- the same defect one level
+    up from the one this pair was added to fix.
+
+    ⚑ BOTH `accum_steps` VALUES ARE LOAD-BEARING. At `accum_steps=1`,
+    `batches_drawn` and `train_steps_done` are the same number (3), so a
+    substitution of one for the other is invisible; at 3 they are 9 vs 3. The
+    counter must be MICROBATCHES pulled from the buffer -- that is the quantity
+    the replay RNG advances on, and therefore the one that says whether two
+    paired arms drew the same rows.
+    """
+    metrics = _train_steps_on_a_tiny_cpu_buffer(
+        tmp_path, accum_steps=accum_steps, steps=3, batch_size=4,
+    )
+
+    assert metrics.batches_drawn == float(3 * accum_steps)
+    assert metrics.train_steps_done == 3
+    if accum_steps > 1:
+        assert metrics.batches_drawn != float(metrics.train_steps_done), (
+            "batches_drawn collapsed onto the optimizer-step count -- it must "
+            "count buffer draws, which is what the replay RNG advances on"
+        )
+
+
+def test_a_clean_cpu_run_reports_no_retries_and_publishes_the_measured_draws(
+    tmp_path: Path,
+) -> None:
+    """End to end on the production path: `train_steps` -> `TrainMetrics` ->
+    `_train_metrics_dict`. A retry only happens on a transient CUDA error, so a
+    CPU run must report exactly 0.0 -- and 0.0 has to be a MEASUREMENT here,
+    which is why the draw count beside it is asserted against the arithmetic
+    rather than against itself."""
+    metrics = _train_steps_on_a_tiny_cpu_buffer(
+        tmp_path, accum_steps=2, steps=3, batch_size=4,
+    )
+    row = _train_metrics_dict(metrics)
+
+    assert metrics.transient_cuda_retry_batches == 0.0
+    assert row["transient_cuda_retry_batches"] == 0.0
+    assert row["batches_drawn"] == metrics.batches_drawn == 6.0
 
 
 def test_status_csv_lr_column_is_named_for_the_mean_not_the_trough() -> None:

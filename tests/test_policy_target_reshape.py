@@ -337,15 +337,20 @@ def test_the_ceiling_clears_every_value_anyone_would_deliberately_set() -> None:
     instead of at launch.
 
     * 1.5   -- the offline screen's arm in `docs/experiment_ledger.md`
-    * 2.2   -- the top of lc0's documented training range (1.36-2.20)
+    * 2.2   -- the top of the 1.36-2.20 band lc0's `--policy-softmax-temp` has
+      run at. ⚑ That is a SEARCH-TIME PRIOR temperature, the analogue of our
+      `gumbel_policy_temp` (production 1.5), NOT a training-target temperature
+      like the knob under test. It is pinned here only as a magnitude a person
+      deliberately sets, so a lowered ceiling breaks visibly.
     * 0.5 / 2.0 -- `scripts/retarget_retrain.py`'s reachability probe values.
     """
     for good in (0.5, 1.36, 1.5, 2.0, 2.2, 4.0):
         out = retemper_main_policy_target(torch.ones(1, 4) / 4, temp=good)
         assert torch.isfinite(out).all()
     assert _POLICY_TARGET_TEMP_MAX >= 2.2, (
-        "the ceiling now sits inside lc0's documented training range, and below "
-        "the 2.2 arm `test_a_yaml_temperature_REACHES_the_trainer...` launches"
+        "the ceiling now sits inside the lc0 --policy-softmax-temp band the "
+        "guard's comment clears, and below the 2.2 arm "
+        "`test_a_yaml_temperature_REACHES_the_trainer...` launches"
     )
 
 
@@ -480,9 +485,10 @@ def test_a_yaml_temperature_REACHES_the_trainer_and_the_training_step(
     value only proves the chain is identity AT that value: a silent
     `min(1.5, ...)` clamp inside `trainer_kwargs_from_config` passed a
     1.30-only test with 176 green, while truncating 2.20 -- which is inside the
-    1.36-2.20 lc0 range this knob's own docstring cites as the intended
-    operating range. A clamp is exactly the "accepted then quietly altered"
-    shape, and one sample point cannot see it.
+    range the guard in `losses.py` is explicitly sized to accept (the 1.36-2.20
+    lc0 `--policy-softmax-temp` band, a SEARCH-TIME PRIOR temperature cited
+    there as a magnitude, not as a target temperature). A clamp is exactly the
+    "accepted then quietly altered" shape, and one sample point cannot see it.
 
     ⚑ THE CTOR DICT IS SPLATTED WHOLE (review #2, S2). Production does
     `Trainer(model, model_config=..., **trainer_ctor)` at

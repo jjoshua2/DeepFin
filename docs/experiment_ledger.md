@@ -1129,9 +1129,20 @@ over-flattening, and it is NOT redundant with "someone will notice `policy_ce`
 rise": `_eval_loss_kwargs` pins eval to 1.0, so the holdout CE an operator
 watches is invariant to the arm's temperature **by construction** and only the
 train-side `policy_loss` moves — on an arm launched because it was expected to
-move. 4.0 clears lc0's 1.36–2.20 band, this screen's 1.5 arm, and
-`retarget_retrain.py`'s 0.5/2.0 reachability probes, so it cannot refuse a value
-anyone would set on purpose.
+move. 4.0 clears this screen's 1.5 arm, `retarget_retrain.py`'s 0.5/2.0
+reachability probes, and the 1.36–2.20 band lc0's `--policy-softmax-temp` has
+run at, so it cannot refuse a value anyone would set on purpose.
+
+⚑ **1.36–2.20 IS A SEARCH-TIME PRIOR TEMPERATURE, NOT A TRAINING-TARGET ONE.**
+`--policy-softmax-temp` softens the net's policy output before lc0's tree uses
+it as a prior; the training target is untouched by it. Its analogue on our side
+is **`gumbel_policy_temp`** (production **1.5**, against lc0's current default
+**1.45**) — a different knob, in the search path, not this one. The number is a
+legitimate anchor *for that knob*, and here it is only evidence that values of
+this magnitude are deliberately set, so the guard must not refuse them. It is
+NOT a recommended `policy_target_temp`. Both get written down as "T=1.5"; that
+they collide numerically is a coincidence of two unrelated knobs, and the
+coincidence is the trap.
 
 ⚑ **Line numbers in that table are checked, and were wrong once.** An earlier
 revision had four of nine pointing at a comment or an unrelated statement, in a
