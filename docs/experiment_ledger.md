@@ -37894,3 +37894,56 @@ then every future iteration's regret row becomes a strength readout at zero marg
 against a current best instrument of ~2.74 Elo/DAY. Any such rig must hold the controller fixed
 and must not condition on the winrate the controller regulates
 ([[never_condition_a_control_on_its_own_outcome]]).
+
+### AMENDMENT 13 — the in-effect check CANNOT be read on the first post-restart row
+
+Bundle deployed 2026-08-09 21:00 (commit `7f4304db9`, code `53eed819e` = main + PR #379 `9e176ceab`).
+Resumed from `checkpoint_000734` (= iteration 735). Verified in effect on the production path:
+all four workers logged `gumbel_policy_temp=1.5 tempered=True` (unanchored grep, paths re-derived
+from `--log-file` under the new Ray session dir).
+
+**Iteration 736 read `gumbel_policy_entropy_mean` = 1.0180, delta -0.0396 vs the 1.0576/0.0159
+baseline (n=74, iters 662-735) — the WRONG DIRECTION, and it is NOT a verdict.**
+
+```
+resumed_inflight_games = 489        total_games_ingested = 494       => 99.0%
+```
+
+C14b resumes suspended in-flight games across a restart, so **99% of the first row's games were
+played under the OLD config** (c_scale 0.025, policy_temp 1.0). The row measures the pre-bundle
+search almost purely.
+
+⇒ **RULE: after any restart that changes a SELFPLAY-SEARCH knob, the statistical in-effect check
+is unreadable until `outcome_stats.resumed_inflight_games / total_games_ingested` has fallen to a
+small fraction.** Gate the read on that ratio, not on an iteration count. This is the price of the
+C14b fix and it is worth paying — the alternative was the drain transient — but it silently
+inverts the first row of every search-knob readout. At ~494 games/iter the cohort should flush
+within ~1-2 iterations; re-read then.
+
+Note this ALSO closes the C14b verification debt: `resumed_inflight_games > 0` at a teardown was
+owed since 2026-07-30 and is now observed at **489**.
+
+### INSTRUMENT BREAK — the `--search-shape training` ruler moved twice
+
+`resolve_search_shape("training")` reads the LIVE YAML (`arena_standard.py`, via
+`production_selfplay_search_config()`); it hardcodes nothing. So the ratchet/arena ruler is
+whatever production is running at the time:
+
+| window | c_scale | policy_temp | topk |
+|---|---|---|---|
+| before 2026-08-06 | 0.1 | 1.0 | 16 |
+| 2026-08-06 (`ed9de8ee9`) .. 2026-08-09 | **0.025** | 1.0 | 32 |
+| from 2026-08-09 (this bundle) | **0.1** | **1.5** | 32 |
+
+**`--search-shape training` rows are NOT comparable across those two boundaries** on c_scale or
+policy_temp. [[a_ruler_change_must_invalidate_its_records]].
+
+**The topk column is the exception and does NOT break the series.** `gumbel.py:737` caps the
+candidate set: `m_cap = max(2, (sim_budget + 1) // 2)`, `m = max(2, min(topk, legal, m_cap))`.
+Every ratchet arena runs **sims=32**, so `m_cap = 16` and topk 16 vs 32 realize the SAME m=16.
+topk only bites above 2x the sim budget — at production's 256 sims it gives m=32 vs m=16.
+⇒ The 08-06 topk change is invisible to every 32-sim ruler we own, and the old "training must
+differ from play on topk" guard in `test_arena_search_shape_plumbing.py` is asserting an
+invariant that production has legitimately abandoned. Hygiene PR in flight; **no production knob
+changes** (topk 32 is intended and stays).
+
