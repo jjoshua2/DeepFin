@@ -39422,3 +39422,65 @@ Confounds: the iter-736 restart also carried the rest of the search-authority bu
 "the bundle" is not resolved into its individual keys by this evidence. The `main` merge
 restart at iter 834 sits inside the "now" window but no step is visible there in any of
 the above series.
+
+### Amendment — the exact causal chain, and a correction to my own first framing
+
+Traced the code rather than inferring from telemetry. Two corrections and one sharpening.
+
+**CORRECTION 1 — `gumbel_policy_temp` softens the PRIOR, not the target.** `gumbel.py:338`:
+
+```python
+def apply_policy_temp(pol, *, cfg):   # T>1 softens the prior, T<1 sharpens it
+    return pol / pt
+```
+
+It divides the policy **logits** that seed the tree. Search then explores more broadly and
+the visit distribution it produces spreads out. So the target softens as a *consequence*,
+which is why stored target entropy moved only +16% while KL moved 9.1x.
+
+**CORRECTION 2 — the unbounded `1e-12` tail I described is the PYTHON path, and production
+runs the C path.** They are not the same expression:
+
+```python
+imp = np.maximum(probs, 1e-12)              # network_turn.py:641 — FLOORS, term included
+kl  = sum(raw_c * (log(raw_c) - log(imp)))
+```
+```c
+if (p > 1e-12f && mp > 1e-12f)              /* _mcts_tree.c:4838 — SKIPS the term */
+    kl += p * (logf(p) - logf(mp));
+```
+
+A move the prior likes but search never visited contributes a ~27-nat spike in Python and
+**exactly zero** in C. My earlier statement that one row reaches priority ~85 *because of
+the floor* was wrong about the mechanism — the measured max of 81.6 is from the C path, so
+it comes from small-but-nonzero visit shares, not from the floor. The divergence is real
+and worth its own item, but it is not what moved the run.
+
+**THE SHARPENING — the diff-focus signal now measures the temperature knob, not difficulty.**
+`network_turn.py:630` builds the KL's reference prior from `pol_logits_full`, the **raw
+untempered** network logits — `apply_policy_temp` is never applied there. So:
+
+| | prior used | target used |
+|---|---|---|
+| the search that produced the target | **tempered** (T=1.5) | — |
+| the KL that sets priority and keep_prob | **untempered** | that broader target |
+
+`kl` is supposed to mean *"search disagreed with the net here, so this position is
+instructive."* After the bundle it substantially means *"we told search to ignore the prior,
+so of course it disagreed."* Both bundle knobs push the same way — `policy_temp` 1.5 softens
+the prior directly, and `gumbel_c_scale` 0.025 → 0.1 raises the Gumbel sigma, spreading
+visits further (and, in the C path only, pulling more moves above the `1e-12` cutoff so more
+terms enter the sum at all). **That is why one restart moved a supposedly position-intrinsic
+quantity 9.1x.**
+
+⇒ The defect is not "a knob was set wrong". It is that **`difficulty` is an unnormalized
+quantity read off a comparison whose two sides were allowed to drift apart**, feeding a
+fixed clamp (`diff_focus_slope: 3.0`, `diff_focus_min: 0.025`) calibrated against the old
+scale. Every value stayed in range and every key was accepted, so nothing warned.
+
+**No guard exists.** `diff_focus_keep_rate`, `diff_focus_keep_limited_frac`,
+`replay_priority_mean/std` are all computed and logged every iteration
+(`tune/trainable_report.py:1381-1453`) and **nothing asserts on any of them** — no test, no
+alert, no gate. The instrument that would have caught this on day one was already built and
+simply never read. That is the cheapest fix available and it is independent of the strength
+question.
