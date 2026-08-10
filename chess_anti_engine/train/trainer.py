@@ -1097,7 +1097,15 @@ class TrainMetrics:
   # additive with defaults, neither read by the best-model comparison or the
   # promotion gate. The benefit is that a transient CUDA retry -- previously a
   # `logging.warning` on a thousand-line console and nothing else -- becomes a
-  # recorded fact. That is worth having live regardless of this PR's knob.
+  # recorded fact.
+  #
+  # ⚑ "RECORDED" MEANS THE RAY RESULT ROW, NOT `_log_metrics`. As merged, these
+  # two reached only TensorBoard, whose event files rotate per Ray session --
+  # the same non-sink that forced the grad-norm family to be promoted. They are
+  # published by `_train_metrics_dict` in tune/trainable_report.py, which
+  # enumerates report columns BY NAME (there is no `asdict` pass-through), so a
+  # field added here and not added there is computed every step and read by
+  # nobody. `tests/test_trainable_report.py` fails if either column is dropped.
     batches_drawn: float = 0.0
     transient_cuda_retry_batches: float = 0.0
 

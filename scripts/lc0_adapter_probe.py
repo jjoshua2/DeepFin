@@ -473,16 +473,30 @@ def gate_net_sanity(ev: Lc0OnnxEvaluator, log: list[str]) -> bool:
     top = _topk_report(pol, start, k=8)
     mainstream = sum(p for san, p in top if san in {"e4", "d4", "Nf3", "c4"})
     value = float(wdl[0] - wdl[2])
-    # "carrying most mass" = a majority of the 20 legal first moves' mass sitting
-    # on those four. A modern Leela net's opening book is genuinely broad (g3/e3
-    # are real lc0 choices), so a tighter bar would be testing lc0's taste rather
-    # than our adapter; the top-1 must still be one of the four.
-    passed = mainstream > 0.5 and top[0][0] in {"e4", "d4", "Nf3", "c4"} and abs(value) < 0.15
+    # ⚑ MAINSTREAM MASS IS AN OBSERVATION, NOT A CRITERION -- deliberately, and
+    # this is a DEMOTION. It used to read `mainstream > 0.5` and feed `passed`.
+    # That 0.5 was set after seeing the number: the bar was written as >0.75,
+    # BT4 realized 0.519, and the bar was lowered to 0.5 (docs/lc0_adapter_probe_run.md,
+    # "Moved goalpost, recorded"). A threshold chosen post-hoc and cleared by
+    # 3.8% has no discriminating power left, and its `PASS` would be cited later
+    # as evidence the adapter was checked. Printed with the ORIGINAL bar so the
+    # number stays legible and the loosening is not re-litigated silently.
+    #
+    # What still binds: the top-1 must be one of the four (a net answering g3 or
+    # a1a2 is a decode failure, and that clause CAN fail at any mass), and the
+    # startpos must be near-balanced. A modern Leela book is genuinely broad, so
+    # a mass bar tests lc0's taste rather than this adapter.
+    passed = top[0][0] in {"e4", "d4", "Nf3", "c4"} and abs(value) < 0.15
     ok &= passed
     log.append(f"- GATE startpos: top = {[(s, round(p, 3)) for s, p in top]}; "
-               f"mass on e4/d4/Nf3/c4 = {mainstream:.3f} (want >0.5, top-1 among them); "
                f"W-L = {value:+.3f} "
-               f"(W/D/L {wdl[0]:.3f}/{wdl[1]:.3f}/{wdl[2]:.3f}) — {'PASS' if passed else 'FAIL'}")
+               f"(W/D/L {wdl[0]:.3f}/{wdl[1]:.3f}/{wdl[2]:.3f}); "
+               f"want top-1 among e4/d4/Nf3/c4 and |W-L| < 0.15 "
+               f"— {'PASS' if passed else 'FAIL'}")
+    log.append(f"    OBSERVED (no verdict): mass on e4/d4/Nf3/c4 = {mainstream:.3f}. "
+               f"The original bar was >0.75; BT4 realized 0.519 and the bar was "
+               f"lowered post-hoc to >0.5, which it cleared by 3.8%. Reported so "
+               f"the number is comparable across nets, NOT scored.")
 
     mates = [("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1", "Ra8#"),
              ("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4", "Qxf7#")]
@@ -993,6 +1007,12 @@ def main() -> None:
     print(text)
     # A gate that cannot fail the process is not a gate: the adapter gates decide
     # whether any number above means anything, so they decide the exit code.
+    #
+    # `ok_net` is EXCLUDED ON PURPOSE, not overlooked. Its thresholds are
+    # calibrated on a ~3500-Elo reference net, so they are informational for any
+    # other net (see the `our_net` note above), and the startpos mainstream-mass
+    # observation is not scored at all. Nothing about the demotion in
+    # `gate_net_sanity` moves this line: it never read `ok_net`.
     if not (ok_rt and ok_idx):
         raise SystemExit(1)
 

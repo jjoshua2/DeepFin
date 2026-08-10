@@ -944,6 +944,8 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "aurora_polar_sv_errors": 0.0,
     "aurora_polar_sv_ratio_square": 0.0, "aurora_polar_sv_ratio_rect": 0.0,
     "aurora_polar_orth_err_square": 0.0, "aurora_polar_orth_err_rect": 0.0,
+  # Draw-sequence provenance. See the block in `_train_metrics_dict` below.
+    "batches_drawn": 0.0, "transient_cuda_retry_batches": 0.0,
 }
 
 
@@ -1113,6 +1115,23 @@ def _train_metrics_dict(metrics) -> dict:
         "aurora_polar_sv_ratio_rect": float(metrics.aurora_polar_sv_ratio_rect),
         "aurora_polar_orth_err_square": float(metrics.aurora_polar_orth_err_square),
         "aurora_polar_orth_err_rect": float(metrics.aurora_polar_orth_err_rect),
+        # Draw-sequence provenance, computed every iteration on the live
+        # training path (`Trainer.train_steps`). `batches_drawn` is the total
+        # microbatches the iteration pulled from the buffer;
+        # `transient_cuda_retry_batches` is how many of those were REPLACEMENT
+        # draws after a transient CUDA error, which advances the buffer's RNG
+        # and so permanently desynchronises one arm of a paired A/B from the
+        # other. Healthy is exactly 0.0.
+        #
+        # These are here for the same reason the grad-norm and aurora families
+        # above are: `_log_metrics` already sends every TrainMetrics field to
+        # TensorBoard, and TensorBoard alone is not a sink -- the event files
+        # rotate per Ray session, so no ledger yardstick can cite them and
+        # audit_realized_config.py cannot gate on them. Until this row carried
+        # them, the only live-path record of a retry was a `logging.warning` on
+        # a thousand-line console.
+        "batches_drawn": float(metrics.batches_drawn),
+        "transient_cuda_retry_batches": float(metrics.transient_cuda_retry_batches),
     }
 
 

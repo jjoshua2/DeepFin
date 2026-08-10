@@ -93,6 +93,41 @@ def test_train_metrics_dict_promotes_grad_norm_clip_rate_and_operating_lr() -> N
     assert got["opt_lr_max"] == 6e-4
 
 
+def test_the_draw_provenance_counters_reach_the_result_row_not_just_tensorboard() -> None:
+    """PR #373 added `batches_drawn` / `transient_cuda_retry_batches` to
+    `TrainMetrics` and called them "worth having live" -- but
+    `_train_metrics_dict` enumerates report columns BY NAME, so neither
+    appeared in the Ray result row. Computed every step, read by nobody.
+
+    `_log_metrics` does splat every field to TensorBoard, which is exactly the
+    non-sink the grad-norm family was promoted out of: the event files rotate
+    per Ray session, so no ledger yardstick can cite them.
+
+    Asserting on the VALUES, not on membership: a column wired to a literal 0.0
+    (or to the wrong metric) is the same defect wearing the right key. A retry
+    count of 3 has to arrive as 3.
+    """
+    got = _train_metrics_dict(
+        _metrics(batches_drawn=1603.0, transient_cuda_retry_batches=3.0)
+    )
+
+    assert got["batches_drawn"] == 1603.0
+    assert got["transient_cuda_retry_batches"] == 3.0
+
+
+def test_a_retry_free_iteration_publishes_zero_rather_than_omitting_the_column() -> None:
+    """The healthy value is 0.0 and it must still be PUBLISHED. Ray fixes the
+    CSV header from the first row, so a counter emitted only on the iterations
+    that happened to retry makes every clean iteration read as missing rather
+    than as "no retry" -- and the whole point of the counter is that a clean run
+    is distinguishable from an unrecorded one."""
+    clean = _train_metrics_dict(_metrics())
+
+    assert clean["transient_cuda_retry_batches"] == 0.0
+    assert _TRAIN_METRIC_DEFAULTS["transient_cuda_retry_batches"] == 0.0
+    assert _TRAIN_METRIC_DEFAULTS["batches_drawn"] == 0.0
+
+
 def test_status_csv_lr_column_is_named_for_the_mean_not_the_trough() -> None:
     """`lr` used to be the end-of-iteration sample, i.e. the sqrt_release
     trough (~9x below the LR the trunk trains at) — rl_loop_audit I19."""

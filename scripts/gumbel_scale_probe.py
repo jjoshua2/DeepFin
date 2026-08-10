@@ -120,8 +120,13 @@ def search_root(pos: Position, ev: Any, cfg: GumbelConfig, seed: int) -> tuple[n
             qvalues[i] = (-ch.W / n) if (ch is not None and n > 0) else float(root_q)
         played = int(st.remaining[0]) if st.remaining else -1
         cands = np.array(sorted(st.candidates or []), dtype=np.int64)
+  # `vol` is what production feeds the volatility factors with. `Node.vol`
+  # always exists, so read it directly rather than through a `getattr(..., 0.0)`
+  # default, which would silently substitute the neutral value -- the very
+  # failure this argument exists to remove.
         qbar, sigma = _qbar_and_sigma(
             priors=pri[legal], visits=visits, qvalues=qvalues, root_q=float(root_q), cfg=cfg,
+            vol=float(st.root.vol),
         )
         sink.append(Root(
             legal, qvalues, played, cands,
@@ -143,19 +148,32 @@ def search_root(pos: Position, ev: Any, cfg: GumbelConfig, seed: int) -> tuple[n
 
 def _qbar_and_sigma(
     *, priors: np.ndarray, visits: np.ndarray, qvalues: np.ndarray,
-    root_q: float, cfg: GumbelConfig,
+    root_q: float, cfg: GumbelConfig, vol: float,
 ) -> tuple[np.ndarray, float]:
     """Split the root value transform into normalized Q-bar and the sigma scale.
 
-    Replicates ``_completed_q_transform``'s min-max normalisation (its lines
-    435-447) and ``_root_sigma_scale``, then ASSERTS that ``sigma * qbar``
-    reproduces production's transform output. Without that assert this is a
-    re-derivation that could silently drift from the code it claims to measure.
+    Replicates ``_completed_q_transform``'s min-max normalisation and
+    ``_root_sigma_scale``, then ASSERTS that ``sigma * qbar`` reproduces
+    production's transform output. Without that assert this is a re-derivation
+    that could silently drift from the code it claims to measure.
 
     ``sigma`` uses the MEASURED max per-move visit count, never the sim budget:
     sequential halving concentrates visits, so max_visit is far below the budget
     and using the budget would overstate the barrier the Q term can clear.
+
+    ⚑ THE VOLATILITY FACTORS ARE READ OFF ``cfg``, NOT HARDCODED. This function
+    used to pass ``sigma_factor=1.0, fpu_penalty=0.0`` while production passes
+    ``_volatility_sigma_factor(root.vol, cfg)`` / ``_volatility_fpu_penalty(...)``
+    (gumbel.py's root call sites). That was latent only because
+    ``volatility_q_scale``/``volatility_fpu`` both default to 0.0 and appear in
+    no config -- the day either is armed, the probe would have measured a
+    transform production does not use, and the assert below could not have
+    noticed, because it passed the SAME neutral values to the reference call.
+    A guard has to share the criterion's instrument. Both sides now take the
+    realized factors, so the assert stays a real check at every config.
     """
+    sigma_factor = float(gumbel_mod._volatility_sigma_factor(float(vol), cfg))
+    fpu_penalty = float(gumbel_mod._volatility_fpu_penalty(float(vol), cfg))
     prior = np.maximum(np.asarray(priors, dtype=np.float64), np.finfo(np.float64).tiny)
     q = np.asarray(qvalues, dtype=np.float64)
     v = np.asarray(visits, dtype=np.float64)
@@ -167,15 +185,17 @@ def _qbar_and_sigma(
         if sum_probs > 0.0 and np.isfinite(sum_probs) else float(root_q)
     )
     mixed = (float(root_q) + sum_visits * weighted_q) / (sum_visits + 1.0)
-    completed = np.where(visited, q, mixed)
+    completed = np.where(visited, q, mixed - fpu_penalty)
     lo, hi = float(completed.min()), float(completed.max())
     qbar = (completed - lo) / max(hi - lo, 1e-8)
-    sigma = float(gumbel_mod._root_sigma_scale(max_visit=int(v.max(initial=0.0)), cfg=cfg))
+    sigma = sigma_factor * float(
+        gumbel_mod._root_sigma_scale(max_visit=int(v.max(initial=0.0)), cfg=cfg)
+    )
 
     ref = gumbel_mod._completed_q_transform(
         actions=np.arange(prior.size, dtype=np.int64), priors=prior, visits=v,
         qvalues=q, raw_value=float(root_q), cfg=cfg,
-        sigma_factor=1.0, fpu_penalty=0.0, root=True,
+        sigma_factor=sigma_factor, fpu_penalty=fpu_penalty, root=True,
     )
     if not np.allclose(sigma * qbar, ref, atol=1e-8, rtol=1e-6):
         raise AssertionError(
