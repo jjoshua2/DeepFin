@@ -635,7 +635,14 @@ def _variant_harness(monkeypatch, buf_cls, *, train: bool = False) -> None:
         )
 
     def _train_steps(*_a, **_k):
-        return type("_M", (), {"loss": 1.0})()
+  # Carries the draw-provenance pair because `TrainMetrics` does. The stub
+  # omitted them and passed only because `_run_variant` read them through
+  # `getattr(..., 0.0)`; that default is gone, so a stub that does not model
+  # the real object now fails here instead of silently feeding the de-pairing
+  # guard two zeros.
+        return type("_M", (), {
+            "loss": 1.0, "batches_drawn": 1.0, "transient_cuda_retry_batches": 0.0,
+        })()
 
     trainer_ns = {"train_steps": _train_steps if train else _no_training,
                   "save": lambda *_a, **_k: None}

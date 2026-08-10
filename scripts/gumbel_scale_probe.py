@@ -197,6 +197,20 @@ def _qbar_and_sigma(
         qvalues=q, raw_value=float(root_q), cfg=cfg,
         sigma_factor=sigma_factor, fpu_penalty=fpu_penalty, root=True,
     )
+  # ⚑ WHAT THIS ASSERT DOES *NOT* COVER -- read it for exactly what it proves.
+  # Both sides now derive `sigma_factor`/`fpu_penalty` from the SAME `vol`
+  # argument, so the assert checks the ALGEBRA (min-max normalise, sigma scale,
+  # fpu offset) against production's implementation of it. It cannot check that
+  # `vol` is the right number. Pass the wrong one and both sides move together
+  # and it stays silent: measured on one synthetic root with both volatility
+  # knobs armed, `vol=0.0` against production's `vol=0.31` gives max|diff| 21.21
+  # and `vol=1.0` gives 0.563, with no complaint either time (an independent
+  # reviewer reproduced the same shape on their own inputs, 33.49 and 0.329).
+  # The single caller reads `st.root.vol` -- the same attribute gumbel.py's root
+  # call sites pass -- and that correspondence is by inspection, not by test.
+  # Deliberately left there: it is a far smaller hole than the hardcoded
+  # neutrals it replaced, and closing it needs a captured production transform
+  # to compare against, which this probe has no way to obtain.
     if not np.allclose(sigma * qbar, ref, atol=1e-8, rtol=1e-6):
         raise AssertionError(
             "sigma*qbar does not reproduce _completed_q_transform: the residual "
