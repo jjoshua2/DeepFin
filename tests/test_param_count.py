@@ -25,6 +25,7 @@ and edit the docs -- not to update the constants to whatever came out.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -126,7 +127,6 @@ def test_dedupe_helper_can_actually_see_tying() -> None:
     ("doc", "claims"),
     [
         ("CLAUDE.md", ("63,084,128", "63.08M", "73,700,885")),
-        ("AGENTS.md", ("63,084,128", "73,700,885")),
         ("tcec.md", ("63,084,128",)),
     ],
 )
@@ -139,10 +139,63 @@ def test_docs_quote_the_measured_count(doc: str, claims: tuple[str, ...]) -> Non
     keep their own numbers; rewriting those would falsify the record. Same for
     ``docs/rl_loop_audit.md`` and ``docs/experiment_ledger.md``, which quote the
     wrong figures deliberately.
+
+    ``AGENTS.md`` used to be listed here. It is now a pointer at ``CLAUDE.md``
+    and states no count at all, which is why
+    ``test_agents_md_stays_a_pointer_at_claude_md`` guards it instead: a doc that
+    quotes nothing cannot quote the wrong number, but it CAN quietly grow a
+    second copy of the rules, or vanish.
     """
     text = (_REPO / doc).read_text(encoding="utf-8")
     for claim in claims:
         assert claim in text, f"{doc} no longer states {claim}"
+
+
+def test_agents_md_stays_a_pointer_at_claude_md() -> None:
+    """``AGENTS.md`` must exist, stay short, and name ``CLAUDE.md``.
+
+    Two opposite regressions, one gate. Deleting the file is not a
+    consolidation: it is the file Codex loads, so the rules would stay written
+    down in ``CLAUDE.md`` and silently stop being delivered to one of the agents
+    that has to follow them. Letting it grow back into content re-creates the
+    duplicate that drifts -- the version this repo shipped for months called the
+    production net "384-dim, 12-layer, ~46M params".
+    """
+    agents = _REPO / "AGENTS.md"
+    assert agents.is_file(), "AGENTS.md is what Codex loads; keep it as a pointer"
+    text = agents.read_text(encoding="utf-8")
+    assert "CLAUDE.md" in text, "AGENTS.md must point at CLAUDE.md"
+    assert len(text) < 600, "AGENTS.md is a pointer, not a second copy of the rules"
+
+
+def test_claude_md_syzygy_pair_matches_the_production_config() -> None:
+    """The documented tablebase pair must be the pair the config actually uses.
+
+    Same defect as the param count, in path form. ``CLAUDE.md`` carried
+    ``.../syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz`` for a month after commit
+    ``6a02200f2`` (2026-07-14) moved production to the local
+    ``data/syzygy_6``, and the sentence *instructs an action* -- "pass the full
+    pair as ``SyzygyPath`` to BOTH engines" -- so following the stale doc aimed
+    an engine at an 82G external-drive copy while production read a 151G local
+    one. Prose next to a config is not pinned by anything, which is why it drifts.
+
+    Two assertions, and the second is the one that earns its keep. The first
+    fails when the config moves and the doc does not. The second fails when the
+    doc grows a SECOND pair -- the realistic regression here, since the stale
+    path is still live in 15 research configs (14 ``configs/exp_*.yaml`` plus
+    ``configs/bt4_aurora_asha.yaml``) and gets copied back in good faith. A bare
+    "is the right pair mentioned" check passes happily on a file that also
+    states the wrong one.
+    """
+    flat = flatten_run_config_defaults(load_yaml_file(str(_REPO / "configs" / "pbt2_small.yaml")))
+    pair = str(flat["syzygy_path"])
+    assert ":" in pair, "production syzygy_path is supposed to be a colon-separated pair"
+
+    text = (_REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    assert f"`{pair}`" in text, f"CLAUDE.md must quote the production syzygy pair {pair}"
+
+    quoted = set(re.findall(r"/[^\s`]*syzygy[^\s`]*:/[^\s`]*", text))
+    assert quoted == {pair}, f"CLAUDE.md states a non-production syzygy pair: {quoted - {pair}}"
 
 
 def test_claude_md_smolgen_share_matches_the_model(production_model: nn.Module) -> None:

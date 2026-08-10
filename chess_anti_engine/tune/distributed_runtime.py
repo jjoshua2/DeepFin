@@ -301,6 +301,7 @@ def build_recommended_worker(
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
+        "gumbel_policy_temp": float(config.get("gumbel_policy_temp", 1.0)),
         "gumbel_target_batch": int(config.get("gumbel_target_batch", 0)),
         "gumbel_vloss_weight": int(config.get("gumbel_vloss_weight", 0)),
   # volatility_q_scale / volatility_fpu / volatility_anchor are DELIBERATELY not
@@ -735,12 +736,52 @@ def _publish_distributed_trial_state(
   # this producer never held it, so no care on the consumer side can close it.
   #
   # Hoisting is the fix rather than locking, because before the manifest exists
-  # any claim recorded in the gate is NECESSARILY from an earlier publish -- a
-  # previous process (mid-iteration resume) or an earlier attempt at this same
-  # iteration (retry republish). That is exactly the set of cases that should
-  # arm, so ordering buys the discriminator for free. THE ADJACENCY IS
-  # LOAD-BEARING: anything inserted between this read and the write below
-  # reopens the window it closes.
+  # any claim recorded in the gate is NECESSARILY from an EARLIER publish. THE
+  # ADJACENCY IS LOAD-BEARING: anything inserted between this read and the write
+  # below reopens the window it closes.
+  #
+  # WHAT THAT DOES AND DOES NOT BUY. Ordering removes exactly one case: a claim
+  # caused BY this publish can no longer arm off this publish. It does NOT make
+  # the armed set correct, and an earlier draft of this comment claimed it did.
+  # The armed set is "some earlier publish saw this iteration claimed", which
+  # still contains two situations the trainer cannot tell apart:
+  #
+  #   ARM IS RIGHT  -- a previous trial process (or an earlier attempt at this
+  #                    same iteration) doled iteration N, then died. The claim
+  #                    is burned, the seeds were never played, and without a
+  #                    rearm they are skipped for this iteration entirely.
+  #   ARM IS WRONG  -- a retry republish of iteration N while the worker that
+  #                    won the previous dole is STILL ALIVE and playing it. The
+  #                    rearm hands the same seed list to a second worker and
+  #                    the batch is doubled -- the residual, and a genuine
+  #                    double-dole of the kind the block exists to prevent.
+  #
+  # NO CHEAP DISCRIMINATOR EXISTS, and the near-misses are worth naming so the
+  # next reader does not re-derive them:
+  #   * "did I publish this iteration before, in this process?" is cheap and
+  #     would remove the residual -- by also removing the ARM IS RIGHT case for
+  #     retries, which `test_manifest_rearms_dole_after_same_iter_republish`
+  #     pins as intended. The retry path fires when NO games came back, which
+  #     correlates with dead workers, i.e. the case where re-doling is correct.
+  #     Trading a real behaviour for a rarer one is not an improvement.
+  #   * the gate file's mtime (or a manifest publish nonce/timestamp) answers
+  #     "how recently was this claimed", not "is the claimant still alive" -- a
+  #     worker can claim and die a second later. Recency is not the question.
+  # The question that WOULD settle it is whether the EARLIER dole of this
+  # iteration was PLAYED, and nothing answers that at this call site. Note what
+  # does exist, so this does not read as a bigger gap than it is: audit A8
+  # (#339) made the dole observable -- `seed dole GRANTED: trial=... iteration=...
+  # seeds=...` plus the rearm counters, in chess_anti_engine/server/app.py --
+  # but a GRANT proves a batch was handed out, not that a game ever came back
+  # from it, and it is emitted in the SERVER process, not this one. The other
+  # near-signal is per-row `opening_source_code` on ingested shards (2 =
+  # fenlist, 3 = fenlist_sf_refute), which does mark seed-origin games; it is
+  # no help on THIS code path, because the retry republish that arms the rearm
+  # fires only when NO games came back for the iteration, so at this moment
+  # there is nothing seed-origin to count. Closing this residual means a
+  # dole-completion signal, or the server recording which publish a claim was
+  # made against; both are server-side machinery and neither is taken here.
+  # Blast radius until then is one extra seed batch on a retried iteration.
     seed_dole_gate_claimed = _seed_dole_gate_claims_iteration(
         server_root=Path(server_root),
         trial_id=str(trial_id),

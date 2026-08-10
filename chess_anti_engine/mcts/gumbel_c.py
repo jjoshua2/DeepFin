@@ -66,6 +66,7 @@ from chess_anti_engine.mcts.gumbel import (
     _gumbel,
     _policy_logits_to_full,
     _softmax,
+    policy_temp_active,
     _wdl_to_q,
     assert_c_path_can_run,
     gumbel_policy_diagnostics,
@@ -598,7 +599,7 @@ def run_gumbel_root_many_c(
         and _has_input_bf16
         and not _inplace
         and not cfg.compute_relations
-        and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
+        and not policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
     )
     _root_eval_legal = (
         [_root_legal_indices_for_eval(i) for i in range(n_boards)]
@@ -1163,7 +1164,7 @@ def run_gumbel_root_many_c(
             # untempered while root/dense priors are tempered. policy_temp is a
             # rare experiment knob (production=1.0), so fall back to the
             # tempering-aware path when it's set rather than re-pack BF16.
-            and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
+            and not policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
         )
   # The gate above is correct, but its PRICE was invisible at the config
   # surface: setting policy_temp to anything but 1.0 costs ~1.9x end-to-end
@@ -1178,15 +1179,20 @@ def run_gumbel_root_many_c(
             and not cfg.compute_relations
             and hasattr(tree, "get_pending_legal_indices")
             and hasattr(tree, "continue_gumbel_sims_legal_bf16")
-            and float(getattr(cfg, "policy_temp", 1.0)) != 1.0
+            and policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
             and not _LEGAL_BF16_TEMP_WARNED
         ):
             _log.warning(
                 "gumbel_c: policy_temp=%.6g != 1.0 disables the compact-legal bf16 leaf "
-                "transport; leaves fall back to dense float32 %d-wide, measured ~1.9x "
-                "end-to-end search cost (play-path audit 2026-08-03, F7). The gate is "
+                "transport; leaves fall back to dense float32 %d-wide. The gate is "
                 "deliberate (the C bf16 leaf softmax has no temperature hook) -- this "
-                "is the price, not a bug.",
+                "is the price, not a bug. COST: the ~1.9x from the play-path audit "
+                "(2026-08-03, F7) was measured on the DIRECT evaluator, which has no "
+                "bf16 leaf transport to lose; on the broker path distributed selfplay "
+                "actually runs it did NOT reproduce (0.87-1.01x, non-monotone in T, "
+                "inside the instrument's own +/-13%% noise). See docs/"
+                "experiment_ledger.md \"selfplay search policy temperature\" (e) -- "
+                "re-measure on your own transport before budgeting for a slowdown.",
                 float(getattr(cfg, "policy_temp", 1.0)), POLICY_SIZE,
             )
             _mark_legal_bf16_temp_warned()
