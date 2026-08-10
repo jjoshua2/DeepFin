@@ -265,6 +265,31 @@ always re-dump and pair.
 
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-09) — selfplay search policy temperature (`gumbel_policy_temp` 1.0 → 1.5), PR #379
 
+> **⚑ SUPERSEDED THE SAME DAY — THE HEADER AND STATUS BELOW ARE NO LONGER TRUE.**
+> `gumbel_policy_temp: 1.5` was deployed live at **iteration 736** as one arm of the
+> search-authority bundle (`7f4304db9`), and PR #379 merged to `main` at
+> **2026-08-10 03:03Z** as `ef401b93f`. In-effect was verified on all four workers
+> (`gumbel_policy_temp=1.5 tempered=True`). The "NOTHING IS LIVE / the yaml is NOT
+> edited" status was correct when written and became false ~4h later; it is preserved
+> rather than rewritten so the pre-registration reads as it did before the numbers came in.
+> Launch conditions, the resumed-game gate, and the readout live in Amendments 13–16.
+>
+> **Two live consequences recorded at merge time:**
+> 1. **Before `ef401b93f`, `main` could not boot against the live yaml at all.** The
+>    live key was unknown to main's schema and `run.py:~94` calls
+>    `flatten_run_config_defaults` *before* argparse and outside any `try`, so it raised
+>    `ValueError: Unknown keys in yaml 'selfplay:' section: ['gumbel_policy_temp']` and the
+>    process never started. This is NOT the survivable "unknown key rejects the reload"
+>    mode — that one only exists mid-run. Verified by execution before and after the merge
+>    (after: accepted, 307 keys, `gumbel_policy_temp = 1.5`).
+> 2. **`scripts/audit_targets.py` does not carry the knob.** Its RL profiles read
+>    `gumbel_c_scale` / `gumbel_topk` / `volatility_*` from the live yaml but NOT
+>    `gumbel_policy_temp`; a single CLI `--policy-temp` (default 1.0) applies to every
+>    profile including PLAY. Now that the yaml carries 1.5, **the audit-first ruler scores a
+>    search shape production does not run** — the same gap PR #379 closed for
+>    `arena_standard`. Harmless while the default held; it is a ruler-validity defect now.
+>    Do not quote an `audit_targets` number against post-736 production until this is fixed.
+
 **Status: plumbing merged-pending (PR #379, default 1.0 = no-op). NOTHING IS
 LIVE. Deployment is restart-gated and the operator has not authorised a
 restart. The yaml is NOT edited.** Every number below was measured BEFORE any
