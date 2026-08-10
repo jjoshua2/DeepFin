@@ -66,9 +66,10 @@ from chess_anti_engine.mcts.gumbel import (
     _gumbel,
     _policy_logits_to_full,
     _softmax,
+    policy_temp_active,
     _wdl_to_q,
+    assert_c_path_can_run,
     gumbel_policy_diagnostics,
-    volatility_search_enabled,
 )
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
@@ -462,6 +463,18 @@ def run_gumbel_root_many_c(
   # because this is the choke point EVERY C-path consumer goes through —
   # selfplay, training-time eval and UCI all land on this function.
     _report_guard_health()
+  # Same reasoning, for the OTHER silent-null shape: a GumbelConfig field this
+  # path does not implement. Guarding the dispatch boundary rather than each
+  # caller's CLI is the point — the CLI is not what chooses the C path, and a
+  # caller that grew a python-only knob would otherwise get a clean, wrong,
+  # perfectly reproducible measurement.
+  #
+  # This REPLACED a hand-written `if volatility_search_enabled(cfg): raise`
+  # that sat a few lines below. Two guards for one rule is worse than one: the
+  # hand-written one named the two fields it knew about, so a THIRD python-only
+  # field would have been added to `GumbelConfig` and silently dropped here.
+  # `PY_ONLY_GUMBEL_KNOBS` is the named set both this and the dispatchers read.
+    assert_c_path_can_run(cfg, where="run_gumbel_root_many_c")
     if int(vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
         # `tree_gumbel_select_child` (_mcts_tree.c:2941-2944) mirrors
         # `tree_select_child`'s VIRTUAL_MEAN accounting for the CHILD term and
@@ -480,17 +493,6 @@ def run_gumbel_root_many_c(
             "(the FPU for unvisited children) with legacy virtual-loss pessimism "
             "(play-path audit 2026-08-03, F4). Use vloss_mode=0 until the C "
             "parent branch is mirrored."
-        )
-    if volatility_search_enabled(cfg):
-        # Fail loud rather than silently searching without the volatility
-        # bias: this entry point does not implement volatility_q_scale /
-        # volatility_fpu. The dispatchers (selfplay network_turn, match
-        # pick_moves_for_boards) route to run_gumbel_root_many when any
-        # flag is on; a direct caller reaching here has bypassed them.
-        raise ValueError(
-            "volatility-aware Gumbel search is Python-path only; call "
-            "run_gumbel_root_many (mcts/gumbel.py) when volatility_q_scale/"
-            "volatility_fpu are non-zero"
         )
     _t_init = 0.0
     _t_prepare = 0.0
@@ -597,7 +599,7 @@ def run_gumbel_root_many_c(
         and _has_input_bf16
         and not _inplace
         and not cfg.compute_relations
-        and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
+        and not policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
     )
     _root_eval_legal = (
         [_root_legal_indices_for_eval(i) for i in range(n_boards)]
@@ -1162,7 +1164,7 @@ def run_gumbel_root_many_c(
             # untempered while root/dense priors are tempered. policy_temp is a
             # rare experiment knob (production=1.0), so fall back to the
             # tempering-aware path when it's set rather than re-pack BF16.
-            and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
+            and not policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
         )
   # The gate above is correct, but its PRICE was invisible at the config
   # surface: setting policy_temp to anything but 1.0 costs ~1.9x end-to-end
@@ -1177,15 +1179,20 @@ def run_gumbel_root_many_c(
             and not cfg.compute_relations
             and hasattr(tree, "get_pending_legal_indices")
             and hasattr(tree, "continue_gumbel_sims_legal_bf16")
-            and float(getattr(cfg, "policy_temp", 1.0)) != 1.0
+            and policy_temp_active(float(getattr(cfg, "policy_temp", 1.0)))
             and not _LEGAL_BF16_TEMP_WARNED
         ):
             _log.warning(
                 "gumbel_c: policy_temp=%.6g != 1.0 disables the compact-legal bf16 leaf "
-                "transport; leaves fall back to dense float32 %d-wide, measured ~1.9x "
-                "end-to-end search cost (play-path audit 2026-08-03, F7). The gate is "
+                "transport; leaves fall back to dense float32 %d-wide. The gate is "
                 "deliberate (the C bf16 leaf softmax has no temperature hook) -- this "
-                "is the price, not a bug.",
+                "is the price, not a bug. COST: the ~1.9x from the play-path audit "
+                "(2026-08-03, F7) was measured on the DIRECT evaluator, which has no "
+                "bf16 leaf transport to lose; on the broker path distributed selfplay "
+                "actually runs it did NOT reproduce (0.87-1.01x, non-monotone in T, "
+                "inside the instrument's own +/-13%% noise). See docs/"
+                "experiment_ledger.md \"selfplay search policy temperature\" (e) -- "
+                "re-measure on your own transport before budgeting for a slowdown.",
                 float(getattr(cfg, "policy_temp", 1.0)), POLICY_SIZE,
             )
             _mark_legal_bf16_temp_warned()

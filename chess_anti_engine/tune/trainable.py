@@ -504,15 +504,97 @@ def _avg_batch_from_worker_logs(distributed_dirs, offsets: dict[str, int]) -> fl
 
 def _maybe_reset_holdout_on_drift(
     *, holdout_buf, drift, tc: TrialConfig, holdout_frozen: bool, holdout_generation: int,
+    async_test_eval,
 ) -> tuple[bool, int]:
     """Clear holdout when input-drift L2 crosses threshold; bumps generation
-    counter to mark which holdout the test_loss in this row reflects."""
+    counter to mark which holdout the test_loss in this row reflects.
+
+    THE ONLY LOOP-TIME HOLDOUT MUTATOR THE START-SIDE GUARD CANNOT COVER (audit
+    L2 residual). ``_ingest_train_arrays`` is the one that guard keys on, and
+    ``holdout_state.load_holdout_rows`` needs no ordering at all because it runs
+    during buffer construction; this one is neither, and it runs at the worst
+    possible point in the iteration -- after the previous
+    iteration's ``AsyncTestEval.start()`` and BEFORE the ``collect()`` that
+    ends it -- so the eval thread can be walking the very buffer being cleared.
+    The start-side guard cannot cover this one: whether a reset fires depends
+    on drift metrics computed a full iteration AFTER the start it would have to
+    veto, so the only place the two can be ordered is here, at the mutator.
+
+    ``async_test_eval`` is REQUIRED and unconditional rather than defaulted,
+    because both failure modes are invisible from this frame:
+
+    * Concurrent clear. ``clear()`` REBINDS ``_chunks`` instead of mutating it,
+      so the eval thread's iterator over the old deque survives and there is no
+      ``RuntimeError: deque mutated during iteration`` -- ``rows_slice_arrays``
+      instead reads the new ``_size`` of 0 and ``_gather_rows`` raises
+      ``ValueError: ArrayReplayBuffer is empty`` (measured, mid-pass and
+      before the first batch alike). Loud, but it costs the row.
+    * The SILENT one, and it is not even a race: an eval that finished cleanly
+      against generation G is collected AFTER this bump, so ``_finalize_iteration``
+      stamps a generation-G measurement with ``holdout_generation`` G+1. The
+      counter exists precisely to say which holdout a ``test_loss`` came from,
+      and on every reset iteration it said the wrong one.
+
+    Draining first fixes both WHEN THE DRAIN SUCCEEDS: the reader is gone
+    before the writer runs, and the pre-reset result is DISCARDED rather than
+    relabelled. The reset row therefore carries no ``test_*`` at all, which is
+    the honest reading -- the set it would describe no longer exists. One row,
+    on a path production has switched off (``reset_holdout_on_drift: false``,
+    and ``drift_threshold`` 0.0 independently disables it).
+
+    The drain is BEST-EFFORT, and the exception is stated rather than implied:
+    ``AsyncTestEval.collect`` returns ``(None, -1)`` from BEFORE its
+    ``with self._lock`` block when the wait times out, so ``_inflight_iter``
+    stays set, ``has_inflight()`` stays True, and the clear below proceeds with
+    the eval thread possibly still walking the buffer -- i.e. both failure
+    modes above are reopened on that one path. Deliberately not handled by
+    skipping the reset: a wedged eval thread would then suppress every drift
+    reset indefinitely, trading a bounded one-row loss for a gate that silently
+    stops firing, which is the worse failure here. It is made LOUD instead --
+    the post-drain ``has_inflight()`` re-check below is the observation that
+    says the guarantee did not hold this time.
+    """
     if not (
         tc.reset_holdout_on_drift
         and tc.drift_threshold > 0.0
         and drift.drift_input_l2 > tc.drift_threshold
     ):
         return holdout_frozen, holdout_generation
+  # Drain BEFORE the clear, never after: after is the race. Guarded by
+  # has_inflight() so a reset with no eval outstanding does not pay the full
+  # collect timeout waiting on an event nobody will set.
+    if async_test_eval is not None and async_test_eval.has_inflight():
+        print(
+            "[trial] holdout drift reset: draining and DISCARDING the in-flight "
+            "async holdout eval before clearing the set -- it measured "
+            f"generation {int(holdout_generation)}, which is about to stop "
+            f"existing. test_* is absent for this row by design (audit L2)",
+            flush=True,
+        )
+        logging.getLogger(__name__).warning(
+            "holdout drift reset: discarding the in-flight async eval "
+            "(generation %d); test_* absent for this row (audit L2)",
+            int(holdout_generation),
+        )
+        async_test_eval.collect(timeout=tc.distributed_async_test_eval_timeout_s)
+  # collect() returns on timeout BEFORE it clears _inflight_iter, so this
+  # re-check is not redundant: True here means the drain did not take and the
+  # clear below runs under a live reader after all. Say so rather than
+  # proceeding silently -- it is the only frame that can tell.
+        if async_test_eval.has_inflight():
+            print(
+                "[trial] holdout drift reset: the drain TIMED OUT after "
+                f"{float(tc.distributed_async_test_eval_timeout_s):.1f}s -- the eval "
+                "thread may still be reading the holdout, so the clear below is "
+                "unordered against it. Expect either a ValueError from the eval "
+                "thread or a generation-mislabelled test_* row (audit L2)",
+                flush=True,
+            )
+            logging.getLogger(__name__).error(
+                "holdout drift reset: drain timed out after %.1fs; clearing the "
+                "holdout under a possibly-live eval reader (audit L2)",
+                float(tc.distributed_async_test_eval_timeout_s),
+            )
     holdout_buf.clear()
     return False, holdout_generation + 1
 
@@ -1057,6 +1139,10 @@ def train_trial(config: dict):
             holdout_frozen, holdout_generation = _maybe_reset_holdout_on_drift(
                 holdout_buf=holdout_buf, drift=drift, tc=tc,
                 holdout_frozen=holdout_frozen, holdout_generation=holdout_generation,
+  # The eval this reset would corrupt is the one started at the END of the
+  # previous iteration and not yet collected; the reset has to order itself
+  # against it (audit L2 residual).
+                async_test_eval=async_test_eval,
             )
 
             _sync_trainer_weights(trainer, config, tc, ds)

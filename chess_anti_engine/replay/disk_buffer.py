@@ -831,6 +831,7 @@ class DiskReplayBuffer:
             "rows_full": 0.0, "rows_fast": 0.0, "rows_fast_demoted": 0.0,
             "kl_term": 0.0, "qd_term": 0.0, "gap_term": 0.0,
             "eff_full": 0.0, "eff_fast": 0.0,
+            "kl_raw": 0.0, "kl_rows": 0.0, "qd_raw": 0.0, "qd_rows": 0.0,
         }
 
     def _accumulate_priority_mass(self, arrs: dict[str, np.ndarray], pri: np.ndarray) -> None:
@@ -840,6 +841,18 @@ class DiskReplayBuffer:
         mass baked into stored priorities at selfplay time, plus the gap
         boost and fast-row demotion applied here at append time. Popped once
         per iteration by the tune trainable (pop_priority_mass_stats).
+
+        ⚑ THE ``*_share`` OUTPUTS ARE ONLY VALID WHILE THE WEIGHTS ARE CONSTANT.
+        Sampling uses the STORED ``priority`` column, which the worker computed
+        with the ``diff_focus_pol_scale``/``q_weight`` that were live when the
+        ply was played. This decomposition multiplies the stored ``kl``/
+        ``q_delta`` columns by TODAY's weights. Recalibrate ``pol_scale`` and
+        every row already in the window is decomposed with a factor its own
+        priority never saw, so ``replay_pmass_kl_share`` misreports the actual
+        sampling until the ~1.5M-position window turns over (~133 iterations).
+        The ``*_raw_mean`` outputs below carry no weight at all -- they are the
+        stored quantities themselves -- so they stay comparable across a
+        recalibration and across a search change. Guard on those.
         """
         pm = self._pmass
         if "has_policy" in arrs:
@@ -856,11 +869,20 @@ class DiskReplayBuffer:
         if self.diff_focus_pol_scale > 0 and "priority_policy_kl" in arrs and "has_priority_policy_kl" in arrs:
             has = np.asarray(arrs["has_priority_policy_kl"], dtype=bool) & hp
             kl = np.nan_to_num(np.asarray(arrs["priority_policy_kl"], dtype=np.float64), nan=0.0)
-            pm["kl_term"] += float(np.maximum(kl[has], 0.0).sum()) * self.diff_focus_pol_scale
+            kl_pos = np.maximum(kl[has], 0.0)
+            pm["kl_term"] += float(kl_pos.sum()) * self.diff_focus_pol_scale
+            # Unweighted, so a pol_scale recalibration cannot move it: this is
+            # the search-vs-prior divergence itself. Its own row count, because
+            # the kl and q_delta presence masks are independent.
+            pm["kl_raw"] += float(kl_pos.sum())
+            pm["kl_rows"] += float(has.sum())
         if self.diff_focus_q_weight > 0 and "priority_q_delta" in arrs and "has_priority_q_delta" in arrs:
             has = np.asarray(arrs["has_priority_q_delta"], dtype=bool) & hp
             qd = np.nan_to_num(np.asarray(arrs["priority_q_delta"], dtype=np.float64), nan=0.0)
-            pm["qd_term"] += float(np.abs(qd[has]).sum()) * self.diff_focus_q_weight
+            qd_abs = np.abs(qd[has])
+            pm["qd_term"] += float(qd_abs.sum()) * self.diff_focus_q_weight
+            pm["qd_raw"] += float(qd_abs.sum())
+            pm["qd_rows"] += float(has.sum())
         if self.sf_gap_priority_weight > 0:
             # Same (signed or abs) boost the shaper applies, so gap_term reflects
             # the mass actually injected — not the symmetric abs sum in signed mode.
@@ -901,6 +923,22 @@ class DiskReplayBuffer:
             "replay_pmass_qd_share": pm["qd_term"] / total if total > 0 else 0.0,
             "replay_pmass_gap_share": pm["gap_term"] / total if total > 0 else 0.0,
             "replay_pmass_fast_share": pm["eff_fast"] / total if total > 0 else 0.0,
+            # Config-free companions to the shares above. A `pol_scale` change
+            # moves every `*_share` on rows it never applied to (see
+            # `_accumulate_priority_mass`); these two move only when the DATA
+            # moves, which is what makes them readable across a recalibration.
+            "replay_pmass_kl_raw_mean": (
+                pm["kl_raw"] / pm["kl_rows"] if pm["kl_rows"] > 0 else 0.0
+            ),
+            "replay_pmass_kl_raw_rows": pm["kl_rows"],
+            "replay_pmass_qd_raw_mean": (
+                pm["qd_raw"] / pm["qd_rows"] if pm["qd_rows"] > 0 else 0.0
+            ),
+            # Its own denominator, emitted for the same reason the kl one is: a
+            # mean of 0.0 must be distinguishable from "no rows carried the
+            # column". Accumulating a count and then not reporting it would be
+            # this repo's signature defect inside the telemetry meant to catch it.
+            "replay_pmass_qd_raw_rows": pm["qd_rows"],
             "replay_fast_demoted_frac": pm["rows_fast_demoted"] / n_fast if n_fast > 0 else 0.0,
         }
 

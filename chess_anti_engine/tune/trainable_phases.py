@@ -46,6 +46,7 @@ from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishU
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.train.trainer import TrainMetrics
 from chess_anti_engine.tune._utils import concat_array_batches as _concat_array_batches
+from chess_anti_engine.tune.diff_focus_guard import evaluate_diff_focus_regime
 from chess_anti_engine.tune.distributed_runtime import (
     _ensure_distributed_workers,
     _ensure_inference_broker,
@@ -530,12 +531,27 @@ def _run_holdout_evaluation(
             )
         else:
             test_metrics, source_iter = None, -1
-  # The SAME predicate the mutator uses, not a proxy for it:
+  # The SAME predicate the APPENDING mutator uses, not a proxy for it:
   # ``_ingest_train_arrays`` appends to the holdout on exactly
   # ``holdout_frac > 0.0 and (not holdout_frozen)``. A guard that checked only
   # ``holdout_frozen`` would skip forever under ``holdout_fraction: 0`` (where
   # nothing can be appended and the async path is perfectly safe), and one that
   # checked only the fraction would not see the freeze at all.
+  #
+  # THERE ARE THREE HOLDOUT MUTATORS AND THIS GUARD COVERS ONE. The second is
+  # ``_maybe_reset_holdout_on_drift``'s ``holdout_buf.clear()``, and it is
+  # deliberately NOT folded in here: whether a reset fires depends on drift
+  # metrics computed a full iteration after the ``start()`` this guard would
+  # have to veto, so it is unknowable at this point in time and no predicate
+  # written here could be honest about it. That mutator orders itself against
+  # the eval at its own site instead, by draining before it clears. The third
+  # is ``holdout_state.load_holdout_rows``, which needs no ordering construct
+  # because it runs during buffer construction, before ``train_trial`` binds an
+  # eval handle at all. If a FOURTH ever appears it belongs in one of those
+  # three buckets -- the tests that pin the enumeration and the by-construction
+  # exemption are `test_every_holdout_buffer_writer_is_ordered_against_the_eval`
+  # and `test_the_init_time_holdout_writer_cannot_race_the_eval_thread` in
+  # tests/test_deterministic_holdout_eval.py.
         holdout_can_grow = float(tc.holdout_fraction) > 0.0 and not holdout_frozen
         if len(holdout_buf) >= tc.batch_size and holdout_can_grow:
             print(
@@ -1397,6 +1413,23 @@ def _finalize_iteration(
     )
 
     report_dict.update(replay_priority_stats or {})
+  # AFTER the priority-mass merge and BEFORE the report: the guard reads the
+  # very dict that is about to be logged, so the number it alarms on and the
+  # number an operator reads out of progress.csv are the same float. Adding
+  # these two columns rotates progress.csv rather than misaligning it
+  # (`_rotate_progress_csv_if_schema_changed`, harness.py).
+    report_dict.update(
+        evaluate_diff_focus_regime(
+            report_dict,
+            enabled=bool(tc.diff_focus_enabled),
+            # ⚑ `completed_iterations`, NOT `iteration_idx`. The latter is the
+            # GLOBAL counter, restored from the donor's trial_meta on a salvage
+            # warm start -- it comes back as ~672, so a warmup expressed in it
+            # would never engage on exactly the restart the warmup exists for.
+            trial_iterations_completed=int(completed_iterations),
+            report_iteration=int(iteration_idx),
+        ),
+    )
     tune_report_fn(report_dict, checkpoint=checkpoint)
 
   # Write compact status row (best-effort — never crash the trial).

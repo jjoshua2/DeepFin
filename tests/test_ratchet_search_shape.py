@@ -1375,3 +1375,129 @@ def test_muted_does_not_fire_when_enough_rows_survive_the_floor(tmp_path):
     assert "INSTRUMENT MUTED" not in out
     assert "VERDICT:" in out
     assert "excluded by --min-pairs" in out, "the drop must still be announced"
+
+
+# ---------------------------------------------------------------------------
+# The opt-out sentinel in train.sh
+# ---------------------------------------------------------------------------
+
+
+def _assert_reachable(lines: list[str], spawn: int) -> None:
+    """The block must live in a function `start` actually calls.
+
+    Without this the guard below is satisfied by a `train.sh` that still
+    CONTAINS the sentinel while the whole block sits in dead code --- the
+    sentinel would then be perfect and unreachable, and "re-enable by deleting
+    the file" would silently stop working. This repo's signature defect is a
+    value that is accepted and then ignored, so a text-located block has to be
+    tied back to a call site or it proves nothing about production.
+    """
+    opens = [j for j in range(spawn, -1, -1) if re.match(r"^[a-z_]+\(\) \{", lines[j])]
+    assert opens, "the ratchet spawn is not inside any shell function"
+    fn = lines[opens[0]].split("(")[0]
+    body = "\n".join(lines)
+    assert re.search(rf"^\s+{re.escape(fn)}\s*$", body, re.M), (
+        f"the ratchet spawn lives in {fn}(), which nothing calls -- the block is "
+        "unreachable and the sentinel guards dead code"
+    )
+
+
+def _ratchet_spawn_block(text: str) -> str:
+    """The `if ... setsid ... ratchet_loop.sh ... fi` construct in train.sh.
+
+    Located from the SPAWN outwards, not from the sentinel inwards: a test that
+    searched for `.ratchet_disabled` would go green on a file where the name
+    survives only in a comment. Walking out from the line that actually starts
+    the loop means the block under test is the block that starts the loop.
+    """
+    lines = text.splitlines()
+    spawn = [i for i, ln in enumerate(lines) if "setsid" in ln and "ratchet_loop.sh" in ln]
+    assert len(spawn) == 1, f"expected exactly one ratchet spawn, found {len(spawn)}"
+    i = spawn[0]
+    _assert_reachable(lines, i)
+    indent = len(lines[i]) - len(lines[i].lstrip())
+    start = next(
+        j for j in range(i, -1, -1)
+        if lines[j].strip().startswith("if ")
+        and (len(lines[j]) - len(lines[j].lstrip())) < indent
+    )
+    guard = " " * (len(lines[start]) - len(lines[start].lstrip())) + "fi"
+    end = next(j for j in range(i, len(lines)) if lines[j] == guard)
+    return "\n".join(lines[start:end + 1])
+
+
+def _run_spawn_block(tmp_path, block: str, *, disabled: bool) -> tuple[str, bool]:
+    """Execute the block for real. Returns (stdout, whether the loop was started).
+
+    `setsid` and `pgrep` are shimmed onto PATH rather than the branch being
+    reasoned about: `pgrep -f "scripts/ratchet_loop.sh"` run for real from a
+    test MATCHES THE TEST'S OWN COMMAND LINE, which is how a `-f` check lies
+    about what is running. The shim answers "nothing is running", so the
+    `elif` is reached exactly when the sentinel does not stop it.
+    """
+    import subprocess
+
+    root = tmp_path / "repo"
+    bin_dir = tmp_path / "bin"
+    root.mkdir(exist_ok=True)
+    bin_dir.mkdir(exist_ok=True)
+    started = root / "started.txt"
+    (bin_dir / "pgrep").write_text("#!/bin/sh\nexit 1\n")   # nothing running
+    (bin_dir / "setsid").write_text(f'#!/bin/sh\necho "$@" >> "{started}"\n')
+    for f in ("pgrep", "setsid"):
+        (bin_dir / f).chmod(0o755)
+    if disabled:
+        (root / ".ratchet_disabled").write_text("disabled by the test\n")
+    elif (root / ".ratchet_disabled").exists():
+        (root / ".ratchet_disabled").unlink()
+    started.unlink(missing_ok=True)
+
+    # `wait`: the spawn is backgrounded, so without it the shell exits before
+    # the shim has written its record and EVERY run looks like "did not start".
+    r = subprocess.run(
+        ["bash", "-c", block + "\nwait\n"], cwd=str(root),
+        capture_output=True, text=True, check=False, timeout=60,
+        env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"},
+    )
+    assert r.returncode == 0, f"the block itself failed:\n{r.stdout}{r.stderr}"
+    return r.stdout, started.exists()
+
+
+def test_the_sentinel_really_stops_the_ratchet_from_being_respawned(tmp_path) -> None:
+    """`.ratchet_disabled` must suppress the spawn, EXECUTED, both ways.
+
+    Killing `ratchet_loop.sh` is not durable: `start_observers` re-spawns it on
+    every `train.sh start`, so a `kill` lasts only until the next restart --- and
+    a restart is exactly when nobody is looking. The sentinel is the durable
+    half. Measured 2026-08-10: a contended arena costs 2.77x slower iterations
+    (833s vs 300s) and returns a fifth of the games, so a silently-returning
+    ratchet is a real and expensive regression, not a cosmetic one.
+    """
+    block = _ratchet_spawn_block((ROOT / "scripts" / "train.sh").read_text())
+
+    out, started = _run_spawn_block(tmp_path, block, disabled=True)
+    assert not started, f"the sentinel did not stop the spawn:\n{out}"
+    assert "DISABLED" in out, f"a suppressed ratchet must say so:\n{out}"
+
+    out, started = _run_spawn_block(tmp_path, block, disabled=False)
+    assert started, f"without the sentinel the ratchet must still start:\n{out}"
+
+
+def test_the_sentinel_guard_can_fail(tmp_path) -> None:
+    """Negative control: strip the sentinel branch and the guard above must break.
+
+    Without this, `test_the_sentinel_really_stops...` is an untested claim ---
+    it would pass just as well against a block that never consulted the file,
+    if the spawn happened not to be reached for some other reason.
+    """
+    block = _ratchet_spawn_block((ROOT / "scripts" / "train.sh").read_text())
+    mutant = re.sub(
+        r"if \[ -f \.ratchet_disabled \].*?\n(\s*)elif ", r"\1if ", block, flags=re.S,
+    )
+    assert mutant != block, "the mutation did not apply; the block shape changed"
+
+    out, started = _run_spawn_block(tmp_path, mutant, disabled=True)
+    assert started, (
+        "the mutant spawned nothing, so the real test proves nothing about the "
+        f"sentinel:\n{out}"
+    )

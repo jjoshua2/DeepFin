@@ -26,16 +26,31 @@ replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/1
 replay_window_max: 1500000   # 2026-07-04: RECOVERY BANKED @ckpt524 (raw top-1 −1.7 and endgame value +1.3 vs ckpt457, both CIs include 0; value 72.15 ≈ the 72.4 known-good) → cap raised 800k→1.5M per the pre-committed plan. NOT back to 3M: 1.5M keeps data-path experiment clocks ~2 days instead of ~5. History: 2026-07-03 3M→800k→250k one-iteration eviction of the fast-ply-contaminated band→800k. Live-reloadable; shrink via enforce_window.
 replay_window_growth_frac: 1.0   # 2026-07-03: retain ALL new (clean) positions while regrowing post deep-cut (~482k @iter524). DROP TO 0.10 when the window reaches ~1.5M cap (~2 days at ~13.5k/iter). Prior: 0.10 (2026-05-28, grow slowly / retain ~10%).
 replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset.
-replay_sf_gap_priority_weight: 0   # 2026-07-05: EXPERIMENT #104 KILLED at the pre-committed ckpt559 readout — every kill threshold crossed: panel v1 18→24/35 (kill ≥20), v2 47→83/113 (kill ≥57), value_regret 72.1→86.0 paired Δ −13.8 [−22.4,−5.8]. Mechanism WORKED on its target (gap_resolution top-decile Δ +0.067) while bottom-half worsened → capacity theft at w=30; policy unchanged (CI includes 0). Do not re-enable at w=30; a low-w retry is a separate future experiment. History: activated w=30 @iter526 2026-07-04; dry-run 31.7% priority mass. Live-tunable; 0 = off. Baselines @ckpt524: panels 18/35 + 47/113, value 72.15, dumps scratchpad/policy_ci/*_ckpt524.jsonl.
+# DELETED replay_sf_gap_priority_weight: 0 disables the branch ([replay/disk_buffer.py] needs >0);
+#   consumer default matches ([tune/trial_config.py] .get(...,0.0)). Experiment #104 KILLED at the
+#   ckpt559 readout -- do NOT re-enable at w=30; baselines and kill evidence in
+#   docs/experiment_ledger.md (rl_loop_audit H2)
 
 # Bootstrap: train initial net on all random games, then discard from window
-bootstrap_dir: data/bootstrap
+# DELETED bootstrap_dir: not consumed by the training loop; the one consumer is
+#   [scripts/train_bootstrap.py], which reads flatten_run_config_defaults(yaml) -- NOT run.py's
+#   argparse-resolved config -- so an absent key falls to that line's literal 'data/bootstrap',
+#   exactly the deleted value. (run.py's own resolution would give None; nothing reads it there)
 bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v5_iter239.pt  # os=334, reg=0.375
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
-bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
-bootstrap_train_steps: 0     # 0 = auto: train 1 epoch — used by scripts/train_bootstrap.py
-shared_shards_dir: null  # Disabled: start trials from bootstrap weights + fresh selfplay window
+# DELETED bootstrap_max_positions: DEAD KEY - it has exactly two surfaces and neither is a
+#   reader: the [utils/config_yaml.py] passthrough allowlist, and the argparse flag
+#   --bootstrap-max-positions ([run.py]), which materialises the key at default=0 and is
+#   never read back. INERT because that argparse default (0) IS the deleted value, so the
+#   resolved flat config is identical with the key absent.
+# DELETED bootstrap_train_steps: DEAD KEY - same two surfaces, neither a reader: the
+#   [utils/config_yaml.py] passthrough allowlist, and the argparse flag
+#   --bootstrap-train-steps ([run.py]), which materialises the key at default=0 and is
+#   never read back. INERT because that argparse default (0) IS the deleted value.
+# DELETED shared_shards_dir: null was never resolved in the first place --
+#   flatten_run_config_defaults drops None, and the consumer defaults to None anyway
+#   ([tune/trial_config.py] _get(...,None))
 # salvage_seed_pool_dir: intentionally omitted — set via CLI --salvage-seed-pool-dir.
 # If set here, the live YAML reload at trainable.py:68 clobbers any CLI-provided value.
 salvage_restore_donor_config: false   # Disabled: use GPBT-sampled LR (0.0003) not donor's 0.001
@@ -62,7 +77,8 @@ model:
   smolgen_relation_norm: none
   smolgen_relation_coeff_norm: none
   smolgen_relation_scale: none
-  use_nla: false
+  # DELETED use_nla: the NLA attention variant is off; consumer default matches
+  #   ([model/__init__.py] .get('use_nla',False)) and its search flag tune.search_nla is off too
   input_pos_encoding: arc_adapter  # Zero-init square geometry adapter; safe warmstart from current best.
   qkv_projection: split  # Split fused QKV for Aurora scope control; tolerant loader migrates old fused weights.
   use_deepnorm: true  # Epoch-4 candidate topology.
@@ -158,6 +174,15 @@ selfplay:
   # design (same ~40min period, same games) — deliberately NOT a throughput
   # change, so it does not confound the live views=5 readout.
   games_per_iter: 440
+  # ⚑ RETAINED, do not delete games_per_iter_start: --games-per-iter-start has argparse
+  #   default 0 ([run.py]),
+  #   so removing this key does NOT fall back to games_per_iter -- it resolves to 0, and the
+  #   defensive fallback at [tune/trial_config.py] is structurally unreachable because the
+  #   key is always materialised. games_per_iter_ramp_iters is NOT restart-required, so a live
+  #   yaml edit arming the ramp would then give 1 game in the first iteration instead of 440.
+  #   One of FIVE audited keys that are NOT safe to delete: this one, lr_T0 and lr_T_mult (a
+  #   yaml-flat consumer whose fallback differs), and both sf_search_dampen_* (a consumer that
+  #   raises on absence). Each ships a `⚑ RETAINED` block; the other 22 were deleted.
   games_per_iter_start: 440   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
   # 2026-07-24: 0.35 -> 0.50, PAIRED with the in-flight-abandonment fix (PR #224).
@@ -267,7 +292,11 @@ selfplay:
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
   opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_478.txt
-  opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
+  # DELETED opening_fen_prob: 0.0, and structurally superseded -- [selfplay/opening.py] requires
+  #   opening_fen_prob>0 for the probabilistic draw, while seeding now runs through the deterministic
+  #   server dole (opening_fen_dole_per_iter). Consumer defaults match ([tune/trial_config.py],
+  #   [worker.py], both .get(...,0.0)). REVERT POINT PRESERVED: a kill of the dole restores this
+  #   key at 0.05
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
   # Each iter the server hands the WHOLE live seed list to ONE worker poll (durable per-iter
@@ -603,7 +632,11 @@ train:
   train_views_per_ingested_position: 5.0  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
-  no_amp: false
+  # DELETED no_amp: TWO consumers, and the deleted value False is the fallback on both.
+  #   [run.py] derives use_amp = not no_amp from the argparse value (store_true, default False);
+  #   [scripts/train_bootstrap.py] reads the yaml key directly, use_amp=not flat.get("no_amp",
+  #   False), on the same flatten_run_config_defaults path as bootstrap_dir above. use_amp stays
+  #   True either way -- unlike lr_T0/lr_T_mult, whose bootstrap fallbacks differ and are RETAINED
   # 2026-07-30: 0.10 -> 0.0 (audit M8 arm C, OPERATOR DECISION — delete the knob
   # rather than compensate it; arm B, the 1/(1-p) rescale, is deliberately NOT run).
   # Rationale: never shown to earn its keep, and it created a systematic train/serve
@@ -624,8 +657,10 @@ train:
   # data/salvage/pre_restart_20260730 (iter 368 / ckpt_000367).
   # Ledger: "feature dropout has no 1/(1-p) rescale (audit M8)".
   feature_dropout_p: 0.0
-  resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
-  resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
+  # DELETED resid_channel_dropout: 0.0 = off ([model/transformer.py] needs >0); consumer default
+  #   matches ([train/trainer.py] _f(...,0.0))
+  # DELETED resid_channel_balance_weight: 0.0 = off ([model/transformer.py]); consumer default
+  #   matches ([train/trainer.py] _f(...,0.0))
   zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). The "median grad norm 1.81, max 3.65" that used to be quoted here is stale by 2.3x — see zclip_max_norm below for the current measurement.
   zclip_alpha: 0.97
   zclip_clip_factor: 1.0
@@ -791,9 +826,13 @@ train:
   sf_wdl_frac_floor: 0.45   # 2026-07-02 value-ranking exp (BT4 43cp vs our 75.9 on same probe): raise truth-anchor floor 0.35->0.45, cut self-echo below. Live-reload. Revert pair: 0.35/0.35.
   search_wdl_frac: 0.20     # 2026-07-02 value-ranking exp (rung 1): 0.35->0.20. STALE PREMISE (Codex review): the original rationale — fast-ply rows carry a ~pure net-eval echo at 35% — no longer holds after record_fast_ply_value was reverted to false the same day; with fast rows gone, every remaining row's search_wdl is a genuine MCTS-averaged root WDL, so 0.20 now under-weights legitimate own-search signal (not just self-echo). Re-examine at the rung-1 read: if value ranking regressed, 0.35 may be the better mix now. Yardstick: value_regret vs the 70-76cp band + BT4=43.0 ref. Live-reload. Revert pair: 0.35/0.35.
   use_adjusted_wdl_target: false  # Opt-in only; regret adjustment applies to the game-outcome fraction, not missing SF/search fallbacks.
-  adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; d95/d98 are per network record, h* are ply windows.
-  adjusted_wdl_regret_scale: 1.0   # For sum/fp16 suffixes, prefer a smaller scale, discounted/horizon source, or positive cap.
-  adjusted_wdl_regret_cap: 0.0     # Q-units; 0 disables cap and can saturate suffix-sum targets.
+  # DELETED adjusted_wdl_regret_source: downstream of use_adjusted_wdl_target: false -- the
+  #   [train/losses.py] gate never opens; consumer default matches ([train/trainer.py]
+  #   .get(...,'sum'))
+  # DELETED adjusted_wdl_regret_scale: downstream of use_adjusted_wdl_target: false
+  #   ([train/losses.py]); consumer default matches ([train/trainer.py] _f(...,1.0))
+  # DELETED adjusted_wdl_regret_cap: downstream of use_adjusted_wdl_target: false
+  #   ([train/losses.py]); consumer default matches ([train/trainer.py] _f(...,0.0))
   # ⚑ BOTH knobs shape ONLY the auxiliary `sf_eval` head's row mask. They do
   # NOT touch the WDL value target: its SF component is weighted by
   # `sf_available * keep` (`losses.py`), which carries neither term. Verified
@@ -804,8 +843,30 @@ train:
   sf_wdl_conf_power: 1.0    # sf_eval row mask: scale by (1-draw_prob)^power. NOT the value blend.
   sf_wdl_draw_scale: 0.55   # sf_eval row mask: rescale game-drawn rows. NOT the value blend.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
-  sf_wdl_temperature: 1.0   # Keep training-time labels unchanged; tune softness in stored cp->WDL formula instead.
+  # DELETED sf_wdl_temperature: 1.0 is the IDENTITY -- [train/losses.py] skips the p^(1/T)
+  #   softening at exactly 1.0; consumer default matches ([train/trainer.py] _f(...,1.0)).
+  #   [scripts/value_optimism.py] names this key too, but only in _REALIZED_FROM_PROGRESS and
+  #   _NEUTRAL_BLEND_KNOBS: it reads the REALIZED value out of progress.csv and never off the
+  #   yaml flat dict, so absence here is invisible to it. Contrast the two sf_search_dampen_*
+  #   keys below, which that same script REQUIRES to be present in the config
+  # ⚑ RETAINED, do not delete sf_search_dampen_sf_low: a SECOND consumer REQUIRES THE KEY TO
+  #   BE PRESENT, and it is not a `.get(key, default)` any name-shaped scan can see.
+  #   [scripts/value_optimism.py] lists this key in the module-level constant tuple
+  #   _CROSSCHECK_YAML_VS_PARAMS and reaches it through a LOOP VARIABLE in
+  #   resolve_blend_knobs, which raises SystemExit("... is absent from the config; it must be
+  #   present to be checked") on the flat dict built by flatten_run_config_defaults(--config)
+  #   -- before any model or data work, so deleting the key breaks that script at startup.
+  #   The requirement is deliberate, not incidental: the function's docstring refuses to let
+  #   an absent key fall back to the neutral value, which is the `reco_diff misses absent keys`
+  #   defect shape. Inert on the TRAINING path only (0.0 = off, [train/losses.py] multiplies
+  #   by it; consumer default matches, [train/trainer.py] _f(...,0.0))
   sf_search_dampen_sf_low: 0.0  # Trust objective SF-low labels when search says winning; final outcomes can reflect curriculum weakness.
+  # ⚑ RETAINED, do not delete sf_search_dampen_sf_high: same second consumer, same mechanism --
+  #   [scripts/value_optimism.py] requires this key's presence via _CROSSCHECK_YAML_VS_PARAMS and
+  #   resolve_blend_knobs raises SystemExit without it. Inert on the training path
+  #   ([train/losses.py] multiplies by it; consumer default matches [train/trainer.py]
+  #   _f(...,0.0)), and never reached there. A `# DELETED` note is not a guard, so both dampen
+  #   keys stay, exactly as lr_T0/lr_T_mult and games_per_iter_start do
   sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
@@ -815,7 +876,20 @@ train:
   warm_start_lr_max_ratio: 2.0
   warmup_steps: 72   # Run 26 default.
   lr_eta_min: 0.00001
+  # ⚑ RETAINED, do not delete lr_T0: a SECOND consumer reads this key straight off the yaml
+  #   flat dict. [scripts/train_bootstrap.py] does lr_T0=int(flat.get("lr_T0", 2000)) and never
+  #   forwards lr_schedule, so Trainer's OWN default lr_schedule="cosine" ([train/trainer.py])
+  #   applies there and CosineAnnealingWarmRestarts is the branch that actually runs -- the
+  #   sqrt_release below never reaches it. Deleting the key therefore changes bootstrap training
+  #   from a flat 3e-5 to a warm-restart cosine (T_0 999999 -> 2000; restarts at 2000/6000/14000;
+  #   LR at step 1000 3.000e-05 -> 2.000e-05, bottoming at lr_eta_min 1e-5), with NO config edit
+  #   required: the script's own docstring names this file as its usage. Inert on the TRAINING
+  #   path only, where lr_schedule: sqrt_release takes the elif ([train/trainer.py]).
   lr_T0: 999999        # Ignored while lr_schedule=sqrt_release; kept for cosine fallback.
+  # ⚑ RETAINED, do not delete lr_T_mult: same second consumer, same mechanism --
+  #   [scripts/train_bootstrap.py] reads lr_T_mult=int(flat.get("lr_T_mult", 2)), so deleting
+  #   this key moves bootstrap from T_mult 1 to 2 ([train/trainer.py] cosine branch). A
+  #   `# DELETED` note is not a guard, so both keys stay, as games_per_iter_start does above.
   lr_T_mult: 1
   lr_schedule: sqrt_release
   lr_release_cycle_steps: 0
@@ -832,7 +906,11 @@ puzzle_epd: null
 puzzle_interval: 0     # Disabled — too slow for many parallel trials
 
 tune:
-  min_replay_size: 0  # Tune path trains when replay >= batch_size; keep 0 for no extra floor
+  # DELETED min_replay_size: DEAD KEY - it has exactly two surfaces and neither is a reader:
+  #   the [utils/config_yaml.py] passthrough allowlist, and the argparse flag
+  #   --min-replay-size ([run.py]), which materialises the key at default=0 and is never
+  #   read back. INERT because that argparse default (0) IS the deleted value, so the
+  #   resolved flat config is identical with the key absent.
 
   # Disk usage controls
   # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
@@ -845,10 +923,19 @@ tune:
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
   tune_scheduler: gpbt_pl
-  gpbt_inertia_weight: 1.0
-  gpbt_winner_weight: 1.0
-  gpbt_quantile_fraction: 0.25
-  gpbt_resample_probability: 0.20
+  # DELETED gpbt_inertia_weight: cross-trial exploit weight ([tune/harness.py]). Dead at
+  #   num_samples: 1 -- Ray's PopulationBasedTraining._quantiles() returns ([],[]) for a single trial,
+  #   so the lower quantile is always empty and no exploit ever runs. Resolves unchanged at 1.0
+  # DELETED gpbt_winner_weight: cross-trial only ([tune/harness.py]); dead at num_samples: 1
+  #   (empty lower quantile). Resolves unchanged at 1.0
+  # DELETED gpbt_quantile_fraction: cross-trial only ([tune/harness.py]); read only inside the
+  #   len(trials)>1 branch, so dead at num_samples: 1. Resolves unchanged at 0.25
+  # DELETED gpbt_resample_probability: cross-trial only ([tune/harness.py]); its only reader is
+  #   GPBTPairwiseScheduler._get_new_config ([tune/gpbt.py]), reached only for a trial in the LOWER
+  #   QUANTILE -- and PopulationBasedTraining._quantiles() returns ([],[]) whenever
+  #   len(trials)<=1, which gpbt.py does not override. Read on the INSTALLED Ray, 2.54.0, not on
+  #   a remembered version. Unconditionally dead at num_samples: 1. DRIFT:
+  #   resolves to the argparse default 0.05, not 0.20 -- re-add before raising num_samples above 1
   num_samples: 1
   max_concurrent_trials: 1
   # LAUNCH-FIXED (audit C2): read once into tune.Tuner's resource spec. Neither
@@ -999,7 +1086,9 @@ tune:
   exploit_replay_local_keep_older_fraction: 0.0    # Flush ALL old data on exploit
 
   # PB2: exploit+explore every X iterations (was 20).
-  pb2_perturbation_interval: 8
+  # DELETED pb2_perturbation_interval: nothing to perturb at num_samples: 1, and the only searched
+  #   key is the degenerate interval pb2_bounds_lr: [3e-5, 3e-5]. DRIFT: resolves to the argparse
+  #   default 10, not 8 ([tune/harness.py]) -- re-add before raising num_samples above 1
 
   tune_metric: opponent_strength_ema
   tune_mode: max
@@ -1154,14 +1243,22 @@ tune:
   # set, which is still far better than every 13 iterations.
   freeze_holdout_at: 2000
   reset_holdout_on_drift: false
-  drift_threshold: 0.0
+  # DELETED drift_threshold: 0.0 independently disables the branch ([tune/trainable.py] needs
+  #   >0.0) and reset_holdout_on_drift is false too; consumer default matches
+  #   ([tune/trial_config.py] .get(...,0.0)). Resolves unchanged at 0.0
   drift_sample_size: 128
 
   # Binary dimensions: keep pinned during small-model search.
   search_smolgen: false
   search_nla: false
   search_optimizer: false
-  search_optimizer_choices: [cosmos_fast]
+  # DELETED search_optimizer_choices: the READ at [tune/harness.py]
+  #   (_optimizer_candidates_from_config) is UNCONDITIONAL -- what the search_optimizer flag
+  #   gates is only the USE of its return value, so "gated" describes the consumer, not the
+  #   read. Inert anyway, on the value: cosmos_fast is not in the allowed set
+  #   ['nadamw','adamw','muon','aurora','soap'], so it filters to empty and BOTH ['cosmos_fast']
+  #   and the argparse default None return that same allowed list, gate open or shut.
+  #   DRIFT: resolves to None
 
   # Expanded PB2 search: opponent_strength stagnated at ~18.7 for 80+ iters
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.

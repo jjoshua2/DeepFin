@@ -338,6 +338,379 @@ If the shards are already in the replay window, the window ages them out on its
 own schedule — quarantining stops them being re-drawn and re-shared, it does not
 un-train them.
 
+## UCI search options (match play)
+
+The engine (`python -m chess_anti_engine.uci`) exposes its search parameters as
+UCI options, so a TCEC-style config, cutechess-cli, or Arena can set them
+without a code change. Every option below **except `MinibatchSize`** is also a
+CLI flag on the same module; the UCI name and the flag set the same field.
+`MinibatchSize` is UCI-only — `run_gumbel_root_many_c(target_batch=...)` starts
+at the C-side default of 0 and only a `setoption` moves it, so there is no
+`--minibatch-size` and passing one is an `unrecognized arguments` error. The
+map that decides this is `_SEARCH_OPTION_ARG` in `uci/__main__.py`, and a
+`None` there is asserted against the real parser
+(`test_every_registry_option_has_a_named_startup_source`), so this paragraph
+cannot drift from the code without a test going red.
+
+**The rule this surface is built around: an option that cannot take effect is
+never silently accepted.** The engine has five search paths and most knobs are
+live on only some of them — `c_puct` and the `fpu_*` family are structurally
+inert in a Gumbel search (`GumbelConfig.full_tree=True` makes the PUCT descent
+unreachable), and the Gumbel shape knobs are equally inert on the PUCT walker
+pool. So a `setoption` that lands on a knob the *live* path cannot read is
+accepted, applied to the config, and reported:
+
+```
+info string CPuct set to 2.5 — NO EFFECT on the live search: CPuct does not
+reach the gumbel path (classic single-thread Gumbel ...). Use `searchconfig`
+to see every realized value.
+```
+
+### Reading back what the engine actually used
+
+```
+searchconfig
+```
+
+A non-spec command (no GUI sends it) that dumps every registered parameter with
+its realized value and a LIVE/INERT verdict for the path that will actually
+run:
+
+```
+info string searchconfig path=gumbel (classic single-thread Gumbel (Threads=1, UseVL off, 1 device))
+info string searchconfig PolicyTemperature = 1.0 [LIVE]
+info string searchconfig CScale = 0.025 [LIVE]
+info string searchconfig CPuct = 1.75 [INERT] — CPuct does not reach the gumbel path (...)
+info string searchconfig QVisitExpRoot = -1.0 [BRANCH] — every value < 0 is the same search: ...
+info string searchconfig 14 live, 1 branch-pinned, 4 inert on path=gumbel
+```
+
+The path is read off the **live worker**, not off the options: `UseVL true`
+against an evaluator without the slot API is accepted and then falls through to
+classic Gumbel, and an options-derived answer would report a path that never
+ran. Values come from `SearchWorker.realized_search_values()` — the same
+objects the search reads, which for the PUCT family means the installed pool's
+or chunker's own config and **not** the shared `GumbelConfig` a `setoption`
+writes. That distinction is the difference between evidence and a restatement
+of the request: sourced from the shared config, the readback printed
+`CPuct = 99.0 [LIVE]` byte-identically whether or not the rebuild that delivers
+it had run. Neuter the rebuild today and `searchconfig` says `CPuct = 2.5
+[LIVE]` — the value the threads are descending on.
+
+### Which path is live
+
+| path | selected by | search |
+|---|---|---|
+| `gumbel` | `Threads 1`, `UseVL false`, one device | classic single-thread Gumbel C |
+| `rpg` | `SearchParallel gumbel` + ≥2 devices | root-parallel Gumbel; Gumbel at the root, PUCT below it |
+| `walker` | `Threads >1` | PUCT walker pool |
+| `pucv` | `UseVL true` (+ slot-API evaluator) | single-thread batched-VL PUCT |
+| `pucv_pool` | `UseMultiGpuPUCV true` + ≥2 devices | multi-GPU shared-tree PUCT |
+
+### The options
+
+Floats use `type string` (UCI has no float type — lc0's `PolicyTemperature`
+convention) and are parsed and range-checked by the engine; an out-of-range or
+unparseable value is refused with an `info string` and the previous value is
+kept. Defaults are advertised from the value the worker was actually built
+with, not a retyped constant.
+
+That holds for the **first** `uci` too, which is the only one most GUIs send.
+`uci` is answered on the reader thread from `startup_options` while the model
+is still loading on the build thread, so the worker → options copy at the end
+of `_build_engine` lands *after* the handshake a GUI sees. Until 2026-08-09 the
+first handshake therefore advertised the registry defaults: launching with
+`--c-scale 0.077 --topk 9 --policy-temp 1.5 --chunk-sims 777` advertised
+`0.025 / 32 / 1.0 / 2048`, and only a second `uci` reported the truth.
+`_startup_engine_options` now seeds the whole surface from the parsed CLI
+before the build thread starts (`_SEARCH_OPTION_ARG` maps every registry field
+to its argparse `dest`, and refuses to run if one is missing), and the copy
+`_build_engine` takes is deferred until after the multi-GPU / RPG pool
+installs, because `realized_search_values()` reads the PUCT family off the
+installed descent object. `searchconfig` remains the authority for what a
+*running* search is using.
+
+| option | type | range | default | live on | notes |
+|---|---|---|---|---|---|
+| `PolicyTemperature` | string | 0.5 – 5.0 | 1.0 | gumbel, rpg | prior temperature (logits/T); >1 softens. **Costs search time when ≠ 1.0 — see below.** |
+| `CScale` | string | 1e-4 – 100 | 0.025 | gumbel; rpg only if `CScaleRoot < 0` | descent value-transform scale |
+| `CVisit` | string | 0 – 1e5 | 50.0 | gumbel; rpg only if `CVisitRoot < 0` | descent transform floor |
+| `CScaleRoot` | string | -1 – 1000 | 7.0 | gumbel, rpg | root-only c_scale; <0 = use `CScale` |
+| `CVisitRoot` | string | -1 – 1e5 | 900.0 | gumbel, rpg | root-only c_visit; <0 = use `CVisit` |
+| `QVisitExp` | string | 0 – 2 | 1.0 | gumbel; rpg only if `QVisitExpRoot >= 90` | descent exponent on max_visit |
+| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg — reported **`[BRANCH]`**, not INERT; see below | <0 = log root (sim-invariant); ≥90 = use `QVisitExp` |
+| `QVisitFloor` | string | -1 – 1e4 | -1.0 | gumbel; rpg only if `QVisitExpRoot >= 0` | additive (decoupled) transform floor; <0 = legacy coupled |
+| `QGlobalScale` | check | — | false | gumbel | scale descent transform by the ROOT max child-visit |
+| `HalvingDiv` | spin | 2 – 8 | 2 | gumbel, rpg | sequential-halving divisor |
+| `Topk` | spin | 2 – 256 | 32 | gumbel, rpg | root candidates |
+| `GumbelScale` | string | 0 – 5 | 0.0 | gumbel, rpg | root Gumbel-noise strength; 0 = deterministic |
+| `ChunkSims` | spin | 32 – 1048576 | 2048 | all | sims per search chunk |
+| `VLossWeight` | spin | 0 – 64 | 3 | all | virtual loss on in-flight leaves |
+| `MinibatchSize` | spin | 0 – 8192 | 0 | **gumbel only** | C-side leaf-flush target; 0 = C default |
+| `CPuct` | string | 1e-4 – 100 | 1.75 | walker, pucv, pucv_pool, rpg | PUCT exploration constant |
+| `CPuctFactor` | string | 0 – 100 | 3.89 | walker, pucv, pucv_pool, rpg | 0 = fixed CPuct |
+| `CPuctBase` | string | 1 – 1e9 | 38739.0 | walker, pucv, pucv_pool, rpg | log((N+base)/base) |
+| `FpuReduction` | string | -10 – 10 | 0.33 | walker, pucv, pucv_pool, rpg | first-play-urgency reduction |
+
+Names match `scripts/arena_standard.py --cand-gumbel` / `--ref-gumbel` field
+names with the underscores removed and CamelCased (`c_scale` → `CScale`,
+`q_visit_exp_root` → `QVisitExpRoot`), so a shape tuned in an arena transfers to
+a UCI config by transliteration. The arena keeps snake_case because those flags
+address `GumbelConfig` fields directly; the UCI side follows lc0's CamelCase.
+
+**⚑ One exception, and it is the knob you are most likely to be transferring:
+`policy_temp` → `PolicyTemperature`, not `PolicyTemp`.** The name follows lc0's,
+which spells it out. This matters because unknown `setoption` names are ignored
+in silence (the lc0/Stockfish convention, kept deliberately — see the rule
+above), so `setoption name PolicyTemp value 2.5` prints nothing and the whole
+match runs at 1.0. Measured:
+
+```
+setoption name PolicyTemp value 2.5          -> (no output)   policy_temp stays 1.0
+setoption name PolicyTemperature value 2.5   -> info string PolicyTemperature set to 2.5
+```
+
+Transliterate mechanically for every other field; check this one by eye, or
+send the `searchconfig` command — the readback prints every registered name and
+its realized value, so a knob you cannot find in that dump is a knob the engine
+will never hear you set.
+
+### `QVisitExpRoot` is branch-pinned, not inert — and the readback says which
+
+`searchconfig` reports this one `[BRANCH]`, counted separately from `[INERT]`.
+The distinction is load-bearing and was got wrong once already.
+
+- `[LIVE]` means **a `setoption` you send right now changes the next search** —
+  not merely that the path *would* read the field if it were rebuilt. See
+  "A `[LIVE]` row is a promise about `setoption`" below; it was false for four
+  rows on the default path, and it is a test now.
+- `[INERT]` means **the path cannot read this option at all** — `CPuct` under
+  classic Gumbel. No value of it matters, and no companion knob rescues it.
+- `[BRANCH]` means **the option does reach the search and does change it**, but
+  the current value sits inside a branch whose members are all equivalent.
+
+#### A `[LIVE]` row is a promise about `setoption`, not about the CLI
+
+Four of the paths run a PUCT descent that reads `CPuct` / `CPuctFactor` /
+`CPuctBase` / `FpuReduction` off a config **snapshotted when the helper was
+built** — `WalkerPoolConfig` at pool construction, `PucvChunker._c_puct` /
+`._fpu_red` at chunker construction. Assigning the shared `GumbelConfig` field
+therefore does *not* reach those two descents, so `Engine._sync_cpuct_to_worker`
+rebuilds whichever helper is installed: `_reinstall_rpg_if_active` for `rpg`,
+`_install_multi_gpu_pucv_pool` for `pucv_pool`, and
+`SearchWorker.rebuild_puct_helpers` for `walker` and `pucv`.
+
+That last branch did not exist until 2026-08-09, and on the **shipped default**
+(`--walkers default=2` → `walker`) the engine printed `FpuReduction set to 9.0`
+and `searchconfig FpuReduction = 9.0 [LIVE]` while the pool kept descending on
+`1.2`. Worse than dead: the dropped value landed **later**, whenever the next
+unrelated option happened to rebuild — on the `pucv` path a subsequent
+`VLossWeight 4` moved the tree `7024 → 4269` because an `FpuReduction` from
+three commands earlier finally took effect, with no readback showing the
+difference.
+
+The guard is behavioural, not a predicate check:
+`test_the_puct_family_reaches_the_pucv_descent_through_a_setoption` requires a
+`setoption` to produce the **same** search the value produces at construction
+(with the construction-time delivery asserted first, so a blind ruler cannot
+pass it), and deleting either rebuild branch turns it red. `rpg` cannot be
+driven behaviourally without ≥2 devices and is a stated gap, covered by
+inspection only.
+
+**What a `[LIVE]` row does not promise: that the change is retroactive.** A
+`CPuct` / `FpuReduction` `setoption` mid-game keeps the search tree, so until
+the tree turns over the search is a hybrid of both settings rather than the one
+just configured. Measured on `pucv`, two `go`s with the tree reused:
+
+| arm | second `go` |
+|---|---|
+| default throughout | `(1921, 14753)` |
+| `c_puct=99` from construction | `(1921, 15144)` |
+| default `go`, then `setoption CPuct 99`, then `go` | `(1921, 15094)` |
+
+The third matches neither, because the visits already banked were bought by the
+old constant. Keeping the tree is the deliberate choice — discarding a game or
+ponder tree to honour a `setoption` is the worse failure, and at handshake time
+(the TCEC/cutechess case) the tree is empty and the question does not arise.
+Note the asymmetry with the row above it in `searchconfig`: `VLossWeight` *does*
+reset the tree, because vloss-adjusted `Q` is not comparable across weights.
+`test_a_mid_tree_puct_change_keeps_the_tree_and_is_a_hybrid` pins the decision
+in both directions.
+
+`VLossWeight`'s delivery on the shipped default (`Threads 2` → `walker`) rests
+entirely on the pool rebuild inside `SearchWorker.set_vloss_weight`. The
+`_reinstall_configured_search_path()` that `_apply_search_option` calls next
+*looks* like a second cover and is not: with `search_parallel="pucv"`,
+multi-GPU off and not leaving Gumbel, that method falls through every branch
+and does nothing. Measured with the rebuild removed — the engine prints
+`VLossWeight set to 17` while `WalkerPoolConfig.vloss_weight` and
+`searchconfig` both stay at 3. `MinibatchSize` has the matching one-liner:
+it reshapes the leaf batch the cudagraph was captured at, so it sets
+`_warmup_dirty` and the next idle `isready` re-captures **before** the clock
+starts. Both are pinned behaviourally
+(`test_vloss_weight_reaches_the_walker_pool_on_the_shipped_default`,
+`test_minibatch_size_marks_the_captured_cudagraph_stale`).
+
+`QVisitExpRoot` is the second kind, and its arms are exact — read off the C, no
+threshold, nothing fitted:
+
+| current value | what the C does | what is pinned |
+|---|---|---|
+| `< 0` (the shipped `-1.0`) | log root: `CScaleRoot·log1p(CVisitRoot + max_visit)` (`_mcts_tree.c:1498`) | the expression **does not contain the exponent**; only its sign chose the branch, so every negative value is one search |
+| `>= 90` | "use `QVisitExp` at the root too" sentinel (`:3947`) | every value in [90, 99] is one search |
+| `0 … 90` | power root: `CScaleRoot·(CVisitRoot + max_visit^exp)` (`:1500-1504`) | the exponent is *added to* `CVisitRoot`, so at `CVisitRoot >> max_visit^exp` it moves `q_scale` very little |
+
+**Crossing a boundary changes the search, and the engine must never call that
+"no effect".** At `CScaleRoot=0.05`, `QVisitExpRoot -1.0 → 1.0` moves the best
+root action 306 → 553 and the tree 8037 → 7764.
+
+#### ⚑ A withdrawn claim, recorded because it was wrong in the dangerous direction
+
+An earlier revision of this section reported `QVisitExpRoot` `[INERT]` using a
+`q_scale`-versus-prior-span bound, and claimed the bound "under-fires rather
+than over-fires" and "never calls a working knob dead". **Both claims were
+false.** The engine printed `NO EFFECT on the live search` for the 306 → 553
+transition above; the reverse direction printed *"Only crossing to >= 0 can
+change anything"* having just crossed from `>= 0`.
+
+The mechanism, for anyone tempted to retune rather than remove such a bound: two
+root transforms differ **only** by the scalar `q_scale` — the normalized
+`u = (q − min_q)/(max_q − min_q)` is identical between them. So a candidate pair
+flips exactly when `−Δlog_prior/Δu` falls between the two `q_scale` values, and
+`Δu` can be arbitrarily small on near-tied Q. No readback-time bound can rule
+that out, which is why the heuristic was deleted rather than retuned, and why
+every arm above is an exact statement about what the C reads.
+
+The measurements that motivated the bound are still true and still useful, just
+not as a predicate: at the shipped `CScaleRoot=7 / CVisitRoot=900` the crossing
+is byte-identical on the harness position, and lowering `CScaleRoot` to 2.0 or
+below makes it observable. Treat that as "this knob is hard to move at the
+shipped root scale", not as "this knob is dead".
+
+`tests/test_uci_search_options.py::test_a_no_effect_report_implies_the_search_did_not_move`
+pins the implication on the message the operator actually sees, over cells that
+**cross** arm boundaries as well as ones that stay inside them — the all-within-arm
+cell list is precisely why the original defect passed its own calibration test.
+
+**Two knobs deliberately have no UCI option:**
+
+- `gumbel_scale_after` (and the `*_decay_*` schedule around it) is a **selfplay**
+  knob. It lives on `selfplay.SearchConfig` and is applied by
+  `selfplay/network_turn.py::_scheduled_gumbel_scale` from the game's move
+  number. Nothing in the UCI engine reads it, and a UCI move has no "move
+  number in a training game" to schedule against. Use `GumbelScale` for a flat
+  match-play noise level.
+- `policy_target_temp` is a **training-time** temperature on the policy TARGET.
+  It never runs during play. It is not the same knob as `PolicyTemperature`,
+  and exposing it would invite exactly that confusion.
+
+### The cost of `PolicyTemperature != 1.0`
+
+`policy_temp != 1.0` disables the compact-legal bf16 leaf transport — the C
+bf16 leaf softmax has no temperature hook — so leaves fall back to dense
+float32 4672-wide. `mcts/gumbel_c.py` warns once per process when this fires.
+
+The `~1.9x end-to-end` figure in that warning comes from the 2026-08-03
+play-path audit (1.63s → 3.12s, 40 searches × 8 boards × 256 sims, CPU).
+**It was NOT reproduced when this option shipped, and the attempt is worth
+recording because it shows what such a measurement needs.**
+
+A naive `T=1.0` vs `T=1.5` comparison is confounded: a different temperature
+searches a different tree, so the two arms do not do the same work. Comparing
+`T=1.0` against `T=1.0+1e-7` removes that — numerically identical priors, but
+the `!= 1.0` transport gate still trips. Measured that way against a numpy CPU
+stand-in evaluator, at the same 40 × 8 × 256 shape: **0.97x, i.e. nothing.**
+
+That 0.97x is a fact about the harness, not evidence against 1.9x. A numpy
+stand-in computes the dense policy for every leaf in *both* arms, so the thing
+the compact path saves — never materialising or transferring 4672 floats per
+leaf — does not exist to be saved. Only an evaluator with the real bf16 legal
+transport can price it.
+
+**Update (merge with #379): it has now been priced on a real transport, and
+1.9x did not survive.** The 1.9x was measured on the DIRECT evaluator, which
+has no bf16 leaf transport to lose in the first place. On the broker path that
+distributed selfplay actually runs, the same gate measured **0.87–1.01x,
+non-monotone in `T`, inside the instrument's own ±13% noise** — see
+`docs/experiment_ledger.md` "selfplay search policy temperature" (e) and the
+warning text in `mcts/gumbel_c.py`, which carries both numbers. So treat 1.9x
+as an upper bound observed on one transport, not as a cost to budget for, and
+**measure on your own transport before paying for it**. The `--policy-temp` and
+`PolicyTemperature` help strings say the same thing.
+
+So: treat 1.9x as an unverified upper bound, and **measure on the target
+evaluator before running a `PolicyTemperature` sweep at a tournament time
+control.** The warning fires once per process, so a match log will tell you the
+fallback engaged; what it costs is hardware-specific.
+
+### Setting search parameters in `audit_targets.py`
+
+`scripts/audit_targets.py` scores target candidates against the frozen audit
+set. Its search shape is now overridable:
+
+```bash
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <ckpt> \
+    --gumbel policy_temp=2.2 --gumbel topk=8,halving_div=4 \
+    --dump-per-position runs/audit_T2.2.jsonl [--dump-distributions]
+```
+
+- Keys are **raw `GumbelConfig` field names**, identical to
+  `arena_standard.py --cand-gumbel` / `--ref-gumbel`, so a shape moves between
+  the two by copy-paste. The UCI engine CamelCases the same fields
+  (`c_scale` → `CScale`); that is the only naming difference in the repo.
+- `c_puct` / `cpuct_factor` / `cpuct_base` / `fpu_reduction` are **refused**,
+  same as in the arena: inert in a Gumbel search.
+- The override applies to the **PLAY row (b)** only. `--gumbel-training-rows`
+  extends it to rows (d)/(e); it is off by default because those rows describe
+  the target production actually stores.
+- **Guarded at the dispatch, not the CLI.** After the `GumbelConfig` is built
+  it is asserted field-by-field against what was asked for, and the run aborts
+  if anything failed to plumb. This is not theoretical: `_SearchProfile` has a
+  fixed field list, so before this guard an override for any field outside it
+  (e.g. `halving_div`) would have parsed, printed in the header, and been
+  dropped — a flawless null. The realized values are echoed as
+  `[audit] b) net + Gumbel search (PLAY settings): --gumbel realized policy_temp=2.2`.
+
+`--dump-per-position` records, per position and per candidate, the chosen move
+plus two **paired per-position booleans**: `top1_agree` (chosen move is among
+the deep-SF co-best set) and `out_of_top10` (chosen move is outside the deep-SF
+top 10, or `null` when the MultiPV list is shorter than 10 and the question
+cannot be asked). They are computed once here rather than left to each caller,
+because tie handling and short lists are exactly where two reimplementations
+would silently disagree. The record also carries `sf_top1` / `sf_top10` (the
+reference they were judged against) and the `gumbel_overrides` in force.
+`--dump-distributions` adds each candidate's full `{uci: p}` over legal moves.
+
+**Positive control for `policy_temp`** — the knob most likely to be silently
+dropped, because 1.0 is a no-op so any plumbing bug looks exactly like "no
+effect". Driven through this exact path (32 positions, sims 256, PLAY shape,
+`add_noise=False` as the script runs it), against a numpy stand-in evaluator:
+
+| T | ΔH raw prior | ΔH search output | reference (real net, noise ON) |
+|---|---|---|---|
+| 1.36 | +0.171 | +0.061 | +0.196 |
+| 1.50 | +0.210 | +0.087 | +0.266 |
+| 2.20 | +0.312 | +0.215 | +0.430 |
+| 3.00 | +0.356 | +0.078 | +0.612 |
+
+**Read the prior column first.** It is monotone and unambiguous: the knob
+reaches the priors. The search-output column is smaller and *non-monotone* —
+it peaks at T=2.2 and falls back at T=3.0 — because the completed-Q transform
+re-sharpens whatever prior it is handed, and past some flatness the search
+output stops tracking the prior at all. That is the same offsetting effect
+already measured in this repo ("163% of the policy gain was the net prior;
+search offset it"). So **a small search-output ΔH is not evidence the knob was
+dropped**, and a control that looked only at the search output would have
+produced a false negative at T=3.0.
+
+Magnitudes here run roughly half the real-net reference: a random-projection
+stand-in has a much flatter prior to begin with (H = 3.26 nats over ~30 legal
+moves), so the same T moves it less. Re-run on a real checkpoint before
+quoting an absolute number.
+
+ΔH ≈ 0 in the **prior** column means the knob is being dropped between the CLI
+and the search — find where before reporting any number from that run.
+
 ## Static analysis
 
 `./scripts/lint.sh <paths>` — default gate is ruff + basedpyright + vulture, a few

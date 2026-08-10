@@ -552,8 +552,71 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `tests/test_wdl_terminal_outcome.py` pins the off-path equality against a
 # verbatim transcription of `main`'s blend so it cannot drift back unnoticed.
 # Records stay comparable across the handover.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:78aaaf430abf66f1"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:afbf4cc1de454249"
+# EIGHTH declared false positive, MEASURED — and this is a MERGE of two
+# independent movements of the same pin, PR #373 (this branch) and PR #375,
+# which branched from the same base (`9f551e8c4`) and therefore each computed
+# an id on a tree that did not contain the other. Neither input id describes
+# the merged code, so BOTH are discarded and the pair below is recomputed on
+# the merged tree.
+#
+# 8a. From #375: `_build_metrics` is in both closures and gained a `_den`
+#     helper plus two kwargs (`policy_own_acc_rows`, `policy_future_acc_rows`).
+#     Control: `origin/main`'s `trainer.py` loaded as a second module and its
+#     `_build_metrics` called with byte-identical `sums`, `acc_sums` and `n`
+#     beside this branch's -- all 98 fields main's `TrainMetrics` declares came
+#     back BITWISE EQUAL; the branch adds exactly two, both pure denominators.
+#     `_den` reads `acc_sums[name][1]`, the same tensor `_acc` already divides
+#     by, so it cannot perturb a numerator and no loss field is reachable.
+#
+# 8b. From #373: `_compute_metrics` is in both closures and its source changed
+#     -- it now splats `_eval_loss_kwargs`
+#     (`{**_loss_kwargs, "policy_target_temp": 1.0}`) instead of `_loss_kwargs`.
+#     That pin is the reason the id can be declared safe. CE's floor IS the
+#     target's entropy, so retempering the target raises `policy_ce` for an
+#     UNCHANGED model; letting `policy_target_temp` reach the holdout would make
+#     the frozen ruler move with the arm under test. Because eval always passes
+#     1.0 and `main` passes no key at all (`compute_loss` defaults to 1.0), the
+#     two are the same call for EVERY possible yaml, not merely at the default.
+#     Control: `origin/main`'s `losses.py` loaded as a second module inside the
+#     real package and its `compute_loss` run beside this branch's on one 96-row
+#     synthetic batch (targets supported on the legal mask, all optional fields
+#     present) -- all 52 returned scalars BITWISE EQUAL, `total`
+#     15.71805477142334 both sides, no key on one side only. The control can
+#     fail: the same batch at `policy_target_temp=1.3` moves exactly seven keys
+#     (`policy_ce`, the three `policy_loss_phase_*` splits, the two
+#     `policy_loss_{selfplay,curriculum}` splits, and `total`), which is also
+#     the direct evidence that the knob does something unpinned. RE-RUN against
+#     `main` after #375 and #376 merged -- a control whose baseline has moved is
+#     not a control -- and the scalar count is unchanged at 52 because neither
+#     of those PRs touches `losses.py`.
+#
+# Both movements are source-hash-only in opposite halves of the same closure,
+# so the merged ids differ from every id on either input branch:
+#   full_pass  78aaaf430abf66f1 -> (#373) a76f440cdb36b72f
+#                               -> (#375) 079f56e31e6b9501
+#                               -> MERGED 73ff47d368fbe10e
+#   sampled    afbf4cc1de454249 -> (#373) 20696c6766732998
+#                               -> (#375) 4ca17596e4a59a90
+#                               -> MERGED f41625e40b98e987
+# ⚑ The sampled id is computed at steps=5, the pre-PR-277 ruler's own budget,
+# which is `sampled`'s own default -- NOT at steps=0. steps is hashed into the
+# id, so a steps=0 sampled pin is simply a different measurement; a previous PR
+# pinned one by accident (9f80a4cda2da0069, that tree's steps=0 value). On this
+# tree `sampled(steps=0)` is e0f28fe544f1cbac, and the pin below is not it.
+# Nothing the best-model comparison reads (`test_loss` and the per-head losses)
+# changed on either side, so records stay comparable across the handover.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
+  # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
+  # name was false: production NEVER runs the sampled ruler. `trainable_phases`
+  # calls `eval_full_pass` (and the async path with `full_pass=True`), and
+  # `eval_steps` appears only in scripts/offline_replay_epoch.py. `steps=5` is
+  # `sampled`'s OWN default, not a production budget -- and the name asserting
+  # otherwise is part of why a previous PR pinned this at steps=0 and called it
+  # production. It is still worth pinning: it is the pre-PR-277 instrument, and
+  # it hashes a slightly different frame set (it covers
+  # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
+  # so it catches drift in a frame the production pin cannot see.
+PRE_PR277_SAMPLED_RULER = "v1:sampled:f41625e40b98e987"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
@@ -576,7 +639,8 @@ def test_the_production_ruler_id_is_pinned() -> None:
     If you did not: you have just changed what `test_loss` means, and the
     holdout is a frozen ruler.
 
-    The value depends on the source of the 19 covered frames and NOT on the
+    The value depends on the source of the 20 covered frames (21 for the
+    sampled ruler; this branch adds `_eval_loss_kwargs`) and NOT on the
     interpreter: `digest_source` is tokenize-based precisely so that a Python
     upgrade cannot move it. Verified equal on CPython 3.10.12, 3.11.14 and
     3.12.12 -- the earlier `ast.unparse` version disagreed on 9 of the 19
@@ -588,4 +652,4 @@ def test_the_production_ruler_id_is_pinned() -> None:
     ) == PRODUCTION_FULL_PASS_RULER
     assert Trainer.eval_ruler_id_for(
         batch_size=512, steps=5, mirror_prob=0.0, full_pass=False,
-    ) == PRODUCTION_SAMPLED_RULER
+    ) == PRE_PR277_SAMPLED_RULER

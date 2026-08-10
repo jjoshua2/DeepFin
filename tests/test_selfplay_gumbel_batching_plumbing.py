@@ -269,6 +269,7 @@ _SENTINELS: dict[str, tuple[str, object]] = {
     "full_ply_pair_fraction": ("full_ply_pair_fraction", 0.41),
     "fast_simulations": ("fast_simulations", 13),
     "gumbel_topk": ("gumbel_topk", 7),
+    "gumbel_policy_temp": ("gumbel_policy_temp", 1.63),
     "gumbel_target_batch": ("gumbel_target_batch", 3),
     "gumbel_vloss_weight": ("gumbel_vloss_weight", 2),
     "gumbel_c_scale": ("gumbel_c_scale", 0.077),
@@ -487,12 +488,58 @@ def test_the_gate_and_eval_matches_search_like_production() -> None:
     assert not (set(_GATE_EVAL_NOT_SET) & kwargs), "stale _GATE_EVAL_NOT_SET entry"
 
 
-def test_the_c17_knobs_survive_into_the_gate_eval_search_config() -> None:
-    """...and the values arrive, not just the kwarg names."""
-    tc = TrialConfig.from_dict({"gumbel_target_batch": 3, "gumbel_vloss_weight": 2})
+def test_every_configurable_value_survives_into_the_gate_eval_search_config() -> None:
+    """...and the VALUES arrive, not just the kwarg names.
+
+    ⚑ The by-name sibling above reads kwarg names off the AST, and **a constant
+    satisfies a name**. That is not hypothetical here: this test used to cover
+    only the two C17 knobs, so when `gumbel_policy_temp=tc.gumbel_policy_temp`
+    was added to `_play_batch_kwargs`, pinning it to a literal `1.0` kept all
+    233 tests green. The gate and eval matches would then have searched at a
+    temperature production does not run, while the AST test reported the field
+    as wired --- the same "accepted and then silently ignored" shape this file
+    exists to catch, one construction site over.
+
+    So drive it off `_SENTINELS`, which
+    `test_the_sentinel_table_covers_exactly_the_configurable_fields` already
+    forces to equal the non-exempt SearchConfig fields exactly. A field added
+    later cannot slip through: it has no sentinel, so the coverage test fails
+    first, and once it has one this test demands its value arrive. Narrowing
+    this back to a hand-listed pair is how the gap reappeared.
+
+    Each sentinel must also DIFFER from the dataclass default, or a field
+    hard-wired to its own default would satisfy the check --- which is exactly
+    what `gumbel_policy_temp=1.0` was.
+    """
+    skip = set(_GATE_EVAL_NOT_SET)
+    covered = {f: v for f, v in _SENTINELS.items() if f not in skip}
+    assert covered, "every field got skipped -- this test is asserting nothing"
+
+    defaults = SearchConfig()
+    degenerate = [
+        field for field, (_key, sentinel) in covered.items()
+        if getattr(defaults, field) == sentinel
+    ]
+    assert not degenerate, (
+        f"sentinels equal to the SearchConfig default: {sorted(degenerate)}. "
+        f"A field wired to a constant equal to its default would pass this test, "
+        f"so pick a distinct sentinel rather than leaving a hole."
+    )
+
+    tc = TrialConfig.from_dict(dict(covered.values()))
     search = _play_batch_kwargs(tc)["search"]
     assert isinstance(search, SearchConfig)
-    assert (search.gumbel_target_batch, search.gumbel_vloss_weight) == (3, 2)
+    wrong = {
+        field: (getattr(search, field), sentinel)
+        for field, (_key, sentinel) in sorted(covered.items())
+        if getattr(search, field) != sentinel
+    }
+    assert not wrong, (
+        f"gate/eval SearchConfig does not carry the configured value for "
+        f"{sorted(wrong)} (got vs want: {wrong}). The kwarg is present at the "
+        f"call site, so the by-name test above is green -- the value is wired "
+        f"to a constant, and those matches search differently from training."
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,12 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.mcts.gumbel import (
+    DEFAULT_VOLATILITY_ANCHOR,
+    POLICY_TEMP_MAX,
+    POLICY_TEMP_MIN,
+    SELFPLAY_GUMBEL_C_SCALE,
+)
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
@@ -45,6 +50,31 @@ def _nonnegative_float(value: Any, *, name: str) -> float:
     val = float(value)
     if not math.isfinite(val) or val < 0.0:
         raise ValueError(f"{name} must be finite and >= 0, got {value!r}")
+    return val
+
+
+def _policy_temperature(value: Any, *, name: str) -> float:
+    """Policy prior temperature: inside ``[POLICY_TEMP_MIN, POLICY_TEMP_MAX]``.
+
+    ``mcts.gumbel.apply_policy_temp`` treats ``policy_temp <= 0`` as a no-op, so
+    a mis-typed 0 would be accepted and then ignored --- the exact silent-ignore
+    failure the plumbing tests exist to prevent. Reject it at load instead.
+
+    ⚑ ``> 0 and finite`` is not enough, which is why this is a band and not a
+    sign check. ``1e300`` is finite and positive and divides every logit to zero: a
+    uniform prior, i.e. search with the policy head switched off, accepted by
+    the validator and published to every worker as a working temperature. The
+    band is imported from ``mcts.gumbel`` rather than restated here so the
+    loader and the hot-path predicate ``policy_temp_active`` cannot drift into
+    disagreeing about which values are real temperatures --- a guard has to
+    share the criterion's instrument.
+    """
+    val = float(value)
+    if not math.isfinite(val) or not (POLICY_TEMP_MIN <= val <= POLICY_TEMP_MAX):
+        raise ValueError(
+            f"{name} must be finite and in [{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}], "
+            f"got {value!r}"
+        )
     return val
 
 
@@ -174,6 +204,9 @@ class TrialConfig:
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
     gumbel_topk: int = 16
+  # lc0 PolicyTemperature on the SELFPLAY search prior; 1.0 = no-op.
+  # See SearchConfig.gumbel_policy_temp for the cost note.
+    gumbel_policy_temp: float = 1.0
   # C17 batching knobs. Carried here so the gate/eval matches built by
   # _play_batch_kwargs search the SAME way distributed selfplay does; without
   # them those matches silently ran the 56%-duplicate vloss_weight=0 arm while
@@ -568,6 +601,9 @@ class TrialConfig:
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),
             gumbel_topk=max(1, int(config.get("gumbel_topk", 16))),
+            gumbel_policy_temp=_policy_temperature(
+                config.get("gumbel_policy_temp", 1.0), name="gumbel_policy_temp",
+            ),
             gumbel_target_batch=max(0, int(config.get("gumbel_target_batch", 0))),
             gumbel_vloss_weight=max(0, int(config.get("gumbel_vloss_weight", 0))),
             volatility_q_scale=float(config.get("volatility_q_scale", 0.0)),

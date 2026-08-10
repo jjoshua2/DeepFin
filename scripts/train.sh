@@ -164,7 +164,15 @@ start_observers() {
             > scratchpad/live_read/monitor_fen.out 2>&1 &
         echo "Started monitor_fen (PID $!) — log: scratchpad/live_read/monitor/monitor.log"
     fi
-    if ! pgrep -f "scripts/ratchet_loop.sh" >/dev/null; then
+    # ⚑ The ratchet is OPT-OUT via a sentinel, because killing the process is NOT
+    # durable — this block re-spawns it on every `start`, so a `kill` survives only
+    # until the next restart. Disabled 2026-08-10: a CONTENDED arena costs 2.77x
+    # slower iterations (833s vs 300s) and returned 70/84 games where a PARKED one
+    # returns ~400, i.e. twice the training for a third of the data. Run it by hand
+    # instead: `bash scripts/daily_gate_ratchet.sh`. Re-enable by deleting the file.
+    if [ -f .ratchet_disabled ]; then
+        echo "ratchet_loop DISABLED by .ratchet_disabled — run it manually when wanted"
+    elif ! pgrep -f "scripts/ratchet_loop.sh" >/dev/null; then
         setsid nohup bash scripts/ratchet_loop.sh < /dev/null \
             > /dev/null 2>&1 &
         echo "Started ratchet_loop (PID $!) — log: scratchpad/ratchet_loop.log"

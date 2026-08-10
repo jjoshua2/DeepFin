@@ -100,6 +100,25 @@ _SEARCH = SearchConfig(
 _OPENING = OpeningConfig(random_start_plies=0)
 _DIFF_FOCUS = DiffFocusConfig(min_keep=1.0)
 
+# The stand-in for `WorkerSession._build_selfplay_configs`'s return value, used
+# by `_wired_session` to drive `_run_selfplay` without the manifest-resolution
+# machinery. It must carry the SAME KEYS as the real one: `_run_selfplay` and
+# its callees index this dict (`cfgs["opening"]`, `cfgs["search"]`,
+# `cfgs["game"]`) and hand it to `play_batch` as `**cfgs`, so a key the double
+# omits is a code path this file silently stops exercising —
+# `_await_broker_ready` was already degrading to its "probe construction
+# failed" branch on the missing `game` key, and the `cfgs["search"]` read added
+# for the selfplay policy-temp log line turned the same drift into a KeyError.
+# `test_the_selfplay_configs_double_matches_the_real_contract` pins the match.
+_SELFPLAY_CFGS_DOUBLE: dict[str, Any] = {
+    "slot_oversubscribe": 1.0,
+    "opponent": OpponentConfig(),
+    "temp": TemperatureConfig(),
+    "search": _SEARCH,
+    "opening": _OPENING,
+    "game": _game_config(),
+}
+
 # Production plays `opening_book_prob: 1.0` / `opening_book_max_plies: 4`, so a
 # real game NEVER starts from a bare startpos with an empty move stack — it
 # starts from a board that already carries moves, and the LC0 history planes at
@@ -1412,7 +1431,7 @@ def _wired_session(tmp_path: Path) -> Any:
     session._resume_skip_reasons = {}
     # Collaborators outside the wiring under test.
     session._build_selfplay_configs = lambda reco: (
-        {"opening": _OPENING}, (1000, 4, 16, None),
+        dict(_SELFPLAY_CFGS_DOUBLE), (1000, 4, 16, None),
     )
     session._sync_stockfish = lambda *a, **k: setattr(session, "sf", object())
     session._promote_pending_dole = lambda: ([], [])
@@ -1421,6 +1440,42 @@ def _wired_session(tmp_path: Path) -> Any:
     session._start_model_watch_thread = lambda: None
     session._flush_and_upload_after_shard = lambda *a, **k: None
     return session
+
+
+def test_the_selfplay_configs_double_matches_the_real_contract(
+    tmp_path: Path,
+) -> None:
+    """`_wired_session`'s `_build_selfplay_configs` double must not drift.
+
+    A double that returns FEWER keys than the collaborator it replaces does not
+    fail loudly — it makes the code under test take a different branch. Both
+    halves of that happened here: the missing `game` key had been quietly
+    sending `_await_broker_ready` down its "probe construction failed" skip, and
+    the `cfgs["search"]` read added for the selfplay policy-temp log line turned
+    the same drift into a KeyError. Compared against the REAL return value, so a
+    key added to production shows up as a failure here rather than as a hole.
+    """
+    from types import SimpleNamespace
+
+    session = _bare_session(tmp_path)
+    session.args = SimpleNamespace()
+    session.opening_book_path = None
+    session.opening_book_path_2 = None
+    session.opening_fen_list_path = None
+
+    real, real_sf_args = session._build_selfplay_configs(
+        {"sf_nodes": 1000, "sf_multipv": 4, "sf_hash_mb": 16},
+    )
+    double, double_sf_args = _wired_session(tmp_path)._build_selfplay_configs({})
+
+    assert set(double) == set(real)
+    # The TYPES too: every `cfgs[...]` reader and `play_batch(**cfgs)` is
+    # written against the dataclasses, so a bare dict standing in for a
+    # SearchConfig would satisfy a key-set check and still not be the contract.
+    assert {k: type(v) for k, v in double.items()} == {
+        k: type(v) for k, v in real.items()
+    }
+    assert len(double_sf_args) == len(real_sf_args)
 
 
 @pytest.mark.parametrize(

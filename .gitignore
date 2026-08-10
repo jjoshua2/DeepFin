@@ -70,3 +70,4 @@ crash-*
 *.password
 .env
 .env.*
+.ratchet_disabled

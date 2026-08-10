@@ -128,7 +128,7 @@ _SELFPLAY_KEYS = (
     "max_plies",
     "mcts", "mcts_simulations", "mcts_start_simulations", "mcts_ramp_steps", "mcts_ramp_exponent",
     "playout_cap_fraction", "full_ply_pair_fraction", "fast_simulations",
-    "fpu_reduction", "fpu_at_root", "gumbel_topk",
+    "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_policy_temp",
     "gumbel_target_batch", "gumbel_vloss_weight",
     "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
     "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
@@ -237,6 +237,13 @@ _TRAIN_KEYS = (
     # whatever the writers used and a second copy could disagree with it.
     "wdl_terminal_outcome_plies", "wdl_terminal_outcome_full_plies",
     "wdl_terminal_outcome_sf_frac",
+    # Temperature on the MAIN policy target. Deliberately NOT in
+    # `TRAINER_WEIGHT_KEYS`, which is the every-iteration live-push list and the
+    # salvage-donor overlay list: this is not a loss WEIGHT, it re-interprets rows
+    # already in the window, exactly like `wdl_terminal_outcome_plies` above.
+    # Startup-only, so a mid-run edit warns instead of silently re-shaping the
+    # target under a half-finished readout window.
+    "policy_target_temp",
 )
 
 # tune section: all 1:1 passthrough.

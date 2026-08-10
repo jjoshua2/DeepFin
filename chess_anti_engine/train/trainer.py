@@ -92,6 +92,8 @@ from .losses import (
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    policy_target_temp_active,
+    retemper_main_policy_target,
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
@@ -802,10 +804,20 @@ class TrainMetrics:
     wdl_terminal_outcome_frac: float = 0.0
     wdl_terminal_outcome_rows: float = 0.0
     sf_move_acc_top5: float = 0.0
+  # Policy move-ordering accuracy, and its DENOMINATOR. An accuracy divides by
+  # the number of rows carrying the head's target (`has_policy` / `has_future`),
+  # and on an empty denominator `_acc` returns 0.0 — which for an accuracy is
+  # the WORST attainable value, not a null. Without `_rows` alongside it, "the
+  # policy head ranks nothing correctly" and "no row in this batch had a policy
+  # target" are the same published number. `policy_future` is the live risk:
+  # `has_future` is false for rows near the end of a game, so a batch can
+  # legitimately hold none.
     policy_own_acc_top1: float = 0.0
     policy_own_acc_top5: float = 0.0
+    policy_own_acc_rows: float = 0.0
     policy_future_acc_top1: float = 0.0
     policy_future_acc_top5: float = 0.0
+    policy_future_acc_rows: float = 0.0
     train_time_s: float = 0.0
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
@@ -1052,6 +1064,70 @@ class TrainMetrics:
   # divided by matrix_lr_multiplier.
     opt_lr_mean: float = 0.0
     opt_lr_max: float = 0.0
+  # ⚑ DRAW-SEQUENCE PROVENANCE — the other half of "same seed, same rows".
+  # `batches_drawn` is the total microbatches this call pulled from the buffer,
+  # and `transient_cuda_retry_batches` is how many of them were REPLACEMENT
+  # draws after a transient CUDA error (`train_steps`' retry path calls
+  # `add_retry_batches`, which advances the buffer's RNG). A single retry in one
+  # arm of a paired offline A/B desynchronises that arm's row sequence from the
+  # other's PERMANENTLY, for every subsequent step, and it was previously
+  # visible only as a `logging.warning` — nothing in a report or a metrics row
+  # recorded it, so a silently de-paired sweep looked exactly like a clean one.
+  # `scripts/retarget_retrain.py` asserts both are equal across arms.
+  # Expected to be exactly 0.0 in a healthy run.
+  #
+  # ⚑ REVIEW FINDING N5, DECIDED — these two fields are ALWAYS ON, and the PR
+  # that added them is titled "default-off". Both statements are true and the
+  # gap is deliberate: "default-off" describes the temperature's effect on
+  # TRAINING, and these are observations, not behaviour. `batches_drawn` reads
+  # `batch_iter.consumed`, which the loop already maintained; the retry counter
+  # sums `_retry_batches`, a value the retry path already computed and already
+  # passed to `add_retry_batches`. No new call, no new branch, no reordering on
+  # the training path.
+  #
+  # They are deliberately NOT gated on `policy_target_temp != 1.0`. The counter
+  # exists to detect a de-paired A/B, and in that A/B the arm that runs at 1.0
+  # is the CONTROL -- the one that defines the reference draw sequence. Gating
+  # the instrument on the intervention would leave the reference arm as the only
+  # one with no counter, which is conditioning a control on the thing it is
+  # controlling for. A retry is also not caused by the temperature; it is caused
+  # by the box.
+  #
+  # The cost is one more `TrainMetrics` field pair on the live path, both
+  # additive with defaults, neither read by the best-model comparison or the
+  # promotion gate. The benefit is that a transient CUDA retry -- previously a
+  # `logging.warning` on a thousand-line console and nothing else -- becomes a
+  # recorded fact.
+  #
+  # ⚑ "RECORDED" MEANS THE RAY RESULT ROW, NOT `_log_metrics`. As merged, these
+  # two reached only TensorBoard, whose event files rotate per Ray session --
+  # the same non-sink that forced the grad-norm family to be promoted. They are
+  # published by `_train_metrics_dict` in tune/trainable_report.py, which
+  # enumerates report columns BY NAME (there is no `asdict` pass-through), so a
+  # field added here and not added there is computed every step and read by
+  # nobody.
+  #
+  # ⚑ WHAT IS GUARDED, EXACTLY -- three separate things, because a claim that
+  # blurs them is the false confidence this pair exists to remove:
+  #   * the COLUMN exists: `_train_metrics_dict` emits both keys, and
+  #     `_TRAIN_METRIC_DEFAULTS` declares them so the row is never ragged;
+  #   * the column carries the METRIC's value, not a literal (a key wired to a
+  #     constant 0.0 passes any membership check and reads as a healthy run);
+  #   * the SOURCE is real: `train_steps` below sets them from
+  #     `batch_iter.consumed` and the retry accumulator, asserted against
+  #     `steps * accum_steps` at two different `accum_steps` -- one value cannot
+  #     tell `batches_drawn` apart from `train_steps_done`.
+  # All three live in `tests/test_trainable_report.py`. Each was a surviving
+  # mutant before it was written.
+  #
+  # The offline consumer, `scripts/retarget_retrain.py`, reads both DIRECTLY.
+  # It used to read them through `getattr(metrics, ..., 0.0)`, which made its
+  # de-pairing `SystemExit` a gate that could not fail: delete either field and
+  # both arms read 0.0, so the check compared `0.0 == 0.0` and passed. Renaming
+  # or removing a field now raises there instead of certifying an unchecked
+  # sweep -- keep it that way.
+    batches_drawn: float = 0.0
+    transient_cuda_retry_batches: float = 0.0
 
 
 # Map compute_loss dict keys → TrainMetrics field names where they differ.
@@ -1570,6 +1646,12 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_policy": _f("w_policy", 1.0),
         "w_soft": _f("w_soft", 0.5),
         "soft_policy_min_tv": _f("soft_policy_min_tv", 0.0),
+  # Spelled as a literal `config.get` rather than `_f(...)` DELIBERATELY:
+  # tests/test_startup_only_config_keys.py derives the startup-only set from
+  # literal config reads, and a key read through the `_f` helper is invisible
+  # to it. Declaring this one startup-only while the instrument cannot see it
+  # would be exactly the hand-override that file's docstring forbids.
+        "policy_target_temp": float(config.get("policy_target_temp", 1.0)),
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
@@ -1670,6 +1752,7 @@ class Trainer:
         w_policy: float = 1.0,
         w_soft: float = 0.5,
         soft_policy_min_tv: float = 0.0,
+        policy_target_temp: float = 1.0,
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
@@ -2056,6 +2139,12 @@ class Trainer:
         self.w_policy = float(w_policy)
         self.w_soft = float(w_soft)
         self.soft_policy_min_tv = float(soft_policy_min_tv)
+  # Validated HERE, at construction, so a bad yaml value fails the trial's
+  # startup instead of raising (or silently inverting the target) inside the
+  # first training step. `retemper_main_policy_target` re-checks it, because a
+  # test or the offline rig can call the helper without a Trainer.
+        self.policy_target_temp = float(policy_target_temp)
+        retemper_main_policy_target(torch.ones(1, 2), temp=self.policy_target_temp)
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
@@ -2147,6 +2236,48 @@ class Trainer:
         self._swa_freq = max(1, int(swa_freq))
         self._swa_model: torch.optim.swa_utils.AveragedModel | None = None
         self._init_swa()
+
+  # ⚑ THE ONLY ARTIFACT THAT NAMES THE REALIZED TARGET TEMPERATURE. Everything
+  # else a reader might reach for reports a DIFFERENT number: `params.json` is
+  # the LAUNCH config (and says nothing about what the constructor accepted),
+  # `scripts/retarget_retrain.py` never writes one at all, and
+  # `scripts/audit_targets.py`'s "production training target" row is rebuilt
+  # from the flat `temperature` key -- the selfplay SAMPLING temperature, an
+  # unrelated knob -- so it reads identically whether or not this one is live.
+  # Without this line an arm whose value never reached `compute_loss` is
+  # indistinguishable from one whose did reach it, which is this codebase's
+  # signature defect (a value accepted and then silently ignored).
+  #
+  # ⚑ LAST STATEMENT OF `__init__`, and that placement is load-bearing. Review
+  # found `eval_pinned_temp=1` written as a string LITERAL when the print sat
+  # beside the assignment above -- a claim, not a measurement, in the one line
+  # whose entire justification is that it reports realized values. It cannot be
+  # a real read up there: `_loss_kwargs` touches `self.w_future` and every other
+  # weight, so reading `_eval_loss_kwargs` mid-constructor raises
+  # `AttributeError: 'Trainer' object has no attribute 'w_future'`. Down here all
+  # three fields are reads of state the training step will actually use. Keep any
+  # new attribute assignment ABOVE this print.
+  #
+  # UNCONDITIONAL on purpose: the control arm's `1.0` has to be a positive
+  # record, not an absent line that could equally mean "old code".
+  # `reshape_active` comes from `policy_target_temp_active`, the same predicate
+  # `retemper_main_policy_target` gates its early return on, so the claim and
+  # the arithmetic cannot drift apart.
+  # `!r`, not `.6g`: review found `.6g` renders 1.0000001 as `1`, which is both
+  # self-contradictory next to `reshape_active=True` and indistinguishable from
+  # the control arm. `repr` is shortest-round-trip, so the printed text always
+  # reconstructs the float that was installed.
+  # print(), NOT logging.info() -- the trial actor installs no logging handler,
+  # so an INFO record is discarded; see the export_swa comment below.
+  # ⚑ NO `^` ANCHOR when grepping for this. Ray prefixes actor stdout with
+  # `(train_trial pid=NNNN)` and an ANSI colour code, so an anchored grep
+  # returns 0 matches on a real trial log and reads as "the arm never ran".
+        print(
+            f"[trainer] policy_target_temp={self.policy_target_temp!r} "
+            f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
+            f"eval_pinned_temp={self._eval_loss_kwargs['policy_target_temp']!r}",
+            flush=True,
+        )
 
     def _init_swa(self) -> None:
         """(Re)initialize SWA from current model weights.
@@ -2381,6 +2512,7 @@ class Trainer:
             "w_policy": self.w_policy, "w_soft": self.w_soft, "w_future": self.w_future,
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
             "soft_policy_min_tv": self.soft_policy_min_tv,
+            "policy_target_temp": self.policy_target_temp,
             "w_wdl": self.w_wdl, "w_sf_move": self.w_sf_move, "w_sf_eval": self.w_sf_eval,
             "w_categorical": self.w_categorical, "w_volatility": self.w_volatility,
             "w_sf_volatility": self.w_sf_volatility, "w_moves_left": self.w_moves_left,
@@ -2400,6 +2532,30 @@ class Trainer:
             "moves_left_max_plies": self.moves_left_max_plies,
             "sf_sparse_params": self.sf_target_params if self.sf_policy_sparse_ce else None,
         }
+
+    @property
+    def _eval_loss_kwargs(self) -> dict[str, Any]:
+        """``_loss_kwargs`` with the policy-target RESHAPE pinned off.
+
+        ⚑ THE RULER MUST NOT MOVE WITH THE ARM. `policy_target_temp` reshapes
+        the target `policy_ce` is measured against, and `CE = H(target) +
+        KL(target||model)`, so an UNCHANGED model reads a different `policy_ce`
+        purely from the reshape. The direction is model-dependent -- flattening
+        raises `H` but can lower `KL` by more, and it has been measured falling
+        on a random-logit fixture -- so no magnitude is quoted here; the pin
+        needs only that the number MOVES. Sharing `_loss_kwargs` between the
+        training step and the holdout/EMA eval would therefore make every
+        arm-vs-baseline CE comparison a comparison of two different rulers --
+        the exact defect docs/experiment_ledger.md logs as "a ruler change must
+        invalidate its records". Eval scores the model against the target the
+        shards ACTUALLY carry, identically in every arm.
+
+        Only the target-SHAPE knob is pinned. Loss WEIGHTS stay as configured:
+        they scale a term without redefining it, so they leave the per-term
+        columns (`policy_ce`, `wdl_ce`, ...) comparable, and pinning them would
+        make `total` stop matching the trained objective.
+        """
+        return {**self._loss_kwargs, "policy_target_temp": 1.0}
 
     def _amp_context(self):
         # Pinned to bf16: training has no GradScaler, so an FP16 fallback
@@ -2471,12 +2627,21 @@ class Trainer:
                 return 0.0
             return float(num.item()) / den_f
 
+  # The denominator `_acc` divided by, published so a 0.0 accuracy can be told
+  # apart from an absent one. Same accumulated tensor `_acc` reads, so this is
+  # one extra sync per head, not an extra reduction.
+        def _den(name: str) -> float:
+            val = acc_sums.get(name)
+            return 0.0 if val is None else float(val[1].item())
+
         return TrainMetrics(
             **_loss_sums_to_metric_kwargs(sums, n),  # dict[str,float] splat covers int fields (step counters) at runtime
             sf_move_acc=_acc("sf_move_acc"),
             sf_move_acc_top5=_acc("sf_move_acc_top5"),
             policy_own_acc_top1=_acc("policy_own_acc_top1"),
             policy_own_acc_top5=_acc("policy_own_acc_top5"),
+            policy_own_acc_rows=_den("policy_own_acc_top1"),
+            policy_future_acc_rows=_den("policy_future_acc_top1"),
             policy_future_acc_top1=_acc("policy_future_acc_top1"),
             policy_future_acc_top5=_acc("policy_future_acc_top5"),
             **extras,
@@ -3239,7 +3404,7 @@ class Trainer:
             with self._amp_context():
                 _rel = batch.get("relations")
                 out = eval_model(batch["x"], relations=_rel) if _rel is not None else eval_model(batch["x"])
-                losses = compute_loss(out, batch, **self._loss_kwargs)
+                losses = compute_loss(out, batch, **self._eval_loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)
             for k, v in scalars.items():
@@ -3417,6 +3582,7 @@ class Trainer:
         clip_counts: dict[str, int] = {
             "clipped": 0, "adaptive_clip": 0, "hard_clip": 0, "nonfinite_grad": 0,
         }
+        transient_cuda_retry_batches = 0
 
         _log = logging.getLogger(__name__)
 
@@ -3458,7 +3624,12 @@ class Trainer:
                 except RuntimeError as exc:
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
-                    batch_iter.add_retry_batches(batch_iter.consumed - consumed_before_attempt)
+                    _retry_batches = batch_iter.consumed - consumed_before_attempt
+                    batch_iter.add_retry_batches(_retry_batches)
+  # Counted, not merely logged. These replacement draws advance the buffer's
+  # RNG, so an arm that retried and an arm that did not are no longer sampling
+  # the same rows — see the TrainMetrics field comment.
+                    transient_cuda_retry_batches += int(_retry_batches)
                     _log.warning("Transient CUDA error (attempt %d/3), retrying: %s", _attempt + 1, exc)
                     torch.cuda.synchronize()
                     torch.cuda.empty_cache()
@@ -3508,6 +3679,11 @@ class Trainer:
             train_samples_seen=int(train_samples_seen),
             opt_lr_mean=float(sum(lr_samples) / len(lr_samples)) if lr_samples else 0.0,
             opt_lr_max=float(max(lr_samples)) if lr_samples else 0.0,
+  # `batch_iter.consumed` survives `close()`, and it is the TOTAL microbatches
+  # this call pulled from the buffer -- retries included. Two paired arms that
+  # disagree on it did not sample the same rows, whatever their shard pools say.
+            batches_drawn=float(batch_iter.consumed),
+            transient_cuda_retry_batches=float(transient_cuda_retry_batches),
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),

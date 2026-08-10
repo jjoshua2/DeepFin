@@ -76,13 +76,25 @@ class CmdSetOption:
 
 
 @dataclass(frozen=True)
+class CmdSearchConfig:
+    """`searchconfig` — dump every realized search parameter, LIVE or INERT.
+
+    Not a UCI-spec command; no GUI sends it. It exists for the operator who
+    has to prove, from the engine's own mouth, that the values in a TCEC /
+    cutechess config reached the search. UCI has no readback for options at
+    all, which is precisely how a knob gets set for a whole tournament while
+    doing nothing.
+    """
+
+
+@dataclass(frozen=True)
 class CmdUnknown:
     raw: str
 
 
 Command = (
     CmdUci | CmdIsReady | CmdUciNewGame | CmdPosition | CmdGo | CmdPonderHit
-    | CmdStop | CmdQuit | CmdSetOption | CmdUnknown
+    | CmdStop | CmdQuit | CmdSetOption | CmdSearchConfig | CmdUnknown
 )
 
 
@@ -220,6 +232,8 @@ def parse_command(line: str) -> Command:
             return CmdQuit()
         case "setoption":
             return _parse_setoption(rest)
+        case "searchconfig":
+            return CmdSearchConfig()
         case _:
             return CmdUnknown(raw=line)
 
