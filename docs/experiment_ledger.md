@@ -39973,3 +39973,65 @@ which is what licenses using it to predict regimes that have not been run.
 `network_turn.py:641` floors at 1e-12 and includes the term, `_mcts_tree.c:4838` skips it,
 and production runs C (task #173). The reconstruction above avoids this entirely by
 reading the STORED kl column, which the C path wrote.
+
+## 2026-08-10 — ⚑⚑ THE COMPOUNDING PREDICTION FIRED: the target ran away from the net
+
+**Pre-registered** in [[kl_target_prior_is_the_training_signal]] on 2026-08-09, BEFORE the
+readout: *"if the ramp PLATEAUS near H ≈ 1.14 (Δ ≈ +0.15), the bundle is just the sum of its
+two direct levers and there is NO closed-loop compounding. If it overshoots materially past
+1.14, compounding is real (softer target → softer trained prior → softer target) and the loop
+has a feedback path nobody has modelled."*
+
+**Measured on the pre-registered instrument (stored shard targets), n≈15k policy rows/era:**
+
+| | H(target) | KL(prior‖target) med | mean | p90 |
+|---|---|---|---|---|
+| pre-bundle, iter~672 (`pre_search_authority_20260809`, 817 shards) | **0.9849** | 0.0238 | 0.1123 | 0.2614 |
+| post-bundle, iter~860 (live buffer, 811 shards) | **1.2136** | **0.2815** | 1.0491 | 2.7715 |
+
+**INSTRUMENT VALIDATED BEFORE THE VERDICT** — the prior shard measurement of this same
+quantity was H 0.9867, KL med 0.0239 / mean 0.1198 / p90 0.2845; reproduced here to ~0.2%.
+This is the same ruler, so the threshold is applicable [[same_name_different_population]].
+
+**VERDICT: OVERSHOOT. Δ = +0.229 vs the predicted +0.15, landing at 1.2136 past the 1.14
+bar, and still climbing at the stop.** ⇒ **Closed-loop compounding is REAL.** The bundle is
+NOT the sum of its two levers.
+
+### The load-bearing number is the KL, not the entropy
+
+`KL(prior‖target)` rose **11.8x at the median** (9.3x mean, 10.6x p90). In a healthy loop this
+quantity SHRINKS — the policy head learns its target, so the prior moves toward it. It grew an
+order of magnitude instead. **The net could not catch its own target because the target kept
+moving away from it.**
+
+### This UNIFIES the two hypotheses that were being treated as competitors
+
+```
+A  target drifts softer and further from the prior      (compounding, this entry)
+     -> KL(prior||target) rises
+B    -> difficulty = 6*q_delta + 3.5*kl rises            (scale drift, 954bc54f9)
+     -> keep_prob saturates AND the surprise half of sampling concentrates
+        on the HIGHEST-KL rows -- exactly the rows whose targets have run
+        furthest from the net
+     -> the net trains hardest on its least-catchable targets
+     -> the prior falls further behind  -> back to A, amplified
+```
+
+**B is the accelerant on A**, which is what the measured Elo slope does: −0.13/iter over
+514→735 (pre-bundle, A only and slow), −0.42 over 735→768, −0.66 over 768→862.
+
+⇒ **A fix that normalizes `difficulty` breaks the AMPLIFIER but not the LOOP.** It is
+necessary and not sufficient. Whatever is chosen must state which of A and B it addresses.
+
+### What this does NOT establish
+
+Per this document's own standing rule — **KL and change RATE are never evidence without change
+QUALITY**, disciplined by the `sims=1` negative control (34.9% of moves changed, +7.60 cp
+WORSE) — "the target moved a lot" is NOT yet "the target got worse". The target-quality
+discriminator against the frozen deep-SF audit set remains owed and remains the deciding
+measurement. Do not read this entry as proving the bundle's targets are bad teachers.
+
+Also unexplained and PREDATING all of this: the 514→735 decline (−28 Elo, −0.13/iter) ran
+while `diff_focus` was entirely healthy (keep_rate 0.80, priority CV 1.19,
+`grad_hard_clip_rate` exactly 0.000). Mechanism A alone is a candidate for it; that is
+untested.
