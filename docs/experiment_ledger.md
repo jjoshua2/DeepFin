@@ -279,6 +279,19 @@ softens. Until PR #379 it was unreachable from configuration —
 keyword list that did not include it (nor `c_visit`, `c_visit_root`,
 `c_scale_root`, `q_visit_exp_root`, `halving_div`; see FINDING below).
 
+**Accepted band: `[POLICY_TEMP_MIN, POLICY_TEMP_MAX]` = `[0.05, 20.0]`**, defined
+once in `mcts/gumbel.py` and read by BOTH the loader
+(`trial_config._policy_temperature`) and the hot-path predicate
+(`policy_temp_active`), so a value the yaml refuses cannot be smuggled in through
+`arena_standard.py --cand-gumbel policy_temp=...` and read as active. The band is
+semantic, not float32: `1e300` is finite and positive and divides every logit to
+exactly zero — a uniform prior, i.e. search with the policy head switched off,
+which a bare `isfinite and > 0` accepts and the realized-shape log line then
+reports as tempering working. `1e-300` gives all-`inf`. 0.05/20.0 sit 8× beyond
+the widest values used anywhere here (0.4 sharpest tested, 2.5 softest, 1.5
+production, 1.2 decided floor); the actual float32 cliffs are ~1e-38 / ~1e39, far
+past the point where the knob has stopped being a temperature.
+
 ### HYPOTHESIS
 
 The loop is self-sealing against rare-but-sound moves: the net rates a sacrifice
