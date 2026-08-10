@@ -65,6 +65,18 @@ The run is usually live. These break production:
   `git worktree` for all branch work, and merge PRs touching the live yaml promptly.
 - **The live-yaml validator is all-or-nothing**: an unknown key rejects the WHOLE
   reload. Add config keys only after restarting onto code that defines them.
+- **⚑ An UNKNOWN key is the SAFE failure. A KNOWN key with an INVALID VALUE KILLS THE RUN.**
+  Two opposite modes — measured 2026-08-09, do not conflate them:
+  - *unknown key* → the reload is rejected, a warning prints, the process keeps the OLD
+    config, **the trial survives**;
+  - *known key, out-of-range value* → the reload SUCCEEDS, then `TrialConfig.from_dict`
+    (`trainable.py:963`) raises `ValueError` **inside the `try:` at `:952`, which has no
+    `except` — only a `finally`** — so **the trial dies mid-iteration**.
+
+  Measured: `gumbel_policy_temp: 0.0` kills it; `2.0` applies cleanly; an unknown key is
+  survivable. ⇒ **A live edit to a VALIDATED key is not a soft operation.** Dry-run it on a
+  COPY first — `TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open(<copy>))))`
+  — and only then write the live file.
 - **Never run a 256+ sim arena concurrent with training** — GPU OOM crashed the run
   2026-06-18. sims-1/32 arenas and `audit_targets`/`value_regret` at small batch with
   `--gpu-mem-fraction` are safe.

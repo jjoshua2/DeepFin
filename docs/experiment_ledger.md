@@ -38088,3 +38088,36 @@ paired arena, never the winrate**. What A16 changes is the prior, not the protoc
 respect: -0.00482 in 8 iterations vs -0.00935 across the whole 486-iteration span 249-735 — if it
 holds, this window did half of the run's lifetime difficulty progress. That is large enough to be
 worth confirming and large enough to be suspicious of; the arena settles it.
+
+### OPS HAZARD (measured 2026-08-09) — a live yaml edit to a VALIDATED key can KILL the run
+
+Surfaced by the PR #379 round-5 reviewer as a side note; confirmed here by execution.
+`gumbel_policy_temp` is now IN the live yaml and a **T=2.0 follow-up is pre-committed**, so this
+is live-relevant, not theoretical.
+
+| live-yaml edit | what happens |
+|---|---|
+| UNKNOWN key | `_reload_yaml_into_config` rejects the reload, prints a warning, process keeps the OLD config — **trial SURVIVES** |
+| KNOWN key, INVALID value (`gumbel_policy_temp: 0.0`) | reload SUCCEEDS, then `TrialConfig.from_dict` raises `ValueError` — **TRIAL DIES** |
+| KNOWN key, valid value (`2.0`) | applied, realized `gumbel_policy_temp=2.0` |
+
+Mechanism: `trainable.py:952` opens `try:` with **no `except` anywhere in the iteration loop** —
+only a `finally`. The per-iteration reload at `:962` and `TrialConfig.from_dict` at `:963` both sit
+inside it, so a validator `ValueError` propagates out of the loop and ends the trial.
+
+**CLAUDE.md documented only the SOFT mode** ("an unknown key rejects the WHOLE reload"), which
+reads as though every bad live edit is survivable. It is not, and the failure modes are opposite:
+the *unrecognised* key is safe, the *recognised* one is lethal. CLAUDE.md corrected in this commit.
+
+⇒ **Dry-run every live edit to a validated key on a COPY before writing the live file:**
+```
+PYTHONPATH=. python3 -c "import yaml; from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults; \
+from chess_anti_engine.tune.trial_config import TrialConfig; \
+TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open('<COPY>')))); print('OK')"
+```
+Verified today: `2.0` passes this check, so the pre-committed T=2.0 follow-up is safe to apply live.
+
+Note this is a DIFFERENT hazard from [[wiring_a_dead_knob_can_arm_a_crash]]: there, wiring a
+previously-inert knob armed a crash path. Here the knob is correctly wired and correctly
+validated — it is the ABSENCE of an `except` around the reload that converts a rejected value
+into a killed run.
