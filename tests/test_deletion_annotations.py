@@ -17,10 +17,10 @@ These citations rot fast, and that is measured rather than assumed:
   hint that its own citations have gone stale.
 
 So the rot happens with no edit to the annotated file at all, which means no
-review of the config can catch it. This test is the guard: it opens every cited
-line and requires it to actually mention the thing the annotation claims is
-there. It reads the whole annotation block, not a diff, so it keeps working
-long after the PR that introduced the block has merged.
+review of the config can catch it. This test is the guard: it re-derives every
+citation against the tree and requires the code to actually say what the
+annotation claims. It reads the whole annotation block, not a diff, so it keeps
+working long after the PR that introduced the block has merged.
 
 The count assertions matter as much as the content check: without them a
 citation could be quietly deleted — or an annotation dropped whole — and every
@@ -37,6 +37,48 @@ re-derived rather than checked for self-consistency:
 grep itself, in **both** spellings, and fails on any mention the annotation does
 not already name. Searching only the source spelling is what produced the false
 statements; argparse renames ``foo_bar`` to ``--foo-bar``.
+
+Citations name a FILE, not a line, and that is deliberate
+--------------------------------------------------------
+A citation is a repo path in square brackets — ``[tune/trial_config.py]``. A
+path written without brackets is prose, not a claim, which is what lets
+``bootstrap_dir`` say "NOT run.py's argparse-resolved config" without asserting
+that ``run.py`` reads the key. The line number is resolved here, at test time,
+by searching the cited file for the token the annotation is about; the check
+fails when that token is ABSENT from the file, which is the condition that means
+the claim died.
+
+An earlier revision pinned ``file:line`` and was measured to be unusable. Taking
+the citation set that was exactly correct at ``ef401b93f`` and replaying it
+backwards over ``main``: 40/46 resolve one commit earlier, 28/46 five commits
+earlier, 21/46 after three days, 9/46 after five. 171 of ``main``'s last 852
+commits touch a cited file. A full set of line numbers is therefore correct only
+at the single commit it was written against, and ``main`` moves ~14 commits a
+day — so the guard was red essentially always, on PRs whose authors did not
+cause it and could not read it. Worse, it made the LIVE production config the
+thing every unrelated PR had to edit to get green, and CLAUDE.md makes edits to
+that file restart-gated and run-fatal when they go wrong. A guard that routinely
+demands edits to the live training config to stay green is worse than the rot it
+detects. Content pinning keeps every property the guard is for — a deleted
+reader, a renamed key, a wrong file, a missed surface all still fail — while
+drift alone no longer fails anything.
+
+The consequence to know: a one-line-off citation and a citation that has merely
+drifted are formally the same observation, so nothing here can distinguish them.
+Line-level precision is instead recovered where it carries the real claim, by
+``DEAD_KEY_EXPECTED_MENTIONS`` — see that pin.
+
+What this file does NOT verify
+------------------------------
+Stated so the coverage is not overread:
+
+* the annotation's REASON. Every surface being cited is not the sentence about
+  that surface being true; a false prose reason built from correct citations
+  passes here.
+* the 23 annotations that carry no ``DEAD KEY`` string. They get the
+  citation-content check only, never the completeness re-derivation.
+* claims phrased without the literal token ``DEAD KEY``. The completeness check
+  keys off that string, so the identical claim in other words is not re-derived.
 """
 
 from __future__ import annotations
@@ -85,14 +127,32 @@ GATE_TOKENS: dict[tuple[str, str], str] = {
 EXPECTED_CITATIONS = 46
 EXPECTED_ANNOTATED_KEYS = 27  # 26 deleted keys + the one RETAINED warning block
 
-# Where a `DEAD KEY` claim is re-derived. Code only: another yaml setting the key
-# is not a reader (17 configs/*.yaml still carry these keys and are out of scope
-# for this PR), and neither is prose in docs/.
+# Where a `DEAD KEY` claim is re-derived. Code only: another yaml SETTING the key
+# is a writer, not a reader, so the other 16 configs/*.yaml that still set these
+# keys are deliberately out of scope, and so is prose in docs/.
+#
+# Blind spots, stated rather than implied: this cannot see a reader in `.c`,
+# `.h` or `.pyx`, in a `.sh` outside `scripts/`, or in `.toml`/`.json`. That is
+# verified moot for all 26 keys annotated today, but the next `DEAD KEY` will be
+# about a different key — widen the globs rather than trusting this comment.
+# The scan is also filesystem-based, not git-based, so an UNTRACKED scratch
+# script under `scripts/` that names a key fails this locally while CI is green.
 _DEAD_KEY_SOURCE_GLOBS = (
     "chess_anti_engine/**/*.py",
     "scripts/**/*.py",
     "scripts/**/*.sh",
 )
+
+# Citations name a file, so a second mention appearing INSIDE an already-cited
+# file would otherwise be invisible. Pinning the mention count per key restores
+# that precision without pinning a line number: drift cannot change a count, but
+# a new surface always does. Raise a number here only together with the
+# annotation sentence that explains the new surface.
+DEAD_KEY_EXPECTED_MENTIONS: dict[str, int] = {
+    "bootstrap_max_positions": 2,  # config_yaml.py allowlist + run.py argparse flag
+    "bootstrap_train_steps": 2,  # ditto
+    "min_replay_size": 2,  # ditto
+}
 
 # A cited path is written relative to the package or to the repo root. Both are
 # tried and exactly one must resolve, so an ambiguous path is an error rather
@@ -107,7 +167,9 @@ _ANNOTATION_START = re.compile(
 # comment's citations to this key, which is how a checker like this fakes its
 # own coverage.
 _CONTINUATION = re.compile(r"^#\s{3,}\S")
-_CITATION = re.compile(r"([A-Za-z_0-9/]+\.py):(\d+)")
+# A citation is a bracketed repo path. The brackets are what separate a CLAIM
+# from a passing prose mention of a file — see the module docstring.
+_CITATION = re.compile(r"\[([A-Za-z_0-9/]+\.py)\]")
 
 
 def _annotation_blocks(text: str) -> list[tuple[str, str]]:
@@ -161,35 +223,35 @@ def _all_blocks() -> list[tuple[Path, str, str]]:
 
 
 def test_every_deletion_annotation_citation_points_at_the_code_it_claims() -> None:
-    """Open each cited line; it must mention the key, or its registered gate."""
+    """Each cited file must still contain the key, or its registered gate.
+
+    The line is resolved here rather than pinned in the config; what is asserted
+    is that the token has not VANISHED from the file it is claimed to be in.
+    That is the condition under which the annotation became a lie — a deleted
+    reader, a renamed key, or a citation naming the wrong file. Code merely
+    moving inside the file is not a defect and does not fail.
+    """
     failures: list[str] = []
     checked = 0
 
     for cfg, key, body in _all_blocks():
-        for rel, lineno in _CITATION.findall(body):
+        for rel in _CITATION.findall(body):
             checked += 1
             path = _resolve(rel)
             relpath = str(path.relative_to(REPO_ROOT))
             lines = path.read_text("utf-8").splitlines()
-            n = int(lineno)
-            if not 1 <= n <= len(lines):
-                failures.append(
-                    f"{cfg.name}: {key} cites {rel}:{n}, but that file has "
-                    f"{len(lines)} lines"
-                )
-                continue
-            src = lines[n - 1]
             expected = GATE_TOKENS.get((key, relpath), key)
-            if expected not in src:
+            if not any(expected in src for src in lines):
                 failures.append(
-                    f"{cfg.name}: {key} cites {rel}:{n} expecting {expected!r}, "
-                    f"but that line is {src.strip()!r}"
+                    f"{cfg.name}: {key} cites [{rel}] expecting {expected!r}, "
+                    f"but no line of that file contains it"
                 )
 
     assert not failures, (
         "config deletion annotations cite code that no longer says what they "
-        "claim — re-derive the line numbers against HEAD (do not just bump "
-        "them):\n  " + "\n  ".join(failures)
+        "claim. The cited file no longer contains the token at all, so this is "
+        "not code movement — re-derive the claim, do not repoint the "
+        "citation:\n  " + "\n  ".join(failures)
     )
     assert checked == EXPECTED_CITATIONS, (
         f"expected {EXPECTED_CITATIONS} citations across the annotation blocks, "
@@ -244,12 +306,19 @@ def _dead_key_sources() -> list[tuple[str, list[str]]]:
 def test_dead_key_annotations_cite_every_surface_that_mentions_the_key() -> None:
     """`DEAD KEY` asserts "nothing reads this" — so re-run the grep, both spellings.
 
-    The citation check above only asks whether a cited line mentions the key; it
-    passes happily over a *false* reason built from correct citations. This one
-    asks the question the annotation actually answers, and it is the check that
-    fails when a surface is missed: a source-name-only grep is invisible to the
-    reader of a config, and it is what put three false ``DEAD KEY`` statements
-    into this block.
+    The citation check above only asks whether a cited file still mentions the
+    key; it passes happily over a *false* reason built from correct citations.
+    This one asks the question the annotation actually answers, and it is the
+    check that fails when a surface is missed: a source-name-only grep is
+    invisible to the reader of a config, and it is what put three false
+    ``DEAD KEY`` statements into this block.
+
+    Scope, so a red result here is diagnosable: only code is scanned
+    (``_DEAD_KEY_SOURCE_GLOBS``). Another yaml SETTING the key is a writer, not
+    a reader, so the 16 other ``configs/*.yaml`` that still set these keys are
+    deliberately excluded — including them would force each annotation to cite
+    16 lines that prove nothing. Prose in ``docs/`` is excluded for the same
+    reason. The glob's blind spots are listed above the glob.
     """
     sources = _dead_key_sources()
     assert sources, "no source files scanned — the glob list is wrong, not the repo"
@@ -258,21 +327,33 @@ def test_dead_key_annotations_cite_every_surface_that_mentions_the_key() -> None
     for cfg, key, body in _all_blocks():
         if "DEAD KEY" not in body:
             continue
-        cited = {
-            (str(_resolve(rel).relative_to(REPO_ROOT)), int(line))
-            for rel, line in _CITATION.findall(body)
-        }
+        cited = {str(_resolve(rel).relative_to(REPO_ROOT)) for rel in _CITATION.findall(body)}
         spellings = (key, key.replace("_", "-"))
+        seen = 0
         for relpath, lines in sources:
             for lineno, src in enumerate(lines, start=1):
                 if not any(s in src for s in spellings):
                     continue
-                if (relpath, lineno) not in cited:
+                seen += 1
+                if relpath not in cited:
                     failures.append(
                         f"{cfg.name}: {key!r} is annotated DEAD KEY, but "
                         f"{relpath}:{lineno} mentions it and the annotation does "
-                        f"not cite that line: {src.strip()!r}"
+                        f"not cite that file: {src.strip()!r}"
                     )
+
+        expected = DEAD_KEY_EXPECTED_MENTIONS.get(key)
+        if expected is None:
+            failures.append(
+                f"{cfg.name}: {key!r} is annotated DEAD KEY but has no "
+                f"DEAD_KEY_EXPECTED_MENTIONS entry; pin the surface count"
+            )
+        elif seen != expected:
+            failures.append(
+                f"{cfg.name}: {key!r} is annotated DEAD KEY with "
+                f"{expected} pinned surfaces, but {seen} lines mention it now. "
+                f"A surface was added or removed inside an already-cited file"
+            )
 
     assert not failures, (
         "a DEAD KEY annotation does not account for every surface that names the "
@@ -286,7 +367,7 @@ def test_registered_gate_tokens_are_all_in_use() -> None:
     used = {
         (key, str(_resolve(rel).relative_to(REPO_ROOT)))
         for _, key, body in _all_blocks()
-        for rel, _ in _CITATION.findall(body)
+        for rel in _CITATION.findall(body)
     }
     unused = sorted(set(GATE_TOKENS) - used)
     assert not unused, (
