@@ -262,9 +262,36 @@ improvement, decide it now: either make the change or say why it isn't worth mak
 abstraction" is a valid reason to skip; "it touches more files than I expected" is not.
 State the call and the reasoning explicitly.
 
-Open PRs ready for review, not draft, unless asked. The Codex review bot was disabled
-2026-07-11 — don't wait for a bot review; every PR gets a manual correctness review before
-it counts as done, with the verdict recorded in the PR conversation or session summary.
+Open PRs ready for review, not draft, unless asked. Every PR gets a manual correctness
+review before it counts as done, with the verdict recorded in the PR conversation or
+session summary.
+
+**⚑⚑ `reviewDecision` IS A FALSE NEGATIVE — DO NOT USE IT TO ASK "HAS THIS BEEN REVIEWED".**
+It is set only by a FORMAL submission (`APPROVED`/`CHANGES_REQUESTED`), and reviews here are
+almost never submitted that way: **agent reviewers post their verdict as an ordinary PR
+COMMENT**, and Codex submits as `COMMENTED`. Neither sets the field. Measured 2026-08-10:
+all five open PRs read `reviewDecision: ""` while three carried full independent reviews,
+one of them an APPROVE-WITH-CHANGES whose four blocking findings were already closed — and
+that PR was wrongly reported as unreviewed and held. Read the bodies instead:
+
+```bash
+gh pr view <N> --json comments,reviews   # verdicts live in comment bodies
+gh pr view <N> --json commits            # "close the review's ..." commits = findings addressed
+```
+
+Judge three axes separately, because they move independently: **reviewed?** (comment bodies)
+· **findings closed?** (later commits) · **CI meaningful?** (green is worthless if the base
+advanced — CI does not re-run on base changes, `strict: false`).
+
+**The Codex bot is INSTALLED and answers `@codex review` on demand — it does NOT review
+automatically.** (The line that used to sit here said it "was disabled 2026-07-11"; that went
+stale. On 2026-08-10 it reviewed six PRs, each 4-10 min after an explicit `@codex review`
+comment, and did NOT review a PR opened later that day with no trigger.) So: still don't wait
+for a bot review, but do summon it — `gh pr comment <N> --body "@codex review"` — as a second
+reviewer from a different model family, alongside a Claude review agent rather than instead of
+one. ⚑ It is credit-metered, and **its boilerplate template can appear with ZERO findings
+under it** (it reacts 👍 when it has nothing to say), so a Codex comment is not a Codex
+finding — read the body. A presence check is not a value read, here as everywhere else.
 
 **THE REVIEWER MUST NOT BE THE AUTHOR.** A subagent that wrote a change does not review
 it — spawn a SEPARATE agent whose only job is the review, and give it the PR, not the
