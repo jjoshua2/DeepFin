@@ -404,6 +404,19 @@ for name, sel in (("PRE", lambda t: t < B), ("POST", lambda t: t >= B)):
 EOF
 ```
 
+**Run verbatim 2026-08-10, before this rule was written (`a required command must be RUN
+before it is written into a protocol`):**
+
+```
+PRE: raw keep=0.8029  NORMED keep=0.8153  NORMED keep_limited=0.3483
+POST: raw keep=0.9556  NORMED keep=0.8364  NORMED keep_limited=0.3474
+```
+
+Quote THESE figures, not the 4-decimal values in the calibration section above — those
+come from an era split by exact mtime rather than the `[-400:]` slice this command uses,
+and differ in the 4th decimal (0.8156 vs 0.8153). Same conclusion, different slice; the
+command's own output is the authoritative one because it is what a reader reproduces.
+
 ### PRE-COMMITTED DECISION RULE (judged on the command above, before any launch)
 
 * **SUCCESS** — the PRE→POST change in normalized `keep_rate` is **≤ 0.05** in absolute
@@ -413,9 +426,9 @@ EOF
 * **KILL** — either normalized arm moves **> 0.10** across the eras, or either normalized
   value falls outside #172's bands in either era. A normalization that does not collapse
   the eras is not worth the new failure surface and must not be enabled.
-* **Measured at pre-registration time: normalized keep_rate 0.8156 → 0.8368 (+0.021),
-  normalized keep_limited_frac 0.3480 → 0.3467 (−0.001)** — against raw +0.153 and
-  −0.253. Both inside #172's bands in both eras. This CLEARS the success rule, which is
+* **Measured at pre-registration time by the command above: normalized keep_rate
+  0.8153 → 0.8364 (+0.0211), normalized keep_limited_frac 0.3483 → 0.3474 (−0.0009)** —
+  against raw +0.1527 and −0.2534. Both inside #172's bands in both eras. This CLEARS the success rule, which is
   why the entry exists before the flag can be flipped, not after.
 
 ### NEGATIVE CONTROL (required; a pass without it is void)
