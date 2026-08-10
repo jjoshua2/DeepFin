@@ -1,8 +1,11 @@
 # CLAUDE.md
 
-Guidance for Claude Code working in this repository. Everything here is either a hard
-rule or a fact you cannot get by reading the code. Module-level detail is deliberately
-absent — read the source.
+The single source of project instructions for every agent (Claude Code, Codex, Grok).
+`AGENTS.md` is a pointer to this file — keep it that way: a second copy of these rules
+drifts, and deleting it would silently strip Codex of its instructions.
+
+Everything here is either a hard rule or a fact you cannot get by reading the code.
+Module-level detail is deliberately absent — read the source.
 
 ## Project
 
@@ -13,6 +16,12 @@ CUDA, primarily one RTX 5090.
 Per-iteration data flow: distributed selfplay (MCTS vs Stockfish) → shard upload →
 ingest into disk-backed replay buffer → training step → checkpoint → publish model to
 workers.
+
+Layout: `chess_anti_engine/` is the package — `encoding/` + `moves/` (input and policy
+encoding), `model/` + `mcts/` + `selfplay/` + `train/` + `replay/` (the training loop),
+`stockfish/` + `server/` + `worker.py` + `tune/` (the distributed pipeline). Plus
+`tests/`, `configs/`, `scripts/`. `runs/`, `tb/`, `server/`, `data/` and large
+model/book artifacts are runtime output — they stay uncommitted.
 
 ## Commands
 
@@ -25,7 +34,9 @@ PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml -
 ```
 
 Scripts need `PYTHONPATH=.`. CLI modes are `train`, `tune`, `salvage` — there is no
-`single` mode. Drive live training with `scripts/train.sh`, not the module directly;
+`single` mode. `--mode train` is a single distributed trial (no PBT), not a local one:
+it still boots the server and at least one worker, because there is no non-distributed
+selfplay path. Drive live training with `scripts/train.sh`, not the module directly;
 see `docs/operations.md` for that and for salvage, blind-spot seeding, and lint detail.
 
 ## Configs
@@ -123,6 +134,12 @@ training compute, and one that loses the direct audit is killed without training
 - `scripts/probe_policy_targets.py`, `scripts/retarget_retrain.py`,
   `scripts/convert_shards_v2_threats.py` — policy/soft-policy divergence, offline
   SF-target retuning, offline v1→v2_threats shard conversion.
+- **Production Syzygy is the colon-separated pair**
+  `/home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz` — the paths
+  `configs/pbt2_small.yaml` uses. Despite the local directory's name it holds 3–6 man
+  WDL (`.rtbw`) plus 3–5 man DTZ (`.rtbz`); 6-man DTZ is on the external drive at
+  `/mnt/e`. Pass the full pair as `SyzygyPath` to BOTH engines for a
+  production-equivalent match; `data/syzygy_3-4man` is a smoke-test set only.
 
 ## Non-obvious training facts
 
@@ -157,7 +174,9 @@ Consequential and not apparent from the code:
 ## Code conventions
 
 Python 3.10+ with `from __future__ import annotations`; type hints on functions and
-dataclasses; tests in `tests/`. Write code that reads like the code around it.
+dataclasses; tests in `tests/`. 4-space indent; `snake_case` functions and modules,
+`PascalCase` classes, `test_*` tests; imports grouped stdlib / third-party / local.
+Write code that reads like the code around it.
 
 Run `./scripts/lint.sh <paths>` after editing, **and `./scripts/lint.sh` with no
 arguments before committing**; the gate is kept at zero findings repo-wide with no

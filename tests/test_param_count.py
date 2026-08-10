@@ -126,7 +126,6 @@ def test_dedupe_helper_can_actually_see_tying() -> None:
     ("doc", "claims"),
     [
         ("CLAUDE.md", ("63,084,128", "63.08M", "73,700,885")),
-        ("AGENTS.md", ("63,084,128", "73,700,885")),
         ("tcec.md", ("63,084,128",)),
     ],
 )
@@ -139,10 +138,33 @@ def test_docs_quote_the_measured_count(doc: str, claims: tuple[str, ...]) -> Non
     keep their own numbers; rewriting those would falsify the record. Same for
     ``docs/rl_loop_audit.md`` and ``docs/experiment_ledger.md``, which quote the
     wrong figures deliberately.
+
+    ``AGENTS.md`` used to be listed here. It is now a pointer at ``CLAUDE.md``
+    and states no count at all, which is why
+    ``test_agents_md_stays_a_pointer_at_claude_md`` guards it instead: a doc that
+    quotes nothing cannot quote the wrong number, but it CAN quietly grow a
+    second copy of the rules, or vanish.
     """
     text = (_REPO / doc).read_text(encoding="utf-8")
     for claim in claims:
         assert claim in text, f"{doc} no longer states {claim}"
+
+
+def test_agents_md_stays_a_pointer_at_claude_md() -> None:
+    """``AGENTS.md`` must exist, stay short, and name ``CLAUDE.md``.
+
+    Two opposite regressions, one gate. Deleting the file is not a
+    consolidation: it is the file Codex loads, so the rules would stay written
+    down in ``CLAUDE.md`` and silently stop being delivered to one of the agents
+    that has to follow them. Letting it grow back into content re-creates the
+    duplicate that drifts -- the version this repo shipped for months called the
+    production net "384-dim, 12-layer, ~46M params".
+    """
+    agents = _REPO / "AGENTS.md"
+    assert agents.is_file(), "AGENTS.md is what Codex loads; keep it as a pointer"
+    text = agents.read_text(encoding="utf-8")
+    assert "CLAUDE.md" in text, "AGENTS.md must point at CLAUDE.md"
+    assert len(text) < 600, "AGENTS.md is a pointer, not a second copy of the rules"
 
 
 def test_claude_md_smolgen_share_matches_the_model(production_model: nn.Module) -> None:
