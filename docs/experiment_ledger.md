@@ -39056,3 +39056,47 @@ A branch revert alone is NOT a rollback: the replay window holds ~a day of data.
   live's tuned value against an old one (`sf_nodes` 75000 vs 5000, `sf_multipv` 6 vs
   40, `w_sf_own_regret` 0.0 vs 0.7). Taking any of main's would have silently
   rewritten production.
+
+### LAUNCHED 2026-08-10 12:34 — verification at boot
+
+Live tree fast-forwarded `ops/live-20260725` -> `0695d21ec` (merge `040bad0f1`), resumed
+from `checkpoint_000833` at **iteration 834**, regret limit **0.03506**. Downtime ~2 min.
+
+**In effect, measured on the running process rather than inferred:**
+
+| claim | observation |
+|---|---|
+| #373 is default-off | `[trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0` — the knob is ABSENT from the yaml, so it runs the code default, and #373's own realized-value line says the reshape is inactive. This is the entry's FIRST SUSPECT closed by direct measurement, not by reading the yaml. |
+| the search bundle survived the implementation swap | all **4/4** workers log `gumbel_policy_temp=1.5 policy_temp=1.5 tempered=True`. Live's pre-merge cut was replaced by main's banded validator and the realized value is unchanged. |
+| the ratchet stays off | `train.sh start` printed `ratchet_loop DISABLED by .ratchet_disabled`. The sentinel is observed firing on the production path, not only in its test. |
+| no launch fuse | zero `Unknown keys`, zero tracebacks, zero CUDA errors in the boot log. |
+
+**⚠ TEARDOWN DEFECT, recorded not swept:** the stop reported *"worker(s) 1590228 1590230
+1590232 1590234 recorded NOTHING this teardown; their in-flight games were DISCARDED."*
+C14b's resume-in-flight path did not produce suspend evidence for ANY of the four
+workers within the 90 s grace. So this restart paid the full in-flight discard cost the
+C14b work exists to avoid, and `outcome_stats.resumed_inflight_games > 0` is STILL owed.
+Do not cite C14b as verified.
+
+**⚠ THE MERGE LEAVES 8 GATES RED, all config-hygiene, none on the runtime path.**
+Recorded here so the next session does not rediscover them as a mystery:
+- `test_deletion_annotations.py` (6) — #380 built a bracketed-citation annotation block
+  ON MAIN; the live yaml still carries the older unbracketed `# DELETED key: reason`
+  form, so every pinned citation reads as absent. These tests parse yaml COMMENTS, which
+  `yaml.safe_load` discards ⇒ zero runtime effect.
+- `test_era_forgetting_probe.py::test_no_config_ships_any_of_the_five_probe_keys` — the
+  live yaml ships all five `era_probe_*` keys and the probe is ARMED
+  (`era_probe_interval: 1`, real `era_probe_path`), publishing `probe_era_*` columns.
+  **The gate has outlived its premise**: its own rationale is "not a config line riding in
+  on the PR that added the machinery", and this arming did not ride in — it was a separate
+  restart-time decision with its own ledger entry (INSTRUMENT 2026-08-03) and a recorded
+  readout (the era-probe columns DO NOT track play strength). The gate asserts "no config
+  ships this" when it means "no config ships this un-ledgered", so it can never go green
+  again. It needs re-pointing at the ledger, not silencing.
+- `test_replay_shard_recency_exponent.py::test_no_live_config_ships_the_key_yet` — shipped
+  at `1.0`, which is the code default (`trial_config.py:356`), i.e. inert; the yaml itself
+  annotates it "pinned at the byte-identical default".
+
+**NOT a merge regression:** the 7-8 `test_uci_smoke` / `test_uci_walker_pool` failures are
+5 s subprocess timeouts that reproduce IDENTICALLY on unmodified `origin/main` in a
+worktree on this same loaded box. Environmental, pre-existing.
