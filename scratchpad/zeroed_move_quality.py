@@ -143,7 +143,15 @@ def main() -> None:
             # cp ordering. 0.5 == coin flip. In the TAIL the target's order IS the
             # prior's order (all tail moves share completed_q), so conc_tail is
             # literally the ranking quality of the signal the target teaches there.
-            def _conc(sel: np.ndarray) -> float | None:
+            # `all_loss`/`prior` are bound as defaults rather than closed over:
+            # they are loop variables, so a late-bound closure would read the
+            # LAST position's arrays if this ever stopped being called in the
+            # same iteration (ruff B023).
+            def _conc(
+                sel: np.ndarray,
+                all_loss: np.ndarray = all_loss,
+                prior: np.ndarray = prior,
+            ) -> float | None:
                 L = all_loss[sel]
                 P = prior[sel]
                 if L.size < 2:

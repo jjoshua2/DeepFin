@@ -1380,6 +1380,26 @@ def test_muted_does_not_fire_when_enough_rows_survive_the_floor(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _assert_reachable(lines: list[str], spawn: int) -> None:
+    """The block must live in a function `start` actually calls.
+
+    Without this the guard below is satisfied by a `train.sh` that still
+    CONTAINS the sentinel while the whole block sits in dead code --- the
+    sentinel would then be perfect and unreachable, and "re-enable by deleting
+    the file" would silently stop working. This repo's signature defect is a
+    value that is accepted and then ignored, so a text-located block has to be
+    tied back to a call site or it proves nothing about production.
+    """
+    opens = [j for j in range(spawn, -1, -1) if re.match(r"^[a-z_]+\(\) \{", lines[j])]
+    assert opens, "the ratchet spawn is not inside any shell function"
+    fn = lines[opens[0]].split("(")[0]
+    body = "\n".join(lines)
+    assert re.search(rf"^\s+{re.escape(fn)}\s*$", body, re.M), (
+        f"the ratchet spawn lives in {fn}(), which nothing calls -- the block is "
+        "unreachable and the sentinel guards dead code"
+    )
+
+
 def _ratchet_spawn_block(text: str) -> str:
     """The `if ... setsid ... ratchet_loop.sh ... fi` construct in train.sh.
 
@@ -1392,6 +1412,7 @@ def _ratchet_spawn_block(text: str) -> str:
     spawn = [i for i, ln in enumerate(lines) if "setsid" in ln and "ratchet_loop.sh" in ln]
     assert len(spawn) == 1, f"expected exactly one ratchet spawn, found {len(spawn)}"
     i = spawn[0]
+    _assert_reachable(lines, i)
     indent = len(lines[i]) - len(lines[i].lstrip())
     start = next(
         j for j in range(i, -1, -1)
