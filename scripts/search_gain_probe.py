@@ -21,16 +21,35 @@ deep-SF audit set, and decomposes the question the way it has to be decomposed:
 A blended metric cannot separate 1 from 2: a low change rate and a high change
 rate with neutral quality are different diseases with the same symptom.
 
-CONTROLS (a statistic that cannot fail is not an instrument). `--controls` adds
-three arms scored through the identical code path as the search arm:
-  * `prior`   - the prior's own move. Must score exactly 0.0 gain, 100% ties.
-  * `rank2`   - the prior's SECOND move. Must score clearly NEGATIVE; it
+CONTROLS (a statistic that cannot fail is not an instrument). They are ALWAYS
+on -- there is no `--controls` flag, because a control an operator can forget
+is a control that will be forgotten. Every arm is scored through the identical
+code path as the search arm and printed in section 5:
+  * `prior`   - the prior's own move, but with its regret looked up by UCI
+                STRING through `move_regrets` instead of by array position.
+                Must reproduce `regret_prior` to 0.00; a nonzero max deviation
+                means `ucis` and the regret vector are misaligned and every cp
+                number in the table is being read off the wrong move.
+  * `rank2`   - the prior's SECOND move. Must score clearly POSITIVE; it
                 calibrates what one rank of prior is worth in cp.
-  * `random`  - a uniformly random legal move. Must score STRONGLY negative.
-  * label shuffle - the search arm re-scored against another position's SF
-                labels. Must collapse to ~0 with a CI covering 0.
-If `random` does not come out worse than `search`, the quality metric is broken
-and no number in the table means anything.
+  * `random`  - a uniformly random legal move. Must score STRONGLY positive.
+  * `shuffled`- ⚑ THE NEGATIVE CONTROL. The SAME search and the SAME prior,
+                scored against a WITHIN-POSITION PERMUTATION of that position's
+                deep-SF labels. It destroys the move->quality association while
+                preserving the legal set, the coverage, and the marginal
+                distribution of regrets exactly, so it MUST collapse to ~0 with
+                a CI covering 0. If it does not, the quality metric is reading
+                something other than move quality and no number above it means
+                anything. (An earlier revision permuted the search REGRETS
+                across positions while subtracting the same prior vector; that
+                leaves the mean algebraically unchanged and could not fail.
+                Permuting the LABELS is not the same operation and does fail.)
+  * `p(sign)` - a paired sign-flip permutation test on the search delta. This
+                is a null-hypothesis test on the real data, NOT a negative
+                control; `shuffled` is the negative control.
+If `random` does not come out worse than `search`, or `shuffled` does not
+collapse, the quality metric is broken and no number in the table means
+anything.
 
 SEARCH SHAPE IS NOT OPTIONAL AND HAS NO SAFE DEFAULT. `configs/pbt2_small.yaml`
 on the live branch and on `origin/main` disagree on every Gumbel knob that
@@ -38,12 +57,28 @@ matters, and the root value-transform has a THIRD setting used only by
 play/UCI. `--shape` is required and its realized fields are printed in the
 header and stored in every output row.
 
-Usage (live selfplay shape, the one that generates training data):
+⚑⚑ THE BUILT-IN SHAPES ARE DATED SNAPSHOTS, NOT LIVE READINGS, and their names
+say so. `live_selfplay_20260809` is what the live yaml said on 2026-08-09; the
+live yaml is not in this repo and moves without touching this file. It has
+ALREADY moved once (`gumbel_c_scale` 0.025 -> 0.1 and `gumbel_policy_temp`
+1.0 -> 1.5 shipped on 2026-08-09/10), which is exactly the failure this naming
+exists to stop -- a fixture called `live_selfplay` that quietly stops being
+live is [[same_name_different_population]]. To measure TODAY's shape, point
+`--shape-yaml` at the actual live config and the shape is read from it:
 
     PYTHONPATH=. python3 scripts/search_gain_probe.py \\
         --checkpoint data/ruler_reads_20260808/trainer.pt \\
-        --shape live_selfplay --sims 1,8,32,64,128,256 \\
-        --positions 512 --controls --out scratchpad/probe.jsonl
+        --shape live_selfplay_20260809 \\
+        --shape-yaml /home/josh/projects/chess/configs/pbt2_small.yaml \\
+        --sims 1,8,32,64,128,256 --positions 512 --out scratchpad/probe.jsonl
+
+Usage (a dated snapshot, when reproducing a banked number rather than measuring
+today's loop):
+
+    PYTHONPATH=. python3 scripts/search_gain_probe.py \\
+        --checkpoint data/ruler_reads_20260808/trainer.pt \\
+        --shape live_selfplay_20260809 --sims 1,8,32,64,128,256 \\
+        --positions 512 --out scratchpad/probe.jsonl
 """
 
 from __future__ import annotations
@@ -71,6 +106,12 @@ from chess_anti_engine.utils.git_meta import git_sha
 # `finalize._build_sf_p0_regret_vector` divides by this before storing, so the
 # stored per-move value is a FRACTION of it, not a cp figure.
 SF_OWN_REGRET_CAP_CP = 1000.0
+
+# Production's own `data_policy_entropy` range over the live run (banked-shard
+# median ~0.924). It is the fidelity gate's threshold: a rig claiming to
+# reproduce the production search at the production shape must land in it, and
+# one that does not may quote only DELTAS between its own arms.
+DATA_POLICY_ENTROPY_BAND: tuple[float, float] = (0.889, 0.979)
 
 
 # ---------------------------------------------------------------------------
@@ -133,22 +174,35 @@ class SearchShape:
         return f"POWER({qer})"
 
 
-# The live production selfplay shape, read off `configs/pbt2_small.yaml` on
-# branch `ops/live-20260725` (2026-08-09) and the explicit keyword list in
-# `selfplay/network_turn.py`, which OMITS c_visit / c_visit_root / c_scale_root /
-# q_visit_exp_root / halving_div / policy_temp -- those take the GumbelConfig
-# dataclass default, and for the root trio that default is a SENTINEL meaning
-# "fall back to the descent knob". So live selfplay runs a LINEAR root.
+# ⚑ A DATED SNAPSHOT OF THE LIVE SELFPLAY SHAPE, read off
+# `configs/pbt2_small.yaml` on branch `ops/live-20260725` ON 2026-08-09. It is
+# NOT a live reading and it has already gone stale once: the search-authority
+# bundle shipped `gumbel_c_scale` 0.025 -> 0.1 and `gumbel_policy_temp`
+# 1.0 -> 1.5 within a day of it being written. Use `--shape-yaml` to read the
+# shape off the actual live config; keep this entry only to reproduce numbers
+# banked against it.
+#
+# `selfplay/network_turn.py` builds its GumbelConfig from an explicit keyword
+# list that OMITS c_visit / c_visit_root / c_scale_root / q_visit_exp_root /
+# halving_div -- those take the GumbelConfig dataclass default, and for the root
+# trio that default is a SENTINEL meaning "fall back to the descent knob", so
+# live selfplay runs a LINEAR root. ⚑ `policy_temp` is NOT in that omitted set
+# any more: PR #385 plumbed `gumbel_policy_temp` through to selfplay, and
+# `test_selfplay_plumbs_policy_temp_but_not_the_root_transform` pins which side
+# of the line each field is on so this comment cannot drift again.
 SHAPES: dict[str, SearchShape] = {
-    "live_selfplay": SearchShape(
-        label="LIVE selfplay (ops/live-20260725)",
+    "live_selfplay_20260809": SearchShape(
+        label="LIVE selfplay SNAPSHOT 2026-08-09 (ops/live-20260725)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=-1.0, c_scale_root=-1.0,
         q_visit_exp=1.0, q_visit_exp_root=99.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
-        provenance="live yaml gumbel_c_scale 0.025 / gumbel_topk 32 / "
-                   "gumbel_vloss_weight 1; root trio unset -> sentinels -> linear root",
+        provenance="SNAPSHOT of the live yaml as of 2026-08-09: gumbel_c_scale "
+                   "0.025 / gumbel_topk 32 / gumbel_vloss_weight 1 / "
+                   "gumbel_policy_temp absent -> 1.0; root trio unset -> "
+                   "sentinels -> linear root. THE LIVE YAML HAS SINCE MOVED "
+                   "(c_scale 0.1, policy_temp 1.5) -- use --shape-yaml to read it",
     ),
     "main_selfplay": SearchShape(
         label="origin/main selfplay defaults",
@@ -171,8 +225,8 @@ SHAPES: dict[str, SearchShape] = {
     # The live selfplay shape with ONLY the root transform swapped to the play
     # shape's log root. Isolates "which root transform" from every other knob,
     # which the play-vs-selfplay contrast confounds with topk and vloss_weight.
-    "live_selfplay_logroot": SearchShape(
-        label="LIVE selfplay + LOG root (isolation arm)",
+    "live_selfplay_20260809_logroot": SearchShape(
+        label="LIVE selfplay SNAPSHOT 2026-08-09 + LOG root (isolation arm)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=900.0, c_scale_root=7.0,
         q_visit_exp=1.0, q_visit_exp_root=-1.0,
@@ -189,8 +243,8 @@ SHAPES: dict[str, SearchShape] = {
     # between the two shapes production actually runs, and nothing has ever
     # measured it. c_scale_root is set so the 256-sim root q_scale lands in the
     # same band as the log root's; see the report's inversion table.
-    "live_selfplay_sqrtroot": SearchShape(
-        label="LIVE selfplay + sqrt(N) root (untested middle)",
+    "live_selfplay_20260809_sqrtroot": SearchShape(
+        label="LIVE selfplay SNAPSHOT 2026-08-09 + sqrt(N) root (untested middle)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=0.0, c_scale_root=6.5,
         q_visit_exp=1.0, q_visit_exp_root=0.5,
@@ -200,6 +254,98 @@ SHAPES: dict[str, SearchShape] = {
                    "chosen to match the log root's realized 256-sim q_scale",
     ),
 }
+
+
+# yaml key -> SearchShape field, for the knobs `network_turn.py` actually passes
+# through to GumbelConfig. Everything NOT in this map is omitted by the
+# production call site and therefore takes the GumbelConfig dataclass default,
+# which is what the snapshot shapes above encode.
+_YAML_TO_SHAPE: dict[str, str] = {
+    "gumbel_topk": "topk",
+    "gumbel_c_scale": "c_scale",
+    "gumbel_policy_temp": "policy_temp",
+    "gumbel_vloss_weight": "vloss_weight",
+}
+
+
+def _find_scalar_keys(node: object, wanted: set[str]) -> dict[str, list[float]]:
+    """Every NUMERIC value any of `wanted` takes in a nested yaml document.
+
+    Collected as a LIST per key rather than a single value: `pbt2_small.yaml`
+    carries `curriculum_gumbel_scale` alongside `gumbel_scale` and a naive
+    "first hit wins" reader would silently pick whichever the walk reached
+    first. A key found twice with different values is an error, not a choice.
+
+    A non-numeric value raises rather than being skipped: skipping it would make
+    the key read as ABSENT, and "absent" is handled by keeping the base shape's
+    value -- so a typo'd yaml would silently measure the snapshot again.
+    """
+    found: dict[str, list[float]] = {k: [] for k in wanted}
+    stack: list[object] = [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            items: list[tuple[object, object]] = list(cur.items())
+            for k, v in items:
+                if isinstance(k, str) and k in wanted:
+                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                        raise SystemExit(
+                            f"yaml key {k!r} has non-numeric value {v!r}; this "
+                            "reader cannot turn it into a search-shape field"
+                        )
+                    found[k].append(float(v))
+                stack.append(v)
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return found
+
+
+def shape_from_yaml(path: Path, *, base: SearchShape) -> SearchShape:
+    """Build a SearchShape from a real config file instead of a hardcoded copy.
+
+    THE POINT. The live yaml is not in this repo, is re-read every iteration,
+    and moves without touching this script -- so any hardcoded "live" fixture is
+    a claim with a shelf life. Reading it makes the shape a MEASUREMENT of the
+    config the operator names, and the resolved values are echoed into the
+    header and the dump's provenance so a number can never be read without them.
+
+    Only the knobs `network_turn.py` passes are taken from the yaml; the rest
+    keep `base`'s values, which are the GumbelConfig defaults the production
+    call site leaves alone. `test_selfplay_plumbs_policy_temp_but_not_the_root_transform`
+    fails the day that split changes, so this reader cannot silently under-read.
+    """
+    import dataclasses
+
+    import yaml
+
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    found = _find_scalar_keys(doc, set(_YAML_TO_SHAPE))
+    changes: dict[str, int | float] = {}
+    resolved: list[str] = []
+    for ykey, field_name in sorted(_YAML_TO_SHAPE.items()):
+        vals = found[ykey]
+        uniq = {repr(v) for v in vals}
+        if len(uniq) > 1:
+            raise SystemExit(
+                f"--shape-yaml {path}: {ykey!r} appears with conflicting values "
+                f"{sorted(uniq)}; refusing to guess which one selfplay reads"
+            )
+        if not vals:
+            # Absent means the SelfPlayConfig default applies, which is NOT
+            # necessarily this shape's value -- say so rather than inheriting.
+            resolved.append(f"{ykey}=ABSENT->keeping {getattr(base, field_name)!r}")
+            continue
+        cur = getattr(base, field_name)
+        changes[field_name] = int(vals[0]) if isinstance(cur, int) else float(vals[0])
+        resolved.append(f"{ykey}={changes[field_name]!r}")
+    return dataclasses.replace(
+        base,
+        label=f"{base.label} [READ FROM {path}]",
+        provenance=f"read from {path}: " + ", ".join(resolved)
+                   + "; every other field keeps the GumbelConfig default that "
+                     "network_turn.py leaves unset",
+        **changes,
+    )
 
 
 def apply_overrides(shape: SearchShape, spec: str | None) -> SearchShape:
@@ -384,8 +530,22 @@ class RowResult:
     regret_improved: float
     regret_rank2: float
     regret_random: float
+    # Controls. `regret_prior_bymove` re-derives the prior move's regret by UCI
+    # STRING rather than by array position, so it can DISAGREE with
+    # `regret_prior` and thereby catch an index misalignment; the previous
+    # revision printed a hardcoded 0.00 in that column, which is a control that
+    # cannot fail. `*_shuffled` are the same two moves scored against a
+    # within-position permutation of the SF labels -- the negative control.
+    regret_prior_bymove: float
+    regret_prior_shuffled: float
+    regret_search_shuffled: float
     covered_prior: bool
     covered_search: bool
+    # False when the position source carries no per-move coverage information at
+    # all (banked shards). Without it the report cannot tell "0% of moves were
+    # inside SF's MultiPV" from "coverage was never tracked", and it printed the
+    # former for the latter.
+    coverage_known: bool
     q_spearman: float
     prior_spearman: float
     q_spearman_n: int
@@ -484,7 +644,7 @@ def run_probe(
     import torch
 
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, apply_policy_temp
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -527,6 +687,11 @@ def run_probe(
     boards = [p.board for p in positions]
     rows: list[RowResult] = []
     rng = np.random.default_rng(seed)
+    # The controls get their OWN stream. Drawing them from `rng` -- which is the
+    # search's Gumbel-noise source -- made the control draws a function of the
+    # chunking, and made the search's noise a function of how many controls had
+    # been drawn before it. Two independent streams, both seeded.
+    ctrl_rng = np.random.default_rng(seed + 991)
 
     for sims in sims_list:
         cfg = _cfg(sims)
@@ -546,6 +711,18 @@ def run_probe(
             with torch.no_grad():
                 pol_logits, _wdl = evaluator.evaluate_encoded(xs)
             pol_logits = np.asarray(pol_logits, dtype=np.float32)
+            # ⚑ TEMPER FIRST, exactly as `gumbel._policy_logits_to_full` does.
+            # The search seeds its tree from `logits / policy_temp`, so the
+            # improved policy is softmax(log(tempered prior) + sigma(Qbar)).
+            # Reading `sigma_span_observed` and `q_scale_needed` off an
+            # UNTEMPERED prior silently folds the temperature into both: at
+            # T=1.5 the prior logit gaps shrink by 1.5x, so section 3's
+            # "P(gap < q_scale)" was overstated and section 6's inversion
+            # solved the wrong equation the moment `gumbel_policy_temp` left 1.0
+            # -- which it did, on the live yaml, on 2026-08-09.
+            pol_logits = np.asarray(
+                apply_policy_temp(pol_logits, cfg=cfg), dtype=np.float32,
+            )
             if pol_logits.shape[1] != POLICY_SIZE:
                 pol_logits = policy_batch_to_full_if_needed(
                     pol_logits, policy_encoding=pol_enc, fill_value=-1e9,
@@ -572,7 +749,7 @@ def run_probe(
                     search_probs=np.asarray(probs_b[j], dtype=np.float64),
                     search_action=int(actions_b[j]),
                     tree=tree, root_id=int(root_ids[j]),
-                    rng=rng,
+                    ctrl_rng=ctrl_rng,
                 )
                 rows.append(row)
                 if sink is not None:
@@ -610,9 +787,10 @@ def _score_one(
     search_action: int,
     tree: object,
     root_id: int,
-    rng: np.random.Generator,
+    ctrl_rng: np.random.Generator,
 ) -> RowResult:
     ucis, idxs = legal_full_indices(board)
+    coverage_known = pos.audit is not None
     if pos.audit is not None:
         # Frozen deep-SF ruler: >=1M nodes, MultiPV >=10, capped at 1000cp, with
         # unlisted moves floored at the worst listed line (an optimistic bound,
@@ -722,7 +900,35 @@ def _score_one(
         p_rho = float("nan")
 
     rank2 = int(order[1]) if order.size > 1 else prior_top
-    rnd = int(rng.integers(0, prior.size))
+    rnd = int(ctrl_rng.integers(0, prior.size))
+
+    # ── controls ─────────────────────────────────────────────────────────────
+    # `prior` scored by UCI STRING through `move_regrets`, i.e. through a
+    # different lookup than the array indexing every other number here uses.
+    # This is the arm the previous revision printed as a literal 0.00: an
+    # identity, and therefore a control that could not fail. Read this way it
+    # CAN fail -- it is exactly the check that `ucis[i]` and `regrets[i]`
+    # describe the same move.
+    if pos.audit is not None:
+        regret_prior_bymove = float(move_regrets(pos.audit, [ucis[prior_top]])[0])
+    else:
+        regret_prior_bymove = float("nan")
+
+    # ⚑ THE NEGATIVE CONTROL. Permute the SF labels WITHIN this position and
+    # re-score the same two moves. Within-position is the right scope: it keeps
+    # the legal-set size, the coverage and the marginal regret distribution
+    # identical and destroys only the move->quality association, so the delta
+    # must go to 0. Permuting the derived DELTAS across positions -- what an
+    # earlier revision did and then removed as unfalsifiable -- is a different
+    # operation: subtracting the same prior vector from a permutation of the
+    # search regrets leaves the mean algebraically unchanged. Permuting the
+    # LABELS does not. [[shuffle_the_labels_negative_control]]
+    perm = ctrl_rng.permutation(regrets.size)
+    regrets_shuf = regrets[perm]
+    regret_prior_shuffled = float(regrets_shuf[prior_top])
+    regret_search_shuffled = (
+        float(regrets_shuf[j_search]) if j_search >= 0 else float("nan")
+    )
 
     # Harness-fidelity gate: how close is this re-run to the improved policy
     # production actually banked for this row?
@@ -775,8 +981,12 @@ def _score_one(
         regret_improved=float(regrets[j_improved]) if imp.size else float("nan"),
         regret_rank2=float(regrets[rank2]),
         regret_random=float(regrets[rnd]),
+        regret_prior_bymove=regret_prior_bymove,
+        regret_prior_shuffled=regret_prior_shuffled,
+        regret_search_shuffled=regret_search_shuffled,
         covered_prior=ucis[prior_top] in covered,
         covered_search=(ucis[j_search] in covered) if j_search >= 0 else False,
+        coverage_known=coverage_known,
         q_spearman=q_rho,
         prior_spearman=p_rho,
         q_spearman_n=int(vis.sum()),
@@ -914,10 +1124,18 @@ def report(rows: list[RowResult], shape: SearchShape, *, rng: np.random.Generato
         better = float((d < 0).mean())
         worse = float((d > 0).mean())
         equal = float((d == 0).mean())
-        cov = float(np.mean([r.covered_prior and r.covered_search for r in sub]))
+        # ⚑ Tri-state. Shard rows carry no per-move coverage at all (production's
+        # SF label already has finalize.py's fill baked in), so `covered_*` is
+        # False there for want of information. Printing that as "0.0%" reads as
+        # "no move was inside SF's MultiPV", which is a measurement nobody made.
+        known = [r for r in sub if r.coverage_known]
+        cov_s = (
+            f"{float(np.mean([r.covered_prior and r.covered_search for r in known])):>7.1%}"
+            if known else "    n/a"
+        )
         out.append(
             f"{s:>6} {len(sub):>6} {m:>10.2f} [{lo:>8.2f},{hi:>8.2f}] "
-            f"{better:>7.1%} {worse:>7.1%} {equal:>7.1%} {cov:>7.1%}"
+            f"{better:>7.1%} {worse:>7.1%} {equal:>7.1%} {cov_s}"
         )
 
     out.append("")
@@ -960,6 +1178,31 @@ def report(rows: list[RowResult], shape: SearchShape, *, rng: np.random.Generato
             f"{np.median(g12[np.isfinite(g12)]):>10.3f} {f12:>10.1%} "
             f"{np.median(g13[np.isfinite(g13)]):>10.3f} {f13:>10.1%}"
         )
+    # ⚑ A VERDICT, not a number to admire. The text above says a mismatch means
+    # "the shape printed above is not the search that ran" -- and the previous
+    # revision then printed `maxdev` with no threshold and no line saying
+    # whether it had been cleared, which is a gate that cannot fail. The
+    # comparison is restricted to rows where NO legal move was pruned to zero
+    # improved-policy mass: on a pruned row the min-max normalisation's minimum
+    # is not in the softmax, so the observed span is legitimately below q_scale.
+    clean = [r for r in rows if r.n_zeroed_legal == 0 and math.isfinite(r.sigma_span_observed)]
+    if not clean:
+        out.append(
+            "   SHAPE GATE: NOT EVALUATED -- no row had a full un-pruned softmax, "
+            "so the printed q_scale is UNVERIFIED against the search that ran"
+        )
+    else:
+        rel = max(
+            abs(r.sigma_span_observed - r.root_q_scale) / max(1e-12, abs(r.root_q_scale))
+            for r in clean
+        )
+        out.append(
+            f"   SHAPE GATE: realized sigma span vs the printed q_scale, max relative "
+            f"deviation {rel:.2e} over {len(clean)} un-pruned rows -- "
+            + ("PASS" if rel <= 1e-3 else
+               "FAIL: the search that ran is NOT the shape in the header, so every "
+               "q_scale-relative statement in sections 3 and 6 is void")
+        )
     zl = sum(r.n_zeroed_legal for r in rows)
     out.append(
         f"   legal moves given exactly zero improved-policy mass: {zl} across "
@@ -986,38 +1229,72 @@ def report(rows: list[RowResult], shape: SearchShape, *, rng: np.random.Generato
 
     out.append("")
     out.append("5. CONTROLS  (mean cp regret vs the prior's move, ALL positions)")
-    out.append("   `prior`  MUST be exactly 0.00 -- the arm scored against itself.")
     out.append("   `rank2`  MUST be clearly positive -- it prices ONE rank of prior, i.e.")
     out.append("            the resolution the ruler has for a move-choice change at all.")
     out.append("   `random` MUST be strongly positive -- if a uniformly random legal move")
     out.append("            does not score worse than search, the ruler is not measuring")
     out.append("            move quality and nothing above this line means anything.")
+    out.append("   `shuffled` IS THE NEGATIVE CONTROL: the SAME search and the SAME prior")
+    out.append("            scored against a within-position permutation of the SF labels.")
+    out.append("            It MUST collapse to ~0 with a CI covering 0. A `shuffled` arm")
+    out.append("            that reproduces the search's gain means the gain is not coming")
+    out.append("            from move quality, and every number above is void.")
     out.append("   `p(sign)` is a paired sign-flip permutation test on the search delta:")
     out.append("            under the null 'search is no better than the prior' the sign of")
-    out.append("            each position's delta is exchangeable. 10k flips.")
+    out.append("            each position's delta is exchangeable. 10k flips. It is a NULL")
+    out.append("            TEST on the real data, not a negative control.")
     out.append(
-        f"{'sims':>6} {'prior':>8} {'rank2':>19} {'random':>19} {'search':>19} {'p(sign)':>9}"
+        f"{'sims':>6} {'rank2':>19} {'random':>19} {'shuffled':>19} "
+        f"{'search':>19} {'p(sign)':>9}"
     )
     for s in sims_vals:
         sub = [r for r in rows if r.sims == s]
         rp = np.array([r.regret_prior for r in sub])
         d_r2 = np.array([r.regret_rank2 for r in sub]) - rp
         d_rn = np.array([r.regret_random for r in sub]) - rp
+        d_sh = (
+            np.array([r.regret_search_shuffled for r in sub])
+            - np.array([r.regret_prior_shuffled for r in sub])
+        )
         d_se = np.array([r.regret_search for r in sub]) - rp
         m2, l2, h2 = _mean_ci(d_r2)
         mr, lr, hr = _mean_ci(d_rn)
+        mh, lh, hh = _mean_ci(d_sh)
         ms, ls, hs = _mean_ci(d_se)
         out.append(
-            f"{s:>6} {0.0:>8.2f} {m2:>8.2f}[{l2:>5.1f},{h2:>5.1f}] "
-            f"{mr:>8.2f}[{lr:>5.1f},{hr:>5.1f}] {ms:>8.2f}[{ls:>5.1f},{hs:>5.1f}] "
+            f"{s:>6} {m2:>8.2f}[{l2:>5.1f},{h2:>5.1f}] "
+            f"{mr:>8.2f}[{lr:>5.1f},{hr:>5.1f}] "
+            f"{mh:>8.2f}[{lh:>5.1f},{hh:>5.1f}] "
+            f"{ms:>8.2f}[{ls:>5.1f},{hs:>5.1f}] "
             f"{_sign_flip_p(d_se, rng):>9.4f}"
         )
     out.append("")
-    out.append("   ⚑ A shuffle that permutes the search deltas across positions was tried")
-    out.append("   and REMOVED: subtracting the same prior vector from a permutation of the")
-    out.append("   search regrets leaves the MEAN algebraically unchanged, so that control")
-    out.append("   reproduced the point estimate exactly and could only ever widen the CI.")
-    out.append("   It could not fail, which is the one thing a control has to be able to do.")
+    # The alignment control. It is a PASS/FAIL line and not a number to admire:
+    # the whole cp table is read out of `regrets[i]` while every move is named
+    # by `ucis[i]`, and nothing else in this report would notice if those two
+    # indexings disagreed.
+    bym = np.array([r.regret_prior_bymove for r in rows], dtype=np.float64)
+    byi = np.array([r.regret_prior for r in rows], dtype=np.float64)
+    ok = np.isfinite(bym) & np.isfinite(byi)
+    if not ok.any():
+        out.append("   ALIGNMENT control: n/a (no position source carries per-move SF labels)")
+    else:
+        dev = float(np.abs(bym[ok] - byi[ok]).max())
+        out.append(
+            f"   ALIGNMENT control: prior regret by UCI string vs by array index, "
+            f"max deviation {dev:.6f} over {int(ok.sum())} rows -- "
+            + ("PASS" if dev <= 1e-9 else "FAIL: `ucis` and `regrets` are MISALIGNED "
+                                          "and every cp number above is off-by-move")
+        )
+    out.append("")
+    out.append("   ⚑ The previous revision printed `prior` as a literal 0.00 in this table.")
+    out.append("   That is an identity, not a measurement -- a control that cannot fail. It")
+    out.append("   is replaced by the ALIGNMENT control above, which can. Separately, a")
+    out.append("   shuffle that permuted the search DELTAS across positions was tried and")
+    out.append("   removed: subtracting the same prior vector from a permutation of the")
+    out.append("   search regrets leaves the MEAN algebraically unchanged. Permuting the")
+    out.append("   LABELS within a position -- the `shuffled` arm above -- is a different")
+    out.append("   operation and does collapse.")
 
     out.append("")
     out.append("6. SIGMA INVERSION  (what q_scale would it take to re-rank the prior?)")
@@ -1040,20 +1317,36 @@ def report(rows: list[RowResult], shape: SearchShape, *, rng: np.random.Generato
             out.append(f"{s:>6} {qs:>9.3f}  (no position is reachable at any scale)")
             continue
         med = float(np.median(fin))
-        # Under the LINEAR root the span is c_scale_root*(c_visit+max_visit),
-        # so the constant that would put the median position on the boundary is
-        # a direct division. Stated for the linear root only: under a log root
-        # the same span comes from a different constant entirely.
-        implied = med / max(1e-9, (SHAPES["live_selfplay"].c_visit + mv))
+        # ⚑ ONLY DEFINED FOR A LINEAR ROOT. The span is
+        # c_scale_root*(c_visit+max_visit) there, so the constant that puts the
+        # median position on the boundary is a direct division -- but under a
+        # LOG or POWER root the same span comes from a different constant
+        # entirely, and the previous revision printed this division anyway for
+        # all five shapes, three of which are not linear. It also divided by
+        # the hardcoded live-snapshot `c_visit` rather than the running shape's.
+        if shape.root_transform_name() == "LINEAR":
+            implied = f"{med / max(1e-9, (shape.c_visit + mv)):24.4f}"
+        else:
+            implied = f"{'n/a (' + shape.root_transform_name() + ' root)':>24}"
         out.append(
             f"{s:>6} {qs:>9.3f} {np.percentile(fin, 25):>9.3f} {med:>9.3f} "
-            f"{np.percentile(fin, 75):>9.3f} {frac:>8.1%} {implied:>24.4f}"
+            f"{np.percentile(fin, 75):>9.3f} {frac:>8.1%} {implied}"
         )
     out.append("   NOTE: 'median' is the scale that would flip HALF the positions. That is")
     out.append("   a reference point, not a recommendation -- flipping half the moves is a")
     out.append("   different search, and its VALUE has to be measured, not assumed.")
 
+    # ⚑ THE FIDELITY GATE'S ABSENCE IS ITSELF A RESULT. A shard run that scored
+    # nothing against the stored target silently dropped this whole section in
+    # the previous revision, so the report read exactly like an audit-set run --
+    # and the text below calls this the thing "nothing else means anything"
+    # without it. Say so instead of vanishing.
     gate = [r for r in rows if r.stored_top1]
+    if not gate and any(r.stored_kl == r.stored_kl for r in rows):
+        out.append("")
+        out.append("0. HARNESS FIDELITY GATE: NOT EVALUATED on any row.")
+        out.append("   This run was NOT checked against a target production stored, so no")
+        out.append("   absolute number in it may be quoted -- only deltas between its arms.")
     if gate:
         out.append("")
         out.append("0. HARNESS FIDELITY GATE  (shard rows only: this re-run vs the STORED target)")
@@ -1075,12 +1368,49 @@ def report(rows: list[RowResult], shape: SearchShape, *, rng: np.random.Generato
                 continue
             agree = float(np.mean([r.improved_move == r.stored_top1 for r in sub]))
             pagree = float(np.mean([r.prior_move == r.stored_top1 for r in sub]))
-            kl = np.array([r.stored_kl for r in sub])
-            hs = np.array([r.stored_entropy for r in sub])
-            hm = np.array([r.improved_entropy for r in sub])
+            # An all-NaN column is a real possibility (a stored target that
+            # sums to zero on every row), and numpy's nan-aggregates warn and
+            # return NaN for it. Reduce over the finite entries explicitly so
+            # the cell reads `nan` rather than emitting a RuntimeWarning that
+            # nobody sees in a piped run.
+            def _agg(vals: list[float], fn: object) -> float:
+                arr = np.asarray(vals, dtype=np.float64)
+                arr = arr[np.isfinite(arr)]
+                return float(fn(arr)) if arr.size else float("nan")  # pyright: ignore[reportCallIssue]
+
+            kl_m = _agg([r.stored_kl for r in sub], np.mean)
+            hs_m = _agg([r.stored_entropy for r in sub], np.median)
+            hm_m = _agg([r.improved_entropy for r in sub], np.median)
             out.append(
-                f"{s:>6} {len(sub):>6} {agree:>10.1%} {np.nanmean(kl):>17.4f} "
-                f"{np.nanmedian(hs):>10.4f} {np.nanmedian(hm):>9.4f} {pagree:>13.1%}"
+                f"{s:>6} {len(sub):>6} {agree:>10.1%} {kl_m:>17.4f} "
+                f"{hs_m:>10.4f} {hm_m:>9.4f} {pagree:>13.1%}"
+            )
+        # ⚑ THE BAND IS A GATE, NOT PROSE. The paragraph above states the rule
+        # ("if H(mine) does not land in 0.889-0.979 this rig is NOT the
+        # production path") and the previous revision then printed the numbers
+        # and left the comparison to the reader -- so the rule could not fail.
+        # Evaluated at the LARGEST sims rung, which is the one a production-shape
+        # run is claiming to reproduce; smaller rungs are deliberately not
+        # production and are exempt.
+        top = max(sims_vals)
+        at_top = [r for r in gate if r.sims == top]
+        if at_top:
+            _h = np.asarray([r.improved_entropy for r in at_top], dtype=np.float64)
+            _h = _h[np.isfinite(_h)]
+            h_mine = float(np.median(_h)) if _h.size else float("nan")
+            in_band = DATA_POLICY_ENTROPY_BAND[0] <= h_mine <= DATA_POLICY_ENTROPY_BAND[1]
+            out.append(
+                f"   FIDELITY GATE @ {top} sims: median H(mine) {h_mine:.4f} vs "
+                f"production's data_policy_entropy band "
+                f"[{DATA_POLICY_ENTROPY_BAND[0]:.3f},{DATA_POLICY_ENTROPY_BAND[1]:.3f}] -- "
+                + ("PASS" if in_band else
+                   "FAIL: this rig is NOT reproducing the production path, so ONLY "
+                   "deltas between its own arms may be quoted and every absolute "
+                   "in this report is void")
+            )
+            out.append(
+                "   ⚑ The band is a property of the PRODUCTION shape. A run at any "
+                "other shape is EXPECTED to leave it, and a PASS there means nothing."
             )
 
     return "\n".join(out)
@@ -1098,7 +1428,15 @@ def main() -> None:
     ap.add_argument("--shards-last", type=int, default=40,
                     help="sample from the newest N matching shards")
     ap.add_argument("--shape", required=True, choices=sorted(SHAPES),
-                    help="REQUIRED: there is no safe default; live/main/play disagree")
+                    help="REQUIRED: there is no safe default; live/main/play disagree. "
+                         "The live_selfplay_* entries are DATED SNAPSHOTS, not live "
+                         "readings -- pair them with --shape-yaml to measure today's shape")
+    ap.add_argument("--shape-yaml", type=Path, default=None,
+                    help="read gumbel_topk / gumbel_c_scale / gumbel_policy_temp / "
+                         "gumbel_vloss_weight off a REAL config file (e.g. the live "
+                         "yaml, which is not in this repo) instead of trusting the "
+                         "hardcoded snapshot; every other field keeps the "
+                         "GumbelConfig default network_turn.py leaves unset")
     ap.add_argument("--sims", default="1,8,32,64,128,256")
     ap.add_argument("--positions", type=int, default=512)
     ap.add_argument("--seed", type=int, default=20260809)
@@ -1123,7 +1461,12 @@ def main() -> None:
         )
 
     sims_list = [int(s) for s in str(args.sims).split(",") if s.strip()]
-    shape = apply_overrides(SHAPES[args.shape], args.override)
+    shape = SHAPES[args.shape]
+    if args.shape_yaml is not None:
+        if not args.shape_yaml.exists():
+            raise SystemExit(f"--shape-yaml {args.shape_yaml} does not exist")
+        shape = shape_from_yaml(args.shape_yaml, base=shape)
+    shape = apply_overrides(shape, args.override)
 
     if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
         import torch
