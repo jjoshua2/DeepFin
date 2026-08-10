@@ -19,6 +19,7 @@ def _snap(
     minutes_flat: float = 0.0,
     trial_dir: str | None = "train_trial_abc_00000",
     progress_file: str | None = None,
+    intentional_stop: bool = False,
 ):
     return wd.ProgressSnapshot(
         pid=pid,
@@ -29,25 +30,70 @@ def _snap(
         minutes_flat=minutes_flat,
         trial_dir=trial_dir,
         progress_file=progress_file,
+        intentional_stop=intentional_stop,
     )
 
 
 # --- decide() state machine -------------------------------------------------
 
 
-def test_stopped_when_pidfile_missing() -> None:
+def test_crashed_when_pidfile_missing_and_no_marker() -> None:
+    """No PID and no intentional-stop marker == it died. 2026-08-08 regression."""
     v = wd.decide(_snap(pid=None, pid_alive=False), stall_minutes=90.0)
-    assert v.state == wd.STATE_STOPPED
-    assert v.exit_code == wd.EXIT_STOPPED
-    assert "watchdog: STOPPED" in v.format_line()
+    assert v.state == wd.STATE_CRASHED
+    assert v.exit_code == wd.EXIT_CRASHED
+    assert "watchdog: CRASHED" in v.format_line()
     assert "pid=none" in v.format_line()
 
 
-def test_stopped_when_pid_dead() -> None:
+def test_crashed_when_pid_dead_and_no_marker() -> None:
     v = wd.decide(_snap(pid=99999, pid_alive=False), stall_minutes=90.0)
+    assert v.state == wd.STATE_CRASHED
+    assert v.exit_code == wd.EXIT_CRASHED
+    assert "pid=99999" in v.format_line()
+
+
+def test_stopped_when_pidfile_missing_and_marker_present() -> None:
+    """`train.sh stop` touches the marker before killing -> deliberate, stays quiet."""
+    v = wd.decide(_snap(pid=None, pid_alive=False, intentional_stop=True), stall_minutes=90.0)
     assert v.state == wd.STATE_STOPPED
     assert v.exit_code == wd.EXIT_STOPPED
-    assert "pid=99999" in v.format_line()
+    assert "watchdog: STOPPED" in v.format_line()
+
+
+def test_stopped_when_pid_dead_and_marker_present() -> None:
+    v = wd.decide(_snap(pid=99999, pid_alive=False, intentional_stop=True), stall_minutes=90.0)
+    assert v.state == wd.STATE_STOPPED
+    assert v.exit_code == wd.EXIT_STOPPED
+
+
+def test_crashed_and_stopped_differ_only_by_the_marker() -> None:
+    """The NEGATIVE CONTROL: identical snapshots, marker is the only difference.
+
+    Without this, a change that made `intentional_stop` unreachable (always
+    False, or always True) would still pass every other test in this file --
+    the exact 'a value is accepted and then silently ignored' failure this
+    codebase keeps producing.
+    """
+    crashed = wd.decide(
+        _snap(
+            pid=4242, pid_alive=False, rows=249, rows_prev=249,
+            minutes_flat=280.0, intentional_stop=False,
+        ),
+        stall_minutes=90.0,
+    )
+    stopped = wd.decide(
+        _snap(
+            pid=4242, pid_alive=False, rows=249, rows_prev=249,
+            minutes_flat=280.0, intentional_stop=True,
+        ),
+        stall_minutes=90.0,
+    )
+    assert crashed.state == wd.STATE_CRASHED
+    assert stopped.state == wd.STATE_STOPPED
+    assert crashed.exit_code != stopped.exit_code
+    # Everything else about the two verdicts is identical.
+    assert crashed.details == stopped.details
 
 
 def test_paused_held_when_pause_and_flat() -> None:
@@ -127,19 +173,24 @@ def test_ok_on_first_observation_no_prev() -> None:
     assert "rows_prev=none" in v.format_line()
 
 
-def test_stopped_takes_priority_over_pause_and_stall() -> None:
-    v = wd.decide(
+def test_dead_pid_takes_priority_over_pause_and_stall() -> None:
+    """A dead PID outranks pause/stall; the marker only picks WHICH dead state."""
+    crashed = wd.decide(
         _snap(
-            pid=1,
-            pid_alive=False,
-            pause_txt="/x/pause.txt",
-            rows=1,
-            rows_prev=1,
-            minutes_flat=999.0,
+            pid=1, pid_alive=False, pause_txt="/x/pause.txt",
+            rows=1, rows_prev=1, minutes_flat=999.0,
         ),
         stall_minutes=90.0,
     )
-    assert v.state == wd.STATE_STOPPED
+    stopped = wd.decide(
+        _snap(
+            pid=1, pid_alive=False, pause_txt="/x/pause.txt",
+            rows=1, rows_prev=1, minutes_flat=999.0, intentional_stop=True,
+        ),
+        stall_minutes=90.0,
+    )
+    assert crashed.state == wd.STATE_CRASHED
+    assert stopped.state == wd.STATE_STOPPED
 
 
 def test_paused_held_takes_priority_over_stalled() -> None:
@@ -306,15 +357,18 @@ def test_build_snapshot_end_to_end(tmp_path: Path) -> None:
     trial.mkdir(parents=True)
     (trial / "progress.csv").write_text("a,b\n1,2\n3,4\n")
     state_path = tmp_path / "state.json"
+    marker = tmp_path / "intentional_stop"  # absent unless a case creates it
 
     # First check: arms clock, OK.
     snap1, new1 = wd.build_snapshot(
         pidfile=pidfile,
         work_dir=work,
         state_path=state_path,
+        stop_marker=marker,
         now=1_000.0,
         pid_alive_fn=lambda _pid: True,
     )
+    assert snap1.intentional_stop is False
     assert snap1.pid == 555
     assert snap1.pid_alive
     assert snap1.rows == 2
@@ -328,6 +382,7 @@ def test_build_snapshot_end_to_end(tmp_path: Path) -> None:
         pidfile=pidfile,
         work_dir=work,
         state_path=state_path,
+        stop_marker=marker,
         now=1_000.0 + 100 * 60,
         pid_alive_fn=lambda _pid: True,
     )
@@ -345,6 +400,7 @@ def test_build_snapshot_end_to_end(tmp_path: Path) -> None:
         pidfile=pidfile,
         work_dir=work,
         state_path=state_path,
+        stop_marker=marker,
         now=1_000.0 + 100 * 60,
         pid_alive_fn=lambda _pid: True,
     )
@@ -352,30 +408,71 @@ def test_build_snapshot_end_to_end(tmp_path: Path) -> None:
     v3 = wd.decide(snap3, stall_minutes=90.0)
     assert v3.state == wd.STATE_PAUSED_HELD
 
-    # Dead PID → STOPPED.
+    # Dead PID, marker ABSENT → CRASHED.
     snap4, _ = wd.build_snapshot(
         pidfile=pidfile,
         work_dir=work,
         state_path=state_path,
+        stop_marker=marker,
         now=1_000.0 + 100 * 60,
         pid_alive_fn=lambda _pid: False,
     )
-    v4 = wd.decide(snap4, stall_minutes=90.0)
-    assert v4.state == wd.STATE_STOPPED
+    assert snap4.intentional_stop is False
+    assert wd.decide(snap4, stall_minutes=90.0).state == wd.STATE_CRASHED
+
+    # Same dead PID, marker PRESENT on disk → STOPPED. Proves build_snapshot
+    # actually stats the file rather than hardcoding the flag.
+    marker.write_text("")
+    snap5, _ = wd.build_snapshot(
+        pidfile=pidfile,
+        work_dir=work,
+        state_path=state_path,
+        stop_marker=marker,
+        now=1_000.0 + 100 * 60,
+        pid_alive_fn=lambda _pid: False,
+    )
+    assert snap5.intentional_stop is True
+    assert wd.decide(snap5, stall_minutes=90.0).state == wd.STATE_STOPPED
 
 
-def test_main_cli_stopped(tmp_path: Path, capsys) -> None:
+def test_main_cli_crashed(tmp_path: Path, capsys) -> None:
+    """No PID, no marker: the CLI must report CRASHED, exit 5."""
     pidfile = tmp_path / "missing.pid"
     code = wd.main([
         "--pidfile", str(pidfile),
         "--work-dir", str(tmp_path / "run"),
         "--state", str(tmp_path / "state.json"),
+        "--stop-marker", str(tmp_path / "no_such_marker"),
+        "--stall-minutes", "90",
+    ])
+    assert code == wd.EXIT_CRASHED
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("watchdog: CRASHED")
+    # Exactly one line.
+    assert "\n" not in out
+
+
+def test_main_cli_stopped_when_the_marker_exists(tmp_path: Path, capsys) -> None:
+    """--stop-marker must REACH the verdict, not merely be parsed and dropped.
+
+    Paired with test_main_cli_crashed: identical arguments except that this
+    marker file EXISTS. Without the pair, `main()` could hardcode the default
+    marker path and every CLI test would still pass — the flag would be
+    accepted and silently ignored, which is this codebase's signature defect.
+    """
+    marker = tmp_path / "intentional_stop"
+    marker.write_text("")
+    pidfile = tmp_path / "missing.pid"
+    code = wd.main([
+        "--pidfile", str(pidfile),
+        "--work-dir", str(tmp_path / "run"),
+        "--state", str(tmp_path / "state.json"),
+        "--stop-marker", str(marker),
         "--stall-minutes", "90",
     ])
     assert code == wd.EXIT_STOPPED
     out = capsys.readouterr().out.strip()
     assert out.startswith("watchdog: STOPPED")
-    # Exactly one line.
     assert "\n" not in out
 
 
@@ -420,7 +517,8 @@ def test_notify_cmd_failsoft(tmp_path: Path, capsys) -> None:
         "--pidfile", str(pidfile),
         "--work-dir", str(tmp_path / "run"),
         "--state", str(tmp_path / "state.json"),
+        "--stop-marker", str(tmp_path / "no_such_marker"),
         "--notify-cmd", "false",  # exits non-zero; must be fail-soft
     ])
-    assert code == wd.EXIT_STOPPED
-    assert capsys.readouterr().out.strip().startswith("watchdog: STOPPED")
+    assert code == wd.EXIT_CRASHED
+    assert capsys.readouterr().out.strip().startswith("watchdog: CRASHED")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Training-health watchdog: one detect-and-report check per invocation.
 
-Detects STOPPED / PAUSED-HELD / STALLED / OK for the live train.sh-managed
+Detects CRASHED / STOPPED / PAUSED-HELD / STALLED / OK for the live train.sh-managed
 run. Never signals, deletes, restarts, or resumes — read-only report only.
 
 Usage (cron / loop):
@@ -9,7 +9,9 @@ Usage (cron / loop):
   PYTHONPATH=. python3 scripts/train_watchdog.py --stall-minutes 90
   PYTHONPATH=. python3 scripts/train_watchdog.py --notify-cmd 'notify-send training'
 
-Exit codes: 0=OK, 1=STOPPED, 2=PAUSED-HELD, 3=STALLED, 4=ERROR.
+Exit codes: 0=OK, 1=STOPPED, 2=PAUSED-HELD, 3=STALLED, 4=ERROR, 5=CRASHED.
+STOPPED vs CRASHED both mean 'no live PID' and differ only by whether
+train.sh's intentional-stop marker is present (see --stop-marker).
 Stdout is always exactly one ``watchdog: ...`` line (or ERROR on failure).
 """
 from __future__ import annotations
@@ -31,18 +33,29 @@ DEFAULT_PIDFILE = Path("/tmp/chess_training.pid")
 DEFAULT_LOG = Path("/tmp/chess_training.log")
 DEFAULT_WORK_DIR = Path(os.environ.get("TRAIN_WORK_DIR", "runs/pbt2_small"))
 DEFAULT_STALL_MINUTES = 90.0
+# Touched by `train.sh stop` BEFORE it kills, removed by `train.sh start`. Its
+# presence is the ONLY thing separating a deliberate stop from a crash: both
+# leave no PID. Before 2026-08-08 both reported STOPPED, so a crash that killed
+# the process was indistinguishable from the operator stopping for the evening
+# — the 4h32m outage that day went unnoticed for exactly that reason.
+DEFAULT_STOP_MARKER = Path("/tmp/chess_training.intentional_stop")
 
 EXIT_OK = 0
 EXIT_STOPPED = 1
 EXIT_PAUSED_HELD = 2
 EXIT_STALLED = 3
 EXIT_ERROR = 4
+# New in 2026-08-08. Appended, never renumbered: watchdog_loop.sh switches on
+# EXIT_STALLED by value for auto-recovery, and any consumer treating "non-zero"
+# as "needs attention" keeps working unchanged.
+EXIT_CRASHED = 5
 
 STATE_OK = "OK"
 STATE_STOPPED = "STOPPED"
 STATE_PAUSED_HELD = "PAUSED-HELD"
 STATE_STALLED = "STALLED"
 STATE_ERROR = "ERROR"
+STATE_CRASHED = "CRASHED"
 
 
 @dataclass(frozen=True)
@@ -57,6 +70,10 @@ class ProgressSnapshot:
     minutes_flat: float
     trial_dir: str | None = None
     progress_file: str | None = None
+    # True when train.sh's intentional-stop marker exists. Defaults False so a
+    # caller that forgets to supply it reports CRASHED rather than silently
+    # downgrading a real crash to a benign stop: the safe default is the loud one.
+    intentional_stop: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,12 +119,19 @@ class PersistedState:
 def decide(snap: ProgressSnapshot, stall_minutes: float) -> Verdict:
     """Pure state machine: snapshot in, verdict out. No I/O.
 
-    Check order: STOPPED → PAUSED-HELD → STALLED → OK.
+    Check order: CRASHED/STOPPED → PAUSED-HELD → STALLED → OK.
     Flatness is ``rows`` not greater than ``rows_prev`` (or no prior rows).
     PAUSED-HELD requires pause.txt AND flat progress (the boundary-hold case
     appends no rows; mtime is untrustworthy because Ray metadata syncs).
     STALLED is flat without pause for longer than ``stall_minutes``.
     Within the stall window (or after growth), the result is OK.
+
+    A dead/absent PID splits on ``intentional_stop``: with the marker it is a
+    deliberate STOPPED (the operator ran `train.sh stop`), without it the
+    process died on its own and the verdict is CRASHED. Both are non-zero, so
+    every existing "non-OK" consumer is unaffected; only the label and the
+    exit code differ, which is what makes a crash legible in the log after
+    the fact instead of looking identical to an evening off.
     """
     details: dict[str, Any] = {
         "pid": snap.pid if snap.pid is not None else "none",
@@ -123,7 +147,9 @@ def decide(snap: ProgressSnapshot, stall_minutes: float) -> Verdict:
         details["pause_txt"] = snap.pause_txt
 
     if snap.pid is None or not snap.pid_alive:
-        return Verdict(STATE_STOPPED, EXIT_STOPPED, details)
+        if snap.intentional_stop:
+            return Verdict(STATE_STOPPED, EXIT_STOPPED, details)
+        return Verdict(STATE_CRASHED, EXIT_CRASHED, details)
 
     flat = snap.rows_prev is not None and snap.rows <= snap.rows_prev
     # First observation (no prior state): not flat — arm the clock, report OK.
@@ -308,13 +334,20 @@ def build_snapshot(
     pidfile: Path,
     work_dir: Path,
     state_path: Path,
+    stop_marker: Path,
     now: float | None = None,
     pid_alive_fn: Callable[[int], bool] = pid_is_alive,
 ) -> tuple[ProgressSnapshot, PersistedState]:
-    """Gather filesystem observations + compute flatness vs persisted state."""
+    """Gather filesystem observations + compute flatness vs persisted state.
+
+    ``stop_marker`` is REQUIRED rather than defaulted: a caller that silently
+    got the production ``/tmp`` path would make tests depend on whether the
+    operator happens to have training stopped right now.
+    """
     now = time.time() if now is None else now
     pid = read_pid(pidfile)
     alive = bool(pid is not None and pid_alive_fn(pid))
+    intentional = stop_marker.exists()
 
     tune_dir = work_dir / "tune"
     pause = find_pause_txt(tune_dir)
@@ -336,6 +369,7 @@ def build_snapshot(
         minutes_flat=minutes_flat,
         trial_dir=trial_name,
         progress_file=progress_file,
+        intentional_stop=intentional,
     )
     return snap, new_state
 
@@ -410,6 +444,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Minutes of flat progress before STALLED (default: {DEFAULT_STALL_MINUTES:g})",
     )
     ap.add_argument(
+        "--stop-marker",
+        type=Path,
+        default=DEFAULT_STOP_MARKER,
+        help=(
+            "train.sh intentional-stop marker. Present + dead PID = STOPPED "
+            f"(deliberate); absent + dead PID = CRASHED (default: {DEFAULT_STOP_MARKER})"
+        ),
+    )
+    ap.add_argument(
         "--notify-cmd",
         default=None,
         help="On non-OK, run this command with the status line as one argument (fail-soft)",
@@ -436,6 +479,7 @@ def main(argv: list[str] | None = None) -> int:
             pidfile=args.pidfile,
             work_dir=work_dir,
             state_path=state_path,
+            stop_marker=args.stop_marker,
         )
         verdict = decide(snap, stall_minutes=float(args.stall_minutes))
         # Always persist the flatness baseline so the next invocation can compare.
