@@ -37947,3 +37947,44 @@ differ from play on topk" guard in `test_arena_search_shape_plumbing.py` is asse
 invariant that production has legitimately abandoned. Hygiene PR in flight; **no production knob
 changes** (topk 32 is intended and stays).
 
+
+### AMENDMENT 14 — RETRACTED: the "+0.10 entropy" in-effect threshold is INVALID for this bundle
+
+The restart runbook pre-registered *"`gumbel_policy_entropy_mean` off baseline 1.0578 by >= +0.10"*
+as the statistical in-effect check. **That threshold is void, and it was void when written.**
+
+`gumbel.py:350`: `sigma = c_scale * (c_visit + max_visit)`, and the improved policy is
+`softmax(log_prior/T + sigma * Qbar)`. The two knobs therefore act on entropy in OPPOSITE
+directions:
+
+| knob | move | effect on sigma / prior | effect on entropy |
+|---|---|---|---|
+| `gumbel_c_scale` | 0.025 -> 0.1 | sigma **2.65 -> 10.6** (4x); Q dominates | **DOWN** (sharper) |
+| `gumbel_policy_temp` | 1.0 -> 1.5 | `log_prior/1.5`, prior flattened | **UP** (softer) |
+
+The c_scale move is the larger one, so the EXPECTED net sign is **negative or ~zero**, not
++0.10. This is the same non-additivity Amendment 11 already recorded ("the bundle nets ~zero
+softening") — the threshold contradicted an amendment in this very document. Writing it was a
+[[compute_instrument_resolution_before_the_threshold]] failure of a new kind: not "can the ruler
+resolve the effect" but **"does the metric even move monotonically in the intervention".**
+
+**Observed, and now correctly interpreted as NON-DIAGNOSTIC:**
+
+| iter | entropy | delta vs 1.0576 | resumed / total |
+|---|---|---|---|
+| 736 | 1.0180 | -0.0396 (-2.5 sd) | 489/494 = **99.0%** |
+| 737 | 1.0078 | -0.0498 (-3.1 sd) | 441/493 = **89.5%** |
+
+Doubly unreadable: the rows are dominated by resumed pre-bundle games (Amendment 13), AND the
+metric is not monotone in the intervention. Do not compute a verdict from either row.
+
+**THE VALID IN-EFFECT PROOF IS THE DIRECT OBSERVATION, AND IT PASSED.** All four workers logged
+`gumbel_policy_temp=1.5 tempered=True` at 21:00:20 — a brand-new key travelling
+yaml -> TrialConfig -> worker, observed on the production selfplay path. `gumbel_c_scale` shares
+that transport (`network_turn.py:272/274/275` read the same `search` object; both keys sit in the
+same `config_yaml.py:131` pinned list) and the realized config reads 0.1.
+
+**Standing rule this yields: a statistical in-effect proxy is only valid if the intervention moves
+it MONOTONICALLY. For a bundle of knobs with opposing signs on the proxy, there is no threshold to
+pre-register — use the direct plumbing observation and pick a separate, conjugate metric for the
+outcome.** For this bundle the outcome yardstick remains the deciding arena, NOT entropy.
