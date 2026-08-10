@@ -310,13 +310,20 @@ def test_the_training_shape_uses_the_linear_root_not_the_play_log_root() -> None
     only the separation it uniquely owns.
 
     On the old docstring's sims-ladder worry: ``topk`` is capped in
-    ``mcts/gumbel.py::_init_board_search_state`` by
-    ``m_cap = max(2, (sim_budget + 1) // 2)``, so it changes nothing at or below
-    2x the sim budget — at the ratchet's 32 sims, ``topk`` 16 and 32 both give
-    ``m = 16``. Breadth only varies across a ladder whose upper rungs are large
-    enough for ``m_cap`` to stop binding (at 256 sims, ``topk`` 32 gives
-    ``m = 32``); read a ladder's breadth off ``min(topk, m_cap)`` per rung, not
-    off ``topk``.
+    ``mcts/gumbel.py::_select_top_m_with_gumbel`` (called by
+    ``_init_board_search_state``) by ``m_cap = max(2, (sim_budget + 1) // 2)``,
+    so the realized breadth is ``m = min(topk, m_cap, legal moves)``:
+
+        ``topk`` BINDS iff ``sim_budget > 2 * topk``.
+        ``topk`` is INERT iff ``sim_budget <= 2 * topk`` (m_cap binds).
+
+    Stated as an inequality on purpose — the prose form ("changes nothing below
+    2x the budget") was written backwards twice, and it is the one sentence a
+    ladder designer acts on. At the ratchet's 32 sims, ``topk`` 16 and 32 both
+    give ``m = 16`` (32 <= 2*16, inert either way); at 256 sims ``topk`` 32
+    gives ``m = 32`` (256 > 64, binds). So a sims ladder only varies breadth
+    across rungs where ``m_cap`` stops binding — read breadth off the
+    ``min(...)`` above per rung, not off ``topk``.
     """
     training = resolve_search_shape("training").realized_gumbel()
     play = resolve_search_shape("play").realized_gumbel()
