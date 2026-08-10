@@ -146,6 +146,22 @@ _ABORT_MIN_STABLE_CHUNKS = 2
 _BOOTSTRAP_NPS_PER_MS = 6.0
 _MIN_FIRST_CHUNK = 64
 
+# Where each PUCT path keeps the family it will actually descend on. All four
+# snapshot the values at CONSTRUCTION, so these -- not the shared `GumbelConfig`
+# a setter writes -- are the live objects `realized_search_values` must read.
+# WalkerPoolConfig / MultiGpuPucvConfig / RootParallelGumbelConfig share the
+# dataclass field names; PucvChunker keeps them in private attributes.
+_PUCT_DESCENT_FIELDS: tuple[str, ...] = (
+    "c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction", "vloss_weight",
+)
+_PUCV_CHUNKER_ATTRS: dict[str, str] = {
+    "c_puct": "_c_puct",
+    "cpuct_factor": "_cpuct_factor",
+    "cpuct_base": "_cpuct_base",
+    "fpu_reduction": "_fpu_red",
+    "vloss_weight": "_vloss",
+}
+
 # Batch-time-variance clock margin. The deadline is only checked BETWEEN chunks,
 # and a chunk (one GPU batch) can't be interrupted once launched — so a chunk that
 # runs slower than the running-average nps can overrun a tight deadline. That is the
@@ -792,6 +808,16 @@ class SearchWorker:
   # evaluator without the slot API is accepted and then falls through to
   # classic Gumbel, and an EngineOptions-derived answer would confidently
   # report a path that never ran.
+  #
+  # "Live object" has to mean the object the DESCENT dereferences, not the one
+  # the setter writes. `realized_search_values` sourced the PUCT family from
+  # `self._cfg` while every PUCT descent reads a construction-time snapshot in
+  # its own pool/chunker config -- so the readback could not witness the very
+  # defect `rebuild_puct_helpers` exists to fix, and printed `CPuct = 99.0
+  # [LIVE]` byte-identically whether or not the rebuild ran. A readback that
+  # re-reads the request is not evidence about the search. `_puct_descent_values`
+  # below closes that; everything it does not cover is `self._cfg`, and that IS
+  # the live source for those fields (see the docstring).
 
     def realized_search_path(self) -> str:
         """Which search path a `run()` right now would actually dispatch to.
@@ -811,6 +837,27 @@ class SearchWorker:
             return "pucv"
         return "gumbel"
 
+    def _puct_descent_values(self) -> dict[str, float | int]:
+        """The PUCT family as the LIVE descent object holds it; `{}` on gumbel.
+
+        Branch order mirrors `realized_search_path` so the readback can never
+        answer off a pool the dispatch would not reach.
+        """
+        pool = (
+            self._rpg_pool if self._rpg_pool is not None else
+            self._pucv_pool if self._pucv_pool is not None else
+            self._walker_pool
+        )
+        if pool is not None:
+            cfg = pool._cfg
+            return {f: getattr(cfg, f) for f in _PUCT_DESCENT_FIELDS}
+        if self._pucv is not None:
+            return {
+                field: getattr(self._pucv, attr)
+                for field, attr in _PUCV_CHUNKER_ATTRS.items()
+            }
+        return {}
+
     def realized_search_values(self) -> dict[str, float | int | bool]:
         """Every registered search parameter's value as the search will read it.
 
@@ -819,6 +866,25 @@ class SearchWorker:
         function ARGUMENTS of `run_gumbel_root_many_c`, which is exactly why no
         `dataclasses.replace`-based override surface ever reached them and why
         every arena before 2026-07-28 silently ran `vloss_weight=0`.
+
+        "As the search will read it" is meant literally, and it costs the
+        `_puct_descent_values` override to be true. Every PUCT path snapshots
+        `c_puct` / `cpuct_factor` / `cpuct_base` / `fpu_reduction` /
+        `vloss_weight` into its own config at construction, so answering those
+        from `self._cfg` would be re-reading the REQUEST -- and the readback
+        would then certify `CPuct = 99.0 [LIVE]` on a pool still descending on
+        2.5, which is exactly the failure it is supposed to expose. It stayed
+        wrong for a reachable reason too: `rebuild_puct_helpers` closes before
+        it rebuilds, so a `_build_walker_pool` that raises leaves the CLOSED
+        pool installed with the old config, and a `_cfg`-sourced readback would
+        certify the new value while the next `go` errors out.
+
+        Everything not in that override does come off `self._cfg`, and for
+        those fields `_cfg` IS the live object, not a proxy for it: the classic
+        Gumbel chunk `dataclasses.replace`s `_cfg` per call, `RootParallelGumbelPool`
+        dereferences the shared config at candidate-selection time, and
+        `chunk_sims` / `minibatch_size` / `root_noise_scale` are read off the
+        worker fields returned here.
         """
         cfg = self._cfg
         out: dict[str, float | int | bool] = {
@@ -833,6 +899,10 @@ class SearchWorker:
             value = getattr(cfg, opt.field)
             out[opt.field] = (
                 bool(value) if isinstance(value, bool) else
+                int(value) if isinstance(value, int) else float(value)
+            )
+        for field, value in self._puct_descent_values().items():
+            out[field] = (
                 int(value) if isinstance(value, int) else float(value)
             )
         return out
@@ -863,10 +933,31 @@ class SearchWorker:
         than dead, because the stale value silently lands later on the next
         command that happens to rebuild (`VLossWeight`, `MaxBatch`, ...).
 
-        Deliberately does NOT reset the tree. c_puct / fpu_reduction steer only
-        FUTURE selection and leave the accumulated Q/N meaning what they meant,
-        unlike a `vloss_mode` or `vloss_weight` change; `_sync_cpuct_to_worker`
-        already rescales the live tree in place for the same reason.
+        Deliberately does NOT reset the tree, and that is a TRADE-OFF, not a
+        clean win -- measured, not asserted. On pucv with the tree reused
+        across two `go`s (`test_a_mid_tree_puct_change_keeps_the_tree_and_is_a_hybrid`):
+
+            A  default throughout                     go2 = (1921, 14753)
+            B  c_puct=99 from construction            go2 = (1921, 15144)
+            C  default go -> setoption 99 -> go       go2 = (1921, 15094)
+
+        `C` equals NEITHER. The accumulated visit distribution is itself a
+        function of the old constant, so until the tree turns over the search
+        is a hybrid of two regimes rather than the one the operator configured.
+        Q and N stay individually meaningful; the SELECTION they feed does not
+        become the new configuration's selection immediately.
+
+        Kept anyway: discarding a tree mid-game (or mid-ponder) to honour a
+        `setoption` is the worse failure, and at handshake time -- the
+        TCEC/cutechess case this surface exists for -- the tree is empty and the
+        question does not arise. Note the asymmetry with the row directly above
+        it in `searchconfig`: `VLossWeight` DOES reset, because vloss-adjusted Q
+        is not comparable across weights, whereas these only bias selection.
+
+        Also deliberately does not set `Engine._warmup_dirty`. Re-warming exists
+        for knobs that RESHAPE the batch (Threads, LeafGather, VLGather,
+        MinibatchSize); a rebuilt chunker reallocates the same shapes against
+        the same evaluator, so the captured graph stays valid.
         """
         if self._walker_pool is not None:
             self._walker_pool.close()

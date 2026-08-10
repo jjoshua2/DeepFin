@@ -27,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import re
+import threading
 
 import chess
 import numpy as np
@@ -719,6 +720,14 @@ class _DetAsyncEval(_DetEval):
         return pol, wdl, None
 
 
+def _live_walker_threads() -> int:
+    """Walker threads alive right now. `WalkerPool` names them `walker-N`."""
+    return sum(
+        1 for t in threading.enumerate()
+        if t.is_alive() and t.name.startswith("walker-")
+    )
+
+
 def _make_pucv_engine(cfg_over: dict[str, float] | None = None) -> Engine:
     """Engine whose realized search path is `pucv`, asserted not assumed."""
     planes = input_plane_count("v2_threats")
@@ -790,6 +799,41 @@ def test_the_puct_family_reaches_the_pucv_descent_through_a_setoption(
     )
 
 
+def test_the_cpuct_log_ramp_reaches_the_pucv_descent_when_the_ruler_can_see_it(
+) -> None:
+    """The other two family members, on a ruler with resolution for them.
+
+    `CPuctFactor` and `CPuctBase` are unobservable at the SHIPPED
+    `cpuct_base=38739` and 2048 nodes: the ramp is
+    `factor·log((N+base+1)/base)` = `7·log(38996/38739)` ≈ **0.046**, far below
+    what the tree can resolve, so both read `moved=0` on the signature and the
+    parametrized test above could only cover `c_puct` and `fpu_reduction`.
+    That is the instrument, not the code — compute the resolution before the
+    threshold. At `cpuct_base=100` the same factor is worth ≈ **8.9** and both
+    become visible, so all four family members are behaviourally verified
+    rather than two plus a caveat.
+
+    Both command orders, because `CPuctFactor` first leaves the ramp inert
+    until `CPuctBase` arrives and the rebuild must happen on the second command
+    too.
+    """
+    sensitive = {"cpuct_base": 100.0}
+    base = _run_pucv(cfg_over=sensitive)
+    built = _run_pucv(cfg_over={**sensitive, "cpuct_factor": 7.0})
+    assert built != base, (
+        f"instrument is blind to the log ramp even at cpuct_base=100: {built}"
+    )
+    for order in (
+        ("setoption name CPuctBase value 100.0",
+         "setoption name CPuctFactor value 7.0"),
+        ("setoption name CPuctFactor value 7.0",
+         "setoption name CPuctBase value 100.0"),
+    ):
+        assert _run_pucv(order) == built, (
+            f"{order} did not produce the construction-time search {built}"
+        )
+
+
 def test_a_puct_setoption_lands_now_and_not_on_a_later_unrelated_command() -> None:
     """The latent half: a dropped value that arrives later is worse than dead.
 
@@ -831,10 +875,15 @@ def test_a_puct_setoption_rebuilds_the_walker_pool_the_threads_read() -> None:
     """
     engine = _make_engine(threads=2)
     try:
-        pool = engine._worker._walker_pool
-        assert pool is not None
+        before_pool = engine._worker._walker_pool
+        assert before_pool is not None
         assert engine._worker.realized_search_path() == "walker"
-        before = pool._cfg
+  # DELTA, not an absolute: `SearchWorker.close()` does not close the walker
+  # pool (pre-existing; the threads are daemons and production has one worker
+  # for the process lifetime), so earlier tests in this file leave their own
+  # walkers parked and an absolute count would measure them.
+        threads_before = _live_walker_threads()
+        before = before_pool._cfg
         for line in (
             "setoption name FpuReduction value -9.0",
             "setoption name CPuct value 99.0",
@@ -855,6 +904,19 @@ def test_a_puct_setoption_rebuilds_the_walker_pool_the_threads_read() -> None:
             f"walker descent config is {cfg} after four setoptions the engine "
             f"reported as reaching the live search"
         )
+  # The rebuild must SHUT DOWN the pool it replaced. Nothing observed this, so
+  # dropping the `close()` passed every test while leaking two walker threads
+  # per setoption on the shipped default — the growth is invisible until a
+  # tournament's worth of `setoption`s has run.
+        assert before_pool._shutdown.is_set(), (
+            "the replaced walker pool was never closed; its threads are still "
+            "parked on the old config"
+        )
+        assert _live_walker_threads() == threads_before, (
+            f"walker threads {threads_before} -> {_live_walker_threads()} "
+            f"across four rebuilds of a 2-walker pool — the replaced pools are "
+            f"leaking two threads per setoption"
+        )
   # Stated as a gap, not papered over: `rpg` needs >= 2 devices with evaluator
   # factories, so neither this file nor any reviewer could drive it
   # behaviourally. Its rebuild path (`_reinstall_rpg_if_active`) and
@@ -863,6 +925,161 @@ def test_a_puct_setoption_rebuilds_the_walker_pool_the_threads_read() -> None:
   # and by inspection.
     finally:
         engine._worker.close()
+
+
+@pytest.mark.parametrize("path", ["walker", "pucv"])
+def test_the_readback_witnesses_the_descent_and_not_the_request(
+    path: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`searchconfig` must be independent evidence, not a restatement of it.
+
+    `realized_search_values` sourced the PUCT family from `self._cfg` — the
+    field a setter writes — while every PUCT descent reads its own
+    construction-time snapshot. So the readback printed `CPuct = 99.0 [LIVE]`
+    identically whether or not `rebuild_puct_helpers` ran, and the artifact
+    whose stated purpose is proving to a TCEC/cutechess operator that the
+    engine used what the config said could not witness the one defect this
+    change exists to fix. A readback that re-reads the request is not evidence.
+
+    Driven through `set_gumbel_field` alone — the public setter this commit
+    proves is insufficient on a PUCT path — so the divergent state is produced
+    legitimately rather than by patching the engine.
+    """
+    engine = _make_engine(threads=2) if path == "walker" else _make_pucv_engine()
+    try:
+        worker = engine._worker
+        assert worker.realized_search_path() == path
+        descent_before = worker._puct_descent_values()
+
+        worker.set_gumbel_field("c_puct", 99.0)
+        worker.set_gumbel_field("fpu_reduction", -9.0)
+        assert worker._cfg.c_puct == 99.0  # the request did land on the config
+
+        values = worker.realized_search_values()
+        assert values["c_puct"] == pytest.approx(descent_before["c_puct"]), (
+            "the readback reports the value that was REQUESTED, not the one "
+            "the descent will read — it cannot witness a dropped rebuild"
+        )
+        assert values["fpu_reduction"] == pytest.approx(
+            descent_before["fpu_reduction"],
+        )
+
+        capsys.readouterr()
+        engine.dispatch(parse_command("searchconfig"))
+        stale = capsys.readouterr().out
+        assert "CPuct = 99.0" not in stale, stale
+
+  # ...and once the rebuild really runs, the readback follows the descent.
+        _setoption(engine, "setoption name CPuct value 99.0")
+        _setoption(engine, "setoption name FpuReduction value -9.0")
+        descent_after = worker._puct_descent_values()
+        assert descent_after["c_puct"] == pytest.approx(99.0)
+        healthy = worker.realized_search_values()
+        for field, value in descent_after.items():
+            assert healthy[field] == pytest.approx(value), field
+
+        capsys.readouterr()
+        engine.dispatch(parse_command("searchconfig"))
+        fixed = capsys.readouterr().out
+        assert "CPuct = 99.0 [LIVE]" in fixed
+        assert fixed != stale, (
+            "searchconfig is byte-identical with and without the rebuild"
+        )
+    finally:
+        engine._worker.close()
+
+
+def test_every_live_row_on_a_puct_path_is_read_off_the_descent_object() -> None:
+    """No `[LIVE]` row on `walker`/`pucv` may be sourced from the request.
+
+    The registry is the moving part: adding an option with
+    `live_in=_PUCT_PATHS` whose value the pool snapshots would silently
+    reintroduce the F1 gap for that option. This fails when that happens,
+    unless the new field is added to `_PUCT_DESCENT_FIELDS` too.
+    """
+    from chess_anti_engine.uci.search import _PUCT_DESCENT_FIELDS
+
+    for path, factory in (("walker", lambda: _make_engine(threads=2)),
+                          ("pucv", _make_pucv_engine)):
+        engine = factory()
+        try:
+            worker = engine._worker
+            assert worker.realized_search_path() == path
+            values = worker.realized_search_values()
+            live = {
+                o.field for o in SEARCH_OPTIONS
+                if inert_reason(o, path, values) is None
+            }
+  # `chunk_sims` / `minibatch_size` / `root_noise_scale` are worker fields the
+  # search reads directly, so the worker IS their live object.
+            worker_owned = {"chunk_sims", "minibatch_size", "root_noise_scale"}
+            unwitnessed = live - set(_PUCT_DESCENT_FIELDS) - worker_owned
+            assert not unwitnessed, (
+                f"on path={path} these are certified [LIVE] but the readback "
+                f"reads them off the shared GumbelConfig, which the descent "
+                f"does not: {sorted(unwitnessed)}"
+            )
+        finally:
+            engine._worker.close()
+
+
+def test_a_mid_tree_puct_change_keeps_the_tree_and_is_a_hybrid() -> None:
+    """Pins the one judgement call in `rebuild_puct_helpers`: no `reset_tree`.
+
+    Adding `reset_tree()` there is a defensible choice and it passed every test
+    in this file, so the decision was pinned by nothing — by this PR's own
+    standard, a deliberate behavioural choice no mutant can fire on is not
+    closed. Two assertions, and the second is the honest one:
+
+    * the tree SURVIVES the setoption (node count unchanged by the command
+      itself). This is what a `reset_tree()` would break.
+    * the resulting search is therefore a HYBRID — arm C matches neither the
+      old configuration nor the new one, because the visits already in the tree
+      were bought by the old constant. The docstring states this as a
+      trade-off; this asserts that it really is one rather than a caveat.
+    """
+    engine = _make_pucv_engine()
+    try:
+        _signature(engine)  # first go: builds the tree
+        worker = engine._worker
+        assert worker._tree is not None
+        before_nodes = worker._tree.node_count()
+        _setoption(engine, "setoption name CPuct value 99.0")
+        assert worker._tree is not None, (
+            "the tree was discarded by a CPuct setoption — a mid-game or "
+            "mid-ponder `setoption` now throws away the search so far"
+        )
+        assert worker._tree.node_count() == before_nodes, (
+            f"tree went {before_nodes} -> {worker._tree.node_count()} on a "
+            f"CPuct setoption; rebuild_puct_helpers must not reset the tree"
+        )
+        hybrid = _signature(engine)
+    finally:
+        engine._worker.close()
+
+  # Same two-`go` shape, so the comparison is against like tree budgets.
+    def _two_gos(cfg_over: dict[str, float] | None = None):
+        e = _make_pucv_engine(cfg_over)
+        try:
+            _signature(e)
+            return _signature(e)
+        finally:
+            e._worker.close()
+
+    old_regime = _two_gos()
+    new_regime = _two_gos({"c_puct": 99.0})
+    assert old_regime != new_regime, (
+        "harness precondition: the two regimes must differ, or 'neither' is "
+        "vacuous"
+    )
+    assert hybrid != old_regime, (
+        f"a mid-tree CPuct change was fully ignored: {hybrid} == {old_regime}"
+    )
+    assert hybrid != new_regime, (
+        f"a mid-tree CPuct change produced the pure new-regime search "
+        f"{new_regime} — if this ever becomes true the tree is being reset, "
+        f"and the docstring's trade-off no longer describes the code"
+    )
 
 
 # --- a NO EFFECT claim must be true of the TRANSITION, not of an arm --------

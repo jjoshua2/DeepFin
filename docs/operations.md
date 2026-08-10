@@ -284,7 +284,13 @@ The path is read off the **live worker**, not off the options: `UseVL true`
 against an evaluator without the slot API is accepted and then falls through to
 classic Gumbel, and an options-derived answer would report a path that never
 ran. Values come from `SearchWorker.realized_search_values()` — the same
-objects the search reads.
+objects the search reads, which for the PUCT family means the installed pool's
+or chunker's own config and **not** the shared `GumbelConfig` a `setoption`
+writes. That distinction is the difference between evidence and a restatement
+of the request: sourced from the shared config, the readback printed
+`CPuct = 99.0 [LIVE]` byte-identically whether or not the rebuild that delivers
+it had run. Neuter the rebuild today and `searchconfig` says `CPuct = 2.5
+[LIVE]` — the value the threads are descending on.
 
 ### Which path is live
 
@@ -373,6 +379,26 @@ The guard is behavioural, not a predicate check:
 pass it), and deleting either rebuild branch turns it red. `rpg` cannot be
 driven behaviourally without ≥2 devices and is a stated gap, covered by
 inspection only.
+
+**What a `[LIVE]` row does not promise: that the change is retroactive.** A
+`CPuct` / `FpuReduction` `setoption` mid-game keeps the search tree, so until
+the tree turns over the search is a hybrid of both settings rather than the one
+just configured. Measured on `pucv`, two `go`s with the tree reused:
+
+| arm | second `go` |
+|---|---|
+| default throughout | `(1921, 14753)` |
+| `c_puct=99` from construction | `(1921, 15144)` |
+| default `go`, then `setoption CPuct 99`, then `go` | `(1921, 15094)` |
+
+The third matches neither, because the visits already banked were bought by the
+old constant. Keeping the tree is the deliberate choice — discarding a game or
+ponder tree to honour a `setoption` is the worse failure, and at handshake time
+(the TCEC/cutechess case) the tree is empty and the question does not arise.
+Note the asymmetry with the row above it in `searchconfig`: `VLossWeight` *does*
+reset the tree, because vloss-adjusted `Q` is not comparable across weights.
+`test_a_mid_tree_puct_change_keeps_the_tree_and_is_a_hybrid` pins the decision
+in both directions.
 
 `QVisitExpRoot` is the second kind, and its arms are exact — read off the C, no
 threshold, nothing fitted:
