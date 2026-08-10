@@ -37482,3 +37482,76 @@ the existing curve; **4x the games** because the GPU is now free and ±43 cannot
 direct links agree with it.* Chaining A-vs-anchor and B-vs-anchor to infer A-vs-B is only valid if
 A-vs-B measured directly reproduces the difference. Here it did not, twice, in opposite
 directions — and that inconsistency is the evidence that the apparent rise was noise.
+
+### VERDICT (2026-08-09, same session) — CI includes 0 ⇒ RESUME FROM 735
+
+**Result: 800 games, +13.0 Elo, 95% CI [-6.6, +32.8].** Pentanomial (candidate POV)
+`{WW 56, WD_DW 72, DD_WL 160, LD_DL 70, LL 42}`, score 0.5188 +/- 0.0144 SE.
+Log `data/ratchet/rollback_20260809/arena_735_vs_514.log`, appended to `runs/arena_results.jsonl`.
+
+The reading was stable throughout and never left the null: -17.4, -3.8, +4.8, -9.0, -2.8, +2.4,
++10.0, +14.3, +2.4, +14.0, +11.7, **+13.0**. Branch 1 of the pre-committed rule fires:
+**resume from 735.** Directionally positive, so branch 2 (735 worse) is excluded on its own terms.
+
+**The candidate arm was verified to BE the resume artifact**, not a copy of it:
+`ck_2026-08-09_iter735_FINAL.pt` is byte-identical to `ckpt/trainer.pt` and to
+`checkpoint_000734/trainer.pt` (md5 `e6283b98345be2ef74532d015d4710d8`). `checkpoint_000734` is
+0-indexed = iteration 735. So [[diff_the_file_you_measured_against_production]] is satisfied by
+hash on the candidate side.
+
+### THE PREMISE OF THE STOP WAS WRONG — the loop is NOT flat
+
+Training was stopped on "training isn't helping," read off flat winrate. **Winrate is the
+CONTROLLED variable** (`sf_pid_target_winrate: 0.5`); the PID holds it at setpoint by moving the
+handicap, so a strengthening model produces a **falling `wdl_regret` limit**, not a rising
+winrate. Lower regret = SF picks from a narrower band = STRONGER SF.
+
+| span | delta `wdl_regret` | 95% CI (residual bootstrap, n=487) |
+|---|---|---|
+| 249 -> 735 | **-0.00935** | [-0.01027, -0.00844] |
+| 514 -> 735 (arena's span) | **-0.00328** | [-0.00478, -0.00174] |
+
+Both exclude 0. The model held 50% against a progressively de-handicapped Stockfish.
+
+**Confound ruled out.** [[winrate_spike_restart_sampling_bias]] (+0.110) pushes the SAME direction
+and there were 9 restart-sized gaps in the span. Per-iteration delta-regret: post-restart (first
+20 iters) **-3.10e-5** [-1.47e-4, +8.5e-5] n=103 vs quiet **-2.40e-5** [-8.7e-5, +3.9e-5] n=384 —
+indistinguishable, and contribution is proportional to iteration share (21% of iters -> 26% of
+tightening). **A ramp, not a stack of steps.** The prev-model-share drift pushes the OPPOSITE way,
+so it masks the gain rather than manufacturing it.
+
+⚠ **Do not read this trend off block means** — only 5/9 50-iteration blocks decline, because
+within-block sd (~0.003) swamps a 50-iter drift (~0.001). The OLS over 487 points is the
+instrument; the block table is not.
+
+**On-curriculum, not stalled.** Regret runs 0.1 -> `sf_pid_wdl_regret_stage_end` 0.0075; at 0.0538
+we are ~50% through stage 1, `regret_stage_complete=False`. `sf_nodes` pinned at exactly 75000 all
+run is therefore CORRECT — `pid.py:880` gates the nodes lever behind stage completion, and the
+comment at `:875` says the gate exists to stop nodes "making SF steadily harder behind our backs."
+⚠ `pid_nodes_active` is NOT usable as evidence: `trainable_report.py:746` emits a literal `0` in
+the no-PID-update branch, so 0 is ambiguous. Realized `sf_nodes` is the unambiguous instrument.
+
+### Why rolling back costs far more than the arena difference
+
+A `data/ratchet/snapshots/*.pt` is **bare weights — no `pid_state.json` sibling**. Warm-starting
+from one resets the PID to `sf_pid_wdl_regret_start: 0.1`, discarding **all 486 iterations** of
+curriculum progress, not the 221 intended. `checkpoint_000734/pid_state.json` carries
+`wdl_regret 0.0552`, `regret_history`, `nodes_history`, `regret_stage_complete=False`. A resume in
+place also keeps the 820-shard / 3.1 GB live replay window
+(`runs/pbt2_small/replay/train_trial_379f6.../replay_shards`, spanning 07:24-20:01 today) and the
+optimizer state. LR is flat at 6e-5 across 249/399/514/735, so no warm-start regime hazard
+distinguishes the candidates. Only real alternative is
+`data/salvage/pre_search_authority_20260809` (ckpt 671, regret 0.0550, 817 shards) — equivalent
+but 64 iterations older with no measured advantage. **Strictly dominated.**
+
+### The ruler this exposed as missing
+
+There is **no `wdl_regret` -> Elo calibration**, so -0.0033 over 514-735 cannot be priced: it is
+consistent with anything from ~0 to ~20 Elo, and the arena's +/-20 cannot resolve it. That gap is
+why a genuinely progressing loop read as a plateau. **Pre-registerable next build:** hold the net
+FIXED and run paired arenas of SF-at-regret-r1 vs SF-at-regret-r2 across the realized 0.10-0.05
+range, fitting Elo(regret). It is a property of the opponent ladder, so it is measured once and
+then every future iteration's regret row becomes a strength readout at zero marginal cost —
+against a current best instrument of ~2.74 Elo/DAY. Any such rig must hold the controller fixed
+and must not condition on the winrate the controller regulates
+([[never_condition_a_control_on_its_own_outcome]]).
