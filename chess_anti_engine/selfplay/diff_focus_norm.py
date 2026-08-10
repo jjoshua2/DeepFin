@@ -1,0 +1,183 @@
+"""Scale-free robust normalizer for the difficulty-focus curriculum.
+
+WHY THIS EXISTS. ``difficulty = |q_delta| * q_weight + kl * pol_scale`` feeds
+two decisions: ``keep_prob = clamp(difficulty * slope, min_keep, 1.0)`` (which
+plies are RECORDED AT ALL) and the stored ``priority`` (which recorded rows the
+replay sampler draws). Both thresholds are FIXED ABSOLUTE numbers, so they only
+mean anything relative to the absolute scale of ``kl`` -- and ``kl`` is
+KL(policy prior || search visit target), whose scale is a property of the SEARCH
+CONFIGURATION, not of the curriculum. Nothing in the diff-focus group knows that.
+
+On 2026-08-09 a search bundle (``gumbel_policy_temp`` -> 1.5, ``gumbel_c_scale``
+-> 0.1) moved the KL scale by ~11.7x on fresh games. No diff-focus key changed
+and every value stayed in range, but the clamp saturated: measured
+``diff_focus_keep_rate`` 0.803 -> 0.956 and ``diff_focus_keep_limited_frac``
+0.368 -> 0.114. The ply-selection curriculum went inert and the sampler
+concentrated on the highest-KL rows.
+
+⚑ This is a distinct species of the codebase's signature defect. The usual form
+is a value accepted and then silently ignored. This is worse and harder to see:
+a knob whose CALIBRATION silently depends on the absolute scale of a quantity
+that a DIFFERENT, unrelated change is free to move. Every value here was read;
+every value was applied; the numbers were simply no longer comparable to the
+constants they were being compared against.
+
+THE FIX. Divide ``difficulty`` by a running robust scale before the fixed
+thresholds see it, so the thresholds live in units of "typical difficulty right
+now" instead of nats. The normalized statistic is then invariant to ANY positive
+rescaling of the difficulty distribution -- which is exactly the property whose
+absence caused the incident, and which
+``tests/test_diff_focus_norm.py`` asserts as a negative control.
+
+WHY THE MEDIAN, AND NOT A ROBUST Z-SCORE. ``difficulty`` is non-negative and
+right-skewed, and ``difficulty == 0`` carries meaning ("search agreed with the
+prior and the value did not move") that must keep mapping to ``min_keep``.
+Subtracting a location estimate would destroy that anchor and make some
+difficulties negative, breaking the monotone map into ``keep_prob``. Scale-only
+normalization by a quantile is the operation that fits the quantity: it keeps
+zero at zero, is equivariant under ``d -> c*d`` for any ``c > 0``, and at the
+median has the maximal 50% breakdown point. ``quantile`` is exposed so the
+reference point can be moved without a code change; the measured cross-era
+drift is flat in it between p25 and p60 (see the ledger entry for the sweep).
+
+WHAT THE ESTIMATOR'S POPULATION ACTUALLY IS -- READ THIS BEFORE TRUSTING IT.
+It is the last ``window`` POLICY-BEARING plies produced by THIS WORKER PROCESS.
+It is NOT a global quantile over the fleet, and calling it one would be the
+``same name != same measurement`` error:
+
+* Only ``has_policy`` rows are observed. ``keep_prob`` is consumed for exactly
+  those rows (``selfplay/finalize.py`` gates the drop on ``row_has_policy``) and
+  the ``diff_focus_*`` telemetry counts exactly those rows. An estimator fed the
+  fast-ply rows too would normalize one population by another's median.
+* Per-worker, not global, because a global quantile would need a server
+  round-trip per ply. That is affordable ONLY because the quantity being
+  estimated is a property of the (published net, search config) pair, which is
+  identical across workers at any instant -- so per-worker medians estimate the
+  same population parameter and differ only by sampling noise. Measured on
+  744,715 real post-bundle rows, the median of an 8192-sample draw has relative
+  sd 1.81% (95% spread of the ratio between two independent workers: 1.072).
+  That is negligible against the 2.83x scale shift this exists to absorb, and it
+  is a real, bounded cost to state rather than a property to assume.
+
+WARM-UP, AND HOW TO TELL IT APART FROM WORKING. Until ``warmup`` samples have
+been seen, ``scale`` is 0.0 and the caller passes 0.0 to the C path, which then
+takes the ORIGINAL unnormalized branch. The warm-up regime is therefore not a
+half-configured third behaviour; it is exactly the pre-fix behaviour, which is
+documented and calibrated. It is also observable without new plumbing: once
+armed, the stored ``priority`` is ``difficulty / q50`` hard-capped at ``clip``,
+so ``diff_focus_priority_max <= diff_focus_norm_clip`` holds in ``progress.csv``
+by construction and cannot hold on the unarmed path (measured unarmed max: 96.0
+against a clip of 8.0). That is a value read on an existing column, not a
+presence check.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+
+log = logging.getLogger(__name__)
+
+__all__ = ["DiffFocusNormalizer"]
+
+
+class DiffFocusNormalizer:
+    """Running robust scale for ``difficulty``, over one worker's recent plies.
+
+    ``observe`` takes the RAW (unnormalized) difficulties of the policy-bearing
+    plies in one ply batch; ``scale`` returns the reference quantile of the
+    retained window, or ``0.0`` while the estimator is not yet armed. ``0.0`` is
+    the caller's "normalization off" sentinel, so an unarmed estimator and a
+    disabled feature take the identical code path.
+    """
+
+    __slots__ = ("_armed_logged", "_buf", "_count", "_pos", "_quantile", "_scale", "_warmup")
+
+    def __init__(self, *, window: int, warmup: int, quantile: float) -> None:
+        if window <= 0:
+            raise ValueError(f"diff_focus_norm_window must be > 0, got {window}")
+        if not 0.0 < quantile < 1.0:
+            raise ValueError(
+                f"diff_focus_norm_quantile must be in (0, 1), got {quantile}",
+            )
+        # A warmup longer than the window could never be reached from a ring
+        # that only ever holds `window` samples' worth of signal; clamp rather
+        # than let a misconfiguration silently pin the feature off forever.
+        self._warmup = max(1, min(int(warmup), int(window)))
+        self._quantile = float(quantile)
+        self._buf = np.zeros(int(window), dtype=np.float64)
+        self._pos = 0
+        self._count = 0
+        self._scale = 0.0
+        self._armed_logged = False
+
+    @property
+    def count(self) -> int:
+        """Samples observed since construction (saturating at the window size)."""
+        return int(self._count)
+
+    @property
+    def armed(self) -> bool:
+        """True once ``scale`` is a usable positive reference quantile."""
+        return self._scale > 0.0
+
+    @property
+    def scale(self) -> float:
+        """Reference quantile of the retained window, or 0.0 while unarmed."""
+        return float(self._scale)
+
+    def observe(self, difficulties: np.ndarray) -> None:
+        """Fold one ply batch's RAW difficulties into the window.
+
+        Non-finite values are dropped rather than clamped: the C path already
+        substitutes 1.0 for a non-finite ``difficulty`` when computing
+        ``keep_prob``, and folding that substituted constant into the scale
+        estimate would let a numerical accident drag the reference quantile.
+        """
+        d = np.asarray(difficulties, dtype=np.float64).ravel()
+        d = d[np.isfinite(d)]
+        if d.size == 0:
+            return
+
+        n = self._buf.size
+        # More arrivals than the ring holds: keep only the newest `n`, which is
+        # what the ring would contain after replaying them in order.
+        if d.size >= n:
+            d = d[-n:]
+            self._buf[:] = d
+            self._pos = 0
+            self._count = n
+        else:
+            end = self._pos + d.size
+            if end <= n:
+                self._buf[self._pos:end] = d
+            else:
+                split = n - self._pos
+                self._buf[self._pos:] = d[:split]
+                self._buf[: end - n] = d[split:]
+            self._pos = end % n
+            self._count = min(n, self._count + d.size)
+
+        if self._count < self._warmup:
+            return
+
+        q = float(np.quantile(self._buf[: self._count], self._quantile))
+        # A non-positive reference quantile means the window is degenerate (an
+        # all-zero difficulty stream). Dividing by it would produce inf/nan
+        # priorities on the production path, so stay unarmed and keep the
+        # original behaviour instead.
+        if not np.isfinite(q) or q <= 0.0:
+            self._scale = 0.0
+            return
+
+        self._scale = q
+        if not self._armed_logged:
+            self._armed_logged = True
+            log.warning(
+                "diff-focus normalization ARMED after %d plies: reference q%.2f = "
+                "%.6g. From here `priority` is difficulty/q%.2f (capped) and "
+                "`keep_prob` uses diff_focus_norm_slope, NOT diff_focus_slope. "
+                "Rows recorded before this line are in RAW units.",
+                self._count, self._quantile, q, self._quantile,
+            )

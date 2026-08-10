@@ -470,6 +470,54 @@ def _expand_policy_logits_for_ply(pol_logits: np.ndarray) -> np.ndarray:
     return policy_batch_to_full_if_needed(pol, fill_value=-1e9)
 
 
+def _policy_kl(
+    prior: np.ndarray, search_probs: np.ndarray, legal_mask: np.ndarray,
+) -> float:
+    """KL(policy prior || search visit target), restricted to the shared support.
+
+    ⚑ THIS MUST MATCH ``_mcts_tree.c``'s ``py_batch_process_ply`` EXACTLY.
+    Production runs the C path; this function only runs when the C extension is
+    unavailable, and a fallback that quietly computes a DIFFERENT training
+    signal is the defect, not the safety net.
+
+    The two implementations used to disagree. C iterated legal moves and SKIPPED
+    a term when either side underflowed; Python floored BOTH distributions at
+    1e-12 and summed over all 4672 entries. Measured on 2,400 real production
+    (prior, visit) pairs reconstructed from live shards, they differed on 51-60%
+    of rows: mean KL 0.6047 (C) vs 0.6642 (Python) post-bundle, with a worst
+    single row differing by 23.29 nats -- which at ``pol_scale=3.5`` is +81.5
+    difficulty, more than the entire observed dynamic range of the metric.
+
+    C's convention is the correct one to converge on, on three grounds:
+
+    1. Production runs it. Every calibrated diff-focus constant, every stored
+       ``priority`` in the ~1.5M-row window, and every ``diff_focus_*`` number
+       in the ledger is denominated in C's value. Moving C would silently
+       redefine a metric that is already in ``progress.csv``.
+    2. Python's extra mass is ``sum(p * (log p - log eps))`` over moves the
+       search never visited, which is dominated by ``-log(1e-12) = 27.63`` -- a
+       constant nobody chose on evidence. Changing eps to 1e-10 moves the metric
+       ~15%. A statistic whose magnitude is a free parameter of its own
+       implementation is not a measurement. The 1e-12 here is only an underflow
+       guard: moving it to 1e-15 changes nothing observable.
+    3. The true KL is +infinity whenever the search leaves prior mass unvisited,
+       which is the normal case (measured: 9-19% of legal moves get no visits).
+       Both are approximations; only the support-restricted one has a limit that
+       does not depend on the guard constant.
+
+    ``tests/test_diff_focus_norm.py::test_python_and_c_kl_agree_on_sparse_targets``
+    fails if they diverge again.
+    """
+    mask = np.asarray(legal_mask, dtype=bool)
+    p = np.asarray(prior, dtype=np.float64)[mask]
+    mp = np.asarray(search_probs, dtype=np.float64)[mask]
+    both = (p > 1e-12) & (mp > 1e-12)
+    if not both.any():
+        return 0.0
+    p = p[both]
+    return float(np.sum(p * (np.log(p) - np.log(mp[both]))))
+
+
 def _append_records_via_c(
     state: SelfplayState, net_idxs: list[int],
     *, cb_encode_list, pol_logits: np.ndarray, wdl_logits_raw: np.ndarray,
@@ -488,6 +536,12 @@ def _append_records_via_c(
     pol_logits_full = _expand_policy_logits_for_ply(pol_logits)
 
     assert state.c_process_ply is not None
+    # 0.0 = normalization off, which is also what an un-armed estimator reports,
+    # so "warming up" and "disabled" take the identical C branch rather than a
+    # third half-configured behaviour. See selfplay/diff_focus_norm.py.
+    df_norm_scale = (
+        state.diff_focus_norm.scale if state.diff_focus_norm is not None else 0.0
+    )
     alt_lc0_root_xs = None
     if (
         bool(state.game.record_lc0_root_input)
@@ -512,6 +566,9 @@ def _append_records_via_c(
         c_input_history_mode(state.game.input_history_encoding),
         extra_feature_plane_count(state.game.input_extra_features),
         int(_want_rel),
+        float(df_norm_scale),
+        float(diff_focus.norm_slope),
+        float(diff_focus.norm_clip),
     )
     c_rel = c_result[12] if _want_rel else None
     (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
@@ -537,6 +594,7 @@ def _append_records_via_c(
     c_over_list = c_over.tolist()
     act_list = actions_arr.tolist()
 
+    eligible = np.zeros(n, dtype=bool)
     for j in range(n):
         idx = net_idxs[j]
         state.move_idx_history[idx].append(act_list[j])
@@ -546,6 +604,7 @@ def _append_records_via_c(
         # target collapses to one-hot regardless of search, so there's no
         # learning signal. Same shape as low-sim filtering (has_policy=False).
         has_policy = bool(is_full_py[j]) and int(c_mask[j].sum()) > 1
+        eligible[j] = has_policy
         state.samples_per_game[idx].append(
             _NetRecord(
                 c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
@@ -571,6 +630,34 @@ def _append_records_via_c(
         if c_over_list[j]:
             state.done_arr[idx] = 1
 
+    if state.diff_focus_norm is not None and eligible.any():
+        # Re-derive the RAW difficulty from the raw KL / q_delta columns rather
+        # than reading `c_priority`, which is already normalized once the
+        # estimator is armed. Feeding a normalized value back into its own
+        # quantile window would pin the reference at 1.0 and freeze the scale
+        # at whatever it happened to be when the estimator first armed.
+        state.diff_focus_norm.observe(
+            _raw_difficulty(
+                np.asarray(c_priority_q_delta, dtype=np.float64)[:n][eligible],
+                np.asarray(c_priority_policy_kl, dtype=np.float64)[:n][eligible],
+                diff_focus,
+            ),
+        )
+
+
+def _raw_difficulty(q_delta: np.ndarray, kl: np.ndarray, diff_focus) -> np.ndarray:
+    """The unnormalized ``difficulty``, matching ``_mcts_tree.c``'s formula.
+
+    Kept as one function so the C path's estimator input and the Python
+    fallback's own arithmetic cannot drift apart;
+    ``test_diff_focus_norm.py::test_python_reconstruction_matches_the_c_priority``
+    pins it against the value C actually computed.
+    """
+    return (
+        np.abs(q_delta) * float(diff_focus.q_weight)
+        + kl * float(diff_focus.pol_scale)
+    )
+
 
 def _append_records_via_python(
     state: SelfplayState, net_idxs: list[int],
@@ -591,6 +678,12 @@ def _append_records_via_python(
     df_p_s = float(diff_focus.pol_scale)
     df_slope = float(diff_focus.slope)
     df_min = float(diff_focus.min_keep)
+    df_norm_scale = (
+        float(state.diff_focus_norm.scale) if state.diff_focus_norm is not None else 0.0
+    )
+    df_norm_slope = float(diff_focus.norm_slope)
+    df_norm_clip = float(diff_focus.norm_clip)
+    raw_difficulties: list[float] = []
     pol_logits_full = _expand_policy_logits_for_ply(pol_logits)
 
     # ``not state.has_c_ply`` ⇒ ``state.batch_enc_146 is None``
@@ -638,9 +731,11 @@ def _append_records_via_python(
         else:
             raw = mask.astype(np.float32) / float(mask.sum())
 
-        imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
-        raw_c = np.maximum(raw, 1e-12)
-        kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
+        # Same eligibility rule as the C path: keep_prob is only CONSUMED for
+        # policy-bearing rows (finalize.py gates the drop on row_has_policy), so
+        # the quantile window must be estimated on exactly that population.
+        row_has_policy = bool(is_full[j]) and int(mask.sum()) > 1
+        kl = _policy_kl(raw, probs, mask)
 
         orig_q = float(wdl_est[j][0] - wdl_est[j][2])
         best_q = float(v)
@@ -650,9 +745,21 @@ def _append_records_via_python(
         difficulty = q_surprise * df_q_w + kl * df_p_s
         if not math.isfinite(difficulty):
             difficulty = 1.0
-        keep_prob = (
-            max(df_min, min(1.0, difficulty * df_slope)) if df_enabled else 1.0
-        )
+        if row_has_policy:
+            raw_difficulties.append(difficulty)
+        priority = difficulty
+        keep_prob = 1.0
+        # Mirrors _mcts_tree.c exactly, including the branch order: scale > 0
+        # takes the normalized path, everything else keeps the original
+        # arithmetic. See _append_records_via_c for why the estimator is fed the
+        # RAW difficulty.
+        if df_norm_scale > 0.0:
+            dn = difficulty / df_norm_scale
+            priority = dn if df_norm_clip <= 0.0 else min(dn, df_norm_clip)
+            if df_enabled:
+                keep_prob = max(df_min, min(1.0, dn * df_norm_slope))
+        elif df_enabled:
+            keep_prob = max(df_min, min(1.0, difficulty * df_slope))
 
         move = index_to_move(int(a), board_before)
         board_before.push(move)
@@ -682,8 +789,8 @@ def _append_records_via_python(
                 search_wdl_est=search_wdl_est,
                 pov_color=pov_color,
                 ply_index=ply_index,
-                has_policy=bool(is_full[j]) and int(mask.sum()) > 1,
-                priority=float(difficulty),
+                has_policy=row_has_policy,
+                priority=float(priority),
                 sample_weight=float(sample_weights[j]),
                 keep_prob=float(keep_prob),
                 legal_mask=mask.view(np.uint8),
@@ -699,6 +806,9 @@ def _append_records_via_python(
 
         if state.cboards[idx].is_game_over():
             state.done_arr[idx] = 1
+
+    if state.diff_focus_norm is not None and raw_difficulties:
+        state.diff_focus_norm.observe(np.asarray(raw_difficulties, dtype=np.float64))
 
 
 def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:

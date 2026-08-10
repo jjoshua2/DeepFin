@@ -33,6 +33,7 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
+from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     resolve_slot_opening,
@@ -647,6 +648,12 @@ class SelfplayState:
     search: SearchConfig
     opening: OpeningConfig
     diff_focus: DiffFocusConfig
+  # Per-worker running robust scale for `difficulty`. None when
+  # diff_focus.norm_enabled is off, so the feature's presence is a real
+  # object-vs-None read rather than a flag consulted in three places. Lives on
+  # the state because ONE instance must span every ply batch of a session: the
+  # quantile window is the point, and a per-call estimator would never arm.
+    diff_focus_norm: DiffFocusNormalizer | None
     game: GameConfig
     batch_size: int
     continuous: bool
@@ -841,6 +848,14 @@ class SelfplayState:
             search=search,
             opening=opening,
             diff_focus=diff_focus,
+            diff_focus_norm=(
+                DiffFocusNormalizer(
+                    window=int(diff_focus.norm_window),
+                    warmup=int(diff_focus.norm_warmup),
+                    quantile=float(diff_focus.norm_quantile),
+                )
+                if bool(diff_focus.norm_enabled) else None
+            ),
             game=game,
             batch_size=batch_size,
             continuous=continuous,

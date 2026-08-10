@@ -243,6 +243,12 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             pol_scale=tc.diff_focus_pol_scale,
             slope=tc.diff_focus_slope,
             min_keep=tc.diff_focus_min,
+            norm_enabled=tc.diff_focus_norm_enabled,
+            norm_window=tc.diff_focus_norm_window,
+            norm_warmup=tc.diff_focus_norm_warmup,
+            norm_quantile=tc.diff_focus_norm_quantile,
+            norm_slope=tc.diff_focus_norm_slope,
+            norm_clip=tc.diff_focus_norm_clip,
         ),
         "game": GameConfig(
             max_plies=tc.max_plies,

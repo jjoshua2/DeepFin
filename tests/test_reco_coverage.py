@@ -338,9 +338,23 @@ def _diff_focus_field(yaml_key: str) -> str:
     return "min_keep" if suffix == "min" else suffix
 
 
+# The ORIGINAL five: declared in the yaml, NOT published to the worker, and
+# therefore required to sit exactly on the dataclass defaults.
 _DIFF_FOCUS_KEYS = (
     "diff_focus_enabled", "diff_focus_q_weight",
     "diff_focus_pol_scale", "diff_focus_slope", "diff_focus_min",
+)
+
+# The normalization group (task #171) IS published through
+# build_recommended_worker, so the pin above must NOT apply to it -- requiring a
+# plumbed key to equal its default would forbid ever configuring it. What these
+# need instead is proof that they reach the worker, which is
+# tests/test_diff_focus_norm.py's job. Splitting the two groups is the point:
+# lumping them together would either freeze the new knobs or silently retire the
+# guard on the old ones.
+_DIFF_FOCUS_NORM_KEYS = (
+    "diff_focus_norm_enabled", "diff_focus_norm_window", "diff_focus_norm_warmup",
+    "diff_focus_norm_quantile", "diff_focus_norm_slope", "diff_focus_norm_clip",
 )
 
 
@@ -384,12 +398,32 @@ def test_every_diff_focus_key_is_a_real_knob_not_a_typo() -> None:
     flat = flatten_yaml_config(raw)
     df_fields = {f.name for f in fields(DiffFocusConfig)}
 
-    for key in _DIFF_FOCUS_KEYS:
+    for key in _DIFF_FOCUS_KEYS + _DIFF_FOCUS_NORM_KEYS:
         assert key in flat, f"{key} is guarded but not in the production yaml"
         assert key in SELFPLAY_CONFIG_KEYS, f"{key} is not a declared selfplay key"
         assert _diff_focus_field(key) in df_fields, (
             f"{key} does not map onto a DiffFocusConfig field"
         )
     assert {f.name for f in fields(DiffFocusConfig)} == {
-        _diff_focus_field(k) for k in _DIFF_FOCUS_KEYS
+        _diff_focus_field(k) for k in _DIFF_FOCUS_KEYS + _DIFF_FOCUS_NORM_KEYS
     }, "a DiffFocusConfig field exists with no yaml key guarding it"
+
+
+def test_diff_focus_norm_keys_are_published_not_pinned() -> None:
+    """The complement of the pin above.
+
+    The original five are guarded by "yaml must equal the default, because the
+    worker cannot see you". The norm group is guarded by the opposite rule: the
+    worker MUST see it. If a future change drops the publisher lines, the pin
+    test would still pass (the yaml ships them at their defaults) and the knobs
+    would go dead silently -- which is exactly the failure mode the group was
+    added to fix.
+    """
+    reco = _reco_from(dict.fromkeys(_DIFF_FOCUS_NORM_KEYS, 0))
+    for key in _DIFF_FOCUS_NORM_KEYS:
+        assert key in reco, f"{key} is no longer published to the worker"
+    for key in _DIFF_FOCUS_KEYS:
+        assert key not in reco, (
+            f"{key} became published; that changes the live keep-probability "
+            "and row priority and needs its own ledger entry"
+        )

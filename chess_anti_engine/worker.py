@@ -70,6 +70,7 @@ from chess_anti_engine.replay.shard import (
     pack_shard_for_upload,
 )
 from chess_anti_engine.selfplay import play_batch
+from chess_anti_engine.selfplay.config import DiffFocusConfig
 from chess_anti_engine.selfplay.config import (
     GameConfig,
     OpponentConfig,
@@ -3483,6 +3484,18 @@ class WorkerSession:
   # experiment that never ran.
         "gumbel_target_batch",
         "gumbel_vloss_weight",
+  # Same reason: the diff-focus norm group is baked into a frozen
+  # DiffFocusConfig at session start, and `norm_enabled` additionally decides
+  # whether SelfplayState.create builds a normalizer at all. A restart is also
+  # the CORRECT semantics rather than merely the achievable one -- changing the
+  # window, quantile or slope invalidates the quantile window that was
+  # accumulated under the old settings, and a restart discards it.
+        "diff_focus_norm_enabled",
+        "diff_focus_norm_window",
+        "diff_focus_norm_warmup",
+        "diff_focus_norm_quantile",
+        "diff_focus_norm_slope",
+        "diff_focus_norm_clip",
   # sf_move_nodes gates the curriculum SF query path: lowering it to 0 mid-flight
   # would make pending move-futures (submitted at the old positive budget) get
   # reused as full-strength label futures, writing low-node SF targets to replay.
@@ -3566,6 +3579,15 @@ class WorkerSession:
         "sf_policy_score_mode", "sf_policy_cp_temp",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
         "sf_refute_record_opp_rows", "sf_refute_opp_policy_net_blend",
+  # RECORD-SHAPING, not plumbing: `priority` and `keep_prob` are stored columns,
+  # and the norm group decides the UNITS they are stored in (raw difficulty vs
+  # difficulty / reference-quantile, capped). A game whose early plies were
+  # recorded under one setting and whose later plies were recorded under another
+  # would carry two unit systems into one shard, and the replay sampler draws on
+  # that column without any way to tell them apart. Discard such games on resume.
+        "diff_focus_norm_enabled", "diff_focus_norm_window",
+        "diff_focus_norm_warmup", "diff_focus_norm_quantile",
+        "diff_focus_norm_slope", "diff_focus_norm_clip",
     )
 
   # Restart keys deliberately NOT part of the resume fingerprint. Listed rather
@@ -3880,6 +3902,23 @@ class WorkerSession:
                 sf_refute_opp_policy_net_blend=float(
                     reco.get("sf_refute_opp_policy_net_blend", 0.0) or 0.0
                 ),
+            ),
+  # Only the norm group is read here; the other five DiffFocusConfig fields
+  # stay at their dataclass defaults, which is exactly what this worker ran
+  # before (play_batch's `diff_focus` default). See build_recommended_worker.
+            "diff_focus": DiffFocusConfig(
+                norm_enabled=bool(reco.get("diff_focus_norm_enabled", False)),
+                norm_window=self._resolve_reco(
+                    reco, "diff_focus_norm_window", 8192, int,
+                ),
+                norm_warmup=self._resolve_reco(
+                    reco, "diff_focus_norm_warmup", 1024, int,
+                ),
+                norm_quantile=self._resolve_reco(
+                    reco, "diff_focus_norm_quantile", 0.5,
+                ),
+                norm_slope=self._resolve_reco(reco, "diff_focus_norm_slope", 1.62),
+                norm_clip=self._resolve_reco(reco, "diff_focus_norm_clip", 8.0),
             ),
             "game": GameConfig(
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),

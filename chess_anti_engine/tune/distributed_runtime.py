@@ -300,6 +300,20 @@ def build_recommended_worker(
         "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
+  # ⚑ diff-focus: only the NORM group rides the reco. The five original
+  # diff_focus_* keys deliberately do NOT -- the worker takes DiffFocusConfig()
+  # defaults for those, the production yaml is pinned equal to them, and
+  # tests/test_reco_coverage.py guards that pin. Plumbing them would change the
+  # live keep-probability and row priority, which needs its own ledger entry.
+  # The norm group has no such history: it is new, defaults OFF, and would be
+  # UNREACHABLE without these lines -- a knob that never reaches the worker is
+  # this codebase's signature defect and the whole point of task #171.
+        "diff_focus_norm_enabled": bool(config.get("diff_focus_norm_enabled", False)),
+        "diff_focus_norm_window": int(config.get("diff_focus_norm_window", 8192)),
+        "diff_focus_norm_warmup": int(config.get("diff_focus_norm_warmup", 1024)),
+        "diff_focus_norm_quantile": float(config.get("diff_focus_norm_quantile", 0.5)),
+        "diff_focus_norm_slope": float(config.get("diff_focus_norm_slope", 1.62)),
+        "diff_focus_norm_clip": float(config.get("diff_focus_norm_clip", 8.0)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
         "gumbel_policy_temp": float(config.get("gumbel_policy_temp", 1.0)),
         "gumbel_target_batch": int(config.get("gumbel_target_batch", 0)),
