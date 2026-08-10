@@ -25,6 +25,18 @@ long after the PR that introduced the block has merged.
 The count assertions matter as much as the content check: without them a
 citation could be quietly deleted — or an annotation dropped whole — and every
 remaining citation would still pass.
+
+"The citation resolves" and "the claim is true" are different guarantees, and
+the first does not imply the second: three annotations shipped
+``DEAD KEY - repo-wide grep outside tests finds only the allowlist`` while
+``run.py`` defined a CLI flag for each, and every one of those citations
+resolved cleanly because the allowlist line does mention the key. So the
+``DEAD KEY`` claim — the strongest claim any annotation here makes — is
+re-derived rather than checked for self-consistency:
+``test_dead_key_annotations_cite_every_surface_that_mentions_the_key`` runs the
+grep itself, in **both** spellings, and fails on any mention the annotation does
+not already name. Searching only the source spelling is what produced the false
+statements; argparse renames ``foo_bar`` to ``--foo-bar``.
 """
 
 from __future__ import annotations
@@ -37,12 +49,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = REPO_ROOT / "configs"
 
-# A citation may name something OTHER than the annotated key in exactly one
-# situation: it points at the GATE that makes the key inert, and a gate is a
-# different key by construction. Each exception is registered here as
-# (annotated key, repo-relative file) -> the token that line must contain, so
-# the set is auditable and cannot grow by accident. Everything not listed must
-# mention its own key.
+# A citation may name something OTHER than the annotated key in exactly two
+# situations: it points at the GATE that makes the key inert (a gate is a
+# different key by construction), or the cited line spells the key differently
+# from the yaml (argparse hyphens, a dropped prefix). Each exception is
+# registered here as (annotated key, repo-relative file) -> the token that line
+# must contain, so the set is auditable and cannot grow by accident. Everything
+# not listed must mention its own key.
 #
 # Keyed by file rather than by line so that ordinary code movement does not
 # force an edit here — the CONTENT check still has to pass, which is the part
@@ -56,8 +69,12 @@ GATE_TOKENS: dict[tuple[str, str], str] = {
     ("sf_wdl_temperature", "chess_anti_engine/train/losses.py"): "temperature != 1.0",
   # The buffer field drops the `replay_` prefix the yaml key carries.
     ("replay_sf_gap_priority_weight", "chess_anti_engine/replay/disk_buffer.py"): "sf_gap_priority_weight",
-  # argparse spells the flag with hyphens.
+  # argparse spells the flag with hyphens. The three entries after the first are
+  # exactly the surfaces the source-name grep missed; see the module docstring.
     ("games_per_iter_start", "chess_anti_engine/run.py"): "games-per-iter-start",
+    ("bootstrap_max_positions", "chess_anti_engine/run.py"): "bootstrap-max-positions",
+    ("bootstrap_train_steps", "chess_anti_engine/run.py"): "bootstrap-train-steps",
+    ("min_replay_size", "chess_anti_engine/run.py"): "min-replay-size",
   # Ray's scheduler attribute, not the yaml key that feeds it.
     ("gpbt_resample_probability", "chess_anti_engine/tune/gpbt.py"): "_resample_probability",
 }
@@ -65,8 +82,17 @@ GATE_TOKENS: dict[tuple[str, str], str] = {
 # Pinned so that a citation (or a whole annotation) cannot vanish unnoticed.
 # Raise these deliberately when adding an annotation; never lower them to make
 # the test pass.
-EXPECTED_CITATIONS = 43
+EXPECTED_CITATIONS = 46
 EXPECTED_ANNOTATED_KEYS = 27  # 26 deleted keys + the one RETAINED warning block
+
+# Where a `DEAD KEY` claim is re-derived. Code only: another yaml setting the key
+# is not a reader (17 configs/*.yaml still carry these keys and are out of scope
+# for this PR), and neither is prose in docs/.
+_DEAD_KEY_SOURCE_GLOBS = (
+    "chess_anti_engine/**/*.py",
+    "scripts/**/*.py",
+    "scripts/**/*.sh",
+)
 
 # A cited path is written relative to the package or to the repo root. Both are
 # tried and exactly one must resolve, so an ambiguous path is an error rather
@@ -201,6 +227,58 @@ def test_the_annotated_key_is_actually_absent_from_the_config() -> None:
             f"still set in the file"
         )
         assert body.startswith("# DELETED"), body[:60]
+
+
+def _dead_key_sources() -> list[tuple[str, list[str]]]:
+    """Repo-relative path + lines for every source file a reader could live in."""
+    paths: set[Path] = set()
+    for pattern in _DEAD_KEY_SOURCE_GLOBS:
+        paths.update(p for p in REPO_ROOT.glob(pattern) if p.is_file())
+    return [
+        (str(p.relative_to(REPO_ROOT)), p.read_text("utf-8", errors="replace").splitlines())
+        for p in sorted(paths)
+        if "tests" not in p.relative_to(REPO_ROOT).parts
+    ]
+
+
+def test_dead_key_annotations_cite_every_surface_that_mentions_the_key() -> None:
+    """`DEAD KEY` asserts "nothing reads this" — so re-run the grep, both spellings.
+
+    The citation check above only asks whether a cited line mentions the key; it
+    passes happily over a *false* reason built from correct citations. This one
+    asks the question the annotation actually answers, and it is the check that
+    fails when a surface is missed: a source-name-only grep is invisible to the
+    reader of a config, and it is what put three false ``DEAD KEY`` statements
+    into this block.
+    """
+    sources = _dead_key_sources()
+    assert sources, "no source files scanned — the glob list is wrong, not the repo"
+
+    failures: list[str] = []
+    for cfg, key, body in _all_blocks():
+        if "DEAD KEY" not in body:
+            continue
+        cited = {
+            (str(_resolve(rel).relative_to(REPO_ROOT)), int(line))
+            for rel, line in _CITATION.findall(body)
+        }
+        spellings = (key, key.replace("_", "-"))
+        for relpath, lines in sources:
+            for lineno, src in enumerate(lines, start=1):
+                if not any(s in src for s in spellings):
+                    continue
+                if (relpath, lineno) not in cited:
+                    failures.append(
+                        f"{cfg.name}: {key!r} is annotated DEAD KEY, but "
+                        f"{relpath}:{lineno} mentions it and the annotation does "
+                        f"not cite that line: {src.strip()!r}"
+                    )
+
+    assert not failures, (
+        "a DEAD KEY annotation does not account for every surface that names the "
+        "key. Either the claim is false, or the annotation must name the surface "
+        "and say why it is not a reader:\n  " + "\n  ".join(failures)
+    )
 
 
 def test_registered_gate_tokens_are_all_in_use() -> None:

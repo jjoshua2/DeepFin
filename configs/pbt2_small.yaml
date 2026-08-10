@@ -39,10 +39,15 @@ replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset
 bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v5_iter239.pt  # os=334, reg=0.375
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
-# DELETED bootstrap_max_positions: DEAD KEY - repo-wide grep outside tests finds only the
-#   utils/config_yaml.py:46 allowlist
-# DELETED bootstrap_train_steps: DEAD KEY - repo-wide grep outside tests finds only the
-#   utils/config_yaml.py:46 allowlist
+# DELETED bootstrap_max_positions: DEAD KEY - it has exactly two surfaces and neither is a
+#   reader: the utils/config_yaml.py:46 passthrough allowlist, and the argparse flag
+#   --bootstrap-max-positions (run.py:402), which materialises the key at default=0 and is
+#   never read back. INERT because that argparse default (0) IS the deleted value, so the
+#   resolved flat config is identical with the key absent.
+# DELETED bootstrap_train_steps: DEAD KEY - same two surfaces, neither a reader: the
+#   utils/config_yaml.py:46 passthrough allowlist, and the argparse flag
+#   --bootstrap-train-steps (run.py:403), which materialises the key at default=0 and is
+#   never read back. INERT because that argparse default (0) IS the deleted value.
 # DELETED shared_shards_dir: null was never resolved in the first place --
 #   flatten_run_config_defaults drops None, and the consumer defaults to None anyway
 #   (tune/trial_config.py:783 _get(...,None))
@@ -868,8 +873,11 @@ puzzle_epd: null
 puzzle_interval: 0     # Disabled — too slow for many parallel trials
 
 tune:
-  # DELETED min_replay_size: DEAD KEY - repo-wide grep outside tests finds only the
-  #   utils/config_yaml.py:301 allowlist
+  # DELETED min_replay_size: DEAD KEY - it has exactly two surfaces and neither is a reader:
+  #   the utils/config_yaml.py:301 passthrough allowlist, and the argparse flag
+  #   --min-replay-size (run.py:628), which materialises the key at default=0 and is never
+  #   read back. INERT because that argparse default (0) IS the deleted value, so the
+  #   resolved flat config is identical with the key absent.
 
   # Disk usage controls
   # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
