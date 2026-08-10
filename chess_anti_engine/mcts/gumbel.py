@@ -90,6 +90,14 @@ PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
     "c_scale_root": 7.0,
     "q_visit_exp_root": -1.0,
     "topk": 32,
+  # 1.0 is a numeric no-op (`apply_policy_temp` returns the logits unchanged),
+  # so adding it here changed no search. It is here because ABSENCE was the
+  # defect: `policy_temp` is a live positive control in the very audit that
+  # named the four inert knobs, and it was the one shape knob no play-path
+  # config surface could set -- not this dict, not `--*-gumbel`'s realized
+  # dump, not the UCI CLI. A knob that cannot be set is not "at its default",
+  # it is unreachable, and an unreachable knob reads as a settled question.
+    "policy_temp": 1.0,
 }
 
 # GumbelConfig fields that PROVABLY cannot change a Gumbel search's output, and
@@ -111,6 +119,53 @@ PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
 INERT_GUMBEL_KNOBS: frozenset[str] = frozenset(
     {"c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction"}
 )
+
+# GumbelConfig fields the C fast path (`run_gumbel_root_many_c`) does not
+# implement. They are NOT inert -- `run_gumbel_root_many` (Python) really acts
+# on them -- but they are dropped WITHOUT A WORD by whichever dispatcher picks
+# the C path, which is the other way a knob returns a flawless null.
+#
+# The guard therefore has to live on the DISPATCH, not on a CLI parser: the CLI
+# is not what chooses the path. `selfplay.match.pick_moves_for_boards` already
+# routes volatility-enabled configs to the Python path and warns
+# (`warn_volatility_python_path`); `assert_c_path_can_run` is the same contract
+# stated once, so a NEW python-only field cannot be added without a dispatcher
+# either honouring it or refusing loudly. See
+# `tests/test_uci_search_options.py::test_the_c_path_refuses_a_python_only_knob`.
+PY_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset(
+    {"volatility_q_scale", "volatility_fpu"}
+)
+
+
+def python_only_knobs_set(cfg: GumbelConfig) -> tuple[str, ...]:
+    """Python-path-only fields on ``cfg`` that are at a non-default value."""
+    base = GumbelConfig()
+    return tuple(
+        sorted(
+            k for k in PY_ONLY_GUMBEL_KNOBS
+            if float(getattr(cfg, k)) != float(getattr(base, k))
+        )
+    )
+
+
+def assert_c_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
+    """Refuse to enter the C Gumbel path with a Python-only knob set.
+
+    Raising beats warning here. A warning on a knob that silently does nothing
+    still produces a complete, reproducible, wrong measurement; the caller's
+    only correct moves are to drop to the Python path or to zero the knob, and
+    both are things the caller must decide.
+    """
+    offenders = python_only_knobs_set(cfg)
+    if not offenders:
+        return
+    raise ValueError(
+        f"{where}: {', '.join(offenders)} are Python-path only; call "
+        "run_gumbel_root_many (mcts/gumbel.py) instead. The C path has no code "
+        "for them, so it would drop them silently and return a search that "
+        "looks like a clean null. Zero them, or route to the Python path "
+        "(see PY_ONLY_GUMBEL_KNOBS)."
+    )
 
 # Lc0 classic-search defaults (Oct 2025 engine flags page) for the UCI engine's
 # PUCT descent -- the walker pool and the multi-GPU PUCV pool, which really do

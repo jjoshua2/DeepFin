@@ -116,6 +116,7 @@ import dataclasses
 import json
 import threading
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -195,11 +196,267 @@ class _SearchProfile:
     volatility_q_scale: float = 0.0
     volatility_fpu: float = 0.0
     volatility_anchor: float | None = None
+  # Free-form `--gumbel k=v` overrides. A tuple of pairs, not a dict, so the
+  # profile stays hashable/frozen and the ORDER an operator typed survives into
+  # the report header.
+  #
+  # These are applied by `dataclasses.replace` on the built GumbelConfig rather
+  # than by adding fields here, and that is the whole point: the field list
+  # above is a FIXED subset, so an override for anything outside it -- say
+  # `halving_div` -- would be accepted by the CLI, printed in the header, and
+  # then dropped on the floor by `_build`. That is this repo's signature defect
+  # and precisely the null a `--gumbel policy_temp=2.2` sweep would produce.
+  # `_assert_overrides_realized` closes it at the dispatch.
+    overrides: tuple[tuple[str, float], ...] = ()
+
+
+def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], ...]:
+    """``["policy_temp=2.2", "topk=8"]`` -> validated (key, value) pairs.
+
+    Same contract as ``scripts/arena_standard.py``'s ``--cand-gumbel`` /
+    ``--ref-gumbel``, and deliberately the same key names (raw ``GumbelConfig``
+    field names, snake_case) so a shape can be moved between the two by copy
+    and paste. The UCI surface CamelCases the same fields; the mapping is
+    documented in docs/operations.md.
+
+    Refuses, rather than accepts-and-ignores:
+      * a key that is not a GumbelConfig field -- caught here instead of by
+        `dataclasses.replace` after the checkpoint has loaded and SF has run;
+      * a key in `INERT_GUMBEL_KNOBS` -- the PUCT descent they drive is
+        unreachable while `full_tree=True`, so a sweep over one returns a flat,
+        perfectly reproducible null that reads as a measurement;
+      * a VALUE that lands inside a real field but outside the band where the
+        field does anything. Today that is `policy_temp` (see below).
+
+    ⚑ The third rule is the same defect as the second, one level down: refusing
+    a dead KNOB and then accepting a dead VALUE of a live knob leaves the exact
+    hole the guard exists to close. `--gumbel policy_temp=0` used to parse,
+    survive `_assert_overrides_realized` (it really does reach `cfg.policy_temp`)
+    and print `--gumbel realized policy_temp=0.0` -- while `apply_policy_temp`
+    returned the priors untouched. A gate that cannot fail, wrapped around a
+    value that is silently ignored, under a header naming the operator's number.
+
+    REFUSAL rather than an "inert" note is deliberate and matches the two rules
+    above: `--gumbel` is a batch audit CLI, so the operator is not present to
+    read a warning, and the artifact left behind is a complete, reproducible,
+    WRONG number. It also matches the other surface this PR ships -- UCI
+    `PolicyTemperature` has range 0.5-5.0 and refuses `0` out loud.
+    """
+    import dataclasses as _dc
+
+    from chess_anti_engine.mcts.gumbel import INERT_GUMBEL_KNOBS, GumbelConfig
+
+    fields = {f.name: f.type for f in _dc.fields(GumbelConfig)}
+    out: list[tuple[str, float]] = []
+    for spec in specs or []:
+        for part in str(spec).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "=" not in part:
+                raise SystemExit(f"--gumbel: expected k=v pairs, got {part!r}")
+            key, raw = part.split("=", 1)
+            key = key.strip()
+            if key not in fields:
+                raise SystemExit(
+                    f"--gumbel: {key!r} is not a GumbelConfig field. Valid "
+                    f"keys: {', '.join(sorted(fields))}"
+                )
+            if key in INERT_GUMBEL_KNOBS:
+                raise SystemExit(
+                    f"--gumbel: {key!r} cannot affect a Gumbel search and is "
+                    "refused. It drives the PUCT descent, which "
+                    "GumbelConfig.full_tree=True makes unreachable (play-path "
+                    "audit 2026-08-03 F2). A sweep over it would return a flat "
+                    "null and read as a measurement."
+                )
+            try:
+                value = float(raw)
+            except ValueError:
+                raise SystemExit(
+                    f"--gumbel: {key}={raw!r} is not a number"
+                ) from None
+            _refuse_dead_override(key, value)
+            out.append((key, value))
+    return tuple(out)
+
+
+def _refuse_dead_override(key: str, value: float) -> None:
+    """Refuse a value that reaches the config and is then not read.
+
+    Consults `mcts.gumbel.policy_temp_active` -- THE definition of "tempering
+    is on", shared with `apply_policy_temp`, both `gumbel_c` bf16 gates and the
+    worker's realized-shape log line -- rather than re-deriving the band here.
+    A guard has to share the criterion's instrument or it is guarding a
+    different question, and a second copy of `0.05 <= T <= 20.0` in this file
+    would drift the day the band moves.
+
+    `policy_temp=1.0` is `policy_temp_active(1.0) == False` but is NOT dead: it
+    is the shipped default and an explicit "run the untempered prior" is a real
+    request, so it is allowed through. Everything else the predicate rejects
+    (0, 0.01, 1e300, nan, inf, negatives) is a no-op `apply_policy_temp` will
+    silently swallow.
+    """
+    from chess_anti_engine.mcts.gumbel import (
+        POLICY_TEMP_MAX,
+        POLICY_TEMP_MIN,
+        policy_temp_active,
+    )
+
+    if key != "policy_temp":
+        return
+    if value == 1.0 or policy_temp_active(value):
+        return
+    raise SystemExit(
+        f"--gumbel: policy_temp={value!r} is inside the field but outside the "
+        f"band where it does anything ([{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}], "
+        "or exactly 1.0 for the untempered prior), so `apply_policy_temp` "
+        "would return the priors untouched. The audit would score the DEFAULT "
+        "prior and report it under a header naming your value. Refusing to "
+        "run — pick a temperature inside the band, or drop the override."
+    )
+
+
+def sf_reference_sets(
+    move_cp: Mapping[str, float],
+) -> tuple[set[str], set[str]]:
+    """Deep-SF `(top1, top10)` reference sets for the paired per-position booleans.
+
+    BOTH are built by SCORE, never by slice.
+
+    `top1` is a SET because SF's MultiPV list routinely holds several moves at
+    the same cp, and calling a candidate wrong for picking one of the co-best
+    would measure tie-breaking, not agreement.
+
+    `top10` follows the same rule for the same reason. A bare `_ranked[:10]`
+    picks among the moves sharing the TENTH-ranked cp by the mapping's
+    iteration order, so a candidate playing an equally scored 11th-ranked move
+    is recorded `out_of_top10=true` and the paired statistic measures MultiPV
+    tie ordering rather than move quality.
+
+    Measured on the shipped frozen set (`data/audit_set_v1.jsonl`, 4000 rows)
+    the score form changes NOTHING: that set is MultiPV=10 exactly -- 3562 rows
+    carry precisely 10 listings and 0 carry an 11th to tie with -- so no banked
+    number moves. It closes the hole for the wider sets `build_audit_set.py`
+    can generate, where an 11th listing exists and the ordering is arbitrary.
+
+    `top10` is empty (-> the caller emits `None`, not `False`) when the list is
+    shorter than 10: a position SF listed 5 moves for cannot support an
+    "outside the top 10" claim at all, and emitting `False` there would quietly
+    count it as a success.
+    """
+    ranked = sorted(move_cp.items(), key=lambda kv: -kv[1])
+    if not ranked:
+        return set(), set()
+    top1 = {u for u, cp in ranked if cp >= ranked[0][1] - 1e-9}
+    if len(ranked) < 10:
+        return top1, set()
+    return top1, {u for u, cp in ranked if cp >= ranked[9][1] - 1e-9}
+
+
+def _coerce_override(cfg_field_default: object, value: float) -> float | int | bool:
+    """Match the GumbelConfig field's type so `topk=8.0` does not land an int
+    field with a float (which the C signature then rejects mid-search)."""
+    if isinstance(cfg_field_default, bool):
+        return bool(value)
+    if isinstance(cfg_field_default, int):
+        return int(value)
+    return float(value)
+
+
+def _assert_overrides_dispatched(
+  # `GumbelConfig` is imported inside the functions that need it (module import
+  # time is on the critical path for every `--help`), so it is not a name this
+  # signature can reference. `Mapping` rather than `dict` because dict's value
+  # type is INVARIANT: `dict[str, GumbelConfig]` is not a `dict[str, object]`.
+    cfgs: Mapping[str, object],
+    profiles: dict[str, _SearchProfile],
+    *,
+    requested: tuple[tuple[str, float], ...],
+) -> None:
+    """THE guard. Conditioned on what the OPERATOR ASKED FOR, never on what survived.
+
+    The version this replaced ran ``if p.overrides:`` and nothing else, so it
+    was conditioned on the very value that goes missing: deleting
+    ``gumbel_overrides=gumbel_overrides`` from ``main()``'s
+    ``build_search_profiles`` call left every profile with ``overrides=()``,
+    the loop body never executed, and the whole audit ran the DEFAULT search
+    shape under a header that said otherwise. That mutant passed 141 tests.
+    A guard that can only fire when the value is present cannot detect the
+    value going absent -- it is this repo's signature defect wearing the
+    costume of the fix for it.
+
+    ``requested`` comes from ``parse_gumbel_overrides``, i.e. straight off the
+    command line, and travels to here beside the profiles rather than through
+    them. So an override dropped anywhere in between is a MISMATCH here rather
+    than a quietly empty loop.
+    """
+    if requested:
+      # `--gumbel` is a PLAY-row flag (`--gumbel-training-rows` adds the two
+      # training rows on top); the PLAY row therefore always carries it, and
+      # "the PLAY row does not" is exactly the dropped-keyword signature.
+        play = profiles.get("search")
+        if play is None or tuple(play.overrides) != tuple(requested):
+            asked = " ".join(f"{k}={v}" for k, v in requested)
+            got = (
+                "no PLAY profile at all" if play is None
+                else (" ".join(f"{k}={v}" for k, v in play.overrides) or "nothing")
+            )
+            raise SystemExit(
+                f"[audit] --gumbel {asked} was parsed but the PLAY profile "
+                f"carries {got}. The override was dropped between the command "
+                "line and the search profile — the run would report the "
+                "DEFAULT search shape under a header naming your values. "
+                "Refusing to run."
+            )
+    for name, p in profiles.items():
+        if p.overrides:
+            _assert_overrides_realized(
+                cfgs[name], p.overrides, where=_CANDIDATE_NAMES[name],
+            )
+            print(
+                f"[audit] {_CANDIDATE_NAMES[name]}: --gumbel realized "
+                + " ".join(f"{k}={getattr(cfgs[name], k)}" for k, _ in p.overrides),
+                flush=True,
+            )
+
+
+def _assert_overrides_realized(cfg, overrides, *, where: str) -> None:
+    """Fail loudly if an override did not land on the config the search reads.
+
+    THE dispatch guard. The CLI parsing above proves the operator typed a real
+    field name; it proves nothing about whether the value survived the trip
+    through `_SearchProfile` into the `GumbelConfig` handed to the runner. That
+    trip is where a knob gets dropped, and a dropped knob here produces a
+    complete, reproducible, WRONG audit -- the exact failure this script is
+    supposed to catch in other people's code.
+    """
+    import dataclasses as _dc
+
+    defaults = {f.name: getattr(type(cfg)(), f.name) for f in _dc.fields(cfg)}
+    bad: list[str] = []
+    for key, value in overrides:
+        want = _coerce_override(defaults[key], value)
+        got = getattr(cfg, key)
+        if isinstance(want, float):
+            ok = abs(float(got) - want) <= 1e-9 * max(1.0, abs(want))
+        else:
+            ok = got == want
+        if not ok:
+            bad.append(f"{key}: asked {want!r}, config has {got!r}")
+    if bad:
+        raise SystemExit(
+            f"[audit] {where}: --gumbel override did not reach the search "
+            f"config: {'; '.join(bad)}. Refusing to run — the numbers would "
+            "look clean and mean nothing."
+        )
 
 
 def build_search_profiles(
     flat: dict[str, object], *, play_sims: int, play_topk: int | None,
     rl_sims_override: int | None = None,
+    gumbel_overrides: tuple[tuple[str, float], ...] = (),
+    override_training_rows: bool = False,
 ) -> dict[str, _SearchProfile]:
     """The search shapes to score: one PLAY, two TRAINING.
 
@@ -227,6 +484,12 @@ def build_search_profiles(
 
     def _rl(label: str, sims: int) -> _SearchProfile:
         return _SearchProfile(
+          # Training rows follow the yaml by default; `--gumbel` reaches them
+          # only under `--gumbel-training-rows`. Overriding the TARGET's own
+          # shape by accident would score a search selfplay never runs and
+          # print it in the column headed "production training target" —
+          # the same reasoning that already makes `--gumbel-topk` PLAY-only.
+            overrides=gumbel_overrides if override_training_rows else (),
             label=label, sims=sims, topk=rl_topk, c_scale=rl_c_scale,
             c_visit=rl.c_visit, c_visit_root=rl.c_visit_root,
             c_scale_root=rl.c_scale_root, q_visit_exp_root=rl.q_visit_exp_root,
@@ -244,6 +507,7 @@ def build_search_profiles(
 
     return {
         "search": _SearchProfile(
+            overrides=gumbel_overrides,
             label="PLAY (UCI/TCEC)", sims=int(play_sims),
           # The PLAY row must be the WHOLE play shape: topk differs from the
           # training default and acts on descent, so taking only the
@@ -267,6 +531,35 @@ _VALUE_NAMES = {
     "blend": "iii) production WDL blend",
     "search_root": "iv) search root WDL",
 }
+
+
+def profiles_for_audit(
+    args, flat: dict[str, object],
+) -> tuple[dict[str, _SearchProfile], tuple[tuple[str, float], ...]]:
+    """Parse ``--gumbel`` and build the search profiles in ONE place.
+
+    The point is that there is no keyword left for ``main()`` to forget. The
+    request and the profiles are derived from the same ``args`` here and handed
+    back together, so the "operator asked for it" and "the search got it" halves
+    cannot be wired independently -- which is precisely how
+    ``gumbel_overrides=gumbel_overrides`` went missing from the
+    ``build_search_profiles`` call and stayed invisible to the whole suite.
+
+    Being a real function rather than a stretch of ``main()`` is also what makes
+    it testable: ``tests/test_audit_gumbel_override_dispatch.py`` drives it with
+    a stub ``args`` and no checkpoint, so the wiring has a test that does not
+    need an hour of Stockfish.
+    """
+    requested = parse_gumbel_overrides(args.gumbel)
+    profiles = build_search_profiles(
+        flat,
+        play_sims=int(args.sims),
+        play_topk=(int(args.gumbel_topk) if args.gumbel_topk is not None else None),
+        rl_sims_override=(int(args.rl_sims) if args.rl_sims else None),
+        gumbel_overrides=requested,
+        override_training_rows=bool(args.gumbel_training_rows),
+    )
+    return profiles, requested
 
 
 def _wdl_softmax(logits: np.ndarray) -> np.ndarray:
@@ -329,6 +622,11 @@ def _net_candidates(
     batch_size: int,
     seed: int,
     profiles: dict[str, _SearchProfile],
+  # Required, and deliberately WITHOUT a default: the expectation this function
+  # checks its profiles against must not be omissible, or the guard degrades to
+  # the `if p.overrides:` no-op it replaced. Callers that pass no `--gumbel`
+  # spell it `()`.
+    requested_gumbel_overrides: tuple[tuple[str, float], ...],
     policy_temp: float = 1.0,
     syzygy_path: str | None = None,
     target_batch: int = 0,
@@ -395,7 +693,7 @@ def _net_candidates(
         kw = {}
         if p.volatility_anchor is not None:
             kw["volatility_anchor"] = p.volatility_anchor
-        return GumbelConfig(
+        cfg = GumbelConfig(
             simulations=int(p.sims), add_noise=False, temperature=0.0,
             input_history_encoding=hist, input_extra_features=extra,
             policy_encoding=pol_enc, compute_relations=use_rel,
@@ -407,8 +705,22 @@ def _net_candidates(
             volatility_fpu=p.volatility_fpu,
             **kw,
         )
+        if p.overrides:
+          # `replace` reaches EVERY GumbelConfig field, including the ones
+          # `_SearchProfile` has no column for — which is why the overrides ride
+          # as a raw pair list rather than as new profile fields.
+            base = GumbelConfig()
+            cfg = dataclasses.replace(cfg, **{
+                k: _coerce_override(getattr(base, k), v) for k, v in p.overrides
+            })
+        return cfg
 
     cfgs = {name: _build(p) for name, p in profiles.items()}
+  # Guard the DISPATCH, not the CLI: these are the objects each runner is about
+  # to be handed, so an override that survives to here survives into the search.
+    _assert_overrides_dispatched(
+        cfgs, profiles, requested=requested_gumbel_overrides,
+    )
   # Volatility-aware search exists ONLY on the Python path; selfplay drops to
   # it when either flag is set. Always calling the C path would silently score
   # the baseline search and report it as the configured training target -- the
@@ -962,6 +1274,25 @@ def main() -> None:
                     help="prior temperature on policy logits before gumbel search "
                          "(>1 softens prior, <1 sharpens, 1.0=no-op). Measures search-prior "
                          "calibration on the REAL audit-set distribution (vs puzzle bias).")
+    ap.add_argument("--gumbel", action="append", default=None, metavar="k=v",
+                    help="override any GumbelConfig field on the PLAY row (b). "
+                         "Repeatable, and comma-separated pairs are accepted: "
+                         "--gumbel policy_temp=2.2 --gumbel topk=8,halving_div=4. "
+                         "Keys are raw GumbelConfig field names, IDENTICAL to "
+                         "scripts/arena_standard.py --cand-gumbel/--ref-gumbel, so a "
+                         "shape moves between the two by copy-paste (the UCI engine "
+                         "CamelCases the same fields: c_scale -> CScale; see "
+                         "docs/operations.md). c_puct/cpuct_factor/cpuct_base/"
+                         "fpu_reduction are REJECTED: inert in a Gumbel search. "
+                         "The override is asserted against the config actually handed "
+                         "to the runner, so a knob that fails to plumb aborts the run "
+                         "instead of producing a clean null.")
+    ap.add_argument("--gumbel-training-rows", action="store_true",
+                    help="also apply --gumbel to the TRAINING rows (d)/(e). OFF by "
+                         "default: those rows exist to describe the target production "
+                         "actually stores, and silently reshaping them would print a "
+                         "search selfplay never runs under the heading 'production "
+                         "training target'.")
     ap.add_argument("--gumbel-topk", type=int, default=None,
                     help="Override the PLAY row's Gumbel root candidate count. "
                          "Default None = the PLAY default (32). The TRAINING rows "
@@ -1034,13 +1365,34 @@ def main() -> None:
     ap.add_argument("--dump-per-position", type=Path, default=None,
                     help="if set, write one JSONL record per scored position "
                          "(phase, source, criticality gap, per-candidate "
-                         "expected/top1 regret) for offline slicing")
+                         "expected/top1 regret, chosen move, and the paired "
+                         "per-position booleans top1_agree / out_of_top10) for "
+                         "offline slicing and PAIRED statistics")
+    ap.add_argument("--dump-distributions", action="store_true",
+                    help="with --dump-per-position, also record each candidate's "
+                         "full distribution over legal moves as {uci: p} (entries "
+                         "below 1e-6 pruned). Roughly 30-40 floats per candidate "
+                         "per position, so the dump grows ~20x; needed only when "
+                         "the downstream statistic is not one of the booleans "
+                         "already emitted.")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
   # Parsed at PARSE time so a malformed threshold list fails before the model
   # is loaded. () when the flag is absent, which is what keeps every code path
   # below identical to the default run.
     blunder_taus = _parse_blunder_taus(args.blunder_taus)
+  # Same reasoning: a bad --gumbel key must not surface after the checkpoint
+  # has loaded and Stockfish has spent an hour labelling.
+  # Fail-fast only: a bad --gumbel key must surface here, not after the
+  # checkpoint has loaded and SF has spent an hour labelling. The value is NOT
+  # kept -- `profiles_for_audit` re-derives it from `args` below, so there is no
+  # variable in `main()` that a later edit can forget to forward.
+    parse_gumbel_overrides(args.gumbel)
+    if args.dump_distributions and args.dump_per_position is None:
+        raise SystemExit(
+            "--dump-distributions needs --dump-per-position (it adds a field "
+            "to that dump; on its own it would silently do nothing)"
+        )
 
   # Reject at PARSE time, not deep in the run. `_net_candidates` only forwards
   # vloss_mode when vloss_weight > 0, and this script never prints or records
@@ -1120,10 +1472,7 @@ def main() -> None:
     from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
 
     full_share = float(flat.get("playout_cap_fraction", 1.0))
-    profiles = build_search_profiles(
-        flat, play_sims=int(args.sims), play_topk=(int(args.gumbel_topk) if args.gumbel_topk is not None else None),
-        rl_sims_override=(int(args.rl_sims) if args.rl_sims else None),
-    )
+    profiles, gumbel_overrides = profiles_for_audit(args, flat)
     rl_c_scale = profiles["train"].c_scale
     rl_sims = profiles["train"].sims
     rl_fast_sims = profiles["train_fast"].sims
@@ -1142,7 +1491,8 @@ def main() -> None:
     raw_probs, search_by_profile, root_q_by_profile, root_wdl = _net_candidates(
         boards, checkpoint=args.checkpoint, device=args.device,
         batch_size=int(args.batch_size), seed=int(args.seed),
-        profiles=profiles, policy_temp=float(args.policy_temp),
+        profiles=profiles, requested_gumbel_overrides=gumbel_overrides,
+        policy_temp=float(args.policy_temp),
         syzygy_path=sz_path or None,
         target_batch=int(args.target_batch),
         vloss_weight=int(args.vloss_weight),
@@ -1174,6 +1524,12 @@ def main() -> None:
         if not legal_ucis:
             continue
         regrets = move_regrets(pos, legal_ucis)
+      # Deep-SF reference sets for the paired per-position booleans below.
+      # `top1` is a SET, not a single move: SF's MultiPV list routinely holds
+      # several moves at the same cp, and calling a candidate wrong for
+      # picking one of the co-best would measure tie-breaking, not agreement.
+      # See `sf_reference_sets`.
+        sf_top1_set, sf_top10_set = sf_reference_sets(pos.move_cp)
         def _as_stored(probs: np.ndarray) -> np.ndarray:
             # policy_t is the visit distribution at the move-selection
             # temperature; production temperature 0.0 (and 1.0) store the
@@ -1206,11 +1562,31 @@ def main() -> None:
             pv = np.asarray(probs, dtype=np.float64)
             pv = pv / max(1e-12, pv.sum())
             entropy = float(-(pv[pv > 0] * np.log(pv[pv > 0])).sum())
+            chosen = legal_ucis[top_i]
             per_cand[cand] = {
                 "exp": exp_r, "top1": top1_r,
-                "move": legal_ucis[top_i], "p": float(probs[top_i]),
+                "move": chosen, "p": float(probs[top_i]),
                 "entropy": entropy,
+              # PAIRED per-position booleans. Computed here, once, rather than
+              # left to each downstream script: `out_of_top10` in particular
+              # depends on how ties and short MultiPV lists are handled, and two
+              # callers reimplementing it would silently disagree. Both are
+              # per-POSITION and per-CANDIDATE, so `paired_compare.py` can join
+              # two dumps on `key` and difference them without re-deriving
+              # anything. Note the denominator is a POSITION-level property
+              # (the deep-SF list), never conditioned on the candidate's own
+              # answer.
+                "top1_agree": bool(chosen in sf_top1_set),
+                "out_of_top10": (
+                    None if not sf_top10_set else bool(chosen not in sf_top10_set)
+                ),
             }
+            if args.dump_distributions:
+                pd = np.asarray(probs, dtype=np.float64)
+                per_cand[cand]["probs"] = {
+                    u: float(pd[k]) for k, u in enumerate(legal_ucis)
+                    if pd[k] >= 1e-6
+                }
             if blunder_taus:
                 rates = expected_blunder_rates(probs, regrets, blunder_taus)
                 per_cand[cand].update({
@@ -1241,6 +1617,11 @@ def main() -> None:
                 "gap_cp": float(gap) if np.isfinite(gap) else None,
                 "n_legal": len(legal_ucis),
                 "n_listed": len(pos.move_cp), "best_cp": float(pos.best_cp),
+              # The reference the two booleans were judged against, carried so a
+              # downstream join can verify it rather than assume it.
+                "sf_top1": sorted(sf_top1_set),
+                "sf_top10": sorted(sf_top10_set),
+                "gumbel_overrides": dict(gumbel_overrides),
                 "cand": per_cand,
             })
 

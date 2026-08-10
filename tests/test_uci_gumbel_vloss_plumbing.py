@@ -62,7 +62,63 @@ def _bare_worker(*, vloss_weight: int, minibatch: int = 0) -> SearchWorker:
     w._last_gumbel_action_idx = None
     w._minibatch_size = int(minibatch)
     w._vloss_weight = int(vloss_weight)
+    # Mirrors `SearchWorker.__init__`'s unconditional default. NOT a `getattr`
+    # fallback at the read site: the real search must never quietly substitute a
+    # noise scale nobody set, so 0.0 lives at construction on both sides.
+    w._root_noise_scale = 0.0
     return w
+
+
+def test_the_bare_worker_sets_every_field_the_chunk_reads() -> None:
+    """The fixture is a hand-maintained mirror; this is what stops it drifting.
+
+    ``_bare_worker`` bypasses ``__init__``, so a new ``self._x`` read added to
+    ``_run_gumbel_chunk`` surfaces as an ``AttributeError`` inside four
+    unrelated virtual-loss tests -- which is how ``_root_noise_scale`` (PR #377)
+    turned into four red tests that named neither the field nor the fixture.
+    Failing here instead names the missing field directly.
+
+    This checks the TEST DOUBLE, not the product: every real construction path
+    goes through ``__init__``, which sets these unconditionally. The only
+    production construction is ``uci/__main__.py``'s.
+
+    Scope, stated because an earlier version of this claim was wrong in a way
+    that stopped people looking: there are **four** ``__init__``-bypassing
+    constructions in the tree, not one --
+    ``tests/test_uci_batch_margin.py:23``, this file's :52, and
+    ``tests/test_uci_time_manager.py`` :299 and :346 (the latter two via
+    ``object.__new__``). ``search.py``'s ``getattr(self, "_rpg_pool", None)``
+    exists for them. This guard covers only ``_run_gumbel_chunk``'s fixture;
+    the other three do not reach that method, so they are out of its scope
+    rather than silently covered by it.
+    """
+    # Parsed from the MODULE, not `inspect.getsource(method)`: a method's source
+    # is indented, and this file's comments sit at column 2 -- below the code --
+    # so `textwrap.dedent` cannot straighten it either.
+    module = ast.parse(inspect.getsource(search_mod))
+    fn = next(
+        node for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_gumbel_chunk"
+    )
+    reads = {
+        node.attr
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+        and node.attr.startswith("_")
+    }
+    worker = _bare_worker(vloss_weight=3)
+    missing = sorted(
+        name for name in reads
+        if not hasattr(worker, name) and not hasattr(type(worker), name)
+    )
+    assert not missing, (
+        f"_run_gumbel_chunk reads {missing} but _bare_worker never sets them. "
+        "Add them to the fixture with the same default __init__ uses -- do NOT "
+        "add a getattr fallback in search.py, which would let a real search run "
+        "on a value nobody set."
+    )
 
 
 def _capture_chunk_kwargs(monkeypatch: Any, worker: SearchWorker) -> dict[str, Any]:
@@ -150,17 +206,25 @@ def test_the_engine_flag_and_the_worker_default_are_the_same_constant() -> None:
     engine's search; it reads PLAY_SEARCH_VLOSS_WEIGHT, so the engine has to be
     reading it too, not a duplicated literal.
 
-    The argparse half is checked structurally because the UCI parser is built
-    inline inside ``main()`` and cannot be obtained without starting an engine.
-    A literal ``default=3`` is an ``ast.Constant`` and fails here.
+    Two halves, because neither alone is enough. The REALIZED default is read
+    off the actual parser -- ``_build_parser()`` exists so the CLI can be built
+    without starting an engine -- which catches a value that drifted. The
+    STRUCTURAL half then requires it to be spelled as the shared constant: a
+    literal ``default=3`` is an ``ast.Constant``, agrees with the value check
+    today, and drifts silently the day the constant moves.
     """
     from chess_anti_engine.uci import __main__ as uci_main
 
     sig_default = inspect.signature(SearchWorker.__init__).parameters["vloss_weight"].default
     assert sig_default == PLAY_SEARCH_VLOSS_WEIGHT
 
+    parser_default = {
+        a.dest: a.default for a in uci_main._build_parser()._actions
+    }["vloss_weight"]
+    assert parser_default == PLAY_SEARCH_VLOSS_WEIGHT
+
     defaults: list[ast.expr] = []
-    for node in ast.walk(ast.parse(inspect.getsource(uci_main.main))):
+    for node in ast.walk(ast.parse(inspect.getsource(uci_main._build_parser))):
         if not isinstance(node, ast.Call) or not node.args:
             continue
         first = node.args[0]

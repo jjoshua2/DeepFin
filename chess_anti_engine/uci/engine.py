@@ -19,6 +19,15 @@ from collections.abc import Callable
 
 import chess
 
+from chess_anti_engine.mcts.search_options import (
+    branch_note,
+    OPTIONS_BY_NAME,
+    PATH_DESCRIPTIONS,
+    SEARCH_OPTIONS,
+    SearchOption,
+    inert_reason,
+    realized_rows,
+)
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 
@@ -28,6 +37,7 @@ from .protocol import (
     CmdPonderHit,
     CmdPosition,
     CmdQuit,
+    CmdSearchConfig,
     CmdSetOption,
     CmdStop,
     CmdUci,
@@ -132,14 +142,9 @@ def emit_handshake(options: EngineOptions) -> None:
         "option name RPGOpenBudgetFrac type string default "
         f"{options.rpg_open_budget_frac}"
     )
-    # Lc0-style: c(N)=CPuct+CPuctFactor*log((N+CPuctBase)/CPuctBase); Factor=0 fixed.
-    _println(f"option name CPuct type string default {options.cpuct}")
-    _println(f"option name CPuctFactor type string default {options.cpuct_factor}")
-    _println(f"option name CPuctBase type string default {options.cpuct_base}")
     _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
-    _println(f"option name MinibatchSize type spin default {options.minibatch_size} min 0 max 8192")
     _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
     _println(f"option name UCI_ShowWDL type check default {'true' if options.show_wdl else 'false'}")
     _println(f"option name MoveOverheadMs type spin default {options.move_overhead_ms} min 0 max 5000")
@@ -151,6 +156,13 @@ def emit_handshake(options: EngineOptions) -> None:
     _println(f"option name Syzygy50MoveRule type check default {'true' if options.syzygy_50_move_rule else 'false'}")
     _println("option name LogFile type string default <empty>")
     _println(f"option name Ponder type check default {'true' if options.ponder else 'false'}")
+  # Search-parameter surface (mcts/search_options.py). Declared from the ONE
+  # registry so the advertised name/type/default cannot drift from the handler
+  # that parses it or from the `searchconfig` readback that reports it.
+  # MinibatchSize / CPuct / CPuctFactor / CPuctBase are declared there too, so
+  # they are deliberately absent from the hand-written block above.
+    for opt in SEARCH_OPTIONS:
+        _println(opt.declaration(options.search_value(opt.field)))
     _println(format_uciok())
 
 # Tight (e.g. 5s) timeouts let a slow stop orphan a thread that emits a
@@ -162,6 +174,24 @@ _JOIN_TIMEOUT_S = 30.0
 # in step with the `min` field `emit_handshake` prints — the two disagreeing is
 # exactly the defect this constant closes.
 _MIN_HASH_MB = 1024
+
+# The one registry field whose EngineOptions attribute does not match its name:
+# `CPuct` predates the registry and stores into `cpuct`. Renaming the attribute
+# would churn `__main__` and three tests for nothing.
+_SEARCH_ATTR: dict[str, str] = {"c_puct": "cpuct"}
+
+
+def _search_default(field: str) -> float:
+    """The registry's default for ``field``, as an EngineOptions field default.
+
+    Sourced rather than retyped on purpose: a retyped default silently drifts
+    from the code default, and then the handshake advertises a number the
+    engine is not running.
+    """
+    for opt in SEARCH_OPTIONS:
+        if opt.field == field:
+            return float(opt.default)
+    raise KeyError(field)
 
 
 @dataclass
@@ -283,6 +313,36 @@ class EngineOptions:
   # GUI sends movestogo. The allocation itself is driven by material, not this.
     moves_horizon: int = _DEFAULT_MOVES_REMAINING
 
+  # ── search-parameter surface (mcts/search_options.py) ────────────────────
+  # One attribute per registry entry, named after `SearchOption.field`, so the
+  # handshake / handler / readback all address the same store. Defaults are
+  # taken from the registry rather than retyped: a retyped default that drifts
+  # from the code default is a handshake that lies about what the engine runs,
+  # and `test_advertised_defaults_match_the_live_worker` fails on it.
+  # `c_puct` maps to the pre-existing `cpuct` attribute (see _SEARCH_ATTR).
+    policy_temp: float = _search_default("policy_temp")
+    c_scale: float = _search_default("c_scale")
+    c_visit: float = _search_default("c_visit")
+    c_scale_root: float = _search_default("c_scale_root")
+    c_visit_root: float = _search_default("c_visit_root")
+    q_visit_exp: float = _search_default("q_visit_exp")
+    q_visit_exp_root: float = _search_default("q_visit_exp_root")
+    q_visit_floor: float = _search_default("q_visit_floor")
+    q_global_scale: bool = bool(_search_default("q_global_scale"))
+    halving_div: int = int(_search_default("halving_div"))
+    topk: int = int(_search_default("topk"))
+    root_noise_scale: float = _search_default("root_noise_scale")
+    chunk_sims: int = int(_search_default("chunk_sims"))
+    vloss_weight: int = int(_search_default("vloss_weight"))
+    fpu_reduction: float = _search_default("fpu_reduction")
+
+    def search_value(self, field: str) -> float | int | bool:
+        """The configured value of one registry field."""
+        return getattr(self, _SEARCH_ATTR.get(field, field))
+
+    def set_search_value(self, field: str, value: float | int | bool) -> None:
+        setattr(self, _SEARCH_ATTR.get(field, field), value)
+
 
 class RebuildEvaluator(Protocol):
     """Evaluator factory: ``n_walkers`` (when given) re-tiers the dispatcher
@@ -385,6 +445,8 @@ class Engine:
             self._handle_ponderhit()
         elif isinstance(cmd, CmdSetOption):
             self._handle_setoption(cmd)
+        elif isinstance(cmd, CmdSearchConfig):
+            self._handle_searchconfig()
         elif isinstance(cmd, CmdQuit):
             self._quit_requested = True
             self._handle_stop()
@@ -613,7 +675,155 @@ class Engine:
         handler = self._SETOPTION_HANDLERS.get(name)
         if handler is not None:
             handler(self, cmd.value)
+            return
+        search_opt = OPTIONS_BY_NAME.get(name)
+        if search_opt is not None:
+            self._set_search_option(search_opt, cmd.value)
   # All other options silently accepted — we don't expose any yet.
+
+  # ─── search-parameter options ─────────────────────────────────────────────
+
+    def _set_search_option(self, opt: SearchOption, raw: str) -> None:
+        """Parse, range-check, apply, and report one registry option.
+
+        The reporting is the load-bearing half. UCI gives a GUI no way to see a
+        rejected option, so a bad value that is quietly dropped and an inert
+        option that is quietly accepted look identical to an operator: the
+        engine plays on and the number in their config file never mattered.
+        Every branch here says what happened on an `info string`.
+        """
+        parsed = self._parse_search_value(opt, raw)
+        if parsed is None:
+            return
+        self._options.set_search_value(opt.field, parsed)
+        self._apply_search_option(opt, parsed)
+        path = self._worker.realized_search_path()
+        values = self._worker.realized_search_values()
+        why = inert_reason(opt, path, values)
+        if why is None:
+  # Reaches the search. It may still be pinned inside a branch whose members
+  # are all equivalent — say so, but do NOT say "no effect": this setoption may
+  # have just CROSSED a branch boundary and changed the played move. Claiming
+  # otherwise is the same defect as a silently-ignored knob, sign-flipped.
+            note = branch_note(opt, path, values)
+            if note is None:
+                _println(f"info string {opt.name} set to {parsed}")
+            else:
+                _println(
+                    f"info string {opt.name} set to {parsed} — reaches the live "
+                    f"search; {note}. Use `searchconfig` to see every realized "
+                    "value."
+                )
+            return
+  # Accepted (a GUI must not see an error for a legal option) but never
+  # silent: this is the exact shape of the c_puct-under-Gumbel defect.
+        _println(
+            f"info string {opt.name} set to {parsed} — NO EFFECT on the live "
+            f"search: {why}. Use `searchconfig` to see every realized value."
+        )
+
+    def _parse_search_value(
+        self, opt: SearchOption, raw: str,
+    ) -> float | int | bool | None:
+        """Value for ``opt`` from a UCI token, or None (with a reason printed).
+
+        Floats ride `type string` because UCI has no float type — lc0's
+        PolicyTemperature convention — so parsing and range-checking are the
+        engine's job, and an unchecked one would accept `PolicyTemperature 0`
+        and divide the logits by zero.
+        """
+        text = raw.strip()
+        if opt.kind == "check":
+            lowered = text.lower()
+            if lowered not in ("true", "false"):
+                _println(
+                    f"info string {opt.name}: expected true/false, got {text!r}; "
+                    f"keeping {self._options.search_value(opt.field)}"
+                )
+                return None
+            return lowered == "true"
+        try:
+            value: float | int = (
+                int(text) if opt.kind == "spin" else float(text)
+            )
+        except ValueError:
+            _println(
+                f"info string {opt.name}: {text!r} is not a "
+                f"{'integer' if opt.kind == 'spin' else 'number'}; "
+                f"keeping {self._options.search_value(opt.field)}"
+            )
+            return None
+        lo, hi = opt.lo, opt.hi
+        if (lo is not None and value < lo) or (hi is not None and value > hi):
+            _println(
+                f"info string {opt.name}: {value} is out of range "
+                f"[{lo}, {hi}]; keeping {self._options.search_value(opt.field)}"
+            )
+            return None
+        return value
+
+    def _apply_search_option(
+        self, opt: SearchOption, value: float | int | bool,
+    ) -> None:
+        """Push one option into the object the search actually reads.
+
+        The three worker-level fields do not live on GumbelConfig at all, and
+        the PUCT knobs are copied into the walker / PucvChunker / pool configs
+        at CONSTRUCTION time — so for those, assigning the config field is
+        precisely the "accepted then ignored" failure, and the reinstall is the
+        part that makes the option real.
+        """
+        field = opt.field
+        if field == "chunk_sims":
+            self._worker.set_chunk_sims(int(value))
+            return
+        if field == "vloss_weight":
+            self._worker.set_vloss_weight(int(value))
+            self._reinstall_configured_search_path()
+            return
+        if field == "minibatch_size":
+            self._worker.set_minibatch_size(int(value))
+            self._warmup_dirty = True
+            return
+        if field == "root_noise_scale":
+            self._worker.set_root_noise_scale(float(value))
+            return
+        self._worker.set_gumbel_field(field, value)
+        if field in ("c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction"):
+  # `_sync_cpuct_to_worker` already owns the rebuild-the-PUCT-helpers dance
+  # (live tree scaling + whichever pool cached the value at install).
+            self._sync_cpuct_to_worker()
+
+    def _handle_searchconfig(self) -> None:
+        """`searchconfig`: dump every realized search parameter, LIVE or INERT.
+
+        Not in the UCI spec — no GUI sends it — which is the point: it is for
+        the operator setting up a TCEC/cutechess config, who needs to prove the
+        engine used what the config said. Values are read off the live worker,
+        so `UseVL=true` on an evaluator that cannot support it reports the path
+        that actually ran rather than the one that was asked for.
+        """
+        self._wait_for_search()
+        path = self._worker.realized_search_path()
+        values = self._worker.realized_search_values()
+        _println(
+            f"info string searchconfig path={path} "
+            f"({PATH_DESCRIPTIONS.get(path, path)})"
+        )
+        for name, value, status, why in realized_rows(path, values):
+            suffix = f" — {why}" if why else ""
+            _println(f"info string searchconfig {name} = {value} [{status}]{suffix}")
+        rows = realized_rows(path, values)
+        inert = sum(1 for _, _, s, _ in rows if s == "INERT")
+  # `BRANCH` is counted apart from `INERT` on purpose: an operator proving
+  # their config must not read "this parameter is not reaching the search"
+  # (CPuct under Gumbel) off the same number as "you cannot vary it without
+  # crossing its branch boundary" (QVisitExpRoot at its shipped -1.0).
+        branch = sum(1 for _, _, s, _ in rows if s == "BRANCH")
+        _println(
+            f"info string searchconfig {len(rows) - inert - branch} live, "
+            f"{branch} branch-pinned, {inert} inert on path={path}"
+        )
 
   # ─── setoption handlers ────────────────────────────────────────────────────
   # Each takes the raw value string and is responsible for parsing + clamping.
@@ -970,44 +1180,20 @@ class Engine:
         tree = getattr(self._worker, "_tree", None)
         if tree is not None:
             tree.set_cpuct_scaling(cfg.cpuct_factor, cfg.cpuct_base)
-        # Rebuild multi-GPU / VL helpers that cache c_puct at install time.
+        # Rebuild every helper that CACHES the family at construction time.
+        # One branch per realized path, in `realized_search_path()` order, so a
+        # path cannot be reported [LIVE] with nothing here to make it so. The
+        # walker pool and the single-thread PucvChunker used to fall off the
+        # end of this chain -- `set_use_pucv(True)` early-returns when pucv is
+        # already on, and there was no walker branch at all -- so on the
+        # SHIPPED default (Threads=2 -> walker) four options `searchconfig`
+        # certifies as [LIVE] could not be moved by a `setoption`.
         if self._options.search_parallel == "gumbel":
             self._reinstall_rpg_if_active(reason="CPuct")
         elif self._options.use_multi_gpu_pucv:
             self._install_multi_gpu_pucv_pool()
-        elif bool(getattr(self._worker, "_use_pucv", False)):
-            self._worker.set_use_pucv(True, gather=self._options.vl_gather)
-
-    def _set_cpuct(self, value: str) -> None:
-        try:
-            v = float(value.strip())
-        except ValueError:
-            return
-        if v <= 0.0:
-            return
-        self._options.cpuct = v
-        self._sync_cpuct_to_worker()
-        _println(f"info string CPuct set to {v}")
-
-    def _set_cpuct_factor(self, value: str) -> None:
-        try:
-            v = float(value.strip())
-        except ValueError:
-            return
-        self._options.cpuct_factor = v
-        self._sync_cpuct_to_worker()
-        _println(f"info string CPuctFactor set to {v}")
-
-    def _set_cpuct_base(self, value: str) -> None:
-        try:
-            v = float(value.strip())
-        except ValueError:
-            return
-        if v < 1.0:
-            return
-        self._options.cpuct_base = v
-        self._sync_cpuct_to_worker()
-        _println(f"info string CPuctBase set to {v}")
+        else:
+            self._worker.rebuild_puct_helpers()
 
     def _reinstall_configured_search_path(
         self, *, after_leaving_gumbel: bool = False,
@@ -1103,21 +1289,6 @@ class Engine:
         self._options.log_file = path
         _attach_log_file(path)
 
-    def _set_minibatch_size(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=0)
-        if n is None:
-            return
-        self._options.minibatch_size = n
-        self._worker.set_minibatch_size(n)
-  # minibatch_size feeds target_batch into start_gumbel_sims, so the search-path
-  # cudagraph captured at build-time warmup is now the wrong shape — re-warm before
-  # the clock or the first real `go` pays cold capture (same contract as MaxBatch).
-        self._warmup_dirty = True
-        _println(
-            f"info string MinibatchSize set to {n} "
-            f"({'default' if n == 0 else f'{n} leaves per GPU flush'})"
-        )
-
     def _set_max_batch(self, value: str) -> None:
         mb = self._parse_clamped_int(value, lo=64)
         if mb is None:
@@ -1182,9 +1353,6 @@ class Engine:
         "rpgminvpa": _set_rpg_min_vpa,
         "rpgminkeep": _set_rpg_min_keep,
         "rpgopenbudgetfrac": _set_rpg_open_budget_frac,
-        "cpuct": _set_cpuct,
-        "cpuctfactor": _set_cpuct_factor,
-        "cpuctbase": _set_cpuct_base,
         "vlgather": _set_vl_gather,
         "multipv": _set_multi_pv,
         "uci_showwdl": _set_show_wdl,
@@ -1192,7 +1360,6 @@ class Engine:
         "clockbatchmarginsigmas": _set_clock_batch_margin_sigmas,
         "syzygy50moverule": _set_syzygy_50_move_rule,
         "logfile": _set_log_file,
-        "minibatchsize": _set_minibatch_size,
         "maxbatch": _set_max_batch,
         "evalcacheentries": _set_eval_cache_entries,
     }
