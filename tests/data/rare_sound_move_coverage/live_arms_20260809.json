@@ -606,7 +606,7 @@
   "stored": {
    "provenance": {
     "mode": "shards",
-    "checkpoint": "/home/josh/projects/chess/data/ruler_reads_20260808/trainer.pt",
+    "checkpoint": "data/ruler_reads_20260808/trainer.pt",
     "seed": 20260809,
     "shuffle": "none",
     "taus_cp": [
@@ -637,7 +637,7 @@
      "diff_focus_keep_prob_mean": 0.8003536143674149,
      "training_iteration": 709.0
     },
-    "replay_dir": "/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rarecov/pinned",
+    "replay_dir": "scratchpad/rarecov/pinned",
     "newest_shard": "shard_003994.zarr",
     "newest_shard_mtime": 1786311134.9280553,
     "read_stats": {
@@ -2586,7 +2586,7 @@
   "A": {
    "provenance": {
     "mode": "research",
-    "checkpoint": "/home/josh/projects/chess/data/ruler_reads_20260808/trainer.pt",
+    "checkpoint": "data/ruler_reads_20260808/trainer.pt",
     "seed": 20260809,
     "shuffle": "none",
     "taus_cp": [
@@ -2617,7 +2617,7 @@
      "diff_focus_keep_prob_mean": 0.8003536143674149,
      "training_iteration": 709.0
     },
-    "replay_dir": "/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rarecov/pinned",
+    "replay_dir": "scratchpad/rarecov/pinned",
     "newest_shard": "shard_003994.zarr",
     "newest_shard_mtime": 1786311134.9280553,
     "shape": {
@@ -4586,7 +4586,7 @@
   "B": {
    "provenance": {
     "mode": "research",
-    "checkpoint": "/home/josh/projects/chess/data/ruler_reads_20260808/trainer.pt",
+    "checkpoint": "data/ruler_reads_20260808/trainer.pt",
     "seed": 20260809,
     "shuffle": "none",
     "taus_cp": [
@@ -4617,7 +4617,7 @@
      "diff_focus_keep_prob_mean": 0.7938573849547108,
      "training_iteration": 710.0
     },
-    "replay_dir": "/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rarecov/pinned",
+    "replay_dir": "scratchpad/rarecov/pinned",
     "newest_shard": "shard_003994.zarr",
     "newest_shard_mtime": 1786311134.9280553,
     "shape": {
@@ -6586,7 +6586,7 @@
   "D": {
    "provenance": {
     "mode": "research",
-    "checkpoint": "/home/josh/projects/chess/data/ruler_reads_20260808/trainer.pt",
+    "checkpoint": "data/ruler_reads_20260808/trainer.pt",
     "seed": 20260809,
     "shuffle": "none",
     "taus_cp": [
@@ -6617,7 +6617,7 @@
      "diff_focus_keep_prob_mean": 0.7938573849547108,
      "training_iteration": 710.0
     },
-    "replay_dir": "/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rarecov/pinned",
+    "replay_dir": "scratchpad/rarecov/pinned",
     "newest_shard": "shard_003994.zarr",
     "newest_shard_mtime": 1786311134.9280553,
     "shape": {
@@ -8586,7 +8586,7 @@
   "E": {
    "provenance": {
     "mode": "research",
-    "checkpoint": "/home/josh/projects/chess/data/ruler_reads_20260808/trainer.pt",
+    "checkpoint": "data/ruler_reads_20260808/trainer.pt",
     "seed": 20260809,
     "shuffle": "none",
     "taus_cp": [
@@ -8617,7 +8617,7 @@
      "diff_focus_keep_prob_mean": 0.7938573849547108,
      "training_iteration": 710.0
     },
-    "replay_dir": "/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rarecov/pinned",
+    "replay_dir": "scratchpad/rarecov/pinned",
     "newest_shard": "shard_003994.zarr",
     "newest_shard_mtime": 1786311134.9280553,
     "shape": {

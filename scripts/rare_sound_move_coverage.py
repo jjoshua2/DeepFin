@@ -2,18 +2,44 @@
 """Rare-sound-move coverage: does the training target give mass to sound moves
 the network's own prior neglects?
 
-WHY THIS EXISTS. The 2026-08-09 pre-registration bundles two knobs of the SAME
+⚑⚑⚑ READ THIS FIRST: THERE IS NO ATTRIBUTION RULE HERE, AND NO CELL OF THIS
+SCRIPT MAY BE PINNED AS A DECISION RULE. This file was built to separate a
+bundled ``gumbel_c_scale`` + ``gumbel_policy_temp`` change into per-knob
+contributions. **IT CANNOT, AND THAT CLAIM IS RETRACTED** -- from this
+docstring, from the PR body, and from the ledger (Amendment 10). The four
+measurements that killed it are below under "WHY THE ATTRIBUTION DIED"; the
+retraction is stated here, at the top, rather than after fifty lines that
+presuppose it, because a reader who stops early must not leave with the
+withdrawn claim.
+
+⚑⚑ AND THE CELL THE LEDGER ONCE PINNED IS UNSAFE. At ``rho = 0.01``,
+``phi = 1e-2`` this metric's OWN negative control INVERTS -- shuffling the
+target RAISES coverage -- so at that cell sound-and-rare moves clear the floor
+LESS often than a random legal move in the same position. **Do not restart onto
+it and do not read a delta from it.** It was missed the first time because the
+control was only ever evaluated at ``phi = 1e-3`` and assumed for the rest;
+``attach_controls`` now fills a null and an interval for EVERY cell of the
+swept grid, ``print_cells`` cannot emit a cell without them, and
+``test_the_control_is_attached_to_every_cell_of_the_grid`` pins that.
+
+WHAT IT IS FOR, THEN. Reporting coverage on a stated population with its own
+null, its own interval, and its own bias printed beside every number -- so that
+a future claim about the target's support can be judged.
+
+WHY IT WAS BUILT. The 2026-08-09 pre-registration bundles two knobs of the SAME
 improved-policy expression, ``softmax(log_prior/T + sigma*Qbar)`` with
 ``sigma = c_scale*(c_visit + max_visit)``:
 
   * ``gumbel_c_scale``   0.025 -> 0.1   (scales sigma)
   * ``gumbel_policy_temp`` 1.0 -> 1.5   (divides the prior logits)
 
-The bundle is only attributable post-hoc if some statistic separates them. The
-two the prereg already uses do not: ``KL(target||prior)`` rises under BOTH, and
-``H(target)`` moves in opposite directions, so a flat entropy readout cannot
-distinguish "neither knob fired" from "both fired and cancelled". This script
-supplies a third axis, chosen because its MECHANISM keys off T alone.
+The bundle would only be attributable post-hoc if some statistic separated
+them. The two the prereg already uses do not: ``KL(target||prior)`` rises under
+BOTH, and ``H(target)`` moves in opposite directions, so a flat entropy readout
+cannot distinguish "neither knob fired" from "both fired and cancelled". This
+script was written as a third axis on the theory that its MECHANISM keys off T
+alone. ⚑ **That theory is the retracted one** -- see below; ``c_scale`` reaches
+every entry of the target, so no mass floor is sigma-invariant.
 
 WHAT IT MEASURES. Over rows where Stockfish scored the position:
 
@@ -68,7 +94,8 @@ at 256 sims / topk 32 / gumbel_scale 0.5, position-paired, tau=25cp, rho=0.01;
 SD the wrong way and its ``c_scale`` term is POSITIVE, so a rise there is
 produced by either knob and attributes to neither.
 
-⚑⚑⚑ THERE IS NO ATTRIBUTION RULE. THIS IS AN INSTRUMENT, NOT A VERDICT.
+⚑⚑⚑ WHY THE ATTRIBUTION DIED (the retraction announced at the top of this
+docstring, with its four measurements).
 
 An earlier revision of this file recommended a ONE-SIDED rule at
 ``tau=50, rho=0.05, phi=2e-2``: ``c_scale`` lowers coverage there (-0.0593)
@@ -233,10 +260,10 @@ Usage::
 
     # recompute the retracted headline from the artifact
     PYTHONPATH=. python3 scripts/rare_sound_move_coverage.py \\
-        --scan-bank data/rare_sound_move_coverage/live_arms_20260809.json
+        --scan-bank tests/data/rare_sound_move_coverage/live_arms_20260809.json
 
 Banked evidence for the 600-row arm table above:
-``data/rare_sound_move_coverage/live_arms_20260809.json``. ⚑ It predates the
+``tests/data/rare_sound_move_coverage/live_arms_20260809.json``. ⚑ It predates the
 control interval and the bias column, so its cells carry NO resolution;
 ``--scan-bank`` reports 0 interval-based passes over it for that reason.
 """
@@ -1393,16 +1420,26 @@ class SimShape:
 # therefore nothing in the data to read production's search shape off, and the
 # fidelity gate needs it to know whether a run is the CALIBRATION or an ARM.
 #
-# ⚑ SOURCED FROM THE **LIVE** YAML, WHICH IS NOT THIS REPO'S YAML. Read
-# 2026-08-09 off `/home/josh/projects/chess/configs/pbt2_small.yaml` on the
-# running branch: `gumbel_c_scale 0.025`, `gumbel_topk 32`,
-# `gumbel_scale_after 0.5`, `mcts_simulations 256`, and no `gumbel_policy_temp`
-# key at all, i.e. 1.0. The in-repo `configs/pbt2_small.yaml` says
+# ⚑ SOURCED FROM THE **LIVE** YAML, WHICH IS NOT THIS REPO'S YAML, AND IT IS A
+# DATED SNAPSHOT, NOT A LIVE READING. Read on **2026-08-09** off the running
+# branch's `configs/pbt2_small.yaml`: `gumbel_c_scale 0.025`, `gumbel_topk 32`,
+# `gumbel_scale_after 0.5`, `mcts_simulations 256`, `gumbel_policy_temp` at its
+# no-op 1.0. The in-repo `configs/pbt2_small.yaml` said
 # `gumbel_topk 16 / gumbel_c_scale 0.1 / gumbel_scale_after 0.0` -- the live
-# yaml and main have diverged (608 of 968 keys), so a test that pinned this
+# yaml and main had diverged (608 of 968 keys), so a test that pinned this
 # constant to the in-repo config would pin it to a search NOBODY IS RUNNING.
 # `gumbel_scale` is the DECAYED 0.5, not the 1.0 opening value, because 88.9%
 # of stored policy rows are at ply >= 30.
+#
+# ⚑⚑ IT HAS ALREADY MOVED. The search-authority bundle shipped
+# `gumbel_c_scale` 0.025 -> 0.1 and `gumbel_policy_temp` 1.0 -> 1.5 on the live
+# branch within a day of this constant being written, so as of 2026-08-10 this
+# is the shape of the shards banked in `tests/data/`, NOT the shape production
+# is writing today. Nothing here auto-detects that, by design (see below);
+# what it means in practice is that a run against TODAY's shards must pass
+# `--production-shape 0.1,1.5,32,0.5,256`, and a run left on this constant will
+# ABORT at the fidelity gate rather than mis-tier. Both behaviours are what you
+# want; neither is "it still works".
 #
 # ⚑ NOTHING IN-BAND CAN CATCH THIS GOING STALE, and that is a limitation, not
 # an oversight: the shards record no shape (see `assert_same_producing_net`).
@@ -2100,6 +2137,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.mode or not args.checkpoint:
         raise SystemExit("--mode and --checkpoint are required unless --scan-bank")
+    # ⚑ A SHUFFLED RUN IS A NULL, NOT AN ARM, and it may not be differenced
+    # against anything. `stored_rows` and any `--compare-to` bank are NOT
+    # shuffled, so `stored - re-searched` would price the PERMUTATION and print
+    # it under the heading "PURE HARNESS ERROR", and a paired delta would price
+    # the permutation and call it a knob effect. Refused up front, before any
+    # shard is read, rather than annotated: a mislabelled number in a banked
+    # table outlives the caveat that qualified it.
+    if args.shuffle != "none" and (
+        args.compare_to is not None or args.calibration is not None
+    ):
+        raise SystemExit(
+            f"--shuffle {args.shuffle} cannot be combined with --compare-to/"
+            "--calibration: the other arm is NOT shuffled, so the difference "
+            "would measure the permutation and be reported as a knob effect. "
+            "Run the shuffled arm on its own -- its purpose is the per-cell "
+            "control column, which is computed for it like any other run."
+        )
     taus = _parse_floats(args.taus)
     rhos = _parse_floats(args.rhos)
     phis = _parse_floats(args.phis)
@@ -2260,6 +2314,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.shuffle != "none":
         rows = shuffled_rows(rows, what=args.shuffle, seed=args.seed + 1)
+        if stored_rows is not None:
+            print(
+                f"[shuffle] {args.shuffle} is ON, so the harness-bias table is "
+                "SUPPRESSED: `stored` is not shuffled and the difference would "
+                "be the permutation, not harness error"
+            )
+            stored_rows = None
         title += f"  [SHUFFLE {args.shuffle}]"
 
     cells = coverage_cells(rows, taus_cp=taus, rhos=rhos, phis=phis)

@@ -21,6 +21,15 @@ import numpy as np
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "rare_sound_move_coverage.py"
+# ⚑ TRACKED TEST FIXTURES, and they live under `tests/data/` for a reason.
+# They were originally committed to `data/rare_sound_move_coverage/`, which
+# `.gitignore` excludes wholesale (`/data/`) as runtime output -- so they had
+# to be force-added, and they sat in a directory the repo treats as
+# uncommittable. Anything a test READS is a fixture, not runtime output.
+# The local absolute paths their provenance carried (`/home/josh/...`, a
+# `/tmp/claude-1000/<session-id>/...` scratchpad) were scrubbed to repo-relative
+# form before landing: this repository is PUBLIC.
+_BANK_DIR = Path(__file__).resolve().parent / "data" / "rare_sound_move_coverage"
 _PRESENCE_KEYS = ("x", "legal_mask", "policy_target", "sf_p0_regret")
 
 
@@ -886,10 +895,7 @@ def test_scan_bank_reproduces_the_banked_headline() -> None:
     the command. `corr = +0.785` between the two selection criteria is why the
     2 survivors were never a regime: the criteria are one variable.
     """
-    bank = (
-        Path(__file__).resolve().parents[1]
-        / "data" / "rare_sound_move_coverage" / "live_arms_20260809.json"
-    )
+    bank = _BANK_DIR / "live_arms_20260809.json"
     scan = rsmc.scan_bank(
         bank, ref_arm="A", c_arm="B", t_arm="D", quiet_ratio=0.25, min_pairs=50,
     )
@@ -929,10 +935,7 @@ def test_load_row_keys_refuses_a_dump_with_no_keys(tmp_path: Path) -> None:
 
 
 def test_the_banked_arms_carry_reproducible_row_keys() -> None:
-    bank = (
-        Path(__file__).resolve().parents[1]
-        / "data" / "rare_sound_move_coverage" / "live_arms_20260809.json"
-    )
+    bank = _BANK_DIR / "live_arms_20260809.json"
     keys = rsmc.load_row_keys(bank)
     assert len(keys) == 600
     assert len(set(keys)) == 600
@@ -944,7 +947,6 @@ def test_the_banked_arms_carry_reproducible_row_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-_BANK_DIR = Path(__file__).resolve().parents[1] / "data" / "rare_sound_move_coverage"
 
 
 def test_the_banked_calibration_recomputes_from_its_own_per_row() -> None:
@@ -1038,3 +1040,110 @@ def test_the_retracted_survivor_cell_is_null_under_the_shipped_verdict() -> None
     assert scan.corr_margin_ratio > 0.7, (
         "the two selection criteria remain one variable on a fresh window"
     )
+
+
+# ---------------------------------------------------------------------------
+# The hole that produced the inverted pin
+# ---------------------------------------------------------------------------
+
+
+# No return annotation, matching `_row` above: `rsmc` is loaded from a path at
+# import time, so `rsmc.RowVectors` is not a resolvable type expression.
+def _graded_rows(n: int = 240, n_legal: int = 28):
+    """Rows whose target funds sound moves, so coverage has real signal."""
+    rng = np.random.default_rng(20260810)
+    rows = []
+    for i in range(n):
+        prior = rng.dirichlet(np.full(n_legal, 0.35))
+        regret = np.abs(rng.normal(0.0, 60.0, n_legal))
+        regret[int(rng.integers(0, n_legal))] = 0.0
+        target = np.exp(-regret / 50.0) * rng.random(n_legal)
+        rows.append(rsmc.RowVectors(
+            prior=prior, target=target / target.sum(), regret_cp=regret,
+            scored=rng.random(n_legal) < 0.9, key=f"k{i}",
+        ))
+    return rows
+
+
+def test_the_control_is_attached_to_every_cell_of_the_grid() -> None:
+    """⚑ THE HOLE THAT PRODUCED THE UNSAFE PIN, CLOSED AS A TEST.
+
+    The `phi = 1e-2` cell was pinned as a PASS while its own control INVERTED,
+    because the control had only ever been evaluated at `phi = 1e-3` and assumed
+    to hold across the sweep. It does not: the association inverts as the mass
+    floor rises. So the invariant is not "a control exists somewhere" but "every
+    cell that gets printed carries its OWN null and its OWN interval", and a
+    cell that has neither can never read PASS.
+    """
+    rows = _graded_rows()
+    taus, rhos = (25.0, 50.0), (0.01, 0.05)
+    phis = (1e-4, 1e-3, 3e-3, 1e-2, 2e-2)
+    cells = rsmc.coverage_cells(rows, taus_cp=taus, rhos=rhos, phis=phis)
+    assert len(cells) == len(taus) * len(rhos) * len(phis)
+
+    rsmc.attach_controls(rows, cells, seeds=8, seed0=5, resamples=250)
+    for cell in cells:
+        where = f"tau={cell.tau_cp} rho={cell.rho} phi={cell.phi}"
+        assert cell.control_seeds > 0, f"{where} was printed with NO null"
+        assert math.isfinite(cell.shuffled_mean), f"{where} has no shuffled mean"
+        assert math.isfinite(cell.margin_ci_lo), f"{where} has no control interval"
+        assert math.isfinite(cell.margin_ci_hi), f"{where} has no control interval"
+        assert cell.verdict() not in ("no-ctrl", "no-res"), where
+
+    # Every phi in the sweep is represented, so a control read at one floor can
+    # never stand in for another.
+    assert {c.phi for c in cells} == set(phis)
+
+
+def test_a_cell_never_reads_pass_without_its_own_resolved_control() -> None:
+    """A cell with no interval is `no-res`, and `no-res` is not a PASS.
+
+    Complements the test above: the grid-wide attachment is only protective if
+    an unattached cell is also unusable.
+    """
+    rows = _graded_rows(n=120)
+    cells = rsmc.coverage_cells(rows, taus_cp=(50.0,), rhos=(0.05,),
+                                phis=(1e-4, 1e-3, 1e-2))
+    rsmc.attach_controls(rows, cells, seeds=8, seed0=5, resamples=0)
+    for cell in cells:
+        assert not math.isfinite(cell.margin_ci_lo)
+        assert cell.verdict() == "no-res"
+        assert not cell.passes_control()
+
+
+def test_shuffle_refuses_to_be_differenced_against_an_unshuffled_arm(
+    tmp_path: Path,
+) -> None:
+    """⚑ A shuffled run is a NULL, not an arm.
+
+    `--shuffle` replaced `rows` but left `stored_rows` and any `--compare-to`
+    bank unshuffled, so the harness-bias table -- printed under the heading
+    "PURE HARNESS ERROR" -- would have priced the PERMUTATION, and a paired
+    delta would have priced it and called it a knob effect. Refused now, because
+    a mislabelled number in a banked table outlives the caveat beside it.
+    """
+    bank = tmp_path / "arm_a.json"
+    bank.write_text(json.dumps({"provenance": {"checkpoint": "c.pt"}, "per_row": []}),
+                    encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        rsmc.main([
+            "--mode", "shards", "--checkpoint", "c.pt",
+            "--replay-dir", str(tmp_path), "--shuffle", "target",
+            "--compare-to", str(bank),
+        ])
+    assert "--shuffle" in str(exc.value)
+    assert "permutation" in str(exc.value)
+
+
+def test_the_unsafe_pinned_cell_is_named_as_unsafe_in_the_docstring() -> None:
+    """The `rho=0.01, phi=1e-2` inversion must be stated where it is read.
+
+    It is a production-safety item, not a style point: the ledger pinned that
+    cell once already. Asserted against the module docstring so a rewrite that
+    drops the warning fails here.
+    """
+    doc = rsmc.__doc__ or ""
+    head = doc[:2000]
+    assert "RETRACTED" in head, "the retraction must precede the claim it retracts"
+    assert "UNSAFE" in head
+    assert "INVERT" in head.upper()
