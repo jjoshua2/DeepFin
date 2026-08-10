@@ -30,7 +30,7 @@ PRE_BUNDLE = {
     "diff_focus_priority_mean": 0.8937,
     "replay_priority_mean": 1.0979,
     "grad_hard_clip_rate": 0.0,
-    "diff_focus_records": 40_000,
+    "diff_focus_records": 11_872,   # measured median over trial 379f6
     "replay_priority_n": 11_300,
     "grad_norm_samples": 88,
 }
@@ -94,11 +94,43 @@ def test_post_bundle_iterations_alarm_within_four_iterations(
             # letting a stale pre-bundle value mask a breach.
             diff_focus_priority_mean=priority * 0.894 / 1.0979,
         ),
-        **STEADY,
+        enabled=True,
+        # The bundle arrived on a RESTART, so the trial counter is `offset`.
+        # Passing the real value makes a future WARMUP_ITERATIONS increase turn
+        # this test red instead of silently delaying detection.
+        trial_iterations_completed=offset,
+        report_iteration=736 + offset,
     )
     if offset >= 3:
         assert out[ALARM_KEY] == 1, f"iter {736 + offset} slipped through"
     # The first three are the ramp; only require that by iter 739 it is caught.
+
+
+# Iteration 5 of this same trial, verbatim: the HEALTHIEST-era extreme, from a
+# full-length iteration (12165 records) while the run was gaining Elo. It is the
+# high-water mark of a 700-iteration downward drift in keep_rate, so the 560-735
+# calibration window is that drift's BOTTOM, not its centre. Pinned so that
+# tightening a band back onto the calibration window fails the suite.
+EARLY_HEALTHY = {
+    "diff_focus_keep_rate": 0.8732,
+    "diff_focus_keep_limited_frac": 0.2630,
+    "diff_focus_priority_mean": 1.1174,
+    "replay_priority_mean": 1.2605,
+    "grad_hard_clip_rate": 0.0,
+    "diff_focus_records": 12_165,
+    "replay_priority_n": 11_300,
+    "grad_norm_samples": 88,
+}
+
+
+def test_early_healthy_iteration_does_not_alarm() -> None:
+    """A cold-buffer iteration from the run's best era must read clean.
+
+    The post-revert restart begins exactly such an era, so this is the likely
+    next operational state, not a hypothetical.
+    """
+    out = evaluate_diff_focus_regime(dict(EARLY_HEALTHY), **STEADY)
+    assert out[ALARM_KEY] == 0, out[ALARM_DETAIL_KEY]
 
 
 def test_alarm_names_the_metric_and_uses_no_commas() -> None:
@@ -184,19 +216,29 @@ def test_guard_reads_keys_the_report_actually_emits() -> None:
     This is the wiring half: a band on a key nobody emits is silent forever,
     which is the failure this whole module exists to stop.
     """
+    import ast
     import inspect
+    import textwrap
 
     from chess_anti_engine.tune import trainable_report
 
-    # Read the EMITTER's source, not a list of names retyped here: a hand-kept
-    # copy of the key names would keep passing after a rename, which is the
-    # "presence check that is not a value read" this repo keeps re-learning.
-    emitted = inspect.getsource(trainable_report._build_report_dict) + inspect.getsource(
-        trainable_report._train_metrics_dict,
-    )
+    # Parse the EMITTER and collect the string keys of its dict literals. A
+    # substring search over the source text passes when the old name survives
+    # only in a rename COMMENT -- verified: that mutation left the suite green,
+    # and this file is in a repo whose comment density makes it likely.
+    emitted: set[str] = set()
+    for fn in (trainable_report._build_report_dict, trainable_report._train_metrics_dict):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Dict):
+                emitted.update(
+                    k.value for k in node.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                )
+    assert len(emitted) > 100, f"AST walk found only {len(emitted)} keys; parse broke"
     for key, (_low, _high, denom_key, _min) in REGIME_BANDS.items():
-        assert f'"{key}"' in emitted, f"{key} is not emitted by trainable_report"
-        assert f'"{denom_key}"' in emitted, f"{denom_key} is not emitted"
+        assert key in emitted, f"{key} is not emitted by trainable_report"
+        assert denom_key in emitted, f"{denom_key} is not emitted"
 
 
 def test_guard_is_wired_into_the_reported_row() -> None:

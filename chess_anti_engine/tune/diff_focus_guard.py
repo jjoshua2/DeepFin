@@ -54,7 +54,12 @@ ALARM_DETAIL_KEY: Final = "diff_focus_regime_alarm_metrics"
 WARMUP_ITERATIONS: Final = 3
 
 # Below this many worker-side records an iteration is not a usable read (a
-# short iteration, a drained pool, a paused fleet). Steady state is ~40k.
+# short iteration, a drained pool, a paused fleet). Measured over all 862
+# iterations of trial 379f6: min 5,479, median 11,872, max 15,134 -- so this
+# floor excludes only genuinely truncated iterations. It is deliberately BELOW
+# the observed minimum: every low-record iteration in that run (5.5k-7.9k) read
+# `keep_rate` ABOVE the 560-735 range, so a floor set at the median would
+# exclude exactly the population nearest the upper band edge and hide it.
 MIN_DIFF_FOCUS_RECORDS: Final = 2_000
 
 # Below this many optimizer steps the gradient-side rate is not a usable read.
@@ -67,8 +72,8 @@ MIN_GRAD_NORM_SAMPLES: Final = 20
 # checked against iters 736-745 (the first ten iterations after the bundle):
 #
 #   metric                        pre-bundle mean +/- sd   736-745      band
-#   diff_focus_keep_rate          0.8029 +/- 0.0063        -> 0.936     0.55-0.88
-#   diff_focus_keep_limited_frac  0.3737 +/- 0.0085        -> 0.146     0.22-0.60
+#   diff_focus_keep_rate          0.8029 +/- 0.0063        -> 0.936     0.55-0.90
+#   diff_focus_keep_limited_frac  0.3737 +/- 0.0085        -> 0.146     0.18-0.60
 #   diff_focus_priority_mean      0.8937 (600-735 window)  -> 3.06      0.40-1.90
 #   replay_priority_mean          1.0979 +/- 0.0195        -> 3.94      0.45-2.20
 #   grad_hard_clip_rate           0.0000 +/- 0.0000        -> 0.0       0.00-0.30
@@ -80,13 +85,35 @@ MIN_GRAD_NORM_SAMPLES: Final = 20
 # detector, and NOT as the damage mechanism: direction-only descent was already
 # refuted as a generalization factor (task #112), so a high clip rate is the
 # airbag reporting that it fired.
+#
+# ⚑ ``diff_focus_priority_mean`` and ``replay_priority_mean`` are CONFIG-SCALED:
+# they scale with ``q_weight``/``pol_scale``, so their bands must be re-derived
+# whenever a diff-focus weight changes -- the same criticism this module levels
+# at ``replay_pmass_kl_share``. Only ``keep_rate`` and ``keep_limited_frac`` are
+# invariant to the weights, and they are the arms to trust after a
+# recalibration. The four difficulty-derived arms are also ONE signal, not four
+# confirmations: expect an alarm detail to name three or four of them at once.
+# ⚑ The upper bound is 0.90, NOT the 0.88 a naive fit to iters 560-735 suggests.
+# That window is the BOTTOM of a 700-iteration monotone drift, not its centre:
+# iters 1-50 ran keep_rate mean 0.8434 / max 0.8732 while healthy and gaining,
+# and 0.88 leaves that peak only 1.1 steady-state sd of headroom. The planned
+# post-revert restart begins a fresh cold-buffer era exactly like iters 1-8, so
+# that is the likely next state, not a hypothetical. Widening to 0.90 costs
+# NOTHING in detection: the 2026-08-09 incident's first armed iteration is 739
+# at 0.9216 either way. `test_early_healthy_iteration_does_not_alarm` pins the
+# real iteration-5 row so a future tightening fails the suite.
 REGIME_BANDS: Final[dict[str, tuple[float | None, float | None, str, int]]] = {
-    "diff_focus_keep_rate": (0.55, 0.88, "diff_focus_records", MIN_DIFF_FOCUS_RECORDS),
+    "diff_focus_keep_rate": (0.55, 0.90, "diff_focus_records", MIN_DIFF_FOCUS_RECORDS),
+    # Lower bound 0.18, not the 0.22 a fit to 560-735 gives: the healthy minimum
+    # over iters 1-735 is 0.2630 (same early-era drift as keep_rate above).
+    # 0.18 still fires on the incident, which reached 0.1813 by iter 739.
     "diff_focus_keep_limited_frac": (
-        0.22, 0.60, "diff_focus_records", MIN_DIFF_FOCUS_RECORDS,
+        0.18, 0.60, "diff_focus_records", MIN_DIFF_FOCUS_RECORDS,
     ),
     "diff_focus_priority_mean": (0.40, 1.90, "diff_focus_records", MIN_DIFF_FOCUS_RECORDS),
-    "replay_priority_mean": (0.45, 2.20, "replay_priority_n", 1),
+    # Same floor as the worker-side arms: a denominator rule that lets ONE
+    # ingested row arm a band contradicts the reason the denominators exist.
+    "replay_priority_mean": (0.45, 2.20, "replay_priority_n", MIN_DIFF_FOCUS_RECORDS),
     "grad_hard_clip_rate": (None, 0.30, "grad_norm_samples", MIN_GRAD_NORM_SAMPLES),
 }
 

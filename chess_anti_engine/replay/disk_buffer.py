@@ -934,6 +934,11 @@ class DiskReplayBuffer:
             "replay_pmass_qd_raw_mean": (
                 pm["qd_raw"] / pm["qd_rows"] if pm["qd_rows"] > 0 else 0.0
             ),
+            # Its own denominator, emitted for the same reason the kl one is: a
+            # mean of 0.0 must be distinguishable from "no rows carried the
+            # column". Accumulating a count and then not reporting it would be
+            # this repo's signature defect inside the telemetry meant to catch it.
+            "replay_pmass_qd_raw_rows": pm["qd_rows"],
             "replay_fast_demoted_frac": pm["rows_fast_demoted"] / n_fast if n_fast > 0 else 0.0,
         }
 
