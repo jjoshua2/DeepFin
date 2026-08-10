@@ -208,6 +208,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             gumbel_policy_temp=tc.gumbel_policy_temp,
             gumbel_target_batch=tc.gumbel_target_batch,
             gumbel_vloss_weight=tc.gumbel_vloss_weight,
+            gumbel_target_max_visit_cap=tc.gumbel_target_max_visit_cap,
             gumbel_c_scale=tc.gumbel_c_scale,
             gumbel_scale=tc.gumbel_scale,
             gumbel_scale_after=tc.gumbel_scale_after,

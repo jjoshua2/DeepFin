@@ -537,6 +537,13 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
         "gumbel_topk",
         "gumbel_policy_temp",
         "gumbel_c_scale",
+        # TARGET-side only. It changes the STORED improved policy and leaves the
+        # played move on the uncapped sigma, so an arena -- which plays games and
+        # stores no training rows -- cannot observe it. It is carried into the
+        # arena's training shape anyway (below), because "provably inert here"
+        # must be re-proved by the `live_and_unpinned` clause rather than
+        # asserted once in a comment.
+        "gumbel_target_max_visit_cap",
         "volatility_q_scale",
         "volatility_fpu",
         "volatility_anchor",

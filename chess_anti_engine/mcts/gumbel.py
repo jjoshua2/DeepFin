@@ -234,6 +234,32 @@ class GumbelConfig:
     # c_scale (to enable sublinear q_visit_exp) without inflating the early-round
     # floor that over-trusts noisy Q at high sims. C path only; < 0 = legacy.
     q_visit_floor: float = -1.0
+    # ── sigma does two jobs with one number; this splits them ──────────────
+    # The improved policy softmax(log_prior + sigma*Qbar) is used for TWO
+    # different purposes that want DIFFERENT sigmas:
+    #   PLAY   -- the move actually made. Wants the strength-optimal sigma; the
+    #             c_scale sweep put that near 0.2 for this net.
+    #   TARGET -- the row stored for training. Wants a SMALLER sigma, because a
+    #             move the target never puts mass on is a move the next
+    #             generation's prior stops proposing, so search never revisits
+    #             it. Sharpening the target is not free the way sharpening play
+    #             is: play errors cost one game, target errors are absorbed.
+    # ⇒ the strength-optimal sigma is an UPPER BOUND on the training-optimal
+    # sigma, and running one number for both pins the target to that bound.
+    #
+    # This knob expresses the split the way the operator thinks about it --
+    # "search deep, but only TRUST the result as much as a shallow search" --
+    # by clamping the max_visit that feeds sigma for the STORED target only:
+    #     sigma_target = c_scale * (c_visit + min(max_visit, cap))
+    # Sims-invariant by construction: raise `mcts_simulations` later and the
+    # target's trust stays put, which a bare c_scale override cannot do.
+    #
+    # 0 = OFF and bit-identical (one sigma, current behaviour). The played move
+    # is NEVER affected: sequential halving keeps the uncapped sigma, and so
+    # does the temperature sample. That also means an arena is structurally
+    # blind to this knob -- the only yardsticks are target quality against the
+    # deep-SF ruler and, downstream, a training run.
+    target_max_visit_cap: int = 0
     # Sequential-halving divisor: each round keeps ceil(n_cands/halving_div).
     # 2 = standard halving (keep top half; default). 3/4 = more aggressive
     # elimination (fewer rounds, visits concentrate on survivors sooner).
@@ -522,12 +548,18 @@ def _completed_q_transform(
     sigma_factor: float = 1.0,
     fpu_penalty: float = 0.0,
     root: bool = False,
+    max_visit_cap: int = 0,
 ) -> np.ndarray:
     """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores.
 
     ``sigma_factor`` scales the sigma(q) constant (volatility_q_scale) and
     ``fpu_penalty`` is subtracted from the unvisited-children mix value
     (volatility_fpu). Both default to the exact legacy behavior.
+
+    ``max_visit_cap`` > 0 clamps the ``max_visit`` that feeds sigma(q), i.e. it
+    computes the transform as if the search had run a SMALLER budget. Used only
+    by the stored-target arm of the improved policy (see
+    ``GumbelConfig.target_max_visit_cap``); 0 = no clamp = legacy.
     """
     actions_arr = np.asarray(actions, dtype=np.int64)
     visits_f = np.asarray(visits, dtype=np.float64)
@@ -551,6 +583,8 @@ def _completed_q_transform(
     max_q = float(completed.max())
     completed = (completed - min_q) / max(max_q - min_q, float(epsilon))
     max_visit = int(visits_f.max(initial=0.0))
+    if max_visit_cap > 0 and max_visit > max_visit_cap:
+        max_visit = int(max_visit_cap)
     scale = (
         _root_sigma_scale(max_visit=max_visit, cfg=cfg)
         if root
@@ -988,20 +1022,42 @@ def _build_improved_policy_for_board(
         n = 0 if ch is None else int(ch.N)
         visits[i] = float(n)
         qvalues[i] = (-ch.W / n) if (ch is not None and n > 0) else float(root_q)
-    logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _completed_q_transform(
+    log_prior = np.log(np.maximum(pri[legal], 1e-12))
+    sigma_factor = _volatility_sigma_factor(root.vol, cfg)
+    fpu_penalty = _volatility_fpu_penalty(root.vol, cfg)
+
+  # imp_all drives the PLAYED move (the temperature sample); imp_store is what
+  # is written to the shard. They are the SAME object unless the target sigma
+  # is decoupled, so the off path computes exactly once, as before.
+  # Kept parallel to the C path's copy in gumbel_c.py -- change both together.
+    imp_all = _softmax(log_prior + _completed_q_transform(
         actions=legal,
         priors=pri[legal],
         visits=visits,
         qvalues=qvalues,
         raw_value=float(root_q),
         cfg=cfg,
-        sigma_factor=_volatility_sigma_factor(root.vol, cfg),
-        fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
+        sigma_factor=sigma_factor,
+        fpu_penalty=fpu_penalty,
         root=True,
+    ))
+    target_cap = int(cfg.target_max_visit_cap)
+    imp_store = imp_all if target_cap <= 0 else _softmax(
+        log_prior + _completed_q_transform(
+            actions=legal,
+            priors=pri[legal],
+            visits=visits,
+            qvalues=qvalues,
+            raw_value=float(root_q),
+            cfg=cfg,
+            sigma_factor=sigma_factor,
+            fpu_penalty=fpu_penalty,
+            root=True,
+            max_visit_cap=target_cap,
+        ),
     )
-    imp_all = _softmax(logits_imp)
     probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
-    probs[legal] = imp_all.astype(np.float32)
+    probs[legal] = imp_store.astype(np.float32)
 
     best_a = int(remaining[0])
   # Gumbel sequential halving leaves the survivor at remaining[0]; map

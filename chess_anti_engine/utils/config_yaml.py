@@ -130,6 +130,7 @@ _SELFPLAY_KEYS = (
     "playout_cap_fraction", "full_ply_pair_fraction", "fast_simulations",
     "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_policy_temp",
     "gumbel_target_batch", "gumbel_vloss_weight",
+    "gumbel_target_max_visit_cap",
     "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
     "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
     "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
@@ -494,7 +495,59 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     flat = {k: v for k, v in out.items() if v is not None}
     _check_sparse_sf_policy_flags(flat)
     _check_volatility_search_unsupported(flat)
+    _check_target_sigma_cap_requires_zero_temperature(flat)
     return flat
+
+
+# Every selfplay knob that can make a ply's move temperature positive. Listed
+# rather than pattern-matched on "temperature" so that adding a new schedule key
+# forces a decision here instead of quietly widening the hole.
+_MOVE_TEMPERATURE_KEYS = (
+    "temperature",
+    "temperature_after",
+    "temperature_endgame",
+    "selfplay_temperature",
+    "selfplay_temperature_endgame",
+)
+
+
+def _check_target_sigma_cap_requires_zero_temperature(flat: dict[str, Any]) -> None:
+    """``gumbel_target_max_visit_cap`` is only ISOLATED at temperature 0.
+
+    The cap softens the improved policy that gets STORED, and leaves the played
+    move on the uncapped sigma -- but only because the played move is the
+    sequential-halving survivor. At a POSITIVE move temperature,
+    ``selfplay/network_turn.py:_resample_actions_with_temperature`` re-draws the
+    move from the RETURNED policy, which is the capped one, so the knob would
+    silently start changing play as well as the target.
+
+    That would be worse than a bug: every strength readout taken while the cap
+    was on would be measuring a search change attributed to a target change.
+    Production runs all of these at 0.0 today, so this refuses a combination
+    nobody is running rather than breaking one somebody is.
+
+    A hard error, not a clamp, for the same reason as the volatility check: a
+    clamp re-creates the accepted-and-silently-ignored shape. If the pairing is
+    ever genuinely wanted, the fix is to return the play policy and the target
+    policy separately from the search -- not to relax this.
+    """
+    if int(flat.get("gumbel_target_max_visit_cap", 0) or 0) <= 0:
+        return
+    hot = sorted(
+        k for k in _MOVE_TEMPERATURE_KEYS if float(flat.get(k, 0.0) or 0.0) > 0.0
+    )
+    if not hot:
+        return
+    raise ValueError(
+        f"gumbel_target_max_visit_cap is set together with a positive move "
+        f"temperature ({hot}). The cap is a TARGET-only knob only while the "
+        f"played move is the halving survivor; at temperature > 0 the move is "
+        f"re-drawn from the stored (capped) policy in "
+        f"selfplay/network_turn.py:_resample_actions_with_temperature, so the "
+        f"knob would change PLAY too and no strength readout taken with it on "
+        f"would be interpretable. Set the temperatures to 0.0, or leave the cap "
+        f"at 0."
+    )
 
 
 # The evaluators a distributed selfplay worker can actually hold. None of them
