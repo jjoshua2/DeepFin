@@ -56,6 +56,14 @@ class SearchConfig:
     # cannot see this knob. 0 = off and bit-identical.
     # Rationale: mcts.gumbel.GumbelConfig.target_max_visit_cap.
     gumbel_target_max_visit_cap: int = 0
+    # Undoes gumbel_policy_temp on the STORED target's log_prior term only.
+    # Temperature's real job -- putting more candidates INTO the search -- is
+    # kept; what stops is the tempering compounding through the loop, because
+    # the stored row is the next generation's training target and gets divided
+    # by T again on the next pass. Play is untouched, so an arena cannot see
+    # this either. False = off and bit-identical.
+    # Rationale: mcts.gumbel.GumbelConfig.target_untempered_prior.
+    gumbel_target_untempered_prior: bool = False
     # lc0's PolicyTemperature for SELFPLAY search: the policy-head logits are
     # divided by this before they seed the tree, at the root AND at every leaf
     # (mcts.gumbel.apply_policy_temp, shared by the Python and C paths).

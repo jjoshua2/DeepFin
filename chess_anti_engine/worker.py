@@ -895,6 +895,7 @@ class WorkerSession:
             _server_managed_keys = [
                 "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
                 "fast_simulations", "gumbel_topk", "gumbel_target_max_visit_cap",
+                "gumbel_target_untempered_prior",
                 "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
                 "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
                 "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
@@ -3487,6 +3488,7 @@ class WorkerSession:
   # session start, so a mid-flight change would be accepted and never reach
   # a search -- the exact shape of a verdict for an experiment that never ran.
         "gumbel_target_max_visit_cap",
+        "gumbel_target_untempered_prior",
   # sf_move_nodes gates the curriculum SF query path: lowering it to 0 mid-flight
   # would make pending move-futures (submitted at the old positive budget) get
   # reused as full-strength label futures, writing low-node SF targets to replay.
@@ -3593,7 +3595,7 @@ class WorkerSession:
   # swap does (which already happens every iteration); each ply keeps a valid
   # target for its own position.
         "gumbel_target_batch", "gumbel_vloss_weight",
-        "gumbel_target_max_visit_cap",
+        "gumbel_target_max_visit_cap", "gumbel_target_untempered_prior",
         "mcts_simulations", "fast_simulations", "mcts", "playout_cap_fraction",
         "full_ply_pair_fraction",
         "gumbel_topk", "gumbel_policy_temp",
@@ -3823,6 +3825,9 @@ class WorkerSession:
                 ),
                 gumbel_target_max_visit_cap=self._resolve_reco(
                     reco, "gumbel_target_max_visit_cap", 0, int,
+                ),
+                gumbel_target_untempered_prior=self._resolve_reco(
+                    reco, "gumbel_target_untempered_prior", False, bool,
                 ),
                 volatility_q_scale=self._resolve_reco(reco, "volatility_q_scale", 0.0),
                 volatility_fpu=self._resolve_reco(reco, "volatility_fpu", 0.0),

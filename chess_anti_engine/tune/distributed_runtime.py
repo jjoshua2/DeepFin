@@ -307,6 +307,9 @@ def build_recommended_worker(
         "gumbel_target_max_visit_cap": int(
             config.get("gumbel_target_max_visit_cap", 0),
         ),
+        "gumbel_target_untempered_prior": bool(
+            config.get("gumbel_target_untempered_prior", False),
+        ),
   # volatility_q_scale / volatility_fpu / volatility_anchor are DELIBERATELY not
   # published. The worker resolves all three out of the reco and the live-yaml
   # validator accepts them, so publishing looks like it would close a

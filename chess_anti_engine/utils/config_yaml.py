@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +131,7 @@ _SELFPLAY_KEYS = (
     "playout_cap_fraction", "full_ply_pair_fraction", "fast_simulations",
     "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_policy_temp",
     "gumbel_target_batch", "gumbel_vloss_weight",
-    "gumbel_target_max_visit_cap",
+    "gumbel_target_max_visit_cap", "gumbel_target_untempered_prior",
     "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
     "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
     "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
@@ -495,7 +496,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     flat = {k: v for k, v in out.items() if v is not None}
     _check_sparse_sf_policy_flags(flat)
     _check_volatility_search_unsupported(flat)
-    _check_target_sigma_cap_requires_zero_temperature(flat)
+    _check_target_only_knobs_require_zero_temperature(flat)
     return flat
 
 
@@ -537,18 +538,37 @@ def _realized_move_temperature(flat: dict[str, Any], key: str, absent: float | N
     return float(raw)
 
 
-def _check_target_sigma_cap_requires_zero_temperature(flat: dict[str, Any]) -> None:
-    """``gumbel_target_max_visit_cap`` is only ISOLATED at temperature 0.
+# Selfplay knobs that change the STORED improved policy and deliberately leave
+# the PLAYED move alone. Each is a separate adjustment to one term of the same
+# softmax(log_prior + sigma*Qbar); both share the identical temperature
+# exposure, so they share one guard rather than growing a second copy of it.
+#
+# The value is paired with the coercion `TrialConfig.from_dict` applies to it,
+# not with a generic truthiness test: the cap is `max(0, int(v))`, so a yaml
+# `0.5` REALIZES as 0 = off, and a guard using `float(v) > 0` would refuse a
+# pairing the run would not actually have been in. A guard has to share the
+# criterion's instrument.
+_TARGET_ONLY_KNOBS: tuple[tuple[str, Callable[[Any], bool]], ...] = (
+    # shrinks sigma on the Q term
+    ("gumbel_target_max_visit_cap", lambda v: max(0, int(v)) > 0),
+    # undoes policy_temp on the prior term
+    ("gumbel_target_untempered_prior", bool),
+)
 
-    The cap softens the improved policy that gets STORED, and leaves the played
-    move on the uncapped sigma -- but only because the played move is the
-    sequential-halving survivor. At a POSITIVE move temperature,
+
+def _check_target_only_knobs_require_zero_temperature(flat: dict[str, Any]) -> None:
+    """The target-only knobs are only ISOLATED at move temperature 0.
+
+    They change the improved policy that gets STORED and leave the played move
+    where it was -- but only because the played move is the sequential-halving
+    survivor, drawn inside the search from the UNMODIFIED arm. At a POSITIVE
+    move temperature,
     ``selfplay/network_turn.py:_resample_actions_with_temperature`` re-draws the
-    move from the RETURNED policy, which is the capped one, so the knob would
-    silently start changing play as well as the target.
+    move from the RETURNED policy, which is the modified one, so either knob
+    would silently start changing play as well as the target.
 
-    That would be worse than a bug: every strength readout taken while the cap
-    was on would be measuring a search change attributed to a target change.
+    That would be worse than a bug: every strength readout taken while one was
+    on would be measuring a search change attributed to a target change.
     Production runs all of these at 0.0 today, so this refuses a combination
     nobody is running rather than breaking one somebody is.
 
@@ -557,7 +577,11 @@ def _check_target_sigma_cap_requires_zero_temperature(flat: dict[str, Any]) -> N
     ever genuinely wanted, the fix is to return the play policy and the target
     policy separately from the search -- not to relax this.
     """
-    if int(flat.get("gumbel_target_max_visit_cap", 0) or 0) <= 0:
+    on = sorted(
+        key for key, realizes_on in _TARGET_ONLY_KNOBS
+        if flat.get(key) is not None and realizes_on(flat[key])
+    )
+    if not on:
         return
     hot = sorted(
         key for key, absent in _MOVE_TEMPERATURE_KEYS
@@ -566,15 +590,15 @@ def _check_target_sigma_cap_requires_zero_temperature(flat: dict[str, Any]) -> N
     if not hot:
         return
     raise ValueError(
-        f"gumbel_target_max_visit_cap is set together with a positive move "
-        f"temperature ({hot}). The cap is a TARGET-only knob only while the "
-        f"played move is the halving survivor; at temperature > 0 the move is "
-        f"re-drawn from the stored (capped) policy in "
-        f"selfplay/network_turn.py:_resample_actions_with_temperature, so the "
-        f"knob would change PLAY too and no strength readout taken with it on "
+        f"{on} is set together with a positive move temperature ({hot}). These "
+        f"are TARGET-only knobs only while the played move is the halving "
+        f"survivor; at temperature > 0 the move is re-drawn from the stored "
+        f"(modified) policy in "
+        f"selfplay/network_turn.py:_resample_actions_with_temperature, so they "
+        f"would change PLAY too and no strength readout taken with them on "
         f"would be interpretable. Set the temperatures to 0.0 EXPLICITLY -- an "
-        f"absent key is not 0.0, it realizes as the loader's default (1.0 for "
-        f"`temperature`, 0.6 for `temperature_endgame`) -- or leave the cap at 0."
+        f"ABSENT key is not 0.0, it realizes as the loader's default (1.0 for "
+        f"`temperature`, 0.6 for `temperature_endgame`) -- or leave {on} off."
     )
 
 

@@ -39461,3 +39461,147 @@ the ten `temperature*` lines in `configs/pbt2_small.yaml` must stay pinned.
 Not required to MERGE (default off, bit-identical, `configs/pbt2_small.yaml`
 unchanged). Required before any live arm: `./scripts/train.sh salvage-export
 --top-n 1 --metric training_iteration --out data/salvage/pre_sigma_cap`.
+
+---
+
+## 2026-08-10 — PREREG (not launched): take `policy_temp` OUT of the STORED target's `log_prior`
+
+**Status: CODE MERGED-PENDING, DEFAULT OFF, NEVER RUN.** `gumbel_target_untempered_prior`
+(PR: `fix/untemper-target-prior`, stacks on `feat/target-sigma-decouple`). This entry exists
+so that rule 1 is satisfied BEFORE anyone sets it non-default; nothing below has been
+measured on a net.
+
+### Hypothesis
+
+The Gumbel improved policy is `softmax(log_prior + sigma*Qbar)` and `log_prior` is the
+**TEMPERED** prior — `gumbel.py:_policy_logits_to_full` divides the policy logits by
+`policy_temp` before they seed the tree, and the improved-policy build then reads
+`log(pri)` off that same tempered prior. Production runs `gumbel_policy_temp: 1.5`
+(live yaml line 260; **the committed `configs/pbt2_small.yaml` does NOT carry the key** —
+see the gate-that-cannot-fail warning below). The stored improved policy is the next
+generation's TRAINING TARGET, so the division re-enters the target every pass:
+
+```
+L -> L/T -> target = L/T + sigma*Qbar -> the head learns it -> L/T again
+fixed point:  L* = sigma*Qbar * T/(T-1)  =  3*sigma*Qbar  at T=1.5
+```
+
+The contraction ratio on everything the head knows that search did not tell it is `1/T`, so
+that component decays geometrically and the attractor is a policy determined ENTIRELY by Q.
+**lc0 is safe at PolicyTemperature 1.45 because it trains on VISIT COUNTS**, which carry no
+additive `log_prior` term, so no version of this recursion exists there. Gumbel-MuZero's
+completed-Q target does. Same knob, different target algebra, opposite safety.
+
+Consistent with the 2026-08-10 readout above (`46c1489e6`): H(stored target) 0.9849 ->
+1.2136 past its pre-registered 1.14 bar, `KL(prior‖target)` median x11.8.
+
+**The fix:** tempered prior for CANDIDATE SELECTION (which is what temperature is actually
+for — it puts more moves INTO the search), untempered prior in the STORED target's
+`log_prior` term. Play is untouched, so an arena is structurally blind to it.
+
+### ⚑ TWO THINGS THAT WOULD MAKE THIS A GATE THAT CANNOT FAIL
+
+1. **`policy_temp == 1.0` makes the knob a provable no-op** (there is no temperature to
+   undo; shipped as a bit-identical test). The committed production yaml has **no
+   `gumbel_policy_temp` key at all**, so `audit_targets.py --config configs/pbt2_small.yaml`
+   run from a checkout would score `T = 1.0` and return a clean null under a heading naming
+   the knob. The yardstick below therefore sets `policy_temp=1.5` explicitly rather than
+   inheriting it. Diff the file you measure against production first
+   [[diff_the_file_you_measured_against_production]].
+2. **`--gumbel` alone does NOT reach the training rows.** Rows (d)/(e) are the production
+   training target and are overridden only under `--gumbel-training-rows`. Without it this
+   is a TARGET-side knob measured on the PLAY row: a perfectly reproducible null.
+
+### Yardstick — ONE, exact
+
+Target QUALITY against the frozen deep-SF audit set, paired per position, on the
+production TRAINING target rows. **NOT an arena** (blind by construction), and **NOT the
+KL** (see the next section).
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+      --audit-set data/audit_set_v1.jsonl --batch-size 64 --gpu-mem-fraction 0.3 \
+      --gumbel policy_temp=1.5,target_untempered_prior=0 --gumbel-training-rows \
+      --dump-per-position scratchpad/untemper_off.jsonl
+    # ...same command with target_untempered_prior=1 -> scratchpad/untemper_on.jsonl
+    PYTHONPATH=. python3 scripts/paired_compare.py \
+      scratchpad/untemper_off.jsonl scratchpad/untemper_on.jsonl \
+      --join-key key --field cand.train.top1 --field cand.train.exp \
+      --field cand.train.entropy
+
+`ck_2026-08-09_iter514.pt` because it is the FROZEN best net, not a live Ray checkpoint
+(Ray prunes those). Judge on **TOP-1 regret**, which is sharpness-invariant; `exp` is
+reported alongside but does not decide, because E[regret] rewards sharpness and this knob
+sharpens the target by construction — deciding on `exp` would be scoring the intervention
+in the unit it moves mechanically.
+
+**Pre-committed thresholds.**
+- **SUCCESS:** `cand.train.top1` improves by **>= 1.0 cp** with a paired 95% CI excluding 0.
+- **KILL:** no significant improvement, OR any significant regression on `top1`.
+- **NEGATIVE CONTROL (structural, ships as a test):** with `policy_temp=1.0` the two arms
+  must be **BIT-IDENTICAL** — there is no temperature to undo, so any difference means the
+  implementation altered something it was not supposed to and NO number from the screen is
+  trustworthy. `tests/test_untempered_target_prior.py::
+  test_the_knob_is_inert_when_there_is_no_temperature_to_undo`, both search paths.
+- **GPU budget:** the standing ~30 min/day outside training, and it must run in a pause
+  window, not beside the queued arena/ladder.
+
+Only if this passes does anything else happen: prereg for the live arm (a live readout is a
+day-plus, paired-CI, learning-quality window), independent review with REVIEWER != AUTHOR,
+and a restart-gated deploy. ⚑ Adding `gumbel_target_untempered_prior` to the live yaml
+requires the PR to be MERGED FIRST — an unknown key is fatal AT LAUNCH
+[[unknown_key_safe_bad_value_lethal]].
+
+### ⚑⚑ ERRATUM AGAINST THIS CHANGE'S OWN MOTIVATION: "KL(prior‖target) must fall" is FALSE as stated
+
+The obvious acceptance test — *with the fix on, the number that rose 11.8x must fall* — was
+pre-registered by the change's brief and **does not survive being computed.** In logit space
+the stored target's displacement from the head's own policy is
+
+```
+    fix ON :  S                       where S = sigma*Qbar
+    fix OFF:  S - (1 - 1/T) * L
+```
+
+so removing the tempering moves the target CLOSER to the prior **only on rows where search
+DISAGREES with the prior**. On rows where search AGREES — the majority, which is exactly why
+the live *median* KL is only 0.0238 — the `-(1-1/T)L` term was CANCELLING part of `S`, and
+taking it away moves the target FURTHER away. Measured on both search paths (random-prior
+net, production `c_scale=0.1`, T=1.5): `KL(prior‖target)` **0.7717 -> 0.9338** (C path) and
+**1.0257 -> 1.1799** (Python path) — it goes UP. Both directions are pinned as tests so that
+nobody later "fixes" the sign by making the knob do something other than remove `T`.
+
+What IS unconditional, and is what the tests assert instead:
+- **sigma = 0** (`c_scale=0`, search contributes nothing): the target must BE the head's
+  policy. Fix ON gives `KL(prior‖target) = 0.0000`; fix OFF gives **0.0910**, and that 0.0910
+  is exactly `KL(softmax(L) ‖ softmax(L/T))` — the target displaced from the prior for a
+  reason that has nothing to do with search. That displacement is the term that compounds.
+- **H(stored target) falls** in every configuration measured (sigma=0: 2.7931 -> 2.2966;
+  production sigma: 1.6895 -> 1.3743 C, 1.4981 -> 1.2182 Python). H(target) is the
+  pre-registered quantity that overshot its 1.14 bar, and it moves the right way.
+- **The loop map's contraction ratio** on the head's own information is `1/T` OFF and `1` ON,
+  with OFF converging onto `3*sigma*Qbar` — asserted directly, 30 iterations.
+
+⇒ **This is a live instance of [[proxy_must_be_monotone_in_the_intervention]]**: KL is not
+monotone in this intervention, so it cannot be its yardstick in either direction. And per
+this document's standing rule, none of the above is evidence of change QUALITY anyway —
+the `sims=1` control changes 34.9% of moves and is **+7.60 cp WORSE**. Only the deep-SF
+audit read decides.
+
+### Confounds
+
+None while it stays off. If it is ever launched live it MUST NOT share a readout window
+with `gumbel_target_max_visit_cap` (the parent PR) — they are two adjustments to the two
+terms of the SAME softmax and their effects are not separable from one shard measurement.
+Both are refused at config load alongside any positive move temperature: at
+`temperature > 0` the played move is re-drawn from the RETURNED (modified) policy in
+`selfplay/network_turn.py:_resample_actions_with_temperature`, which would silently convert
+a target-only knob into a search change and make every strength readout uninterpretable.
+
+### Revert point
+
+Not required to MERGE (default off, bit-identical, `configs/pbt2_small.yaml` unchanged and
+pinned by a test). Required before any live arm: the usual
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out
+data/salvage/pre_untempered_target` — a yaml revert is not a rollback, the replay window
+holds ~a day of data made under the old target.

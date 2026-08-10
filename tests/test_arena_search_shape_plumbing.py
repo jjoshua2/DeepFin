@@ -86,11 +86,13 @@ def _sentinel_search_config() -> tuple[SearchConfig, dict[float, str]]:
     ``GumbelConfig`` field holding a sentinel identifies the ``search`` knob
     that fed it.
 
-    ⚑ Numeric fields only — a bool has no room for a sentinel. All six knobs the
-    mapping carries today are numeric, but a future BOOL ``SearchConfig`` knob
-    wired into ``GumbelConfig`` would land in ``_search_attrs_the_mapping_mentions``
-    and NOT here, and fail the equality spuriously. Give it a sentinel by another
-    means rather than deleting the assertion.
+    ⚑ Numeric fields only — a bool has no room for a sentinel. Bool knobs are
+    covered instead by ``_bool_gumbel_fields_driven_by_search`` below, which
+    flips ONE at a time and watches which ``GumbelConfig`` field follows: the
+    same "observed to flow" standard, by differencing rather than by a marker
+    value. Both results are merged in
+    ``_selfplay_gumbel_fields_driven_by_search``, so a bool knob wired into the
+    mapping is proved to arrive rather than being skipped as unsentinelable.
     """
     base = SearchConfig()
     replacements: dict[str, Any] = {}
@@ -113,6 +115,48 @@ def _sentinel_search_config() -> tuple[SearchConfig, dict[float, str]]:
     assert not defaults & set(by_sentinel), "a sentinel collides with a GumbelConfig default"
     assert float(_PROBE_SIMULATIONS) not in by_sentinel
     return dataclasses.replace(base, **replacements), by_sentinel
+
+
+def _bool_gumbel_fields_driven_by_search() -> dict[str, str]:
+    """GumbelConfig BOOL field -> SearchConfig bool attribute, by differencing.
+
+    A bool cannot carry a sentinel, so flip exactly one ``SearchConfig`` bool at
+    a time and record which ``GumbelConfig`` bool changes with it. That is the
+    same standard the numeric probe holds itself to — the value is OBSERVED to
+    arrive through the real mapping — and it is what keeps a target-only flag
+    like ``gumbel_target_untempered_prior`` inside the coverage set instead of
+    silently exempt because of its type.
+    """
+    from chess_anti_engine.selfplay import network_turn
+
+    def _mapped(search: SearchConfig) -> dict[str, bool]:
+        cfg = network_turn.build_selfplay_gumbel_config(
+            search=search, game=GameConfig(), simulations=_PROBE_SIMULATIONS,
+        )
+        return {
+            f.name: bool(getattr(cfg, f.name))
+            for f in dataclasses.fields(GumbelConfig)
+            if isinstance(getattr(cfg, f.name), bool)
+        }
+
+    base = SearchConfig()
+    baseline = _mapped(base)
+    driven: dict[str, str] = {}
+    for field in dataclasses.fields(SearchConfig):
+        if not isinstance(getattr(base, field.name), bool):
+            continue
+        flipped = _mapped(
+            dataclasses.replace(base, **{field.name: not getattr(base, field.name)}),
+        )
+        for name, value in flipped.items():
+            if value == baseline[name]:
+                continue
+            assert name not in driven, (
+                f"GumbelConfig.{name} follows two different SearchConfig bools "
+                f"({driven[name]} and {field.name}); the mapping is ambiguous"
+            )
+            driven[name] = field.name
+    return driven
 
 
 def _selfplay_gumbel_fields_driven_by_search() -> dict[str, str]:
@@ -141,6 +185,7 @@ def _selfplay_gumbel_fields_driven_by_search() -> dict[str, str]:
         attr = by_sentinel.get(float(value))
         if attr is not None:
             driven[field.name] = attr
+    driven.update(_bool_gumbel_fields_driven_by_search())
     return driven
 
 
@@ -544,6 +589,12 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
         # must be re-proved by the `live_and_unpinned` clause rather than
         # asserted once in a comment.
         "gumbel_target_max_visit_cap",
+        # Same shape, other term of the same softmax: it undoes
+        # policy_temp on the STORED target's log_prior and leaves the
+        # played move on the tempered arm, so an arena cannot observe it
+        # either -- and is carried into the training shape anyway, for
+        # the `live_and_unpinned` clause below to re-prove.
+        "gumbel_target_untempered_prior",
         "volatility_q_scale",
         "volatility_fpu",
         "volatility_anchor",
