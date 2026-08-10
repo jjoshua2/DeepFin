@@ -230,12 +230,40 @@ class GumbelConfig:
     volatility_factor_clip: float = 4.0
 
 
+def policy_temp_active(policy_temp: float) -> bool:
+    """True when ``policy_temp`` will actually change the priors.
+
+    THE single definition of "tempering is on". ``apply_policy_temp`` below,
+    both bf16 fast-path gates in ``gumbel_c`` and the worker's realized-shape
+    log line all call this, so the transport gate, the arithmetic and the
+    operator-facing claim can never drift apart: a guard has to share the
+    criterion's instrument or it is guarding a different question.
+
+    ``<= 0`` and non-finite (``nan``/``inf``) both read as *off* rather than
+    raising because this is the hot path; config loading rejects all of them
+    (``trial_config._positive_float``) so they cannot reach here from the yaml
+    in the first place.
+
+    ⚑ ``inf`` is excluded deliberately, not incidentally. ``nan`` already fell
+    out as off via ``pt > 0.0``, but ``inf`` used to read as ACTIVE, and
+    ``apply_policy_temp`` then returns all-zero logits --- a uniform prior over
+    every legal move, i.e. search with the policy head switched off, announced
+    in the realized-shape log line as tempering working normally. The yaml
+    cannot deliver it, but ``arena_standard.py --cand-gumbel policy_temp=inf``
+    reaches ``dataclasses.replace`` without passing the loader's validator. The
+    predicate is THE definition of "tempering is on", so it has to agree with
+    the loader rather than leave one entry point a hole.
+    """
+    pt = float(policy_temp)
+    return math.isfinite(pt) and pt > 0.0 and pt != 1.0
+
+
 def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
     """Scale policy logits by the prior temperature before they seed the tree.
     T>1 softens the prior, T<1 sharpens it, 1.0 (or <=0) = no-op. Shared by the
     Python and C (gumbel_c) search paths so both honor policy_temp identically."""
     pt = float(getattr(cfg, "policy_temp", 1.0))
-    if pt > 0.0 and pt != 1.0:
+    if policy_temp_active(pt):
         return pol / pt
     return pol
 

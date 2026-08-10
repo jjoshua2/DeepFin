@@ -263,6 +263,345 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-09) — selfplay search policy temperature (`gumbel_policy_temp` 1.0 → 1.5), PR #379
+
+**Status: plumbing merged-pending (PR #379, default 1.0 = no-op). NOTHING IS
+LIVE. Deployment is restart-gated and the operator has not authorised a
+restart. The yaml is NOT edited.** Every number below was measured BEFORE any
+threshold in this entry was chosen.
+
+### What the knob is
+
+`GumbelConfig.policy_temp` = lc0's PolicyTemperature: policy-head logits are
+divided by T before they seed the tree, **at the root and at every leaf**
+(`mcts/gumbel.py:apply_policy_temp`, shared by the Python and C paths). T>1
+softens. Until PR #379 it was unreachable from configuration —
+`selfplay/network_turn.py`'s `GumbelConfig(...)` was built from an explicit
+keyword list that did not include it (nor `c_visit`, `c_visit_root`,
+`c_scale_root`, `q_visit_exp_root`, `halving_div`; see FINDING below).
+
+### HYPOTHESIS
+
+The loop is self-sealing against rare-but-sound moves: the net rates a sacrifice
+low → search barely explores it → no game plays it → no outcome data is ever
+generated → the prior stays low. The move is never *disconfirmed*, it is never
+*tried*. Softening the search prior puts those moves back into the explored set,
+so the training data begins to contain evidence about them. Sacrifices are
+exactly the family that exploits horizon effects, i.e. the project's thesis.
+
+### MEASURED BACKGROUND (2026-08-09, production checkpoint iter 647, production search shape)
+
+All of it on the **production path**: an offline broker
+(`python -m chess_anti_engine.inference`, AOT + `reduce-overhead`, the live
+published `latest_model.pt`) fronted by `MultiSlotInferenceClient` — the same
+evaluator and shared-memory transport distributed selfplay uses. Search shape
+**pinned by hand to the LIVE values** (sims 256, `topk` 32, `c_scale` 0.025,
+`vloss_weight` 1, noise on, `gumbel_scale` 1.0), NOT read from a yaml —
+`origin/main`'s `configs/pbt2_small.yaml` carries 0.1 / 16 / 0.75 and a worktree
+cut from main therefore has the wrong shape by default.
+
+**The quantity measured is the STORED TARGET.** `run_gumbel_root_many_c` returns
+`probs[i]`; `network_turn` stores it verbatim on `_NetRecord.policy_probs`
+(`_resample_actions_with_temperature` rewrites ACTIONS, never probs); `finalize.py`
+writes `policy_target = policy_vector_to_encoding(rec.policy_probs, ...)`, a pure
+4672→1858 re-index with no renormalisation and no smoothing (`soft_policy_temp`
+feeds a different head; `tb_policy_overrides` needs `syzygy_rescore_policy`, off).
+Entropy over legal moves is invariant to the re-index.
+
+**(a) THE SIMS LADDER IS FLAT — the premise that 256 sims is sharper than 32 is REFUTED.**
+Median stored-target entropy (nats) / effective moves, 256 random-play positions:
+
+| sims | 32 | 50 | 128 | 256 |
+|---|---|---|---|---|
+| H median | 0.638 | 0.653 | 0.645 | **0.629** |
+| eff moves | 1.89 | 1.92 | 1.91 | **1.88** |
+
+So "what `policy_temp` makes 256 match 32 or 50?" has the answer **T = 1.0: they
+already match.** Our targets are not sharp because of the sim count. They are
+sharp because **the network's own prior is sharp** (prior H median 0.743) and
+**search barely moves it**: KL(target ‖ raw prior) median **0.007**, argmax
+differs in **6.6%** of positions, Spearman 0.982.
+
+**(b) TEMPERATURE IS MONOTONE ON THE REAL NET, no turnover through T=5.**
+
+| T | 1.0 | 1.2 | 1.5 | 2.0 | 3.0 | 5.0 |
+|---|---|---|---|---|---|---|
+| H median | 0.629 | 0.775 | **1.004** | 1.348 | 1.795 | 2.385 |
+| ΔH vs T=1 | — | +0.146 | **+0.375** | +0.719 | +1.166 | +1.756 |
+| eff moves | 1.88 | 2.17 | **2.73** | 3.85 | 6.02 | 10.86 |
+| KL(tgt‖raw prior) | 0.007 | 0.011 | 0.053 | 0.206 | 0.656 | 1.640 |
+| argmax≠prior argmax | 6.6% | 7.0% | 7.8% | 7.8% | 9.8% | 13.3% |
+
+The **non-monotone turnover reported on a random-projection stand-in evaluator
+does NOT replicate on the production checkpoint.** The stand-in starts at H=3.26
+nats, a regime a trained net is nowhere near. Use the real-checkpoint curve.
+
+Projecting the paired ΔH onto the banked-shard median (0.924 nats / 2.52 eff
+moves, 67,783 rows): T=1.5 → **~1.30 nats / ~3.7 eff moves**; T=2.0 → ~1.64 /
+~5.2. lc0's stored targets are 1.39–1.89 nats / 4.0–6.6 eff moves. **T=1.5 lands
+just below lc0's floor; T≈1.7–2.0 lands inside their band.**
+
+**(c) `c_scale` IS NOT AN ALTERNATIVE ROUTE TO THE SAME PLACE — and its reach is
+tiny.** At sims 256, lowering `c_scale` from the production 0.025:
+
+| c_scale | 0.1 | **0.025 (live)** | 0.0125 | 0.00625 |
+|---|---|---|---|---|
+| H median | 0.383 | **0.629** | 0.688 | 0.697 |
+| KL(tgt‖prior) | 0.048 | 0.007 | 0.002 | 0.001 |
+| argmax≠prior | 12.5% | 6.6% | 3.1% | 2.0% |
+| Spearman | 0.893 | 0.982 | 0.993 | 0.997 |
+
+Two conclusions. **(1) It saturates immediately**: halving and quartering
+`c_scale` below the live value buys +0.06/+0.07 nats total — it cannot approach
+lc0's band, whereas temperature reaches it. **(2) The entropy it does buy is
+bought by suppressing search**: KL to the prior *falls* by 7× and argmax
+disagreement *falls* to 2%, i.e. the target converges onto the raw prior.
+Temperature does the opposite — KL and argmax disagreement *rise*. Matching an
+entropy number via `c_scale` would match the NUMBER while making the target mean
+something worse. **These are not two levers on one axis.**
+
+**(d) THE 0.72→1.40 `c_scale` SWEEP DOES NOT REPRODUCE.** An earlier sweep
+reported `c_scale` 0.1→0.025 taking target entropy 0.72→1.40 at 256 sims. Here
+the same move gives **0.383→0.629**. The direction agrees; the levels and the
+magnitude do not. Four candidate explanations were tested and **all four are
+null**: root noise off (0.631 vs 0.629), warm tree carry (0.629), `gumbel_scale`
+0.5 (0.625), and sims. The remaining difference is the position mix (my
+random-play set reads 0.629 where banked shards read 0.924 at the same settings)
+— i.e. the earlier sweep's ABSOLUTE levels are not comparable to shard levels
+and its magnitude is unexplained. **Treat `c_scale`'s "demonstrated reach" as
+unreproduced.** Only the PAIRED deltas in this entry should be used.
+
+**(e) COST ON THE PRODUCTION PATH: the documented ~1.9× does NOT reproduce.**
+T≠1 disables the compact-legal bf16 leaf transport (the C bf16 leaf softmax has
+no temperature hook, so keeping it would leave LEAF priors untempered) and, on
+the same boolean, the bf16 input transport. Measured with 8 search threads on 1
+broker slot (production's 32 threads / 4 slots ratio):
+
+| T | 1.0 | 1.1 | 1.179 | 1.2 | 1.36 | **1.5** | 2.2 |
+|---|---|---|---|---|---|---|---|
+| throughput × | 1.000 | 0.873 | 0.890 | 0.856 | 0.942 | **1.005** | 1.006 |
+
+Non-monotone, and the two passes of the *same* T=1.0 arm differ by ±13%
+(14.79 vs 16.66 board-plies/s) — **the T effect is inside the instrument's own
+noise.** The ~1.9× came from the DIRECT evaluator, where `supports_legal_bf16`
+is False and there is no bf16 transport to lose. **Cost does not talk us down
+from 1.5.**
+
+**(f) WHERE THE ADDED MASS AND THE SIM BUDGET GO** (frozen audit set, first 2000
+positions, cp-covered = **90.2%** — the top MultiPV entry carries a cp score and
+≥2 entries do; n_legal median 21, MultiPV depth 10):
+
+| T | tgt mass ≤25cp | 25–200cp | >200cp | unlisted | **visits >200cp** | visits unlisted |
+|---|---|---|---|---|---|---|
+| 1.0 | 0.6661 | 0.2401 | 0.0279 | 0.0659 | **0.0903** | 0.1928 |
+| 1.5 | 0.6334 | 0.2528 | 0.0316 | 0.0822 | **0.0911** | 0.2036 |
+| 3.0 | 0.5509 | 0.2749 | 0.0456 | 0.1286 | **0.0924** | 0.2409 |
+
+At T=1.5 the **search budget** spent on clearly-terrible (>200cp) moves rises by
+**+0.08pp — under one sim in 256.** Unlisted visits rise +1.1pp (~3 sims);
+unlisted moves are bounded below by the last listed move's loss, whose median is
+**133cp** and which already exceeds 200cp in 38% of positions. So the corrected
+cost model (search budget, not target corruption) prices T=1.5 at **≈3 of 256
+sims redirected to probably-bad moves.** Note also that search *examines and
+correctly demotes* them: 9.0% of visits go to >200cp moves but only 2.8% of
+target mass does. That is the completed-Q transform working as designed, not the
+intervention being defeated.
+
+**(g) MECHANISM — `gumbel_topk` is NOT binding, and round-1 elimination is NOT
+the bottleneck.** The root candidate set already covers every legal move in
+**82.8%** of audit positions (`topk` 32 vs n_legal median 21), so temperature
+cannot widen the root set; it acts through descent. The exact C schedule
+(`gss_begin_round`: `vpa = budget / (n_cands * rounds_left)`, floored at 1) at
+sims 256 / topk 32 / `halving_div` 2 is **1, 3, 7, 15, 30 visits per candidate**
+across the five rounds — **round one decides half the eliminations on the prior
+plus ONE value sample.** But measured round-1 survival of the target move class
+(below) is **flat in T: 0.666 / 0.655 / 0.657 at T = 1.0 / 1.5 / 2.0.**
+Temperature's gain is NOT in round-1 survival; it is in final target mass and
+final ranking. Recorded so nobody re-derives the round-1 story as the mechanism.
+
+Sim-count arithmetic worth having (exact, from the same schedule): round-1
+visits/candidate goes 1 → 2 at **sims 320** when the candidate set fills topk 32
+(**sims 300 is NOT enough at 32 candidates — it still gives 1**), and at sims 435
+→ 3. `halving_div` 3 buys round-1 = 2 visits at sims 256 for free. Both are
+separate one-change-per-window experiments and are NOT part of this arm.
+
+### THE ONE DECIDING YARDSTICK
+
+**RARE-BUT-SOUND-MOVE COVERAGE.** For each frozen-audit position, let
+S = {moves the RAW net prior ranks 5th or lower, that deep SF scores within 25cp
+of best}. The statistic is the **mean stored-target probability mass on S**.
+
+Why not the obvious rulers, all pre-committed:
+* **NOT `E[regret]`** — it REWARDS SHARPNESS and is biased in the exact
+  direction of a smoothing intervention (2026-08-08: both arms sharpened,
+  E[regret] reported a gain, top-1 accuracy was flat, ECE worsened).
+* **NOT PRIOR top-1 accuracy** — temperature is a monotone transform and cannot
+  change the prior's argmax (bit-constant over T∈[0.7,6.0]).
+* **NOT `top1_agree` / `out_of_top10_rate`** — these measure AGREEMENT WITH SF'S
+  MAINLINE. A rare sound sacrifice is by construction a move the prior ranks low
+  and a depth-10 list may not favour, so **more of them would LOWER top-1
+  agreement while being precisely the intended effect.** Correct for the MATCH
+  arm, close to exactly wrong here.
+* **NOT Elo** — the loop gains ~0.02 Elo/iter, the best instrument resolves
+  ~2.74 Elo/day, a 200-game arena is ±42 Elo.
+* **NOT `data_unique_positions`** — `unique(row-sums)/128`, 89.9% of iterations
+  read exactly 1.0.
+
+**Exact command.** ⚑ **BLOCKING PREREQUISITE: the scorer must land in `scripts/`
+before this arm launches.** The prototype is
+`scratchpad/ptcost/rare_sound_move.py` (2026-08-09) and every number below came
+from it; a pre-registration whose deciding command lives in a scratchpad is not
+reproducible, and this entry is not satisfied until the script is a repo script
+with its own test. Intended form:
+
+```
+PYTHONPATH=. python3 scripts/rare_sound_move_coverage.py \
+  --audit-set data/audit_set_v1.jsonl --max-positions 1200 \
+  --checkpoint <frozen copy of the arm's checkpoint> \
+  --sims 256 --topk 32 --c-scale 0.025 --vloss-weight 1 \
+  --policy-temp 1.5 --min-prior-rank 5 --cp-window 25 --shuffle-control
+```
+
+**RESOLUTION, COMPUTED BEFORE THE THRESHOLD** (n=1200 audit positions →
+**1,968 S-moves**, bootstrap over moves, 2000 resamples):
+
+| sims | T | coverage | 95% CI | round-1 survival | rank-up rate |
+|---|---|---|---|---|---|
+| 256 | 1.0 | **0.0801** | [0.0713, 0.0887] | 0.666 | 0.249 |
+| 256 | 1.5 | **0.1169** | [0.1067, 0.1273] | 0.655 | 0.296 |
+| 256 | 2.0 | **0.1427** | [0.1318, 0.1533] | 0.657 | 0.335 |
+
+CI half-width ≈ **±0.0090 absolute (±11% relative)** at the T=1.0 baseline. The
+T=1.0 and T=1.5 intervals are **disjoint**; the T=1.5 effect is **+0.0368
+absolute, +46% relative, ≈ 4.1 half-widths.**
+
+**NEGATIVE CONTROL, run and required to fail.** Re-pair each position's search
+output with a DIFFERENT position's SF loss map, so "sound" means nothing:
+
+| T | 1.0 | 1.5 | 2.0 |
+|---|---|---|---|
+| control coverage | 0.0133 | 0.0164 | 0.0205 |
+| real / control | **6.0×** | **7.1×** | **7.0×** |
+| control ΔT vs real ΔT | — | +0.0031 vs +0.0368 (**12×**) | +0.0072 vs +0.0626 (**9×**) |
+
+The control does not reproduce the effect: it sits ~6–7× lower and its
+temperature slope is ~9–12× smaller. It is NOT exactly flat, and that is
+expected — any low-prior move gains mass under a monotone transform — so the
+load-bearing quantity is the **excess over control**, which is what the decision
+rule below uses. An instrument that could not fail here would not be an
+instrument.
+
+### PRE-COMMITTED DECISION RULE (offline pre-launch screen, on the arm's own checkpoint)
+
+Judged on coverage **excess over the shuffled control**, T=1.5 vs T=1.0, paired
+on the same positions and seeds:
+
+| outcome | rule | verdict |
+|---|---|---|
+| excess Δcoverage ≥ **+0.020** and the two 95% CIs are disjoint | CONFIRMS | ship T=1.5 at the next operator-authorised restart |
+| **+0.008 ≤** excess Δ **< +0.020**, CIs disjoint | PARTIAL | ship at the **1.2 floor** instead and re-read |
+| excess Δ **< +0.008** or CIs overlap | REFUTES | do NOT ship; the knob does not buy the exploration it was chosen for |
+
+(+0.020 is ~2.2 half-widths and ~55% of the measured +0.0368; +0.008 is ~1
+half-width. Both fixed before this arm's checkpoint is scored.)
+
+**PRE-COMMITTED AS NOT A FAILURE:** a modest DROP in `top1_agree` on this arm is
+**EXPECTED** and must not be re-read as a kill signal. Measured on the audit set
+(n=2000, McNemar-paired): 0.4580 → 0.4570 at T=1.5 (**−0.10pp, 34/32 discordant,
+p=0.81**) and 0.4465 at T=3.0 (−1.15pp, p=0.08). `out_of_top10_rate` is flat
+everywhere (all p>0.19). Instrument resolution ≈ **±0.8pp** at T=1.5 and ±1.3pp
+at T=3.0. A drop up to **−1.5pp** is inside the pre-registered expectation.
+
+**IN-EFFECT PROOF, on a production row.** Read `gumbel_policy_entropy_mean` from
+`result.json`. It is the mean improved-policy entropy over **fresh, full
+(256-sim) plies of the current iteration only** (`finalize.py` skips
+`has_policy=0` rows), so it is NOT diluted by the replay window. Live baseline
+over iters 589–648: **mean 1.0635, per-iteration sd 0.01606**. T=1.5 moves
+search-output entropy **+0.375 nats ⇒ ~23σ on the first full post-restart
+iteration.** Read it on the first row whose `matching_games` is ≥0.8× the
+trailing median (post-restart rows are length-truncated). Secondary: the worker's
+`selfplay session starting: ... gumbel_policy_temp=1.5 tempered=True` line.
+⚠ Do **NOT** use `data_policy_entropy` — it is `_mean_entropy(train_batch)` over
+a REPLAY-WINDOW batch (sd **0.0638**, 4× larger, and diluted over ~151
+iterations of turnover at ~9.9k positions/iter against a 1.5M cap).
+
+### CONFOUNDS
+
+* Deployment requires a **restart**, which itself perturbs the loop: post-restart
+  winrate is length-truncated and +0.110 too high, and the PID observes a
+  truncated curriculum sample for ~10 iterations. Drop the first 10 post-restart
+  rows before fitting any trend.
+* The restart will also pick up every merged-but-never-run change on the live
+  branch. Before restarting, `git diff HEAD...origin/main` must be empty and each
+  such change listed here.
+* One data-affecting change per readout window: `gumbel_policy_temp` is the ONLY
+  one this window. Sims (256→320), `halving_div` (2→3) and `gumbel_topk` are all
+  live candidates and must NOT ship alongside it.
+* `sf_nodes` is PID-owned and drifts; the "selfplay is search-bound, not
+  SF-bound" observation must be re-measured at readout, not assumed.
+* The blind-spot dole list advances every ~10–15 min and the deploy must carry
+  the LIVE `opening_fen_list_path` forward, never main's committed value.
+
+### WHAT THIS ARM CAN AND CANNOT ESTABLISH
+
+**Can:** whether raising the search prior temperature puts rare-but-sound moves
+into the training data (the pre-launch offline screen decides this before any
+restart), and whether the configured value is actually in force (~23σ on
+`gumbel_policy_entropy_mean`).
+
+**Cannot:**
+1. **Whether it makes the net stronger.** Elo is too blunt at this loop's rate.
+   No arena is authorised, and 200 games is ±42 Elo — an effect plausibly worth
+   10–20 Elo is not resolvable at that width.
+2. **Whether the exploration is converted into learning.** Coverage measures what
+   the data CONTAINS, not what the net absorbs. The follow-on readout is
+   `value_regret` on a day-plus window with paired CIs — chosen because the value
+   head is not directly rewarded by policy smoothing, which is what makes it
+   conjugate to the intervention; but it is a frozen ruler and frozen rulers can
+   move opposite to real play, so it is a secondary, not a verdict.
+3. **A variance phenomenon.** It was measured on 2026-08-09 that search entropy is
+   currently **SOFTENING**, not sharpening (+0.00535 [+0.00178, +0.00885] nats/100
+   iters over the last 200, restart-clean, 30 post-restart rows dropped), while
+   Var(H) rose ~40% in 2.4 days (Jensen gap 0.998→1.362). **A global constant T is
+   a MEAN lever against a VARIANCE phenomenon.** The case for this arm rests on
+   the ACCUMULATED STATE (targets at 2.52 effective moves against lc0's 4.0–6.6),
+   not on the current slope. This arm cannot establish that the variance rise is
+   addressed, and a per-position or scheduled temperature is a different
+   experiment.
+4. **Whether depth would do the same job.** Measured, so this is not left open:
+   doubling sims 256→512 at fixed T buys **almost nothing in coverage** (0.0801→
+   0.0824 at T=1.0, 0.1169→0.1225 at T=1.5 — CIs overlap) but a real gain in
+   RANKING (rank-up 0.249→0.315 and 0.296→0.365; top-3 promotion roughly
+   doubles). **Temperature and depth are complementary, not substitutes:** only
+   temperature puts the moves into the data (+46% coverage at T=1.5), while depth
+   only helps search recognise them once they are there (+6.6pp rank-up, about
+   the same as T 1.0→1.5's +4.7pp). Round-1 survival is flat in BOTH (≈0.66
+   across every cell), which is why the round-1-elimination story is recorded
+   above as refuted rather than as the mechanism. If the follow-on readout is
+   null, the next hypothesis is **search allocation** (sims 320 for 2
+   visits/candidate in round one, or `halving_div` 3 for the same at no sim
+   cost) — as a SEPARATE window, not alongside this one.
+
+### REVERT POINT
+
+**Not yet taken — required before launch.**
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/pre_policytemp_20260809`
+A yaml revert is NOT a rollback: the replay window holds ~a day of data made
+under the changed setting. Config revert = remove `gumbel_policy_temp` from the
+`selfplay:` block (the code default is 1.0, an exact no-op) and restart.
+
+### FINDING (2026-08-09, out of scope for PR #379) — five search knobs are unreachable from selfplay
+
+`selfplay/network_turn.py`'s `GumbelConfig(...)` never passed `c_visit`,
+`c_visit_root`, `c_scale_root`, `q_visit_exp_root` or `halving_div`. PR #379 adds
+`policy_temp` and leaves the other five alone deliberately (one knob per PR, each
+needs its own pre-registration). Consequence worth recording: **the sim-invariant
+LOG root (`c_scale_root` 7 / `q_visit_exp_root` −1), which is a PLAY default,
+cannot be configured on the selfplay path at all** — selfplay is pinned to the
+linear root regardless of any yaml. `gumbel_scale=1.0` at that constructor is NOT
+a bug: the per-move schedule reaches the search through the separate
+`per_game_gumbel_scale=` argument.
+
 ## PRE-REGISTERED (2026-07-31, WRITTEN BEFORE THE RUN) — the VALUE-HEAD SWAP: is the value head causally upstream of the training-target degradation?
 
 **Status at write time: rig built, ZERO numbers seen.** Offline, forward-only,
