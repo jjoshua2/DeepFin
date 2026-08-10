@@ -66,7 +66,7 @@ The run is usually live. These break production:
 - **The live-yaml validator is all-or-nothing**: an unknown key rejects the WHOLE
   reload. Add config keys only after restarting onto code that defines them.
 - **⚑ An UNKNOWN key is the SAFE failure. A KNOWN key with an INVALID VALUE KILLS THE RUN.**
-  Two opposite modes — measured 2026-08-09, do not conflate them:
+  Two opposite modes **on the mid-run RELOAD path** — measured 2026-08-09, do not conflate them:
   - *unknown key* → the reload is rejected, a warning prints, the process keeps the OLD
     config, **the trial survives**;
   - *known key, out-of-range value* → the reload SUCCEEDS, then `TrialConfig.from_dict`
@@ -77,6 +77,16 @@ The run is usually live. These break production:
   survivable. ⇒ **A live edit to a VALIDATED key is not a soft operation.** Dry-run it on a
   COPY first — `TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open(<copy>))))`
   — and only then write the live file.
+- **⚑⚑ "An unknown key is survivable" is TRUE ONLY MID-RUN. AT LAUNCH IT IS FATAL.**
+  `run.py:~94` calls `flatten_run_config_defaults(cfg)` **before argparse**, outside any
+  `try`, so an unknown key there raises and the process **never starts** — there is no
+  "old config" to fall back to. Verified 2026-08-09 by running `origin/main`'s
+  `flatten_run_config_defaults` against the live yaml:
+  `ValueError: Unknown keys in yaml 'selfplay:' section: ['gumbel_policy_temp']`.
+  ⇒ **Restarting onto code that predates a live yaml key does not silently revert — it fails
+  to boot.** Before ANY restart, diff the live yaml's keys against the target branch's
+  schema, not just against `main`'s yaml. This is why a PR that adds a live key must be
+  merged before the branch it is missing from can ever be restarted onto.
 - **Never run a 256+ sim arena concurrent with training** — GPU OOM crashed the run
   2026-06-18. sims-1/32 arenas and `audit_targets`/`value_regret` at small batch with
   `--gpu-mem-fraction` are safe.
