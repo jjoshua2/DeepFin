@@ -48,3 +48,39 @@ RATCHET_EXIT_NO_RETRY=5
 ratchet_iter_from_checkpoint () {   # $1 = .../checkpoint_000478
     basename "$1" | sed -E 's/^checkpoint_//; s/^0+([0-9])/\1/'
 }
+
+# The trial whose data is freshest. ⚑ NOT `ls -td`, which ranks by DIRECTORY
+# mtime -- and a directory's mtime moves whenever any entry is created or
+# removed inside it, so Ray writing `checkpoint_NNNNNN/` under a DEAD trial
+# floats it above the live one. Both scripts had that rule, and
+# `pause_window.sh` was fixed while these two were not, which made the
+# disagreement WORSE than the original bug: the wrapper parked the trial IT
+# chose while `iter`, `MIN_ITER`, `ck_ready` and the snapshot all came from the
+# trial the LOOP chose. Production parked to measure a dead trial.
+#
+# Same rule as `train_watchdog.newest_trial_dir` / `trial_paths._trial_sort_key`
+# / `pause_window.sh:resolve_trial_id`: populated-preferred (rank 1 = carries
+# result.json or progress.csv), then that file's mtime, then the name.
+# `%.9Y` not `%Y`: whole-second mtimes tie for two trials written in the same
+# second -- what a restart does -- and the comparison then falls through to the
+# NAME, deciding alphabetically. LC_ALL=C so the decimal separator is a dot.
+# Prints the directory WITH a trailing slash, matching what `ls -td .../*/` gave
+# its callers.
+ratchet_newest_trial_dir () {   # $1 = tune dir (default $WORK_DIR/tune)
+    local tune="${1:-$WORK_DIR/tune}" d f rank m best
+    best="$(
+        for d in "$tune"/train_trial_*/; do
+            [ -d "$d" ] || continue
+            rank=0; m=0
+            for f in result.json progress.csv; do
+                if [ -f "$d$f" ]; then
+                    m="$(stat -c %.9Y "$d$f" 2>/dev/null || echo 0)"; rank=1; break
+                fi
+            done
+            [ "$rank" -eq 1 ] || m="$(stat -c %.9Y "$d" 2>/dev/null || echo 0)"
+            printf '%s %s %s\n' "$rank" "$m" "$d"
+        done | LC_ALL=C sort -k1,1nr -k2,2nr -k3,3r | head -1 | cut -d' ' -f3-
+    )"
+    [ -n "$best" ] || return 1
+    printf '%s\n' "$best"
+}

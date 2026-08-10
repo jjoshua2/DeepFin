@@ -1,24 +1,57 @@
 #!/usr/bin/env python3
 """Training-health watchdog: one detect-and-report check per invocation.
 
-Detects CRASHED / STOPPED / PAUSED-HELD / STALLED / OK for the live train.sh-managed
-run. Never signals, deletes, restarts, or resumes — read-only report only.
+Detects CRASHED / STOPPED / PAUSED-HELD / PAUSE-ABANDONED / STALLED / OK for
+the live train.sh-managed run. Never signals, deletes, restarts, or resumes —
+read-only report only.
 
 Usage (cron / loop):
   PYTHONPATH=. python3 scripts/train_watchdog.py
   PYTHONPATH=. python3 scripts/train_watchdog.py --stall-minutes 90
   PYTHONPATH=. python3 scripts/train_watchdog.py --notify-cmd 'notify-send training'
 
-Exit codes: 0=OK, 1=STOPPED, 2=PAUSED-HELD, 3=STALLED, 4=ERROR, 5=CRASHED.
+Exit codes: 0=OK, 1=STOPPED, 2=PAUSED-HELD, 3=STALLED, 4=ERROR, 5=CRASHED,
+6=PAUSE-ABANDONED.
 STOPPED vs CRASHED both mean 'no live PID' and differ only by whether
 train.sh's intentional-stop marker is present (see --stop-marker).
 Stdout is always exactly one ``watchdog: ...`` line (or ERROR on failure).
+
+⚑ WHY PAUSE-ABANDONED EXISTS (2026-08-09, the ack-gated pause window).
+``decide()`` returns PAUSED-HELD whenever the loop is flat and a ``pause.txt``
+is present, and STALLED requires ``pause_txt is None``; ``watchdog_loop.sh``
+recovers only on STALLED. So while ANY marker is held, auto-recovery is
+structurally unable to fire and ``recover_stall.sh``'s ``rm -f ... pause.txt``
+is unreachable. That was tolerable while a marker meant "an operator is doing
+something"; ``scripts/pause_window.sh`` makes a held marker a NIGHTLY event, so
+the same verdict now means both "production is parked" and "the ratchet is
+running", and a wrapper that dies holding the marker parks production until a
+human notices.
+
+The marker itself carries the discriminator: ``pause_window.sh`` writes
+``pid=<n> started=<iso>``, and ``graceful_restart.py`` writes prose with no
+``pid=``. So ONLY a self-identifying marker can be judged abandoned — an
+operator's marker is never touched, whatever its age — and the criteria are
+"the owning process is gone" or "held past ``--pause-max-minutes``".
+
+⚑ ``--pause-max-minutes`` IS COUPLED TO ``daily_gate_ratchet.sh``'s
+``BUDGET_MIN``, ACROSS TWO FILES, WITH NOTHING BUT THIS PARAGRAPH PINNING IT.
+A window is bounded by ``CAE_PAUSE_ACK_TIMEOUT`` (30 min) plus ``BUDGET_MIN``
+(90 — a deadline for the WHOLE invocation shared by both series, not per
+series), so 120 against the default 180 leaves 50% headroom. **Raising this past
+~150 makes the age branch fire on a HEALTHY window**, because the age criterion
+applies even when the owner is alive: the watchdog would delete a live window's
+marker and resume training beside a running 16-concurrent compiled arena, which
+is the documented double-OOM cause (CLAUDE.md: one arena at a time). If
+``BUDGET_MIN`` rises, this must rise with it — and if it does not, the failure is
+silent in the dangerous direction.
 """
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -28,11 +61,15 @@ from pathlib import Path
 from typing import Any
 
 
-# Match scripts/train.sh defaults.
-DEFAULT_PIDFILE = Path("/tmp/chess_training.pid")
+# Match scripts/train.sh defaults. TRAIN_PIDFILE is the same seam
+# ratchet_loop.sh already reads for the same file; without it nothing can drive
+# watchdog_loop.sh against a sandbox, because the loop does not pass --pidfile
+# and the check would silently read the LIVE run's pid.
+DEFAULT_PIDFILE = Path(os.environ.get("TRAIN_PIDFILE", "/tmp/chess_training.pid"))
 DEFAULT_LOG = Path("/tmp/chess_training.log")
 DEFAULT_WORK_DIR = Path(os.environ.get("TRAIN_WORK_DIR", "runs/pbt2_small"))
 DEFAULT_STALL_MINUTES = 90.0
+DEFAULT_PAUSE_MAX_MINUTES = 180.0
 # Touched by `train.sh stop` BEFORE it kills, removed by `train.sh start`. Its
 # presence is the ONLY thing separating a deliberate stop from a crash: both
 # leave no PID. Before 2026-08-08 both reported STOPPED, so a crash that killed
@@ -49,13 +86,26 @@ EXIT_ERROR = 4
 # EXIT_STALLED by value for auto-recovery, and any consumer treating "non-zero"
 # as "needs attention" keeps working unchanged.
 EXIT_CRASHED = 5
+# ⚑ 6, NOT 5. This branch was written against a main that stopped at 4 and it
+# claimed 5, which #371 had already taken for CRASHED. Two states sharing an
+# exit code is the same defect one level up from the one this state exists to
+# fix: watchdog_loop.sh would have cleared a pause marker on a CRASHED verdict.
+# Caught by reading origin/main, not by any test here -- a merge conflict would
+# have shown the collision only if both sides had touched the same LINE, and
+# they did not.
+EXIT_PAUSE_ABANDONED = 6
 
 STATE_OK = "OK"
 STATE_STOPPED = "STOPPED"
 STATE_PAUSED_HELD = "PAUSED-HELD"
+STATE_PAUSE_ABANDONED = "PAUSE-ABANDONED"
 STATE_STALLED = "STALLED"
 STATE_ERROR = "ERROR"
 STATE_CRASHED = "CRASHED"
+
+# `pid=<n>` anywhere in the marker, on a word boundary. Written by
+# scripts/pause_window.sh; graceful_restart.py's marker deliberately has none.
+_PAUSE_OWNER_RE = re.compile(r"(?:^|\s)pid=(\d+)\b")
 
 
 @dataclass(frozen=True)
@@ -74,6 +124,12 @@ class ProgressSnapshot:
     # caller that forgets to supply it reports CRASHED rather than silently
     # downgrading a real crash to a benign stop: the safe default is the loud one.
     intentional_stop: bool = False
+    # Present only for a SELF-IDENTIFYING pause marker (one carrying `pid=`). A
+    # marker without an owner line is an operator's and is never judged
+    # abandoned, so both stay None and the verdict is PAUSED-HELD as before.
+    pause_owner_pid: int | None = None
+    pause_owner_alive: bool | None = None
+    pause_age_minutes: float | None = None
 
 
 @dataclass(frozen=True)
@@ -116,13 +172,20 @@ class PersistedState:
         )
 
 
-def decide(snap: ProgressSnapshot, stall_minutes: float) -> Verdict:
+def decide(
+    snap: ProgressSnapshot,
+    stall_minutes: float,
+    pause_max_minutes: float = DEFAULT_PAUSE_MAX_MINUTES,
+) -> Verdict:
     """Pure state machine: snapshot in, verdict out. No I/O.
 
-    Check order: CRASHED/STOPPED → PAUSED-HELD → STALLED → OK.
+    Check order: CRASHED/STOPPED → PAUSE-ABANDONED → PAUSED-HELD → STALLED → OK.
     Flatness is ``rows`` not greater than ``rows_prev`` (or no prior rows).
     PAUSED-HELD requires pause.txt AND flat progress (the boundary-hold case
     appends no rows; mtime is untrustworthy because Ray metadata syncs).
+    PAUSE-ABANDONED is the same state narrowed to a marker that NAMES ITS
+    OWNER and whose owner is gone (or which has been held past
+    ``pause_max_minutes``) — the only pause a machine may safely clear.
     STALLED is flat without pause for longer than ``stall_minutes``.
     Within the stall window (or after growth), the result is OK.
 
@@ -145,6 +208,11 @@ def decide(snap: ProgressSnapshot, stall_minutes: float) -> Verdict:
         details["progress"] = snap.progress_file
     if snap.pause_txt is not None:
         details["pause_txt"] = snap.pause_txt
+    if snap.pause_owner_pid is not None:
+        details["pause_owner"] = snap.pause_owner_pid
+        details["pause_owner_alive"] = int(bool(snap.pause_owner_alive))
+    if snap.pause_age_minutes is not None:
+        details["pause_age_min"] = f"{snap.pause_age_minutes:.1f}"
 
     if snap.pid is None or not snap.pid_alive:
         if snap.intentional_stop:
@@ -157,12 +225,65 @@ def decide(snap: ProgressSnapshot, stall_minutes: float) -> Verdict:
         flat = False
 
     if flat and snap.pause_txt is not None:
+        reason = _abandoned_reason(snap, pause_max_minutes)
+        if reason is not None:
+            details["pause_abandoned"] = reason
+            return Verdict(STATE_PAUSE_ABANDONED, EXIT_PAUSE_ABANDONED, details)
         return Verdict(STATE_PAUSED_HELD, EXIT_PAUSED_HELD, details)
 
     if flat and snap.pause_txt is None and snap.minutes_flat > stall_minutes:
         return Verdict(STATE_STALLED, EXIT_STALLED, details)
 
     return Verdict(STATE_OK, EXIT_OK, details)
+
+
+def _abandoned_reason(snap: ProgressSnapshot, pause_max_minutes: float) -> str | None:
+    """Why this held marker is recoverable, or None if it must be left alone.
+
+    ⚑ THE GATE IS ``pause_owner_pid is not None``, not the age. A marker with
+    no ``pid=`` line is an operator's ``graceful_restart.py`` pause, and an
+    operator's pause is allowed to outlast any bound we could pick — clearing
+    it would resume the run they deliberately parked. So an unowned marker can
+    never reach either criterion below.
+    """
+    if snap.pause_owner_pid is None:
+        return None
+    if snap.pause_owner_alive is False:
+        return f"owner_pid_{snap.pause_owner_pid}_is_gone"
+    if snap.pause_age_minutes is not None and snap.pause_age_minutes > pause_max_minutes:
+        return f"held_{snap.pause_age_minutes:.0f}min_over_{pause_max_minutes:.0f}"
+    return None
+
+
+def parse_pause_marker(
+    text: str,
+    *,
+    mtime: float | None,
+    now: float,
+) -> tuple[int | None, float | None]:
+    """``(owner_pid, age_minutes)`` for a pause marker's contents.
+
+    ``pause_window.sh`` writes ``pause_window.sh pid=<n> started=<iso>``. The
+    age comes from ``started=`` when it parses and from the file's mtime
+    otherwise; a marker with no ``pid=`` yields ``(None, None)`` regardless,
+    because nothing downstream may act on an unowned marker's age.
+    """
+    m = _PAUSE_OWNER_RE.search(text)
+    if m is None:
+        return None, None
+    pid = int(m.group(1))
+
+    started = re.search(r"(?:^|\s)started=(\S+)", text)
+    if started is not None:
+        try:
+            begin = dt.datetime.fromisoformat(started.group(1)).timestamp()
+        except (ValueError, OSError, OverflowError):
+            pass
+        else:
+            return pid, max(0.0, (now - begin) / 60.0)
+    if mtime is not None:
+        return pid, max(0.0, (now - mtime) / 60.0)
+    return pid, None
 
 
 def compute_flatness(
@@ -355,6 +476,21 @@ def build_snapshot(
     rows, progress_file = count_progress_rows(trial)
     trial_name = trial.name if trial is not None else None
 
+    owner_pid: int | None = None
+    owner_alive: bool | None = None
+    pause_age: float | None = None
+    if pause is not None:
+        # Fail-soft: an unreadable marker is reported as an ordinary
+        # PAUSED-HELD, never as one a machine may clear.
+        try:
+            text = pause.read_text(encoding="utf-8", errors="replace")
+            mtime = pause.stat().st_mtime
+        except OSError:
+            text, mtime = "", None
+        owner_pid, pause_age = parse_pause_marker(text, mtime=mtime, now=now)
+        if owner_pid is not None:
+            owner_alive = pid_alive_fn(owner_pid)
+
     prev = load_state(state_path)
     rows_prev, minutes_flat, new_state, _grew = compute_flatness(
         rows=rows, trial=trial_name, now=now, prev=prev,
@@ -370,6 +506,9 @@ def build_snapshot(
         trial_dir=trial_name,
         progress_file=progress_file,
         intentional_stop=intentional,
+        pause_owner_pid=owner_pid,
+        pause_owner_alive=owner_alive,
+        pause_age_minutes=pause_age,
     )
     return snap, new_state
 
@@ -453,6 +592,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     ap.add_argument(
+        "--pause-max-minutes",
+        type=float,
+        default=DEFAULT_PAUSE_MAX_MINUTES,
+        help=(
+            "A pause marker that NAMES ITS OWNER (pid=) and has been held longer "
+            f"than this is PAUSE-ABANDONED (default: {DEFAULT_PAUSE_MAX_MINUTES:g}). "
+            "An operator's unowned marker is never judged by it."
+        ),
+    )
+    ap.add_argument(
         "--notify-cmd",
         default=None,
         help="On non-OK, run this command with the status line as one argument (fail-soft)",
@@ -465,6 +614,8 @@ def main(argv: list[str] | None = None) -> int:
         args = parse_args(argv)
         if args.stall_minutes <= 0:
             raise ValueError("--stall-minutes must be > 0")
+        if args.pause_max_minutes <= 0:
+            raise ValueError("--pause-max-minutes must be > 0")
 
         state_path = args.state if args.state is not None else default_state_path(args.log)
         work_dir = args.work_dir
@@ -481,7 +632,11 @@ def main(argv: list[str] | None = None) -> int:
             state_path=state_path,
             stop_marker=args.stop_marker,
         )
-        verdict = decide(snap, stall_minutes=float(args.stall_minutes))
+        verdict = decide(
+            snap,
+            stall_minutes=float(args.stall_minutes),
+            pause_max_minutes=float(args.pause_max_minutes),
+        )
         # Always persist the flatness baseline so the next invocation can compare.
         try:
             save_state(state_path, new_state)

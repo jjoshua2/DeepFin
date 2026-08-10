@@ -552,7 +552,8 @@ def test_the_loop_stamps_the_day_only_for_a_real_reading(tmp_path) -> None:
     assert "NO strength measurement" in log, log
 
 
-def _run_one_poll(root: Path, *, mode: str = "good", timeout: float = 120.0):
+def _run_one_poll(root: Path, *, mode: str = "good", timeout: float = 120.0,
+                  env: dict | None = None):
     """Drive ONE real poll of ratchet_loop.sh end to end. Returns (rc, output).
 
     The loop's own body, not an extracted function: the defect this whole
@@ -579,6 +580,7 @@ def _run_one_poll(root: Path, *, mode: str = "good", timeout: float = 120.0):
                 "ARENA_MODE": mode,
                 "ARENA_CALLS": str(root / "arena_calls.txt"),
                 "PYTHONDONTWRITEBYTECODE": "1",
+                **(env or {}),
             },
         )
     finally:
