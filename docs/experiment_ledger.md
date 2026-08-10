@@ -39484,3 +39484,492 @@ scale. Every value stayed in range and every key was accepted, so nothing warned
 alert, no gate. The instrument that would have caught this on day one was already built and
 simply never read. That is the cheapest fix available and it is independent of the strength
 question.
+
+---
+
+## 2026-08-10 — ROLLBACK PLAN: the bundle IMPROVED SEARCH and DEGRADED THE NET. Revert the net, KEEP the search.
+
+**PREPARED, NOT LAUNCHED.** Training is STOPPED by operator decision. Nothing in this
+entry has been executed. Josh executes; this entry is the pre-commitment required by
+CLAUDE.md §"Experiment protocol" before it may be.
+
+
+### ⚑⚑ THE SPINE: the arena and the selfplay winrate were never in conflict
+
+**The arena is structurally BLIND to the search change.** `arena_standard.py::resolve_search_shape`
+(~line 263) resolves `--search-shape training` through `production_selfplay_search_config()`,
+which runs the real yaml -> live-yaml validator -> `build_recommended_worker` channel and
+passes `c_scale`, `topk` and `policy_temp` into the arena search **for BOTH sides**.
+Verified in the artifacts, not inferred — every row of today's ladder, including the
+PRE-bundle nets, logs:
+
+```
+[arena] SEARCH candidate: shape=training ... c_scale=0.1 ... policy_temp=1.5 ... [pbt2_small.yaml -> reco -> worker SearchConfig]
+[arena] SEARCH reference:  shape=training ... c_scale=0.1 ... policy_temp=1.5 ...
+```
+
+⇒ iter 514, 735, 768 and 862 were ALL played at the bundle's search shape. The arena holds
+search constant and therefore isolates **the NET**. It cannot see a benefit from the search
+change, by construction.
+
+**Meanwhile the selfplay winrate measures net + search TOGETHER, and it jumped.** Raw
+`pid_raw_winrate` (NOT the EMA, and after the resumed-game contamination washed out by iter
+743 per Amendment 15): 0.5986 (740), 0.6013 (745), **0.6106 (750)**, 0.5602 (775) — against
+a pre-bundle baseline of ~0.44-0.57, **while the PID was simultaneously CUTTING
+`wdl_regret` 0.0552 → 0.0307, a 44% harder opponent at fixed `sf_nodes` 75000.**
+
+A ZERO-LAG jump at the restart is not something a training process can produce. A better
+search wins more games the instant it is switched on.
+
+⇒ **THE BUNDLE DID TWO SEPARABLE THINGS. It IMPROVED PLAY STRENGTH via the search shape —
+real, immediate, and worth keeping — and it DEGRADED THE NET, via the diff-focus coupling
+and/or the changed training target.** This is not "a bad change". It is **a genuine
+improvement to search that arrived welded to a defect in how `difficulty` consumes search
+output.** That is why the fix keeps `gumbel_c_scale: 0.1` and `gumbel_policy_temp: 1.5`
+and makes `difficulty` scale-invariant, rather than reverting the knobs.
+
+⚑ **PROTOCOL NOTE — do not judge the search knobs with `--search-shape training`.** It reads
+the live yaml for BOTH sides, so a future search experiment run that way would measure
+nothing and report a clean null. This is the "same name ≠ same measurement" trap in its
+sharpest form. To price a search change, pin the two sides' gumbel dicts explicitly
+(`--cand-gumbel` / `--ref-gumbel`) or use `--search-shape play` with overrides.
+
+**HYPOTHESIS, NOT A FINDING — partial rehabilitation of `wdl_regret`.** If regret tracks
+TOTAL playing strength (net + search) rather than net quality, the whole series is
+consistent: search improves once at 736 → regret drops hard → the net then degrades →
+regret climbs back. It does: regret bottomed at 0.0307 (iter 775) and rose 18% to 0.0363 by
+iter 860. This does NOT overturn task #170 — regret is still not a NET-quality ruler — but
+the refutation should be stated as "regret does not track NET strength", not "regret is
+uninformative". Unestablished; do not cite it as a finding.
+
+### What is established, and what is NOT
+
+**ESTABLISHED — the Elo of the NET (search held constant at the bundle shape).** 400-game
+paired arenas vs the frozen anchor
+`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt`, all COMPLETE:
+
+| checkpoint | Elo vs boot512 | 95% CI |
+|---|---|---|
+| iter 514 | **+115.2** | [+85.2, +147.0] |
+| iter 735 | **+86.9** | [+55.3, +119.9] |
+| iter 768 | **+67.7** | [+38.3, +98.1] |
+| iter 862 | **+11.3** | [−18.4, +41.2] |
+
+That is a **monotone decline that PREDATES the bundle**: −0.13 Elo/iter over 514→735,
+then −0.42 over 735→768, then −0.66 over 768→862. The bundle at iter 736 did not start
+the decline; it accelerated it ~5x. **Do not read 514→735 as a flat plateau — an earlier
+draft of this plan did, and it was wrong.**
+
+**ESTABLISHED — the diff-focus mechanism.** Independently re-derived here from tfevents
+and from banked shards; both agree, and the shard reconstruction reproduces the live
+telemetry to three decimals (see "Method" below).
+
+| | pre-bundle 560-735 | 736-745 | 836-862 |
+|---|---|---|---|
+| mean raw `kl` on FRESH games | 0.0966 | 0.7576 | 0.9813 |
+| `diff_focus_keep_rate` | 0.8029 ± 0.0063 | → 0.936 by iter 745 | 0.957 |
+| `diff_focus_keep_limited_frac` | 0.3737 ± 0.0085 | → 0.146 | 0.109 |
+| `replay_pmass_kl_share` | 0.3659 ± 0.0035 | 0.49 | 0.861 |
+| `replay_priority_mean` | 1.0979 ± 0.0195 | 3.94 | 4.26 |
+| `grad_hard_clip_rate` | 0.0000 ± 0.0000 | 0.0000 | 0.908 |
+
+Two timescales, and they are the structural proof: `keep_rate` (computed on FRESH games)
+saturates in ~5 iterations, while `replay_pmass_kl_share` (a WINDOW quantity) ramps over
+~133 iterations — 1.5M positions ÷ ~11.3k ingested/iter = ~133, matching to within one
+iteration. `grad_hard_clip_rate` was **exactly 0.0000 at all nine restarts in this trial**
+(iters 22, 152, 157, 166, 189, 401, 736, 818, 835) and only lifts at iter 782, 46
+iterations after the bundle, when `grad_norm_mean` ramps past the fixed
+`zclip_max_norm: 6.5`. **It is not a restart artifact and it is not the damage
+mechanism** — direction-only descent was already REFUTED as a generalization factor
+(task #112, rig B2). Treat it as the airbag reporting that it fired.
+
+**NOT ESTABLISHED — the causal share.** The three downstream effects do not visibly sum
+to 76 Elo and no attempt here shows that they do:
+- curriculum dilution ≈ **10% of training rows** newly admitted (offered 12415 → 11601,
+  kept 9951 → 11095, ingested 11043 → 11305). ⚑ "we kept MORE rows" is NOT the
+  scale-rows-not-parameters win — same games, lower bar, more rows of worse average
+  quality at fixed compute. Dilution, not scale.
+- sampling concentration ≈ **12% of whole-batch effective diversity** (CV 1.19 → 1.77;
+  bounded because `disk_buffer.py:545` draws 50% uniform / 50% priority).
+- gradient regime: 93% hard-clipped, already refuted as a generalization factor.
+
+**NOT SEPARATED — a more parsimonious competing hypothesis.** `gumbel_c_scale` and
+`gumbel_policy_temp` reshape the visit distribution, and **the visit distribution IS the
+stored `policy_target`**. So the bundle changed the policy TRAINING TARGET directly, on
+every row. diff-focus is a side channel reading prior-vs-target disagreement; the target
+is the main channel. **The simplest explanation of the 76 Elo is that the new search
+shape is a worse teacher**, with the diff-focus coupling as a secondary aggravator. These
+two hypotheses are unseparated. A verdict that names either as "the cause" would be read
+off an unresolved discriminator.
+
+**AND — the decline predates all of it.** 514→735 is −28 Elo with diff-focus behaving
+perfectly normally throughout (keep_rate ~0.80, CV 1.19, clip rate exactly 0.000). ~340
+iterations from 399→735 bought nothing measurable. **Reverting does not fix that, and the
+diff-focus fix is not a candidate explanation for it.** The bundle is a clean cliff
+sitting on top of a loop that already was not gaining.
+
+### Why the two knobs cannot be blamed individually
+
+`gumbel_c_scale: 0.1` SHARPENS the target (4x sigma); `gumbel_policy_temp: 1.5` SOFTENS
+the prior. They CANCEL on `gumbel_policy_entropy_mean` (−0.005 on the cleanest row, iter
+743 — Amendments 11 and 15) but they ADD on `kl = KL(prior‖target)`, because reverse KL
+is U-shaped in target temperature and minimized when target ≈ prior: softening flattens
+the peak and sharpening zeroes the tail, and **both raise it**. That is simultaneously
+why the entropy proxy was non-diagnostic and why `difficulty` blew up despite the
+cancellation. ⇒ **"Revert the guilty knob" is not an available strategy.** There is no
+identified guilty knob, and reverting both would discard `gumbel_c_scale: 0.1`, itself a
+deliberate correction back to the library optimum.
+
+Josh's original reasoning for the bundle — the loop was not gaining, so search needed more
+authority — is NOT refuted by anything here. What is refuted is the EVIDENCE that it
+helped: `pid_ema_winrate` 0.5065 → 0.5416 and `wdl_regret` −44% looked decisive, but
+winrate is the PID's CONTROLLED variable (it unwound to 0.4935 by iter 840) and regret was
+refuted as a strength ruler this morning. **The arena never showed a gain.** Write the
+bundle up as an intervention whose test was confounded by an unnormalized quantity, not as
+a bad change to be reverted.
+
+---
+
+## HYPOTHESIS
+
+Restarting from the iter-672 export (weights + optimizer + PID + RNG + gate + holdout +
+817 matched pre-bundle shards, one coherent moment) with `diff_focus_pol_scale`
+recalibrated to the post-bundle KL scale restores the pre-bundle **realized** curriculum
+regime, and the reverted net does not resume the −0.42 to −0.66 Elo/iter slide it was on
+after iter 736.
+
+This does NOT claim to restore the pre-514 gains and does NOT claim to fix the 399→735
+plateau. It claims exactly two things: the realized regime comes back into band, and the
+post-736 acceleration stops.
+
+## THE DECIDING YARDSTICK — one command
+
+```bash
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate data/ratchet/snapshots/<newest ck_*_iter>.pt \
+  --reference scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt \
+  --mode matched_sims --search-shape training --sims 32 \
+  --games 400 --max-concurrent-games 16 --report-every 64 \
+  --max-seconds 2400 --device cuda --seed 42 \
+  --label rollback_readout_iter<N>_vs_boot
+```
+Run it on the checkpoint **100 iterations after the restart**, in a pause window
+(`scripts/graceful_restart.py` + PR #374's ack-gated pause) — never concurrent with
+training, per the 2026-06-18 OOM and the 1.89x pause-window measurement.
+
+Reference points, same instrument, same anchor, all 400 games:
+iter 672 (queued; `scratchpad/ladder_20260810/run_672.sh`), iter 735 **+86.9
+[+55.3, +119.9]**, iter 862 **+11.3 [−18.4, +41.2]**.
+
+## PRE-COMMITTED THRESHOLDS
+
+**Success** — the restart+recalibration is kept:
+- the readout at restart+100 lands **at or above the iter-672 400-game reading**, CIs
+  overlapping or better (i.e. the 100 iterations did not cost Elo); AND
+- realized `diff_focus_keep_rate` ∈ [0.75, 0.86] and `diff_focus_keep_limited_frac` ∈
+  [0.30, 0.45] on the steady-state rows.
+
+**Kill** — revert the recalibration and escalate to the rank/quantile design below:
+- the readout at restart+100 is **below the iter-672 reading with non-overlapping CIs**; OR
+- `diff_focus_regime_alarm` (PR #388) is set on **5 consecutive iterations** after the
+  3-iteration warmup.
+
+**Abort the restart itself** (within the first ~10 iterations, before 100 are spent):
+- realized `diff_focus_keep_rate` > 0.90 or < 0.65 once resumed games have drained.
+
+⚠ **Do not read any of these off the first post-restart rows.** They are ~99% RESUMED
+pre-change games. Gate every proxy on the resumed ratio and wait for it to fall below 0.1.
+
+---
+
+## THE FIX — three levers evaluated, one recommended
+
+Measured on three ply populations drawn from banked shards, Horvitz-Thompson reweighted
+back to the pre-keep population. **Knobs fitted on the PRE-BUNDLE population only, then
+applied unchanged to the others** — that is the invariance test:
+
+| lever | pre-bundle | post-bundle | current |
+|---|---|---|---|
+| **today** (`pol_scale` 3.5, raw) — keep / kl_share | 0.807 / 0.373 | **0.923 / 0.825** | **0.957 / 0.867** |
+| **B** recalibrated (`pol_scale` 0.45, raw) | 0.713 / 0.065 | 0.815 / 0.377 | 0.842 / 0.456 |
+| **A** mean-normalized (`pol_scale` 0.34, `q_weight` 0.58) | 0.808 / 0.373 | **0.817 / 0.371** | **0.835 / 0.370** |
+
+**A — normalize each term by a running mean. Scale-invariant, and it works.** Fitted on
+the pre-bundle population alone it holds keep_rate to within 3.6% and kl_share to within
+0.8% across a 10x change in the KL scale. Priority CV comes back to 1.13-1.20 (pre-bundle
+1.19) and the p99.9 tail drops from 59-61 to 8.9-9.7.
+**Rejected FOR THIS RESTART** on two grounds, neither of which is the mean's robustness:
+(i) it is a change to the semantics of the stored `priority` column, landing on the same
+restart as a revert, with no way to test the production path (GPU busy, training stopped);
+(ii) the mean is not robust — `priority_max` 81.6 against a mean of 4.19 — so it partly
+chases its own tail. **The rank/quantile version below is strictly better and is the
+recommended follow-up.**
+
+**C — make the KL's reference prior the TEMPERED one.** `network_turn.py:630` builds the
+reference from `pol_logits_full`, the RAW untempered logits, while search ran on the
+tempered ones (`gumbel.py:338`). **REJECTED on correctness, not cost.** The policy head is
+trained toward the visit target FROM the raw logits, so KL(raw prior ‖ target) is the
+learning signal for that row. Tempering the reference makes the metric ignore exactly the
+part of the disagreement the head will be trained on: a row where the net must move a long
+way to the softer target would read as "nothing to learn here". It would systematically
+de-prioritize the rows with the most to learn. It also only removes the temperature arm,
+not the `c_scale` arm, and it changes the meaning of the stored `priority_policy_kl`
+column across eras, breaking any offline read of banked shards.
+
+**B — recalibrate `diff_focus_pol_scale` 3.5 → 0.45. RECOMMENDED FOR THIS RESTART.**
+One yaml number, a key already known and already live, dry-run verified. On the population
+the restart will actually produce (pre-bundle net meeting bundle search) it restores
+keep 0.815 / keep_limited 0.361 / kl_share 0.377 / priority_mean 1.089 / priority_std 1.229
+against pre-bundle targets of 0.807 / 0.372 / 0.373 / 1.109 / 1.332. `diff_focus_slope`
+stays 3.0 and `diff_focus_q_weight` stays 6.0 — **one knob moves**, which is what
+"one data-affecting change per readout window" requires.
+
+Its known weakness is real: it is a point calibration against today's KL and leaves the
+trap armed for the next person who touches search. **That weakness is now bounded rather
+than open-ended.** PR #388 makes the same drift loud within four iterations instead of
+140 — it fires on the actual iter 736-745 telemetry, as a shipped test. B alone and
+B-plus-the-guard are not the same proposition. Against that, shipping an untested
+curriculum rewrite onto the same restart as a revert is an unbounded risk on the one
+event that must not go wrong.
+
+⚑ **B's residual, stated so it is not rediscovered:** `pol_scale` 0.45 is wrong for
+PRE-bundle data (it gives kl_share 0.065 on population A). Sampling uses the **stored**
+`priority` column — `disk_buffer._append_shuffle_arrays` does NOT recompute it — so the
+817 restored shards keep their correct pre-bundle priorities and are unaffected. But
+`replay_pmass_kl_share` decomposes stored mass with TODAY's weight, so **that column will
+misreport for ~133 iterations after the change**. Read `replay_pmass_kl_raw_mean`
+(added in PR #388, carries no config factor) instead. This is why the guard does not band
+`kl_share`.
+
+## THE RECOMMENDED FOLLOW-UP — rank/quantile, as a separate PR with its own readout
+
+Rank and quantile statistics are invariant to ANY monotone rescaling of `difficulty`, and
+`c_scale`/`policy_temp` rescale it monotonically. **Under a percentile rule the iter-736
+bundle would have been a no-op on the curriculum.** Design:
+
+- Rank EACH TERM separately against a worker-local ring buffer of recent values:
+  `kl_u = ecdf(kl)`, `qd_u = ecdf(|q_delta|)`, both in [0,1] with mean 0.5.
+- `difficulty_u = (q_weight·qd_u + pol_scale·kl_u) / (q_weight + pol_scale)`.
+  ⚑ Ranking each term separately is what pins the kl:qd balance at
+  `pol_scale : q_weight` = 3.5 : 6.0 = **0.368 : 0.632** — which is exactly the measured
+  pre-bundle `kl_share` of 0.373. **The existing weights already encode the right balance;
+  ranking makes that balance realized instead of nominal, so neither weight needs to
+  change.** Ranking the SUM instead would not do this.
+- Keep rate becomes a CONFIGURED TARGET: with `keep_prob = clamp(difficulty_u·slope_u,
+  min_keep, 1)`, realized `keep_rate = 1 − 1/(2·slope_u)`, so `slope_u = 2.538` gives
+  0.803 by construction under any search shape. The guard then degenerates to
+  `assert realized ≈ configured` and cannot silently stop meaning anything.
+
+**Two problems this design has that must be solved before it ships — found here, stated so
+they are not rediscovered:**
+1. **It changes the priority DISTRIBUTION, not just its scale.** A ranked priority is
+   near-uniform, giving recorded CV ≈ 0.49 against the historical 1.19. That is a large
+   unintended weakening of surprise weighting. Fix: map `u` through the measured
+   pre-bundle difficulty quantile function so the historical priority distribution is
+   reproduced exactly under any search shape.
+2. **The absolute priority scale must match the restored window.** New rows and the 817
+   restored shards share one buffer for ~133 iterations; if their priority scales differ
+   by a constant factor the sampler is wrecked by our own fix, in the same way the bundle
+   wrecked it. The historical recorded mean is 1.11 and must be reproduced.
+
+⚑ **No `.c` change is required, and this is the load-bearing implementation finding.**
+A batch quantile cannot be computed inside `_mcts_tree.c`'s per-row loop — but it does not
+have to be. `c_process_ply` returns `priority_policy_kl` and `priority_q_delta` per row;
+`network_turn.py:_append_records_via_c` then stores them into `_NetRecord`, and the
+Bernoulli keep draw does not happen until `finalize.py:910`. So the difficulty/keep
+computation can be done ONCE in Python over the returned columns, discarding C's own
+`priority`/`keep` outputs. That is strictly better than mirroring the formula in C:
+**a mirrored pair is exactly how the two paths' KL expressions already drifted apart**
+(`_mcts_tree.c:4838` skips terms below 1e-12, `network_turn.py:641` floors them — task
+#173, still open, untouched, and affecting nothing in production because production runs
+the C path).
+
+## THE DISCRIMINATOR — run this BEFORE the restart
+
+The target-quality hypothesis and the diff-focus hypothesis are separable offline, cheaply,
+and the answer changes whether the bundle knobs should be re-deployed at all. The banked
+pre-bundle shards (817 in `data/salvage/pre_search_authority_20260809`) and post-bundle
+rows carry stored `policy_target`s produced by the two search shapes. Score target QUALITY
+directly, with no reference to diff-focus, per the audit-first rule in
+`docs/eval_protocol.md`:
+
+```bash
+PYTHONPATH=. python3 scripts/probe_policy_targets.py \
+  --shards data/salvage/pre_search_authority_20260809/seeds/slot_000/replay_shards \
+  --label pre_bundle_target_quality --gpu-mem-fraction 0.25
+PYTHONPATH=. python3 scripts/probe_policy_targets.py \
+  --shards runs/pbt2_small/replay/train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06/replay_shards \
+  --label post_bundle_target_quality --gpu-mem-fraction 0.25
+```
+(check `--help` first; the flags above are the intent, not a verified invocation — this was
+not run here, no GPU was used.)
+
+**Pre-committed reading.** If the post-bundle target scores WORSE against the frozen deep-SF
+audit set with non-overlapping intervals, the search-shape-as-teacher hypothesis is
+supported, the bundle knobs must NOT be re-deployed as-is, and the diff-focus fix is
+confirmed as a confound removal rather than the cure. If it scores the same or better, the
+teacher hypothesis is not supported and the diff-focus chain carries more of the share.
+**Either way the diff-focus fix is worth shipping** — it is what makes the search-authority
+question measurable separately from its side effect on the curriculum for the first time.
+
+⇒ **The intended sequence is: fix the confound → revert to 672 → re-deploy the higher
+`c_scale` + temperature as a clean pre-registered experiment with the arena as the deciding
+yardstick.** The bundle's question was never answered; it was confounded.
+
+---
+
+## THE RESTART RUNBOOK — Josh executes
+
+### ⚑⚑ BLOCKER FOUND: `salvage-restart` is a SILENT NO-OP as the yaml stands
+
+`configs/pbt2_small.yaml:97` carries `salvage_seed_pool_dir: ""`. `trainable.py:764` calls
+`_reload_yaml_into_config(config, ...)` **at the top of trial setup, before
+`TrialConfig.from_dict` and before the restore**, and `salvage_seed_pool_dir` is in none of
+the protected sets (`_TOPOLOGY_KEYS`, `_RESUME_CONSTRUCTION_BOUND_KEYS`,
+`_LIVE_RELOAD_SKIPPED_KEYS`, PB2-searched), so it falls through to `config[k] = v` and the
+CLI flag is overwritten with `""`. `./scripts/train.sh salvage-restart <POOL>` passes ONLY
+the CLI flag. The yaml's own comment says exactly this ("naming this key here CLOBBERS any
+`--salvage-seed-pool-dir` CLI value"). Since `salvage-restart` also does not pass
+`--resume`, the trial would find no checkpoint and no pool and start **RANDOM-INIT**.
+**Set the yaml key. Do not rely on the CLI flag.**
+
+### Step 0 — pre-flight (no GPU, safe with the ladder running)
+```bash
+cd /home/josh/projects/chess
+git log --oneline -1                                    # expect ops/live-20260725
+git diff --name-only origin/main HEAD -- '*.c' '*.h'    # expect EMPTY -> NO REBUILD
+ls data/salvage/pre_search_authority_20260809/seeds/slot_000/
+python3 -c "import json;m=json.load(open('data/salvage/pre_search_authority_20260809/manifest.json'));e=m['entries'][0];print(e['checkpoint_dir_name'],e['picked_row_training_iteration'],e['copied_replay_shards'],m['created_at'])"
+# expect: checkpoint_000671 672 817 2026-08-09T14:19:22
+```
+**No `.c`/`.h` differs between the live branch and `origin/main`, and PR #388 touches no C.
+⇒ `scripts/build_production_extensions.py` is NOT required for this restart.** Re-run the
+first two commands anyway — if either is non-empty, the rebuild becomes mandatory and must
+happen BEFORE the restart.
+
+### Step 1 — merge PR #388 (guard), then pull it onto the live branch
+Agents do not merge. After merge:
+```bash
+cd /home/josh/projects/chess && git pull --ff-only origin ops/live-20260725 && git merge origin/main
+```
+⚑ **Never `git checkout` in this tree.** If the merge needs conflict work, do it in a
+worktree.
+
+### Step 2 — dry-run the yaml edit ON A COPY, then apply
+```bash
+cp configs/pbt2_small.yaml /tmp/pbt2_recal.yaml
+# edit /tmp/pbt2_recal.yaml:
+#   diff_focus_pol_scale: 3.5  ->  0.45
+#   salvage_seed_pool_dir: ""  ->  "/home/josh/projects/chess/data/salvage/pre_search_authority_20260809"
+PYTHONPATH=. python3 -c "
+import yaml
+from chess_anti_engine.utils import flatten_run_config_defaults
+from chess_anti_engine.tune.trial_config import TrialConfig
+tc = TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open('/tmp/pbt2_recal.yaml'))))
+print('OK', tc.diff_focus_pol_scale, tc.diff_focus_slope, tc.diff_focus_q_weight, repr(tc.salvage_seed_pool_dir))"
+# expect: OK 0.45 3.0 6.0 '/home/josh/projects/chess/data/salvage/pre_search_authority_20260809'
+cp /tmp/pbt2_recal.yaml configs/pbt2_small.yaml
+git add configs/pbt2_small.yaml && git commit -m "ops: recalibrate diff_focus_pol_scale to the post-bundle KL scale; point salvage at the iter-672 export"
+```
+⚑ **COMMIT IT.** Not committed = not deployed — the June policy win was off for 15.8 days
+because a live yaml edit was never committed. Verified: `diff_focus_pol_scale: 0.45` is a
+KNOWN key with a VALID value, so it is accepted at launch and on reload. The live yaml
+already parses cleanly against `origin/main`'s schema, so the **launch fuse is clear**.
+
+### Step 3 — restart
+```bash
+./scripts/train.sh salvage-restart data/salvage/pre_search_authority_20260809
+```
+`salvage_restart` stops, then starts with `--salvage-restore-pid-state
+--salvage-restore-full-trainer-state --no-salvage-restore-donor-config
+--no-salvage-reinit-volatility-heads`. The yaml already carries all four at those values,
+so CLI and yaml agree and no reload can clobber them.
+
+**Window disposition, stated explicitly.** The current live window is bundle-era and is
+DISCARDED. `salvage-restart` starts a NEW trial, so its replay dir is empty and
+`_seed_replay_from_warmstart` (`trainable_init.py:539`) copies the pool's **817 matched
+pre-bundle shards** into it — its guard is `not iter_shard_paths(replay_shard_dir)`, which
+only holds for a fresh trial dir. 817 × 2000 = **1.63M positions against a
+`replay_window_max` of 1.5M**, so the window is FULL from iteration 1: no cold-start
+upload wedge, no fresh-buffer warming problem, and **no window/views confound —
+`train_views_per_position` sees the same denominator it always has.** This is the single
+strongest reason to prefer 672 over any assembled alternative.
+
+**Checkpoint-index ratchet.** A new trial gets a new trial dir and its own checkpoint
+index, so the iter-672 export cannot be overwritten by its own restore (the 2026-07-25
+failure). `_guard_checkpoint_index` will still log its line on every restart — expected,
+not a bug. The pool lives under `data/salvage/`, outside any tune dir, so Ray's pruner
+cannot reach it.
+
+### Step 4 — VERIFY, on realized values (a presence check is not a value read)
+```bash
+grep -E "salvage warmstart loaded slot|Seeded .* replay shards from salvage" /tmp/chess_training.log
+```
+**If neither line appears, STOP — the pool did not load and the trial is random-init.**
+Then, once the resumed-game ratio has drained (NOT on the first rows — they are ~99%
+resumed pre-change games):
+```bash
+D=$(ls -td runs/pbt2_small/tune/train_trial_*/ | head -1)
+python3 -c "
+import pandas as pd
+d = pd.read_csv('$D/progress.csv', low_memory=False).tail(5)
+print(d[['training_iteration','diff_focus_keep_rate','diff_focus_keep_limited_frac',
+         'diff_focus_priority_mean','replay_priority_mean','replay_pmass_kl_raw_mean',
+         'grad_hard_clip_rate','diff_focus_regime_alarm']].to_string())"
+```
+Required realized values (targets from the pre-bundle steady state):
+
+| column | expect | pre-bundle reference |
+|---|---|---|
+| `diff_focus_keep_rate` | 0.75 – 0.86 | 0.8029 ± 0.0063 |
+| `diff_focus_keep_limited_frac` | 0.30 – 0.45 | 0.3737 ± 0.0085 |
+| `diff_focus_priority_mean` | 0.60 – 1.30 | 0.8937 |
+| `replay_priority_mean` | 0.80 – 1.60 | 1.0979 ± 0.0195 |
+| `grad_hard_clip_rate` | 0.000 | 0.0000 |
+| `diff_focus_regime_alarm` | **0** | n/a |
+
+`replay_pmass_kl_share` is NOT on this list and must not be used — see B's residual above.
+
+### Revert points
+
+| label | path | contents |
+|---|---|---|
+| `pre_search_authority_20260809` | `data/salvage/pre_search_authority_20260809` | **THE REVERT TARGET.** checkpoint_000671 / iter 672, trainer.pt + pid_state.json + rng_state.json + gate_state.json + best.json + holdout.npz + 817 pre-bundle shards. 3.8G, verified complete. |
+| `pre_mainmerge_20260810` | `data/salvage/pre_mainmerge_20260810` | iter ~834, bundle-era. Not a revert target. |
+| iter 514 | `data/ratchet/snapshots/ck_2026-08-09_iter514.pt` | Complete trainer state (`model`/`opt`/`scheduler`/`step`/`peak_lr` 3e-5/`zclip`/`arch`) — **no warm-start-LR hazard**, peak_lr matches the yaml's 3e-5. But NO matched window: the only complete exports in range are iter 478 and iter 672. Considered and not chosen: state coherence beats a checkpoint whose window has to be assembled, and 514 / 672 / 735 are not separated by anything measured. |
+
+⚑⚑ **THE YAML KEEPS THE BUNDLE'S SEARCH KNOBS.** `gumbel_c_scale: 0.1` and
+`gumbel_policy_temp: 1.5` STAY. Someone reading "revert to the pre-bundle checkpoint" will
+assume the pre-bundle yaml goes with it. **It must not.** The search shape is the half of
+the bundle that worked; only the net is being reverted, and the recalibration exists
+precisely so the kept search shape stops corrupting the curriculum.
+
+**Confounds.** Two changes land on this restart: the revert to 672 and the
+`diff_focus_pol_scale` recalibration. They cannot be separated by this readout. They are
+bundled deliberately — reverting without recalibrating reproduces the defect within four
+iterations, since the yaml still carries `gumbel_c_scale: 0.1` and
+`gumbel_policy_temp: 1.5`. PR #388's guard also merges here, but it only observes.
+
+**Open items this entry does not close:** whether the damage is in the WEIGHTS or only in
+the data/optimizer REGIME (untested — "revert + fix" is unproven, not guaranteed); whether
+the harm is data-side or optimization-side; the pre-736 slow drift
+(`probe_gap_policy_eregret` +83%, `sf_move_acc` −8% over 514→735); and the 399→735
+plateau, which predates everything here.
+
+### Method — how the shard numbers above were derived (CPU only, no GPU)
+
+Stored `priority_policy_kl` / `priority_q_delta` were read from banked zarr shards for
+three populations: the iter-672 pool (pre-bundle), live shards written 2026-08-09 21:12-21:55
+(iters 736-745, pre-bundle net meeting bundle search), and 2026-08-10 12:30-15:10 (836-862).
+Shards contain only KEPT rows, so each row was reweighted by `1/keep_prob` — a
+Horvitz-Thompson estimator, exact here because `keep_prob` is a deterministic function of
+the row itself, so recording is an independent Bernoulli with known probability.
+**Validation: the reconstruction reproduces the live telemetry on the pre-bundle population
+to three decimals** (keep 0.809 vs logged 0.799-0.805, keep_limited 0.369 vs 0.372-0.379,
+kl_share 0.370 vs 0.3688, priority_mean 1.111 vs 1.093-1.105, priority_std 1.332 vs 1.307),
+which is what licenses using it to predict regimes that have not been run.
+
+⚑ Any PYTHON-path offline reconstruction of the KL itself would NOT reproduce production —
+`network_turn.py:641` floors at 1e-12 and includes the term, `_mcts_tree.c:4838` skips it,
+and production runs C (task #173). The reconstruction above avoids this entirely by
+reading the STORED kl column, which the C path wrote.
