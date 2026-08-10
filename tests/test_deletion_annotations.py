@@ -59,9 +59,16 @@ cause it and could not read it. Worse, it made the LIVE production config the
 thing every unrelated PR had to edit to get green, and CLAUDE.md makes edits to
 that file restart-gated and run-fatal when they go wrong. A guard that routinely
 demands edits to the live training config to stay green is worse than the rot it
-detects. Content pinning keeps every property the guard is for — a deleted
-reader, a renamed key, a wrong file, a missed surface all still fail — while
-drift alone no longer fails anything.
+detects. Content pinning keeps every property the guard is for — a renamed key,
+a wrong file, a missed surface, and a deleted reader *whose key name goes with
+it* all still fail — while drift alone no longer fails anything.
+
+The bound on "a deleted reader still fails" is exact and worth stating, because
+the unbounded version is false: what fails is the key's NAME vanishing from the
+cited file. Delete the reader but leave the key named anywhere else in that file
+— a historical comment, a docstring, an unrelated dict literal — and this check
+stays green where a line pin would have gone red. That is the residual price of
+dropping line numbers, alongside the one-line-off case below.
 
 The consequence to know: a one-line-off citation and a citation that has merely
 drifted are formally the same observation, so nothing here can distinguish them.
@@ -75,8 +82,13 @@ Stated so the coverage is not overread:
 * the annotation's REASON. Every surface being cited is not the sentence about
   that surface being true; a false prose reason built from correct citations
   passes here.
-* the 23 annotations that carry no ``DEAD KEY`` string. They get the
-  citation-content check only, never the completeness re-derivation.
+* the 24 annotations that carry no ``DEAD KEY`` string. They get the
+  citation-content check only, never the completeness re-derivation. This hole
+  shipped for real: ``lr_T0``/``lr_T_mult`` were annotated "read ONLY by the
+  cosine branch, unreachable at ``lr_schedule: sqrt_release``" while
+  ``scripts/train_bootstrap.py`` read them off the yaml flat dict and never
+  forwarded ``lr_schedule``, so the cosine branch was exactly what ran there.
+  Both keys are RETAINED rather than deleted as a result.
 * claims phrased without the literal token ``DEAD KEY``. The completeness check
   keys off that string, so the identical claim in other words is not re-derived.
 """
@@ -122,10 +134,47 @@ GATE_TOKENS: dict[tuple[str, str], str] = {
 }
 
 # Pinned so that a citation (or a whole annotation) cannot vanish unnoticed.
-# Raise these deliberately when adding an annotation; never lower them to make
-# the test pass.
-EXPECTED_CITATIONS = 46
-EXPECTED_ANNOTATED_KEYS = 27  # 26 deleted keys + the one RETAINED warning block
+# Raise deliberately when adding a citation; never lower to make the test pass.
+EXPECTED_CITATIONS = 48
+
+# Pinned BY NAME, not by count. A count cannot express the guarantee this test
+# claims to give: swap one annotation block for a different one and the total is
+# unchanged, every surviving citation still resolves, and the absent-key test
+# only ever iterates the blocks it discovered — so the annotation that vanished
+# is checked by nothing. The set is 24 deleted keys plus the 3 that the audit
+# deliberately did NOT delete, which ship a `⚑ RETAINED` warning instead.
+EXPECTED_ANNOTATED_KEYS: frozenset[str] = frozenset({
+  # Deleted: inert on every resolution path, reason and citations in the config.
+    "adjusted_wdl_regret_cap",
+    "adjusted_wdl_regret_scale",
+    "adjusted_wdl_regret_source",
+    "bootstrap_dir",
+    "bootstrap_max_positions",
+    "bootstrap_train_steps",
+    "drift_threshold",
+    "gpbt_inertia_weight",
+    "gpbt_quantile_fraction",
+    "gpbt_resample_probability",
+    "gpbt_winner_weight",
+    "min_replay_size",
+    "no_amp",
+    "opening_fen_prob",
+    "pb2_perturbation_interval",
+    "replay_sf_gap_priority_weight",
+    "resid_channel_balance_weight",
+    "resid_channel_dropout",
+    "search_optimizer_choices",
+    "sf_search_dampen_sf_high",
+    "sf_search_dampen_sf_low",
+    "sf_wdl_temperature",
+    "shared_shards_dir",
+    "use_nla",
+  # Retained: a live consumer whose fallback differs from the shipped value, so
+  # the key is protected by being present rather than by a comment.
+    "games_per_iter_start",
+    "lr_T0",
+    "lr_T_mult",
+})
 
 # Where a `DEAD KEY` claim is re-derived. Code only: another yaml SETTING the key
 # is a writer, not a reader, so the other 16 configs/*.yaml that still set these
@@ -133,7 +182,7 @@ EXPECTED_ANNOTATED_KEYS = 27  # 26 deleted keys + the one RETAINED warning block
 #
 # Blind spots, stated rather than implied: this cannot see a reader in `.c`,
 # `.h` or `.pyx`, in a `.sh` outside `scripts/`, or in `.toml`/`.json`. That is
-# verified moot for all 26 keys annotated today, but the next `DEAD KEY` will be
+# verified moot for all 27 keys annotated today, but the next `DEAD KEY` will be
 # about a different key — widen the globs rather than trusting this comment.
 # The scan is also filesystem-based, not git-based, so an UNTRACKED scratch
 # script under `scripts/` that names a key fails this locally while CI is green.
@@ -159,8 +208,11 @@ DEAD_KEY_EXPECTED_MENTIONS: dict[str, int] = {
 # than a coin flip.
 _SEARCH_ROOTS = (REPO_ROOT, REPO_ROOT / "chess_anti_engine")
 
+# Both markers name their key, so the parser never has to guess one. An earlier
+# revision hardcoded the single RETAINED key here; that stops working the moment
+# a second key is retained, which is exactly what happened.
 _ANNOTATION_START = re.compile(
-    r"^#\s*(?:⚑ RETAINED, do not delete:|DELETED ([A-Za-z_0-9]+):)"
+    r"^#\s*(?:⚑ RETAINED, do not delete|DELETED) ([A-Za-z_0-9]+):"
 )
 # Continuation lines use the "#" + 3-space wrap format. A plain "# ..." comment
 # ENDS the annotation: absorbing it would silently attribute a neighbouring
@@ -183,9 +235,7 @@ def _annotation_blocks(text: str) -> list[tuple[str, str]]:
         if start:
             if key is not None:
                 blocks.append((key, " ".join(buf)))
-          # The RETAINED block has no key in the marker; it is the one key the
-          # audit deliberately did NOT delete.
-            key = start.group(1) or "games_per_iter_start"
+            key = start.group(1)
             buf = [line]
         elif key is not None and _CONTINUATION.match(line):
             buf.append(line)
@@ -266,9 +316,12 @@ def test_the_annotation_block_still_has_every_key_it_is_supposed_to() -> None:
     keys = [key for _, key, _ in blocks]
 
     assert len(keys) == len(set(keys)), f"duplicate annotated keys: {sorted(keys)}"
-    assert len(keys) == EXPECTED_ANNOTATED_KEYS, (
-        f"expected {EXPECTED_ANNOTATED_KEYS} annotated keys "
-        f"(26 deleted + 1 RETAINED), found {len(keys)}: {sorted(keys)}"
+    moved = [f"annotation vanished: {k!r}" for k in sorted(EXPECTED_ANNOTATED_KEYS - set(keys))]
+    moved += [f"annotation not in the pin: {k!r}" for k in sorted(set(keys) - EXPECTED_ANNOTATED_KEYS)]
+    assert not moved, (
+        "the annotated key set moved. Edit EXPECTED_ANNOTATED_KEYS deliberately "
+        "— a block may not be swapped for another one silently:\n  "
+        + "\n  ".join(moved)
     )
 
     for cfg, key, body in blocks:
@@ -279,10 +332,17 @@ def test_the_annotation_block_still_has_every_key_it_is_supposed_to() -> None:
 
 
 def test_the_annotated_key_is_actually_absent_from_the_config() -> None:
-    """`# DELETED foo` while `foo:` is still set would be a lie in the file."""
-    retained = {"games_per_iter_start"}
+    """`# DELETED foo` while `foo:` is still set would be a lie in the file.
+
+    Which keys are exempt is read off the annotation itself rather than listed
+    here: a `⚑ RETAINED` block asserts the opposite — the key MUST still be set.
+    """
     for cfg, key, body in _all_blocks():
-        if key in retained:
+        if body.startswith("# ⚑ RETAINED"):
+            assert re.search(rf"^\s*{re.escape(key)}:", cfg.read_text("utf-8"), re.M), (
+                f"{cfg.name}: annotation says {key!r} is RETAINED, but the key "
+                f"is not set in the file"
+            )
             continue
         assert not re.search(rf"^\s*{re.escape(key)}:", cfg.read_text("utf-8"), re.M), (
             f"{cfg.name}: annotation says {key!r} was DELETED, but the key is "

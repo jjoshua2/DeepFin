@@ -174,7 +174,8 @@ selfplay:
   # design (same ~40min period, same games) — deliberately NOT a throughput
   # change, so it does not confound the live views=5 readout.
   games_per_iter: 440
-  # ⚑ RETAINED, do not delete: --games-per-iter-start has argparse default 0 ([run.py]),
+  # ⚑ RETAINED, do not delete games_per_iter_start: --games-per-iter-start has argparse
+  #   default 0 ([run.py]),
   #   so removing this key does NOT fall back to games_per_iter -- it resolves to 0, and the
   #   defensive fallback at [tune/trial_config.py] is structurally unreachable because the
   #   key is always materialised. games_per_iter_ramp_iters is NOT restart-required, so a live
@@ -629,8 +630,11 @@ train:
   train_views_per_ingested_position: 5.0  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
-  # DELETED no_amp: consumed only where the argparse value is read ([run.py] use_amp = not no_amp);
-  #   argparse default False equals the deleted value, so use_amp stays True
+  # DELETED no_amp: TWO consumers, and the deleted value False is the fallback on both.
+  #   [run.py] derives use_amp = not no_amp from the argparse value (store_true, default False);
+  #   [scripts/train_bootstrap.py] reads the yaml key directly, use_amp=not flat.get("no_amp",
+  #   False), on the same flatten_run_config_defaults path as bootstrap_dir above. use_amp stays
+  #   True either way -- unlike lr_T0/lr_T_mult, whose bootstrap fallbacks differ and are RETAINED
   # 2026-07-30: 0.10 -> 0.0 (audit M8 arm C, OPERATOR DECISION — delete the knob
   # rather than compensate it; arm B, the 1/(1-p) rescale, is deliberately NOT run).
   # Rationale: never shown to earn its keep, and it created a systematic train/serve
@@ -851,13 +855,21 @@ train:
   warm_start_lr_max_ratio: 2.0
   warmup_steps: 72   # Run 26 default.
   lr_eta_min: 0.00001
-  # DELETED lr_T0: read ONLY by the CosineAnnealingWarmRestarts branch ([train/trainer.py]),
-  #   unreachable at lr_schedule: sqrt_release. DRIFT: resolves to the argparse default 5000, not
-  #   999999 ([train/trainer.py]) -- re-add before ever setting lr_schedule back to cosine.
-  #   Constructor-only and lr_schedule is restart-required, so no live path reaches it
-  # DELETED lr_T_mult: same cosine-only branch ([train/trainer.py]). DRIFT: resolves to the
-  #   argparse default 2, not 1 ([train/trainer.py]) -- re-add before ever setting lr_schedule back
-  #   to cosine
+  # ⚑ RETAINED, do not delete lr_T0: a SECOND consumer reads this key straight off the yaml
+  #   flat dict. [scripts/train_bootstrap.py] does lr_T0=int(flat.get("lr_T0", 2000)) and never
+  #   forwards lr_schedule, so Trainer's OWN default lr_schedule="cosine" ([train/trainer.py])
+  #   applies there and CosineAnnealingWarmRestarts is the branch that actually runs -- the
+  #   sqrt_release below never reaches it. Deleting the key therefore changes bootstrap training
+  #   from a flat 3e-5 to a warm-restart cosine (T_0 999999 -> 2000; restarts at 2000/6000/14000;
+  #   LR at step 1000 3.000e-05 -> 2.000e-05, bottoming at lr_eta_min 1e-5), with NO config edit
+  #   required: the script's own docstring names this file as its usage. Inert on the TRAINING
+  #   path only, where lr_schedule: sqrt_release takes the elif ([train/trainer.py]).
+  lr_T0: 999999        # Ignored while lr_schedule=sqrt_release; kept for cosine fallback.
+  # ⚑ RETAINED, do not delete lr_T_mult: same second consumer, same mechanism --
+  #   [scripts/train_bootstrap.py] reads lr_T_mult=int(flat.get("lr_T_mult", 2)), so deleting
+  #   this key moves bootstrap from T_mult 1 to 2 ([train/trainer.py] cosine branch). A
+  #   `# DELETED` note is not a guard, so both keys stay, as games_per_iter_start does above.
+  lr_T_mult: 1
   lr_schedule: sqrt_release
   lr_release_cycle_steps: 0
   lr_release_start_frac: 0.80
