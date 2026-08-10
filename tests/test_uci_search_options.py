@@ -2043,9 +2043,30 @@ def test_main_builds_the_engine_from_the_args_it_advertised(
         if m is not None:
             printed[m.group(1)] = m.group(2)
 
+  # ⚑ The absent set is PINNED, not skipped. `if opt.field not in captured:
+  # continue` made this loop unfalsifiable for 18 of the 19 registry options:
+  # dropping a field from `_engine_search_kwargs`'s splat removes it from
+  # `captured`, so the very divergence this test exists to catch was the one
+  # input it silently tolerated. The literal `{"minibatch_size"}` is deliberate
+  # — deriving it from `_SEARCH_OPTION_ARG` would condition the control on its
+  # own outcome again, the mistake `_engine_search_kwargs`'s own docstring
+  # records. MinibatchSize is the one legitimate absentee: it is the only
+  # registry field mapped to `None` ("no CLI flag") in `_SEARCH_OPTION_ARG` and
+  # the only one missing from `_EngineSearchKwargs`, because
+  # `run_gumbel_root_many_c(target_batch=...)` starts at the C-side default and
+  # only a `setoption` moves it.
+    absent = {opt.field for opt in SEARCH_OPTIONS if opt.field not in captured}
+    assert absent == {"minibatch_size"}, (
+        f"main() built the engine without {sorted(absent - {'minibatch_size'})} "
+        "— those fields are advertised in the `uci` handshake but never reach "
+        "_build_engine, so the engine runs _build_engine's own defaults while "
+        "the handshake certifies the CLI's. (Expected exactly {'minibatch_size'}, "
+        "the one option with no startup source.)"
+    )
+
     for opt in SEARCH_OPTIONS:
-        if opt.field not in captured:
-            continue    # MinibatchSize: UCI-only, no startup source
+        if opt.field in absent:
+            continue
         built = captured[opt.field]
         assert isinstance(built, (float, int, bool)), (
             f"main() passed a non-numeric {opt.field}={built!r} to _build_engine"

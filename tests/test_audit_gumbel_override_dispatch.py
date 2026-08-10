@@ -439,13 +439,24 @@ def test_the_audit_loop_builds_its_top10_through_the_helper() -> None:
   # explaining why it is wrong, and a text scan cannot tell prose from code.
     import ast
 
+  # ⚑ `lower is None` alone matched only the `[:10]` spelling, so the identical
+  # `_ranked[0:10]` reintroduced the tie bug with `co_names` still satisfied and
+  # this scan still green. An explicit zero lower bound is the SAME slice.
+    def _starts_at_zero(lower: ast.expr | None) -> bool:
+        return lower is None or (
+            isinstance(lower, ast.Constant)
+            and not isinstance(lower.value, bool)
+            and isinstance(lower.value, int)
+            and lower.value == 0
+        )
+
     tree = ast.parse(inspect.getsource(at))
     offenders = [
         node.lineno
         for node in ast.walk(tree)
         if isinstance(node, ast.Subscript)
         and isinstance(node.slice, ast.Slice)
-        and node.slice.lower is None
+        and _starts_at_zero(node.slice.lower)
         and isinstance(node.slice.upper, ast.Constant)
         and node.slice.upper.value == 10
     ]
