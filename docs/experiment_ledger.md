@@ -446,6 +446,19 @@ Disjoint files; no conflict; not redundant (that is the alarm, this is the fix).
   ~133 iterations while the ~1.5M-row window turns over mixing raw-unit and
   normalized-unit priorities. `a ruler change must invalidate its records`.
 
+**Verified by EXECUTION against the merged `evaluate_diff_focus_regime`, not by reading
+its band table** (`enabled=True`, `trial_iterations_completed=10`, real denominators):
+
+| report fed to the guard | alarm | detail |
+|---|---|---|
+| current production (iter 862) | **1** | `keep_rate=0.9568>0.9` + `keep_limited_frac=0.1088<0.18` + `priority_mean=4.1008>1.9` + `replay_priority_mean=3.9400>2.2` |
+| normalized, PRE-bundle data | **0** | *(clean)* |
+| normalized, POST-bundle data | **1** | `priority_mean=2.0591>1.9` — the config-scaled arm ONLY |
+
+So the fix silences three of the four arms outright and leaves exactly the one arm whose
+units it changed. That residual fire is the ruler problem above, not a regime problem, and
+it is why the band re-derivation is a precondition rather than a follow-up.
+
 ### SECOND FIX IN THE SAME PR — task #173, Python/C KL divergence
 
 `network_turn.py` floored both distributions at 1e-12 and summed over all 4672 entries;
