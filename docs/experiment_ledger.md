@@ -39168,3 +39168,57 @@ the last usable row is 2026-08-09 iter 514.
 of the long-missing regret->Elo calibration (Task #170). Anchors are already banked:
 `data/ratchet/snapshots/ck_2026-08-09_iter735_FINAL.pt` sits at the TOP of the drop
 (regret ~0.056) and `ck_2026-08-10_iter768.pt` mid-way; the live net is at 0.036.
+
+---
+
+## PRE-REGISTERED 2026-08-10 15:05 — **REGRET → ELO CALIBRATION** (Task #170), paused window
+
+**The question.** Between iter 735 and iter 862 the PID's `wdl_regret` limit fell
+**0.0560 → 0.0363 (Δ = −0.0197, −35%)**. `wdl_regret` is the only everyday progress
+variable this project has, and **it has never been converted to Elo even once**. So we do
+not know whether that move is worth 5 Elo or 100 — and we have been reasoning about "the
+loop is gaining / stalling" on an unpriced ruler for weeks.
+
+It also settles the open A/B from the two-regime finding above: (A) the post-780 rise in
+regret is controller ringing and we kept the gain, vs (B) real strength loss. The PID makes
+those observationally identical in live telemetry; a frozen-opponent arena does not.
+
+### Arms (parked — training is STOPPED, per the pause-and-run rule)
+
+| series | candidate | reference | what it prices |
+|---|---|---|---|
+| `vs_iter735` | `ck_2026-08-10_iter862_postmerge/trainer.pt` | `ck_2026-08-09_iter735_FINAL.pt` | **the regret drop itself** — the calibration point |
+| `vs_boot512` | same | `scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` | continuity with the existing ratchet series |
+
+`--mode matched_sims --sims 32 --search-shape training --seed 42 --games 400
+--max-concurrent-games 16`.
+
+**⚑ BOTH SIDES USE THE SAME SEARCH SHAPE (current production `training`), so this prices
+the WEIGHTS, not the bundle.** The search-authority bundle's own search-side contribution
+(c_scale 0.1, policy_temp 1.5) is applied to BOTH nets and is therefore differenced out.
+Do not read this as "what the bundle bought".
+
+### PRE-COMMITTED THRESHOLDS — written before any number is read
+
+- **CONFIRMED — regret IS a progress variable.** `vs_iter735` Elo ≥ **+45** with the 95%
+  pentanomial CI excluding 0. Calibration constant then published as
+  **Elo per 0.001 regret = ΔElo / 19.7**, and regret becomes readable daily without arenas.
+- **REFUTED — regret is NOT tracking play strength over this window.** CI includes 0, or
+  the point estimate is negative. This is the outcome that matters most: it would void the
+  "the loop gained" language in this run's recent entries, and it would mean the 730-780
+  move was the controller re-pricing difficulty rather than the net improving.
+- **UNDERPOWERED, no verdict.** Fewer than **300** completed games in a series ⇒ CI wider
+  than ±55 Elo, which cannot resolve the +45 bar. Record as UNREAD, do not soften the bar
+  after the fact. (2026-08-10's contended rows returned 70/84 games and are exactly this.)
+
+### Why this clears the "most experiments here are unfalsifiable" bar
+
+The standing rule is: run it only if ≥5-8 Elo/day or offline-screenable, because the loop
+moves ~0.02 Elo/iter against a best instrument of ~2.74 Elo/day. **This is not an
+experiment, it is a ruler calibration** — its value is that it makes every FUTURE regret
+reading interpretable at zero further arena cost. Both outcomes are decisive and neither
+depends on detecting a small effect: the hypothesised gap (0.0197 of regret across 127
+iterations) is large if regret means anything at all.
+
+**Cost:** ~40 min of paused training (~8 iterations) for both series.
+**Revert/anchor:** nothing to revert — the run is stopped and resumes unchanged.
