@@ -561,12 +561,19 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 #                      also be false for the first two: on `--resume` they come
 #                      back from `tuner.pkl`, so not even a restart applies them
 #                      (audit T6). They need the driver-side fix, not this set.
+#   policy_target_temp -- a Trainer construction argument like the rest of
+#                      `trainer_kwargs_from_config`, but listed HERE rather than
+#                      left unclassified because it re-interprets rows already in
+#                      the replay window. Pushing it live would move the training
+#                      target mid-window with no restart boundary to mark where a
+#                      readout's data changed shape.
 _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "iterations",
     "puzzle_epd",
     "eval_sf_nodes",
     "sf_pid_enabled",
     "pause_file",
+    "policy_target_temp",
 })
 
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is

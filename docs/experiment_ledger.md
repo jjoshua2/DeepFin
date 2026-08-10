@@ -614,6 +614,798 @@ linear root regardless of any yaml. `gumbel_scale=1.0` at that constructor is NO
 a bug: the per-move schedule reaches the search through the separate
 `per_game_gumbel_scale=` argument.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-09, PR #373) — `policy_target_temp`: a temperature on the MAIN policy target
+
+**Status: code merged default-off; NO arm has run. This entry exists so one can.**
+The PR is bitwise-identical to `main` on the training path at the default
+(`temp == 1.0`, 52/52 scalars equal, verified in two processes by an independent
+reviewer), so merging it is not a launch and rule 1 does not gate the merge. It
+gates the first arm at `temp != 1.0`.
+
+### ⚑ THE MECHANISM I AM *NOT* CLAIMING
+
+The knob was originally motivated by the fixed point — the target is a function
+of the net, so CE against it self-distils and plateaus (asymptote 0.0703). **That
+motivation is withdrawn, and this entry must not be read as testing it.**
+`p ** (1/T)` is a deterministic monotone function of the same target, so the
+retempered target is *also* entirely a function of the net. It adds zero
+information. Softening the STORED target at training time cannot break the
+self-reference; that is memory `kl_target_prior_is_the_training_signal` and it
+has not been refuted.
+
+⚑ **AN EARLIER REVISION OF THIS PARAGRAPH ALSO SAID THE TRANSFORM LEAVES
+`KL(target‖prior)` "exactly unchanged". THAT WAS FALSE** (review, codex P2) and
+it is corrected here rather than quietly dropped, because it is the kind of
+claim this file gets cited for. A power transform followed by a renormalise
+moves the target toward uniform for `T > 1`, and a broad prior is nearer uniform
+than a peaked target, so the KL FALLS — measured on a sparse fixture (target
+`[.90 .05 .03 .01 .005 .005]`, prior `[.40 .25 .15 .10 .06 .04]`):
+
+| T | 0.7 | 1.0 | 1.3 | 1.5 | 2.2 | 4.0 |
+|---|---|---|---|---|---|---|
+| `KL(target‖prior)` | 0.7891 | 0.5552 | 0.3380 | **0.2322** | 0.0609 | 0.0563 |
+
+**The withdrawal above does not weaken.** It rests on "deterministic function of
+the same target", not on KL invariance, and that part is untouched. Two live
+consequences: (1) `KL(target‖prior)` is **arm-dependent** and may not be used as
+a shared ruler across the two arms of this screen — one more reason the deciding
+yardstick is `cand.raw.top1`, which is argmax-based and invariant to any monotone
+reshape; (2) it is mildly *supportive* of the label-smoothing hypothesis below,
+since the pressure the fitted solution is under genuinely does change. Neither is
+evidence for the mechanism, and neither is claimed as such.
+
+### THE HYPOTHESIS I *AM* PRE-REGISTERING
+
+Label smoothing. Not "more information in the target", but "less overconfidence
+pressure on the fitted solution" — a claim about the optimum the loss selects,
+not about the target's information content. Our targets are ~2× sharper than
+lc0's (entropy **0.924**, 2.52 effective moves, vs lc0 1.39–1.89 / 4.0–6.6), and
+the 08-08 readout found the policy "gain" was **confidence inflation**: both arms
+sharpened, ACCURACY FLAT, ECE worse. If over-sharpness is costing anything, a
+flatter target should show up as better *ranking* at unchanged or better
+calibration.
+
+**H1:** at `policy_target_temp` 1.5, argmax agreement with deep SF on the frozen
+audit set improves — paired mean **`cand.raw.top1` falls**, with the 95% CI
+excluding 0, vs the `temp = 1.0` control on the same rows. **"The control" has
+exactly one admissible meaning here and it is specified in the next section — a
+banked or time-separated checkpoint is FORBIDDEN, by measurement.**
+
+⚑ **No effect SIZE is asserted, deliberately.** The instrument's resolution is
+~10 cp (derived below) and I have no prior that says the effect is that large;
+naming a smaller number would only pre-commit to a threshold the ruler cannot
+reach. If the honest answer is "this screen cannot see it", that is the result.
+
+### THE CONTROL ARM — AN OFFLINE PAIRED RETRAIN, AND WHY A BANKED CHECKPOINT IS FORBIDDEN
+
+⚑ **Added 2026-08-09 after a second reviewer pointed out that the entry pinned
+the ruler, the field, the statistic, the n and the thresholds and never said
+where the OTHER dump comes from.** The control is not a detail of the yardstick;
+it is half the measurement.
+
+**A TIME-SEPARATED CONTROL IS DISQUALIFIED BY MEASUREMENT.** This file's default
+idiom — "pair against the banked ckpt457 dumps" — puts drift of the same order
+as the effect straight into the delta. On this exact field, executed here:
+
+```
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  scratchpad/valueswap/pdump_pBOOT_vBOOT.jsonl scratchpad/valueswap/pdump_p477_v477.jsonl \
+  --join-key key --field cand.raw.top1 --label-a ctrl --label-b arm
+  -> paired delta -13.70  [95% CI -21.64 .. -6.23]   n=2000, CI EXCLUDES 0
+```
+
+| time-separated pair | Δ `cand.raw.top1` | vs this screen's MDE₈₀ |
+|---|---|---|
+| boot512 → iter477 (re-executed above) | **−13.70 [−21.64, −6.23]** | **larger** than 9.9 |
+| ckpt457 → ckpt500, 43 iters (this file's own recovery row) | **−11.2 [−21.8, −1.7]** | **larger** than 9.9 |
+
+Drift alone therefore manufactures a SUCCESS or a KILL. **No dump from a
+different iteration, a different restart boundary, or a different wall-clock
+day may be used as the control for this entry.**
+
+**A CONCURRENT LIVE CONTROL IS IMPOSSIBLE.** One GPU, and `num_samples: 1`
+(pbt2_small.yaml:459) — there is one trial and it cannot be forked. A sequential
+same-trial before/after is exactly the time-separated design ruled out above.
+
+**SO THE CONTROL IS AN OFFLINE PAIRED RETRAIN.** Two retrains from the SAME
+starting checkpoint over the SAME frozen shard bank with the SAME seed and step
+count, differing ONLY in `policy_target_temp`. Drift is eliminated by
+construction: `policy_target_temp` is not a sampling knob, so at a shared seed
+the two arms traverse the *identical rows in the identical order*.
+
+**RIG: `scripts/retarget_retrain.py`, and it can hold the knob — verified, not
+assumed.** The override path is `_parse_variant` → `config.update(overrides)` →
+`trainer_kwargs_from_config(config)` → `Trainer(**kwargs)`, i.e. the same
+constructor call the live trial makes. Executed 2026-08-09:
+
+```
+_parse_variant('arm:policy_target_temp=1.5') -> ('arm', {'policy_target_temp': 1.5})
+trainer_kwargs_from_config(flat | override)['policy_target_temp'] -> 1.5
+TrialConfig.from_dict(flat | override)                            -> OK
+```
+
+⚑ That verification is not ceremony. The 07-06 dose screen recorded
+`sf_gap_priority_signed` in `retarget_report.json` and the arms ran WITHOUT it —
+`TrialConfig` drops unknown keys silently. `policy_target_temp` escapes that only
+by an accident of plumbing (it is read by `trainer_kwargs_from_config` off the
+flat dict, not by `TrialConfig`), and the accident does NOT extend to a
+MISSPELLING: `policy_target_tempp=1.5` used to be accepted, train at 1.0, and be
+reported as applied. **That hole is now closed in the rig** — see "TWO
+SILENT-FAILURE PATHS IN THE RIG" below — so this entry no longer relies on an
+operator noticing two log lines.
+
+**THE INVOCATION (both arms in ONE process, so arm 1's own buffer scan is the
+shard reference):**
+
+```
+PYTHONPATH=. python3 scripts/retarget_retrain.py \
+  --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/<snapshot>/seeds/slot_000/trainer.pt \
+  --replay-dir data/salvage/<snapshot>/seeds/slot_000/replay_shards \
+  --steps 25000 --batch-size 512 --no-rebuild-sf-targets \
+  --out-dir runs/policy_target_temp_ab \
+  --variant ctrl: --variant arm:policy_target_temp=1.5
+```
+
+| knob | value | why this and not something else |
+|---|---|---|
+| start checkpoint | ONE salvage `trainer.pt`, both arms. Reference snapshot `data/salvage/pre_search_authority_20260809/seeds/slot_000` = `checkpoint_000671`, exported 2026-08-09T14:19:22 | protocol rule 2 already requires a revert-point snapshot before launch; reuse it so the control is the revert point |
+| shard bank | that snapshot's own `replay_shards` — **measured: 817 shards, 1,499,910 rows** | FROZEN. Never the live window: a shard landing mid-sweep de-pairs the arms (07-31: one extra shard moved 77.1% of sampled rows). The rig aborts, which costs the whole sweep |
+| seed | config `seed: 0` (pbt2_small.yaml:53), applied identically per variant | the rig seeds `torch.manual_seed` and the buffer RNG from it, and forces `deterministic_refresh=True` |
+| steps | **25000** per arm, batch 512 | = the live loop's day-plus window in the only currency an offline rig has. Measured over the last 60 live iterations: `train_steps_used` median **90**, `time_this_iter_s` median **311.9 s** ⇒ **277 iters/day, 24,929 steps/day** (independently re-measured a few hours later at 312.95 s ⇒ 276.1 / 24,847 — the derivation is stable, the equivalence is not: see the views caveat below) |
+| `--no-rebuild-sf-targets` | required | the knob acts at loss time on the STORED main policy target. The rebuild is irrelevant to it and would additionally mask `sf_p0_policy_target`/`sf_volatility_target` in both arms, moving the rig further from production for nothing |
+| wall clock | **~10.6-11.1 h/arm, ~21-22 h for two** | projection, not a measurement: 25000 / live `trainer_steps_per_s`, measured **0.6522** and re-measured **0.6235** by a reviewer a few hours later. It needs the GPU to itself — do NOT run it beside training, and note the pre-screen adds a third arm |
+
+⚑ **THE FIXED-POOL ASYMMETRY, stated because it is real — and it reaches the
+SUCCESS branch.** 25000 × 512 = 12.8M draws over a 1.5M-row static bank =
+**8.53 views/position**, against the live loop's measured `train_views_actual`
+**4.3212** — **1.97×**. A fixed pool confounds window size with views (memory:
+`window_size_and_views_are_confounded_in_fixed_pool_rigs`), and the rig
+additionally starts every arm from a COLD optimizer. Both are COMMON-MODE —
+identical in the two arms, so they cancel in the contrast of the two NETS.
+
+**But common-mode is not transportability, and this entry's hypothesis is on the
+affected axis.** The pre-registered mechanism is label smoothing — "less
+overconfidence pressure on the fitted solution" — and views-per-position sits
+directly on that causal path (memory: *the policy head memorises the window*; *a
+held-out set the baseline memorised measures forgetting*). So the caveat extends
+from the absolute numbers to **Δ itself**: a SUCCESS measured at 8.5
+views/position is evidence for a live arm at 4.3 views/position only under an
+assumed monotonicity in views that **nobody has measured**. The SUCCESS branch
+must state that assumption when it spends the Δ, and a live arm's own entry
+should treat the offline Δ as a direction, not a magnitude.
+
+**Pre-screen — THREE arms, and it is explicitly NOT a verdict:**
+
+```
+--steps 2500 --batch-size 512 \
+  --variant ctrl: --variant arm:policy_target_temp=1.5 --variant ctrl2:seed=1
+```
+
+`ctrl2` is the **seed null arm** required by the noise-floor section below: it is
+the only measurement of the run-to-run variance the position bootstrap cannot
+see, and its pre-committed reading gates whether the full sweep is worth running
+at all. Run it FIRST, read `paired_compare(ctrl, ctrl2)`, and only then commit
+21 h to the 25000-step arms.
+
+Executed at `--steps 2 --batch-size 64` on 2026-08-09 as a plumbing smoke — see
+the in-effect section below for the log lines it produced.
+
+**Both dumps must use IDENTICAL audit settings.** `scripts/paired_compare.py`
+refuses dumps whose `input_encoding` / `batch_size` disagree, and warns when a
+dump does not declare them (observed on the banked 2026-06/07 dumps:
+`WARNING: 'batch_size' not declared … cannot verify both sides used the same
+ruler`). Use the same `--batch-size 64`, the same `--seed 0`, the same
+`--sf-effort low`, and `--config configs/pbt2_small.yaml` for BOTH — never the
+arm's own config, which would move the ruler with the arm.
+
+### THE ONE DECIDING YARDSTICK (exact command)
+
+⚑ **This section was rewritten 2026-08-09 after a reviewer EXECUTED the first
+version of it.** The original named a command that emits no CI, read a "`top1`
+column" that does not exist, used off-anchor settings, and set thresholds
+arithmetically unreachable against this file's own measured noise floor. Every
+one of those was invisible until someone ran it. The rule that follows from that
+is already in this file — *compute the instrument's resolution before the
+threshold* — and it was not followed.
+
+**Two reads per arm. Both take a per-position dump; the verdict is the PAIRED
+comparison of the dumps, never the stdout tables.** `<ckpt>` is the OFFLINE
+retrained checkpoint of that arm — `runs/policy_target_temp_ab/arm.pt` and
+`.../ctrl.pt` from the sweep in the control section — never a live trial
+checkpoint, for the drift reason given there.
+
+1. ANCHOR / sanity (canonical line from the Yardsticks table, so the numbers sit
+   on the 49.6 / 51.5 cp @ckpt457 anchor):
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <ckpt> \
+  --sims 32 --batch-size 64 --gpu-mem-fraction 0.15 \
+  --max-positions 2000 --seed 0 --sf-effort low
+```
+
+2. VERDICT dump, on the FULL frozen set (`--max-positions 0` = all 4000 rows —
+   the extra rows are the only lever this instrument has on its own CI; see
+   "THE OPENING STRATUM" below for why they are also nearly free):
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <ckpt> \
+  --sims 32 --batch-size 64 --gpu-mem-fraction 0.15 \
+  --max-positions 0 --seed 0 --sf-effort low \
+  --dump-per-position data/audit_dumps/<arm|ctrl>.jsonl
+```
+
+3. THE VERDICT ITSELF:
+```
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  data/audit_dumps/ctrl.jsonl data/audit_dumps/arm.jsonl \
+  --join-key key --field cand.raw.top1 --label-a ctrl --label-b arm
+```
+
+**The exact field is `cand.raw.top1`** — a dotted path into the DUMP, in cp. It
+is not a stdout column and must not be confused with two things that are:
+`audit_targets` prints top-1 regret only as half of a combined
+`E[regret] / top-1` cell in the policy table, and it separately prints a **`mean
+top-1` column that is top-1 MASS**, not regret — which a flattening arm lowers
+BY CONSTRUCTION and which would therefore read as "worse" for a reason that has
+nothing to do with move quality. Reading that column would be the fifth blind
+ruler in a week.
+
+⚑ `cand.raw` is the net's raw policy, so **the verdict field does not depend on
+`--sims` at all** — no Gumbel re-search noise enters it. `--sims 32` is retained
+only so the other rows of the same run stay comparable to the anchor.
+
+### RESOLUTION FIRST, THEN THE THRESHOLDS
+
+This file's measured paired 95% CI half-width for **audit raw top-1 is ±9.8 cp at
+n=2000** (2026-07-02 retro-read; 72% exact ties). Everything below is derived
+from that number rather than chosen:
+
+```
+SE(n=2000)  = 9.8 / 1.96                       = 5.00 cp
+SE(n)       = 5.00 * sqrt(2000/n)
+half-width(n=4000) = 1.96 * 5.00/sqrt(2)       = ±6.93 cp
+MDE @ n=4000, CI-excludes-0 (~50% power)       = 6.9 cp
+MDE @ n=4000, 80% power (2.802*SE)             = 9.9 cp
+```
+
+**⚑ WHY THE FIRST VERSION OF THIS ENTRY WAS VOID.** It pre-committed SUCCESS at
+"≥3.0 cp with CI excluding 0" and KILL at "worsens by ≥2.0 cp, or the CI spans
+0". A TRUE effect of exactly 3.0 cp on the full set returns
+**3.0 ± 6.93 = [−3.9, +9.9]**, which spans 0 — so the true effect trips the KILL
+clause and SUCCESS is arithmetically unreachable. The 2.0 cp point-delta kill is
+separately forbidden by the Yardsticks paragraph above, which states that fixed
+±2 cp thresholds sit below every measured floor and that a verdict needs the CI
+to exclude zero, not a point delta.
+
+**n required to resolve a given effect** (`n = 2000·(9.8/δ)²`, and ×2.04 for 80%
+power):
+
+| true effect | n for CI to exclude 0 | n for 80% power | vs the frozen 4000-row set |
+|---|---|---|---|
+| 2 cp | 48,020 | 98,140 | 12.0× / 24.5× |
+| 3 cp | 21,342 | 43,618 | 5.3× / 10.9× |
+| 5 cp | 7,683 | 15,702 | 1.9× / 3.9× |
+| 7 cp | 3,920 | 8,011 | 1.0× / 2.0× |
+| 10 cp | 1,921 | 3,926 | 0.5× / 1.0× |
+
+**The audit set FREEZES after generation (new sampling = new version), so 4000
+rows is the ceiling and ~10 cp is the smallest effect this screen can honestly
+claim to detect.** A few-cp effect — the size originally imagined — is NOT
+observable on this instrument at any threshold. That is a property of the ruler,
+not of the hypothesis, and it must be stated before the run rather than
+discovered after it.
+
+#### THE OPENING STRATUM — measured, not projected (2026-08-09)
+
+⚑ **The ±6.93 above was a √2 projection from a 2000-row pair, and the 2000-row
+subset is NOT a random half.** Counted directly on `data/audit_set_v1.jsonl`:
+the file's first 2000 rows are **1332 endgame + 668 middlegame, zero openings**;
+the full 4000 are **1332 endgame / 1335 middlegame / 1333 opening**
+(`PHASE_NAMES = ('endgame','middlegame','opening')`, missing `phase` → 0). So
+`--max-positions 0` adds a stratum every anchor in this file lacks, and a
+projection over it was unmeasured.
+
+It is now measured, on the only banked pair of FULL 4000-row `cand.raw` dumps
+that exists (`data/audit_analysis/per_position_v1donor.jsonl` vs
+`per_position_277.jsonl`, 2026-06-26, join 4000/4000, 0 unmatched):
+
+| stratum | n | paired mean Δ | paired SD | hw95 at this n |
+|---|---|---|---|---|
+| endgame | 1332 | +9.85 | **281.44** | ±15.11 |
+| middlegame | 1335 | +2.68 | **124.74** | ±6.69 |
+| opening | 1333 | −0.57 | **47.25** | ±2.54 |
+| anchor subset (first 2000) | 2000 | — | 237.60 | **±10.41** |
+| FULL SET | 4000 | +3.98 | 179.77 | **±5.57** (MDE₈₀ **7.96**) |
+
+**The openings are the LOW-variance half, by ~6× on SD.** Two consequences, and
+they answer the dilution worry rather than dismissing it:
+
+* The projection was conservative. Measured hw95 at n=4000 is **±5.57** vs the
+  ±6.93 projected, MDE₈₀ **7.96** vs 9.91. Keep the projected numbers as the
+  pre-committed design figures — being pessimistic is the safe direction — but
+  the screen is ~25% sharper than the table above claims.
+* **Dilution is real and costs almost nothing.** Worst case — the temperature
+  matters only in middlegame/endgame and does exactly nothing in openings — the
+  pooled mean is δ·(2667/4000) = 0.667δ against hw95 5.57, so CI-exclusion needs
+  δ ≥ **8.35** and 80% power needs δ ≥ **11.94**. Restricting to endgame+middlegame
+  (n=2667, hw95 8.26) needs δ ≥ **8.26** / **11.81**. That is a 1% difference. If
+  the effect is instead uniform across phases, the full set wins outright
+  (MDE₈₀ 7.96 vs 11.81). **There is no configuration in which dropping the
+  openings helps.**
+
+**PRE-COMMITTED STRATIFICATION.** The **overall** line of `paired_compare`
+decides, over all 4000 rows, openings INCLUDED. The three per-phase lines it
+prints are DESCRIPTIVE and may not be promoted to a verdict after the fact —
+picking the phase that moved is the "exit code is an OR" defect. One secondary
+descriptive number is pre-registered because it is the population every anchor
+in this file was measured on: the same delta restricted to endgame+middlegame.
+It is reported, never decisive.
+
+⚠ Provenance of the table: that pair is v1-era, `input_encoding` inferred as
+`fen_only` (neither dump is stamped) and `batch_size` undeclared, and it
+contrasts two very different nets. It is used only for the **paired SD per
+stratum**, which is what the power arithmetic needs; its MEANS are not an anchor
+for anything here.
+
+### PRE-COMMITTED THRESHOLDS
+
+⚑ **WHAT IS BEING DECIDED IS WHETHER THE KEY IS EVER ARMED LIVE.** This entry
+pre-registers an OFFLINE screen, because a live arm has no admissible control
+(see the control section). That is not a downgrade: this file's own 07-27 entry
+already names "an offline retrain at candidate temps
+(`scripts/retarget_retrain.py`) judged on POLICY only, never value" as one of the
+three things that CAN decide a target temperature. **A live arm, if the screen
+earns one, needs its OWN ledger entry** — its confounds, its window and its
+in-effect check are different, and it inherits none of the numbers here.
+
+Point deltas are DESCRIPTIVE ONLY. The verdict is the paired bootstrap CI on
+`cand.raw.top1`, arm vs control, same rows, same ruler, **overall line, all 4000
+rows**:
+
+- **SUCCESS:** CI excludes 0 on the BETTER side (arm's top-1 regret lower).
+  Design MDE at 80% power is **9.9 cp** (measured **7.96**), so this is a screen
+  for a LARGE effect. SUCCESS earns a live arm and a new entry; it does NOT arm
+  the yaml by itself.
+- **KILL:** CI excludes 0 on the WORSE side. Record FAILED the same session; the
+  key stays absent from the production yaml. (Nothing to revert — no live arm ran.
+  If a live arm is ever running when a KILL lands, reverting the yaml key is not a
+  rollback: the replay window holds ~a day of rows trained under the old shape.)
+- **UNRESOLVED (the expected outcome):** CI contains 0. This is a VERDICT and is
+  recorded as one — but it is **not evidence of absence**, because the table
+  above shows anything under ~7 cp is invisible here. It closes the arm on this
+  instrument and does not license "temperature does nothing".
+
+**NEGATIVE CONTROL — two of them, and they answer different questions.**
+
+*(1) PLUMBING (same checkpoint, same seed, same session).* Paired delta
+**+0.00 [+0.00 .. +0.00], 100% tied** (n=60 smoke while writing this entry).
+⚑ **This is a determinism check, NOT a noise floor.** It proves the join key,
+the dotted field path and the ruler guard work end to end, and nothing else: a
+fixed-seed single-session re-run cannot show the ~0.7 cp CUDA-argmax jitter this
+file's Yardsticks paragraph records for same-checkpoint re-runs. Do not cite it
+as the resolution of the instrument — the resolution table above is that.
+
+*(2) REAL NOISE FLOOR, cross-process, on this exact field.* Executed 2026-08-09
+on two dumps produced by two SEPARATE `audit_targets` processes 9 minutes apart,
+same policy weights, deliberately perturbed in a way that provably cannot reach
+`cand.raw` (different value head):
+
+```
+pdump_pBOOT_vBOOT vs pdump_pBOOT_v477 -> +0.00 [+0.00 .. +0.00], 100.0% tied, n=2000
+pdump_p477_v477   vs pdump_p477_vBOOT -> +0.00 [+0.00 .. +0.00], 100.0% tied, n=2000
+```
+
+**The cross-process floor on `cand.raw.top1` is EXACTLY zero.** That is not luck:
+`cand.raw` is the argmax of a deterministic forward pass on a FEN-only input,
+with no search, no sampling and no value head in the path, scored against frozen
+deep-SF regrets. An independent reviewer confirmed the *reason* rather than the
+number, by checking the CONTINUOUS fields of the same pair — `cand.raw.exp`,
+`.entropy`, `.p` all equal on 2000/2000 with maxabsdiff 0, while `cand.search.exp`
+matches on only 140/2000 (maxabsdiff 6136.77). It is a bitwise-identical forward,
+not an argmax step function hiding jitter. The 0.7 cp CUDA-argmax jitter this file
+records belongs to search-dependent rows.
+
+⚑ **WHAT THAT ZERO DOES *NOT* COVER, and an earlier revision of this section
+claimed it did.** Both floors score **the SAME net twice**. The verdict compares
+**two SEPARATELY TRAINED nets**. Those are different questions, and this file's
+own rule is that a guard must share the criterion's instrument. With ONE training
+run per arm, the paired bootstrap over positions treats both nets as fixed: it
+estimates sampling error over the 4000 positions and **cannot see run-to-run
+trajectory variance at all**. A 25000-step trajectory amplifies a loss
+perturbation chaotically, and this rig's run-to-run floor is nonzero and already
+measured elsewhere in this file — *"15 identical invocations gave 3 distinct draw
+sequences, 0.0056 nats of held-out CE apart"* at **800** steps, 31× shorter than
+the sweep. That floor has never been converted to `cand.raw.top1` cp. The
+sentence "all of this screen's variance is position-sampling variance" was
+therefore FALSE and is withdrawn.
+
+**(3) REQUIRED THIRD ARM — a `seed=1` NULL ARM on the pre-screen.** The pre-screen
+below runs THREE variants, not two:
+
+```
+--variant ctrl: --variant arm:policy_target_temp=1.5 --variant ctrl2:seed=1
+```
+
+`ctrl2` differs from `ctrl` in nothing but the seed, so `paired_compare(ctrl,
+ctrl2)` on `cand.raw.top1` measures exactly the quantity the position bootstrap
+cannot: how far two trainings of the SAME configuration land apart on the
+deciding ruler. This is the file's own standing rule — *run the negative control,
+require it to FAIL* — applied to the half of the design that had none.
+
+⚑ **PRE-COMMITTED READING OF THE NULL ARM**, written before it runs:
+
+| `|Δ(ctrl, ctrl2)|` | what it means | what the verdict must then say |
+|---|---|---|
+| ≤ 2 cp | seed noise is small against the 7.96 cp MDE₈₀ | proceed; the position bootstrap is an adequate error model, state the measured value |
+| 2–8 cp | seed noise is a material fraction of the MDE | the single-seed CI UNDERSTATES the error. Report the arm's Δ **and** the null arm's Δ side by side; SUCCESS requires the arm's Δ to exceed the null arm's in magnitude, and the entry says explicitly that the CI is a lower bound on the true uncertainty |
+| > 8 cp | seed noise is the same order as the effect being screened | **the screen is not decidable at n=1 seed.** No SUCCESS/KILL may be recorded. Either the sweep is repeated at ≥3 seeds per arm (cost ×3) or the arm is closed as UNRESOLVED-BY-CONSTRUCTION |
+
+The null arm rides on a pre-screen that is already budgeted, so it costs one
+extra `--steps 2500` arm, not a third of the full sweep. Its `seed` override is
+admissible: `seed` is a real config key and the rig's dead-key guard accepts it
+(verified).
+
+Note `paired_compare` refuses to compare dumps made with different
+`input_encoding` / `batch_size`, so the two arms must use identical audit
+settings; on undeclared dumps it warns rather than refusing, which is not a
+substitute for setting them identically.
+
+### THE IN-EFFECT CHECK (required; a null without it is void)
+
+⚑ **This entry pre-declares UNRESOLVED as the expected outcome, and in this repo
+a null with no in-effect proof is void** (memory:
+`invalid_verdicts_from_unwired_features`). Worse, the natural place to look
+cannot answer the question:
+
+```
+scripts/audit_targets.py:1078:   train_temp = float(flat.get("temperature", 1.0))
+```
+
+That is the **selfplay SAMPLING temperature** — `pbt2_small.yaml` sets
+`temperature: 0.0` — and it is an unrelated knob. Candidate row **(d)
+production training target** in the audit output is reconstructed from it and
+knows nothing about `policy_target_temp`, so **row (d) reads identically in both
+arms whether or not the arm was live.** It is not the in-effect check and must
+not be offered as one. (Related and good: `--config` defaults to
+`configs/pbt2_small.yaml` — `audit_targets.py:939` — so the ruler config is
+shared across arms by default. Keep it that way; passing the arm's own config
+would move the ruler with the arm.)
+
+**THE REACHABILITY CHAIN, by call graph.** Every hop is a line, not a grep:
+
+| hop | site | evidence |
+|---|---|---|
+| yaml → flat config | `flatten_run_config_defaults` | `policy_target_temp` is in the live-yaml allowlist, `utils/config_yaml.py:246` |
+| flat config → ctor kwargs | `trainer_kwargs_from_config`, **`trainer.py:1626`** | literal `float(config.get("policy_target_temp", 1.0))` — spelled as a literal `config.get` on purpose so `tests/test_startup_only_config_keys.py` can see it |
+| ctor kwargs → Trainer | `tune/trainable.py:759` splat (bound at `:756`) | `tests/test_policy_target_reshape.py` AST-asserts nothing mutates the dict between bind and splat (that mutant SURVIVED review #2) |
+| Trainer → attribute | **`trainer.py:2118`** | `self.policy_target_temp = float(...)`, then `retemper_main_policy_target(torch.ones(1,2), temp=self.policy_target_temp)` VALIDATES it at construction |
+| attribute → loss | `Trainer._loss_kwargs` (**`trainer.py:2482`**, the entry at **`:2487`**) → `compute_loss` → `retemper_main_policy_target` (**`losses.py:813`**) | eval is separately pinned to 1.0 at **`trainer.py:2530`** |
+| the reshape itself | `losses.py:448`, gating on `policy_target_temp_active` (**`losses.py:317`**) | one predicate shared by the early return and the log line |
+| observability | the print at **`trainer.py:2248`**, the LAST statement of `__init__` | all three fields are reads; see below |
+| drift | `_STARTUP_ONLY_TRIAL_KEYS` (`tune/trainable_config_ops.py:576`) | the launch value CANNOT change mid-run; a live yaml edit skips **this key only**, warns, and the rest of the reload still applies — see the ⚑ below |
+
+⚑ **AN EARLIER REVISION OF THAT LAST ROW SAID "a live yaml edit is rejected for
+the whole reload". THAT IS THE *UNKNOWN-KEY* MODE AND IT IS WRONG HERE**, and
+wrong in the direction that makes an operator over-cautious about a key that is
+in fact the safest kind. `policy_target_temp` IS in the live-yaml allowlist
+(`utils/config_yaml.py:246`), so `flatten_run_config_defaults` accepts it and
+the strict validator never sees an unknown key. What happens instead, driven
+through `_reload_yaml_into_config(cfg, <armed yaml>, live_reload=True)` on a
+copy of the production yaml carrying `policy_target_temp: 1.5` **and** a second
+live key in the same reload:
+
+```
+WARNING  YAML reload: policy_target_temp changed (1.0 -> 1.5) but requires restart — skipping
+policy_target_temp : before 1.0    after 1.0    -> SKIPPED
+w_policy           : before 1.0    after 1.25   -> APPLIED   (same reload)
+no exception raised; `restart_required_config_keys()` contains the key;
+`_STARTUP_ONLY_TRIAL_KEYS <= _LIVE_RELOAD_SKIPPED_KEYS` -> True
+```
+
+⚑ **AND THE `⚑ A KNOWN KEY WITH AN INVALID VALUE KILLS THE RUN` HAZARD IN
+CLAUDE.md DOES NOT APPLY TO THIS KEY.** That hazard is `TrialConfig.from_dict`
+raising inside `trainable.py`'s `try:` that has a `finally:` and no `except:`.
+`policy_target_temp` is **not a `TrialConfig` field** (261 fields; measured
+`hasattr(TrialConfig.from_dict({...}), "policy_target_temp")` → `False`), because
+`trainer_kwargs_from_config` reads it straight off the flat dict. So
+`from_dict` never sees it and cannot raise on it — measured at `0.0`, `-1.0`,
+`15.0` and `nan`, all four return normally:
+
+```
+TrialConfig.from_dict({**flat, "policy_target_temp": 0.0 / -1.0 / 15.0 / nan}) -> OK (4/4)
+```
+
+**An out-of-range value on this key therefore cannot kill a live trial
+mid-iteration.** It is skipped with a warning at reload, and refused at the
+*next* `Trainer.__init__`, i.e. the trial refuses to START. That is the safe
+failure mode. Do not read CLAUDE.md's validated-key hazard onto this row.
+
+⚑ **The corollary is the reason the range guard has a CEILING** (review N3).
+Because nothing between the yaml and the loss validates this key, the range
+check in `retemper_main_policy_target` is the *only* thing standing between a
+dropped decimal point and a 21-hour sweep. Accepted range is **`[0.5, 4.0]`**;
+`policy_target_temp: 15` (for `1.5`) is refused at construction. The floor
+catches over-sharpening, which reads as the loss improving. The ceiling catches
+over-flattening, and it is NOT redundant with "someone will notice `policy_ce`
+rise": `_eval_loss_kwargs` pins eval to 1.0, so the holdout CE an operator
+watches is invariant to the arm's temperature **by construction** and only the
+train-side `policy_loss` moves — on an arm launched because it was expected to
+move. 4.0 clears lc0's 1.36–2.20 band, this screen's 1.5 arm, and
+`retarget_retrain.py`'s 0.5/2.0 reachability probes, so it cannot refuse a value
+anyone would set on purpose.
+
+⚑ **Line numbers in that table are checked, and were wrong once.** An earlier
+revision had four of nine pointing at a comment or an unrelated statement, in a
+table whose premise is "every hop is a line, not a grep". They move whenever this
+file's code moves — re-derive them (`grep -n`) rather than trusting them, and fix
+them in the same commit that moves the code.
+
+**THE CHAIN WAS *NEARLY* PROVABLE FROM ARTIFACTS, AND "NEARLY" IS THE GAP THAT
+KEEPS BURNING US.** `params.json` is the flattened LAUNCH config, so after
+arming it carries `policy_target_temp: 1.5` (verified: it is a flat file, and
+the key is absent today because the production yaml does not set it), and
+startup-only membership means the launch value is the realized value. But
+**nothing the running trial EMITTED named the realized temperature** — a reader
+could confirm what was *requested*, never what the constructor *installed*. That
+is precisely this codebase's signature defect, so it is now closed in code
+rather than argued around:
+
+```
+chess_anti_engine/train/trainer.py:2248, the LAST statement of Trainer.__init__:
+    [trainer] policy_target_temp=1.5 reshape_active=True eval_pinned_temp=1.0
+    [trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0
+```
+
+Printed UNCONDITIONALLY, so the control arm's `1.0` is a positive record rather
+than an absent line that could equally mean "old code". `reshape_active` comes
+from `losses.policy_target_temp_active`, the *same* predicate
+`retemper_main_policy_target` gates its early return on — a guard has to share
+the criterion's instrument. `print()` not `logger.info()`: the trial actor
+installs no logging handler (see the `export_swa` comment in the same file).
+
+⚑ **All THREE fields are reads, and that took two fixes review found.**
+`eval_pinned_temp` was a string LITERAL — a claim, not a measurement, in the one
+line whose whole justification is reporting realized values; it now reads
+`_eval_loss_kwargs`, which is only constructible at the END of `__init__`, hence
+the placement. And the value field was `.6g`, which renders `1.0000001` as `1` —
+self-contradictory beside `reshape_active=True` and byte-identical to the control
+arm's field; it is now `!r` (shortest round-trip).
+
+Mutation-checked, all killed: a hard-coded value, a deleted line, a constant
+`reshape_active`, an always-True shared predicate, `eval_pinned_temp` back to a
+literal, `.6g` back in place of `!r`, and an un-pinned eval ruler. A comment-only
+null control stays green. The literal-killer needs a fixture whose eval pin is
+NOT 1.0 (`_UnpinnedEvalTrainer`), because on the real class a literal `1.0`
+agrees with the property by coincidence and asserts itself.
+
+**REQUIRED AT LAUNCH — FOUR observations, in order.** ⚑ Every command here was
+EXECUTED against a real artifact before being written down; the previous revision
+of this list was written for a live arm, never re-read after the pivot to an
+offline screen, and two of its three steps could not fire.
+
+1. **The rig's report** — `jq '.[].overrides' runs/policy_target_temp_ab/retarget_report.json`
+   shows `{}` for `ctrl` / `ctrl2` and `{"policy_target_temp": 1.5}` for `arm`.
+   ⚑ **NOT `params.json`.** `scripts/retarget_retrain.py` writes
+   `retarget_report.json` (`:627`) and no `params.json` at all, so the previous
+   revision's step 1 was unperformable for the screen this entry actually
+   pre-registers. `params.json` is the right artifact for a LIVE arm — which
+   needs its own entry.
+   ⚑ And the report ALONE is not proof: it records whatever was typed. A
+   misspelled key used to land there reading exactly like success. That is now
+   refused by the rig (see the dead-key guard below), and step 2 is the
+   independent confirmation.
+2. **The startup line — NO `^` ANCHOR:**
+   ```
+   grep -F '[trainer] policy_target_temp=' <logfile>
+   ```
+   ⚑ **The previous revision wrote `grep '^\[trainer\] …'` and it CANNOT MATCH.**
+   Ray prefixes actor stdout with an ANSI colour code and `(train_trial pid=NNNN)`,
+   so the message is never at line start. Executed on the live log against the
+   identically-shaped `print()` that already exists in the same class:
+   ```
+   $ grep -c '^\[trial\] export_swa' /tmp/chess_training.log   # anchored
+   0
+   $ grep -c   '\[trial\] export_swa' /tmp/chess_training.log   # unanchored
+   335
+   $ grep -m1  '\[trial\] export_swa' /tmp/chess_training.log | cat -v
+   ^[[36m(train_trial pid=3193402)^[[0m [trial] export_swa: wrote …
+   ```
+   A required in-effect check that returns 0 does not read as "the grep is
+   wrong", it reads as **"the arm never ran"** — the exact wrong conclusion on
+   the exact question this section exists to settle. The `-F` form was then run
+   against a log composed of the REAL Ray prefix bytes taken from that file and
+   the REAL line a `Trainer` emits: **anchored 0, `-F` 2/2 matched.**
+   Expect `reshape_active=True` for `arm`, `False` for `ctrl` and `ctrl2`.
+3. **POSITIVE DIFFERENTIAL CHECK, two-sided, on a REAL batch from the replay
+   window.** `policy_ce` computed with the armed temp must DIFFER from
+   `policy_ce` at temp 1.0, and at temp 1.0 the two must be BITWISE identical
+   (`retemper_main_policy_target` early-returns the same tensor object). It can
+   fail in both directions: a dead knob fails the first, a knob that leaks into
+   the default fails the second.
+
+   **EXECUTED 2026-08-09** — `checkpoint_000671`
+   (`data/salvage/pre_search_authority_20260809/seeds/slot_000/trainer.pt`), one
+   real 256-position batch drawn from that snapshot's 817-shard / 1,499,910-row
+   replay pool after warming the buffer 40 draws, forward-only, `--gpu-mem-fraction 0.06`:
+
+   | temp | `policy_ce` (masked mean) | Δ vs 1.0 |
+   |---|---|---|
+   | 1.0 | **0.93595117** | — |
+   | 1.0 (re-run, same process) | 0.93595117 | bitwise identical |
+   | 1.2 | **1.09663498** | **+0.16068381** |
+   | 1.5 | **1.36106944** | **+0.42511827** |
+
+   `retemper_main_policy_target(pol_target, temp=1.0) is pol_target` → **True**.
+   CE RISES because flattening raises `H(target)` and `CE = H + KL` — which is
+   why `_eval_loss_kwargs` pins the ruler to 1.0 and why this number is an
+   in-effect probe, never a quality metric.
+
+4. **THE RIG ITSELF EMITS THE SAME PROOF.** A two-arm `retarget_retrain` smoke
+   (`--steps 2 --batch-size 64 --no-rebuild-sf-targets`, same salvage snapshot)
+   run 2026-08-09:
+
+   ```
+   [trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0  <- ctrl
+   [trainer] policy_target_temp=1.5 reshape_active=True  eval_pinned_temp=1.0  <- arm
+   ```
+
+   with `retarget_report.json` recording `overrides {'policy_target_temp': 1.5}`,
+   both arms scanning the identical 817 shards (arm 2's de-pairing assertion
+   passed), identical row counts in every phase bucket
+   (`policy_own_acc_rows` 128, `policy_future_acc_rows` 125, phase n 27/45/56 in
+   BOTH arms), and `policy_loss` **1.004326 → 1.417086**
+   (+0.412760) while `soft_policy_loss` moved 1.616723 → 1.617079 (the
+   `soft_policy_min_tv 0.0` guard holding, as required below).
+
+   ⚑ Those row counts are COUNT-level evidence of pairing. An independent
+   reviewer took it to ROW level and it holds: two `DiskReplayBuffer`s over the
+   real 817-shard bank with production `TrialConfig` knobs and
+   `deterministic_refresh=True` gave **byte-identical SHA-256 over the drawn `x`
+   planes** at the same seed (`2d2bcad8a2cc34ff3d02`), and a different digest at
+   `seed=1` — the negative control. Priority weighting cannot couple the loss to
+   the draw: `diff_focus_pol_scale`/`diff_focus_q_weight` are non-zero in
+   production but read STORED shard fields (`disk_buffer.py:856-863`), never the
+   live model.
+
+### TWO SILENT-FAILURE PATHS IN THE RIG, NOW CLOSED IN CODE
+
+Both were found by review of this entry, and both would have produced a clean-
+looking 21-hour sweep with an invalid answer. Neither is prose in this ledger;
+both are guards with mutation-tested coverage in `tests/test_retarget_retrain.py`.
+
+**(a) A MISSPELLED `--variant` KEY USED TO BE ACCEPTED AND REPORTED AS APPLIED.**
+`_parse_variant` validated only the `k=v` shape and `_run_variant` did a bare
+`config.update(overrides)`, so `arm:policy_target_tempp=1.5` trained at 1.0 and
+`retarget_report.json` recorded the override — indistinguishable from success.
+**That is the 2026-07-06 `sf_gap_priority_signed` failure verbatim, inside the
+instrument this entry designates as deciding.** `scripts/retarget_retrain.py:261`
+now refuses any override key that is not a `TrialConfig` field, not present in
+the flat config, and does not move `trainer_kwargs_from_config`'s output — a
+BEHAVIOURAL test, not an allowlist that would drift. It runs before `torch.load`,
+so a typo costs seconds. Executed against the production config:
+
+```
+REFUSE  policy_target_tempp  ·  policy_temp  ·  sf_gap_priority_signed
+ACCEPT  policy_target_temp   ·  sf_policy_temp  ·  replay_sf_gap_priority_weight  ·  lr  ·  seed
+```
+
+`policy_target_temp` is admitted by the behavioural probe ALONE — it is not a
+`TrialConfig` field and is absent from the shipped yaml — which is pinned by its
+own test so a future "simplification" to an allowlist cannot silently refuse the
+knob this entry exists for.
+
+**(b) A TRANSIENT CUDA RETRY DE-PAIRED THE ARMS, VISIBLE ONLY AS A WARNING.**
+`_assert_shards_unchanged` pins the POOL, not the draw sequence.
+`Trainer.train_steps` catches a transient CUDA error and calls
+`add_retry_batches(...)`, which pulls replacement batches and advances the
+buffer's private RNG — so ONE retry in ONE arm desynchronises its rows from every
+other arm's permanently, for every subsequent step, with the shard list
+untouched. Load-dependent exactly like the shuffle-refresh race this rig already
+fixed, and over ~21 h on a shared box, not remote: I hit one myself while
+smoke-testing this rig at `--gpu-mem-fraction 0.08`. `TrainMetrics` now carries
+`batches_drawn` and `transient_cuda_retry_batches`, both land in
+`retarget_report.json` under `draws`, and `_assert_draws_unchanged`
+(`retarget_retrain.py:178`) aborts the sweep if they differ across arms **or if
+arm 1 itself retried** — arm 1 defines the reference, so a plain equality check
+cannot see its own perturbation.
+
+**Read `draws` before reading the verdict.** `transient_cuda_retry_batches` must
+be `0.0` in every arm; anything else voids the comparison regardless of what
+`paired_compare` prints.
+
+⚑ The draw guard checks the draw COUNT, not row identity, and that is deliberate:
+the `ctrl2:seed=1` null arm is *supposed* to draw different rows. A different
+seed changes WHICH rows, not HOW MANY, so the guard stays silent on the null arm
+and still fires on a retry. Verified on a real three-arm sweep (below).
+
+**Both guards observed on the real path, 2026-08-09** — a three-arm smoke
+(`--steps 2 --batch-size 64 --no-rebuild-sf-targets`, salvage snapshot,
+`--gpu-mem-fraction 0.20`), EXIT=0:
+
+```
+[trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0   <- ctrl
+[trainer] policy_target_temp=1.5 reshape_active=True  eval_pinned_temp=1.0   <- arm
+[trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0   <- ctrl2
+
+retarget_report.json
+  ctrl   overrides {}                              draws {batches_drawn 2.0, retries 0.0}  policy_loss 1.004326
+  arm    overrides {'policy_target_temp': 1.5}     draws {batches_drawn 2.0, retries 0.0}  policy_loss 1.417086
+  ctrl2  overrides {'seed': 1.0}                   draws {batches_drawn 2.0, retries 0.0}  policy_loss 0.930986
+```
+
+⚑ **Note `ctrl2`'s `policy_loss` already differs from `ctrl`'s** (0.930986 vs
+1.004326) after TWO steps, on rows the seed alone chose. That is not a result —
+two steps decide nothing and `policy_loss` is not the yardstick — but it is a
+concrete demonstration of why the null arm is required: at n=1 seed the position
+bootstrap cannot see this axis at all.
+
+### WINDOW, CONFOUNDS, GUARDS
+
+- This is a learning-quality change ⇒ **day-plus window, paired CIs** (protocol
+  rule 3). It is NOT readable in 5 iterations. In the offline rig the day-plus
+  window is spent as **25000 steps per arm** (derivation in the control section).
+- **One data-affecting change per window.** For this OFFLINE screen "live" is not
+  the criterion — the frozen bank and frozen start checkpoint make the live run
+  irrelevant to it. The criterion is the CODE REVISION: both arms must run from
+  one worktree at one commit, and nothing else touching the policy target may
+  land between them (the Confounds bullet below states this as the open item).
+  The live-arm reading of this rule returns if a live arm is ever run, under its
+  own entry.
+- **Confounds (filled 2026-08-09, at pre-registration rather than at launch;
+  re-check and amend the day the arm starts):**
+  - **Structurally absent by construction, and that is the point of the offline
+    design.** Both arms are one process, one frozen 817-shard bank, one seed,
+    one starting checkpoint, and `policy_target_temp` is not a sampling knob —
+    so selfplay drift, PID difficulty drift, prev-model share, restart
+    boundaries, window turnover and ingest volume are *identical* in the two
+    arms, not merely controlled for. The 2-step smoke confirms the pairing at
+    count level; a reviewer confirmed it at ROW level (byte-identical SHA-256
+    over the drawn planes at a shared seed, different digest at seed 1).
+  - **Present and COMMON-MODE (cancels in the paired contrast, but forbids any
+    absolute claim):** the cold optimizer every `retarget_retrain` arm starts
+    from, and the fixed-pool over-viewing (8.5 views/position vs the live 4.32).
+  - **Present in the RULER, shared by both arms:** the frozen `holdout.npz` is
+    10.13% SF-desync-contaminated and does not age out — irrelevant here only
+    because this entry's verdict never touches the holdout. The deciding ruler
+    is the frozen deep-SF audit set, whose `cand.raw` leg was re-verified
+    cross-process at exactly 0.00 above (a SCORING floor; it says nothing about
+    trajectory variance — see the null arm).
+  - **NOT controlled, and measured by the `ctrl2:seed=1` null arm rather than
+    argued about:** run-to-run trajectory variance. One training run per arm
+    means the paired position bootstrap treats both nets as fixed; the null arm
+    is the only thing in this design that can see the seed axis, and its
+    pre-committed reading can close the screen outright.
+  - **Live-side confound that would apply to a LIVE arm and is the reason there
+    isn't one:** `cand.raw.top1` drifts 13.70 cp [6.23, 21.64] with time alone,
+    larger than this screen's MDE₈₀.
+  - **Open, and it must be re-checked at launch:** whether any other
+    policy-target-touching change (`gumbel_policy_temp` / PR #379, the 08-06
+    search bundle, `soft_policy_min_tv`) has landed between this entry and the
+    sweep. The frozen bank pins the DATA, not the CODE — if the two arms are
+    ever run under different revisions the comparison is void.
+- ⚑ **`soft_policy_min_tv` MUST stay 0.0 for the duration.** The temperature also
+  re-gates the `policy_soft` head (the TV gate is computed from the retempered
+  target; measured kept_frac 1.000 → 0.000), so with both on, the arm is two
+  interventions and the entry is void.
+  ⚑ **ABSENT, NOT SET TO 0.0** (review N4). `grep soft_policy_min_tv
+  configs/pbt2_small.yaml` exits **1** on both the repo copy and the LIVE file —
+  the 0.0 is `compute_loss`'s own default (`train/losses.py:742`), and only
+  `configs/exp_soft_policy_divergent_only.yaml` ever sets it. So checking this
+  constraint is "the grep finds nothing" (safe), not "the grep finds 0.0"; a
+  reader who greps and gets an empty result must not read that as *unchecked*.
+  The gate is a hard `> 0.0` test (`losses.py:809`), so absent and 0.0 are the
+  same behaviour today — this is a provenance correction, and it is worth making
+  because absent ≠ default has bitten this repo before.
+- Restart-gated (`_STARTUP_ONLY_TRIAL_KEYS`), which the offline screen turns from
+  an obstacle into a guarantee: the launch value is the realized value and cannot
+  drift mid-sweep. It matters again only for a LIVE arm, where the arm must start
+  at a restart boundary and the replay window still holds ~a day of rows made at
+  the old shape. Snapshot a revert point before any live launch (protocol rule 2);
+  the offline screen reuses that same snapshot as its shared starting checkpoint,
+  so the revert point and the control are one artifact.
+- Eval is pinned to `temp = 1.0` in `Trainer._eval_loss_kwargs`, so `test_loss`
+  and the holdout ruler stay comparable across arms. Do not undo that to "see the
+  arm's own CE" — that is the ruler-moves-with-the-arm defect.
+
 ## PRE-REGISTERED (2026-07-31, WRITTEN BEFORE THE RUN) — the VALUE-HEAD SWAP: is the value head causally upstream of the training-target degradation?
 
 **Status at write time: rig built, ZERO numbers seen.** Offline, forward-only,

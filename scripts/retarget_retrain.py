@@ -175,10 +175,145 @@ def _assert_shards_unchanged(
     )
 
 
+def _assert_draws_unchanged(
+    *, observed: dict[str, float], snapshot: dict[str, float], name: str,
+) -> None:
+    """Abort if this arm drew a different NUMBER of batches than the first arm.
+
+    ``_assert_shards_unchanged`` pins the POOL. It does not pin the draw
+    sequence, and there is a path that breaks the sequence with the pool
+    untouched: ``Trainer.train_steps`` catches a transient CUDA error and calls
+    ``batch_iter.add_retry_batches(...)``, which pulls replacement batches and
+    so advances the buffer's private RNG. One retry in ONE arm desynchronises
+    that arm's rows from every other arm's PERMANENTLY, for every subsequent
+    step -- and it used to be visible only as a ``logging.warning`` on a
+    thousand-line console. ``retarget_report.json`` recorded nothing, so a
+    silently de-paired 21-hour sweep was indistinguishable from a clean one.
+
+    Load-dependent exactly like the shuffle-refresh race this module already
+    fixed, and on a shared box over hours it is not a remote possibility.
+    Refuse rather than print a comparison that reads valid.
+
+    Both counts come from ``TrainMetrics``: ``batches_drawn`` is the total
+    microbatches pulled from the buffer and ``transient_cuda_retry_batches``
+    how many of those were replacements. A non-zero retry count in the FIRST
+    arm is fatal on its own -- there is no later arm to disagree with it, and
+    the reference sequence is already the perturbed one.
+    """
+    obs_retry = float(observed.get("transient_cuda_retry_batches", 0.0))
+    snap_retry = float(snapshot.get("transient_cuda_retry_batches", 0.0))
+    obs_drawn = float(observed.get("batches_drawn", 0.0))
+    snap_drawn = float(snapshot.get("batches_drawn", 0.0))
+    if obs_retry == snap_retry == 0.0 and obs_drawn == snap_drawn:
+        return
+    raise SystemExit(
+        f"replay DRAW SEQUENCE de-paired at variant {name!r}: "
+        f"batches_drawn {snap_drawn:.0f} (reference) vs {obs_drawn:.0f} (this arm), "
+        f"transient CUDA retry batches {snap_retry:.0f} vs {obs_retry:.0f}. "
+        "A transient-CUDA retry draws replacement batches and advances the "
+        "buffer's RNG, so from that point on the arms sample DIFFERENT rows "
+        "with the same seed and every delta this script prints is unpaired. "
+        "Re-run the whole sweep on a quieter box (or with a larger "
+        "--gpu-mem-fraction); the counts are in retarget_report.json."
+    )
+
+
+def _override_key_reaches_the_trainer(key: str, base_config: dict) -> bool:
+    """Does ``key`` actually change what an arm trains with?
+
+    ⚑ THIS EXISTS BECAUSE THE 2026-07-06 DOSE SCREEN SHIPPED A NO-OP AS A
+    RESULT. Its arms were launched with ``sf_gap_priority_signed=...``; the key
+    is not a ``TrialConfig`` field, ``TrialConfig.from_dict`` drops unknown keys
+    in silence, and ``retarget_report.json`` recorded the override as applied.
+    Four arms of GPU time measured the control twice. An independent review
+    reproduced the same shape here with a single doubled letter --
+    ``policy_target_tempp=1.5`` is accepted, trains at 1.0, and is reported as
+    an override -- which would spend a 21-hour paired sweep producing two
+    identical nets and a report claiming otherwise.
+
+    The test is BEHAVIOURAL rather than a hand-kept allowlist, because an
+    allowlist is one more thing that drifts from the code it describes:
+
+    1. a ``TrialConfig`` field -- reaches the replay buffer; or
+    2. a key the flat config already defines -- a real knob of some consumer,
+       and refusing it would break every existing sampling/loss sweep; or
+    3. a key that demonstrably moves ``trainer_kwargs_from_config``'s output --
+       this is what catches ``policy_target_temp``, which is read straight off
+       the flat dict by the Trainer and is in neither of the first two sets.
+
+    Anything else cannot reach the Trainer or the buffer, so an arm carrying it
+    is the control wearing another name.
+    """
+    if key in base_config:
+        return True
+    if hasattr(TrialConfig.from_dict({}), key):
+        return True
+  # Probe with two values so a key whose default happens to equal the probe
+  # cannot read as inert. Comparing the WHOLE kwargs dict, not the same-named
+  # entry: `trainer_kwargs_from_config` renames some keys on the way through.
+    base_kwargs = trainer_kwargs_from_config(dict(base_config))
+    for probe in (0.5, 2.0):
+        if trainer_kwargs_from_config({**base_config, key: probe}) != base_kwargs:
+            return True
+    return False
+
+
+def _assert_overrides_reach_the_trainer(
+    *, name: str, overrides: dict, base_config: dict,
+) -> None:
+    """Fail the sweep on an override key nothing will read. See above."""
+    dead = sorted(
+        k for k in overrides if not _override_key_reaches_the_trainer(k, base_config)
+    )
+    if not dead:
+        return
+    raise SystemExit(
+        f"variant {name!r} sets {len(dead)} key(s) that reach NOTHING: "
+        f"{', '.join(repr(k) for k in dead)}. They are not TrialConfig fields, "
+        "are absent from the flat config, and do not move "
+        "trainer_kwargs_from_config's output, so this arm would train "
+        "identically to the control while retarget_report.json recorded the "
+        "override as applied -- the 2026-07-06 sf_gap_priority_signed failure. "
+        "Check the spelling against the yaml and TrialConfig."
+    )
+
+
+def _sweep_level_keys() -> frozenset[str]:
+    """Config keys a per-variant override CANNOT win, derived from the signature.
+
+    ⚑ REVIEW FINDING (codex, P1). ``_run_variant`` takes ``steps``, ``batch_size``,
+    ``device``, ``checkpoint``, ``replay_dir`` and ``gpu_mem_fraction`` as explicit
+    arguments that ``main()`` resolves ONCE from the CLI and the BASE config, and
+    passes identically to every arm --- e.g. ``batch_size`` at
+    ``int(args.batch_size or base_config.get("batch_size", 256))``, off
+    ``base_config``, never off the per-variant ``config``. So
+    ``--variant arm:batch_size=1024`` updates a dict nothing downstream reads,
+    trains identically to the control, and lands in ``retarget_report.json`` as
+    ``"overrides": {"batch_size": 1024}``.
+
+    That is the 2026-07-06 ``sf_gap_priority_signed`` failure again, and
+    ``_override_key_reaches_the_trainer`` does NOT catch it: ``batch_size`` is a
+    real ``TrialConfig`` field, so it passes the reachability probe honestly ---
+    it reaches the buffer, it just cannot reach the thing an operator writing
+    ``batch_size=1024`` means. Reachability is the wrong question for this class;
+    SHADOWING is.
+
+    Derived by introspection rather than hand-listed, so a future parameter added
+    to ``_run_variant`` is covered the day it is added instead of the day someone
+    remembers this list. ``rebuild_sf_targets`` was already refused by hand here
+    for the same reason; it now falls out of the same rule.
+    """
+    import inspect
+    plumbing = {"name", "overrides", "base_config", "out_dir", "shard_snapshot",
+                "draw_snapshot", "allow_yaml_arch", "allow_partial_load"}
+    return frozenset(inspect.signature(_run_variant).parameters) - plumbing
+
+
 def _parse_variant(spec: str) -> tuple[str, dict]:
     name, _, body = spec.partition(":")
     if not name:
         raise SystemExit(f"--variant needs a name before ':', got {spec!r}")
+    shadowed = _sweep_level_keys()
     overrides: dict = {}
     for pair in filter(None, body.split(",")):
         k, _, v = pair.partition("=")
@@ -192,6 +327,14 @@ def _parse_variant(spec: str) -> tuple[str, dict]:
                 "rebuild_sf_targets is not variant-overridable — use the "
                 "global --rebuild-sf-targets / --no-rebuild-sf-targets flag "
                 "so every arm trains on the same targets"
+            )
+        if k.strip() in shadowed:
+            raise SystemExit(
+                f"{k.strip()!r} is a SWEEP-LEVEL setting, not variant-overridable: "
+                f"main() resolves it once and passes it to every arm as an explicit "
+                f"argument, so this override would reach nothing while "
+                f"retarget_report.json recorded it as applied. Use the matching "
+                f"--{k.strip().replace('_', '-')} flag, which applies to all arms."
             )
         lowered = v.strip().lower()
         if lowered in ("true", "false"):
@@ -216,11 +359,17 @@ def _run_variant(
     device: str,
     out_dir: Path,
     shard_snapshot: list[Path] | None,
+    draw_snapshot: dict[str, float] | None = None,
     rebuild_sf_targets: bool = True,
     gpu_mem_fraction: float = 0.0,
     allow_yaml_arch: bool = False,
     allow_partial_load: bool = False,
 ) -> dict:
+  # BEFORE torch.load and CUDA init: a dead override key must cost seconds, not
+  # the hours a full arm takes to reveal that it trained the control twice.
+    _assert_overrides_reach_the_trainer(
+        name=name, overrides=overrides, base_config=base_config,
+    )
     config = dict(base_config)
     config["rebuild_sf_targets"] = bool(rebuild_sf_targets)
     config.update(overrides)
@@ -401,6 +550,21 @@ def _run_variant(
     finally:
         buf.close()
 
+    draws = {
+        "batches_drawn": float(getattr(metrics, "batches_drawn", 0.0)),
+        "transient_cuda_retry_batches": float(
+            getattr(metrics, "transient_cuda_retry_batches", 0.0),
+        ),
+    }
+  # Arm 1 DEFINES the reference, exactly as it does for the shard pool -- but a
+  # retry in arm 1 is still fatal, because the reference sequence would already
+  # be the perturbed one and no later arm can disagree with it.
+    _assert_draws_unchanged(
+        observed=draws,
+        snapshot=draw_snapshot if draw_snapshot is not None else dict(draws),
+        name=name,
+    )
+
     out_path = out_dir / f"{name}.pt"
     trainer.save(out_path)
     summary = {
@@ -414,6 +578,11 @@ def _run_variant(
         # can see WHICH shards the printed deltas were paired over — the shard
         # list is the other half of "same seed" and was previously unrecorded.
         "shard_pool": [str(p) for p in shard_pool],
+  # The other half of "same seed, same rows": how many batches this arm pulled
+  # from the buffer, and how many of those were post-CUDA-error replacements
+  # that advanced its RNG. Recorded so a reader can SEE the arms were paired,
+  # rather than inferring it from the shard list alone.
+        "draws": draws,
         "final_metrics": {
             k: float(v)
             for k, v in vars(metrics).items()
@@ -469,30 +638,59 @@ def main() -> None:
     # seconds (torch.load + CUDA init) before arm 1's scan, and a shard landing
     # in that window aborts a sweep whose arms would all have been paired.
     shard_snapshot: list[Path] | None = None
-
-    summaries = []
-    for spec in args.variant:
-        name, overrides = _parse_variant(spec)
-        summary = _run_variant(
-            name=name, overrides=overrides, base_config=base_config,
-            checkpoint=args.checkpoint, replay_dir=args.replay_dir,
-            steps=args.steps, batch_size=batch_size, device=args.device,
-            out_dir=args.out_dir, shard_snapshot=shard_snapshot,
-            rebuild_sf_targets=args.rebuild_sf_targets,
-            gpu_mem_fraction=args.gpu_mem_fraction,
-            allow_yaml_arch=args.allow_yaml_arch,
-            allow_partial_load=args.allow_partial_load,
-        )
-        if shard_snapshot is None:
-            # Subscript, not `.get(..., [])`: a missing field must be a loud
-            # KeyError here, not an empty reference that turns every later arm
-            # into a false `(0 shards at start, N now)` abort.
-            shard_snapshot = [Path(p) for p in summary["shard_pool"]]
-        summaries.append(summary)
+    draw_snapshot: dict[str, float] | None = None
 
     report = args.out_dir / "retarget_report.json"
-    report.write_text(json.dumps(summaries, indent=2))
-    print(f"[retarget] report written to {report}")
+  # ⚑ REVIEW FINDING (codex, P3). The de-pairing guards raise INSIDE
+  # `_run_variant`, and the report used to be written only after every arm
+  # returned — so the one path that most needs its counts banked (`the sweep
+  # aborted, here is what the arms drew`) wrote nothing, and in a REUSED
+  # --out-dir the previous run's report survived the abort and read as a clean
+  # sweep of the run that had just failed. Two halves: delete the stale file
+  # before the first arm, so a missing report can never be mistaken for an old
+  # one; and write what we have on the way out whatever happens. `bank the dump,
+  # not just the number`.
+    report.unlink(missing_ok=True)
+
+    summaries: list[dict] = []
+    aborted: str | None = None
+    try:
+        for spec in args.variant:
+            name, overrides = _parse_variant(spec)
+            summary = _run_variant(
+                name=name, overrides=overrides, base_config=base_config,
+                checkpoint=args.checkpoint, replay_dir=args.replay_dir,
+                steps=args.steps, batch_size=batch_size, device=args.device,
+                out_dir=args.out_dir, shard_snapshot=shard_snapshot,
+                draw_snapshot=draw_snapshot,
+                rebuild_sf_targets=args.rebuild_sf_targets,
+                gpu_mem_fraction=args.gpu_mem_fraction,
+                allow_yaml_arch=args.allow_yaml_arch,
+                allow_partial_load=args.allow_partial_load,
+            )
+            if shard_snapshot is None:
+                # Subscript, not `.get(..., [])`: a missing field must be a loud
+                # KeyError here, not an empty reference that turns every later arm
+                # into a false `(0 shards at start, N now)` abort.
+                shard_snapshot = [Path(p) for p in summary["shard_pool"]]
+            if draw_snapshot is None:
+                draw_snapshot = dict(summary["draws"])
+            summaries.append(summary)
+    except BaseException as exc:
+  # A guard's SystemExit carries the message; anything else is a crash. Either
+  # way the completed arms' draw/shard provenance is the evidence for WHY the
+  # sweep is void, so it goes to disk before the process leaves.
+        aborted = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        payload: object = summaries
+        if aborted is not None:
+            payload = {"aborted": aborted, "completed_variants": summaries}
+        report.write_text(json.dumps(payload, indent=2))
+        print(
+            f"[retarget] {'PARTIAL ' if aborted else ''}report written to {report} "
+            f"({len(summaries)} of {len(args.variant)} variant(s))"
+        )
 
 
 if __name__ == "__main__":
