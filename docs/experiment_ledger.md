@@ -40035,3 +40035,142 @@ Also unexplained and PREDATING all of this: the 514→735 decline (−28 Elo, �
 while `diff_focus` was entirely healthy (keep_rate 0.80, priority CV 1.19,
 `grad_hard_clip_rate` exactly 0.000). Mechanism A alone is a candidate for it; that is
 untested.
+
+### Amendment — A and B are ONE COUPLED SYSTEM, and the mechanism-A fix is in `gumbel.py:991`
+
+Written after ledger `46c1489e6`, which fired a prediction pre-registered on 2026-08-09
+and changes what the fix above can claim. The entry above treated the target-quality
+hypothesis and the diff-focus hypothesis as competitors. **They are not. They are one
+positive feedback loop, and the entry above should be read with that correction.**
+
+**The measurement** (pre-registered instrument: stored shard `policy_target`, ~15k policy
+rows per era; the instrument was validated against a prior measurement of the same
+quantity and reproduced it to ~0.2% BEFORE the verdict was read):
+
+| era | H(target) | KL(prior‖target) median | mean | p90 |
+|---|---|---|---|---|
+| pre-bundle iter ~672 (817 pool shards) | 0.9849 | **0.0238** | 0.1123 | 0.2614 |
+| post-bundle iter ~860 (811 live shards) | **1.2136** | **0.2815** | 1.0491 | 2.7715 |
+
+The pre-registered bar was H ≈ 1.14 (Δ ≈ +0.15) for "the bundle is just the sum of its two
+levers". Δ = **+0.229** and still climbing at the stop ⇒ **compounding is real**.
+
+**The load-bearing number is the KL, not the entropy: KL(prior‖target) rose 11.8x at the
+median.** In a healthy loop this SHRINKS — the policy head learns its target, so the prior
+moves toward it. It grew an order of magnitude. **The net could not catch its own target
+because the target kept moving away from it.**
+
+```
+A  target drifts softer / further from the prior          (compounding)
+     -> KL(prior||target) rises
+B    -> difficulty = 6*|q_delta| + 3.5*kl rises            (the scale drift)
+     -> keep_prob saturates AND the surprise half concentrates on the
+        HIGHEST-KL rows = exactly the rows whose targets ran furthest away
+     -> the net trains hardest on its least-catchable targets
+     -> the prior falls further behind -> back to A, amplified
+```
+
+**B is the ACCELERANT on A**, which is what the Elo slope shows: −0.13 Elo/iter over
+514→735 (A alone, pre-bundle), −0.42 over 735→768, −0.66 over 768→862.
+
+### Mechanism A, traced in source
+
+- `gumbel.py:348 _policy_logits_to_full` applies `apply_policy_temp` (logits / T, T = 1.5)
+  **before** the prior enters the tree.
+- `gumbel.py:991` builds the stored target as
+  `logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _completed_q_transform(...)`
+  — and `pri` is that **TEMPERED** prior. Verified by reading both lines.
+- The C path does the same: `_mcts_tree.c:3036` `log_priors[i] = log(t->prior[cid])` over
+  the same tempered root priors, combined at `:3127`.
+
+⇒ **The stored training target algebraically CONTAINS the tempered prior.** Closed the
+loop:
+```
+net outputs L -> search tempers to L/T -> target = L/T + sigma*Qbar
+-> net learns that -> next pass tempers AGAIN -> L/T^2 + sigma*Qbar/T + sigma*Qbar -> ...
+```
+Fixed point `L* = sigma*Qbar * T/(T-1)` = **3*sigma*Qbar** at T = 1.5: a policy determined
+ENTIRELY by Q, with the policy head's independently learned prior information
+geometrically discounted away. That is mechanism A, and it is why H(target) blew past its
+pre-registered plateau.
+
+**⚑ WHY LC0 IS SAFE AT PolicyTemperature 1.45 AND WE ARE NOT — the generalisable part.**
+lc0 trains on **visit-count** distributions. Their target has no additive `log_prior` term,
+so the temperature never re-enters the target algebraically. Gumbel-MuZero's completed-Q
+target does. **Same knob, different target algebra, opposite safety.** Any future "engine X
+does this routinely" argument must check the target's ALGEBRA before transferring the
+knob.
+
+### The mechanism-A remedy
+
+Use the **TEMPERED** prior for Gumbel CANDIDATE SELECTION — exploration, which is what
+temperature is actually for: *temperature puts candidates INTO the target; search authority
+RANKS them* — and the **UNTEMPERED** prior in the improved-policy `log_prior` term at
+`gumbel.py:991` (and its C twin). This breaks the geometric feedback while preserving every
+exploration benefit `gumbel_policy_temp` was adopted for, so **`gumbel_policy_temp: 1.5`
+can stay.**
+
+⚠ **It must be applied on BOTH paths, and the C path is what production runs. Touching
+`_mcts_tree.c` makes `python3 scripts/build_production_extensions.py` MANDATORY before the
+restart — NOT `pip install -e .`, whose setuptools lacks PEP 660.** That is the most
+failure-prone step in any restart and must be verified by importing the extension and
+re-running `tests/test_e2e_smoke.py -k gumbel_selfplay_smoke` before training starts.
+⚠ It changes the stored target's meaning across eras: any banked-shard rig that compares
+`policy_target` or `priority_policy_kl` across the boundary is measuring two different
+constructions. Version the shards or restrict such rigs to one side.
+
+### What each element of the recommendation fixes
+
+| element | fixes | status |
+|---|---|---|
+| untemper the target's `log_prior` term (`gumbel.py:991` + C twin) | **A** — the compounding loop | designed, NOT implemented; requires the `.c` rebuild |
+| quantile `keep_prob` + winsorized priority | **B** — the amplifier | designed above, two open problems named |
+| `diff_focus_pol_scale` 3.5 → 0.45 | **B**, as a point calibration | ready; one yaml key, dry-run verified |
+| revert to the iter-672 export | resets BOTH drifted states | ready |
+| the regime guard (PR #388) | makes recurrence VISIBLE | merged-ready, reviewed |
+| split `sigma_play` / `sigma_target` | the standing one-number-two-jobs tension | LATER — new knob, new tuning problem, does not address A |
+| target quality vs deep SF | **the deciding measurement** | still owed |
+
+⇒ **STATE PLAINLY: the diff-focus fix breaks the AMPLIFIER, not the LOOP.** Nothing in the
+recommendation above addresses A except the untempering change, which is designed and not
+built. **Claiming the recalibration resolves the regression would be false.**
+
+**THE SECOND TENSION, recorded, not scheduled.** `sigma` does two jobs with one number: the
+PLAYED move and the STORED TRAINING TARGET are both `softmax(log_prior + sigma*Qbar)` at
+the same root with the same `sigma`, and no knob separates them. **The strength-optimal
+sigma is an UPPER BOUND on the training sigma, not the value to train at.** Splitting into
+`sigma_play` (strength optimum, measured ~0.2) and `sigma_target` (lower, for teaching) is
+the remedy. Lower priority than the untempering fix and explicitly not a substitute for it.
+
+**⚑ DO NOT enable PR #373's `policy_target_temp` (merged, parked at 1.0).** Softening the
+stored target post-hoc raises entropy while leaving KL(target‖prior) unchanged — it adds
+exactly zero information. It is the one thing that structurally cannot work here.
+
+### What this does NOT establish
+
+**"The target moved a lot" is NOT "the target got worse."** This document's own rule is
+that KL and change RATE are never evidence without change QUALITY — the `sims=1` negative
+control changes 34.9% of moves and is +7.60cp WORSE. The deep-SF target-quality
+discriminator specified above remains the deciding measurement and has not been run.
+
+### Added post-restart verification — a realized-value check on the production artifact
+
+The 817 banked pool shards are measured **pre-drift**. After the revert, freshly generated
+shards must come back to that distribution. This is a check on the actual artifact, not on
+a config or a report column:
+
+```bash
+# after ~20 post-restart iterations, over the NEWEST shards only
+PYTHONPATH=. python3 scripts/probe_policy_targets.py \
+  --shards <live trial>/replay_shards --newest 40 --label post_revert_target_shape
+```
+| quantity | expect | pre-bundle reference | post-bundle (what we are leaving) |
+|---|---|---|---|
+| H(`policy_target`) | 0.98 – 1.00 | 0.9849 | 1.2136 |
+| KL(prior‖target) median | ≈ 0.024 | 0.0238 | 0.2815 |
+
+⚑ Gate the KL read on `has_priority_policy_kl` presence ≥ 99% before believing it, and note
+that **KL(prior‖target) is a SHARD field, not a `result.json` key** — the per-iteration
+guard in PR #388 structurally cannot see it, which is exactly why the quantity that moved
+11.8x looked ordinary in every live metric outside the diff-focus family. A shard-side
+reader is the follow-up the guard does not cover.
