@@ -304,9 +304,14 @@ def soft_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torc
     return -(target_probs * F.log_softmax(logits, dim=-1)).sum(dim=-1)
 
 
-# Smallest accepted `policy_target_temp`. Not a numerical limit (see the guard
-# in the function) -- a typo catcher, set well below any value we would use.
+# Accepted `policy_target_temp` range. NEITHER endpoint is a numerical limit
+# (see the guard in the function) -- both are typo catchers, set clear of any
+# value we would deliberately use. lc0 trains at 1.36-2.20; the offline screen's
+# arm is 1.5 and `scripts/retarget_retrain.py`'s reachability probe uses 0.5/2.0,
+# so [0.5, 4.0] cannot refuse a value anyone would set on purpose while still
+# catching the decimal-point class of mistake (`15` for `1.5`).
 _POLICY_TARGET_TEMP_MIN = 0.5
+_POLICY_TARGET_TEMP_MAX = 4.0
 
 
 def policy_target_temp_active(temp: float) -> bool:
@@ -336,11 +341,27 @@ def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> tor
     the target is a function of the net, so CE against it converges to a fixed point.
     **That argument does not survive, and it does not survive because of this
     transform.** ``p ** (1/T)`` is a deterministic monotone function of the same
-    target, so the retempered target is ALSO entirely a function of the net; it adds
-    exactly zero information and leaves ``KL(target‖prior)`` — the standing finding's
-    training signal — unchanged. A knob cannot break a self-reference by reshaping one
+    target, so the retempered target is ALSO entirely a function of the net and adds
+    exactly zero information. A knob cannot break a self-reference by reshaping one
     side of it. See the ledger entry and
     memory `kl_target_prior_is_the_training_signal`.
+
+    ⚑ AN EARLIER REVISION OF THIS PARAGRAPH ALSO CLAIMED THE TRANSFORM "leaves
+    ``KL(target‖prior)`` unchanged". **THAT IS FALSE** (review, codex P2), and it is
+    false in the direction that matters: a power transform followed by a renormalise
+    moves the target toward uniform for ``T > 1``, and a broad prior is nearer uniform
+    than a peaked target is, so the KL FALLS. Measured on a sparse fixture
+    (target ``[.90 .05 .03 .01 .005 .005]``, prior ``[.40 .25 .15 .10 .06 .04]``):
+
+        T      1.0      1.3      1.5      2.2      4.0      0.7
+        KL   0.5552   0.3380   0.2322   0.0609   0.0563   0.7891
+
+    Nothing in the argument above depends on the retracted claim — the fixed-point
+    framing dies on "deterministic function of the same target", not on KL invariance
+    — so the withdrawal stands and gets no weaker. But the standing finding's tracked
+    QUANTITY does move under this knob, which is a thing anyone reading
+    `kl_target_prior_is_the_training_signal` beside this docstring has to know: do not
+    use ``KL(target‖prior)`` as an arm-invariant number here.
 
     What is left is a DIFFERENT and narrower mechanism, which is what this actually is:
     label smoothing. It does not add information; it reduces the overconfidence
@@ -350,6 +371,11 @@ def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> tor
     should cite this docstring as evidence for it — the entry in
     docs/experiment_ledger.md carries the hypothesis, the single deciding yardstick and
     the kill threshold, and no arm may run at ``temp != 1.0`` without it.
+
+    Accepted range is ``[0.5, 4.0]`` (see the guard); both endpoints are typo
+    catchers rather than numerical limits, and the ceiling in particular is NOT
+    optional — over-flattening is invisible on the pinned eval ruler, so nothing
+    downstream would notice a dropped decimal point.
 
     ``temp`` > 1 flattens (``p ** (1/temp)``, renormalised); < 1 sharpens. It
     deliberately does NOT resurrect zeros: a zero stays zero under a power, and the
@@ -374,8 +400,12 @@ def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> tor
     ``policy_soft`` head trains on: a flatter hard target sits closer to the soft one,
     the TV falls below the threshold, and the row is dropped (measured kept_frac
     1.000 -> 0.000 across temp 1.0 -> 1.3 on a fixture straddling the threshold; see
-    tests/test_policy_target_reshape.py). Latent while ``soft_policy_min_tv`` is 0.0 in
-    the production config, and note the asymmetry if both are ever on: the eval pin
+    tests/test_policy_target_reshape.py). Latent while ``soft_policy_min_tv`` is 0.0 --
+    which in ``configs/pbt2_small.yaml`` means ABSENT rather than set: the key is not in
+    the production yaml at all (grep exits 1 on the repo copy and on the live file), and
+    the 0.0 is this function's own default below. Only
+    ``configs/exp_soft_policy_divergent_only.yaml`` sets it. Note the asymmetry if both
+    are ever on: the eval pin
     fixes the temperature but NOT ``soft_policy_min_tv``, so training and eval would
     mask different row sets for that head.
 
@@ -385,23 +415,35 @@ def retemper_main_policy_target(pol_target: torch.Tensor, *, temp: float) -> tor
     transform is not, which is why this one needs code and an SF blend does not.
     """
     t = float(temp)
-  # ⚑ THE FLOOR IS ASYMMETRIC ON PURPOSE, and it is a policy choice rather than
-  # a numerical necessity — the max-scaling below already makes any positive
-  # temperature safe. It exists because the two directions FAIL DIFFERENTLY:
-  # over-flattening drives the target toward uniform, which raises `policy_ce`
-  # loudly and gets noticed; over-sharpening drives it toward one-hot, which
-  # LOWERS the CE floor to zero, so a typo reads as the loss improving. Review
-  # found `policy_target_temp: 0.001` doing exactly that. Intended use is >= 1
-  # (lc0 trains at 1.36-2.20) or a little below, so 0.5 sits well clear of any
-  # value we would deliberately set and can only catch mistakes.
-  # `not (t >= MIN)` also catches NaN, which compares False against everything.
-    if not (t >= _POLICY_TARGET_TEMP_MIN) or t == float("inf"):
+  # ⚑ BOTH ENDPOINTS ARE TYPO CATCHERS, not numerical necessities — the
+  # max-scaling below already makes any positive temperature finite. They exist
+  # because the two directions FAIL DIFFERENTLY, and NEITHER of them fails
+  # loudly on the channel an operator watches:
+  #   * over-SHARPENING drives the target toward one-hot, which LOWERS the CE
+  #     floor toward zero, so the mistake reads as the loss IMPROVING. Review
+  #     found `policy_target_temp: 0.001` doing exactly that.
+  #   * over-FLATTENING drives it toward uniform over its support, which raises
+  #     the CE floor. An earlier revision of this comment claimed that "gets
+  #     noticed" and so needed no ceiling. ⚑ THAT WAS WRONG, and it was wrong
+  #     for the reason this whole knob exists: `_eval_loss_kwargs` PINS eval to
+  #     1.0, so the holdout `policy_ce` an operator actually watches does NOT
+  #     move. Only the train-side `policy_loss` does, on an arm that was
+  #     launched expecting it to move. `policy_target_temp: 15` (a dropped
+  #     decimal point) is therefore silently wrong, not loudly wrong — a
+  #     ceiling is the only thing that catches it.
+  # `not (t >= MIN)` also catches NaN, which compares False against everything;
+  # `+inf` fails the `<= MAX` arm, so the range check subsumes the old explicit
+  # infinity test.
+    if not (_POLICY_TARGET_TEMP_MIN <= t <= _POLICY_TARGET_TEMP_MAX):
         raise ValueError(
-            f"policy_target_temp must be finite and >= {_POLICY_TARGET_TEMP_MIN}, got "
-            f"{temp!r}. It is an exponent denominator: 0 divides by zero, a negative "
-            "value inverts the target's ordering while still summing to 1, and a small "
+            f"policy_target_temp must be finite and in "
+            f"[{_POLICY_TARGET_TEMP_MIN}, {_POLICY_TARGET_TEMP_MAX}], got {temp!r}. "
+            "It is an exponent denominator: 0 divides by zero, a negative value "
+            "inverts the target's ordering while still summing to 1, a small "
             "positive value collapses the target toward one-hot -- which lowers "
-            "`policy_ce` and so reads as the loss improving. None of them fail loudly."
+            "`policy_ce` and so reads as the loss improving -- and a large value "
+            "drives it to uniform over its support while the PINNED eval ruler "
+            "shows nothing. None of them fail loudly."
         )
     if not policy_target_temp_active(t):
         return pol_target

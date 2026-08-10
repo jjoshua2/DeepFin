@@ -278,10 +278,42 @@ def _assert_overrides_reach_the_trainer(
     )
 
 
+def _sweep_level_keys() -> frozenset[str]:
+    """Config keys a per-variant override CANNOT win, derived from the signature.
+
+    ⚑ REVIEW FINDING (codex, P1). ``_run_variant`` takes ``steps``, ``batch_size``,
+    ``device``, ``checkpoint``, ``replay_dir`` and ``gpu_mem_fraction`` as explicit
+    arguments that ``main()`` resolves ONCE from the CLI and the BASE config, and
+    passes identically to every arm --- e.g. ``batch_size`` at
+    ``int(args.batch_size or base_config.get("batch_size", 256))``, off
+    ``base_config``, never off the per-variant ``config``. So
+    ``--variant arm:batch_size=1024`` updates a dict nothing downstream reads,
+    trains identically to the control, and lands in ``retarget_report.json`` as
+    ``"overrides": {"batch_size": 1024}``.
+
+    That is the 2026-07-06 ``sf_gap_priority_signed`` failure again, and
+    ``_override_key_reaches_the_trainer`` does NOT catch it: ``batch_size`` is a
+    real ``TrialConfig`` field, so it passes the reachability probe honestly ---
+    it reaches the buffer, it just cannot reach the thing an operator writing
+    ``batch_size=1024`` means. Reachability is the wrong question for this class;
+    SHADOWING is.
+
+    Derived by introspection rather than hand-listed, so a future parameter added
+    to ``_run_variant`` is covered the day it is added instead of the day someone
+    remembers this list. ``rebuild_sf_targets`` was already refused by hand here
+    for the same reason; it now falls out of the same rule.
+    """
+    import inspect
+    plumbing = {"name", "overrides", "base_config", "out_dir", "shard_snapshot",
+                "draw_snapshot", "allow_yaml_arch", "allow_partial_load"}
+    return frozenset(inspect.signature(_run_variant).parameters) - plumbing
+
+
 def _parse_variant(spec: str) -> tuple[str, dict]:
     name, _, body = spec.partition(":")
     if not name:
         raise SystemExit(f"--variant needs a name before ':', got {spec!r}")
+    shadowed = _sweep_level_keys()
     overrides: dict = {}
     for pair in filter(None, body.split(",")):
         k, _, v = pair.partition("=")
@@ -295,6 +327,14 @@ def _parse_variant(spec: str) -> tuple[str, dict]:
                 "rebuild_sf_targets is not variant-overridable — use the "
                 "global --rebuild-sf-targets / --no-rebuild-sf-targets flag "
                 "so every arm trains on the same targets"
+            )
+        if k.strip() in shadowed:
+            raise SystemExit(
+                f"{k.strip()!r} is a SWEEP-LEVEL setting, not variant-overridable: "
+                f"main() resolves it once and passes it to every arm as an explicit "
+                f"argument, so this override would reach nothing while "
+                f"retarget_report.json recorded it as applied. Use the matching "
+                f"--{k.strip().replace('_', '-')} flag, which applies to all arms."
             )
         lowered = v.strip().lower()
         if lowered in ("true", "false"):
@@ -600,32 +640,57 @@ def main() -> None:
     shard_snapshot: list[Path] | None = None
     draw_snapshot: dict[str, float] | None = None
 
-    summaries = []
-    for spec in args.variant:
-        name, overrides = _parse_variant(spec)
-        summary = _run_variant(
-            name=name, overrides=overrides, base_config=base_config,
-            checkpoint=args.checkpoint, replay_dir=args.replay_dir,
-            steps=args.steps, batch_size=batch_size, device=args.device,
-            out_dir=args.out_dir, shard_snapshot=shard_snapshot,
-            draw_snapshot=draw_snapshot,
-            rebuild_sf_targets=args.rebuild_sf_targets,
-            gpu_mem_fraction=args.gpu_mem_fraction,
-            allow_yaml_arch=args.allow_yaml_arch,
-            allow_partial_load=args.allow_partial_load,
-        )
-        if shard_snapshot is None:
-            # Subscript, not `.get(..., [])`: a missing field must be a loud
-            # KeyError here, not an empty reference that turns every later arm
-            # into a false `(0 shards at start, N now)` abort.
-            shard_snapshot = [Path(p) for p in summary["shard_pool"]]
-        if draw_snapshot is None:
-            draw_snapshot = dict(summary["draws"])
-        summaries.append(summary)
-
     report = args.out_dir / "retarget_report.json"
-    report.write_text(json.dumps(summaries, indent=2))
-    print(f"[retarget] report written to {report}")
+  # ⚑ REVIEW FINDING (codex, P3). The de-pairing guards raise INSIDE
+  # `_run_variant`, and the report used to be written only after every arm
+  # returned — so the one path that most needs its counts banked (`the sweep
+  # aborted, here is what the arms drew`) wrote nothing, and in a REUSED
+  # --out-dir the previous run's report survived the abort and read as a clean
+  # sweep of the run that had just failed. Two halves: delete the stale file
+  # before the first arm, so a missing report can never be mistaken for an old
+  # one; and write what we have on the way out whatever happens. `bank the dump,
+  # not just the number`.
+    report.unlink(missing_ok=True)
+
+    summaries: list[dict] = []
+    aborted: str | None = None
+    try:
+        for spec in args.variant:
+            name, overrides = _parse_variant(spec)
+            summary = _run_variant(
+                name=name, overrides=overrides, base_config=base_config,
+                checkpoint=args.checkpoint, replay_dir=args.replay_dir,
+                steps=args.steps, batch_size=batch_size, device=args.device,
+                out_dir=args.out_dir, shard_snapshot=shard_snapshot,
+                draw_snapshot=draw_snapshot,
+                rebuild_sf_targets=args.rebuild_sf_targets,
+                gpu_mem_fraction=args.gpu_mem_fraction,
+                allow_yaml_arch=args.allow_yaml_arch,
+                allow_partial_load=args.allow_partial_load,
+            )
+            if shard_snapshot is None:
+                # Subscript, not `.get(..., [])`: a missing field must be a loud
+                # KeyError here, not an empty reference that turns every later arm
+                # into a false `(0 shards at start, N now)` abort.
+                shard_snapshot = [Path(p) for p in summary["shard_pool"]]
+            if draw_snapshot is None:
+                draw_snapshot = dict(summary["draws"])
+            summaries.append(summary)
+    except BaseException as exc:
+  # A guard's SystemExit carries the message; anything else is a crash. Either
+  # way the completed arms' draw/shard provenance is the evidence for WHY the
+  # sweep is void, so it goes to disk before the process leaves.
+        aborted = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        payload: object = summaries
+        if aborted is not None:
+            payload = {"aborted": aborted, "completed_variants": summaries}
+        report.write_text(json.dumps(payload, indent=2))
+        print(
+            f"[retarget] {'PARTIAL ' if aborted else ''}report written to {report} "
+            f"({len(summaries)} of {len(args.variant)} variant(s))"
+        )
 
 
 if __name__ == "__main__":

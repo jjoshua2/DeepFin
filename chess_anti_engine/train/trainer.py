@@ -1075,6 +1075,29 @@ class TrainMetrics:
   # recorded it, so a silently de-paired sweep looked exactly like a clean one.
   # `scripts/retarget_retrain.py` asserts both are equal across arms.
   # Expected to be exactly 0.0 in a healthy run.
+  #
+  # ⚑ REVIEW FINDING N5, DECIDED — these two fields are ALWAYS ON, and the PR
+  # that added them is titled "default-off". Both statements are true and the
+  # gap is deliberate: "default-off" describes the temperature's effect on
+  # TRAINING, and these are observations, not behaviour. `batches_drawn` reads
+  # `batch_iter.consumed`, which the loop already maintained; the retry counter
+  # sums `_retry_batches`, a value the retry path already computed and already
+  # passed to `add_retry_batches`. No new call, no new branch, no reordering on
+  # the training path.
+  #
+  # They are deliberately NOT gated on `policy_target_temp != 1.0`. The counter
+  # exists to detect a de-paired A/B, and in that A/B the arm that runs at 1.0
+  # is the CONTROL -- the one that defines the reference draw sequence. Gating
+  # the instrument on the intervention would leave the reference arm as the only
+  # one with no counter, which is conditioning a control on the thing it is
+  # controlling for. A retry is also not caused by the temperature; it is caused
+  # by the box.
+  #
+  # The cost is one more `TrainMetrics` field pair on the live path, both
+  # additive with defaults, neither read by the best-model comparison or the
+  # promotion gate. The benefit is that a transient CUDA retry -- previously a
+  # `logging.warning` on a thousand-line console and nothing else -- becomes a
+  # recorded fact. That is worth having live regardless of this PR's knob.
     batches_drawn: float = 0.0
     transient_cuda_retry_batches: float = 0.0
 

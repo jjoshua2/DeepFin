@@ -29,6 +29,7 @@ import pytest
 import torch
 
 from chess_anti_engine.train.losses import (
+    _POLICY_TARGET_TEMP_MAX,
     compute_loss,
     policy_target_temp_active,
     retemper_main_policy_target,
@@ -73,7 +74,7 @@ def test_zeroed_moves_stay_exactly_zero() -> None:
     moves outside the support lose a median 538cp -- importing them is the
     opposite of the intent."""
     pol = _target([[8.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-    for temp in (1.30, 2.0, 5.0, 0.70):
+    for temp in (1.30, 2.0, 4.0, 0.70):
         out = retemper_main_policy_target(pol, temp=temp)
         assert (out[0, 3:] == 0.0).all(), f"temp {temp} lifted a zeroed move off zero"
 
@@ -269,7 +270,7 @@ def test_the_pinned_kwargs_override_only_the_target_shape() -> None:
 # ── The underflow the max-scaling makes impossible ──────────────────────────
 
 
-@pytest.mark.parametrize("temp", [0.5, 0.9, 1.3, 2.2, 10.0, 1000.0])
+@pytest.mark.parametrize("temp", [0.5, 0.9, 1.3, 2.2, 4.0])
 def test_no_temperature_can_empty_the_target(temp: float) -> None:
     """⚑ REVIEW FINDING B1, and the reason for the max-scaling.
 
@@ -301,9 +302,51 @@ def test_a_temperature_below_the_floor_is_refused(bad: float) -> None:
     """The floor is a typo catcher, not a numerical limit -- the max-scaling
     already makes these safe. It exists because over-SHARPENING fails quietly:
     a one-hot target has entropy 0, so `policy_ce` falls, and the mistake reads
-    as the loss improving. Over-flattening raises CE and gets noticed."""
+    as the loss improving."""
     with pytest.raises(ValueError, match="policy_target_temp must be finite"):
         retemper_main_policy_target(torch.ones(1, 4) / 4, temp=bad)
+
+
+@pytest.mark.parametrize("bad", [4.01, 10.0, 15.0, 150.0, 1000.0, 1e30])
+def test_a_temperature_above_the_ceiling_is_refused(bad: float) -> None:
+    """⚑ REVIEW FINDING N3, and the reason the ceiling exists at all.
+
+    There was no upper bound, so `policy_target_temp: 15` -- a dropped decimal
+    point on the screen's own arm value of 1.5 -- was ACCEPTED, and it drives
+    the target to uniform over its support (`p ** (1/15)`).
+
+    The docstring's mitigation for that was "over-flattening raises `policy_ce`
+    loudly and gets noticed". It does not, and the reason is this PR's own
+    design: `Trainer._eval_loss_kwargs` PINS eval to 1.0, so the holdout
+    `policy_ce` an operator watches is invariant to the arm's temperature by
+    construction. Only the train-side `policy_loss` moves -- on an arm launched
+    precisely because it was expected to move. So the typo is silently wrong,
+    and a range check is the only thing between it and a 21-hour sweep.
+
+    `1e30` also pins that the range check subsumes the old explicit `+inf`
+    test rather than merely sitting beside it.
+    """
+    with pytest.raises(ValueError, match="policy_target_temp must be finite"):
+        retemper_main_policy_target(torch.ones(1, 4) / 4, temp=bad)
+
+
+def test_the_ceiling_clears_every_value_anyone_would_deliberately_set() -> None:
+    """The other half of the mutation: a ceiling of 1.0 would also pass the test
+    above and would refuse the knob this PR exists for. Pin the values that are
+    load-bearing SOMEWHERE ELSE in the tree, so lowering the bound breaks here
+    instead of at launch.
+
+    * 1.5   -- the offline screen's arm in `docs/experiment_ledger.md`
+    * 2.2   -- the top of lc0's documented training range (1.36-2.20)
+    * 0.5 / 2.0 -- `scripts/retarget_retrain.py`'s reachability probe values.
+    """
+    for good in (0.5, 1.36, 1.5, 2.0, 2.2, 4.0):
+        out = retemper_main_policy_target(torch.ones(1, 4) / 4, temp=good)
+        assert torch.isfinite(out).all()
+    assert _POLICY_TARGET_TEMP_MAX >= 2.2, (
+        "the ceiling now sits inside lc0's documented training range, and below "
+        "the 2.2 arm `test_a_yaml_temperature_REACHES_the_trainer...` launches"
+    )
 
 
 def test_the_max_scaling_does_not_change_the_result_where_it_was_already_safe() -> None:

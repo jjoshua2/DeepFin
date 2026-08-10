@@ -629,10 +629,30 @@ of the net, so CE against it self-distils and plateaus (asymptote 0.0703). **Tha
 motivation is withdrawn, and this entry must not be read as testing it.**
 `p ** (1/T)` is a deterministic monotone function of the same target, so the
 retempered target is *also* entirely a function of the net. It adds zero
-information and leaves `KL(target‖prior)` — the standing finding's actual
-training signal — exactly unchanged. Softening the STORED target at training
-time cannot break the self-reference; that is memory
-`kl_target_prior_is_the_training_signal` and it has not been refuted.
+information. Softening the STORED target at training time cannot break the
+self-reference; that is memory `kl_target_prior_is_the_training_signal` and it
+has not been refuted.
+
+⚑ **AN EARLIER REVISION OF THIS PARAGRAPH ALSO SAID THE TRANSFORM LEAVES
+`KL(target‖prior)` "exactly unchanged". THAT WAS FALSE** (review, codex P2) and
+it is corrected here rather than quietly dropped, because it is the kind of
+claim this file gets cited for. A power transform followed by a renormalise
+moves the target toward uniform for `T > 1`, and a broad prior is nearer uniform
+than a peaked target, so the KL FALLS — measured on a sparse fixture (target
+`[.90 .05 .03 .01 .005 .005]`, prior `[.40 .25 .15 .10 .06 .04]`):
+
+| T | 0.7 | 1.0 | 1.3 | 1.5 | 2.2 | 4.0 |
+|---|---|---|---|---|---|---|
+| `KL(target‖prior)` | 0.7891 | 0.5552 | 0.3380 | **0.2322** | 0.0609 | 0.0563 |
+
+**The withdrawal above does not weaken.** It rests on "deterministic function of
+the same target", not on KL invariance, and that part is untouched. Two live
+consequences: (1) `KL(target‖prior)` is **arm-dependent** and may not be used as
+a shared ruler across the two arms of this screen — one more reason the deciding
+yardstick is `cand.raw.top1`, which is argmax-based and invariant to any monotone
+reshape; (2) it is mildly *supportive* of the label-smoothing hypothesis below,
+since the pressure the fitted solution is under genuinely does change. Neither is
+evidence for the mechanism, and neither is claimed as such.
 
 ### THE HYPOTHESIS I *AM* PRE-REGISTERING
 
@@ -1061,7 +1081,57 @@ would move the ruler with the arm.)
 | attribute → loss | `Trainer._loss_kwargs` (**`trainer.py:2459`**, the entry at **`:2464`**) → `compute_loss` → `retemper_main_policy_target` (**`losses.py:771`**) | eval is separately pinned to 1.0 at **`trainer.py:2507`** |
 | the reshape itself | `losses.py:406`, gating on `policy_target_temp_active` (**`losses.py:312`**) | one predicate shared by the early return and the log line |
 | observability | the print at **`trainer.py:2225`**, the LAST statement of `__init__` | all three fields are reads; see below |
-| drift | `_STARTUP_ONLY_TRIAL_KEYS` (`tune/trainable_config_ops.py:575`) | the launch value CANNOT change mid-run; a live yaml edit is rejected for the whole reload |
+| drift | `_STARTUP_ONLY_TRIAL_KEYS` (`tune/trainable_config_ops.py:575`) | the launch value CANNOT change mid-run; a live yaml edit skips **this key only**, warns, and the rest of the reload still applies — see the ⚑ below |
+
+⚑ **AN EARLIER REVISION OF THAT LAST ROW SAID "a live yaml edit is rejected for
+the whole reload". THAT IS THE *UNKNOWN-KEY* MODE AND IT IS WRONG HERE**, and
+wrong in the direction that makes an operator over-cautious about a key that is
+in fact the safest kind. `policy_target_temp` IS in the live-yaml allowlist
+(`utils/config_yaml.py:246`), so `flatten_run_config_defaults` accepts it and
+the strict validator never sees an unknown key. What happens instead, driven
+through `_reload_yaml_into_config(cfg, <armed yaml>, live_reload=True)` on a
+copy of the production yaml carrying `policy_target_temp: 1.5` **and** a second
+live key in the same reload:
+
+```
+WARNING  YAML reload: policy_target_temp changed (1.0 -> 1.5) but requires restart — skipping
+policy_target_temp : before 1.0    after 1.0    -> SKIPPED
+w_policy           : before 1.0    after 1.25   -> APPLIED   (same reload)
+no exception raised; `restart_required_config_keys()` contains the key;
+`_STARTUP_ONLY_TRIAL_KEYS <= _LIVE_RELOAD_SKIPPED_KEYS` -> True
+```
+
+⚑ **AND THE `⚑ A KNOWN KEY WITH AN INVALID VALUE KILLS THE RUN` HAZARD IN
+CLAUDE.md DOES NOT APPLY TO THIS KEY.** That hazard is `TrialConfig.from_dict`
+raising inside `trainable.py`'s `try:` that has a `finally:` and no `except:`.
+`policy_target_temp` is **not a `TrialConfig` field** (261 fields; measured
+`hasattr(TrialConfig.from_dict({...}), "policy_target_temp")` → `False`), because
+`trainer_kwargs_from_config` reads it straight off the flat dict. So
+`from_dict` never sees it and cannot raise on it — measured at `0.0`, `-1.0`,
+`15.0` and `nan`, all four return normally:
+
+```
+TrialConfig.from_dict({**flat, "policy_target_temp": 0.0 / -1.0 / 15.0 / nan}) -> OK (4/4)
+```
+
+**An out-of-range value on this key therefore cannot kill a live trial
+mid-iteration.** It is skipped with a warning at reload, and refused at the
+*next* `Trainer.__init__`, i.e. the trial refuses to START. That is the safe
+failure mode. Do not read CLAUDE.md's validated-key hazard onto this row.
+
+⚑ **The corollary is the reason the range guard has a CEILING** (review N3).
+Because nothing between the yaml and the loss validates this key, the range
+check in `retemper_main_policy_target` is the *only* thing standing between a
+dropped decimal point and a 21-hour sweep. Accepted range is **`[0.5, 4.0]`**;
+`policy_target_temp: 15` (for `1.5`) is refused at construction. The floor
+catches over-sharpening, which reads as the loss improving. The ceiling catches
+over-flattening, and it is NOT redundant with "someone will notice `policy_ce`
+rise": `_eval_loss_kwargs` pins eval to 1.0, so the holdout CE an operator
+watches is invariant to the arm's temperature **by construction** and only the
+train-side `policy_loss` moves — on an arm launched because it was expected to
+move. 4.0 clears lc0's 1.36–2.20 band, this screen's 1.5 arm, and
+`retarget_retrain.py`'s 0.5/2.0 reachability probes, so it cannot refuse a value
+anyone would set on purpose.
 
 ⚑ **Line numbers in that table are checked, and were wrong once.** An earlier
 revision had four of nine pointing at a comment or an unrelated statement, in a
@@ -1316,6 +1386,15 @@ bootstrap cannot see this axis at all.
   re-gates the `policy_soft` head (the TV gate is computed from the retempered
   target; measured kept_frac 1.000 → 0.000), so with both on, the arm is two
   interventions and the entry is void.
+  ⚑ **ABSENT, NOT SET TO 0.0** (review N4). `grep soft_policy_min_tv
+  configs/pbt2_small.yaml` exits **1** on both the repo copy and the LIVE file —
+  the 0.0 is `compute_loss`'s own default (`train/losses.py:742`), and only
+  `configs/exp_soft_policy_divergent_only.yaml` ever sets it. So checking this
+  constraint is "the grep finds nothing" (safe), not "the grep finds 0.0"; a
+  reader who greps and gets an empty result must not read that as *unchecked*.
+  The gate is a hard `> 0.0` test (`losses.py:809`), so absent and 0.0 are the
+  same behaviour today — this is a provenance correction, and it is worth making
+  because absent ≠ default has bitten this repo before.
 - Restart-gated (`_STARTUP_ONLY_TRIAL_KEYS`), which the offline screen turns from
   an obstacle into a guarantee: the launch value is the realized value and cannot
   drift mid-sweep. It matters again only for a LIVE arm, where the arm must start

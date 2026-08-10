@@ -8,7 +8,7 @@ legacy az_4672 (see the Move Encoding section of CLAUDE.md).
 
 | Head output | Shape | Training target | Target source | Loss | Weight knob |
 |---|---|---|---|---|---|
-| `policy` / `policy_own` | policy logits | `policy_t` (soft) | Gumbel completed-Q **improved policy** over all legal moves (`rec.policy_probs` = softmax(log prior + σ(completed Q)) at the searched root — the paper's recommended target, NOT raw visit counts). Move-selection temperature affects only the played move, not this target. | CE, legal-masked | `w_policy` |
+| `policy` / `policy_own` | policy logits | `policy_t` (soft) | Gumbel completed-Q **improved policy** over all legal moves (`rec.policy_probs` = softmax(log prior + σ(completed Q)) at the searched root — the paper's recommended target, NOT raw visit counts). Move-selection temperature affects only the played move, not this target. **Optionally retempered at loss time by `policy_target_temp` (default 1.0 = identity, accepted range [0.5, 4.0], startup-only) — see the note below.** | CE, legal-masked | `w_policy` |
 | `policy_soft` | policy logits | `policy_soft_t` (soft) | Same improved policy as `policy_t`, retempered via `apply_policy_temperature(soft_policy_temp)` (typically softer) | CE, legal-masked | `w_soft` |
 | `policy_future` | policy logits | `future_policy_t` (soft) | The t+2 record's `policy_probs` — improved policy at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
 | `policy_sf` | policy logits | `sf_policy_t` (soft) | Softmax over SF's MultiPV candidate WDL scores + label smoothing. SF labels are queried at **P1** (after the net's move), so this is the **opponent's reply distribution**, NOT a move-teacher for the sample's own position — the `sf_p0_*` fields (one-ply shift, selfplay rows) provide that. `sf_move_index` is the stored bestmove pointer, used only by the `sf_move_acc` metric. | CE (soft), no mask | `w_sf_move` |
@@ -18,6 +18,22 @@ legacy az_4672 (see the Move Encoding section of CLAUDE.md).
 | `volatility` | N scalars | `volatility_t` | Net-derived position volatility signal | Huber (δ=0.1) | `w_volatility` |
 | `sf_volatility` | N scalars | `sf_volatility_t` | SF-derived position volatility signal | Huber (δ=0.1) | `w_sf_volatility` |
 | `moves_left` | 1 scalar | `moves_left` | Plies remaining in the game | smooth L1 | `w_moves_left` |
+
+⚑ **`policy_target_temp` — the MAIN policy target's optional loss-time reshape,
+and it touches TWO heads.** Default `1.0` is an exact identity (the function
+returns the same tensor object), and the production yaml does not set the key.
+When it is set, `compute_loss` replaces `pol_target` with
+`retemper_main_policy_target(pol_target, temp=...)` = `p ** (1/T)` renormalised —
+so `policy_own` trains on the reshaped target, **and so does the
+`soft_policy_min_tv` TV gate, which is computed from the reshaped target and
+therefore decides which rows `policy_soft` trains on at all** (measured
+kept_frac 1.000 → 0.000 across T 1.0 → 1.3 on a fixture straddling the
+threshold). Support is unchanged: zeros stay zero. Eval is separately pinned to
+`1.0` in `Trainer._eval_loss_kwargs`, so the holdout ruler does not move with the
+arm — which also means over-flattening is invisible on the holdout and is caught
+only by the range guard. Details and the full rationale live in
+`retemper_main_policy_target`'s docstring in `train/losses.py`; the experiment is
+pre-registered in `docs/experiment_ledger.md` (PR #373) and NO arm has run.
 
 Implementation details:
 

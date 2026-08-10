@@ -7,6 +7,7 @@ the knob under test. These tests pin the guardrails that enforce that.
 from __future__ import annotations
 
 import inspect
+import json
 import sys
 from pathlib import Path
 
@@ -778,6 +779,48 @@ def test_a_dead_variant_key_ABORTS_instead_of_training_the_control_twice(
     assert "reach NOTHING" in msg, msg
 
 
+# ── codex P1: a SWEEP-LEVEL key is not variant-overridable ──────────────────
+#
+# ⚑ The reachability guard above asks the wrong question for one class of key.
+# `batch_size` IS a TrialConfig field, so it passes the probe honestly -- and
+# `main()` still resolves it ONCE off `base_config`/argv and hands the same
+# value to every arm, so `--variant arm:batch_size=1024` trains identically to
+# the control while `retarget_report.json` records the override as applied.
+# Reachability is satisfied; SHADOWING is the defect.
+
+
+@pytest.mark.parametrize(
+    "key", ["batch_size", "steps", "device", "gpu_mem_fraction",
+            "checkpoint", "replay_dir", "rebuild_sf_targets"],
+)
+def test_a_SWEEP_LEVEL_key_is_refused_as_a_variant_override(key: str) -> None:
+    with pytest.raises(SystemExit) as ei:
+        rr._parse_variant(f"arm:{key}=1024")
+    assert key in str(ei.value), str(ei.value)
+
+
+def test_the_shadowed_key_set_is_DERIVED_from_the_signature_not_hand_listed() -> None:
+    """A hand-kept list is covered the day someone remembers it. This one is
+    covered the day a parameter is added -- so pin the derivation, not the
+    membership: every name in the set must really be a `_run_variant` parameter,
+    and the real collisions with production config keys must be in it."""
+    import inspect
+    shadowed = rr._sweep_level_keys()
+    params = set(inspect.signature(rr._run_variant).parameters)
+    assert shadowed <= params, sorted(shadowed - params)
+    flat = _prod_flat()
+    assert {"batch_size", "steps", "device"} <= shadowed
+    # only keys that COLLIDE with a real config key can bite; the rest are inert
+    assert shadowed & set(flat), "the guard covers no real config key at all"
+
+
+def test_the_reachability_probe_would_have_PASSED_the_shadowed_key() -> None:
+    """The reason this needed its own guard rather than a wider reachability
+    probe. If this ever starts failing, the two guards have converged and one
+    of them is redundant -- decide which, do not leave both."""
+    assert rr._override_key_reaches_the_trainer("batch_size", _prod_flat())
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [
@@ -959,3 +1002,103 @@ class _FakeTC:
     replay_fast_low_surprise_priority = 0.0
     diff_focus_pol_scale = 0.0
     diff_focus_q_weight = 0.0
+
+
+# ── codex P3: the abort path must BANK what the completed arms drew ─────────
+#
+# ⚑ The de-pairing guards raise inside `_run_variant`, and the report was
+# written only after every arm returned. So the one path whose whole purpose is
+# provenance ("the sweep is void, here is what the arms drew") wrote nothing --
+# and in a REUSED --out-dir the previous run's report survived the abort and
+# read as a clean sweep of the run that had just failed. `bank the dump`.
+
+
+def _drive_main(monkeypatch, tmp_path, variants: list[str], run_variant) -> None:
+    monkeypatch.setattr(rr, "_run_variant", run_variant)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["retarget_retrain.py", "--config", "configs/pbt2_small.yaml",
+         "--checkpoint", str(tmp_path / "ckpt.pt"),
+         "--replay-dir", str(tmp_path / "shards"),
+         "--out-dir", str(tmp_path / "out"), "--steps", "1",
+         *[a for v in variants for a in ("--variant", v)]],
+    )
+    rr.main()
+
+
+def _summary(name: str) -> dict:
+    return {"variant": name, "shard_pool": ["a.zarr"],
+            "draws": {"batches_drawn": 8.0, "transient_cuda_retry_batches": 0.0}}
+
+
+def test_an_ABORTED_sweep_still_writes_the_completed_arms_provenance(
+    monkeypatch, tmp_path,
+) -> None:
+    calls: list[str] = []
+
+    def _run(*, name: str, **_k: object) -> dict:
+        calls.append(name)
+        if name == "arm":
+            raise SystemExit("replay DRAW SEQUENCE de-paired at variant 'arm'")
+        return _summary(name)
+
+    with pytest.raises(SystemExit):
+        _drive_main(monkeypatch, tmp_path, ["ctrl:", "arm:lr=1e-4"], _run)
+
+    report = tmp_path / "out" / "retarget_report.json"
+    assert report.exists(), "the abort path wrote no report at all"
+    payload = json.loads(report.read_text())
+    assert "de-paired" in payload["aborted"], payload["aborted"]
+    assert [s["variant"] for s in payload["completed_variants"]] == ["ctrl"]
+    assert payload["completed_variants"][0]["draws"]["batches_drawn"] == 8.0
+    assert calls == ["ctrl", "arm"]
+
+
+def test_a_STALE_report_is_gone_BEFORE_the_first_arm_runs(
+    monkeypatch, tmp_path,
+) -> None:
+    """⚑ MUTATION NOTE, and the reason this asserts mid-sweep rather than after.
+
+    Deleting `report.unlink(...)` and checking the file AFTERWARDS is an
+    EQUIVALENT MUTANT: the `finally:` rewrites the report on every exit path, so
+    a post-hoc read cannot tell the unlink apart from the overwrite. The unlink
+    earns its place only for the exits `finally` does not get -- SIGKILL, the
+    OOM killer, a box reboot part-way through a 21-hour sweep -- after which a
+    reused `--out-dir` still holds the PREVIOUS run's clean two-arm report and
+    an operator reads it as this run's.
+
+    That window is observable without killing a process: while the sweep is
+    running, the report on disk must never be a previous run's. Assert it from
+    inside the first arm.
+    """
+    out = tmp_path / "out"
+    out.mkdir(parents=True)
+    stale = out / "retarget_report.json"
+    stale.write_text(json.dumps([_summary("ctrl"), _summary("arm")]))
+    seen: list[bool] = []
+
+    def _run(**_k: object) -> dict:
+        seen.append(stale.exists())
+        raise SystemExit("boom on the first arm")
+
+    with pytest.raises(SystemExit):
+        _drive_main(monkeypatch, tmp_path, ["ctrl:"], _run)
+
+    assert seen == [False], (
+        "a previous run's retarget_report.json was still on disk while this "
+        "sweep was running; a hard kill here leaves it there to be misread"
+    )
+    payload = json.loads(stale.read_text())
+    assert isinstance(payload, dict), "the stale two-arm list survived the abort"
+    assert payload["completed_variants"] == []
+    assert "boom" in payload["aborted"]
+
+
+def test_a_CLEAN_sweep_still_writes_a_plain_list(monkeypatch, tmp_path) -> None:
+    """The null half: banking on abort must not change the shape every existing
+    reader (and the ledger's `jq '.[].overrides'` step) parses."""
+    _drive_main(monkeypatch, tmp_path, ["ctrl:", "arm:lr=1e-4"],
+                lambda *, name, **_k: _summary(name))
+    payload = json.loads((tmp_path / "out" / "retarget_report.json").read_text())
+    assert isinstance(payload, list)
+    assert [s["variant"] for s in payload] == ["ctrl", "arm"]
