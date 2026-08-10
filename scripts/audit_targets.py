@@ -224,7 +224,23 @@ def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], 
         `dataclasses.replace` after the checkpoint has loaded and SF has run;
       * a key in `INERT_GUMBEL_KNOBS` -- the PUCT descent they drive is
         unreachable while `full_tree=True`, so a sweep over one returns a flat,
-        perfectly reproducible null that reads as a measurement.
+        perfectly reproducible null that reads as a measurement;
+      * a VALUE that lands inside a real field but outside the band where the
+        field does anything. Today that is `policy_temp` (see below).
+
+    ⚑ The third rule is the same defect as the second, one level down: refusing
+    a dead KNOB and then accepting a dead VALUE of a live knob leaves the exact
+    hole the guard exists to close. `--gumbel policy_temp=0` used to parse,
+    survive `_assert_overrides_realized` (it really does reach `cfg.policy_temp`)
+    and print `--gumbel realized policy_temp=0.0` -- while `apply_policy_temp`
+    returned the priors untouched. A gate that cannot fail, wrapped around a
+    value that is silently ignored, under a header naming the operator's number.
+
+    REFUSAL rather than an "inert" note is deliberate and matches the two rules
+    above: `--gumbel` is a batch audit CLI, so the operator is not present to
+    read a warning, and the artifact left behind is a complete, reproducible,
+    WRONG number. It also matches the other surface this PR ships -- UCI
+    `PolicyTemperature` has range 0.5-5.0 and refuses `0` out loud.
     """
     import dataclasses as _dc
 
@@ -260,8 +276,82 @@ def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], 
                 raise SystemExit(
                     f"--gumbel: {key}={raw!r} is not a number"
                 ) from None
+            _refuse_dead_override(key, value)
             out.append((key, value))
     return tuple(out)
+
+
+def _refuse_dead_override(key: str, value: float) -> None:
+    """Refuse a value that reaches the config and is then not read.
+
+    Consults `mcts.gumbel.policy_temp_active` -- THE definition of "tempering
+    is on", shared with `apply_policy_temp`, both `gumbel_c` bf16 gates and the
+    worker's realized-shape log line -- rather than re-deriving the band here.
+    A guard has to share the criterion's instrument or it is guarding a
+    different question, and a second copy of `0.05 <= T <= 20.0` in this file
+    would drift the day the band moves.
+
+    `policy_temp=1.0` is `policy_temp_active(1.0) == False` but is NOT dead: it
+    is the shipped default and an explicit "run the untempered prior" is a real
+    request, so it is allowed through. Everything else the predicate rejects
+    (0, 0.01, 1e300, nan, inf, negatives) is a no-op `apply_policy_temp` will
+    silently swallow.
+    """
+    from chess_anti_engine.mcts.gumbel import (
+        POLICY_TEMP_MAX,
+        POLICY_TEMP_MIN,
+        policy_temp_active,
+    )
+
+    if key != "policy_temp":
+        return
+    if value == 1.0 or policy_temp_active(value):
+        return
+    raise SystemExit(
+        f"--gumbel: policy_temp={value!r} is inside the field but outside the "
+        f"band where it does anything ([{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}], "
+        "or exactly 1.0 for the untempered prior), so `apply_policy_temp` "
+        "would return the priors untouched. The audit would score the DEFAULT "
+        "prior and report it under a header naming your value. Refusing to "
+        "run — pick a temperature inside the band, or drop the override."
+    )
+
+
+def sf_reference_sets(
+    move_cp: Mapping[str, float],
+) -> tuple[set[str], set[str]]:
+    """Deep-SF `(top1, top10)` reference sets for the paired per-position booleans.
+
+    BOTH are built by SCORE, never by slice.
+
+    `top1` is a SET because SF's MultiPV list routinely holds several moves at
+    the same cp, and calling a candidate wrong for picking one of the co-best
+    would measure tie-breaking, not agreement.
+
+    `top10` follows the same rule for the same reason. A bare `_ranked[:10]`
+    picks among the moves sharing the TENTH-ranked cp by the mapping's
+    iteration order, so a candidate playing an equally scored 11th-ranked move
+    is recorded `out_of_top10=true` and the paired statistic measures MultiPV
+    tie ordering rather than move quality.
+
+    Measured on the shipped frozen set (`data/audit_set_v1.jsonl`, 4000 rows)
+    the score form changes NOTHING: that set is MultiPV=10 exactly -- 3562 rows
+    carry precisely 10 listings and 0 carry an 11th to tie with -- so no banked
+    number moves. It closes the hole for the wider sets `build_audit_set.py`
+    can generate, where an 11th listing exists and the ordering is arbitrary.
+
+    `top10` is empty (-> the caller emits `None`, not `False`) when the list is
+    shorter than 10: a position SF listed 5 moves for cannot support an
+    "outside the top 10" claim at all, and emitting `False` there would quietly
+    count it as a success.
+    """
+    ranked = sorted(move_cp.items(), key=lambda kv: -kv[1])
+    if not ranked:
+        return set(), set()
+    top1 = {u for u, cp in ranked if cp >= ranked[0][1] - 1e-9}
+    if len(ranked) < 10:
+        return top1, set()
+    return top1, {u for u, cp in ranked if cp >= ranked[9][1] - 1e-9}
 
 
 def _coerce_override(cfg_field_default: object, value: float) -> float | int | bool:
@@ -1438,14 +1528,8 @@ def main() -> None:
       # `top1` is a SET, not a single move: SF's MultiPV list routinely holds
       # several moves at the same cp, and calling a candidate wrong for
       # picking one of the co-best would measure tie-breaking, not agreement.
-      # `top10` is None-able because a position whose list is shorter than 10
-      # cannot support an "outside the top 10" claim at all -- emitting False
-      # there would quietly count it as a success.
-        _ranked = sorted(pos.move_cp.items(), key=lambda kv: -kv[1])
-        sf_top1_set = (
-            {u for u, cp in _ranked if cp >= _ranked[0][1] - 1e-9} if _ranked else set()
-        )
-        sf_top10_set = {u for u, _ in _ranked[:10]} if len(_ranked) >= 10 else set()
+      # See `sf_reference_sets`.
+        sf_top1_set, sf_top10_set = sf_reference_sets(pos.move_cp)
         def _as_stored(probs: np.ndarray) -> np.ndarray:
             # policy_t is the visit distribution at the move-selection
             # temperature; production temperature 0.0 (and 1.0) store the

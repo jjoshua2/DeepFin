@@ -227,3 +227,183 @@ def test_net_candidates_requires_the_request_rather_than_defaulting_it() -> None
         "be silenced by omitting it"
     )
     assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+# --- a live knob's DEAD values ------------------------------------------------
+#
+# The two rules above refuse a dead KNOB (a non-field, or one of
+# INERT_GUMBEL_KNOBS). They said nothing about a dead VALUE of a live knob,
+# and that hole was the same defect one level down: `--gumbel policy_temp=0`
+# parsed, reached `cfg.policy_temp`, SATISFIED `_assert_overrides_realized`
+# (the value really is on the config) and printed
+# `[audit] <candidate>: --gumbel realized policy_temp=0.0` -- while
+# `apply_policy_temp` returned the priors untouched. A gate that cannot fail,
+# certifying a value that is silently ignored.
+
+
+def _dead_and_live_policy_temps() -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Read the band off `mcts.gumbel`, never off a literal in this file.
+
+    A second copy of 0.05/20.0 here would keep passing the day the band moves,
+    which is how a guard stops sharing the criterion's instrument.
+    """
+    from chess_anti_engine.mcts.gumbel import POLICY_TEMP_MAX, POLICY_TEMP_MIN
+
+    dead = (
+        0.0, -1.0, POLICY_TEMP_MIN / 2.0, POLICY_TEMP_MAX * 2.0, 1e300,
+        float("inf"), float("nan"),
+    )
+    live = (POLICY_TEMP_MIN, POLICY_TEMP_MAX, 1.5, 2.2, 0.4)
+    return dead, live
+
+
+@pytest.mark.parametrize("value", _dead_and_live_policy_temps()[0])
+def test_a_policy_temp_the_search_will_not_read_is_refused(value: float) -> None:
+    """THE F1 regression test: a dead value must not become a certified one.
+
+    The kill condition is deliberately not "SystemExit is raised" alone -- the
+    positive control below proves the parser still accepts live values, so a
+    parser that refused EVERYTHING could not pass both.
+    """
+    from chess_anti_engine.mcts.gumbel import apply_policy_temp
+
+    with pytest.raises(SystemExit) as exc:
+        at.parse_gumbel_overrides([f"policy_temp={value!r}"])
+    assert "outside the band" in str(exc.value)
+
+    # ...and the reason the refusal is right: the value really is a no-op, so
+    # accepting it would have produced a certified-realized null. Asserted from
+    # the arithmetic, not from the predicate the parser consults.
+    import numpy as np
+
+    pol = np.array([1.0, -2.0, 3.5], dtype=np.float32)
+    cfg = GumbelConfig(policy_temp=value)
+    assert np.array_equal(apply_policy_temp(pol, cfg=cfg), pol), (
+        f"policy_temp={value} is NOT a no-op, so refusing it is wrong"
+    )
+
+
+@pytest.mark.parametrize("value", _dead_and_live_policy_temps()[1])
+def test_a_policy_temp_the_search_does_read_is_accepted(value: float) -> None:
+    """NEGATIVE CONTROL for the test above.
+
+    Without this, "refuse everything" passes the refusal test and the whole
+    `--gumbel policy_temp` surface dies silently.
+    """
+    from chess_anti_engine.mcts.gumbel import apply_policy_temp
+
+    assert at.parse_gumbel_overrides([f"policy_temp={value!r}"]) == (
+        ("policy_temp", value),
+    )
+
+    import numpy as np
+
+    pol = np.array([1.0, -2.0, 3.5], dtype=np.float32)
+    cfg = GumbelConfig(policy_temp=value)
+    tempered = apply_policy_temp(pol, cfg=cfg)
+    if value == 1.0:
+        assert np.array_equal(tempered, pol)
+    else:
+        assert not np.array_equal(tempered, pol), (
+            f"policy_temp={value} was accepted but is a no-op"
+        )
+
+
+def test_the_untempered_prior_is_still_requestable() -> None:
+    """`policy_temp=1.0` is `policy_temp_active(1.0) == False` and NOT dead.
+
+    It is the shipped default and "run the untempered prior explicitly" is a
+    real request, so the band check must not swallow it. A refusal built on
+    `policy_temp_active` alone would.
+    """
+    assert at.parse_gumbel_overrides(["policy_temp=1.0"]) == (("policy_temp", 1.0),)
+
+
+def test_the_band_check_does_not_leak_onto_other_knobs() -> None:
+    """Only `policy_temp` has a shipped activity predicate.
+
+    `topk=0` is a different question (the C signature rejects it downstream);
+    this guard must not start silently policing fields whose dead zones nobody
+    has measured.
+    """
+    assert at.parse_gumbel_overrides(["topk=8", "c_scale=0.5"]) == (
+        ("topk", 8.0), ("c_scale", 0.5),
+    )
+
+
+def test_the_refusal_reaches_the_real_cli_entry_point() -> None:
+    """The guard must sit on the path `main()` actually parses through.
+
+    `parse_gumbel_overrides` is called from `main()` (validation) and from
+    `profiles_for_audit` (the profiles). Pinning only the helper would leave
+    the same "proved the function, never proved the call" gap round 1 found.
+    """
+    with pytest.raises(SystemExit):
+        at.profiles_for_audit(_args(gumbel=["policy_temp=0"]), {})
+
+
+# --- the deep-SF reference sets ----------------------------------------------
+
+
+def test_the_top10_reference_set_includes_ties_at_the_cutoff() -> None:
+    """A move equal in cp to the 10th-best is IN the top 10.
+
+    Slicing `_ranked[:10]` picked among equals by mapping iteration order, so
+    `out_of_top10` measured MultiPV tie ordering rather than move quality.
+    `sf_top1_set` has always been built by score; this is the same rule at the
+    other cutoff.
+    """
+    move_cp = {f"m{i}": float(100 - i) for i in range(9)}   # ranks 1..9, strictly better
+    move_cp.update({"tie_a": 10.0, "tie_b": 10.0, "tie_c": 10.0})  # ranks 10,11,12
+    move_cp["worse"] = 1.0
+
+    top1, top10 = at.sf_reference_sets(move_cp)
+
+    assert top1 == {"m0"}
+    assert {"tie_a", "tie_b", "tie_c"} <= top10, (
+        "a move scored exactly as well as the 10th-best was ranked out of the "
+        "top 10 by dict order"
+    )
+    assert "worse" not in top10
+    assert len(top10) == 12
+
+
+def test_the_top10_set_is_insensitive_to_input_ordering() -> None:
+    """The property the slice violated, stated directly.
+
+    Two dicts holding the SAME scores in different insertion orders must give
+    the same set — otherwise the statistic is a function of MultiPV emission
+    order.
+    """
+    scores = {f"m{i}": float(100 - i) for i in range(9)}
+    scores.update({"tie_a": 10.0, "tie_b": 10.0})
+    reordered = dict(reversed(list(scores.items())))
+
+    assert at.sf_reference_sets(scores)[1] == at.sf_reference_sets(reordered)[1]
+
+
+def test_a_short_multipv_list_yields_no_top10_claim() -> None:
+    """Fewer than 10 listings cannot support an "outside the top 10" verdict.
+
+    An empty set is the caller's `None` sentinel; a non-empty one would be
+    scored as a success for every candidate.
+    """
+    top1, top10 = at.sf_reference_sets({"a": 5.0, "b": 5.0, "c": 1.0})
+    assert top1 == {"a", "b"}
+    assert top10 == set()
+    assert at.sf_reference_sets({}) == (set(), set())
+
+
+def test_the_score_form_is_a_no_op_at_the_shipped_multipv_width() -> None:
+    """NEGATIVE CONTROL: no banked audit number moves.
+
+    The frozen set is MultiPV=10 exactly, so there is never an 11th listing to
+    tie with and the score form must agree with the old slice element for
+    element. If this ever fails, the audit set got wider and the CHANGE — not
+    the old behaviour — is what the numbers now reflect.
+    """
+    for n in range(10, 0, -1):
+        move_cp = {f"m{i}": float(100 - i) for i in range(n)}
+        ranked = sorted(move_cp.items(), key=lambda kv: -kv[1])
+        old = {u for u, _ in ranked[:10]} if len(ranked) >= 10 else set()
+        assert at.sf_reference_sets(move_cp)[1] == old, f"diverged at {n} listings"

@@ -244,8 +244,15 @@ un-train them.
 
 The engine (`python -m chess_anti_engine.uci`) exposes its search parameters as
 UCI options, so a TCEC-style config, cutechess-cli, or Arena can set them
-without a code change. Every option below is also a CLI flag on the same
-module; the UCI name and the flag set the same field.
+without a code change. Every option below **except `MinibatchSize`** is also a
+CLI flag on the same module; the UCI name and the flag set the same field.
+`MinibatchSize` is UCI-only — `run_gumbel_root_many_c(target_batch=...)` starts
+at the C-side default of 0 and only a `setoption` moves it, so there is no
+`--minibatch-size` and passing one is an `unrecognized arguments` error. The
+map that decides this is `_SEARCH_OPTION_ARG` in `uci/__main__.py`, and a
+`None` there is asserted against the real parser
+(`test_every_registry_option_has_a_named_startup_source`), so this paragraph
+cannot drift from the code without a test going red.
 
 **The rule this surface is built around: an option that cannot take effect is
 never silently accepted.** The engine has five search paths and most knobs are
@@ -352,6 +359,23 @@ names with the underscores removed and CamelCased (`c_scale` → `CScale`,
 `q_visit_exp_root` → `QVisitExpRoot`), so a shape tuned in an arena transfers to
 a UCI config by transliteration. The arena keeps snake_case because those flags
 address `GumbelConfig` fields directly; the UCI side follows lc0's CamelCase.
+
+**⚑ One exception, and it is the knob you are most likely to be transferring:
+`policy_temp` → `PolicyTemperature`, not `PolicyTemp`.** The name follows lc0's,
+which spells it out. This matters because unknown `setoption` names are ignored
+in silence (the lc0/Stockfish convention, kept deliberately — see the rule
+above), so `setoption name PolicyTemp value 2.5` prints nothing and the whole
+match runs at 1.0. Measured:
+
+```
+setoption name PolicyTemp value 2.5          -> (no output)   policy_temp stays 1.0
+setoption name PolicyTemperature value 2.5   -> info string PolicyTemperature set to 2.5
+```
+
+Transliterate mechanically for every other field; check this one by eye, or
+send the `searchconfig` command — the readback prints every registered name and
+its realized value, so a knob you cannot find in that dump is a knob the engine
+will never hear you set.
 
 ### `QVisitExpRoot` is branch-pinned, not inert — and the readback says which
 
@@ -504,6 +528,17 @@ stand-in computes the dense policy for every leaf in *both* arms, so the thing
 the compact path saves — never materialising or transferring 4672 floats per
 leaf — does not exist to be saved. Only an evaluator with the real bf16 legal
 transport can price it.
+
+**Update (merge with #379): it has now been priced on a real transport, and
+1.9x did not survive.** The 1.9x was measured on the DIRECT evaluator, which
+has no bf16 leaf transport to lose in the first place. On the broker path that
+distributed selfplay actually runs, the same gate measured **0.87–1.01x,
+non-monotone in `T`, inside the instrument's own ±13% noise** — see
+`docs/experiment_ledger.md` "selfplay search policy temperature" (e) and the
+warning text in `mcts/gumbel_c.py`, which carries both numbers. So treat 1.9x
+as an upper bound observed on one transport, not as a cost to budget for, and
+**measure on your own transport before paying for it**. The `--policy-temp` and
+`PolicyTemperature` help strings say the same thing.
 
 So: treat 1.9x as an unverified upper bound, and **measure on the target
 evaluator before running a `PolicyTemperature` sweep at a tournament time

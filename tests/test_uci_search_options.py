@@ -713,11 +713,22 @@ def test_the_first_uci_advertises_the_engine_that_is_about_to_be_built() -> None
     This drives the REAL parser and the REAL startup-options factory, then
     builds the engine from the same `args`, so a drift between the two
     (a new CLI flag, a renamed `dest`) fails here rather than in a match log.
+
+    ⚑ THE TWO SIDES COME FROM TWO SOURCES. The advertised side is
+    `_seed_search_options_from_args`, which reads `_SEARCH_OPTION_ARG`; the
+    built side is `_engine_search_kwargs`, the kwargs `main()` itself hands
+    `_build_engine`, which does not consult that map at all. An earlier
+    revision built the engine side FROM `_SEARCH_OPTION_ARG` too, and was
+    therefore a control conditioned on its own outcome: setting
+    `_SEARCH_OPTION_ARG["cpuct_factor"] = None` (reviewer mutant `n2`) dropped
+    the option from the expectation as well as from the seeding, both sides
+    fell back to 3.89, and the mutant survived 193 tests while
+    `--cpuct-factor 7.0` really did advertise 3.89 for an engine running 7.0.
     """
     from chess_anti_engine.uci.__main__ import (
-        _SEARCH_OPTION_ARG,
         _build_engine,
         _build_parser,
+        _engine_search_kwargs,
         _startup_engine_options,
     )
 
@@ -727,6 +738,7 @@ def test_the_first_uci_advertises_the_engine_that_is_about_to_be_built() -> None
         "--chunk-sims", "777", "--halving-div", "4", "--gumbel-scale", "0.25",
         "--q-global-scale", "--vloss-weight", "5", "--c-puct", "3.25",
         "--fpu-reduction", "0.9", "--c-visit-root", "123.0",
+        "--cpuct-factor", "7.0", "--cpuct-base", "12345.0",
         "--walkers", "2",
     ])
     startup_options = _startup_engine_options(
@@ -735,13 +747,8 @@ def test_the_first_uci_advertises_the_engine_that_is_about_to_be_built() -> None
     first_uci = _printed_handshake_defaults(startup_options)
 
     planes = input_plane_count("v2_threats")
-  # Every kwarg by REGISTRY FIELD NAME, so the test carries no second copy of
-  # the arg->field mapping it is checking.
-    built_from = {
-        opt.field: getattr(args, dest)
-        for opt in SEARCH_OPTIONS
-        if (dest := _SEARCH_OPTION_ARG[opt.field]) is not None
-    }
+  # PRODUCTION's own kwargs, not a re-derivation from the map under test.
+    built_from = _engine_search_kwargs(args)
     engine = _build_engine(
         evaluator=_DetEval(planes), primary_device="cpu",
         n_walkers=int(args.walkers), walker_gather=1, pucv_vloss_mode=0,
@@ -762,6 +769,12 @@ def test_the_first_uci_advertises_the_engine_that_is_about_to_be_built() -> None
         assert first_uci["Topk"] == "9"
         assert first_uci["ChunkSims"] == "777"
         assert first_uci["VLossWeight"] == "5"
+      # `n2`'s field, off BOTH defaults (registry 3.89, `_build_engine`
+      # signature 3.89) so demoting it to `None` in `_SEARCH_OPTION_ARG` is
+      # visible rather than masked by an accidental agreement -- which is
+      # exactly why `n1` (`c_puct`) died and `n2` did not.
+        assert first_uci["CPuctFactor"] == "7.0"
+        assert first_uci["CPuctBase"] == "12345.0"
     finally:
         engine._worker.close()
 
@@ -834,6 +847,12 @@ def test_every_registry_option_has_a_named_startup_source() -> None:
     Without this, adding a registry entry silently reverts the first handshake
     to advertising a default the engine is not running — the exact defect
     above, one option at a time.
+
+    ⚑ `None` is an ESCAPE HATCH, so it needs its own guard. `assert dest is
+    None or dest in dests` accepts `None` unconditionally, which makes
+    "this option has no CLI flag" an unfalsifiable claim: assert it against
+    the parser instead. `_SEARCH_OPTION_ARG["cpuct_factor"] = None` is a lie
+    (`--cpuct-factor` exists) and the old form waved it through.
     """
     from chess_anti_engine.uci.__main__ import _SEARCH_OPTION_ARG, _build_parser
 
@@ -843,7 +862,15 @@ def test_every_registry_option_has_a_named_startup_source() -> None:
             f"{opt.name} has no entry in _SEARCH_OPTION_ARG"
         )
         dest = _SEARCH_OPTION_ARG[opt.field]
-        assert dest is None or dest in dests, (
+        if dest is None:
+            assert opt.field not in dests, (
+                f"{opt.name} is mapped to None ('no CLI flag') but the parser "
+                f"defines --{opt.field.replace('_', '-')}. The first `uci` "
+                "would advertise the registry default while the engine is "
+                "built from the flag."
+            )
+            continue
+        assert dest in dests, (
             f"{opt.name} is seeded from args.{dest}, which the CLI does not define"
         )
 
@@ -1695,3 +1722,127 @@ def test_realized_search_path_mirrors_the_dispatch_branch_order() -> None:
         inspect.getsource(SearchWorker.realized_search_path),
     )
     assert reported == order[: len(reported)]
+
+
+# --- the seeded handshake must stay inside its own advertised bounds ---------
+#
+# Seeding is what makes the first `uci` print the CLI value, so it is also
+# what can make the first `uci` print a value the option surface itself would
+# refuse. Measured before the range check:
+#
+#     --topk 1        -> option name Topk type spin default 1 min 2 max 256
+#     --policy-temp 0 -> option name PolicyTemperature type string default 0.0
+#
+# The first is self-contradictory on its own line; the second advertises a
+# temperature `policy_temp_active` says the search does not run.
+
+
+def test_the_advertised_default_is_inside_the_advertised_range() -> None:
+    """THE F2 anti-rot gate, read off the PRINTED line.
+
+    Parses `min`/`max` back out of the spin declarations rather than trusting
+    `opt.lo`/`opt.hi`, so a declaration that contradicts ITSELF fails here even
+    if the registry and the seeding agree with each other.
+    """
+    from chess_anti_engine.uci.__main__ import _build_parser, _startup_engine_options
+
+    args = _build_parser().parse_args(["--checkpoint", "unused"])
+    options = _startup_engine_options(
+        args, search_parallel="pucv", restore_multi_gpu_pucv=False,
+    )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        emit_handshake(options)
+
+    by_name = {o.name: o for o in SEARCH_OPTIONS}
+    seen: set[str] = set()
+    for line in buf.getvalue().splitlines():
+        m = re.match(
+            r"option name (\S+) type spin default (\S+) min (\S+) max (\S+)", line,
+        )
+        if m is None or m.group(1) not in by_name:
+            continue
+        name, default, lo, hi = m.group(1), *(float(g) for g in m.groups()[1:])
+        seen.add(name)
+        assert lo <= default <= hi, (
+            f"the handshake advertises {name} default {default} outside its "
+            f"OWN advertised range [{lo}, {hi}]"
+        )
+    assert {"Topk", "ChunkSims", "HalvingDiv", "VLossWeight"} <= seen, (
+        "the spin options were not found in the printed handshake at all — "
+        "this gate would pass vacuously"
+    )
+
+    # The float ("string") options print no min/max, so check those against the
+    # registry the handler enforces.
+    printed = _printed_handshake_defaults(options)
+    for opt in SEARCH_OPTIONS:
+        if opt.kind != "string" or opt.lo is None or opt.hi is None:
+            continue
+        assert opt.lo <= float(printed[opt.name]) <= opt.hi, (
+            f"the handshake advertises {opt.name}={printed[opt.name]}, outside "
+            f"the [{opt.lo}, {opt.hi}] its own `setoption` handler enforces"
+        )
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "option"),
+    [
+        ("--policy-temp", "0", "PolicyTemperature"),
+        ("--policy-temp", "0.01", "PolicyTemperature"),
+        ("--policy-temp", "1e300", "PolicyTemperature"),
+        ("--topk", "1", "Topk"),
+        ("--topk", "9999", "Topk"),
+        ("--halving-div", "1", "HalvingDiv"),
+        ("--vloss-weight", "-1", "VLossWeight"),
+        ("--fpu-reduction", "-99", "FpuReduction"),
+    ],
+)
+def test_an_out_of_range_cli_value_is_refused_at_startup(
+    flag: str, value: str, option: str,
+) -> None:
+    """A startup value the engine's own `setoption` would refuse must not start.
+
+    Refusing (rather than clamping) is the deliberate contract: a clamp would
+    run 2 for a requested 1 and report 2, which is the accepted-then-ignored
+    defect with a friendlier face.
+    """
+    from chess_anti_engine.uci.__main__ import _build_parser, _startup_engine_options
+
+    args = _build_parser().parse_args(["--checkpoint", "unused", flag, value])
+    with pytest.raises(SystemExit) as exc:
+        _startup_engine_options(
+            args, search_parallel="pucv", restore_multi_gpu_pucv=False,
+        )
+    assert option in str(exc.value)
+    assert flag in str(exc.value)
+
+
+def test_every_cli_default_is_inside_its_advertised_range() -> None:
+    """NEGATIVE CONTROL: the refusal above cannot fire on a bare command line.
+
+    A range check whose own defaults are out of band would make the engine
+    refuse to start at all — so this is the observation that proves the guard
+    is a guard and not a brick.
+    """
+    from chess_anti_engine.uci.__main__ import (
+        _SEARCH_OPTION_ARG,
+        _build_parser,
+        _startup_engine_options,
+    )
+
+    args = _build_parser().parse_args(["--checkpoint", "unused"])
+    _startup_engine_options(
+        args, search_parallel="pucv", restore_multi_gpu_pucv=False,
+    )  # must not raise
+    for opt in SEARCH_OPTIONS:
+        dest = _SEARCH_OPTION_ARG[opt.field]
+        if dest is None or opt.lo is None or opt.hi is None:
+            continue
+        raw = getattr(args, dest)
+        if isinstance(raw, bool):
+            continue
+        assert opt.lo <= float(raw) <= opt.hi, (
+            f"the CLI default for {opt.name} ({raw}) is outside [{opt.lo}, "
+            f"{opt.hi}], so the engine would refuse to start with no flags"
+        )

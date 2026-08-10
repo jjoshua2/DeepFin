@@ -146,10 +146,13 @@ SEARCH_OPTIONS: tuple[SearchOption, ...] = (
         "PolicyTemperature", "string", "policy_temp", float(_PLAY["policy_temp"]),
         _GUMBEL_PATHS, 0.5, 5.0,
         "Prior temperature on the policy logits before they seed the tree "
-        "(logits/T). T>1 softens, T<1 sharpens, 1.0 = no-op. COSTS ~1.9x "
-        "end-to-end search time when != 1.0: it disables the compact-legal "
-        "bf16 leaf transport (the C bf16 leaf softmax has no temperature "
-        "hook), so leaves fall back to dense float32 4672-wide.",
+        "(logits/T). T>1 softens, T<1 sharpens, 1.0 = no-op. != 1.0 disables "
+        "the compact-legal bf16 leaf transport (the C bf16 leaf softmax has no "
+        "temperature hook), so leaves fall back to dense float32 4672-wide. "
+        "The ~1.9x long quoted for that was measured on the DIRECT evaluator, "
+        "which has no bf16 transport to lose, and did NOT reproduce on the "
+        "broker path (0.87-1.01x, inside the instrument's noise) — measure on "
+        "your own transport rather than budgeting a slowdown.",
     ),
     SearchOption(
         "CScale", "string", "c_scale", float(_PLAY["c_scale"]),

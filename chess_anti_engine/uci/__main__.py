@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import threading
+from typing import TypedDict
 
 import chess
 import numpy as np
@@ -37,7 +38,7 @@ from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_VLOSS_WEIGHT,
     GumbelConfig,
 )
-from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
+from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS, SearchOption
 
 from .engine import Engine, EngineOptions, _emit_info_string, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
@@ -531,8 +532,10 @@ def _build_engine(
     q_visit_exp_root: float = -1.0,
   # Search-time policy-prior temperature (UCI `PolicyTemperature`). 1.0 is a
   # no-op; it had no plumbing here at all before, which is why no play-path
-  # config could set it. != 1.0 costs ~1.9x end-to-end search — see the option
-  # table in docs/operations.md.
+  # config could set it. != 1.0 drops the compact-legal bf16 leaf transport;
+  # the ~1.9x that was long quoted for it is a DIRECT-evaluator number that did
+  # not reproduce on the broker path (0.87-1.01x) — see docs/operations.md
+  # "The cost of PolicyTemperature != 1.0".
     policy_temp: float = 1.0,
     halving_div: int = 2,
   # Root Gumbel-noise strength (UCI `GumbelScale`). 0 = the deterministic
@@ -742,8 +745,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--policy-temp", type=float, default=float(PLAY_SEARCH_DEFAULTS["policy_temp"]),
         help="search-time temperature on the policy PRIOR (logits/T) before it "
              "seeds the tree. >1 softens, <1 sharpens, 1.0 (default) = no-op. "
-             "Also UCI `PolicyTemperature`, range 0.5-5.0. COSTS ~1.9x search "
-             "time when != 1.0 (disables the compact-legal bf16 leaf transport). "
+             "Also UCI `PolicyTemperature`, range 0.5-5.0. != 1.0 disables the "
+             "compact-legal bf16 leaf transport; the ~1.9x that cost was long "
+             "quoted at was measured on the DIRECT evaluator (which has no bf16 "
+             "transport to lose) and did NOT reproduce on the broker path "
+             "(0.87-1.01x) — measure on your own transport, do not budget 1.9x. "
              "NOT policy_target_temp, which is a training-time knob on the "
              "policy TARGET and never runs during play.",
     )
@@ -953,13 +959,103 @@ _SEARCH_OPTION_ARG: Mapping[str, str | None] = {
 }
 
 
+class _EngineSearchKwargs(TypedDict):
+    """Per-key types for the search kwargs, so `**`-splatting stays checked.
+
+    A plain `dict[str, float | int | bool]` collapses `chunk_sims: int` and
+    `c_scale: float` into one union, and `_build_engine(**that)` then type-errors
+    on every int/bool parameter. Widening `_build_engine` or suppressing the
+    diagnostic would both trade a real check for quiet — this keeps it.
+    """
+
+    chunk_sims: int
+    topk: int
+    c_scale: float
+    c_visit: float
+    c_puct: float
+    cpuct_factor: float
+    cpuct_base: float
+    fpu_reduction: float
+    c_visit_root: float
+    q_visit_floor: float
+    q_visit_exp: float
+    q_global_scale: bool
+    c_scale_root: float
+    q_visit_exp_root: float
+    policy_temp: float
+    halving_div: int
+    root_noise_scale: float
+    vloss_weight: int
+
+
+def _engine_search_kwargs(args: argparse.Namespace) -> _EngineSearchKwargs:
+    """The search kwargs ``main()`` hands ``_build_engine`` — the ENGINE's source.
+
+    Extracted from ``main()``'s call so it can be read without starting an
+    engine, and it is deliberately spelled out here rather than derived from
+    ``_SEARCH_OPTION_ARG``: production really does pass every search value
+    straight off ``args``, independently of that map, and a test asserting
+    "the first handshake matches the engine that is about to be built" needs
+    its two sides to come from two sources.
+
+    ⚑ This is the fix for a control conditioned on its own outcome. The old
+    test built its ``_build_engine`` kwargs from ``_SEARCH_OPTION_ARG``, so
+    demoting an option to ``None`` (`_SEARCH_OPTION_ARG["cpuct_factor"] = None`,
+    reviewer mutant `n2`) removed it from the EXPECTATION as well as from the
+    seeding, and both sides fell back to the same default. The mutant survived
+    all 193 tests while `--cpuct-factor 7.0` really did produce a first
+    handshake of 3.89 against an engine running 7.0.
+    """
+    return {
+        "chunk_sims": int(args.chunk_sims), "topk": int(args.topk),
+        "c_scale": float(args.c_scale), "c_visit": float(args.c_visit),
+        "c_puct": float(args.c_puct),
+        "cpuct_factor": float(args.cpuct_factor),
+        "cpuct_base": float(args.cpuct_base),
+        "fpu_reduction": float(args.fpu_reduction),
+        "c_visit_root": float(args.c_visit_root),
+        "q_visit_floor": float(args.q_visit_floor),
+        "q_visit_exp": float(args.q_visit_exp),
+        "q_global_scale": bool(args.q_global_scale),
+        "c_scale_root": float(args.c_scale_root),
+        "q_visit_exp_root": float(args.q_visit_exp_root),
+        "policy_temp": float(args.policy_temp),
+        "halving_div": int(args.halving_div),
+        "root_noise_scale": float(args.gumbel_scale),
+        "vloss_weight": int(args.vloss_weight),
+    }
+
+
 def _seed_search_options_from_args(
     options: EngineOptions, args: argparse.Namespace,
 ) -> None:
     """Point ``options`` at the values the worker is ABOUT to be built with.
 
     Coerces through ``SearchOption.kind`` so the handshake prints the same type
-    the ``setoption`` handler would parse back.
+    the ``setoption`` handler would parse back, and REFUSES a value outside the
+    option's own advertised ``lo``/``hi``.
+
+    ⚑ The range check is not decoration: seeding is what MAKES the handshake
+    print the CLI value, so without it this helper is the thing that mints a
+    self-contradictory declaration. Measured before the check:
+
+        --topk 1        -> option name Topk type spin default 1 min 2 max 256
+        --policy-temp 0 -> option name PolicyTemperature type string default 0.0
+
+    ``Topk default 1 min 2`` is a declaration a GUI can be defeated by: echo the
+    advertised default back and the engine answers ``info string Topk: 1 is out
+    of range [2, 256]; keeping 1``. ``PolicyTemperature 0.0`` is worse -- it is
+    a value the search does not run (``policy_temp_active(0.0)`` is False), so
+    the artifact this whole commit exists to make truthful would be advertising
+    a temperature the engine is not using. Before seeding, the first handshake
+    printed the in-range registry default: wrong, but not self-inconsistent. The
+    symptom is created here, so the fix belongs here.
+
+    REFUSE rather than clamp: ``setoption`` refuses out-of-range and keeps the
+    current value, and a startup that silently ran 2 for a requested 1 would be
+    the same accepted-then-ignored defect with a friendlier face. Every argparse
+    default is in band (``test_every_cli_default_is_inside_its_advertised_range``),
+    so this cannot fire on an unmodified command line.
     """
     unmapped = [o.name for o in SEARCH_OPTIONS if o.field not in _SEARCH_OPTION_ARG]
     if unmapped:
@@ -981,7 +1077,35 @@ def _seed_search_options_from_args(
             value = int(raw)
         else:
             value = float(raw)
+        _refuse_out_of_range_startup_value(opt, dest, value)
         options.set_search_value(opt.field, value)
+
+
+def _refuse_out_of_range_startup_value(
+    opt: SearchOption, dest: str, value: float | int | bool,
+) -> None:
+    """The startup half of the ``setoption`` range check, same bounds object.
+
+    Reads ``opt.lo`` / ``opt.hi`` -- the very numbers ``declaration()`` prints
+    in the ``min``/``max`` fields and ``_set_search_option`` enforces -- so the
+    advertised range, the accepted range and the startup range cannot drift.
+
+    ``check`` options have no range; float (``string``) options advertise theirs
+    in the docs rather than on the handshake line, but the handler enforces it,
+    so startup does too.
+    """
+    if isinstance(value, bool) or opt.lo is None or opt.hi is None:
+        return
+    if opt.lo <= float(value) <= opt.hi:
+        return
+    flag = "--" + dest.replace("_", "-")
+    raise SystemExit(
+        f"{flag} {value!r}: {opt.name} accepts [{opt.lo}, {opt.hi}]. The "
+        "engine's own `setoption` handler refuses this value, so starting on "
+        "it would advertise a default the engine would not accept back — and "
+        f"for PolicyTemperature it is also a value the search does not run. "
+        "Refusing to start."
+    )
 
 
 def _startup_engine_options(
@@ -1172,19 +1296,8 @@ def main() -> int:
             )
             engine_ref[0] = _build_engine(
                 evaluator=evaluator, primary_device=devices[0],
-                chunk_sims=args.chunk_sims, topk=args.topk,
-                c_scale=args.c_scale, c_visit=args.c_visit,
-                c_puct=args.c_puct,
-                cpuct_factor=float(args.cpuct_factor),
-                cpuct_base=float(args.cpuct_base),
-                fpu_reduction=args.fpu_reduction,
-                c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
-                q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
-                c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
-                policy_temp=float(args.policy_temp),
-                halving_div=int(args.halving_div),
-                root_noise_scale=float(args.gumbel_scale),
-                n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
+                **_engine_search_kwargs(args),
+                n_walkers=n_walkers,
                 walker_gather=walker_gather,
                 pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,
                 max_batch=startup_options.max_batch,
