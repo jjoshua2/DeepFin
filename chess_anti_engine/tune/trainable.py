@@ -533,12 +533,24 @@ def _maybe_reset_holdout_on_drift(
       counter exists precisely to say which holdout a ``test_loss`` came from,
       and on every reset iteration it said the wrong one.
 
-    Draining first fixes both: the reader is gone before the writer runs, and
-    the pre-reset result is DISCARDED rather than relabelled. The reset row
-    therefore carries no ``test_*`` at all, which is the honest reading -- the
-    set it would describe no longer exists. One row, on a path production has
-    switched off (``reset_holdout_on_drift: false``, and ``drift_threshold``
-    0.0 independently disables it).
+    Draining first fixes both WHEN THE DRAIN SUCCEEDS: the reader is gone
+    before the writer runs, and the pre-reset result is DISCARDED rather than
+    relabelled. The reset row therefore carries no ``test_*`` at all, which is
+    the honest reading -- the set it would describe no longer exists. One row,
+    on a path production has switched off (``reset_holdout_on_drift: false``,
+    and ``drift_threshold`` 0.0 independently disables it).
+
+    The drain is BEST-EFFORT, and the exception is stated rather than implied:
+    ``AsyncTestEval.collect`` returns ``(None, -1)`` from BEFORE its
+    ``with self._lock`` block when the wait times out, so ``_inflight_iter``
+    stays set, ``has_inflight()`` stays True, and the clear below proceeds with
+    the eval thread possibly still walking the buffer -- i.e. both failure
+    modes above are reopened on that one path. Deliberately not handled by
+    skipping the reset: a wedged eval thread would then suppress every drift
+    reset indefinitely, trading a bounded one-row loss for a gate that silently
+    stops firing, which is the worse failure here. It is made LOUD instead --
+    the post-drain ``has_inflight()`` re-check below is the observation that
+    says the guarantee did not hold this time.
     """
     if not (
         tc.reset_holdout_on_drift
@@ -563,6 +575,24 @@ def _maybe_reset_holdout_on_drift(
             int(holdout_generation),
         )
         async_test_eval.collect(timeout=tc.distributed_async_test_eval_timeout_s)
+  # collect() returns on timeout BEFORE it clears _inflight_iter, so this
+  # re-check is not redundant: True here means the drain did not take and the
+  # clear below runs under a live reader after all. Say so rather than
+  # proceeding silently -- it is the only frame that can tell.
+        if async_test_eval.has_inflight():
+            print(
+                "[trial] holdout drift reset: the drain TIMED OUT after "
+                f"{float(tc.distributed_async_test_eval_timeout_s):.1f}s -- the eval "
+                "thread may still be reading the holdout, so the clear below is "
+                "unordered against it. Expect either a ValueError from the eval "
+                "thread or a generation-mislabelled test_* row (audit L2)",
+                flush=True,
+            )
+            logging.getLogger(__name__).error(
+                "holdout drift reset: drain timed out after %.1fs; clearing the "
+                "holdout under a possibly-live eval reader (audit L2)",
+                float(tc.distributed_async_test_eval_timeout_s),
+            )
     holdout_buf.clear()
     return False, holdout_generation + 1
 

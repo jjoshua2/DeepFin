@@ -502,7 +502,9 @@ class _FakeAsyncEval:
     def has_inflight(self) -> bool:
         return self._inflight
 
-    def collect(self, timeout: float):
+  # Annotated to the real ``AsyncTestEval.collect`` signature so the
+  # timed-out variant below can override it without widening anything.
+    def collect(self, timeout: float) -> tuple[object, int]:
         self.collect_timeouts.append(float(timeout))
         self.order.append(f"collect(len={0 if self._buf is None else len(self._buf)})")
         self._inflight = False
@@ -608,6 +610,56 @@ def test_a_reset_that_does_not_fire_never_touches_the_eval(tmp_path: Path) -> No
     assert len(buf) == 20
 
 
+class _TimingOutAsyncEval(_FakeAsyncEval):
+    """``collect()`` that times out: returns without clearing the in-flight mark.
+
+    Exactly what the real ``AsyncTestEval.collect`` does on a timeout -- it
+    returns ``(None, -1)`` from before its ``with self._lock`` block, so
+    ``_inflight_iter`` is left set.
+    """
+
+    def collect(self, timeout: float) -> tuple[object, int]:
+        self.collect_timeouts.append(float(timeout))
+        self.order.append("collect(TIMEOUT)")
+        return None, -1
+
+
+def test_a_drain_that_times_out_says_so_instead_of_clearing_silently(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The drain is best-effort, and the one path where it fails must be loud.
+
+    On timeout the reader is still live, so the clear reopens both failure
+    modes the drain closes. The reset still proceeds -- skipping it would let a
+    wedged eval thread suppress drift resets forever, which is worse -- but an
+    operator who later sees a ``ValueError: ArrayReplayBuffer is empty`` from
+    the eval thread, or a mislabelled ``test_*`` row, needs this line to
+    explain it. Without it the docstring's guarantee would be unfalsifiable.
+    """
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(64, rows=20))
+    buf, restore = _restore_into(tmp_path, frozen=True, generation=5)
+    ev = _TimingOutAsyncEval(inflight=True, buf=buf)
+
+    frozen, generation = _maybe_reset_holdout_on_drift(
+        holdout_buf=buf, drift=_drift(9.0),
+        tc=_tc(reset_holdout_on_drift=True, drift_threshold=1.0),
+        holdout_frozen=restore.holdout_frozen,
+        holdout_generation=restore.holdout_generation,
+        async_test_eval=ev,
+    )
+
+    assert ev.collect_timeouts, "the drain was never attempted"
+    assert ev.has_inflight() is True, "the fake must model the timeout path"
+    out = capsys.readouterr().out
+    assert "drain TIMED OUT" in out, (
+        "a clear under a live reader has to announce itself; stdout was:\n" + out
+    )
+    assert (len(buf), frozen, generation) == (0, False, 6), (
+        "the reset must still fire -- suppressing it on a wedged eval thread "
+        "would stop drift resets indefinitely"
+    )
+
+
 def test_clearing_under_an_in_flight_full_pass_is_what_the_drain_prevents() -> None:
     """The mechanism, driven directly on the real buffer.
 
@@ -638,4 +690,58 @@ def test_clearing_under_an_in_flight_full_pass_is_what_the_drain_prevents() -> N
     assert rows_seen == 8, (
         "the batches before the clear read normally -- which is exactly why "
         "this is not caught by the deque-mutation guard"
+    )
+
+
+def test_the_trial_loop_hands_the_reset_the_LIVE_eval_handle() -> None:
+    """The drain is only a fix if the production call site reaches it.
+
+    ``async_test_eval`` is a REQUIRED kwarg, but ``None`` is an explicitly
+    supported value (a trial with ``distributed_async_test_eval`` off never
+    constructs one, and two tests above pass ``None`` honestly), so
+    ``async_test_eval=None`` at the ``train_trial`` call site is legal, silent,
+    and severs every behavioural test in this file from production -- the house
+    defect, a value accepted and then ignored. Only this file and
+    ``tests/test_deterministic_holdout_eval.py`` exercise
+    ``_maybe_reset_holdout_on_drift`` at all, and both call it directly, so
+    this is the only observation that proves the drain runs on the real loop.
+
+    Scoped to the call inside ``train_trial`` on purpose: ``async_test_eval``
+    is passed to several helpers from that frame, so a whole-file substring
+    check would stay green on exactly the mutation this exists to kill.
+    """
+    import ast
+    import inspect
+
+    from chess_anti_engine.tune import trainable
+
+    fn = next(
+        node
+        for node in ast.walk(ast.parse(inspect.getsource(trainable)))
+        if isinstance(node, ast.FunctionDef) and node.name == "train_trial"
+    )
+    calls = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_maybe_reset_holdout_on_drift"
+    ]
+    assert len(calls) == 1, (
+        f"expected exactly one drift-reset call in train_trial, found {len(calls)}"
+    )
+
+    passed = {kw.arg: kw.value for kw in calls[0].keywords}
+    assert "async_test_eval" in passed, (
+        "the drift reset must be given the eval handle to order against"
+    )
+    value = passed["async_test_eval"]
+    assert isinstance(value, ast.Name), (
+        "train_trial must pass the LIVE async_test_eval to the drift reset; "
+        f"it passes {ast.dump(value)}. Passing None (or any other expression) "
+        "disables the drain on the production path without failing a test."
+    )
+    assert value.id == "async_test_eval", (
+        "the drift reset must be handed train_trial's own eval handle, not "
+        f"some other binding ({value.id})"
     )

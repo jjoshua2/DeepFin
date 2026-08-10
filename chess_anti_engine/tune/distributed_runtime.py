@@ -754,12 +754,21 @@ def _publish_distributed_trial_state(
   #   * the gate file's mtime (or a manifest publish nonce/timestamp) answers
   #     "how recently was this claimed", not "is the claimant still alive" -- a
   #     worker can claim and die a second later. Recency is not the question.
-  # The question that WOULD settle it is whether the doled seeds were played,
-  # and nothing reports that: the dole has no runtime observability at all
-  # (audit A8, task #148). Closing this residual means a dole-completion signal
-  # or the server recording which publish a claim was made against; both are
-  # server-side machinery and neither is taken here. Blast radius until then is
-  # one extra seed batch on a retried iteration.
+  # The question that WOULD settle it is whether the EARLIER dole of this
+  # iteration was PLAYED, and nothing answers that at this call site. Note what
+  # does exist, so this does not read as a bigger gap than it is: audit A8
+  # (#339) made the dole observable -- `seed dole GRANTED: trial=... iteration=...
+  # seeds=...` plus the rearm counters, in chess_anti_engine/server/app.py --
+  # but a GRANT proves a batch was handed out, not that a game ever came back
+  # from it, and it is emitted in the SERVER process, not this one. The other
+  # near-signal is per-row `opening_source_code` on ingested shards (2 =
+  # fenlist, 3 = fenlist_sf_refute), which does mark seed-origin games; it is
+  # no help on THIS code path, because the retry republish that arms the rearm
+  # fires only when NO games came back for the iteration, so at this moment
+  # there is nothing seed-origin to count. Closing this residual means a
+  # dole-completion signal, or the server recording which publish a claim was
+  # made against; both are server-side machinery and neither is taken here.
+  # Blast radius until then is one extra seed batch on a retried iteration.
     seed_dole_gate_claimed = _seed_dole_gate_claims_iteration(
         server_root=Path(server_root),
         trial_id=str(trial_id),
