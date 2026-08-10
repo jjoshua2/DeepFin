@@ -35,7 +35,11 @@ from chess_anti_engine.broker_hang import (
     pin_nvml_cuda_check,
     resolve_worker_boot_hang_abort_seconds,
 )
-from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.mcts.gumbel import (
+    DEFAULT_VOLATILITY_ANCHOR,
+    SELFPLAY_GUMBEL_C_SCALE,
+    policy_temp_active,
+)
 from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
 from chess_anti_engine.moves.encode import legal_move_indices
 from chess_anti_engine.inference import (
@@ -890,7 +894,8 @@ class WorkerSession:
         if not bool(args.allow_overrides):
             _server_managed_keys = [
                 "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
-                "fast_simulations", "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
+                "fast_simulations", "gumbel_topk",
+                "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
                 "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
                 "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
                 "curriculum_gumbel_scale_decay_start_move", "curriculum_gumbel_scale_decay_moves",
@@ -3484,6 +3489,10 @@ class WorkerSession:
   # It's a static knob, so make it restart-only rather than drain futures live.
         "sf_move_nodes",
         "mcts_simulations", "fast_simulations",
+  # Same reason as the two batching knobs above: _build_selfplay_configs reads
+  # it into the frozen SearchConfig once per session, so a mid-flight change
+  # would be accepted by the manifest and never reach a search.
+        "gumbel_policy_temp",
         "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
         "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
         "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
@@ -3582,7 +3591,8 @@ class WorkerSession:
         "gumbel_target_batch", "gumbel_vloss_weight",
         "mcts_simulations", "fast_simulations", "mcts", "playout_cap_fraction",
         "full_ply_pair_fraction",
-        "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
+        "gumbel_topk", "gumbel_policy_temp",
+        "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
         "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
         "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
         "curriculum_gumbel_scale_decay_start_move", "curriculum_gumbel_scale_decay_moves",
@@ -3797,6 +3807,9 @@ class WorkerSession:
                 ),
                 fast_simulations=self._resolve_reco(reco, "fast_simulations", 8, int),
                 gumbel_topk=self._resolve_reco(reco, "gumbel_topk", 16, int),
+                gumbel_policy_temp=self._resolve_reco(
+                    reco, "gumbel_policy_temp", 1.0,
+                ),
                 gumbel_target_batch=self._resolve_reco(
                     reco, "gumbel_target_batch", 0, int,
                 ),
@@ -4433,13 +4446,24 @@ class WorkerSession:
         self._start_model_watch_thread()
         n_dole = len(fen_dole_queue)
         n_refute = len(fen_sf_refute_queue)
+        search_cfg = cfgs["search"]
+  # policy_temp is printed from the SearchConfig the session is about to run
+  # with, and `tempered` comes from mcts.gumbel.policy_temp_active -- the same
+  # predicate the search itself gates on. A yaml value that failed to reach the
+  # worker therefore shows up here as 1.0/False on the very first session, in
+  # the worker's own log, before a single shard is written.
         self.log.info(
             "selfplay session starting: games_per_batch=%d threaded=%s "
-            "broker=%s dole=%d sf_refute=%d",
+            "broker=%s dole=%d sf_refute=%d sims=%d gumbel_topk=%d "
+            "gumbel_policy_temp=%.4g tempered=%s",
             int(games_per_batch),
             bool(self.args.threaded_selfplay),
             self.inference_client is not None,
             n_dole, n_refute,
+            int(search_cfg.simulations),
+            int(search_cfg.gumbel_topk),
+            float(search_cfg.gumbel_policy_temp),
+            policy_temp_active(float(search_cfg.gumbel_policy_temp)),
         )
         try:
             stats = self._dispatch_selfplay_one_shard(

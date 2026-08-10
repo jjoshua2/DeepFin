@@ -12,7 +12,18 @@ both of which invalidated published Elo (docs/experiment_ledger.md 2026-07-28):
    and 27.5% at 256 — production's own budget.
 2. ``scripts/arena_standard.py`` seeded every run from ``PLAY_SEARCH_DEFAULTS``
    even with no flag, so every arena silently measured the UCI/play shape
-   (c_scale 0.025, topk 32, log root) instead of training's (0.1, 16, linear).
+   (c_scale 0.025, topk 32, LOG root) instead of the training shape, which is
+   read from the production yaml and uses the LINEAR root.
+
+Do NOT re-quote the training shape's numbers anywhere in this file. They move
+with the config: ``ed9de8ee9`` (2026-08-06) took production selfplay from
+``gumbel_topk: 16`` to 32, which falsified two literal ``== 16`` expectations
+PR #286 had left behind. Those failures did not show up in CI, because CI runs
+against the *committed* ``configs/pbt2_small.yaml`` and the live production yaml
+is edited in place and lags behind it — so a literal here fails first against
+the run that matters and only later against the gate. Assert relationships
+(base vs override, training vs play) or read the value back from
+``production_selfplay_search_config()``.
 
 The shape is now a required choice with no default, and the realized values are
 printed and stored in the JSONL record.
@@ -20,6 +31,7 @@ printed and stored in the JSONL record.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 import re
 import sys
@@ -38,7 +50,7 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.selfplay import match as match_mod
-from chess_anti_engine.selfplay.config import SearchConfig
+from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
 from scripts.arena_standard import (
     SEARCH_SHAPES,
     SideSearch,
@@ -57,6 +69,105 @@ from scripts.arena_standard import (
 # budget and the move-selection/noise policy come from arena flags. Everything
 # else production sets from config has to be carried by the training shape.
 _ARENA_OWNED_GUMBEL_FIELDS = {"simulations", "temperature", "add_noise", "gumbel_scale"}
+
+# Sentinel values handed to the production SearchConfig -> GumbelConfig mapping.
+# Every GumbelConfig default is <= 99 apart from cpuct_base (38739), so nothing
+# in the 701+ band can match by coincidence; ``_sentinel_search_config`` asserts
+# that rather than trusting it.
+_SENTINEL_BASE = 701
+# Passed as ``simulations=``, which the arena owns; must not be a sentinel.
+_PROBE_SIMULATIONS = 37
+
+
+def _sentinel_search_config() -> tuple[SearchConfig, dict[float, str]]:
+    """A ``SearchConfig`` whose every numeric field carries a unique sentinel.
+
+    Returns the config and the sentinel -> attribute-name inverse map, so a
+    ``GumbelConfig`` field holding a sentinel identifies the ``search`` knob
+    that fed it.
+
+    ⚑ Numeric fields only — a bool has no room for a sentinel. All six knobs the
+    mapping carries today are numeric, but a future BOOL ``SearchConfig`` knob
+    wired into ``GumbelConfig`` would land in ``_search_attrs_the_mapping_mentions``
+    and NOT here, and fail the equality spuriously. Give it a sentinel by another
+    means rather than deleting the assertion.
+    """
+    base = SearchConfig()
+    replacements: dict[str, Any] = {}
+    by_sentinel: dict[float, str] = {}
+    for offset, field in enumerate(dataclasses.fields(SearchConfig)):
+        current = getattr(base, field.name)
+        if isinstance(current, bool) or not isinstance(current, (int, float)):
+            continue
+        sentinel = _SENTINEL_BASE + offset
+        replacements[field.name] = type(current)(sentinel)
+        by_sentinel[float(sentinel)] = field.name
+
+    assert len(by_sentinel) == len(replacements), "the sentinels must be unique"
+    defaults = {
+        float(getattr(GumbelConfig(), f.name))
+        for f in dataclasses.fields(GumbelConfig)
+        if isinstance(getattr(GumbelConfig(), f.name), (int, float))
+        and not isinstance(getattr(GumbelConfig(), f.name), bool)
+    }
+    assert not defaults & set(by_sentinel), "a sentinel collides with a GumbelConfig default"
+    assert float(_PROBE_SIMULATIONS) not in by_sentinel
+    return dataclasses.replace(base, **replacements), by_sentinel
+
+
+def _selfplay_gumbel_fields_driven_by_search() -> dict[str, str]:
+    """GumbelConfig field -> SearchConfig attribute, proved by CALLING the mapping.
+
+    This used to parse ``network_turn.run_network_turn`` for an inline
+    ``GumbelConfig(...)``. That construction is now the module-level, public
+    ``build_selfplay_gumbel_config``, made addressable precisely so a test could
+    invoke it — and invoking it is strictly stronger than parsing it: an AST
+    scan cannot tell a field wired to ``search.x`` from one wired to a constant,
+    and "a value accepted and then silently ignored" is this repo's signature
+    defect. A field that comes back carrying its knob's sentinel has been
+    observed to flow, at runtime, through the production mapping.
+    """
+    from chess_anti_engine.selfplay import network_turn
+
+    search, by_sentinel = _sentinel_search_config()
+    cfg = network_turn.build_selfplay_gumbel_config(
+        search=search, game=GameConfig(), simulations=_PROBE_SIMULATIONS,
+    )
+    driven: dict[str, str] = {}
+    for field in dataclasses.fields(GumbelConfig):
+        value = getattr(cfg, field.name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        attr = by_sentinel.get(float(value))
+        if attr is not None:
+            driven[field.name] = attr
+    return driven
+
+
+def _search_attrs_the_mapping_mentions() -> set[str]:
+    """Every ``search.<attr>`` the production mapping's own source NAMES.
+
+    The counterpart to the call above: the call proves what flows, this proves
+    what was meant to. A knob named here but missing from the call's result is
+    exactly the accepted-then-ignored shape — mangled en route, or overwritten
+    by a constant.
+    """
+    from chess_anti_engine.selfplay import network_turn
+
+    src = inspect.getsource(network_turn.build_selfplay_gumbel_config)
+    mentioned: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "GumbelConfig":
+            continue
+        for kw in node.keywords:
+            if not kw.arg:
+                continue
+            match = re.search(r"\bsearch\.(\w+)", ast.unparse(kw.value))
+            if match:
+                mentioned.add(match.group(1))
+    return mentioned
 
 
 class _DummyModel(torch.nn.Module):
@@ -284,22 +395,51 @@ def test_the_play_shape_is_the_engine_play_shape() -> None:
     assert side.target_batch == PLAY_SEARCH_TARGET_BATCH
 
 
-def test_the_training_shape_is_not_the_play_shape() -> None:
-    """The regression that invalidated the sims ladder.
+def test_the_training_shape_uses_the_linear_root_not_the_play_log_root() -> None:
+    """The root TRANSFORM is what still separates the two shapes.
 
-    Root breadth (topk) and the root transform are the two knobs a sims ladder
-    is most sensitive to: under the play shape the root candidate set doubles
-    between the 32- and 256-sim rungs, so the ladder varies breadth AND depth.
+    This test used to also assert ``training["topk"] != play["topk"]``, on the
+    theory that the shapes must differ on every knob. They need not, and today
+    they do not: ``ed9de8ee9`` (2026-08-06) moved production selfplay to
+    ``gumbel_topk: 32`` — the same breadth the play shape uses — deliberately.
+    A shape difference is not the invariant; carrying production's actual value
+    is, and ``test_the_training_shape_is_what_the_worker_would_actually_run``
+    (equality against ``production_selfplay_search_config()``) plus
+    ``test_a_config_value_actually_reaches_the_arenas_training_shape`` (the
+    non-vacuous yaml->arena discriminator) already cover that. This one keeps
+    only the separation it uniquely owns.
+
+    On the old docstring's sims-ladder worry: ``topk`` is capped in
+    ``mcts/gumbel.py::_select_top_m_with_gumbel`` (called by
+    ``_init_board_search_state``) by ``m_cap = max(2, (sim_budget + 1) // 2)``,
+    so the realized breadth is ``m = min(topk, m_cap, legal moves)``:
+
+        ``topk`` BINDS iff ``sim_budget > 2 * topk``.
+        ``topk`` is INERT iff ``sim_budget <= 2 * topk`` (m_cap binds).
+
+    Stated as an inequality on purpose — the prose form ("changes nothing below
+    2x the budget") was written backwards twice, and it is the one sentence a
+    ladder designer acts on. At the ratchet's 32 sims, ``topk`` 16 and 32 both
+    give ``m = 16`` (32 <= 2*16, inert either way); at 256 sims ``topk`` 32
+    gives ``m = 32`` (256 > 64, binds). So a sims ladder only varies breadth
+    across rungs where ``m_cap`` stops binding — read breadth off the
+    ``min(...)`` above per rung, not off ``topk``.
     """
     training = resolve_search_shape("training").realized_gumbel()
     play = resolve_search_shape("play").realized_gumbel()
 
-    assert training["c_scale"] != play["c_scale"]
-    assert training["topk"] != play["topk"]
     # Linear root, i.e. the sentinels — NOT the play shape's log root.
     assert training["c_scale_root"] == GumbelConfig().c_scale_root
     assert training["q_visit_exp_root"] == GumbelConfig().q_visit_exp_root
     assert training["c_visit_root"] == GumbelConfig().c_visit_root
+    # ...and `play` really does transform the root differently, so the three
+    # asserts above separate two shapes rather than restating a dataclass
+    # default against nothing.
+    assert (play["c_scale_root"], play["q_visit_exp_root"], play["c_visit_root"]) != (
+        training["c_scale_root"],
+        training["q_visit_exp_root"],
+        training["c_visit_root"],
+    )
 
 
 def test_the_training_shape_is_what_the_worker_would_actually_run() -> None:
@@ -324,12 +464,13 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
 ) -> None:
     """The discriminating test: change the yaml, the arena must follow.
 
-    The comparison above cannot fail on today's shipped config, because every
-    value it checks happens to equal the dataclass default (``gumbel_topk: 16``
-    is ``GumbelConfig.topk``, and ``main``'s yaml does not set
-    ``gumbel_vloss_weight`` at all). A check that cannot fail is not a check —
-    this one runs the whole channel against values chosen to differ from every
-    default in sight.
+    The comparison above is only as strong as the config it runs against: any
+    knob whose production value happens to equal the ``GumbelConfig`` /
+    ``SearchConfig`` default is checked by a comparison that would also pass if
+    the yaml never reached the arena at all, and which knobs those are moves
+    with every config edit. A check that can silently stop being a check is not
+    a check — this one runs the whole channel against values chosen to differ
+    from every default in sight, and asserts that at the bottom.
     """
     import yaml as _yaml
 
@@ -340,6 +481,7 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
     raw["selfplay"]["gumbel_vloss_weight"] = 2
     raw["selfplay"]["gumbel_topk"] = 24
     raw["selfplay"]["gumbel_c_scale"] = 0.077
+    raw["selfplay"]["gumbel_policy_temp"] = 1.7
     patched = tmp_path / "patched.yaml"
     patched.write_text(_yaml.safe_dump(raw), encoding="utf-8")
     monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)
@@ -349,45 +491,74 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
     assert side.vloss_weight == 2, "the published vloss_weight never reached the arena"
     assert side.realized_gumbel()["topk"] == 24
     assert side.realized_gumbel()["c_scale"] == pytest.approx(0.077)
-    # None of the three is a default, so none can pass by accident.
+    # ⚑ policy_temp must be checked BY VALUE here, not only for key presence.
+    # `test_the_realized_view_is_not_just_the_override_dict` pins the key SET, so
+    # it catches a deleted `policy_temp` and NOT a hard-coded one; and the drift
+    # guard's `pinned` is also `set(...gumbel)`, so a constant leaves the key
+    # present and the "provably inert today" branch unreachable. With production
+    # about to run T=1.5, a collapsed-to-1.0 line here would make every
+    # `--search-shape training` arena — the Cheese-tail yardstick included —
+    # measure a sharper prior than the live run trains on, with CI green.
+    assert side.realized_gumbel()["policy_temp"] == pytest.approx(1.7), (
+        "the published gumbel_policy_temp never reached the arena's training "
+        "shape: the arena would search at a temperature production does not run"
+    )
+    # None of the four is a default, so none can pass by accident.
     assert GumbelConfig().topk != 24
     assert GumbelConfig().c_scale != 0.077
+    assert GumbelConfig().policy_temp != 1.7
     assert SearchConfig().gumbel_vloss_weight != 2
 
 
 def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> None:
     """Drift guard: a NEW yaml-driven search knob must reach the arena too.
 
-    Reads the ``GumbelConfig(...)`` production selfplay builds
-    (``network_turn.py``) and takes every field it fills from ``search.*`` —
-    not just ``search.gumbel_*``: the same call is also fed
-    ``search.volatility_q_scale/_fpu/_anchor``, and a narrower scan would call
-    itself a coverage guard while missing three knobs.
+    Builds the ``GumbelConfig`` production selfplay searches with — by CALLING
+    ``network_turn.build_selfplay_gumbel_config``, the real mapping — and takes
+    every field it fills from ``search.*``: not just ``search.gumbel_*``, since
+    the same call is also fed ``search.volatility_q_scale/_fpu/_anchor`` and a
+    narrower scan would call itself a coverage guard while missing three knobs.
 
     A field the training shape does not carry passes only if production's value
     for it equals the ``GumbelConfig`` default, i.e. omitting it is provably a
     no-op TODAY. Turning such a knob on in the yaml fails this test, which is
     the intent: the arena would otherwise keep measuring the old shape.
     """
-    from chess_anti_engine.selfplay import network_turn
+    config_driven = _selfplay_gumbel_fields_driven_by_search()
 
-    src = inspect.getsource(network_turn.run_network_turn)
-    config_driven: dict[str, str] = {}
-    for node in ast.walk(ast.parse(src)):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-            continue
-        if node.func.id != "GumbelConfig":
-            continue
-        for kw in node.keywords:
-            if not kw.arg:
-                continue
-            match = re.search(r"\bsearch\.(\w+)", ast.unparse(kw.value))
-            if match:
-                config_driven[kw.arg] = match.group(1)
-
-    assert len(config_driven) >= 5, (
-        f"only {sorted(config_driven)} found in network_turn's GumbelConfig -- "
-        "the selfplay search construction moved; re-point this test"
+    # PER-FIELD pins, not a count. A `len(...) >= N` floor lets any ONE knob be
+    # silently hard-coded as long as another is added, which is how the first
+    # version of this re-pointing ended up WEAKER than the AST test it replaced:
+    # the mapping carries six fields, the floor said five, so hard-coding
+    # `c_scale` passed here while still failing on `main`. Every entry below is
+    # a knob whose value must be OBSERVED to flow (see the helper: sentinel in,
+    # sentinel out), so hard-coding any one of them fails this line by name.
+    assert set(config_driven.values()) == {
+        "gumbel_topk",
+        "gumbel_policy_temp",
+        "gumbel_c_scale",
+        "volatility_q_scale",
+        "volatility_fpu",
+        "volatility_anchor",
+    }, (
+        f"the selfplay search is driven by {sorted(set(config_driven.values()))}; "
+        "if that is a deliberate change, update this set and check the arena's "
+        "training shape still carries every knob production sets"
+    )
+    # Separately: what the mapping NAMES must equal what it CARRIES.
+    #
+    # ⚑ This does NOT catch a hard-coded field. Both sides derive from the same
+    # source, so deleting `search.x` from the call deletes it from `mentioned`
+    # too and the equality passes vacuously — the set assertion above is what
+    # catches that. What this DOES catch is the named-but-mangled case
+    # (`float(search.gumbel_policy_temp) * 0.0 + 1.0`), where the source still
+    # reads as wired and the value still does not arrive. That case is invisible
+    # to any source-reading test, which is the whole reason the mapping was made
+    # callable.
+    mentioned = _search_attrs_the_mapping_mentions()
+    assert mentioned == set(config_driven.values()), (
+        f"build_selfplay_gumbel_config names {sorted(mentioned)} but only "
+        f"{sorted(set(config_driven.values()))} reach the returned GumbelConfig"
     )
     search = production_selfplay_search_config()
     pinned = set(resolve_search_shape("training").gumbel) | _ARENA_OWNED_GUMBEL_FIELDS
@@ -406,12 +577,13 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
 
 def test_an_override_layers_on_top_of_the_shape_and_is_recorded() -> None:
     """``--cand-gumbel`` still works, and the provenance string says so."""
-    side = apply_search_overrides(
-        resolve_search_shape("training"), spec="c_scale=0.05", vloss_weight=4,
-    )
+    base = resolve_search_shape("training")
+    side = apply_search_overrides(base, spec="c_scale=0.05", vloss_weight=4)
 
     assert side.realized_gumbel()["c_scale"] == 0.05
-    assert side.realized_gumbel()["topk"] == 16  # untouched by the override
+    # Untouched by the override — compared against the BASE shape, not against
+    # a literal: the literal here was production's topk, and it went stale.
+    assert side.realized_gumbel()["topk"] == base.realized_gumbel()["topk"]
     assert side.vloss_weight == 4
     assert "c_scale=0.05" in side.source
     assert "vloss_weight=4" in side.source
@@ -439,6 +611,7 @@ def test_an_override_naming_a_nonexistent_knob_is_rejected_at_parse_time() -> No
 def test_the_record_stores_the_search_that_produced_the_elo() -> None:
     """A result row must be re-interpretable years later without its argv."""
     summary = summarize_pentanomial(pentanomial_counts([2.0, 1.0]))
+    training = resolve_search_shape("training")
     record = build_result_record(
         summary,
         mode="matched_sims", candidate="c.pt", reference="r.pt",
@@ -446,7 +619,7 @@ def test_the_record_stores_the_search_that_produced_the_elo() -> None:
         sims_candidate=32, sims_reference=32, ms_per_move=None,
         temperature=0.1, gumbel_add_noise=True, max_plies=10,
         seed=0, device="cpu", duration_s=0.0,
-        search_candidate=resolve_search_shape("training"),
+        search_candidate=training,
         search_reference=resolve_search_shape("play"),
     )
 
@@ -454,9 +627,15 @@ def test_the_record_stores_the_search_that_produced_the_elo() -> None:
     assert record["search_reference"]["shape"] == "play"
     assert record["search_reference"]["vloss_weight"] == PLAY_SEARCH_VLOSS_WEIGHT
     # The REALIZED knobs, not just the ones that were overridden: a reader must
-    # be able to see c_scale on a row that never passed --cand-gumbel.
-    assert record["search_candidate"]["gumbel"]["c_scale"] == pytest.approx(0.1)
-    assert record["search_reference"]["gumbel"]["c_scale"] == pytest.approx(0.025)
+    # be able to see c_scale on a row that never passed --cand-gumbel. Checked
+    # against the shape that was handed in (and, for play, its constant) rather
+    # than against production's number of the day, which goes stale.
+    assert record["search_candidate"]["gumbel"]["c_scale"] == pytest.approx(
+        training.realized_gumbel()["c_scale"]
+    )
+    assert record["search_reference"]["gumbel"]["c_scale"] == pytest.approx(
+        PLAY_SEARCH_DEFAULTS["c_scale"]
+    )
     assert record["search_candidate"]["source"]
 
 
@@ -464,7 +643,7 @@ def test_the_realized_view_is_not_just_the_override_dict() -> None:
     """A sparse override dict is what made the old runs unreadable."""
     side = resolve_search_shape("training")
 
-    assert set(side.gumbel) == {"c_scale", "topk"}
+    assert set(side.gumbel) == {"c_scale", "topk", "policy_temp"}
     assert set(side.realized_gumbel()) >= set(PLAY_SEARCH_DEFAULTS)
     # A knob the training shape never overrode still resolves to its realized
     # value (the GumbelConfig default), which is the point of the view.

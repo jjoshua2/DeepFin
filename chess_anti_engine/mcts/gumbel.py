@@ -230,12 +230,62 @@ class GumbelConfig:
     volatility_factor_clip: float = 4.0
 
 
+# Sanity band for the policy prior temperature, in the ONE place both the
+# loader (`trial_config._policy_temperature`) and the hot-path predicate
+# (`policy_temp_active`) read it from.
+#
+# ⚑ These are semantic bounds, not float32 bounds, and deliberately far tighter.
+# The float32 cliffs are ~1e-38 (a logit of magnitude 1 divides to +inf) and
+# ~1e39 (every logit divides to zero / denormal, i.e. an exactly uniform prior).
+# Anything past ~20 is already uniform IN EFFECT long before it is numerically
+# invalid --- at T=1e300 `apply_policy_temp` returns all-zero logits, which is
+# search with the policy head switched off, and `math.isfinite` waves it
+# through. That is the failure the band exists to close, so the band has to sit
+# where the knob stops being a temperature rather than where IEEE754 stops.
+#
+# 0.05 / 20.0 are 8x beyond the widest values anything here has used: the
+# sharpest tested is 0.4, the softest 2.5, and production runs 1.5 with a
+# decided floor of 1.2. A run wanting more than a 13x departure from production
+# is not tuning a prior temperature and should say so in the ledger first.
+POLICY_TEMP_MIN = 0.05
+POLICY_TEMP_MAX = 20.0
+
+
+def policy_temp_active(policy_temp: float) -> bool:
+    """True when ``policy_temp`` will actually change the priors.
+
+    THE single definition of "tempering is on". ``apply_policy_temp`` below,
+    both bf16 fast-path gates in ``gumbel_c`` and the worker's realized-shape
+    log line all call this, so the transport gate, the arithmetic and the
+    operator-facing claim can never drift apart: a guard has to share the
+    criterion's instrument or it is guarding a different question.
+
+    Out-of-band values read as *off* rather than raising because this is the hot
+    path; config loading rejects the same set (``trial_config._policy_temperature``)
+    so they cannot reach here from the yaml in the first place.
+
+    ⚑ The band, not just ``isfinite``, is what makes this safe. ``nan`` falls out
+    via the comparison and ``inf`` used to read as ACTIVE --- ``apply_policy_temp``
+    then returns all-zero logits, a uniform prior over every legal move,
+    announced in the realized-shape log line as tempering working normally. But
+    ``isfinite`` closes only the literal: ``1e300`` produces the identical
+    all-zero prior and ``1e-300`` produces all-inf, both finite and both
+    ACTIVE under a bare ``pt > 0``. The yaml cannot deliver any of them, but
+    ``arena_standard.py --cand-gumbel policy_temp=1e300`` reaches
+    ``dataclasses.replace`` without passing the loader's validator. This
+    predicate is THE definition of "tempering is on", so it agrees with the
+    loader on the whole rejection set rather than leaving one entry point a hole.
+    """
+    pt = float(policy_temp)
+    return math.isfinite(pt) and POLICY_TEMP_MIN <= pt <= POLICY_TEMP_MAX and pt != 1.0
+
+
 def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
     """Scale policy logits by the prior temperature before they seed the tree.
     T>1 softens the prior, T<1 sharpens it, 1.0 (or <=0) = no-op. Shared by the
     Python and C (gumbel_c) search paths so both honor policy_temp identically."""
     pt = float(getattr(cfg, "policy_temp", 1.0))
-    if pt > 0.0 and pt != 1.0:
+    if policy_temp_active(pt):
         return pol / pt
     return pol
 
