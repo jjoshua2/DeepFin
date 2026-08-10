@@ -39279,3 +39279,52 @@ Today's two series were run separately against different references:
    hypothesis is now live again with a much stronger instrument behind it.
 4. **The external Cheese-2400 check is now a cross-instrument validation of a
    run-level regression**, not a curiosity. Both nets, node-limited, frozen thereafter.
+
+## PRE-REGISTERED 2026-08-10 — POWER UP THE LADDER: is regret's fall correlated, uncorrelated, or ANTI-correlated with Elo?
+
+The 08-10 400-game verdict established that iter 862 is ~94 Elo below the iter-514 peak.
+But the ladder's older rows are thin (76/200/190/84 games), and a first pass at aligning
+the regret trajectory against them produced a result that inverts the project's working
+intuition:
+
+| segment | d(regret)/iter | d(Elo)/iter | games at the right endpoint |
+|---|---|---|---|
+| 249 → 399 | −2.13e-05 | −0.146 | 200 |
+| **399 → 514** | **+6.79e-06** (flat) | **+0.337** | 190 |
+| **514 → 768** | **−1.14e-04** (5x harder than anywhere else) | **−0.185** | **84** |
+| 768 → 862 | +1.27e-05 | −0.502 | 400 |
+
+⇒ **The hardest regret fall coincides with an Elo DECLINE, and the largest Elo gain
+coincides with FLAT regret.** If that survives powering-up, regret is not merely
+uninformative (already established) but **anti-correlated** over this run, which would make
+"regret is dropping, we are improving" an actively misleading read that this ledger has
+used repeatedly.
+
+**⚠ It is 4 segments off 5 points of wildly unequal power. It is a hypothesis, not a
+finding.** The 84-game 768 row (CI ±69) carries most of the turning-point argument.
+
+### Arms (parked, 400 games each, `matched_sims 32`, `--search-shape training`, seed 42)
+
+| series | candidate | reference | why |
+|---|---|---|---|
+| `iter514_vs_boot512` | `ck_2026-08-09_iter514.pt` | boot512 anchor | firm up the PEAK (190 → 400 games, ±45 → ±30) |
+| `iter768_vs_boot512` | `ck_2026-08-10_iter768.pt` | boot512 anchor | the weakest, most load-bearing point (84 → 400 games, ±69 → ±30) |
+| `iter862_vs_iter514` | `ck_..._iter862_postmerge` | `ck_2026-08-09_iter514.pt` | make the headline ONE measurement instead of a difference of two |
+
+### PRE-COMMITTED READINGS
+
+- **Turning point LOCATED** if the powered 514 and 768 rows keep 514 > 768 with
+  non-overlapping CIs. Then the decline began in (514, 768] and the pre-bundle segment owns
+  part of it — the bundle is not the sole cause.
+- **Turning point LATER THAN 768** if powered 768 ≈ powered 514. Then the whole decline is
+  post-bundle and the bundle becomes the prime suspect.
+- **THE LADDER WAS AN ARTIFACT** if powered 514 comes in ≤ +60 (its thin row said +105.5).
+  Then the "peak" was a small-sample high and the run may have been flat all along, not
+  peaked-then-declining. **This outcome must be reported as loudly as the others** — it
+  would mean today's 94-Elo claim was inflated by the baseline, not by the candidate.
+- **DIRECT CHECK:** `iter862_vs_iter514` must agree with (powered 862-vs-boot512) −
+  (powered 514-vs-boot512) to within the summed CIs. Disagreement ⇒ the anchor is not
+  transitive and every boot512-referenced row is suspect.
+
+Cost: ~75 min parked. Training stays STOPPED — it is currently losing ~0.5 Elo/iteration,
+so the pause is not the expensive part.
