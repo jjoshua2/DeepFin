@@ -37988,3 +37988,56 @@ same `config_yaml.py:131` pinned list) and the realized config reads 0.1.
 it MONOTONICALLY. For a bundle of knobs with opposing signs on the proxy, there is no threshold to
 pre-register — use the direct plumbing observation and pick a separate, conjugate metric for the
 outcome.** For this bundle the outcome yardstick remains the deciding arena, NOT entropy.
+
+### AMENDMENT 15 — entropy readout CLOSED (A11 confirmed); a NEW pre-registration on the regret rate
+
+**Entropy, read on clean rows (Amendment 13's gate satisfied):**
+
+| iter | entropy | delta vs 1.0576 | resumed% |
+|---|---|---|---|
+| 742 | 1.0346 | -0.0230 | 6.9% |
+| 743 | **1.0528** | **-0.0047** | **5.5%** |
+
+**Net effect on `gumbel_policy_entropy_mean` is ~ZERO** (-0.005 on the cleanest row; -0.014 mean of
+the two). This is a positive confirmation of **Amendment 11's prediction that the bundle nets
+~zero softening** — the 4x sigma sharpening from `c_scale` and the T=1.5 prior softening cancel.
+It is ALSO the final proof that Amendment 14's retraction was correct: the pre-registered
+"+0.10" would have declared a hard FAILURE on a bundle behaving exactly as predicted.
+
+### THE REAL SIGNAL, AND ITS CONFOUND — pre-registered before the deciding number exists
+
+```
+raw winrate 736..743:  0.4506 0.5292 0.5504 0.5588 0.5986 0.5934 0.6158 0.6214
+ema  winrate 736..743: 0.5065 0.5076 0.5097 0.5122 0.5165 0.5204 0.5251 0.5299
+wdl_regret  736..743:  0.05520 ............................................ 0.05115
+```
+| window | regret rate |
+|---|---|
+| historic 249-735 (486 iters) | **-2.55e-5** /iter |
+| post-bundle 736-743 (7 iters) | **-5.79e-4** /iter = **22.7x** |
+
+**TWO HYPOTHESES, BOTH PREDICTING THIS SHAPE. Do not adjudicate on the current rows.**
+- **H1 (real):** the bundle raised play strength; winrate rose; the controller is correctly
+  converting it into difficulty. Expected under [[pid_absorbs_strength_gains_into_difficulty]].
+- **H2 (artifact):** the documented post-restart winrate bias
+  ([[winrate_spike_restart_sampling_bias]], +0.110) plus the C14b completion-ORDER residual
+  (open task: the resume fixed the ply ramp, NOT completion order). Iter 736 was 99% resumed
+  LONG games at raw 0.4506; as short fresh games dominate the completing cohort, raw winrate
+  climbs for reasons unrelated to strength.
+
+**PRE-COMMITTED READ, at iteration ~765** (≈20 further iterations: the EMA's alpha 0.05 gives a
+~20-iteration time constant, and mean game residence is ~4.7 iterations at 2304 in-flight /
+~490 ingested per iter, so both transients are spent):
+- **raw winrate holds >= 0.58 AND regret still falling faster than 1e-4/iter** ⇒ consistent with
+  H1. Bank a checkpoint and run a paired arena vs `ck_2026-08-09_iter735_FINAL.pt` — the arena,
+  not the winrate, is the verdict.
+- **raw winrate decays below 0.55 and the regret rate relaxes toward the historic -2.5e-5** ⇒ H2;
+  the burst was the restart transient and the bundle is unproven.
+- **raw winrate stays high but regret STOPS falling** ⇒ neither; check the airbag
+  (`sf_pid_regret_crash_ease_*`) and whether a clamp or `min_games_between_adjust` is binding.
+
+⚠ **RISK IF H2:** the controller is tightening on a possibly-inflated winrate, so it may
+OVER-tighten and then have to ease. A regret undershoot followed by an airbag ease is itself
+evidence for H2 — record it if seen. ⚠ Do NOT read the winrate as a strength yardstick under
+EITHER hypothesis; it is the controlled variable. The regret rate is a progress indicator only
+because the setpoint is fixed.
