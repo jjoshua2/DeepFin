@@ -30,6 +30,7 @@ import dataclasses
 import io
 import pathlib
 import re
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -850,28 +851,62 @@ def test_every_registry_option_has_a_named_startup_source() -> None:
 
     ⚑ `None` is an ESCAPE HATCH, so it needs its own guard. `assert dest is
     None or dest in dests` accepts `None` unconditionally, which makes
-    "this option has no CLI flag" an unfalsifiable claim: assert it against
-    the parser instead. `_SEARCH_OPTION_ARG["cpuct_factor"] = None` is a lie
-    (`--cpuct-factor` exists) and the old form waved it through.
-    """
-    from chess_anti_engine.uci.__main__ import _SEARCH_OPTION_ARG, _build_parser
+    "this option has no CLI flag" an unfalsifiable claim.
 
-    dests = {a.dest for a in _build_parser()._actions}
+    ⚑⚑ And the guard must not be keyed on the FIELD NAME. An earlier revision
+    asserted `opt.field not in dests`, which is structurally blind for exactly
+    one option: `root_noise_scale`'s dest is `gumbel_scale`, so the field name
+    is not a dest and the assertion could never fire for it no matter what the
+    map claimed. A guard with a hole at one specific option is the thing it was
+    written to prevent.
+
+    The witness used instead is `_engine_search_kwargs` — PRODUCTION's own list
+    of which search values `main()` feeds `_build_engine` from `args`. If a
+    field is in there, a CLI flag really does decide it at startup, so claiming
+    `None` for it is false by construction. That is independent of both the
+    map under test and of any field->flag spelling convention.
+    """
+    from chess_anti_engine.uci.__main__ import (
+        _SEARCH_OPTION_ARG,
+        _build_parser,
+        _engine_search_kwargs,
+    )
+
+    parser = _build_parser()
+    dests = {a.dest for a in parser._actions}
+    args = parser.parse_args(["--checkpoint", "unused"])
+    fed_from_args = set(_engine_search_kwargs(args))
+    flags = {opt_str for a in parser._actions for opt_str in a.option_strings}
+
     for opt in SEARCH_OPTIONS:
         assert opt.field in _SEARCH_OPTION_ARG, (
             f"{opt.name} has no entry in _SEARCH_OPTION_ARG"
         )
         dest = _SEARCH_OPTION_ARG[opt.field]
         if dest is None:
-            assert opt.field not in dests, (
-                f"{opt.name} is mapped to None ('no CLI flag') but the parser "
-                f"defines --{opt.field.replace('_', '-')}. The first `uci` "
-                "would advertise the registry default while the engine is "
-                "built from the flag."
+            assert opt.field not in fed_from_args, (
+                f"{opt.name} is mapped to None ('no CLI flag') but "
+                f"_engine_search_kwargs feeds {opt.field} straight off args, so "
+                "a CLI flag DOES decide it at startup. The first `uci` would "
+                "advertise the registry default while the engine is built from "
+                "the flag."
+            )
+          # Belt and braces on the spelling the doc promises operators.
+            assert f"--{opt.field.replace('_', '-')}" not in flags, (
+                f"{opt.name} is mapped to None but --"
+                f"{opt.field.replace('_', '-')} exists"
             )
             continue
         assert dest in dests, (
             f"{opt.name} is seeded from args.{dest}, which the CLI does not define"
+        )
+      # The converse of the `None` rule: a mapped option must be one production
+      # actually feeds from args, or the two sources are describing different
+      # engines.
+        assert opt.field in fed_from_args, (
+            f"{opt.name} is seeded from args.{dest} for the handshake, but "
+            f"_engine_search_kwargs does not feed {opt.field} to _build_engine "
+            "— the advertised value and the built value have different sources"
         )
 
 
@@ -1846,3 +1881,185 @@ def test_every_cli_default_is_inside_its_advertised_range() -> None:
             f"the CLI default for {opt.name} ({raw}) is outside [{opt.lo}, "
             f"{opt.hi}], so the engine would refuse to start with no flags"
         )
+
+
+def test_the_uci_policy_temp_range_is_contained_in_the_live_band() -> None:
+    """The relation that makes TWO independently-written bands safe.
+
+    Two surfaces bound `policy_temp` with two different sets of numbers:
+
+      * UCI `PolicyTemperature` — `[opt.lo, opt.hi]`, literals in this registry;
+      * `--gumbel policy_temp` — `[POLICY_TEMP_MIN, POLICY_TEMP_MAX] u {1.0}`,
+        from `mcts.gumbel`, i.e. THE definition of "tempering is on".
+
+    No dead value gets through the UCI surface today, but only because
+    `[0.5, 5.0]` happens to sit inside `[0.05, 20.0]`. Nothing asserted that.
+    Widen the registry's `lo` toward 0 and UCI starts accepting temperatures
+    `apply_policy_temp` ignores — the F1 defect, re-opened on the other surface,
+    and the tests that hard-code the literal `0.5` are the only thing that would
+    notice.
+
+    So pin the RELATION, not either literal: every value UCI accepts must be one
+    the search actually reads.
+    """
+    from chess_anti_engine.mcts.gumbel import (
+        POLICY_TEMP_MAX,
+        POLICY_TEMP_MIN,
+        policy_temp_active,
+    )
+
+    opt = next(o for o in SEARCH_OPTIONS if o.name == "PolicyTemperature")
+    assert opt.lo is not None
+    assert opt.hi is not None
+
+    assert opt.lo >= POLICY_TEMP_MIN, (
+        f"PolicyTemperature accepts down to {opt.lo}, below the live band's "
+        f"{POLICY_TEMP_MIN}: values in between reach the config and are then "
+        "ignored by apply_policy_temp"
+    )
+    assert opt.hi <= POLICY_TEMP_MAX, (
+        f"PolicyTemperature accepts up to {opt.hi}, above the live band's "
+        f"{POLICY_TEMP_MAX}"
+    )
+
+  # Sampled across the whole advertised interval, including both endpoints:
+  # every accepted value is one the search reads (1.0 is the deliberate
+  # untempered-prior exception and is a no-op by definition, not by accident).
+    span = opt.hi - opt.lo
+    probes = [opt.lo, opt.hi, *(opt.lo + span * i / 16.0 for i in range(1, 16))]
+    for value in probes:
+        if value == 1.0:
+            continue
+        assert policy_temp_active(value), (
+            f"UCI would accept PolicyTemperature {value}, which the search "
+            "does not read"
+        )
+
+
+def test_the_two_policy_temp_surfaces_agree_on_the_dead_values() -> None:
+    """What the containment above does and does NOT buy.
+
+    The two surfaces are NOT the same band — UCI `[0.5, 5.0]` is strictly
+    tighter than `--gumbel`'s `[0.05, 20.0]`, so 0.1 / 0.3 / 10.0 / 19.0 are
+    accepted by `--gumbel` and refused by UCI. That asymmetry is fine and
+    deliberate: UCI is a match-play surface with a conservative range, `--gumbel`
+    is an offline audit sweep.
+
+    What must hold is the safety property: a value EITHER surface accepts is one
+    the search reads. This states the disagreement explicitly so nobody reads
+    the containment test above as "the two surfaces are the same".
+    """
+    from scripts import audit_targets as at
+
+    opt = next(o for o in SEARCH_OPTIONS if o.name == "PolicyTemperature")
+    assert opt.lo is not None
+    assert opt.hi is not None
+
+    wider_but_live = [0.1, 0.3, 10.0, 19.0]
+    for value in wider_but_live:
+        assert not (opt.lo <= value <= opt.hi), (
+            f"{value} was chosen as OUTSIDE the UCI range; the ranges moved"
+        )
+        assert at.parse_gumbel_overrides([f"policy_temp={value!r}"]) == (
+            ("policy_temp", value),
+        ), f"--gumbel should accept {value}: it is inside the live band"
+
+
+def test_main_builds_the_engine_from_the_args_it_advertised(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """THE production wiring: one `args`, feeding BOTH the handshake and the build.
+
+    `_engine_search_kwargs(args)` at `main()`'s `_build_engine` call is a line
+    somebody can drop or re-point, and no test in the repo drove `main()` at
+    all — both subprocess suites only assert that a bestmove appears, and
+    `test_uci_walker_pool.py` passes `--chunk-sims 32` without ever checking it
+    landed. Repointing that one argument at a freshly-parsed default namespace
+    left the whole suite green while the newly-truthful handshake certified
+    `--c-scale 0.077 --topk 9 --policy-temp 1.5` for an engine running
+    `0.025 / 32 / 1.0`.
+
+    This is the same reasoning `_startup_engine_options` already applies to
+    seeding ("deliberately not a separate call at the call site, because that is
+    a line somebody can drop") — applied to the other half of the pair.
+
+    So: run the REAL `main()` over a real stdin, with only the model load and
+    the evaluator stubbed, capture what `_build_engine` was actually called
+    with, and compare it against the handshake `main()` actually printed. Two
+    observations of one process, not a re-derivation.
+    """
+    from chess_anti_engine.uci import __main__ as uci_main
+
+    captured: dict[str, object] = {}
+
+    class _StubEngine:
+        quit_requested = False
+
+        def warmup_search(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        def dispatch(self, cmd: object) -> None:
+            del cmd
+            return None
+
+    def _fake_build_engine(**kwargs: object) -> _StubEngine:
+        captured.update(kwargs)
+        return _StubEngine()
+
+    def _fake_load_models(checkpoint: str, devices: list[str]) -> list[object]:
+        del checkpoint, devices
+        return [SimpleNamespace(
+            input_history_encoding="legacy", input_extra_features="v2_threats",
+            policy_encoding="lc0_1858", use_dynamic_relations=False,
+        )]
+
+    def _fake_evaluator_factory(*a: object, **k: object):
+        del a, k
+        return lambda *_a, **_k: object()
+
+    monkeypatch.setattr(uci_main, "_build_engine", _fake_build_engine)
+    monkeypatch.setattr(uci_main, "_load_models", _fake_load_models)
+    monkeypatch.setattr(uci_main, "_make_evaluator_factory", _fake_evaluator_factory)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["uci", "--checkpoint", "unused", "--device", "cpu",
+         "--c-scale", "0.077", "--topk", "9", "--policy-temp", "1.5",
+         "--chunk-sims", "777", "--halving-div", "4", "--gumbel-scale", "0.25",
+         "--q-global-scale", "--vloss-weight", "5", "--c-puct", "3.25",
+         "--cpuct-factor", "7.0", "--cpuct-base", "12345.0",
+         "--fpu-reduction", "0.9", "--c-visit-root", "123.0", "--walkers", "1"],
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("uci\nquit\n"))
+
+    assert uci_main.main() == 0
+    assert captured, "_build_engine was never called"
+
+    printed: dict[str, str] = {}
+    for line in capsys.readouterr().out.splitlines():
+        m = re.match(r"option name (\S+) type \S+ default (\S+)", line)
+        if m is not None:
+            printed[m.group(1)] = m.group(2)
+
+    for opt in SEARCH_OPTIONS:
+        if opt.field not in captured:
+            continue    # MinibatchSize: UCI-only, no startup source
+        built = captured[opt.field]
+        assert isinstance(built, (float, int, bool)), (
+            f"main() passed a non-numeric {opt.field}={built!r} to _build_engine"
+        )
+        assert printed[opt.name] == _fmt_expected(opt, built), (
+            f"main() advertised {opt.name}={printed[opt.name]} on the `uci` it "
+            f"answered, then built the engine with {opt.field}={built}"
+        )
+
+  # ...and the flags really were off-default, so the comparison had something
+  # to catch rather than agreeing on a shared default.
+    assert captured["c_scale"] == 0.077
+    assert captured["topk"] == 9
+    assert captured["policy_temp"] == 1.5
+    assert captured["chunk_sims"] == 777
+    assert captured["cpuct_factor"] == 7.0
+    assert printed["CScale"] == "0.077"

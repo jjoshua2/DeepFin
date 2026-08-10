@@ -407,3 +407,50 @@ def test_the_score_form_is_a_no_op_at_the_shipped_multipv_width() -> None:
         ranked = sorted(move_cp.items(), key=lambda kv: -kv[1])
         old = {u for u, _ in ranked[:10]} if len(ranked) >= 10 else set()
         assert at.sf_reference_sets(move_cp)[1] == old, f"diverged at {n} listings"
+
+
+def test_the_audit_loop_builds_its_top10_through_the_helper() -> None:
+    """The F6 fix's CALL SITE, not just its logic.
+
+    Same shape as the `--gumbel` dispatch guard's own history: the helper is
+    pinned by the four tests above, its INVOCATION by nothing, so reverting
+    `audit_targets.main()` to the inline `_ranked[:10]` slice passed the whole
+    suite. Logic pinned, wiring not — one level down from R5-B2.
+
+    ⚑ This check is STRUCTURAL, and that is a compromise, not a preference.
+    The call site lives inside `audit_targets.main()`, which needs a checkpoint,
+    a Stockfish binary and the frozen audit set before it reaches the line; the
+    behavioural observation (drive the loop, assert a tied 11th-ranked move is
+    scored `out_of_top10=false`) is not reachable in a unit test. So this
+    asserts the two things a revert cannot avoid tripping: `main` must reference
+    the helper, and no top-10 set may be built by slicing anywhere in the
+    module.
+    """
+    import inspect
+
+    assert "sf_reference_sets" in at.main.__code__.co_names, (
+        "audit_targets.main() no longer calls sf_reference_sets — the top-10 "
+        "reference set is being built somewhere else, and the tie handling the "
+        "helper's tests pin is not what the audit actually runs"
+    )
+
+  # The revert reintroduces a slice. Catch the CONSTRUCTION via the AST, not a
+  # substring: `sf_reference_sets`'s own docstring quotes `_ranked[:10]` when
+  # explaining why it is wrong, and a text scan cannot tell prose from code.
+    import ast
+
+    tree = ast.parse(inspect.getsource(at))
+    offenders = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.slice, ast.Slice)
+        and node.slice.lower is None
+        and isinstance(node.slice.upper, ast.Constant)
+        and node.slice.upper.value == 10
+    ]
+    assert not offenders, (
+        "a top-10 set is being built by slicing, which picks among moves tied "
+        f"at the tenth-ranked cp by mapping order (audit_targets.py lines "
+        f"{offenders})"
+    )
