@@ -37941,7 +37941,14 @@ policy_temp. [[a_ruler_change_must_invalidate_its_records]].
 **The topk column is the exception and does NOT break the series.** `gumbel.py:737` caps the
 candidate set: `m_cap = max(2, (sim_budget + 1) // 2)`, `m = max(2, min(topk, legal, m_cap))`.
 Every ratchet arena runs **sims=32**, so `m_cap = 16` and topk 16 vs 32 realize the SAME m=16.
-topk only bites above 2x the sim budget — at production's 256 sims it gives m=32 vs m=16.
+**`topk` BINDS iff `sim_budget > 2*topk`; it is INERT iff `sim_budget <= 2*topk`.** At production's
+256 sims, topk 32 gives m=32 vs m=16 (binds); at 32 sims both 16 and 32 give m=16 (inert).
+⚠ ERRATUM 2026-08-09: an earlier revision of this line read "topk only bites ABOVE 2x the sim
+budget", which is the TRANSPOSE and is false — at sims=32, `topk=8` yields **m=8**, i.e. topk
+binds well below that. The worked examples were right; the generalisation was backwards, and it
+is exactly the sentence a sims-ladder designer would act on. Caught by the PR #383 reviewer.
+The symbol is **`_select_top_m_with_gumbel`** (main lines 687-717), NOT `_init_board_search_state`,
+which only calls it.
 ⇒ The 08-06 topk change is invisible to every 32-sim ruler we own, and the old "training must
 differ from play on topk" guard in `test_arena_search_shape_plumbing.py` is asserting an
 invariant that production has legitimately abandoned. Hygiene PR in flight; **no production knob
