@@ -20,6 +20,8 @@ off-centre latent truth behind a noisy ruler, where the null really is non-zero
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
@@ -538,3 +540,83 @@ def test_multipv_axis_separates_where_the_desync_rate_cannot() -> None:
     diluted = np.ones(n, dtype=bool)
     diluted[:60] = False
     assert sf_multipv_missing_rate(diluted, labelled).value == pytest.approx(0.6)
+
+
+# ---------------------------------------------------------------------------
+# The SCRIPT's config gate, on the SHIPPED config.
+# ---------------------------------------------------------------------------
+# Everything above tests `chess_anti_engine/eval/value_optimism.py`, the library.
+# `scripts/value_optimism.py` — the entry point an operator actually runs — has
+# its own hard startup gate, `resolve_blend_knobs`, and NOTHING reached it. That
+# is a gate that cannot fail in the exact sense this repo keeps rediscovering:
+# a config-only PR deleted `sf_search_dampen_sf_low` / `_high`, the script would
+# have raised `SystemExit` on `--config configs/pbt2_small.yaml` before touching
+# a model or a shard, and this whole file stayed green.
+#
+# So these two run the real function against the real production config. They
+# read `_CROSSCHECK_YAML_VS_PARAMS` from the module rather than restating it, so
+# adding a key to that tuple extends the coverage automatically.
+
+def _fabricated_run_dir(tmp_path, flat: dict, keys: tuple[str, ...]):
+    """A run dir with the two artifacts `resolve_blend_knobs` cross-checks."""
+    import json
+
+    trial = tmp_path / "tune" / "train_trial_00000"
+    trial.mkdir(parents=True)
+    (trial / "result.json").write_text('{"training_iteration": 1}\n', encoding="utf-8")
+    (trial / "progress.csv").write_text(
+        "training_iteration,sf_wdl_frac,sf_wdl_temperature\n1,0.45,1.0\n", encoding="utf-8",
+    )
+    (trial / "params.json").write_text(
+        json.dumps({k: flat[k] for k in keys if k in flat}), encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _production_flat() -> dict:
+    from pathlib import Path
+
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults, load_yaml_file
+
+    repo_root = Path(__file__).resolve().parents[1]
+    return flatten_run_config_defaults(load_yaml_file(str(repo_root / "configs" / "pbt2_small.yaml")))
+
+
+def test_the_shipped_config_still_satisfies_the_scripts_blend_knob_gate(tmp_path) -> None:
+    """`scripts/value_optimism.py --config configs/pbt2_small.yaml` must start.
+
+    `resolve_blend_knobs` runs before any model or data work and REQUIRES every
+    key of `_CROSSCHECK_YAML_VS_PARAMS` to be present in the flattened config —
+    deliberately, because its docstring refuses to let an absent key fall back to
+    the neutral value. So deleting one of those keys from the production yaml is
+    not a documentation defect, it is the script failing to run at all.
+    """
+    from scripts.value_optimism import _CROSSCHECK_YAML_VS_PARAMS, resolve_blend_knobs
+
+    flat = _production_flat()
+    missing = [k for k in _CROSSCHECK_YAML_VS_PARAMS if k not in flat]
+    assert not missing, (
+        f"configs/pbt2_small.yaml no longer sets {missing}, which "
+        f"scripts/value_optimism.py requires to be present. Restore the key(s) — "
+        f"the script raises SystemExit at startup without them."
+    )
+    resolved = resolve_blend_knobs(flat, _fabricated_run_dir(tmp_path, flat, _CROSSCHECK_YAML_VS_PARAMS))
+    for key in _CROSSCHECK_YAML_VS_PARAMS:
+        assert key in resolved
+
+
+def test_the_blend_knob_gate_actually_fails_when_a_required_key_is_absent(tmp_path) -> None:
+    """The positive control for the test above: prove the gate can go red.
+
+    Without this, `..._still_satisfies_...` would pass on a `resolve_blend_knobs`
+    that had quietly been softened into a `.get(key, neutral)` — which is the
+    `reco_diff misses absent keys` shape the function exists to refuse.
+    """
+    from scripts.value_optimism import _CROSSCHECK_YAML_VS_PARAMS, resolve_blend_knobs
+
+    flat = _production_flat()
+    run_dir = _fabricated_run_dir(tmp_path, flat, _CROSSCHECK_YAML_VS_PARAMS)
+    for key in _CROSSCHECK_YAML_VS_PARAMS:
+        without = {k: v for k, v in flat.items() if k != key}
+        with pytest.raises(SystemExit, match=rf"{re.escape(key)} is absent from the config"):
+            resolve_blend_knobs(without, run_dir)

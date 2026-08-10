@@ -180,7 +180,9 @@ selfplay:
   #   defensive fallback at [tune/trial_config.py] is structurally unreachable because the
   #   key is always materialised. games_per_iter_ramp_iters is NOT restart-required, so a live
   #   yaml edit arming the ramp would then give 1 game in the first iteration instead of 440.
-  #   This is the one key of the audited set that is NOT safe to delete.
+  #   One of FIVE audited keys that are NOT safe to delete: this one, lr_T0 and lr_T_mult (a
+  #   yaml-flat consumer whose fallback differs), and both sf_search_dampen_* (a consumer that
+  #   raises on absence). Each ships a `⚑ RETAINED` block; the other 22 were deleted.
   games_per_iter_start: 440   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
   # 2026-07-24: 0.35 -> 0.50, PAIRED with the in-flight-abandonment fix (PR #224).
@@ -842,11 +844,30 @@ train:
   sf_wdl_draw_scale: 0.55   # sf_eval row mask: rescale game-drawn rows. NOT the value blend.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
   # DELETED sf_wdl_temperature: 1.0 is the IDENTITY -- [train/losses.py] skips the p^(1/T)
-  #   softening at exactly 1.0; consumer default matches ([train/trainer.py] _f(...,1.0))
-  # DELETED sf_search_dampen_sf_low: 0.0 = off ([train/losses.py] multiplies by it); consumer
-  #   default matches ([train/trainer.py] _f(...,0.0))
-  # DELETED sf_search_dampen_sf_high: 0.0 = off ([train/losses.py] multiplies by it); consumer
-  #   default matches ([train/trainer.py] _f(...,0.0))
+  #   softening at exactly 1.0; consumer default matches ([train/trainer.py] _f(...,1.0)).
+  #   [scripts/value_optimism.py] names this key too, but only in _REALIZED_FROM_PROGRESS and
+  #   _NEUTRAL_BLEND_KNOBS: it reads the REALIZED value out of progress.csv and never off the
+  #   yaml flat dict, so absence here is invisible to it. Contrast the two sf_search_dampen_*
+  #   keys below, which that same script REQUIRES to be present in the config
+  # ⚑ RETAINED, do not delete sf_search_dampen_sf_low: a SECOND consumer REQUIRES THE KEY TO
+  #   BE PRESENT, and it is not a `.get(key, default)` any name-shaped scan can see.
+  #   [scripts/value_optimism.py] lists this key in the module-level constant tuple
+  #   _CROSSCHECK_YAML_VS_PARAMS and reaches it through a LOOP VARIABLE in
+  #   resolve_blend_knobs, which raises SystemExit("... is absent from the config; it must be
+  #   present to be checked") on the flat dict built by flatten_run_config_defaults(--config)
+  #   -- before any model or data work, so deleting the key breaks that script at startup.
+  #   The requirement is deliberate, not incidental: the function's docstring refuses to let
+  #   an absent key fall back to the neutral value, which is the `reco_diff misses absent keys`
+  #   defect shape. Inert on the TRAINING path only (0.0 = off, [train/losses.py] multiplies
+  #   by it; consumer default matches, [train/trainer.py] _f(...,0.0))
+  sf_search_dampen_sf_low: 0.0  # Trust objective SF-low labels when search says winning; final outcomes can reflect curriculum weakness.
+  # ⚑ RETAINED, do not delete sf_search_dampen_sf_high: same second consumer, same mechanism --
+  #   [scripts/value_optimism.py] requires this key's presence via _CROSSCHECK_YAML_VS_PARAMS and
+  #   resolve_blend_knobs raises SystemExit without it. Inert on the training path
+  #   ([train/losses.py] multiplies by it; consumer default matches [train/trainer.py]
+  #   _f(...,0.0)), and never reached there. A `# DELETED` note is not a guard, so both dampen
+  #   keys stay, exactly as lr_T0/lr_T_mult and games_per_iter_start do
+  sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
   # 2026-07-26 (PR #247): refuse a warm start whose configured lr exceeds the
@@ -911,8 +932,9 @@ tune:
   #   len(trials)>1 branch, so dead at num_samples: 1. Resolves unchanged at 0.25
   # DELETED gpbt_resample_probability: cross-trial only ([tune/harness.py]); its only reader is
   #   GPBTPairwiseScheduler._get_new_config ([tune/gpbt.py]), reached only for a trial in the LOWER
-  #   QUANTILE -- and Ray 2.53.0's PopulationBasedTraining._quantiles() returns ([],[]) whenever
-  #   len(trials)<=1, which gpbt.py does not override. Unconditionally dead at num_samples: 1. DRIFT:
+  #   QUANTILE -- and PopulationBasedTraining._quantiles() returns ([],[]) whenever
+  #   len(trials)<=1, which gpbt.py does not override. Read on the INSTALLED Ray, 2.54.0, not on
+  #   a remembered version. Unconditionally dead at num_samples: 1. DRIFT:
   #   resolves to the argparse default 0.05, not 0.20 -- re-add before raising num_samples above 1
   num_samples: 1
   max_concurrent_trials: 1
@@ -1230,10 +1252,12 @@ tune:
   search_smolgen: false
   search_nla: false
   search_optimizer: false
-  # DELETED search_optimizer_choices: read at [tune/harness.py] but only under the
-  #   search_optimizer gate, which is false -- and the value is inert even if that gate opens:
-  #   cosmos_fast is not in the allowed set ['nadamw','adamw','muon','aurora','soap'], so it filters
-  #   to empty and BOTH ['cosmos_fast'] and the argparse default None return that same allowed list.
+  # DELETED search_optimizer_choices: the READ at [tune/harness.py]
+  #   (_optimizer_candidates_from_config) is UNCONDITIONAL -- what the search_optimizer flag
+  #   gates is only the USE of its return value, so "gated" describes the consumer, not the
+  #   read. Inert anyway, on the value: cosmos_fast is not in the allowed set
+  #   ['nadamw','adamw','muon','aurora','soap'], so it filters to empty and BOTH ['cosmos_fast']
+  #   and the argparse default None return that same allowed list, gate open or shut.
   #   DRIFT: resolves to None
 
   # Expanded PB2 search: opponent_strength stagnated at ~18.7 for 80+ iters
