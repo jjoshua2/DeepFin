@@ -1075,13 +1075,13 @@ would move the ruler with the arm.)
 | hop | site | evidence |
 |---|---|---|
 | yaml → flat config | `flatten_run_config_defaults` | `policy_target_temp` is in the live-yaml allowlist, `utils/config_yaml.py:246` |
-| flat config → ctor kwargs | `trainer_kwargs_from_config`, **`trainer.py:1603`** | literal `float(config.get("policy_target_temp", 1.0))` — spelled as a literal `config.get` on purpose so `tests/test_startup_only_config_keys.py` can see it |
+| flat config → ctor kwargs | `trainer_kwargs_from_config`, **`trainer.py:1626`** | literal `float(config.get("policy_target_temp", 1.0))` — spelled as a literal `config.get` on purpose so `tests/test_startup_only_config_keys.py` can see it |
 | ctor kwargs → Trainer | `tune/trainable.py:759` splat (bound at `:756`) | `tests/test_policy_target_reshape.py` AST-asserts nothing mutates the dict between bind and splat (that mutant SURVIVED review #2) |
-| Trainer → attribute | **`trainer.py:2095`** | `self.policy_target_temp = float(...)`, then `retemper_main_policy_target(torch.ones(1,2), temp=self.policy_target_temp)` VALIDATES it at construction |
-| attribute → loss | `Trainer._loss_kwargs` (**`trainer.py:2459`**, the entry at **`:2464`**) → `compute_loss` → `retemper_main_policy_target` (**`losses.py:771`**) | eval is separately pinned to 1.0 at **`trainer.py:2507`** |
-| the reshape itself | `losses.py:406`, gating on `policy_target_temp_active` (**`losses.py:312`**) | one predicate shared by the early return and the log line |
-| observability | the print at **`trainer.py:2225`**, the LAST statement of `__init__` | all three fields are reads; see below |
-| drift | `_STARTUP_ONLY_TRIAL_KEYS` (`tune/trainable_config_ops.py:575`) | the launch value CANNOT change mid-run; a live yaml edit skips **this key only**, warns, and the rest of the reload still applies — see the ⚑ below |
+| Trainer → attribute | **`trainer.py:2118`** | `self.policy_target_temp = float(...)`, then `retemper_main_policy_target(torch.ones(1,2), temp=self.policy_target_temp)` VALIDATES it at construction |
+| attribute → loss | `Trainer._loss_kwargs` (**`trainer.py:2482`**, the entry at **`:2487`**) → `compute_loss` → `retemper_main_policy_target` (**`losses.py:813`**) | eval is separately pinned to 1.0 at **`trainer.py:2530`** |
+| the reshape itself | `losses.py:448`, gating on `policy_target_temp_active` (**`losses.py:317`**) | one predicate shared by the early return and the log line |
+| observability | the print at **`trainer.py:2248`**, the LAST statement of `__init__` | all three fields are reads; see below |
+| drift | `_STARTUP_ONLY_TRIAL_KEYS` (`tune/trainable_config_ops.py:576`) | the launch value CANNOT change mid-run; a live yaml edit skips **this key only**, warns, and the rest of the reload still applies — see the ⚑ below |
 
 ⚑ **AN EARLIER REVISION OF THAT LAST ROW SAID "a live yaml edit is rejected for
 the whole reload". THAT IS THE *UNKNOWN-KEY* MODE AND IT IS WRONG HERE**, and
@@ -1150,7 +1150,7 @@ is precisely this codebase's signature defect, so it is now closed in code
 rather than argued around:
 
 ```
-chess_anti_engine/train/trainer.py:2225, the LAST statement of Trainer.__init__:
+chess_anti_engine/train/trainer.py:2248, the LAST statement of Trainer.__init__:
     [trainer] policy_target_temp=1.5 reshape_active=True eval_pinned_temp=1.0
     [trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0
 ```
