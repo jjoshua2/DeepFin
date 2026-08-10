@@ -135,11 +135,18 @@ training compute, and one that loses the direct audit is killed without training
   `scripts/convert_shards_v2_threats.py` — policy/soft-policy divergence, offline
   SF-target retuning, offline v1→v2_threats shard conversion.
 - **Production Syzygy is the colon-separated pair**
-  `/home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz` — the paths
-  `configs/pbt2_small.yaml` uses. Despite the local directory's name it holds 3–6 man
-  WDL (`.rtbw`) plus 3–5 man DTZ (`.rtbz`); 6-man DTZ is on the external drive at
-  `/mnt/e`. Pass the full pair as `SyzygyPath` to BOTH engines for a
+  `/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6` —
+  `configs/pbt2_small.yaml`'s `syzygy_path`, and **both halves are local**. The directory
+  names lie, so read them off the contents rather than the name: `syzygy_3-4-5` holds 3–6
+  man WDL (`.rtbw`, 510 files) plus 3–5 man DTZ (`.rtbz`, 145); the 6-man DTZ that supplies
+  root ranking and 50-move-exact conversion is the separate local `data/syzygy_6` (365
+  `.rtbw` + 365 `.rtbz`, 151G). Pass the full pair as `SyzygyPath` to BOTH engines for a
   production-equivalent match; `data/syzygy_3-4man` is a smoke-test set only.
+  `tests/test_param_count.py` pins this pair to the config, because the claim above is
+  exactly the kind that drifts: production moved off the external drive on 2026-07-14 and
+  15 research configs (14 `configs/exp_*.yaml` plus `configs/bt4_aurora_asha.yaml`, all
+  default-off) still point their second half at `/mnt/e/chess/syzygy_6_dtz` — same tables,
+  external drive, **not what production reads**.
 
 ## Non-obvious training facts
 
@@ -177,6 +184,14 @@ Python 3.10+ with `from __future__ import annotations`; type hints on functions 
 dataclasses; tests in `tests/`. 4-space indent; `snake_case` functions and modules,
 `PascalCase` classes, `test_*` tests; imports grouped stdlib / third-party / local.
 Write code that reads like the code around it.
+
+Add or update tests with every behaviour change, and prefer deterministic units around
+encoding, replay, MCTS and training targets. For distributed or selfplay-path changes
+also run `tests/test_e2e_smoke.py` (`-k gumbel_selfplay_smoke` for the search path) — it
+boots the real selfplay → replay → train → checkpoint chain, so it catches wiring that
+unit tests mock away. The `scripts/e2e_distributed_smoke_gumbel.sh` the old `AGENTS.md`
+named alongside it has not existed since `dcb31fdf2` (2026-04-18); the instruction
+outlived the script by four months, which is the drift this file exists to stop.
 
 Run `./scripts/lint.sh <paths>` after editing, **and `./scripts/lint.sh` with no
 arguments before committing**; the gate is kept at zero findings repo-wide with no

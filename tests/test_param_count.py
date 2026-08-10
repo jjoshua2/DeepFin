@@ -25,6 +25,7 @@ and edit the docs -- not to update the constants to whatever came out.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -165,6 +166,36 @@ def test_agents_md_stays_a_pointer_at_claude_md() -> None:
     text = agents.read_text(encoding="utf-8")
     assert "CLAUDE.md" in text, "AGENTS.md must point at CLAUDE.md"
     assert len(text) < 600, "AGENTS.md is a pointer, not a second copy of the rules"
+
+
+def test_claude_md_syzygy_pair_matches_the_production_config() -> None:
+    """The documented tablebase pair must be the pair the config actually uses.
+
+    Same defect as the param count, in path form. ``CLAUDE.md`` carried
+    ``.../syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz`` for a month after commit
+    ``6a02200f2`` (2026-07-14) moved production to the local
+    ``data/syzygy_6``, and the sentence *instructs an action* -- "pass the full
+    pair as ``SyzygyPath`` to BOTH engines" -- so following the stale doc aimed
+    an engine at an 82G external-drive copy while production read a 151G local
+    one. Prose next to a config is not pinned by anything, which is why it drifts.
+
+    Two assertions, and the second is the one that earns its keep. The first
+    fails when the config moves and the doc does not. The second fails when the
+    doc grows a SECOND pair -- the realistic regression here, since the stale
+    path is still live in 15 research configs (14 ``configs/exp_*.yaml`` plus
+    ``configs/bt4_aurora_asha.yaml``) and gets copied back in good faith. A bare
+    "is the right pair mentioned" check passes happily on a file that also
+    states the wrong one.
+    """
+    flat = flatten_run_config_defaults(load_yaml_file(str(_REPO / "configs" / "pbt2_small.yaml")))
+    pair = str(flat["syzygy_path"])
+    assert ":" in pair, "production syzygy_path is supposed to be a colon-separated pair"
+
+    text = (_REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    assert f"`{pair}`" in text, f"CLAUDE.md must quote the production syzygy pair {pair}"
+
+    quoted = set(re.findall(r"/[^\s`]*syzygy[^\s`]*:/[^\s`]*", text))
+    assert quoted == {pair}, f"CLAUDE.md states a non-production syzygy pair: {quoted - {pair}}"
 
 
 def test_claude_md_smolgen_share_matches_the_model(production_model: nn.Module) -> None:
