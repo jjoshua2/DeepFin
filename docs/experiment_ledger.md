@@ -82,6 +82,7 @@ and 2026-07-02):
 
 | snapshot | state captured | restore |
 |---|---|---|
+| `data/salvage/pre_search_authority_20260809` | 2026-08-09 14:13–14:2x, trial **379f6 iter 672** (ckpt_000671, **817 shards, 2.9G**) — banked as the pre-registered revert point for the **search-authority bundle** (`gumbel_c_scale` 0.025 → 0.1 + `gumbel_policy_temp` 1.0 → 1.5), prereg `8fec387a3` + Amendment 2 `99031d9af`. Export guard verified: the exporter printed `metric=672.000 iter=672` (so `--metric training_iteration` selected CURRENT state, not the best-metric row) and `newest on disk: checkpoint_000671` matched the exported ckpt. **Shard count verified NON-EMPTY against live: 817 banked vs 816 in `runs/pbt2_small/replay/<trial>/replay_shards` at bank time** — the #290 zero-shard failure mode is ruled out by counting, not by the exit code. Contains `trainer.pt` 654M (weights+optimizer), `pid_state.json`, `rng_state.json`, `holdout.npz`, `gate_state.json`, `best.json`. ⚠ `trial_meta.json` is an EMPTY dict `{}` — provenance comes from the exporter log line and this row, not from that file. State at bank time: the **08-06 reduced-SF relaunch bundle** — `gumbel_c_scale: 0.025`, `gumbel_topk: 32`, `gumbel_scale: 1.0 → gumbel_scale_after: 0.5` (root noise ON all game), `mcts_simulations: 256`, `playout_cap_fraction: 0.25`, `fast_simulations: 32`, `selfplay_fraction: 0.8`, `sf_nodes: 75000`, `sf_multipv: 6`, `zclip_max_norm: 6.5`, `diff_focus_enabled: true` / `pol_scale 3.5`, seeding ON (`dole_per_iter: 1`, `max_fraction: 0.08`). **This is the pool to restore if the search-authority bundle goes wrong**, and it is genuinely data-affecting-capable: the bundle changes the STORED policy target, so a yaml revert alone would leave ~a day of tempered-target rows in the replay window. | `./scripts/train.sh salvage-restart data/salvage/pre_search_authority_20260809` |
 | `data/salvage/pre_restart_bundle_20260731` | 2026-07-31 12:54, trial 13a9f **iter 477** (ckpt_000476, **833 shards, 4.0G**) — banked immediately before the restart that deploys the merged bundle: **#291** (`train.sh stop` drains selfplay workers instead of discarding in-flight games) and **#289** (`sp=` harvest provenance tag). No yaml keys change, so the all-or-nothing live validator is not exercised. **⚑ THIS IS THE FIRST COMPLETE REVERT POINT SINCE 2026-07-27.** Every snapshot from 07-27 to 07-30 is weights-only (0 shards, 656M) because `salvage.py` chose its source by `is_dir()` on an EMPTY decoy directory and reported `shards=0` as success — fixed in **#290**, and this export is the end-to-end proof on production: 833 of the real shards copied, `iter=477` matched live, `newest on disk: checkpoint_000476` matched the exported ckpt. State at bank time: seeding ON (`opening_fen_dole_per_iter: 1`, `opening_fen_dole_max_fraction: 0.08`, realized 6.67% of games / 4.14% of rows), pool `blindspot_fens_retire_474.txt`, `zclip_max_norm: 6.5`, `selfplay_resume_inflight_games: true`. **This is the pool to restore if the bundle goes wrong**, and unlike its recent predecessors it can serve a genuinely data-affecting rollback. | `./scripts/train.sh salvage-restart data/salvage/pre_restart_bundle_20260731` |
 | `data/salvage/pre_restart_20260730` | 2026-07-30 11:05, trial 13a9f **iter 368** (ckpt_000367, **0 shards, 656M — see the warning**) — banked immediately before the restart that deploys **#283/#284/#285/#286/#287** (all plumbing or flag-off) plus the ONE data-affecting change, `feature_dropout_p` 0.10 → 0.0. Export guard verified: `iter=368` matched live, and `newest on disk: checkpoint_000367` matched the exported ckpt. Contains `trainer.pt` (weights+optimizer), `pid_state.json`, `rng_state.json`, `holdout.npz`, `trial_meta.json`. **⚑⚑ WARNING — THIS SNAPSHOT HAS NO REPLAY WINDOW, AND NEITHER DOES ANY RECENT ONE.** `salvage.py:461-463` falls back to `tune_replay_root_override` only when the trial's `replay_shards` **is not a dir** — it IS a dir but EMPTY, so the fallback never fires and **0 of the 842 real shards (3.4G, at `runs/pbt2_small/replay/<trial>/replay_shards`) are copied**, reported as success via a `shards=0` log line that nothing checks. Signature-defect class: a guard that cannot fire plus a success report that does not mean what it says. Tracked as a fix task. **Adequate for THIS restart anyway, and the reason is specific:** `feature_dropout_p` is applied at `trainer.py:2876` inside `_run_optimizer_step` to `batch["x"]` — a train-time augmentation that changes NO recorded data, so the replay window is bit-identical either way and the revert is "set 0.10 + restart". **Do NOT rely on this snapshot for a data-affecting rollback** — for those, copy the shards from the override root by hand until the fallback is fixed. | `./scripts/train.sh salvage-restart data/salvage/pre_restart_20260730` |
 | `data/salvage/pre_audit_deploy_20260726` | 2026-07-26 ~23:00, trial 13a9f **iter 65** (ckpt_000064, 821 shards, 3.6G) — banked immediately before the deploy restart that merges PRs **#260/#262/#263/#264/#265/#266/#267**. Export guard verified: printed `iter=65` matched live iter 65, and `newest on disk: checkpoint_000064` matched the exported ckpt, so the `result.json`-is-a-sync-copy gotcha is ruled out by the guard rather than assumed. State at bank time: boot512 lineage at 3e-5, seeding OFF (`opening_fen_dole_per_iter: 0`), `holdout_frozen: 1` / `test_replay: 2000`, and the live yaml already pinned to the REALIZED `soft_policy_temp: 2.0` and `diff_focus 6.0/3.5/3.0/0.025`. **This is the one to restore if the six-PR deploy goes wrong** — note #260 changes per-group `weight_decay` re-application, so the optimizer state, not just the weights, is what this preserves. | `./scripts/train.sh salvage-restart data/salvage/pre_audit_deploy_20260726` |
@@ -263,6 +264,31 @@ always re-dump and pair.
   knob as live unless proven otherwise.
 
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-09) — selfplay search policy temperature (`gumbel_policy_temp` 1.0 → 1.5), PR #379
+
+> **⚑ SUPERSEDED THE SAME DAY — THE HEADER AND STATUS BELOW ARE NO LONGER TRUE.**
+> `gumbel_policy_temp: 1.5` was deployed live at **iteration 736** as one arm of the
+> search-authority bundle (`7f4304db9`), and PR #379 merged to `main` at
+> **2026-08-10 03:03Z** as `ef401b93f`. In-effect was verified on all four workers
+> (`gumbel_policy_temp=1.5 tempered=True`). The "NOTHING IS LIVE / the yaml is NOT
+> edited" status was correct when written and became false ~4h later; it is preserved
+> rather than rewritten so the pre-registration reads as it did before the numbers came in.
+> Launch conditions, the resumed-game gate, and the readout live in Amendments 13–16.
+>
+> **Two live consequences recorded at merge time:**
+> 1. **Before `ef401b93f`, `main` could not boot against the live yaml at all.** The
+>    live key was unknown to main's schema and `run.py:~94` calls
+>    `flatten_run_config_defaults` *before* argparse and outside any `try`, so it raised
+>    `ValueError: Unknown keys in yaml 'selfplay:' section: ['gumbel_policy_temp']` and the
+>    process never started. This is NOT the survivable "unknown key rejects the reload"
+>    mode — that one only exists mid-run. Verified by execution before and after the merge
+>    (after: accepted, 307 keys, `gumbel_policy_temp = 1.5`).
+> 2. **`scripts/audit_targets.py` does not carry the knob.** Its RL profiles read
+>    `gumbel_c_scale` / `gumbel_topk` / `volatility_*` from the live yaml but NOT
+>    `gumbel_policy_temp`; a single CLI `--policy-temp` (default 1.0) applies to every
+>    profile including PLAY. Now that the yaml carries 1.5, **the audit-first ruler scores a
+>    search shape production does not run** — the same gap PR #379 closed for
+>    `arena_standard`. Harmless while the default held; it is a ruler-validity defect now.
+>    Do not quote an `audit_targets` number against post-736 production until this is fixed.
 
 **Status: plumbing merged-pending (PR #379, default 1.0 = no-op). NOTHING IS
 LIVE. Deployment is restart-gated and the operator has not authorised a
@@ -21574,6 +21600,8243 @@ Concern withdrawn.
 repo-wide grep plus `crontab -l` shows nothing consumes exit 4 — `ratchet_slope.py`
 is hand-run and reaches no retry loop.
 
+## ⚑⚑ PRE-REGISTRATION (2026-08-01 21:4x) — CAN HELD-OUT POLICY LOSS BE IMPROVED AT ALL FROM THE BANKED ITER-478 STATE? Offline, training DOWN, GPU free.
+
+Written BEFORE any arm was run. The only numbers that existed first are harness
+facts: the step-0 held-out value, throughput, and the split/desync audit below.
+
+### The question, as a binary
+
+Search still beats the net by 32 cp and the search-output entropy is frozen across
+477 iterations, yet the swap rig measures the net getting WORSE (+8.44 cp raw policy,
++11.34 cp [+4.68,+18.20] in-rig, ~73 % policy prior). The improvement operator works;
+the improvement does not stick. **Is the head's held-out policy loss movable at all
+from the banked state, by any data-side lever?**
+
+### Ruler — built here, NOT `holdout.npz`
+
+`holdout.npz` bundled with checkpoints 474/476/478 is **10.13 % SF-desync
+contaminated and frozen**, so it never ages out. It is not used. Instead:
+
+- `evalA` — the newest 100 desync-clean shards of the post-quarantine window,
+  **177,256 rows / 10,278 games**, `has_sf_wdl & ~has_sf_multipv_raw` fraction
+  **exactly 0.000000** (printed by the rig; it aborts on any non-zero).
+- `evalB` — a contiguous mid-window block of 60 clean shards, **101,804 rows /
+  5,266 games**, desync fraction **exactly 0.000000**. Replication set.
+- Both are scored by a **full deterministic pass** through production's own
+  `Trainer._iter_full_pass_batches` (mirror pinned 0.0, no SF rebuild, no
+  WDL rebalance, no priority weighting), every row exactly once, per-row CE dumped.
+- **Split is by GAME.** `game_id` sets were computed for all 712 window shards and
+  all 10,708 historical shard dirs. Any shard sharing a game with either eval set is
+  excluded from every train pool (38 window shards dropped for exactly this). Asserted
+  and printed: train x eval game overlap = **0** for all four train pools.
+- Criterion is **SF-independent**: `policy_target` is the net's own MCTS visit
+  distribution; the desync only empties the SF label block. Eval rows are nonetheless
+  desync-zero so the claim does not have to be relied on.
+
+### Arms — a 2x2 that breaks the pool/views confound, plus a scale arm
+
+All arms: batch **512**, **`--chunk-steps 88`** (production's realized per-iteration
+step budget, so the `sqrt_release` LR sawtooth — flat at base for 80 % of each window,
+0.1x at the trough — is reproduced rather than smeared over one long window),
+**3,520 steps = 40 production iterations**, seed 0, full `configs/pbt2_small.yaml`,
+model + optimizer + scheduler restored from the banked `trainer.pt` via
+`Trainer.load` (step 94062; base LRs 6e-4 matrix / 3e-5 aux).
+
+| arm | pool | shards | rows | breadth | recency | views/row |
+|---|---|---|---|---|---|---|
+| `A0_CONTROL` | post-quarantine window | 514 | 923,705 | ~19 h | current | 1.95 |
+| `A2_WIDE` | uniform across 12 window snapshots | 495 | 925,048 | **~25 d** | old | 1.95 |
+| `A3_OLDNARROW` | one 07-11..07-14 block | 503 | 925,533 | ~3 d | old | 1.95 |
+| `A1_BIG` | window + all clean history | 5,244 | 9,773,686 | ~25 d | mixed | **0.18** |
+| `NEG` | post-quarantine window, `policy_target` permuted within every batch | 514 | 923,705 | — | — | 1.95 |
+| `A0b_SEED1` | = A0, seed 1 | 514 | 923,705 | — | — | 1.95 |
+
+**The confound this design breaks.** Rows, views/row and optimizer steps are
+IDENTICAL across A0/A2/A3; only the time-breadth and the staleness of the pool move.
+`A2 vs A3` is breadth at matched staleness; `A3 vs A0` is staleness at matched
+breadth. **`A1` cannot be matched** — with pool P, steps S, batch B, `views = SB/P`,
+so 10x the distinct rows at fixed steps necessarily means 1/10 the views. That is
+stated, not hidden: A1 is the "more distinct rows per step" arm and is confounded
+with views by construction, exactly as the identity requires.
+
+### Pre-committed decision rule
+
+Metric of record: **held-out policy cross-entropy on `evalA`**, arm's final state vs
+the **step-0 (iter-478) state on the identical rows**, paired **per game**, 95 % CI
+from a 10,000-resample **game-cluster** bootstrap.
+
+- **YES / big**: some arm improves CE by **>= 0.05 nats** with the 95 % CI excluding 0.
+- **YES / delicate**: improvement in **[0.01, 0.05)** nats, CI excluding 0. Reported
+  as improvable only with a delicate instrument — which, given we are ~500 Elo below
+  Cheese and should be in the easy-gains regime, is itself the finding.
+- **NO**: no arm improves by >= 0.01 nats with a CI excluding 0.
+- **VOID**: `NEG` improves by >= 0.01 nats. A screen whose shuffled-target control
+  also improves is measuring an artifact and reports nothing else.
+- Secondary, must not contradict: held-out `argmax_agree`. Primary and secondary
+  moving in opposite directions => UNRESOLVED, not a win.
+- `evalB` replicates. A verdict that flips between evalA and evalB => UNRESOLVED.
+- Noise floor = the paired A0-vs-A0b difference at 3,520 steps. Any effect that does
+  not exceed it is reported as inside the floor regardless of its own CI.
+
+### Stated in advance, so it cannot be a post-hoc excuse
+
+1. 3,520 steps x 512 = 1.80 M draws is **40 production iterations (~7 h of live
+   training)**. The memorisation under test accumulated over ~94,062 steps. This
+   screen measures whether the MARGINAL 40 iterations can be made to move the
+   held-out prior. A null does NOT prove a from-scratch run under the same data
+   would fail; it does say no data-side lever repairs the current head.
+2. `A2`/`A3` pools are 8-21 days stale, so their targets came from an earlier net.
+   A2 or A3 WINNING is clean evidence. A2 or A3 LOSING is ambiguous (breadth helped,
+   staleness hurt) — except for `A2 vs A3`, where staleness is matched.
+3. Train-side desync: `train_recent` retains **228 desync rows of 918,516 labelled
+   (0.000248)**; the other three pools are exactly 0. Not excluded from train because
+   removing them costs 17 % of the window's shards, and the criterion is policy.
+4. Temperature scan (11 values, 0.7-3.0) is computed inside the same forward pass at
+   every probe. It is **not** an arm and cannot answer the binary question — a
+   temperature cannot change `argmax_agree` — but it separates "the excess is
+   miscalibration" from "the excess is ignorance". Reported as a diagnostic.
+
+### ⚠ THE ROWS ARE HELD OUT FROM THE ARMS, NOT FROM THE LIVE RUN — stated before the numbers
+
+Every shard in `evalA`/`evalB` was inside the live replay window before the bank, so
+the iter-478 net **already trained on these rows**. No post-bank data exists (the run
+is paused; the live trial dir tops out at the same shard 033951 as the bank), so a
+never-seen ruler cannot be built from disk at all.
+
+This is not fatal, and the direction of the bias is the safe one: prior exposure makes
+these the rows the head should find EASIEST to fit, and the exposure is identical for
+the step-0 baseline and for every arm. **A null on previously-seen rows is a stronger
+null than a null on unseen rows.** What it does forbid is reading the absolute level as
+a generalization gap; only the paired deltas are interpreted.
+
+### Instrument verified against the production call path, not its name
+
+`Trainer.eval_full_pass(evalB).policy_loss` = **1.1004641** vs this rig's per-row probe
+CE = **1.100215** on the identical buffer — 0.00025 nats apart, which is the
+batch-mean-of-batch-means vs row-exact-mean difference and nothing else.
+
+Step-0 (iter-478) on `evalB`, full pass, 101,804 rows: **CE 1.10022, target-entropy
+floor 0.65758, excess 0.44263, argmax_agree 0.72007.**
+
+⚠ For the record, this does NOT reproduce the 0.8984 excess / 0.5503 agreement that the
+07-31 remedy screen and views ladder used as their held-out baseline. Those came from a
+40-batch SAMPLED probe on a freshly-built `DiskReplayBuffer` — i.e. drawn WITH
+replacement, WDL-rebalanced, priority-weighted, and taken before the >=40 warm draws
+that buffer's own seeding rule requires. On the production full-pass ruler the head sits
+at roughly HALF the excess and much higher agreement than those entries report. The
+verdicts in them were paired within their own harness and are not thereby overturned,
+but the absolute level should not be quoted.
+
+### Order of execution (pre-committed)
+
+`A0_CONTROL`, `NEG_SHUFFLE`, `A1_BIG`, `A2_WIDE`, `A3_OLDNARROW`, `A0b_SEED1`. Any arm
+not reached inside the session is reported as NOT RUN, not silently dropped. Step budget
+is fixed at 3,520 for every arm; if time runs short, arms are dropped whole rather than
+shortened, so every reported comparison stays matched.
+
+### AMENDMENT (2026-08-01 21:5x), written BEFORE any arm ran — prior-art reconciliation with the 07-31 streaming rig
+
+The streaming rig (this file, ~line 17840) already ran windows 100k/200k and views
+2.5/5.0 and reported: window null at views 2.5; views 5.0 worse than 2.5 by mean
++0.0733 nats; **seed-only control span 0.0640 nats**; run-to-run non-determinism
+**0.0131 nats** on bit-identical programs. Four consequences, all adopted here.
+
+1. **Its views result and mine are not the same measurement, and together they
+   decompose the axis.** In that rig `B0` vs `A0` changed views by changing STEPS at a
+   fixed pool (7,724 vs 3,862), so "more views" and "twice the optimisation" are one
+   statement there. Here every arm gets **exactly 3,520 steps**; views move because the
+   POOL moves. So:
+   - `A6_QUARTER` (new arm, added by this amendment): every 4th shard of
+     `train_recent` — **129 shards, 227,918 rows, 13,009 games, spanning the identical
+     33118..33839 index range**, i.e. the same 19 h of selfplay, the same era, the same
+     opening/PID regime, one quarter of the distinct rows. views/row **7.91** vs A0's
+     1.95, at **identical total gradient steps**. `A6 vs A0` is repeats-at-fixed-steps
+     with era, breadth-in-time and step count all matched — **the separation the
+     streaming rig states it could not make.**
+   - `A1_BIG vs A0` is the same separation in the other direction (10.6x FEWER repeats,
+     same steps) but adds staleness; `A2/A3` price staleness and breadth separately.
+2. **The bar is set from MY OWN control, not from theirs.** `A0b_SEED1` is run for
+   exactly this. Anything not exceeding the measured `A0 vs A0b` paired difference is
+   reported as inside the floor. My ruler is a full deterministic pass over 177,256
+   fixed rows rather than 40 sampled batches, so I expect a much smaller floor — but
+   the number that governs is the one I measure.
+3. **Ruler non-determinism is checked, not assumed.** Every arm computes its own step-0
+   probe in a separate process on identical rows and identical weights. If those step-0
+   values are not bit-identical across arms, that difference IS the ruler's
+   non-determinism and is reported as the hard floor. (`configs/pbt2_small.yaml` uses
+   `compile_mode: max-autotune`, the suspected source; it is left as production has it
+   so the arms measure production's trainer, and the step-0 spread prices the cost.)
+4. **The question is ABSOLUTE improvement, not an arm delta.** In the streaming rig both
+   arms degraded (0.9088 -> ~1.00 / ~1.07); "one degraded less" is already known and is
+   NOT an answer here. Every number reported below is paired against **that same arm's
+   own step-0 (iter-478) value on the same rows**. An arm that degrades less than
+   another but still degrades is a FAIL under the pre-committed rule.
+
+Arm list is therefore: `A0_CONTROL`, `NEG_SHUFFLE`, `A1_BIG`, `A6_QUARTER`, `A2_WIDE`,
+`A3_OLDNARROW`, `A0b_SEED1`, in that order. Measured throughput after warm compile:
+**46 s per 88 steps**, so 3,520 steps ~ 31 min of training per arm.
+
+---
+
+## 2026-08-02 — OFFLINE SIDECAR (PRE-REGISTRATION): does the memorisation SLOPE change with PARAMETER COUNT?
+
+**Status: PRE-REGISTERED, not yet read.** Offline only; training deliberately paused,
+no live change proposed by this entry. Owner: capacity-sizing sidecar agent.
+(A concurrent, unrelated offline screen by another agent is running on the same corpus
+and the same GPU — see the entry above. Confound: GPU contention affects wall-clock
+only, never a loss value.)
+
+### Hypothesis
+
+The RL loop degrades because the net is **too large for the data rate**. If so, the
+shape of held-out policy loss vs views/row should CHANGE with parameter count: at
+production size the curve should flatten or turn UP, and the turning point should move
+to higher views/row (or disappear) as the net shrinks. The null is that all sizes
+degrade with the same shape, which would say capacity is not the lever and redirect
+effort away from a rebuild.
+
+**This is explicitly NOT the 1-epoch architecture bake-off** (May/June, ~40 variants,
+`layers12`/`heads16` within noise). One-epoch `eval_loss` is a FIT metric; the failure
+here is DEGRADATION ACROSS REPEATED PASSES, so the readout is a slope, not a level.
+
+### Arms (only net size moves)
+
+Three sizes, topology flags all pinned to production (per-layer smolgen, arc_adapter,
+split QKV, deepnorm, lc0_1858, v2_threats 175 planes). `ffn_mult_by_layer` is the
+production 16-layer profile RESAMPLED onto each arm's depth, so the FFN curve is the
+same shape at every size. Counts are by UNIQUE STORAGE (`p.untyped_storage().data_ptr()`
+dedup over `parameters()`), never `sum(state_dict numel)`:
+
+| arm | shape | smolgen (ch,hid,gen) | trainable params (unique storage) | rows/param |
+|---|---|---|---|---|
+| L (control = production) | 512 x 16 x 16 | 32, 256, 256 | **63,084,128** | 0.00297 |
+| M | 320 x 12 x 10 | 20, 160, 160 | **19,577,669** | 0.00958 |
+| S | 160 x 8 x 8 | 10, 80, 80 | **6,172,739** | 0.03038 |
+
+10.2x span. The floor on how small this family goes is the three `ValueHead`s, whose
+first layer is `64*token_dim=8192 -> 128` with `token_dim` HARD-CODED at
+`transformer.py:323`; that is ~3.2M size-independent params, so ~4-6M is not reachable
+without editing model code, and the smallest defensible arm is ~6.2M.
+
+### Data (fixed across arms — the only manipulation is net size)
+
+`data/salvage/post_quarantine_20260801/seeds/slot_000/replay_shards`, every 6th shard
+(119 of 713, spread across the whole ~33.5h pool, NOT a contiguous slice).
+
+- **Split by `game_id`, never by row** (a per-row split leaks ~23 siblings/game).
+  Held-out = games whose 64-bit-mixed `game_id` hits 1 residue in 10.
+  **train 187,537 rows / 10,680 games; held-out 21,093 rows / 1,217 games;
+  `game_id` overlap = 0** (asserted, and re-asserted on the WRITTEN arrays).
+- **Desync-clean:** every row with `has_sf_wdl` set and `has_sf_multipv_raw` clear is
+  DROPPED at build time. Realized `nopv_of_labelled` = **0.000000 on train AND on
+  held-out** (asserted; the build fails otherwise). `holdout.npz` is NOT used — it is
+  10.13% contaminated.
+- Same corpus, same seed, same rng stream => same batch order in every arm.
+
+### Ruler
+
+`held_excess = masked_mean(soft_ce(masked_logits, policy_t), pol_base) - masked_mean(H(normalize(align(policy_t))), pol_base)`
+— the `scratchpad/policy_floor.py` instrument, i.e. `losses.py` `m_policy` minus the
+entropy of the SAME tensor `soft_cross_entropy` consumes. The floor is
+model-independent, so it cancels between arms and between the train/held sets.
+Deterministic pass, fixed rows, fixed order, `mirror_prob=0.0`,
+`rebuild_sf_targets=False`. Positive control `posA` (logits := log target) measured on
+the held-out set at step 0: **+5.8e-9**, i.e. the floor is attainable — recorded here
+because it was produced by a timing smoke before registration.
+
+`torch.compile` is DISABLED for this probe (production runs `max-autotune`, the
+measured source of the 0.0131-nat run-to-run drift on bit-identical programs, and the
+between-arm effect being tested is of that size class). **AND** 2 seeds per arm are run,
+with the between-seed spread reported as the floor. Batch is 256, not production's
+realized 512: at 512 the L arm thrashes against the 32 GB card while a second offline
+job holds 13.8 GB (5.1 s/step vs 0.75 s/step) — the deviation is identical in all arms.
+
+### THE ONE DECIDING MEASUREMENT (exact command)
+
+```
+SC=/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/capsize
+PYTHONPATH=. nice -n 19 .venv/bin/python -u $SC/slope.py \
+  --corpus $SC/corpus --arm {L,M,S} --seed {0,1} \
+  --batch-size 256 --chunk-steps 176 --chunks 48 --eval-every 2 \
+  --out $SC/run_{arm}_s{seed}
+```
+48 chunks x 176 steps x 256 = 2,162,688 samples = **views/row 0 -> 11.53** (production
+runs at 5.0), evaluated every 0.481 views. One `sqrt_release` LR cycle per chunk, and a
+chunk is exactly one production iteration's worth of data (45,056 samples).
+
+Deciding statistics, per arm, computed on the resulting `held_excess(views)` curve:
+* `views_at_min` — the views/row at which held-out excess is lowest.
+* `rebound = held_excess(views=11.53) - min(held_excess)` — how far it comes back up.
+
+### PRE-COMMITTED DECISION RULE
+
+* **CAPACITY CONFIRMED** iff `views_at_min` is ordered S >= M >= L (smaller turns later
+  or never) AND `rebound` is ordered L > M > S AND `rebound(L) - rebound(S) >= 0.07`
+  nats (2x the historical sidecar floor) AND that L-S difference exceeds the
+  between-seed spread within BOTH arms.
+* **NULL — capacity is not the lever** iff all three `rebound` values agree within
+  0.07 nats AND `views_at_min` spans less than 2 eval checkpoints (0.48 views).
+* Anything else is reported as INCONCLUSIVE with the numbers shown. No rounding toward
+  either verdict.
+
+* **RIG-VALIDITY GATE (checked first).** If NO arm's held-out excess rises by >= 0.02
+  nats from its own minimum by views 11.53, AND no arm's train-to-held gap exceeds 0.15
+  nats, then the rig never entered the memorisation regime and the result is
+  **NOT TESTED**, not a null.
+
+* **NEGATIVE CONTROL, required to FAIL.** A fourth run, arm S seed 0, with every
+  policy-shaped TRAIN target (`policy_target`, `policy_soft_target`, `sf_policy_target`,
+  `sf_p0_policy_target`, `sf_p0_regret`, `future_policy_target`, `sf_move_index`,
+  `has_sf_move`) permuted across rows by one fixed permutation (legal masks NOT
+  permuted, held-out untouched). Required: shuffled-S `held_excess` stays **>= 0.30 nats
+  WORSE** than unshuffled-S at every checkpoint with views >= 1.0. If it does not, the
+  whole readout is VOID.
+
+### What this cannot decide
+
+LR is held identical across arms (production `peak_lr` 3e-5 with
+`matrix_lr_multiplier` 20). Aurora is scale-invariant (audit I21), so this is the
+defensible choice, but a per-size LR sweep is not affordable here and an arm could in
+principle be mis-tuned rather than mis-sized. Nothing here is an arena result, and
+nothing here licenses a live topology change on its own.
+
+
+## ⚑⚑ VERDICT (2026-08-02 03:1x) — **NO ARM IMPROVES THE HELD-OUT PRIOR. Every one of six data-side arms degrades it, monotonically, from the very first production iteration.**
+
+Judged against the rule committed before any arm ran. Training DOWN, offline, GPU
+free, `nice -n 19`. Rig: `scratchpad/screen.py` (session scratch), full deterministic
+pass through production's `Trainer._iter_full_pass_batches`.
+
+### The headline number
+
+**Held-out policy CE on `evalA` (177,256 rows / 10,278 games / desync 0.000000),
+paired per game against the banked iter-478 state on the identical rows, 3,520 steps
+= 40 production iterations at batch 512:**
+
+| arm | pool rows | views/row | final CE | **ΔCE vs iter-478** | 95 % CI (game-cluster) | Δagree | train pol. loss |
+|---|---|---|---|---|---|---|---|
+| **A0_CONTROL** (production) | 923,705 | 1.95 | 1.30858 | **+0.09227** | [+0.0903, +0.0942] | −0.0354 | 0.944 |
+| A0b_SEED1 (= A0, seed 1) | 923,705 | 1.95 | 1.31045 | **+0.09413** | [+0.0922, +0.0961] | −0.0351 | 0.945 |
+| A1_BIG (window + 4,730 hist shards) | 9,773,686 | 0.21 | 1.34844 | **+0.13213** | [+0.1295, +0.1348] | −0.0621 | 1.566 |
+| A6_QUARTER (every 4th window shard) | 227,918 | 7.91 | 1.36891 | **+0.15260** | [+0.1503, +0.1550] | −0.0502 | 0.724 |
+| A3_OLDNARROW (07-11..07-14 block) | 925,533 | 1.95 | 1.39806 | **+0.18174** | [+0.1787, +0.1849] | −0.0790 | 1.439 |
+| A2_WIDE (uniform over 25 days) | 925,048 | 1.97 | 1.40613 | **+0.18982** | [+0.1867, +0.1930] | −0.0768 | 1.432 |
+| NEG_SHUFFLE (targets permuted) | 923,705 | 1.95 | 68.94565 | **+67.7** | [+63.10, +72.49] | −0.5808 | 9.5e8 |
+
+`evalB` (101,804 rows / 5,266 games, desync 0.000000) replicates the ordering and the
+sign on every arm. **No arm on either ruler has a negative ΔCE at any probe.**
+
+**Verdict = NO**, on the pre-committed rule: no arm improves by ≥0.01 nats with a CI
+excluding 0; every arm's CI lies entirely on the WRONG side of zero.
+
+### Negative control: FAILED as required
+
+`NEG_SHUFFLE` drove train policy loss to **9.5e8** and held-out CE from 1.21631 to
+**68.95** with agreement 0.669 → 0.088. It does not improve; it is destroyed. That
+also proves positively that the `policy_target` gradient reaches the head and that the
+ruler reads the head — the screen is not measuring a disconnected knob. Its weakness
+is stated: it is a *destructive* control, so it certifies wiring, not subtlety.
+
+### Noise floor — measured here, not inherited
+
+- **Seed-only floor**: A0 vs A0b at step 3,520, identical config, different data
+  order and mirror draws: **+0.00187 nats [+0.00012, +0.00366]**. The smallest arm
+  effect (+0.0923) is **49x** this.
+- **Ruler non-determinism**: two SEPARATE PROCESSES scoring identical weights on
+  identical rows differ by **1.2e-07 nats** in mean CE; `agree` and `floor` are
+  bit-identical. Per-row max |Δ| 4.8e-05.
+- ⚠ **This corrects the sibling rig's numbers rather than reproducing them.** Its
+  0.0640-nat seed span and 0.0131-nat "`torch.compile` max-autotune non-determinism"
+  are **not properties of the trainer**. `compile_mode: max-autotune` is ON here,
+  unchanged from production, and cross-process agreement is 1.2e-07. Both of those
+  numbers were the *sampling variance of a 40-batch probe drawn with replacement from
+  a freshly-seeded `DiskReplayBuffer`* — which WDL-rebalances, priority-weights and
+  seeds from the newest 10 shards. A full deterministic pass removes them entirely.
+  **The instrument here is ~34x finer than the one those verdicts were read on.**
+
+### Mechanism: STEPS and REPEATS separated, which the streaming rig could not do
+
+Every arm gets **exactly 3,520 optimizer steps at batch 512**. Views/row moves because
+the POOL moves, not because the step count moves. So:
+
+| comparison | what is matched | what differs | result |
+|---|---|---|---|
+| **A6 vs A0** | steps, era, 19 h time-span, config | **views 7.91 vs 1.95** | held-out **+0.0603 WORSE**, train loss **0.724 vs 0.944 BETTER** |
+| **A1 vs A0** | steps, config | views 0.21 vs 1.95, but 90.5 % stale | +0.0399 worse |
+| **A3 vs A0** | steps, rows, views, breadth | **staleness only** (8-21 d) | **+0.0895 worse** |
+| **A2 vs A3** | steps, rows, views, staleness centre | **breadth 25 d vs 3 d** | **+0.0081 — effectively null** |
+
+Read plainly:
+
+1. **Repeats are causally harmful at fixed optimisation.** A6 quadruples views/row
+   with the step count, era, opening/PID regime and 19-hour time span all held fixed:
+   train fit IMPROVES by 0.220 nats while held-out DEGRADES by 0.060. That is
+   memorisation, isolated, with steps removed as an explanation. **The standing
+   hypothesis "too much optimisation per unit of fresh data" is confirmed on the
+   REPEATS term specifically, not merely on the step count.**
+2. **Staleness costs more than repeats.** 8-21-day-old data, at identical rows, views
+   and steps, costs **+0.0895** — as much as the entire control's degradation.
+3. **Breadth is worth nothing.** 25 days of coverage vs 3 days, everything else
+   matched, is +0.008 — inside a rounding error of the effects that matter. **The
+   "more distinct positions" lever is dead on this ruler.**
+4. **Scale does not rescue it.** 10.6x the distinct rows (9.77 M) at the same step
+   count still degrades +0.132, because the only way to get 10.6x rows is to reach
+   back into stale data, and staleness costs more than the repeats it removes.
+
+### The scissors — what a knob could EVER buy, quantified
+
+From the two matched-steps, recent-era arms the dose-response is
+**+0.0299 nats per doubling of views/row**. Naively extrapolated, zero degradation
+needs views ≈ **0.229**, i.e. **8.5x more rows at the same optimisation — 7.86 M
+FRESH rows**. At the measured ingest of ~8,987 rows/iteration and ~665 s/iteration
+that is **6.7 days of selfplay**, by which age the measured staleness penalty is
+**+0.090** — the entire thing you were trying to remove.
+
+**And the extrapolation is not supported by the one arm that tested it.** `A1_BIG`
+actually ran at views 0.21 and still degraded +0.132. So the honest statement is:
+the fresh-data pool needed to zero the repeat penalty does not exist and cannot be
+made to exist by any scheduling knob, and the only evidence at that views level says
+it would not zero it anyway.
+
+Data/param for context: **0.0202** on the post-quarantine window (1,273,501 rows /
+63,084,128 params), 0.0238 at the 1.5 M window cap, 0.1931 counting every clean shard
+ever written to disk. Against LC0's 3-5 that is **16x short even if the entire 25-day
+corpus were simultaneously fresh**, and **~150-250x short at the live window size**.
+No knob in `configs/pbt2_small.yaml` moves a 150x mismatch.
+
+### Two things that are NOT the defect (both were live hypotheses; both are now dead)
+
+- **It is not miscalibration.** An 11-point temperature scan runs inside every probe.
+  At iter-478 the optimum is **T = 1.000 exactly, gain 1.9e-07 nats**. The head is
+  already perfectly temperature-calibrated on unseen rows; the 0.584-nat excess is
+  ignorance, not overconfidence. After 3,520 production steps the optimum drifts to
+  T = 1.1 (gain 0.011 = 12 % of that arm's damage) and for A6 to T = 1.25 (gain 0.036
+  = 23 %). Overconfidence is a *symptom acquired during* the degradation and accounts
+  for at most a quarter of it. **`policy_own.log_temp` converging to 0.7533 is not the
+  problem and re-tuning it buys ~0.01 nats.**
+- **It is not a transient that a smaller step budget would catch.** `FINE_A0` probed
+  the control every 88 steps — one production iteration — for 10 iterations:
+  1.21631 / 1.22185 / 1.22767 / 1.22894 / 1.23714 / 1.23707 / 1.24035 / 1.24338 /
+  1.24797 / 1.24980 / 1.25241. **Monotone from the first iteration.** There is no
+  step count, however small, at which production training improves the held-out prior.
+
+### The live run's OWN trajectory on this ruler (eval only, 24 banked checkpoints)
+
+| iter | 360 | 400 | 430 | 450 | 455 | 460 | 465 | 470 | 475 | **478** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| evalA CE | 1.4043 | 1.4023 | 1.3881 | 1.3876 | 1.3849 | 1.3632 | 1.3335 | 1.2878 | 1.2362 | **1.2163** |
+| agree | 0.5842 | 0.5879 | 0.5923 | 0.5958 | 0.5963 | 0.6051 | 0.6189 | 0.6375 | 0.6603 | 0.6690 |
+
+**Flat for 95 iterations (−0.019 nats over iters 360→455, ~8,700 optimizer steps),
+then −0.169 nats in the final 23 iterations.** Those final 23 iterations are exactly
+when `evalA`'s shards (indices 33843-33943) entered the replay window and were trained
+on. **That is an exposure curve, not a learning curve** — and it prices prior exposure
+at **~0.17 nats**, which is the same order as every arm effect above. Quoting the late
+fall as progress would be quoting memorisation.
+
+⚠ The read has a second bias in the same direction, stated for completeness: `evalA`'s
+`policy_target` is the search output of the ~iter-470s net, so later checkpoints are
+scored against a teacher closer to themselves. Both biases favour iter-478, and even
+so the pre-exposure segment is FLAT.
+
+### What was NOT tested, and why — "unchecked" is not "clean"
+
+1. **No genuinely unseen rows exist.** Every eval shard was inside the live window
+   before the bank; the run is paused and the live trial dir tops out at the same shard
+   033951. The bias is the safe one (previously-seen rows are the EASIEST to fit, so a
+   null on them is the stronger null) but the ABSOLUTE excess level must not be read as
+   a generalization gap.
+2. **No from-scratch arm.** Every number is a 40-iteration continuation from iter-478.
+   This screen cannot say what a run trained under any of these settings FROM THE START
+   would do. A null here kills these levers as REPAIRS; it does not kill them as regimes.
+3. **No architecture, capacity, LR-family, or optimizer arm.** Only data-side levers
+   were screened. LR was left exactly as the banked scheduler restored it
+   (base 6e-4 matrix / 3e-5 aux, `sqrt_release` sawtooth to 0.1x over the last 20 % of
+   each 88-step window). **An LR arm is the obvious untested cheap lever and is NOT
+   covered by this verdict.**
+4. **No strength yardstick.** Held-out policy CE is not Elo. Nothing here was arenaed.
+5. **Train-side desync retained**: `train_recent` keeps 228 desync rows of 918,516
+   labelled (0.000248); the other three pools are exactly 0. Eval sides are exactly 0.
+6. **`policy_soft`/`sf_p0`/value legs were not ablated** — the 07-31 remedy screen
+   already killed those on a coarser ruler and they were not re-run on this one.
+
+### Consequence
+
+The knob family is closed by measurement, on an instrument 34x finer than the one that
+closed it before. **Held-out policy loss cannot be pushed down from iter-478 by any
+data-composition lever available on this disk, and the two levers that DO have real
+dose-response — repeats and staleness — are in direct opposition: removing repeats
+requires reaching for data whose staleness costs more than the repeats did.** The
+remaining directions are the ones this screen deliberately says nothing about: LR /
+optimizer family, model capacity (63.08 M params against 0.02 data/param), or a
+genuinely larger fresh-data rate.
+
+### VERDICT (same session, judged by the pre-committed rule): **CAPACITY CONFIRMED**
+
+All four pre-committed conditions met, both seeds. Rig-validity gate PASSED first
+(max rebound +0.2363 >= 0.02; max train-to-held gap +1.2966 > 0.15). Negative control
+FAILED as required at **all 22** checkpoints with views >= 1 (worse by min +10.45,
+max +706 nats; `argmax_agree` pinned at chance 0.066 throughout).
+
+**Held-out policy excess over floor (nats), seed 0 / seed 1:**
+
+| views/row | L 63.08M | M 19.58M | S 6.17M |
+|---|---|---|---|
+| 0.96 | 1.6819 / 1.6800 | 1.7213 / 1.7184 | 1.7873 / 1.7861 |
+| 2.88 | 1.5757 / 1.5690 | 1.5889 / 1.5767 | 1.6384 / 1.6316 |
+| **5.00 (production)** | **1.6125 / 1.6076** | 1.5414 / 1.5212 | 1.5715 / 1.5703 |
+| 7.69 | 1.7012 / 1.6971 | 1.5252 / 1.5131 | 1.5044 / 1.5085 |
+| 11.53 | 1.7933 / 1.8053 | 1.5910 / 1.5914 | **1.4336 / 1.4483** |
+
+| statistic | L 63.08M | M 19.58M | S 6.17M |
+|---|---|---|---|
+| `views_at_min` | **3.364 / 2.883** | 7.688 / 6.727 | **11.532 / 11.532 (never turned)** |
+| best held-out excess | 1.5706 / 1.5690 | 1.5252 / 1.5096 | **1.4336 / 1.4483** |
+| `rebound` | **+0.2227 / +0.2363** | +0.0658 / +0.0819 | **+0.0000 / +0.0000** |
+| train-to-held gap @11.53 | +1.2671 / +1.2966 | +0.6320 / +0.6555 | +0.1451 / +0.1566 |
+| held `argmax_agree` @11.53 | 0.3278 / 0.3267 | 0.3449 / 0.3483 | 0.3730 / 0.3667 |
+
+1. `views_at_min` ordered S >= M >= L in BOTH seeds. PASS
+2. `rebound` ordered L > M > S in BOTH seeds. PASS
+3. `rebound(L) - rebound(S)` = **+0.2227 / +0.2363** >= 0.07. PASS (3.2x the bar)
+4. Exceeds the between-seed spread in both arms (L max 0.0206, S max 0.0181, views>=1). PASS
+
+**The shape of the curve changes with size, and it changes monotonically.** The
+production-size net turns UP at views/row ~3.1; the 19.6M net at ~7.2; the 6.2M net
+does not turn at all inside 11.53 views. The train-to-held gap at the endpoint is
+**8.5x larger** at 63M than at 6.2M. The 10.2x smaller net finishes **0.358 nats
+better** on held-out policy and beats production size on `argmax_agree` (0.370 vs
+0.327) — i.e. it agrees more often with the search target it is trying to absorb.
+
+**At production's own operating point (views/row 5.0) the 63M net is already +0.040
+past its own minimum, while both smaller arms are still improving.** The 6.17M arm
+passes L's best-ever value at views 5.29 and keeps going.
+
+**Measured noise floor (mine, not inherited).** Full deterministic pass, seed-only
+repeat (init + batch order), 8,448 steps: |s0-s1| mean **0.0072 / 0.0136 / 0.0063**
+nats (L/M/S, views >= 1), max 0.0206 / 0.0304 / 0.0181. Every effect above is 10-30x
+that. The ruler is verified against production: this rig's `achieved` equals
+`Trainer.eval_full_pass().policy_loss` to **1.29e-04 nats** on identical rows
+(`scratchpad/.../verify_ruler.py`), and `floor` is bit-identical (0.639123700961)
+across all seven runs and all 25 checkpoints — the eval set is provably one ruler.
+
+### What this does NOT establish
+
+* **Param count and rows/param are the SAME manipulation here, by design.** The corpus
+  is fixed, so the small arm is also the data-rich arm. This cannot separate "fewer
+  parameters" from "more data per parameter"; it says the pair moves the curve.
+* **The absolute turning points are not live numbers.** At 187,537 rows the arms sit at
+  rows/param 0.00297 / 0.00958 / 0.03038 against the live window's **0.0202** — the L
+  arm is 6.8x MORE data-starved than production actually is, M is 2.1x below, and S is
+  1.5x ABOVE it. So "L turns at views 3.1" is a lower bound on where live L turns. The
+  ORDERING is the result; the abscissa is not transferable.
+* **No arena, no Elo.** This is held-out policy CE against the stored search target. A
+  better prior is the mechanism the loop needs, not a demonstrated strength gain.
+* **Value head untested** — the same slope was not measured for `wdl`.
+* **LR was not re-tuned per size** (production `peak_lr` 3e-5, `matrix_lr_multiplier`
+  20, identical in all arms). Aurora is scale-invariant (I21) so this is defensible,
+  but a mis-tuned arm is not excluded. Mitigating: `zclip_max_norm` 6.50 is an ABSOLUTE
+  cap, and the observed grad-norm medians ran HIGHER on the small arms (S up to 21.99,
+  L up to 15.95), so the cap bit HARDER on the arms that won — the handicap runs
+  against the finding.
+* Deviations, identical across arms: `use_compile=False` (in light of the corrected
+  determinism finding this was unnecessary, but it is uniform and the seed repeats
+  price the residual noise directly), and batch 256 rather than the realized 512
+  (at 512 the L arm thrashed a 32 GB card shared with a second offline job).
+
+### Relation to the same-day sibling screen
+
+That screen ran every data-side lever FROM the iter-478 checkpoint and killed them all
+as REPAIRS. This entry is the from-scratch REGIME question it explicitly did not run,
+and the two agree on mechanism: repeated optimisation over a fixed pool buys train fit
+and sells the prior, and how fast it does so scales with capacity. Neither is an arena
+result and neither on its own licenses a live topology change.
+
+
+---
+
+## CORRECTIONS to the 2026-08-02 offline absorption screen (PR #308 independent review)
+
+*Appended at EOF rather than edited in place: at the time of writing
+`docs/experiment_ledger.md` carried 554 uncommitted lines from a concurrent writer, and
+silently rewriting cells underneath that would be the exact defect these corrections are
+about. Every item below is a correction to numbers **I** wrote in the entry above; each
+was re-derived independently before being recorded, and the derivations are listed.*
+
+### C1 — the two biggest arms were SMALLER than the entry says (a real bug, already published)
+
+`scripts/holdout_policy_screen.py`'s `link_dir` symlinked each manifest shard into the
+arm's pool under its **basename**, skipping any basename already linked. Shard indices
+are REUSED across salvage bundles with different contents — `shard_033118.zarr` exists
+in `post_quarantine_20260801` with 2,000 rows and in
+`pre_sf_reallocation_ck148_20260722` with 155 — so the basename is not a key. The
+screen then printed and banked `train shards={len(tr_paths)}`, the MANIFEST's count,
+while the buffer held less. The rig's own log stated the contradiction on adjacent
+lines (`shards=10/4537` beside `train shards=5244`) and nothing read it.
+
+| pool | manifest paths | **shards actually loaded** | manifest rows | **rows actually loaded** | lost |
+|---|---|---|---|---|---|
+| `A1_BIG` | 5,244 | **4,537** | 9,773,686 | **8,442,044** | **1,331,642 (13.6 %)** |
+| `A2_WIDE` | 495 | **488** | 925,048 | **913,877** | 11,171 (1.2 %) |
+| `A0_CONTROL` | 514 | 514 | 923,705 | 923,705 | 0 |
+| `A3_OLDNARROW` | 503 | 503 | 925,533 | 925,533 | 0 |
+| `A6_QUARTER` | 129 | 129 | 227,918 | 227,918 | 0 |
+| `NEG_SHUFFLE`, `A0b_SEED1`, `FINE_A0` | = A0 | = A0 | = A0 | = A0 | 0 |
+
+So, correcting every place they appear above:
+
+- `A1_BIG` is **8,442,044 rows / 4,537 shards / 9.1x the control**, not 9,773,686 /
+  5,244 / 10.6x. Its true views/row is **0.2135**, not 0.18.
+- `A2_WIDE` is **913,877 rows / 488 shards**, not 925,048 / 495. Views/row **1.9721**.
+- The arm-design table's `views/row` column was computed from the MANIFEST and is wrong
+  for those two rows; the results table's column was computed from `len(tr_buf)` and is
+  therefore already right (0.21, 1.97). That inconsistency inside one entry is what the
+  defect looks like from the outside.
+
+**What survives.** Only two arms moved, both in the "more distinct rows" direction, and
+the design's matched-rows contrasts (`A0`/`A2`/`A3`, all exact) are untouched. `A1_BIG`
+remains the most-rows/fewest-views arm and `A2_WIDE` remains matched to `A0`/`A3` to
+within 1.2 %, so no verdict flips. What is NOT defensible is any sentence that reads
+"10.6x more rows still degrades" — the tested factor was 9.1x.
+
+*Derived by: re-reading `x.shape[0]` from every manifest path and replaying the
+basename-collapse. Fixed in PR #308 — links are now named `shard_<index>_<digest>.zarr`
+(the `shard_` prefix and second-field index are load-bearing: `iter_shard_paths` globs
+`shard_*.zarr` and `shard_index` reads `stem.split("_")[1]`), the pool's row total is
+reconciled against the buffer's own `len()` and aborts on a mismatch, and `meta.json`
+now banks `train_shards` as LOADED plus a separate `train_manifest_paths`. Verified on
+the real A1_BIG pool: 5,244 shards / 9,773,686 rows now enter the buffer.*
+
+### C2 — ⚑⚑ THE EXPOSURE BIAS IS STATED WITH THE WRONG SIGN. THE NULL IS WEAKER, NOT STRONGER.
+
+The entry says:
+
+> prior exposure makes these the rows the head should find EASIEST to fit, and the
+> exposure is identical for the step-0 baseline and for every arm. **A null on
+> previously-seen rows is a stronger null than a null on unseen rows.**
+
+**That is inverted, and it is the most consequential error in the entry.** The exposure
+is *not* identical across the comparison. It is **fresh** for the step-0 baseline and
+**40 iterations stale** for every arm, and no arm can re-acquire it: every training pool
+is game-disjoint from both eval sets (now enforced in code, C6 below). So each arm's
+ΔCE carries a **forgetting term that is positive by construction**. The comparison is
+biased **TOWARD "degrades"**, which makes the null *weaker*, not stronger.
+
+Magnitude, three independent readings:
+
+1. **Exposure is worth ~0.17-0.19 nats** — the entry's own checkpoint curve prices it
+   (see C3). The control's entire ΔCE is **+0.09227**, i.e. only about **49 %** of the
+   way back from the exposed level (1.21631) to the unexposed plateau (~1.4043).
+   *(The review put this at 54 %; re-derived it is 0.09227/0.18798 = 49.1 % against the
+   iter-360 plateau, 50.9 % against iter-410. The argument is unaffected.)*
+2. **The control degrades 1.84x more on the recently-exposed set.** Same weights, same
+   steps, two rulers: `evalA` **+0.09227** [+0.0903, +0.0942] vs `evalB` **+0.05006**
+   [+0.0483, +0.0519]. `evalA`'s shards entered the window in the final 23 iterations;
+   `evalB`'s entered around iters 360-410. The set with the fresher exposure loses more.
+3. **A bound, not a story.** Write ΔCE = D + F where D is any genuine degradation common
+   to both rulers and F is the set's forgetting term. F >= 0 forces D <= 0.05006, hence
+   `evalA`'s forgetting term is **>= 0.0422 = >= 45 % of its ΔCE**, and if D = 0 it is
+   **all of it**.
+
+**Consequence — the screen as built cannot distinguish "training makes the prior worse"
+from "training makes the net forget rows it had memorised."** Every absolute
+"degrades" statement in the entry inherits this. See C7 for exactly which conclusions
+survive it and which do not.
+
+**Remedy (pre-registered here, not run):** rebuild the eval set from shards that aged
+OUT of the live window at least a day before the bank (index <~ 33100), game-disjoint as
+before, then re-run `A0_CONTROL` and one contrast arm. If the control's ΔCE collapses
+toward zero on that ruler, the absolute claim was forgetting; if it survives at ~0.09,
+it was degradation. Until that runs, neither is established.
+
+*Derived by: `scripts/holdout_paired_ci.py` on the banked step-0 vs step-3520 dumps for
+every arm on BOTH rulers (table in C5).*
+
+### C3 — Claim 4 (the exposure curve) is CONFIRMED AND STRENGTHENED: two instances, not one
+
+The entry reads the iters-455..478 fall in `evalA` as an exposure curve. There is a
+**second, independent instance** in the same checkpoint series, on the other ruler, at a
+different time — and each set collapses exactly when its OWN shards enter the window,
+while the other stays flat.
+
+| checkpoint | 360 | 370 | 380 | 390 | 400 | 410 | ... | 478 |
+|---|---|---|---|---|---|---|---|---|
+| `evalB` CE | **1.37663** | 1.27995 | **1.20018** | 1.17622 | 1.14643 | 1.12907 | | 1.10022 |
+| `evalA` CE | **1.40429** | 1.40498 | **1.40120** | 1.40283 | 1.40225 | 1.39775 | | 1.21631 |
+
+- 360->380: `evalB` **-0.17645**, `evalA` **-0.00309** (flat).
+- 410->478: `evalA` **-0.18144**, `evalB` **-0.02885**.
+- Full span 360->478: `evalA` -0.18798, and its entire fall is in the last 23 iterations.
+
+Timing is exact: checkpoint 455 was written 07-31 09:16, the last `train_recent` shard
+(033841) at 09:16:44, and the first `evalA` shard (033843) at 09:22:01.
+
+A cross-over this clean is not compatible with "the net was learning"; a learning curve
+does not wait for a particular set of shards. **Prior exposure prices at ~0.176-0.188
+nats on this ruler** — the same order as every arm effect in the entry.
+
+*Derived by: re-scoring 6 of the 24 banked checkpoints on `evalB` (the entry scored 24
+on `evalA` only).*
+
+### C4 — "optimal T = 1.000 exactly" is evalA-SPECIFIC, and the pre-registered flip rule was not applied to it
+
+The entry states, as one of the "two things that are NOT the defect":
+
+> At iter-478 the optimum is **T = 1.000 exactly, gain 1.9e-07 nats**.
+
+Re-read at step 0 on both rulers:
+
+| ruler | best_temp | CE at T=1 | best CE | gain |
+|---|---|---|---|---|
+| `evalA` | **1.0** | 1.2163115 | 1.2163115 | **0.0000000** |
+| `evalB` | **0.9** | 1.1002154 | 1.0948341 | **0.0053813** |
+
+The conclusion **survives**: 0.0054 nats is ~6 % of the smallest arm effect and ~11 % of
+the control's own ΔCE, so miscalibration is still not the defect, and the direction
+(T < 1 = slightly UNDER-confident on `evalB`) is not even the direction the
+overconfidence hypothesis wanted.
+
+What does not survive is the word "exactly", and more importantly the **process**: this
+entry pre-registered "a result that flips between `evalA` and `evalB` is UNRESOLVED",
+applied that rule to the primary metric, and then did not apply it to this one. Stating
+it here so the omission is on the record rather than discovered later.
+
+### C5 — "`evalB` replicates the ordering and the sign on every arm": the SIGN yes, the ORDERING no
+
+| arm | ΔCE `evalA` | rank A | ΔCE `evalB` | rank B |
+|---|---|---|---|---|
+| `A0_CONTROL` | +0.09227 | 1 | +0.05006 | 2 |
+| `A0b_SEED1` | +0.09413 | 2 | +0.04970 | 1 |
+| `A1_BIG` | **+0.13213** | **3** | **+0.20115** | **4** |
+| `A6_QUARTER` | **+0.15260** | **4** | **+0.11259** | **3** |
+| `A3_OLDNARROW` | +0.18174 | 5 | +0.24300 | 6 |
+| `A2_WIDE` | +0.18982 | 6 | +0.24229 | 5 |
+
+`A1` and `A6` **swap**, and not marginally — `A1` is 0.020 BETTER than `A6` on `evalA`
+and 0.089 WORSE on `evalB`. (`A2`/`A3` also swap, but by 0.0007, which is noise; `A0`
+and `A0b` are the seed pair and their swap is the floor itself.) The sign claim is
+correct: all six are positive on both rulers, and no arm has a negative ΔCE at any probe
+on either. The ordering claim is not.
+
+### C6 — the "game splits" guard described in the PR did not exist in the shipped code
+
+The PR body listed game-disjointness as one of "two guards that fail closed". The desync
+gate is real. The game-split guard was **not in `scripts/holdout_policy_screen.py` at
+all** — `grep -nE "overlap|intersect|disjoint|leak"` matched only the docstring. It was
+a property of a manifest builder that never shipped, so a future hand-built manifest
+would have leaked behind a green desync line. Also: `desync_frac = des / lab if lab else
+0.0` made an eval set with **zero labelled rows PASS** the gate whose entire purpose is
+to reject contaminated eval sets.
+
+Both are now enforced in code (PR #308) and both are pinned by tests that were each
+confirmed to fail against a mutant. The manifests used for the entry above were
+re-checked and **are** game-disjoint, so no number above changes — but they were
+disjoint by luck of construction, not by any check.
+
+### C7 — what the verdict actually splits into
+
+**SAFE — the comparative claim.** *No alternative data COMPOSITION beats production's
+own.* Arm-vs-arm contrasts are clean precisely because C2's forgetting offset is common
+to both sides and cancels in the difference, and every contrast replicates on `evalB`:
+
+| contrast | evalA | evalB |
+|---|---|---|
+| repeats (`A6` - `A0`) | +0.0603 | +0.0625 |
+| staleness (`A3` - `A0`) | +0.0895 | +0.1929 |
+| breadth (`A2` - `A3`) | +0.0081 | -0.0007 |
+| dose-response, per doubling of views/row | +0.0299 | +0.0310 |
+| seed floor (`A0b` - `A0`) | +0.0019 | -0.0004 |
+
+Every effect is 4-100x the 0.0019 seed floor, and the three mechanism findings stand:
+**repeats are causally harmful at fixed optimisation, staleness costs more than repeats,
+breadth is ~0.**
+
+**NOT SAFE — the absolute claim.** *"Held-out policy loss cannot be pushed down from
+iter-478 by any data-side lever"* is **not established** by this screen. Its ruler
+cannot separate degradation from forgetting (C2), and the specific number it rests on —
+the control's +0.09227 — is at least 45 % forgetting by the bound in C2.3. Do not cite
+that sentence, and in particular do not cite it as evidence about the live loop's
+direction, until the aged-out ruler in C2's remedy has been run.
+
+### C8 — the reviewer's un-checked list, recorded so "unchecked" is not read as "clean"
+
+- The checkpoint-curve driver (`scratchpad/eval_ckpts.py`) is unshipped and unreviewed.
+- Only **6 of 24** checkpoints were re-scored on `evalB`.
+- **No arm was re-run end-to-end.** Every ΔCE above is re-derived from the banked
+  per-row dumps, not from a fresh training run.
+- `--eval-batch-size`, `--probe-every`, `--chunk-steps` and `--device` were never tested
+  for effect on the result.
+- **No arena of any kind. CE is not Elo.** Nothing in this entry is a strength claim.
+- Exact-position / transposition overlap between train and eval is **not quantified**
+  beyond an opening-seed + ply-depth proxy: 99.8 % of `evalA` rows share a `seed_id`
+  with the train pool, but median ply is 66 and only 0.32 % sit at ply <= 10, so the
+  proxy argues against shared positions without measuring them.
+
+### C9 — the 0.00025 production-vs-rig gap is bf16 vs fp32, NOT batch-mean vs row-mean
+
+The entry and the PR body both say the gap is "the batch-mean-of-batch-means vs
+row-exact-mean difference and nothing else". **That is wrong.** `pol_base` is
+**identically 1** on both eval sets (verified all-ones), so production's row-weighted
+pooling *is* the row-exact mean and pooling contributes **exactly zero**.
+
+The actual cause: `Trainer._compute_metrics` runs the eval forward inside
+`self._amp_context()` (**bf16**; `use_amp` defaults True, `trainer.py:1263`), and
+`full_pass_rows` does not. **The rig scores fp32; production's own holdout scores
+bf16.** On the full `evalB`:
+
+| quantity | value |
+|---|---|
+| rig **fp32** row-mean | **1.1002154** |
+| rig **bf16** row-mean (same code inside `_amp_context`) | **1.1004793** |
+| production `eval_full_pass().policy_loss` | **1.1004793** |
+| production - rig fp32 | **+0.0002639** |
+| production - rig bf16 | **-0.0000000** |
+
+Equal to 7 dp once the precision is matched. A related detail worth keeping: the
+production number read **1.1004641** when the entry was written and **1.1004793** now —
+its bf16 path is not reproducible across processes at 1e-5, whereas the rig's fp32 path
+reproduced **1.1002154** exactly, matching the banked step-0 dump. The rig is the
+steadier instrument, but it is measuring a **different precision** from production's own
+holdout, and the two must not be quoted as the same number.
+
+
+## 2026-08-02 — PRE-REGISTRATION: separate "fewer parameters" from "more rows per parameter" (L arm at raised rows/param)
+
+**Status: PRE-REGISTERED, offline sidecar rig, training stays PAUSED. Not a live change.**
+
+### Why
+
+The 2026-08-02 "CAPACITY CONFIRMED" entry ran three net sizes on ONE fixed
+187,537-row corpus. Param count and rows/param moved together **by design**, and
+that entry says so itself: *"This cannot separate 'fewer parameters' from 'more
+data per parameter'."* The two readings imply opposite remedies — raise the
+fresh-data rate versus shrink the net — so the confound is worth one clean run.
+
+This arm holds the ARCHITECTURE at production L (63,084,128 params, unique
+storage) and moves ONLY the corpus size.
+
+### Design
+
+| arm | params | train rows | rows/param | source |
+|---|---|---|---|---|
+| sibling L | 63,084,128 | 187,537 | 0.0029728 | capsize rig |
+| sibling M | 19,577,669 | 187,537 | 0.0095811 | capsize rig |
+| sibling S | 6,172,739 | 187,537 | 0.0303797 | capsize rig |
+| **this arm: L-wide** | **63,084,128** | **1,145,716** | **0.0181617** | this rig |
+
+**The 0.03038 match is NOT reachable and this entry does not claim it.** Matching
+S's ratio at 63.08M params needs ~1.92M train rows. The ENTIRE clean
+post-quarantine pool is 1,273,501 rows over 713 shards (712 usable; one is a
+5-key stub), and the game-hash held-out split removes 10% of it. 1,145,716 train
+rows is therefore the ceiling on desync-clean, single-era data.
+Achieved ratio = **0.0181617 = 6.11x sibling L, 1.90x sibling M, 0.598x sibling S**
+(**77.9%** of the L->S span on a log10 axis). Interpretation below is written
+against 0.01816, not against 0.03038.
+
+Everything else is held byte-identical to the capsize rig: same `slope.py`
+training/eval code, same production loss, batch 256, `chunk_steps` 176 (so the
+sqrt_release LR sawtooth is period-identical; only the number of cycles grows),
+`zclip_max_norm` 6.50, `use_compile` False, two seeds {0,1}, same views/row
+ladder to 11.53. The held-out RULER is the **sibling's own 21,093-row held set,
+byte-identical**, which is legitimate because the split rule is the same
+deterministic `game_id` hash (`mix64(gid) % 10 == 7`), so every held game is
+excluded from the wide train corpus by construction.
+
+### ONE deciding yardstick (exact command)
+
+```
+PYTHONPATH=. nice -n 19 .venv/bin/python /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/analyze_rp.py
+```
+
+Deciding statistic **B** = mean over seeds {0,1} of
+`REBOUND = held_excess(views 11.53) - min(held_excess)` for the L-wide arm.
+
+Sibling anchors: `B_L(0.00297) = +0.2295`, `B_M(0.00958) = +0.0739`,
+`B_S(0.03038) = +0.0000`. Log-linear interpolation of the sibling's own
+ratio axis predicts **+0.033** at 0.01816 if rows/param is the driver;
+the parameter-count reading predicts **+0.2295**, unchanged.
+
+### Pre-committed verdict rule
+
+Let `F` = my own measured noise floor on the rebound = `|rebound(s0) - rebound(s1)|`
+for this arm (measured here, NOT inherited).
+
+- **"rows/param"** iff `B <= +0.0739` (at or below the SMALLER net's rebound at
+  HALF my ratio) **and** `(0.2295 - B) >= 5F`.
+- **"parameter count"** iff `B >= +0.1500` (>=65% of the low-data rebound survives
+  a 6.11x rise in rows/param) **and** `(B - 0.0739) >= 5F`.
+- **"UNRESOLVED"** for any `B` in `(0.0739, 0.1500)`, or if either 5F margin fails.
+
+### KILL / VOID gates — any failure makes the readout NOT a verdict
+
+1. desync fingerprint (`has_sf_wdl & ~has_sf_multipv_raw`) **exactly 0.000000** on
+   train and on held.
+2. `game_id` intersection between the wide train corpus and the held ruler
+   **exactly 0**.
+3. rows written into the corpus **exactly 1,145,716** (asserted against the
+   metadata pre-pass; shard basenames keyed by FULL PATH, never basename).
+4. `unique_trainable_params` **exactly 63,084,128**.
+5. **Replication control**: re-run the sibling's L arm, seed 0, on the SIBLING's
+   own 187,537-row corpus. `|mine - sibling|` must be `<= 0.020` nats at views
+   0.481 / 0.961 / 1.442. A miss means the comparison is rig-vs-rig and the whole
+   readout is void (see "an intervention rig must regenerate its own baseline").
+6. **Negative control**: shuffled policy targets on the wide corpus must be worse
+   than the unshuffled wide arm by `>= +0.30` nats at every checkpoint with
+   views >= 0.4. If it is not worse, the ruler is not reading label dependence.
+7. **Ruler verification**: rig `achieved` vs `Trainer.eval_full_pass().policy_loss`
+   `<= 1e-3` nats. Known and expected residual ~2.6e-4: `_compute_metrics` runs
+   the forward inside `_amp_context()` (bf16) and this rig scores **fp32**.
+
+### Confounds, stated in advance
+
+- Holding views/row fixed while multiplying rows by 6.11 necessarily multiplies
+  OPTIMIZER STEPS by 6.11 (51,744 vs 8,448 to reach views 11.53). Views/row is the
+  exposure axis the sibling's claim is stated on, so it is the right x-axis, but
+  the wide arm's minimum sits at a much later STEP count and that is not evidence
+  of anything on its own.
+- Absolute excess levels are comparable to the sibling ONLY because the held
+  ruler is byte-identical. Any future arm on a different held set may compare
+  rebounds but not levels.
+- The wide corpus spans the whole post-quarantine window; the sibling's is a
+  stride-6 subsample of the same window. Same era, same distribution, strict
+  superset of the sibling's train rows.
+- This is held-out policy CE. It is not Elo and says nothing about strength.
+
+
+### C10 — ⚑⚑ THE POOL ORDER IS SHARD **INDEX**, NOT RECENCY, AND `A1_BIG` IS CONFOUNDED WITH STALENESS
+
+*(2026-08-02, appended during the second review round on PR #308. Corrects C1's closing
+paragraph and the `link_name` docstring it was copied from; supersedes the phrase
+"the glob's lexicographic sort ... (that order is the pool's recency)" wherever it
+appears in that entry, in commit `c6b87bcae`, and in PR #308's body.)*
+
+**The claim that was wrong.** C1 justified zero-padding the new link names by saying the
+resulting lexicographic sort *is* the pool's recency order. The zero-padding is still
+necessary and still correct — real shard indices reach **34,676**, so an unpadded glob
+sort interleaves 7 with 33,118 with 900,001 and the order is not even index-monotonic —
+and the order genuinely is load-bearing: `DiskReplayBuffer._load_refresh_chunks`
+(`disk_buffer.py:976`) draws with `weights = np.arange(1, n_shards + 1)`, i.e. **linearly
+by position in `sorted(glob("shard_*.zarr"))`**, both for the open-time seed pool and for
+every steady-state refresh. Position therefore decides sampling weight.
+
+But that position is the shard **index**, and salvage bundles do not have monotonic index
+ranges. On `A1_BIG`'s own 5,244 paths, by bundle:
+
+| index range | shards | bundle |
+|---|---|---|
+| 33118–33841 | 514 | `post_quarantine_20260801` |
+| 33296–33867 | 443 | `pre_abandonfix_20260724` |
+| **33868–34676** | **551** | **`pre_durable_deploy_20260726`** |
+
+`pre_durable_deploy_20260726` sits **strictly above** `post_quarantine_20260801`, so the
+07-25/26 bundle outranks — and outweighs — the newest one.
+
+**Measured on A1_BIG** (`os.path.getmtime` of every manifest path vs its shard index),
+for the pool **as designed** (5,244 paths, which is what it loads after PR #308) and for
+the pool **as the banked arm actually ran** (the 4,537-shard basename collapse of C1):
+
+| | as designed (5,244) | **as RAN (4,537)** |
+|---|---|---|
+| rank corr(index, mtime) | 0.8415 | **0.8512** |
+| adjacent pairs non-decreasing in mtime | 86.4 % | 98.7 % |
+| rank of the single newest shard | 4,730 / 5,244 | **4,023 / 4,537** |
+| highest-weighted last decile | 99.8 % `pre_durable_deploy_20260726` | **100 %** `pre_durable_deploy_20260726` |
+| median mtime of that decile | 2026-07-25 | **2026-07-25** |
+
+(The as-designed pool has the *lower* adjacency figure only because the collapse happened
+to delete the duplicated index ranges. The conclusion is the same, and stronger, on the
+pool that produced the published number.) Weight-weighted mean mtime **07-21 22:14** vs
+unweighted **07-16 20:39** — the linear weighting does pull the draw newer, just not to
+the newest window.
+
+**Why this bounds a published conclusion.** `A1_BIG` was cited as *"10x the data still
+degrades ⇒ scale does not rescue it"* (the tested factor is 9.1x per C1; 10.6x is what
+the pool loads only after the PR #308 fix). Its sampling weight peaks on **07-25/26**
+data rather than on the newest window, so the arm is **confounded with staleness** —
+which this same screen measured as the single largest cost of any lever tested
+(**+0.090**). And the number sits exactly where that confound predicts: control
+**+0.092**, `A1_BIG` **+0.132**, deliberately-stale arms **+0.182 / +0.190**.
+
+**Verdict on the verdict.** *"Scale does not rescue it"* is the **weakest of the four
+conclusions** in this screen and must not be cited as evidence that scale **cannot**
+help. A clean scale arm needs a pool whose sampling weight is flat in age, or one built
+so that index order and recency agree (e.g. re-indexing the links by mtime rank rather
+than by source index) — neither of which this screen ran.
+
+**The other three contrasts are unaffected.** Repeats (`A0` vs `A6_QUARTER`), staleness
+(`A0` vs `A3_OLDNARROW`) and breadth (`A0` vs `A2_WIDE`) are all matched-rows contrasts
+between pools drawn from comparable index spans, and none of them rests on where the
+weighting peaks inside a 5,244-shard pool.
+
+*Derived by: `spearmanr(index, mtime)` and a per-bundle index-range tabulation over the
+5,244 paths of `manifests.json`'s `train_recent + train_hist`. Reproduced independently
+of the reviewer who first reported it; every figure above is a re-measurement, not a
+quotation.*
+
+### C11 — `--verify-production-metric` was a print, and its bound is 1e-4, not 1e-5
+
+The pre-registered ruler-verification rule above (`rig achieved vs
+Trainer.eval_full_pass().policy_loss <= 1e-3`, "known residual ~2.6e-4 because
+`_compute_metrics` runs bf16 and the rig scores fp32") was checked **by reading the
+printed line**. `--verify-production-metric` computed the deltas, wrote `verify.json`,
+and proceeded regardless. It now aborts, inside the single function that produces the
+verification, so the abort cannot be dropped while the numbers still get banked.
+
+The bound is on `|production - rig **bf16** probe|` and is **1e-4**. A tighter 1e-5 was
+proposed and **would false-positive**: production's *first* `eval_full_pass` in a fresh
+process — which is exactly the call `--verify-production-metric` makes — does not select
+the same bf16 kernels as its later ones. Measured against the banked iter-478
+`trainer.pt`, reproduced bit-for-bit across three separate processes:
+
+| set / eval batch | `|prod − bf16|` | `|prod − fp32|` |
+|---|---|---|
+| evalB 3 shards @512 | **5.409e-05** | 2.311e-04 |
+| evalB 60 shards @512 | 2.886e-05 | 2.443e-04 |
+| evalA 100 shards @512 | 1.571e-07 | 2.146e-04 |
+| evalB 3 shards @64 | 1.748e-09 | 4.468e-04 |
+| any set, 2nd call onward | 6.697e-08 | 2.732e-04 |
+
+So the largest benign reading is **5.409e-05** and the smallest reading of the defect the
+gate exists to catch (the rig scoring a different precision from production) is
+**2.146e-04**. 1e-4 is 1.85x above the former and 2.15x below the latter. 1e-5 sits below
+two of the four benign readings and would have aborted the PR's own smoke run.
+
+Also fixed in the same round: `EvalSet` now proves its `game_id` array is **element-wise
+identical** to the buffer's own column in the buffer's own row order, rather than merely
+counting it. The per-row CE dump is emitted in buffer order and paired with `ev.game_id`
+**positionally**, and `holdout_paired_ci.py` clusters its bootstrap on that pairing — a
+scrambled pairing leaves every arm mean untouched and pushes the clusters toward
+independence, so the CI comes out **too narrow**, in the direction that makes every
+verdict look stronger. The pairing was verified to hold on the real evalA (177,256 rows /
+10,278 games) and evalB (101,804 rows / 5,266 games), so **no published interval changes**;
+what changed is that it is now enforced instead of assumed.
+
+## ⚑⚑ CALIBRATION (2026-08-02) — THE HELD-OUT POLICY CE RULER, IN UNITS OF SEARCH BUDGET
+
+**Not an experiment.** No training ran, nothing was changed, training stayed DOWN. This
+is an INSTRUMENT CALIBRATION, so it carries no kill threshold. What it carries instead
+is a set of checks that ABORT rather than warn, and an explicit list of what it does not
+establish.
+
+### Why
+
+Every number in the 08-02 screen is quoted in nats against a **seed floor** (+0.00187).
+A noise floor says an effect is RESOLVABLE. It cannot say whether it is LARGE. And the
+screen's only negative control is a label shuffle, which permutes `policy_target` across
+rows so the mass lands on moves that are **illegal** in the new position —
+`apply_policy_mask_to_logits` sends those logits to −1e9, so the control is destroyed by
+legality violation. It certifies wiring. It cannot price a defect that produces a
+**legal but wrong** target (a POV flip, an off-by-one move encoding, a target paired to
+the wrong ply of the same game), and this repo has shipped that shape.
+
+So the scale is built from real distributions with a **known ordering**: the same
+positions' targets at different search budgets, from the banked iter-478 net
+(`data/salvage/post_quarantine_20260801`).
+
+### The ladder — 4,568 rows / 260 games, reference `sims_512`
+
+`CE(A || B) = -sum_a B[a] log A[a]`: A is the prediction, B the reference, matching
+production's `soft_cross_entropy(logits, target)` order. `excess` subtracts the
+reference's own entropy (H = 0.56537).
+
+| sims | CE vs ref | **excess** | 95% CI (game-clustered) | top-1 vs ref | H(target) |
+|---|---|---|---|---|---|
+| 1 | 2.86141 | **2.29604** | [2.22355, 2.37110] | 0.3621 | 1.20248 |
+| 2 | 2.29785 | **1.73248** | [1.67229, 1.79289] | 0.4790 | 1.06229 |
+| 4 | 2.12297 | **1.55760** | [1.49883, 1.61565] | 0.5339 | 0.94477 |
+| 8 | 1.86970 | **1.30433** | [1.24186, 1.36600] | 0.5812 | 0.69574 |
+| 16 | 1.61729 | **1.05193** | [0.99196, 1.11076] | 0.6278 | 0.73760 |
+| 32 | 1.42610 | **0.86073** | [0.79527, 0.92743] | 0.6482 | 0.83009 |
+| 64 | 1.36761 | **0.80224** | [0.73808, 0.86491] | 0.6743 | 0.80414 |
+| 128 | 1.27815 | **0.71278** | [0.64610, 0.78073] | 0.7139 | 0.74876 |
+| **256** (production) | 1.16155 | **0.59618** | [0.52129, 0.67412] | 0.7712 | 0.66993 |
+| 512 (reference) | 0.56537 | 0.00000 | — | 1.0000 | 0.56537 |
+
+**MONOTONE** — excess falls strictly at every rung.
+
+**Where the net sits.** The net's raw policy has excess **0.79735** [0.74607, 0.85046],
+i.e. between `sims_64` (0.80224) and `sims_128` (0.71278), essentially AT the 64-sim
+rung. Production trains it toward a 256-sim target.
+
+### The conversion, and why there are two of them
+
+⚑ **The last interval is not a doubling estimate.** `excess` is distance to the
+reference, so the reference's own excess is 0 BY CONSTRUCTION and `256->512` inherits
+that zero. Quoting it would report a self-distance as a search effect — with a 1024-sim
+reference the same interval would read smaller. Only INTERIOR differences are used, and
+the log-linear fit excludes the reference rung.
+
+| interval | nats |
+|---|---|
+| 1->2 | +0.56356 |
+| 2->4 | +0.17488 |
+| 4->8 | +0.25327 |
+| 8->16 | +0.25241 |
+| 16->32 | +0.19119 |
+| 32->64 | +0.05849 |
+| 64->128 | +0.08946 |
+| **128->256 (production's anchor)** | **+0.11660** |
+| ~~256->512~~ | ~~+0.59618~~ INVALID, self-distance |
+
+log-linear fit, reference rung excluded: **0.19688 nats/doubling**.
+
+**A second estimator that needs no currency bridge.** The ladder above is
+target-to-target; the 08-02 effects are net-to-target. Converting between them assumes
+1 nat of target-to-target distance equals 1 nat of net-to-target loss, which is an
+assumption, not a measurement. `CE(net raw || sims_k)` has the net on the left and a
+search target on the right at every rung — the 08-02 currency exactly:
+
+| sims | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| excess | 0.812 | 0.649 | 0.607 | 0.489 | 0.380 | **0.276** | 0.316 | 0.381 | 0.541 | 0.797 |
+
+This one is **U-shaped with a minimum at `sims_32`**, and every rung is measured the same
+way so all intervals are valid. Its anchor `128->256` is **0.15960 nats/doubling**.
+(Read with care: CE penalizes the net for being flatter than a sharp target, so the
+minimum is partly sharpness-matching, not a claim that the net "is" a 32-sim player.)
+
+### The 08-02 effects, restated
+
+| effect | nats | **A: doublings (bridge-free)** | B: doublings (target-quality) |
+|---|---|---|---|
+| `A0_CONTROL` total degradation, 40 iters | +0.09227 | **0.58** | 0.79 |
+| staleness (`A3`-`A0`) | +0.08950 | **0.56** | 0.77 |
+| repeats (`A6`-`A0`) | +0.06030 | **0.38** | 0.52 |
+| breadth (`A2`-`A3`) | +0.00810 | **0.05** | 0.07 |
+| seed floor (`A0b`-`A0`) | +0.00187 | **0.01** | 0.02 |
+
+**To one significant figure, which is all this instrument supports: the entire
+40-iteration degradation the 08-02 control measured is worth about ONE doubling of
+search budget** — roughly the difference between a 128-sim and a 256-sim target. Breadth
+is worth about 1/20th of a doubling, which is a quantitative restatement of the ledger's
+"the more-distinct-positions lever is dead."
+
+⚑ **Direction, stated because it is easy to get backwards.** A SMALLER nats-per-doubling
+makes any fixed effect look like MORE doublings. The production (unpinned) ladder has the
+shallower slope, so it yields the LARGEST doubling-equivalents; a fixed-shape ladder
+would yield ~3x smaller ones. "Conservative" is the wrong word for it in this direction.
+
+### What was checked, and aborts if it fails
+
+- **Positions.** 4,568 rows / 260 games, sampled **BY GAME** out of a reconstruction of
+  the 08-02 screen's `evalA`. The reconstruction reproduces the ledger to the row:
+  **177,256 rows / 10,278 games, desync fraction exactly 0.000000**. (The 08-02 rig's
+  own manifest was session scratch and is gone; `evalA` was rebuilt from its stated
+  definition — the newest 100 desync-clean shards of the post-quarantine window — and
+  the exact match is the evidence it is the same set.)
+- **Game disjointness.** Calibration games ∩ `A0_CONTROL` train-pool games = **0**,
+  printed and asserted. A sweep of all **22,961** shards under `data/` found 177 shards
+  carrying a calibration game — **every one of them a copy of the live window** inside
+  `post_quarantine_20260801` (91) and `pre_restart_bundle_20260731` (86). No INDEPENDENT
+  historical pool carries these games, which is what holds them out of `A1_BIG` as well
+  as `A0`. `game_id` is a blake2b hash of (opening source, start FEN, full move trace,
+  result, ply count), so a shared id is the same game, not a recycled counter.
+- **Board reconstruction.** Shards store planes, not FENs, so every root had to be
+  decoded. Each rebuilt `CBoard`'s legal move set is checked against the shard's own
+  `legal_mask`: **0 mismatches on every row scored**, and a mismatch is a `SystemExit`.
+  Two real bugs were caught by exactly this check and would otherwise have been silent:
+  the four castling planes are **us-Q, us-K, them-Q, them-K** (not K/Q/K/Q), and
+  `CBoard.legal_move_indices()` speaks the FULL 4672 action space while `legal_mask` and
+  `policy_target` speak COMPACT lc0_1858.
+- **Net.** 63,084,128 trainable params by **unique storage** — exact.
+- **Ruler vs production.** `Trainer.eval_full_pass().policy_loss` = **1.1641179**; the
+  merged screen's bf16 probe **1.1640642** (delta **+5.37e-05**, inside its 1e-4 abort
+  bound and consistent with the documented first-call warm-up artefact); its fp32 probe
+  **1.1638396** (delta +2.78e-04, the documented structural bf16-vs-fp32 gap). **This
+  calibration's own plain-numpy CE on the identical 37,510 rows is 1.1638395 — 8.9e-08
+  from the screen's fp32 probe.** The ladder speaks production's `policy_loss`.
+
+### Realized search shape — printed from the run, not asserted
+
+`topk=16 c_scale=0.1 c_visit=50 c_visit_root=-1 c_scale_root=-1 q_visit_exp=1.0
+q_visit_exp_root=99 c_puct=2.5 fpu_reduction=1.2 vloss_weight=1 target_batch=0
+syzygy_in_search=true`, root Gumbel noise OFF.
+
+These are the TRAINING knobs (`gumbel_c_scale: 0.1`, linear root), not the arena's
+(0.025 / LOG root / topk 32). `network_turn.py` builds its `GumbelConfig` with exactly
+five keyword arguments and leaves every descent and root-transform knob at the dataclass
+default, so `GumbelConfig()`'s defaults ARE the RL shape — those sentinels are the
+production values, not placeholders.
+
+**Noise.** The ladder runs `add_noise=False`. That is a smaller deviation than it
+sounds: `gumbel_scale` decays to 0.0 by move 15, and **87.6%** of the calibration rows
+are past that, so the majority of the stored targets were themselves noise-free.
+
+### ⚑ The root is history-faithful; the leaves are not
+
+`CBoard` builds history only through `push_index`, and the moves that produced a stored
+row's 7 history slots are not on disk — so a rebuilt root carries `hist_len == 0`, and
+without history 117 of 175 planes go to zero
+(`frozen_rulers_score_fen_only_inputs`).
+
+The rig therefore does NOT re-encode the root. It computes the root's policy and WDL
+from **the row's own stored planes** and hands them to the search as
+`pre_pol_logits`/`pre_wdl_logits` — the same call shape `network_turn.py` itself uses.
+So the root prior, the Gumbel candidate set and the root value are bit-faithful. What
+stays degraded is LEAF encoding at depth d, which carries d real slots (rebuilt by
+`push_index` as the search descends) and 7−d empty ones.
+
+**Not reproduced, and stated rather than hidden:** production reuses the search tree
+across plies, so its 256-sim target is built on a WARM subtree while every rung here is
+a COLD search. That is the leading candidate explanation for the residual gap between
+the stored target and this rig's own 256-sim target.
+
+### ⚑⚑ THE VALIDITY CHECK THAT FAILS, AND IT IS THE IMPORTANT ONE
+
+Scored against production's **real stored `policy_target`** instead of this rig's own
+top rung, the ladder is **NOT monotone**. It improves to `sims_128` and then REVERSES:
+
+| sims | 1 | 8 | 32 | 64 | **128** | 256 | 512 | **net raw** |
+|---|---|---|---|---|---|---|---|---|
+| excess vs STORED | 2.114 | 1.061 | 0.654 | 0.640 | **0.623** | 0.804 | 1.480 | **0.583** |
+
+Two things follow, and neither is a nuisance:
+
+1. **Above ~128 sims this rig's extra search moves AWAY from the target production
+   actually stores.** So the `128->256` anchor is measuring rig degradation as much as
+   target quality, and the conversion above must be read as an order of magnitude.
+2. **The net's raw policy (0.583) is closer to production's stored target than ANY
+   searched rung this rig can produce (best 0.623).** The mechanism is legible: the raw
+   policy is the ONLY quantity here computed on the row's full stored planes, while
+   every search leaf is encoded from a history-less rebuilt board. That points at LEAF
+   HISTORY, not tree reuse, as the dominant rig-vs-production error.
+
+The stored target also sits **off** this ladder entirely: excess 1.223 against the
+rig's `sims_512` reference, between the rig's `sims_8` and `sims_16` rungs. The
+reference is "the best cold, history-degraded search this rig can build", not
+production's target. The ladder is internally valid; its ZERO POINT is not production's.
+
+### Rig reproducibility floor — measured here, not inherited
+
+A second full run of the same 640 rows in the same order at a different `--board-batch`
+(20 vs 32). ⚠ A different SEED is a null perturbation: with `add_noise=False` the search
+RNG is never drawn and the seed floor reads exactly 0.000000 — an instrument certifying
+itself.
+
+| sims | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
+|---|---|---|---|---|---|---|---|---|---|
+| \|delta excess\| | 0.026 | 0.055 | 0.042 | 0.081 | **0.093** | 0.063 | 0.023 | 0.028 | 0.061 |
+
+**The floor is 0.093 nats — the same size as the +0.0923 effect being converted**, and it
+is partly SYSTEMATIC, not noise: the larger batch reads higher at all 9 rungs, and the
+game-clustered CI excludes zero at `sims_8`, `16` and `32`. The `128->256` per-doubling
+itself reads 0.040 vs 0.074 across the two runs, CI on the difference
+[-0.180, +0.100] — **unresolved at 640 rows.**
+
+⚑ And neither batch shape is production's: the C17 entry measured production's realized
+`n_boards ~= 1` (23.5 of every 24 games per thread blocked on a pending Stockfish move).
+
+### Two mechanism findings that fall out of the ladder
+
+**1. `sims_1` is NOT "the raw policy with no search" — it is a value-based re-ranking of
+it.** The consistency check the design called for FAILS, loudly and informatively:
+`sims_1` excess **2.29604** vs net raw **0.79735**, |delta| **1.499 nats**, top-1
+agreement between them only **0.3343**. They are not averaged.
+
+The mechanism is confirmed, not assumed. `gumbel_c.py` builds the returned target in
+PYTHON from the C tree via `_completed_q_transform(..., root=True)` over ALL legal
+moves. At one visit `completed = q` for the single visited action and `mixed_value` for
+every other legal move, then min-max normalized and scaled by
+`q_scale = c_scale*(c_visit + max_visit) = 0.1*(50+1) = 5.1`. So
+`log p_sims1 - log p_raw` must take EXACTLY TWO values per row. Measured over 4,568 rows:
+**3,958 rows show exactly two levels, and the gap is 5.1000 on every one of them,
+min = max** — the formula confirmed to 15 digits off the data.
+
+At one visit `mixed_value = (root_Q + q_visited)/2`, so "visited action at the bottom"
+reduces exactly to `q_visited < root_Q`. That happens on **68.5%** of rows (mean H
+**1.716**); the other 31.5% collapse to near-one-hot (mean H **0.052**). Mean H(raw) is
+1.230, so the mixture nearly cancels in the mean — the target is not uniformly softened,
+it is bimodally shattered.
+
+**2. The value term's weight GROWS along the ladder, but far less than the formula
+suggests, and pinning it makes every rung WORSE.** `max_visit` at the root is nowhere
+near the sim count, because sequential halving spreads visits (320 rows):
+
+| sims | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| realized `max_visit` | 1 | 1 | 2 | 3 | 4 | 6 | 16 | 32 | 63 | 126 |
+| realized `q_scale` | 5.10 | 5.10 | 5.20 | 5.30 | 5.41 | 5.60 | 6.62 | 8.19 | **11.34** | 17.64 |
+
+So 3.46x across the whole ladder (not the 6x that `max_visit = sims` would give), and
+essentially FLAT across sims 1..32.
+
+A SHAPE CONTROL isolates it: the improved policy is rebuilt from the **same searched
+tree** with sigma pinned to the reference rung's per-row value, so nothing about the
+search changes — only the transform. (Pinning via config would also change
+`gss_score_and_halve`, i.e. which candidates survive, and would not be a shape control at
+all.) The rebuild is GATED: it must reproduce the runner's own shipped `probs` to 2e-6 or
+the run aborts, otherwise the pinned arm would differ in two terms rather than one.
+
+| sims | 1 | 8 | 32 | 128 | 256 |
+|---|---|---|---|---|---|
+| excess, unpinned | 2.072 | 1.259 | 0.785 | 0.646 | 0.481 |
+| excess, pinned to reference sigma | 7.665 | 4.315 | 1.960 | 1.123 | 0.658 |
+| reshaping | -5.593 | -3.056 | -1.175 | -0.477 | -0.178 |
+
+**Pinning makes every rung worse, at every budget.** The production transform is
+self-scaling — little search means little value weight — and that self-scaling keeps each
+rung's target CLOSER to the reference than a fixed large sigma would. The worry that the
+ladder's fall is partly the reference drifting into value-dominance is therefore not
+supported; a fixed-shape ladder would be STEEPER (0.42-1.18 nats/doubling vs 0.07-0.27),
+so the production ladder gives the LARGEST doubling-equivalents. Stated with the
+direction of pinning: rungs were pinned UP to the reference's sigma; pinning the
+reference DOWN is a different control, not run.
+
+### What this does NOT establish
+
+- **It is cross-entropy, not Elo.** A target-quality scale in search units is a far
+  better unit than raw nats, but no game was played and nothing here is a strength
+  measurement. `arena_standard.py` remains the only instrument that answers that.
+- **The zero point is not production's target** (previous section). The conversion is
+  order-of-magnitude.
+- **The rig floor is the same size as the effect being converted**, and partly
+  systematic in a knob (`board-batch`) whose production value neither run used.
+- **Leaf encodings are history-degraded**; only the root is faithful. Tree reuse is not
+  reproduced at all.
+- **UNCHECKED, and "unchecked" is not "clean":** whether the ladder's shape survives at
+  production's `n_boards ~= 1`; whether a 1024-sim reference would move the anchor;
+  whether the sims<=128 region alone would give a different conversion (the
+  stored-referenced ladder's slope there is 0.017/doubling near its turning point, which
+  would imply ~5 doublings rather than ~1 — a factor-of-5 spread this rig cannot
+  resolve); and whether any of this predicts Elo.
+
+---
+
+## 2026-08-02 — PRE-REGISTRATION: `train_views_per_ingested_position` 5.0 → 4.3
+
+**Status: PRE-REGISTERED, NOT LIVE.** Training is paused; this cannot deploy until the
+live branch is squared with `origin/main` (33 files behind as of 2026-08-02).
+
+**Hypothesis.** Views/row is at or just above its optimum, and 4.3 is inside the same
+flat basin while matching KataGo's proven ~4 rather than our own noisy argmin.
+
+**Evidence (offline L-wide ladder, 63.08M net, rows/param 0.0182 vs live 0.0202 —
+i.e. within 1.1x of production's data economy, unlike the earlier capacity rig's L at
+0.00297).** Held-out policy excess, both seeds:
+
+| views | s0 | s1 | mean |
+|---|---|---|---|
+| 3.854 | 1.1288 | 1.1232 | 1.1260 |
+| 4.326 | 1.1229 | 1.1162 | 1.1196 |
+| 4.798 | 1.1271 | 1.1125 | 1.1198 |
+| 5.270 | 1.1255 | 1.1128 | **1.1192** |
+| 5.781 | 1.1290 | 1.1161 | 1.1226 |
+
+The floor is a PLATEAU from ~4.3 to ~5.3; those three points sit within **0.0007 nats**
+of each other, far below the seed floor. The seeds disagree about the argmin's location
+(4.33 vs 4.80) while agreeing on the rebound's magnitude (+0.0605 / +0.0608 by views
+9.12). **3.854 is the first rung measurably worse on BOTH seeds (+0.007 on the mean).**
+
+**⚑ THIS IS A CHANGE MADE ON PRIOR, NOT ON EVIDENCE, AND IT CANNOT READ OUT.** The
+4.3-vs-5.0 difference is below this rig's own seed floor. No honest verdict will come
+back from any instrument we have. It is being made because an externally proven
+configuration is a better bet than our own argmin, given that this rig is
+fixed-corpus and from-scratch while the live loop is a growing stream. Recording it as
+such rather than inventing a yardstick it cannot pass.
+
+**Target 4.3, NOT 4.0** — 4.0 sits on the plateau's edge, and realized views drift from
+the configured knob (live realized 5.013).
+
+**Deciding yardstick (a GUARD, not a success test).** Realized `train_views_actual`
+must land in [4.0, 4.6] on the first 5 new iterations:
+`grep -h train_views_actual runs/pbt2_small/tune/*/progress.csv`
+**Kill rule:** realized views outside [4.0, 4.6], or `policy_loss` worsening by more
+than 0.02 nats against the pre-change 5-iteration mean → revert to 5.0.
+
+**Confounds.** None intended; this must be the ONLY data-affecting change in its
+window. Note the whole ladder ran inside the zclip regime recorded the same day (every
+production step normalized to exactly 6.5), so LR was not re-tuned at any rung.
+
+**No throughput argument.** Training is 15.9% of a 665s iteration and throughput is
+views-neutral; this buys no extra fresh data.
+
+---
+
+### ⚑⚑ VERDICT 2026-08-02 — VALUE-vs-POLICY TURN ORDERING: **CANNOT RESOLVE.** The pre-committed rule fires "value first", but it flips on the choice of policy metric and the scale-free lead test reads exactly zero. Also: **the value series everyone has been quoting (74.5 / 70.0 / 71.9 / 76.4) is from the DEAD 384×12 lineage and does not describe today's net.**
+
+**Question.** Does the value head degrade BEFORE the policy prior (supporting
+value → MCTS → search-derived target → policy prior), or do they turn together?
+Read-only, offline, forward-only; training stayed paused; no config touched.
+
+**Pre-registration** (written before any paired delta was computed, banked at
+`scratchpad/vp_timing_20260802/PREREG.md`; at write time exactly one absolute
+number had been seen — `value_regret(boot512) = 60.4` — and no delta of any
+kind). Rule: *turn point* T_X = earliest grid checkpoint whose paired delta vs
+boot512 is >0 with a 95% bootstrap CI excluding 0 **and** stays significant at
+every later grid point. VALUE FIRST iff T_V < T_P and dP(T_V) is not
+significant; TOGETHER iff T_V==T_P or adjacent; CANNOT RESOLVE iff either
+series never sustains significance, or the negative control fails.
+
+---
+
+#### ⚑ FIRST, A CORRECTION THAT INVALIDATES THE PROMPTING NUMBERS
+
+`scratchpad/value_regret_trend.out` (iter42 74.5 / iter111 **70.0** / iter281
+71.9 / iter428 76.4 / v1donor 80.6) is dated **2026-07-01** and its checkpoints
+are **34.66M params, 388 state-dict keys, 384-dim × 12-layer, `peak_lr` 3e-4**
+(`scratchpad/base_stable/checkpoint_000428`, `scratchpad/base_stable/params.json`).
+Today's lineage is **63,084,128 params, 496 keys, 512×16, `peak_lr` 3e-5**.
+**Those iter numbers belong to a lineage that no longer exists**, the "+6.4cp
+from its best" was measured on a different net, and it was measured on the
+**v1-2k prefix, which is 1332 endgame + 668 middlegame + ZERO opening rows.**
+Do not carry that table forward. Everything below is a fresh measurement of the
+live `13a9f` lineage on the FULL audit set.
+
+#### Instruments, and what was verified about them
+
+| | VALUE | POLICY (prior) |
+|---|---|---|
+| tool | `scripts/value_regret.py` | `cand.raw` of `scripts/audit_targets.py`, re-implemented at `scratchpad/vp_timing_20260802/raw_policy_regret.py` |
+| set | full `data/audit_set_v1.jsonl` (4000), TB-excluded default `--min-pieces 8` → **n=3723** | same 4000, restricted to the SAME 3723 by a position-level piece-count filter (join verified: intersection 3723, zero rows on either side only) |
+| batch | 128 (fixed) | 256 (fixed) |
+
+- **The light policy path IS the canonical one.** `--verify-against
+  scratchpad/strength_readout_0731/pdump_iter409.jsonl` at batch 256:
+  **`max|Δexp| = 0.000e+00`, `max|Δtop1| = 0.000e+00`, 0 argmax mismatches over
+  2000 rows** — bit-identical to `audit_targets.py`'s own dump produced by a
+  different process on a different day.
+- **⚑ RAW POLICY REGRET IS BATCH-SIZE DEPENDENT.** The same checkpoint reads
+  **70.13 cp at batch 64 vs 69.33 cp at batch 256, with 25/2000 argmax flips.**
+  0.80 cp is a tenth of the entire lineage effect. Batch size is part of this
+  ruler and must be pinned; it is pinned at 256 here.
+- **Value ruler determinism: exact.** Independent re-run of `iter409`,
+  `paired_compare.py` → `+0.00 [+0.00 .. +0.00]`, **100.0% tied**.
+- **Ruler-invariance control (rules out a moving ruler).** `cand.sf_soft.top1`
+  — the frozen SF teacher scored through the same code path — is
+  **+0.00 [+0.00, +0.00]** across boot512 → iter409 → iter477. `audit_set_v1.jsonl`
+  md5 `18451796f936a517f82bf1210581193f`, unchanged since 2026-06-14.
+- **Checkpoint identity verified, not assumed.** All 12 lineage points: 496
+  keys, 63,084,128 unique-storage params, `peak_lr` 3e-5, **distinct weight
+  hashes**, and strictly increasing `step` 56000 → 94062. The net really changed
+  between every pair of points.
+
+**Set composition (the `--max-positions 2000` trap is not repeated here).**
+Phase is a PIECE-COUNT bucket, not a ply — every FEN is rewritten with fullmove
+1, so there is no ply axis to report. endgame ≤13 pieces (n=1332, median 9.5,
+1055 survive TB exclusion), middlegame 14–22 (n=1335, median 18), **opening ≥23
+(n=1333, median 27) — present, and it is the bucket the 2k prefix omitted
+entirely.** Sources are balanced 50/50 selfplay/curriculum in every phase.
+
+#### The two series — paired deltas vs boot512, n=3723, 10k-resample percentile bootstrap
+
+| ckpt | step | VALUE cp | **ΔV [95% CI]** | POLICY top-1 cp | **ΔP [95% CI]** |
+|---|---|---|---|---|---|
+| boot512 | 56000 | 60.39 | — | 47.70 | — |
+| iter025 | 57002 | 65.05 | **+4.66 [+0.02, +9.43]** SIG | 48.00 | +0.30 [−2.79, +3.38] |
+| iter070 | 59893 | 62.17 | +1.78 [−2.85, +6.42] | 47.78 | +0.08 [−3.27, +3.37] |
+| iter122 | 62253 | 65.75 | **+5.36 [+1.38, +9.63]** SIG | 50.74 | +3.04 [−0.65, +6.75] |
+| iter172 | 67021 | 67.71 | **+7.32 [+2.76, +12.23]** SIG | 50.87 | +3.17 [−0.97, +7.49] |
+| iter218 | 71042 | 66.45 | **+6.06 [+1.40, +10.89]** SIG | 53.83 | **+6.13 [+1.60, +10.97]** SIG |
+| iter308 | 79060 | 68.38 | **+8.00 [+2.27, +14.01]** SIG | 52.09 | +4.39 [−0.10, +9.05] |
+| iter360 | 83587 | 69.07 | **+8.68 [+3.38, +14.23]** SIG | 53.64 | **+5.94 [+1.65, +10.42]** SIG |
+| iter409 | 88162 | 67.18 | **+6.79 [+1.27, +12.50]** SIG | 55.43 | **+7.73 [+2.74, +13.44]** SIG |
+| iter425 | 89747 | 72.03 | **+11.64 [+6.08, +17.40]** SIG | 57.06 | **+9.36 [+4.11, +15.40]** SIG |
+| iter450 | 91855 | 73.51 | **+13.12 [+7.16, +19.49]** SIG | 54.82 | **+7.11 [+2.52, +11.84]** SIG |
+| iter477 | 94062 | 73.75 | **+13.36 [+7.38, +19.69]** SIG | 56.15 | **+8.45 [+3.73, +13.32]** SIG |
+| **SHUFFLED** (neg ctl) | — | 203.31 | **+142.92 [+132.58, +153.77]** | 195.29 | **+147.58 [+137.70, +158.10]** |
+| v1donor (cross-era) | — | 65.62 | +5.23 [−0.64, +10.96] | 43.85 | −3.86 [−8.18, +0.26] |
+
+Reproduced with the canonical tool: `paired_compare.py vfull_iter477 vfull_boot512`
+→ `+13.36 [+7.38 .. +19.69]`, identical to the table.
+
+**NEGATIVE CONTROL — PASSES.** `SHUFFLED` = iter477 with every unique weight
+tensor's elements permuted (seed 20260802; shapes, dtypes and the 16-key tied
+`layer_smolgens` storage preserved). Separation is **10.7×** the largest
+lineage-vs-lineage value delta and **15.8×** the largest policy one, against a
+pre-committed bar of 10×. The instrument does separate a known-bad net.
+
+#### Verdict
+
+**By the letter of the pre-committed rule: VALUE FIRST.** T_V = **iter122**
+(iter025 is significant but iter070 is not, so iter025 fails the "sustained"
+clause); T_P = **iter360** (iter218 is significant but iter308 is not); and
+dP(T_V) = +3.04 [−0.65, +6.75] is not significant. That is the rule firing
+exactly as written.
+
+**And it does not survive contact with three checks, so the honest headline is
+CANNOT RESOLVE.**
+
+1. **⚑ IT FLIPS ON THE POLICY METRIC.** The prereg's *secondary* policy metric,
+   raw **expected** regret, is significantly worse at the **first** post-origin
+   grid point — `iter025 +2.01 [+1.18, +2.93] SIG` — and at every point after.
+   On that metric T_P = iter025 ≤ T_V, i.e. TOGETHER or policy-first. Top-1 is
+   an argmax statistic and expected regret uses the whole distribution, so
+   expected regret detects the same movement earlier; it is the more sensitive
+   read of the same head. **A verdict that depends on which of two readings of
+   the same head you pick is not a verdict.**
+2. **⚑ THE SCALE-FREE LEAD TEST READS ZERO.** Normalising each head by its own
+   total lineage degradation (VALUE +13.36 cp, POLICY +8.45 cp) and asking
+   whether one curve is left-shifted:
+   **L = mean(f_V − f_P) over the interior = −0.010, 95% CI [−0.413, +0.347], NOT SIG**
+   (bootstrap over positions, both curves resampled jointly on the shared
+   position set). Per-checkpoint f_V − f_P is non-significant at **every single
+   grid point**. This test is immune to the two metrics having different
+   magnitudes and different noise, and it says neither head leads — with a CI
+   wide enough to admit either leading by up to ~40% of the whole trajectory.
+3. **⚑ T_V ITSELF TURNS ON ONE NOISY POINT.** ΔV(iter025) = +4.66 with a CI
+   lower bound of **+0.02**. Move that point by a hair and T_V becomes iter025;
+   move iter070 by a hair and T_V stays iter025 as *sustained*. The
+   "earliest sustained significance" statistic is a threshold crossing on a
+   non-monotone series and it moves ~100 iterations on sub-noise perturbations.
+
+**So: the data are consistent with value turning no later than policy, and give
+no evidence that it turned meaningfully earlier. They cannot establish a
+separation, which is what the causal claim needs.**
+
+#### The mechanism argument that does survive, and it argues AGAINST the cascade
+
+The proposed chain (value → MCTS → search-derived target → policy prior) has a
+structural minimum latency: the replay window is pinned at **1,500,000 rows**
+and ingest is **~8,000–10,000 rows/iteration** (`progress.csv`, trial 13a9f,
+`replay_window_after` / `replay_positions_ingested`), so a full turnover is
+**~167 iterations** and at **iter025 at most ~15% of the training window can
+contain any post-boot512 data at all.** Yet by iter025 the value head is
+already +4.66 cp worse and the policy prior is already +2.01 cp worse on
+expected regret. **Both heads move before the loop has had time to feed
+anything back**, which points at a common cause acting on both heads at once
+(shared trunk, the LR/optimizer regime, the inherited window) rather than at a
+value→policy cascade.
+
+This agrees with the intervention already on the record: the 2026-07-31
+value-swap rig put value at a **~27% minority channel** with the policy prior
+carrying the rest. Timing and intervention now say the same thing from
+different directions.
+
+#### Two side findings worth carrying
+
+- **The search output is not degrading — only its inputs and the head are.**
+  On the existing 07-31 dumps (v1-2k prefix, endgame+middlegame, n=2000),
+  boot512 → iter477: `raw.top1` **+13.70 [+6.23, +21.64] SIG**,
+  `train.top1` **+6.80 [+0.17, +13.52] SIG**, but
+  `search.top1` **+1.27 [−5.19, +7.57] ns**. Gumbel search keeps absorbing the
+  degradation; the head keeps not absorbing the search.
+- **⚑⚑ v1donor BEATS iter477 ON BOTH HEADS, AND BOTH CLEAR ZERO.** The
+  **32,280,185-param 384×12 net from a month ago**, scored on these same frozen
+  positions through this same code: policy top-1 **−10.41 cp
+  [−16.79, −3.55] SIG** (n=4000) and value **−8.13 cp [−14.56, −1.95] SIG**
+  (n=3723) against iter477. Against boot512 it is −3.86 [−8.18, +0.26] on policy
+  and +5.23 [−0.64, +10.96] on value, i.e. roughly level with the lineage's own
+  starting point. It is a different architecture on a FEN-only ruler, so this is
+  not an Elo claim — but a half-size predecessor scoring significantly better
+  than today's net on both heads belongs in the record next to
+  "63M turns up at ~3.1 views/row".
+
+#### What is VERIFIED vs ASSUMED
+
+**Verified by measurement:** every checkpoint's identity, param count and weight
+hash; that all 12 are one continuous lineage by strictly increasing step; that
+the light policy path reproduces `audit_targets.py`'s `cand.raw` bit-for-bit;
+that the value ruler is bit-deterministic across runs; that the audit set and
+its scoring are unchanged across the whole comparison (frozen `sf_soft` scores
++0.00 exactly); that the position join is exact (3723 = 3723, zero unmatched);
+that the negative control separates by >10×; that batch size perturbs the policy
+ruler by 0.80 cp; the full-set phase composition including 1333 opening rows.
+
+**Assumed / not established:** that `boot_snap_recheck_0711_0404.pt` (step
+56000) is the exact state the 13a9f trial resumed from — the step number and
+architecture match and nothing contradicts it, but no manifest was checked (the
+consecutive-delta table is base-free and does not depend on this). The
+~15%-window-turnover figure is ARITHMETIC from the recorded window cap and
+ingest rate, not a direct measurement of iter025's shard composition — the
+early shards have been evicted, so it cannot be measured now. Restart proximity
+was checked (iter070 sits ~1h after the 07-26 ~23:00 restart, iter360 ~1h before
+the 07-30 11:05 one) and is not corrected for; both series read the same
+checkpoints, so any restart effect is common to both.
+
+**⚑ RULER CAVEAT THAT BOUNDS EVERY NUMBER ABOVE.** Both rulers score **FEN-only**
+inputs — no move stack, **117 of 175 planes zero**, top-1 changes in 21.4% of
+positions (`docs/rl_loop_audit.md` M10). **Every claim here is a RANKING claim
+across checkpoints scored identically. No absolute cp bar is claimed, and none
+of these numbers is production's value or policy quality.**
+
+**Dumps banked** (per-position, so every CI above is recomputable without
+re-running): `scratchpad/vp_timing_20260802/dumps/{vfull,pfull}_*.jsonl`
+(26 files), plus `PREREG.md`, `ckpt_verify.json`, `results.json`, `lead.json`,
+`value.log`, `policy.log`, and the drivers `run_value.sh` / `run_policy.sh` /
+`raw_policy_regret.py` / `analyse.py` / `lead.py` / `make_shuffled.py`.
+
+### FORENSIC RECONSTRUCTION — what the training regime actually was in iters 0-30 of lineage 13a9f (2026-08-02)
+
+**Question.** The 08-02 paired-CI series (ledger commit `ead2067ec`, dumps
+`scratchpad/vp_timing_20260802/`) puts value regret at **+4.66 cp [+0.02, +9.43]
+SIG at iter025** with ~13% of the replay window turned over, i.e. before selfplay
+feedback can be the cause. What was the regime? Reconstructed READ-ONLY from
+`runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/`
+(rotated `progress.1785134613.csv` = iters 1-80; `result.json` carries the
+per-iteration realized `config`), the salvage bundles, and the boot512 bootstrap
+logs. **"The yaml says" is kept strictly separate from "the log shows" below.**
+
+---
+
+#### FIRST: the fact being explained is weaker than the brief states
+
+Read off `scratchpad/vp_timing_20260802/results.json`, not off the summary:
+
+| series | iter025 | iter070 |
+|---|---|---|
+| `value_vs_base` (VALUE yardstick) | **+4.664 [+0.022, +9.425] SIG** | **+1.784 [−2.85, +6.42] ns** |
+| `policy_vs_base` = raw top-1, the PRE-REGISTERED PRIMARY | **+0.301 [−2.79, +3.38] ns** | +0.076 [−3.27, +3.37] ns |
+| `policy_exp_vs_base` = `cand.raw.exp`, the SECONDARY | +2.012 [+1.18, +2.93] SIG | +2.927 SIG |
+
+Three corrections that change what has to be explained:
+
+1. **The value series is NOT monotone.** iter070 is not significant. Under
+   `PREREG.md`'s own turn-point definition (*earliest grid point significant AND
+   significant at every later point*), **T_V is iter122, not iter025.** The
+   iter025 point has a CI lower bound of **0.022 cp**.
+2. **The policy PRIMARY is not significant at iter025.** "Policy already
+   drifting" rests entirely on the secondary `cand.raw.exp`.
+3. **The cross-era anchor lands on top of iter025.** `v1donor` (the 46M 384x12
+   era net) scores **+5.235 [−0.64, +10.96] ns** on the same value ruler — i.e.
+   iter025's +4.66 is statistically indistinguishable from the value regret of
+   the net that GENERATED the replay window. Suggestive for cause (1) below;
+   NS and cross-architecture, so it cannot carry the claim alone.
+
+So the target is: *a marginal value excursion and a secondary-instrument policy
+drift by iter 25*, not an established double regression.
+
+---
+
+#### TIMELINE, iters 1-30 (all values from `progress.1785134613.csv` / `result.json`)
+
+| iter | LR (trough / base) | grad regime | window | ingest | steps | views | notable |
+|---|---|---|---|---|---|---|---|
+| 1 | `opt_lr` 6.000e-05, base_lrs `[6e-4, 3e-5, 3e-5, 3e-5]` | **NOT INSTRUMENTED** | 1,500,000 | 10,710 | 53 | 2.534 | boot from salvage; `policy_loss_curriculum` **1.2888 = run minimum**; PID inherits nodes 698,289 / regret 0.0393 / ema_wr 0.5695; realized curriculum score 0.392 |
+| 2 | identical | — | 1,500,000 | 8,487 | 42 | 2.534 | **AIRBAG FIRES**: `pid_regret_reason=airbag`, cap 0.05, regret 0.03963 → 0.08963 in one step (the maximum). Curriculum score 0.364 |
+| 3-26 | identical every row | — | 1,500,000 every row | 6.5k-8.6k | 33-43 | 2.50-2.57 | regret `fit_capped` in 0.087-0.098 (per-iter cap 0.0027); `pid_nodes_reason=not_active` throughout ⇒ `sf_nodes` pinned 698,289; 4 workers; `backpressure_paused_percent` 0.0; `distributed_stale_games` 0 |
+| 27 | identical | — | 1,500,000 | 7,205 | 36 | 2.558 | **`opening_fen_dole_per_iter` 1 → 0** (seeding off). Iteration takes **1903 s** vs ~560 s baseline, `ingest_ms` 1.80M — the worker-session restart |
+| 28-29 | identical | — | 1,500,000 | 10,252 / 23,021 | 51 / 113 | 2.547 / 2.513 | `ingest_frac_selfplay` **1.000** both iters; `pid_curriculum_{w,d,l}` = **0/0/0**; `pid_regret_reason=not_active`, `pid_active_levers=none` — **the PID was blind.** Independently reproduces the ledger's own C6 table |
+| 30 | identical | — | 1,500,000 | 11,392 | 56 | 2.517 | `ingest_frac_selfplay` 0.9998; curriculum backlog still empty (1/0/0) |
+
+Cumulative ingest iters 1-25 = **194,222 rows** against a window pinned at
+1,500,000 in every single row ⇒ **12.9% fresh at the iter025 readout.**
+Corroborated independently by shards: the iter-41 bundle
+(`data/salvage/pre_audit_window_20260726/seeds/slot_000/replay_shards`) holds
+820 shards of which only **255 (31%)** carry indices above the boot maximum
+31416 — and shard-count over-states row share because fresh shards are smaller.
+
+`iterations_since_restore` runs **1, 2, 3 … 34 monotone**: there was **no
+restart, no checkpoint-index ratchet and no worker death anywhere in iters
+0-34.** The window was at its 1.5M cap from iteration 1 and never moved.
+
+---
+
+#### 1. REALIZED PER-GROUP LR — the "LR insult" is REFUTED by a positive artifact
+
+- **The 3e-4 launch never ran.** A first trial `967b1_00000_0_lr=0.0003` started
+  2026-07-26 05:58:44 and **died before iteration 1**:
+  `runs/pbt2_small/tune/train_trial_967b1_00000_0_lr=0.0003_2026-07-26_05-58-44/error.txt`
+  — `trainable_init.py:111 guard_warm_start_lr` raised
+  *"warm start from salvage pool would run a net converged at peak_lr 3e-05 at
+  lr 0.0003 (10.0x, limit 2.0x)"*. Its `result.json` is **0 bytes** ⇒ zero
+  optimizer steps. `warm_start_lr_max_ratio: 2.0` (PR #247) did its job. 13a9f
+  relaunched 06:02:14 at `lr: 3e-05`.
+- **Log, not yaml:** `opt_lr` = **6.000000000000001e-05** and `peak_lr` =
+  **3e-05** in **all 80 rows** of `progress.1785134613.csv` (single distinct
+  value each). Per `tune/trainable_report.py:1304-1306`, `opt_lr` is
+  `trainer.opt.param_groups[0]["lr"]` sampled AFTER the train phase — the
+  `sqrt_release` **trough**, not the LR the trunk trains at.
+- **Optimizer state, iter 41** (`data/salvage/pre_audit_window_20260726/seeds/slot_000/trainer.pt`,
+  `step` 58327, `peak_lr` 3e-05):
+  `scheduler.base_lrs = [0.0006, 3e-05, 3e-05, 3e-05]`,
+  `_last_lr = [6e-05, 3e-06, 3e-06, 3e-06]`, `last_epoch = 40` (one scheduler
+  step per ITERATION). `lr_T0: 999999` ⇒ base_lrs cannot decay, so these are the
+  base_lrs for iters 1-40 as well. **This is exactly boot512's donor regime as
+  this ledger records it** (`[6e-4, 3e-5, 3e-5, 3e-5]`).
+- **Realized trunk LR:** `opt_lr_mean` 5.0e-04 / `opt_lr_max` 6.0e-04 in every
+  row that has the column (iter 81+), confirming the memory note that `peak_lr`
+  is the AUX base and the matrix/trunk group runs at ~5.3e-4 mean
+  (6e-4 x ~0.88 ramp mean). Those columns did not exist in iters 0-30, but
+  `base_lrs` did and they pin the same answer.
+- **Param groups at iter 41:** g0 Aurora **48 tensors, weight_decay 1e-4**;
+  g1 empty; g2 143 tensors wd 1e-4; g3 290 tensors wd 0 (481 tensors total).
+  **⚑ `matrix_weight_decay: 0` did NOT reach the Aurora group** — g0 carries
+  `aux_weight_decay` 1e-4. This is [[matrix_weight_decay_is_decorative]]
+  observed on THIS lineage, live for iters 0-64 until PR #260. Magnitude bounds
+  it out as a cause: lr x wd ~ 5.3e-8/step, ~1e-4 relative shrink over the ~1000
+  steps of iters 1-25. **Verified, not causal — but it means "production
+  optimizer scope" in this window was not what the config said.**
+
+**Verdict: the LR-insult hypothesis is DISFAVOURED and specifically refuted.**
+There is no LR anomaly in iters 0-30 to blame: the guard rejected the only
+candidate insult before it could take a step, and the realized base_lrs equal
+the donor's.
+
+---
+
+#### 2. GRADIENT REGIME — NOT MEASURABLE for iters 0-30, and that is the finding
+
+- `progress.1785134613.csv` has **264 columns and none of them is a grad
+  column**. `grad_norm_{mean,median,p95,max}`, `grad_{clip,adaptive_clip,hard_clip}_rate`,
+  `grad_nonfinite_skip_rate`, `grad_norm_{aurora,adamw}` all land with PR #260
+  (`git log -S grad_norm_median` → `5e2b1ef9`, 2026-07-26) and **first appear in
+  `result.json` at iteration 81** (2026-07-27 02:43). **Iters 0-80 have no
+  gradient instrument at all.** zclip's adaptive EMA is not checkpointed either,
+  so nothing survives to reconstruct it.
+- What IS established for iters 0-30:
+  - `zclip_max_norm` = **5.0** in the iter-1 realized `config` and unchanged
+    through iter 122 (→ 6.5 at iter 123, 2026-07-27 11:12). `grad_clip` 10.0.
+  - **The clip scope INCLUDED the Aurora matrix group.** `trainer.py:997-1001`:
+    *"since 2026-07-27 the clip scope excludes the scale-invariant matrix group
+    ... the series it reads steps down ~4.4% at that deploy."* So in iters 0-30
+    the 5.0 cap was compared against a whole-model norm, making the effective
+    AdamW-group threshold ~5.0/1.046 = **~4.78, about 4.5% TIGHTER than
+    nominal**.
+  - **First measurement, iter 81:** median **5.102**, p95 6.016, hard-clip
+    **65.5%**, adaptive 0.0%. The median is already above BOTH the 5.0 cap and
+    the pre-committed `GRAD_NORM_MEDIAN_WATCH = 4.75` (`trainer.py:993-1003`,
+    "the hard cap is acting as an LR cap, not a tail guard").
+  - The measured series ratchets: median 5.10 (81) → 7.00 (250) → 8.21 (350) →
+    8.82 (478); hard-clip 0.655 → 0.865 → 1.000 → 1.000.
+- **Backward extrapolation** of that slope (~+0.0094 median/iter) puts iter 1 at
+  ~4.4-4.7 — below the 5.0 cap, implying a **partial** (tens of percent) rather
+  than 100% hard-clip regime in iters 0-30, i.e. **the regime DRIFTED INTO
+  direction-only descent rather than starting there.**
+  **⚑ This is EXTRAPOLATION, not measurement, and it is the one question this
+  reconstruction cannot close from artifacts.** It is also not closable
+  retroactively — gradients are not checkpointed. It CAN be measured offline:
+  replay the boot-era window through `boot_snap_recheck_0711_0404.pt` at the
+  recorded base_lrs and read `grad_norm_median` / hard-clip rate directly.
+
+---
+
+#### 3. LOSS COMPOSITION — every weight constant; one signal moves, and it is diagnostic
+
+- **Constant across all of iters 1-30** (`progress.1785134613.csv`, one distinct
+  value each): `w_wdl` 1.0, `w_soft` 1.0, `w_categorical` 0.3, `w_sf_move` 0.02,
+  `sf_wdl_frac` 0.45, `selfplay_fraction` 0.5, `feature_dropout_p` 0.1,
+  `sf_wdl_conf_power` 1.0, `sf_wdl_draw_scale` 0.55, `sf_wdl_temperature` 1.0,
+  `diff_focus` 4.8 / 3.8 / 4.0 / 0.09.
+- **Realized-config diff over iters 1-40** (`result.json` per-row `config`): the
+  **only** keys that ever change are `opening_fen_list_path` (the retire_N seed
+  rotation) and `opening_fen_dole_per_iter` 1 → 0 at iter 27. **No loss weight,
+  LR, optimizer, or data-pipeline key moves.** "A loss-weight change vs the
+  previous era" is REFUTED as an in-window cause.
+- `batch_size` 512; `train_views_actual` 2.50-2.57 (vs 5.013 realized at iter
+  478 — the loop was running at HALF today's reuse); `train_steps_used` 33-53.
+- **⚑ THE ONE LOSS SIGNAL THAT MOVES, and it is asymmetric:**
+
+  | metric | iter 1 | mean 1-10 | mean 21-30 | mean 71-80 | argmin |
+  |---|---|---|---|---|---|
+  | `policy_loss_curriculum` | **1.2888** | 1.3532 | 1.4478 | 1.4965 | **iter 1 (run minimum)** |
+  | `policy_loss_selfplay` | 1.3906 | 1.4046 | 1.3948 | 1.4243 | iter 33 |
+  | `wdl_loss_curriculum` | 0.9897 | ~0.999 | ~1.000 | — | flat |
+  | `wdl_loss` (all) | 0.7233 | 0.7314 | 0.7412 | 0.7844 | iter 3 |
+
+  The drift in iters 0-30 is **policy-specific AND curriculum-row-specific**.
+  Part of the curriculum rise is exposure — fresh rows are unseen and
+  [[policy_head_memorises_the_window]] says unseen rows read ~0.31 nats high.
+  **What makes it more than exposure is the asymmetry against
+  `wdl_loss_curriculum`: same rows, same freshness, FLAT.** An exposure term
+  lifts both heads; this lifts only policy.
+- `frac_is_selfplay_batch` falls 0.910 (iter 1) → 0.821-0.856 (iters 25-30) —
+  the batch is ~14-18% curriculum rows, so the moving signal sits on a minority
+  row class.
+
+---
+
+#### 4. WHAT WAS IN THE WINDOW AT BOOT — **100% old-era, and that is measured, not inferred**
+
+The restart vehicle was `data/salvage/swap_512x16_20260711`
+(`startup_source = salvage` in every row of iters 1-80).
+
+- Its window: **815 shards, indices 30602-31416, mtimes 2026-07-06 23:06 →
+  2026-07-11 07:25** (`.../seeds/slot_000/replay_shards`).
+- The 512x16 swap happened **2026-07-11 13:05** (bundle `README.md` /
+  directory mtime). **Every shard in the boot window predates the swap.**
+- The bundle README's own step 1 says the window was hardlinked from *"the
+  CURRENT live trial's replay_shards"* at swap time — i.e. the 46M 384x12 net's
+  own selfplay.
+
+**⚑ ANSWER, stated explicitly as requested: at 13a9f iteration 1 the replay
+window was 100% old-era 46M-384x12-net selfplay, already 15 days stale, and it
+was still ≥87.1% old-era at the iter025 readout** (194,222 rows ingested against
+a 1,500,000-row window pinned at cap). A fresh 512x16 net was trained on a
+weaker net's search targets and game outcomes for its entire first 25
+iterations.
+
+Two things that must be said alongside it, or this is over-claimed:
+- **boot512 was itself produced on 46M-era data** — its bootstrap ran on 1402
+  shards / 2,591,168 positions
+  (`runs/scaleup_512x16_bootstrap/cont_0710_2120_lr0.00003_noplateau.log`,
+  `{"event":"live_follow_ready", "shards":1402, "positions":2591168}`), also
+  from the 46M loop. So "old era" is not a NEW insult at iteration 1. **What
+  changed is the size and reuse** (2.59M positions with `target_reuse: 1.0`
+  offline, vs a 1.5M window at 2.5 views) **and the arrival of a
+  differently-shaped curriculum stream** (next section).
+- The bundle's shards are a LATER slice than the bootstrap pool, so the two
+  corpora overlap but are not identical. Fraction of overlap not measured.
+
+---
+
+#### 5. THE PID STATE WAS INHERITED FROM THE 46M NET AND WAS WRONG BY ~0.20 WINRATE
+
+`data/salvage/swap_512x16_20260711/seeds/slot_000/pid_state.json` (copied from
+`recover_ckpt751_20260711`, i.e. the 46M trial's controller):
+`nodes 698289`, `wdl_regret 0.039324554`, `ema_winrate 0.5695`.
+
+Reality on the first two iterations (`pid_curriculum_{w,d,l}`):
+
+| iter | W/D/L | score |
+|---|---|---|
+| 1 | 17 / 35 / 36 | **0.392** |
+| 2 | 22 / 138 / 90 | **0.364** |
+
+The controller responded exactly as designed: **`pid_regret_reason = airbag` at
+iter 2, cap 0.05, regret 0.03963 → 0.08963 in a single step** (the maximum
+allowed), then `fit_capped` creeping inside 0.087-0.098 for iters 3-32 against a
+per-iteration cap of ~0.0027. `pid_nodes_reason = not_active` for **all** of
+iters 1-32 — the nodes lever never engaged, so `sf_nodes` stayed pinned at
+**698,289** the whole time.
+
+**Consequence for the training distribution:** from iteration 2 onward every
+fresh curriculum row was generated against a 698k-node Stockfish handicapped to
+**2.3x the eased regret** of anything in the boot window (0.0896 vs 0.0393).
+That is a position/target-distribution shift applied from step ~100, and it
+lands on precisely the row class whose policy loss is the only one that moves.
+
+---
+
+#### 6. RESTART / ANOMALY TIMELINE, iters 0-30
+
+- **No restarts** — `iterations_since_restore` 1…34 monotone. 4 workers every
+  iteration; `backpressure_paused_percent` 0.0; `distributed_stale_games` 0
+  through iter 28. Iterations run a steady ~500-670 s.
+- **Iter 27, 1903 s** (`ingest_ms` 1.80M): the `opening_fen_dole_per_iter` 1 → 0
+  worker-session restart.
+- **Iters 28-29: the curriculum stream went to ZERO.** `ingest_frac_selfplay`
+  1.000 / 1.000, `pid_curriculum_{w,d,l}` 0/0/0, `pid_active_levers = none`.
+  Recovery is not complete until iter 32 (52/4/12). This independently
+  reproduces the ledger's own C6 correction from the per-iteration rows.
+- **Iters 33-34: 3112 s and 3234 s** with 136 and 1293 stale games — concurrent
+  load (the 07-26 200-game `CONC=4` ratchet arena this ledger records as costing
+  ~23 iterations). Outside 0-30, but it contaminates any iter-33+ baseline.
+- **The holdout is NOT a ruler in this window.** `holdout_frozen` 0,
+  `holdout_generation` 0, `test_size` grows 0 → 2000 across iters 1-14
+  (`freeze_holdout_at: 2000` only deploys at the iter-41 restart). So
+  `test_wdl_loss` 0.776 (iter 4) → 0.8535 (iter 21) → 0.8079 (iter 30) is read
+  off a churning set and is **not evidence of anything**.
+- `pid_ema_winrate` falls 0.5607 → 0.5135 over iters 1-27. **Do NOT read this as
+  degradation**: it is a post-restart series and
+  [[winrate_spike_restart_sampling_bias]] says post-restart winrate is
+  length-truncated ~+0.110 too high. The decline is consistent with the bias
+  decaying. DISQUALIFIED.
+
+---
+
+#### RANKED CAUSES
+
+**1. FAVOURED — the window was 100% old-era 46M-net data and stayed ≥87% old-era
+through iter 25.**
+*For:* measured shard index/mtime range vs the swap date (§4); ingest arithmetic
+(12.9% fresh at iter 25); the 08-02 composition arms already measured STALENESS
+as harmful; the drift is policy-specific and curriculum-specific (§3), which is
+what a stale SEARCH TARGET predicts and what a stale VALUE label does not
+(`sf_wdl` is external ground truth and does not go stale); iter025's value
+regret (+4.66) is statistically indistinguishable from the 46M-era net's own
+(+5.24), i.e. the net looks like it regressed toward the generator of its data.
+*Against:* boot512 was itself trained on 46M-era data, so "old era" is not a NEW
+insult at iteration 1; and the v1donor coincidence is NS and cross-architecture.
+*Not settleable from artifacts.* Needs an intervention: train boot512 forward
+the same number of steps on a window that is 100% fresh, same seed, same views.
+
+**2. FAVOURED (second) — the inherited PID state made the curriculum stream a
+distribution the window contains none of.**
+*For:* fully verified (§5) — inherited `ema_winrate` 0.5695 vs realized 0.36-0.39,
+airbag at maximum step on iteration 2, regret held at ~2.3x the boot-window
+value for 30 iterations, nodes pinned at 698,289 with the lever `not_active`.
+Applied from iteration ~2, i.e. "from the first steps", which is what the brief
+asks for. Lands on the exact row class whose policy loss is the only one moving.
+*Against:* curriculum rows are only ~14-18% of the batch, so the mechanism must
+be efficient to explain a whole-head regression; and part of the
+`policy_loss_curriculum` rise is exposure to unseen rows.
+*Cheap next test:* split the 08-02 value-regret dumps by position phase against
+`pid_curriculum` composition, or re-run the iter025 checkpoint against a
+curriculum-only vs selfplay-only slice.
+
+**3. DISFAVOURED — REFUTED: LR insult.** The 3e-4 launch was rejected before
+iteration 1 by `guard_warm_start_lr` (967b1 `error.txt`, `result.json` 0 bytes);
+`opt_lr` is one constant across all 80 rows; the iter-41 optimizer state carries
+base_lrs **exactly** equal to the donor's `[6e-4, 3e-5, 3e-5, 3e-5]`. There is
+no LR anomaly to blame. **Say so — do not leave this hanging.**
+
+**4. DISFAVOURED — REFUTED: loss-weight / config change vs the previous era.**
+The per-iteration realized `config` in `result.json` changes only
+`opening_fen_list_path` and `opening_fen_dole_per_iter` across iters 1-40.
+
+**5. OPEN, CANNOT CLOSE FROM ARTIFACTS — zclip as an LR cap in disguise.** The
+instrument did not exist before iter 81 and the adaptive state is not
+checkpointed. Established: cap 5.0, scope included the matrix group (effective
+AdamW threshold ~4.78), and by the FIRST measured iteration the median was
+already past the pre-committed watch line with 65% of steps hard-clipped.
+Extrapolation says iters 0-30 were partial, not 100% — so the regime **drifted
+into** direction-only descent rather than starting there. **Extrapolation, not
+measurement.** Resolvable offline, not retroactively.
+
+**6. NEW, not on the candidate list — `matrix_weight_decay: 0` was decorative
+for iters 0-64.** The Aurora group carried `weight_decay` 1e-4 (§1). Bounded out
+as a cause by magnitude (~1e-4 relative shrink over iters 1-25), but it is a
+live instance of the signature defect inside the exact window under
+investigation, and it means the optimizer scope in this window was not what the
+config claimed.
+
+---
+
+#### VERIFIED (artifact cited above for each)
+
+Boot vehicle and `startup_source: salvage`; boot window = 815 shards, idx
+30602-31416, all pre-swap; 12.9% window turnover at iter 25; 255/820 new shards
+at iter 41; `opt_lr` 6.000e-05 and `peak_lr` 3e-05 constant over iters 1-80;
+base_lrs `[6e-4, 3e-5, 3e-5, 3e-5]` and `_last_lr` `[6e-5, 3e-6, 3e-6, 3e-6]` at
+iter 41; `last_epoch` 40 = one scheduler step per iteration; param-group sizes
+48/0/143/290 and Aurora `weight_decay` 1e-4; the 3e-4 launch rejected pre-iter-1;
+all loss weights constant; realized-config diff over iters 1-40 = seed path +
+dole only; `train_views_actual` 2.50-2.57; window pinned at 1,500,000 every row;
+no restarts iters 1-34; the iter-27 worker restart and the iters-28-29 curriculum
+drought; `policy_loss_curriculum` minimum at iteration 1; grad columns absent
+before iter 81 and median 5.102 / hard-clip 65.5% at iter 81; `zclip_max_norm`
+5.0 → 6.5 at iter 123; PID state inherited at nodes 698,289 / ema_wr 0.5695 and
+the airbag firing at iter 2; the 08-02 CIs quoted in the opening table.
+
+#### ASSUMED / NOT ESTABLISHED
+
+That the gradient regime in iters 0-30 was a partial rather than a 100% hard
+clip (**backward extrapolation of the iters-81+ series only — no instrument
+existed**). That the boot window's 815 shards overlap boot512's own 1402-shard
+bootstrap pool (both are 46M-era and time-adjacent; overlap fraction not
+measured). That `boot_snap_recheck_0711_0404.pt` is bit-identical to the trainer
+weights 13a9f resumed (`step` 56000 → 58327 at iter 41 is consistent with 40
+iterations x ~40 steps, but no hash was compared). That `policy_loss_curriculum`'s
+rise is degradation rather than pure exposure to unseen rows — the flat
+`wdl_loss_curriculum` argues against pure exposure but does not exclude a mixed
+effect. That the iters-33-34 slowdown is the ratchet arena (timing is
+consistent; not confirmed from the arena log). **No claim here is a strength
+measurement**: the only strength reading in this window is the ledger's own
+iter-25 ratchet, −12.2 Elo [−61.5, +36.7] vs boot512 = parity.
+
+#### WHAT WOULD DECIDE IT
+
+Two offline runs from `boot_snap_recheck_0711_0404.pt`, identical seed / steps /
+views / base_lrs, differing in ONE factor each, both scored on the frozen
+value_regret + `audit_targets` rulers with paired CIs vs boot512:
+(a) 100%-old-era window (reproduces iters 0-25) vs a window of equal size drawn
+only from post-swap shards — decides cause 1;
+(b) the same old-era window with `grad_norm_median` / hard-clip rate INSTRUMENTED
+at the iters-0-30 clip scope and cap — closes cause 5 with a measurement instead
+of an extrapolation.
+
+
+### ⚑⚑ VERDICT 2026-08-02 — IS THE POLICY TARGET BELOW THE NET THAT TRAINS ON IT? **NO — REFUTED, and not marginally: on the current window the search target is 10.27 cp BETTER on top-1 than the unexposed boot512 student and 18.58 cp better in expectation.** Absorption failure is re-confirmed on stored production planes. Side effect, and it is the bigger number: **12.81 cp of iter478's apparent policy quality is memorisation** — iter478 beats boot512 by 7.94 cp on rows it recently trained on and LOSES to it by 4.87 cp on rows it has not seen since ~iter 60.
+
+**Question.** Does the net train toward a target that is worse than the net
+itself ("teacher below student"), which would make every gradient step
+destructive with no selfplay feedback loop required?
+Read-only, offline, forward-only; training stayed paused; no config touched.
+
+**Pre-registration** banked at `scratchpad/teacher_vs_student_20260802/PREREG.md`,
+written before any teacher-vs-student number existed (only the two frame checks
+below had been run). Rule: D = mean paired `top1_regret(teacher) −
+top1_regret(boot512)` on fully-covered rows, 95% percentile bootstrap over
+10,000 resamples **clustered by `game_id`**, seed 0. SUPPORTED iff D > 0 with CI
+excluding 0; ABSORPTION FAILURE RE-CONFIRMED iff D < 0 with CI excluding 0;
+INCONCLUSIVE otherwise or if the negative control fails.
+
+Per-row dumps banked: `scratchpad/teacher_vs_student_20260802/dumps/full.jsonl`
+(211,028 rows) and `dumps/era46m.jsonl` (86,056 rows), with `results_*.json/.txt`
+and `extra_*.txt`. Scripts: `measure.py`, `analyse.py`, `extra.py`,
+`verify_ruler.py`.
+
+---
+
+#### ⚑⚑ FIRST: THE OBVIOUS INSTRUMENT IS WRONG, AND IT IS WRONG BY 89%
+
+A row's own `sf_multipv_raw` is **NOT** SF's read of that row's position.
+`stockfish_turn.py::_sf_result_wdl_for_record`: *"SF label searches are run after
+the network move has been pushed"*. Measured on shard_033500, 500 labelled rows:
+a row's own MultiPV move indices are legal in its **own** `legal_mask` only
+**11.3%** of the time, and legal in the **next ply's** row **100.0%** of the time
+(n=87 rows whose successor is in the same shard). Scoring
+`argmax(policy_target)` against the row's own `sf_multipv_raw` measures the
+OPPONENT'S REPLY POSITION and would have produced a confident, fabricated answer.
+
+The correct field is **`sf_p0_regret`** (`has_sf_p0_regret`), built in
+`finalize.py::_build_sf_p0_regret_vector` from the PREVIOUS full ply's raw
+MultiPV — SF's read of THIS row's position, per-legal-move cp regret normalised
+by `SF_OWN_REGRET_CAP_CP = 1000`. Verified two ways:
+- its non-default entries are legal in the row's own mask **100.0%** (n=300);
+- **re-derived from scratch** off the ply-1 row's raw table on **9,317 rows**
+  across both eras: max |recon − stored| = **2.42e-4** = exactly one fp16 ulp at
+  0.5, and **0/9,317** SF-best-move disagreements (`verify_ruler.py`).
+
+Ruler strength on these shards: `sf_label_meta` median **698.5k nodes, depth
+12-13**. Best-move based only — `_build_sf_p0_regret_vector` reads `(move_idx,
+cp, mate)` and never touches which move the PID-handicapped opponent played, so
+the "targets are always best-move based" invariant is confirmed for this field
+specifically.
+
+#### The measurement
+
+Rows carry the FULL production input `x` (175,8,8, real move history), so the
+FEN-only ruler defect (117/175 planes zero) **does not apply here** — this is the
+first policy-quality reading in this project taken on inputs the net actually saw.
+Arms scored identically: `teacher` = argmax/distribution of the stored
+`policy_target` over `legal_mask` (verified to be the target of the main policy
+CE at `w_policy=1.0` into `policy_own`, `losses.py:297` `batch["policy_t"]`,
+stored verbatim — no temperature is applied to the main head anywhere in
+buffer/dataset/target_builder); `boot512`, `iter478`, `shuffled` = raw policy
+prior via `LocalModelEvaluator`, `model.eval()`, production AMP, **batch pinned
+at 256**; `uniform` = uniform over legal.
+
+**PRIMARY sample** = rows where every legal move is scored by SF
+(`n_covered == n_legal`), a strictly position-level filter. 60.9% of rows.
+Uncovered moves carry finalize's `(worst+1)/2` imputation; the primary avoids it
+by construction.
+
+#### RESULT — live window (512-era, shards 33118-33943, all 713 shards)
+
+n = 128,567 fully-covered rows / 32,820 games (211,028 rows before the cover
+filter). cp, lower is better.
+
+| arm | top-1 regret | soft (E[regret]) | picks SF-best | ≥100cp blunder |
+|---|---|---|---|---|
+| **teacher (`policy_target`)** | **26.69** | **29.08** | **0.530** | **0.065** |
+| boot512 (unexposed student) | 36.95 | 47.67 | 0.464 | 0.101 |
+| iter478 (exposed student) | 29.01 | 41.38 | 0.511 | 0.074 |
+| uniform-legal (control) | 218.05 | 218.48 | 0.125 | 0.551 |
+| shuffled-477 (control) | 201.22 | 218.61 | 0.126 | 0.520 |
+
+- **teacher − boot512 = −10.266 cp [−10.717, −9.830] SIG** ← the pre-registered D
+- teacher − iter478 = −2.326 cp [−2.614, −2.030] SIG
+- soft: teacher − boot512 = −18.583 [−18.912, −18.247]; teacher − iter478 =
+  −12.296 [−12.504, −12.090], both SIG
+
+**VERDICT: ABSORPTION FAILURE RE-CONFIRMED.** D = **−10.266 cp** [−10.717,
+−9.830]. The teacher is not below the student; it is decisively above it, on
+every arm, every era bucket, every phase bucket, and every branching bucket
+except one (below). The "net trains toward a worse target" hypothesis is dead.
+
+Negative control **PASSES**: uniform 218.05 and shuffled 201.22 against the
+pre-committed bar of 2× the worst real arm (73.91). Both controls are ~7.5× the
+teacher.
+
+Stratification (all PRIMARY, teacher − boot512 unless noted):
+- era quartiles of the window: −10.45 / −10.10 / −10.18 / −10.28. **Flat.** The
+  teacher's own absolute quality is also flat (26.61 / 26.85 / 26.24 / 26.99) —
+  the target is not decaying across the window.
+- phase: opening (ply<20) −7.36, middlegame (20-59) −14.83, late (≥60) −7.08.
+- branching: n_legal<20 −2.61, 20-34 −12.42, ≥35 −15.56.
+- **The one bucket where the teacher loses to a student:** n_legal<20 vs
+  **iter478**, teacher − iter478 = **+2.00 cp [+1.38, +2.64] SIG**. In
+  low-branching (largely late/endgame) positions today's net's prior is already
+  better than the search target it trains on. 30% of rows.
+
+Off-list rates (arm's argmax not scored by SF, all rows): teacher 0.0216,
+boot512 0.0211, iter478 0.0170, uniform 0.1034, shuffled 0.0999. On the
+SECONDARY (all-rows, imputed) sample teacher − iter478 flips to **+2.05 cp** —
+that flip is entirely the imputation acting on a 0.5 pp off-list difference
+(~700 cp per event) and is why the primary was pre-registered on fully-covered
+rows.
+
+#### ⚑⚑ THE SIDE FINDING IS BIGGER THAN THE HEADLINE: 12.81 cp OF iter478's POLICY IS MEMORISATION
+
+Same instrument, same ruler, two row sets, paired within each:
+
+| rows | boot512 − iter478 (top-1) | verdict |
+|---|---|---|
+| **512-era** (in-window, iter478 trained on them) | **+7.940 cp [+7.533, +8.360]** | iter478 looks BETTER |
+| **46M-era** (out of window since ~iter 60) | **−4.873 cp [−5.474, −4.285]** | iter478 is WORSE |
+
+A **12.81 cp sign flip on the same net, same ruler, same metric**, driven only by
+whether the rows are currently in the replay window. This is
+[[policy_head_memorises_the_window]] measured in cp instead of nats, and it is
+an **independent confirmation of the strength slide on inputs that carry real
+move history** — the 08-02 frozen-audit reading (+8.45 cp raw-policy
+degradation) has been criticised as possibly a FEN-only-planes artifact; it is
+not. Any future policy readout taken on in-window rows is reading ~13 cp of
+memorisation.
+
+#### The era contrast the boot forensics asked for — AND WHY IT CANNOT DECIDE
+
+Measured on the boot window itself (`data/salvage/swap_512x16_20260711/seeds/slot_000/replay_shards`,
+204 of 815 shards, stride 4; 86,056 rows / 51,384 fully-covered / 14,995 games):
+
+| arm | top-1 | soft |
+|---|---|---|
+| teacher (46M-era search target) | 29.88 | 31.98 |
+| boot512 | 30.57 | 42.62 |
+| iter478 | 35.44 | 46.91 |
+
+- teacher − boot512 = **−0.695 cp [−1.229, −0.179] SIG** (top-1);
+  **−10.638 [−11.020, −10.266]** (soft)
+- teacher − iter478 = −5.568 [−6.224, −4.923] SIG
+
+The forensics' favoured story predicted *"teacher regret > boot512 student regret
+HERE, decisively"*. **That prediction is REFUTED**: the old teacher is still
+better than the student, not worse. What is true is that its **top-1 headroom
+was ~zero (0.70 cp) where today's is 10.27 cp.**
+
+**⚑ But this contrast is CONFOUNDED, and in the direction that manufactures it.**
+`comm -12` over shard indices: **all 815** of the boot-window shards are inside
+boot512's own bootstrap pool `data/scaleup_pool_512x16` (2,514 unique indices,
+029941-032456). **boot512 had memorised 100% of the 46M-era rows and 0% of the
+512-era rows.** Confirming signature: boot512's top-1 agreement with the teacher
+is **0.598** on the memorised rows vs **0.518** on the unexposed ones. A student
+that has memorised its teacher must score near it — 0.70 cp apart is what
+memorisation predicts, not evidence about headroom. **The 46M-era arm carries
+almost no information about whether that teacher was above or below an
+unexposed student, by construction.** Exposure is perfectly confounded with era
+for both students, so the era contrast cannot be cleanly measured with these
+instruments.
+
+What survives the confound, because it points the other way: the teacher on the
+46M-era rows beats **iter478** (the least-exposed student available for those
+rows) by 5.57 cp. Nothing measured here shows a teacher below a student on the
+boot window.
+
+The mechanism that IS supported for iters 0-25 is therefore **zero headroom, not
+negative headroom**: at boot the 512×16 student had already absorbed the 46M
+teacher (agreement 0.598, top-1 gap 0.70 cp), so the 100%-old-era window offered
+it essentially no top-1 signal to climb — while today's window offers 10.27 cp
+that the net still is not taking. Suggestive only, and flagged as such because it
+conditions on a property of one arm: on the boot window, in the 32% of rows with
+teacher entropy ≥0.8 nats, teacher − boot512 = **+2.41 cp [+1.46, +3.37]** —
+the teacher IS below the student there. No entropy bucket is positive in the
+512-era (−11.91 / −11.37 / −6.97).
+
+#### The shape of the failure, restated
+
+The improvement operator is fine and the target is fine. On the current window
+the target is 10.27 cp (top-1) / 18.58 cp (expected) better than the unexposed
+student, its quality is flat across the whole 713-shard window, it picks SF's
+best move 53.0% of the time vs the student's 46.4%, and it blunders ≥100 cp 6.5%
+vs 10.1%. The net trains on it at `w_policy=1.0` and **does not absorb it** —
+except as memorisation of the specific rows, worth 12.81 cp that evaporates the
+moment the rows leave the window. Search gives +32 cp over the raw prior and the
+prior does not keep it; the target gives +10 cp over the prior and the prior does
+not keep that either. The defect is downstream of the target, in what the policy
+head retains.
+
+#### VERIFIED (artifact for each)
+
+`sf_multipv_raw` is the P1 frame (11.3% / 100.0% legality split, n=500/87);
+`sf_p0_regret` is the P0 frame (100% own-legal, n=300) and is reproduced
+bit-for-bit-to-fp16 from the ply-1 raw table on 9,317 rows with 0 best-move
+disagreements; `policy_target` is the main policy CE target verbatim
+(`losses.py:297`) and its measured mean entropy 0.638 nats matches the documented
+0.63; boot512 / iter478 / shuffled477 all **63,084,128** unique-storage params,
+496 keys, all `lc0_1858` / `v2_threats` / `lc0_root_legacy_meta` and
+`use_dynamic_relations=False`, matching the shards' own `policy_encoding` and
+`input_history_encoding` attrs; the 4672→1858 gather used to align the head to
+the shard axis is **bit-exact** vs the model's native head (max |Δ| = 0.0) with
+no legal slot landing on a −1e9 pad; the `has_sf_p0_regret` subsample is an
+**IID random** subsample, not a difficulty filter — `_draw_is_full` is
+`rng.random(n) < playout_cap_fraction` and `full_ply_pair_fraction` is absent
+from the yaml ⇒ 0.0 ⇒ pure IID at 0.25 (`network_turn.py:239-261`,
+`trial_config.py:172`); 100.0% of measured rows are `is_selfplay=1` in both eras;
+batch pinned at 256; negative control passes at 7.5× the bar; all 815 boot-window
+shard indices are inside boot512's bootstrap pool; the 46M-era pool's provenance
+(`manifest.json`: `checkpoint_000751`, trial `5fac4`, 815 copied replay shards;
+`README.md`: `trainer.pt` = the boot512 snapshot, "trial_meta/manifest still
+describe the 46M trunk").
+
+#### ASSUMED / NOT ESTABLISHED
+
+That the 46M-era rows' `policy_target` was produced by the 384×12 net's search —
+taken from the pool's README/manifest, **not** verifiable from the shards
+themselves (`model_sha256` and `model_step` are `None` in every shard attr set).
+That the ~698k-node depth-12/13 SF label is a sound ABSOLUTE ruler — it is
+identical across arms so all rankings hold, but no absolute cp bar is claimed.
+The 1000 cp regret cap applies inside the primary sample and compresses
+differences in already-lost positions. **This verdict covers SELFPLAY rows
+only**: `sf_p0_regret` needs two consecutive full-sim net plies, which curriculum
+games structurally cannot produce (the net's plies are 2 apart), so ~50% of the
+data is unmeasured by this instrument. No arena, no Elo, no strength claim — cp
+regret against a label-grade SF is not a game result. The entropy stratification
+conditions on a property of one arm (the teacher) and is descriptive only. The
+two era dumps are different rows, so the era contrast is unpaired.
+
+#### WHAT WOULD DECIDE THE REMAINING QUESTION
+
+The open question is no longer "is the target good" — it is "why does the head
+not keep it". The decisive experiment is a retention probe, not another target
+audit: train from `boot_snap_recheck_0711_0404.pt` on a FIXED window for N steps,
+then measure top-1 regret against `sf_p0_regret` on (a) the trained rows and (b)
+held-out rows from the same shards, at several checkpoints. The 12.81 cp
+in-window/out-of-window gap measured here predicts (a) improves and (b) does not;
+if (b) also improves, the retention failure is a property of the live loop's
+window turnover rather than of the head, and the lever is window/views, not
+capacity.
+
+## 2026-08-02 — VERDICT: L arm at raised rows/param (pre-registration at "PRE-REGISTRATION: separate 'fewer parameters' from 'more rows per parameter'", this file, 2026-08-02)
+
+**VERDICT (by the pre-committed rule, nothing else): UNRESOLVED.**
+B (mean rebound over seeds) = **+0.0878** [s0 +0.0878, s1 +0.0878], inside the
+pre-committed dead zone (+0.0739, +0.1500). Neither branch bar is met:
+`B <= +0.0739` False; `B >= +0.1500` False. Both 5F margins pass trivially
+(F = |s0-s1| of rebound = 0.0001; 5F = 0.0004; bit-identical rerun floor 0.0000).
+
+Readout validity gates: ALL PASSED.
+- desync fingerprint 0.000000 on train AND held; game_id overlap train↔held = 0.
+- rows written 1,145,716 == pre-pass exactly; params 63,084,128 by unique storage.
+- ruler vs production `eval_full_pass().policy_loss`: |diff| 3.252e-05 (rig fp32,
+  production bf16; gate <= 1e-3).
+- replication of sibling L seed 0 on the sibling's own corpus: |delta| = 0.00e+00
+  at all four checked points, reproduced twice — same rig, arm-vs-arm comparison valid.
+- negative control (policy targets permuted across rows, arm L, wide corpus): held
+  excess worse by min +793 nats at every matched checkpoint (bar: >= +0.30) — control
+  FAILED as required. Note: the cross-row shuffle also breaks target legality, so this
+  is a label-dependence proof, not a calibrated chance bar.
+
+Numbers (held-out policy excess over floor, nats; held set byte-identical to the
+sibling's, so LEVELS are comparable across all arms):
+- L-wide (63.08M, rows/param 0.01816 = 6.11x sibling L, 89.9% of live 0.0202):
+  min 1.1229 @ views 4.326 (s0) / 1.1125 @ 4.798 (s1); final(11.52) 1.2107 / 1.2003;
+  REBOUND +0.0878 both seeds. Sibling anchors: L(0.00297) +0.2295, M(0.00958) +0.0739,
+  S(0.03038) +0.0000. Log-interp rows/param prediction at 0.01816 was +0.0329.
+- Interpretation constraint: the rebound COLLAPSED 0.2295 -> 0.0878 with 6.1x data at
+  FIXED params — rows/param is clearly the dominant driver — but it did NOT fall to the
+  ratio-matched prediction (+0.033) and sits slightly ABOVE the 19.6M net's rebound at
+  its own (lower) ratio. A residual same-params effect of ~+0.05-0.06 nats of rebound
+  survives the data increase. The pre-committed rule anticipated exactly this middle
+  ground and it landed there: UNRESOLVED, and honestly so.
+
+Secondary findings (coordinator-requested, NOT part of the verdict rule):
+- **LEVELS: L-wide is the BEST of all four arms at EVERY rung 0.47–11.52 views/row**,
+  by 0.24–0.43 nats. No crossover exists anywhere on the ladder. Even at final
+  views 11.52 (deep in its rebound) L-wide's 1.2055 beats S's best-ever 1.4336 by 0.23.
+  At this data rate "shrink the net" is not supported by levels.
+- **Turning point moves LATER with more data**: views_at_min 3.12 (rows/param 0.00297)
+  -> 4.56 (0.01816), shift +1.44. Still (just) below production's views/row 5.0; at
+  live 0.0202 the turn is plausibly at or past 5.0, but that is extrapolation.
+- Caveat that must ride with any live inference: this is a FIXED-CORPUS FROM-SCRATCH
+  regime; the live loop is a growing stream with fresh rows always arriving. A rebound
+  produced by recycling a frozen corpus may not exist there. Held-out policy CE only —
+  says nothing about Elo/strength on its own.
+
+Confounds: as pre-registered (6.11x more optimizer steps at fixed chunk_steps=176 so
+the LR sawtooth is preserved; level comparability rests on the byte-identical held set;
+exposure recency identical across arms by construction — all arms train only on the
+same-era wide/sibling corpora and the held set is game-disjoint by the mix64 split).
+Artifacts: /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/
+(runs run_LW_s0, run_LW_s1, run_LWSHUF_s0; analyzer analyze_rp.py; corpus_wide).
+
+
+## 2026-08-02 — VALUE teacher-vs-student and the value memorisation wedge: SAME DEFECT SHAPE AS POLICY
+
+**Status: MEASURED (offline, no training compute, no production change).**
+Companion to the 08-02 policy readout (ledger commit 6642e79e9). Pre-registration:
+`scratchpad/value_teacher_20260802/PREREG.md`, written before any arm was scored;
+one amendment, dated and reasoned, is inside it. Dumps banked at
+`scratchpad/value_teacher_20260802/{live,out}.npz` (+ `.meta.json`), scripts
+`measure.py` / `analyse.py`, results `results_sf020.json`.
+
+### Question and answer in one line
+
+The policy result was: **the teacher is ~10.3 cp BETTER than the net everywhere,
+yet 478 iterations produced a 12.8 cp memorisation wedge.** The value head shows
+**the same shape**: the value target is above the head, and the head's apparent
+progress is concentrated on the rows it is currently training on — including a
+**sign flip** out of window.
+
+### The realized value target, reconstructed (not assumed)
+
+`losses.py:418-503`, with `use_adjusted_wdl_target: false`, both
+`sf_search_dampen_*: 0.0`, `sf_wdl_temperature: 1.0`:
+
+```
+target = 0.35*onehot(wdl_target) + 0.45*norm(sf_wdl) + 0.20*norm(search_wdl)
+```
+
+- `sf_wdl_frac = 0.45` is **VERIFIED from a log line**: the trainer's realized value
+  is a progress.csv column and reads **0.45 on all 478 rows** of the lineage
+  (`progress.1785134613.csv` iters 1-80 through `progress.csv` iters 411-478).
+  The yaml's nominal `sf_wdl_frac: 0.50` is never realized — `wdl_regret` has
+  stayed in 0.0647-0.0823, below `sf_wdl_floor_at_regret: 0.10`, so
+  `_dynamic_sf_wdl_weight` pins the blend to the `sf_wdl_frac_floor: 0.45`.
+  **Anyone quoting 0.50 for the last 478 iterations is quoting a knob, not the run.**
+- `search_wdl_frac = 0.20` is **ASSUMED** — it is in `TRAINER_WEIGHT_KEYS` (re-applied
+  from the live yaml every iteration) but **has no progress.csv column**, so there is
+  no log line to prove it. Every headline was recomputed at 0.35 (the documented
+  revert pair) and moves by <0.0003 in E2; the verdicts are insensitive.
+- `sf_wdl_conf_power` / `sf_wdl_draw_scale` were checked and touch only
+  `_compute_sf_wdl_mask`, i.e. the auxiliary `sf_eval` head's mask. They are **not**
+  in the blend. (`losses.py:539-544`.)
+
+### Instrument
+
+Rows: stored replay rows with their own `x` (175,8,8) planes — mean **62.4/175**
+zero planes live, 71.4/175 out-of-window, so the FEN-only ruler defect (117/175)
+does not apply. Filters, all position-level: `is_network_turn` (the mask the wdl
+loss uses) AND `has_sf_wdl` AND `has_search_wdl` AND `has_sf_multipv_raw` (the SF
+desync screen). Metric: **E2 = (S_arm − S_truth)², S = p_W + 0.5·p_D** — proper,
+so no arm can win it by sharpening or hedging; not Brier, not ECE. Companions:
+game-clustered concordance (calibration-immune) and E2 after an optimal affine
+refit. cp-equivalent is a presentation transform at the label's own logistic
+slope, **1 cp = 0.0013213 in S** (756.9 cp per unit S). Batch 256, `use_amp=True`
+`amp_dtype=auto`, `model.eval()`, forward-only, `nice -n 19`.
+
+Row sets, both read-only:
+| set | source | n rows | games | selfplay | noPV |
+|---|---|---|---|---|---|
+| **LIVE** (in window) | live trial `replay_shards`, 713 shards, idx 033118-033951, written 07-30..08-01 | 155,257 | 8,855 | 0.680 | 0.000213 |
+| **OUT** (aged out) | `data/salvage/pre_sf_reallocation_ck148_20260722/.../replay_shards`, 643 shards idx<33118 (032475-033117), written 07-19..07-22 | 154,286 | 10,355 | 0.503 | 0.000253 |
+
+**⚑ `data/scaleup_pool_512x16` was REJECTED as the out-of-window set** — its
+31417-32456 range reads **8.1% no-PV** and its 07-14/07-15 shards up to **63%**,
+i.e. it is squarely inside the SF-desync episode. A desynced engine returns the
+previous query's answer, which would have poisoned both the 45% SF component of
+the teacher AND the SF ground truth. Whoever reaches for that pool next should
+screen it first.
+
+**The exposure structure is cleaner than the policy version's.** Both sets were
+written AFTER the boot512 snapshot (mtime 2026-07-11 04:04:50) — the earliest OUT
+shard by 8.7 days — so **boot512 is unexposed to BOTH sets** and the
+difference-in-differences isolates iter478's exposure recency alone. The policy
+wedge's 46M-era arm had boot512 exposed to 100% of the out-of-window rows.
+
+### ⚑ There is no uncontaminated ground truth for the target on a stored row
+
+Every component of the realized target is one of the two available truths:
+the outcome is **35%** of it, `sf_wdl` is **45%** of it. Scoring the realized
+target against either is partly scoring a component against itself — and it shows:
+`E2(iter478) − E2(target)` reads **+0.0572** against outcome truth, which is a
+measurement of the 35% self-inclusion, not of teaching quality. The deciding
+teacher arm is therefore **`teacher_no_outcome` = (0.45·sf + 0.20·search)/0.65**,
+the target with its outcome component removed and renormalised. It is a strictly
+handicapped version of the real target, so every "teacher above the head" result
+below is **a-fortiori**.
+
+### V1 — THE VALUE TARGET IS ABOVE THE HEAD (verdict: TEACHER ABOVE, pre-committed rule)
+
+LIVE rows, outcome truth, game-clustered 95% CI, n=155,257 / 8,855 games:
+
+| contrast | E2 | cp-equiv (ΔRMSE) | |
+|---|---|---|---|
+| `E2(iter478) − E2(teacher_no_outcome)` | **+0.00538 [+0.00486, +0.00589]** | **+6.69 cp** | SIG |
+| `E2(boot512) − E2(teacher_no_outcome)` | **+0.00980 [+0.00925, +0.01035]** | **+12.06 cp** | SIG |
+| `E2(iter478) − E2(sf_only)` | +0.00310 [+0.00238, +0.00383] | | SIG |
+| `E2(iter478) − E2(search_only)` | +0.00177 [+0.00147, +0.00208] | | SIG |
+
+So the value teacher has **~6.7 cp-equivalent of headroom over today's head** and
+12.1 cp over the unexposed boot512 — the same order as the policy target's
+10.27 cp. **The teacher is not the problem for value either.**
+
+**And it is not a calibration artifact.** Three independent checks:
+- **Concordance** (monotone-invariant, so immune to any miscalibration), selfplay
+  rows. LIVE: `teacher_no_outcome` **0.8522 [0.8459, 0.8593]**, `iter478`
+  **0.8351 [0.8290, 0.8420]**, `boot512` **0.8259 [0.8194, 0.8325]**; the paired
+  difference `C(teacher) − C(iter478)` = **+0.01681 [+0.01509, +0.01906]** SIG.
+  OUT: teacher 0.8776, iter478 0.8586, boot512 0.8599; paired
+  `C(teacher) − C(iter478)` = **+0.01916 [+0.01725, +0.02097]** SIG — the teacher's
+  ranking lead is if anything **wider** on rows the head no longer sees. The
+  teacher ranks positions better, not merely scales better.
+- **Affine recalibration** buys the head almost nothing: E2 0.09510 → E2_recal
+  0.09501 for iter478 (0.09953 → 0.09945 for boot512). The heads are already
+  near-optimally affine-calibrated **against the outcome**; their known
+  under-confidence is measured against the *SF label*, not against the result.
+- **Dispersion decomposition** (`D1 = D1_perm − 2ΔCov`): `D1_perm = −0.01148
+  [−0.01203, −0.01091]` — the teacher is genuinely **sharper**, and that sharpness
+  *costs* it 0.0115 of E2 — yet it still wins by +0.00538, because its covariance
+  with the outcome is **+0.01686** better. The teacher's advantage survives paying
+  a sharpness penalty.
+
+**The one place the head has caught up:** LIVE **curriculum** rows,
+`iter478 − teacher = +0.00009 [−0.00099, +0.00116]` — not significant. On
+in-window curriculum rows the value head is level with its target. On in-window
+**selfplay** rows it is +0.00786 [+0.00732, +0.00840] behind.
+
+### V2 — THE VALUE WEDGE IS CONFIRMED, AND IT FLIPS SIGN (pre-committed primary: selfplay rows, outcome truth)
+
+`Δ(set) = E2(boot512) − E2(iter478)`; positive = iter478 better.
+
+| rows | Δ = boot512 − iter478 | cp-equiv | verdict |
+|---|---|---|---|
+| **LIVE, selfplay** (iter478 trains on them now) | **+0.00328 [+0.00289, +0.00366]** | +3.82 cp | iter478 looks BETTER |
+| **OUT, selfplay** (aged out ≥ 8 days) | **−0.00073 [−0.00110, −0.00035]** | −0.86 cp | iter478 is **WORSE** |
+| **WEDGE** | **+0.00400 [+0.00347, +0.00454]** | **+4.68 cp** | **CONFIRMED** |
+
+**A sign flip on the same net, same ruler, same metric, driven only by whether the
+rows are currently in the replay window** — the value analogue of the policy
+result's +7.94 / −4.87 flip. 478 iterations of training bought iter478 nothing
+over the boot net on value, on rows it is no longer being shown.
+
+Robustness of the wedge — **four metrics, four confirmations, three with the flip**:
+- **Not calibration.** On affinely-recalibrated E2 (discrimination only) the wedge
+  is **+0.00442 [+0.00389, +0.00495]** — slightly *larger*, not smaller.
+- **Calibration-immune ranking.** Paired concordance, selfplay rows:
+  `C(iter478) − C(boot512)` = **+0.00953 [+0.00792, +0.01086]** on LIVE and
+  **−0.00135 [−0.00261, −0.00024]** on OUT. Both CIs exclude 0, with opposite
+  signs — **the sign flip reproduces on a metric that cannot be moved by any
+  monotone miscalibration.**
+- **Second, independent truth.** Against the SF cp-logistic label the wedge is
+  **+0.00196 [+0.00172, +0.00220]** with the same sign flip (LIVE +0.00117
+  [+0.00100,+0.00134], OUT −0.00079 [−0.00097,−0.00062]).
+- Secondary splits: curriculum wedge +0.00294 [+0.00227, +0.00360] (positive but
+  **no sign flip** — both sets favour iter478); all-rows +0.00284 [+0.00241,
+  +0.00326]. The flip is a **selfplay-row** phenomenon.
+
+**Timing of the eviction, from the trial's own iteration clock:** the OUT shards
+sit below the live window's minimum index, and the live window's oldest shard
+(033118) was written 2026-07-30 01:09. The first training iteration at or after
+that timestamp is **iteration 315**, so the OUT rows had left the window at least
+**163 iterations** before iter478. They were in the window (and trained on) for
+roughly iterations 1-315 of this trial.
+
+### Negative controls
+
+| control | result | |
+|---|---|---|
+| NC1 `shuffled` worse than every real arm | `E2(shuffled) − E2(iter478)` = +0.2755 [+0.2717, +0.2794] | **PASS** |
+| NC2 `const_prior` worse than both heads | vs iter478 +0.0670 [+0.0648, +0.0692]; vs boot512 +0.0626 [+0.0603, +0.0649] | **PASS** |
+| NC3 heads ≫ 0.5 concordance; controls not | heads 0.826/0.835 SIG > 0.5 ✓; `const_prior` C = 0.5000 exactly ✓; **`shuffled` C = 0.5224 [0.5164, 0.5289] — CI EXCLUDES 0.5** | **PARTIAL FAIL** |
+| **NC4a** permuted-truth concordance = 0.5 | every arm, both sets, CI **contains** 0.5: LIVE teacher 0.4988 [0.4950,0.5023], iter478 0.4994 [0.4954,0.5031], boot512 0.4994 [0.4951,0.5027], sf_only 0.4989; OUT all four 0.5007-0.5014 with CIs spanning 0.5 | **PASS** |
+| NC4 (original) label permutation on E2 | **withdrawn as a gate before any headline was computed** — see the amendment; replaced by NC4a above and NC4b (the dispersion decomposition) | amended |
+
+**⚑ NC3's failure, stated plainly and not rescued.** A weight-shuffled net is
+**not** a zero-information control here: it retains **2.2 pp of concordance above
+chance** from architecture and input structure alone. The pre-registered clause
+said it must not exceed 0.5 significantly; it does. Consequence, applied
+honestly: the concordance metric carries a ~2.2 pp architectural floor, so
+concordance readings must be compared **arm-to-arm**, never to 0.5 — and note the
+teacher-vs-iter478 concordance gap (1.7 pp) is *smaller than that floor*, which is
+why the concordance result is quoted only as a paired contrast and the PRIMARY
+verdict rests on E2 (NC1/NC2/NC4b), not on NC3.
+
+**⚑ Why NC4 was withdrawn (before any headline number, from a 4-shard smoke run).**
+A label permutation is **not a null for a squared-error metric**: for truth `y'`
+independent of the row, `E[(S−y')²] = Var(y) + E[(S−ȳ)²]`, so the permuted contrast
+converges to the difference in the arms' *dispersion*, not to zero. The smoke run
+returned −0.0106 with a CI excluding 0 — which says the teacher is sharper, not
+that the instrument leaks. The naive fix (permutation on recalibrated E2) was
+**rejected as a gate that cannot fail**: after an affine refit against an
+independent truth the optimum is `a=0, b=ȳ` for every arm, so the contrast is
+identically 0 by construction. The replacement, NC4b, is used as a decomposition
+rather than a pass/fail, and it is what produced the sharpness-penalty finding
+above.
+
+### Verified vs assumed
+
+**Verified from code or a log line:** the blend formula and every coefficient
+except one; `sf_wdl_frac = 0.45` over all 478 iterations; POV of `wdl_target`,
+`sf_wdl` (`flip_wdl_pov`) and `search_wdl_est`, each confirmed empirically by
+pairwise Q-correlations of +0.63 to +0.94 in both eras and +0.91/+0.92 for the net
+arms; both checkpoints and the shuffled net at **63,084,128** unique-storage params
+with three distinct state-dict hashes; the desync rates; the write times that make
+boot512 unexposed to both sets; head output is **logits** (softmax applied).
+
+**Assumed:** `search_wdl_frac = 0.20` (no log column exists — sensitivity run at
+0.35 changes nothing). That the OUT rows left the window "≥ 8 days / ~100+
+iterations" before iter478 is an inference from shard write times and index
+ordering, not from a log of window eviction.
+
+### Comparison to the policy result — same defect shape, smaller amplitude
+
+**Same shape.** Both heads have a target that is genuinely better than they are
+(policy 10.27 cp, value ~6.7 cp-equivalent); both show an in-window/out-of-window
+sign flip on the boot-vs-iter478 contrast (policy +7.94/−4.87 cp, value
++3.82/−0.86 cp-equivalent); in both cases the gap is discrimination, not
+calibration or imputation. This is the **same absorption failure**: the improvement
+operator produces a better target, the head fits it where it is being shown the
+rows, and the fit does not survive the rows leaving the window. **The
+"converged on a compressed target" reading is not supported** — the value head is
+not at its target's floor, it is 6.7 cp-equivalent below a *handicapped* version of
+that target, and its own concordance is 1.7 pp below it.
+
+**Different amplitude, and this is the one number to keep.** The value wedge
+(+4.68 cp-equivalent) is about **a third** of the policy wedge (12.81 cp), and
+value's out-of-window position is only −0.86 cp-equivalent versus policy's
+−4.87 cp. So value degrades the same way but less, which sits oddly beside the
+frozen-audit reading that value degraded MORE (+13.36 cp vs +8.45 cp). The two are
+not directly comparable — different ruler, different positions, different units —
+and reconciling them is open work, but the honest summary is: **on stored rows the
+value head's memorisation wedge is real, is smaller than policy's, and cannot by
+itself account for value being the worse-degraded head on the frozen audit.**
+
+### Confounds
+
+- Outcome truth is the SELFPLAY result under a PID handicap (`wdl_regret ≈ 0.079`),
+  with 75% of plies fast-ply labelled, and it carries 0.35 of the production
+  target. Measured as it is, deliberately; it is not an objective-eval claim.
+- `search_wdl` is the net's OWN search root, so `teacher_no_outcome` contains a
+  net-derived component. **The conclusion does not rest on it:** `sf_only`, which
+  contains no net-derived signal at all, still beats both heads on LIVE rows
+  (`E2(iter478) − E2(sf_only)` = +0.00310 [+0.00238, +0.00383] SIG,
+  `E2(boot512) − E2(sf_only)` correspondingly larger). The blended teacher is
+  better still (E2 0.08973 vs sf_only 0.09201), i.e. mixing in the net's own
+  search *helps* the target — which is itself evidence that search is producing
+  value information the head is not keeping.
+- LIVE and OUT differ in selfplay fraction (0.680 vs 0.503), which is exactly why
+  the primary wedge is pre-registered on selfplay rows only.
+- Era and exposure-recency are confounded for iter478 by construction. boot512's
+  symmetric non-exposure to both sets is what makes the difference-in-differences
+  interpretable, and is the improvement over the policy version of this test.
+- The trainer's own phase split is nearly degenerate on these rows: 149,463 of
+  155,257 LIVE rows fall in the `end` bucket (`moves_left < 0.31`), so
+  `wdl_loss_open`/`_mid` are computed on ~4% of the data. Worth knowing before
+  anyone reads those columns.
+
+---
+
+### ⚑⚑ VERDICT 2026-08-02 — PLAY-STRENGTH GROUND TRUTH, boot512 → iter477 (lineage 13a9f): **THE LOOP LOST REAL PLAY STRENGTH. −48.6 Elo [−68.1, −29.4], 1000 games, CI ENTIRELY BELOW ZERO.** The degradation the cp rulers reported is NOT an artifact of those rulers, and search does NOT absorb it.
+
+**Why this run exists.** Every readout this week was cross-entropy or 1-ply cp
+regret, and every one of those rulers has a known defect (FEN-only inputs on the
+frozen sets — `docs/rl_loop_audit.md` M10, 117/175 planes zero; raw-policy regret
+is batch-size dependent at 0.80 cp / 25 argmax flips). Their verdict was that
+raw policy got **+8.45 cp worse** and value **+13.36 cp worse** over the lineage,
+while **`search.top1` moved only +1.27 cp (ns)** — which left the decisive
+question open: *did the loop lose real playing strength, or only prior quality
+that search puts back?* Nothing this week produced an Elo. This is that number.
+
+**Pre-committed interpretation rule** (fixed before the run, from the task
+brief): primary = pentanomial Elo(iter477) − Elo(boot512) at sims 32 with 95% CI.
+CI entirely below 0 ⇒ real play strength lost. CI entirely above 0 ⇒ search
+absorbs the prior damage and the "weaker net" narrative needs revision. CI
+spanning 0 ⇒ report the bound only.
+
+#### The result
+
+| | value |
+|---|---|
+| **Elo (iter477 − boot512)** | **−48.61** |
+| **95% CI (pentanomial)** | **[−68.15, −29.37]** |
+| games / pairs | **1000 / 500**, `truncated=False` (ran 3106 s of a 3600 s cap) |
+| pentanomial (candidate POV) | WW **58**, WD_DW **55**, DD_WL **186**, LD_DL **92**, LL **109** |
+| score | **0.4305 ± 0.0139** (SE) |
+| W/D/L (candidate POV) | **342 / 163 / 481** over 986 naturally-decided games, **+14** drawn by the 300-ply cap |
+
+**The CI is entirely below zero, so by the pre-committed rule the loop LOST real
+play strength.** The point estimate was stable from ~100 pairs onward (−52.3,
+−47.3, −48.8, −44.7, −48.5, −48.8, −48.9, −47.7, −51.5, −50.4, −51.4, −45.1,
+−49.1, −45.3, −46.7, −48.6 across the sixteen running blocks), so this is not a
+tail that happened to land negative.
+
+#### Realized configuration — PRINTED from the run, not asserted
+
+```
+[arena] SEARCH candidate: shape=play vloss_weight=3 target_batch=0 c_puct=1.75
+  c_scale=0.025 c_scale_root=7.0 c_visit=50.0 c_visit_root=900.0
+  cpuct_base=38739.0 cpuct_factor=3.89 fpu_reduction=0.33 q_visit_exp_root=-1.0
+  topk=32 [mcts.gumbel PLAY_SEARCH_DEFAULTS + PLAY_SEARCH_VLOSS_WEIGHT]
+[arena] SEARCH reference: <identical>
+[arena] matched_sims: candidate=32 sims/move, reference=32 sims/move, temp=0.1, noise=True
+[arena] ROLLING pool: keep 32 games active
+```
+
+`git_sha` **59518054665b071df76c4f1693822441d4e102ca**, `config_hash` **6dd68d4a613d**,
+seed 42, `max_plies` 300, `compile=off -> EAGER`, device cuda.
+Openings: the production 8-move UHO book
+`data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip`,
+`opening_plies=16`, **500 pairs** (each opening played twice, colours swapped).
+
+**⚑ This is the PLAY regime, not the training regime** (c_scale 0.025 / LOG root /
+topk 32 / vloss 3, vs training's 0.1 / linear / 16). That is the correct choice
+for *"did we lose playing strength"* — it is the shape the engine ships with —
+but it is deliberately NOT the shape production selfplay runs, and the ledger's
+2026-07-28 entry records a rung that read −52.5 Elo on one shape and +5.8 on the
+other. **A shape-matched second run is therefore reported alongside, below.**
+
+**The YAML-clobbers-CLI check passes:** the log line prints `candidate=32 sims/move,
+reference=32 sims/move`, which is what was asked for on the command line; the
+search block prints its own provenance string; `--search-shape` is a REQUIRED
+argument with no default, so no silent shape could be substituted.
+
+#### Checkpoint identity — verified, not assumed
+
+| name | path | weight hash (first 4 KB/key) | full weight hash | unique-storage params |
+|---|---|---|---|---|
+| boot512 | `scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` (step **56000**) | `5f61a6b85cd3d3cd` | `cb69a232531b1343` | **63,084,128** |
+| iter477 | `scratchpad/strength_readout_0731/ck477/trainer.pt` (step **94062**) | `cd5e47b4d31a75f4` | `1429d18e2d8fcefa` | **63,084,128** |
+
+Both counted by **unique `untyped_storage().data_ptr()`**, never `sum(numel())`
+(the naive sum reads 78,812,768 for both — 496 keys over 481 distinct storages,
+the tied `layer_smolgens.*.gen_weight.weight` gap). The two short hashes match
+`scratchpad/vp_timing_20260802/ckpt_verify.json` exactly, so this is the same
+pair the cp-regret work measured. **Full-tensor hashes differ**, so the nets are
+genuinely different. Both were copied out of the tree to scratch before use, and
+both loaded through the arena's own `load_model_from_checkpoint` with **no
+`Tolerant load` line** — i.e. the embedded `arch` matched strictly on both sides,
+so neither side is a partially fresh-initialised net.
+
+#### Game lengths and adjudication — checked, because a length shift can bias it
+
+mean **124.4** played plies, median **111.5**, p05 45 / p25 76 / p75 158 / p95 255,
+min 17, max 300. Only **14 of 1000 games (1.4%)** failed to finish naturally and
+were scored as draws by the `--max-plies 300` cap, and Syzygy adjudication was
+OFF, so **adjudication touches too little of the sample to carry the −48.6**.
+**No time forfeits are possible in this measurement at all** — `matched_sims`
+runs in-process at a fixed simulation budget with no clock; forfeits are a
+`matched_time` failure mode only.
+
+W/D/L was recovered by a **pass-through observer** (`run_arena.py`) that wraps
+`pick_moves_for_boards` and `result_from_a_pov` to record per-game ply counts and
+outcomes; it delegates unchanged and cannot alter a move. The JSONL record stores
+only pentanomial PAIR bins, and the `DD_WL` bin merges two different game-level
+outcomes, so game W/D/L is not otherwise recoverable. **Cross-check:** the
+observer's counts reconstruct the arena's own score exactly —
+(342 + 163/2 + 14/2)/1000 = **0.43050** vs the arena's reported **0.43050**.
+
+#### What this establishes, and what it does not
+
+**Establishes.** The lineage's own start and end points, same architecture, same
+parameter count, same search, same openings, same budget: the end point is
+**48.6 Elo weaker**, with 500 paired openings and a CI that excludes zero by
+29 Elo. The cp rulers were not lying about the direction, and **`search.top1`'s
++1.27 cp (ns) must not be read as "search absorbs the damage"** — at this budget
+it does not.
+
+**Does NOT establish.**
+- **This is 32 sims.** Search strength grows with budget, so a deeper search
+  could still absorb more of the prior damage than 32 sims does. The pre-agreed
+  256-sim confirmatory was **NOT affordable** and was not run: the 32-sim run
+  held 0.29 games/s with 32 concurrent games and a 10%-utilised GPU (the MCTS is
+  Python-bound, not GPU-bound), so a 256-sim run of comparable precision would
+  need multiple hours of exclusive GPU. **The Elo-vs-sims exchange rate for this
+  pairing is unmeasured.**
+- **It does not localise the loss** to policy vs value; it is the net-level sum.
+  The paired cp work attributes ~73% policy prior / ~27% value, but that split is
+  from a different instrument on FEN-only inputs and is not confirmed here.
+- **It does not name a cause,** and it does not say the loss is monotone in
+  iteration — only the two endpoints were played. The intermediate ratchet rows
+  are all truncated small samples (13–57 pairs) and cannot date the turn.
+- **boot512 as "the lineage origin" is inherited, not re-proven here.** The step
+  number (56000) and architecture match and nothing contradicts it, but no
+  trial manifest was checked — the same caveat the 08-02 turn-ordering entry
+  records.
+
+#### Relation to the four existing ratchet rows for this pairing
+
+`runs/arena_results.jsonl` already held four boot512-referenced rows, all on the
+**training** shape and all **truncated** by their wall-clock cap: iter478 vs
+boot512 at 57 pairs (−39.8 [−91.4, +10.1]) and at 13 pairs (−110.5 [−224.4,
+−16.2]), plus two vs-prev rows. Their point estimates bracket this one but none
+had the sample size to exclude zero on its own; the 13-pair row's −110 was noise.
+**This run supersedes them for the endpoint question.**
+
+**Banked** at **`scratchpad/arena_13a9f_20260802/`** (copied out of session-temp so
+it survives the session): `arena_results.jsonl` (the full JSONL record — every
+number above is recomputable from it), `arena_play_sims32.log` (the complete run
+log including all sixteen running blocks and the printed search shape),
+`lengths_play_sims32.json` (per-game ply counts + W/D/L), `ckpt_verify.json`
+(the hashes above), and the drivers `verify.py` / `run_arena.py` /
+`launch_play.sh` / `launch_training.sh` / `report.py`. Written to a scratch JSONL
+rather than `runs/arena_results.jsonl` because `runs/` was read-only for this
+task — **fold this row into `runs/arena_results.jsonl` when convenient**, it is a
+full-sample row and the four truncated ratchet rows there are not.
+
+#### ⚑ The shape-matched second run was STARTED AND ABANDONED — it is NOT a result
+
+A `--search-shape training` twin of the run above (same pairing, same 32 sims,
+same seed/openings, `--games 1000`) was launched at 14:03:48 and **killed at
+14:15 having produced ZERO complete pairs**. It is not reported as a number
+because there is no number: the log
+(`scratchpad/arena_13a9f_20260802/arena_training_sims32.ABORTED.log`) ends after
+the startup block, before the first 50-game report.
+
+**Why it was killed, recorded because it is a resource-etiquette lesson, not a
+technical one.** Another agent's `absorb_20260802` driver had been polling
+`[driver] waiting for the card` since **13:26:50** and started **14:03:53 — five
+seconds after the play-shape arena exited**, having explicitly waited for a free
+GPU. The training-shape twin then launched on top of it, taking the card to
+**31.4 GB of 32.6 GB** and dropping its own throughput to zero reports in eleven
+minutes. Killing it returned the card to 22.7 GB and lifted the other job's
+utilisation from 22% to 55%. (Their `[driver] FATAL: A_s0 died before chunk 1`
+is a **driver bookkeeping false alarm**, not a crash and not caused by this —
+the very next line adopts the still-running pid, and there is no OOM or CUDA
+error anywhere in their logs.)
+
+**So the shape caveat above stands UNRESOLVED and must not be quietly dropped:**
+the −48.6 Elo is a **play-shape** number, and this repo has one recorded instance
+(ledger 2026-07-28) of a rung whose sign flipped between the two shapes. The
+training-shape replication is the single highest-value follow-up to this entry,
+it needs ~50 minutes of *uncontended* GPU, and `launch_training.sh` in the banked
+directory will run it as-is.
+
+## ⚑⚑ VERDICT 2026-08-02 — TRAINING-DATA GEOMETRY: **THE DISTRIBUTION DID NOT NARROW, AND `diff_focus` IS NOT AN ANTI-REHEARSAL FILTER.** Both limbs of the "degenerate drift + anti-rehearsal sampling" hypothesis are REFUTED on measurement. The one real narrowing is TEMPORAL: the window's span fell 4.35 d → 1.50 d, and the shuffle pool draws shards with a weight LINEAR IN RECENCY (newest shard 712× the oldest), so the recency-weighted mean age of a training row fell ~1.45 d → ~0.50 d. Separately, task #124 is an INSTRUMENT BUG: the 96% `end` bucket is a stale `moves_left` threshold, not endgame skew — under the codebase's OWN piece-count phase definition the live window is 30.7% opening / 32.4% mid / 36.9% end.
+
+Read-only analysis, CPU-only, no production code touched. Drivers banked at
+`scratchpad/geom_20260802/` (`geom_scan.py`, `geom_analyze.py`, `geom_sampler.py`)
+with the four per-row feature tables they produced.
+
+### Snapshots measured (four eras, all full windows except `jun`)
+
+| era | shard dir | span | rows |
+|---|---|---|---|
+| `jun` | `runs/pbt2_small/replay/train_trial_7cc7c_.../replay_shards` (150-shard stride subsample) | 06-07 → 06-17 | 291,575 |
+| `boot` | `data/salvage/swap_512x16_20260711/seeds/slot_000/replay_shards` (815 shards) | 07-06 → 07-11 | 1,497,712 |
+| `mid` | `data/salvage/pre_sf_reallocation_ck148_20260722/seeds/slot_000/replay_shards` (777) | 07-19 → 07-22 | 1,498,747 |
+| `live` | `runs/pbt2_small/replay/train_trial_13a9f_.../replay_shards` (712) | 07-30 → 07-31 | 1,273,501 |
+
+### 1 — ERA COMPOSITION: NO NARROWING, NO ENDGAME-WARD DRIFT
+
+| | jun | boot | mid | live |
+|---|---|---|---|---|
+| piece count, mean | 17.96 | 17.84 | 17.37 | 17.68 |
+| game length, median plies | 126 | 123 | 126 | 123 |
+| `ply_index` median | — | 66 | 68 | 65 |
+| distinct positions / rows | — | 0.9724 | 0.9881 | **0.9948** |
+| distinct material signatures | — | 48,370 | 50,771 | 44,473 |
+| rows per distinct game | — | 20.84 | 15.18 | 17.86 |
+| selfplay fraction | 0.539 | 0.921 | 0.525 | 0.681 |
+| W / D / L | — | .370/.254/.377 | .301/.340/.359 | .307/.359/.333 |
+| **window SPAN** | — | **4.35 d** | **3.09 d** | **1.50 d** |
+
+Jensen–Shannon divergence, boot → live: `ply_index` **0.00006**, game length
+**0.00087**, piece count **0.00027**, `moves_left` **0.00010** nats. **Reference
+scale, same window, same estimator: JS(piece count | selfplay vs curriculum rows)
+= 0.00098 and JS(ply | selfplay vs curriculum) = 0.00124 nats** — i.e. the entire
+boot→live compositional change is **3–4× SMALLER than a routine within-window
+contrast**. Position diversity went UP (97.2% → 99.5% of rows are distinct
+positions). `mid` is the outlier on every axis, and that tracks its 47.5%
+curriculum fraction, not a lineage trend.
+
+**What DID change:** the selfplay/curriculum mix (0.92 → 0.52 → 0.68), the draw
+rate (+10.6 pp boot→live), and the window's TIME span (4.35 → 1.50 days at a
+fixed 1.5M-row cap, i.e. throughput rose). **Position-space geometry: unchanged.**
+
+### 2 — TASK #124 VERDICT: **INSTRUMENT BUG.** The predicate is not a phase test.
+
+- Predicate: `chess_anti_engine/train/losses.py:213-232` `_phase_split_masks`,
+  thresholds at `losses.py:23-24` (`_PHASE_OPEN_THRESHOLD = 0.45`,
+  `_PHASE_END_THRESHOLD = 0.31`), applied to `moves_left`.
+- `moves_left` is built at `chess_anti_engine/selfplay/finalize.py:924-927`:
+  `(total_plies_played − ply_index) / max_plies` with **`max_plies: 450`**
+  (`configs/pbt2_small.yaml:196`). It is **plies-REMAINING-in-this-game / 450**.
+  It is NOT a board-phase measure and there is no piece-count cut anywhere in it.
+  A row at ply 2 of a 60-ply adjudicated game scores 0.129 and is labelled `end`.
+- Measured live: **open 0.60% / mid 3.03% / end 96.37%.** The value analysis's
+  149,463 of 155,257 (96.27%) reproduces exactly; its *reading* as endgame skew
+  does not survive.
+- **It is not drift.** `end` share: jun 95.86%, boot 96.54%, mid 93.68%, live
+  96.37%. P33/P67 of `moves_left` has been **0.073–0.076 / 0.156–0.160** in all
+  four eras. The 0.45/0.31 cuts sit at **P99.4 / P96.4** today. To restore thirds
+  the thresholds must be ~**0.158 / 0.076** — 2.9× and 4.1× lower. The
+  2026-04-25 recalibration (`0fcf899e4`, claimed 33/34/33) has been wrong for at
+  least the eight weeks of data that still exist on disk.
+- **The window is not endgame-heavy.** Under the codebase's own piece-count phase
+  definition — `PHASE_THRESHOLDS = (13, 22)` at `chess_anti_engine/eval/audit.py:34`,
+  the same one `utils/architecture.py:100` defaults to and the same one the frozen
+  audit set is stratified by — the window is **opening (≥23 pieces) 30.7% / mid
+  32.4% / end (≤13) 36.9%**, and boot was 31.0/33.2/35.8. ~1 pp of endgame-ward
+  movement over the whole lineage.
+- `corr(moves_left, pieces) = 0.554` vs `corr(ply_index, pieces) = −0.851`.
+  `moves_left` is a poor phase proxy even after a retune.
+
+**Fix (for a SEPARATE reviewed PR — not made here):** replace the `moves_left`
+cut in `_phase_split_masks` with the piece-count bucket the rest of the repo
+already uses (`eval/audit.py:39 phase_bucket`, thresholds `(13, 22)`), derived
+from the x planes. That also makes per-phase TRAINING loss directly comparable to
+the audit's per-phase regret, which it currently is not. A pure threshold retune
+(0.45/0.31 → 0.158/0.076) restores thirds but keeps a proxy that measures
+game-length-remaining and will drift again with adjudication.
+
+**Second defect found in the same predicate's inputs, same PR:** the Python
+fallback ply path and the C production path disagree on what `ply_index` means.
+`network_turn.py:558` sets `ply_index = len(board_before.move_stack)` (**relative**
+to the seeded start); the C path sets `ply_out[i] = cb->ply`
+(`chess_anti_engine/mcts/_mcts_tree.c:4734`, **absolute**), and `finalize.py:924`
+divides against `total_plies_played = int(cb.ply)`, which is **absolute**. On the
+fallback path every book/seeded game therefore gets `moves_left` inflated by its
+starting ply (+16/450 for the standard 8-move book, ~+0.22 for a ply-100
+blind-spot seed). Production runs the C path, so live data is self-consistent —
+but the fallback silently produces a different target.
+
+### 3 — WHAT THE SAMPLER ACTUALLY AMPLIFIES: **±10% on every compositional axis, 18× on AGE**
+
+Production sampling is THREE stages. The hypothesis named only the first.
+
+**(a) selfplay-side `diff_focus` DROP** — `finalize.py:905-908`, keep probability
+`clip(priority × 3.0, 0.025, 1.0)` computed at `network_turn.py:599-604` (C twin
+`_mcts_tree.c`), `priority = |q_delta|·6.0 + KL·3.5`. **The 40× floor exists in
+the formula and applies to almost nothing:** on the live window **1.717% of rows
+have keep_prob < 1 and 0.0102% reach the 0.025 floor**; those floor rows carry
+**0.005% of gradient weight**. Logged production keep_rate is 0.977–0.985. This
+stage is not an anti-rehearsal policy; it is a rounding error.
+
+**(b) the shard draw into the 100k-row hot pool — THE REAL AMPLIFIER.**
+`disk_buffer.py:976-978`: `weights = np.arange(1, n_shards + 1)`, normalized —
+**linear in recency**, 5 shards every 4 batches (`shuffle_buffer_size: 100000`,
+`shuffle_refresh_interval: 4`, `shuffle_refresh_shards: 5`). At 712 shards the
+newest shard is **712× the oldest**. Cumulative shard-draw weight: **oldest 10%
+of the window → 1.01%, oldest 25% → 6.3%, oldest 50% → 25.0%.**
+
+**(c) in-pool 50/50 uniform/priority** — `disk_buffer.py:1302-1356`,
+`surprise_mix` hard-coded 0.5 at `disk_buffer.py:323`, with WDL stratification
+(`draw_cap_frac 0.90`, `wl_max_ratio 1.5`, `disk_buffer.py:1446-1481`).
+
+Realized per-row draw rate (all three stages), live window:
+
+| axis | row share → gradient weight | amplification |
+|---|---|---|
+| ESS | — | **0.582 of N** (0.772 without the recency draw) |
+| phase `open` (moves_left) | .0060 → .0054 | 0.896× |
+| phase `end` (moves_left) | .9637 → .9677 | 1.004× |
+| TRUE phase, open (≥23 pieces) | .3070 → .2746 | 0.894× |
+| TRUE phase, end (≤13 pieces) | .3695 → .3975 | 1.076× |
+| ply < 10 | .0030 → .0020 | 0.664× |
+| ply 10–20 | .0428 → .0313 | 0.731× |
+| ply > 120 | .1136 → .1250 | 1.100× |
+| pieces < 8 | .0668 → .0737 | 1.103× |
+| pieces 28–32 | .1453 → .1213 | 0.834× |
+| selfplay / curriculum | .6806 → .6834 / .3194 → .3166 | 1.004× / 0.991× |
+| W / D / L | — | 0.991× / 1.005× / 1.002× |
+| **age decile 0 (OLDEST)** | .1007 → **.0104** | **0.103×** |
+| **age decile 9 (NEWEST)** | .0996 → **.1884** | **1.891×** |
+
+Priority top-quartile vs bottom-quartile mean weight ratio: **2.95×**, not 40×.
+
+**So production's gradient is NOT concentrated on a narrower compositional slice
+than the window suggests — every compositional amplification is within ±10%, and
+the two that are not (ply<10 at 0.66×, pieces 28-32 at 0.83×) point the same way
+as raw scarcity rather than against it. The concentration is entirely TEMPORAL.**
+
+#### Reconciliation against logged production statistics (the proof this is production's sampler)
+
+| quantity | this reimplementation | logged, `progress.csv` iters 471–478 |
+|---|---|---|
+| `replay_pmass_kl_share` | 0.90436 | 0.90522 – 0.90701 |
+| `replay_pmass_qd_share` | 0.09570 | 0.09306 – 0.09485 |
+| `replay_priority_mean` | 6.8561 | 6.689 – 6.876 |
+| `replay_priority_std` | 7.6731 | 7.438 – 7.689 |
+| `diff_focus_keep_rate` (implied by 1/keep_prob importance weights) | 0.98575 | 0.97732 – 0.98542 |
+| `diff_focus_keep_prob_mean` (implied, pre-filter) | 0.98575 | 0.98354 – 0.98991 |
+| `diff_focus_keep_limited_frac` (implied, pre-filter) | 0.0312 | 0.0218 – 0.0359 |
+| `diff_focus_priority_mean` (implied, pre-filter) | 6.7575 | 6.609 – 6.845 |
+| recency mean percentile | 0.667 by construction | `disk_buffer.py:866` states 0.667; a real logged line reads `mean_recency=0.645` |
+
+Also read off the same logs and worth keeping: **the diff-focus priority is 90.6%
+policy-KL and 9.4% q-surprise** despite `q_weight 6.0 > pol_scale 3.5`, and
+`replay_pmass_fast_share` / `gap_share` are exactly 0 (no fast rows,
+`sf_gap_priority_weight: 0`). `priority` is **negative on 0.010% of rows**
+(min −1.27) — mathematically impossible for a KL between two normalized
+distributions, so something in the C priority path is producing a non-normalized
+`imp`; sampling clamps it to 0 (`disk_buffer.py:1315`) so it is harmless today,
+but it is an unexplained value.
+
+### 4 — STARVED-vs-DEGRADED CORRESPONDENCE: **NO MATCH on the audit's own definition**
+
+The frozen audit set's `opening` bucket is a **piece-count** bucket —
+`scripts/build_audit_set.py:114` → `eval/audit.py:39`, thresholds `(13, 22)` —
+and the set is stratified **1333 / 1335 / 1332** across the three. Under that
+same definition the live window is **30.7 / 32.4 / 36.9%** of rows receiving
+**27.5 / 32.8 / 39.8%** of gradient weight. **The audit-opening bucket runs at
+0.894×.** A 12% shortfall is not a mechanism for −48.6 Elo, and the correspondence
+the task asked about is **not present**.
+
+The correspondence DOES exist under a *different* definition of "opening" — early
+**plies**, which is not what the audit measures:
+
+- **Plies 0–3 are literally absent from training: zero rows, in every era.**
+- Plies 4–15 are **0.60% of rows and 0.42% of gradient weight**.
+- Cause, and it is a design constant rather than drift: `opening_book_max_plies_2:
+  16` with `opening_book_mix_prob_2: 0.95` (`configs/pbt2_small.yaml:231-234`) —
+  95% of games are seeded at ply 16 from the 8-move UHO book and 5% at ply 4, so
+  the net never emits a policy target inside the book prefix. The ply histogram
+  shows it exactly: ~640 rows/ply for plies 4–15, then a 20× step to ~12,700
+  rows/ply at ply 16.
+- Identical in every era (0.606% / 0.610% / 0.596% of rows at ply<16 for
+  boot/mid/live), so **it cannot explain a CHANGE over the lineage.**
+
+### What this changes about the working hypothesis
+
+The "~1.3-day moving spotlight + structural anti-rehearsal sampling" framing
+survives only in its **temporal** half, and that half is now quantified rather
+than assumed: the effective rehearsal horizon is **not** the 1.5M-row window. With
+the linear-recency shard draw the recency-weighted mean age of a sampled row is
+**one third of the window's span**, and the span itself fell from 4.35 d (boot) to
+1.50 d (live) as throughput rose — so the mean age of a training row fell from
+**~1.45 d to ~0.50 d** over the lineage, at constant nominal window size. **A
+window measured in ROWS silently shrank in MODEL GENERATIONS.** The compositional
+half of the hypothesis is dead: the data the net trains on looks the same today as
+it did at boot512, only younger.
+
+**The single highest-value follow-up this suggests** is an intervention on the
+recency draw (`disk_buffer.py:976-978` — uniform vs linear vs a tunable exponent)
+rather than on `diff_focus`, which is doing almost nothing. That is a
+one-line-shaped change with a real effect size, and it is *construction-time
+only* (see the `shuffle_*` warning at `configs/pbt2_small.yaml:930-933`) so it
+needs a restart, not a live edit.
+
+### Verified
+
+- Every era-composition number above, from the shard arrays themselves (4 eras,
+  4.56M rows total scanned; piece counts from x planes 0–11, the LC0
+  current-position piece planes).
+- The phase predicate, its thresholds, its input's construction, and its
+  `max_plies` divisor — read from source and confirmed against the measured
+  `moves_left` distribution in four eras.
+- The three sampler stages, read from source, and the composite reproduction
+  reconciled against **nine** independently logged production statistics (table
+  above), all matching.
+- The audit set's phase definition and its 1/3-per-bucket stratification, counted
+  from `data/audit_set_v1.jsonl` directly.
+- The ply-16 book step, from the ply histogram and the two book keys in the yaml.
+
+### Assumed / not established
+
+- **`shard_order` = chronological age.** Taken from the sorted shard filename
+  index and confirmed against file mtimes, but the buffer's own `_shard_paths`
+  deque order was not read back from a live process.
+- **The pool-draw model is a steady-state approximation.** It treats a row's
+  expected draw rate as (per-shard recency weight) × (in-pool rate) and ignores
+  FIFO residence variation across shards of different row counts (live shards
+  range 155–2000 rows). Direction of the error is unknown; magnitude is bounded by
+  the shard-size spread and cannot move the 18× age ratio.
+- **`boot`'s opening-source and seed-id columns do not exist in that era's shard
+  schema.** My first pass reported "boot = 100% start-position, 1 distinct seed"
+  — that was my scanner defaulting absent fields to zero, and it is WRONG. The
+  boot bundle simply predates `opening_source_code` / `seed_id`.
+  Live is 98.0% book / 1.1% fenlist / 0.8% sf_refute with 399 distinct seed ids;
+  mid is 30.1% start / 63.9% book. **Opening-source drift boot→live is unmeasured.**
+- **No Elo, no arena, no training run.** This is a description of the data and the
+  sampler, not a demonstration that either causes the −48.6 Elo.
+- The `jun` era is a 150-shard stride subsample, not a full window; it is used
+  only for the `moves_left` percentile check.
+
+## ⚑⚑ VERDICT 2026-08-02 — FORGETTING CURVE: **DECAY ONSET TRACKS WINDOW EXIT.** On five fixed row-sets with FIVE DIFFERENT window-exit iterations, each set's best checkpoint lands at **66–83% of its window residency** — i.e. after **88–97% of its recency-weighted training exposure has been spent** — and the five minima order EXACTLY by exit date (**iter 25 / 122 / 172 / 218 / still-falling-at-450** for exits **60 / 154 / 199 / 273 / never**). The never-exited control does the mirror image: it got **+3.19 cp WORSE** while it was still in the future, then **−10.91 cp BETTER [−12.34, −9.50]** the moment it entered the window. **BUT** the frozen audit set, which was never in the window at all and therefore cannot "exit" it, degraded **+9.04 cp monotonically** over the same lineage — MORE than any set's post-exit decay (+2.80 to +5.67 cp). **The timing structure is real; it is not the whole −48.6 Elo.** Pre-registered prediction "openings decay hardest" is **REFUTED**: openings decay LEAST in all four exiting sets.
+
+Read-only, GPU-light (16 checkpoints × 50k rows of single-forward inference at batch
+128, `nice -n 19`, ≤6 GB, no production file touched). Drivers and per-position dumps
+banked at `scratchpad/forget_curve_20260802/`: `PREREG.md` (written before any
+post-exit slope existed), `window_timing.py`, `p0rebuild.py`, `build_sets.py`,
+`sweep.py`, `analyse.py`, `sets/*.npz` (5 × 10,000 rows), `dumps/*.npz` (16 arms ×
+5 sets of per-position top-1 / soft / argmax), `results.json`, `analyse.log`,
+`did.log`, `agree.log`. Every CI below is recomputable from the banked dumps without
+touching the GPU.
+
+### The instrument, and the two things that had to be proven before it could be used
+
+**1 — The window-exit iteration of a shard is now a MEASURED quantity, not an estimate.**
+The replay window is a hard 1,500,000-row FIFO and was already full at iteration 1
+(`replay_window_before/after == 1500000` on every one of the 478 `result.json` rows),
+so a shard leaves when 1.5M rows younger than it exist. `window_timing.py` computes
+that from `replay_positions_ingested` and checks it against **five directly observed
+windows**:
+
+| iteration | observed oldest shard | predicted | delta |
+|---|---|---|---|
+| 41 | 30852 | 30856 | +4 |
+| 65 | 30996 | 30997 | +1 |
+| 121 | 31279 | 31278 | −1 |
+| 477 | 33106 | 33106 | 0 |
+| 478 | 33118 | 33106 | −12 |
+
+~12 shards are written per iteration, so every prediction is inside one iteration.
+
+⚑ **Two provenance traps this exposed, both live hazards for anyone reading salvage
+bundles.** (a) Trial 13a9f re-used shard NUMBERING from the boot512 seed pool: its
+first own shard is `31417` (mtime 2026-07-26 06:09, seven minutes after the trial
+started), while the PREVIOUS lineage had already reached `34676` on 07-25. **Shard
+indices therefore COLLIDE across lineages** — `data/salvage/pre_abandonfix_20260724`
+and the live 13a9f window both contain a `shard_033295.zarr`, and they are different
+games. Only the six 13a9f directories are used here. (b) Consequently the bundles
+dated 07-26/07-27 that report `copied_replay_shards: 820` are NOT stale: indices
+≤ 31416 in them are genuinely seed-pool shards written 07-06..07-11 that were still
+in 13a9f's window at iteration 41. The `shards=0` salvage bug is a separate defect
+and does not apply to those three.
+
+**2 — `sf_p0_regret` had to be REBUILT for the shards that matter, and the rebuild is
+verified bit-for-bit.** The band carrying exits 149–284 (`31417..32110`, written
+07-26/27) predates `pre_sfp0_restore_20260727` and has no `sf_p0_regret` array — only
+`sf_multipv_raw`. `p0rebuild.py` reconstructs the vector the way `finalize.py`
+does (previous full ply's MultiPV = SF's read of THIS position; the stored move column
+is already in shard encoding, so the full→compact gather is skipped). Checked against
+rows that DO carry a stored vector: **1,355 rows across 4 shards spanning the seed era
+and the live era, max |diff| = 0.000e+00** after the shard's own fp16 cast. Zero
+mismatched rows. Without the fp16 cast the residual is 2.4e-04, which is exactly fp16
+resolution near 0.5 — i.e. the disagreement was the storage dtype, not the arithmetic.
+
+**Ruler.** Raw-policy (prior) top-1 cp regret against `sf_p0_regret`, no search, one
+deterministic forward per row on the row's **stored production `x` planes** (175, WITH
+move history — the FEN-only defect of `rl_loop_audit.md` M10 does not apply here).
+Batch **pinned at 128** for every checkpoint and every set (regret is batch-size
+dependent at the ~0.8 cp level). PRIMARY row filter `n_covered == n_legal`, a
+POSITION-level filter. Realized no-PV rate on all five sets: **0.0000** — the
+desync-contamination flag on band 31417–32456 does not bite on these shards.
+
+### The row-sets
+
+| set | shards | rows / games | entry iter | **exit iter** | provenance |
+|---|---|---|---|---|---|
+| `S1_exit065` | 30950–30990 | 10,000 / 2,642 | 0 | **56–83 (med 60)** | seed pool ⚠ boot512 trained on it |
+| `S2_exit155` | 31417–31481 | 10,000 / 2,776 | 1–20 | **149–164 (med 154)** | 13a9f own |
+| `S3_exit200` | 31650–31705 | 10,000 / 2,672 | 38–46 | **195–208 (med 199)** | 13a9f own |
+| `S4_exit275` | 32030–32085 | 10,000 / 2,507 | 106–122 | **268–284 (med 273)** | 13a9f own |
+| `S5_never` | 33118–33174 | 10,000 / 2,504 | 315–344 | **never** | 13a9f own — CONTROL |
+
+### THE CURVE — mean raw-policy top-1 cp regret (lower = better)
+
+| ckpt | S1 exit 60 | S2 exit 154 | S3 exit 199 | S4 exit 273 | S5 never |
+|---|---|---|---|---|---|
+| boot512 | 29.152 | 37.268 | 35.891 | 35.223 | 36.905 |
+| iter025 | **29.045** | 35.477 | 36.132 | 35.665 | 37.343 |
+| iter070 | 29.185 | 33.330 | 34.719 | 36.848 | 38.170 |
+| iter122 | 29.949 | **33.161** | 33.766 | 36.136 | 39.369 |
+| iter172 | 30.457 | 34.272 | **33.438** | 33.314 | 38.827 |
+| iter218 | 32.038 | 34.600 | 34.073 | **32.324** | 39.057 |
+| iter308 | 32.061 | 35.969 | 35.338 | 33.610 | 40.095 |
+| iter360 | 34.042 | 36.181 | 35.014 | 34.741 | 31.004 |
+| iter409 | 34.007 | 36.897 | 37.102 | 34.876 | 29.329 |
+| iter425 | 34.023 | 37.154 | 37.293 | 34.555 | 29.093 |
+| iter450 | 34.102 | 36.715 | 36.566 | 34.052 | **28.320** |
+| iter475 | 34.485 | 36.698 | 37.017 | 34.643 | 29.458 |
+| iter477 | 35.119 | 37.392 | 36.600 | 35.286 | 29.098 |
+| iter478 | 34.719 | 36.782 | 36.826 | 35.122 | 29.184 |
+| `shuffled` | 200.80 | 199.49 | 196.84 | 200.25 | 201.57 |
+| `uniform` | 215.26 | 213.70 | 219.97 | 217.47 | 221.45 |
+
+Every set is U-shaped, and **the minima march right in lock-step with the exit dates**:
+25 → 122 → 172 → 218 → 450, for exits 60 → 154 → 199 → 273 → never.
+
+### The hinge test (pre-registered; `c_pre` = last grid point at or before exit)
+
+| set | c_pre | D_pre (0→c_pre) | D_post (c_pre→478) | D_post − D_pre | hinge raw / rate |
+|---|---|---|---|---|---|
+| S1 | iter025 | −0.107 [−0.84, +0.63] | **+5.674 [+4.36, +7.04]** | +5.780 [+4.12, +7.46] | **True / False** |
+| S2 | iter122 | −4.108 [−5.24, −2.97] | **+3.621 [+2.31, +4.93]** | +7.728 [+5.65, +9.77] | **True / True** |
+| S3 | iter172 | −2.453 [−3.69, −1.23] | **+3.388 [+2.11, +4.72]** | +5.841 [+3.75, +8.03] | **True / True** |
+| S4 | iter218 | −2.899 [−4.16, −1.59] | **+2.798 [+1.57, +4.03]** | +5.697 [+3.61, +7.74] | **True / True** |
+| S5 (control) | iter308 | +3.189 [+1.86, +4.49] | **−10.911 [−12.34, −9.50]** | −14.100 [−16.46, −11.73] | **False / False** |
+
+cp, positive = worse, 95% percentile bootstrap over 10,000 resamples **clustered by
+`game_id`**, seed 0. **3 of 4 exiting sets pass both the raw and the rate-normalised
+hinge; the control passes in the opposite direction with a 14 cp margin.**
+S1 fails the RATE test only, and the reason is mechanical: its pre-exit span is 25
+iterations, so `R_pre` has a ±0.03 cp/iter CI that cannot exclude anything. Its raw
+hinge is the largest of the four.
+
+### The timing is the fingerprint: turning point vs ENTRY and vs EXIT
+
+Window residency is a constant ~148 iterations, so `exit = entry + 148` and the two are
+confounded for the run-generated sets — the fingerprint is WHERE INSIDE residency the
+turn happens, and it is not the middle:
+
+| set | argmin | entry | exit | closer to | fraction of residency | **recency-weighted exposure already spent** |
+|---|---|---|---|---|---|---|
+| S1 | 25 | 0 | 60 | ENTRY (grid-limited: next point is 70, past exit) | 0.42 | 0.66 |
+| S2 | 122 | 7 | 154 | **EXIT** | 0.78 | **0.95** |
+| S3 | 172 | 42 | 199 | **EXIT** | 0.83 | **0.97** |
+| S4 | 218 | 111 | 273 | **EXIT** | 0.66 | **0.88** |
+
+`disk_buffer.py:975-977` draws refresh shards with weight **linear in recency rank**,
+so a shard's sampling rate falls linearly from entry to eviction and the cumulative
+exposure at residency fraction `f` is `2f − f²`. That formula reproduces the
+independently measured "newest 50% of the window carries 75% of draws" from the
+07-26 geometry entry, so it is not a fresh assumption. **The net stops improving on a
+row-set at the point where 88–97% of that set's training exposure has already been
+spent — not when the shard is physically evicted, and not when it was created.** The
+era-matching alternative (a net looks best on positions its own generation produced)
+predicts the turn at ENTRY and is refuted for S2/S3/S4.
+
+### Independent confirmation on a second metric: agreement with the stored target
+
+Fraction of rows where the net's argmax equals the argmax of the `policy_target` the
+head actually trained on:
+
+| ckpt | S1 | S2 | S3 | S4 | S5 |
+|---|---|---|---|---|---|
+| boot512 | 0.6099 | 0.4865 | 0.4693 | 0.4772 | 0.5200 |
+| iter025 | **0.6161** | 0.5248 | 0.4719 | 0.4801 | 0.5215 |
+| iter122 | 0.5897 | **0.5954** | 0.5700 | 0.5148 | 0.5254 |
+| iter172 | 0.5696 | 0.5620 | **0.5789** | 0.5860 | 0.5302 |
+| iter218 | 0.5562 | 0.5426 | 0.5599 | **0.6146** | 0.5395 |
+| iter308 | 0.5325 | 0.5275 | 0.5240 | 0.5721 | 0.5507 |
+| iter425 | 0.5187 | 0.5041 | 0.5033 | 0.5330 | **0.7103** |
+| iter478 | 0.5061 | 0.4964 | 0.4958 | 0.5222 | 0.6933 |
+
+Same five peaks, same order, on a metric that never touches Stockfish. Agreement is
+gained by ~9–14 points during residency and given back after it — **the in-window
+improvement is substantially row-level MEMORISATION of the stored target**
+(consistent with `policy_head_memorises_the_window`), and the post-exit decay is
+substantially its decay. That is what "forgetting" means here; it is not a claim about
+transferable skill.
+
+### Phase split — the pre-registered prediction is REFUTED
+
+`D_post` by piece-count bucket (opening ≥23, middle 14–22, endgame ≤13):
+
+| set | opening ≥23 | middle 14–22 | endgame ≤13 |
+|---|---|---|---|
+| S1 | **+2.86** [+1.09, +4.67] | +7.97 [+5.68, +10.33] | +6.06 [+3.31, +8.82] |
+| S2 | **+2.49** [+0.70, +4.28] | +4.62 [+2.29, +6.88] | +3.55 [+1.02, +6.09] |
+| S3 | **+0.54** [−1.05, +2.13] | +4.24 [+2.14, +6.42] | +5.39 [+2.60, +8.27] |
+| S4 | **+1.93** [+0.62, +3.33] | +1.17 [−0.87, +3.21] | +5.31 [+2.67, +7.98] |
+| S5 | −8.74 [−10.60, −7.00] | −14.16 [−16.69, −11.72] | −9.57 [−12.56, −6.70] |
+
+**Openings decay the LEAST in all four exiting sets**, and in S3 not significantly at
+all. The "fixed rulers degrade in openings/old-era material specifically" limb of the
+hypothesis does not survive. Buckets are near-balanced by construction (≈3,100–3,500
+rows each), so this is not a power artifact.
+
+### ⚑ The size check that keeps this honest: the frozen audit set
+
+Scored with the SAME raw-policy ruler at the same checkpoints (reusing
+`scratchpad/vp_timing_20260802/dumps/pfull_*.jsonl`, n=4000, no new GPU work). This set
+was NEVER in the replay window, so it has no exit and cannot hinge:
+
+| ckpt | boot512 | 025 | 070 | 122 | 172 | 218 | 308 | 360 | 409 | 425 | 450 | 477 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| top-1 cp | 48.33 | 49.29 | 50.01 | 52.94 | 54.62 | 57.79 | 55.56 | 56.05 | 56.69 | 58.98 | 57.09 | 57.37 |
+
+**+9.04 cp, essentially monotone, no U-shape** — larger than the +2.80 to +5.67 cp
+post-exit decay of any era set. So the lineage carries a GLOBAL degradation term that
+window residency does not explain. What residency explains is the U: in-window material
+improves 2.5–4.1 cp against that degrading backdrop and then gives it back. Restated as
+a difference-in-differences against the audit set (`did.log`), every exiting set sits
+BELOW the global trend at every checkpoint — they are the least-damaged material, not
+the most.
+
+### Negative control (pre-committed)
+
+`shuffled477` (every unique tensor permuted, tying preserved) and `uniform`-over-legal:
+**5.03×–6.13× the worst lineage checkpoint on every set.** Threshold was 2×. PASS on
+all ten comparisons, so the ruler resolves a few-cp question on these rows.
+
+### Verified
+
+- Window-exit iteration per shard, against five observed windows (table above).
+- The `sf_p0_regret` rebuild, bit-for-bit on 1,355 rows spanning two eras.
+- 63,084,128 unique-storage params asserted at load for all 15 model arms.
+- No-PV rate 0.0000 on all five sets (desync-clean), 10,000 rows / 2,507–2,776 games each.
+- Shard-index collision across lineages, from mtimes; only 13a9f directories used.
+- The `2f − f²` exposure law re-derived from `disk_buffer.py:975-977` and checked
+  against the already-logged "newest 50% → 75% of draws".
+
+### Assumed / not established
+
+- **No arena, no Elo.** This is per-position cp regret. It shows WHEN skill on fixed
+  material turns; it does not price that in Elo, and the audit-set control shows the
+  window-exit term is smaller than the global term.
+- **Selfplay rows only.** `sf_p0_regret` needs two consecutive stored full-sim plies,
+  which happens only in selfplay slots. Curriculum rows are structurally unmeasurable
+  this way and are ~32% of the window.
+- **Cross-set ABSOLUTE levels are not comparable** — the sets differ in generating net,
+  PID difficulty, opening book and SF node budget. Every claim is within a set, across
+  checkpoints.
+- **`S1_exit065` is inside boot512's own bootstrap pool**, so boot512's score on it is
+  optimistically biased; that biases S1 toward showing decay. It is also the one set
+  whose rate-hinge fails. The verdict rests on S2/S3/S4, which carry no such bias.
+- **Entry and exit are confounded by the constant-length FIFO** (residency ≈148 iters
+  for every run-generated set). They are separated only by WHERE inside residency the
+  turn lands, which is a weaker separation than two independent manipulations would be.
+- **The grid is coarse** (25/70/122/172/218/308/360/…), so each argmin is located to
+  ±25–50 iterations. The ORDERING is robust to that; the exact residency fractions
+  (0.66–0.83) are not.
+- **No intervention was run.** A fingerprint match is not a cause. The pre-registered
+  follow-up this points at is the recency draw (`disk_buffer.py:976-978`, uniform vs
+  linear vs tunable exponent) — construction-time only, needs a restart, and it is the
+  one knob that moves `2f − f²` directly.
+
+## 2026-08-02 — boot512 WAS desync-contaminated at birth, but NOT by the range that prompted the question: 1.41 % of its SF-labelled training rows, all of it the 07-05 episode, and EXACTLY ZERO from shards 31417-32456
+
+Task #123. Read-only; `data/` and `runs/` were not written.
+
+### Verdict
+
+**The named range contributed nothing, and the contamination that IS there is
+an order of magnitude smaller than the number that prompted the question.**
+
+`data/scaleup_pool_512x16/replay_shards` indices **31417-32456** read
+**8.022 % no-PV** (1 014 shard FILES, 1 837 669 labelled rows, 147 422 no-PV —
+reproducing the 8.1 % figure). The index span is 1 040 wide but holds 1 013
+distinct indices: **27 are absent because every 40th shard was split off into
+the pool's `holdout_shards/`** (105 of them pool-wide), and index 31417 carries
+two files (a hash-suffixed duplicate), giving 1 014 files. **boot512 never saw
+one row of any of it.** Its visible
+shard set stops at index **31416**; the contaminated range begins at 31417. The
+boundary is exact, not approximate.
+
+What boot512 DID inherit is the **07-05 episode**, which the 2026-08-01
+day-bucket entry already recorded but nobody had connected to the bootstrap:
+
+| quantity | value |
+|---|---|
+| **share of boot512's trained SF-LABELLED rows carrying a desynced label** | **1.413 %** |
+| share of ALL its trained rows | 1.388 % |
+| hard bracket, independent of any step weighting | **[0.684 %, 2.224 %]** |
+| rows implicated | ~255 600 of 18 086 400 sampled |
+| of the 32 792 no-PV rows in its visible pool, from 07-05 | **31 351 (95.6 %)** |
+
+The rate **declines monotonically through the run** — 1.70 % in the first phase
+down to 0.79 % in the last — because the 07-05 mass is FIXED at 32 792 rows
+while clean shards kept arriving. So the contamination was worst exactly where
+it matters most: the earliest, highest-LR phases.
+
+### Method (and what is verified vs assumed)
+
+**Instrument.** The shipped no-PV detector: `has_sf_wdl & ~has_sf_multipv_raw`
+(`eval/value_optimism.py::sf_multipv_missing_rate`). Healthy is EXACTLY
+0.000000. Swept over **all 4 428 shards** of the pool — 100 % coverage, where
+the 2026-08-01 day-bucket sweep read every 2nd shard. Pool totals: 8 151 687
+rows, 8 011 156 labelled, **180 728 no-PV (2.256 %)**.
+
+**Replication of the earlier sweep at 2x coverage** (day buckets, mtime): 07-05
+**8.43 %** (prev 8.36 %), 07-12 1.53 % (1.50), 07-13 **15.54 %** (15.44), 07-14
+13.30 % (13.47), 07-15 **32.67 %** (34.12), and 07-06 / 07-07 / 07-08 / 07-09 /
+07-19 **exactly 0.000000**. The episodic shape holds.
+
+**Which weights are boot512** — VERIFIED from the file, not inferred.
+`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` carries
+`step = 56000` (mtime 2026-07-11 04:04:50); its 07-10 22:32 sibling carries
+`step = 45000`. `trainer_best_eval.pt`, the `init_checkpoint` of the final
+phase, carries `step = 44000`. So boot512 is **phase step 12000 of
+`cont_0710_2120_lr0.00003_noplateau`** — that phase ran to 19 180, and
+`cont_0711_0757` (13 100 further steps, ending at the `trainer.pt` step 76180)
+is entirely AFTER boot512 and irrelevant to it.
+
+**Usage weighting.** `scripts/offline_replay_epoch.py::_LiveShardSampler.
+sample_batch_arrays` draws a shard with probability **proportional to its row
+count** (`rng.choice(len(paths), p=positions/positions.sum())`) and mixes the
+batch across the LRU cache by the same weights, so the marginal probability of
+a trained row is `rows_s / total_rows` over whichever shards were present. The
+contaminated share at time t is therefore `noPV(N_t) / rows(N_t)`, and the
+run-level figure is that quantity integrated over the 383 + 499 + ... logged
+`live_progress` reports of the ten chained phase logs, weighted by the samples
+in each interval.
+
+**Shard presence** was reconstructed as *the first N shards in MTIME order*,
+with N taken from each report's own `shards` field. **This is VERIFIED, not
+assumed**: the reconstruction reproduces the log's `positions` field EXACTLY at
+four separate points of the final phase — 2658 -> 4 891 977, 2660 -> 4 895 977,
+2662 -> 4 899 090, 2668 -> 4 910 223. (Index order does NOT work; the pool
+contains hash-suffixed shard names and is not index-monotone in arrival.) Early
+reports disagree by <= 0.11 % of positions (1402 shards -> 2 588 393 measured vs
+2 591 168 logged), consistent with one or two shards later removed. That error
+is two orders below the effect.
+
+**Rate-insensitivity to the lineage detail.** The `cont_*` chain restarts from
+`trainer_best_eval.pt` several times, so ~10 % of the logged steps were
+discarded and are not in boot512's lineage. This does not move the FRACTION:
+discarded steps drew from the same shard distribution as retained ones. The
+hard bracket above is the point — every prefix set boot512 could have trained
+on reads between 0.684 % (N=2668) and 2.224 % (N=808), so no step-weighting
+choice can put the answer outside it.
+
+### Caveat on the denominator — this is a LOWER bound
+
+The no-PV instrument sees only rows that lost their WHOLE MultiPV block. A
+desynced engine strips the block on ~59 % of the labels it poisons; the rest
+keep a wrong block and are invisible to this detector. The live-window
+comparison in the 2026-08-01 entry put the identified-detached rate at 1.32x
+the no-PV rate (3.92 % vs 2.96 %). Applying that ratio gives **~1.9 %** as the
+corresponding all-detached figure for boot512. Still under 2 %.
+
+### What this does and does not license
+
+**Does:** retire the worry that boot512 is a poisoned anchor. At 1.4 % (or 1.9 %
+all-detached) of SF-labelled rows, on a target where `sf_wdl` is 45 % of the WDL
+blend, boot512 is a usable baseline and the many `vs_boot512` paired readouts do
+not need re-reading on this ground.
+
+**Does not:** clear the OFFLINE work that used this pool AFTER 07-11. Any arm
+drawing from shards 31417-32456 sat in an 8.0 % episode with 07-13/14/15 shards
+running 13-33 %, and the 2026-08-02 value-teacher entry's rejection of this pool
+as an out-of-window set was correct. Screen with
+`scripts/quarantine_desync_shards.py --shard-dir data/scaleup_pool_512x16/replay_shards`
+before reaching for it.
+
+**Open, and NOT answered here:** whether the 07-05 episode also touched the
+46M-era lineage, and whether boot512's 1.4 % is large enough to matter at all —
+that needs an intervention (retrain the same phase on the desync-screened
+subset), not another measurement. Priced as a separate item; nothing here is a
+verdict about learning quality.
+
+## 2026-08-02 — RULER CHANGE: the per-phase loss split was never a phase split, and every historical `wdl_loss_open` / `_mid` / `_end` reading is void
+
+Backlog #124. Code in PR (branch `backlog/small-items-20260802`); this entry is
+the invalidation notice the change requires.
+
+### What the columns were actually measuring
+
+`train/losses.py::_phase_split_masks` bucketed on `moves_left`, which
+`selfplay/finalize.py:924` writes as
+`(total_plies_played - ply_index) / max_plies`. **The divisor is the CONFIGURED
+PLY CAP — `max_plies: 450` in production — not the game's own length.** So the
+coordinate is "plies remaining as a share of the cap" and carries no
+information about the board: a row at ply 2 of a 60-ply adjudicated game scored
+0.129 and was filed under `end`.
+
+Measured over the WHOLE live window (713 shards, 1 273 501 rows,
+`runs/pbt2_small/replay/train_trial_13a9f_.../replay_shards`):
+
+| bucket | old predicate | rows | piece-count predicate |
+|---|---|---|---|
+| `open` | **0.605 %** | 7 702 | **30.70 %** |
+| `mid` | **3.027 %** | 38 547 | **32.35 %** |
+| `end` | **96.368 %** | 1 227 252 | **36.95 %** |
+
+median `moves_left` 0.113, p99 0.409; implied median game length 123 plies
+against the 450 cap. The 0.45 / 0.31 cuts sat at roughly P99.4 / P96.4 of the
+realized distribution.
+
+**The thresholds were correct when set.** Commit `0fcf899e4` (2026-04-25)
+recalibrated them from 0.66/0.33 to 0.45/0.31 and measured 33/34/33 at the
+time, with a comment saying to re-derive when the distribution drifts. It
+drifted. **Re-deriving would have been the wrong repair** — current P33/P67 are
+0.076/0.158, so new cuts would have restored three equal buckets of a quantity
+that is still not game phase, i.e. hidden the defect behind healthy-looking
+numbers. That is this repo's signature failure with a fresh coat of paint.
+
+### The change
+
+- The split now buckets by **piece count**, on
+  `utils/architecture.DEFAULT_PHASE_PIECE_THRESHOLDS = (13, 22)` — the SAME
+  OBJECT `eval/audit.py::PHASE_THRESHOLDS` uses, imported rather than re-typed.
+  So a training per-phase column and the audit's per-phase deep-SF regret now
+  name the same set of positions, which they never did before. Agreement with
+  `eval.audit.phase_bucket` is asserted per count over 2..32.
+- **The columns are RENAMED, deliberately**: `wdl_loss_open` ->
+  `wdl_loss_phase_open`, same for `_mid` / `_end`, for `policy_loss_*`, and for
+  the `test_` twins. A ruler change must invalidate its records; the old and new
+  columns measure different row sets and must not share a name that lets them be
+  plotted as one series.
+- New **`wdl_loss_phase_n_open/_mid/_end`** row counts. `masked_mean` clamps its
+  denominator to 1.0, so a bucket holding ZERO rows publishes a loss of 0.0 —
+  the best possible value — and nothing else in the row could contradict it.
+  These are the only columns that can.
+- `moves_left` is untouched as a TARGET; only the reporting split moved off it.
+
+### Invalidation
+
+**Void:** every `wdl_loss_open` / `wdl_loss_mid` / `policy_loss_open` /
+`policy_loss_mid` reading in this ledger and in every `progress.csv` to date.
+They were computed on ~3.6 % of the window and, worse, on a sample selected by
+GAME LENGTH — long games only — which is not a neutral slice of anything. The
+`_end` columns are ~96 % of the data and therefore approximately duplicate
+`wdl_loss` / `policy_loss`; they are not wrong so much as redundant.
+
+**One direct citation to retract:** the entry at ledger line ~15098 reading
+`wdl_loss_open` +0.00069/iter RISING as a corroborating signal. That series is a
+long-games-only subsample and cannot corroborate anything; the entry's
+independent frozen-audit-set evidence is untouched.
+
+**Not affected:** anything judged on `value_regret`, `audit_targets`,
+`arena_standard`, held-out CE, or the whole-batch `wdl_loss` / `policy_loss`.
+
+### Adjacent defect found, documented, NOT fixed
+
+`selfplay/network_turn.py:558` (Python fallback) sets `ply_index` RELATIVE to
+the search root, while the production C path (`mcts/_mcts_tree.c:4734`) sets it
+ABSOLUTE, and `finalize.py:924` divides against an absolute total. Left alone
+here: a `.c` change forces the extension-rebuild pairing rule, and after this
+change the mismatch no longer touches the phase split. It still touches the
+`moves_left` TARGET on any row produced by the Python path.
+
+## ⚑⚑ VERDICT 2026-08-02 — THE "UNEXPLAINED" GLOBAL TERM IS REAL, IS **~69–78% OF THE POST-EXIT RATE, NOT MORE**, AND IT DEGRADES MATERIAL **NO NET IN THIS LINEAGE EVER TRAINED ON**. Pre-registered rule returns **CANNOT RESOLVE** — H1/H2/H3 are all refuted as stated, and the number they were arguing over does not exist: the frozen audit set's "2× faster" decay is **NOT significant** (audit − never-seen = +0.0095 cp/iter [−0.0005, +0.0200] **ns**) and is confined entirely to iterations 0–218. The right model is **ADDITIVE**: post-exit decay = a global term (+0.0080 cp/iter) **plus** a window-exit increment (+0.0036 cp/iter, 31%). Decay is **RANKING, not mass** — top-1 worsens, target-agreement falls, and **entropy DROPS 0.07–0.09 nats**: the net becomes *more confidently wrong*.
+
+Read-only, GPU-light (16 arms × 40k rows of single-forward inference at batch 128,
+`nice -n 19`, ≤6 GB via `--gpu-mem-fraction 0.18`, shared with the live rig, no
+production file touched). Drivers and per-position dumps banked at
+`scratchpad/neverseen_20260802/`: `PREREG.md` (written before any checkpoint was scored
+on any `N*` set), `build_sets.py`, `sweep.py`, `analyse.py`, `robust.py`,
+`sets/*.npz` (4 × 10,000 rows), `dumps/*.npz` (16 arms × 4 sets of per-position
+top-1 / soft / argmax / entropy / CE), `results.json`, `robust.json`,
+`audit_vs_never.json`, `build.log`, `sweep1.log`, `sweep2.log`, `analyse.log`,
+`robust.log`. Every CI below is recomputable from the banked dumps without a GPU.
+
+### The question this closes
+
+The 08-02 forgetting-curve entry proved the hinge and then flagged one term it could not
+place: the frozen audit set, **never in any replay window and therefore unable to
+hinge**, degraded +9.04 cp "monotonically" at ≈2× any set's post-exit rate — but on the
+**FEN-only** input path. Three accounts were pre-registered (`PREREG.md`): H1 unified
+forgetting (never-in-window ≈ post-exit rate), H2 a separate faster global drift
+(never-in-window > post-exit), H3 ruler artifact (stored-plane never-in-window rate
+materially BELOW the audit's).
+
+### The instrument — deliberately the same one, so the rates are comparable
+
+Identical to the forgetting curve in every measurement detail: raw-policy top-1 cp
+regret against `sf_p0_regret` rebuilt from the previous full ply's `sf_multipv_raw`, one
+deterministic forward per row on the row's **stored production `x` planes** (175, WITH
+move history — the FEN-only defect of `rl_loop_audit.md` M10 does not apply), batch
+**pinned at 128**, PRIMARY row filter `n_covered == n_legal` (position-level). Slopes are
+per-row OLS on iteration, mean over rows, 95% percentile bootstrap over 10,000 resamples
+**clustered by `game_id`**, seed 0.
+
+**All slopes are computed on the COMMON 12-point grid** `boot512 / 025 / 070 / 122 /
+172 / 218 / 308 / 360 / 409 / 425 / 450 / 477`, because that is every grid point the
+frozen audit set also has a dump for. iter475 / iter478 were scored on the `N*` sets and
+are reported, but never enter a slope.
+
+### ⚑ "Never in 13a9f's window" is VERIFIED, at the index level, not by a basename join
+
+- `params.json`: `salvage_seed_pool_dir = data/salvage/swap_512x16_20260711` — exactly
+  shards **030602–031416**.
+- That bundle's `seeds/slot_000/trainer.pt` is **bit-for-bit the boot512 snapshot**
+  (`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt`): identical SHA-256 over
+  all 496 sorted state-dict tensors, both `step=56000`. So "boot512" really is trial
+  13a9f's iteration-0 net and the seed pool really is what it had already trained on.
+- The trial then wrote **031417 … 033951** of its own. Every directly observed 13a9f
+  window (seed pool + five snapshots + the live replay dir) lies inside
+  **[030602, 033951]**.
+- ⇒ any shard **< 030602** or **> 033951** from a non-13a9f directory was never in its
+  window. All four `N*` sets satisfy the index bound as well as the directory bound.
+  (⚑ indices COLLIDE across lineages — 13a9f restarted numbering at 031417 while the
+  previous lineage had already reached 034676.)
+- Same-lineage continuity for the pre-boot sets is **proved, not assumed**:
+  `shard_030602.zarr` in `scaleup_512x16_window_20260707` and in `swap_512x16_20260711`
+  have an **identical SHA-256 over the `x` array**. One numbering stream runs
+  028830 (07-02) → 030748 (07-07) → 031416 (07-11) → 032048 (07-14) → 034676 (07-25).
+
+### The row-sets
+
+| set | source bundle | shards used | rows / games | written | in 13a9f window? | **trained by boot512?** |
+|---|---|---|---|---|---|---|
+| `N1_jul06` | `scaleup_512x16_window_20260707` | 030560–030601 (42) | 10,000 / 2,662 | 07-06 | NEVER | YES (ancestor window, just below the seed-pool floor) |
+| `N2_jul04` | `scaleup_512x16_window_20260707` | 029941–029984 (44) | 10,000 / 2,542 | 07-04 | NEVER | YES, exited earlier |
+| `N3_jul02` | `prechange_20260702_ckpt479` | 028830–029077 (248) | 10,000 / 2,448 | 07-02 | NEVER | YES, exited earliest |
+| `N4_jul25` | `pre_durable_deploy_20260726` | 034000–034064 (65) | 10,000 / 2,960 | 07-24/25 | NEVER | **NO — written 13–14 days AFTER the boot512 snapshot (mtime 2026-07-11 04:04:50). No net in this lineage ever trained on it.** |
+
+No-PV rate **0.0000** on all four (desync-clean). 100% `is_selfplay`. Piece-count
+buckets near-balanced (2,741–3,950 per bucket).
+
+**An older set is NOT REACHABLE.** Every `data/best_pools/*` bundle is April/May and
+stores `x` as **(N, 146, 8, 8)** with a 4672-wide policy — the v1 legacy format these
+175-plane / `lc0_1858` nets cannot consume. The age ladder tops out at 07-02.
+
+### THE CURVE — mean raw-policy top-1 cp regret (lower = better)
+
+| ckpt | N1 jul06 | N2 jul04 | N3 jul02 | **N4 jul25 (never trained)** | audit (FEN-only) |
+|---|---|---|---|---|---|
+| boot512 | 31.060 | 30.906 | 31.925 | 39.891 | 48.327 |
+| iter025 | 31.067 | 30.387 | 31.597 | 39.886 | 49.286 |
+| iter070 | 31.697 | 31.629 | 32.306 | 41.069 | 50.006 |
+| iter122 | 31.857 | 32.275 | 33.042 | 41.156 | 52.937 |
+| iter172 | 32.963 | 32.913 | 32.849 | 41.046 | 54.620 |
+| iter218 | 33.808 | 33.335 | 32.985 | 41.937 | 57.786 |
+| iter308 | 34.921 | 34.140 | 34.655 | 42.811 | 55.559 |
+| iter360 | 34.650 | 34.837 | 34.422 | 43.799 | 56.047 |
+| iter409 | 35.677 | 35.793 | 35.046 | 43.727 | 56.688 |
+| iter425 | 35.448 | 34.715 | 34.638 | 44.262 | 58.979 |
+| iter450 | 34.982 | 35.195 | 34.006 | 44.190 | 57.090 |
+| iter477 | 35.334 | 34.948 | 34.682 | 44.039 | 57.365 |
+| iter478 | 35.773 | 35.491 | 34.526 | 43.489 | — |
+| `shuffled` | 205.21 | 198.86 | 193.37 | 192.21 | 194.98 |
+| `uniform` | 225.03 | 218.76 | 212.41 | 206.56 | — |
+
+**No U-shape anywhere.** Every never-in-window set degrades from iteration 0, exactly as
+the audit set does — which is what H1 predicted qualitatively. The quantitative test is
+below and it does not go H1's way.
+
+### THE SLOPE TABLE (cp per iteration, + = worse; 95% game-clustered bootstrap)
+
+| set | rate | span | rel. rate ×1e-4 /iter | boot level |
+|---|---|---|---|---|
+| `N1_jul06` | **+0.01003** [+0.00750, +0.01250] | 0→477 | 3.23 | 31.06 |
+| `N2_jul04` | **+0.01002** [+0.00746, +0.01256] | 0→477 | 3.24 | 30.91 |
+| `N3_jul02` | **+0.00647** [+0.00407, +0.00887] | 0→477 | 2.03 | 31.92 |
+| **`N4_jul25`** | **+0.00952** [+0.00668, +0.01251] | 0→477 | 2.39 | 39.89 |
+| `S1_exit065` post-exit | +0.01347 [+0.01074, +0.01621] | 25→477 | 4.62 | 29.15 |
+| `S2_exit155` post-exit | +0.01119 [+0.00789, +0.01463] | 122→477 | 3.00 | 37.27 |
+| `S3_exit200` post-exit | +0.01195 [+0.00811, +0.01592] | 172→477 | 3.33 | 35.89 |
+| `S4_exit275` post-exit | +0.00952 [+0.00504, +0.01395] | 218→477 | 2.70 | 35.22 |
+| frozen audit (FEN-only) | +0.01851 [+0.00826, +0.02901] | 0→477 | 3.83 | 48.33 |
+
+Pooled: **`rho_never` = +0.00901 [+0.00771, +0.01031]**, **`rho_post` = +0.01153
+[+0.00974, +0.01336]**, ratio **0.781**, difference **−0.00252 [−0.00475, −0.00031]**.
+
+### THE PRE-REGISTERED VERDICT: **CANNOT RESOLVE** — and why that is the informative answer
+
+Evaluated exactly as written in `PREREG.md`:
+
+| clause | value | outcome |
+|---|---|---|
+| `rho_never` in `[0.5, 1.5] × rho_post` | ratio 0.781 | **satisfied** |
+| **H2** `rho_never > 1.5 × rho_post`, CI of `never − 1.5·post` excludes 0 | −0.00829 [−0.01132, −0.00532] | **REFUTED, decisively and in the wrong direction** |
+| **H1** CI of `never − post` includes 0 | −0.00252 [−0.00475, −0.00031] excludes 0 | **fails** (never is significantly BELOW post) |
+| **H3** CI of `audit − never` excludes 0, audit higher | +0.00950 [−0.00045, +0.01995] **ns** | **fails** |
+
+⇒ **CANNOT RESOLVE**, by the exact branch pre-registered for "point estimate in range,
+difference CI excluding 0 on the low side". Recorded as the verdict. But the three
+hypotheses were competing to explain a **gap that the data says is not there**:
+
+**⚑ The audit set is NOT significantly faster than never-in-window stored-plane material
+at all.** +0.0095 cp/iter apart with a CI spanning zero. The "≈2×, on a different ruler"
+line in the forgetting-curve entry was a comparison of two point estimates, one of which
+(n=4,000 positions, position-level bootstrap) has a ±0.010 cp/iter CI. **It never had the
+power to be a 2×.**
+
+### POST-HOC (declared, run after the verdict was recorded): the gap is REAL and it is an ADDITIVE decomposition
+
+The pre-registered estimator compares slopes over different spans (never = 0→477, post
+= `c_pre`→477) and the curves are visibly non-linear, so `robust.py` recomputes the
+never-in-window rate over each exiting set's OWN post-exit span:
+
+| span | `rho_post` | `rho_never` (same span) | ratio | never − post |
+|---|---|---|---|---|
+| 25→477 | +0.01347 | +0.00902 | 0.669 | −0.00446 [−0.00760, −0.00141] SIG |
+| 122→477 | +0.01119 | +0.00826 | 0.738 | −0.00293 [−0.00681, +0.00077] ns |
+| 172→477 | +0.01195 | +0.00787 | 0.658 | −0.00408 [−0.00850, +0.00045] ns |
+| 218→477 | +0.00952 | +0.00666 | 0.699 | −0.00286 [−0.00784, +0.00213] ns |
+| **pooled** | **+0.01153** [+0.00970,+0.01335] | **+0.00795** [+0.00698,+0.00890] | **0.689** | **−0.00358 [−0.00564, −0.00156] SIG** |
+
+Span-matching makes the gap **larger**, not smaller. So:
+
+> **post-exit decay (0.0115 cp/iter) = GLOBAL term (0.0080, 69%) + WINDOW-EXIT increment
+> (0.0036, 31%).**
+
+Over the 477 iterations that is ≈ **+3.8 cp of purely global degradation** on any fixed
+material, plus ≈ **+1.7 cp extra** on material that was in the window and left — which
+is what the exiting sets' +2.80…+5.67 cp post-exit deltas are made of.
+
+### ⚑⚑ THE DECISIVE ARM: `N4_jul25`, WHICH NO NET IN THIS LINEAGE EVER TRAINED ON
+
+`N4` was written 07-24/25 by the abandoned lineage, **13–14 days after the boot512
+snapshot**, and 13a9f never held it. It has nothing to forget. It decays anyway:
+
+- `rho(N4)` = **+0.00952 [+0.00668, +0.01251]** cp/iter, **SIG > 0**.
+- `rho(N4) − rho_post_pool` = −0.00201 [−0.00551, +0.00147] — **not distinguishable from
+  the post-exit rate**.
+- And its rate is **flat in time** (early [0,218] +0.00861, late [218,477] +0.00896)
+  while every previously-trained set **decelerates** (N1 0.01252→0.00564,
+  N2 0.01306→0.00715, N3 0.00625→0.00488).
+
+**This kills the mechanism H1 was proposing** — "the whole lineage is the post-exit
+phase of pre-boot material it is shedding". The degradation is not shedding of anything
+memorised; it hits material no net ever saw, at an undiminishing rate. What is
+degrading is **generalisation**, not memory.
+
+Consistent with that, the age ladder (secondary S2) does **not** order by age:
+N1 (07-06) 0.01003, N2 (07-04) 0.01002, N3 (07-02) **0.00647**, N4 (never trained)
+0.00952. The oldest previously-trained set is the SLOWEST — it has already been
+forgotten — while the never-trained set is near the top.
+
+### Where the audit set's excess actually lives — it is EARLY, and then it stops
+
+| span | never-seen pooled | audit (FEN-only) | audit − never |
+|---|---|---|---|
+| full 0→477 | +0.00901 [+0.00771,+0.01033] | +0.01851 [+0.00865,+0.02885] | +0.00950 [−0.00045,+0.01995] **ns** |
+| early 0→218 | +0.01011 [+0.00754,+0.01268] | **+0.04214** [+0.01709,+0.06979] | **+0.03203 [+0.00702,+0.06005] SIG** |
+| late 218→477 | +0.00666 [+0.00424,+0.00899] | +0.00241 [−0.01829,+0.02099] | −0.00424 [−0.02513,+0.01448] ns |
+
+The audit set loses ~9.5 cp in the first 218 iterations and is **flat for the remaining
+259**. The stored-plane sets decay throughout. **That is a SHAPE mismatch, not a level
+mismatch**, and it is a second, independent reason (after M10's 117/175 zero planes) not
+to read absolute bars off the FEN-only path. In RELATIVE terms the two rulers agree far
+better than the absolute numbers suggest: 3.83e-4/iter (audit) vs 3.41e-4 (post-exit
+pool) vs 2.72e-4 (never-seen pool) — **most of the audit's apparent 2× is a LEVEL
+effect** (it sits at 48 cp; the shard sets sit at 31–40 cp). ⚠ This relative reading was
+motivated by already-visible levels and is declared in `PREREG.md` as suggestive, not
+blind.
+
+### RANKING vs MASS — it is RANKING, on every set, and the net gets MORE CONFIDENT
+
+boot512 → iter477, paired per position, game-clustered:
+
+| set | Δtop-1 cp | Δsoft cp | Δ(soft−top1) | Δentropy nats | Δ CE(target) | Δ agreement | read |
+|---|---|---|---|---|---|---|---|
+| N1_jul06 | **+4.274** [+2.99,+5.53] | +3.842 | −0.432 ns | **−0.0684** | +0.2804 | **−0.0864** (0.580→0.494) | RANKING |
+| N2_jul04 | **+4.041** [+2.77,+5.29] | +3.407 | −0.635 ns | **−0.0724** | +0.2871 | **−0.0814** (0.568→0.487) | RANKING |
+| N3_jul02 | **+2.757** [+1.56,+3.97] | +2.157 | −0.600 ns | **−0.0826** | +0.1483 | **−0.0228** (0.465→0.443) | RANKING |
+| N4_jul25 | **+4.148** [+2.62,+5.70] | +2.714 | −1.434 SIG | **−0.0871** | +0.1455 | **−0.0129** (0.416→0.403) | RANKING |
+
+Every Δtop-1 is significantly positive, every target-agreement significantly falls, and
+**entropy FALLS by 0.068–0.087 nats on all four while the ranking gets worse**. The
+mass-excess term (`soft − top1`) is flat or **negative**. So the global degradation is
+**not** entropy spreading and **not** loss of calibration in the "flatter, hedged"
+sense — the net is concentrating probability harder onto moves that are increasingly the
+wrong ones. The exiting sets show the same signature over their post-exit span
+(Δmass −1.08 … −2.88, all negative).
+
+⚑ Note the split inside the never-seen family: N1/N2 lose ~8 points of target agreement
+(like the exiting sets) while N3/N4 lose only 1–2 points yet still lose 2.8–4.1 cp of
+top-1. On the oldest and the never-trained material the net does not disagree with the
+target much more often — its disagreements just get **more expensive**.
+
+### CONTROLS — all three pass
+
+1. **Negative control.** `shuffled477` and `uniform`-over-legal against the pre-committed
+   2× bar: N1 5.74× / 6.29×, N2 5.56× / 6.11×, N3 5.52× / 6.06×, N4 4.34× / 4.67×,
+   audit 3.31×. **PASS on every comparison.**
+2. **Rebuild verification.** N1/N2/N3 carry a stored `sf_p0_regret`; the rebuild was
+   checked against it on **49,430 scanned rows** spanning 07-02 … 07-06,
+   **max |rebuilt − stored| = 0.000e+00**. This extends the forgetting-curve entry's
+   1,355-row verification to the oldest era used. N4 has no stored array (as the S2–S4
+   forget-curve sets did) and uses the verified rebuild alone.
+3. **Independent-number reproduction.** The teacher-vs-student entry recorded, on the
+   adjacent band 030602–031416 at batch **256**: teacher 29.88 / boot512 30.57 /
+   iter478 35.44. On `N1_jul06` (immediately-adjacent index band, same lineage, batch
+   **128**): **teacher 29.78 / boot512 31.06 / iter478 35.77**;
+   `teacher − boot512 = −1.277 [−2.528, −0.088]` (pre-committed window [−2.2, +0.8],
+   **PASS**) and `iter478 − boot512 = +4.713 [+3.423, +6.005]` (window [+3.0, +7.0],
+   **PASS**). Two independently-built instruments land within ~0.6 cp.
+
+### WHAT THIS DOES TO THE REMEDY LIST
+
+- **Rehearsal / anchor data is now capped at ~31% of the post-exit rate.** It addresses
+  the window-exit increment (+0.0036 cp/iter) and **cannot touch the global term**
+  (+0.0080 cp/iter), which degrades material no net ever trained on. Any rehearsal
+  proposal must be priced against ≈1.7 cp of the ≈5.5 cp, not against all of it.
+- **An optimizer/CALIBRATION intervention is mis-targeted.** H2's calibration limb is
+  refuted by the ranking-vs-mass split: entropy goes DOWN, mass-excess goes DOWN. There
+  is no hedging/flattening to correct. Anything aimed at temperature, entropy bonus or
+  probability calibration is fixing a symptom that is moving the other way.
+- **H3 shrinks the problem only in the sense that the "2×" was never real.** The audit
+  set does not carry a separate faster process; but its degradation has a **different
+  SHAPE** (all of it before iter 218, flat after), so it remains unusable as an absolute
+  bar — a second strike against the FEN-only path on top of M10.
+- **What the shape actually points at.** A steady, non-decelerating loss of
+  generalisation on never-trained material, accompanied by *rising* confidence and by
+  simultaneous memorisation of the in-window rows
+  ([[policy_head_memorises_the_window]], 12.81 cp sign flip), is the signature of
+  over-fitting at the trunk, not of forgetting and not of a bad teacher. It lines up
+  with the 08-02 capacity result (63M turns UP at ~3.1 views/row; production runs 5.0).
+
+### WHAT WOULD DECIDE THE REMAINING QUESTION (pre-registerable, offline, no live change)
+
+Score the **capacity-ladder arms** (6.2M / 20M / 63M, already trained and banked from the
+08-02 capacity entry) on `N4_jul25` — the never-trained-by-anyone set — with this exact
+instrument, and fit the same OLS slope across their step grid. Pre-committed rule: if the
+6.2M arm's `N4` slope is ≥50% below the 63M arm's with a non-overlapping game-clustered
+CI, the global term is an over-parameterised-memorisation effect and the remedy is
+capacity/views, not rehearsal and not the optimizer. If the slopes match, the global term
+is optimizer-state drift and survives a size change. This is the one comparison that
+separates them, it needs no restart, and it costs ~4 GPU-minutes per arm.
+
+### VERIFIED (artifact for each)
+
+- `salvage_seed_pool_dir` in the trial's `params.json`; the seed pool's `trainer.pt` is
+  **bit-for-bit boot512** (SHA-256 over 496 sorted state-dict tensors, `step=56000`).
+- Every observed 13a9f window inside [030602, 033951]; all four `N*` bands outside it by
+  index **and** by directory.
+- Same-lineage continuity of the pre-boot bundles: identical SHA-256 of the `x` array for
+  `shard_030602.zarr` in the 07-07 and 07-11 bundles.
+- `N4`'s never-trained status from file mtimes (07-24/25) vs the boot512 snapshot's mtime
+  (2026-07-11 04:04:50).
+- `sf_p0_regret` rebuild = stored, max |dev| **0.000e+00** on 49,430 rows, 07-02…07-06.
+- 63,084,128 unique-storage params asserted at load on all 15 model arms.
+- No-PV rate **0.0000** and `is_selfplay` 100% on all four sets; 10,000 rows /
+  2,448–2,960 games each.
+- Audit dumps key-aligned across all 12 checkpoints (4,000 positions, 0 duplicate keys).
+- Negative control passes at 3.31–6.29× a 2× bar.
+
+### ASSUMED / NOT ESTABLISHED
+
+- **No arena, no Elo.** Per-position cp regret only. The 0.0080 cp/iter global term is
+  not priced in Elo.
+- **Selfplay rows only.** `sf_p0_regret` needs two consecutive stored full-sim plies;
+  curriculum rows are structurally unmeasurable this way.
+- **Cross-set ABSOLUTE levels are not comparable** (different generating nets, PID
+  difficulty, opening composition, SF node budget). Every claim is WITHIN a set ACROSS
+  checkpoints; the verdict compares SLOPES for exactly that reason.
+- **`N4_jul25` comes from the abandoned lineage's later nets**, so its absolute level
+  (39.9 cp at boot512) is not comparable to N1–N3; its slope is.
+- **The span-matched decomposition is POST-HOC**, declared as such, run after the
+  pre-registered verdict was written to `results.json`. It sharpens the gap; it did not
+  create it (the pre-registered full-grid comparison already had `never − post` SIG
+  negative).
+- **The relative-rate reading (S1) is not blind** — it was motivated by absolute levels
+  visible before the sets were built, and is flagged in `PREREG.md`.
+- The audit comparison is cross-ruler (FEN-only vs stored planes) AND cross-sample by
+  construction; that asymmetry is the thing being measured and no absolute audit bar is
+  claimed.
+- **The 12-point grid is coarse**, so "early vs late" is located to ±25–50 iterations.
+- **No intervention was run.** A rate decomposition is not a mechanism. The capacity
+  cross-check above is the pre-registerable next step, not a result.
+
+## ⛔ 2026-08-02 — BLOCKED, not deferred: the capacity-ladder × `N4_jul25` cross-check is **UNRUNNABLE**. The capsize and rows/param rigs banked **ZERO weight files** — no per-eval-point checkpoints, no finals, and no `torch.save` anywhere in their source. The three-way PARAMS / ROWS-PER-PARAM / OPTIMIZER rule is pre-registered and ready at `scratchpad/capacity_n4_20260802/PREREG.md`; it needs a **≈19 GPU-hour re-run** (≈6.4 h at reduced seeds) of arms that already ran once. **A metric was banked instead of the artifact that produced it** — the weights-level version of [[bank_the_dump_not_just_the_number]].
+
+This is the pre-registered follow-up named in the never-seen entry ("score the capacity
+ladder on `N4_jul25` … costs ~4 GPU-minutes per arm"). That cost estimate was wrong by
+three orders of magnitude, for a reason that had nothing to do with scoring.
+
+### What was checked, before any scoring was attempted
+
+| check | result |
+|---|---|
+| `find` both rigs for `*.pt` / `*.pth` / `*.safetensors` / `*.ckpt` / `*.bin` | **0 files** |
+| `grep -rn "torch.save"` over `capsize/*.py`, `rowsparam/*.py` | **0 hits** |
+| `slope.py::_record` (263-282) | evaluates, appends a **metrics-only** JSON row, discards the model |
+| what each of the 8 runs banked | `header.json`, `rows.json`, `slope.jsonl` (25 rows), one TB event file. **Scalars only.** |
+
+**Not even finals exist**, so there is no two-point-slope substitute to fall back on
+either. Recorded as UNRUNNABLE rather than quietly swapping in a weaker instrument.
+
+### What DOES survive, and why the re-run is cheap in everything except GPU time
+
+- Both corpora are intact: `capsize/corpus` 4.2 GB, `rowsparam/corpus_wide` 25.7 GB. No
+  rebuild needed.
+- Encoding is compatible with the eval set as-is: the capsize corpus is
+  `x (N,175,8,8) float16`, `policy_target (N,1858)`, `legal_mask (N,1858)` — identical to
+  `N4_jul25`, so `scratchpad/neverseen_20260802/sweep.py` transfers **unchanged**.
+- The fix is one `torch.save` inside `_record`, writing
+  `{"arch": <the config already in scope at slope.py:222>, "model": state_dict}` so the
+  existing `load_model_from_checkpoint` reads it with no scorer change.
+- Re-run cost, from the runs' own banked `wall_s`: L 79.9 / 77.6 min, M 64.4 / 41.0,
+  S 52.5 / 29.8, **L-wide 414.8 / 414.2** (seed0 / seed1) ⇒ **≈19 GPU-hours** for all 8,
+  **≈6.4 h** for one L-wide seed plus two seeds of each sibling arm. Banking 10 of the 25
+  eval points costs ≈12 GB (63M ≈252 MB/ckpt, 19.6M ≈78 MB, 6.2M ≈25 MB); 1.6 TB free.
+
+### The pre-registered rule, fixed now so the re-run cannot be read post-hoc
+
+Full text at `scratchpad/capacity_n4_20260802/PREREG.md`. Summary:
+
+- **Instrument**: byte-identical to the never-seen entry — raw-policy top-1 cp regret on
+  `N4_jul25` (10,000 rows / 2,960 games, stored 175-plane inputs, no-PV 0.0000), batch
+  pinned 128. `N4_jul25` is shards 034000–034064 of the **abandoned** lineage and shares
+  no shard index or directory with any arm's corpus (to be re-verified at run time).
+- **⚠ Absolute levels are meaningless** — the arms train from scratch, so their `N4`
+  regret starts near the random-net level (~190–210 cp) and falls before any rebound.
+  Only the **post-minimum** slope is the analogue of the live global term, because live
+  production sits past its minimum (63M turns up at ~3.1 views/row; production runs 5.0).
+- **Axis, stated explicitly**: PRIMARY = **views per row**, on which all four arms share
+  an identical 25-point grid 0 → 11.53 (`chunk_steps 176`, `batch 256`) so no
+  interpolation is needed and the 08-02 capacity verdict stays commensurable. SECONDARY =
+  **optimizer steps**, which the arms do NOT share — L/M/S reach 11.53 views in **8,448**
+  steps, L-wide in **51,568**. The step axis is the only handle on the data-vs-steps
+  confound in the L vs L-wide contrast; if the two axes rank the arms differently the
+  verdict is downgraded to CANNOT RESOLVE.
+- **PRIMARY quantity** `rho_late` = per-row OLS over the **last 8 eval points**
+  (views ≈7.9 → 11.53) — span-identical, no arm-specific choice, inside the rebound for
+  L, M and L-wide. **SECONDARY** `rho_rebound` from each arm's own `views_at_min`
+  (banked: L 3.364 / 2.883, M 7.688 / 6.727, **S 11.532 / 11.532 = last point, no
+  rebound**, L-wide 4.326 / 4.798). S's empty rebound span is handled by a pre-committed
+  rule (last-5-point slope, reported as an upper bound, arm recorded as "no rebound") so
+  that the answer is an answer, not a missing value.
+- **Three-way rule** (seeds pooled, game-clustered CIs), with
+  `rho_pred(L-wide)` = log-interpolation of `rho_late` across `log(rows/param)` through
+  L 0.0029728 / M 0.0095811 / S 0.0303797, evaluated at L-wide's **0.0181617**:
+  - **ROWS/PARAM driver** iff `rho_late(S) <= 0.5 × rho_late(L)` with non-overlapping CIs,
+    **and** `rho_late(L-wide)` strictly between L and S with the difference CI excluding
+    0, **and** `rho_pred(L-wide)` inside `rho_late(L-wide)`'s CI. ⇒ coverage/size is the lever.
+  - **PARAMS driver** iff the S clause holds **but** `rho_late(L-wide) − rho_late(L)`
+    includes 0 despite **6.11×** the rows/param, and L-wide is significantly above
+    `rho_pred`. ⇒ a different remedy: raising data rate will not help, and live's 0.0202
+    rows/param is not the lever.
+  - **OPTIMIZER-STATE DRIFT** iff the S clause fails — the term survives a 10.2× size
+    change. ⇒ optimizer/schedule; neither capacity nor data rate is the lever.
+  - **CANNOT RESOLVE** otherwise, including any arm whose `rho_late` CI includes 0.
+- **Negative control**: the rigs' label-shuffled arms (`run_SHUF_s0`, `run_LWSHUF_s0`)
+  must score `N4_jul25` at ≥2× the worst real arm at every eval point and show no
+  significant `rho_late`, alongside the already-banked `uniform` (206.56 cp) and
+  `shuffled477` (192.21 cp) controls for this set.
+
+### ⚑⚑ THE TRANSFERABLE DEFECT — this is [[bank_the_dump_not_just_the_number]] one level up
+
+The capacity rig was designed to answer exactly one question — *where does held-out loss
+turn* — and banked exactly the scalar that answered it. It answered that question well
+(the 08-02 verdict stands, all four pre-committed conditions passed). But the **nets it
+built were thrown away at process exit**, so every later question about those nets is
+unanswerable without paying the full training cost again. The scalar was banked; the
+artifact that produced it was not.
+
+**Standing rule going forward: any rig that trains a net `torch.save`s the net at every
+eval point unless disk genuinely forbids it.** Weights are the reusable artifact; the
+metric is one query against them. At 63M params a full 25-point grid is 6.3 GB — against
+19 GPU-hours, that trade is not close.
+
+### VERIFIED
+
+- 0 weight files of any extension under either rig; 0 `torch.save` occurrences in either
+  rig's source; `_record` writes scalars only.
+- 8 runs × 25 eval points of metrics present and intact (`slope.jsonl`, `header.json`,
+  TB events), so the ORIGINAL capacity and rows/param verdicts are unaffected by this.
+- Corpora present and encoding-compatible with `N4_jul25`
+  (`x (N,175,8,8)`, policy/legal width 1858).
+- Re-run cost taken from the runs' own recorded `wall_s`, not estimated.
+- `views_at_min` per arm re-read from the banked `slope.jsonl` (values above), which is
+  existing on-record data and involves no `N4` number, so the pre-registration remains
+  blind to the quantity it decides.
+
+### NOT ESTABLISHED
+
+- **No `N4` number exists for any capacity arm.** Nothing about params vs rows/param vs
+  optimizer drift is claimed here in either direction. The never-seen entry's global term
+  (+0.0080 cp/iter) remains unattributed.
+- The re-run cost assumes the rigs reproduce at their original wall-clock on a card that
+  is currently shared with the live rig; contention could inflate it.
+- Corpus retention is not guaranteed — both corpora live under `/tmp/claude-1000/…`,
+  30 GB that a cleanup would remove, and rebuilding them is additional cost not counted
+  above.
+
+## ⚑⚑ VERDICT 2026-08-02 — VALUE FORGETTING CURVE: **THE VALUE HEAD HAS THE SAME TREADMILL SHAPE AS POLICY, AND IT IS SMALLER — 0.67× [0.54, 0.84] OF POLICY'S POST-EXIT DECAY ON THE SAME ROWS.** All four exiting row-sets hinge at their own window-exit (4/4, vs policy's 3/4 — value additionally hinges on S1 where policy failed the rate test), the never-exited control does the mirror image, and the five minima order by exit date. The decay is **RANKING, not calibration**: an in-sample affine refit removes **none** of it (`ΔE2_recal` = `ΔE2` to within noise) and concordance falls significantly on every exiting set while it RISES on the control. ⚠ The pre-registered gate returns **CANNOT RESOLVE by the letter** — NC-V3 required the weight-shuffled arm's concordance CI to contain 0.5 and it does not (C = 0.509–0.515) — but that bar was mis-specified by me: a random-features net is a weak, genuine predictor, the effect **replicates independently** in the value_teacher run (C = 0.522 LIVE / 0.534 OUT, measured before this rig existed and visible to me when I wrote the prereg), and the true null (whole-game label permutation) **passes on every arm on every set**.
+
+Rig: `scratchpad/value_forget_20260802/` (`PREREG.md`, `build_value_sets.py`,
+`sweep_value.py`, `analyse.py`, `followups.py`, `results.json`, `followups.json`,
+per-row dumps in `dumps/`). Companion to the policy curve at
+"VERDICT 2026-08-02 — FORGETTING CURVE" (this file) — **same rows, same checkpoints,
+same estimator family**, so every value-vs-policy contrast below is PAIRED per position.
+
+### THE ROWS ARE THE POLICY RUN'S ROWS, AND THE JOIN IS PROVEN
+
+The five era row-sets were reused **unchanged** — same shard bands, same 10,000 rows,
+same order, same `n_covered == n_legal` position-level filter, no resampling. Those npz
+banked no value fields, so `wdl_target` / `sf_wdl` / `search_wdl` / `has_*` were
+re-extracted for the same rows from the same shards.
+
+`(shard_index, game_id, ply_index)` is **not** a key — it collides inside a shard (2
+rows in S1) — so the join is made on the row's own `x`: a candidate is accepted only if
+its `175×8×8` float16 block is **bit-identical** (compared as `uint16`, no cast) to the
+block the policy set banked, ties among bit-identical duplicates broken by the ascending
+source-row order `build_sets.py` emitted. **50,000 / 50,000 rows bit-exact, injective on
+every shard.** Confirmed independently on a field never used to make the join: the banked
+`teacher` column (argmax `policy_target` over the legal mask), recomputed from the joined
+source row, agrees on **50,000 / 50,000**. All five sets: `is_network_turn` 10,000/10,000,
+`is_selfplay` 10,000/10,000, `has_search_wdl` 10,000/10,000, `has_sf_wdl` ≥ 9,970/10,000.
+
+### THE CURVE (mean `E2 = (S_arm − S_outcome)²`, lower = better; `S = p_W + 0.5·p_D`)
+
+| ckpt | S1 exit 60 | S2 exit 154 | S3 exit 199 | S4 exit 273 | S5 never |
+|---|---|---|---|---|---|
+| boot512 | 0.10691 | 0.11622 | 0.11857 | 0.12268 | 0.10927 |
+| iter025 | **0.10662** | 0.11520 | 0.11845 | 0.12258 | 0.10945 |
+| iter070 | 0.10754 | **0.11408** | 0.11700 | 0.12228 | 0.10966 |
+| iter122 | 0.10791 | 0.11415 | 0.11606 | 0.12188 | 0.10967 |
+| iter172 | 0.10850 | 0.11453 | **0.11544** | 0.11987 | 0.10934 |
+| iter218 | 0.10856 | 0.11511 | 0.11607 | **0.11927** | 0.10961 |
+| iter308 | 0.10946 | 0.11551 | 0.11673 | 0.12000 | 0.10914 |
+| iter360 | 0.10978 | 0.11568 | 0.11655 | 0.12031 | 0.10687 |
+| iter409 | 0.11007 | 0.11573 | 0.11697 | 0.12084 | 0.10607 |
+| iter425 | 0.11020 | 0.11615 | 0.11676 | 0.12102 | 0.10616 |
+| iter450 | 0.11014 | 0.11570 | 0.11655 | 0.12081 | **0.10579** |
+| iter475 | 0.11028 | 0.11590 | 0.11660 | 0.12103 | 0.10580 |
+| iter477 | 0.11048 | 0.11594 | 0.11671 | 0.12118 | 0.10609 |
+| iter478 | 0.11057 | 0.11607 | 0.11674 | 0.12133 | 0.10635 |
+| shuffled | 0.41861 | 0.42467 | 0.41783 | 0.41857 | 0.41915 |
+| const_prior | 0.18264 | 0.19596 | 0.18856 | 0.19339 | 0.18363 |
+
+Every column turns. The minima are **iter 25 / 70 / 172 / 218 / 450** against exits
+**60 / 154 / 199 / 273 / never** — non-decreasing in exit order, and `argmin(S5)` last.
+The concordance table has the same shape (S1 0.8158 → 0.8055, S5 0.8099 → 0.8197).
+
+### HINGE TEST (pre-registered, `c_pre` identical to the policy run, game-clustered)
+
+| set | `D_pre` (E2) | `D_post` (E2) | `D_post − D_pre` | raw | rate | **value hinge** | policy hinge |
+|---|---|---|---|---|---|---|---|
+| S1 exit 60 | −0.000284 [−0.00064,+0.00007] | **+0.003943** [+0.00317,+0.00472] | +0.004227 [+0.00332,+0.00513] | ✓ | ✓ | **YES** | no (rate failed) |
+| S2 exit 154 | −0.002066 [−0.00273,−0.00142] | **+0.001920** [+0.00124,+0.00259] | +0.003986 [+0.00294,+0.00506] | ✓ | ✓ | **YES** | yes |
+| S3 exit 199 | −0.003132 [−0.00380,−0.00246] | **+0.001299** [+0.00066,+0.00193] | +0.004431 [+0.00341,+0.00545] | ✓ | ✓ | **YES** | yes |
+| S4 exit 273 | −0.003405 [−0.00416,−0.00263] | **+0.002063** [+0.00145,+0.00269] | +0.005468 [+0.00438,+0.00657] | ✓ | ✓ | **YES** | yes |
+| **S5 never** | −0.000126 [−0.00084,+0.00058] | **−0.002795** [−0.00336,−0.00224] | −0.002670 [−0.00367,−0.00168] | ✗ | ✗ | **NO** | no |
+
+Control S5 is the mirror image on the value head exactly as on the policy head: flat
+while the material was still in the future, then **better** once it entered the window.
+
+Pooled `D_post` over S1–S4 = **+0.00231 in E2 units** — the same order as the
+value_teacher entry's selfplay LIVE-vs-OUT wedge (**+0.00400** [+0.00347, +0.00454]),
+which is the same metric in the same units measured on a different rig, different rows
+and a different contrast. The two agree that the value head's window-linked term is real
+and is a few thousandths of E2.
+
+### AMPLITUDE — value vs policy, PAIRED on the same rows and the same game clusters
+
+`D_post` converted to cp-equivalent via the label logistic (`1 cp = 1.3213e-3` in `S`,
+the constant the value_teacher entry already uses), applied to `ΔRMSE` only. **It is a
+presentation transform, not a measurement.**
+
+| set | value `D_post` cp-eq | policy `D_post` cp | ratio value/policy | frac of own best-ever gain (value \| policy) |
+|---|---|---|---|---|
+| S1 | +4.529 [+3.65,+5.39] | +5.674 [+4.36,+7.04] | 0.798 [0.587, 1.086] | 13.89 \| 53.06 ⚠ |
+| S2 | +2.141 [+1.39,+2.88] | +3.621 [+2.31,+4.93] | 0.591 [0.349, 0.998] | 0.899 \| 0.881 |
+| S3 | +1.443 [+0.73,+2.15] | +3.388 [+2.11,+4.72] | 0.426 [0.205, 0.788] | 0.415 \| 1.381 |
+| S4 | +2.251 [+1.59,+2.93] | +2.798 [+1.57,+4.03] | 0.804 [0.482, 1.514] | 0.606 \| 0.965 |
+| **pooled S1–S4** | **+2.591 [+2.22,+2.97]** | **+3.870 [+3.22,+4.51]** | **0.669 [0.536, 0.841]** | — |
+| S5 (control) | −3.223 [−3.86,−2.59] | −10.911 [−12.34,−9.50] | 0.295 [0.229, 0.370] | — |
+
+⚠ S1's dimensionless form is unusable **for both heads**: boot512 was trained on S1's
+pool, so its best-ever gain there is near zero (0.00029 E2 for value, 0.107 cp for
+policy) and both fractions blow up. The three unbiased sets give value/policy fractions
+of **1.02 / 0.30 / 0.63** — the same story as the cp-eq ratio, without the transform.
+
+**The pooled ratio's CI excludes 1.** On identical rows, identical checkpoints and
+identical spans, the value head gives back about **two-thirds** of what the policy head
+gives back after material leaves the window.
+
+### RANKING vs CALIBRATION — it is RANKING, on every exiting set
+
+| set (`c_pre`→478) | `ΔE2` | `ΔE2` after optimal affine refit | `ΔC` (concordance LOST) |
+|---|---|---|---|
+| S1 | +0.003943 [+0.00317,+0.00472] | **+0.003924** [+0.00311,+0.00474] | **+0.01033** [+0.00798,+0.01273] |
+| S2 | +0.001920 [+0.00124,+0.00259] | **+0.002039** [+0.00134,+0.00273] | **+0.00536** [+0.00355,+0.00715] |
+| S3 | +0.001299 [+0.00066,+0.00193] | **+0.001205** [+0.00055,+0.00185] | **+0.00315** [+0.00116,+0.00521] |
+| S4 | +0.002063 [+0.00145,+0.00269] | **+0.002030** [+0.00139,+0.00268] | **+0.00540** [+0.00355,+0.00734] |
+| S5 (control) | −0.002795 | −0.003303 | **−0.00872** [−0.01039,−0.00693] (C IMPROVES) |
+
+A two-parameter affine recalibration fitted **in sample** removes essentially none of the
+gap on any set — on S2 it makes it slightly worse. Concordance, which no monotone
+miscalibration can touch, falls significantly on all four exiting sets and rises on the
+control. **The value head forgets WHICH side stands better; it is not drifting in
+confidence.** This is the value-side twin of the policy finding "decay is RANKING, not
+mass, and the net becomes more confidently wrong", and it means any temperature /
+calibration / sharpness intervention aimed at the value head is aimed at the wrong thing
+— the same conclusion `value_head_calibrated_not_broken` and
+`value_head_converged_on_a_compressed_target` already reached from a different direction.
+
+### THE DISCRIMINATOR: value's turning points sit EARLIER than policy's
+
+| set | entry | exit | **value argmin** | policy argmin | value closer to |
+|---|---|---|---|---|---|
+| S1 | 0 | 60 | 25 | 25 | ENTRY (tie-ish: 25 vs 0 / 60) |
+| S2 | 7 | 154 | **70** | 122 | **ENTRY** |
+| S3 | 42 | 199 | 172 | 172 | EXIT |
+| S4 | 111 | 273 | 218 | 218 | EXIT |
+| S5 | 321 | never | 450 | 450 | n/a |
+
+On the two late sets value and policy turn at the same grid point and both sit at EXIT.
+On S2 the value minimum is one grid point earlier than policy's and lands nearer ENTRY —
+though iter070 (0.11408) and iter122 (0.11415) differ by 7e-5, i.e. the S2 value argmin
+is **not** robustly distinguishable between those two points at this grid resolution.
+The honest reading: the ordering condition passes, but the value head's evidence for
+"argmin ≈ exit" rather than "argmin ≈ entry" is weaker than policy's, and the 12-point
+grid locates every turning point only to ±25–50 iterations.
+
+### CONTROLS
+
+- **NC-V1 (gating, E2, PASS 5/5).** `shuffled` and `const_prior` are each significantly
+  worse than **all 14** lineage checkpoints on **all 5** sets (game-clustered paired CI
+  on every one of the 140 differences excludes 0).
+- **NC-V2 (reported, pre-declared NON-gating).** The policy prereg's "≥2× the largest
+  lineage value" bar: shuffled scores **3.41–3.82×** and passes anyway. The prereg states
+  in advance why it is not the gate for E2 (E2's floor is `Var(S_out) ≈ 0.183`, not 0).
+- **NC-V3 (gating, concordance) — FAILED, and the failure is mine, not the ruler's.**
+  I required `C(shuffled)` not to exceed 0.5 significantly. It does: **0.509–0.515**, CI
+  above 0.5 on S2 and S3. By the letter, the pre-registered verdict is **CANNOT
+  RESOLVE**. Adjudication, declared post-hoc:
+  - **NC-V4 (the true null) PASSES on every arm on every set.** Whole-game label
+    permutation (seed 7, block order permuted, within-game structure preserved) puts
+    every arm's `C` CI across 0.5 — shuffled 0.493–0.505, iter478 0.498–0.507. The
+    pairing, clustering and bootstrap machinery does not manufacture concordance.
+  - **The shuffled arm's small positive C REPLICATES independently.** The value_teacher
+    run measured `C(shuffled)` = **0.5224 [0.5164, 0.5289]** on LIVE and **0.5335
+    [0.5262, 0.5417]** on OUT, on different rows with a different estimator, and its own
+    NC3 was worded the same way and was equally violated there. A weight-permuted net is
+    a **random-features predictor**, not an information-free one: material count and
+    gross structure survive the permutation. **The bar was wrong, and it was already
+    falsified in a run I had read before writing the prereg.**
+  - Consequence: the E2-based hinge verdict, whose gate NC-V1 passed unanimously, stands.
+    The concordance results are used as a ranking-vs-calibration *split*, where the arms
+    compared are lineage checkpoints 30 points above chance, not as a resolution gate.
+- **Anchor (a) — my E2 estimator vs the published value_teacher numbers, on THEIR banked
+  dump.** boot512 `0.099529170` vs `0.099529170` (|Δ| 2.5e-13); iter478 `0.095104383` vs
+  `0.095104383` (|Δ| 5.7e-12); shuffled |Δ| 1.6e-9 against a pre-committed 1e-9 bar —
+  **fails the bar by 6e-10 absolute / 4.3e-9 relative, which is float32 summation order,
+  not a discrepancy.** The two decisive arms clear the bar by three orders of magnitude.
+- **Anchor (b) — my own forward pass vs theirs on the 1,091 rows shared between S5_never
+  and their LIVE set** (matched on `(shard_idx, game_id, ply_index)`; `wdl_target`
+  identical on all 1,091, which re-proves the join against an independently built row
+  list). Pre-committed `mean|ΔS| < 5e-4` **PASSES** on all three arms (7.4e-5 / 1.1e-4 /
+  2.3e-4). Pre-committed `max|ΔS| < 5e-3` **fails** (4.1e-3 / 6.5e-3 / 9.8e-3) — and that
+  bar was **below the instrument's own noise floor**, proven by intervention rather than
+  asserted: re-running **the same checkpoint on the same rows** at batch 128 instead of
+  256 moves individual rows by up to **1.6e-2 – 3.2e-2** with mean 9.6e-4. The
+  cross-run agreement is therefore *tighter than the net agrees with itself* under a
+  batch change. A max-|Δ| bar cannot be used on a bf16-autocast forward path.
+- **Batch sensitivity at the level that matters is negligible**: iter478 at 128 vs 256
+  moves mean `E2` by ≤1.0e-5, i.e. **≤0.011 cp-eq**, against hinge effects of 1.4–4.5
+  cp-eq. Pinned at **256** (the value_teacher setting) for every checkpoint and set.
+
+### PHASE SPLIT (secondary)
+
+`D_post` by piece count: **mid-game decays hardest on 4 of 5 sets**; openings decay
+LEAST on S2/S3/S4 (S1 +0.0036 open vs +0.0046 mid; S4 +0.0012 open vs +0.0028 mid). Same
+direction as the policy run, where "openings decay hardest" was likewise REFUTED.
+
+### WHAT THIS DOES TO THE AMPLITUDE PUZZLE
+
+The puzzle was: value degraded MORE than policy on the frozen deep-SF audit (+13.36 vs
++8.45 cp) yet the value memorisation wedge came out SMALLER (~4.7 cp vs policy's ~12.8).
+This rig says the wedge asymmetry is the **robust** half. On identical rows, identical
+checkpoints and a paired bootstrap, value's window-linked post-exit decay is **0.669×
+[0.536, 0.841]** policy's — smaller, with the CI excluding 1, and smaller again in the
+transform-free "fraction of own best-ever gain" form. Two independent rigs (the LIVE-vs-
+OUT wedge and this exit-timed hinge) now agree that the value head's **treadmill term is
+about two-thirds to one-third of policy's**.
+
+So the puzzle does not need a new mechanism; it needs the two numbers to stop being
+compared. **Value's degradation has the SAME SHAPE as policy's** — hinged at window
+exit, ordered by exit date, mirror-imaged on the never-exited control, and driven by
+ranking rather than calibration — and it is SMALLER on the window-linked component. The
+audit-set ordering (value worse) is therefore a claim about the **global** term, and it
+is made on the FEN-only path whose defects are already twice-documented (M10's 117/175
+zero planes; and the global-term entry's finding that the audit's excess decay is
+confined to iterations 0–218 and is a LEVEL effect). **A cp number off the frozen audit
+and a cp-eq number off stored planes are not the same ruler and must not be differenced.**
+
+### THE MISSING PIECE, AND IT IS CHEAP
+
+The policy side resolved global-vs-window-linked with `N1..N4` — bands no net in this
+lineage ever trained on — and found post-exit decay = **69% global + 31% window-exit**.
+**That decomposition does not yet exist for value.** S5_never cannot supply it: it is
+*inside* the window, so its in-window learning masks any global term (indeed value on S5
+improves). The exact next measurement, pre-registerable and needing no restart: run
+`build_value_sets.py` over the four `N*` bands, score the same 14 checkpoints' `wdl`
+head, and fit the same OLS slope. If value's global term is ~69% of its post-exit rate
+like policy's, the two heads share one defect and the remedy is the same one; if value's
+global share is much larger, the audit ordering is explained and value has an extra
+problem the policy head does not. Cost ≈ 4 GPU-minutes per arm on the existing rig.
+
+### VERIFIED (artifact for each)
+
+- Join: **50,000/50,000** rows bit-exact on `x` (uint16 compare), **50,000/50,000**
+  independent agreement on the never-used-for-joining `teacher` column, injective per
+  shard. `sets/summary.json`.
+- 63,084,128 unique-storage params asserted at load on all 15 model arms; head output
+  branch recorded (`logits` → softmax) in `dumps/meta.json`.
+- All 5 sets 100% `is_network_turn`, 100% `is_selfplay`, 100% `has_search_wdl`,
+  ≥99.70% `has_sf_wdl`; 10,000 rows / 2,504–2,776 games each.
+- `Var(S_out)` per set matches `E2(const_prior)` to 5 decimals on all 5 sets — the E2
+  estimator is arithmetically consistent with the label marginals.
+- Anchor (a): estimator reproduces published `E2` to 2.5e-13 / 5.7e-12 on the decisive
+  arms. Anchor (b): 1,091 shared rows, `wdl_target` identical, mean|ΔS| ≤ 2.3e-4.
+- Batch-composition noise floor measured by direct intervention (same net, same rows,
+  128 vs 256): mean|ΔS| 9.6e-4, max 1.6e-2–3.2e-2.
+- NC-V1 140/140 paired CIs; NC-V4 85/85 arm×set permutation CIs contain 0.5.
+
+### ASSUMED / NOT ESTABLISHED
+
+- **Pre-registered gate returns CANNOT RESOLVE**; the verdict above rests on NC-V1 plus
+  the post-hoc NC-V4 adjudication. Stated first, not buried.
+- **No arena, no Elo.** Per-row proper-score and concordance only.
+- **Selfplay rows only** — inherited from the policy rig (`sf_p0_regret` needs two
+  consecutive stored full-sim plies). Curriculum rows are absent from BOTH curves.
+- **The OUTCOME truth is the PID-handicapped, fast-ply-labelled selfplay result**, not
+  objective chess truth. It is the target the trainer uses; that is the point, and it is
+  not an objective-eval claim.
+- **The global/window-exit split is NOT measured for value** (above). Every `D_post`
+  here is the SUM of both terms, so "0.669× policy" is a ratio of sums, not of the
+  window-linked components alone.
+- **Cross-set ABSOLUTE levels are not comparable** (different generating nets, PID
+  difficulty, opening composition). Claims are WITHIN a set, ACROSS checkpoints or heads.
+- **The cp-eq transform is a presentation device.** The dimensionless
+  fraction-of-own-gain form is reported alongside precisely so the conclusion does not
+  depend on it; S1's dimensionless form is unusable (near-zero denominator).
+- **S1 sits inside boot512's own bootstrap pool**, biasing it toward showing decay; the
+  verdict needs ≥3 of 4 and S2–S4 carry no such bias.
+- **12-point grid** — argmins locate to ±25–50 iterations, and S2's value argmin is a
+  coin flip between iter070 and iter122 (Δ = 7e-5 E2).
+- Value forwards ran at batch **256**, policy forwards at batch **128**. No contrast
+  differences raw forwards across the two, and the value-side batch effect on mean E2 is
+  ≤0.011 cp-eq, but the two sweeps are not byte-identical instruments.
+
+## ⚑⚑ VERDICT 2026-08-02 — VALUE GLOBAL-vs-WINDOW SPLIT: **VALUE'S "GLOBAL" TERM IS NOT GLOBAL. IT IS ~51% OF THE POST-EXIT RATE (vs policy's 69%) BUT IT VANISHES ON MATERIAL NO NET EVER TRAINED ON AND ON THE OLDEST PREVIOUSLY-TRAINED MATERIAL — WHICH IS THE OPPOSITE OF THE POLICY RESULT.** `rho(N4_jul25)` = **+1.1e-6 E2/iter [−0.7e-6, +2.8e-6] ns** and `rho(N3_jul02)` = −0.3e-6 [−2.0e-6, +1.3e-6] ns, while `rho(N1_jul06)` = `rho(N2_jul04)` = **+5.5e-6 SIG**; the contrast recent(N1,N2) − (N3,N4) is **+5.1e-6 [+3.5e-6, +6.7e-6] SIG**. Policy on the SAME rows with the SAME code has all four SIG > 0 and recent − old **ns** (+0.00203 [−0.00059, +0.00463]). ⚠ Pre-registered verdict is **CANNOT RESOLVE twice over** — the NC-P gate failed and the two co-primaries landed either side of a band edge at 0.50 (g = 0.494 full-grid vs 0.509 span-matched, CIs [0.34, 0.68] and [0.40, 0.65]). The gate failure was a **ply-parity confound in my own control**, diagnosed mechanistically and repaired; the repaired gate passes **9/9 sets × 3 conditions**.
+
+Rig: `scratchpad/value_forget_20260802/` (`PREREG_N.md`, `build_value_sets_n.py`,
+`analyse_n.py`, `followups_n.py`, `results_n.json`, `followups_n.json`, `dumps_n/`).
+Completes the value picture begun at "VALUE FORGETTING CURVE" (this file). Rows and grid
+are the policy decomposition's ("THE 'UNEXPLAINED' GLOBAL TERM IS REAL", this file), so
+every head-to-head below is on identical rows over identical spans.
+
+### THE ROWS ARE THE POLICY N-RIG'S ROWS, AND THE JOIN IS PROVEN TWICE
+
+`neverseen_20260802/sets/N{1..4}*.npz` reused unchanged. Value fields re-extracted with
+the same contract as the S-sets: candidate accepted only on a **bit-identical `x`**
+(uint16 compare), strictly-increasing source-row tie-break, injectivity asserted per
+shard. The independent confirmation is **stronger here** — the N sets banked the FULL
+`policy_target` vector, so the check is a bit-for-bit compare of 1,858 float16 values
+per row on a field never used to make the join.
+
+**40,000 / 40,000 bit-exact on `x`; 40,000 / 40,000 bit-exact on `policy_target`; 0
+ambiguous `(shard, game, ply)` keys; injective on every shard.** All four sets 100%
+`is_network_turn`, 100% `is_selfplay`, 100% `has_search_wdl`, ≥99.79% `has_sf_wdl`.
+
+### THE SPLIT
+
+Per-row OLS slope of `E2` on grid iteration, G12, game-clustered bootstrap, seed 0.
+Units **E2 per iteration**; positive = worse.
+
+| quantity | value (E2/iter) | policy (cp/iter, same code, same rows) |
+|---|---|---|
+| `rho_post_pool` span-matched | **+5.9e-6** [+4.9e-6, +7.0e-6] | +0.01153 [+0.00968, +0.01338] |
+| `rho_never_pool` span-matched | **+3.0e-6** [+2.5e-6, +3.5e-6] | +0.00795 [+0.00700, +0.00890] |
+| `never − post` | **−2.9e-6** [−4.0e-6, −1.7e-6] **SIG** | −0.00358 SIG |
+| **global share `g`** | **0.509** [0.399, 0.652] | **0.689** |
+| full-grid `g` (co-primary) | 0.494 [0.342, 0.679] | 0.689 |
+
+**HEAD-TO-HEAD: `g_val − g_pol` = −0.180 [−0.371, +0.005] — ns, borderline.** On the
+pooled ratio alone the two heads are not distinguishable, with value pointing lower.
+`rho_post` reproduces the hinge run's two-point rates (7.8/4.8/3.7/7.4e-6 vs
+`D_post/(478−c_pre)` = 8.7/5.4/4.2/7.9e-6, OLS slightly lower as expected from curvature).
+
+### ⚑⚑ BUT THE POOLED RATIO HIDES THE ACTUAL RESULT — PER SET, VALUE AND POLICY DIVERGE
+
+| set | written | trained by 13a9f's ancestry? | **value `rho_never`** | **policy `rho_never`** |
+|---|---|---|---|---|
+| `N1_jul06` | 07-06 | yes, most recently | **+5.5e-6** [+3.9e-6, +7.1e-6] **SIG** | +0.01003 [+0.00750, +0.01255] SIG |
+| `N2_jul04` | 07-04 | yes | **+5.5e-6** [+3.9e-6, +7.1e-6] **SIG** | +0.01002 [+0.00746, +0.01265] SIG |
+| `N3_jul02` | 07-02 | yes, longest ago | **−0.3e-6** [−2.0e-6, +1.3e-6] **ns** | +0.00647 [+0.00406, +0.00886] SIG |
+| `N4_jul25` | 07-24/25 | **NO — no net in this lineage ever trained on it** | **+1.1e-6** [−0.7e-6, +2.8e-6] **ns** | +0.00952 [+0.00655, +0.01247] SIG |
+
+The nulls are backed by contrasts, not by absence of evidence:
+
+| contrast (value, full G12) | | |
+|---|---|---|
+| N1 − N3 | +5.8e-6 [+3.5e-6, +8.1e-6] | **SIG** |
+| N1 − N4 | +4.4e-6 [+2.1e-6, +6.8e-6] | **SIG** |
+| N2 − N3 | +5.8e-6 [+3.5e-6, +8.1e-6] | **SIG** |
+| N2 − N4 | +4.4e-6 [+2.0e-6, +6.8e-6] | **SIG** |
+| N1 − N2 | −0.0e-6 [−2.3e-6, +2.3e-6] | ns |
+| N3 − N4 | −1.4e-6 [−3.8e-6, +1.0e-6] | ns |
+| **recent(N1,N2) − (N3,N4)** | **+5.1e-6 [+3.5e-6, +6.7e-6]** | **SIG** |
+| **policy, same contrast** | **+0.00203 [−0.00059, +0.00463]** | **ns** |
+
+`rho(N4) − rho_post_pool` = −4.9e-6 [−6.9e-6, −2.8e-6] **SIG** — for value, never-trained
+material decays significantly SLOWER than exited material. Policy's was −0.00201
+[−0.00551, +0.00147] **ns**, i.e. indistinguishable.
+
+**This is the exact number that killed H1 on the policy side, and for value it goes the
+other way.** Policy degrades material no net ever trained on, at an undiminishing rate —
+that is loss of generalisation. The value head does not: its decay is confined to
+material the ancestry trained on **recently**, is absent on material it trained on
+**longest ago**, and is absent on material **nobody trained on**. That is the age-ordered
+signature of shedding what was memorised — the "unified forgetting" account that the
+policy data refuted survives for value.
+
+Secondary D agrees, on a metric no calibration can touch: the concordance slope over G12
+is **SIG negative on N1 (−1.62e-5/iter) and N2 (−1.43e-5)** and **ns on N3 (−0.07e-5) and
+N4 (−0.17e-5)**; `C(N4)` literally does not move (0.8406 → 0.8411 over 477 iterations).
+
+### THE ONE PLACE NEVER-TRAINED MATERIAL *DOES* MOVE — AND IT IS SCALE, NOT RANKING
+
+NC-D (pre-declared as a decomposition, never as a gate) splits each slope via
+`E[(S−y)²] = E[(S−ȳ)²] + Var(y) − 2Cov(S,y)`:
+
+| set | `rho` | = sharpness term | + tracking term (`−2 dCov/dt`) |
+|---|---|---|---|
+| N1 | +5.46e-6 | −1.37e-6 ns | **+6.84e-6** [+4.26e-6, +9.42e-6] SIG |
+| N2 | +5.47e-6 | −4.34e-6 SIG | **+9.81e-6** [+7.30e-6, +1.23e-5] SIG |
+| N3 | −0.31e-6 | −3.40e-6 SIG | **+3.09e-6** [+0.52e-6, +5.73e-6] SIG |
+| N4 | +1.07e-6 | −5.01e-6 SIG | **+6.08e-6** [+3.37e-6, +8.87e-6] SIG |
+
+So on N3/N4 the flat `E2` is a **cancellation, not an absence**: `Cov(S, outcome)` does
+fall, and it is offset by the head's output dispersion falling too. Read together with
+concordance being **flat** on those sets, the mechanism is unambiguous — on never-trained
+material the value head is **shrinking toward its own mean (hedging harder) without
+losing any rank ordering**. That is a scale/calibration drift, and it is exactly the kind
+of thing E2 is designed not to be fooled by in the other direction. It is NOT the ranking
+loss seen on N1/N2 and on all four exiting sets. ⚑ Note this is the opposite sign to the
+policy head, which becomes **more confidently wrong** (entropy −0.068…−0.087 nats while
+ranking degrades).
+
+### CURVATURE — no deceleration anywhere on the N sets, and the hinge is visible on the S sets
+
+Early [0,218] vs late [218,477], value:
+
+| set | early | late | early − late |
+|---|---|---|---|
+| N1 | +6.5e-6 | +5.8e-6 | +0.7e-6 ns |
+| N2 | +5.7e-6 | +4.9e-6 | +0.8e-6 ns |
+| N3 | −0.7e-6 | −0.8e-6 | +0.1e-6 ns |
+| **N4** | −1.6e-6 | +1.2e-6 | −2.8e-6 ns |
+| S2 | **−4.1e-6** | +3.1e-6 | −7.2e-6 **SIG** |
+| S3 | **−14.1e-6** | +2.1e-6 | −16.2e-6 **SIG** |
+| S4 | **−16.4e-6** | +7.4e-6 | −23.8e-6 **SIG** |
+
+Value shows **no significant curvature on any N set** — unlike policy, where N1
+decelerated 2.2× (0.01252 → 0.00564) while N4 stayed flat. The exiting sets show the
+hinge itself as a significant sign change, which is the same object the hinge entry
+already reported, re-derived here by a different estimator.
+
+### CONTROLS
+
+- **GATE NC-P as pre-registered — FAILED, and the failure was in my control, not the
+  instrument.** Whole-game block permutation put `C_perm` at **0.4844 [0.4749, 0.4947]**
+  on N4, CI below 0.5. **Diagnosed, not excused**: `wdl_target` is STM-POV, so it carries
+  a strong ply-parity signal (mean truth even-ply − odd-ply = **+0.062 … +0.126** across
+  the eight sets) and the value head's `S` tracks it (**+0.079 … +0.109**). Permuting
+  whole games by REORDERING blocks of unequal length re-aligns each row against a label
+  of the wrong parity — the block-permuted parity contrast collapses to ≈0 and on N4
+  **reverses to −0.0184**, the largest reversal of the eight and the only set that
+  failed. The control was manufacturing anti-correlation.
+- **NC-P REPAIRED — PASS 9/9 sets × 3 conditions.** Row-level label shuffle (the clean
+  null for a rank statistic; within-game correlation still enters every CI through the
+  game-clustered bootstrap). `C_perm` at boot512 **0.4951–0.5052**, at iter477
+  **0.4950–0.5069**, and the `C_perm` slope CI contains 0 on every set. Applied to the
+  four N sets AND re-applied to the four S sets of the hinge entry, whose NC-V4 had used
+  the same block scheme — it passes there too, so no banked verdict changes.
+- **NC-P variant, reported not gating**: a length-matched whole-game permutation (games
+  swapped only with games of identical length, so clustering AND parity are preserved)
+  reads C = 0.4992–0.5142. It retains a small REAL positional signal by construction, so
+  its own null is not exactly 0.5 and it cannot be a gate; it is reported because it
+  brackets the two failure modes from the other side.
+- **NC-D is not a gate**, and was pre-declared non-zero (`E[(S−y')²] = Var(y) +
+  E[(S−ȳ)²]`), which is why it is used as the decomposition above and not as a control.
+  The shuffled-net bar is not used at all — it already failed me once for a reason that
+  had nothing to do with the ruler.
+
+### WHAT THE VALUE PICTURE NOW IS, END TO END
+
+1. **Shape** — value hinges at window exit on 4/4 exiting sets, control mirrors, minima
+   order by exit date. Same treadmill as policy.
+2. **Amplitude** — value's post-exit decay is **0.669× [0.536, 0.841]** policy's on
+   identical rows.
+3. **Composition** — value's post-exit decay is ~**51% [40%, 65%]** "not attributable to
+   13a9f's own window" and ~49% window-exit increment, versus policy's 69/31. On the
+   pooled ratio the heads are not significantly different. **But the composition of that
+   half differs qualitatively**: policy's is a true global term that hits never-trained
+   material at full rate, while value's is entirely ancestor-era forgetting that decays
+   to zero with age and is absent on never-trained material.
+
+**Consequence for the remedy discussion.** The two heads do not need the same fix.
+Policy has a generalisation-loss term that rehearsal cannot touch (the policy entry
+already priced rehearsal at ≈31% of its post-exit rate). Value has **no measurable
+generalisation-loss term** — every cp of its decay is attached to material that was in
+some window, so for the value head the addressable fraction is the whole of it. And the
+one thing value does do on never-trained material — shrink toward its mean without
+losing rank — is a scale drift, not a strength loss, and is the one place a calibration
+or temperature intervention would actually be on-target (it is off-target everywhere
+else, per the hinge entry's ranking-not-calibration split).
+
+⚠ This does NOT say value is fine. Value's absolute post-exit decay is real, significant
+on all four exiting sets, and 0.669× policy's. It says value's decay has a **different
+and more tractable cause**.
+
+### VERIFIED (artifact for each)
+
+- Join: 40,000/40,000 bit-exact `x`; 40,000/40,000 bit-exact full `policy_target`;
+  injective per shard; 0 ambiguous keys. `sets/summary_n.json`.
+- 63,084,128 unique-storage params asserted on load for all 15 arms; head-output branch
+  recorded in `dumps_n/meta.json`; batch pinned 256.
+- Repaired gate 9 sets × 3 conditions, all pass. Parity diagnosis reported per set.
+- `rho_post` reproduces the hinge entry's independent two-point rates on all four sets.
+- Policy slopes recomputed **with this code on these rows** and reproduce the banked
+  policy entry (span-matched `rho_never` +0.00795 [+0.00700,+0.00890] vs banked
+  +0.00795 [+0.00698,+0.00890]; `rho_post` +0.01153 vs +0.01153).
+
+### ASSUMED / NOT ESTABLISHED
+
+- **Pre-registered verdict is CANNOT RESOLVE, for two reasons**: the NC-P gate failed,
+  and the two co-primaries straddled a band edge I placed at exactly 0.50 (0.494 vs
+  0.509 — a knife-edge, with the two CIs [0.34,0.68] and [0.40,0.65] almost identical).
+  Everything above the "CONTROLS" section is therefore a post-hoc adjudication, stated as
+  such. The band edge was badly placed; the substantive quantity is `g_val = 0.51`
+  [0.40, 0.65] against policy's 0.689, ns in the head-to-head.
+- **The headline per-set result rests on two NULLS (N3, N4)**, which is why the contrasts
+  are given: N1/N2 − N3/N4 is SIG, so the claim is a measured difference, not an absence
+  of evidence. It remains true that a small non-zero `rho(N4)` cannot be excluded — the
+  CI admits up to +2.8e-6, i.e. up to ~47% of N1's rate.
+- **Selfplay rows only**, both families, inherited. Curriculum rows unmeasured everywhere
+  in this line of work.
+- **"Global" means "not attributable to 13a9f's own window"** — N1–N3 were trained on by
+  the ancestry, N4 by neither. Same meaning as the policy entry.
+- Value forwards at batch **256**, policy N-forwards at batch **128**. No statistic
+  differences a raw forward across the two; the value-side batch effect on mean E2 is
+  ≤0.011 cp-eq.
+- **Cross-set ABSOLUTE levels are not comparable** (different generating nets, PID
+  difficulty, opening composition; N4 is another lineage's stronger nets). All claims are
+  WITHIN a set ACROSS checkpoints; the verdict compares SLOPES for exactly that reason.
+- **No arena, no Elo, no intervention.** A rate difference is not a mechanism, and the
+  scale-drift reading of N3/N4 is an inference from three agreeing statistics (flat E2,
+  flat concordance, negative sharpness term), not an intervention.
+- The 12-point grid is coarse; "early vs late" is not a fitted shape.
+
+## 2026-08-02 — `replay_sf_gap_priority_signed` REFUSED rather than wired, and the fourth reload class it exposed
+
+Backlog #106, in the same PR as the #124 ruler change. Not a training-affecting
+change: it makes an already-inert knob say so.
+
+**The state.** The key is in the yaml allowlist (`utils/config_yaml.py`), parsed
+into `TrialConfig`, and supported by `DiskReplayBuffer.sf_gap_priority_signed` —
+and never passed to the buffer the trial trains from. `trainable_init.py` hands
+over `sf_gap_priority_weight` alone; the per-iteration live push in
+`trainable.py` pushes the same four live knobs and not this one. Flagged by
+PR #303's review, which correctly declined to fold it in.
+
+**Decision: hard startup error, NOT wiring.** Four reasons, in order of weight:
+
+1. **Experiment #104 KILLED the gap-priority family** at the pre-committed
+   ckpt559 readout. Production pins `replay_sf_gap_priority_weight: 0`, and
+   `_gap_boost_and_mask` is only reached when `w_gap > 0`, so `signed` is
+   unreachable regardless. Wiring adds a live-reachable path for a killed
+   mechanism with no ledger entry — i.e. it would need this entry to be a
+   pre-registration, and there is no experiment to register.
+2. **The semantics are not unambiguous**, which was the stated bar for wiring.
+   `signed` does not refine the default — it swaps the boost SOURCE from the
+   stored `priority_sf_search_gap` column to a recomputed `(search − sf)`
+   difference gated on DIFFERENT `has_` flags, and returns `None` (no shaping at
+   all) for a chunk carrying one set and not the other.
+3. **Wiring it would arm a silent live change.** The key is live-reload
+   allowlisted, so a future `signed: true` would take effect MID-WINDOW,
+   splitting one replay window across two sampling regimes — exactly what
+   `_CONSTRUCTION_ONLY_REPLAY_KEYS` already refuses for `shuffle_draw_cap_frac`.
+4. **Deleting the key is also wrong**: `scripts/retarget_retrain.py` and
+   `scripts/holdout_policy_screen.py` both consume it offline, and dropping it
+   from the allowlist would make the all-or-nothing validator reject the WHOLE
+   reload for any yaml carrying it.
+
+**Blast radius: none today, and that is verified rather than assumed.** The key
+appears in NO config under `configs/` (pinned by a test), `TrialConfig`'s default
+is `False`, and `DiskReplayBuffer.__init__`'s default is `False`. The guard
+cannot fire on the current yaml; only a deliberate edit reaches it.
+
+**Startup raises, live reload declines-and-warns.** Raising on live reload would
+crash-loop under `train.sh`'s auto-resume. The live warning gets its own message
+rather than the generic `_LIVE_RELOAD_SKIPPED_KEYS` "requires restart" one,
+because restarting does not honour the value — it refuses to start, so the
+generic text would be the same lie relocated.
+
+**⚑ The finding underneath: dead keys are a FOURTH reload class the provenance
+API did not have.** They are declined on live reload like restart-required keys,
+but absent from `restart_required_config_keys()` — correctly, since a restart
+refuses rather than applies them. That left a set-but-declined dead key falling
+through every branch of `scripts/audit_realized_config.py`, where yaml ==
+realized (the startup overlay ran) reads as a healthy live-reloadable key. Fixed
+with a fourth injected set, `dead_config_keys()`, checked BEFORE the restart
+branch and reported on the VALUE rather than on a diff — the diff is zero by
+construction, which is what made it invisible. Same shape as the verdict PR #303
+removed for construction-only keys.
+
+## 2026-08-02 — `export_swa` now says which weights it shipped, and the first attempt at saying it was itself swallowed
+
+Backlog #57 / audit J10. Observability only; no training path touched.
+
+J10 established by READING THE BRANCH that `export_swa` emits `self.model` today
+(`swa_start: -1`) but would emit `_swa_model.module` under SWA, while the ratchet
+arena reads the raw model out of `checkpoint_*/trainer.pt` — 86/86 tensors
+different. Nothing in the artifact said which side ran, so the fact had to be
+re-derived from the config every time and a change to the branch would
+invalidate it silently.
+
+Now every publish emits:
+
+```
+[trial] export_swa: wrote <path> source={model|swa_model.module} step=… tensors=… params=… digest=… swa_enabled=…
+```
+
+`digest` is a content hash over the exported tensors (key, dtype, shape, values;
+key-order independent), so it is an IDENTITY claim recomputable from the
+published file — not a label. `params` counts **unique storage** per J11, not
+`sum(numel())`, which would read 78,812,768 against a true 63,084,128 on the
+production net.
+
+**⚑ THE FIRST VERSION OF THIS LINE WAS `logging.info` AND REACHED NO OUTPUT AT
+ALL — caught in independent review of the PR.** The trial actor installs no
+logging handler: `tune/trainable.py::_set_log_level` sets a LEVEL on the
+`chess_anti_engine` logger and stops, and nothing in the package or in Ray
+attaches one for that process, so INFO records fall to `logging.lastResort`
+(WARNING+) and are discarded. Verified directly: with no handler, a WARNING
+reaches stderr and an INFO reaches nothing. Consistent with production logs,
+which contain zero INFO-level `chess_anti_engine` records while being full of
+`[trial]` / `[disk_buf]` `print()` lines.
+
+**The tests passed because `caplog` installs the handler production lacks** —
+they proved the record was EMITTED and said nothing about whether anyone could
+SEE it. That is this repo's signature defect committed inside the fix for it,
+and it is worth recording as a method rule: **`caplog` is not evidence of
+observability in this process; `capsys` is.** The line is now a `print()`
+matching the neighbouring `[trial]` convention, asserted with `capsys` on the
+real `_publish_distributed_trial_state` path, and a companion test reproduces
+the handler-free configuration and requires INFO to be dropped — so if a handler
+ever appears, the test says so rather than the print silently becoming redundant.
+
+## 2026-08-02 — STANDING GATE ENTRY: `train.rebuild_sf_targets` (task #55 — written BEFORE any flip, as the protocol requires)
+
+**Status: default OFF, never flipped live (PR #283).** What it does: at sample time,
+`rebuild_sf_targets_in_arrays` (`train/target_builder.py:479`) re-derives the SF policy
+targets of every drawn batch from the stored `sf_multipv_raw` + `sf_label_meta`, so a
+retuned SF-target parameter applies to the WHOLE window at draw time instead of only to
+fresh rows. It mutates no shard — a yaml revert is a TRUE revert, which most
+data-affecting changes here are not.
+
+This entry is not a launch pre-registration; it is the gate any future flip must clear.
+A flip without its own entry satisfying ALL of the following is a protocol violation:
+
+1. **Name the ONE parameter delta the rebuild carries** (e.g. an `sf_policy_temp`
+   retune) and change nothing else in the window. The rebuild retargets ~the whole
+   window in one step — it is maximally exposed to the one-change-per-readout rule.
+2. **Audit-first**: the rebuilt target must beat the current target on the frozen
+   deep-SF audit set via the offline twin (`scripts/retarget_retrain.py`) BEFORE any
+   live flip. A candidate that loses the direct audit dies without training compute.
+3. **Desync precondition**: verify presence-rate exactly 0.0000 on the live window
+   first. The 2026-07-29 readout stands: on desynced rows the stored raws ARE the
+   desynced engine's answer to the wrong position — a rebuild re-parameterises the
+   corruption (faithfully rebuildable fraction of affected rows: 0%).
+4. **Cross-ply trap**: a row's `sf_multipv_raw` is the PREVIOUS ply's table
+   (`sf_p0_*` from t-1, `sf_volatility` from t+6). Only the audited
+   `target_builder.py` path may be used — no hand-rolled rebuild.
+5. **Proof of effect on the first new iteration**: the `RebuildCoverage` accumulator
+   must report nonzero rows rebuilt in the trial's own output. A flag accepted and
+   silently ignored is this codebase's signature defect; absence of the coverage line
+   = not in effect, per config_change_may_not_be_in_effect.
+6. **Kill rule template**: pre-commit a paired sf_p0-regret (policy) or value_regret
+   bound; readout is day-plus with paired CIs. Revert = flip OFF (clean, draw-time).
+
+
+## 2026-08-02 — ABSORPTION RIG ARM F BLOCKING CHECK: the six zero-filled provenance fields — **UNBLOCKED**
+
+**What was blocked and why.** The rig's pre-registered ARM F (20% old-era rehearsal,
+`scratchpad/absorb_20260802/PREREG.md` lines 269-284) draws 20% of every batch from the
+46M-era pool `corpus_era/erareg` (65,257 rows). That pool predates six provenance columns
+and `build_erareg.py` zero-fills them: `seed_id`, `seed_family_id`,
+`opening_source_code` and their three `has_` flags (`corpus_era/meta.json` →
+`report.synthesised_zero_fields`). PREREG made F's verdict void unless those fields were
+SHOWN not to reach the loss — otherwise F measures a field artefact, not rehearsal.
+
+**Instrument** (banked, CPU-only, no GPU, ~40 s at `nice -n 19`, recomputes from scratch):
+
+```
+PYTHONPATH=/home/josh/projects/chess nice -n 19 python3 \
+  /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/absorb_20260802/f_unblock/f_diff.py
+```
+Output `f_unblock/f_diff_report.json`; trace + verdict `f_unblock/F_UNBLOCK.md`.
+
+A code read is not a control, so the check is a **differential intervention**: the same
+era rows run twice — BASE (fields as stored, all zero) vs MUT (`seed_id`/`seed_family_id`
+← random 31-bit ids, `opening_source_code` ← a mix including the seed-origin codes {2,3},
+all three `has_` flags ← 1) — with identical draw seeds, identical mirror rng and
+identical `torch.manual_seed`. The comparison is BYTE equality (not a tolerance) of all
+57 collated batch tensors and all 36 `compute_loss` terms. Run on BOTH batch pipelines:
+the rig's own (`absorb.py` `TrainSampler` → `Trainer._prepare_host_arrays` →
+`collate_arrays` → `compute_loss`) and PRODUCTION's (`DiskReplayBuffer.add_many_arrays`
+→ zarr shard → shuffle buffer → `sample_batch_arrays` → the same tail).
+
+**Result. 0 diffs on both pipelines.** Positive controls on the same harness DO fire —
+perturbing `moves_left`/`has_moves_left` moves `loss[moves_left]` 0.0014 → 16.489 (17
+diffs rig / 7 prod) and perturbing one `x` cell moves every head (47 / 22) — so the test
+can fail. The production leg is the load-bearing one: in BASE the six are dropped at
+shard write by `prune_storage_arrays` (`replay/shard.py:616-621`), while in MUT they
+survive storage and ARE present in the sampled array dict handed to the trainer, and
+still change nothing. The null is therefore not "the mutation was discarded early".
+
+**Where the influence terminates:** `replay/dataset.py:189-276` `collate_arrays` — the
+tensor dict is an explicit whitelist (`:196-200` plus `optional_specs` `:210-265`) and
+none of the six is in it, so they never become tensors; same for the sample-object path
+at `dataset.py:112-181`. Upstream they are carried but never read:
+`shard.py:137-139/817-819/1221-1226`, `sample.py:26-28`, `augment.py:127-129` (sample
+mirror) and `augment.py:234-286` (array mirror, `out = dict(arrs)` passes them through
+untouched), `disk_buffer.py:1380-1423` generic row gather. Occurrence count in
+`train/losses.py`, `train/trainer.py`, `train/target_builder.py`, `replay/dataset.py`,
+`replay/disk_buffer.py`, `replay/buffer.py`: **0, all six**. Specifically checked and
+clean: the 175-plane `v2_threats` input (x is stored verbatim; only the mirror and
+feature-group dropout touch it), every loss mask (all fetched by literal key through
+`_get_mask` `losses.py:150` / `apply_policy_mask_to_logits` `:130`), sample weighting
+(WDL balance on `wdl_target` `disk_buffer.py:1443-1490` and the stored `priority`
+`:1302-1328`; priority shaping reads `priority_policy_kl`/`priority_q_delta`/
+`priority_sf_search_gap`/`search_wdl` `:627-656`), and keep/filter decisions (the only
+flag-dependent behaviour is storage-side pruning).
+
+**VERDICT: UNBLOCKED — arm F may run in the pre-registered form.** Caveats recorded
+rather than hidden: (a) `feature_dropout_p` is 0.0 in production, so the train-mode
+forward is numerically identical to eval-mode here — both legs ran and both positive
+controls fired in both; (b) this licenses the ROWS, not an implementation — F's 80/20
+mixer is not yet written, and if it adds a per-row weight or a provenance tag of its own
+this proof does not extend to it; (c) the era pool still differs from the current corpus
+in the real ways F exists to measure.
+
+
+## 2026-08-02 — ABSORPTION ARMS: can a training regime turn the search teacher into out-of-window gain?
+
+**Status:** SEED-0 ARMS COMPLETE AND DECISION-GRADE. Second seeds (`C_s1`, `D_s1`),
+the sampler arm (`G_s0/G_s1`) and the frozen-audit cross-check are still running; a
+follow-up entry will carry them. Nothing below depends on them except where a
+"pending seed agreement" caveat says so. Pre-registration: `scratchpad/absorb_20260802/PREREG.md`
+(+ two amendments, both timestamped before the contrast they affect was computed).
+Running verification notes: `scratchpad/absorb_20260802/NOTES.md`.
+
+**Hypothesis.** #108 ("search improvement does not stick") is a supervised-learning
+question: the teacher beats the student by ~10 cp, yet training on it did not
+transfer. Four regimes were run from the boot512 lineage origin on the live window's
+own `policy_target`, matched corpus / batch order / step budget, judged by cp regret
+against SF rather than CE to the target (CE to the target rewards the memorisation
+under test).
+
+---
+
+### ⚑⚑ THE 12.81 cp WEDGE IS AN ERA EFFECT, NOT WITHIN-ERA WINDOW MEMORISATION
+
+Measured BEFORE any arm trained (`validate_wedge.py`), frozen endpoints, paired,
+95% percentile bootstrap over 10,000 resamples clustered by `game_id`:
+
+| contrast | **oow** = held-out GAMES, same era | **inw** = train rows |
+|---|---|---|
+| teacher − boot512 | **−9.67 cp** [−11.04, −8.30] SIG | **−11.20 cp** [−12.53, −9.89] SIG |
+| teacher − iter478 | −1.40 cp SIG | −1.61 cp [−2.47, −0.73] SIG |
+| iter478 − boot512 | **−8.27 cp** [−9.55, −7.00] SIG | −9.59 cp [−10.82, −8.38] SIG |
+
+The teacher−boot512 figure reproduces this ledger's own pre-registered −10.266 cp
+[−10.717, −9.830] on independent rows, so **the ruler is validated**. On that same
+validated ruler:
+
+- **iter478 is 8.27 cp BETTER than boot512 out-of-window**, not 4.87 cp worse.
+- Its top-1 agreement with the teacher is **0.7006 out-of-window vs 0.7000
+  in-window** — identical to three decimals.
+- The in-minus-out memorisation term is **1.33 cp**, not 12.81 cp.
+
+The difference is what "out of window" denotes. The 12.81 cp entry's out-of-window
+set is the **46M ERA** — a distribution shift — and this ledger already records the
+confound: *"all 815 of the boot-window shards are inside boot512's own bootstrap pool
+... boot512 had memorised 100% of the 46M-era rows and 0% of the 512-era rows."*
+Independent confirmation here: boot512 scores **31.32 cp** on era rows against the
+era teacher's **30.23 cp**, a 1.10 cp gap, matching the −0.695 cp this ledger measured
+on that pool.
+
+**Correction to the earlier entry:** the 12.81 cp sign flip is real as a measurement
+but is **superseded on the claim that it measures within-era window memorisation**.
+It is era shift + boot512's own confounded exposure + iter478's forgetting. The
+"any future policy readout taken on in-window rows is reading ~13 cp of memorisation"
+warning should read **~1.3 cp** for same-era rows.
+
+**Scope, stated explicitly:** same-era held-out games were GENERATED BY LATE-LINEAGE
+NETS, so part of "iter478 is better there" is a net being best on its own play
+distribution. This is **not** a finding that iter478 is fine — on neutral fixed
+rulers it is worse (frozen audit +8.45 cp), and whether that shows up in play is the
+arena's question. No arm here is scored by Elo.
+
+---
+
+### ⚑ THE PRODUCTION CONFIG AND THE PRODUCTION CLIP REGIME ARE NOT THE SAME THING
+
+The brief's premise for the zclip arm: production runs `zclip_max_norm 6.5` against a
+grad-norm median of 8.7, so **100% of steps hard-clip** and descent is direction-only.
+
+Arm A is a faithful config replica — realized `tm_lr_mean` **5.2847e-4** against the
+independently recorded production trunk LR of **5.29e-4**, and `param_groups` carrying
+exactly 18,033,664 Aurora params (28.6%) at wd 1e-4 and 44,747,680 AdamW params,
+summing to 63,084,128. Yet:
+
+| | grad_norm_median | grad_hard_clip_rate |
+|---|---|---|
+| production (recorded) | 8.7 | ~1.0 |
+| arm A, chunk 1 (incl. 72 warmup steps) | 4.797 | 0.0341 |
+| arm A, chunk 8 | 4.118 | **0.0000** |
+
+**The same cap of 6.5 binds on 0% of steps here.** Batch size does not explain it —
+production uses the LARGER batch (512), which should lower the gradient norm, not
+raise it 1.8x. Untested candidates: warm vs fresh optimizer state, 478 iterations of
+drift, live-buffer loss composition. Worth its own check on the live trial.
+
+Consequence for the experiment: the brief's arm B (raise the cap 6.5 → 12) is
+**mechanically incapable of doing anything** when the cap never binds. Confirmed
+empirically before it was retired — A vs B agreed to 3 decimals on grad norm
+(4.118 vs 4.121), exactly on `tm_lr_mean`, chose the **identical argmax on 99.52%** of
+full-cover rows, and contrasted at **+0.122 cp [−0.011, +0.275]**. Verdict for arm B
+as specified: **PREMISE ABSENT**, decided on mechanism, not on outcome.
+
+It was replaced by **arm B2 = direction-only FORCED** (`zclip_max_norm` 2.06 = 0.5 ×
+A's chunk-8 median), which reproduces production's *regime* rather than its *config*:
+realized `grad_hard_clip_rate` **1.000** against a pre-registered >0.80 bar, on the
+same gradient distribution (median 4.800 vs A's 4.797). This is the only way this rig
+can test the direction-only hypothesis, and it tests it with the polarity that
+matters.
+
+---
+
+### Arms
+
+| arm | manipulation vs A | proof of effect (read off the live objects) |
+|---|---|---|
+| **A** | none — production replica | `tm_lr_mean` 5.2847e-4 ≡ production 5.29e-4 |
+| **B** | cap 6.5 → 19.187 | RETIRED: hard-clip 0.0 in A ⇒ cap never binds |
+| **B2** | cap 6.5 → 2.06 (direction-only forced) | `grad_hard_clip_rate` **1.000** (bar >0.80) |
+| **C** | aux wd 1e-4→1e-3 + label smoothing 0.05 + lr ×1/3 | wd on the **44,747,680-param** AdamW group; target entropy 0.643→0.910; `kwargs_lr` 1e-5 |
+| **D** | lr ×1/3 only | `kwargs_lr` 1e-5 |
+
+⚑ A trap this rig walked into and out of: `header.json`'s `param_groups` are the
+**warmup-start** LRs, not the base LRs. `Trainer._set_initial_lrs()` pins every group
+to `warmup_lr_start * base_lr / peak_lr`, and `warmup_lr_start` falls back to
+`lr_eta_min` = **1e-5, an absolute value that does not scale with `lr`** — so arms A
+and C both print pg0 = 2e-4 despite 3x different base LRs. Read as proof-of-effect it
+would have "shown" that arm C's LR manipulation did nothing. The valid instruments are
+`kwargs_lr`, `step1_effect.json`'s post-chunk `param_groups_after_step`, and
+`tm_lr_mean`. Side effect, not chosen: arms C/D get **no warmup ramp at all**
+(72 of 12,320 steps).
+
+### Rulers (all cp top-1 regret vs `sf_p0_regret`, lower better; PRIMARY = fully-covered rows)
+
+| ruler | rows / games | full-cover | teacher's own top-1 |
+|---|---|---|---|
+| `oow` same-era held-out GAMES | 21,191 / 3,507 | 12,879 | 26.35 cp |
+| `inw` train rows (fitted) | 23,000 / 15,735 | 13,838 | 26.59 cp |
+| `era` 46M-era pool (forgetting, co-primary) | 21,000 / 9,013 | 12,460 | 30.23 cp |
+
+`oow` was rebuilt from the whole 713-shard pool rather than the materialised held
+corpus, which carried only 3,536 such rows — a 6x gain for one CPU pass. Frame check
+on both new rulers: **100.0%** of covered `sf_p0_regret` entries are legal in the
+row's OWN `legal_mask` (n≈3,000 each), i.e. the previous-ply frame is correct and the
+known "a row's own `sf_multipv_raw` is the position AFTER the net moved" trap is not
+re-entered. `game_id` overlap with train: **0** for `oow`, `held` and `era`.
+
+Instrument checks: self-contrast `mean_ci(x−x)` = 0.0 [0.0, 0.0]; game clustering
+inflates the CI by 3.8% (`oow`) / 2.1% (`era`) on level contrasts, as it should, and
+is ~neutral on arm-vs-arm where paired differences are zero on 99%+ of rows; achieved
+resolution **±0.15 cp** CI half-width on an arm-vs-arm paired contrast.
+
+### RESULT 1 — ⚑⚑ THE WEDGE REPRODUCES, AND IT IS TOTAL: 8.46 cp LEARNED, 0.00 cp TRANSFERRED
+
+Arm A (production config replica), cp top-1 regret, PRIMARY = fully-covered rows:
+
+| step | `oow` same-era held-out | `inw` train rows | `era` 46M-era | oow agree w/ teacher | era agree |
+|---|---|---|---|---|---|
+| 0 | 36.010 | 37.788 | 31.323 | 0.5255 | 0.5907 |
+| 1408 | 36.238 | 35.735 | 32.855 | 0.5471 | 0.5602 |
+| 2816 | 36.151 | 33.975 | 32.635 | 0.5523 | 0.5547 |
+| 4224 | 35.844 | 33.010 | 32.664 | 0.5521 | 0.5535 |
+| 5632 | 36.274 | 32.142 | 32.948 | 0.5514 | 0.5504 |
+| 7040 | 36.491 | 31.412 | 33.473 | 0.5501 | 0.5477 |
+| 8448 | 36.933 | 30.092 | 33.391 | 0.5504 | 0.5482 |
+| 9856 | 36.593 | 29.330 | 33.243 | 0.5528 | 0.5462 |
+
+| **12320 (final)** | **37.164** | **27.467** | **33.719** | 0.5530 | 0.5450 |
+
+Within-run vs step 0, paired, game-clustered 95% CI, **at the full 12,320-step budget**:
+
+- `inw` **−10.320 cp** [−11.521, −9.187] **SIG** — it learns the teacher on rows it sees
+- `oow` **+1.153 cp** [+0.086, +2.189] **SIG** — **significantly WORSE than the
+  checkpoint it started from**, on held-out games of the SAME era, same distribution,
+  same teacher
+- `era` **+2.397 cp** [+1.342, +3.433] **SIG** — and it forgets the old era faster still
+
+**VERDICT: WEDGE REPRODUCED**, and in a stronger form than the rule anticipated. The
+pre-registered gate only required that out-of-window fail to improve. It does not
+merely fail to improve: **10.32 cp of in-window gain buys 1.15 cp of out-of-window
+LOSS.** Every centipawn the net takes from the teacher is spent on rows it has seen,
+and the transfer term is negative.
+
+Held-out CE agrees and dates the turn: 0.8548 -> minimum **0.7367 at step 5,632** ->
+0.7649 at 12,320, while train CE falls monotonically 0.8544 -> 0.5200. The net passes
+its own generalisation optimum around step 5-6k and then trades held-out loss for
+train loss for the remaining 6k steps.
+
+⚑ The rig is a fixed 1.15M-row pool; production regenerates data every iteration. A
+fixed pool is the condition under which memorisation dominates, so this **overstates
+production's absolute wedge** and is a sensitive detector of arm differences rather
+than an estimator of the live one. Both statements belong together.
+
+⚑ Note the agreement columns, which cut against the obvious reading: out-of-window
+agreement with the teacher RISES 0.5255 → 0.5528 while out-of-window regret does not
+improve. The net does move toward the teacher's move choices on unseen same-era rows;
+those newly-copied choices simply are not worth cp there. Copying the teacher and
+being right are coming apart.
+
+### RESULT 2 — ⚑⚑ DIRECTION-ONLY DESCENT IS **NOT** THE CAUSE
+
+Arm B2 = arm A with production's realized clip regime forced
+(`grad_hard_clip_rate` **1.000** vs A's **0.000**, identical gradient distribution,
+median 4.800 vs 4.797). Paired vs A at the pre-registered matched steps:
+
+| step | `oow` (B2 − A) | `inw` | `era` |
+|---|---|---|---|
+| 7040 | +0.008 [−0.306, +0.326] ns | +0.068 ns | −0.263 [−0.583, +0.035] ns |
+| 8448 | **−0.335** [−0.669, −0.015] SIG | +0.066 ns | −0.038 ns |
+
+The rule requires the effect at BOTH matched steps. It appears at one. **VERDICT: B2
+is NO BETTER THAN A** — not sustained, and not a forgetting win either (era ns at both
+points).
+
+The magnitude is the finding: switching between 0% and 100% hard-clipping — the whole
+span of the direction-only axis — moves out-of-window regret by **at most 0.34 cp
+against an 8.46 cp wedge**, i.e. ≤4% of it. The brief's hypothesis that direction-only
+descent causes the absorption failure is **REFUTED** for this rig. The
+`zclip_max_norm` control surface is not where the wedge lives.
+
+Corollary for the live run: the recent zclip 5.0 → 6.5 change (and any successor) is
+being made on an axis that, when swept end to end here, cannot move generalisation.
+
+### RESULT 3 — THE SEED-0 ARM TABLE
+
+Paired vs A at the two pre-registered matched steps, game-clustered 95% CI.
+Negative = arm better than A.
+
+| arm | step | `oow` same-era (PRIMARY) | `inw` | `era` forgetting (CO-PRIMARY) |
+|---|---|---|---|---|
+| **B2** | 7040 | +0.008 [−0.306, +0.326] ns | +0.068 ns | −0.263 [−0.583, +0.035] ns |
+| direction-only forced | 8448 | −0.335 [−0.669, −0.015] S | +0.066 ns | −0.038 [−0.369, +0.302] ns |
+| **C** | 7040 | −0.147 [−0.821, +0.504] ns | +2.958 [+2.247, +3.686] S | **−1.091 [−1.801, −0.400] S** |
+| wd + smoothing + lr/3 | 8448 | −0.807 [−1.488, −0.149] S | +3.428 [+2.631, +4.234] S | **−1.087 [−1.819, −0.347] S** |
+| **D** | 7040 | +0.142 [−0.539, +0.817] ns | +2.849 [+2.145, +3.563] S | **−0.897 [−1.618, −0.201] S** |
+| lr/3 only | 8448 | −0.761 [−1.422, −0.125] S | +3.501 [+2.710, +4.301] S | **−1.125 [−1.829, −0.409] S** |
+
+Within-run vs step 0 (each arm's own start), at 8448:
+
+| arm | `oow` | `inw` | `era` |
+|---|---|---|---|
+| A | +0.923 | −7.696 | +2.068 |
+| B2 | +0.588 [−0.454, +1.631] ns | −7.630 S | +2.031 S |
+| C | +0.116 [−0.836, +1.033] ns | −4.268 S | +0.981 S |
+| D | +0.162 [−0.802, +1.085] ns | −4.195 S | +0.943 S |
+
+**Verdicts by the pre-registered rules:**
+
+- **PRIMARY — no arm BEATS A.** The rule requires `d_X < 0` with CI excluding 0 at
+  BOTH matched steps. Every arm that reaches significance does so only at 8448 and is
+  null at 7040. **B2, C, D: NO BETTER THAN A on same-era out-of-window regret.**
+- **CO-PRIMARY — C and D FORGET LESS than A**, sustained: significant at both 7040 and
+  8448 (C −1.09/−1.09; D −0.90/−1.13). Seed agreement pending (`C_s1`, `D_s1` queued).
+  **B2 does not** (ns at both).
+- By the letter of the winner rule (forgets less AND `d_X` never significantly
+  positive), **C and D qualify as ABSORPTION WINNERS pending seed agreement** — but
+  see the exchange-rate analysis below before that is believed.
+
+### RESULT 5 — ⚑⚑ EVERY LEVER CHANGES THE **RATE**, NONE CHANGES THE **EXCHANGE RATE**
+
+**This diagnostic is POST-HOC and is not a verdict.** The pre-registered rule compares
+at matched STEPS, which is the right question for a fixed compute budget and is
+answered above. It is the wrong question for "does this lever change the trade-off",
+because an arm at 1/3 the LR is simply further back along the trajectory. Comparing at
+matched IN-WINDOW PROGRESS (each arm at its final `inw`, with A linearly interpolated
+to the same `inw`) asks that question instead:
+
+| arm | its `inw` | its `oow` | A at same `inw` | **d_oow** | its `era` | A at same `inw` | **d_era** |
+|---|---|---|---|---|---|---|---|
+| B2 | 30.16 | 36.60 | 36.91 | **−0.313** | 33.35 | 33.40 | −0.042 |
+| C | 33.52 | 36.13 | 36.01 | **+0.120** | 32.30 | 32.65 | −0.345 |
+| D | 33.59 | 36.17 | 36.03 | **+0.142** | 32.27 | 32.65 | −0.381 |
+
+**The entire same-era out-of-window "win" for C and D is an artefact of having trained
+less.** At matched learning both are slightly WORSE than A out-of-window, and the
+forgetting advantage shrinks from ~1.1 cp to ~0.35-0.38 cp.
+
+The exchange rate makes it plainest — cp moved per cp of in-window gain, each arm at
+its own final step:
+
+| arm | in-window gain | `oow` per cp learned | `era` per cp learned |
+|---|---|---|---|
+| A | 10.320 | +0.112 | **+0.232** |
+| B2 | 7.630 | +0.077 | **+0.266** |
+| C | 4.268 | +0.027 | **+0.230** |
+| D | 4.195 | +0.039 | **+0.225** |
+
+**The forgetting exchange rate is INVARIANT at ~0.23-0.27 across every optimizer lever
+tested** — clip regime swept 0% to 100% hard-clip, weight decay 10x, label smoothing
+0.05, learning rate 1/3. And the out-of-window term is **positive for every arm**: on
+this data, every cp the net takes from the teacher in-window costs it out-of-window.
+
+The trajectories say the same thing directly. Every arm's `oow` reaches its minimum
+early and then degrades — A bottoms at 35.84 (step 4224), C at 35.55 (2816), D at
+35.61 (2816), all landing within ~0.3 cp of the same floor before turning. **There is
+one trade-off curve here and the levers only change how fast a run travels along it.**
+
+### RESULT 4 — ⚑⚑ ARM C ≡ ARM D: THE REGULARISATION FAMILY IS DOWN
+
+C = D + 10x weight decay + label smoothing 0.05. At 8448 they agree on every ruler:
+
+| | `oow` | `inw` | `era` |
+|---|---|---|---|
+| C | 36.126 | 33.520 | 32.304 |
+| D | 36.172 | 33.592 | 32.266 |
+| C − D | −0.046 | −0.072 | +0.038 |
+
+All three differences are inside the ±0.15 cp resolution this rig demonstrated on the
+A-vs-B null. **Weight decay at 1e-3 on the 44.7M-param AdamW group and label smoothing
+at 0.05 contribute NOTHING measurable; arm C is entirely explained by its LR cut.**
+Both were verified in effect first (wd reaching `param_groups`, target entropy
+0.643 -> 0.910 on 45,312/45,312 rows), so this is a real null, not an unwired knob —
+exactly the isolation the compound arm was built to permit, obtained without needing
+the follow-up arms.
+
+
+### RESULT 6 — negative control (interim, run in progress)
+`SHUF_s0` = arm A with every policy-shaped target permuted across train rows. At
+step 1408 it stands at `oow` **226.47**, `inw` **228.83**, `era` **226.41** cp
+(held-out CE +153.4), against a teacher of 26.35 cp and a boot512 init of 36.01 cp.
+Out-of-window regret did not improve; it is ~6x worse than the init and ~8.6x the
+teacher. The pre-committed pass condition ("`mean[top1_oow(final) − top1_oow(step0)]`
+is NOT significantly negative") is already satisfied by an enormous margin.
+**CONTROL PASSES.** Final CI in the follow-up entry.
+
+Incidental, and it corroborates RESULT 2 from the other direction: the shuffled run
+hard-clips **100%** of steps at the same `zclip_max_norm` 6.5 where arm A clips 0%.
+The cap binds only when the gradient is garbage — further evidence that the
+live 100%-hard-clip regime is a symptom to be explained, not a knob to be tuned.
+
+---
+
+## WHAT THIS MEANS FOR THE RESTART
+
+**No lever tested converts teacher signal into out-of-window gain.** The measured
+picture is one trade-off curve, travelled at different speeds:
+
+- The wedge is real, reproduces, and at full budget is NEGATIVE-sum: 10.32 cp of
+  in-window gain buys 1.15 cp of out-of-window LOSS (RESULT 1).
+- Direction-only descent is REFUTED as the cause: sweeping hard-clip 0% -> 100% moves
+  out-of-window regret ≤0.34 cp against an 8.46 cp wedge (RESULT 2).
+- Weight decay 10x and label smoothing 0.05 do NOTHING, verified in effect (RESULT 4).
+- Lower LR changes the RATE, not the exchange rate. Forgetting costs
+  **~0.23-0.27 cp of old-era competence per cp of in-window gain in EVERY arm**
+  (RESULT 5), and at matched learning the LR arms are slightly WORSE out-of-window.
+
+**Actionable now, independent of the pending runs:** every arm's held-out optimum
+arrives early and is then spent. Arm A's held-out CE bottoms at **step 5,632 of
+12,320** and its `oow` regret bottoms at **step 4,224**, after which both degrade
+monotonically while train loss keeps falling. On this data the useful step budget is
+roughly **HALF** what was run. `train_views_per_position` is the live knob that sets
+this, and the pre-registered 5.0 -> 4.3 change already in the ledger moves in the
+right direction but is probably not far enough.
+
+**Where to look next, on this evidence:** not the optimizer. The remaining untested
+axis is the DATA one — what the sampler shows the net (`G`, running) and whether
+rehearsal of old-era rows breaks the exchange rate (`F`, specified, unrun). The
+exchange-rate invariance across four optimizer regimes is the strongest argument yet
+that #108 is a data-distribution problem, not a training-hyperparameter problem.
+
+## 2026-08-02 — PRE-REGISTRATION: is the frozen-audit head asymmetry (VALUE +13.36 vs POLICY +8.45) a FEN-only ruler artifact? (audit-v2 = same set, real input encoding)
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written before any
+boot512/iter477 forward pass on the full set. Only a 64-position smoke test of
+the rig had been run.
+
+**The defect being tested.** The frozen audit set stores per row only
+`key`/`fen`/`phase`/`source`. Both rulers rebuild the input with
+`chess.Board(fen)`, whose move stack is empty, so under the production encoding
+(`lc0_root_legacy_meta` + `v2_threats`, 175 planes) **93 planes are
+structurally zero on every audit row**: the 7 non-current history slots
+(13..103), the current-frame repetition plane (12), and — separately — the
+side-to-move colour flag (108), which the FEN-only path writes as 0 on 100% of
+rows although the stored rows carry 1 on **50.8%** of them. The set is sound;
+the RULER feeds the net an input it never saw in training.
+
+**audit-v2 changes ONLY the encoding.** Positions, deep-SF labels, legal-move
+indexing, metrics, batch sizes: identical. Per the standing rule this is a
+RULER CHANGE — audit-v2 numbers must never be mixed into a table with v1
+numbers, and every v1 quantity used below is RE-MEASURED on this rig rather
+than cited from the table above.
+
+**Provenance is exact, not approximated.** `audit_set_v1_README.md` names the
+snapshot the set was sampled from, and it survives:
+`runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats`
+(1463 shards, all `lc0_root_legacy_meta`). Joining by `position_key` recovers
+the original stored production row for **4000/4000 audit positions** (mean
+duplicate multiplicity 1.010, max 3; first match in shard-name order wins).
+Verified on the join: piece planes 0..11 and castling planes 104..107 are
+**bit-identical** to the FEN-only encoding (canonicalisation preserved), while
+history-frame occupancy goes **0.0% -> 71.3%** and whole-input nonzero-plane
+fraction **27.0% -> 64.4%**.
+
+**Child encodings for the VALUE ruler are DERIVED and PROVEN, not assumed.**
+`value_regret.py` evaluates every legal child, so children need history too.
+Child slot k+1 = parent slot k with the us/them 6-plane halves swapped and the
+rank axis flipped. Checked bit-exactly against real consecutive-ply row pairs
+taken from the snapshot itself: **28,539/28,539 piece-history slots exact,
+4,077/4,077 colour flags exact**, 28,535/28,539 repetition planes exact (the 4
+misses are repetitions older than the 8-slot window, which no shift can know).
+
+**Arms.** `v1` = FEN-only (today's ruler). `v1_stm` = v1 plus the true colour
+flag only (attribution: separates the flag from the history). `v2` = stored row
+at the root, derived children.
+
+**THE PRE-COMMITTED QUESTION.** Define, WITHIN a single ruler, the head
+asymmetry `A = ΔV − ΔP` for boot512 → iter477, where ΔV is the paired change in
+1-ply value-match top-1 deep-SF regret (cp) and ΔP the paired change in
+raw-prior top-1 deep-SF regret (cp). Set: `data/audit_set_v1.jsonl`,
+TB-excluded `--min-pieces 8`, n=3723. Batches pinned as in the 08-02 lineage
+read (policy 256, value 128). CIs: 10k-resample percentile bootstrap
+**clustered on `game_id`** (802 source games recovered by the same join) — the
+audit rows are not independent, up to several per game.
+
+**Kill/success rule, committed now:**
+
+- **ARTIFACT** if `A_v2`'s 95% CI contains 0 **and** `|A_v2| < |A_v1|/2`, with
+  `A_v1` re-measured on this rig. The "value degraded more" reading is then a
+  property of the FEN-only encoding, not of the lineage.
+- **SURVIVES** if `A_v2`'s 95% CI excludes 0 with the same sign as `A_v1`.
+- **CANNOT RESOLVE** otherwise (CI contains 0 but the point estimate has not
+  materially shrunk).
+
+**Validity gate, committed now — no verdict is read if it fails.** The `v1` arm
+of this rig must reproduce the 08-02 lineage table within **±0.5 cp** on all
+four anchors: VALUE boot512 60.39 / iter477 73.75, POLICY boot512 47.70 /
+iter477 56.15. A rig that does not reproduce the ruler is not the ruler.
+
+**Confounds.** (i) 38 of 4000 positions occur in more than one stored row with
+different histories; the first-match rule is deterministic but arbitrary among
+them. (ii) The recovered rows are the JUNE snapshot's — the history is the one
+the position actually had when generated, which is what training saw, but it is
+not "iter477-era history". (iii) Repetition-plane reconstruction for children
+is exact to 99.986%, not 100%.
+
+**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+(`match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`, `matched_rows.npz`,
+`match_report.json`, `child_transform_verify.json`).
+
+### 2026-08-02 — VERDICT: **ARTIFACT.** "Value degraded more" does NOT survive the history fill — it REVERSES. And the reason is that boot512 could use move history and iter477 cannot.
+
+Reads out the pre-registration immediately above. Nothing in the plan changed
+between writing it and scoring.
+
+#### Validity gate: FAILED AS WRITTEN, and the failure is in the ANCHOR, not the rig
+
+The gate demanded ±0.5 cp against the 08-02 lineage table on four anchors.
+POLICY passed (boot512 47.84 vs 47.70; iter477 56.10 vs 56.15). **VALUE failed**
+(boot512 60.53 vs 60.39 ✓; **iter477 74.64 vs 73.75 = 0.89 ✗**). Rather than
+read a verdict through a failed gate, the cause was chased:
+
+**`scripts/value_regret.py` itself no longer reproduces its own recorded number.**
+Run today on the same `iter477.pt`: **74.4 cp at batch 128, 74.6 cp at batch
+256** — never 73.75. This rig matches the canonical tool to **≤0.05 cp at every
+matched setting** (boot512 61.19/61.2 @128, 60.53/60.5 @256; iter477
+74.35/74.4 @128, 74.64/74.6 @256). So the rig IS the ruler; the ledger's
+absolute VALUE anchor has drifted.
+
+**⚑ NEW RULER PROPERTY — `value_regret.py` IS BATCH-SIZE DEPENDENT.** boot512
+**61.19 cp at batch 128 vs 60.53 at batch 256 (0.66 cp)**; iter477 74.35 vs
+74.64 (0.29 cp). Only *raw policy* regret carried this warning before; the
+VALUE yardstick carries it too, and 0.66 cp is ~5% of the entire lineage effect.
+The table above records "batch 128 (fixed)" for VALUE but its numbers match
+neither. **Pin and state the value batch on every future `value_regret` reading.**
+Everything below is pinned at **value batch 256, policy batch 256**.
+
+Gate substituted, explicitly: *the rig must reproduce the CANONICAL TOOL at
+matched settings to ≤0.05 cp* — met. The asymmetry question is a WITHIN-ruler
+contrast computed end-to-end on this one rig, so it does not touch the drifted
+anchor at all.
+
+#### The readout — n=3723 (TB-excluded), 800 source games, 10k game-clustered resamples
+
+| arm | POLICY top-1 boot512→477 | dP [95% CI] | VALUE top-1 boot512→477 | dV [95% CI] | **A = dV − dP** |
+|---|---|---|---|---|---|
+| `v1` FEN-only (today's ruler) | 47.84 → 56.10 | **+8.26 [+3.18, +13.35]** SIG | 60.53 → 74.64 | **+14.11 [+8.36, +20.35]** SIG | **+5.85 [−1.98, +14.15] ns** |
+| `v1_stm` (+ colour flag only) | 47.48 → 54.71 | **+7.23 [+2.46, +12.16]** SIG | 60.46 → 74.85 | **+14.39 [+8.60, +20.62]** SIG | +7.16 [−0.35, +15.20] ns |
+| **`v2` real history** | 42.62 → 56.26 | **+13.64 [+7.97, +19.93]** SIG | 61.61 → 72.88 | **+11.27 [+6.17, +16.51]** SIG | **−2.37 [−9.68, +4.86] ns** |
+
+Policy EXPECTED regret moves the same way: dE = +4.99 [+2.09, +8.05] under v1,
+**+6.12 [+3.29, +9.08]** under v2.
+
+**By the pre-committed rule: ARTIFACT.** `A_v2`'s CI contains 0, and
+`|A_v2| = 2.37 < |A_v1|/2 = 2.93`. Both clauses fire.
+
+**⚠ State it honestly: `A_v1` was never significant either** (+5.85 [−1.98,
++14.15] with game-clustered CIs). The entry above already found the same thing
+by a different route — its scale-free lead test read L = −0.010, ns. So the
+correct claim is NOT "a real asymmetry was destroyed"; it is **"the point
+estimate that the restart plan leaned on reverses sign when the ruler is fixed,
+and it was never significant under either ruler."** `A_v2 − A_v1 = −8.22
+[−18.73, +2.15]` is itself ns — a difference of differences, so wide.
+
+#### The mechanism, and it IS significant
+
+History benefit within a single checkpoint (v2 minus v1, same net, same rows):
+
+| net | head | v2 − v1 |
+|---|---|---|
+| boot512 | POLICY top-1 | **−5.23 [−9.08, −1.86] SIG** |
+| iter477 | POLICY top-1 | +0.16 [−5.49, +6.26] ns |
+| boot512 | VALUE top-1 | +1.07 [−3.57, +5.82] ns |
+| iter477 | VALUE top-1 | −1.77 [−6.04, +2.40] ns |
+
+**boot512's policy is 5.2 cp BETTER when it is given the move history it was
+trained with. iter477's is not better at all.** Per phase (boot512): middlegame
+−6.13 [−12.60, −0.78] SIG, opening −2.29 [−3.85, −0.81] SIG, endgame −7.81 ns.
+Value is history-insensitive for BOTH nets.
+
+That is the whole artifact in one line: the FEN-only ruler taxes boot512's
+policy and does not tax iter477's, so it shrank the measured policy degradation
+from **+13.64 to +8.26** while leaving value roughly alone — manufacturing
+"value degraded more". The `v1_stm` arm shows the colour flag (plane 108, wrong
+on 50.8% of rows) is worth only ~1 cp; the 7 history frames do the work.
+
+#### What this does and does not license
+
+**Does:** kill "value degraded MORE than policy" as an input to the restart
+plan. Under the production input the ordering is the other way round
+(dP +13.64 vs dV +11.27), though not separably so. It also removes the puzzle
+the 08-02 entry flagged — value degrading more on the audit while the value
+memorisation wedge came out SMALLER (~4.7 vs ~12.8 cp). There is no puzzle: the
+audit's policy number was suppressed by its own encoding.
+
+**Does:** promote a new, testable claim — **the lineage LOST the ability to
+exploit move history in the policy head.** boot512 converts real history into
+5.2 cp of policy accuracy; iter477 converts it into nothing. That is a
+degradation the FEN-only audit is structurally blind to, and it is consistent
+with the treadmill/forgetting picture (a net that has collapsed onto
+row-level recall of the current window has no use for the temporal stack).
+
+**Does NOT:** revalidate any absolute audit bar. Per the standing rule a ruler
+change invalidates its records — **every `audit_targets.py` / `value_regret.py`
+absolute number recorded before today is a v1 (FEN-only) number and must never
+be tabled against a v2 number.** The 12-point lineage table above is v1
+throughout and stays internally consistent; it is not comparable to anything
+here except through the within-ruler contrasts stated above.
+
+**Confounds, unchanged from the pre-registration:** 38/4000 positions occur in
+more than one stored row (first-match rule); the recovered history is the June
+snapshot's, i.e. the history the position actually had when generated;
+child repetition planes are exact to 99.986%.
+
+#### Next, not run
+
+A v2 rescore of the remaining 10 lineage points would say WHEN the history
+capability was lost, and whether that onset tracks the forgetting-hinge
+window-exit story. ~4 min/checkpoint on the banked rig at
+`--gpu-mem-fraction 0.15`. Not run: the offline rig owns the card.
+
+**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+(`README.md`, `match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`,
+`analyze.py`, `matched_rows.npz`, `score_{boot512,iter477}_vb256.json`,
+`analysis.json`, `match_report.json`, `child_transform_verify.json`).
+`analyze.py` re-derives every CI above on CPU with no GPU and no checkpoints.
+
+## 2026-08-02 — PRE-REGISTRATION: does the audit-v2 HISTORY BENEFIT decay across the 13a9f lineage, and is the shape a WINDOW-EXIT HINGE or a MONOTONE decline?
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Only `boot512` and
+`iter477` are in hand (from the audit-v2 entry above). A guard dry-run of the
+sweep script began scoring `iter025` before this entry was written; **that
+output was deleted unread** and `iter025` will be re-scored below. The scorer is
+deterministic against the canonical tool (≤0.05 cp), so nothing could have been
+selected on.
+
+**What is being tracked.** For each checkpoint c, over the SAME 3723 TB-excluded
+audit positions:
+
+    H(c) = mean(policy top-1 regret | v2 real history)
+         − mean(policy top-1 regret | v1 FEN-only)
+
+H < 0 means the net converts real move history into accuracy. Measured so far:
+**boot512 H = −5.23 [−9.08, −1.86] SIG; iter477 H = +0.16 [−5.49, +6.26] ns.**
+The two-point read says the capability was lost. This asks WHEN and HOW.
+
+**Grid.** 14 checkpoints, **all 14 hash-verified today** against
+`scratchpad/vp_timing_20260802/ckpt_verify.json` (16-char weight digest +
+63,084,128 unique-storage params + strictly increasing `step` 56000 → 94169):
+boot512, iter025/070/122/172/218/308/360/409/425/450/475/477/478. Banked at
+`audit_historyfill_20260802/lineage_ckpt_verify.json`. `v1donor` is excluded —
+different architecture (32.3M params), not this lineage.
+
+**Ruler pinned** exactly as the entry above: arms `v1` and `v2` only (`v1_stm`
+dropped — the colour flag was worth ~1 cp and is not worth 50% more GPU on 14
+points), **value batch 256, policy batch 256**, n=3723, CIs by 10k-resample
+percentile bootstrap **clustered on the 800 source `game_id`s**, with the WHOLE
+CURVE recomputed on each game draw so per-checkpoint H values keep their real
+correlation.
+
+**The window-exit anchor, computed BEFORE seeing the curve.** The replay window
+sits at its 1.5M cap and realized ingest is ~8,987 rows/iter, so the window
+spans **1,500,000 / 8,987 = 167 iterations**. If the history capability is lost
+because the data that taught it aged out, the loss should be concentrated near
+iteration ~167 — i.e. between grid points `iter122` and `iter218`. If instead it
+is the same slow global term that degraded the never-in-window audit set by
++9.04 cp monotonically, H should climb steadily across the whole 477.
+
+**PRE-COMMITTED STATISTICS AND ANSWERS.**
+
+1. **PRIMARY — is there decay at all?** Slope of H vs iteration index,
+   game-clustered bootstrap.
+   - **DECAY** if the slope CI excludes 0 with H rising toward 0.
+   - **NO DECAY** if the CI contains 0. Then the boot512-vs-iter477 contrast is
+     an ENDPOINT artifact and neither shape question is answerable — report that
+     and stop. (Note the 2-point slope is already ns, so this is a live outcome.)
+
+2. **SHAPE-A — how much decay is done by the first point past the window?**
+   `f = (H(218) − H(boot512)) / (H(477) − H(boot512))`, bootstrap CI.
+   - **HINGE-consistent** if `f ≥ 0.70`.
+   - **MONOTONE-consistent** if `f ≤ 0.55` (a straight line through 477 predicts
+     218/477 = 0.46).
+   - **AMBIGUOUS** in between.
+
+3. **SHAPE-B — does a breakpoint pay for itself?** Continuous 2-piece linear fit
+   with one free breakpoint vs a straight line, compared by BIC.
+   - **HINGE** requires `ΔBIC(linear − segmented) ≥ 6` **AND** the breakpoint
+     point-estimate inside **[100, 240]** (the ±~40% band around 167).
+   - **MONOTONE** if the linear slope is SIG and `ΔBIC < 6`.
+   - **CANNOT RESOLVE** otherwise — including a `ΔBIC ≥ 6` breakpoint that lands
+     OUTSIDE [100, 240], which would be a real hinge but NOT the window-exit one
+     and must not be reported as confirming the window-exit story.
+
+**Overall verdict rule.** WINDOW-EXIT requires PRIMARY = DECAY **and** SHAPE-A
+hinge-consistent **and** SHAPE-B = HINGE. MONOTONE requires PRIMARY = DECAY
+**and** SHAPE-A monotone-consistent **and** SHAPE-B = MONOTONE. Any split
+decision is reported as **CANNOT RESOLVE**, not adjudicated post-hoc.
+
+**Secondary, expected null.** The same curve for the VALUE head. boot512 and
+iter477 both read ns (+1.07, −1.77), so value is predicted history-insensitive
+throughout; a SIG value curve would undercut the policy-specific reading.
+
+**GPU discipline.** The offline rig owns the card and its footprint GREW during
+this session (free 8625 → 7209 MiB, util 76–88%), recovering to ~8.4–8.7 GB.
+`sweep_lineage.sh` therefore re-checks `nvidia-smi` **before every checkpoint**
+and aborts, keeping partial results, if free memory is below a pre-committed
+**8600 MiB** floor; each process is additionally capped by
+`--gpu-mem-fraction 0.15` (~4.9 GB) so it OOMs itself rather than starving the
+rig. A partial sweep is a legitimate outcome and will be reported as such.
+
+**Bank:** `audit_historyfill_20260802/` — `sweep_lineage.sh`,
+`analyze_lineage.py`, `lineage/score_<ckpt>.json`, `lineage_ckpt_verify.json`.
+`analyze_lineage.py` re-derives every number on CPU with no GPU.
+
+## 2026-08-02 — CORRECTION to the dead-key entry above: the audit branch as first written could not fire for the only action that reaches it
+
+Delta review of the #106 work. The entry above says the misclassification was
+"fixed with a fourth injected set, checked BEFORE the restart branch and
+reported on the VALUE rather than on a diff". The set and the value-based report
+were right; **the placement was not, and the branch was dead on the production
+path.**
+
+It sat inside `for key in sorted(set(flat_yaml) & set(realized))`. The ONLY
+route by which a dead key goes live is an operator **adding** it to the yaml —
+no file under `configs/` carries one — and `_reload_yaml_into_config` **declines
+to overlay it**, so it never enters `config`, never reaches the result row, and
+the intersection drops it. Reproduced directly: live-add gives `report=[]`,
+`findings=[]`, so `audit_realized_config.py` printed *"ok every shared yaml key
+has reached the running trial"* for exactly the action the branch was added to
+catch. The only scenario that did fire — the key already in the row at its inert
+value, then flipped — is **unreachable**, because `reject_dead_config_keys`
+raises at startup before such a row could be written.
+
+**This is the intersection-vs-union defect the same file already documents.**
+The A4/E13 note in `scripts/audit_realized_config.py` says it in as many words:
+`soft_policy_temp` read 3.0 in the yaml for five months while every worker used
+2.0, because a key absent from one side never entered the comparison, and the
+fix was to diff over the UNION so that "absent" is a reportable state. I
+reproduced that defect in the audit whose whole purpose is the silent-detection
+leg. **Rule, restated because it keeps costing: an audit that compares two
+sources over their INTERSECTION cannot see the state where one source lacks the
+key — which is usually the state worth seeing.**
+
+Fixed: dead keys get their own pass over `set(flat_yaml) | set(realized)`,
+before the main loop.
+
+**Second correction, same round — the guard did not share the criterion's
+instrument.** The audit used `bool(value)` while the refusal used
+`bool(value) != bool(inert)`. Those agree only while every dead key's inert
+value is falsey, which is true of the one key that exists and is a property of
+today's key set rather than of the code. Both now route through a single
+exported predicate, `dead_config_key_violations`. Pinned behaviourally by a test
+that registers a SYNTHETIC dead key inert at `True` and requires the audit and
+the refusal to agree on it — without that key the mutation "audit ignores the
+inert value" survives, which it did on the first pass.
+
+**Method note for the mutation standard:** three of the six delta mutations
+survived their first run. Two were real gaps (above); one was a badly chosen
+mutation that did not actually break the property the test asserted. A surviving
+mutation means *either* the test is weak *or* the mutation missed — and the two
+must be told apart by reading, not assumed to be the first or the second.
+
+## 2026-08-02 — PRE-REGISTRATION (ARM H, stage 1): does post-hoc SWA/EMA weight averaging of lineage checkpoints beat raw iter477 on held-out rulers?
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written after the
+checkpoint inventory (properties of the FILES only) and before any average was
+built or scored on any ruler. Full text, with the averaging procedure and the
+per-file inventory: `scratchpad/swa_armH_20260802/PREREG.md` +
+`inventory.json`. This is the restart brief's "EMA/SWA published-model arm (H) —
+unspecced idea, needs a rig verdict first".
+
+**Hypothesis.** The loop is a proven treadmill (forgetting hinge, 5 sets; −48.6
+Elo [−68.2, −29.4] over 478 iterations). If consecutive checkpoints memorise
+DIFFERENT ~0.5-day windows, the window-specific component of their weights is
+approximately independent across checkpoints while the generalizing component is
+shared, so a uniform average over the last K cancels part of the churn:
+**SWA(last K) should beat raw iter477 on out-of-window/era material without
+losing more than the noise bar in-window.** Stage 1 is an OFFLINE screen; a
+PROMISING verdict buys an arena, nothing else.
+
+**Inventory (done first; dictates the candidate set).** 28 checkpoint files
+opened. Ray's pruning left a dense 5-iteration grid in
+`data/salvage/rolling/checkpoint_000{360..475}` (24 files) plus `iter477`
+(`scratchpad/strength_readout_0731/ck477`) and `iter478`. **All 496 keys, all
+63,084,128 unique-storage params, all 28 weight-fingerprints distinct, and NO
+file carries `_orig_mod.` or `module.` on any key.** The off-grid `iter409`
+ratchet snapshot is excluded so no region is double-weighted.
+
+**Arms (uniform average, ending at iter477).** `SWA2` {477,475} span 2 ·
+`SWA4` {477…465} span 12 · `SWA8` {477…445} span 32 · `SWA13` {477…420} span 57
+· `SWA25` {477…360} span 117. Window residency ≈ 148–167 iters, so the extreme
+members of SWA25 share ~21% of their FIFO and SWA2's share ~99%.
+
+**Instrument control, pre-committed:** `SWA_boot` = ½(iter477 + boot512), 477
+iterations apart. Weights from disconnected basins do not average.
+**Prediction: SWA_boot is materially WORSE than iter477** (Δ > +0.64 cp,
+corrected CI excluding 0). If it is not, the rulers cannot see a weight-space
+perturbation and the whole read is CANNOT RESOLVE.
+
+**Averaging (CPU, pure state_dict arithmetic).** Keys normalized through
+`strip_compile_prefix` (`replace(...,1)`, never `removeprefix` — `AveragedModel`
+NESTS the segment, PR #267/J9) although today's files carry no prefix;
+identical key sets and shapes asserted; float64 accumulate; the 16 tied
+`layer_smolgens.N.gen_weight.weight` keys asserted equal in every input AND in
+the average, and the tie restored on write; **unique-storage count of the LOADED
+model asserted at 63,084,128 and `load_state_dict_tolerant` asserted at 0
+missing / 0 unexpected on every input and on every average**; sha256 banked.
+
+**Rulers, with batches pinned.**
+- **PRIMARY (oow/era)** — audit-v2 stored-row encoding rig
+  (`audit_historyfill_20260802/score_audit_v2.py`, `matched_rows.npz`),
+  **arm `v2` only** (the `v1` FEN-only arm is a known-defective encoding, M10 —
+  recorded for the history-benefit column, never a decision ruler), n=3723
+  TB-excluded, 800 source games, **`--policy-batch 256 --value-batch 256`**
+  (`value_regret` is batch-size dependent ~0.66 cp). Heads: raw-prior
+  `policy_top1` and 1-ply `value_top1` deep-SF cp regret.
+- **IN-WINDOW** — `forget_curve_20260802/sets/S5_never.npz` (the only banked set
+  still resident at the pause), raw-policy top-1 `sf_p0` cp regret, **batch
+  pinned at 128**.
+- **ERA/CHURN side-sets** — `forget_curve_20260802/sets/S{1,2,3,4}`, the sets
+  that exited at ~65/155/200/275, same ruler, same batch 128.
+
+**Statistics.** Every contrast paired per position against raw iter477 on
+identical rows in identical order; 10,000-resample percentile bootstrap
+**clustered on `game_id`**, seed 20260802. Positive = worse.
+
+**Noise bar.** `B_oow = 0.64 cp`, `B_inw = 0.31 cp`, adopted from the banked
+08-02 regularization-bundle rig's measured seed-pair spreads (0.638 / 0.307 /
+0.394) — conservative here, since these arms carry no seed noise at all.
+**Rig-repeat determinism is MEASURED, not assumed:** iter477 is re-scored from
+scratch on the primary ruler and compared per position against the banked
+`lineage/score_iter477.json`; if the repeat |Δ| on either head exceeds `B_oow`
+the verdict is CANNOT RESOLVE.
+
+**Multiplicity.** 6 arms × 2 primary heads = 12 tests ⇒ the PROMISING call is
+gated on a **Bonferroni-corrected CI** (percentiles 0.208 / 99.792). Plain 95%
+CIs are reported and gate only the weaker WEAK call.
+
+**Kill/success rule, committed now.**
+- **PROMISING** (advance to a stage-2 arena) iff some `SWA_K` satisfies ALL of:
+  (1) `Δ ≤ −0.64 cp` on the audit-v2 `v2` arm on `policy_top1` OR `value_top1`,
+  with its **corrected** CI excluding 0; (2) `Δ ≤ +0.31 cp` on `S5_never`;
+  (3) neither primary head degrades by more than `+0.64 cp` with a corrected CI
+  excluding 0 (a policy gain bought with a value loss is not a promotion).
+- **WEAK** iff (1) holds only at plain 95%, with (2) and (3). Reported, not promoted.
+- **DEAD** otherwise.
+- **CANNOT RESOLVE** iff the determinism check or the `SWA_boot` control fails.
+
+**Churn-cancellation side-prediction (direction only, NO gate).** On the four
+window-EXITED sets `S1..S4` (post-exit decay `D_post` = +2.80 … +5.67 cp), SWA
+should recover part of that decay: `Δ < 0` on ≥3 of 4. On `S5_never` the same
+mechanism predicts SWA gives back part of the in-window memorisation, so `Δ ≥ 0`
+there is EXPECTED and is not evidence against the hypothesis unless it breaches
+`B_inw` (which is gate 2). This distinguishes "SWA cancels churn" from "SWA is
+just a smoother net".
+
+**Confounds / known limits.** (i) No arena, no Elo — and this lineage already
+produced one case where flat per-position signals hid a −48.6 Elo slide, so a
+PROMISING verdict is a licence to spend arena GPU and nothing more. (ii) The
+`S*` sets are selfplay rows only; curriculum rows are structurally unmeasurable
+by `sf_p0_regret`. (iii) Averaging across 117 iterations is not classical SWA
+(constant/cyclic high LR over a short tail); `SWA25` is expected to be the most
+likely to break. (iv) No BatchNorm in this architecture, so `update_bn` is a
+no-op and no data pass is done or claimed. (v) Stage 1 scores post-hoc averages
+of a 5-iteration grid; it does NOT test an ONLINE EMA, which sees every step.
+
+**Bank:** `scratchpad/swa_armH_20260802/` (`PREREG.md`, `inventory.py`,
+`inventory.json`, `build_avg.py`, `avg/`, `score.sh`, `dumps/`, `analyse.py`).
+
+### 2026-08-02 — VERDICT (ARM H, stage 1): **CANNOT RESOLVE** — the pre-committed instrument control FAILED, in the opposite direction to the one it was written to catch. Every SWA arm beats iter477, and the reason is almost certainly REVERSION, not churn cancellation.
+
+Reads out the pre-registration immediately above. Nothing in the plan changed
+between writing it and scoring. Bank: `scratchpad/swa_armH_20260802/`
+(`results.json` has every CI; `dumps/` has per-position dumps so every number
+below is recomputable on CPU with `analyse.py`, no GPU).
+
+#### Gate 1 — rig-repeat determinism: PASS, but by 0.008 cp, and this is a ruler finding
+
+`iter477` re-scored from scratch against its banked lineage dump, same rows,
+same batches, same code:
+
+| head | repeat Δ | 95% CI | rows differing |
+|---|---|---|---|
+| `policy_top1` | **+0.632 cp** | [−0.319, +1.970] ns | 41 / 3723 |
+| `value_top1`  | +0.446 cp | [−0.382, +1.515] ns | 85 / 3723 |
+
+The bar was 0.64 cp, so policy passes with 0.008 cp to spare. **The substantive
+reading is the CI, not the point estimate: both repeat contrasts are ns, so the
+paired bootstrap absorbs this noise correctly.** But note what produces it — two
+identical runs flip the argmax on ~1-2% of rows (bf16 autocast nondeterminism),
+and because top-1 regret is a step function with a heavy tail (max single-row
+|Δ| = 1711 cp), a handful of flips moves the mean by half a cp. **⚑ The audit-v2
+top-1 rulers have ~0.5 cp of pure run-to-run noise and a ±1-2 cp bootstrap
+resolution. Any future entry quoting a sub-cp difference on them is quoting
+noise.**
+
+#### Gate 2 — SWA_boot instrument control: **FAILED**
+
+Predicted: ½(iter477 + boot512) is materially WORSE than iter477 (disconnected
+basins do not average). Measured: it is the **best arm in the entire
+experiment** — `policy_top1` **−8.08 cp [−12.56, −3.83] SIG (Bonferroni)**,
+`value_top1` **−9.85 cp [−13.93, −5.95] SIG (Bonferroni)**.
+
+The failure is not the one the control was written to detect. The ruler is not
+insensitive — it is extremely sensitive. What the control actually proves is
+that **boot512 and iter477 are linearly mode-connected**: obvious in hindsight,
+since iter477 was fine-tuned FROM boot512 at `peak_lr` 3e-5 and never left the
+basin. Per the pre-committed rule the verdict is **CANNOT RESOLVE**, and it is
+recorded as such.
+
+#### The table (primary ruler: audit-v2 arm `v2`, n=3723, 800 games, batches 256/256; Δ vs raw iter477, negative = BETTER)
+
+| arm | span | POLICY top1 | Δ | VALUE top1 | Δ |
+|---|---|---|---|---|---|
+| iter477 (raw) | — | 56.26 | — | 72.88 | — |
+| `SWA2`  | 2 | 54.24 | −2.02 [−4.37, +0.16] ns | 69.30 | **−3.58 [−6.67, −0.94]** sig |
+| `SWA4`  | 12 | 53.45 | −2.81 [−5.83, +0.02] ns | 70.65 | −2.23 [−6.26, +1.70] ns |
+| `SWA8`  | 32 | 54.00 | −2.25 [−5.93, +1.32] ns | 69.08 | **−3.80 [−7.50, −0.40]** sig |
+| `SWA13` | 57 | 52.79 | **−3.47 [−7.11, −0.11]** sig | 68.43 | **−4.45 [−8.25, −0.94]** sig |
+| `SWA25` | 117 | 53.13 | −3.13 [−6.70, +0.22] ns | 67.55 | **−5.33 [−9.32, −1.61]** sig |
+| `SWA_boot` | (477↔0) | 48.18 | **−8.08 [−12.56, −3.83]** SIG* | 63.03 | **−9.85 [−13.93, −5.95]** SIG* |
+
+`SIG*` = survives Bonferroni over the 12-test family; `sig` = plain 95% only.
+**No SWA arm survives the correction; only the failed control does.**
+
+In-window ruler (`S5_never`, batch 128): **every SWA arm is at or better than
+iter477** — SWA2 −0.11, SWA4 −0.03, SWA8 −0.33, SWA13 −0.55, SWA25 −0.15, all
+inside the ±0.31 bar. `SWA_boot` is the only arm that pays in-window: **+3.83
+[+2.71, +5.00] SIG worse.** So gate 2 of the PROMISING rule passes for all five
+SWA arms and gate 3 passes for all five; only the corrected-CI leg of gate 1
+fails. Under the pre-registered ladder that reads **WEAK** — but the control
+failure supersedes it, and WEAK would in any case be reported, not promoted.
+
+Side-prediction (direction only): **HELD** — on the four window-EXITED sets, SWA
+recovers post-exit decay on 3/4 for SWA2/4/8/13 and **4/4** for SWA25. `S3_exit200`
+is the lone dissenter in every arm (+0.36 … +0.49).
+
+#### Why the honest reading is REVERSION, not cancellation (post-hoc, labelled)
+
+On a lineage that degrades monotonically, averaging with older checkpoints is
+partly just *reverting* toward older, stronger weights, and everything here
+lines up with that and not with cancellation:
+
+- the ladder is monotone in reach — the further back the span extends, the
+  better the score (value 72.88 → 69.30 → 70.65 → 69.08 → 68.43 → 67.55), and
+  `SWA_boot`, which reaches furthest, wins by the largest margin;
+- **`SWA25` performs like its OLDEST member**: vs `iter360` it reads
+  policy +0.25 [−3.51, +4.21] ns and value +0.16 [−3.52, +3.86] ns;
+- **no SWA arm significantly beats its own best scored member on either head**
+  (best case `SWA13` vs `iter475`, policy −0.56 ns);
+- `SWA_boot` — the largest reversion — is the only arm that loses in-window,
+  which is what reversion predicts and cancellation does not.
+
+The clean discriminator is not "does SWA beat iter477" (it does) but **"does SWA
+beat the single checkpoint at its own centroid iteration"** — pre-registered
+below as stage 1b.
+
+#### What this costs and what it buys
+
+`iter477` is a poor incumbent even locally: `iter475` reads 53.35 and `iter478`
+53.82 on the same ruler against iter477's 56.26 — a 2.9 cp swing between
+adjacent checkpoints. Part of every Δ above is simply not being iter477.
+
+The one result that is *not* explained by reversion is the shape: the five SWA
+arms take their out-of-window gains at **zero in-window cost** (all ≤ 0 on
+`S5_never`), while the reversion extreme pays +3.83. Whatever the mechanism, an
+average over a few tens of iterations sits in a regime where old-material
+competence is bought for free — which is exactly the trade the restart brief's
+arm-H idea wants. That is a reason to finish the mechanism question, not to
+promote the arm.
+
+#### Traps hit
+
+- **`_orig_mod.` prefix: checked, ABSENT.** All 28 inventoried files carry 496
+  keys with no `_orig_mod.` and no `module.` segment. Normalization ran through
+  `strip_compile_prefix` (`replace(...,1)`) anyway, so a future `AveragedModel`
+  input with the NESTED segment cannot slip past (PR #267 / J9).
+- **Weight tying survived**: the 16 `layer_smolgens.N.gen_weight.weight` keys
+  are equal in all 26 members and in every average, and the tie is restored on
+  write. Unique-storage count asserted at **63,084,128 on every input AND every
+  average**, `load_state_dict_tolerant(require_complete=True)` clean on all.
+  Averaging verified against an independent recomputation: max |Δ| **5.96e-08**.
+- **Ray pruning**: the paused trial dir is gone; what survives is
+  `data/salvage/rolling/checkpoint_000{360..475 step 5}` (24 files) plus
+  `iter477`/`iter478`. There is no consecutive-iteration grid anywhere — 5 is
+  the finest spacing available, which caps how "adjacent" any SWA arm can be.
+- **GPU contention**: the offline rig held the card at 84-95% throughout; free
+  memory oscillated 7,999-19,476 MiB. Every checkpoint was gated on ≥8,500 MiB
+  free at `--gpu-mem-fraction 0.15`, `nice -n 19`; no run was started below the
+  gate and nothing was pre-empted.
+
+
+## 2026-08-02 — PRE-REGISTRATION (ARM H, stage 1b): is the SWA gain CHURN CANCELLATION or just REVERSION toward older weights?
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written after stage 1
+read out (its numbers are visible and are quoted below) and **before any
+centroid-twin checkpoint had produced a single number** — `iter470` was mid-run
+with no output, `iter460` and `iter420` not started; none of the three has ever
+been scored on this ruler by anyone. Full text:
+`scratchpad/swa_armH_20260802/PREREG_1b.md`.
+
+**Why.** Stage 1's control failure showed boot512 and iter477 are linearly
+mode-connected, so on a monotonically degrading lineage every SWA arm is
+confounded: averaging with older checkpoints is partly just reverting to older,
+stronger weights. "Does SWA beat iter477" is therefore the wrong question — it
+does, and reversion alone predicts that. **The right question is whether SWA
+beats the single checkpoint it is centred on.**
+
+**Design.** For each arm let `c̄_K` = mean member iteration and the **centroid
+twin** = the raw 5-grid checkpoint nearest `c̄_K`:
+
+| arm | `c̄_K` | twin | already scored? |
+|---|---|---|---|
+| `SWA2` | 476.0 | `iter475` | yes (banked lineage sweep) |
+| `SWA4` | 471.8 | `iter470` | no — to score |
+| `SWA8` | 461.5 | `iter460` | no — to score |
+| `SWA13` | 448.6 | `iter450` | yes (banked) |
+| `SWA25` | 418.1 | `iter420` | no — to score |
+
+REVERSION predicts `SWA_K ≈ twin`; CANCELLATION predicts `SWA_K < twin` (the
+average beats any single point near its centre because it has cancelled
+window-specific memorisation each individual point carries). `SWA_boot`'s
+centroid (~iter 238) is off-grid, so it gets no twin and takes no part.
+
+**Instrument — unchanged.** audit-v2 arm `v2`, n=3723, 800 games,
+`--policy-batch 256 --value-batch 256 --gpu-mem-fraction 0.15`, `nice -n 19`,
+paired per position against the twin, 10k percentile bootstrap clustered on
+`game_id`, seed 20260802. Bar `B_oow = 0.64 cp`. Stage 1's measured rig-repeat
+noise (+0.632 / +0.446 cp, both ns) is the determinism reference and is NOT
+subtracted anywhere — the bootstrap absorbs it.
+
+**Kill/success rule, committed now.** Family = 5 arms × 2 heads.
+- **CANCELLATION** iff for **≥3 of 5** arms `Δ(SWA_K − twin) ≤ −0.64 cp` on at
+  least one head with its plain-95% CI excluding 0, **and** no arm degrades
+  against its twin by more than +0.64 cp with a 95% CI excluding 0. (Plain 95%:
+  requiring 3-of-5 agreement is itself the multiplicity control, and this stage
+  answers a mechanism question — it cannot promote anything.)
+- **REVERSION-ONLY** iff for **≥4 of 5** arms `Δ ≥ −0.64 cp` on BOTH heads.
+- **INCONCLUSIVE** otherwise.
+
+**Known limits, stated in advance.** Twins are the nearest grid point, off by up
+to 1.8 iterations, and adjacent checkpoints on this ruler differ by up to 2.9 cp
+(`iter475` 53.35 / `iter477` 56.26 / `iter478` 53.82) — a single twin is a noisy
+stand-in for "the trajectory at `c̄`", which is exactly why the rule requires
+agreement across arms rather than one decisive arm. Still no arena, still no Elo;
+a mechanism result is not a strength result and cannot promote arm H.
+
+### 2026-08-02 — VERDICT (ARM H, stage 1b): **INCONCLUSIVE** by the pre-committed rule — but the failure is structured, and the structure is a HEAD SPLIT: the POLICY gain is reversion, the VALUE gain is not.
+
+Reads out the pre-registration immediately above. Nothing changed between
+writing it and scoring; the three new twins (`iter470`, `iter460`, `iter420`)
+had produced no numbers when the rule was committed. Bank:
+`scratchpad/swa_armH_20260802/results_1b.json`, `analyse_1b.py` (CPU-only).
+
+#### The table (audit-v2 arm `v2`, n=3723, 800 games, batches 256/256; Δ = SWA − twin, NEGATIVE = SWA beats the single checkpoint at its own centre)
+
+| arm | centroid | twin | POLICY swa/twin | Δ policy | VALUE swa/twin | Δ value |
+|---|---|---|---|---|---|---|
+| `SWA2`  | 476.0 | `iter475` | 54.24 / 53.35 | +0.89 [−1.35, +3.26] ns | 69.30 / 71.56 | −2.26 [−5.16, +0.19] ns |
+| `SWA4`  | 471.8 | `iter470` | 53.45 / 52.55 | +0.90 [−2.42, +5.35] ns | 70.65 / 71.46 | −0.82 [−4.55, +2.75] ns |
+| `SWA8`  | 461.5 | `iter460` | 54.00 / 53.91 | +0.09 [−2.65, +2.83] ns | 69.08 / 72.91 | **−3.83 [−7.07, −0.71] sig** |
+| `SWA13` | 448.6 | `iter450` | 52.79 / 56.54 | **−3.75 [−6.78, −0.90] sig** | 68.43 / 70.50 | −2.07 [−5.07, +0.69] ns |
+| `SWA25` | 418.1 | `iter420` | 53.13 / 52.06 | +1.07 [−1.25, +3.63] ns | 67.55 / 68.10 | −0.55 [−3.58, +2.34] ns |
+
+Arms beating their twin by ≥0.64 cp with a 95% CI excluding 0: **2 of 5**
+(CANCELLATION needed ≥3). Arms within the bar of their twin on BOTH heads:
+**1 of 5** (REVERSION-ONLY needed ≥4). No arm degrades against its twin. So the
+rule fires **INCONCLUSIVE**, and that is the verdict of record.
+
+#### The structure the rule could not see (post-hoc, labelled as such)
+
+The two heads behave completely differently, and averaging them into a single
+"arms" count is what produced the null:
+
+- **POLICY — consistent with pure REVERSION.** Four of five arms are at or
+  *worse* than their centroid twin (+0.89, +0.90, +0.09, +1.07); the mean over
+  arms is ≈ −0.16 cp. The single significant win (`SWA13` −3.75) is against
+  `iter450`, which reads 56.54 — as bad as `iter477` itself and an outlier
+  against its neighbours `iter460` 53.91 and `iter470` 52.55. **That win is a
+  bad twin, not a good average.** This is exactly the noisy-twin weakness the
+  pre-registration flagged in advance.
+- **VALUE — NOT explained by reversion.** All five deltas are negative
+  (−2.26, −0.82, −3.83, −2.07, −0.55), mean **−1.90 cp**, one individually
+  significant. **⚠ No combined p-value is claimed**: the arms are NESTED
+  (`SWA2` ⊂ `SWA4` ⊂ `SWA8` ⊂ `SWA13` ⊂ `SWA25`) and scored on the same 3723
+  rows, so these are not five independent tests and a sign test would be
+  invalid. What is claimed is only the *direction*: on value, averaging beats
+  the trajectory point it is centred on, every time, at 5 different spans.
+
+This head split is mechanistically coherent with what is already banked: value's
+degradation is **all age-linked shedding of trained material** (N4/N3 flat in
+`neverseen_20260802`), while **69% of policy's post-exit decay is a
+generalisation-loss term** that touches material no net ever trained on. An
+average spanning many ages can plausibly recover shed-by-age competence; it
+cannot recover capability that was never learned or has been genuinely lost.
+**If that is right, arm H is a VALUE-head intervention, not a whole-model one.**
+
+#### What would settle it, and what should NOT be run
+
+Neither stage promotes arm H. **A stage-2 arena is NOT warranted on these
+results** and none was run.
+
+The binding weakness is not statistical power on the arms — it is that each arm
+is compared against ONE noisy twin, on a trajectory whose adjacent checkpoints
+swing up to 2.9 cp. The cheap fix is offline and needs no arena: **score the
+remaining ~20 `data/salvage/rolling` checkpoints on this same ruler** (≈4 min
+each at `--gpu-mem-fraction 0.15`, ≈80 min total, resumable, no arena) to get a
+dense trajectory, then compare each SWA arm against a LOCAL SMOOTH of the
+trajectory at its centroid instead of a single point. That converts every arm's
+twin contrast from n=1 to a fitted value and would move both heads out of the
+noise. Only if VALUE cancellation survives that is an arena worth its GPU — and
+then the right one is `SWA8` or `SWA13` vs `iter477`, paired UHO, matched sims
+32, judged on the Cheese tail, NOT a generic arena.
+
+#### Cross-reference for the restart decision
+
+`SWA_boot` = ½(iter477 + boot512) is not a candidate model, but its numbers bear
+directly on the restart brief's open "RESTART BASE" decision: halfway back to
+boot512 buys **−8.08 cp policy / −9.85 cp value** on never-in-window material and
+**−6.56 / −3.73 / −1.99 / −1.41 cp** on the four window-exited era sets, at a cost
+of **+3.83 cp on the material still in the window**. The old-material competence
+the lineage shed is still *reachable by weight-space interpolation* — it has not
+been destroyed. That is evidence about how recoverable the damage is, on a
+per-position ruler; it is NOT an Elo claim and must not be quoted as one.
+
+## 2026-08-02 — PRE-REGISTRATION (ARM H, stage 1c): re-adjudicate VALUE-beyond-reversion against a DENSE local smooth instead of an n=1 twin
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written before any of
+the 17 new trajectory checkpoints produced a number. At writing time the
+audit-v2 `v2` ruler covered exactly seven points of the 5-spaced rolling grid
+(`iter360, 420, 425, 450, 460, 470, 475`) plus `iter477`/`478`; the 17 files this
+stage adds — `iter365, 370, 375, 380, 385, 390, 395, 400, 405, 410, 415, 430,
+435, 440, 445, 455, 465` — **have never been scored on this ruler by anyone**.
+Full text: `scratchpad/swa_armH_20260802/PREREG_1c.md`.
+
+**Why.** Stage 1b's binding weakness was named in advance and then confirmed:
+each arm was compared against ONE centroid twin, and its single significant
+policy win was against `iter450` (56.54) — an outlier between `iter460` 53.91
+and `iter470` 52.55. One twin is an n=1 estimate of "the trajectory at `c̄`".
+The one directional claim stage 1b left standing was VALUE (all five arms beat
+their twin, mean −1.90 cp) against POLICY (four of five did not). This stage
+replaces the twin with a fitted value and asks whether VALUE survives.
+
+**Dense trajectory.** Every 5-spaced `data/salvage/rolling` checkpoint
+`iter360…475` (24) plus `iter477`, on the unchanged ruler: audit-v2 arm `v2`,
+n=3723, 800 games, `--policy-batch 256 --value-batch 256
+--gpu-mem-fraction 0.15`, `nice -n 19`, gated on ≥8,500 MiB free before every
+checkpoint, resumable. **Every member of every arm is then scored**, because
+each arm's members are exactly the grid points inside its span.
+
+**The smooth (fixed now).** Per position `p`, ordinary unweighted least-squares
+polynomial of `score_p(i)` over the grid iterations inside the arm's span,
+evaluated at `c̄_K` (the same centroid stage 1b used). **Degree 2 when the span
+holds ≥7 scored iterations, else degree 1** — degree 1 at the centre of a CURVED
+trajectory inherits curvature bias, and on a convex `T` that bias pushes `Δ_L`
+negative, i.e. would manufacture the result being tested for. No bandwidth
+parameter: the window is the arm's own span, unweighted, nothing tuned.
+
+| arm | span | grid pts | degree | decidable |
+|---|---|---|---|---|
+| `SWA2` | 475–477 | 2 | 1 | no |
+| `SWA4` | 465–477 | 4 | 1 | no |
+| `SWA8` | 445–477 | 8 | 2 | **yes** |
+| `SWA13` | 420–477 | 13 | 2 | **yes** |
+| `SWA25` | 360–477 | 25 | 2 | **yes** |
+
+**Contrasts.** Primary `Δ_L = SWA_K − L_K`, paired per position, 10k percentile
+bootstrap clustered on `game_id`, seed 20260802. Reported with NO gate:
+`Δ_M` vs mean-of-members (⚠ **Jensen-confounded** — on a convex `T`,
+mean-of-members exceeds `T(c̄)` with no cancellation at all, so the curvature gap
+`J_K = mean-of-members − L_K` is reported beside it), and `Δ_best` vs
+best-in-span (⚠ **comparator chosen by its own outcome**, so its CI is
+miscalibrated — but selection is toward the strongest opponent and `min` over
+noisy estimates is biased low, so the bias runs AGAINST cancellation: a
+significant negative is trustworthy, a null is not evidence of absence).
+
+**Bar `B = 0.64 cp`** — the larger of the two measured stage-1 rig-repeat point
+estimates (policy +0.632, value +0.446; both *ns* under this same clustered
+bootstrap). Applied only as a practical floor on the point estimate; the
+bootstrap absorbs the argmax-flip noise.
+
+**Multiplicity.** 3 decidable arms × 2 heads. The arms are **nested**
+(`SWA8 ⊂ SWA13 ⊂ SWA25`) and share all 3723 rows, so **no combined p-value is
+claimed**; the `≥2 of 3` requirement IS the multiplicity control, deliberately
+the same shape as stage 1b's `≥3 of 5`.
+
+**Kill/success rule, committed now — on `value_top1`:**
+- **VALUE-BEYOND-REVERSION CONFIRMED** iff ≥2 of the 3 decidable arms have
+  `Δ_L ≤ −0.64 cp` with 95% CI excluding 0, and no decidable arm has
+  `Δ_L ≥ +0.64 cp` with 95% CI excluding 0.
+- **DEAD** iff 0 of 3 reach it, or any decidable arm degrades significantly.
+- **STILL INCONCLUSIVE** iff exactly 1 of 3.
+
+`policy_top1` is scored under the **identical** rule and reported as a CONTRAST,
+not a second chance: stage 1b predicts policy will not confirm, and a stage where
+BOTH heads confirm would mean the smooth is manufacturing the effect.
+
+**Known limits, in advance.** Degree 2 still carries third-order bias, and over
+`SWA25`'s 117-iteration span that is not obviously negligible — the three
+decidable arms have spans 32 / 57 / 117, so a fit-order artifact should show a
+span-ordered pattern, and the raw dense trajectory is banked for any other
+smoother. Still a per-position cp-regret ruler on frozen positions: **no arena,
+no Elo**, and this lineage already produced one case where flat per-position
+signals hid a −48.6 Elo slide.
+
+#### 2026-08-02 — CORRECTION to the stage-1b table above: three centroid values were misprinted (the twin SELECTIONS were unaffected)
+
+Recomputed from the member lists while building stage 1c, which derives `c̄_K`
+from the membership rather than from a written-down number:
+
+| arm | `c̄_K` printed in stage 1b | `c̄_K` true | error | nearest grid pt | twin used |
+|---|---|---|---|---|---|
+| `SWA2`  | 476.0 | 476.00 | +0.00 | 475 | 475 ✓ |
+| `SWA4`  | 471.8 | 471.75 | −0.05 | 470 | 470 ✓ |
+| `SWA8`  | 461.5 | **462.12** | +0.62 | 460 | 460 ✓ |
+| `SWA13` | 448.6 | **449.77** | +1.17 | 450 | 450 ✓ |
+| `SWA25` | 418.1 | **419.88** | +1.78 | 420 | 420 ✓ |
+
+**Every twin was still the correct nearest grid point**, so no stage-1b number
+or verdict changes — the misprint is in the reported centroid column only. It is
+recorded rather than quietly fixed because a banked table is a record. Stage 1c
+computes `c̄_K` from the membership in code (`analyse_1c.py`), so the value
+cannot drift from the arm it describes again.
+
+## 2026-08-02 — CONFIG AUDIT: every key in `configs/pbt2_small.yaml` classified (INSTRUMENT, no training)
+
+Read-only keep/drop audit of the production config, to ground the "minimal verified core"
+restart in `scratchpad/restart_brief_20260802.md`. Not an experiment — no pre-registration
+needed, nothing was changed on the live tree.
+
+**319 keys: 118 LOAD-BEARING / 90 ACTIVE-UNREAD / 68 DECORATIVE / 43 OFF-INERT.**
+
+Full table (one row per key, with evidence and a restart recommendation), the falsifier for
+every DECORATIVE call, and a verified minimal-config proposal:
+`scratchpad/config_audit_20260802/CONFIG_AUDIT.md`.
+
+Instruments: `scripts/audit_realized_config.py --last 20 --reco-diff` (AUDIT OK, 0
+divergences), `restart_required_config_keys()`, and 478 rows of the trial's own
+`result.json` for realized time series. Realized values are read from the row config, never
+from `params.json` (rl_loop_audit J5).
+
+Findings that change a decision:
+
+- **⚠ `exploit_replay_*` is ARMED for the planned restart, not inert.** `cross_trial_restore`
+  is set whenever the restored checkpoint's `owner_trial_id` differs from the trial's
+  (`trainable_init.py:408`) — i.e. by a boot512/salvage restore into a new trial id. It then
+  runs `_prune_local_shards_keep_fraction(keep_recent=0.0, keep_older=0.0)` (wipe the whole
+  local replay dir) followed by `_copy_donor_shards_to_recipient(donor_shards=-1)` (import the
+  donor's entire window) — `replay_exchange.py:357,380`. That contradicts this ledger's own
+  −252 swap-gate reading on cross-era window reuse, and it is decided by config with no entry
+  behind it. **Decide it explicitly before restart** (`exploit_replay_donor_shards: 0`, or
+  `exploit_replay_refresh_enabled: false`).
+- **A dead key is not always a deletable key.** Verified by rebuilding `TrialConfig` without
+  each candidate: deleting the 10 inert `temperature*` lines turns stochastic play ON
+  (`temperature` defaults to 1.0, `temperature_endgame` 0.6, `temperature_decay_moves` 60);
+  deleting `mcts_start_simulations` drops start sims 256 → 50 (`progressive_mcts` is not
+  settable from yaml and defaults True); deleting `replay_window_growth[_frac]` gives
+  10000/None instead of 20000/1.0 on a fresh window. All three are DECORATIVE in effect and
+  load-bearing as PINS.
+- **Three corrections to the restart brief's DROP list.** `diff_focus` keys are decorative but
+  the FEATURE is not (rl_loop_audit H2: it is the source of the entire replay-priority spread,
+  CV 0.94) and deleting them disables nothing; `replay_sf_gap_priority_signed` is not in the
+  production yaml at all (the real target is `replay_sf_gap_priority_weight: 0`, `pmass_gap_share
+  == 0.0` on 478/478); `zclip_z_thresh` fires at a 6.25% median with a 0–61.8% range, not "3–9%".
+- **`sf_wdl_frac: 0.5` has never been in effect in this run** — `sf_wdl_frac == 0.45` on 478 of
+  478 rows because `wdl_regret` never reached the 0.10 knee (max 0.0984, i.e. within 1.6% of it).
+  Pin the yaml to 0.45 per the A5 rule, and note that one PID ease-step would otherwise change
+  the value target mid-run with nothing warning about it.
+- **`sf_nodes: 5000` is unreachable by construction** — `pid.py:487` clamps `initial_nodes` into
+  `[sf_pid_min_nodes, sf_pid_max_nodes]` = [50000, 1000000] even at cold boot.
+- **`train_steps: 800` and `train_window_fraction: 0.04` have never been read**: 0 of 478
+  iterations hit the ingest-drought fallback that is their only consumer, and max
+  `train_steps_used` over the run is 401.
+- **`lr_release_cycle_steps: 0` is not "off"** — it makes the WSD release cycle equal ONE
+  TRAINING ITERATION, so the LR sawtooths 6e-4 → 6e-5 within each of the 478 iterations
+  (rl_loop_audit I19 measured it). It belongs in the brief's KEEP table as a named mechanism.
+- **The 11-key `exploit_replay_*` block splits**: 6 per-iteration sharing keys are inert
+  (`shared_samples_ingested == 0` on 478/478); the other 5 are the hazard above.
+- **`w_volatility` / `w_sf_volatility` / `w_moves_left` contribute 0.005% / 0.003% / 0.001% of
+  `train_loss`** at iter 478, on heads with coverage 0.94 / 0.23 / 1.00 — so not a masking
+  artifact. Cheapest offline-screenable ablation in the file.
+
+Proposal: `scratchpad/config_audit_20260802/pbt2_small_minimal.yaml.PROPOSED` (29 keys deleted,
+each with its evidence inline; 2 pin-to-realized flips; 3 `# DECISION OWED` blocks). It is a
+document, NOT wired anywhere. `verify_proposal.py` rebuilds `TrialConfig`/`ModelConfig`/trainer
+kwargs from both files and prints `NO SEMANTIC DRIFT`; its one non-neutral edge is `lr_T0`/
+`lr_T_mult`, safe only while `lr_schedule` stays `sqrt_release`.
+
+### 2026-08-02 — VERDICT (ARM H, stage 1c): **VALUE-BEYOND-REVERSION DEAD.** The dense trajectory kills it. Stage 1b's value signal was the n=1 twin problem it was pre-registered as being at risk of. **ARM H IS CLOSED; the stage-2 arena is NOT run.**
+
+Reads out the pre-registration immediately above. All 17 new checkpoints scored,
+no `[STOP]`, nothing skipped. Bank: `scratchpad/swa_armH_20260802/`
+(`results_1c.json`, `analyse_1c.py`, `dumps/audit_iter*.json` — CPU-recomputable,
+no GPU).
+
+#### The dense trajectory (audit-v2 arm `v2`, n=3723, 800 games, batches 256/256), 25 points
+
+| | POLICY | VALUE |
+|---|---|---|
+| best point | **51.11 @ iter400** | **65.46 @ iter400** |
+| worst point | 56.54 @ iter450 | 72.91 @ iter460 |
+| `iter477` | 56.26 | 72.88 |
+| **adjacent-step \|Δ\|** | **median 0.98, max 3.50** | **median 1.72, max 4.77** |
+
+**⚑ This is the finding that settles the arm.** The trajectory is not a smooth
+decline with a little noise — adjacent checkpoints 5 iterations apart differ by
+a median of 1.0 cp (policy) and 1.7 cp (value), with excursions to 3.5 / 4.8 cp.
+Every stage-1b twin contrast was a draw from that. `SWA8`'s twin `iter460` reads
+72.91 on value — the WORST point in the whole 25-point scan — while `iter465`,
+also inside `SWA8`'s span, reads 68.14. The −3.83 cp "SWA8 beats its twin" of
+stage 1b was an outlier comparator, not an effect.
+
+#### The result (Δ_L = SWA − local smooth at its own centroid; negative = beats it)
+
+| arm | pts | deg | POLICY Δ_L | VALUE Δ_L | VALUE Δ vs best-in-span |
+|---|---|---|---|---|---|
+| `SWA2`  | 2 | 1 | −0.56 ns | −2.92 [−5.10,−1.00] *(under-determined, not counted)* | +? (iter475) −2.26 ns |
+| `SWA4`  | 4 | 1 | −0.45 ns | −0.37 ns *(under-determined, not counted)* | +2.50 ns |
+| **`SWA8`**  | 8 | 2 | +0.34 ns | **−1.04 [−3.49, +1.49] ns** | **+0.93 ns** |
+| **`SWA13`** | 13 | 2 | −1.00 ns | **−1.77 [−4.11, +0.48] ns** | **+0.33 ns** |
+| **`SWA25`** | 25 | 2 | +0.27 ns | **−1.14 [−3.15, +0.84] ns** | **+2.09 ns** |
+
+**Decidable arms beating the smooth by ≥0.64 cp with a 95% CI excluding 0:
+`value_top1` 0 of 3, `policy_top1` 0 of 3. Degradations: 0 of 3.** The
+pre-committed rule fires **DEAD** on the registered head, and DEAD on the policy
+contrast too.
+
+Only `SWA2` — 2 grid points, degree-1, **explicitly excluded from the count in
+advance as under-determined** — shows a significant value effect. With two
+points its "smooth" is just the mean of `iter475` and `iter477`, i.e. it is the
+mean-of-members contrast (Jensen gap exactly +0.00), so it says only that
+½(475+477) beats the average of their two scores. That is one comparator pair
+on the noisiest possible footing, and it is precisely why the degree rule was
+pre-registered.
+
+#### The known limits were checked, and neither is operative
+
+- **Third-order bias** (named in advance as the degree-2 fit's weakness):
+  degree-3 refits move nothing — POLICY +0.65/−0.97/+0.27 vs +0.34/−1.00/+0.27;
+  VALUE −1.00/−1.70/−1.13 vs −1.04/−1.77/−1.14. **Fit order is not driving the
+  result**, and there is no span-ordered pattern across spans 32/57/117.
+- **Jensen/curvature confound** on the mean-of-members contrast: gaps are
+  +0.44/−0.06/+0.25 (policy) and +0.77/+0.11/+0.35 (value), so `Δ_M ≈ Δ_L`
+  throughout and the confound was negligible in practice rather than assumed
+  away.
+
+#### What the whole arm amounts to
+
+**The average never beats the best single checkpoint in its own span** — on
+either head, on every arm: +1.45 / +0.98 / +2.02 (policy) and +0.93 / +0.33 /
++2.09 (value). And the strongest point found anywhere in the scan, `iter400`
+(51.11 / 65.46), beats **every** SWA average and beats `iter477` by 5.15 cp
+policy / 7.42 cp value on its own.
+
+So the three stages compose into one statement: **SWA beats `iter477` (stage 1,
+real), that gain is reversion toward older weights (stage 1b control failure:
+`SWA_boot` mode-connected and best of all), and there is no cancellation on top
+of the reversion once the comparator stops being a single noisy checkpoint
+(stage 1c).** Averaging is a mediocre way to move back along the trajectory;
+selecting a good earlier checkpoint is a better one.
+
+**ARM H (post-hoc SWA of lineage checkpoints) is CLOSED as a strength
+intervention. The stage-2 arena is gated on CONFIRMED and is therefore NOT RUN**
+— the spec stays banked and unexecuted at
+`scratchpad/swa_armH_20260802/ARENA_SPEC_stage2.md`. No arena GPU was spent on
+this arm at any stage. The restart brief's arm-H line should move from
+"unspecced idea, needs a rig verdict" to **DEAD (offline, 3 stages, no arena)**.
+
+#### What survives, and it is NOT arm H
+
+Two by-products are worth more than the arm was:
+
+1. **⚑ Checkpoint-to-checkpoint noise on this ruler is ~1-2 cp median and up to
+   4.8 cp at 5-iteration spacing.** Any lineage claim that compares two
+   individual checkpoints — including a "the net got worse between X and Y"
+   reading — needs either a span of many checkpoints or a smooth. Combined with
+   the stage-1 rig-repeat finding (~0.5 cp, ±1-2 cp bootstrap resolution),
+   **this ruler cannot resolve single-checkpoint differences below ~3 cp.**
+2. **Old-material competence in the 360-410 range is far better than at 477 and
+   is reachable**, both by picking a checkpoint (`iter400`: −5.15 policy /
+   −7.42 value vs iter477) and by weight-space interpolation (`SWA_boot`:
+   −8.08 / −9.85). Evidence for the restart brief's open RESTART BASE decision,
+   on a per-position ruler. **Not an Elo claim.**
+
+### ADDENDUM (same session) — second seeds, the negative control, and the sampler arm
+
+**Negative control PASSES by ~250x.** `SHUF_s0` (arm A, all eight policy-shaped
+targets permuted together across train rows) at 8,448 steps, paired vs its own step 0:
+`oow` **+161.908** [+157.695, +166.101], `inw` **+159.043**, `era` **+167.844**, all
+SIG POSITIVE. The pre-committed bar was merely "not significantly negative". The ruler
+cannot be moved by noise-shaped targets. Incidentally it hard-clips **100%** of steps
+at the same `zclip_max_norm` 6.5 where arm A clips 0% — the cap binds only when the
+gradient is garbage, which is further reason to read production's live 100%-hard-clip
+regime as a symptom rather than a knob.
+
+**Noise bar (pre-registered), from the A_s0/A_s1 pair over the two verdict steps:**
+`oow` **0.638 cp**, `inw` 0.307 cp, `era` **0.394 cp**. The per-step |s0 − s1| spread
+on `oow` GROWS with training (0.145, 0.335, 0.550, 0.235, 0.532, 0.744) — two runs
+differing only in seed diverge steadily on the held-out ruler, which is a floor on what
+any offline arm here can ever claim.
+
+**Seed agreement changed a verdict.** Full table, paired vs A at matched steps:
+
+| arm | `era` @7040 | `era` @8448 | `oow` @7040 | `oow` @8448 |
+|---|---|---|---|---|
+| C_s0 | −1.091 **S** | −1.087 **S** | −0.147 ns | −0.807 **S** |
+| C_s1 | −0.289 ns | −1.198 **S** | −0.135 ns | −0.224 ns |
+| D_s0 | −0.897 **S** | −1.125 **S** | +0.142 ns | −0.761 **S** |
+| D_s1 | −0.524 ns | −1.092 **S** | +0.113 ns | −0.086 ns |
+| B2_s0 | −0.263 ns | −0.038 ns | +0.008 ns | −0.335 S (below bar) |
+| G_s0 | +0.452 ns | +0.151 ns | −0.209 ns | −0.453 ns |
+| G_s1 | **+0.838 S** | +0.245 ns | +0.716 ns | +0.329 ns |
+
+- **PRIMARY: NO ARM BEATS A.** Every arm is null at 7,040 in both seeds. The only
+  significant `oow` points are seed-0-only at 8,448 and neither replicates (C_s1
+  −0.224, D_s1 −0.086, both inside the 0.638 bar). The single-seed result that cleared
+  both its CI and its noise bar was **not real** — which is precisely what the
+  pre-registered seed clause exists to catch.
+- **CO-PRIMARY: C and D forget less than A** by the rule as written (sustained
+  significance + sign agreement; all eight point estimates negative, −0.289 to
+  −1.198). Weaker than seed 0 alone implied: in seed 1 the 7,040 point is ns for both,
+  so "sustained at both steps" holds only in seed 0 — and at matched LEARNING the
+  advantage is −0.345 / −0.381, **below the 0.394 bar**.
+
+**ARM G — the sampler arm — is NULL by the pre-registered rule.** G replicates
+production's linear-recency shard draw exactly (gate checked on chunk 1: max decile
+error **0.1654 pp** vs a 0.5 pp bar, newest/oldest 712.0). Its era effect reaches
+significance at exactly one of four arm-steps (G_s1 @7040, +0.838 [+0.037, +1.635]) and
+is not sustained. **`g_G > 0` at both matched steps is NOT met: G does not forget
+significantly more than A.**
+
+Directionally, all four `era` point estimates are positive (+0.452, +0.151, +0.838,
++0.245; mean +0.42) — a 4/4 sign consistency worth one line and no more (sign test
+p=0.0625, one-tailed). G's `oow` signs DISAGREE across seeds (−0.209/−0.453 vs
++0.716/+0.329), so there is no out-of-window effect at all.
+
+⚑ Two honest caveats on G, both of which limit what a null here licenses. (1) The
+corpus is a **fixed 1.15M-row pool with the window frozen**; production's recency draw
+acts on a window that is continuously refilled, so the mechanism G can express here is
+only the static part of it. (2) At 48 chunks G's `inw` is +0.13 to +0.70 vs A (ns), so
+the two are at comparable learning — the matched-learning confound that dissolved C/D
+does NOT apply to G, which makes the null cleaner but also means the recency draw is
+not buying or costing learning either. **The live recency weighting is not exonerated;
+it is untested against a MOVING window, which is the only form in which it operates.**
+
+### ⚑⚑ NEUTRAL FIXED RULER — the rig reproduces the LIVE degradation, and it ranks the arms
+Frozen deep-SF audit, raw-policy top-1 on all 4,000 `data/audit_set_v1.jsonl`
+positions (`raw_policy_regret.py` == `audit_targets` `cand.raw`), final weights,
+paired by position, 10k-resample bootstrap. FEN-only inputs (117/175 planes zero), so
+RANKING claims only. This is the one ruler whose positions no lineage net generated.
+
+| arm | level | vs boot512 (positive = WORSE than the init) |
+|---|---|---|
+| boot512 | 47.93 | — |
+| **A_s0** (12,320 steps) | 55.88 | **+7.945** [+3.024, +13.676] SIG |
+| A_s1 (8,448) | 54.62 | +6.690 [+2.146, +11.957] SIG |
+| B2_s0 | 54.70 | +6.770 [+2.251, +11.955] SIG |
+| C_s0 / C_s1 | 51.71 / 51.77 | +3.778 ns / +3.838 ns |
+| D_s0 / D_s1 | 52.35 / 51.83 | +4.421 ns / +3.895 ns |
+| G_s0 / G_s1 | 55.97 / 55.94 | +8.033 SIG / +8.006 SIG |
+| SHUF_s0 | 204.67 | +156.735 SIG (control) |
+
+**⚑⚑ RIG VALIDATION AGAINST THE LIVE RUN.** Arm A degrades this ruler by **+7.945 cp**
+in 12,320 offline steps. The live lineage boot512 -> iter477 degrades the SAME ruler by
+**+8.45 cp** over 478 iterations. A fixed-pool offline sidecar reproduces the
+production degradation magnitude on an independent, neutral ruler to within 0.5 cp.
+Whatever this rig is doing, it is doing the same thing the live loop does.
+
+**Every arm is worse than its own initialisation on neutral positions.** Training on
+this window degrades general policy quality, full stop — the wedge is not an artefact
+of the `oow`/`era` rulers.
+
+**Ranking agrees with the era ruler**: C/D best (least degradation, and the only arms
+whose degradation is not significant), then B2 ~ A, then G worst. Two independent
+rulers, built from different pools by different code, order the arms identically.
+
+**C and D beat A on this ruler and it REPLICATES** — 7 of 8 seed-pairings SIG,
+−2.27 to −4.17 cp. This is the strongest arm effect in the experiment.
+⚑ But it is very likely the same rate confound. C/D reached `inw` ~33.5 at 8,448 steps
+where A reached 30.1; A's own audit degradation grows with steps (+6.690 at 8,448 ->
++7.945 at 12,320, ~+0.32 cp/1k steps), and extrapolating A back to the ~3,500 steps at
+which it had C/D's in-window level gives ~+2.8 cp, i.e. BETTER than C/D's +3.8 to
++4.4. **Not properly tested**: the audit was run on final weights only, so there is no
+matched-learning control on this ruler. Stated as an open item, not a win.
+
+**G is null here too**: G−A is ns in all four seed pairings (+0.061 to +1.343) against
+an A seed spread of +1.255. Three rulers now agree that the recency draw does nothing
+on a frozen window.
+
+### CORRECTION to this entry's RESULT 1
+I reported arm A as ending "significantly WORSE out-of-window". That holds for seed 0
+at the full 12,320 steps (+1.153 [+0.086, +2.189] S), but seed 1 was run to 8,448 only
+and the two seeds read **+0.923 and +0.179** there — a spread that IS the entire noise
+bar. The seed-robust claim is the weaker one: **out-of-window does not improve.** The
+degradation claim rests on one seed at a longer budget and is labelled as such.
+
+### FINAL ANSWER TO THE QUESTION THIS EXPERIMENT ASKED
+**No.** Nothing tested converts the teacher's signal into out-of-window gain. Six
+regimes — production replica, direction-only forced (hard-clip 0%->100%), 10x weight
+decay, label smoothing 0.05, 1/3 LR, and production's own recency sampler — all sit on
+one trade-off curve, losing **~0.23-0.27 cp of old-era competence per cp of in-window
+gain**, with the out-of-window term positive in every arm. The levers move how fast a
+run travels that curve; **none bends it**.
+
+The one durable, actionable number is the timing: arm A's held-out CE bottoms at
+**step 5,632 of 12,320** and its `oow` regret at **step 4,224**, after which both
+degrade while train loss keeps falling. On this data the useful step budget is roughly
+**half** what was run.
+
+Still unrun, and now the only live hypotheses: **arm F** (20% old-era rehearsal;
+UNBLOCKED by the provenance-field proof appended above) and any test of the recency
+draw against a **moving** window rather than a frozen one.
+
+### 2026-08-02 — VERDICT: **NO DECAY.** The history benefit does not fade — and on the sensitive statistic it is SIGNIFICANT AT ALL 14 CHECKPOINTS. ⚑ This RETRACTS the "iter477 cannot use history" claim in the entry above.
+
+Reads out the pre-registration immediately above. All 14 checkpoints scored
+(`sweep.log`: `exit=0 scored=14/14`), all 14 hash-verified beforehand.
+
+#### The pre-registered readout — H = v2 − v1 policy TOP-1 regret, n=3723, 800 games, 10k game-clustered resamples
+
+| ckpt | iter | H [95% CI] | | ckpt | iter | H [95% CI] |
+|---|---|---|---|---|---|---|
+| boot512 | 0 | **−5.23 [−9.08, −1.86] SIG** | | iter360 | 360 | −0.43 [−6.73, +6.16] ns |
+| iter025 | 25 | −2.51 [−6.49, +1.21] ns | | iter409 | 409 | −3.38 [−8.84, +1.98] ns |
+| iter070 | 70 | −3.17 [−7.26, +0.70] ns | | iter425 | 425 | −1.87 [−6.69, +2.56] ns |
+| iter122 | 122 | −0.97 [−4.43, +2.44] ns | | iter450 | 450 | +1.84 [−3.35, +7.54] ns |
+| iter172 | 172 | −2.83 [−6.68, +0.74] ns | | iter475 | 475 | −2.02 [−7.14, +3.55] ns |
+| iter218 | 218 | −3.74 [−8.95, +1.94] ns | | iter477 | 477 | +0.16 [−5.49, +6.26] ns |
+| iter308 | 308 | −2.48 [−7.78, +3.24] ns | | iter478 | 478 | −1.82 [−7.08, +3.82] ns |
+
+**PRIMARY: slope = +0.570 cp/100 iter [−0.636, +1.810] — CI CONTAINS 0 → NO DECAY.**
+By the pre-committed rule that ends it: *"the boot512-vs-iter477 contrast is an
+ENDPOINT artifact and neither shape question is answerable — report that and
+stop."* For completeness, both shape statistics were computed and both also
+read null, so nothing is being hidden by stopping:
+
+- **SHAPE-A** f(iter218) = 0.277 **[−2.940, +3.255]** — the CI spans the hinge
+  band, the monotone band, and far outside both. Uninformative.
+- **SHAPE-B** ΔBIC(linear − segmented) = **−3.44**, i.e. the segmented fit is
+  WORSE than a straight line (hinge needed ≥ +6). Breakpoint point-estimate 25,
+  bootstrap CI **[25, 477]** = the entire grid, and OUT of the pre-committed
+  [100, 240] band. Pre-committed reading: CANNOT RESOLVE, and explicitly **not**
+  reportable as confirming window-exit.
+
+**Answer to the standing question — none of the three.** Not window-exit
+(iter ~167), not monotone-from-boot, not a boot-era 0–25 step. There is no
+established decay for any story to explain. The post-hoc step test agrees:
+boot512 − mean(13 post-boot) = **−3.44 [−7.32, +0.19] ns**; boot512 → iter025
+alone **+2.71 [−0.31, +5.80] ns**; slope over the 13 post-boot points
+**+0.424 [−0.901, +1.801] ns**; pooled post-boot H vs 0 **−1.79 [−4.94, +1.46] ns**.
+**1 of 14 points is individually SIG — chance expectation at 5% is 0.7.**
+
+#### ⚑⚑ THE RETRACTION — and it is the important part
+
+The pre-registered statistic is **structurally underpowered**, and measuring it
+exposed why. Raw policy **top-1** is an argmax statistic: swapping the encoding
+changes the argmax on only **19.1% of positions** (effective n ≈ 712 of 3723);
+the other 80.9% contribute exactly 0. Median per-checkpoint 95% CI half-width is
+**±5.38 cp — larger than the entire 5.2 cp effect being chased.**
+
+Re-run on **expected** regret, which moves on **98.3%** of positions (secondary,
+NOT pre-registered, reported as such):
+
+| ckpt | H_exp | ckpt | H_exp | ckpt | H_exp |
+|---|---|---|---|---|---|
+| boot512 | **−4.73 [−6.42, −3.12]** | iter172 | **−4.84 [−6.87, −2.74]** | iter425 | **−3.80 [−6.94, −0.86]** |
+| iter025 | **−4.98 [−6.60, −3.42]** | iter218 | **−3.78 [−6.03, −1.32]** | iter450 | **−3.26 [−6.24, −0.09]** |
+| iter070 | **−5.22 [−7.00, −3.54]** | iter308 | **−3.48 [−6.21, −0.18]** | iter475 | **−3.01 [−5.67, −0.23]** |
+| iter122 | **−5.00 [−6.80, −3.21]** | iter360 | **−3.14 [−5.64, −0.50]** | iter477 | **−3.60 [−6.45, −0.87]** |
+| | | iter409 | **−4.82 [−7.66, −1.90]** | iter478 | **−3.61 [−6.50, −0.56]** |
+
+**All 14 SIG.** Slope +0.343 cp/100 iter [−0.227, +0.908] **ns**; step
+boot512 − post-boot mean −0.69 [−2.21, +0.82] **ns**.
+
+**So: the net uses move history, by 3–5 cp, at EVERY point in the lineage
+including iter477 and iter478. The capability was never lost.** The claim in the
+entry above — *"boot512 converts real history into 5.2 cp of policy accuracy;
+iter477 converts it into nothing"* — is **REFUTED**. It came from reading `ns`
+as `absent` on a statistic that cannot resolve 3.6 cp. That is this codebase's
+signature defect committed by me, in the same session, one entry earlier.
+
+#### What this does to the audit-v2 ARTIFACT verdict above
+
+The **structural** finding stands untouched: the v1 ruler really does feed 93
+dead planes and the wrong colour flag on 50.8% of rows, verified bit-exactly,
+and audit-v2 is the correct encoding. **But the correction is now known to be
+near-UNIFORM across the lineage (−3.0 to −5.2 cp at every checkpoint), so it
+largely CANCELS in a paired boot→477 delta** — exactly as the already-reported
+ruler effect on expected regret said: dE(v2) − dE(v1) = +1.13 [−1.68, +3.84] ns.
+
+Consequence, stated plainly: **fixing the ruler does not much change the
+measured lineage degradation.** The "asymmetry reverses sign" reading
+(A_v1 +5.85 → A_v2 −2.37) fired its pre-committed rule as written, but both
+terms are top-1 quantities at ±5.4 cp per-checkpoint resolution, and the value
+head has NO smooth analogue to cross-check against. **Downgrade it: do not carry
+"policy degrades more than value" into the restart brief as established.** What
+should be carried is the negative — *the frozen audit does not establish that
+either head leads*, which is also what the 08-02 lineage entry concluded by its
+own scale-free test (L = −0.010, ns).
+
+#### ⚑ METHOD RULE, general
+
+**For any within-position paired contrast, use EXPECTED regret, not top-1.**
+Top-1 discards ~81% of the sample on an encoding swap and inflates the CI past
+the effect size. The 08-02 lineage entry already noted expected regret "detects
+the same movement earlier; it is the more sensitive read of the same head" — that
+was right, and the pre-registration above ignored it. The VALUE ruler has no
+smooth analogue at all; building one (e.g. value-ranking correlation rather than
+argmax regret) is the prerequisite for any future value-vs-policy lead test.
+
+**Bank:** `audit_historyfill_20260802/` — `lineage/score_<ckpt>.json` (14),
+`analyze_lineage.py`, `lineage_analysis.log`, `posthoc_step.log`,
+`posthoc_expected.log`, `lineage_ckpt_verify.json`, `sweep_lineage.sh`,
+`sweep.log`. All statistics above re-derive on CPU with no GPU.
+
+## 🔬 2026-08-02 — PRE-REGISTERED LAUNCH: the capacity ladder is being RE-TRAINED with weights banked, to attribute POLICY's global (never-trained-material) decay term
+
+The entry immediately above recorded this test as **UNRUNNABLE**: the 08-02 `capsize`
+and `rowsparam` rigs banked `slope.jsonl` scalars and threw the nets away at process
+exit, so the pre-registered PARAMS / ROWS-PER-PARAM / OPTIMIZER-DRIFT rule had no
+instrument to run against. This entry launches the re-run. **The deciding rule is NOT
+re-opened** — it is the text already fixed at `scratchpad/capacity_n4_20260802/PREREG.md`,
+written before any arm had an `N4_jul25` number and unchanged since.
+
+### The question, restated
+
+The 08-02 never-seen entry split the lineage's per-position policy decay into a **global
+term** (+0.0080 cp/iter, **69%**) that degrades material *no net ever trained on*, and a
+**window-exit increment** (+0.0036 cp/iter, 31%). The global term is a loss of
+generalisation. This retrain asks whether it **scales with net size at matched data** —
+i.e. whether it is set by parameter count, by rows/param, or by neither.
+
+### What is being run, and what is different from last time
+
+Identical training to the original rigs — same preserved corpora, same seed, same
+`batch 256 / chunk_steps 176`, same 25-point views grid 0 → 11.53, same production loss,
+compile off. `diff` of the rig against the originals is **two hunks**, and neither is on
+the training path:
+
+1. **`torch.save` of the full `state_dict` at EVERY eval point** — the entire reason this
+   re-run exists. Written in `absorb.py`'s `final.pt` format
+   (`{"model": …, "arch": {…, "_schema_version": ARCH_SCHEMA_VERSION}}`) so
+   `load_model_from_checkpoint` reads it with no scorer change. Saved from the
+   pre-`Trainer` `model` object, **not** `trainer.model`, because `apply_compile`
+   *rebinds* `self.model`; a wrapper would prefix every key with `_orig_mod.` (PR #267's
+   defect). The rig **asserts** no `_orig_mod.`/`module.` key is ever banked rather than
+   assuming compile-off makes it impossible.
+2. **`--gpu-mem-fraction`**, so the run stays inside the headroom the absorption rig
+   leaves. Numerically inert: it can only turn an over-budget allocation into an OOM.
+
+| arm | params (unique storage) | train rows | rows/param | steps to 11.53 views | est. wall |
+|---|---|---|---|---|---|
+| S | 6,172,739 | 187,537 | 0.0303797 | 8,448 | ~53 min |
+| M | 19,577,669 | 187,537 | 0.0095811 | 8,448 | ~64 min |
+| L | 63,084,128 | 187,537 | 0.0029728 | 8,448 | ~80 min |
+| SHUF (negative control, S size, permuted labels) | 6,172,739 | 187,537 | — | 8,448 | ~53 min |
+| **L-wide** | 63,084,128 | **1,145,716** | **0.0181617** | **51,568** | ~415 min |
+| live production | 63,084,128 | — | 0.0202 | — | — |
+
+**L-wide is the arm that separates "params" from "rows/param" at FIXED params**: 6.11×
+sibling-L's rows/param, 89.9% of live's.
+
+### DEVIATIONS from PREREG.md, declared BEFORE launch
+
+Both are budget cuts, and both are stated here so neither can be read as a post-hoc
+choice. Neither touches the deciding rule.
+
+- **ONE SEED (0) per arm, not two.** PREREG's estimator pools seeds 0 and 1 with a
+  bootstrap that resamples games independently per seed; with one seed that reduces to
+  the single-seed game-clustered bootstrap it already specifies. Cost of the second seed
+  was ~4.5 GPU-h against a re-run already ~11 GPU-h serial on a shared card.
+  **Consequence, stated in advance: seed-to-seed variance is not measured, so a
+  between-arm difference of the size of the original rigs' seed spread cannot be
+  separated from initialisation noise.** The original runs' banked `views_at_min` gives
+  the scale of that spread (L 3.364/2.883, M 7.688/6.727, L-wide 4.326/4.798).
+- **The `LWSHUF` (L-wide label-shuffled) leg is NOT re-run** — 7 GPU-h for a second
+  negative control. The `SHUF` leg **is** re-run and must pass PREREG's clause in full.
+  Standing already-banked `N4_jul25` controls (`uniform` 206.56 cp, `shuffled477` 192.21
+  cp) apply unchanged, and every arm now additionally banks its **own views = 0
+  random-init checkpoint**, which is a per-size untrained control the original rigs could
+  not offer. **If the surviving control legs fail, the verdict is CANNOT RESOLVE** —
+  exactly as PREREG says.
+
+### ⚑ ONE PERMITTED ADDITION, pre-registered as a SECONDARY instrument
+
+At every banked eval point of every arm, also score the **frozen deep-SF audit ruler**
+(`scratchpad/vp_timing_20260802/raw_policy_regret.py --audit-set data/audit_set_v1.jsonl`,
+raw policy prior, batch 128 — the identical invocation the absorption rig used).
+
+**Rationale for adding it now:** ledger `720f11d95` showed the absorption rig's
+production-replica arm *reproduces the live lineage's frozen-audit degradation*
+(**+7.945 cp in 12,320 steps** vs live **+8.45 cp / 478 iters**). So the frozen audit is
+a demonstrated carrier of the global term, and this retrain can read the global term
+**directly, per net size**, on a ruler that shares no rows with either the arms' corpora
+or `N4_jul25`.
+
+**It is SECONDARY and it gates nothing.** The three-way decision is made on `rho_late`
+over `N4_jul25` exactly as PREREG specifies. The audit numbers are reported alongside; if
+they disagree with `N4_jul25` that disagreement is **reported**, not used to pick a
+verdict. Standing caveat carried: `data/audit_set_v1.jsonl` is **FEN-only**, so 117/175
+input planes are zero and it is a **ranking** cross-check — absolute bars off it are not
+comparable with `N4_jul25`'s stored-history rows.
+
+### Disjointness — RE-VERIFIED at run time, not assumed
+
+PREREG required this. Checked just now, on **both** axes, because shard indices collide
+across lineages and a basename join would be worthless:
+
+| | arms' corpora | `N4_jul25` |
+|---|---|---|
+| replay dir | `data/salvage/post_quarantine_20260801/seeds/slot_000/replay_shards` | `data/salvage/pre_durable_deploy_20260726/seeds/slot_000/replay_shards` |
+| shard index range | 033118 – 033940 (119 shards) | 034000 – 034064 (65 shards) |
+
+Different directory **and** non-overlapping index range; index-set intersection is
+**empty**. `N4_jul25` = 10,000 rows / 2,960 games, confirmed at load.
+
+Corpora re-verified present and intact before launch: `capsize_corpus` 10 G,
+`rowsparam_corpus_wide` 55 G. The wide corpus's `held` split was a symlink into
+`/tmp/claude-1000/…`; it has been repointed at the preserved copy after md5-verifying
+`x.npy`, `policy_target.npy` and `legal_mask.npy` byte-identical, so no arm now depends
+on a cleanable path.
+
+### GPU coordination
+
+The absorption rig owns the card (arm F, two concurrent trainers; H2 after). `gate.sh`
+requires **≤1 real `absorb.py` trainer AND ≥8.5 GB free**, re-checked before every arm and
+never mid-arm — a running arm is allowed to finish and the driver pauses *between* arms
+if the rig's second slot re-fills. The gate counts processes by `comm ~ ^python` plus a
+bare `absorb.py` argv entry, so the `bash -c`, `timeout` and `tail` wrappers that also
+carry the path in their command lines are not miscounted as trainers.
+
+### Kill / success rule — the PREREG's, unmodified
+
+Gate: every arm's `rho_late` CI computable, negative control passes. Then on
+`rho_late` = per-row OLS of `N4_jul25` top-1 cp regret over the **last 8 eval points**
+(views 7.9 → 11.53), 95% percentile bootstrap over 10,000 resamples **clustered by
+`game_id`**, seed 0, with `D_S` = `rho_late(S) − rho_late(L)` and
+`D_LW` = `rho_late(L-wide) − rho_late(L)`:
+
+- **ROWS/PARAM** iff `rho_late(S) ≤ 0.5 × rho_late(L)` with non-overlapping CIs, **and**
+  L-wide strictly between L and S with `D_LW`'s CI excluding 0, **and** `rho_pred(L-wide)`
+  (log-interpolation across `log(rows/param)` through L/M/S) inside L-wide's CI.
+- **PARAMS** iff the S clause holds but `D_LW`'s CI **includes** 0 despite 6.11× the
+  rows/param, and L-wide is significantly above `rho_pred`.
+- **OPTIMIZER-STATE DRIFT** iff the S clause fails.
+- **CANNOT RESOLVE** otherwise, including any arm whose `rho_late` CI includes 0.
+- SECONDARY step-axis (`cp / 1,000 steps`) reported for every arm; **if the step-axis and
+  views-axis rankings disagree the verdict is downgraded to CANNOT RESOLVE**, because then
+  this design does not separate data from steps.
+
+**Bank:** `scratchpad/capacity_n4_20260802/` — `rig/{slope,slope_wide}.py` (with the
+two-hunk diff against the originals), `driver.sh`, `gate.sh`, `score_n4.py`,
+`runs/run_*/ckpt/chunk_NNNN.pt` (**full weights, every eval point, sha256 recorded in
+`slope.jsonl`**), `runs/run_*/n4/chunk_NNNN.npz` (per-row dumps), `audit/`. Every
+statistic below re-derives on CPU from the dumps; every dump re-derives on GPU from the
+banked weights. **That is the point of this entry.**
+
+### ⚑ 2026-08-02, 21:4x — CLARIFICATION to the entry above, made BEFORE any control number exists
+
+Filed while arm S is training and the `SHUF` arm is ~3 h away, so this resolves an
+ambiguity in the pre-registered text rather than a number.
+
+PREREG's negative-control clause reads: the label-shuffled arm "must, **at every eval
+point**, score `N4_jul25` at **≥ 2×** the worst real arm's mean top-1 regret". That has two
+readings and they are not equivalent:
+
+- **LITERAL** — control point *k* vs the worst real arm at point *k*. **This cannot be
+  passed by any control that has ever been built.** Every arm in this rig trains *from
+  scratch*, so its chunk-0 point is an untrained net at ~180–200 cp — and so is the
+  control's. The ratio at chunk 0 is ~1.0 by construction, for a shuffled arm and an
+  honest arm alike. **A gate that cannot pass is as useless as [[a_gate_that_cannot_fail]]**,
+  and it tests nothing whatever about label shuffling.
+- **ADOPTED** — the control's **late window** (the last 8 eval points, the ones `rho_late`
+  is read on) vs the worst real arm's late window. This asks what a negative control
+  exists to ask: *did permuting the labels destroy the learning the real arms achieved,
+  in the window the deciding rule reads?* It is also the form the absorption rig's own
+  control took (SHUF 204.67 cp vs real arms ~52 cp on the frozen audit).
+
+The adopted reading gates; the literal ratio is **reported alongside** so the swap is
+visible rather than silent. The `rho_late`-must-be-`ns` half of the clause is unchanged
+and unaffected by either reading. This changes no other pre-registered rule.
+
+⚑ The general defect worth naming: PREREG wrote the control clause by analogy with rigs
+whose baseline was a *trained* net, and did not notice that a from-scratch ladder puts an
+untrained point on the grid where every arm — honest or shuffled — looks identical. **A
+control threshold stated as a ratio must name the window it is evaluated over.**
+
+### ADDENDUM 2 — ARM F (20% old-era rehearsal): FAILS its pre-registered test, and is
+### still the most promising lever found. Both halves reported.
+
+**Contamination hazard caught before launch.** `F_UNBLOCK.md` licensed the era ROWS; it
+said nothing about WHICH era rows. Measured: **58,290 of the 65,257 rows in
+`corpus_era/erareg` (89%) share a `game_id` with the era RULER.** Rehearsing from that
+pool would have made the era ruler an IN-WINDOW ruler for arm F alone — F would have
+posted a forgetting "win" earned by memorising the games it is scored on, and been the
+only arm with that advantage. Rehearsal instead draws from `corpus_frehearse`, built
+from the **652 era shards the ruler never touched** (ruler used stride-5 = 163 of 815)
+with ruler `game_id`s excluded on top: **120,000 rows / 5,795 games, 0 game overlap**,
+enforced by a runtime abort rather than trusted from the build.
+Mixer honours the proof's caveat — per-pool indices, identical `Corpus.gather` tail,
+field-by-field concatenation, **no per-row weight, no provenance tag, no new field**.
+Proof of effect: `realized_rehearsal_frac` **0.19922** from actual draw counts.
+
+**PRE-REGISTERED VERDICT: F does NOT forget less than A.** The rule required `g_F < 0`
+with CI excluding 0 at BOTH matched steps. Significance is **anti-correlated across
+seeds**:
+
+| | `era` @7040 | `era` @8448 | `oow` @7040 | `oow` @8448 | `inw` @8448 |
+|---|---|---|---|---|---|
+| F_s0 | **−1.448** [−2.233, −0.675] S | −0.745 [−1.542, +0.056] ns | −0.087 ns | −0.381 ns | +0.979 S |
+| F_s1 | −0.297 [−1.027, +0.413] ns | **−1.565** [−2.322, −0.822] S | +0.106 ns | −0.097 ns | +0.729 ns |
+
+Neither seed is sustained at both steps. **`oow`: all four null and inside the 0.638
+noise bar — F does not beat A out-of-window**, exactly as pre-registered.
+
+**BUT F IS THE ONLY ARM WHOSE FORGETTING ADVANTAGE SURVIVES THE MATCHED-LEARNING
+CONTROL** — the same post-hoc control that dissolved C and D entirely:
+
+| arm | d_era at matched `inw` | vs 0.394 bar | learning given up (`inw` vs A) |
+|---|---|---|---|
+| C | −0.345 | **below** | +3.428 |
+| D | −0.381 | **below** | +3.501 |
+| **F_s0** | **−0.805** | **above** | **+0.979** |
+| **F_s1** | **−0.874** | **above** | **+0.729** |
+
+C and D bought −1.1 cp of era at the cost of 3.4 cp of learning, and the advantage
+vanished once that was controlled for. F buys a comparable era gain for **~0.85 cp**
+of learning — a quarter the cost — and the gain **persists** at matched learning,
+consistently across both seeds. That is the first sign in this experiment of an arm
+bending the trade-off curve rather than sliding along it.
+
+**Neutral frozen-audit ruler** (paired, 4,000 positions): F_s0 +4.860 [+0.018, +10.321]
+SIG vs boot512, F_s1 +4.208 ns. F − A is negative in all four seed pairings (−1.830 to
+−3.737), SIG in 2 of 4. Level ranking across the whole experiment:
+**C 51.7 | D 52.1 | F 52.5 | B2 54.7 | A 55.2 | G 56.0 | boot512 47.9.**
+C/D edge F on level, but reached it by training ~3.4 cp less; F is within ~0.9 cp of
+A's learning. At comparable learning F is the best arm on this ruler.
+
+**The pre-registered prediction was right, and it constrains the mechanism.** I
+predicted F would improve `era` modestly at best and NOT improve `oow`, reasoning from
+G's null that the mechanism is INTERFERENCE rather than EXPOSURE. That is what
+happened. Quantitatively: A's total era degradation is ~2.07 cp; F recovers ~0.84 cp of
+it at matched learning, i.e. **20% rehearsal addresses at most ~40% of forgetting**.
+Exposure is part of the mechanism, but the majority is not — new-era gradients
+overwrite old-era structure regardless of how often the old rows are shown.
+
+**Status: F is a FAILED pre-registered test with a positive post-hoc signal.** It is
+not promotable on this evidence. What it justifies is a properly powered re-run —
+more seeds and a denser eval grid, since the failure mode was per-eval-point variance
+(F's era estimates swing 0.7-1.3 cp between adjacent points against a 0.394 bar), not
+a null. **Do not put rehearsal on the restart add-back list on this entry.**
+
+## 2026-08-03 — AUDIT (play-path code audit, Opus-5 class): two instrument findings + latent traps
+
+Full write-up: `scratchpad/code_audit_20260803/PLAY_PATH_AUDIT.md` (9 repro scripts alongside; all CPU, synthetic evaluator; structural findings survive that, magnitudes do not).
+
+- **F1 CONFIRMED: production selfplay searches a WARM tree; every arena searches a COLD one — `matched_sims` does not match production search.** `selfplay/network_turn.py:799-801` carries `tree=`/`root_node_ids=` and advances roots via `find_child`; `selfplay/match.py:147-152` (`pick_moves_for_boards`, the ONLY entry point for `arena_standard.py`, in-loop gate, match scripts) passes neither. Measured (12 plies, 256 nominal sims): warm roots 315-363 visits (+23-42%), `max_visit` 77-108 vs 60 cold ⇒ root value-transform `q_scale` up to +44% sharper on the stored policy target than anything an arena reproduces. **Reading rule: arena verdicts are SYMMETRIC (both arms cold) so rankings incl. Elo(iter477−boot512)=−48.6 stand; any claim that an arena reproduces the TRAINING TARGET's regime does not.** Same family as the 07-28 vloss_weight divergence. Not covered by `test_arena_search_shape_plumbing.py` (tree reuse is not a config knob).
+- **F2 CONFIRMED: `c_puct`, `fpu_reduction`, `cpuct_factor`, `cpuct_base` cannot affect any Gumbel search** (PUCT descent gated on `full_tree == false`, which nothing sets; `cpuct_*` not even args of `start_gumbel_sims`) — yet `PLAY_SEARCH_DEFAULTS` publishes all four, `--cand-gumbel` advertises two, and `SideSearch.realized_gumbel()` prints them into the JSONL as *realized*. Perturbation to extremes: L1 0.000000, 0/4 moves changed, against positive controls that move it. **A Swiss over `c_puct` would return a clean reproducible null and read as a measurement.** Fix PR queued (delete from the shape surface + dead Python PUCT branch F12).
+- F4 latent: `tree_gumbel_select_child` lacks the VIRTUAL_MEAN parent branch its comment claims to mirror — inert today (no caller passes `vloss_mode=1` to Gumbel), guard queued. F5: `_use_pipeline` (n_boards≥64, async evaluator, in-process only) silently discards caller tree reuse. F7: `policy_temp != 1.0` silently disables compact-legal transport (~1.9× per-batch transport cost). F8 negative: bucket padding only 5.9-7.0% of rows — not a lever. F9: C17 virtual-loss batching claim survived an active falsification attempt at n_boards≈1.
+- Not covered (honesty): ~half of `_mcts_tree.c` (walker/PUCT/multi-GPU), v2_threats plane build + lc0_1858 mapping (NO C-vs-Python encoder differential — highest-value gap), `inference_threaded.py`/`inference_cache.py`/AOT selection.
+
+### ADDENDUM 3 — ARM H2 (in-training step-EMA): FAILS. The high-LR step-averaging
+### story is DEAD on a stationary corpus — but NOT because EMA is "a smaller LR".
+
+Pre-registration: PREREG.md amendment 5, written before launch. One arm-A run, EMA at
+two decays, updated every optimizer step from an optimizer POST-HOOK (not by calling
+`train_steps(steps=1)`, which would have given every step its own `sqrt_release` cycle).
+
+**Instrument validation, free and total:** H2's RAW arm reproduces `A_s0` **to every
+printed digit** at steps 5,632 and 7,040 — all three rulers and both CE columns
+(`oow` 36.274/36.491, `inw` 32.142/31.412, `era` 32.948/33.473). The EMA hook adds
+weights without perturbing the trajectory, so EMA-vs-raw is a genuine within-run
+contrast, and the rig is bit-reproducible across runs at fixed seed.
+
+**Proof of effect:** EMA weights diverge from raw as required (`rel_l2` > 0,
+`n_updates` == step count). ⚑ The first implementation computed divergence AFTER
+swapping the EMA weights in, so it compared the shadow against a model already holding
+the shadow and could only ever report `0.0` — a gate that cannot fail. Caught by the
+smoke run and fixed to measure before the swap.
+
+**EMA vs RAW, paired within run, game-clustered 95% CI** (negative = EMA better;
+bars `oow` 0.638, `inw` 0.307, `era` 0.394):
+
+| variant | step | `oow` | `inw` | `era` |
+|---|---|---|---|---|
+| ema500 | 7040 | −0.033 [−0.529, +0.462] | −0.036 | −0.214 |
+| ema500 | 8448 | −0.339 [−0.778, +0.095] | +0.263 | −0.038 |
+| **ema2000** | 7040 | **−0.654** [−1.218, −0.095] **S** | **+0.447** | **−0.919** [−1.528, −0.326] **S** |
+| **ema2000** | 8448 | **−0.871** [−1.439, −0.313] **S** | **+1.004** [+0.422, +1.604] **S** | −0.480 |
+
+**VERDICT: EMA DOES NOT WIN.**
+- `ema500` (~500-step window) does nothing: `oow` inside the noise bar at both steps.
+- `ema2000` clears the `oow` bar at both steps (−0.654, −0.871, both SIG) but **loses
+  `inw` beyond its bar at both** (+0.447 = 1.5x the bar; +1.004 = **3.3x** the bar and
+  significantly worse). The rule required the `oow` gain WITHOUT `inw` loss beyond
+  0.307. It fails that clause at both matched steps.
+
+Per the pre-registration: **the high-LR step-averaging story is DEAD on a stationary
+corpus.** EMA-publish does **NOT** go on the restart add-back list. Neither post-hoc
+checkpoint averaging (arm H, reversion-confounded) nor in-training step-EMA rescues
+generalisation here.
+
+**⚑ But the tempting interpretation — "EMA is just a smaller effective LR, same
+trade-off curve as the optimizer family" — is NOT supported by these numbers, and
+should not be carried into the restart reasoning.** Exchange rate, cp of `oow` gained
+per cp of `inw` given up:
+
+| arm | ratio |
+|---|---|
+| D (lr/3), the optimizer family | **+0.217** |
+| ema2000 @8448 | **+0.867** |
+| ema2000 @7040 | **+1.461** |
+
+EMA converts sacrificed in-window learning into out-of-window quality **4-6x more
+efficiently** than the LR cut does. If it were merely a smaller effective LR the ratios
+would coincide; they differ by most of an order of magnitude. Matched-learning control
+agrees — placing ema2000 on the raw run's OWN curve gives `d_oow` −0.521 / −0.534 and
+`d_era` −0.597 / −0.541, i.e. it sits slightly BELOW the curve on both axes, a modest
+but consistent bend of the same size class as arm F's (−0.805 / −0.874 on `era`).
+
+Two qualifications keep this from being a win. The matched-learning `d_oow`
+(−0.52/−0.53) is **inside the 0.638 `oow` bar**, so the out-of-window part is not
+claimable; only the `era` part clears its bar. And a bend that still costs 3.3 bars of
+in-window learning is not something to publish from.
+
+**What this actually licenses:** EMA is the second lever (with rehearsal, arm F) whose
+effect survives the matched-learning control that dissolved the entire optimizer
+family. Both fail their pre-registered tests on power, not on direction. If either is
+revisited it should be with more seeds and a denser eval grid — and the ~2,000-step
+window is the one worth revisiting, since ~500 steps does nothing and ~2,000 spans
+arm A's held-out optimum at step 4,224-5,632.
+
+**Deferred, not done:** the neutral frozen-audit ruler on the two EMA checkpoints. It
+needs the GPU, and the card is the capacity retrain's. `final.pt` is banked for both
+variants at `run_H2_s0_ema500/` and `run_H2_s0_ema2000/`; the command is the same
+`raw_policy_regret.py` invocation used for every other arm.
+
+#### ADDENDUM 3a — the owed neutral frozen-audit on the H2 EMA checkpoints
+
+Run 2026-08-03 once the capacity retrain released the card (verified free: 29.8 GB,
+only its CPU-side scorer resident). Same `raw_policy_regret.py` invocation as every
+other arm, paired on all 4,000 audit positions. FEN-only inputs, so RANKING only.
+
+| checkpoint | level | vs RAW (`A_s0`, verified bit-identical to H2's raw arm) | vs boot512 |
+|---|---|---|---|
+| `H2_ema500` | **53.92 cp** | −1.961 [−4.818, +0.756] ns | +5.984 SIG |
+| `H2_ema2000` | **52.92 cp** | **−2.959 [−5.493, −0.672] SIG** | +4.986 SIG |
+| raw (`A_s0`) | 55.88 cp | — | +7.945 SIG |
+
+**It CORROBORATES the ema2000 `oow` reading on a third, independent ruler.** ema2000 is
+significantly better than the raw run it came from, on positions no lineage net
+generated, measured by a different script against a different label source. ema500
+remains null here too, consistent with its null on `oow` — the ~500-step window does
+nothing on any ruler.
+
+Efficiency corroborates as well. Audit improvement per cp of in-window learning
+surrendered: C_s0 −1.22, D_s0 −1.01, **F_s0 −3.15, ema2000 −2.95**. The same two
+levers that survived the matched-learning control are ~3x more efficient than the
+optimizer family on this ruler too — three independent rulers now agree on which arms
+are doing something different in kind.
+
+**It does NOT change the verdict.** The pre-registered rule was `oow` beyond its bar
+WITHOUT `inw` loss beyond its bar; ema2000 failed that clause at both matched steps
+(+0.447, +1.004 = 3.3x the bar) and the audit is a declared cross-check, "reported but
+not decisive". It also cannot be matched-learning-controlled — only final weights were
+scored, so the −2.959 is a matched-STEPS contrast and carries the same confound that
+dissolved C/D. **EMA-publish stays off the restart add-back list.**
+
+And both EMA variants remain **significantly worse than boot512** (+4.99, +5.98). EMA
+reduces the degradation; it does not rescue it. Full ranking, best to worst:
+boot512 47.93 | C 51.7 | D 51.8-52.4 | F 52.1-52.8 | **ema2000 52.92** | **ema500 53.92** |
+A_s1 54.62 | B2 54.70 | A_s0 55.88 | G 55.9-56.0 | SHUF 204.67.
+
+## ⛔ 2026-08-03 — VERDICT: **CANNOT RESOLVE**, and for the informative reason: the from-scratch capacity ladder **does not contain the global term at all**. The rebound is WITHIN-DISTRIBUTION only.
+
+The re-run pre-registered two entries above completed: 5 arms, 25 eval points each, **125
+checkpoints banked** (~21 GB), scored on `N4_jul25` and on the frozen deep-SF audit.
+Training ran 21:27 → 05:04 (7.6 h wall, gate-clean throughout).
+
+### First, the thing that makes the rest trustworthy: the re-run IS the original experiment
+
+Every arm reproduced the 08-02 rig **bit-identically** — `max |re-run − original|` of
+`held_excess` over all 25 eval points = **0.000e+00** for S, L, M **and** SHUF, and every
+arm landed on its pre-registered `views_at_min` exactly (S 11.532 = *no rebound*, L 3.364,
+M 7.688, L-wide 4.326). So the banked weights are the artifacts the original rigs threw
+away, not a similar-looking re-run. All 125 checkpoints sha256-verified.
+
+### PRIMARY readout — `rho_late` on `N4_jul25` (cp per view/row, game-clustered 95% CI)
+
+Negative control **PASSES**: SHUF late-window 185.48 cp vs worst real arm 71.93 cp,
+**ratio 2.58** (≥2.00 required), `rho_late` +0.5318 [−0.2219, +1.2796] **ns**.
+
+| arm | params | rows/param | `rho_late` (views axis) | | `rho_late` (cp/1k steps) | late-window LEVEL |
+|---|---|---|---|---|---|---|
+| S | 6.17 M | 0.03038 | **−0.8642 [−1.2705, −0.4630]** | SIG | −1.1797 [−1.7343, −0.6320] | 66.67 cp |
+| M | 19.58 M | 0.00958 | +0.0519 [−0.3907, +0.4974] | ns | +0.0708 [−0.5333, +0.6790] | 69.24 cp |
+| L | 63.08 M | 0.00297 | −0.2481 [−0.6796, +0.1690] | ns | −0.3386 [−0.9277, +0.2307] | 71.93 cp |
+| **L-wide** | 63.08 M | **0.01816** | −0.2869 [−0.6241, +0.0528] | ns | −0.0641 [−0.1394, +0.0118] | **52.10 cp** |
+
+`D_S` = −0.6161 [−1.1866, −0.0199] (excludes 0) · `D_LW` = −0.0388 [−0.6050, +0.5152]
+(includes 0) · `rho_pred(L-wide)` = −0.4558, **inside** L-wide's CI.
+
+**VERDICT = CANNOT RESOLVE**, fired by the pre-registered clause *"any arm whose
+`rho_late` CI includes 0 — no term to attribute"*: three of four arms are flat, and the
+one significant arm (S) is **improving**, not degrading. **A second pre-registered
+downgrade trigger fired independently**: the views-axis ranking `[S, LW, L, M]` disagrees
+with the step-axis ranking `[S, L, LW, M]`, which by itself forces CANNOT RESOLVE.
+
+### ⚑⚑ WHY it cannot resolve — the rebound does NOT reach never-trained material
+
+This is the finding, and it is not a null result:
+
+| arm | held-out CE **rebound** (rig's own ruler) | rise from min on **`N4_jul25`** |
+|---|---|---|
+| S | **+0.0000 nats** (no rebound) | **+0.00 cp** |
+| M | +0.0658 nats | +1.72 cp |
+| L | **+0.2227 nats** (largest) | **+0.32 cp** |
+| L-wide | +0.0878 nats | +1.29 cp |
+
+The 08-02 capacity verdict is fully reproduced on its own ruler — the held-out policy-CE
+rebound is real, large, and ordered by size. **On material the nets never trained on, the
+same checkpoints barely move.** L rebounds hardest in-distribution (+0.2227 nats) and is
+the *flattest* on `N4_jul25` (+0.32 cp). The from-scratch rebound is therefore a
+**within-distribution** phenomenon — the net gets worse at held-out rows *drawn from the
+corpus it is memorising*, not at material outside it.
+
+**Consequence for the never-seen entry's decomposition:** the live lineage's global term
+(+0.0080 cp/iter on never-trained material, **69%** of the decay) is **NOT reproduced by
+this rig**, so this rig cannot attribute it to params, rows/param, or optimizer drift. The
+three remedies remain untested, and — this is the actionable part — **the capacity ladder
+is the wrong instrument for them.** Any future attribution needs a rig that first
+demonstrates it *carries* the global term (the absorption rig's production-replica arm
+does; these from-scratch arms do not).
+
+### What IS strongly established here (post-hoc, descriptive — NOT the pre-registered quantity)
+
+Paired game-clustered contrasts of the late-window LEVEL, same bootstrap draws:
+
+- **L-wide − L = −19.83 cp [−21.78, −17.91] SIG** — at **identical parameter count**,
+  6.11× the distinct rows buys ~20 cp of never-seen-material accuracy.
+- S − L = −5.26 cp [−7.02, −3.52] SIG · M − L = −2.69 cp [−4.36, −1.02] SIG.
+
+⚑ **The level is NOT a function of rows/param.** L-wide's rows/param (0.01816) sits
+*between* M's and S's, yet its level (52.10 cp) is ~15 cp below both. What separates it is
+**absolute distinct rows** — 1,145,716 vs 187,537. At fixed params, *data volume* moves
+never-seen generalisation far more than the rows-per-param ratio does. That is a different
+axis from the one PREREG was built to test, and it is the one that moved.
+
+### ⚑⚑ The SECONDARY instrument FAILED ITS OWN NEGATIVE CONTROL — its readings are discarded
+
+The frozen deep-SF audit was added as a pre-registered secondary that **gates nothing**.
+That precaution paid for itself:
+
+- SHUF audit late-window **203.97 cp vs worst real arm 110.78 → ratio 1.84**, below the
+  2.00 the same control clause requires; **and** its `rho_late` is **−1.8756 [−3.6419,
+  −0.1629] SIG**. A net trained on **permuted labels** shows a *significant trend* on this
+  ruler.
+- Therefore the audit's headline reading — L-wide `rho_late` **+1.9963 [+0.6862, +3.3666]
+  SIG**, the only arm that looked like it was degrading — **is not a verdict**, per the
+  standing rule that a reading off a stage failing its invariant is not a reading. It is
+  reported and set aside.
+
+Had the addition been allowed to gate, it would have delivered a confident, wrong
+"L-wide degrades" story off an instrument that cannot tell a trained net from a
+label-shuffled one over 8 points.
+
+### Declared deviations, carried into the verdict as caveats
+
+- **One seed (0) per arm**, declared before launch. Seed-to-seed variance is unmeasured, so
+  a between-arm difference the size of the original rigs' seed spread cannot be separated
+  from initialisation noise. This bites hardest on `D_S`, whose CI [−1.1866, −0.0199]
+  barely excludes 0 — **treat `D_S` as suggestive, not established.**
+- **No `LWSHUF` leg.** The surviving `SHUF` leg passed on the primary axis, and every arm's
+  own views=0 random-init checkpoint is banked as a per-size untrained control.
+- The arms are 4-hour from-scratch runs on fixed corpora, not the RL flywheel. No arena, no
+  Elo. This limit is now load-bearing rather than incidental: it is *why* the global term
+  is absent.
+
+### VERIFIED
+
+- Disjointness re-checked at run time on **both** axes (never by basename): arms' corpora
+  = `post_quarantine_20260801/…` shards 033118–033940; `N4_jul25` =
+  `pre_durable_deploy_20260726/…` shards 034000–034064. Index-set intersection **empty**.
+- Estimator tested against synthetic data with a known slope before use: exact recovery
+  (2.96e-14), noise matching the analytic OLS slope sd, game-clustering widening CIs 2.78×
+  vs iid, ~nominal false-positive rate over 200 true-zero trials.
+- The hoisted audit scorer is **bit-identical** to `raw_policy_regret.py`:
+  `max|dexp| = max|dtop1| = 0.000e+00` over all 4,000 positions.
+- Banked checkpoint format round-trips through the production `load_model_from_checkpoint`
+  at all three arm sizes with `max|dW| = 0` and correct unique-storage param counts
+  (63,084,128 / 19,577,669 / 6,172,739).
+
+### NOT ESTABLISHED
+
+- Nothing about params vs rows/param vs optimizer drift as the driver of the **global
+  term**. The term is absent from these arms; the question is untouched, not answered.
+- The −19.83 cp L-wide level advantage is **not** a slope result and says nothing about
+  decay over time. It is a statement about where a net lands, not where it is heading.
+- Whether the live loop's global term would respond to any of the three remedies.
+
+**Bank:** `scratchpad/capacity_n4_20260802/` — `rig/{slope,slope_wide}.py` (two-hunk diff
+vs the originals), `driver.sh`, `gate.sh`, `chain.sh`, `score_all.sh`, `score_n4.py`,
+`score_audit.py`, `analyse.py`, `analyse.log`, `results.json`,
+`runs/run_*/ckpt/chunk_NNNN.pt` (**125 full checkpoints, sha256 in `slope.jsonl`**),
+`runs/run_*/n4/*.npz` + `runs/run_*/audit/*.npz` (per-row dumps). Every number above
+re-derives on CPU from the dumps; every dump re-derives on GPU from the banked weights.
+**The re-run cost 7.6 h precisely because the last rig banked scalars instead of nets —
+this one will not have to be paid again.**
+
+## ⚑⚑ VERDICT 2026-08-03 — RESTART BASE, ARENA (b): **iter400 IS ALSO SIGNIFICANTLY WEAKER THAN boot512 IN PLAY. −37.7 Elo [−57.6, −18.0], 1000 games, CI ENTIRELY BELOW ZERO. THE BASE DECISION DOES NOT REOPEN — the default `boot512 + fresh window regeneration` STANDS.** The arm-H dense scan's ruler edge (iter400 beats iter477 by 5.15 cp policy / 7.42 cp value, and beats every SWA average) is real on that ruler and does **not** translate into play strength against the lineage origin.
+
+Reads out the pre-committed rule in `scratchpad/restart_brief_20260802.md` ("Base
+decision", line 84): *"if it also beats boot512 in PLAY, the base decision reopens
+(start from iter400 = keep 400 iterations of learning, restart the data schedule).
+A ruler edge is NOT a play edge — the arena decides… If boot512 wins or the CI spans
+0, the default base stands."* boot512 wins with the CI entirely below zero, so the
+default stands. Nothing in the plan changed between launch and read.
+
+### Why this spec, and why it is comparable to the −48.6
+
+Deliberately the SAME spec as the 2026-08-02 `Elo(iter477 − boot512) = −48.6` run
+(this file, "PLAY-STRENGTH GROUND TRUTH"), reusing its banked driver verbatim:
+matched_sims 32, `--search-shape play`, 1000 games / 500 paired UHO openings, seed 42,
+32 concurrent games, `--compile off`, same book, `opening_plies 16`, `max_plies 300`,
+Syzygy OFF. The only deviation is `--max-seconds 5400` instead of 3600 — the prior run
+used 3106 s of its 3600 s cap and this one used 2710 s, so **the cap never bound in
+either run** (`truncated=False` both times) and it cannot have touched the sample.
+
+`config_hash` is **6dd68d4a613d on both runs**, i.e. the production yaml the arena
+records is byte-for-byte the one the −48.6 was measured under.
+
+### The result
+
+| | value |
+|---|---|
+| **Elo (iter400 − boot512)** | **−37.67** |
+| **95% CI (pentanomial)** | **[−57.57, −18.01]** |
+| games / pairs | **1000 / 500**, `truncated=False` (2709.6 s of a 5400 s cap) |
+| pentanomial (candidate POV) | WW **68**, WD_DW **49**, DD_WL **205**, LD_DL **63**, LL **115** |
+| score | **0.4460 ± 0.0143** (SE) |
+| W/D/L (candidate POV) | **383 / 118 / 491** over 992 naturally-decided games, **+8** drawn by the 300-ply cap |
+
+Point estimate across the twenty running blocks: −88.7, −52.1, −74.5, −41.8, −46.2,
+−40.6, −36.9, −42.8, −40.1, −30.7, −39.3, −42.6, −38.2, −36.3, −33.0, −31.7, −34.6,
+−35.3, −35.8, −37.7 — stable inside −31…−43 from ~75 pairs onward, so this is not a
+tail that happened to land negative.
+
+**Cross-check that the observer and the arena agree:** (383 + 118/2 + 8/2)/1000 =
+**0.44600** vs the arena's reported **0.44600**.
+
+### Realized configuration — PRINTED from the run, not asserted
+
+```
+[arena] SEARCH candidate: shape=play vloss_weight=3 target_batch=0 c_puct=1.75
+  c_scale=0.025 c_scale_root=7.0 c_visit=50.0 c_visit_root=900.0
+  cpuct_base=38739.0 cpuct_factor=3.89 fpu_reduction=0.33 q_visit_exp_root=-1.0
+  topk=32 [mcts.gumbel PLAY_SEARCH_DEFAULTS + PLAY_SEARCH_VLOSS_WEIGHT]
+[arena] SEARCH reference: <identical>
+[arena] matched_sims: candidate=32 sims/move, reference=32 sims/move, temp=0.1, noise=True
+[arena] ROLLING pool: keep 32 games active
+```
+
+Byte-identical to the printed block of the −48.6 run. `git_sha`
+**00be40af130db0787267aeefb1763f254acc0064**, `config_hash` **6dd68d4a613d**, seed 42,
+`compile=off -> EAGER`, device cuda. `--search-shape` is a required argument with no
+default, so no silent shape could be substituted; the YAML-clobbers-CLI check passes
+(the log prints `candidate=32 sims/move, reference=32 sims/move`, which is what the
+command line asked for).
+
+### Checkpoint identity — verified, not assumed
+
+| name | path | weight hash (first 4 KB/key) | full weight hash | step | unique-storage params |
+|---|---|---|---|---|---|
+| boot512 | `scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` | `5f61a6b85cd3d3cd` | `cb69a232531b1343` | 56000 | **63,084,128** |
+| **iter400** | `data/salvage/rolling/checkpoint_000400/trainer.pt` | `087f9f9c74106fbf` | `22acb04e6401f863` | **87409** | **63,084,128** |
+| iter477 (context) | `scratchpad/strength_readout_0731/ck477/trainer.pt` | `cd5e47b4d31a75f4` | `1429d18e2d8fcefa` | 94062 | **63,084,128** |
+
+Counted by unique `untyped_storage().data_ptr()`, never `sum(numel())` (the naive sum
+reads 78,812,768 for all three). **boot512's and iter477's short hashes reproduce the
+08-02 run's `ckpt_verify.json` exactly**, so this arena's reference net is provably the
+same net the −48.6 was measured against. iter400 is the exact file the arm-H dense scan
+scored (`scratchpad/swa_armH_20260802/inventory.json`, name `iter400`, step 87409 — the
+step matches; its inventory fingerprint uses a different digest recipe so the hex
+strings are not comparable). All three were copied out of the tree to
+`scratchpad/arena_20260803/ckpt/` before use and loaded through the arena's own
+`load_model_from_checkpoint` with **no `Tolerant load` line**, so neither side is a
+partially fresh-initialised net.
+
+### Game lengths and adjudication
+
+mean **119.2** played plies, median **110.0**, p05 41 / p25 76 / p75 154 / p95 230,
+min 12, max 300. Only **8 of 1000 games (0.8%)** failed to finish naturally and were
+scored as draws by the `--max-plies 300` cap (the −48.6 run had 14); Syzygy
+adjudication was OFF. **Adjudication touches too little of the sample to carry the
+−37.7.** No time forfeits are possible in `matched_sims` — it runs in-process at a
+fixed simulation budget with no clock.
+
+### What this establishes, and what it does NOT
+
+**Establishes.** Against the lineage origin, on the same search, openings, budget and
+book, `iter400` is **37.7 Elo weaker** with the CI excluding zero by 18 Elo. **The
+"old-material competence in iters 360-410 is reachable" finding (arm H stage 1c) does
+not buy playing strength back**: on the audit-v2 per-position ruler iter400 is the best
+point in the whole 25-point scan, and it still loses a 500-pair match to boot512.
+Checkpoint selection inside the lineage is not an escape from the treadmill.
+
+**Does NOT establish.**
+- **It does not establish iter400 > iter477 in play.** This arena and the 08-02 one
+  share a reference and a seed but not their games, so the difference
+  **+10.94 Elo [−16.8, +38.6]** (conservative, treating the two as independent;
+  SE 9.89 and 10.09) is **not significant**. The ruler's 5-7 cp iter400-over-iter477
+  edge remains unreplicated in play, and a direct iter400-vs-iter477 arena was not run.
+  What IS established is that both are well below boot512.
+- **This is 32 sims**, in the **play** shape, on a **COLD tree** (`PLAY_PATH_AUDIT`
+  F1 — production selfplay searches a warm one). The ranking is safe because both arms
+  are cold and both are at the same budget; a "this reproduces the training-target
+  regime" claim is not.
+- It does not localise the loss to policy vs value, and it does not date the turn.
+- **boot512-as-lineage-origin is inherited, not re-proven here** — same caveat as the
+  08-02 entry.
+
+### Consequence for the restart
+
+**Base = boot512 + fresh window regeneration, unchanged.** The conditional branch in
+the restart brief ("the base decision reopens") is **closed** — no iter400 base, and
+no reason to reopen it for any other in-lineage checkpoint chosen on a cp ruler, since
+the best one on that ruler loses this match. `exploit_replay_*` cross-trial restore
+stays disabled (blocker #4); the swap gate's −252 for cross-era window reuse is
+untouched by this result.
+
+**Banked** at `scratchpad/arena_20260803/`: `arena_results.jsonl`,
+`logs/arena_b_iter400_vs_boot512_play_sims32.log`,
+`lengths_b_iter400_vs_boot512_play_sims32.json`, `ckpt_verify.json`, and the drivers
+`verify.py` / `run_arena.py` (byte-identical copy of the 08-02 observer) /
+`launch_b_iter400.sh` / `report.py`. Written to a scratch JSONL rather than
+`runs/arena_results.jsonl` because `runs/` was read-only for this task — fold both of
+today's rows in when convenient.
+
+## ⚑⚑ VERDICT 2026-08-03 — ARENA (a), THE TRAINING-SHAPE TWIN (owed since 08-02): **THE SHAPE CAVEAT IS DISCHARGED. THE SIGN DOES NOT FLIP. Elo(iter477 − boot512) on the TRAINING search shape = −54.6 [−74.0, −35.6], 1000 games, CI ENTIRELY BELOW ZERO** — same direction, same size class as the play-shape **−48.6 [−68.2, −29.4]**, difference **−6.04 Elo [−33.3, +21.2] ns**. The −48.6 was not an artifact of measuring the shipped play shape rather than the shape production selfplay runs.
+
+Discharges the explicit debt left open by the 08-02 entry ("PLAY-STRENGTH GROUND
+TRUTH… the shape caveat above stands UNRESOLVED and must not be quietly dropped… the
+training-shape replication is the single highest-value follow-up to this entry, it
+needs ~50 minutes of *uncontended* GPU, and `launch_training.sh` in the banked
+directory will run it as-is"). It was run as-is: the banked
+`scratchpad/arena_13a9f_20260802/launch_training.sh` settings verbatim, the same
+byte-identical `run_arena.py` observer, only the paths and `--max-seconds` changed
+(5400 vs 3600; the run used 2581 s, so the cap never bound — `truncated=False`).
+
+**Pre-committed interpretation rule** — the same one the play-shape run was judged by
+(that entry, "Pre-committed interpretation rule"): primary = pentanomial
+Elo(iter477) − Elo(boot512) at sims 32 with 95% CI. CI entirely below 0 ⇒ real play
+strength lost. CI entirely above 0 ⇒ search absorbs the prior damage. CI spanning 0 ⇒
+report the bound only. **The CI is entirely below zero: real strength lost, on the
+training shape too.**
+
+The secondary question this arena exists for — the ledger's 2026-07-28 precedent of a
+rung reading **−52.5 Elo on one shape and +5.8 on the other** — is answered: **no sign
+flip, and no material size difference.** Both shapes agree to within their noise.
+
+### The result
+
+| | training shape (this run) | play shape (08-02) |
+|---|---|---|
+| **Elo (iter477 − boot512)** | **−54.65** | −48.61 |
+| **95% CI (pentanomial)** | **[−74.01, −35.61]** | [−68.15, −29.37] |
+| games / pairs | **1000 / 500**, `truncated=False` (2580.6 s of 5400 s) | 1000 / 500 (3106 s of 3600 s) |
+| pentanomial (cand POV) | WW **44**, WD_DW **80**, DD_WL **163**, LD_DL **102**, LL **111** | WW 58, WD_DW 55, DD_WL 186, LD_DL 92, LL 109 |
+| score | **0.4220 ± 0.0137** | 0.4305 ± 0.0139 |
+| W/D/L (cand POV) | **311 / 215 / 467** over 993 decided, **+7** ply-capped | 342 / 163 / 481 over 986, +14 ply-capped |
+
+**Shape contrast: −6.04 Elo [−33.3, +21.2]**, computed conservatively as if the two
+runs were independent (SE 9.80 and 9.89; they share the reference net, the seed and
+the opening set but not their games, so this over-states the interval). **Not
+significant** — the two shapes are one result, not two.
+
+The one visible shape effect is on the DRAW RATE, not on strength: the training shape
+(c_scale 0.1, topk 16, LINEAR root, vloss 1) draws **215 of 993** decided games vs the
+play shape's 163, and its pentanomial mass shifts out of `DD_WL` (186 → 163) into the
+split bins (`WD_DW` 55 → 80, `LD_DL` 92 → 102). A sharper root exploration and a
+narrower top-k make more games decisive on one board of a pair and fewer decisive on
+both.
+
+Point estimate across the twenty running blocks: −53.3, −72.1, −82.2, −85.9, −63.3,
+−72.4, −68.5, −60.6, −59.3, −67.7, −59.1, −56.5, −58.5, −57.9, −57.2, −54.8, −57.0,
+−56.9, −56.1, −54.6 — monotone convergence from a pessimistic small-sample start,
+settled inside −54…−59 from ~250 pairs on.
+
+**Cross-check that the observer and the arena agree:** (311 + 215/2 + 7/2)/1000 =
+**0.42200** vs the arena's reported **0.42200**.
+
+### Realized configuration — PRINTED from the run, and it is genuinely the OTHER shape
+
+```
+[arena] SEARCH candidate: shape=training vloss_weight=1 target_batch=0 c_puct=2.5
+  c_scale=0.1 c_scale_root=-1.0 c_visit=50.0 c_visit_root=-1.0 cpuct_base=38739.0
+  cpuct_factor=0.0 fpu_reduction=1.2 q_visit_exp_root=99.0 topk=16
+  [pbt2_small.yaml -> reco -> worker SearchConfig]
+[arena] SEARCH reference: <identical>
+[arena] matched_sims: candidate=32 sims/move, reference=32 sims/move, temp=0.1, noise=True
+[arena] ROLLING pool: keep 32 games active
+```
+
+`c_scale 0.1` / `topk 16` / linear root (`c_scale_root -1`, `q_visit_exp_root 99`) /
+`vloss_weight 1`, sourced from the production yaml — i.e. **provably not** the play
+block (`c_scale 0.025` / `topk 32` / LOG root / `vloss 3`) that the 08-02 run printed.
+`git_sha` **00be40af130db0787267aeefb1763f254acc0064**, `config_hash` **6dd68d4a613d**
+— *the same config hash as the 08-02 play run*, so the yaml the training shape is read
+out of is the one that was live for the −48.6. `--search-shape` is required with no
+default; the printed `candidate=32 sims/move, reference=32 sims/move` matches the
+command line, so the YAML-clobbers-CLI check passes.
+
+⚠ Per `PLAY_PATH_AUDIT` F2, `c_puct` / `fpu_reduction` / `cpuct_factor` / `cpuct_base`
+are printed here but are **provably inert in all Gumbel searches** — they are not part
+of what distinguishes these two shapes and must not be read as such.
+
+### Checkpoint identity — verified, not assumed
+
+| name | path | weight hash (first 4 KB/key) | full weight hash | step | unique-storage params |
+|---|---|---|---|---|---|
+| boot512 | `scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` | `5f61a6b85cd3d3cd` | `cb69a232531b1343` | 56000 | **63,084,128** |
+| iter477 | `scratchpad/strength_readout_0731/ck477/trainer.pt` | `cd5e47b4d31a75f4` | `1429d18e2d8fcefa` | 94062 | **63,084,128** |
+
+Both short hashes **reproduce the 08-02 run's `ckpt_verify.json` exactly**, so this is
+the same pair, byte for byte, that produced the −48.6 — which is what makes the shape
+contrast a clean one-factor comparison. Counted by unique
+`untyped_storage().data_ptr()`; full-tensor hashes differ, so the nets are genuinely
+different. Loaded through the arena's own `load_model_from_checkpoint` with **no
+`Tolerant load` line** on either side.
+
+### Game lengths and adjudication
+
+mean **121.2** played plies, median **112.0**, p05 47 / p25 75 / p75 151 / p95 237,
+min 12, max 300. **7 of 1000 games (0.7%)** were drawn by the `--max-plies 300` cap
+(play shape: 14); Syzygy OFF; no clock, so no time forfeits are possible in
+`matched_sims`. Length distributions are near-identical between the shapes
+(mean 121.2 vs 124.4), so the draw-rate difference is not a length artifact.
+
+### What this establishes, and what it does NOT
+
+**Establishes.** The lineage's −48.6 Elo loss is **shape-independent**. Measured in the
+shape production selfplay actually runs, on the same nets, budget, book and openings,
+iter477 is **54.6 Elo weaker** than boot512 with the CI excluding zero by 36 Elo. The
+2026-07-28 shape-flip precedent does not apply to this pairing, and no future reading
+of the −48.6 needs the "but it is the play shape" hedge.
+
+**Does NOT establish.**
+- **It still does not reproduce the training-TARGET regime.** Per `PLAY_PATH_AUDIT`
+  F1 every arena searches a **COLD** tree while production selfplay searches a warm
+  one (warm `max_visit` +28–80% ⇒ stored target up to +44% sharper). Matching the
+  shape does not fix the tree-reuse mismatch. Both arms are cold, so the **ranking**
+  stands; "this arena reproduces the target production stores" does not.
+- **This is 32 sims.** The Elo-vs-sims exchange rate for this pairing remains
+  unmeasured on both shapes; the pre-agreed 256-sim confirmatory is still unrun.
+- It does not localise the loss to policy vs value and does not date the turn.
+- The two shape numbers are **not paired**; the −6.04 contrast is a conservative
+  unpaired estimate, and a genuinely paired shape contrast (same games, both shapes)
+  was not run and is not needed for the sign question it was asked to settle.
+
+### Relation to the four old ratchet rows
+
+`runs/arena_results.jsonl`'s four boot512-referenced rows were **all training-shape and
+all wall-clock truncated** (57 pairs: −39.8 [−91.4, +10.1]; 13 pairs: −110.5). This run
+is the full-sample training-shape number they were reaching for and **supersedes all
+four** for the endpoint question — and it lands between their two point estimates.
+
+**Banked** at `scratchpad/arena_20260803/`: `arena_results.jsonl` (both of today's
+rows), `logs/arena_a_iter477_vs_boot512_training_sims32.log`,
+`lengths_a_iter477_vs_boot512_training_sims32.json`, `ckpt_verify.json`, and the
+drivers `verify.py` / `run_arena.py` / `launch_a_training_twin.sh` / `report.py`.
+Written to a scratch JSONL because `runs/` was read-only for this task — fold both
+rows into `runs/arena_results.jsonl` when convenient.
+
+### ⚑ Consequence for the restart, read together with arena (b) above
+
+The two arenas run today say the same thing from two directions: **the lineage is
+genuinely, shape-independently weaker than its own starting point (−54.6 training /
+−48.6 play), and its best checkpoint on the audit-v2 ruler (`iter400`) is ALSO weaker
+than that starting point (−37.7).** There is no in-lineage checkpoint the base
+decision can be rescued with. **Base = boot512 + fresh window regeneration stands, and
+the success criterion the brief sets — "the loop only has to not lose to its own
+starting point" — is now measured on the shape the loop itself runs.**
+
+### PRE-REGISTRATION — ARM FE (rehearsal x EMA interaction sweep, and the powered F re-run)
+
+Written and committed **before any FE process was launched**. Rig, corpus, rulers,
+bars and analysis code are unchanged from waves 1-3; the only new code is the arm
+gate, a denser eval grid and weight banking (all smoke-verified below).
+
+#### What this wave is for
+
+Two levers survived wave 2's matched-LEARNING control and only those two: **F**
+(20% old-era rehearsal, era recovery ~0.84 cp for ~0.85 cp of surrendered
+in-window learning) and **ema2000** (in-training step-EMA, `oow` −0.654/−0.871 SIG
+but `inw` +1.004 = 3.3x its bar). Both then FAILED their pre-registered rules — F
+on power, ema2000 on the `inw` clause. FE crosses them.
+
+The headline question is not "does the combined arm promote" (see the prediction in
+§4, which is that it will not). It is: **is the observed exchange rate a property of
+the LEVER or of the LOOP?** Every intervention measured so far buys out-of-window /
+era regret at a fixed price in in-window learning — ~0.32 cp per cp for the
+optimizer family (C, D), ~0.99 cp per cp for F. If two mechanistically independent
+levers compose, the price should improve when they are stacked. If FE lands at the
+same price as the better solo lever, the exchange rate is a **loop invariant**, and
+no training-regime intervention will convert these targets into out-of-window
+improvement — which retires the whole "regularize or average your way out" family
+and points the restart at the target and the loop instead.
+
+#### Design
+
+5 runs; each run yields 3 readouts (its own raw + 2 EMA variants) from one
+trajectory, so the 6 promotion cells cost 5 runs, not 18.
+
+| run | rehearsal frac | seed | launch priority |
+|---|---|---|---|
+| `FE20_s0` | 0.20 | 0 | 1 |
+| `FE20_s1` | 0.20 | 1 | 2 |
+| `FE35_s0` | 0.35 | 0 | 3 |
+| `FE35_s1` | 0.35 | 1 | 4 |
+| `FE10_s0` | 0.10 | 0 | 5 |
+
+Priority is the coordinator's (0.20x2 > 0.35x2 > 0.10x1); anything cut is cut from
+the bottom. EMA decays **0.9995 (~2000 steps)** and **0.99975 (~4000 steps)** on
+every run; 0.998 (~500) is dropped as proven null on all three rulers plus the
+neutral audit. Rehearsal draws from `corpus_frehearse/erarehearse` — 120,000 rows /
+5,795 games from the 652 era shards the era ruler never touched, **0 game overlap**,
+runtime abort retained.
+
+Everything else is wave-1 identical: boot512 init, batch 256, 176 steps/chunk, 48
+chunks = **8,448 steps**, same frozen corpus, same three rulers, same
+game-clustered percentile bootstrap (10,000 resamples, seed 0), `nice -n 19`.
+
+**Two adjustments, with reasons, per the licence to adjust:**
+
+1. **Denser eval grid**: every 8 chunks to chunk 24, then **every 4** — eval points
+   0, 8, 16, 24, 28, 32, 36, 40, 44, 48 (10, vs F's 7). F's pre-registration failed
+   because its era estimate swung 0.7-1.3 cp between adjacent points against a 0.394
+   bar; halving the spacing over the second half is aimed squarely at that.
+2. **Verdict steps stay 7,040 and 8,448** (chunks 40/48), not 5,632/7,040. Reason:
+   the noise bars (`oow` 0.638, `inw` 0.307, `era` 0.394) were *derived from the A
+   seed pair at chunks 40 and 48*. Applying a bar at a step it was never measured at
+   would be a ruler change without a ruler re-measurement, and it would make the FE
+   table incomparable with the F and H2 tables it exists to be read against.
+   Weights are nonetheless **banked at chunks 32, 40 AND 48** for raw and both EMA
+   variants (45 checkpoints, ~11 GB), so 5,632 is available for any matched-learning
+   contrast and nothing depends on interpolation.
+
+**Contrast decomposition.** Each run's own `raw` is rehearsal-ONLY at that fraction,
+i.e. a powered arm-F replication. So:
+
+- rehearsal alone: `FE{f}_raw − A_raw` (across-run, paired by row)
+- EMA given rehearsal: `FE{f}_ema − FE{f}_raw` (**within-run**, same seed, same data
+  order — the tightest contrast in the wave)
+- combined: `FE{f}_ema − A_raw`
+- **interaction** (difference-in-differences):
+  `(FE20_ema2000 − FE20_raw) − (H2_ema2000 − A_raw)`
+
+#### 1. Promotion rule, and how bars apply to a two-lever arm
+
+A cell is `(fraction, decay)`; there are 6. The bars are per-RULER and do not
+change because an arm carries two levers — a two-lever arm is judged on its
+combined effect against the same bars, because the bars measure the rig's seed
+noise, not the arm's complexity.
+
+**A cell PROMOTES iff, at matched LEARNING, against `A_raw`:**
+- `oow` improves beyond **0.638 cp**, AND
+- `era` improves beyond **0.394 cp**, AND
+- `inw` does NOT degrade beyond **0.307 cp**, AND
+- each of the three holds at **both** verdict steps (7,040 and 8,448), AND
+- the paired game-clustered 95% CI excludes 0 for both `oow` and `era`, AND
+- the sign agrees across seeds 0 and 1.
+
+`FE10` has one seed, so it can never satisfy the seed-agreement clause: **`FE10` is
+dose-response evidence only and cannot promote.** Stated now, not after seeing it.
+
+**Multiplicity — fixed-sequence gatekeeping, NOT flat Bonferroni across 6.** Flat
+Bonferroni at 6 (or 12, counting two co-primary rulers) is the wrong instrument
+here: the cells are strongly dependent (two cells share every trajectory; 0.20 and
+0.35 share a mechanism), and at the effect sizes in play (0.5-1.5 cp against
+0.3-0.6 cp bars) a /12 correction guarantees no promotion regardless of truth,
+which is a gate that cannot pass. Instead:
+
+- **Stage 1 (gate):** ONE pre-specified primary cell — **(0.20, ema2000)** — tested
+  uncorrected at alpha=0.05. It is primary because 0.20 is the dose F actually
+  tested and ema2000 is the only decay that cleared any bar.
+- **Stage 2:** the remaining 5 cells are tested with **Holm** at alpha=0.05 **only
+  if stage 1 passes.**
+- If stage 1 fails, the other 5 cells are **descriptive only** — reported with
+  uncorrected CIs, explicitly labelled exploratory, and **no cell may promote from
+  this wave.**
+
+#### 2. Interaction hypothesis
+
+Does rehearsal reduce ema2000's in-window cost below its solo **+1.004 cp**?
+
+Mechanism against: both levers pay `inw` the same way — by reducing effective
+fitting of the memorisable window (rehearsal displaces main rows; EMA lags the
+trajectory). Costs should then roughly ADD. Mechanism for: EMA's cost is a *lag*
+cost proportional to how fast weights move, and rehearsal reduces the gradient's
+concentration on the recent window, so the trajectory should drift less per step
+and the average should lag less — sub-additive.
+
+- **H-strong** (the coordinator's question): combined `inw` cost < 1.004.
+  **PREDICTED FALSE** — rehearsal costs `inw` on its own (~0.85), so the combination
+  should not come in under the EMA-only cost.
+- **H-weak (sub-additivity):** combined `inw` cost < **1.854** (0.85 + 1.004).
+  **PREDICTED TRUE.**
+- **Refuted** if combined `inw` cost >= 1.854 (additive or super-additive), which
+  would say the two levers pay for the same thing twice and should never be stacked.
+
+#### 3. Dose-response reading for rehearsal
+
+Read off the three `FE{f}_raw` runs' era recovery at matched learning, as a fraction
+of A's total era degradation (~2.07 cp). F's estimate: 20% rehearsal recovers ~40%.
+
+- **SATURATING** iff recovery(0.20) >= 0.8 x recovery(0.35) AND recovery(0.10) >=
+  0.5 x recovery(0.35).
+- **MONOTONE-LINEAR** iff recovery(0.35)/recovery(0.10) >= 2.5 with the three
+  ordered.
+- Otherwise **UNRESOLVED** (report as such; do not pick post hoc).
+
+**PREDICTED: SATURATING**, on the exposure-minority prior — if 20% already reaches
+~40% and the remaining 60% is structure the rehearsal pool simply does not cover,
+more dose cannot buy it. The `inw` cost, by contrast, should be near-LINEAR in
+fraction, since each rehearsal row directly displaces a main row. If both predictions
+hold, **0.35 is strictly dominated by 0.20, and 0.10 may dominate both** — a
+directly actionable output for the restart even if nothing promotes.
+
+**3b. The exchange-rate test (the wave's real question).** Define
+`E = |d_era at matched learning| / (in-window learning surrendered)`, both in cp.
+Measured solos: C/D ~0.32, **F20 ~0.99**, ema2000 ~0.48-2.06 depending on step.
+
+- **COMPOSE** iff `E(FE20, ema2000) >= 1.3 x max(E_F20, E_ema2000)`.
+- **LOOP-INVARIANT** iff `E(FE20, ema2000)` is within [0.7, 1.3] x that max.
+- **ANTI-COMPOSE** iff below 0.7x.
+
+**PREDICTED: LOOP-INVARIANT.** If that lands, the price of out-of-window regret is a
+property of this loop and not of any lever in it, and the restart brief should stop
+buying levers.
+
+#### 4. Kill rule and the explicit "no cell promotes" outcome
+
+**Kill the wave** if any proof-of-effect fails: realized rehearsal fraction more
+than 1 pp from target in `step1_effect.json`; EMA `divergence.rel_l2` == 0 at the
+first eval after step 0; any rehearsal/era-ruler game overlap (already a runtime
+abort). **Kill an individual run** if its `oow` at chunk 8 is worse than `A_raw`'s
+chunk-8 `oow` by more than 3x the 0.638 bar.
+
+**Predicted outcome: the pre-registered rule FAILS on the `inw` clause**, exactly as
+ema2000 did solo — the combined cost should be ~1.5-1.9 cp against a 0.307 bar.
+Recording that prediction now is the point: it is why §3b, not §1, is the reading
+this wave is actually built to deliver.
+
+**If no cell promotes**, the verdict is recorded as: *the rehearsal x EMA
+interaction does not convert search-derived targets into out-of-window improvement
+at production LR.* Combined with the dead composition family, the dead optimizer
+family, and the dead capacity story, that closes the training-regime family
+entirely, and the restart brief should say so — a negative on the last two surviving
+levers is decision-grade, not a null result to be buried.
+
+#### 5. Neutral frozen-audit cross-check
+
+`raw_policy_regret.py` on the promoted cell's final weights, paired against `A_s0`
+and `boot512`, **declared non-decisive in advance** exactly as for H2 (FEN-only
+inputs, ranking claims only, level comparison on final weights with no
+matched-learning control available). If nothing promotes, the audit is run on
+`FE20_s0` raw and `FE20_s0_ema2000` anyway, for continuity with the H2 addendum.
+
+#### Proof-of-effect, verified before launch (smoke run `smoke_FE`, arm FE, frac 0.35)
+
+| check | result |
+|---|---|
+| `--ema-decays` on a non-EMA arm | rejected: "only for arms ('H2', 'FE')" |
+| arm FE without `--ema-decays` | rejected: "arm FE requires --ema-decays" |
+| arm FE without `--rehearsal-corpus` | rejected: "arm FE requires --rehearsal-corpus" |
+| realized rehearsal fraction, step 1 | 0.3438 at batch 64 (per-batch rounding; 0.3516 at batch 256) |
+| rehearsal game overlap with era ruler | **0** (5,795 games, 120,000 rows) |
+| rehearsal field set == train field set | True |
+| EMA divergence vs raw at 12 steps | `rel_l2` 1e-3, non-zero, `n_updates` 12 and 12 |
+| banking | `bank_chunk002.pt` written for raw, ema2000, ema4000 (241 MB each) |
+
+Both EMA labels derive from the decay (`ema2000`, `ema4000`), so a mis-typed decay
+renames the output directory rather than silently mislabelling a cell.
+
+## 2026-08-03 — AUDIT WAVE 2 (encoding / C walker / inference stack): one CRITICAL live defect, one clean bill, one protocol hole
+
+Full write-ups + repros: `scratchpad/code_audit_20260803/{ENCODING,C_WALKER,INFERENCE}_AUDIT.md` (`enc_*`/`cwalk_*`/`inf_*` repros banked alongside). Fix PRs in flight for W1/W2, E1-E4, I1-I4+I6; all deploy-gated items marked below.
+
+- **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
+- **ENCODING: the C and Python encoders are BIT-IDENTICAL in the production regime** (175/v2_threats + lc0_root_legacy_meta + history_rep_fix, 1,654 positions with real history × 3 modes × both versions) — first time measured. 722,888 lc0_1858↔4672 round-trips clean incl. promotions/castling/EP; PR #314's 93-dead-planes accounting confirmed exactly. Defects are COVERAGE: E1 the only C-vs-Py plane oracle is off in every gate (stale docstring; passes today when enabled — fix PR turns it into CI); E2 AOT package verification encodes its distribution in the LEGACY history layout (98/175 planes differ; one keyword); E3 rep_fix flag-ordering has no guard (latent); E4 C encoders infer plane count from the buffer, config never compared (latent). ⚠ our `lc0_1858` is NOT Leela's kMoveStrs promotion ordering — `onnx/load.py` handles it; live trap for BT4 distillation.
+- **INFERENCE: I1 (CONFIRMED, both transports): the slot protocol has NO request identity** — a client that times out (hardcoded 30s) and re-submits is served the PREVIOUS request's policy/WDL; on compact-legal the row is partially reinterpreted metadata bytes = plausible-looking policy from a different position, recordable as training data. Precondition (client reset) documented in-source as observed 2026-07-24; RATE UNMEASURED (log grep in flight). Fix PR in flight (request id/epoch in header; wire-format change, workers+broker restart together). I2: connect never validates layout vs shm size → all-zero policy on plane skew (latent; guard in PR). I3: hang watchdog inert until first successful forward AND excludes _ensure_model — cannot fire on the documented boot-into-wedged-dxg scenario. I4: AOT constants rebound check_full_update=False, nothing binds package↔model. I6: broker busy-spins ~83% of a core at idle. I5 (deferred, separate decision): EncodedEvalCache transparently BYPASSED on the compact UCI path (0 hits/0 misses reads as clean); both cache keys otherwise sound. Gather policy clean; ThreadedDispatcher not on the production selfplay path.
+
+#### PREREG AMENDMENT 6a (2026-08-03) — the exchange-rate estimator, fixed BEFORE the FE readout
+
+Written while the FE20 pair was still training, from validating the analysis code
+against the ALREADY-PUBLISHED F and H2 tables. No FE contrast has been computed.
+
+`analyse_FE.py` reproduces both prior tables exactly — `F_s0` d_era −0.805 at
++0.979 given up, `F_s1` −0.874 at +0.729, the whole H2 within-run table, and
+`H2_s0` vs `A_s0` returns 0.000 on every ruler (they are the same trajectory,
+independently confirming that identity). The instrument is sound.
+
+**But it shows the pre-registered §3b statistic is not.** `E` is a ratio whose
+denominator is a small difference of two noisy levels, so it explodes when the
+denominator is small:
+
+| arm | step | gave up `inw` | d_era | E |
+|---|---|---|---|---|
+| F_s0 | 7040 | +0.387 | −1.169 | **3.02** |
+| F_s0 | 8448 | +0.979 | −0.805 | 0.82 |
+| F_s1 | 7040 | +0.939 | −0.294 | 0.31 |
+| F_s1 | 8448 | +0.729 | −0.874 | 1.20 |
+
+A statistic that swings 0.31 to 3.02 across seeds and steps of the *same arm*
+cannot adjudicate a pre-registered 1.3x / 0.7x threshold. Applying it as written
+would be reading noise.
+
+**Fix, pre-committed now:** `E` is computed **at step 8,448 only** (where the
+denominator is largest and best determined), and **pooled across seeds as a ratio
+of sums**, not as a mean of per-seed ratios:
+
+    E = sum_seeds |d_era| / sum_seeds (inw given up)
+
+Pooled this way the published solo values are stable and reproduce the addendum:
+**F20 = (0.805+0.874)/(0.979+0.729) = 0.98**; ema2000 (one seed) = 0.54. The
+COMPOSE / LOOP-INVARIANT / ANTI-COMPOSE thresholds (1.3x, 0.7x of the best solo)
+are unchanged and are now applied to this pooled estimator against
+**max(E_F20, E_ema2000) = 0.98**.
+
+`FE10` has one seed, so its `E` is reported with the explicit caveat that it is a
+single-seed ratio of the unstable kind above, and it does not enter the verdict.
+
+**Also pre-committed:** where `inw given up` is below **0.30 cp** (i.e. the arm did
+not meaningfully trade learning at all), `E` is reported as `n/a` rather than as a
+number. Below that the ratio is dominated by its denominator's error and the arm
+should be judged directly on the level contrasts instead.
+
+---
+
+### AUDIT 2026-08-03 — legality screen over stored policy targets: ZERO findings, and the screen is PROVABLY BLIND to the two defects it was aimed at
+
+**Full report:** `scratchpad/data_legality_scan_20260803/LEGALITY_SCAN.md`.
+Read-only, CPU-only. Verdict class: INSTRUMENT (no training change).
+
+**What ran.** Every stored policy target was checked against an independent
+oracle: rebuild the board from the row's own `x` planes
+(`eval/audit.py::decode_board_from_planes`), generate legal moves with
+**python-chess**, map them into the shard's id space via `moves/encode.py`. The
+stored `legal_mask` was never used as the oracle — it was scanned separately.
+
+**Scope.** 3,177 shards / **5,864,682 rows**, shard-mtime span 2026-07-02 →
+2026-08-01: the live replay window (trial `13a9f`, 713 shards, 1,273,501 rows,
+**exhaustive**) plus nine banked `data/salvage/` pools at stride 3, newest first.
+Keyed on resolved full paths — basenames collide across lineages.
+
+**Result — every class ZERO.** `policy_target`, `policy_soft_target` and
+`sf_p0_policy_target`: no mass on an illegal move at >1e-8, >1e-3 or argmax; no
+all-zero, NaN/inf, negative or unnormalized target. `sf_p0_regret`: no
+non-finite, none outside [0,1]. `x`-plane decode failed on 0 of 5.86M rows.
+95% upper bound on the `policy_target` illegal rate is **5.4e-7**. Per-day table
+in the report is uniformly zero, so there is nothing to date.
+
+**The one genuinely positive finding.** The stored `legal_mask` — produced by the
+**C** generator `CBoard.legal_move_indices()`, the same one the search expands
+nodes with — agrees with python-chess **exactly on all 5,864,360 rows carrying
+one**, in both directions (no missing legal move, no extra illegal one), across
+positions of which ~3.1% hold an en-passant square. "The production legal-move
+generator is wrong about ep / castling / promotion" is closed.
+
+**⚠⚠ THE ZERO IS NOT EVIDENCE ABOUT W1 OR I1.** `gumbel_c.py:1125-1156` builds
+the improved policy by scattering onto `np.nonzero(pri > 0)` — Python's own legal
+set — and only *looks up* the C tree's child actions through `action_to_slot`. An
+illegal action in a node's child set is never enumerated, so it cannot reach the
+target. `blindness_proof.py` demonstrates this on the production search: a root
+deliberately expanded with W1's donor child set (illegal action 2562 present,
+root not re-expanded) yields `probs mass on 2562 = 0.000000e+00`, clean
+`legal_mask`, legal played move — **indistinguishable from an uncorrupted root**.
+`i1_visibility.py` shows the same for I1: priors are gathered at
+`pol_logits[legal_idx]`, so even **all-NaN logits** come back finite, sum 1.0,
+fully legal. This screen therefore cannot detect W1's root manifestation, W1's
+interior visit-count distortion, or I1's stale-response poisoning. Anyone citing
+"we scanned for illegal targets and found none" must carry this caveat — it is a
+gate that cannot fail for those two causes.
+
+**Power caveat on the ep fingerprint.** `ep_power.py`: only **0.1323%** of live
+rows have a legal en-passant capture (3.10% have an ep square). Even if the
+target could carry an injected ep move, the reachable population is small.
+
+**Bonus screen that IS sensitive.** All-NaN logits are laundered into an
+*exactly uniform* legal target (entropy = log k exactly, vs 2.71 nats for a clean
+33-move row), which is a usable fingerprint. Over the live window: **0 exactly
+uniform** rows in 1,216,909 (support ≥ 3); 2 near-uniform (deficit < 1e-3), both
+ordinary 3-move positions. A real, narrow negative on the worst I1 case.
+
+**Rig soundness (banked, not asserted).** Positive control 150/150 (decoded
+board's legal set identical to the original's); out-of-set negative control
+150/150; live rows 0/200; **shuffled-labels control 199-200/200** — the screen
+fires when the labels are permuted. A mutation control ran `scan_shard.py`
+itself — the exact file that produced the rates — over a corrupted shard copy and
+recovered every injected class at its expected count (125 illegal-mass, 25
+argmax-illegal, 51 zero-sum, 25 NaN, 25 negative, 25 mask-disagree).
+
+**Rig correction made mid-run.** `sf_p0_regret` first flagged 285/285 — a 100%
+rate, which the method rules treat as the rig being wrong. It was:
+`finalize.py::_build_sf_p0_regret_vector` fills *every* index including illegal
+ones with the uncovered default by design, and the loss masks them. Check
+replaced with finiteness + range. `sf_policy_target`/`sf_legal_mask` (t+1
+opponent POV) and `future_policy_target`/`future_legal_mask` (t+2) were **not
+scanned** — a same-position check false-flags by construction
+(`trainer.py:2705-2711`). `sf_p0_policy_target` *was* scanned, and its 0/692,051
+rate independently confirms the P0/own-POV convention documented at
+`replay/sample.py:73-78`.
+
+#### PREREG AMENDMENT 6b (2026-08-03) — the "powered F re-run" did NOT happen; repairing it
+
+**Finding, verified by hash.** `FE20_s0`'s raw arm is **bit-identical to `F_s0`** and
+`FE20_s1`'s to `F_s1` — every per-row dump array equal at both verdict steps, and the
+same `final.pt` sha256 (`86b1f3a9aaa037df`, `9d326a5f747c9826`). That is the correct
+and expected behaviour: arm FE at frac 0.20 seed 0 IS arm F at frac 0.20 seed 0, and
+the EMA post-hook is a pure observer that maintains shadow copies without touching
+the optimizer, the RNG or the sampler.
+
+**As a control this is a strong positive result** — it proves the rig is fully
+deterministic and that adding EMA tracking provably does not perturb the trajectory
+it is tracking, which is exactly the "does the knob take effect / does the observer
+disturb the system" question this codebase's signature defect lives in.
+
+**But it means the wave did not deliver the powered F re-run it was also supposed
+to deliver.** `FE20`'s raw arms are not a replication of F — they are the *same two
+trajectories recomputed*, so they add exactly zero power to the F(0.20) estimate,
+which still rests on n=2 seeds. Only NEW SEEDS can add power. (`FE35` and `FE10`
+raw arms are unaffected: no prior F exists at those doses, so those are genuinely new.)
+
+**Repair, pre-committed before any seed-2/3 contrast is computed:** append
+**`FE20_s2` and `FE20_s3`** (arm FE, frac 0.20, seeds 2 and 3, identical config) to
+the end of the queue, to run only after the entire pre-registered queue has drained
+and only while the card would otherwise be idle. Their raw arms are the genuine
+powered F(0.20) replication; their EMA variants extend the primary cell from 2 seeds
+to 4.
+
+**What they may and may not change.** They CANNOT revive the primary cell: it failed
+the `inw` clause at 1.257 cp against a 0.307 bar (4.1x), a margin no plausible seed
+draw closes, and that clause is judged per-seed anyway. They are pre-committed to
+serve exactly two purposes:
+1. the pooled exchange rate `E` (the wave's headline) moves from n=2 to n=4 seeds;
+2. the F(0.20) era estimate gets the power the original arm-F pre-registration
+   lacked, which is the specific deficit that made F's verdict a FAIL-on-power.
+
+**Pre-committed reading:** if the 4-seed pooled `E` for `FE20_ema2000` stays within
+[0.7, 1.3] x the 4-seed best solo, the LOOP-INVARIANT verdict is confirmed at double
+power and is reported as the wave's finding. If it leaves that band, the verdict is
+withdrawn and re-reported at n=4 — the n=2 reading below is superseded, not averaged
+with it.
+
+#### VERDICT (2026-08-03) — arm FE primary cell (0.20, ema2000): **FAIL stage 1**; exchange rate is a **LOOP INVARIANT**
+
+**Judged by the pre-registered rule (9c5c9a681, estimator per amendment 6a
+dfed54f54), matched-learning vs A, both seeds, both verdict steps.** The `era`
+clause passes on all four reads (−1.138/−1.303 @7040, −1.489/−1.004 @8448, all
+SIG past the 0.394 bar). The `oow` clause fails — every CI includes 0, none
+reaches the 0.638 bar. The `inw` give-back clause fails decisively:
++0.955/+1.342 @7040, +1.319/+1.195 @8448 against a 0.307 bar (**4.1×**).
+**Stage 1 failing means the remaining 5 cells are descriptive-only and NOTHING
+promotes from this wave** — exactly the outcome predicted in the
+pre-registration. The restart ships raw-publish, no rehearsal, no EMA.
+
+**Headline (the wave's real question): stacking the only two curve-benders does
+not change the price of era regret.** Pooled `E` at step 8,448, ratio of sums
+(amendment 6a): FE20 raw 0.983 (= F20, bit-identical per 6b); **FE20 ema2000
+0.992**; FE20 ema4000 0.688; ema2000 solo (H2) 0.539. `E(FE20,ema2000)/best
+solo = 1.009` → **LOOP-INVARIANT** (pre-registered band 0.7–1.3). ema4000 =
+0.700, sitting on the ANTI-COMPOSE boundary: more smoothing buys more era
+(−1.55) at disproportionate learning cost (2.26).
+
+**Mechanism: the interaction is real but self-cancelling.** Both pre-registered
+interaction predictions confirmed: H-strong FALSE (combined inw cost 1.257 >
+ema2000 solo 1.004); H-weak sub-additivity TRUE (1.257 < 1.858, ratio 0.676).
+Difference-in-differences: rehearsal cuts EMA's inw cost 60% (+0.403 vs +1.004)
+**and cuts its oow benefit 50%** (−0.439 vs −0.871); era DiD ≈ 0 (+0.082). The
+levers partially substitute; the ratio survives untouched. This is the stronger
+form of the invariance claim — not just "the level didn't move" but "the
+interaction exists and cancels in the ratio."
+
+**Instrument checks:** analysis instrument reproduces the published F and H2
+tables bit-for-bit; `H2_s0` vs `A_s0` returns exactly 0.000 on all three rulers.
+`FE35` pair running, `FE10` queued, then the 6b-chained `FE20_s2/s3` (which
+cannot revive the primary cell — per-seed inw miss at 4.1× — and may only move
+pooled `E` to n=4 and give F(0.20) its missing power). Full 6-cell dose table
+follows when the queue drains.
+
+#### AUDIT WAVE 3 (2026-08-03) — worker.py, promotion gate, selfplay provenance, shared broker + concurrency. Two CRITICALs on the gate path; one ledger closure FALSE; one memory retraction REFUTED
+
+Four parallel line-level audits of the never-read half of the production loop.
+Docs + banked repros in `scratchpad/code_audit_20260803/`: `WORKER_AUDIT.md`
+(K1-K11), `GATE_AUDIT.md` (G3-1..G3-12), `SELFPLAY_AUDIT.md` (P1-P9),
+`SHARED_BROKER_AUDIT.md` (B1-B9). All audited `origin/main` post #320/#321/#322.
+
+**CORRECTION — the 2026-07-30 "BOTH BLOCKING FINDINGS CLOSED AS BUILT" paragraph
+(this file, :495-500) is FALSE for finding (1) on the production path.**
+Found independently by BOTH the gate audit (G3-1, from the consumer end) and the
+worker audit (K1, from the producer end): the worker stamps
+`opponent_wdl_regret_limit`/`sf_nodes` correctly on every raw shard (verified
+0.0817/698289 on a live worker shard), and the SERVER's upload compactor drops
+them — `_BufferedUploadAccumulator` (`server/app.py:281-341`) has no slot for
+them and `_flush_buffered_upload_to_inbox` (:434-489) rebuilds `ShardMeta`
+passing 48 of 56 fields. Compaction is unconditional ⇒ loss on 100% of
+production shards: `None` on 447/447 ingested shards (audit K) and 400/400
+(audit G3), `gate_sample_confound_elo` NaN on 109/109 live rows, 68/68
+iterations. The PID-confound HOLD leg — the deciding KILL rule this ledger
+pre-registered for gate enablement (:471-476) — **cannot fire, ever, as built**.
+The 24/24 mutation kills cited in the closure used hand-written inbox shards
+that bypassed the producer. Also dropped: `sf_d6_sum`/`sf_d6_n` (⇒
+`sf_eval_delta6` 0.0 on every live row); the server merge key omits difficulty
+(true of the worker buffer, false of the server). Negative control: the same
+compactor carries `input_history_encoding`/`history_rep_fix` faithfully 447/447.
+Root cause of the class: the reco layer has a completeness test; the
+shard-metadata layer has none (K11's clean negative is the same lesson).
+
+**⚑ EXIT-CODE TRAP (K1×G3-2 interaction), pre-committed here before any gate
+readout is re-run:** `gate_shadow_readout.py` currently exits 2 on the
+*prev_share* leg (G3-2: a FALSE kill — the mover is fleet refresh lag
+117.5→194.2 s, invisible to the cadence leg which passes only <584 s/iter, live
+635; the pooled-count identity passes 109/109). Fixing that leg alone makes the
+same run exit 0 **with the confound leg still measuring nothing**. The gate
+readout's success criterion is therefore re-specified: **assert `n_confound ≥ 3`
+in the readout output; never judge by exit code alone** (an exit code is an OR
+over axes). `OfflineReference` constants must be re-derived from current-lag
+shards before `gate_mode` leaves `off`.
+
+**P1 (HIGH) — REFUTATION of this file's/memory's 2026-07-28 retraction "the
+regret filter is FINE."** The retraction cited `_pv_wdl_score` — right helper,
+wrong call site. `_collect_sf_pv_candidates` takes the cp-logistic switch as a
+defaulted kwarg: the LABEL site (`stockfish_turn.py:1311`) passes it; the MOVE
+site (:1303) does not. The curriculum opponent's move filter scores with SF's
+NATIVE UCI_ShowWDL — one search, two scorers. Settled on production's own
+columns: stored `sf_played_rank` reproduced 99.89% by the native scorer vs
+69.16% by cp-logistic (8,328 curriculum rows). Consequence: regret 0.20→0.0075
+(the whole stage-1 travel) shrinks the acceptance set only 26% (9.27→6.90
+moves), not 62%; at the floor 35.1% of positions accept every MultiPV candidate
+— the difficulty lever is much weaker than designed. Confirms D17.
+**Load-bearing invariant re-verified and HOLDS: labels stay best-move based.**
+⚠ Any fix (passing the switch at the move site) RE-CALIBRATES the whole
+difficulty scale the PID was tuned against — it is a training-affecting change
+requiring its own pre-registered entry, not a hygiene fix.
+
+**Other production-reachable findings (fix routing at end):**
+- K2 (HIGH): model_sha/difficulty stamped at game COMPLETION; mean game in
+  flight 4,040 s vs 618 s median publish period ⇒ straddles ~6.5 publishes,
+  tagged with one. `distributed_stale_games`=0 in 66/68 iterations measures tag
+  lag, not weight staleness. Consumers: gate cur/prev split, prev-model cap,
+  stale-pause backpressure.
+- K3: `_check_model_freshness` compares the manifest to a tag assigned FROM the
+  manifest on the broker path — a check that cannot fail; no observation of
+  whether the broker actually swapped weights (slot protocol carries no model
+  identity).
+- K5: worker validates manifest plane count against itself, never against
+  `--inference-slot-input-planes` (default 146) — third leg of the I2 family;
+  #322 closed client/broker only.
+- P2 (HIGH): `sf_wdl` (0.45 of the value target) has NO detector in either
+  direction — the desync tripwire reads only the policy half; 99.99% of flagged
+  rows on the quarantined shards still carry has_sf_wdl=1.
+- P3: `pid._observation_se` data term unreachable (se ≡ max(0.01, 0.5/√n),
+  beaten on 95/200,000 batches); airbag trigger moves 0.313→0.435 on sample
+  size alone, hardest to fire exactly in the +0.110-biased post-restart window.
+- P4: nodes-lever inverse fit degenerate — last 12 steps are the blind ±5%
+  half-cap; `sf_pid_min_nodes` operator ratchet injected an uncontrolled ×4.15
+  x-jump; recency ages by deque INDEX not time.
+- G3-3: degenerate-variance guard (se<=0.0) bypassed by 51.2% of stuck-counter
+  windows (se~1e-17) ⇒ DEMOTE on a zero-width CI.
+- G3-7: every restart collapses `accepted_model_shas` to one sha ⇒ cur=0 rows
+  observed as valid (live iter 411: cur=0 prev=60).
+- G3-12: the restart's 11 new probe_* report keys rotate progress.csv ⇒ the
+  readout's 40-row precondition restarts (~7.4 h). Expected, not a defect —
+  recorded so it is not misread.
+- B6: MultiSlotInferenceClient never evicts a wedged slot and counts its failed
+  requests as throughput; `slot_roundtrip_s` (100× separation) computed,
+  exported, read by nothing. B7: walker vloss leaks on evaluator raise
+  (UCI/ruler path); `remove_vloss_path` called from nowhere.
+- Settled: production runs the PER-TRIAL SlotBroker; SharedSlotBroker OFF
+  (`distributed_inference_shared_broker: false`, yaml:862). B1: the shared
+  broker never reads `request_mode` (modes added to client+SlotBroker only) —
+  latent critical if the flag ever flips; every shared-broker test exercises
+  the one working mode. B8 negative: walkers serialize on the GIL; releasing it
+  would arm B9 (reserve() unenforced — PLAUSIBLE, needs ASan/TSan).
+
+**Clean negatives banked:** gate decision math sound (no NaN-demote, all-draws
+variance-floored, step leg cannot manufacture a promote); dole cap wired;
+harvested seeds row-level excludable; resume re-encode guard sound; reco
+transport complete over all get-sites; C legal-gen already exonerated.
+
+**Fix routing (reviewer≠author per PR):** (A) server compactor carries ALL
+ShardMeta fields + a test that enumerates the dataclass so an absent key cannot
+recur + difficulty into the merge key [K1/G3-1 — unblocks the gate decision].
+(B) gate internals: G3-3/4/5/6/8 + readout leg fix + n_confound≥3 assertion +
+OfflineReference re-derivation [G3-2]. (C) inference: B6/B7 + B1 loud-refuse +
+K5 [+ #137 items]. (D) P2 sf_wdl detector + P9 denominator. DECISIONS (not
+hygiene, need pre-registration): P1 move-site scorer, P3 SE floor, P4 nodes-fit
+reset, K2 per-ply stamping, K3 broker model identity.
+
+#### CORRECTION 6c (2026-08-03) — the pooled-E numerator must be SIGNED. Post-hoc, disclosed.
+
+Amendment 6a defined `E = sum_seeds |d_era| / sum_seeds (inw given up)`. The
+absolute value is **wrong**, and `FE35_s1` is the case that exposes it: its era
+effect at 8,448 is **+0.029**, i.e. rehearsal at 0.35 made forgetting slightly
+WORSE in that seed. `|+0.029|` enters the numerator as a 0.029 cp *gain*. An
+estimator that scores a loss as a win is the "gate that cannot fail" defect in
+miniature, so it is corrected to the signed form:
+
+    E = sum_seeds (-d_era) / sum_seeds (inw given up)
+
+where `d_era` is negative for improvement, so a seed that degrades now correctly
+subtracts. Also retained from 6a: `E` at 8,448 only, and `n/a` when the arm gave up
+under 0.30 cp.
+
+**This is a POST-HOC correction — I had already seen the FE35 numbers when I found
+it.** Stating the impact so it cannot be read as outcome-shopping:
+
+- **The primary cell is unaffected.** Every `d_era` for `FE20_ema2000` is negative
+  at both steps and both seeds, so signed and absolute forms are identical and the
+  headline `E = 0.992`, ratio **1.009**, LOOP-INVARIANT, stands exactly as reported.
+- The correction is likewise inert for `FE20_raw`, `FE20_ema4000`, and every
+  `FE35` EMA cell — all of their per-seed era effects are negative.
+- It changes exactly one number: **`FE35_raw`**, whose pooled `E` moves from 0.450
+  (absolute) to **0.429** (signed). The correction makes the 0.35 dose look
+  *slightly worse*, not better, which is the opposite direction from any incentive
+  to fiddle it.
+
+The rule stands as corrected for the remaining `FE10` and seed-2/3 readouts, which
+had not been computed when this was written.
+
+### VERDICT — ARM FE (rehearsal x EMA): NO CELL PROMOTES. The exchange rate is a LOOP
+### INVARIANT at the verdict cell — but the LOW-DOSE EDGE broke the pattern.
+
+Pre-registered 9c5c9a681, estimator fixed 6a/dfed54f54, F-replication gap 6b/faf809288,
+signed-E correction 6c/eab182419. Reading is n=2 per dose; the 6b seed extension
+(`FE20_s2`, `FE20_s3`) was still running when this was written and can only revise §3.
+
+#### 1. The pre-registered promotion rule: FAIL, exactly as predicted before launch
+
+Primary cell **(0.20, ema2000)**, matched learning vs A, both seeds, both steps:
+
+| | gave up `inw` (bar 0.307) | `oow` (bar 0.638) | `era` (bar 0.394) |
+|---|---|---|---|
+| s0 @7040 | +0.955 | −0.370 ns | **−1.138 S** |
+| s1 @7040 | +1.342 | −0.478 ns | **−1.303 S** |
+| s0 @8448 | +1.319 | −0.561 ns | **−1.489 S** |
+| s1 @8448 | +1.195 | −0.166 ns | **−1.004 S** |
+
+`era` passes on all four. `oow` fails — no CI excludes 0, none reaches the bar.
+`inw` fails at **4.1x** its bar. **Stage 1 fails, so by the pre-registered
+gatekeeping the other 5 cells are DESCRIPTIVE ONLY and nothing promotes.**
+
+Across all 6 cells and all 5 raw arms, **not one clears the `oow` bar at both steps
+and both seeds**. The only two significant `oow` results in the wave are
+`FE20_s1_ema4000` (−0.644, its seed-mate is −0.453 ns) and `FE35_s1` raw at
+**+0.951 S — significantly WORSE**.
+
+#### 2. All six cells, matched learning @8448 (descriptive)
+
+| cell | `inw` cost | `oow` | `era` | E |
+|---|---|---|---|---|
+| (0.10, ema2000) | +1.027 | −0.330 ns | **−1.540 S** | 1.50 * |
+| (0.10, ema4000) | +2.097 | −0.038 ns | **−1.554 S** | 0.74 * |
+| **(0.20, ema2000)** | +1.257 | −0.363 ns | **−1.246 S** | **0.99** |
+| (0.20, ema4000) | +2.230 | −0.549 mixed | **−1.535 S** | 0.69 |
+| (0.35, ema2000) | +2.271 | −0.256 ns | **−1.032 S** | 0.45 |
+| (0.35, ema4000) | +3.083 | −0.296 ns | **−1.341 S** | 0.44 |
+
+`*` single seed, caveated per 6a, does not enter any verdict.
+
+**ema4000 is refuted as an upgrade over ema2000.** It was added to test whether
+longer smoothing keeps buying `oow` without proportionally more `inw` cost. It does
+not: at every dose it costs ~1 cp more learning for no reliable `oow` gain, and its
+E is lower at every dose. The 4000-step window is dead.
+
+#### 3. THE HEADLINE — E is loop-invariant at the verdict cell
+
+Pooled at 8,448, signed, ratio of sums:
+
+| | E | vs best solo (0.983) | |
+|---|---|---|---|
+| FE20 raw (= F20) | 0.983 | — | solo reference |
+| ema2000 solo (H2) | 0.539 | — | solo reference |
+| **(0.20, ema2000)** | **0.992** | **1.009** | **LOOP-INVARIANT** |
+
+**Stacking two mechanistically independent levers moved the price of era regret by
+1%.** The mechanism is visible in the difference-in-differences (within-run, 8448):
+
+| ruler | EMA with rehearsal | EMA alone | DiD |
+|---|---|---|---|
+| `oow` | −0.439 | −0.871 | **+0.432** |
+| `inw` | +0.403 | +1.004 | **−0.602** |
+| `era` | −0.398 | −0.480 | +0.082 |
+
+Rehearsal makes EMA's `inw` cost **60% cheaper** — the sub-additivity is real and
+significant — **and cuts its `oow` benefit by 50%**. The levers do not compose; they
+**partially substitute**, and the ratio survives untouched. That is a far stronger
+form of the invariance claim than any level comparison: the price held while the
+mechanism underneath it was substantially rearranged.
+
+Interaction hypotheses, both as predicted: **H-strong FALSE** (combined cost 1.257 >
+ema2000's solo 1.004); **H-weak sub-additivity TRUE** (1.257 < 1.858, ratio 0.676).
+
+#### 4. Dose-response: SATURATING by the letter, INVERTED in fact
+
+Rehearsal-only arms, matched learning @8448:
+
+| dose | era recovery | `inw` cost | E |
+|---|---|---|---|
+| **0.10** | **+1.039** | **+0.107** | n/a (gave up <0.30) |
+| 0.20 | +0.839 | +0.854 | 0.98 |
+| 0.35 | +0.614 | +1.430 | 0.43 |
+
+Both SATURATING clauses pass, so the pre-registered reading is SATURATING. **But the
+criterion understates what happened.** It was written expecting a rising-then-flat
+curve; the data falls monotonically — recovery **decreases** with dose (1.04 > 0.84 >
+0.61) while cost **rises** (0.11 < 0.85 < 1.43), and E orders strictly 1.50 > 0.99 >
+0.45. **0.35 is not merely dominated, it is actively harmful**: `FE35_s1` gave up
+1.66 cp of learning, recovered nothing on era (+0.029), and was significantly worse
+out-of-window (+0.951 S). More rehearsal is worse rehearsal, on every axis, monotonically.
+
+#### 5. THE ONE RESULT THAT DOES NOT FIT — and it is the most promising in the experiment
+
+**`FE10` raw (10% rehearsal, no EMA) is the first arm in this entire experiment to
+buy significant forgetting recovery essentially for free.**
+
+| | gave up `inw` (bar 0.307) | `oow` (bar 0.638) | `era` (bar 0.394) |
+|---|---|---|---|
+| @7040 | **+0.073 — INSIDE the bar** | −0.015 ns | **−1.253 S** |
+| @8448 | **+0.107 — INSIDE the bar** | −0.652 ns [−1.343, +0.053] | **−1.039 S** |
+
+It **passes the `inw` clause** — the clause every other arm in three waves has
+failed — and clears `era` at both steps. Its `oow` point estimate at 8,448 (−0.652)
+is the first in the experiment to exceed the 0.638 bar, though its CI still includes 0.
+
+It cannot promote, for reasons fixed before launch, not after: `FE10` was allocated
+one seed (I ranked it lowest priority) and the pre-registration states a single-seed
+arm can never satisfy seed agreement. Its E is `n/a` under 6a's own floor, because
+the denominator (0.107) is exactly the small-denominator case that floor exists to
+suppress. **Both guards fired correctly, and both now stand between us and the
+single most interesting number in the wave.** That is the design's fault, not the
+result's.
+
+The same edge shows in the cells: **(0.10, ema2000) is the only cell reading
+COMPOSE** (E 1.50, ratio 1.525) — single seed, caveated, excluded from the verdict,
+but pointing the same way as the raw arm.
+
+#### 6. What this closes and what it opens
+
+**Closed.** At doses 0.20 and 0.35 the exchange rate is a property of the LOOP, not
+of the lever: two independent mechanisms stack to a 1% change while their internals
+rearrange by 50-60%. Combined with the dead composition, optimizer and capacity
+families, the "regularize or average your way out at production dose" story is over.
+`ema4000` is dead. Rehearsal above ~0.2 is dead and at 0.35 is harmful.
+
+**Open, and this is the actionable output.** The invariance was established at the
+doses the wave sampled heavily and **broke at the dose it sampled once**. The
+low-dose edge — where the intervention barely perturbs training yet still recovers
+~1 cp of era — is the only place in three waves where the trade-off curve looks
+bent rather than slid along. It is n=1. It needs seeds before anyone believes it,
+including me.
+
+#### ADDENDUM — the declared-non-decisive neutral audit for arm FE
+
+Run on the same frozen deep-SF audit set with the same `raw_policy_regret.py`
+invocation as every prior arm, paired on all 4,000 positions, while the 6b seed
+extension held the card (batch 64 / mem-fraction 0.12 so that any OOM would take the
+audit and not the runs). Declared non-decisive in advance: FEN-only inputs, ranking
+only, level comparison on final weights with no matched-learning control.
+
+**`FE20_s0` raw needed no compute.** Its `final.pt` sha256 is identical to `F_s0`'s
+(`86b1f3a9…`), so its audit number is the one already banked: **52.79 cp**. This is
+the 6b bit-identity finding paying for itself — re-scoring would have burned GPU on
+weights already measured.
+
+| checkpoint | level |
+|---|---|
+| boot512 | 47.93 |
+| `F_s0` == `FE20_s0` raw | 52.79 |
+| **`FE20_s0_ema2000`** | **52.81** |
+| `H2_ema2000` (EMA solo) | 52.92 |
+| `A_s0` (control) | 55.88 |
+
+| paired contrast | delta cp | |
+|---|---|---|
+| **`FE20_s0_ema2000` − its own raw run** | **+0.015 [−2.940, +2.887]** | **ns** |
+| `H2_ema2000` − `A_s0` (EMA solo, same contrast without rehearsal) | **−2.959 [−5.394, −0.636]** | **SIG** |
+| `FE20_s0_ema2000` − `A_s0` | −3.071 [−6.501, +0.169] | ns |
+| `F_s0` − `A_s0` (rehearsal alone) | −3.085 [−6.750, +0.552] | ns |
+| `FE20_s0_ema2000` − boot512 | +4.875 [+0.109, +10.189] | SIG |
+
+**This is a third independent ruler confirming the substitution finding, and it puts
+it more starkly than the regret rulers did.** Adding EMA on top of rehearsal moves
+the neutral audit by **+0.015 cp — indistinguishable from zero**. The same EMA
+applied WITHOUT rehearsal moves the same ruler by **−2.959 cp, significantly**. The
+difference-in-differences is **+2.974**: on this ruler the cancellation is not the
+~50% seen on `oow`, it is **total**. The combined arm (−3.071) is statistically
+indistinguishable from rehearsal alone (−3.085) — EMA contributed nothing it did not
+already have.
+
+Two levers that each do something real, and that stack to exactly one of them. That
+is what "the exchange rate is a property of the loop" looks like from a third angle.
+
+Caveats kept: single seed; the vs-A contrasts are individually ns because the audit's
+paired CI is +-3-6 cp at n=4,000, so the load-bearing comparison is the marginal one
+(EMA's contribution with rehearsal, +0.015 ns, versus without, −2.959 SIG), not the
+absolute levels. And every FE checkpoint remains significantly worse than boot512.
+
+**Also owed and already delivered** (ledger 00be40af1): the H2 banked-EMA neutral
+audit — `H2_ema500` **53.92 cp** (−1.961 ns vs raw), `H2_ema2000` **52.92 cp**
+(−2.959 SIG vs raw). Both remain significantly worse than boot512 (+5.98, +4.99).
+
+### PRE-REGISTRATION — LOW-DOSE WAVE (FE10 seeds 1-3, FE05 seeds 0-1)
+
+Written and committed BEFORE any run in this wave launched. Chained to start only
+after the 6b extension (`FE20_s2`, `FE20_s3`) has drained, so it can never take a
+slot from committed work. Same rig, same frozen corpus, same three rulers, same
+game-clustered bootstrap, same verdict steps (7,040 / 8,448), same bars
+(`oow` 0.638, `era` 0.394, `inw` 0.307), `nice -n 19`.
+
+#### Hypothesis
+
+**The trade-off curve BENDS at low dose: era recovery survives while the in-window
+cost goes to zero.** The FE wave measured, at matched learning @8448, era recovery
+falling with dose (0.10: +1.039 / 0.20: +0.839 / 0.35: +0.614) while cost rose
+(+0.107 / +0.854 / +1.430). If that continues down, a small rehearsal fraction buys
+most of the forgetting recovery for almost none of the learning — the first genuine
+bend, rather than a slide along a fixed exchange rate, in three waves.
+
+**`FE10` is n=1.** This wave powers it to n=4 and maps one rung below it.
+
+#### Runs
+
+| run | dose | seeds | role |
+|---|---|---|---|
+| `FE10_s1`, `FE10_s2`, `FE10_s3` | 0.10 | 1, 2, 3 | power the n=1 signal to n=4 (with existing `FE10_s0`) |
+| `FE05_s0`, `FE05_s1` | 0.05 | 0, 1 | descriptive dose-mapping ONLY |
+
+Raw arms carry the decision. EMA post-hooks (0.9995, 0.99975) run as **free
+observers** — proven non-perturbing by the 6b hash result (`FE20_s0` raw is
+bit-identical to `F_s0`, same `final.pt` sha256), so they cost only eval time and
+cannot contaminate the raw trajectory.
+
+**`FE05` cannot promote**: 2 seeds cannot satisfy the seed-agreement clause below.
+Stated now, as it was for `FE10` in the FE pre-registration.
+
+#### THE PROMOTION RULE — exact clause, pre-committed
+
+**`FE10` (0.10 rehearsal, raw arm) promotes as the restart's DATA-AXIS LEVER iff all
+three hold, at matched learning against `A_s{seed}`:**
+
+- **(a) ERA** — `era` improves beyond **0.394 cp** with a paired game-clustered 95%
+  CI excluding 0, at **BOTH** verdict steps (7,040 and 8,448), in **at least 3 of the
+  4 seeds** (s0, s1, s2, s3).
+- **(b) INW** — in-window learning given up is **within 0.307 cp** at **BOTH**
+  verdict steps, in **at least 3 of the 4 seeds**.
+- **(c) OOW** — the **seed-pooled** `oow` contrast (per-row contrasts averaged across
+  the 4 seeds, then game-clustered bootstrapped) improves beyond **0.638 cp with its
+  CI excluding 0, at step 8,448**, AND its point estimate at 7,040 is **not positive**.
+
+**Why (c) is judged at 8,448 with 7,040 as a direction guard, rather than at both
+steps.** The `oow` effect grows over training (`FE10_s0`: −0.015 at 7,040, −0.652 at
+8,448), so a both-steps rule would be a gate that essentially cannot pass, which is
+the failure mode this repo warns about. The terminal step decides; the earlier step
+only has to not contradict.
+
+**DISCLOSURE: this rule is written with `FE10_s0` already visible, and `FE10_s0`
+FAILS it.** Scored alone, s0 satisfies (a) — era −1.253 S and −1.039 S — and
+satisfies (b) — 0.073 and 0.107, both inside 0.307 — but **fails (c)**: its 8,448
+`oow` point estimate (−0.652) clears the bar while its CI [−1.343, +0.053] includes
+0. The rule is therefore not rigged to ratify the result that motivated it; the
+three new seeds have to actually deliver the out-of-window effect.
+
+#### The negative reading, pre-committed
+
+**If (a) fails — era significance does not replicate at both steps in at least 3 of
+4 seeds — then the n=1 free-lunch reading was a SEED DRAW, and the low-dose bend is
+WITHDRAWN.** The FE verdict's §5 gets an addendum saying exactly that, the
+"trade-off curve bends at low dose" claim is retracted rather than softened, and the
+data axis joins the composition, optimizer, capacity and averaging families as
+closed. No partial credit: (a) is the clause the whole hypothesis rests on.
+
+If (a) and (b) hold but (c) fails, the finding is recorded as **"forgetting recovery
+is available at near-zero in-window cost, but it does not convert to out-of-window
+strength"** — real, publishable inside the ledger, and NOT a promotion.
+
+#### The exchange rate is deliberately NOT the instrument here
+
+`E` stays defined as in corrections 6a/6c — signed numerator, ratio of sums, step
+8,448 only, `n/a` when the arm gave up under 0.30 cp. **At these doses it will
+almost certainly read `n/a` by construction, and that is the point**: a free lunch
+has an unbounded exchange rate, so the ratio is the wrong instrument exactly where
+the hypothesis lives. This wave is judged on the LEVEL clauses above. `E` is
+reported where defined, for continuity with the FE table, and decides nothing.
+
+#### Kill rule
+
+Unchanged and already enforced in-code: realized rehearsal fraction more than 1 pp
+from target aborts the run at chunk 1 (0.05 -> 13/256 = 0.0508 and 0.10 -> 26/256 =
+0.1016 both sit inside the band); any rehearsal/era-ruler game overlap aborts at
+startup; EMA divergence 0 at the first eval fails the wave. An individual run dies
+if its chunk-8 `oow` is worse than `A`'s by more than 3x the 0.638 bar.
+
+#### ADDENDUM — the 6b seed extension: LOOP-INVARIANT CONFIRMED at n=4, and a gap in 6b itself
+
+`FE20_s2` and `FE20_s3` completed. Per 6b the test was whether the 4-seed pooled
+signed `E` for `FE20_ema2000` stays within [0.7, 1.3] x the 4-seed best solo.
+
+| reading | E(raw) | E(ema2000) | best solo | **ratio** | verdict |
+|---|---|---|---|---|---|
+| n=2, pre-registered (seed-matched controls) | 0.983 | 0.992 | 0.983 | **1.009** | LOOP-INVARIANT |
+| n=4 (deviation below) | 0.808 | 0.877 | 0.808 | **1.085** | **LOOP-INVARIANT** |
+
+**Confirmed at double power.** The instructive part is that the absolute `E` moved a
+lot — raw 0.983 -> 0.808, ema2000 0.992 -> 0.877, both ~12-18% lower — while **the
+ratio the verdict actually rests on barely moved (1.009 -> 1.085)**. The level of
+the exchange rate is seed-sensitive; the *composition* question is not. That is the
+right robustness property for the claim being made, and it is the reason the
+pre-registration put the threshold on the ratio rather than on `E` itself.
+
+#### The gap: 6b added FE seeds without adding their controls
+
+**Amendment 6b was under-specified, and I did not catch it until execution.** Every
+matched-learning contrast is computed against arm A *at the same seed*, so the FE
+and A runs share a data order and that noise cancels. **`A_s2` and `A_s3` do not
+exist** — arm A was only ever run at seeds 0 and 1.
+
+Deviation taken, and labelled everywhere it is used: seeds 2 and 3 are contrasted
+against **both** `A_s0` and `A_s1`, and the two results averaged ("pooled-A
+control"). This halves the control's seed noise relative to picking one arbitrarily,
+but it does **not** recover the data-order cancellation a matched control provides.
+**The n=2 seed-matched reading therefore remains the pre-registered primary; the n=4
+reading is a supporting robustness check, not a replacement.**
+
+#### What that costs the powered F(0.20) replication — 6b's other stated purpose
+
+| seed | gave up `inw` | d_era @8448 | control |
+|---|---|---|---|
+| 0 | +0.979 | **−0.805 SIG** | seed-matched |
+| 1 | +0.729 | **−0.874 SIG** | seed-matched |
+| 2 | +1.142 | −0.844 **ambiguous** | pooled-A |
+| 3 | +0.755 | −0.390 ns | pooled-A |
+
+**Direction replicates 4 of 4** (all negative, all favourable). **Significance
+replicates cleanly only in the 2 seeds that have proper matched controls.** Seed 2
+is significant against one A control and not the other — precisely the ambiguity the
+missing control creates — and seed 3 is null against both.
+
+Note on presentation: the per-seed interval for a pooled-A contrast is an *average
+of two CI endpoints*, which is **not a valid confidence interval**. The `sig` flag
+reported is the conservative one (significant against BOTH controls), which is why
+seed 2 reads ambiguous even though its averaged endpoints happen to exclude 0. The
+averaged bounds are descriptive only.
+
+So 6b delivered its first purpose (E at n=4) and only **partially** its second: the
+mean F(0.20) era gain softens from −0.840 (n=2) to **−0.728 (n=4)**, the direction is
+now 4-for-4, but the powered *significance* claim the original arm-F verdict lacked
+is still not available. **Closing it properly needs `A_s2` and `A_s3`, not more FE
+seeds** — a control-side gap, not a treatment-side one. Not queued: the low-dose wave
+(decee3589) is the higher-value use of the card and started at 15:39.
+
+#### AUDIT WAVE 4 (2026-08-03) — tune orchestration, model/optimizers, UCI match-play. New mandate: bugs + simplifications + improvement ideas
+
+Three parallel audits of the remaining never-read half (docs + repros in
+`scratchpad/code_audit_20260803/`: `TUNE_AUDIT.md` T1-T17, `MODEL_OPT_AUDIT.md`
+M4-1..6, `UCI_AUDIT.md` U1-U13; all audited `origin/main 1e6e55717`, CPU-only).
+With this, every production module has had a line-level pass; residual holes are
+declared per-doc (largest: Aurora's CUDA-graph path read but never executed).
+
+**M4-1 (HIGH, training-quality): Aurora's polar iteration under-converges on the
+16 square 512×512 `out_proj` tensors at production `aurora_polar_steps: 8`** —
+update σ_min/σ_max 0.248 (5-seed mean, fp32 = optimistic bound) vs 1.0000 on the
+48-group's 32 rectangular FFN tensors; 12 steps → 0.930, 16 → 1.0000. It is
+conditioning, not the branch (same matrix as 512×511 → 0.401). The attention
+output projections have received partially-preconditioned steps all run; no
+metric reports polar convergence. FOLLOW-UP IN FLIGHT: the Aurora paper claims
+PE-8 reaches ~2e-16 while the QUINTIC iteration has persistent 0.032 spectral
+error — our 0.036 relative error suggests the implementation may be running
+quintic-family coefficients, in which case swapping to true PE-8/CANS-12 at
+UNCHANGED cost is the fix candidate; coefficient identification + a
+pre-registration draft are being produced before any change. NOT slipped into
+the restart — it is a pre-registered experiment when it comes.
+- M4-2: `aurora_uw_effective_ratio_*` sampled only at the LR-sawtooth bottom —
+  10× low by construction, every iteration. M4-3: the holdout
+  `ArrayReplayBuffer` homogenises mixed encoding markers (a `<U4` prototype
+  truncates `'false'`→`'fals'`; mixed rep_fix reads all-True; sidecar round-trip
+  collapses to row 0's value) — on the best-model ruler's own set. M4-4:
+  `TransformerConfig.dropout` unreachable. M4-5: the shared `gen_weight` is
+  exactly scale-invariant under `center_rms` yet carries aux weight decay.
+  M4-6: async holdout eval reads live `_loss_kwargs` off-thread + different
+  compile mode; neither is in the ruler id.
+- Verified clean: 63,084,128 by unique storage reconfirmed; the gen_weight tie
+  SURVIVES a checkpoint round-trip; `matrix_weight_decay` genuinely re-applied
+  on load; the matrix-group LR sawtooth is intended by construction (granularity
+  filed as a decision, not a bug); `mlp_out` selects exactly what its name says.
+
+**U2 (match-play, the sharpest single item of the wave): ANY in-search exception
+ends as `next(iter(board.legal_moves))` — the first legal move in generation
+order** (measured: hangs a knight), while the root policy logits sit unused in
+memory. Exception sources feeding it exist (U1: positions python-chess calls
+over — halfmove≥100, 3-fold, insufficient material — crash the classic-Gumbel
+path with `node_id out of range` on PLAYABLE positions; B7 vloss leak; CUDA
+faults). Given the Cheese loss profile (80% of losses = ONE collapse), this
+mechanism must be excluded before any tuning: the ~5-line fix is root-policy
+argmax fallback + a `bestmove_fallback_used` counter, and the yardstick is an
+existence grep over banked match logs, not an A/B.
+- U3: `movestogo 1` gets HALF its clock (`_MAX_FRACTION_OF_REMAINING` applied
+  after division). U4: `optimum_fraction=0` (the documented A/B baseline) moves
+  THREE axes — never use it as a baseline arm; use
+  `abort_factor=1.0,time_budget_scale=1.0`. U5/U6: bad FEN → silent STARTPOS;
+  bad move list → silent truncation. U7: `Hash` advertised min 1024, enforced
+  at 1 (reuse dead, nodes 4× down at 1MB). U9: 9 of 21 advertised UCI options
+  inert at the 1-GPU default, 2 warn. U10: ponderhit rebuilds with
+  `copy(stack=False)` → 72/146 planes differ (history worth −3..−5cp). U12:
+  Gumbel path costs ~1.71 KB/node vs walker 0.06 — the sizing fact behind the
+  old tree-memory collapse. Time-management sweep instrument
+  (`scripts/validate_time_mgmt.py`) EXISTS and has never produced a ledger
+  verdict; the one recorded 30+10 game left +535s unspent.
+- Blast radius: W3/#135 DEPRIORITISED (1-GPU default hardcodes
+  VLOSS_MODE_LEGACY; root-parallel needs ≥2 devices and has no knob); I5/#136
+  MOOT at defaults (`eval_cache_entries: 0` — cache never constructed).
+
+**T1-T17 (tune orchestration): the defect surface is the config LIFECYCLE; the
+phase loop itself is the best code in the repo.** T1: `opp_strength_ema` —
+GPBT's own objective metric — is persisted, read at restore, and DISCARDED;
+6/6 live process segments re-seed the EMA from the instantaneous value on the
++0.110-biased post-restart row. T4: the live reload is ADD/UPDATE-only — a
+deleted/nulled key reverts NOTHING, silently; a rejected reload freezes the
+whole overlay at one log.warning (six raise sites enumerated). T5: keys stick
+across restarts — 7 ghost keys live today, including `salvage_seed_pool_dir` =
+the −494 Elo swap pool, which a checkpoint-less resume would silently
+warm-start from. T2: 10 more construction-only keys unclassified (the realized-
+config audit vouches for them wrongly); `iterations: 750` is per-PROCESS. T3:
+`backpressure_paused_*` structurally 0.0 (the pause flag is one yaml flip from
+live, so the dead column is one flip from mattering). T8: 1004 MB unpruned
+quarantine in a dead trial. T10: **salvage-export drops `gate_state.json` /
+`best.json` / `best/`** — revert points bank weights but not gate/ratchet
+state. GPBT verdict: genuinely inert, mechanism nailed (num_samples=1 ⇒
+_quantiles ([],[]) ⇒ exploit unreachable; live pickle shows 0 perturbations) —
+no half-alive path.
+
+**Simplification candidates (decided calls, not a deferral queue):** dead
+optimizers soda/cosmos/cosmos_fast (~824 LOC; KEEP muon as Aurora's ablation
+arm) · population/exploit half of replay_exchange.py (~500 LOC + 13 keys; 5
+shared_* columns 0.0 on 478/478 — gate behind num_samples>1 if not deleted) ·
+scheduler builders collapse (~125 LOC) · gate_* corpses (~25 LOC) ·
+TransformerConfig.dropout (~8 LOC) · replay/buffer.py::balance_wdl (46 LOC, no
+caller) · UCI ponder path (~150 LOC — reachable and BROKEN (U10), fix or
+hard-refuse `go ponder`).
+
+**Improvement shortlist (each with pre-committed yardstick in its doc):**
+U2 fallback (existence check) · time-management sweep (1 GPU-day, zero code,
+pre-registered command in UCI_AUDIT — baseline arm warning above) · realized
+search-shape print + walkers-1-vs-2 A/B · per-tensor polar steps or coefficient
+swap (awaiting M4-1 addendum) · polar-convergence metric in _uw_stats · live-
+reload observable (config_reload_seq; the silent-freeze class has cost ≥15.8
+days once) · restore opp_strength_ema (~5 LOC; negative control banked 6/6) ·
+derive the construction-only classification via ast (assert the axis state).
+
+Fix routing: wave-3 PRs (#323 merged, #324 in confirm) unchanged; wave-4
+remediation batches after #324 lands — (E) UCI safety (U2+U1+U5/U6+U7), (F)
+tune lifecycle (T1+T4 observable+T2), (G) model instruments (M4-2, M4-3,
+polar-convergence metric). P1-class decisions (difficulty scale) and the
+Aurora coefficient change remain pre-registration-gated.
+
+#### M4-1 RESOLVED (2026-08-03, MODEL_OPT_AUDIT.md addendum): the coefficients ARE Polar Express — the failure is CONDITIONING, and fp16 saturates at 12 steps
+
+The quintic-coefficients hypothesis from the wave-4 entry is **refuted**:
+`_POLAR_EXPRESS_COEFFS_RAW` is 8 distinct triples decaying bit-exactly to the
+NS5 fixed point — a shape no constant iteration produces; pre-normalization
+(X0 = M/||M||_F, fp32, before the work-dtype cast) is present and correct. The
+0.032≈0.036 match with the paper's quintic error was coincidence.
+
+**The real cause is a hard bound:** p(x)≈a·x for small x, so an N-step
+composition lifts σ_min by at most Π aₖ. PE-8 delivers 6,363; the square
+512×512 momentum at its measured κ≈3,477 needs 3.05e4 (fails by 4.8×), while
+the rectangular tensors at κ≈9.8 need 119 (53× headroom) — **the rectangular
+tensors are ~350× better conditioned, which is the entire square/rectangular
+split.** No 8-step quintic scheme can fix it (Chebyshev ceiling argument in the
+addendum) — "swap coefficients at unchanged step count" is NOT available.
+
+**Precision (the direct question): 8 steps fails in ALL THREE precisions**
+(fp32 0.312 / bf16 0.333 / fp16 0.317) — precision is not the discriminator,
+step count is. Once steps suffice, precision sets the ceiling, and **in
+production fp16, 12/16/24 steps are indistinguishable: `polar_steps: 12` is the
+saturation point** (corrects the fp32-derived "16" in the original finding).
+
+**Recommendation (A8 draft pre-registration in the addendum): square-tensors-
+only `polar_steps` 8→12** — 0.317→0.998 in fp16, rectangular untouched, ≈+17%
+of polar work — plus the free `polar_safety` fix (the safety adjustment is
+applied twice at step 1, costing 9.4% of reach; 1.01→1.00 measured +7.6%).
+Standard-Muon treatment for the squares would be WORSE (NS5 Π a = 485, 13×
+short). CANS-12 untested (coefficients unverifiable offline; cost-matched cubic
+ceiling is HIGHER, 3¹²=5.3e5 — experiment pre-wired in
+`md_polar_conditioning.py`, deciding cell κ 3,000–6,000). Owed before any
+change ships: re-run on REAL out_proj momentum on GPU fp16 (Gaussian surrogates
+may overstate κ), the polar-convergence metric ships WITH the change (a guard
+must share the criterion's instrument), and the per-shape key is
+restart-gated (unknown key rejects the whole live reload).
+
+#### M4-1 ADDENDUM II (2026-08-03): REAL momentum overturns the Gaussian analysis — tight-safe normalization REJECTED, CANS DROPPED, recommendation = GLOBAL polar_steps 12 (which is the CODE DEFAULT; production's 8 is an unexplained override)
+
+Real Aurora momentum extracted from live `checkpoint_000478` (48 params, 0
+missing buffers). It is nothing like the Gaussian surrogates: κ 4.8e4–5.7e6
+(vs 1.7e3), ‖M‖_F/σ_max only 1.18–2.49 (vs 11.4), **stable rank 1.4–6.2** —
+momentum is nearly low-rank. TWO earlier audit claims RETRACTED: "rectangular
+~350× better conditioned" (false — real rect κ 4.8e4–8.6e4, same order as
+squares) and the 0.248 magnitude (real: 0.0209). The
+diff-the-file-you-measured rule biting the audit's own work.
+
+**The deciding cell: production PE-8's SIGNIFICANT-subspace ratio = 1.0000.**
+The top ~490 of 512 directions are already orthogonalized exactly; the entire
+deficit lives in ~20 directions below 1e-3·σ_max — the noise floor of a
+stable-rank-3 matrix. Effect-size expectations for any loss impact drop
+accordingly (consistent with the NorMuon prior; the stage-2 rig A/B keeps the
+null pre-declared plausible).
+
+- **Tight-safe σ_max normalization: REJECTED by its own pre-committed bar**
+  (0.0374 vs PE-12's 0.2489; needed ≥0.99×). The mechanism is real and the
+  FREE Gelfand k=2 bound saturates it exactly (identical to the exact-σ_max
+  oracle) — but on real momentum Frobenius is already nearly tight (slack
+  1.18–2.49× < one PE step's 1.875×). Pre-committing the bar before the
+  deciding cells is what made this a verdict rather than a negotiation.
+- **Square-only scoping: REJECTED** — a Gaussian artifact; ALL 48 tensors are
+  ill-conditioned on real data. The arm becomes GLOBAL `aurora_polar_steps: 12`
+  (+50% polar work — still negligible end-to-end; SF CPU is the binding
+  resource).
+- **CANS: DROPPED, not deferred** — won on Gaussians (1.0000 vs 0.357 at
+  matched 24 matmuls), INVERTED on real data (breaks the dominant subspace,
+  sig 0.4185, 6× production's orth error). Implemented from the paper's own
+  Prop 3.3/eq 4/Alg 1 with passing sanity checks.
+- **Safety results:** s < σ_max is a CLIFF (1.0001 → 0/16 non-finite; 1.1 →
+  16/16 NaN); power iteration measured BELOW σ_max on 11/20 real tensors
+  (unsafe-lower class confirmed empirically). Interaction rule: Frobenius →
+  safety 1.00 free; tight normalization → safety 1.01 LOAD-BEARING (0.09%
+  from the cliff); never both. Keep `polar_safety: 1.01` with the current
+  normalization.
+- **Gram-NS/QuACK deferral criterion corrected:** real rect κ 4.8e4–8.6e4 ⇒
+  Gram-squaring → 2.3e9–7.4e9 — inadmissible on BOTH shapes, not just squares.
+- **Provenance surprise: the code default for `aurora_polar_steps` is ALREADY
+  12; production's 8 is an unexplained yaml override from `ecd2101a0`.** The
+  restart's minimal-core config review should treat the 8 as a candidate DROP
+  (reverting to default 12), pending the A8 stage-2 rig verdict.
+
+A8 v2 (in the audit doc + PRECOMMIT_tight_safe_norm.md): stage 2 is a ONE-LINE
+yaml change on the rig (`aurora_polar_steps` is plumbed via
+trainer_kwargs_from_config), full command + I3 instrument gate (metric must
+read ≥0.99 in the arm or no verdict) + bars + null-plausible + revert point
+written; queue on the card after the FE low-dose wave drains.
+
+**Incident (disclosed by the auditor): the audit's four parallel CPU torch jobs
+perturbed the FE rig** — FE10_s1/s2 cadence +14.6%/+13.3% at chunk 40 despite
+nice 19 and zero GPU use (nice protects CPU priority, not memory bandwidth).
+Killed on detection. Chunk-40 `wall_s` in the low-dose wave is contaminated by
+the AUDIT, not the arm; no FE verdict clause reads wall_s, so the verdict is
+unaffected. No GPU fp16 timing leg was run — matmul counts are the only cost
+metric of record.
+
+#### AMENDMENT — the low-dose wave needs `A_s2` and `A_s3`. Committed BEFORE any FE10 result was inspected.
+
+**Sequence, stated plainly because it is what makes this legitimate:** `FE10_s1` and
+`FE10_s2` finished at ~17:40. **I have not computed or looked at a single regret
+number from either.** This amendment is written from a purely structural argument
+about the controls, then committed, and only afterwards will the verdict be computed.
+
+**The problem.** Every matched-learning contrast is scored against arm A *at the same
+seed*, so the FE and A runs share a data order and that noise cancels. Arm A exists
+only at seeds 0 and 1. The low-dose wave runs `FE10` at seeds 1, 2, 3 — so
+**`FE10_s2` and `FE10_s3`, half the seeds the verdict rests on, have no matched
+control.** This is the same gap disclosed in the 6b addendum (fb5c42edc); I found it
+there *after* pre-registering this wave in decee3589, and it lands much harder here
+because the low-dose verdict actually depends on per-seed significance.
+
+**Why that is not survivable by falling back to pooled-A.** The pooled-A substitute
+is measurably conservative: on `FE20_s2` it produced an **ambiguous** reading —
+significant against one A control and not the other — where a matched control plausibly
+would have resolved it. Clause (a) of decee3589 requires era SIG at both steps in
+**>=3 of 4 seeds**. With 2 of the 4 seeds scored on a conservative instrument, **the
+rule could fail for a control-side reason while the treatment effect is real.** That is
+a verdict read off an instrument that is known to be degraded — the exact thing the
+audit's method rules forbid.
+
+**Action, pre-committed now:** run **`A_s2`** and **`A_s3`** (arm A, seeds 2 and 3,
+otherwise identical config), chained to start after the low-dose queue drains so they
+never take a slot from it. The low-dose verdict is then computed with **all four
+`FE10` seeds on seed-matched controls**.
+
+**Instrument asymmetry, disclosed in advance:** the new controls will run the denser
+eval grid (every 4 chunks from chunk 24, 10 eval points) while `A_s0`/`A_s1` used
+every 8. The matched-learning solver interpolates the control's in-window curve, so a
+denser control grid means *less* interpolation error. The effect is that seeds 2 and 3
+will be scored slightly more accurately than seeds 0 and 1 — a difference in precision,
+not in direction, and it cannot manufacture significance because `interp_frac` is
+reported for every contrast.
+
+**If `A_s2`/`A_s3` do not complete**, the verdict is reported on pooled-A with the
+conservatism stated as a limitation, and any FAIL of clause (a) is explicitly labelled
+**"fails on an instrument known to be conservative in 2 of 4 seeds"** rather than
+recorded as a clean negative. **A PASS under pooled-A would stand**, since a
+conservative instrument cannot manufacture significance — the asymmetry only matters
+in one direction, and pre-committing that asymmetry now is what stops it being used
+selectively later.
+
+## 2026-08-04 — ADDENDUM to the 07-31 policy-target screen (this file :17278-17565): conjugacy audit — VERDICT REFINED to SUSTAIN WITH CAVEAT (pre-registered cell iii)
+
+Non-author review of the banked harness found a specification defect the entry did not address: R1 = E_p[deep cp regret] is LINEAR in the target p, so at fixed entropy its minimizer is exactly softmax(cp/T) — arm B_cpgap IS the Gibbs distribution in a shallow estimate of the very cost R1 scores (A_prod is Gibbs in a saturating transform of it). The banked −11.76 cp is therefore measured in the unit for which the candidate is the analytic minimizer. The 07-29 pre-registration flagged this circularity; the 07-31 run answered it with "the reference is DEEPER", which fixes the ESTIMATOR, not the conjugacy.
+
+Falsification pre-registered BEFORE any comparative number (scratchpad/cp_target_screen_20260804/PRECOMMIT.md): same arms, same 2000 positions, temperatures FROZEN as inherited (per-ruler recalibration would hand each arm a fresh conjugacy), four outcome cells with numeric bands committed in advance, R5 = target mass on moves losing >100cp to deep SF as PRIMARY neutral ruler (collapse avoidance is the mechanism of interest; R4 top-1's discreteness makes ties cheap). Gates: banked screen replicated BIT-IDENTICAL (−11.764 [−17.031, −6.300]); rebuild-vs-stored sf_policy_target TV 6.99e-5 ≈ the module's documented float precision (bit-identity is not its claim).
+
+RESULTS:
+- Mirror tautology CONFIRMED: rel(R1) = −0.428 but rel(R3 = E[deep WDL loss], A_prod's exact conjugate) = +0.978 SIG [+0.00196, +0.00244] — in win-probability units the same target at the same temperatures is WORSE, giving back 98% of the span. The cp headline is a units artifact.
+- PRIMARY NEUTRAL R5: B WINS, −0.02457 [−0.02997, −0.01941] SIG, replicated in the half-swap (−0.02062 [−0.02541, −0.01610] SIG). R4: tie in both halves — a genuine null (all positive controls pass on every ruler).
+- RULER-INVARIANT CORE: on all four rulers — two conjugate to opposite arms, two to neither — B is better in won AND lost buckets and worse in balanced, EVERY cell SIG. The R1/R3 aggregate sign flip is purely a re-weighting of those three cells. Unit-free: blunder mass (>100cp to deep SF) 5.08% → 2.62% overall, 13.27% → 5.70% in won, 16.73% → 6.88% in lost; balanced 0.140% → 0.391% (WORSE — goes in any deployment entry's Confounds line).
+- Negative controls: primary ruler passes both halves (leak 2.5%/9.3% of effect, n.s.). R3 shuffle FAILS in the swap half (−5.6e-4 SIG) ⇒ R3 VOID there per pre-reg — non-fatal (feeds only the RETRACT cell, not reached; its seed-0 control passed where the mirror is measured; leak sign OPPOSES the effect, i.e. conservative). The leak pattern — present on both conjugate rulers, absent on both neutral ones — is a third independent line of evidence for the conjugacy diagnosis.
+
+VERDICT (pre-committed cell iii governs; the R5-WIN + R4-TIE outcome satisfies both ii and iii and iii is the more specific and conservative): SCREEN SUSTAINED WITH CAVEAT. The cp-ranked target remains a better teacher where it matters — decisive-position blunder mass roughly halved — but the banked headline must NEVER be quoted as "11.8 cp better": that number is denominated in the unit the candidate minimizes by construction. Quote blunder-mass units. Deployment remains a separate pre-registered decision (unchanged).
+
+Method disclosure: the screen agent's own parity gate tripped on its first run (its script re-normalized an already-normalized float32 vector); the script was fixed to bit-parity 0.00e+00 on all five arms and the threshold was NOT loosened. Artifacts: scratchpad/cp_target_screen_20260804/ (PRECOMMIT.md, RESULTS.md, ruler_spec_test.py, wiring_check.py, per-position CSVs 2000 rows × 8 arms × 6 rulers per half, replication dumps). This addendum appends; the 07-31 entry is unmodified.
+
+### VERDICT — LOW-DOSE WAVE: FE10 does NOT promote. **The low-dose bend is WITHDRAWN.**
+### And it retracts my own "inverted dose-response" reading from the FE verdict.
+
+Pre-registered decee3589; missing controls added 086b247a4 (committed before any FE10
+result was inspected). All four `FE10` seeds are scored against **seed-matched**
+`A_s0..A_s3`, so the conservative pooled-A fallback never had to be used and the
+asymmetric-fallback clause is moot.
+
+#### The pre-registered clauses — all three FAIL
+
+| seed | @7040 gave up | @7040 era | @8448 gave up | @8448 era |
+|---|---|---|---|---|
+| **s0** | **+0.073 IN** | **−1.253 SIG** | **+0.107 IN** | **−1.039 SIG** |
+| s1 | +0.208 IN | −0.448 ns | +0.445 OUT | −0.272 ns |
+| s2 | −0.449 OUT | −0.518 ns | +0.466 OUT | −0.576 ns |
+| s3 | +0.595 OUT | −0.386 ns | +0.647 OUT | −0.873 SIG |
+
+- **(a) ERA** beyond 0.394 with CI excluding 0 at BOTH steps: **seed 0 only — 1 of 4**,
+  needed >=3. **FAIL.**
+- **(b) INW** within 0.307 at BOTH steps: **seed 0 only — 1 of 4**, needed >=3. **FAIL.**
+- **(c) pooled OOW**: @8448 **−0.225 [−0.619, +0.152] ns** (bar 0.638, CI includes 0);
+  @7040 **+0.020 — positive**, violating the direction guard. **FAIL.**
+
+**`FE10` PROMOTES: NO.**
+
+#### The pre-committed negative reading applies, verbatim
+
+decee3589 stated: *"If (a) fails ... then the n=1 free-lunch reading was a SEED DRAW,
+and the low-dose bend is WITHDRAWN ... retracted rather than softened."*
+
+**Clause (a) failed 1 of 4. The low-dose bend is WITHDRAWN.**
+
+Seed 0 was an outlier **on both legs simultaneously**, which is exactly why it looked
+like a free lunch: its era gain (−1.039) is 1.5-3.8x the other three (−0.272, −0.576,
+−0.873), *and* its cost (+0.107) is 4-6x smaller than theirs (+0.445, +0.466, +0.647).
+Neither leg replicated. The 4-seed mean cost is **+0.416 — outside the `inw` bar** the
+n=1 point sat comfortably inside.
+
+#### RETRACTION — the "INVERTED dose-response" in the FE verdict (f7194ad40 §4) was the same artifact
+
+That entry reported recovery falling monotonically with dose (1.04 > 0.84 > 0.61) and
+called 0.35 "actively harmful". The 1.04 was the n=1 `FE10_s0` point. With every dose
+now seed-pooled against matched controls:
+
+| dose | n | era gain @8448 [95% CI] | `inw` cost | pooled `oow` |
+|---|---|---|---|---|
+| 0.05 | 2 | **+0.709 [+0.320, +1.103] SIG** | +0.229 | +0.085 ns |
+| 0.10 | 4 | **+0.690 [+0.351, +1.036] SIG** | +0.416 | −0.225 ns |
+| 0.20 | 2 | **+0.839 [+0.271, +1.402] SIG** | +0.854 | +0.039 ns |
+| 0.35 | 2 | +0.614 [−0.030, +1.272] ns | +1.430 | +0.456 ns |
+
+**Era recovery is FLAT at ~0.7 cp across a 7x dose range.** It is not inverted, and it
+does not rise with dose either. The monotone fall I reported was one outlier seed at
+one dose. Retracted.
+
+What survives from that reading, in weaker form: **cost rises ~6x across the range
+(0.23 -> 1.43) while recovery does not move**, so low dose is strictly more
+*efficient* — same ceiling, less learning surrendered. 0.35 remains the worst cell
+(only non-significant era gain, highest cost), but "actively harmful" overstated it.
+
+#### The finding that actually stands, and it is a hard negative
+
+**`oow` never moves. At any dose. In any seed. Ever.** All four pooled `oow` readings
+are ns, three of the four have the WRONG sign, and the best of them (−0.225 at dose
+0.10) is a third of its bar. This is the pre-registered fallback wording, now
+established across four doses with matched controls rather than asserted from one arm:
+
+> **Forgetting recovery is available cheaply — ~0.7 cp for as little as 0.23 cp of
+> in-window learning — and it does not convert to out-of-window strength.**
+
+Rehearsal does exactly what a rehearsal buffer should: it stops the net forgetting the
+old era. That recovery is real, significant at three of four doses, and cheap. It buys
+**nothing** on held-out games from the current era. The forgetting axis and the
+generalisation axis are decoupled.
+
+#### What this closes
+
+The data axis is now closed on the same terms as the others. Across four waves:
+composition (dead), optimizer/regularization (dead), capacity (dead, reversed),
+averaging/EMA (dead — `ema4000` refuted, `ema2000` fails its `inw` clause), rehearsal
+dose 0.05-0.35 (recovers forgetting, converts to nothing), and the rehearsal x EMA
+interaction (loop-invariant, levers substitute). **No training-regime intervention
+tested in this experiment converts the search-derived targets into out-of-window
+improvement.** That is the answer to the original question, and it is negative.
+
+#### Instrument notes
+
+- N15 resolved: control-run cadence is 59-101 s/chunk, versus the 117-173 s/chunk
+  contaminated window. Arm A is faster than the FE arms by construction (one eval
+  variant, no rehearsal gather, no EMA shadows), so this is not comparable to the FE
+  baseline directly — but it is nowhere near the contaminated range.
+- `interp_frac` ranged 0.20-0.96 across the 8 `FE10` contrasts; the denser eval grid
+  on `A_s2`/`A_s3` is what kept those interpolations short.
+- `FE05` is descriptive only (2 seeds, cannot satisfy seed agreement) and is reported
+  in the dose table above, not as a verdict.
+
+### PRE-REGISTRATION — A8 v2 stage-2: global `aurora_polar_steps` 8 vs 12
+
+Committed BEFORE any A/B run launched. References: MODEL_OPT_AUDIT.md Addendum II,
+ledger 210f6810a, and the PR #327 entry whose **RESTATED instrument gate** is
+reproduced and adopted verbatim below.
+
+#### Code provenance — the rig runs DIFFERENT code from every prior wave
+
+Every earlier wave imported `chess_anti_engine` from the live tree
+(`/home/josh/projects/chess`, currently `ba0656728`), which predates PR #327 and has
+no polar instrument. This wave runs a dedicated worktree at
+`.../scratchpad/wt-a8v2`, **SHA `0333932cf`** — the #327 merge itself. The live tree
+was never checked out or modified; `git worktree add --detach` only creates a new
+directory. C extensions were rebuilt in the worktree
+(`scripts/build_production_extensions.py`, GCC 15.3 + native + LTO, 3 `.so`), because
+3 `.c`/`.h` files differ between `ba0656728` and `origin/main`.
+
+**⚑ A defect found while wiring this, worth its own note.** `PYTHONPATH` pointing at
+the worktree was **silently ignored**: `sys.path[0]` is the process CWD, and every
+driver in this rig does `cd /home/josh/projects/chess`, so the live tree won every
+import. The first import test I ran "passed" while resolving to the WRONG tree — the
+signature defect exactly (a value accepted, then discarded). The fix is an explicit
+`ABSORB_REPO` env var consumed before the imports, and the run header now banks
+`repo_resolved` read from the imported module's own `__file__` plus `repo_sha` from
+`git -C` on that path — i.e. where Python actually went, never where it was asked to
+go. Both smoke runs confirm `repo_resolved` = the worktree and `repo_sha` =
+`0333932cf9b8`.
+
+(The editable install's `MAPPING` points at `/tmp/chess-pr12-fix`, which no longer
+exists, so the finder is inert and falls through to `sys.path`. Noted so nobody
+re-diagnoses it.)
+
+#### Design
+
+| | arm | `aurora_polar_steps` | seeds |
+|---|---|---|---|
+| control | `A8` | **8** (production's yaml override) | 0, 1 |
+| arm | `A8` | **12** (the code default) | 0, 1 |
+
+4 runs. Identical in every other respect — same corpus, init, batch 256, 176
+steps/chunk, 48 chunks (8,448 steps), eval grid (every 8 to chunk 24 then every 4),
+banking at chunks 32/40/48, same seeds, same LR schedule. **Both sides pass the flag
+explicitly**, so the control is stated rather than inherited and a missing flag is a
+hard error rather than a silent default.
+
+Note the control is NOT reusable from the FE wave's `A_s0`/`A_s1`: those ran on
+pre-#327 live-tree code. Fresh controls on the worktree are required and are included.
+
+#### 1. INSTRUMENT GATE — adopted verbatim from the #327 RESTATED gate
+
+Mapping to this rig: a "live iteration" is one **chunk** (the trainer arms
+`collect_optimizer_stats` on the last step of each `train_steps` call, so there is
+exactly one polar sample per chunk). Medians are over **chunks 1-5**, logged to
+`polar.jsonl` every chunk rather than at eval points, because the eval grid's first
+point is chunk 8 and an eval-only log could not answer this gate at all.
+
+- **PRIMARY, binary:** `aurora_polar_steps_configured` == 12.0 on every arm row and
+  == 8.0 on every control row, with `aurora_polar_sv_samples` == 2.0 and
+  `aurora_polar_sv_errors` == 0.0. **If this fails, the change did not reach the
+  optimizer and NO verdict is readable — abort and report, do not interpret.**
+- **PRIMARY CONFIRMING, paired arm/control on the same designated tensor**, medians
+  over chunks 1-5:
+  - square `sv_ratio` ratio **>= 8.0**
+  - square `orth_err` ratio **<= 0.70**
+  - rect **in the ARM**, absolute: `sv_ratio` **>= 0.99** and `orth_err` **<= 0.005**
+- **A ratio ~= 1.0 means the setting silently did not take effect. That is an ABORT,
+  not a null.** The distinction is the whole point of the gate: "no effect on the
+  optimizer" and "effect on the optimizer, no effect on learning" are different
+  findings and must not be reported as the same one.
+- **SUPPORTING, not bars** (expected designated-tensor readings): square 0.0273 /
+  0.2114 control and 0.3275 / 0.0614 arm; rect 0.3714 / 0.0381 control and
+  1.0000 / 0.0000 arm.
+
+**Smoke evidence already in hand** (tiny run, batch 64 x 4 steps, both sides): binary
+leg passes on both; square `sv_ratio` ratio **18.1**, square `orth_err` ratio
+**0.307**, rect arm **0.9984 / 0.0017** — all four confirming legs clear. Rect
+control read 0.3879 / 0.0376 against an expected 0.3714 / 0.0381. Square `sv_ratio`
+came in below expectation on both sides, which is anticipated: at 4-20 steps the
+momentum is nearly rank-1, and the ledger states the absolutes are expectations, not
+bars, with 94x across-tensor spread. **The gate is re-evaluated on the real runs and
+only that evaluation counts.**
+
+#### 2. OUTCOME — NULL IS PRE-DECLARED AS THE EXPECTED RESULT
+
+Prior: NorMuon, plus PE-8's significant-subspace ratio already reading 1.0000. Both
+arms see identical data for identical steps, so no learning is being traded and
+**matched STEPS is the primary comparison** (matched-learning is reported as a
+secondary only if `inw` diverges beyond its bar).
+
+Bars carry over unchanged: `oow` **0.638**, `inw` **0.307**, `era` **0.394**, at
+verdict steps **7,040 and 8,448**, paired game-clustered bootstrap.
+
+- **REGRESSION** — arm worse than control beyond the bar on `oow` OR `era`, CI
+  excluding 0, at both verdict steps, sign-consistent across both seeds.
+  -> **Keep 8; the production override was load-bearing.**
+- **IMPROVEMENT** — arm better beyond the bar, CI excluding 0, **on seed-pooled rows**
+  (per the "judged only if SIG on pooled seeds" instruction), at both verdict steps.
+  -> Bonus; report as such.
+- **NULL** — anything else, including a within-bar difference of either sign.
+  -> **12 is free insurance and ships at restart per the open_decisions default.**
+
+I expect NULL and am recording that now so a small favourable wobble cannot be
+narrated into a win.
+
+#### 3. COST
+
+`opt_step_time_s` is banked every chunk (new `tm_opt_step_time_s` column plus
+`polar.jsonl`). Reported as the arm/control ratio over all 48 chunks per seed.
+Expected negligible — training is ~16% of loop time and the polar step is a slice of
+that; #327 banked ~129 ms/iter for the metric itself. **No cost bar is set here**;
+the number is reported, and a cost verdict is not this wave's to make.
+
+#### 4. Discipline
+
+No peeking before all four runs complete. N15's `wall_s` caveat no longer applies
+(the external CPU probe has drained; load 4.8 at launch) but cadence is stated in the
+verdict regardless. The neutral frozen-audit ruler is run on all four sets of final
+weights.
+
+**Already delivered, not owed:** the neutral audit on the two banked H2 EMA
+checkpoints — `H2_ema500` **53.92 cp**, `H2_ema2000` **52.92 cp** — was completed and
+banked in ledger 00be40af1 and restated in 6dbccc872. If a DIFFERENT pair of EMA
+checkpoints is meant, name them and I will run those.
+
+#### AMENDMENT — A8 v2 square `sv_ratio` leg RE-BASED for this momentum regime
+
+**Self-disclosure, up front.** Written AFTER the gate reading and BEFORE any outcome
+metric was computed or inspected. Argued from instrument structure only. The
+procedure and bars below are committed before the derivation is run; step 3's number
+is mechanical once it runs.
+
+**The original leg's FAIL is recorded, not erased:** live arm/control square
+`sv_ratio` median over chunks 1-5, seed 0 = **5.11 against a >= 8.0 bar. FAIL.**
+That reading stands in the record permanently. The bar is re-based; the measurement
+is not revised.
+
+**Why re-basing rather than aborting.** The gate exists to catch a silent no-op,
+whose signature is `steps_configured` == 8 with all ratios ~= 1.0. The observation is
+the opposite on 4 of 5 legs, including the binary proof-of-effect leg #327's reviewer
+verified by intervention: `steps_configured` 12 vs 8 read off the live param group,
+square `orth_err` ratio 0.336, rect `sv_ratio` 0.399 -> 0.998 (2.6x), rect `orth_err`
+0.0372 -> 0.0017 (23x). The failing leg is the single-tensor statistic **already
+re-based once for exactly this class of error** — #327's own words, *"A correctly
+installed instrument on a correctly applied arm would have failed my gate, for the
+wrong reason"* — now meeting a third momentum regime, with a per-chunk ratio of
+1.16 / 2.61 / 4.71 / 5.33 / 25.06, a **22x spread** that makes its 5-sample median
+uninformative on its face.
+
+**Procedure, pre-committed:**
+
+1. Capture the designated square tensor's momentum — the FIRST square parameter of
+   the Aurora group, which is the same tensor the live column samples — from the
+   **control** arm at chunks 1-5. Specifically the tensor fed INTO
+   `_aurora_update_for_param` (`state["momentum_buffer"]`, after the nesterov lerp),
+   since the live column measures `polar_convergence` of that call's OUTPUT.
+   The rig is deterministic (proven in 6b: `FE20` raw was bit-identical to `F`,
+   matching `final.pt` sha256), so a 5-chunk re-run at the control's seed reproduces
+   that momentum exactly rather than approximating it.
+2. Offline, through the production `_aurora_update_for_param` in the arms' live work
+   dtype (fp16 on CUDA, `aurora_polar_method: polar_express`, `safety 1.01` — matched
+   to what the arms actually run), compute `polar_convergence` `sv_ratio` at
+   **PE-8** and **PE-12** on that captured momentum, per chunk. This is #327's own
+   calibration procedure applied to this rig's population instead of
+   `checkpoint_000478`'s.
+3. **Derived bar = 0.5 x median over the 5 chunks of (PE-12 `sv_ratio` / PE-8
+   `sv_ratio`).** The 0.5 factor is a safety margin absorbing live-vs-offline and
+   fp16 variance, and is stated as exactly that — not tuned, not chosen after seeing
+   the live ratio.
+4. **Amended leg:** live arm/control square `sv_ratio` median (chunks 1-5) **>= the
+   derived bar**.
+5. **DEGENERATE CLAUSE, decided now:** if the offline derivation itself reads
+   **< 2.0** — i.e. this momentum does not separate 8 from 12 on `sv_ratio` at all —
+   the leg is declared **UNINFORMATIVE IN THIS REGIME**: not passed, not failed. The
+   gate then rests on the four passing legs plus the offline verification, and that
+   is disclosed prominently in the verdict rather than buried.
+6. **This can still fail in the case the gate exists for.** Had the arm silently run
+   8, the offline derivation would show the expected 8-vs-12 separation while the
+   live column read ~= 1.0, and the amended leg would fail. Re-basing the bar does
+   not disarm the no-op detector; it moves the bar onto this rig's own population.
+7. **This is the LAST amendment.** If the re-based leg fails, the wave aborts for
+   real. No second re-base.
+
+Outcome clauses are unchanged from the pre-registration (aebc3cf45): NULL remains
+pre-declared and plausible; null ships 12 as free insurance, regression keeps 8,
+improvement counts only if SIG on pooled seeds. Outcomes stay unread until this leg
+is settled.
+
+### VERDICT — A8 v2 stage-2: **WAVE ABORTED.** The re-based leg failed, and the
+### derivation REFUTED the reasoning that justified re-basing it.
+
+Pre-registration aebc3cf45; re-base amendment 678479216 (item 7: last amendment, a
+failure aborts for real). All numbers below re-verified from banked dumps after an
+API drop, not from mid-flight output.
+
+#### The offline derivation — and it falsifies my own hypothesis
+
+Designated square tensor (512x512, `nesterov=False`, so the captured
+`momentum_buffer` IS the polar path's input), control momentum, chunks 1-5, through
+production `_aurora_update` at the arms' live dtype:
+
+| chunk | PE-8 `sv_ratio` | PE-12 `sv_ratio` | ratio |
+|---|---|---|---|
+| 1 | 0.014534 | 0.177988 | 12.25 |
+| 2 | 0.001552 | 0.019232 | 12.39 |
+| 3 | 0.004170 | 0.051578 | 12.37 |
+| 4 | 0.001250 | 0.015503 | 12.40 |
+| 5 | 0.006331 | 0.078189 | 12.35 |
+
+**Median 12.369. Derived bar = 0.5 x 12.369 = 6.184.** Not degenerate (>= 2.0).
+
+**I re-based this leg on the theory that this rig's momentum regime differs from
+`checkpoint_000478`'s. The derivation says it does not.** #327 measured a centre of
+**12.07** across designations (range 11.40-12.36); this rig's own momentum gives
+**12.369**, with a per-chunk spread of **1.2%**. The regimes agree to within 2.5%.
+**The original >= 8.0 bar was appropriate for this rig all along, and my stated
+reason for moving it was wrong.** The re-base was procedurally legitimate — argued
+from instrument structure, committed before outcomes — but its premise is falsified
+by the very measurement designed to test it.
+
+#### The amended leg
+
+| seed | control | arm | live ratio | vs bar 6.184 |
+|---|---|---|---|---|
+| 0 | 0.0176 | 0.0899 | **5.11** | **FAIL** |
+| 1 | 0.0052 | 0.0645 | **12.40** | PASS |
+
+The amendment's item 4 is singular ("live arm/control square `sv_ratio` median >=
+that derived bar") and was written when only seed 0 existed. Seed 0 fails. Read as
+written, or read as "both seeds", the leg **FAILS**; only a pooled-or-any-seed
+reading would pass, and **I will not resolve an ambiguity I introduced in the
+direction that unlocks outcomes.** Per item 7: **the wave aborts. No second
+re-base.**
+
+#### What actually went wrong — an instrument finding for #327
+
+Seed 1 landing on **12.40** against an offline **12.369** is the tell. The live
+column and the offline derivation are not measuring the same thing:
+
+* **Offline** compares PE-8 and PE-12 on **ONE shared momentum**. Spread 1.2%.
+* **Live** compares the arm's PE-12 on the **ARM's** momentum against the control's
+  PE-8 on the **CONTROL's** momentum. After step 1 those trajectories diverge, so
+  numerator and denominator come from different matrices. Per-chunk spread **22x**
+  (1.16 / 2.61 / 4.71 / 5.33 / 25.06 on seed 0).
+
+**#327's premise — "the arm/control RATIO on the SAME designated tensor is the
+statistic that survives the choice of tensor" — is true for a same-momentum
+comparison and does NOT transfer to a live cross-run column.** The designated tensor
+is the same *parameter slot*, not the same *tensor value*. Seed 0 and seed 1 are the
+same statistic sampled twice: one landed on the expected value, one did not. A
+5-sample median of a 22x-spread quantity was never going to be a reliable bar.
+
+**Concrete recommendation for the column:** drop the cross-run square `sv_ratio`
+ratio as a gate leg. The three legs that were rock-steady across both seeds are
+`orth_err` ratio (0.336 / 0.329), rect arm `sv_ratio` (0.9984 / 0.9984) and rect arm
+`orth_err` (0.0016 / 0.0017). If a square `sv_ratio` check is wanted, derive it
+offline on one shared momentum, as done here.
+
+#### What SURVIVES the abort: the setting deploys correctly
+
+The outcome verdict is void. The **deployment** evidence is not, and it is strong:
+
+* **Binary leg exact on all four runs** — `aurora_polar_steps_configured` 12.0 on
+  both arm runs and 8.0 on both control runs, `sv_samples` 2.0, `sv_errors` 0.0,
+  read off the live optimizer param group.
+* **square `orth_err` ratio** 0.336 / 0.329 (bar <= 0.70) — passes both seeds.
+* **rect arm** 0.9984 / 0.0016-0.0017 (bars >= 0.99, <= 0.005) — passes both seeds.
+* **Offline derivation independently confirms** PE-12 delivers a ~12.4x `sv_ratio`
+  improvement over PE-8 on this rig's own momentum.
+
+So: **`aurora_polar_steps: 12` provably reaches the optimizer, through
+`trainer_kwargs_from_config`, and changes polar convergence in the expected direction
+and magnitude.** What is unknown is whether that changes learning.
+
+#### Discipline record
+
+**No outcome metric was read at any point.** No `inw`, `oow`, `era`, no neutral
+audit, no CE. The gate was never passed, so the outcome clauses were never unlocked.
+The banked data is therefore still *blind* and retains its value for a properly
+pre-registered re-analysis under a corrected instrument.
+
+#### Disposition and recommendation
+
+* **Four runs banked and complete**: 48 polar rows each, per-row dumps at 10 eval
+  points, weights at chunks 32/40/48 plus final. Retained. Not usable for an outcome
+  verdict under this wave; usable for a future wave only under fresh pre-registration.
+* **Seed-1 kill/keep is moot** — both seed-1 runs completed at 23:24, before the
+  question arose. Keeping was right regardless: seed 1 is what exposed the noise
+  diagnosis.
+* **`aurora_polar_steps` open decision: KEEP 8.** The PENDING marker resolves to
+  no-change-without-evidence. "12 ships as free insurance" was explicitly conditional
+  on reading a NULL outcome, and no outcome was read. Shipping 12 now would be
+  citing a verdict this wave did not produce. The deployment evidence above means a
+  future A8 needs no new plumbing work — only a sound confirming leg.
 ---
 
 ## 2026-08-01 — PRE-REGISTRATION: an ALWAYS-ON no-MultiPV column, because the only in-loop desync tripwire is gated behind a flag that is in no config file
@@ -25655,6 +33918,300 @@ by the rebase (`git diff origin/main -- docs/experiment_ledger.md` shows
 insertions only). **Not reviewed by its author** — the re-review verdict is
 REQUEST CHANGES and the reviewer gets this delta.
 
+### RESTART (pre-registered bundle) — boot512 --fresh on the audited minimal core: does the fixed loop gain, hold, or degrade? (2026-08-04)
+
+**User-authorized 2026-08-04 ("lets restart and see if it keeps gaining or stops and
+fails"). Launched from `scratchpad/restart_package_20260804/` (verifier: ZERO semantic
+drift) + `restart_brief_20260802.md`. This entry is the bundle's ONE entry per the
+Confounds rule; per-component observables live in the package's `first_row_checks.md`.**
+
+**Hypothesis.** The −48.6 Elo degradation (iter477 − boot512, hash-verified) was produced
+by the data schedule plus unverified-knob accumulation, not by the machinery (teacher
+above student, absorption clean, ruler passes a 250× control). With the audited minimal
+core, the fix set through PR #330, and fresh window regeneration from boot512, the loop
+should AT LEAST not lose to its own starting point — the pre-registered success criterion
+from the base decision (`1e5e2bfab`).
+
+**Base and mechanism (open_decisions 1).** `--fresh` experiment; `bootstrap_checkpoint`
+repointed at boot512 (`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt`) WITH
+`bootstrap_zero_policy_heads: false` as the paired edit (`trainable_init.py:471` zeroes
+trained policy heads otherwise — the package's trap 1). Fresh PID from yaml
+(`wdl_regret_start: 0.20`); exploit-replay refresh DISABLED (the only real kill switch —
+trap 2); 28 deletions + 7 ghost purges take effect (fresh path only). Cleanup dry-run
+simulated pre-launch: live trial 13a9f PROTECTED by both kept experiment-state files;
+only the 60K errored 967b1 stub is deleted.
+
+**The bundle (4 value changes + 15 added keys + the base repoint pair):**
+- `train_views_per_ingested_position` 5.0 → 4.3 — pre-registered `22891e8cc`, own kill
+  band (first 5 rows in [4.0, 4.6]; `policy_loss` worse >0.02 nats vs pre-change 5-iter
+  mean ⇒ revert to 5.0 live).
+- `exploit_replay_refresh_enabled` → false; `sf_wdl_frac` 0.50 → 0.45 (pin to realized;
+  floor==frac ⇒ knee cannot fire); `sf_nodes` 5000 → 50000 (no-op by construction,
+  `pid.py:487` clamps).
+- `gate_mode: shadow` + 7 gate siblings (FIRST RUN of the gate, all legs unproven — G1-G9);
+  5 `era_probe_*` keys with both sets cut from the pre-pause window pre-launch
+  (decision 4: the "inwindow" leg is most-recently-exited for segment 1 — decay ordering
+  by age, NOT an in/out contrast; it becomes a true in-window leg at the NEXT restart);
+  `replay_shard_recency_exponent: 1.0` (pin; arm G null licenses only the static form);
+  `salvage_seed_pool_dir: ""` (purges the −494 Elo ghost pool).
+- `aurora_polar_steps` stays 8 — A8 v2 ABORTED (`bf9585789`), no outcome read, no change
+  without evidence.
+- NOT in the bundle (each with its own reason recorded in open_decisions): rehearsal/EMA
+  (FE10 WITHDRAWN `ba0656728`; data axis closed), cp-ranked sf_policy_target rebuild
+  (SUSTAINED `b260373c5` but data-affecting — queued as the FIRST single-change window
+  post-stabilization), P1/P3/P4/K2/K3, zclip re-point, any LR change.
+
+**Deciding yardstick (ONE).** The arena ratchet vs the boot anchor, actually producing
+games: paired-opening pentanomial Elo(published − boot512), matched sims 32, play shape,
+same instrument as the base-decision arenas (rankings shape-robust per `1e5e2bfab`).
+Read at ~5 days (learning-quality change ⇒ day-plus window, paired CIs).
+- **SUCCESS:** Elo(published − boot512) CI lower bound > 0 — the loop gains.
+- **HOLD (acceptable):** CI spans 0 — the loop at least does not lose to its start;
+  continue, next lever (cp-target) proceeds.
+- **KILL:** CI upper bound < 0 (confirmed losing, the old failure reproduced on the
+  fixed loop) ⇒ pause training, do NOT iterate knobs; the remaining hypothesis space is
+  the target/loop family and the readout moves there.
+Supporting (leading indicators, NOT deciders): `probe_gap_*` TREND (never level),
+grad-norm median + clip rate (warm-state always-clip emergence was the old run's
+signature), test_loss continuity at handover, sf_eval desync detectors
+(both-zero = UNMEASURED not clean).
+
+**Confounds.** Unavoidable bundle: minimal core + views 4.3 + gate shadow first-fire +
+probe pair + exploit-replay off + boot512 fresh-window base, all in one window. Partial
+per-component attribution via each component's own observable (first_row_checks.md);
+anything separable waited. Post-restart winrate rows are +0.110 length-truncation biased
+(drop before fitting ANY trend); #328's `opp_strength_ema` restore is now MERGED — check
+its startup line rather than assuming the re-seed bias. `holdout_generation` bumps ONCE
+at this restart (#326 handover, pins full `44755941fd0bf0c8` / sampled `bbae91591858d35c`,
+neutrality measured loss-bit-identical) — one bump is EXPECTED; per-iteration climbing is
+a separate KILL. Holdout-series records are not comparable across the boundary.
+
+**Revert point.** `data/salvage/pre_restart_20260804` (3.5G, iter478 weights + optimizer
++ PID + 713-shard window manifest) + `hand_copied_state/` (gate_state.json, best.json,
+best/, top-level best.json — T11 hand-copy). The OLD lineage remains intact in trial
+13a9f (protected).
+
+**FIRST-ROW READOUT (2026-08-04 ~02:35, rows 1-2 of trial 0f888) — the bundle is IN
+EFFECT; one cold-start incident, self-resolved, mechanism banked.**
+
+Checks PASSED on effect-level observables (not echoes): T1 `train_views_actual` 4.3035
+∈ [4.0, 4.6] (views 4.3 LIVE); T2 realized SF share 0.45; T3 `feature_dropout_p` 0.0 —
+first time proven in effect; T4 reco `sf_nodes` 50000 (clamp floor, fresh PID); T5
+buffer init `cross_trial=False len(buf)=0` (no donor import); T7
+`shard_recency_exponent=1.0`; P1/P2 both probe sets loaded with build digests
+(001b991bedc3521d / 44887335e5ea4f52), P3 all 11 probe columns present, probe_ms ~580;
+G1 `gate_mode_code` 1.0 (shadow ARMED, first run ever), G2 reason 1
+(insufficient_iters), G3 cur=0 expected, G8 would_demote 0; C5 value-half desync
+detector ALIVE AND CLEAN — `sf_eval_pv_checked_frac` 0.9987 with `orphan_frac` 0.0
+(healthy = checked high + orphan 0; NOT the both-zero unmeasured state); C6 zero
+`[mcts] search guards FIRED` lines; C8 v2 slot protocol attached with no timeouts;
+grad columns present (I9): iter-1 median 3.60, clip 5.2% — the FRESH-state regime, vs
+the old run's warm 8.7/100% always-clip. Boot512's 28 policy tensors verified
+BIT-IDENTICAL in the first publish (the zero_policy_heads pair worked). Fresh-trial
+notes: `holdout_generation` 0 (fresh record — the #326 one-bump handover check applies
+to resumed lineages; the KILL remains generation CLIMBING per-iteration);
+`wdl_regret` 0.197 = the configured fresh-PID start 0.20, T2's <0.10 bound presumes
+the warmed regime; `test_loss` 5.00 on the new lineage's own holdout — not comparable
+to the old 7.238 series, as ledger'd. WATCH: iter-2 adaptive clip rate 92% (hard-clip
+0%) — the un-checkpointed zclip EMA re-learning its scale; I11's pre-registration
+governs any action.
+
+**COLD-START INCIDENT (00:34-~01:5x), self-resolved, no intervention:** from a fresh
+start the stale-game backpressure cap (`ceil(games_per_iter ×
+distributed_prev_model_max_fraction)` = 1870, distributed_runtime.py:494) is BELOW
+iteration 1's matching-games target, and with only ONE published sha ever (boot512's
+2fffc555…) workers self-paused at the cap while the trainer sat in its ingest wait —
+a deadlock the resume path cannot hit (games from the PREVIOUS sha count as matching;
+from cold there is none). worker_00's pause gated its uploader but not its in-flight
+games, so its 5000-position upload buffer overflowed and dropped completed games for
+~50 min (data loss only). The wait broke on the soft/partial path; iteration 1 took
+1901s, published a new sha, counters reset, fleet resumed; iteration 2 ran 722s (in
+the 620-750s historical band) with ingest flowing (2 → 81 shards). FOLLOW-UPS (post
+stabilization, own entries): (a) exempt the bootstrap sha from the stale cap or floor
+the auto target at iteration-1's need — every future cold start hits this; (b) the
+worker pause should gate game STARTS, not uploads — the current shape wastes the tail
+of every pause.
+
+**CONFOUND ADDENDUM (2026-08-04 ~02:30, user-made live edit):** `opening_fen_list_path`
+repointed `blindspot_fens_retire_478.txt` (371 FENs) → `blindspot_fens_retire_0.txt`
+(507 FENs, built 02:30) in the LIVE yaml, in effect from ~iteration 10 (live reload;
+seeding active: `opening_fen_dole_per_iter: 1`, `opening_fen_dole_max_fraction: 0.08`;
+worker telemetry confirms fenlist seeds playing). This is a second data-affecting
+change inside the restart readout window — small dose, but it belongs on the bundle's
+Confounds line: the fresh-window composition includes blind-spot seeds from the NEW
+pool from ~iter 10 onward. Committed to the live branch the same night so a branch
+operation cannot silently revert it ([[uncommitted_live_yaml_edits_lose_proven_wins]]).
+⚠ `data/blindspot_fens_retire_0.txt` itself is gitignored (data/, .gitignore:34) — the
+committed pointer refers to a file that exists only on this machine; a fresh clone
+starts with seeding silently disabled (`load` degrades to no-seed). Tracking the FEN
+asset (or an exception for data/blindspot_*) is the durable fix — user decision.
+
+**CORRECTION (2026-08-04 ~04:00) — the COLD-START INCIDENT paragraph above misattributes
+the mechanism. Caught by the fix-PR authoring agent's independent check before any code
+shipped; verified against the live yaml, params.json, and progress.csv row 1.**
+
+What is RETRACTED: "the stale-game cap is below iteration 1's matching-games target and
+deadlocked the loop." Wrong three ways: (1) the realized 1870 is EXPLICIT
+(`configs/pbt2_small.yaml:455`, carried by the minimal core; params.json agrees) — the
+auto formula at `distributed_runtime.py:493-497` is behind `if < 0` and NEVER RAN; my
+ceil() attribution was an inference error. (2) `games_per_iter` is 440, so the cap sits
+4.25× ABOVE the per-iteration need, not below it. (3) row 1 ingested 806 matching games
+(target 440) — the wait was not starved by the cap.
+
+What is SUSTAINED (directly observed this session, from worker logs that no longer
+exist): the 00:34:22 pause line ("stale backlog target reached: 1928/1870 games for
+model 2fffc555") and worker_00's drop lines from 00:37:20 (4,264 by ~01:25). ⚠ The
+01:47:22 worker revive TRUNCATED all four worker logs, destroying the incident-window
+evidence — an agent reading the disk afterwards correctly found zero drop lines; absence
+of evidence there is evidence destruction, not absence of the event.
+
+Best-supported mechanism now: the worker→server UPLOAD path stalled at ~00:23 (65
+upload POSTs total, then none; server inbox empty; ingested shards frozen at 2) for a
+cause the truncated logs can no longer establish. Workers kept playing against a stalled
+consumer, hit the 1870 cap at 00:34 (a SYMPTOM — the brake doing its job), and
+worker_00's full buffer dropped completed games (the pause-orders-uploads reading is
+REFUTED on code: `worker.py:2751` drains pending shards BEFORE the pause check — the
+drops indicate the upload/flush path itself was wedged, consistent with the stall
+predating the pause by 11 minutes). The MID-ITERATION REVIVE machinery (PR #232 family)
+reset the workers at 01:47:22 and everything flowed: iteration 1 completed ~01:50 with
+806 matching games, published, and cadence normalized. This resembles
+the stale-worker ingest wedge far more than a backpressure design flaw — and the revive
+resolving it autonomously is that machinery's first live save.
+
+REAL LATENT BUG (fix worth shipping, explicitly NOT tonight's cause): with the yaml key
+unset, the auto path computes ceil(440 × 0.6) = 264 < 440 — a config that relies on the
+default WOULD cold-start-deadlock. Fix = floor the auto-derived target at iteration 1's
+`_games_per_iter_for_iteration(tc, 1)` (games_per_iter_start under a ramp). Second fix:
+the revive must ROTATE worker logs, not truncate — tonight it destroyed the evidence
+needed to diagnose the primary stall. Both re-briefed to the authoring agent. The
+memory/first-row-checks records are corrected in the same pass.
+
+**WATCH ADDENDUM (2026-08-04 ~04:40, iter 41):** G6 PASSES — `gate_sample_confound_elo`
+went FINITE from ~iter 28 (reading real values every row since; latest −5.2) — the
+cheapest falsification of #323's "closed as built" survives, and the difficulty key is
+splitting. T6 PASSES — the new trial's saved config carries `salvage_seed_pool_dir: ''`
+(ghost pool purged). State: views in-band 41/41 rows; gate shadow window
+Elo(published − boot anchor) −0.76 [−7.6, +6.0] — level with the starting point, as a
+healthy early window should be; PID regret 0.199 → 0.077 (difficulty rising, controller
+live); desync detectors steady (checked ~0.999 / orphan 0); zero tracebacks, zero
+search-guard fires; 6 checkpoints. WATCH (not action): grad_norm_median climbed
+3.6 → plateau ~6.1-6.3, adaptive clip 1.0, hard-clip 0.0 — same growth shape as the old
+run's warm-state emergence, governed by I11's pre-registration; the discriminating read
+is whether the median crosses the 6.5 cap and hard-clip engages. C1 (compactor rate
+signature) still owed at a fuller window.
+
+### 2026-08-04 ~10:0x — CANDIDATE mechanism found for the 00:23 upload wedge (audit finding A4)
+
+The coverage-map audit (tranche 2, `scratchpad/audit_coverage_map_20260804.md`) found, and the
+main session verified by direct read: **`server/app.py:1758` acquires `upload_lock` — a
+`threading.Lock` (`:774`) — inside `async def _upload_shard_impl` (`:1612`)**, with
+`arrays_to_samples` + `acc.add_upload` + the `_try_flush_and_pop` disk flush held under it. A
+threading lock acquired in a coroutine blocks the event-loop thread, so one worker's compaction
+flush stalls EVERY route (lease, health, publish, arena upload) — the server presents as wedged,
+then clears when the flush completes. The two sync-def acquisitions (`:952`, `:1028`) run in the
+FastAPI threadpool and are correct; `:1758` is the only on-loop site and it is the hot path.
+
+Fit to the incident: the trigger profile — concurrent uploads with full accumulators — is exactly
+a cold start on a fresh lineage (every worker fills an empty window and hits
+`compact_target_positions` together), matching the recorded signature (fresh-start stall on the
+upload path, cleared by the revive re-serialising arrivals, cause unestablished).
+
+**Status: CANDIDATE, not a diagnosis.** The 04:00 CORRECTION's "cause UNESTABLISHED" stands until
+a repro fails on current main: fix PR is being authored repro-first (two concurrent flush-sized
+uploads + an event-loop responsiveness probe; if the repro cannot be made to fail, the mechanism
+is refuted and the fix unjustified). Deploy is restart-gated (server restarts with training);
+trial 0f888 keeps current behavior. Task #144.
+
+**A4 addendum (~11:0x):** the pre-registered discriminator has now run — PR #335's repro
+FAILS on unmodified origin/main (one flush-sized upload stalls the event loop 0.797s vs a
+0.25s bound, critical section on MainThread) and passes with the fix (locked block moved to
+the threadpool via run_in_threadpool; lock stays threading.Lock to preserve exclusion with
+the sync sites). **The MECHANISM is confirmed. Attribution of the 00:23 incident to it
+remains a candidate** — the repro proves the failure mode exists, not that it fired that
+night. Deploy restart-gated. Reviewer note kept: the author deleted its own ASGI-poller
+test after proving it passes on broken code (a poller on the blocked loop cannot time the
+blockage) — a gate that cannot fail, correctly removed.
+
+### 2026-08-04 ~12:0x — WATCH addendum, trial 0f888 iter ~148: nodes ramp started; gate shadow gone negative
+
+**Milestone: the PID nodes ramp is live.** Regret pinned at its 0.0075 floor since ~iter 128;
+`sf_nodes` 50000 → ~107k over iters ~143-148; winrate EMA 0.624 and falling toward the 0.5
+target; iteration time up ~200s → 531s (SF cost, expected). Difficulty is now moving on the
+nodes axis exactly per DIFFICULTY = REGRET + NODES.
+
+**Gate shadow, first sustained negative window:** `gate_delta_elo` drifted −8.1 → −16.1 →
+−13.3 over iters 141-148, CI excluding zero on 4 consecutive rows (iter 148: −13.3
+[−25.6, −1.0]); `gate_sample_confound_elo` ~0. Two readings, stated without a verdict:
+(a) the onset coincides with the nodes ramp, which changes the selfplay data regime — a
+confound the gate's own confound column does not capture; (b) this instrument is WATCH-ONLY
+under the bundle pre-registration — the deciding yardstick remains the ~5-day ratchet arena
+Elo(published − boot512), and no action rule is armed on the shadow. Next checks: whether
+the trend persists once the ramp settles, and `gate_would_demote` behavior.
+
+**A8 corroborated live:** the dole knobs echo in config (`opening_fen_dole_per_iter: 1`) but
+the runtime log contains ZERO dole lines — "working silently" and "never firing" are
+indistinguishable, which is exactly audit finding A8 (task #148).
+
+**Gate-shadow follow-up (~15:1x, iter 165):** the CI-negative window (iters 145-148, min −16.1)
+RELAXED as the nodes ramp settled — last 10 rows drift −10.3 → −1.3 with every CI spanning zero
+(iter 165: −1.3 [−14.4, +11.8]). Consistent with the confound reading (difficulty-regime
+transient), not with onset of the old slide. PID effectively converged: regret at the 0.0075
+floor, nodes stabilized ~93-100k, winrate EMA 0.543 vs the 0.5 target; iteration time ~757s
+(SF cost at the higher node count — the expected price of a net that forced difficulty up 2×).
+Watch continues; the deciding instrument remains the ~5-day arena.
+
+## 2026-08-04 ~16:00 — dxg wedge is BACK; ratchet (the deciding instrument) is down, training unaffected
+
+- `nvidia-smi` hangs >120s; dmesg shows the July-25 fingerprint (`dxgvmb_send_sync_msg:
+  wait_for_completion failed: fffffe00`, `query_adapter_info Ioctl failed: -512`,
+  `vmbus_sendpacket failed`). Existing CUDA contexts run normally — trial 0f888 wrote
+  iter 170 during the diagnosis. New CUDA clients hang at device init.
+- This retro-explains today's ratchet failure: both 03:11/03:35 attempts backstop-killed
+  at "loading candidate" (CUDA init), `attempts.csv` reasons `vs_prev:backstop|vs_boot512:backstop`.
+  **2026-08-04 has NO strength measurement, and none is possible until reboot.** The
+  Elo(published − boot512) deciding series has zero rows for the 0f888 lineage.
+- Mitigation: banked `checkpoint_000169` (weights+opt+pid+holdout, 656M) to
+  `data/ratchet/snapshots/ck_2026-08-04_iter169_banked_during_dxg_wedge` so today's
+  point can be retro-measured after reboot. Bank one snapshot per ~12h until reboot.
+- Prior art: a3aa9447e — the wedge does NOT drain; reboot was the resolution. Reboot
+  timing is the user's call: it interrupts the run exactly at window-eviction onset
+  (the forgetting-hinge readout), and the next restart deploys #332–#346 (live branch
+  must first merge origin/main to empty diff).
+
+## 2026-08-04 ~17:40 — WINDOW EVICTION ONSET (iter ~170): the forgetting-hinge readout window is OPEN
+
+- `replay` 1,499,096 vs cap 1,500,000; `replay_window_growth_positions` 0,
+  `growth_frac_used` 1.0 — the window is pinned; ~32k rows/iter now exit.
+- Pre-registered readout: the old lineage's proven hinge (decay onset tracks
+  WINDOW-EXIT, [[forgetting_hinge_proven_window_exit]]) either fires in
+  `probe_era_policy_eregret` / the gap probe over the next ~day or it does not.
+  At onset: era 0.0851-0.0855, gap 0.0026-0.0046 — flat, no hinge signature yet
+  (exit lag expected). Judged on the probe series, not any window-mean CI.
+- All other watch items clean at iter 173: views 4.31, desync measured-clean
+  (0.9972/0), gate shadow noise about zero, holdout_generation 0, disk 50%.
+
+## 2026-08-04 ~19:30 — CORRECTION: the dxg wedge DRAINED without reboot; ratchet relaunched by hand
+
+- Fresh `nvidia-smi` returns in <20s and a NEW CUDA context inits in 1.7s (torch
+  matmul probe) — the 16:00 entry's "none is possible until reboot" is falsified.
+  Unlike 07-25 (a3aa9447e: did NOT drain), this episode recovered on its own;
+  dxg noise persists in dmesg, so treat the device as fragile until the reboot
+  (still planned tonight/tomorrow).
+- `daily_gate_ratchet.sh --max-attempts 0` relaunched by hand ~19:30 — first
+  vs_boot512 row of the 0f888 lineage expected within the hour. The banked
+  iter169 snapshot remains available for a second retro point.
+
+## 2026-08-04 ~18:05 — the dxg wedge is INTERMITTENT, not drained; evening ratchet attempt also starved
+
+- 19:30 entry amended: the drain was temporary. New kernel event at uptime 715140s
+  (`query_adapter_info Ioctl failed: -512`), nvidia-smi hangs again, and the manual
+  ratchet's vs_prev leg loaded both checkpoints fine (2s/1s — past the morning's
+  failure point) but then froze in the game loop at 0 completed games and hit the
+  899s backstop. Trainer unaffected throughout (progress.csv current).
+- Net: 2026-08-04 still has NO strength row, and the instrument cannot run reliably
+  until reboot. Snapshots banked for retro-measurement: iter169 (16:00 manual bank)
+  and iter177 (ratchet snapshot dir).
+- Recommendation restored: REBOOT, folded into the graceful restart (user timing).
 ---
 
 ## FIX 2026-08-04 — the cold-start backpressure floor (latent, did NOT fire tonight) and worker-log rotation at relaunch
@@ -25957,3 +34514,4451 @@ earn their place as boundary pins on this branch, not as evidence against main.
 
 `./scripts/lint.sh` (no args) exit 0. **Not reviewed by its author** — a
 separate reviewer follows.
+
+## 2026-08-04 ~20:30 — RETRO STRENGTH READOUT: KILL-SHAPED. Elo(iter177 − boot512) = −130.9 [−175.1, −90.5]; Elo(iter169 − boot512) = −81.4 [−125.4, −39.8]
+
+- First direct strength rows of the 0f888 lineage, measured post-reboot on a FREE GPU
+  (no contention confound): 200 games each, matched_sims 32, training search-shape,
+  paired openings seed 42, reference = the yaml's own bootstrap_checkpoint
+  (boot_snap_recheck_0711_0404.pt). Banked snapshots: ratchet ck_iter177 + the
+  wedge-window iter169 bank. Results in runs/arena_results.jsonl.
+- **Both CIs entirely negative. The audited restart family (views 4.3, sf_wdl_frac
+  0.45 floor, dropout 0, refresh off, fixed pipeline) did NOT fix the degradation —
+  it reproduces FASTER than the old lineage** (old: −48.6 by iter 477; new: −81 by
+  iter 169). Per the pre-committed rule this is the KILL branch: the readout moves to
+  the TARGET/LOOP family (cp-rank policy target, PREREG awaiting sign-off).
+- The in-loop instruments stayed clean while play strength fell: winrate 0.53+ at
+  rising difficulty, era/gap probes flat (no memorization signature), gate shadow ~0
+  (a ±12/iter first-difference instrument cannot see ~−0.5 Elo/iter drift). The
+  degradation is invisible to every training-regime signal we watch — only the
+  anchored arena sees it. Confound note: this is the PLAY regime (net-vs-net,
+  32 sims, cold tree); the training-regime winrate paradox is the same one the old
+  lineage carried.
+- Caveat against over-reading the 169→177 slope: CIs overlap; the LEVEL (both far
+  below zero) is the finding, not the 8-iter delta.
+- Training was DOWN at measurement time (post-reboot). Resume-vs-pivot decision
+  surfaced to the user; pre-registration says the 5-day window decides, but both
+  early rows clear the KILL threshold with margin.
+
+## 2026-08-04 ~20:50 — ⚑⚑ THE KILL READOUT IS CONFOUNDED: the restart silently cut the TEACHER 11× (user hypothesis, mechanism + numbers confirmed)
+
+- `_eff_sf_nodes` (stockfish_turn.py:493): label queries run at `base_nodes` — the
+  PID-ramped OPPONENT budget — and production `sf_label_nodes_cap: 0` means no
+  decoupling. The nodes knob is BOTH the difficulty axis and the teacher axis.
+- Measured from both lineages' progress.csv: OLD labels flat at 698,289 nodes;
+  NEW labels mean 61,875 (50k start → 116k peak). Policy teacher, the 0.45 SF
+  value-blend component, and refute labels all moved together, ~11× shallower.
+- Consequence: the −81/−131 rows do NOT cleanly indict the target/loop family —
+  the pre-registered readout's implicit "same teacher" assumption was broken at
+  launch ([[invalid_verdicts_from_unwired_features]] shape: the family was never
+  tested in its intended condition). Also candidate-explains: degradation FASTER
+  than old lineage; all in-loop signals healthy (net fit its shallow targets).
+- NOT explained: the old lineage's own −48.6 at 698k labels. Teacher depth is a
+  candidate for the delta, not the base phenomenon.
+- Next: (a) DONE — realized-depth measurement above; (b) offline label-quality
+  screen: relabel a sample of new-lineage positions at ~698k and score stored
+  50k targets vs deep targets on the frozen audit ruler; (c) iter21-vs-boot512
+  arena in flight (onset timing); (d) fix shape = decouple: a label-nodes floor
+  knob (the cap only caps DOWN), restore ~698k labels, resume, judge on daily
+  ratchet rows.
+
+## 2026-08-04 ~21:05 — third retro point: Elo(iter21 − boot512) = −96.2 [−141.5, −53.9] — onset is IMMEDIATE
+
+- Trajectory −96 (i21) → −81 (i169) → −131 (i177): compatible with a fast collapse
+  inside the first ~21 iterations then stasis near −100, NOT a slow drift. Matches
+  the shallow-teacher onset prediction (labels 50k flat through i21).
+- Caveat: the OLD lineage also showed an iters-0-25 shock at 698k labels (boot
+  forensics, task #122), so part of the early dip may be fresh-boot dynamics.
+  The teacher-restored rerun is the discriminator.
+
+## 2026-08-04 ~22:15 — OFFLINE SCREEN VERDICT: shallow teacher is REAL BUT SMALL — does not carry ~100 Elo. The phenomenon is the EARLY-BOOT SHOCK, common to both lineages
+
+- Screen (750 pos, stored-teacher bytes + re-query check, 2M-node SF ruler + Cheese
+  conjugate ruler, dump banked in session scratchpad screen_tb.json): policy
+  E[regret] stored-vs-698k = +7.26cp [+3.65,+11.34] — but lands on policy_sf
+  (w_sf_move 0.02, opponent-reply head, NOT a move-teacher); value label error
+  +0.0163 win-prob under the SF ruler COLLAPSING to +0.0048 [+0.0009,+0.0088]
+  under Cheese (≈70% ruler nepotism; sign test 0.739→0.523), unbiased
+  (−16.6cp [−43.3,+10.2]) = added noise, concentrated in sharp positions
+  (decisive 54 vs 23cp; finds 12/24 forced mates vs deep's 19/24).
+- TWO BRIEF CORRECTIONS (both load-bearing, agent-caught): labels RAMPED
+  (median 91,247, p5 50k, p95 108k — not flat 62k; MultiPV 40 at 50k = median
+  depth 8 is what makes it shallow); a row's label is the P0+1 position (proven
+  60/60 mask check), so a row-position screen would have measured nothing.
+- Verdict on the hypothesis: measurable damage, wrong magnitude and wrong
+  timing — the −96.2 at iter21 predates any cumulative label effect, and the
+  old lineage's comparable iters-0-25 shock AT 698k labels is the control.
+  NOT closed outright (mate-blindness + sharp-position noise are real; earliest
+  stratum worst at +9.3cp); the teacher-restored rerun remains the named
+  discriminator, but the screen predicts it will NOT rescue ~100 Elo.
+- REFRAME: the dominant phenomenon is the FRESH-BOOT EARLY SHOCK (both lineages,
+  both teacher depths, ~first 20-25 iters). Next diagnostic target = what the
+  loop does to a freshly booted net in iters 0-25 (re-read task #122 boot
+  forensics with this lens; the −96→−81→−131 stasis-then-dip shape).
+- Fix routing: sf_label_nodes_floor decoupling knob is STILL worth shipping
+  (cheap; removes the mate-blind/sharp-noise damage and the silent double-duty
+  knob) — but as hygiene, not as the strength lever.
+
+## 2026-08-05 PREREG — FRESH RESTART #2: boot512 --fresh with the teacher RESTORED (sf_label_nodes_floor 700000)
+
+- User decision after the screen verdict: run the named discriminator anyway.
+  Everything else about the launch config matches the 08-04 restart (views 4.3,
+  sf_wdl_frac 0.45, dropout 0, refresh off, boot512 bootstrap, sf_nodes start
+  50k with PID free to ramp) — the ONE data-affecting change vs 08-04 is
+  `sf_label_nodes_floor: 700000` (PR #354), pinning label queries at >=700k
+  nodes (old lineage realized 698,289) while the PID keeps the OPPONENT budget.
+- Hypothesis: restoring teacher depth prevents/reduces the fresh-boot early
+  collapse. The offline screen PREDICTS A NULL on the ~100 Elo question
+  (teacher damage sized at ~+0.005 win-prob conjugate-corrected); this run is
+  the in-vivo test that separates teacher-depth from boot-shock once and for
+  all.
+- DECIDING YARDSTICK (pre-committed): bank the iter-21 checkpoint
+  (`data/ratchet/snapshots/ck_<date>_iter21.pt`), then
+  `PYTHONPATH=. python3 scripts/arena_standard.py --candidate data/ratchet/snapshots/ck_<date>_iter21.pt --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt --mode matched_sims --sims 32 --search-shape training --games 200 --seed 42 --label rerun_iter21_vs_boot512`
+  — identical shape to the 08-04 retro arenas (their JSONL rows in
+  runs/arena_results.jsonl are the authoritative flag record). Baseline to beat:
+  Elo(iter21_0f888 − boot512) = −96.2 [−141.5, −53.9].
+- Verdict rule: TEACHER-RESCUE if the new iter21 CI lies entirely above −53.9
+  (the old CI's upper bound) — teacher depth was a major shock component,
+  contra the screen. NULL if the new point estimate falls inside
+  [−141.5, −53.9] — shock is teacher-independent; investigation stays on the
+  early-boot mechanisms (aae9c diagnosis in flight) and the floor stays as
+  hygiene. Intermediate (CI straddles −53.9): teacher is a MINOR component;
+  size it by the point-estimate gap. Family yardstick unchanged: daily ratchet
+  arena Elo(published − boot512), SUCCESS CI>0 / KILL CI<0.
+- First-row verification owed (config_change_may_not_be_in_effect): stored
+  shard `sf_label_meta[:,0]` >= 700000 on the first new rows, and
+  worker log's realized label-nodes line. A floor that doesn't show in the
+  shard bytes is not deployed.
+- Confounds: (1) this restart also deploys the restart-gated fix PRs
+  #332-#353 (wedge/loop-stall fixes, zclip EMA checkpointing — EMA effective
+  only from the NEXT restart, this boot is still adaptive-1.0/hard-0.0 cold);
+  (2) 700k labels restore the old-lineage cost shape — iteration wall time,
+  games/iter, and views throughput all shift vs 0f888, so throughput-sensitive
+  columns are not comparable across the two fresh boots; (3) reboot cleared
+  the dxg wedge — worker liveness differs from late-0f888.
+
+## 2026-08-05 — BOOT-SHOCK DIAGNOSIS (agent forensics on 0f888 iters 1-25): zclip REGIME LOCK-IN is the lead mechanism; the era probes are BLIND to the lost axis
+
+- Full report + banked assets (progress.csv both lineages, params.json,
+  tfevents, probe harness + readings): session scratchpad
+  `boot_forensics/`. Instruments validated with positive/negative controls
+  before use; snapshot label lag discovered (checkpoint_N holds iteration N+1
+  — every prior banked-snapshot claim should be read with that offset).
+- ⚑⚑ INSTRUMENT FINDING: the era-probe columns DO NOT TRACK PLAY STRENGTH.
+  corr(arena Elo, Δprobe policy E[regret]) = −0.19 across iter21/169/177;
+  iter21 (−96.2 Elo) reads BETTER than boot512 on the probe; the whole effect
+  is 0.09% of the trained→random span. Every "probes flat" note for this
+  episode means UNINFORMATIVE, not "nothing happened". Head attribution on
+  stored rows: per-row policy/value accuracy is NOT where the Elo went
+  (iter21 ≈ boot512 on both heads) — rules out the simple degraded-head
+  story; the damage lives on an axis stored-row rulers do not measure.
+- Timeline: iteration 1 ran 801 optimizer steps (steady median 75; 27.4% of
+  all steps in iters 1-25) over the 400k seeded window, warmup covered 9% of
+  them, 95% unclipped. Iterations 2-3: adaptive clip rate 0.051 → 0.921 →
+  1.000, then 1.000 for 98.9% of ALL 180 iterations, grad-norm median ramping
+  3.60 → 7.96 monotone (EMA chasing, never catching). 13a9f steady state by
+  contrast: adaptive clip mean 0.068, never 1.0. ⚑ `train_views_actual` read
+  a stable 4.30 through the 10.7x step spike — never gate on that column.
+- Mechanism ranking: M2 zclip regime lock-in STRONGEST (timing exact,
+  persistent, explains stasis-not-decay, all-parameter reach, separates the
+  lineages; correlational, confounded with M1 by construction). M1 cold
+  optimizer state STRONG but a transient predicts recovery and there is none.
+  M5 step-count overshoot CONFIRMED as an exposure amplifier. M3 easy-curriculum
+  data real but self-correcting. M4 head asymmetry NOT SUPPORTED.
+- Pre-registerable discriminators for a FUTURE boot (none deployed now — one
+  change per window, and this window belongs to sf_label_nodes_floor):
+  D1 carry zclip EMA across the boot (readout: grad_adaptive_clip_rate in
+  0.02-0.20 by iters 3-10; >=0.95 = fix not in effect). NOTE: PR #334
+  checkpoints the EMA but a FRESH boot has no checkpoint to inherit — D1
+  needs an explicit warm-init or import step, it is NOT free on restart #2.
+  D2 cap iteration-1 step budget at steady state (readout: train_steps_used,
+  NOT train_views_actual). D3 warmup spanning all of iteration 1 (readout:
+  opt_lr_mean below 5.29e-4 for the whole first iteration).
+- Consequence for restart #2 (teacher-floor run): the M2 signature is
+  PREDICTED TO RECUR (cold EMA again). Watch-only columns added to the first
+  rows: grad_adaptive_clip_rate (expect the 0.05 → 1.0 lock-in by iter 3 if
+  M2 replicates), train_steps_used at iteration 1. A second NULL on the
+  teacher yardstick + a replicated M2 signature makes D1 the next
+  pre-registered intervention.
+
+## 2026-08-05 PREREG AMENDMENT — restart #2 is a BOOT-HYGIENE PACKAGE (user-directed): floor 700k + regret start 0.1 + warmup spanning iteration 1
+
+- User call after the boot-shock diagnosis: "start with regret more like .1
+  instead of .2" + more of the bad-start issues addressed. Launch config now
+  carries THREE changes vs the 08-04 boot:
+  1. `sf_label_nodes_floor: 700000` (PR #354) — teacher depth pinned.
+  2. `sf_pid_wdl_regret_start: 0.2 -> 0.1` — construction-only key, armed
+     exactly on a --fresh boot. 0.2 gave winrate 0.97-1.00 for 25 iterations
+     (post-correction ~0.86-0.89, still far above target); 0.1 is the top of
+     the band 0f888's PID actually settled at (0.0689-0.0984), so the servo
+     starts near equilibrium instead of feeding the iteration-1 step blast
+     easy-win data.
+  3. `warmup_steps: 72 -> 1000` (diagnosis D3, the only boot fix needing no
+     new code) — iteration 1 ran 801 optimizer steps with warmup covering 9%;
+     1000 spans the whole first-iteration blast plus slack, so the 95%-
+     unclipped full-LR volume that preceded the zclip lock-in cannot recur at
+     full LR.
+- ATTRIBUTION SACRIFICED KNOWINGLY: the teacher-only discriminator is gone —
+  if iter21 improves we cannot split credit among the three levers (the
+  offline screen + onset timing already predicted the teacher alone is NOT
+  the ~100 Elo). The package question — "does a hygienic boot avoid the
+  shock?" — is the question the user actually wants answered. D1 (warm zclip
+  EMA) and D2 (iter-1 step cap) need code and remain pre-registered for a
+  future boot; if the shock recurs THROUGH this package, they are the next
+  levers and M2 gains standing.
+- Yardstick UNCHANGED: iter21 arena vs boot512 (exact command in the prereg
+  entry above), baseline −96.2 [−141.5, −53.9]. Package-SUCCESS if the new
+  CI lies entirely above −53.9; NULL if the point lands inside the old CI.
+- Per-lever deploy proofs on the first rows: (1) `sf_label_meta[:,0]` >=
+  700000 + `label_floor=700000` in worker logs; (2) realized wdl_regret
+  ~0.1 on row 1 and winrate NOT pinned at ~1.0 by iters 3-5; (3)
+  `opt_lr_mean` well below 5.29e-4 through iteration 1 and `train_steps_used`
+  read directly (never `train_views_actual`). Watch-only M2 columns:
+  `grad_adaptive_clip_rate` (0.05 -> 1.0 lock-in by iter 3 = M2 replicates).
+
+## 2026-08-05 — PACKAGE LEVER 4 (user-directed) + LAUNCH
+
+- Added at user direction before launch: `sf_nodes: 50000 -> 75000` — the
+  fresh-boot OPPONENT start (pid.py initial_nodes; sf_pid_min_nodes stays
+  50000, it is a start not a floor). Rationale: 50k + regret 0.2 gave the
+  0.97-1.00 winrate plateau; 75k + regret 0.1 starts the opponent near the
+  servo's settled operating point on both axes.
+- PR #354 merged (independent review: round 1 REQUEST CHANGES — H1 curriculum
+  reuse bypassed the floor on the production config, H2 reco publisher
+  unguarded; round 2 CONFIRM after fixes; R1/R2 residual test pins applied).
+  Live branch merged to origin/main (three-dot empty), yaml validated through
+  flatten + reject_dead_config_keys on the new code: floor 700000, nodes
+  75000, regret_start 0.1, warmup 1000. Deploy proofs and yardstick as
+  pre-registered above.
+
+## 2026-08-05 00:40 — RESTART #2 FIRST-ROW READOUT: ALL FOUR PACKAGE LEVERS VERIFIED IN EFFECT; NO ITERATION-1 STEP BLAST
+
+- Trial cdb96_00000, launched 23:57. Row 1 landed ~00:28. Deploy proofs:
+  1. FLOOR: newest replay shards (shard_000016-19, mtime 00:32-00:35)
+     sf_label_meta[:,0] p50 = 700,215-700,238, frac >= 700k = 0.94-0.97
+     (remainder = early-stop mate/TB rows). Worker session-start line:
+     "regret=0.1000 sf_nodes=75000 label_floor=700000". ⚠ Method note: the
+     first shard sampled (c710c59b, p50 108k) was an OLD 0f888 shard picked
+     by NAME sort — always select shards by mtime > launch time.
+  2. REGRET/NODES: realized opponent_wdl_regret_limit = 0.1,
+     opponent_sf_nodes = 75000 on row 1.
+  3. WARMUP: opt_lr_mean = 2.138e-4 vs peak 5.29e-4 — ramp active.
+  4. Views 4.344 in [4.0, 4.6]; window 400,000 -> 408,251 (+8,251 iter 1).
+- ⚑ NO ITERATION-1 STEP BLAST: train_steps_used = 70 (0f888: 801). Reading:
+  the 08-04 blast was largely the UPLOAD WEDGE's doing — ~90 min of stalled
+  uploads landed as one giant first ingest and views-targeting converted it
+  to 801 steps; with #335/#336 deployed the first ingest is normal-sized.
+  D2 (step cap) may be moot; D3 (warmup) is now insurance on top.
+- M2 watch, row 1: grad_adaptive_clip_rate = 0.0 (0f888 row 1: 0.051,
+  locked 1.0 by iter 3), grad_hard_clip_rate = 0.014, grad_norm_median 4.41.
+  Verdict window = iterations 2-10.
+
+## 2026-08-05 02:12 — M2 VERDICT AT FULL LR: ZCLIP LOCK-IN NOT REPLICATED under the boot-hygiene package
+
+- Trial cdb96_00000, iterations 1-12 grad_adaptive_clip_rate:
+  0.000 / 0.006 / 0.212 / 0.248 / 0.164 / 0.136 / 0.145 / 0.186 / 0.109 /
+  0.107 / 0.130 / 0.151 — warmup essentially complete by iter 12
+  (opt_lr_mean 6e-4 group mean). 0f888 at the same point: 1.000 since iter 3
+  (98.9% of its whole run). Readings sit in/near the 0.02-0.20 healthy band
+  13a9f occupied — the pre-committed D1 observable, satisfied WITHOUT D1.
+- grad_norm_median 4.41 -> 5.36 over 12 iters: mild drift, clipping engages
+  on ~13% of steps (0f888: monotone 3.6 -> 8 with 100% clipping). Watch-only.
+- ATTRIBUTION CAVEAT (package, not lever): can't split credit between
+  no-iteration-1-blast (wedge fixes #335/#336 — steps 70 vs 801), warmup
+  spanning the ramp, and healthier early data (regret 0.1 / nodes 75k).
+  The blast-free start makes "the blast seeded the lock-in" the leading
+  account, consistent with M2-downstream-of-M1/M5 from the forensics.
+- D1 (zclip EMA warm-init) and D2 (step cap): NOT needed on this evidence;
+  they stay in the ledger as levers if a future boot regresses.
+- Servo healthy: regret 0.0956 -> 0.0900, raw winrate 0.991 -> 0.944
+  (length-biased, no trend fitting), pid_ema_winrate 0.69 and rising.
+  Next readout: iteration-21 checkpoint bank + prereg arena vs boot512.
+
+## 2026-08-05 05:30 — RESTART #2 ITER-21 ARENA: NULL. Elo(iter21 − boot512) = −96.2 [−138.3, −56.7] — THE COLLAPSE REPLICATED EXACTLY THROUGH THE FULL BOOT-HYGIENE PACKAGE
+
+- Prereg command run as registered (200 games, matched_sims 32, training
+  shape, seed 42, conc-16 concurrent with training). Score 0.3650,
+  pentanomial {WW:3, WD_DW:13, DD_WL:37, LD_DL:21, LL:26}. Point estimate
+  IDENTICAL to the 08-04 retro baseline (−96.2 vs −96.2; different
+  pentanomials, same total score — checked, genuine coincidence, not a
+  caching artifact). CI entirely inside the old [−141.5, −53.9] ⇒ NULL by
+  the pre-committed rule.
+- WHAT THIS ELIMINATES (all verified in effect on this boot, all
+  insufficient, jointly): shallow teacher (labels 700k in shard bytes),
+  easy-start data (regret 0.1 / nodes 75k, winrate off ceiling by iter 20),
+  iteration-1 step blast (70 steps vs 801), unclipped-full-LR early volume
+  (warmup spanned it), zclip regime lock-in (clip rate 0.0-0.25 healthy all
+  21 iters). The screen's prediction (teacher NULL) confirmed in vivo; the
+  M2/M5 story ALSO falsified as the cause of the Elo loss — the optimizer
+  pathology and the strength collapse have now been DISSOCIATED: this boot
+  had a healthy optimizer regime and lost the same 96 Elo.
+- SURVIVING candidates, ranked: (1) THE TRAINING TARGETS/LOOP ITSELF —
+  ~21 iterations of training on this loop's targets costs ~96 Elo under
+  this arena regardless of teacher depth, data difficulty, or optimizer
+  regime (consistent with the cp-rank screen's "the lever is the
+  TARGET/LOOP family" and the old lineage's independent boot shock at 698k
+  labels); (2) M1 cold optimizer moments — the ONE untouched mechanism
+  (fresh Aurora state, step 0); (3) an arena-instrument systematic that
+  makes any early-training checkpoint of this family read ~−100 (weak
+  evidence against: iter-5 ratchet point was POSITIVE +34.9, though 30
+  games is uninformative).
+- Onset timing is now the cheapest discriminator again: iter-5 point
+  positive (uninformative CI) vs iter-21 −96 → damage accrues somewhere in
+  iters ~5-21 OR the iter-5 read is noise. NEXT: 200-game arena on the
+  earliest banked snapshot of THIS lineage to locate onset; then the M1
+  test (warm optimizer import) and/or a frozen-training control (selfplay
+  WITHOUT weight updates for N iters — if strength drops with NO training,
+  the arena/instrument is indicted; if it holds, training is).
+- Family yardstick unchanged: daily ratchet Elo(published − boot512),
+  SUCCESS CI>0 / KILL CI<0. On today's evidence the target/loop family is
+  now the primary suspect for BOTH the boot shock and the −48.6 steady
+  drift.
+
+## 2026-08-05 07:10 — ONSET LOCATED: iter5 ≈ boot512 (−15.6 [−60.9, +29.1]); the ~96 Elo accrues in iterations ~5-21
+
+- Onset arena (200 games, same rig as the prereg arena, label
+  onset_iter5_vs_boot512): Elo(iter5 − boot512) = −15.6 [−60.9, +29.1],
+  score 0.4775, pentanomial {WW:16, WD_DW:13, DD_WL:37, LD_DL:14, LL:20}.
+  CI spans zero; essentially disjoint from iter21's [−138.3, −56.7].
+- ELIMINATED: the arena-instrument systematic ("any trained checkpoint of
+  this family reads ~−100") — iter5 is a trained checkpoint (~530 steps)
+  and reads ≈0 on the same instrument, same seed, same openings.
+- WEAKENED: pure M1 cold-optimizer shock — a moments-initialization
+  transient predicts front-loaded damage; the damage instead lands AFTER
+  the early iterations. CONFOUND to keep honest: warmup 1000 held iters
+  1-5 at reduced LR, and full LR arrives ~iter 9-12 — exactly when the
+  damage window opens. So the cleanest surviving account is: TRAINING ON
+  THIS LOOP'S TARGETS AT FULL LR COSTS ROUGHLY −80 ELO PER ~1000 STEPS
+  until it plateaus ~−100, robust to teacher depth, data difficulty, and
+  optimizer regime. The target/loop family is now the dominant suspect for
+  the boot shock AND (at lower rate vs a moving window) the −48.6 steady
+  drift.
+- IN-LOOP BLINDNESS CONFIRMED AGAIN: at iter 33 the servo reads winrate
+  0.68 at regret 0.050 (difficulty already past the old lineage's band) —
+  the net crushes its curriculum opponent while losing 96 Elo of general
+  play. The curriculum winrate measures the handicapped-SF matchup, not
+  play strength.
+- NEXT MEASUREMENT (launched): old lineage 0f888's banked
+  ck_2026-08-04_iter8.pt vs boot512, same rig, label onset_0f888_iter8.
+  0f888 had warmup 72, so its iters 2-8 ran at FULL LR (~900 steps): if
+  damage ∝ LR-weighted steps on-target, 0f888-iter8 should ALREADY read
+  strongly negative; if it reads ≈0, the accrual account needs revision.
+- Intervention decisions (user-gated, for the morning): the surviving
+  levers are target-side — e.g. w_selfplay/loss-weight geometry, the
+  saturating SF policy target (cp-rank replacement, task #155/PR-B prereg),
+  sf_wdl_frac floor-pinning — plus the M1 warm-optimizer-import control.
+  A frozen-training control is now LESS urgent (instrument exonerated).
+
+## 2026-08-05 08:50 — CROSS-LINEAGE CONFIRMATION: 0f888-iter8 = −103.7 [−150.7, −60.2]. LR-WEIGHTED-STEPS ACCRUAL OF TARGET DAMAGE CONFIRMED ACROSS BOTH LINEAGES
+
+- onset_0f888_iter8_vs_boot512 (200 games, same rig): Elo −103.7
+  [−150.7, −60.2], score 0.3550, pentanomial {WW:8, WD_DW:9, DD_WL:27,
+  LD_DL:29, LL:27}. 0f888 had warmup 72, so its iter 8 carried ~1,430
+  full-LR steps (blast included) — and the collapse was ALREADY COMPLETE.
+- Consolidated onset table (all vs boot512, same instrument, seed 42):
+  0f888 (full LR from step 72): iter8 −103.7 | iter21 −96.2 | iter169
+  −81.4 | iter177 −130.9 → collapse complete by ~1,400 full-LR steps,
+  then plateau. cdb96 (warmup 1000): iter5 −15.6 (mostly reduced-LR
+  steps, ≈ boot512) | iter21 −96.2 → collapse complete once ~1,000+
+  full-LR steps accumulate. ACCOUNT CONFIRMED: training this net on this
+  loop's targets at full LR moves it to a ~−100 Elo attractor within
+  ~1,000-1,500 steps, invariant to teacher depth, opponent difficulty,
+  data-blast size, and optimizer clipping regime. The damage is the
+  DESTINATION, not the transient: the loop equilibrium is ~100 Elo below
+  boot512 under this arena.
+- Interpretive note (not a verdict): the old 13a9f lineage sat at −48.6
+  at iter477 — i.e., its long-run equilibrium was LESS bad than the
+  ~−100 early attractor. Whether that is window-maturation (1.5M mixed
+  window vs a young window) or era drift is an open question the daily
+  ratchet on cdb96 will start answering for free.
+- ALL measurement follow-ups from the NULL are now closed. Remaining
+  moves are TARGET-side interventions + the M1 warm-optimizer control —
+  user decisions, queued for the morning.
+
+## 2026-08-05 — KILLED BEFORE LAUNCH: M1 warm-optimizer-import boot control (user-caught). The intervention decays ~35 half-lives before the damage window opens
+
+- The proposed control: fresh boot from boot512 weights + import the optimizer
+  moments banked with those weights (boot_snap_recheck_0711_0404.pt `opt`, step
+  56000), everything else identical to restart #2; a non-null vs cdb96's −96.2
+  would have promoted M1 (cold optimizer moments).
+- Kill reason (structural, no run needed): the production aurora optimizer's
+  ONLY state is `momentum_buffer` (verified on the snapshot: 481 entries, no
+  second moments, no persistent polar/PP state). `aurora_momentum: 0.95` ⇒
+  half-life ln2/ln(1/0.95) ≈ 13.5 steps. Restart #2's damage window opens at
+  full LR (~step 1000, iters ~9-12, warmup_steps 1000); by then an imported
+  buffer is attenuated 0.95^1000 ≈ 5e-23 — the arm and its control are
+  bit-identical where the damage happens. The experiment cannot discriminate.
+- Confirming evidence already in hand: the iter-5 arena (−15.6 [−60.9, +29.1],
+  ~530 all-warmup steps) shows the genuinely-cold-moments period did no
+  measurable damage. M1 required the damage to be front-loaded; it is not.
+- M1 is hereby ELIMINATED as a candidate for the boot shock — not by a run but
+  by timescale arithmetic + the onset arena. The surviving cause list is now
+  the TARGET/LOOP family alone (plus the weak arena-systematic residual).
+  Credit: the kill question ("warmup is supposed to stabilize that regardless")
+  was the user's.
+- Consequence: the next boot window goes 100% to the cp-rank policy-target
+  deploy (07-31 screen PASSED, 08-04 conjugacy audit SUSTAINED-WITH-CAVEAT;
+  deploy spec at :17529-17550 — new score-mode key through SfTargetParams /
+  _pv_wdl_score / worker reco RESTART key; proof observation = won-bucket
+  sf_policy_target entropy ~1.75 → ~1.0 nats within one window turnover).
+  Prereg for that deploy will be its own entry before launch.
+
+## 2026-08-05 PREREG — DEPLOY the cp-ranked SF policy target (sf_policy_score_mode: cp) at the next boot. USER-APPROVED ("Let's try both", 08-05; the M1 half was killed before launch — see the entry above)
+
+- Hypothesis: the fresh-boot collapse and the steady drift are TARGET/LOOP
+  damage, and the dominant candidate defect is the saturating w+0.5d policy
+  score (07-31 screen PASSED; 08-04 conjugacy audit SUSTAINED on neutral
+  rulers: decisive-position blunder mass ~halved). Replacing the soft-CE
+  score with the cp ranking changes what the loop teaches in exactly the
+  positions the loop currently teaches shuffling.
+- Change: PR #355 (sf_policy_score_mode + sf_policy_cp_temp, default wdl =
+  bit-identical). Deploy = merge + restart FRESH from boot512 with the
+  08-04 boot-hygiene package UNCHANGED (teacher floor 700k, regret 0.1,
+  nodes 75k, warmup 1000) + sf_policy_score_mode: cp + sf_policy_cp_temp:
+  16.2. ONE data-affecting change vs restart #2 — the two prior boots
+  (0f888, cdb96) are the paired baselines, both reading −96.2 at iter 21.
+- DECIDING YARDSTICK (boot-shock readout, ~5h of training): bank the
+  iter-21 checkpoint (checkpoint_000020/trainer.pt per label lag) and run
+  the SAME arena as the baselines:
+  PYTHONPATH=. python3 scripts/arena_standard.py --candidate <iter21 bank>
+  --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --mode matched_sims --sims 32 --search-shape training --games 200
+  --seed 42 --label cp_target_iter21_vs_boot512
+  SUCCESS: CI excludes −96.2 on the favorable side (upper bound > −56.7 is
+  suggestive; point estimate > −50 = the target family is implicated and the
+  lever works). NULL: ≈−96 again ⇒ the soft-CE score mode is NOT the binding
+  defect; the cp-rank lever is spent at this dose (w_sf_own 0.1 / 17.1%
+  coverage — the reach caveat from the 07-31 entry stands) — record FAILED,
+  do not re-litigate.
+- FAMILY YARDSTICK unchanged: daily ratchet Elo(published − boot512),
+  SUCCESS CI>0 / KILL CI<0.
+- Deploy proofs on the FIRST session (no verdict before all three):
+  (1) worker log "session-start reco applied: ... score_mode=cp
+  cp_temp=16.20"; (2) mtime-selected NEW shards: won-bucket (|cp|>=300)
+  sf_policy_target mean entropy moves from ~1.75 toward ~1.0 nats within one
+  window turnover; (3) params.json carries both keys.
+- Confounds (pre-declared): (a) policy_sf_loss / m_sf_own series change
+  meaning at the switch — never compare across it; (b) balanced-bucket
+  blunder mass gets WORSE under cp ranking (0.140%→0.391%, 08-04 audit);
+  (c) the boot readout inherits the warmup-1000 schedule, so damage-window
+  timing matches cdb96, not 0f888.
+- Revert: flip sf_policy_score_mode back to wdl + restart (target-only
+  change; the replay window carries ~a day of cp-mode rows after a revert —
+  the standard yaml-revert-is-not-a-rollback caveat applies).
+
+## 2026-08-05 PREREG — TIER-0 OFFLINE REPLAY SCREEN: does STORED DATA ALONE recreate the fresh-boot collapse? (user-requested)
+
+- Question: sever the closed loop. Retrain boot512 offline on the EXACT
+  shards cdb96 ingested through iter 21 (104 shards, 424M, ~587k rows,
+  selected by SOURCE mtime <= iter-21 end ts 1785914301; banked at
+  data/offline_replay_screen_cdb96/shards_iter21) for the MATCHED budget
+  (1578 steps = cdb96's realized train_steps_used sum over iters 1-21,
+  batch 512, cold optimizer + warmup 1000 per the live yaml — the same
+  regime the fresh boot ran).
+- Command: PYTHONPATH=. python3 scripts/retarget_retrain.py
+  --config configs/pbt2_small.yaml
+  --checkpoint scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --replay-dir data/offline_replay_screen_cdb96/shards_iter21
+  --steps 1578 --batch-size 512 --no-rebuild-sf-targets
+  --out-dir data/offline_replay_screen_cdb96/retrain --variant control:
+  (--no-rebuild-sf-targets = stored targets exactly as live; ALL heads incl.
+  sf_p0 train as stored.)
+- Yardstick: the standard 200-game arena of the resulting checkpoint vs
+  boot512 (same rig/seed as the boot baselines). PRE-COMMITTED READING:
+  REPRODUCES if Elo <= -50 with CI excluding 0 (the static data/targets are
+  sufficient poison; Tier-1 selfplay-vs-curriculum row split becomes the next
+  screen). FAILS TO REPRODUCE if CI includes 0 and excludes -96 (the damage
+  needs the CLOSED LOOP / something not in stored rows; the ablation ladder
+  shifts to live-loop arms). Intermediate = partial reproduction, judged
+  against the in-vivo -96.2 anchor.
+- Known approximations (Confounds): (a) fixed pool vs the live run's growing
+  window (400k -> 587k over iters 1-21); (b) offline sampler recency
+  weighting operates over the whole pool at once; (c) zclip/EMA state starts
+  fresh (matches the fresh boot); (d) training-only process — no concurrent
+  selfplay load. None of these touched the in-vivo outcome across two boots
+  (blast/no-blast, lock-in/no-lock-in), so they are not expected to gate
+  reproduction.
+- GPU: cdb96 STOPPED for this screen (user-sanctioned; it was due to be
+  replaced by the arm-A restart anyway). Restart onto arm A proceeds after
+  PR #355 merges regardless of this screen's outcome.
+
+### 2026-08-05 12:15 — ARM A IS LIVE (trial d2003) + Tier-0 screen status
+
+- PR #355 merged (squash e8ec94bbe) after a03 round-3 CONFIRM on head
+  0d1acf241; CI test+lint green verified against that exact SHA. Live branch
+  synced (git diff HEAD...origin/main EMPTY), no .c/.h changes so no
+  extension rebuild. Arm-A keys committed pre-launch (6e5285751).
+- Trial d2003 launched 12:07 (--fresh from boot512 per the deploy prereg).
+  DEPLOY PROOFS: (1) PASSED — all 4 workers 12:08:10 "session-start reco
+  applied: regret=0.1000 sf_nodes=75000 label_floor=700000 score_mode=cp
+  cp_temp=16.20"; (3) PASSED — params.json carries sf_policy_score_mode=cp
+  + sf_policy_cp_temp=16.2. (2) won-bucket entropy PENDING one window
+  turnover (~1.75 -> ~1.0 nats expected). No verdict before all three.
+- Tier-0 offline replay screen: retrain COMPLETE (control: 1578 steps,
+  1412s, data/offline_replay_screen_cdb96/retrain/control.pt). First arena
+  attempt CRASHED 12:09 — CUDA OOM: the UNCAPPED arena collided with trial
+  d2003's boot-time memory grab (sequencing error, launched 2 min apart;
+  zero games played, no data loss). Relaunched 12:12 at
+  --max-concurrent-games 16 (the ratchet-proven safe config concurrent with
+  training; matched_sims is concurrency-invariant so the ruler is
+  unchanged). PID 206681, log arena_tier0_run2.log.
+- Follow-up PR #356 opened (the two a03 round-3 LOW residuals: audit-ruler
+  cp-mode coverage + sparse-CE scoreable-mask pin; 4 mutations verified
+  RED); a03 review requested.
+
+### 2026-08-05 CORRECTION to the Tier-0 prereg row count + PREREG — TIER-1 PROVENANCE SPLIT (user-approved "should we start tier 1 then while we wait", 08-05)
+
+- CORRECTION (Tier-0): the 104-shard pool holds 184,639 rows, not "~587k".
+  586,688 was the LIVE window size at iter 21, which includes the ~400k
+  fresh-boot regeneration base; the mtime-filtered selection captured the
+  iters-1-21 uploads only. Realized control views 1578*512/184639 = 4.38 —
+  inside the 4.3-5.3 views plateau, so the screen's reading stands; the
+  regeneration base's absence is added to the Confounds list as (e).
+  Interim (30/100 pairs): -113.9 [-199.6, -40.0] — no verdict until 200.
+- TIER-1 QUESTION: which game type carries the poison? Split the SAME
+  184,639 rows by the per-row `is_selfplay` tag (slot-level game type,
+  selfplay_fraction 0.5; verified at state.py:_init_color_and_selfplay_arrays
+  and finalize.py) into two exact-partition pools:
+  * arm SP (selfplay-only): 158,225 rows (85.7%) -> 5.11 views/row (IN basin)
+  * arm CU (curriculum-only): 26,414 rows (14.3%) -> 30.6 views/row (OUT of
+    basin — pre-declared repetition confound; a matched-views CU arm would be
+    ~227 steps, entirely inside warmup 1000, hence unreadable — matched STEPS
+    is the only readable design and the views asymmetry is accepted).
+  Filtered shard copies preserve source mtimes (hot-pool recency draw is
+  mtime-based); empty filtered shards are dropped.
+- Command per arm (identical to Tier-0 control except --replay-dir/--out-dir):
+  PYTHONPATH=. python3 scripts/retarget_retrain.py --config configs/pbt2_small.yaml
+  --checkpoint scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --replay-dir data/offline_replay_screen_cdb96/tier1_<sp|cu>
+  --steps 1578 --batch-size 512 --no-rebuild-sf-targets
+  --out-dir data/offline_replay_screen_cdb96/retrain_tier1_<sp|cu> --variant control:
+  Retrains serialize AFTER the Tier-0 arena frees its GPU slice (OOM lesson
+  12:09); each arm's arena is the SAME prereg ruler (200 games, seed 42,
+  matched_sims 32, conc-16, labels tier1_selfplay_vs_boot512 /
+  tier1_curriculum_vs_boot512).
+- PRE-COMMITTED READING (same rule as Tier-0, per arm): REPRODUCES if
+  Elo <= -50 with CI excluding 0; CLEAN if CI includes 0 and excludes -96.
+  Interpretation matrix: SP-only reproduces + CU clean => selfplay rows carry
+  it (search-visit targets / selfplay value labels); CU-only reproduces + SP
+  clean => curriculum rows carry it (SF-teacher legs); BOTH reproduce =>
+  ubiquitous target-construction defect (shared target builders); BOTH clean
+  while the full mix reproduced => interaction/mixture effect — report as
+  such, no arm verdict.
+- Confounds: (i) CU views 30.6 vs SP 5.11 vs control 4.38 — repetition
+  exonerated only WITHIN 4.3-5.3, so a CU-only reproduction is confounded
+  with repetition and will be stated as "CU rows OR repetition"; (ii) pool
+  sizes differ 6x; (iii) sf_p0 teacher rows exist only on selfplay rows
+  (blindspot_seed_vet memory) — the SP arm carries that leg, CU does not;
+  (iv) both arms inherit Tier-0 confounds (a)-(e) including the missing
+  regeneration base.
+
+### ⚑⚑ VERDICT (2026-08-05) — TIER-0 REPRODUCES. STORED DATA ALONE recreates the fresh-boot collapse: Elo(offline-retrained boot512 − boot512) = **−105.6 [−148.1, −66.1]**, 200 games.
+
+- Judged by the pre-committed rule: Elo <= −50 with CI excluding 0 => REPRODUCES.
+  −105.6 clears it decisively, and the CI CONTAINS the in-vivo −96.2 anchor —
+  this is a FULL reproduction, not partial. Pentanomial (candidate POV):
+  WW 5 / WD 8 / DD_WL 34 / LD_DL 29 / LL 24; label
+  tier0_offline_replay_vs_boot512 in runs/arena_results.jsonl.
+- Meaning: the ~−100 attractor does NOT require the closed loop. No PID
+  feedback, no publish cadence, no mid-run distribution shift, no selfplay
+  concurrency — a cold-optimizer retrain of boot512 on the exact stored
+  iters-1-21 rows (184,639; views 4.38, in-basin) at the matched 1578-step
+  budget loses the same ~100 Elo. The poison is IN THE STORED ROWS
+  (data and/or targets as written), which also retroactively strengthens the
+  Tier-0-style interpretation of every offline screen run on this bank.
+- Family routing: eliminates the loop-dynamics half of the TARGET/LOOP
+  family. Live-loop-only arms (e.g. C′ regret-band-in-cp) lose priority as
+  COLLAPSE explanations (they may still matter for steady-state quality);
+  target/data arms (A cp-rank — already live as trial d2003 — B zero SF
+  policy weights, Tier-1 row splits) gain.
+- Confounds (a)-(e) stand as pre-declared; none plausibly manufactures a
+  −105.6 that lands on the in-vivo anchor.
+- NEXT (already prereg'd + launched): Tier-1 provenance split — chain fired
+  13:36, SP retrain running, CU follows; arenas after.
+
+### 2026-08-05 AMENDMENT to the Tier-1 prereg — add arm SP-sub (user design input: equalize pool size/views across arms rather than shrink steps)
+
+- User objection sustained: matched steps on 6x-different pools leaves the CU
+  arm's repetition (30.6 views) unseparated from its row type. Pure
+  matched-views (1-3x per row) is UNREADABLE: 26,414 rows at 3 views = ~155
+  steps, entirely inside warmup 1000, where both live boots showed damage
+  does NOT land (iter-5 level, -15.6 [-60.9,+29.1]).
+- Arm SP-sub: GAME-level random subsample of tier1_sp down to ~26,414 rows
+  (target fraction 26414/158225 = 0.1670, seed 42, whole games kept/dropped
+  so row correlation structure matches CU's whole-game pools; per-shard
+  subsampling, all mtimes preserved). Same command shape, --replay-dir
+  data/offline_replay_screen_cdb96/tier1_sp_sub, --steps 1578.
+- AMENDED READING: primary contrast = CU-full vs SP-sub (identical size,
+  views, steps, schedule; differ only in row type), each also read vs
+  boot512 by the standard rule. SP-full keeps its in-basin absolute reading.
+  If BOTH 26k arms reproduce but SP-full is clean/mild => repetition or
+  pool-size drives it, row type not established. If CU reproduces and SP-sub
+  does not => curriculum rows carry it, repetition exonerated by the matched
+  control. Symmetrically for SP-sub-only.
+- Arena order (serialized, conc-16, same ruler): SP-full, CU-full, SP-sub.
+
+### 2026-08-05 AMENDMENT 2 to the Tier-1 prereg — FAST RIG (user design: cut warmup 1000->100 to reach collapse in fewer steps; views capped ~6)
+
+- Supersedes Amendment 1's arm plan BEFORE any amended arm launched (chain2
+  killed at the gate; nothing trained under Amendment 1's SP-sub-b512 leg).
+  SP-full (b512/1578/warmup-1000, 5.1 views) unchanged and still running;
+  CU-b512 (30.6 views) retrain still banks as a dose-response/fallback
+  checkpoint, arena DEFERRED (30-view repetition could collapse either arm
+  alone — user objection sustained, exposure-memorization memory concurs).
+- Evidence licensing the warmup cut: 0f888 collapsed at warmup 72 (-103.7),
+  cdb96 at warmup 1000 (-96.2) — warmup length does not gate the collapse,
+  it only delays full-LR accumulation.
+- FAST RIG (identical for all three fast arms): batch 256, steps 700,
+  --variant control:warmup_steps=100 => ~600 full-LR steps (Tier-0's
+  reproducing dose was ~578), ~6.7-6.8 views/row. Deploy proof: realized LR
+  ramp in each arm's report must reach peak by ~step 100 (a rig whose
+  override silently failed re-runs, not reinterprets).
+- Arms (all ~26.4-27k rows, game-level subsamples, seed 42, mtimes kept):
+  * MIX-fast: tier1_mix_sub (26,820 rows, selfplay share 0.870 vs source
+    0.857) — POSITIVE CONTROL. GATE: if MIX-fast does not REPRODUCE
+    (<= -50, CI excl 0), the fast rig cannot express the damage —
+    record INSTRUMENT-INSUFFICIENT and fall back to the banked b512 arms
+    with the 30-view caveat; the split arms are then NOT read as clean.
+  * SP-sub-fast: tier1_sp_sub (26,991 rows)
+  * CU-fast: tier1_cu (26,414 rows)
+- READING (gate passed): primary contrast CU-fast vs SP-sub-fast (identical
+  rig, size, views; differ only in row type); each also vs boot512 by the
+  standard rule. Confounds: batch 256 + warmup 100 deviate from the boot
+  regime (absorbed by MIX-fast for existence, shared across split arms for
+  the contrast); masked-mean low-coverage tails are noisier at b256
+  (shared).
+- Arena order (serialized, conc-16, standard ruler, 200 games, seed 42):
+  SP-full (tier1_selfplay_vs_boot512), MIX-fast (tier1_mixfast_vs_boot512),
+  CU-fast (tier1_cufast_vs_boot512), SP-sub-fast (tier1_spsubfast_vs_boot512).
+
+- ADDENDUM to Amendment 2 (pre-committed BEFORE any fast-arm readout): 6.7
+  views sits above the validated 4.3-5.3 basin. Two built-in cross-anchors
+  decide whether that matters, and the reading rule is fixed now:
+  (1) MIX-fast vs the Tier-0 control (same mixed data, 4.38 views): if
+  MIX-fast CI overlaps -105.6, the fast rig + views add nothing — absolutes
+  are readable. If MIX-fast is decisively worse, the rig inflates damage —
+  ONLY the CU-fast vs SP-sub-fast contrast is read (inflation shared), no
+  absolute verdicts from fast arms.
+  (2) SP-full (5.1 views) vs SP-sub-fast (6.6): same row type; a large gap
+  here corroborates rig/views inflation independently of (1).
+  Note the arithmetic floor: full-LR dose >= 578 forces views >= 6.57 at
+  b256 on a 26.4k pool — going under 6 needs batch <= 224 and was declined
+  as more regime deviation than the cross-anchors justify.
+
+- INSTRUMENT NOTE (Amendment 2, pre-declared): the four Tier-1 arenas run
+  --compile on (plain inductor, explicitly NOT reduce-overhead/cudagraphs —
+  arena_standard.py:1243) instead of auto->EAGER. Rationale: the auto
+  threshold's games*sims proxy assumes cold compile; these are ~1.5h runs
+  and the production workers' shared compile cache is warm for this arch.
+  The anchors (-96.2, -105.6) ran EAGER; the numerics delta is symmetric
+  within each run and orders of magnitude below the reading thresholds. Any
+  cross-mode comparison in the verdicts (MIX-fast vs Tier-0) is CI-width
+  coarse. Elo shifts attributable to compile mode are expected ~0; if
+  MIX-fast lands implausibly far from BOTH -105.6 and 0, an eager re-run
+  adjudicates before any verdict.
+
+### 2026-08-05 16:20 — ARM A DEPLOY PROOFS ALL THREE PASSED (trial d2003, iter ~6)
+
+- (2) won-bucket (|sf_label_meta[:,2]| >= 300) sf_policy_target mean entropy:
+  d2003 cp-mode 1.025 nats (14,486 rows, 93 shards) vs cdb96 wdl-mode 1.706
+  nats (13,370 rows, 104 shards) — the prereg predicted ~1.75 -> ~1.0. The
+  cp-rank target is demonstrably ranking decisive positions the saturating
+  score could not. (1) worker log score_mode=cp cp_temp=16.20 and (3)
+  params.json both passed at 12:08. Bonus: sf_label_meta[:,0] on new rows
+  reads 700017/700405/... — the 700k teacher floor is live in labels.
+- The iter-21 deciding arena (vs the paired -96.2 baselines) may now be
+  judged when it runs; no proof debt outstanding.
+
+## 2026-08-05 PREREG — TIER-2 LOSS-COMPONENT ABLATION on the Tier-0 rig: WHICH LOSS LEG carries the stored-row poison? (queued behind the arm-A iter-21 arena)
+
+- Question: Tier-0 proved the stored rows recreate the collapse (-105.6).
+  Tier-1 splits by ROW TYPE; this splits by LOSS COMPONENT on the FULL mixed
+  pool. Also serves as the OFFLINE SCREEN FOR ARM B (zero SF policy
+  weights) — a positive readout replaces a 6h live boot with a 2h screen.
+- Rig: EXACTLY the Tier-0 control (boot512, shards_iter21 184,639 rows,
+  b512, 1578 steps, config warmup 1000, --no-rebuild-sf-targets), one
+  invocation, three --variant arms sharing one shard scan:
+  * t2_nosfpol:  w_sf_move=0,w_sf_own=0,w_sf_own_regret=0   (ARM B offline —
+    self-visit policy + soft + all value legs kept)
+  * t2_novisit:  w_policy=0,w_soft=0                        (SF policy legs
+    kept; kills the dominant 2.0-weight self-visit teacher + soft policy)
+  * t2_valueonly: w_policy=0,w_soft=0,w_sf_move=0,w_sf_own=0,w_sf_own_regret=0
+    (no policy gradients at all; tests the ~27% value share in isolation)
+- Command: PYTHONPATH=. python3 scripts/retarget_retrain.py --config
+  configs/pbt2_small.yaml --checkpoint <boot512> --replay-dir
+  data/offline_replay_screen_cdb96/shards_iter21 --steps 1578 --batch-size
+  512 --no-rebuild-sf-targets --out-dir
+  data/offline_replay_screen_cdb96/retrain_tier2 --variant t2_nosfpol:...
+  --variant t2_novisit:... --variant t2_valueonly:...
+- Yardstick: standard 200-game arena per arm vs boot512 (matched_sims 32,
+  seed 42, conc-16, compile on per the Tier-1 instrument note). ANCHOR =
+  Tier-0 control -105.6 [-148.1, -66.1].
+- PRE-COMMITTED READING per arm: COLLAPSE PERSISTS if Elo <= -50 CI excl 0
+  (the removed leg is NOT necessary); DAMAGE GONE if CI incl 0 (the removed
+  leg is NECESSARY for the collapse); intermediate = partial contributor.
+  t2_valueonly persisting => the value target alone can do it. Confounds:
+  removing a leg changes gradient mix/scale (zclip renormalizes); loss-leg
+  weights interact with the causal split (~73% policy / ~27% value); arms
+  inherit Tier-0 confounds (a)-(e).
+- Sequencing: retrains + arenas run ONLY after the arm-A iter-21 deciding
+  arena completes (it owns the priority slot tonight).
+
+### ⚑⚑ 2026-08-05 — N1 CONFIRMED (task #155 investigation, pre-declared BEFORE the arm-A iter-21 readout): TWO MATE->SCORE FORMULAS TRAIN policy_own IN OPPOSITE DIRECTIONS, and cp mode (live in d2003) is what arms it
+
+- Two formulas, five sites: mate_to_effective_cp (wdl.py:10) folds mates to
+  +/-1500..2480cp — INSIDE the reachable cp band (SF emits ~20000cp in
+  decisive endgames; shard clamp +/-32000) — consumed by the live cp-mode
+  policy scorer (_pv_cp_score), target_builder, sparse_sf_ce (2 inline
+  copies), and the FROZEN AUDIT RULER. _sf_move_score (finalize.py:1258)
+  and its C copy (_lc0_ext.c:1017) use +/-(100000 - N*100) — the correct
+  dominating band — feeding sf_p0_regret.
+- Worked live row (0f888 shard_001187 idx 642): forced mate-in-3 scores
+  2440 under map1 vs 99700 under map2; four cp~19996 moves outrank it in
+  cp mode. sf_p0_policy_t gives the MATE 0.000000; sf_p0_regret gives the
+  mate 0.000 regret and the decliners 1.000 each. Both train policy_own,
+  7:1 (w_sf_own_regret 0.7 vs w_sf_own 0.1) toward map2's view.
+- Frequency (last 40 live shards, 75,356 positions): 14.20% carry a mate
+  line; 1.344% flip best-move between mappings. Negative control: 0/15,325
+  disagreements on mate-free rows. Under the former wdl mode the same row
+  differed ~5e-5 — cp mode is what makes this a POLICY-label defect.
+- N2 corollary: the frozen audit ruler shares map1 and is mate-blind
+  (mate-in-10 scored a 965cp blunder). A fix inflates unclamped audit
+  regret spread 14.1x => the fix MUST co-design a ruler regret clamp and
+  INVALIDATE recorded audit numbers. Full analysis + fix plan (3 coupled
+  parts) in the task-#155 agent report; instruments banked at
+  scratchpad/n1_freq.py + n1_live_worked.py.
+- ARM-A READOUT CONFOUND, PRE-DECLARED (iter-21 arena has NOT run yet):
+  the deployed cp-rank lever mis-ranks mates on ~1.3% of rows. The
+  pre-committed kill rule STANDS for "cp-rank AS DEPLOYED": NULL => FAILED
+  as deployed, no re-litigation of THIS entry. A mate-fixed cp-rank is a
+  NEW experiment requiring its own prereg; a SUCCESS tonight is a success
+  despite this bug (bias is against arm A, not for it).
+- NO deploy action now: arm A owns the window; the unification is a
+  3-part coupled change (wdl.py one-home + ruler clamp/invalidations +
+  sparse-CE collapse) with no config flag — next-shards-effective, mixed
+  window ~a day.
+
+- FAST-RIG WARMUP DEPLOY PROOF (Amendment 2) — PASSED by exclusion, all
+  three fast arms: checkpoint scheduler _last_lr at step 700 = 6.0e-5 =
+  the 10%-of-base end-of-schedule decay floor (identical to the Tier-0
+  control's completed-schedule end state at step 1578). A FAILED override
+  (warmup 1000 > 700 steps) would have ended MID-RAMP at ~4.2e-4, 7x
+  higher. warmup_steps=100 was in effect. Also noted: mix_fast grad-norm
+  median 5.06 tripped the I11 watch line (clip 17.1%/hard 13.1%) — an
+  offline-rig observation, no action; shared across fast arms.
+
+### ⚑ 2026-08-05 16:48 — INCIDENT: trial d2003 DIED at iter 10 (CUDA unknown error) + both round-1 arenas core-dumped. ROOT CAUSE: VRAM exhaustion from PAIRED COMPILED arenas concurrent with training. GPU HEALTHY (fresh CUDA context verified) — NOT the vmbus wedge, no reboot needed.
+
+- Sequence: round-1 arenas (SP-full + MIX-fast, --compile on, conc-16 each)
+  launched paired at ~16:29 under a 5GB-free guard; VRAM climbed to
+  31.2/32.6G; 16:47 trainer hit "CUDA error: unknown error" (retry 1/3
+  failed through), trial ERROR at 16:48:10 after 10 iterations; both
+  arenas Aborted (exit 134) with ZERO games. The 5GB guard was calibrated
+  on EAGER arena footprints; compiled arenas grow past it. My sequencing
+  error — same failure class as the 12:09 OOM, now twice in one day.
+- RULE GOING FORWARD (operational): never pair arenas while training is
+  live; compiled arenas need a >=10G floor; pairing only on an idle GPU.
+- Casualties/survivors: d2003 trainer + workers/server DOWN (iter-10 state
+  intact: checkpoint_000009 banked by Ray, auto-resume available). Chain4
+  proceeded to round 2 (CU-fast + SP-sub-fast) which now runs on the FREE
+  gpu — those two arms are uncompromised. Round-1 arenas RE-QUEUED serial
+  behind round 2 with the 10G floor (rerun logs *_rerun.log). Tier-2 chain
+  unaffected (gated further downstream). iter-21 watcher remains valid
+  across a resume (same trial dir, checkpoint indices continue).
+- ARM A impact: outage from 16:48 until user-approved resume; iters 11-21
+  resume from checkpoint (optimizer/schedule state intact, so damage-window
+  step arithmetic is unchanged). Confound to carry into the iter-21 entry:
+  mid-experiment outage + C14b resumed in-flight games at the boundary.
+  RESUME RECOMMENDED (not fresh); awaiting user go per the no-autostart
+  rule.
+
+- RESUME AUTHORIZED (user, 2026-08-05 evening, "you can resume if its not
+  gonna mess up arena"): gated auto-resume armed — training restarts ONLY
+  after round-2 arenas AND the round-1 re-runs clear the GPU (~3h), because
+  resuming beside two compiled arenas is the exact 16:48 crash
+  configuration. Arm A continues iters 11-21 from the intact iter-10 state;
+  the iter-21 watcher then banks ckpt_000020 and runs the deciding arena
+  (eager, conc-16, single-arena-beside-training — the proven-safe class).
+  Tier-2 remains gated behind that arena. Also user-specified: minimum
+  password length 8, folded into the PR #358 fix wave.
+
+### ⚑⚑ VERDICTS (2026-08-05 17:11) — TIER-1 SPLIT PAIR: BOTH row types REPRODUCE at matched rig/size/views. The poison is in what they SHARE — the target construction — not in either game type.
+
+- CU-fast (curriculum-only, 26,414 rows, 6.8 views, b256/700/w100):
+  Elo(vs boot512) = -111.4 [-155.0, -70.9], 200 games. REPRODUCES
+  (pre-committed rule: <= -50, CI excl 0). 14% of the data recreates the
+  FULL-scale collapse.
+- SP-sub-fast (selfplay-only, 26,991 rows, 6.6 views, same rig):
+  -66.8 [-112.8, -23.1]. REPRODUCES by the rule; milder point estimate.
+- Arm-vs-arm contrast: 44.6 Elo gap, NOT CI-separated (diff ~45 +/- 61) —
+  "curriculum denser poison per-row" is SUGGESTIVE ONLY; do not cite as
+  established.
+- Matrix reading (pre-committed): BOTH reproduce => ubiquitous
+  target-construction defect. Sharpened by teacher asymmetry: sf_p0 rides
+  ONLY selfplay rows, opponent-reply policy_sf rides curriculum games —
+  the arms share the SEARCH-VISIT policy target + VALUE labels + builder
+  machinery. Tier-2 (t2_novisit / t2_valueonly / t2_nosfpol) is now the
+  discriminating screen and runs tonight as prereg'd.
+- Gate status: MIX-fast (positive control) crashed in the 16:48 OOM and is
+  re-running; its gate function is moot for REPRODUCES readings (the rig
+  demonstrably expresses damage) and it now serves the views cross-anchor
+  (vs Tier-0 -105.6). SP-full re-running behind it.
+
+### ⚑ VERDICTS (2026-08-05 17:42) — ROUND-1 RE-RUNS COMPLETE: the Tier-1 matrix closes clean. Fast rig VALIDATED by its cross-anchor; SP-full REPLICATES SP-sub-fast almost exactly.
+
+- SP-full (selfplay-only FULL pool 158,225 rows, Tier-0 rig b512/1578/w1000):
+  Elo(vs boot512) = -66.8 [-107.7, -27.7], 200 games. REPRODUCES
+  (pre-committed rule: <= -50, CI excl 0). Point estimate lands ON
+  SP-sub-fast's -66.8 [-112.8, -23.1] — the 27k subsample at the fast rig
+  and the full pool at the slow rig agree to the integer. Internal
+  replication across BOTH rig and pool size: the selfplay-row damage
+  (~-67) is real and rig-invariant.
+- MIX-fast (mixed 26,820-row subsample, fast rig b256/700/w100, 6.7 views):
+  -79.5 [-128.4, -33.6]. Serves as the pre-committed views cross-anchor:
+  CI broadly overlaps Tier-0's full-rig -105.6 [-148.1, -66.1] => the
+  fast rig is a valid instrument at ~6.7 views; the CU-fast and
+  SP-sub-fast readings STAND as reported. (Positive-control gate function
+  moot, as pre-declared — the rig demonstrably expresses damage.)
+- Full matrix now: MIX -105.6 (full rig) / -79.5 (fast) · CU -111.4 ·
+  SP -66.8 (both rigs). Consistent ordering: curriculum rows carry the
+  denser damage, selfplay rows a milder but unambiguous dose; the mixture
+  sits between. Arm-vs-arm still not CI-separated — ordering stays
+  SUGGESTIVE, the load-bearing conclusion remains "both reproduce =>
+  shared target construction", discriminated by Tier-2 tonight.
+- Instrument note: all four re-run/fast arenas compiled conc-16 on an idle
+  GPU (~11-min/200 games — the earlier ~75-min timings were contention,
+  not arena cost). Same ruler class as the crashed originals.
+
+### ⚑⚑ VERDICT (2026-08-05 21:08) — ARM A (cp-rank sf_p0 target) iter-21 arena: NULL ⇒ FAILED-AS-DEPLOYED
+
+- Deciding yardstick (prereg'd): Elo(d2003 iter21 − boot512), eager conc-16
+  seed 42, 200 games, baseline-identical ruler. Result: **−92.5
+  [−138.8, −49.2]** (pentanomial 7/11/34/19/29, score 0.3700).
+- Rule application: the CI contains −96 and the point estimate sits on the
+  attractor — this is the NULL branch. The three boots now read −96.2
+  (unhygienic) / −96.2 (full-hygiene) / −92.5 (cp-rank): the iter-21 boot
+  shock is INSENSITIVE to the sf_p0 scoring mode as deployed.
+- Deploy proofs all passed pre-readout (score_mode=cp in worker log both
+  sessions, won-bucket entropy 1.706→1.025, params.json, teacher ≈700k),
+  so this is a verdict about the EFFECT, not the wiring.
+- Pre-declared confound (stands, no re-litigation): the N1 mate fold
+  biases AGAINST arm A — cp mode gave forced mates 0.000000 target mass
+  on 1.34% best-move-flip rows. The mate fix is MERGED (PR #360,
+  a84aaf8) but deploy-gated and NOT in d2003. A mate-fixed cp-rank is a
+  NEW experiment with its own prereg; tomorrow's boot decision belongs to
+  the user.
+- Trial d2003 stays LIVE past iter 21 (standing task #143 ratchet
+  yardstick unaffected). Tier-2 loss-leg ablation chain fires now, gated
+  on this arena's append line.
+
+### ⚑⚑ VERDICT (2026-08-06 00:20) — TIER-2 ARM 1 (t2_nosfpol): damage SURVIVES with ALL SF policy legs removed ⇒ SF POLICY TARGETS EXONERATED as the necessary cause
+
+- Rig: Tier-0 exactly (boot512, full shards_iter21 pool, b512/1578/w1000,
+  --no-rebuild-sf-targets), w_sf_move=0 w_sf_own=0 w_sf_own_regret=0.
+  Arena (compiled conc-16 seed 42, 200 games): Elo(vs boot512) =
+  **−75.9 [−117.1, −36.6]**. Anchor −105.6 [−148.1, −66.1].
+- Pre-committed rule: DAMAGE GONE (CI incl 0) = removed leg necessary.
+  CI decisively excludes 0 ⇒ NOT GONE ⇒ the SF policy teacher (sf_p0,
+  opponent-reply policy_sf, regret weighting — all of it) is NOT required
+  to reproduce the collapse.
+- Joint reading with arm A (same session): cp-rank as deployed didn't
+  move the boot shock, AND removing the legs it reranks doesn't move the
+  offline collapse. Two independent instruments now point away from the
+  SF policy target family for THIS defect. (The mate fix #360 remains
+  correct on its own merits — its case is steady-state quality, not the
+  collapse.)
+- Remaining suspects by prereg: search-visit policy targets (t2_novisit,
+  arena next) and value labels (t2_valueonly, last). If t2_valueonly
+  reproduces, the value target is implicated with policy legs entirely
+  absent.
+
+### ⚑⚑ VERDICT (2026-08-06 01:47) — TIER-2 ARM 2 (t2_novisit): damage SURVIVES with search-visit + soft policy legs removed
+
+- Same rig; w_policy=0 w_soft=0 (sf legs retained). Arena 200 games:
+  Elo(vs boot512) = **−115.2 [−160.2, −73.7]**. Anchor −105.6.
+- Rule: DAMAGE GONE (CI incl 0) = removed leg necessary ⇒ NOT GONE.
+  The MCTS visit-count policy target and policy_soft are NOT required to
+  reproduce the collapse either.
+- Running tally: nosfpol −75.9, novisit −115.2 — NO single policy family
+  is necessary. The discriminator is now t2_valueonly (ALL five policy
+  weights zero, pure value training, arena next): if it reproduces, the
+  VALUE LABELS alone are sufficient to carry the collapse, consistent
+  with the standing value-target findings (compressed target, HL-Gauss
+  edge truncation candidate). If it does NOT reproduce, the collapse
+  needs policy training but no specific leg — a redundant-cause reading
+  across policy legs, discriminated further only by pairwise ablations.
+
+### ⚑⚑ VERDICT (2026-08-06 01:55) — TIER-2 COMPLETE: THE VALUE LABELS ALONE ARE SUFFICIENT TO REPRODUCE THE COLLAPSE. No policy leg is necessary; value-only is the WORST arm.
+
+- Final table (all: boot512, full shards_iter21, b512/1578/w1000, compiled
+  conc-16 seed 42, 200 games, Elo vs boot512):
+    full mix (Tier-0 anchor)              −105.6 [−148.1, −66.1]
+    t2_nosfpol  (SF policy legs off)       −75.9 [−117.1, −36.6]
+    t2_novisit  (visit+soft legs off)     −115.2 [−160.2, −73.7]
+    t2_valueonly (ALL policy legs off)    −157.7 [−205.3, −115.0]
+- Pre-registered reading: t2_valueonly REPRODUCES ⇒ the VALUE TARGET is
+  implicated — training ONLY the value heads on these rows produces a
+  collapse at least as large as the full loss. No policy family is
+  necessary (arms 1-2), and the monotone ordering (less policy training ⇒
+  more damage) says policy training was partially PROTECTIVE, not causal.
+  (valueonly-vs-anchor CIs overlap at the edge — "worse than full mix" is
+  strong-suggestive; "reproduces without any policy training" is the
+  CI-clean, load-bearing conclusion.)
+- Convergent with the standing value-target findings: the value target is
+  ABOVE the head yet compressed (handicapped teacher +6.7cp-equiv,
+  sf_wdl_frac floor-pinned 0.45), HL-Gauss edge truncation candidate
+  (A20, ~⅓ of gap), and the boot-shock family's insensitivity to every
+  policy-side lever tried (arm A cp-rank NULL, teacher hygiene NULL).
+- Joint session synthesis: arm A NULL + t2_nosfpol REPRODUCES = two
+  independent instruments exonerating the SF policy teacher for the
+  collapse; Tier-1 already showed both game types carry it; Tier-2 now
+  locates it in the VALUE labels of the stored rows.
+- NEXT (needs its own prereg, user decision): value-side ablation screen
+  on this SAME validated offline rig — candidate arms: sf_wdl_frac
+  floor unpinned/raised, HL-Gauss edge-truncation fix, w_wdl-only vs
+  +sf_eval/categorical aux heads, cp-logistic slope. The rig is cheap
+  (~2h retrain + ~45min arena per arm beside training) and burns no boot.
+- Confound line: arenas beside live training (load); ruler class identical
+  across all arms and anchor, differences are arm-vs-arm on shared inputs.
+
+### ⚑ PREREG (2026-08-06) — TIER-3: VALUE-LABEL SOURCE DECOMPOSITION — which component of the WDL blend carries the collapse?
+
+- Context: Tier-2 proved the VALUE labels alone reproduce the collapse
+  (t2_valueonly −157.7, worst arm). The trained WDL target is a 3-way
+  blend (yaml: sf_wdl_frac 0.45 / search_wdl_frac 0.20 / game 0.35).
+  This wave decomposes it. It doubles as the "prove offline training
+  works" gate: until some offline arm stops losing to its own
+  initialization on our own labels, no live/RL intervention is worth
+  compute — an arm with CI including 0 is the existence proof and the
+  anti-collapse candidate for the next live prereg.
+- Rig: IDENTICAL to Tier-2 (boot512, full shards_iter21, b512/1578 steps,
+  cold optimizer, seed via config, --no-rebuild-sf-targets), 4 variants in
+  one paired retarget_retrain run; arena_standard vs boot512, matched_sims
+  32, --search-shape training, 200 games, seed 42, conc-16, compile on.
+- Arms (ALL include the five policy weights = 0, matching t2_valueonly):
+    t3_sfonly     sf_wdl_frac=1.0, search_wdl_frac=0.0  (pure SF cp-logistic)
+    t3_gameonly   sf_wdl_frac=0.0, search_wdl_frac=0.0  (pure game outcome)
+    t3_searchonly sf_wdl_frac=0.0, search_wdl_frac=1.0  (pure search WDL)
+    t3_noaux      production blend, w_sf_eval=0, w_categorical=0
+                  (tests the aux value heads the blend arms cannot see)
+- Wiring: overrides flow retarget_retrain.py config.update ->
+  trainer_kwargs_from_config (trainer.py:1560-1561) -> losses.py:701-762;
+  offline rig has no PID, so the override IS the realized value. Proof
+  recorded per-arm in retarget_report.json `overrides`; cross-arm wdl-loss
+  divergence in final_metrics is the in-effect signal.
+- Pre-committed decision rules (per arm, Elo vs boot512, 95% CI):
+    CARRIER: CI overlaps t2_valueonly [−205.3, −115.0] AND point ≤ −100.
+    CLEARS THE ANCHOR: CI lower bound > −66.1 (entirely above the
+      full-mix anchor's CI). Strong success: CI includes 0.
+    LOCALIZATION SUCCESS: ≥1 pair of arms with non-overlapping CIs.
+    KILL (no localization): all four arms' CIs mutually overlap ⇒ the
+      mechanism is common target construction (HL-Gauss mapping / value
+      head training itself), NOT the label source ⇒ next prereg is the
+      HL-Gauss edge-truncation fix arm.
+- Confounds: (a) convexity caveat — single-source arms may each read
+  worse than the blend without contradiction; the readout is ORDERING
+  among arms, not absolute-vs-blend. (b) arms 1-3 still carry SF signal
+  via aux heads w_sf_eval/w_categorical (constant across arms; arm 4
+  covers that family). (c) rows lacking SF/search labels fall back to
+  game outcome INSIDE the sf/search terms (losses.py:751-762) — pure-
+  source arms are diluted toward game_oh on label-absent rows. (d) arenas
+  run beside live training (load); ruler class identical across arms.
+- ETA: ~2.7h retrain (4 arms paired) + 4×~45min arenas ≈ 6h, gated on
+  memory floors beside the live d2003 trainer.
+
+### OPS (2026-08-06 09:28) — d2003 STOPPED BY USER DECISION; program pivots to OFFLINE-FIRST
+
+- User call: the live loop is not gaining (iter-21 row −92.5, no lineage has
+  ever recovered above its boot) and the offline rig has localized the defect
+  to the value labels — stop burning GPU on live data-gen and iterate offline
+  until an arm demonstrably GAINS vs boot512, then relaunch with the fix.
+- Stack stopped via train.sh stop: 4 workers drained cleanly, 1846 in-flight
+  games suspended (resumable), GPU freed (30.9G). Lineage d2003 ends at
+  ~iter 103; final banked weights data/ratchet/snapshots/
+  ck_20260806_d2003_checkpoint_000102 (656M, full trainer.pt + pid_state).
+- Task #143's ~5-day ratchet yardstick is SUPERSEDED by this decision (no
+  5-day window will exist). The lineage's second and final strength row is
+  the already-queued ck102-vs-boot512 arena (200g, seed 42, ruler class
+  identical to the Tier waves) — reads out after Tier-3's arenas.
+- Tier-3 (prereg ca09cb38c) now runs on an idle GPU: ETA collapses from ~6h
+  to ~2h (arena ~11min/200g idle vs ~45min beside training).
+- Offline-first exit criterion (restates the Tier-3 prereg gate): NO live
+  relaunch until an offline arm's arena CI vs boot512 includes or exceeds 0.
+  The relaunch then carries the full restart-gated wave: #360 (+cp mode
+  commit + ruler re-baseline + C rebuild), #364, #332-336, #161 rotation.
+
+### ⚑⚑ VERDICT (2026-08-06 11:07) — TIER-3 COMPLETE: GAME-OUTCOME LABEL IS THE WORST POISON; AUX VALUE HEADS CARRY ~121 ELO OF DAMAGE; noaux ARM'S CI TOUCHES 0 — FIRST NEAR-NON-DESTRUCTIVE OFFLINE ARM
+
+- Rig per prereg ca09cb38c (idle GPU: 4 retrains 60min, arenas ~9min each).
+  Deploy proof: retarget report records every override; wdl_loss traces
+  diverge per blend (gameonly 0.544 / sfonly 0.770 / searchonly 0.810).
+  All arms value-only (five policy weights zero). Elo vs boot512, 200g:
+    t3_sfonly     (pure SF cp-logistic)   −72.2 [−114.2, −32.3]
+    t3_gameonly   (pure game outcome)    −235.4 [−289.9, −189.6]
+    t3_searchonly (pure search WDL)      −145.1 [−194.4, −100.9]
+    t3_noaux      (blend, aux heads off)  −36.6 [ −84.9, +10.3]
+- By the pre-committed rules:
+    LOCALIZATION SUCCESS — multiple non-overlapping CI pairs
+      (gameonly vs sfonly; gameonly vs noaux; searchonly vs noaux).
+    CARRIERS: t3_gameonly (worse than the t2_valueonly anchor itself) and
+      t3_searchonly. t3_sfonly is NOT a carrier (CI misses the anchor's
+      band; point −72.2) — the SF cp-logistic label is the LEAST damaging
+      source. Ordering: game ≪ search ≪ sf.
+    t3_noaux: does not formally CLEAR THE ANCHOR (CI lower −84.9 vs the
+      −66.1 bar) but its CI INCLUDES 0 — best arm ever measured on this
+      rig (previous best t2_nosfpol −75.9) and a near-miss on the offline
+      exit criterion.
+- Paired contrast with Tier-2: t2_valueonly (blend + aux) −157.7 vs
+  t3_noaux (blend − aux) −36.6, identical rig/seed/pool ⇒ the aux value
+  heads w_sf_eval + w_categorical account for ~121 Elo of the damage in
+  the value-only setting. Consistent with the standing HL-Gauss
+  edge-truncation suspect (A20 — the categorical head is the HL-Gauss
+  head), now with an arena-sized effect attached.
+- Mechanism reading: fresh-boot selfplay game outcomes (vs servo-weakened
+  SF) are the most toxic value signal; engine-derived labels are mildest.
+  The 0.35 game fraction in the production blend and the aux heads
+  together plausibly compose most of the −157.7.
+- Confound notes: sfonly/searchonly rows lacking labels fall back to game
+  outcome inside their terms (dilution toward game); w_future/w_moves_left
+  active in all arms (constant, unsplit).
+
+### ⚑ PREREG (2026-08-06) — TIER-4: AUX-HEAD SPLIT + BEST-COMBINATION ARMS (offline rig; chasing the CI≥0 exit criterion)
+
+- Same rig/ruler as Tier-3 (boot512, shards_iter21, b512/1578, cold opt,
+  arena 200g seed 42 conc-16 compiled, Elo vs boot512). All arms keep the
+  five policy weights at zero. Arms:
+    t4_auxsplit_sfeval  production blend, w_sf_eval=0 (categorical ON)
+    t4_auxsplit_cat     production blend, w_categorical=0 (sf_eval ON)
+    t4_noaux_sfonly     aux off + sf_wdl_frac=1.0, search_wdl_frac=0.0
+    t4_noaux_nogame     aux off + sf_wdl_frac=0.69, search_wdl_frac=0.31
+                        (game removed; sf:search ratio 0.45:0.20 kept)
+- Pre-committed rules:
+    Aux attribution (arms 1-2): an arm with point ≤ −100 and CI
+      overlapping t2_valueonly [−205.3,−115.0] ⇒ the head still ON in that
+      arm carries the aux damage. An arm with CI overlapping t3_noaux's
+      [−84.9,+10.3] and point > −60 ⇒ the head turned OFF in that arm was
+      the carrier. Both intermediate ⇒ damage is shared/additive.
+    Combination arms (3-4): SUCCESS = CI includes 0 (meets the offline
+      exit criterion, ledger 363050e5e); STRONG = CI lower bound ≥ 0;
+      BEATS t3_noaux = point ≥ 0. KILL branch: neither combo improves on
+      t3_noaux ⇒ next split is w_future/w_moves_left + a 2×-steps
+      trajectory arm on t3_noaux.
+- ETA ~1.5h on the idle GPU, gated behind the running ck102 arena.
+
+### GOAL AMENDMENT (2026-08-06, user-directed) — THE BAR IS A GAIN, NOT DAMAGE-ZERO
+
+- User: "we should be gaining elo not minimizing elo loss. our RL loop will
+  never work unless we can gain elo with new data." Adopted. The 363050e5e
+  exit criterion (CI includes 0) is downgraded to a MILESTONE; the relaunch
+  bar is a demonstrated GAIN: an offline-trained net whose arena CI vs its
+  own initialization is STRICTLY > 0.
+- Why a gain should be possible on this data (not wishful): the value
+  teacher is measurably ABOVE the head (handicapped 700k-node SF beats
+  iter478 by +6.7cp-equiv, ledger 07-31), i.e. the labels contain signal
+  the net has not absorbed; and search visit targets are the classic
+  policy-improvement operator. What Tiers 2-4 do is strip the components
+  that DESTROY that signal in transit.
+- Phase-2 design (prereg to be written after Tier-4 reads out):
+  1. Take the least-destructive label recipe from Tier-4.
+  2. Restore the FULL loss around it — policy legs come back (Tier-2
+     showed policy training is protective; value-only was an isolation
+     device, never the recipe).
+  3. Scale the two axes an 1578-step screen cannot see: train longer
+     (3-5x steps, arena at checkpoints -> absorption curve, does it climb
+     or plateau at 0?) and/or a bigger pool assembled from banked shards
+     under the winning label recipe.
+  4. Resolution: certifying a small gain needs more than 200 games
+     (CI half-width ~±45); the gain arena runs 1000+ games (~±20) — cheap
+     on an idle GPU (~45-55min).
+- KILL reading if phase-2 plateaus at ~0 despite clean labels: the stored
+  pool contains no net-usable above-net signal — the problem moves from
+  "labels poisoned" to "data has no teaching signal", pointing at label
+  depth/coverage (BT4-distill direction), not the loop.
+
+### CLOSING ROW (2026-08-06 11:17) — d2003 LINEAGE FINAL: ck102 (~iter 103) = −86.9 [−131.4, −45.0] vs boot512
+
+- Statistically identical to the iter-21 shock row (−92.5 [−138.8, −49.2]):
+  ~80 further iterations of live RL produced ZERO recovery — flat on the
+  collapse floor. Confirms the stop decision (363050e5e) and the family
+  verdict: the live loop as configured neither gains nor recovers.
+- The d2003 lineage is now fully documented: boot 0 → iter21 −92.5 →
+  iter103 −86.9. Banked weights: ck_20260806_d2003_checkpoint_000102.
+
+### ⚑⚑ MECHANISM (2026-08-06 12:00) — THE CATEGORICAL HEAD IS AN UNBLENDED GAME-OUTCOME HEAD AT WEIGHT 0.3; ITS HL-GAUSS TARGET IS AN EDGE-SPIKE FOR 76% OF ROWS
+
+- Read directly off the stored pool (184,639 rows, CPU, no arena):
+  outcome dist W .434 / D .241 / L .325; mean HL-Gauss edge-bin mass
+  0.669; 75.9% of rows carry >0.5 of categorical target mass in the two
+  edge bins. Outright outcome-vs-SF contradictions are RARE (0.23% at
+  |q|>0.8) — mislabeling is not the story; the story is target
+  construction:
+- Chain of custody: configs/pbt2_small.yaml has NO categorical_blend_frac
+  key ⇒ categorical_target_value() takes its documented default path and
+  returns the RAW TERNARY GAME OUTCOME (targets.py:69 "byte-identical to
+  the legacy behaviour"); hlgauss_target() then clips value ±1 onto the
+  support boundary [−1,1] (targets.py:23), truncating half the Gaussian
+  and renormalizing ⇒ an edge spike (~2/3 mass in the last bin — matches
+  the measured 0.669 exactly, and the 75.9% matches W+L=75.9% of rows).
+  And w_categorical = 0.3 (yaml:367) — 3x the default 0.10, twice
+  w_sf_eval, 30% of the main head's weight.
+- UNIFICATION: Tier-3's two findings are ONE defect. The "aux head damage"
+  (~121 Elo) and the "game outcome is the worst label" (−235) meet in the
+  categorical head: it trains the shared trunk on 100% game outcome (the
+  most toxic source) in a saturated encoding at weight 0.3, while the main
+  WDL head at least dilutes outcome to a 0.35 blend fraction. Effective
+  outcome weight in the loss is w_wdl*0.35 + w_categorical*1.0 =
+  0.35 + 0.30 — the loop has been training on game outcome at ~2x the
+  weight the yaml appears to say. Corrects audit A20's "~1/3 of gap"
+  framing: edge truncation is not an edge case, it is the COMMON case.
+- PRE-REGISTERED PREDICTION (arenas for Tier-4 have NOT read out at
+  commit time; retrain in progress): t4_auxsplit_cat (w_categorical=0,
+  sf_eval ON) recovers most of the ~121 Elo and lands near t3_noaux
+  (−36.6 band); t4_auxsplit_sfeval (w_sf_eval=0, categorical ON) stays
+  deep, near the t2_valueonly band. If the arenas read the OPPOSITE, the
+  mechanism above is wrong and w_sf_eval is condemned instead.
+- Fix options this licenses (post-Tier-4 prereg): (a) w_categorical=0;
+  (b) keep the head but rebuild its target BLENDED — the knob and the
+  offline rebuild path already exist (categorical_blend_frac +
+  rebuild_categorical_target_in_arrays, target_builder.py:757) and were
+  shipped exactly for this screen; (c) encoding fix: clamp the value to
+  ±(1−3σ) or widen support so ±1 cannot saturate. (b)+(c) preserve the
+  head's distributional-RL value if it has any; Tier-5 can race (a) vs
+  (b)+(c) directly on stored shards.
+
+### ⚑ PREREG (2026-08-06) — FAST-HARNESS CALIBRATION: does the 800-step screen reproduce the 1578-step verdicts?
+
+- User-proposed harness validation, run ONCE: re-run the two most extreme
+  known arms at half budget and check the answer survives. If it does,
+  every future screen runs ~2/3 the wall clock and 1578 is reserved for
+  borderline arms.
+- Fast-harness definition: --steps 800, warmup_steps=500 override (at the
+  production w1000 an 800-step run would sit entirely inside LR warmup —
+  fewer steps would silently confound with lower LR). All else identical
+  to the Tier rigs (boot512, shards_iter21, b512, cold opt, arena 200g
+  seed 42 conc-16 compiled vs boot512).
+- Arms: t3f_gameonly (value-only, sf_wdl_frac=0, search_wdl_frac=0) and
+  t3f_noaux (value-only, w_sf_eval=0, w_categorical=0). Their 1578-step
+  references: −235.4 [−289.9,−189.6] and −36.6 [−84.9,+10.3] — 199 Elo
+  apart, CI-separated by ~105.
+- Pre-committed rule: fast harness VALIDATED iff at 800 steps the pair
+  keeps its ordering AND stays CI-separated (gameonly upper < noaux
+  lower). Then: future waves default to 800/w500 with one internal
+  baseline arm per wave; a full-budget re-run is required only for
+  borderline arms (CI straddling a decision boundary). NOT validated ⇒
+  keep 1578 and stop tuning the harness (user rule: the fix matters more
+  than the instrument).
+- Note for the "run the other half" idea: resuming a 800-step arm for the
+  remaining 778 is NOT equivalent to a straight 1578 run (the rig
+  deliberately resets to a cold optimizer + fresh warmup on every start,
+  retarget_retrain.py:30-33) — so the two-stage policy is screen-at-800
+  then RE-RUN borderline arms at full budget, not resume.
+- Cost ~35 min queued behind Tier-4's last arena.
+
+### DATA FORENSICS (2026-08-06 ~12:20) — CPU-only audit of shards_iter21 (184,639 rows): ONE confirmed defect (categorical, above), everything else CLEAN
+
+- CLEAN (instruments in the loss's own frames): outcome POV consistency
+  0/9,455 games violated; corr(sf_q, search_q) identical by ply parity
+  (0.9549/0.9542 — no side-to-move sign bug); NaN count 0 across all
+  float targets; illegal mass 0.0 in policy_target / policy_soft /
+  sf_policy (t+1 frame) / future_policy (t+2 frame) / sf_p0 (t frame);
+  moves_left ∈ [0.002, 0.996], no negatives; future_sf_regret_sum p99
+  0.4, no inf; sf label coverage 97.3%, future coverage 97.8%.
+- sf_p0_regret fill convention verified sane: best move 0.0 (median 1
+  zero-regret legal move/row), evaluated alternatives scaled, illegal/
+  unevaluated 0.5–1.0 — inert under the masked softmax.
+- sf_multipv_raw col1 min = −32768 on 48.5% of entries = int16 padding
+  sentinel for unused PV slots (48 slots vs ~34 legal moves), not mate
+  overflow.
+- INSTRUMENT ERRATUM (recorded per the wrong-frame rule): first pass
+  measured sf_p0_policy_target against sf_legal_mask (t+1) and read 90.9%
+  "illegal" — sf_p0 lives in the t frame per losses.py:597-601 and reads
+  0.0 there. The measured-frame must be the loss's frame.
+- OPEN QUESTION for the searchonly result: search_wdl tracks SF closely
+  (corr 0.955, draw mass 0.244) yet t3_searchonly read −145 vs sfonly
+  −72. Candidate: the saturated tail (13.6% of rows |q|>0.95 — near-one-
+  hot search values) and/or self-referential error (search_wdl derives
+  from the net's own value head). Not yet a claim; a Tier-5+ question.
+
+### ⚑ PREREG (2026-08-06) — TIER-5 RUNG 0: THE AZ/LC0-RECIPE CONTROL — does the PROVEN loss composition work on our own stored selfplay games?
+
+- User-proposed debugging paradigm: bisect against the known-good
+  AlphaZero/Lc0 recipe instead of debugging our recipe in a vacuum. The
+  ladder: rung 0 = AZ loss on stored selfplay rows (free, this prereg);
+  rung 1 = fresh net-vs-net data at ~800-node search from our own stack
+  (data-gen on the idle GPU); rung 2 = cross-stack tests (lc0 net in our
+  exe / our net on lc0-style data) only if rungs 0-1 fail to localize.
+- Rig: offline rig at 1578/w1000 (anchored budget; the 800-step harness
+  is used only if fastcal validated by launch time — it did not gate this
+  entry). Pool = $D/tier1_sp (selfplay-only rows, 104 shards, already
+  built for Tier-1). Arena 200g seed 42 conc-16 compiled vs boot512.
+- Arms (both zero out EVERYTHING the AZ recipe lacks: w_soft, w_sf_move,
+  w_sf_own, w_sf_own_regret, w_sf_eval, w_categorical, w_future,
+  w_moves_left, w_sf_volatility; keep w_policy=1.0, w_wdl=1.0):
+    t5_az    value = pure game outcome (sf_wdl_frac=0, search_wdl_frac=0)
+             — the literal AZ loss: visit-count policy CE + outcome value.
+    t5_az_q  value = pure search WDL (sf_wdl_frac=0, search_wdl_frac=1.0)
+             — the Lc0 value-blend/root-Q analog.
+- Pre-committed reading:
+    t5_az CI includes/exceeds 0 ⇒ MACHINERY VALIDATED: trainer, arch,
+      optimizer, and search-visit targets can execute the proven recipe;
+      the defect lives entirely in the extra apparatus (SF opponent
+      servo, aux heads, blend) — fix by subtraction.
+    t5_az CI-clean NEGATIVE ⇒ the proven loss composition FAILS on our
+      stored selfplay data ⇒ the divergence from Lc0 is upstream of the
+      loss: data-generation regime (32-sim Gumbel games, temperature/
+      noise schedule, adjudication, 16 rows/game outcome correlation,
+      4.3 views vs Lc0's ~1) or optimizer regime ⇒ rung 1 (800-node
+      fresh data) becomes the deciding experiment.
+    t5_az vs t5_az_q ordering: which value source is less harmful ON
+      PURE SELFPLAY ROWS (no servo-biased curriculum outcomes in pool).
+- Note on the user's "SF as target didn't work" reading: as of this
+  entry SF is the LEAST harmful label source measured (−72 with aux
+  heads still on; the clean SF-only arm t4_noaux_sfonly is in flight).
+  The "high agreement yet lost Elo" observation was the SEARCH label
+  (corr 0.955 to SF, −145) — agreement-on-average does not preclude
+  training damage from the disagreeing tail.
+
+- RUNG-1 CONSTRAINT (2026-08-06, user): the "lc0-way" data-gen rung must
+  use the AUDITED Gumbel path at ~800 sims, NOT the PUCT/PUCV path — that
+  path is under-tested precisely because production is Gumbel (W3/PR #362
+  found 3 wiring defects there; c_puct/fpu_* knobs are inert-but-printed
+  in Gumbel searches). Literal PUCT replication requires its own
+  correctness audit FIRST, and only if Gumbel-800 data also fails.
+
+### INSTRUMENT READING (2026-08-06 ~12:45) — THE GUMBEL IMPROVED-POLICY TARGET IS NEAR-SF-QUALITY; THE SUSPECT HALF OF SEARCH IS ITS VALUES, NOT ITS MOVE-CHOOSING
+
+- User worry: oddities in Gumbel itself / the values it uses / target
+  shape. CPU-measured on the 37,619 stored rows carrying sf_p0_regret:
+    shape: policy_target is the completed-Q improved policy, NOT raw
+      32-sim visits (median support 25 actions, p90 40, median entropy
+      0.588 nats; 21.9% effectively one-hot).
+    quality on the SF ruler (expected normalized cp-regret, 0 = SF best):
+      policy_target 0.0506 (median 0.0090) vs uniform-legal 0.3128 —
+      an 83.8% improvement; top-1 agrees with SF's best move 54.1%.
+  Caveats: sf_p0_regret is an SF-conjugate ruler (fine for an oddity
+  check, not an arm verdict); unevaluated legal moves carry 0.5-1.0
+  penalty fill, which inflates the uniform baseline somewhat.
+- Joint reading with Tier-3: the search's MOVE-RANKING is healthy (near-
+  SF expected regret) while its VALUES as training labels are toxic
+  (t3_searchonly −145 despite corr 0.955 to SF; 13.6% saturated |q|>0.95
+  tail; self-referential — search values are the net's own value head
+  averaged through the tree). "Gumbel oddity" resolves to: the improved
+  policy is a good teacher; recycling search VALUES into the value
+  target is the hazard. Consistent with policy-training-protective
+  (Tier-2) and the whole value-side localization.
+
+### ⚑⚑ VERDICT (2026-08-06 12:58) — TIER-4: PREDICTION CONFIRMED (categorical is the main aux carrier); BEST ARM EVER = noaux + game-outcome REMOVED, CI comfortably includes 0
+
+- Elo vs boot512, 200g, rig per prereg 2b550f6be:
+    t4_auxsplit_sfeval (cat ON,  sf_eval off)  −109.5 [−161.5, −61.8]
+    t4_auxsplit_cat    (cat OFF, sf_eval on)    −68.6 [−111.0, −28.2]
+    t4_noaux_sfonly    (aux off, pure SF)       −65.0 [−111.7, −20.6]
+    t4_noaux_nogame    (aux off, sf.69/srch.31) −15.6 [ −57.8, +26.1]
+- Pre-registered prediction (1be7120e0, committed before readout):
+  CONFIRMED in direction — the categorical-ON arm reads deep (point ≤
+  −100, CI overlaps the t2_valueonly band) ⇒ by the pre-committed rule
+  the CATEGORICAL head carries the aux damage. Partial nuance: cat-off
+  recovered to −68.6, not all the way to t3_noaux (−36.6), and its point
+  misses the >−60 clause ⇒ w_sf_eval contributes a smaller share too.
+  Both aux heads harm; categorical ~2-3x worse. The mechanism entry
+  (edge-spike outcome head at w=0.3) stands.
+- SURPRISE against my reading, worth stating: pure-SF label (−65.0) is
+  NOT the best blend — keeping search WDL as a ~31% minority component
+  (nogame, −15.6) reads ~50 Elo better (CIs overlap; ordering only).
+  "Trust its policy, don't eat its values" over-simplified: search
+  values as a MINORITY blend component look useful; as a majority or
+  solo source they were toxic (t3_searchonly −145). Game outcome
+  removal is the unambiguous win.
+- By the prereg rules: t4_noaux_nogame = SUCCESS (CI includes 0, upper
+  +26.1) — the 363050e5e milestone is MET; the bdc2928fb GAIN bar
+  (CI > 0) is not yet. RECIPE OF RECORD for Phase-2:
+  sf_wdl_frac=0.69, search_wdl_frac=0.31 (game 0), w_sf_eval=0,
+  w_categorical=0.
+
+### ⚑ PREREG (2026-08-06) — PHASE-2 GAIN ATTEMPT: recipe of record + full protective policy loss + the 713-shard clean bank
+
+- Hypothesis: with the poison removed (game outcome + aux heads) and the
+  protective policy legs restored, training boot512 on the LARGE clean
+  pool produces a measurable GAIN (the labels provably sit above the
+  head; the screens only ever used an 8x-smaller pool at 4+ views).
+- Pool: data/salvage/pre_restart_20260804/seeds/slot_000/replay_shards —
+  713 quarantine-PASSED shards (~1.43M rows), old-lineage window ~iters
+  404-478, deep-teacher (~698k-node) SF labels, post-C17.
+- Loss: production config PLUS overrides = value recipe of record
+  (sf 0.69 / search 0.31 / game 0, aux heads 0) + SF POLICY legs OFF
+  (w_sf_move=0, w_sf_own=0, w_sf_own_regret=0 — the only direct test,
+  t2_nosfpol, read them net-negative) + visit/soft/future/moves_left at
+  production. Confound line: recipe was screened on the iter21 pool;
+  Phase-2 changes pool+steps together — acceptable because the verdict
+  is ABSOLUTE (CI vs boot512), not anchor-paired.
+- Arms (separate cold runs, absorption curve): p2_1view (2800 steps ≈ 1
+  view of 1.43M) and p2_2view (5600 steps). Arena each at 200g first;
+  then the better arm re-arenas at 1000 games (~±20 Elo).
+- Pre-committed rules: GAIN PROVEN = 1000-game CI entirely > 0 ⇒ relaunch
+  planning begins (with its own live-translation prereg). PARTIAL =
+  1000g CI includes 0 with point > 0 ⇒ extend steps/pool (absorption
+  curve rising) or accept plateau. FAIL = point ≤ 0 at 1000g ⇒ the
+  stored pool carries no net-usable above-net signal at this recipe ⇒
+  pivot to label depth/coverage (BT4-distill direction) and the
+  t5_az/rung-1 line. Curve reading: p2_2view > p2_1view = absorbing;
+  equal/worse = plateau at the pool's information ceiling.
+- Queue: behind tier5az. ETA ~3h of GPU after it starts.
+
+- AMENDMENT (2026-08-06, user): the Phase-2 confirm arena is SEQUENTIAL,
+  not a flat 1000. Rules pre-committed: (a) the confirm arena runs ONLY
+  if the better arm's 200g screen CI upper bound > 0 — a deep-negative
+  screen (the usual −60..−90 outcome) is its own verdict and gets no
+  extra games; (b) confirm = 500 games at a NEW seed (different openings
+  add information; replaying seed 42 would not); (c) if the 500g CI
+  excludes 0 either way, verdict FINAL; (d) if it includes 0, extend
+  ONCE by 500 more (third seed) and judge on the pooled 1000 — no
+  further extensions, so optional stopping cannot fish for significance.
+
+### VERDICT (2026-08-06 13:35) — FAST HARNESS VALIDATED: the 800-step screen reproduces the 1578-step verdicts
+
+- t3f_gameonly @800/w500: −137.0 [−187.9, −91.2]  (1578 ref −235.4)
+  t3f_noaux    @800/w500:   −6.9 [ −50.8, +36.7]  (1578 ref  −36.6)
+- Pre-committed rule (e1d6af66e): ordering kept AND CI-separated
+  (gameonly upper −91.2 < noaux lower −50.8) ⇒ VALIDATED. Adopted:
+  future screens default to 800/w500 + one internal baseline arm per
+  wave; full 1578 reserved for borderline arms.
+- Bonus observation: damage is DOSE-DEPENDENT — both arms read ~40-60%
+  of their 1578-step magnitude at half the steps. The poison accumulates
+  with displacement; at small doses even the semi-clean recipe is
+  near-harmless (noaux −6.9). Keeps the tiny-LR direction test relevant
+  for separating direction from dynamics.
+
+### ⚑⚑ VERDICT (2026-08-06 ~14:10) — TIER-5 RUNG 0: THE LITERAL AZ RECIPE FAILS ON OUR STORED SELFPLAY DATA — the divergence from lc0 is UPSTREAM of the loss
+
+- Rig per prereg f2993b989 (1578/w1000, tier1_sp selfplay-only pool):
+    t5_az   (visit policy + game-outcome value) −135.0 [−182.6, −91.7]
+    t5_az_q (visit policy + search-WDL value)    −81.4 [−123.0, −41.9]
+- Pre-committed reading: t5_az CI-clean NEGATIVE ⇒ the PROVEN loss
+  composition fails on OUR selfplay data ⇒ the divergence from the
+  known-good recipe is in DATA GENERATION (and/or the cold-optimizer
+  retrain regime), not in the loss we bolt on top. NET-VS-NET outcomes
+  are toxic here even though the same label family demonstrably works
+  for lc0/AZ.
+- Coherence checks: t5_az ≈ "gameonly + policy" and reads +100 vs
+  t3_gameonly (−235) — policy training protective yet again, same
+  magnitude. t5_az_q beats t5_az by ~54 — search values above outcomes
+  as the value source, consistent with Tier-4's blend result.
+- Prime suspects for WHY our selfplay outcomes differ from lc0's:
+  blind-spot SEEDED games (mid-game seed FENs = artificial positions
+  with systematically weird outcomes), temperature/diversity of 32-sim
+  games, 16-rows/game outcome correlation, adjudication. Next: CPU
+  split of outcome-label quality by opening_source_code (running).
+
+- FOLLOW-UP (14:35, CPU split by opening_source_code on tier1_sp):
+  SEEDED GAMES EXONERATED for the AZ-arm toxicity — codes 2/3 (blind-
+  spot/seeded) are only 3.3% of rows, and their outcome labels are the
+  CLEANEST (corr(out,sf) 0.90-0.92 vs 0.682 for standard games) because
+  the seed positions are already decided at game start (mean |sf_q|
+  0.76-0.82 at earliest ply, 64-70% > 0.8 — confirming seeds start in
+  won/lost territory, which makes outcomes PREDICTABLE, not noisy).
+  Standard-opening games (96.7% of rows) carry the noise: corr 0.682,
+  i.e. outcomes are honest ternary samples of genuinely uncertain
+  positions.
+- SURVIVING MECHANISM for "outcomes work for lc0 but poison us":
+  game-correlated noise x repetition. 152,954 rows share only 6,285
+  independent outcomes (24.3 rows/game); the 1578-step rig passes ~808k
+  samples = ~5.3 views, so the value head sees each game's single noisy
+  outcome ~5 times and memorises the noise. Lc0 trains at ~1 view on
+  effectively unlimited fresh games. Consistent with fastcal's dose-
+  dependence (half the steps = roughly half the damage). Phase-2's big-
+  pool 1-2 view design is the indirect test; the direct test (gameonly
+  @1view-big vs @5views-small) is a Tier-6 candidate if needed.
+
+### ⚑⚑ FINDING (2026-08-06 ~15:00) — REAL LC0 DATA COMPARISON: OUR POLICY TARGETS ARE ~2.4x SHARPER THAN LC0'S; THE LC0-SHAPED TARGET ALREADY EXISTS IN OUR ROWS AS policy_soft_target
+
+- Method: 80MB prefix of test80 tar (training-run1-test80-20240401-0017),
+  119 games / 13,115 positions, v6 records parsed (record 8356, version
+  6 verified). Same stats as measured on tier1_sp.
+- lc0: entropy p50 1.399 nats, max-prob p50 0.562, one-hot 1.3%,
+  support p50 30, ~110 stored rows/game, opening-bucket entropy 1.69.
+  OURS: 0.588 / 0.822 / 21.9% / 25.
+- Reading: a ~3500-Elo net (test80) trains on FLATTER targets than our
+  ~2000-Elo net. Our sharpness ≈ prior sharpness (c_scale 0.1 means Q
+  barely tempers the prior; prior temp already flagged overconfident) —
+  self-reinforcement risk: sharp target -> sharper prior -> sharper
+  target. Diversity/duplication REFUTED as the divergence (0.02% dup
+  rows, 0 duplicate trajectories); shape mismatch is the live suspect.
+- policy_soft_target median entropy 1.443 ≈ lc0's 1.399 — the lc0-shaped
+  target is ALREADY STORED per row. Cheapest screen: offline arm
+  training the MAIN policy head on the soft target (needs a small
+  retarget-rig option; heads are hard-wired to their own targets).
+  Data-gen levers for rung 1 if the screen reads well: raise c_scale
+  toward paper default / prior temp / pi' temperature.
+- Caveat: test80 is PUCT-800 vs our Gumbel-32 — shape difference partly
+  reflects budget; but the lc0 target's flatness comes from visit
+  statistics, ours from a barely-perturbed prior. The screen tests
+  whether SHAPE (not provenance) is what matters.
+
+### ⚑ PREREG (2026-08-06) — TIER-6 (queued behind Phase-2): direction-falsification probe + recipe fast-baseline
+
+- Fast harness (800/w500, validated e10ab7c45), iter21 pool, ruler
+  unchanged (200g seed 42 conc-16 compiled vs boot512). Arms:
+    t6_dirtest  recipe of record + lr=3.0e-06 (0.1x production 3.0e-05).
+                ASYMMETRIC by design: at 0.1x LR the displacement is
+                tiny, so it can only FAIL decisively — CI-clean negative
+                ⇒ the recipe's target DIRECTION is condemned (no dose/
+                transient excuse). CI including 0 = consistent-with-
+                sound, NOT proof (200g cannot resolve small positives).
+    t6_base800  recipe of record at production lr, 800/w500 — the
+                wave's internal baseline + the recipe's dose-curve point
+                (vs t4_noaux_nogame −15.6 @1578 and t3f_noaux −6.9
+                @800 without the blend fix).
+- Also records the integration map for the day's findings: (a) soft-
+  target-on-main-head arm needs a small rig patch (train policy_own on
+  policy_soft_target) — next wave after the patch; (b) the (c_scale,
+  topk) shape-matched candidate from the lc0-probe agent is a DATA-GEN
+  change: it enters via a small fresh-gen batch or the live relaunch
+  config, not the stored-shard rig; (c) training-on-lc0-data control is
+  an explicitly UNTESTED ASSUMPTION, triggered only if Phase-2 FAILS.
+
+### ⚑ PREREG (2026-08-06) — TIER-7 (queued behind Tier-6): THE SOFT-SHAPE SCREEN — does training the search-facing head on the lc0-shaped target help?
+
+- Hypothesis (from the real-lc0 comparison, 5fd8f3f12): our policy_target
+  is ~2.4x sharper than lc0's; the stored policy_soft_target already has
+  lc0's entropy (1.443 vs their 1.399). If target SHAPE matters, serving
+  the soft target to the MAIN policy head should read >= the recipe
+  baseline.
+- Rig: fast harness (800/w500), iter21 pool, ruler unchanged. New rig
+  knob `rig_policy_from_soft=1` (commit 25a552896, default off, smoke-
+  tested: swap only where has_policy_soft, loud abort on soft-less
+  pools, delegation verified; deploy proof = per-arm ACTIVE print +
+  overrides record). VERDICT IS PROVISIONAL until an independent review
+  of 25a552896 confirms the wrapper (reviewer != author rule; review
+  agent dispatched this session).
+- Arms: t7_softmain = recipe of record + rig_policy_from_soft=1;
+  baseline = Tier-6's t6_base800 (same wave family, same budget).
+- Pre-committed rules: HELPS = t7_softmain point > t6_base800 point AND
+  CI overlapping-or-better (200g cannot CI-separate small effects; a
+  point win routes the soft shape into the Phase-2 recipe for the next
+  big-pool run). HURTS = CI-clean below t6_base800. Either way this only
+  screens SHAPE-VIA-STORED-TARGET; the data-gen shape fix (c_scale/
+  topk) is decided by the lc0-probe agent's surface, not this arm.
+
+### 2026-08-06 — Phase-2 first arm POSITIVE; Tier-7 review CONFIRM + two-arm amendment
+
+**Phase-2 (prereg 612c07782 + aca505d22), 200g screen, arm 1 of 2:**
+- `p2_1view` (recipe of record, 2800 steps ≈ 1 view over the 713-shard clean bank):
+  **Elo +22.6 [−22.8, +68.8]** vs boot512 — the first positive point estimate any
+  retrain arm has produced on this ruler. CI upper > 0 ⇒ the pre-registered 500-game
+  fresh-seed (1337) confirm arena is ARMED; it fires on the better of the two arms
+  once `p2_2view` reads out (arena running now). Confirm chain inserted AHEAD of
+  Tier-6 in the GPU queue.
+
+**Tier-7 rig patch review (25a552896+65a4a3a61): CONFIRM** (independent reviewer,
+REVIEWER ≠ AUTHOR). Wrapper verified on the training path (`train_steps` →
+`sample_batch_arrays`, trainer.py:3376-3403); flag plumbing and swap semantics
+verified; `--rebuild-sf-targets` cannot overwrite `policy_target` (reviewer
+corrected my premise: its CLI default is True, not False — harmless here).
+Two interpretation caveats, recorded against ef67a2960:
+1. On swapped rows the MAIN and SOFT heads train on the same distribution with
+   production `w_soft: 1.0` ⇒ the soft-shaped gradient is effectively
+   double-weighted. **Amendment: Tier-7 becomes two arms** —
+   `t7_softmain` (recipe + `rig_policy_from_soft=1`) and
+   `t7_softmain_nosoft` (same + `w_soft=0`), isolating the shape effect on the
+   main head alone. Same judge, same kill rules as ef67a2960.
+2. `soft_policy_min_tv > 0` would zero the soft-head loss on swapped rows —
+   currently 0.0/off, no action.
+Deploy proofs unchanged: `ACTIVE` print per arm + policy_loss CE at the soft
+target's higher entropy level.
+
+Queue now: p2_2view arena → confirm500 (better arm, seed 1337) → Tier-6
+(t6_dirtest, t6_base800) → Tier-7 (two arms).
+
+### 2026-08-06 — p2_2view NEGATIVE (dose effect confirmed at scale); confirm500 RUNNING; lc0-adapter agent results (review in flight)
+
+**Phase-2 arm 2:** `p2_2view` (same recipe, 5600 steps ≈ 2 views): **Elo −36.6
+[−78.7, +4.4]**. Doubling passes over the same fixed pool flips +22.6 → −36.6 —
+the strongest direct evidence yet for the noise×repetition mechanism (549c063e1):
+the second view is where the game-correlated label noise gets memorised. Curve
+verdict per prereg: NOT absorbing — plateau-and-degrade. **Better arm = p2_1view;
+its CI upper (+68.8) > 0 ⇒ confirm500 fired 16:25 (seed 1337, 500g)** per
+aca505d22. Ops note: the first Tier-6 chain survived its wrapper kill as an
+orphan and stole the GPU slot 16:17–16:24 (running-scripts-keep-the-old-file);
+killed mid-retrain, no results read from it; requeued v2 chain will redo Tier-6
+cleanly.
+
+**lc0-adapter probe (branch `diag/lc0-net-in-our-search`, 5fbb98b0f, worktree
+agent; INDEPENDENT REVIEW IN FLIGHT — findings PROVISIONAL until it lands):**
+- **Latent defect found on main:** `onnx/load.py::build_lc0_policy_remap` is a
+  static table but the true our-1858↔Leela-1858 correspondence is board-dependent
+  (46/1858 slots agree; back-rank slide-vs-=N overload + king-takes-rook
+  castling). Mis-maps ≥1 legal move in 9.3% of positions (worst case: BT4 O-O
+  prior read as 0.0034 instead of 0.4045). Blast radius: ONLY foreign lc0 nets
+  through OnnxChessNet — no training run affected — but any PAST lc0-through-4672
+  policy reading is invalid.
+- Fix on branch: board-aware `moves/leela_index.py` + 7 tests (reference derived
+  from the move, not our tables). Gates: index correspondence 55,586 legal moves
+  0 mismatch; round-trip 59/60 exact (repetition-plane synthetic-history
+  exception); mate-in-1 sane. Startpos gate was LOOSENED mid-run (0.75→0.5
+  mainstream mass; self-flagged) — reviewer asked to judge.
+- lc0 training planes are FILE-REVERSED (bit j = file 7−j%8); proven by castling
+  legality + BT4-vs-stored-target agreement 43/60 (naive read: 3/60 ≈ chance).
+- **Shape sweep (BT4 via onnxruntime CPU, 60 matched positions, 32 sims, cached
+  evals, 36 configs):** BT4's RAW PRIOR already matches lc0's target entropy
+  (KL 0.03–0.13); every increase of `gumbel_c_scale` moves the improved policy
+  monotonically AWAY from lc0's shape in all three phases. Production c_scale
+  0.1 is 2–7× worse KL than the per-phase argmin (opening 0.025, middle 0.05,
+  endgame 0.0-boundary). **`gumbel_topk` is INERT at 32 sims** — sequential
+  halving caps candidates at ceil(sims/2)=16, so topk 16/32/218 are bit-identical
+  (540/540); only topk 8 differs. Caveat (author's own): KL-to-lc0 is a SHAPE
+  diagnostic, not an objective (different net, 800-visit target, Dirichlet
+  noise); any c_scale retune needs its own prereg on our yardstick.
+
+### 2026-08-06 — lc0-adapter review verdict: REQUEST CHANGES, all substantive claims CONFIRMED
+
+Independent review (separate agent, own instruments) of 5fbb98b0f: every finding in
+5fbf/5fd8f3f12's provisional entry UPGRADED to confirmed —
+- permutation verified against reviewer's own reference (7,976 positions / 243,071
+  legal moves, 0 mismatches);
+- `onnx/load.py::build_lc0_policy_remap` defect reproduced index-level on unmodified
+  main (e1g1 read from Leela's slide slot instead of e1h1; a7a8 read as a7a8q);
+  reviewer's sample reads 7.9% of positions affected vs author's 9.3% — sampling
+  difference, same phenomenon. Blast radius confirmed: zero runtime users of
+  OnnxChessNet outside onnx/ — no training path affected. NOTE: the branch does
+  NOT fix load.py itself (commit subject overstates); decision routed to author.
+- test anti-circularity confirmed (reference from chess.Move, not our tables); 7/7 pass;
+- decoder file-reversal confirmed both legs (kings 17+19/21 vs 0/21 naive;
+  top-move agreement 42/60 reviewer vs 43/60 author — one-position comment
+  discrepancy, chance ~1/33 either way);
+- cache-key soundness (position-only, no config leak) and the ceil(sims/2)=16
+  candidate cap verified against gumbel.py:710-711 — the topk-inert-at-32-sims
+  result is a theorem of the implementation.
+Three change requests routed back to the author agent: (1) BLOCKING — guard
+`castling_from_lc0_planes` on plane layout (silently wrong on `legacy`); (2) decide
+the load.py wiring explicitly; (3) commit the matched-set generator + record the
+0.75→0.5 startpos-gate loosening in the frozen doc. Lint gate on the branch: clean
+repo-wide (after C-ext build; note lint.sh is red in any never-built worktree).
+
+**Sweep program in flight (user-directed):** production data-gen budget is 256 sims
+(fast plies write no rows), where the halving cap is 128 — so topk 16 BINDS there
+and the 32-sim "topk inert" result does NOT transfer. Author agent now running, CPU
+only: (a) our-net (boot512) 32-sim grid; (b) PRIMARY 256-sim grid, both nets,
+c_scale {0.025,0.05,0.1,0.25} × topk {8,16,32,64,128}; (c) sims ladder
+{32,64,128,256,+512/800 if affordable} at production params + argmin candidate —
+800 = lc0's own target budget. Shape diagnostics only; any production change needs
+its own prereg on our arena yardstick.
+
+### 2026-08-06 — confirm500 STRADDLES: −3.5 [−31.4, +24.4] → pre-registered pooled-1000 extension fired
+
+`p2_1view` confirm arena (500g, fresh seed 1337): **Elo −3.5 [−31.4, +24.4]**,
+score 0.4950. Dead straddle — neither GAIN PROVEN nor FAIL. Per aca505d22 the ONE
+allowed extension fired: 500g at a third seed (7777), verdict = pooled 1000 games
+(seeds 1337+7777; the seed-42 screen games are NOT pooled — they selected the arm).
+Reading so far: seed-42's +22.6 looks like the optimistic tail of a ~0±25 effect;
+the three readings (+22.6 / −3.5 / pending) are consistent with a net that is
+approximately AT its initialization strength after 2800 recipe steps — i.e. the
+recipe stops the collapse (vs −86 to −235 for every pre-recipe arm) but has not yet
+demonstrated gain. Queue after ext: tier6 arenas (orphan retrain's arms banked),
+tier7 two-arm. Ops: two orphaned chains (tier6 v2, tier7 v1) found running from
+wrapper-kills — killed by script pid; tier6's orphan retrain output KEPT (arms
+identical to prereg); rule going forward: kill chains by `pgrep -f "^/bin/bash
+<abs-path>"`, never the launcher pid.
+
+### 2026-08-06 — DIRECTION: Tier-8 BT4-prior policy distillation (design intent, full prereg before launch)
+
+Rationale (user + session analysis): the −100 boot losses were information-free
+destruction; symmetric gain requires a teacher that KNOWS more than the student.
+The 713-shard bank's search targets are self-generated (~+32cp over own prior) —
+p2_1view/2view showed ~0±25 Elo is all it holds at 1 view, negative at 2. The one
+massively-stronger policy teacher we can now run correctly is BT4 (adapter branch:
+onnxruntime + board-aware leela_index mapping, prior confirmed well-calibrated on
+the lc0 comparison). Design: relabel `policy_target` (and/or a blend leg) on the
+clean bank with BT4's prior via our-planes→board→lc0-planes→BT4→lc0_1858 gather;
+retrain with the RECIPE OF RECORD value target (sf 0.69 / search 0.31, aux off) —
+VALUE distillation stays FORBIDDEN per the proven offline-distill value trap.
+Ruler: standard 200g screen vs boot512 → aca505d22 sequential confirm. Labeling
+cost: ~1.4M rows × ~70ms CPU batch-1, parallelizes across cores (~2-3h) or subset
+300k first. Execution owner: adapter agent AFTER its sweep amendments finish (CPU
+contention). Full prereg (exact commands, kill/success thresholds, confounds incl.
+"BT4 prior may be conjugate to nothing in our eval battery" check) REQUIRED before
+launch per protocol — this entry is direction, not authorization.
+
+### 2026-08-06 — Tier-8 (BT4 distillation) WITHDRAWN as strategy by user decision
+
+User verdict on f8ec96297: distilling an lc0-family net is a solved, off-mission
+path — it manufactures a generic net and dilutes anti-SF specialization, which is
+the project's identity. Tier-8 will NOT be prereg'd or launched. BT4's role stays
+diagnostic-only: shape ruler for the sweep program + host-a-foreign-net correctness
+proof (leela_index). The gain thesis reverts to making OUR loop's data compound:
+(1) generation-time shape (c_scale/topk/sims sweeps), (2) training-time shape
+(Tier-7 soft-as-main), (3) recipe pooled-1000 relaunch bar, (4) rebuilt target
+construction for the vs-SF curriculum (Tier-1: the toxin was construction, not
+game type).
+
+### 2026-08-06 — PHASE-2 FINAL (pooled 1000): Elo −0.35 [−19.5, +18.8] — NULL AT ZERO
+
+Extension arena (seed 7777, 500g): +2.8 [−23.4, +29.0]. Pooled with confirm
+(seed 1337): pentanomial WW77/WD83/DD179/LD84/LL77, score 0.4995, **Elo −0.35
+[−19.5, +18.8]**. By the letter of 612c07782 (point ≤ 0) this is FAIL; the
+substantive reading is NULL AT ZERO with a ±19 ruler: the recipe of record holds
+the net exactly at its initialization through 2800 steps — collapse fully stopped,
+zero gain extracted from the fixed 713-shard bank. Seed-42's +22.6 was the
+optimistic tail. The 612c07782 FAIL pivot (BT4 distill) was WITHDRAWN by the user
+(95ba2cfe0); the gain program is now the innovations track: repaired-KataGo-aux +
+surprise weighting (rig), Gumbel shape/params from the sweeps (data-gen), window
+policy (relaunch). Task #166 CLOSED on this verdict.
+
+### 2026-08-06 — PREREG Tier-10: REPAIRED categorical head (the lc0/KataGo-faithful aux arm)
+
+Hypothesis: the categorical head hurt (Tier-4: cat-ON −109.5 vs cat-OFF −68.6)
+because its TARGET was broken — raw ternary outcome + HL-Gauss edge clip
+(1be7120e0) — not because distributional value auxiliaries are bad; lc0/KataGo
+evidence says a properly-targeted aux HELPS value learning. The repair needs no
+new code: `rebuild_categorical_target_in_arrays` (target_builder.py:757) mirrors
+live finalize and is enabled by flat keys (trainer.py:1498-1501).
+Arms (retarget rig, 800 steps/warmup 500, shards_iter21 pool, cold optimizer,
+RECIPE base = sf_wdl_frac=0.69,search_wdl_frac=0.31,w_sf_eval=0,w_sf_move=0,
+w_sf_own=0,w_sf_own_regret=0):
+- `t10_catfix`:  RECIPE + w_categorical=0.3, rebuild_categorical_target=true,
+  categorical_blend_frac=0.69, categorical_search_blend_frac=0.31
+  (mirrors the recipe's value blend into the categorical target; outcome weight 0)
+- `t10_catfix_low`: same with w_categorical=0.1
+Yardstick: standard 200g arena vs boot512 (seed 42, matched_sims 32, training
+shape, conc 16, compile on). Baseline for comparison: t6_base800 (identical rig,
+categorical OFF) — reads out tonight.
+Pre-committed rules: SUCCESS = better t10 arm point > t6_base800 point AND its CI
+upper > +20 (aux must ADD, not just not-hurt). KILL (defect re-armed) = t10 point
+< t6_base800 point − 25. Anything between = NULL, aux head stays out of the
+relaunch bundle. Confound: none new — same pool/steps/seed as t6_base800.
+Optional arm 3 (only if SUCCESS): extract lc0's exact categorical constants
+(bins/support/smoothing/target value) from lc0 source and match them — copying
+tuning per user directive 08-06.
+
+### 2026-08-06 — PROVENANCE of two Gumbel settings (user, this session) + transform fidelity check
+
+- `gumbel_c_scale: 0.1` is mctx's OWN default (`qtransform_completed_by_mix_value
+  (value_scale=0.1)`), not a drift from the paper's c_scale=1.0; our
+  `_completed_q_transform` (gumbel.py:408) is a faithful port (mix-value
+  completion, min-max rescale, value_scale semantics). The BT4 sweep argmin
+  (0.025-0.05) pulls BELOW 0.1, not toward 1.0 — the our-net 256-sim sweep is the
+  decider; any change is tuning, not defect repair.
+- `gumbel_scale` decay to 0 after move ~15 was a MEASURED decision: user verified
+  positions dedup by move 15, so root exploration noise adds no diversity there.
+  Load-bearing exoneration: gumbel_scale affects only the PLAYED move — the
+  stored improved-policy target is computed from priors+completed-Q over all
+  legal moves independent of root noise, so the decay cannot distort targets.
+  Drift-geometry (58bbdd97c) independently found no composition narrowing.
+  DECAY IS NOT A SUSPECT for target shape.
+
+### 2026-08-06 — OUR-NET 256-SIM SWEEP (adapter agent, runs/ournet_probe_256.md): SUPPORT CEILING FOUND
+
+Premise correction: our prior is NOT sharper than lc0's in entropy (H 1.58-1.74 vs
+lc0 targets 1.39-1.89) — it is NARROWER: **support 10-15 moves vs lc0's 20-34**,
+i.e. near-zero mass on ~2/3 of legal moves. KL(lc0‖our prior) 0.57-0.85 vs
+KL(lc0‖BT4 prior) 0.03-0.13.
+- c_scale dominates topk ~10× (KL range 1.3-3.6 vs 0.1-0.25); topk binds at 256
+  but saturates at 32. Per-phase argmin ≈ **(c_scale 0.025, topk 32)** all phases.
+- **Sims ladder at production (0.1,16): shape degrades MONOTONICALLY with budget,
+  no plateau** — 800-sim target entropy collapses to 0.35-0.69 nats. At
+  (0.025,32): FLAT across 32→800 sims (KL ~0.77 opening at every rung). More
+  search at production c_scale actively drives targets AWAY from lc0's shape.
+- **Mechanism: the SUPPORT CEILING.** Gumbel's improved policy can only
+  redistribute mass among moves the prior admits — target support never exceeds
+  prior support (~9-12). A support-narrow prior therefore produces support-narrow
+  targets, which train the prior narrower: a one-way ratchet with NO
+  support-replenishing mechanism in our loop (no Dirichlet noise, no target
+  floor). lc0/AZ inject root Dirichlet every position; KataGo forces playouts.
+  This is a concrete, previously-unnamed member of the TARGET/LOOP family and a
+  candidate mechanism for long-run narrowing. c_scale tuning halves the
+  divergence (1.79→0.77) but CANNOT fix the residual — that is prior-intrinsic.
+- Consequences: (a) Tier-7 (soft-as-main) is now doubly loaded — the soft target's
+  wider shape is exactly a support-replenishment test on existing data; (b)
+  (0.025, 32) enters the relaunch-bundle candidate list, own prereg required;
+  (c) NEW candidate arm (Tier-11, not yet prereg'd): epsilon-mix a uniform-over-
+  legal floor into stored policy targets (Dirichlet-in-expectation) — offline
+  support-replenishment screen on the bank. Caveats per agent: shape-vs-lc0 is a
+  diagnostic not a strength claim; lc0 targets carry Dirichlet tail inflation.
+
+Housekeeping: review items 1-3 CLOSED on the branch (400d39c4d) — load.py now
+WIRED to leela_index (static remap deleted), castling reader takes explicit
+layout + reviewer's test, matched60 committed, goalpost change recorded. Legacy-
+layout retirement: production-side deletion complete but STASHED uncommitted
+(stash@{0} + patch in agent scratchpad) — blocked on ~hundreds of tests that pass
+literal "legacy"; per-site default decision recorded (normalize(None)→
+lc0_root_legacy_meta for leaf calls + require_lc0_history_encoding() raising at
+plumbing boundaries). param-count test proven unaffected (infer_input_planes
+takes only input_extra_features).
+
+### 2026-08-06 — ERRATUM to 091cbae18 + TWO-MECHANISM ACCOUNT of target narrowing (user hypotheses CONFIRMED in code)
+
+ERRATUM: 091cbae18 said "DECAY IS NOT A SUSPECT for target shape — gumbel_scale
+affects only the PLAYED move." WRONG. `_select_top_m_with_gumbel` (gumbel.py:694,
+:703 `scale = gumbel_scale if add_noise else 0.0`) uses gumbel_scale to pick the
+CANDIDATE SET: with scale 0 (production after move ~15) candidates are the
+deterministic prior top-k, so a low-prior move can never be visited and can never
+earn mass in the improved-policy target. The Gumbel paper drops Dirichlet BECAUSE
+the noise's unbounded tails take over the support-replenishment job; our decay
+closes that valve for every position after move 15 (the majority of rows). The
+exoneration's reasoning ("target independent of noise") holds only conditional on
+the visited set, which the noise determines.
+Mechanism 2 (also user-diagnosed): `sigma = c_scale × (c_visit + max_visit)`
+(gumbel.py:321-322) — sigma grows LINEARLY with budget. mctx's value_scale=0.1
+default was calibrated at tens of sims; at 256 sims effective sigma is several
+times the calibration point. Explains the monotone budget degradation at (0.1,16)
+and the budget-flatness of (0.025,32) (≈ calibration-regime sigma at 256 sims).
+The two mechanisms are SEPARATE and compound: (1) support truncation after move
+15 (valve closed), (2) within-support over-sharpening ∝ budget.
+Relaunch-bundle candidates (each needs own prereg): c_scale 0.025, topk 32,
+late-game gumbel_scale > 0 (e.g. 0.25). Offline principle tests: Tier-7 (soft-as-
+main, running) + Tier-11 epsilon-floor (proposed, not prereg'd).
+
+### 2026-08-06 — SIGMA BOUND: c_scale-down and noise-restore PULL AGAINST EACH OTHER (agent, 013452d36)
+
+Code-derived bound: the completed-Q term is min-max normalised to [0,1] then
+multiplied by sigma = c_scale×(c_visit+max_visit), so Q can move a move's
+improved-policy logit by AT MOST sigma nats. At c_scale 0.1/256 sims ≈ 15 nats
+headroom; at the shape-argmin 0.025 ≈ 2.9 nats. Late-game noise-promoted
+candidates sit a MEASURED 8-11 nats below the top move in prior (smoke, deepest-
+new median/p95) ⇒ **at 0.025 a discovered-good move structurally CANNOT earn
+target mass** (smoke earned-new mass 0.000 = the bound, not sample noise).
+So the relaunch package as sketched (0.025 + late-game noise) is internally
+inconsistent: one parameter controls BOTH within-support sharpness (wants small)
+AND the discovery-reward ceiling (wants large). Prereg HELD until the queued
+probe maps the trade (runs/gumbel_scale_probe.md; scale grid × the corrected
+metrics). Candidate resolutions, in order of surgery: intermediate c_scale
+(~0.05-0.1); accept 0.1 (replenishment over shape); transform change decoupling
+reward ceiling from sharpness (root-log transform exists in-tree).
+Probe hygiene (agent): metric-1 as originally specified SATURATES (deterministic
+top-32 already exits the prior's p>1e-3 support in 85/75/25% of positions at
+scale 0) — headline metric re-based to replenishment RELATIVE to the scale-0
+candidate set; earned mass summed over candidates only (non-candidates carry
+prior-shaped completed-Q fallback mass); scale-0 negative control reads exactly
+0.000/0.000/0.000. Corroboration: PLAY_SEARCH_DEFAULTS is ALREADY (0.025, 32)
+("+301 Elo @8k") — the play path was independently tuned to the shape argmin;
+production selfplay shares the linear root fallback (c_visit_root/c_scale_root
+unset), so the probe is on the training-target path.
+
+### 2026-08-06 — EXTERNAL REVIEW of the sigma-bound analysis: corrections ACCEPTED (28c27fb8a amended)
+
+1. sigma = c_scale×(c_visit + MAX PER-MOVE VISITS), not total sims. Measured 2.9
+   nats at 0.025 ⇒ maxN≈66 under halving. All prereg thresholds must come from
+   measured visit patterns; never reason from the simulation budget.
+2. Relative lift between moves a,b is s·(Q̄a−Q̄b) ⇒ an equal-Q deep-tail
+   discovery gets ZERO lift at ANY scale. The transform preserves prior odds
+   among equal-Q moves BY DESIGN (one-step improvement has no reason to reward
+   equal alternatives). Support replenishment is a DIFFERENT OBJECTIVE from the
+   paper's theorem — that, not constant size, is why no second channel exists.
+   "Ceiling never binds at 1.0" holds only for positive-Q-advantage discoveries.
+3. Mixture guarantee requires the merit component restricted to
+   {visited, Q ≥ V^π} (exact-value theorem; estimated-Q = motivation + empirical
+   safeguard, same limitation as the base theorem). A GATED prior-relief floor
+   (visited AND Q_LCB > V) is also Appendix-C-admissible; mixture still preferred
+   (λ-bounded damage, no discontinuity, annealable as support recovers).
+4. Probe metric upgraded: per discovered move compute the RESIDUAL BARRIER
+   R_a = (z_best − z_a) − s·(Q̄a − Q̄best); R_a predicts target-mass acquisition
+   directly. Judge config-only candidates on R_a distributions, not global range.
+5. Play path stays at (0.025, 32) untouched regardless of training-target choice
+   — training-target and root-play transforms are separable requirements.
+6. One-parameter resolution acceptance bar RAISED: nonzero earned mass is
+   insufficient; requires (a) increased prior support in the NEXT net, (b)
+   retention across a generation, (c) no teacher-KL/concentration damage, (d) no
+   elevated false-promotion rate under deeper verification, (e) equal-dose arena
+   non-regression. BT4-tolerates-0.1 remains a HYPOTHESIS for annealing, not
+   established.
+
+### 2026-08-06 — BT4 256-GRID: the two defects SEPARATE; my annealing hypothesis REFUTED
+
+BT4 (healthy prior) replicates ALL THREE config findings: argmin c_scale 0.025 in
+every phase; c_scale dominates topk 10-25×; at c_scale 0.1 shape degrades
+MONOTONICALLY with budget (BT4 opening KL 0.108→0.654 across 32→800 sims) and is
+flat at 0.025. ⇒ **budget-dependent over-sharpening is a SEARCH-CONFIG defect,
+universal across nets — c_scale 0.025 is the correct setting for a healthy prior
+too.** My "0.025 is rehab scaffolding, anneal back to 0.1 after support recovers"
+hypothesis (98600239d) is REFUTED — 0.025 is launch AND equilibrium.
+The residual floor is OURS ALONE: at the shared argmin BT4 sits at KL 0.06-0.16,
+we sit at 0.59-0.77 (7-10×, matching the 9-15 vs 20-34 support gap). No search
+config touches it — prior-support defect, target/loop family.
+CONSEQUENCE FOR THE BUNDLE: c_scale 0.025 + topk 32 confirmed as launch values on
+two-net evidence; but at 0.025 the Q-lift cap (~2.9 nats vs 8-11 deficits) means
+gumbel_scale restoration alone likely CANNOT make deep-tail discoveries earn
+target mass — the gated mixture moves from "follow-up refinement" toward
+"required for support recovery." Overnight probe grid (residual barriers at 256
+sims) is the decider: if frac(R<0) is ~0 at (0.025, all scales), the mixture PR
+gates the restart; if the near-tail clears, launch config-only and build the
+mixture behind it.
+
+### 2026-08-06 — TIER-7 VERDICT (prereg ef67a2960 + two-arm amendment): NULL — training-time shape substitution does not rescue
+
+Same rig/pool/steps/seed as t6_base800 (−45.4 [−89.5, −2.8]):
+- t7_softmain (soft target as main, w_soft 1.0): **−56.1 [−102.8, −11.3]**
+- t7_softmain_nosoft (same + w_soft=0, double-weight control): **−36.6 [−80.1, +5.8]**
+Both arms statistically indistinguishable from the recipe baseline; the reviewer's
+double-weight confound reads ~19 points in the expected direction but is not
+significant. VERDICT: swapping the lc0-shaped soft target in as the main policy
+target does NOT improve Elo on stored data. Combined with the BT4 two-defect
+separation (dbd4acc97): the shape axis is closed at TRAINING time — what remains
+is generation-time (search config + support replenishment through the loop).
+Deploy proof was positive (ACTIVE prints 2/2; policy CE at soft-entropy level in
+retrain_tier7.log). Tier-10 (categorical repair) is the last offline arm.
+
+### 2026-08-06 — Sweep program COMPLETE (4 reports on diag/lc0-net-in-our-search); 32-sim refinement
+
+Internal control PASSED: the c_scale=0 search row reproduces the standalone raw
+prior exactly (KL and entropy identical to 3 decimals) — pipeline validated.
+Refinement: at 32 sims, search can at best NOT DAMAGE the prior's shape (argmin
+c_scale→0-0.01); genuine shape improvement over the raw prior exists only in
+MIDDLEGAMES at 256 sims (0.848→0.676). Opening slightly worsens (0.696→0.769),
+endgame flat. "Lower c_scale" mostly buys back damage rather than adding shape.
+Reports: runs/{ournet_probe_256,lc0_probe_256,ournet_probe_32,lc0_adapter_probe}.md.
+Residual-barrier probe running (started 19:52, ~hours). Two human decisions
+parked: legacy-retirement test triage (~150 tests, stash@{0}); the earned-mass
+prereg threshold vs the 2.9-nat cap.
+
+### 2026-08-06 — TIER-10 VERDICT (prereg 39e61de46): NULL — repaired categorical does not help; aux stays OUT. OFFLINE PROGRAM CLOSED.
+
+Deploy proof POSITIVE (CPU replication of the trainer's rebuild path on this
+pool's sampled batches: fields all present, 511/512 rows modified, edge-bin mass
+0.713→0.172 — the 1be7120e0 defect signature removed; rig log itself prints
+nothing, noted for future rigs).
+- t10_catfix (w_cat 0.3, blended 0.69/0.31): **−47.2 [−93.7, −2.3]**
+- t10_catfix_low (w_cat 0.1): **−61.4 [−103.2, −21.4]**
+- baseline t6_base800 (cat OFF): −45.4 [−89.5, −2.8]
+Better arm ≈ baseline exactly (Δ −1.8; bar was point > baseline AND CI upper >
++20); low arm −16 vs baseline (KILL bar −25 not reached). VERDICT: NULL — the
+REPAIRED distributional aux neither helps nor re-arms the damage on stored data.
+Per prereg: categorical head stays OUT of the relaunch bundle; lc0-constants
+arm 3 does not fire. The broken form hurt (Tier-4 −109.5); the repaired form is
+merely inert here — consistent with aux value being a live-loop/fresh-data
+property if it exists at all (KataGo's evidence is from a working loop).
+
+**EVENING TABLE (all 800 steps, shards_iter21 pool, seed 42, vs boot512;
+placebo zero-point +22.6):** dirtest +22.6 | base800 −45.4 | softmain −56.1 |
+softmain_nosoft −36.6 | catfix −47.2 | catfix_low −61.4. Every recipe-variant
+arm is statistically identical to baseline: NOTHING trainable on stored data
+moves Elo at this dose. The offline rig's discriminating power is EXHAUSTED —
+remaining hypotheses are all generation-time. GPU paused for the evening (user);
+next: overnight barrier probe → tomorrow consumers-of-changed-fields audit,
+MultiPV path check, deploy-proof battery, relaunch prereg.
+
+### 2026-08-06 — RESIDUAL-BARRIER PROBE FINAL: config-only launch; MIXTURE NOT JUSTIFIED (zero occupancy of its gate). + Consumers-of-changed-fields audit.
+
+Probe complete (runs/gumbel_scale_probe.md, 2150s, 60 positions × 512 selection
+draws; 24 positions × 12 search draws × 6 scales at 256 sims, c_scale
+{0.025,0.05,0.1}). Read against the pre-committed decision rule (28c27fb8a,
+17092b6ec):
+
+- **frac(R<0) = 0.000 in all 54 cells.** R medians +11 to +17 nats vs sigma
+  2.7–13.2 — no noise-promoted candidate can ever take the improved-policy
+  argmax from the prior leader.
+- **n promoted with positive Q-advantage = 0 in every cell** (up to 86
+  promoted/cell), and **frac equal-Q = 0.000** — the gated mixture's
+  ρ ⊆ {visited, Q ≥ V^π} has ZERO occupancy in the entire sample. A mixture
+  would be inert as gated, and harmful un-gated (it would inject moves the net's
+  own Q rates ≥0.05 worse).
+- Earned target mass on noise-new candidates: 1e-6..1e-9 — nil at any scale.
+- The selection valve is SATURATING anyway: with topk 32 > support 9–15, the
+  deterministic top-32 already exits the prior's p>1e-3 support on 100% of
+  opening rows, 95% middlegame, 30–35% endgame. **The candidate set was never
+  the binding constraint** — the transform's prior-odds preservation plus the
+  absence (per the net's Q) of Q-advantaged tail moves is.
+- Late-game noise's only measurable effect is played-move flips at a Q cost
+  (middlegame flip rate 0.43–0.57 at scale ≥0.5, mean deficit +0.06–0.10;
+  endgame ~neutral). Support-replenishment as a rationale for late noise is
+  DEAD; late noise buys trajectory diversity only.
+
+**DECISION (per the pre-committed rule): config-only relaunch — c_scale 0.025,
+topk 32, sims 256. The gated-mixture PR is NOT built now** (gate occupancy 0%);
+it can be revisited only if a future probe on a stronger value head shows
+ρ-occupancy > 0. gumbel_scale schedule: start 1.0 (canonical), decay to a low
+late value — evidence supports anything in [0, 0.5] with lower slightly better
+for played-move quality; user's 0.5 instinct is fine and low-cost. Noise applies
+ONLY to full plies (network_turn.py:920 hardcodes 0.0 on fast plies), so the
+schedule touches ~25% of plies.
+
+CAVEAT in flight: the probe's Q is the net's own value head at 1–2 visits — a
+blind value head cannot see a discovery. Ground-truth check running (CPU):
+stored `sf_p0_regret` (deep-SF MultiPV-40 per-move cp-regret at the row's own
+position) vs boot512's prior support on 3000 bank rows — decides whether the
+narrow prior actually hides SF-good moves at all. If ~none, the support ceiling
+deflates entirely; if many, replenishment is real but must come from the live
+loop, not the target transform (same relaunch either way).
+
+**CONSUMERS-OF-CHANGED-FIELDS AUDIT (bundle keys, code-read):**
+- `sf_label_nodes_floor/cap` (worker live keys, stockfish_turn.py:494): labels
+  = fast-scale(min(PID base_nodes, cap)) then max(·, floor). **The floor alone
+  does NOT bound cost from above** — labels ride PID base_nodes above the
+  floor, and the old lineage's PID ramp reached ~500k. Bundle must set BOTH:
+  floor ~100k AND cap ~150k (cap requires sf_wdl_use_cp_logistic=true — already
+  production; GameConfig warns if floor>cap; both keys live-reloadable).
+- `sf_multipv` 40→6: RESTART key (applied only at engine (re)init,
+  worker.py:3443 — fine, the bundle deploys at a restart). Desync detector is
+  width-safe (presence of sf_multipv_raw, not width). SF_MULTIPV_RAW_MAX=48 ≥ 6
+  fine. sf-policy label smoothing branch flips to "uncovered" on most rows —
+  inert while SF policy legs are 0, noted for any future re-enable.
+  **REAL CONSEQUENCE: the PID airbag's easing range is capped.** The opponent's
+  regret-band move draws from the SAME MultiPV list
+  (_process_sf_results→_push_curriculum_opponent_move, stockfish_turn.py:1622):
+  at width 6, even infinite regret yields uniform-over-top-6 — a much stronger
+  floor-difficulty than uniform-over-40-within-band. Combined with nodes
+  700k→~100k the net effect on realized difficulty is unmodeled. → prereg WATCH
+  item: winrate + regret-at-clamp on the first day; if winrate pins low with
+  regret pegged at max, the easing ceiling is binding and multipv (or nodes)
+  is the release valve.
+- `selfplay_fraction` 0.5→0.8: live key, clean plumbing
+  (state.py:448/:756/:1039); opening.py:76 note — seeds land on ~sp_frac of
+  slots, so dole pacing shifts with the fraction (informational).
+- gumbel keys (`gumbel_scale`, `gumbel_scale_after`, decay start/moves +
+  curriculum_* variants): all RESTART keys, wired end-to-end
+  (network_turn.py:237 _scheduled_gumbel_scale); no new yaml keys needed — the
+  1.0→0.5 schedule uses existing keys, validator-safe.
+- All four families are in _RECO_WATCH_KEYS; completeness guarded by
+  test_every_reco_field_is_watched.
+
+### 2026-08-06 — GROUND TRUTH vs DEEP SF: THE NARROW PRIOR IS NOT HIDING GOLD. Support ceiling DEFLATED as a strength concern; config-only relaunch fully vindicated.
+
+The barrier probe's "zero discoveries" used the net's own Q (a blind value head
+cannot see a discovery). This check replaces the ruler with stored deep-SF
+truth: `sf_p0_regret` (per-move cp-regret at the row's own position, MultiPV-40
+teacher labels, best=0, cap 1000cp) vs boot512's prior on 2,975 bank rows
+(shards_iter21, stratified across all 104 shards; 1,826 fully-measured rows
+i.e. every legal move SF-scored). Banked:
+data/offline_replay_screen_cdb96/sf_tail_goldcheck_20260806.{py,out} (CPU-only).
+
+- **Alignment control PASSED** (required before reading anything): the row's
+  own policy_target argmax has SF-regret mean 46.8cp / median 0.0cp vs a random
+  legal move's 817cp — the field belongs to this row's position.
+- **SF's best move is outside the net's top-32 prior in 0.0–0.1% of rows**
+  (fully-measured: 0.000 at every ply bucket; all-rows: 0.001). At `gumbel_topk
+  32` the candidate set ~always contains SF's best move.
+- SF's best outside the p>1e-3 "support": only ~2% of rows — and still inside
+  top-32, so still searched.
+- A ≤20cp-regret move outside top-32 exists in 0.2–0.5% of rows (≤50cp:
+  0.4–1.6%); 99.5% of the prior mass of ≤20cp moves is inside the support.
+- The ~24% of rows with a ≤50cp move outside the p>1e-3 set are NOT blind
+  spots: those moves are inside top-32 (out-T32≤50cp ≈ 0.004), i.e. candidates.
+
+READ: the support/KL floor vs lc0 (0.59–0.77) is a SHAPE/STYLE difference, not
+blindness to good moves — everything the current reward structure could reward
+is within candidate reach at (0.025, 32, 256). The support-replenishment
+program (mixture, noise valves, Dirichlet) is CLOSED on ground truth, not just
+on the net's Q. Combined with the barrier probe: config-only relaunch, no
+search-side code changes.
+
+HONEST CAVEAT (mission-level, not a hedge on the above): sf_p0_regret is gold
+per SF'S OWN judgment. An anti-SF exploit move that SF misjudges would carry
+high SF-regret and is invisible to this ruler BY CONSTRUCTION. Today the loop's
+reward structure is SF-derived, so this does not change the relaunch; it
+becomes relevant only if/when we hunt moves SF underrates (the blind-spot/seed
+channel, judged by the Cheese tail per standing rule).
+
+### 2026-08-06 — PREREG + LAUNCH: REDUCED-SF RELAUNCH BUNDLE (user-authorized "launch now"; values locked by user this session)
+
+HYPOTHESIS: collapse is solved (recipe pooled-1000 = −0.35±19 at zero); offline
+axis exhausted (all arms NULL); the remaining defect family is generation-time
+starvation + mis-tuned search. Feeding the fixed loop several-fold more fresh
+games under the corrected search config yields ratchet Elo gain over boot512.
+
+BUNDLE (ONE experiment, judged as a package; all values verified through the
+validator flatten post-edit):
+- Labels: sf_label_nodes_floor 700k→150k AND sf_label_nodes_cap 0→200k
+  (floor+cap both required — labels = max(min(PID nodes, cap), floor));
+  sf_multipv 40→6 (user sweet spot; airbag-ceiling watch below).
+- Mix: selfplay_fraction 0.5→0.8; sf_fast_ply_node_scale stays 0.25
+  (dataclass default — not in yaml, default = desired value).
+- Search (training): gumbel_c_scale 0.1→0.025, gumbel_topk 16→32, sims 256;
+  gumbel_scale 0.75→1.0, gumbel_scale_after 0.0→0.5 (existing decay keys,
+  moves 12–15); curriculum_gumbel_scale 0.25→1.0 / after 0.0→0.5 (uniform
+  schedule both game types — the canonical-scale rationale is game-type
+  independent; noted as a bundled choice, not separately evidenced).
+- Losses (recipe of record): w_sf_move/w_sf_own/w_sf_own_regret/w_sf_eval/
+  w_categorical all →0.0; sf_wdl_frac 0.45→0.69 (+floor 0.69),
+  search_wdl_frac 0.2→0.31. sf_policy_score_mode: cp (already deployed).
+- Dose: train_views_per_ingested_position stays 4.3 (measured plateau).
+  warmup_steps stays 1000. Boot: boot512 --fresh (bootstrap_checkpoint
+  already points at boot_snap_recheck_0711_0404.pt; revert point = that
+  banked artifact + ck_20260806_d2003_checkpoint_000102).
+
+DECIDING YARDSTICK (ONE): daily ratchet arena Elo(published − boot512), fixed
+seed, matched_sims, pooled across the window.
+- SUCCESS: CI > 0 within 5–7 days. KILL: CI < 0 at day 5–7 → pre-committed
+  pivot to pure-selfplay bootstrap. Straddle at day 7: one 3-day extension;
+  second straddle = KILL for the bundle-as-package.
+- Absolute early points must beat the seed-42 placebo zero-point (~+20 for
+  near-clones), not zero.
+
+WATCH (not verdicts): PID winrate + regret-at-clamp day 1 (multipv 6 caps the
+airbag at uniform-over-top-6; release valves = width up or nodes down);
+train_steps_used; desync presence rate (healthy = exactly 0.0000); gate shadow.
+
+CONFOUNDS: everything changes at once, deliberately (user-agreed). Interior
+attribution (SF value at all? multipv 6 vs 1?) deferred to post-gain ablations
+on tagged rows. Consumers audit of every key: ledger 082489713.
+
+DEPLOY RECORD (this session): origin/main merged (fba1fce5a; conflict resolved
+to main's secrets-out-of-yaml side; stray marker fixed 21dd2b985 — validator
+flatten passes); C-ext rebuilt (_lc0_ext.c changed in merge); **#161 EXECUTED:
+credential rotated** (32-char secret; users.json hash + server .password file +
+.secrets/worker_password all symmetric, 0600, gitignored; old
+chess_worker_2026 verified DEAD against the store). First-shard proof battery:
+scripts/relaunch_proof_battery.py (negative controls verified on the old bank).
+
+### 2026-08-07 00:15 — RELAUNCH BOOT REPORT (trial 379f6) + RULER RE-BASELINE BANKED (#360 obligation closed)
+
+BOOT: trial train_trial_379f6_00000 live 23:51, all 4 workers authenticated
+under the ROTATED credential (password-file path) and playing. First realized
+proof, from the workers' own session-start line: `regret=0.1000 sf_nodes=75000
+label_floor=150000 score_mode=cp cp_temp=16.20` — floor 150k + cp mode LIVE.
+Remaining keys (cap/multipv/sp_frac/gumbel) get their proof from the first
+shard via scripts/relaunch_proof_battery.py (watcher armed).
+
+KNOWN-PATTERN STARTUP LOSS, quantified: at 23:52:51 (broker compile window)
+each worker lost exactly 4 selfplay threads to 30s inference-broker timeouts
+(16 total). Worker code confirms dead threads are logged but NEVER respawned
+(worker.py:4052 _run_one_thread) — each worker runs 28/32 threads for the
+session, ~12.5% selfplay capacity. Phase stats corroborate (~2880% total_thread
+≈ 28.8 threads). Fix available: SIGTERM → graceful suspend → driver revive →
+resume (wired, worker.py:1170), compile cache now warm — but killing live
+worker processes needs operator action (permission-gated this session).
+OPERATOR DECISION: bounce the 4 workers one at a time, or accept −12.5%
+selfplay throughput until the next natural session restart.
+
+RULER RE-BASELINE (subagent, banked data/ruler_baselines_20260806/, both exit
+0, training undisturbed): post-#360 + cp-mode baselines on boot512 —
+- audit_targets (v1 frozen set, 2k subset, batch 64 PINNED, fen_only): raw
+  policy E[regret]/top-1 = 74.9/53.5 cp; PLAY 32-sim 53.6/52.3; SF MultiPV
+  soft 22.9/19.2; production training target 62.2/50.4.
+- value_regret (batch 128 PINNED — CLI default is 256, must pass explicitly):
+  70.8 cp overall TB-excluded (n=1723); endgame 81.4 / middlegame 53.9.
+- ⚑ These must NOT be diffed against pre-#360 anchors (old mate fold, other
+  batch/subset) — apparent shifts are the ruler change itself. Pair future
+  readings against the banked per-position dumps via scripts/paired_compare.py.
+- Note: audit_targets' internal RL-search row already runs the bundle's
+  c_scale 0.025 (reads live yaml) — recorded as part of this baseline's ruler
+  identity.
+
+### 2026-08-07 00:35 — DEPLOY PROOF BATTERY: 14/14 PASS (trial 379f6, first-shard evidence)
+
+scripts/relaunch_proof_battery.py against the first compacted server shards +
+params.json + live server:
+- SHARD EVIDENCE: sf_multipv non-pad PV rows p95=6 median=6; label nodes
+  median 150,094 (p10 150,011 / p90 150,169 — floor AND cap live);
+  is_selfplay 0.725 over 1,428 rows (trending to 0.8; early-completion
+  transient per the length-truncation rule).
+- LAUNCH CONFIG: c_scale 0.025 / topk 32 / sims 256 / gumbel 1.0→0.5 /
+  multipv 6 / floor 150k / cap 200k / sp_frac 0.8 all exact;
+  sf_fast_ply_node_scale correctly ABSENT (dataclass default 0.25).
+- #161: live server answers HTTP 401 to the burned chess_worker_2026 over
+  HTTP Basic on /v1/lease_trial — old credential DEAD end-to-end.
+Battery corrections in this pass (constants → user-locked 150k/200k; absent-
+key semantics; real endpoint — 404 was "no auth verdict", not a rejection).
+Every training-affecting bundle key is now PROVEN in effect on the production
+path. config_change_may_not_be_in_effect: SATISFIED for this restart.
+
+## 2026-08-07 — DEPLOY: PR #365 broker-warmup gate via train.sh restart (ops, not a training-quality experiment)
+
+**Change:** PR #365 (merged, squash 4cd6dfb64): `_await_broker_ready` probe gate in `_run_selfplay`, broker path, before `_selfplay_session_active = True`. Fixes the measured compile-window thread deaths (4/32 threads per worker died at first-compile on the 08-06 relaunch = −12.5% selfplay capacity, never respawned). Gate is ON by default (env `CAE_WORKER_BROKER_WARMUP_TIMEOUT_S`, default 240; 0 disables). Independent review: APPROVE-WITH-NITS (PR comment), nits folded in. CI green.
+
+**Deploy:** `train.sh restart` (stop → start, auto-RESUME — never `--fresh`) on the live 379f6 trial, AFTER checkpoint_000020 is banked so the iter-21 boot-shock arena checkpoint comes from the uninterrupted boot. Restart also restores the 4 dead threads per worker.
+
+**Pre-committed verification (first new session, same day):**
+1. `grep "broker ready after"` in each worker log — line MUST exist (gate ran on the production path).
+2. `grep "selfplay thread .* died"` — MUST be zero in the new session.
+3. F1 disambiguation (reviewer finding): ready wait <5s on a freshly launched broker AND any thread deaths ⇒ probe was AOT-short-circuited — gate needs a production-batch-shaped probe; file immediately.
+4. `outcome_stats.resumed_inflight_games > 0` on teardown of the old session (resume path exercised).
+FAIL on any ⇒ the gate did not take effect; do NOT count this deploy as done.
+
+**Confounds:** restart transient (post-restart winrate biased high — drop post-restart rows per standing rule); +12.5% selfplay capacity from thread recovery changes games/h vs the first-day baseline — note when reading day-1 throughput.
+
+**VERDICT 2026-08-07 ~02:05 (same session): DEPLOY VERIFIED — all 4 pre-committed checks PASS.**
+1. "broker ready after 1.6–2.1s (1 probe attempt(s))" in ALL FOUR worker logs at 01:57:40 — gate ran on the production path.
+2. Zero "selfplay thread died" since restart (01:56); historical death waves hit within ~2 min of session start, window passed.
+3. F1: ready was sub-5s BUT with zero deaths, so no AOT-short-circuit escape occurred on this boot. Note the pre-restart logs revealed a SECOND death wave at 00:42:58 (~16 more threads, mid-session recycle) — old-session capacity loss was worse than the −12.5% first reported; the gate covers every session start, which is exactly the case that fired at 00:42.
+4. `selfplay resume totals: resumed=568` (worker_03 alone; discarded=0) — resume path exercised, no drain transient.
+
+Iter-21 boot-shock arena LAUNCHED 02:04 from banked checkpoint_000020 copy (data/ckpt20_iter21_arena/), 200g seed 42 matched_sims 32 --search-shape training vs boot_snap_recheck_0711_0404.pt, out data/iter21_bootshock/. Reading rule (pre-committed 08-06): ≈−96 = boot-shock attractor persists under the reduced-SF bundle; ≈0/positive = escaped. Single 200g CI ±~45 separates the two.
+
+**VERDICT 2026-08-07 02:47 — ITER-21 BOOT-SHOCK ARENA: ATTRACTOR ESCAPED (pre-committed rule, same session).**
+ckpt_000020 (iter 21, reduced-SF bundle) vs boot512, 200g/100 pairs, seed 42, matched_sims 32, --search-shape training:
+**Elo +1.7, 95% CI [−41.1, +44.6]**, score 0.5025, pentanomial WW16/WD15/DD-WL38/LD16/LL15. Artifact: data/iter21_bootshock/arena_iter21_vs_boot512.json (also appended to runs/arena_results.jsonl).
+Reading rule was: ≈−96 = attractor persists, ≈0/+ = escaped. All three previous fresh boots read ≈−96 at iter 21 on this ruler; −96 is excluded by >2 CI half-widths. The bundle's iter-21 net is LEVEL with its own boot weights instead of 96 Elo below — the early-training value collapse that defined every prior boot did not occur under the reduced-SF bundle.
+What this verdict is NOT: proof of GAIN. Level-with-boot at iter 21 says the damage mechanism is gone; the deciding yardstick for gain remains the daily ratchet Elo(published − boot512) pooled, CI>0 within 5–7 days per prereg ed9de8ee9 (early absolute points must beat the ~+20 seed-42 placebo zero-point).
+Confounds: none material — checkpoint predates the 01:56 restart (uninterrupted boot); same ruler class as the historical −96 readings.
+
+**MILESTONE ARENA 2026-08-07 ~10:35 — iter-119 vs boot512: LEVEL. Elo +5.2, 95% CI [−29.6, +40.1]**, 200g/100 pairs, seed 42, matched_sims 32, training shape, pentanomial WW7/WD22/DD-WL48/LD13/LL10. Artifact: data/milestone_arenas/arena_iter119_vs_boot512.json.
+Two fixed points now: iter 21 = +1.7 [−41,+45]; iter 119 = +5.2 [−30,+40]. Reading discipline: a ±35 CI over ~100 iters (~8h) CANNOT resolve a 2–4 Elo movement, so this is consistent BOTH with zero gain AND with a healthy 5–10 Elo/day. It is NOT a kill signal; the pre-registered verdict instrument remains the pooled multi-day ratchet (now unstarved by PR #366, merged e1ad0ddb1). What it DOES establish: no regression, attractor still escaped, and the milestone series (every ~100 iters, same ruler) will resolve a real slope within 2–3 days.
+Next probe (today, cp-resolution): paired audit_targets + value_regret on ckpt-119 vs the banked boot512 per-position dumps (data/ruler_baselines_20260806/, batch sizes PINNED 64/128, fen_only) via scripts/paired_compare.py — detects direction long before arena CIs can.
+
+**PAIRED RULERS ckpt-119 vs boot512 (2026-08-07 ~11:00, banked-identical params, scripts/paired_compare.py): THE LOOP IS LEARNING — POLICY PRIOR +8.0cp ON GROUND TRUTH.**
+- audit_targets frozen set, 2000 paired positions, join=key: raw prior E[regret] 74.89 → 66.91, **paired delta +7.98cp [95% CI +6.22, +9.76], significant**; both phases (endgame +7.2, middlegame +9.7). Training-target candidate: 62.15 → 57.58, **+4.58 [+2.02, +7.22], significant**.
+- value_regret, 1723 paired: 70.78 → 70.63, +0.15 [−6.0, +6.5] NOT significant; split: middlegame **−10.0 [−18.6, −1.7] (ckpt119 WORSE)**, endgame +6.6 [−2.1, +15.5] n.s. Value head flat-to-mixed; watch the middlegame term at the next milestone.
+- Reading: ~8cp prior improvement in ~12h is the FIRST measurable learning of the new lineage — the old lineage's prior DEGRADED on this same ruler. Invisible to ±35-Elo arenas by construction; consistent with a real but modest Elo slope. Dumps: data/ruler_ckpt119_20260807/.
+
+**TARGET-SHAPE CHECK, fresh shards vs old bank (selfplay rows, all-phase aggregate; ply split unavailable in stored fields):** new (0.025/topk32/256 sims) entropy med 0.94 (q25 0.39, q75 1.52), support med 11 (5–18), top1 med 0.66; old bank (0.1/topk16) entropy 0.56 (0.10–1.03), support 8 (3–13), top1 0.84. lc0 refs: entropy 1.58–1.74, support 20–34. Verdict: markedly softer/wider than the old recipe (over-sharpening gone), still narrower than lc0 — the residual is the PRIOR's own support (goldcheck: hides no gold per SF), not the search transform.
+
+## 2026-08-07 — PREREG: lc0-judged goldcheck (independent-judge retest of the support ceiling)
+
+**Hypothesis:** the 08-06 "narrow prior hides no gold" verdict (2bf22e962) is SF-conjugate: sf_p0_regret cannot see moves SF misjudges — exactly the anti-SF channel. BT4 at a deep budget is a strong independent judge; if BT4-preferred moves are systematically OUTSIDE our net's top-32, the support ceiling is re-opened on the lc0 axis even though it is closed on the SF axis.
+
+**Method (one screen, no training change):** same 2,975 goldcheck bank rows (directly comparable per-position to the SF verdict). BT4-it332 via the diag/lc0-net-in-our-search adapter, our batched Gumbel search at c_scale 0.025 / topk 32 / 800 sims (BT4's own argmin per the 08-06 sweeps; 800 ≈ user-requested depth). Record per row: BT4 best move + root Q per move; our boot512 prior top-32 (already banked in the goldcheck dump); SF best + sf_p0_regret (stored).
+
+**Metrics + pre-committed reading:**
+1. frac(BT4-best outside our top-32) — SF analogue was 0.0–0.1%. **>2% overall re-opens the support question on the lc0 axis; ≤0.5% = CLOSED on both axes.**
+2. Disagreement set (BT4-best ≠ SF-best): its size, our coverage of BT4-best inside it, and SF-judged regret of those BT4 moves (high SF regret + BT4 preference = anti-SF candidate signature). **Coverage <90% on this subset = the mixture probe gets re-evaluated for the hole-finding channel.**
+3. lc0-judged support regret: BT4 Q(BT4-best) − max BT4 Q(move ∈ our top-32), reported in win% (BT4 units, NOT cp — do not mix with SF numbers).
+In-between readings = record, no action, revisit with ckpt-119's prior swapped in as a follow-up.
+
+**Confounds:** BT4 judged via OUR search shape (mitigated: 0.025/32 is BT4's own argmin); Q units incommensurate with cp; single BT4 net = one judge, not ground truth — a 2-of-3 judges framing (SF + BT4) is the standard this feeds.
+
+## 2026-08-07 — CONFIG: SF gets 6-man DTZ (stockfish_syzygy_path aligned with syzygy_path, 6e3d8ee4c)
+
+**Finding first:** the dir names lie — data/syzygy_3-4-5 contains the full 3-4-5 set (145 WDL + 145 DTZ) PLUS all 365 six-man WDL files. So SF has probed 6-man WDL in search since forever; "SF only has 5-man" was false. Inventory verified by piece-count histogram: 6-man set in data/syzygy_6 is complete (365 rtbw + 365 rtbz, 151G).
+**Change:** stockfish_syzygy_path now lists both dirs → SF additionally gets 6-man DTZ (root move ranking + 50-move-exact conversion in ≤6-man positions). Expected effect: SMALL (search-probe WDL, the label-quality driver, was already in effect); sharpens SF's endgame root play as opponent and label PVs at TB roots. Takes effect at next worker session recycle (restart-class reco key, engine reinit; warmup gate covers it).
+**Confound note:** lands inside the reduced-SF bundle's readout window; effect judged small (DTZ-only delta). Recorded here per rule 4. Watch: PID winrate dip in endgame-heavy curriculum cells would be the visible signature; the PID absorbs it by design.
+**Housekeeping flag (not done):** the 365 six-man WDL files are duplicated on disk across the two dirs (~68G waste). Dedup is a separate operator decision — both copies are live-mapped today.
+
+**VERIFIED 11:02 (same session): 6-man DTZ config IN EFFECT** — all workers logged `restarting selfplay session [restart_keys=stockfish_syzygy_path]` at 11:01, gracefully recycled (warmup gate 0.0s, broker hot, zero deaths), engines rebuilt via the syzygy_changed init branch with the two-dir path. First real-world exercise of PR #365's gate on a mid-process recycle: clean.
+
+## 2026-08-07 — VERDICT: lc0-judged goldcheck — support ceiling CLOSED on the lc0 axis (prereg e18cafc80)
+
+Judged strictly by the pre-committed thresholds; artifacts in `data/lc0_goldcheck_20260807/`.
+
+- **Metric 1 — frac(BT4-best outside our top-32): 1/2975 = 0.03%** (threshold: >2% re-opens
+  support axis; ≤0.5% closes both). Far under the close bar. The single miss (row 2750,
+  ply 63) is a SHARED blind spot — BT4-best = SF-best there — not an lc0-only channel.
+  SF analogue on the same rows: 2/2975 = 0.07%.
+- **Metric 2 — coverage on the BT4≠SF disagreement set: 1284/1284 = 100%** (threshold:
+  <90% re-opens the mixture probe). Disagreement set was large (43.2% of rows), so this
+  is a real test, and coverage was total.
+- **Metric 3 — lc0-judged support regret: median/p90 = 0.000/0.000 BT4-win%**, frac>0.02
+  = 0.03% (same single row).
+
+**Verdict: CLOSED, both judges.** The prior's top-32 contains the best move of a much
+stronger, stylistically independent judge (BT4-it332 @ 800 sims, adapter-verified)
+essentially always — including the anti-SF-flavored tail (BT4 prefers moves SF rates
+≥100cp worse in ~10% of disagreements; every such move already inside our top-32).
+The KL-floor-vs-lc0 is confirmed as SHAPE, not blindness; gated-mixture stays shelved.
+Sanity controls: exact row-identity reproduction of the 2,975-row goldcheck sample
+(alignment to 0.1cp), 32-vs-800-sims stability 84%, FEN reconstruction 2975/2975.
+Confound note: two mid-run ONNX-arena OOMs (rows 888/1008) fixed by batch bucketing;
+JSONL verified gap-free, no per-position effect.
+
+## 2026-08-07 — PREREG: terminal-proximal outcome share in the wdl blend (RESTART-GATED, not live)
+
+**Hypothesis.** Within ~7 plies of the game's end the recorded outcome is the cleanest
+value estimator available — cleaner than the search component it would displace and
+crisper than the deliberately-soft cp-logistic SF label — so transferring the SEARCH
+share (never the load-bearing SF share) to the outcome, tapered to zero by 7 plies,
+improves endgame value quality without re-admitting the deep-game outcome noise that
+carried the value collapse.
+
+**Calibration (banked `data/terminal_outcome_calibration_20260807/`, 149k rows, newest
+80 shards of 379f6).** Outcome-vs-blend disagreement ramps ~0.033 E-score/ply:
+0.043 at d1–2 vs the search component's 0.078 on the same rows; per-distance crossover
+at d≈6–7; 0.65+ deep (the collapse channel — global game_frac stays 0). Three-cornered
+hat decomposition: sd(outcome) 0.10→0.77 across d; SF's apparent near-terminal noise
+(~0.13) is cp-logistic label softness, not misjudgment; far-field sd(search) estimates
+are biased low by outcome↔search error correlation (net played its own game) — near-
+terminal region, where the decision lives, is the trustworthy zone. TB-provable (≤6-man)
+rows are only ~0.3% of near-terminal volume — the case rests on generic near-terminal
+reliability, not TB exactness. Volume touched (d≤6): 4.7% of rows.
+
+**Mechanism.** New keys `wdl_terminal_outcome_plies` (0=off; production plan 7) and
+`wdl_terminal_outcome_full_plies` (2). w(d) = realized_search_frac × clamp((7−d)/5,0,1)
+transferred search→outcome (one-hot from `wdl_target`); d from `moves_left`×max_plies
+(rounded; has_moves_left=0 rows unchanged). SF share untouched at every d; default-off
+bit-identity is a shipped test. PR by Opus author agent, independent review to follow.
+
+**Stage 1 — offline screen (BEFORE any live enable; audit-first rule).** Rig arm on the
+713-shard clean bank, lever-on (7/2) vs control, same recipe as the tier-2/3 screens.
+Deciding yardstick: paired value_regret (pinned batch 128, fen_only, seed 0), endgame
+slice. SUCCESS: endgame slice improves, paired CI>0. KILL: endgame CI includes 0 or
+middlegame slice worsens with CI<0. No stage-2 without stage-1 pass.
+**Stage 2 — live enable at the next user-authorized restart** (never mid-run: new keys
+freeze live reloads). Yardstick: existing milestone paired value_regret endgame slice +
+value_component_drift endgame trend; KILL: middlegame value slice degrades beyond its
+paired CI at the first milestone, or endgame drift E|d| rises >0.02 over its banked
+day-one trajectory for 2 consecutive readings.
+**Confounds.** Fresh-boot shock at the enabling restart (use conjugate-ruler pairing,
+drop post-restart winrate rows per the length-truncation rule); HL-Gauss edge
+truncation (A20) — ±1 outcome targets push on the truncated edge, so part of any null
+may be head-side, note before judging; one-data-affecting-change-per-window applies to
+the enabling restart.
+
+### 2026-08-07 amendment to the terminal-outcome prereg — three-arm stage-1 screen
+
+User call: the conservative cap (outcome ≤ search's 0.31 share) is a design guess, and
+this axis is offline-screenable — so let the rig decide instead of tuning live. New key
+`wdl_terminal_outcome_sf_frac` (default 0.0 = SF untouched) lets the outcome also take
+part of the SF share near-terminal. Stage 1 now runs THREE arms on the clean bank:
+control / conservative (7, 2, sf_frac 0) / aggressive (7, 2, sf_frac 0.5 → at d≤2:
+SF 0.345, search 0, outcome 0.655). Deciding rule unchanged (paired value_regret
+endgame slice, CI>0 to pass; middlegame slice worsening = kill) plus arm selection:
+aggressive must BEAT conservative with paired CI>0 to be chosen, ties go to
+conservative (smallest change that captures the effect). Production enable remains
+whichever single arm wins, at a user-authorized restart only. Confound note: the
+aggressive arm bends the load-bearing-SF rule on ~1.2% of rows (d≤2) — the rig screen
+is exactly the instrument that is allowed to test that safely.
+
+## 2026-08-07 — OUTAGE: trainer OOM-killed at 12:22, run DOWN pending user-authorized restart
+
+At 12:22:23 Ray's raylet killed the training actor for node memory pressure and the
+tuner exited (full traceback + Ray memory report banked at
+`data/oom_20260807/chess_training_oom.log`; /tmp copy is reboot-volatile). Root cause
+per the raylet's own memory report: the FOUR selfplay worker processes had ballooned to
+**~18 GB RSS EACH (~72 GB of the node's 98 GB)**; the trainer actor (6.8 GB) was the
+process Ray could kill. Workers had been up 10.4 h — since the 01:56 stop/resume
+(`logfile_restart_20260807.txt`, which also discarded 4 workers' in-flight games) — so
+this is ~1.7 GB/h/worker of growth, a leak or unbounded accumulation, not a spike:
+iter 151 completed normally at 12:18 (302 s, ingest healthy, desync 0.0). Minor
+concurrent RAM users (bt4 goldcheck 1.26 GB, blindspot_retire_step 1.25 GB) are noise
+at this scale. Aftermath: server shut down cleanly with the teardown; the inference
+broker (PID 1996441) is ORPHANED and idle-spinning ~82% CPU — kill it at restart.
+Last checkpoint = iter 151 (holds iter-152 state per the ckpt_N gotcha).
+
+Impact on open readouts: the ~iter-220 milestone slips by the outage length; the regret
+trend fit gains a gap and post-restart rows must be dropped per the length-truncation
+rule; tonight's ratchet run needs training back up to matter. The stage-1
+terminal-outcome rig screen is UNAFFECTED (offline, RAM headroom 73 GB free after the
+workers died).
+
+Open defect: worker RSS growth ~1.7 GB/h/worker must be root-caused (candidates: replay
+upload path accumulation, eval-cache growth, game-record retention on the resumed
+in-flight path — none confirmed). Restart is NOT mitigation, it is a ~2-day fuse.
+Per the standing rule I am not restarting training without user input.
+
+### 2026-08-07 — VERDICT: terminal-outcome stage-1 screen = KILL (both arms), stage 2 does not launch
+
+Chain ran 14:03–15:28 on the 713-shard clean bank (control / conservative 7,2,sf_frac 0
+/ aggressive 7,2,sf_frac 0.5; 2800 steps @ 512 each, shared seed + shard pool; artifacts
+`data/offline_replay_screen_cdb96/retrain_termout/`). In-effect proof from the rig's own
+`retarget_report.json`: control `wdl_terminal_outcome_frac` 0.0 / 0 rows; cons 0.0117 /
+86,343 rows; aggr 0.0246 / 86,343 rows — lever live in both arms, dead in control, and
+both lever arms touched the identical row set.
+
+Deciding yardstick (paired value_regret, batch 128, fen_only, per-position dumps,
+10k-resample bootstrap; delta = control − arm, >0 = arm better):
+endgame  cons +1.24 [−2.93, +5.53] · aggr −0.44 [−4.48, +3.21]
+midgame  cons −0.68 [−2.81, +1.07] · aggr −0.44 [−2.31, +1.17]
+cons-vs-aggr endgame −1.68 [−5.45, +1.27].
+
+Pre-committed rule: endgame CI>0 to pass → **both arms KILL (CI includes 0)**. No
+middlegame harm; the sf_frac axis question resolves as "aggressive buys nothing over
+conservative". Production stays default-off; the PR #368 code remains merged and
+harmless (bit-identical off, shipped test).
+
+Honest caveat, not a verdict escape: the realized dose was small — mean transferred
+weight 0.012 of the value target over 4.7% of rows, and the screen's endgame resolution
+is ~±4cp. A live effect smaller than that would not have passed this screen, by design
+(the audit-first rule kills candidates that cannot prove themselves offline). Any
+re-attempt needs a NEW prereg with a bigger dose or a sharper instrument, not a re-read
+of this one.
+
+### 2026-08-07 — VERDICT: worker OOM root cause = _NetRecord view pinning; fix deployed, ratchet gone
+
+Root cause (PR #369, merged, live at the 17:15 restart, merge e4cc79ff4): every
+`_NetRecord` stored bare numpy ROW VIEWS into the per-turn eval batch arrays
+(`c_x[j]` / `xs_batch[j]` etc., selfplay/network_turn.py), pinning the whole
+(N,175,8,8) parent batch (up to ~53MB) per stored 44.8KB row until the record's game
+finalized. Fix: `_owned()` choke point in `_NetRecord.__init__` (copy iff view), with
+a negative-controlled regression test that fails on pre-fix code.
+
+Deciding readout (per-minute RSS logger, `data/oom_20260807/rss_log.csv`, single-change
+restart — no MALLOC_ARENA_MAX):
+- pre-fix   (uncapped):     5.9GB@379s → 8.35GB@920s → 12.4GB@2060s → ~18GB/worker at the 12:22 raylet kill (~1.5-2GB/h ratchet)
+- pre-fix   (arena-capped): 8-8.8GB@360s → ~11.6GB@1741s (cap changed nothing → fragmentation refuted)
+- post-fix: ~10GB by 1735s then FLAT 10.0-10.8GB through 4617s (77 min), residual slope ≤~0.4GB/h
+
+Verdict: the ratchet component is gone; the ~10GB plateau is steady-state footprint
+(in-flight records now owned copies; 32 threads × 24 in-flight games). This is a
+MEMORY-LEAK fix, NOT a correctness fix — reviewer confirmed batch buffers are freshly
+allocated per call, so views were pinned but never corrupted. Attribution note: SF
+children read 5.6-6.5GB RSS each but are ~96% Shared_Clean syzygy mmap counted 32×;
+real SF anon is ~78MB/proc. The leak was python-worker anon heap only.
+
+Residual watch: ≤0.4GB/h creep vs measurement noise — discriminated by the flag-gated
+in-process heap census (PR #370, reviewed+CI-green, merge pending approval): arm ONE
+worker via work-dir flag file + SIGTERM recycle (revive resumes suspended games; model
+lives in the broker so no compile). memray attach is BANNED on this host: gdb-injected
+malloc call took SIGILL in worker_00 (18:34, worker survived, verified producing after).
+
+### 2026-08-08 — VERDICT: first POSITIVE paired ruler readout of the reduced-SF lineage (iter331 vs boot512)
+
+Both frozen offline rulers re-read on `checkpoint_000331` (copied out of the tune dir to
+`data/ruler_reads_20260808/trainer.pt`, size-verified 685323131 B — Ray prunes live
+checkpoints), paired against the 2026-08-06 boot512 dumps with `scripts/paired_compare.py`.
+Canonical pinned invocations, batch 64 (audit) / 128 (value), `--gpu-mem-fraction 0.15`,
+nice 10, strictly sequential. Code state: live branch `ops/live-20260725`.
+
+**Policy — `audit_targets`, paired n=2000 (+ = iter331 better):**
+
+| candidate | boot512 | iter331 | paired delta | 95% CI | verdict |
+|---|---|---|---|---|---|
+| a) net raw policy | 74.89 | 64.72 | **+10.17** | [+8.06, +12.29] | iter331 better |
+| d) production TRAINING target (256 sims) | 62.15 | 56.73 | **+5.42** | [+2.95, +7.95] | iter331 better |
+| b) PLAY search (32 sims) | 53.56 | 50.36 | +3.20 | [-1.30, +7.79] | ns |
+| c) SF MultiPV soft target | 22.94 | 22.94 | +0.00 | [+0.00, +0.00] | 100% tied |
+
+Row (c) is net-independent and came back bit-identical with 100% of positions tied —
+that is the RULER-IDENTITY NEGATIVE CONTROL for this readout: the ruler did not change
+and the join is correct, so the other deltas are not measurement drift.
+Per-phase, both significant rows hold: raw endgame +9.56 [+6.79,+12.33] / middlegame
++11.40 [+8.33,+14.62]; training target endgame +6.68 [+3.15,+10.28] / middlegame
++2.91 [+0.65,+5.08].
+
+**The stored TRAINING TARGET improving is the load-bearing result** — that is the loop
+improving the data it feeds itself, not merely the net improving on fixed data. Target
+shape sharpened: entropy 1.1875 -> 0.9804, mean top-1 0.5950 -> 0.6616, eff. support
+4.170 -> 3.524.
+
+**Value — `value_regret`, paired n=1723 (TB-excluded default):** OVERALL 70.78 -> 65.48,
+delta +5.31 [-1.20, +11.89] ns; **endgame +11.37 [+1.84, +21.29] SIGNIFICANT**;
+middlegame -4.27 [-12.90, +3.78] ns (worse in sign). The endgame-up / middlegame-flat-
+or-down split has now been seen TWICE. That makes the terminal-proximal outcome re-add
+pre-registerable, but it is NOT fired in this window: it would confound the first arena
+row whose CI excludes zero (2026-08-08 ratchet, iter 249, +88.7 Elo [+18.0, +167.6]).
+
+Three independent instruments (arena Elo, policy regret, value endgame regret) now agree
+in sign for the first time on this lineage.
+
+**PROXY CALIBRATION (new, useful for cadence design).** Per-position correlation of the
+boot512->iter331 DELTA between rows — a proxy is only useful if it reproduces the verdict,
+so correlate deltas, not absolute regret:
+
+| proxy -> target | delta r | abs r | mean delta |
+|---|---|---|---|
+| e) fast-ply 32 sims, RL shape -> d) 256 sims | **+0.707** | +0.940 | +6.72 vs +5.42 |
+| a) raw policy -> d) 256 sims | +0.609 | +0.926 | +10.17 vs +5.42 |
+| b) PLAY 32 sims -> d) 256 sims | **+0.194** | +0.687 | +3.20 vs +5.42 |
+
+**SEARCH SHAPE DOMINATES SIM COUNT.** Both (b) and (e) are 32-sim rows; (e) shares the RL
+shape (linear root) and tracks the 256-sim target well, (b) uses the PLAY shape (log root)
+and is nearly useless as a proxy. "32 sims proxies 256 sims" is TRUE only at fixed root
+transform. Raw policy is a serviceable direction proxy but OVERSTATES the gain ~1.9x
+(search compensates for a weaker prior) — never quote its magnitude for the target row.
+
+**COST (measured, answers the standing concurrency question).** `value_regret` 24s;
+full `audit_targets` **4.4 min** (2000 positions, ~640k net evals, ~2400 evals/s batched).
+Both are below the resolution of iteration-time noise (238 +/- 12 s), so neither needs
+rationing and neither justifies a trimmed-candidate mode. NOTE: the earlier claim that
+the 2026-08-06 baselines ran "with live training undisturbed" is RETRACTED as
+unverifiable — those runs finished ~7 min after the 23:51 relaunch while training was
+still booting, and no progress rows covering that window survive.
+
+**INCIDENT (same session, must be read with the cost number above).** The FIRST attempt at
+this audit wedged in the WSL2 GPU driver: main thread parked in `dxgvmb_send_sync_msg`,
+8m39s CPU across 4h37m wall, zero dump rows. `nvidia-smi` hung (exit 124) for the whole
+period and recovered within seconds of the process dying. On release the driver returned
+corrupt accounting — `Process 2937357 has 17179869184.00 GiB memory in use` (uint64
+overflow) — and the run died on a spurious CUDA OOM with 29.65 GiB actually free, plus
+`CUDA warning: unknown error (function ~CUDAEvent)`. ~1 minute later (~11:25) the
+production inference broker exited with **code=-6 (SIGABRT)** mid-iteration and was
+auto-relaunched by the trial (`[trial] inference broker exited (code=-6) ... relaunching`);
+iteration 401 ran long while it recompiled. Workers recovered to 4246-4292 pos/s.
+Temporal association is strong but causation is NOT proven — recorded as an association.
+Same wedge family as the 2026-08-07 19:00 outage (`dxgk: process_completion_packet: did
+not find packet to complete`), which killed training instead of a ruler.
+**Standing mitigation: every offline ruler invocation is now wrapped in `timeout 3600`.**
+A wedge that costs 20 minutes is an annoyance; one that costs 4h37m silently eats a
+readout window and may take the broker with it.
+
+Artifacts: `data/ruler_reads_20260808/{audit_targets_iter331_run2.log,
+value_regret_iter331.log, audit_targets_iter331_dump.jsonl, value_regret_iter331_dump.jsonl}`.
+
+### 2026-08-08 — AMENDMENT to the readout above: the gain is CONFIDENCE, not demonstrated RANKING
+
+Raised in-session and confirmed on the same banked dumps. **E[regret] mechanically
+rewards sharpness** (`E[regret] = sum_m p(m)*regret(m)`, so moving mass onto an
+already-correct top move lowers it with no ranking change). Both arms sharpened
+massively between boot512 and iter331, so the headline deltas are confounded:
+
+| metric | delta (A-B) | 95% CI | verdict |
+|---|---|---|---|
+| train target E[regret] | +5.42 | [+2.95, +7.95] | significant |
+| train target **top-1** (sharpness-invariant) | +0.88 | [-3.74, +5.43] | **ns**, 77.4% tied |
+| train target entropy | -0.21 nats | [-0.22, -0.19] | sharpened in 76.0% of rows |
+| raw policy E[regret] | +10.17 | [+8.06, +12.29] | significant |
+| raw policy **top-1** | **-1.48 (worse)** | [-6.18, +3.15] | ns, 78.6% tied |
+| raw policy entropy | -0.29 nats | [-0.31, -0.28] | sharpened in 81.2% of rows |
+
+**Corrected reading:** the improvement is real as "the target puts more mass on a move
+that was already its argmax" — a genuinely better distribution to sample from — but it
+does NOT establish improved move ORDERING. The sentence "the loop is improving the data
+it feeds itself" in the entry above overstates what the instrument shows; read it as
+improved target CONFIDENCE. Honest counter-caveat, so this is not overcorrected: top-1
+is low-power here (it only moves when the argmax flips; ~78% of rows tied, CIs ~+/-5cp),
+so it cannot establish that the gain is spurious either. **Neither metric alone can
+adjudicate a comparison in which sharpness changed.**
+
+**METHOD RULE (new, applies to every future policy-target comparison).** When two arms
+differ in sharpness, report E[regret] AND top-1 AND entropy/eff-support together, and
+prefer a MATCHED-SHARPNESS comparison: retemper both arms to a common entropy before
+scoring, so the contrast answers "at equal confidence, which ranks better". This is the
+policy-side analogue of a lesson already paid for on the value side — native
+`UCI_ShowWDL` beats cp-logistic against a deep-SF ruler and is the WORSE teacher,
+because a near-one-hot target teaches over-confidence (`docs/model_heads.md`; the
+cp-logistic label is deliberately soft). Chasing sharpness against a deep-SF ruler is a
+known failure mode, and the policy head is not immune ("policy head memorises the
+window"). Related: the existing "paired contrasts: EXPECTED regret, never top-1" rule is
+NOT repealed — top-1 remains too noisy to lead with; it is a CONFOUND CHECK, not the
+headline.
+
+**Open measurement this creates (higher value than the root-transform screen):** anchor
+target sharpness on a recipe known to work — measure the entropy / effective support of
+real **LC0 TRAINING DATA** (root VISIT distributions with Dirichlet root noise and
+early-move temperature), NOT an LC0 net's policy output, which is a different object and
+is the thing our stack can already load. Ours currently sits at entropy 0.9804 nats,
+eff. support 3.524, mean top-1 0.6616. Whether that is above or below the LC0 recipe is
+UNMEASURED — no number for it exists in this repo, do not assume one. Establishing it
+converts "maintain LC0-like sharpness" from a principle into a threshold and yields a
+REUSABLE ruler axis for every future target change, rather than a single config verdict.
+
+Does NOT change: the arena row (+88.7 Elo, CI excludes zero) and the value-regret
+endgame delta (+11.37 [+1.84, +21.29]) are independent of this confound.
+
+### 2026-08-08 — REJECTED BEFORE LAUNCH: `c_scale` is the wrong lever for over-sharpening
+
+Proposed in-session ("adjust c_scale to fight over-sharpening"). Rejected on the
+decomposition below, computed from the two banked audit dumps (n=2000 paired).
+
+| | conf | acc | gap | entropy |
+|---|---|---|---|---|
+| boot512 NET prior | 0.5236 | 0.4705 | +0.0531 | 1.3948 |
+| boot512 after SEARCH | 0.5950 | 0.4820 | +0.1130 | 1.1875 |
+| *search adds* | *+0.0714* | *+0.0115* | *+0.0599* | *-0.2072* |
+| iter331 NET prior | 0.6194 | 0.4695 | +0.1499 | 1.1026 |
+| iter331 after SEARCH | 0.6616 | 0.4890 | +0.1726 | 0.9804 |
+| *search adds* | *+0.0421* | *+0.0195* | *+0.0226* | *-0.1222* |
+
+Attribution of the target's overconfidence-gap growth (+0.0595 total):
+**net prior +0.0968 (163%); search -0.0373 (-63%, i.e. the search OFFSET part of it).**
+
+**The search is the component that IMPROVED.** Its sharpening got more efficient:
+boot512 spent 0.207 nats of entropy for +1.15pp accuracy; iter331 spends 0.122 nats for
++1.95pp. `c_scale` is a SEARCH knob; lowering it would shrink the healthy contribution
+and pull the stored target CLOSER to an overconfident prior — worsening calibration.
+Do not re-propose without first re-running this decomposition.
+
+**MECHANISM (hypothesis, falsifiable): a CONFIDENCE RATCHET.** Search emits a target
+more confident than the prior (+7.1pp at boot512, +4.2pp at iter331); the net trains CE
+toward it; the next prior is sharper; repeat. Nothing in the loop pushes back on
+confidence, because CE rewards matching the target's sharpness and the target inherits
+the prior's sharpness plus a search increment. Consistent with "policy head memorises
+the window". **Falsifiable prediction: target entropy keeps declining while accuracy
+stays flat.** Two points exist (1.1875 -> 0.9804 nats, acc 0.4820 -> 0.4890); a third
+read tests it. If entropy flattens or accuracy rises with it, the ratchet story is dead.
+
+**LEVER SHAPE (analysis, no launch).** The lever is TRAINING-side, not search-side. But
+a single global constant CANNOT be the fix, because the miscalibration is two-signed:
+gap by confidence bin = -0.133 (p<0.3), +0.118, +0.136, +0.291, +0.268 (p>=0.9). Any
+one-parameter global family (a constant temperature, or a constant uniform-mix eps)
+moves every bin the SAME direction, so it must worsen the low bin to fix the high one.
+What fits is a monotone CONFIDENCE-DEPENDENT map — cheapest is a per-position
+temperature solved against a fitted reliability curve (T<1 where under-confident, T>1
+where over). Temperature also PRESERVES MOVE ORDERING exactly, which is the property we
+want: the evidence says confidence is broken, not ranking.
+Uniform mixing is additionally disfavoured on semantics: calibrating the top bin needs
+eps~0.28, which spreads ~0.013 onto each of ~18 legal moves the search never visited
+(mean 21.2 legal, target eff. support 3.52). LC0's target is a VISIT distribution and is
+exactly zero on unvisited moves, so mixing breaks the very anchor being proposed.
+
+**Pre-registration blockers for the target-softening lever (all three must be closed):**
+1. CIRCULARITY — fitting the calibration map on the audit set and scoring calibration on
+   the audit set fits noise. Requires a held-out split or a different fit source.
+2. ECE-optimal is NOT strength-optimal. Offline yields a CANDIDATE; the live paired A/B
+   is still required. Do not promote on ECE alone.
+3. Calibrating the stored TARGET is not the same as calibrating the NET, and the gap
+   lives in the prior. The propagation is the hypothesis, not a given.
+TOOLING GAP: the per-position dumps carry `p`/`entropy`/regrets but NOT the full
+distributions, so no offline retempering fit can run until the dump is extended.
+
+### 2026-08-08 — CORRECTION + C-path verification: the target NEVER zeroes a legal move
+
+**RETRACTED from the entry above:** the claim that uniform mixing would "spread mass onto
+moves the search never visited" was an INFERENCE from low effective support (3.52), not a
+measurement, and it is WRONG. Verified in the PRODUCTION C path (`gumbel_c.py:1324-1356`,
+the path selfplay actually runs — the Python `gumbel.py` reference agrees):
+
+```
+legal = np.nonzero(pri > 0)[0]            # ALL legal moves
+    else: completed_q[j] = root_q_i       # unvisited -> ROOT's Q, not zero/-inf
+          visits[j]      = 0.0
+logits_imp   = log(max(pri[legal],1e-12)) + _completed_q_transform(..., root=True)
+probs[legal] = _softmax(logits_imp)       # every legal move gets POSITIVE mass
+```
+
+Low effective support means CONCENTRATED mass, not ABSENT mass. No legal move is ever
+assigned zero policy, in either implementation, including the high-branching tail.
+The shape objection to uniform mixing (it cannot fit a TWO-SIGNED miscalibration) is
+unaffected and still stands; only the "teaches unvisited moves" objection is withdrawn.
+
+**SUPPORT vs VISITS — the distinction that survives.** Root candidates are
+`m = min(topk=32, n_legal, m_cap)` (`gumbel.py:711`). Measured on the audit set
+(mean 21.2 legal, median 20, max 60): **n_legal <= 32 in 82.9%** of positions (every legal
+move is a visited candidate) and **> 32 in 17.1%**. In that tail, some legal moves get ZERO
+visits and are ranked purely by the net's prior via the `root_q` fallback — search never
+corrects them.
+
+**Observation (SUGGESTIVE, n=342, no bootstrap CIs computed — do NOT cite as established):**
+
+| bucket | ckpt | conf | acc | gap |
+|---|---|---|---|---|
+| n_legal <= 32 (n=1658) | boot512 | 0.6000 | 0.4807 | +0.1193 |
+| | iter331 | 0.6685 | **0.4934 (+1.3pp)** | +0.1751 |
+| n_legal > 32 (n=342) | boot512 | 0.5707 | 0.4883 | +0.0824 |
+| | iter331 | 0.6280 | **0.4678 (-2.1pp)** | +0.1602 |
+
+Where search covers every legal move, accuracy ROSE with the confidence. Where it cannot,
+accuracy FELL 2.1pp while confidence rose 5.7pp — confidence up, skill down. Gap growth is
+also larger in the tail (+0.078 vs +0.056) from a lower base. Consistent with the
+confidence-ratchet mechanism being worst where search cannot correct the prior, but
+underpowered as recorded; a bucket-split with paired CIs is owed before it is a finding.
+
+**Candidate lever (NOT pre-registered, NOT free): raise `topk` so every legal move gets a
+visit.** Sequential halving splits the budget: at 256 sims topk=32 gives ~1.6 first-round
+visits per candidate; topk=64 (needed to cover max n_legal=60) gives ~0.67 — under one
+visit each. Coverage in 17.1% of positions is bought with depth in the 83% where coverage
+is already complete. Price it offline before proposing. Note root evals are already padded
+to 32-row buckets, so a topk change also moves the batching shape.
+
+**Scope reminder for every number in these three entries:** production trains ONLY on the
+full 256-sim plies. The fast 32-sim plies carry NO policy target (`finalize.py` drops
+them), so row (e) `train_fast` is a MEASUREMENT proxy only and never a training target.
+All target analysis above is row (d), the 256-sim production target.
+
+### 2026-08-08 — OUTAGE (4h32m) + the first FULL-POWER ratchet: +66.8 Elo vs boot512
+
+**OUTAGE.** Training died 11:39, restarted 16:11 (PID 3191137, resumed from
+`checkpoint_000399`). Iterations 401+ lost; last banked row is iter 400 @ 11:23.
+Cascade, all downstream of the wedged `audit_targets` releasing the dxg channel:
+
+```
+11:24:25  wedged ruler dies - corrupt accounting + "CUDA warning: unknown error"
+~11:25    inference broker SIGABRT (code=-6); trial auto-relaunches it
+11:2x     trial actor: "Transient CUDA error (attempt 1/3), retrying: CUDA error: unknown error"
+11:38:03  last worker log line
+11:39:18  node marked dead, GCS SIGTERM, raylet shutdown (CLEAN exit, NOT an OOM kill)
+```
+
+The trial exhausted its 3 CUDA retries, errored, and Ray shut the run down. This
+UPGRADES the earlier entry's "strong temporal association, causation NOT proven" —
+the same `CUDA error: unknown error` signature appears in the trainer, and the chain is
+four coherent steps from one wedged observer. Still short of proof; recorded as a
+strongly-evidenced cascade. **Second GPU-wedge outage in 17 hours** (cf. 08-07 19:00),
+both with a GPU-consuming observer present. Post-outage GPU was CLEAN: `nvidia-smi -L`
+rc=0, fresh-process CUDA kernel OK, 30.1/31.8 GiB free, ZERO D-state processes — i.e.
+the recoverable variant, not the restart-blocking one.
+**OPERATOR MISS, recorded deliberately:** the stall was visible at 11:40 and was not
+re-checked for four hours. A "I'll flag it if the next iteration is slow" intention is
+not a monitor. The watchdog's 90-min flat-clock should have caught this — whether it was
+running is NOT established and is owed a check.
+
+**RATCHET — run OFFLINE in the outage window, and it is the first full-n reading.**
+
+| series | Elo | 95% CI | score | games |
+|---|---|---|---|---|
+| **vs_boot512** (iter399) | **+66.8** | **[+24.5, +111.2]** | 0.5950 | **200** |
+| vs_prev (iter399 vs iter249) | +19.1 | [-26.8, +65.8] | 0.5275 | **200** |
+
+Both series reached the full 200 games for the FIRST time. Supersedes this morning's
+iter249 vs_boot512 (+88.7 [+18.0, +167.6], n=76): same direction, CI half-width 43 vs 75,
+heavy overlap — the n=200 row is the trustworthy one and the point estimate moved DOWN.
+Day-over-day is directionally positive but underpowered across 150 iterations.
+
+**This reading is NOT subject to the sharpness confound** that qualified the policy-regret
+verdict: it is decided by game outcomes, not by a distribution scored against a deep-SF
+ruler. It is the load-bearing strength evidence for this lineage.
+
+**RECONCILIATION of the day's three instruments.** Arena Elo UP (+66.8, CI excludes 0);
+value regret endgame UP (+11.37, CI excludes 0); policy ACCURACY FLAT (+0.7pp target,
+-0.1pp raw, both ns) with confidence +7-10pp. Coherent: `wdl` is the only value head MCTS
+evaluates with, so value improvement converts to play strength while the policy prior
+inflates confidence without improving ranking. The loop IS gaining strength; the gain is
+NOT coming from the policy head's move ordering.
+
+**OPERATIONAL FINDING — schedule ratchets into pause windows, do not run them beside
+training.** Uncontended, the full two-series 2x200-game job took **~35 min** (15:36-16:11).
+Beside live training the same job truncated at **79/200** in its share. So the offline
+window is not merely safer (no contention, no wedge exposure, and two arena-induced
+training OOMs already on record) — it is ~2.5x more games in LESS wall time. The 90-min
+budget is now generous rather than binding; `BUDGET_MIN` needs no increase.
+
+### 2026-08-08 — PRE-COMMITMENT (armed, not launched): confidence-ratchet trigger
+
+No change is being made to the live run. This entry exists so the decision rule is FIXED
+BEFORE the data that will decide it, per the protocol.
+
+**Why not fire the calibration lever now.** The loop is gaining (+66.8 Elo vs anchor,
+CI excludes 0, n=200). Elo is a LAGGING indicator here and is currently value-driven;
+calibration is the LEADING one. Firing now would put a second data-affecting change on
+top of the first configuration that has worked, destroying attribution for both.
+
+**Why not simply wait.** The ratchet mechanism predicts COMPOUNDING: a sharper prior
+makes a sharper target, which narrows search and the data behind it, until the policy
+stops finding improvements. The documented endpoint is "policy head memorises the
+window", already hit once on this project. By the time Elo turns over the confound is
+baked into a day-plus of replay window.
+
+**Baseline (2 points; the metrics fall out of the `audit_targets` dump already run each
+readout, so tracking costs NOTHING extra):**
+
+| | boot512 | iter331 |
+|---|---|---|
+| target entropy (nats) | 1.1875 | 0.9804 |
+| target accuracy (argmax == deep-SF best) | 0.4820 | 0.4890 |
+| overconfidence gap (conf - acc) | +0.1130 | +0.1726 |
+| ECE (5 bins, weighted) | 0.1336 | 0.1980 |
+
+**FIRE the target-softening lever if:** the next TWO reads continue entropy DECLINING
+while accuracy stays FLAT (paired CI on accuracy includes 0).
+**KILL the confidence-ratchet hypothesis if:** entropy FLATTENS (|delta| <= 0.02 nats
+between consecutive reads) or accuracy RISES with a paired CI excluding 0.
+Two points cannot distinguish a ratchet from a one-off transient — this rule exists to
+make the third and fourth points decide it, either way.
+
+**PARALLEL PREP (not data-affecting, no restart, needs a reviewer who is not the author):**
+extend the per-position dump to carry FULL DISTRIBUTIONS. Today it carries only
+`p`/`entropy`/regrets, so NO offline retempering fit can run — the instrument for the
+lever does not exist yet. Build it while the trigger is pending so a fired trigger does
+not spend its first session building tooling.
+
+**Reminder of the shape constraint already established:** no single global constant can
+fix this. The miscalibration is TWO-SIGNED (gap -0.133 at p<0.3, +0.268 at p>=0.9), so a
+constant temperature or a constant uniform-mix eps must worsen the low bin to fix the
+high one. The candidate family is a monotone CONFIDENCE-DEPENDENT map (per-position
+temperature solved against a fitted reliability curve), which also preserves move
+ordering exactly — the property we want, since ranking is not the thing shown broken.
+
+**Also owed (from the outage entry):** verify whether the watchdog's 90-min flat-clock
+was actually running during the 11:39-16:11 outage. If it was up and did not fire, that
+is a GUARD THAT CANNOT FIRE — this codebase's signature defect, and more important than
+the outage itself.
+
+---
+
+## 2026-08-08 PRE-REG (offline screen, NOT launched): exhaustive round-1 root expansion
+
+**Status: PRE-REGISTERED, nothing implemented, nothing live.** Threshold committed BEFORE
+the screen is written, per the audit-first rule in `docs/eval_protocol.md`.
+
+**Trigger.** Not the one we started from. The proposal arrived as "give every legal move
+an eval so it stops getting zero target mass". That rationale is REFUTED and is recorded
+here so it is not re-argued: stored `policy_target` is **float16**, its smallest nonzero
+value is exactly 5.960e-08 (fp16 smallest subnormal), 7.8% of nonzeros sit clamped on
+that floor, and 64% of rows have >=1 legal move underflowed to exactly 0 (mean 4.9
+moves/row, 17.5% of legal). But the mass involved is ~3e-7 per row. In CE a target entry
+of 6e-8 contributes ~6e-7 against the top move's ~0.65. Zeroing it changes no gradient.
+**The fp16 underflow is real and immaterial. Not worth a PR.**
+
+**The real mechanism (this is the hypothesis).** `gumbel_c.py:1333-1341`: every legal move
+that is not a visited root candidate gets `completed_q = root_q_i` -- the SAME constant
+for all of them. Their target logits are `log(prior) + f(root_q)` with an IDENTICAL
+second term, so their ranking among themselves is **purely the net prior, with zero
+search correction**. Measured against the live window (9,924 stored rows sampled across
+all 814 shards):
+
+| quantity | value |
+|---|---|
+| mean legal moves | 26.66 |
+| positions with `n_legal > gumbel_topk(32)` | **38.7%** |
+| among those, mean tail ranked by prior alone | **7.7 moves** |
+| all legal moves receiving no search opinion | **11.2%** |
+| extra root evals to give every legal move one | **+1.17%** |
+
+This is the same bucket where the 08-08 audit read found accuracy DEGRADING (-2.1pp,
+n=342, no CI). It is also where the prior's overconfidence is unopposed: the 08-08
+decomposition put 163% of the target's overconfidence growth in the prior with search
+OFFSETTING it (-63%), and for this tail the offsetting term is structurally absent.
+
+**Yardstick (ONE, exact).** Regenerate the production training target on the FROZEN
+deep-SF audit set with and without exhaustive round-1 expansion, paired per position:
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint data/ruler_reads_20260808/trainer.pt \
+      --audit-set <frozen set> --batch-size 64 \
+      --dump scratchpad/rootexp_{off,on}.jsonl
+
+Judge on **TOP-1 regret (sharpness-invariant)**, reporting E[regret] alongside but NOT
+deciding on it -- E[regret] rewards sharpness and has already produced one wrong verdict
+in this campaign (08-08 AMENDMENT).
+
+**Pre-committed thresholds.**
+- **SUCCESS:** on the `n_legal > 32` subset, top-1 regret improves by **>= 1.0 cp** with a
+  paired 95% CI excluding 0.
+- **KILL:** no significant improvement on that subset, OR any significant regression
+  overall.
+- **NEGATIVE CONTROL, and this one is structural:** on `n_legal <= 32` every legal move is
+  ALREADY a root candidate and every candidate gets >=1 visit under sequential halving, so
+  the change is a literal no-op there. The two arms must come back **BIT-IDENTICAL** on
+  that subset. If they do not, the implementation altered something it was not supposed
+  to and NO number from the screen is trustworthy. Ships as a test.
+
+**Only if the screen passes** does anything else happen: prereg for the live arm, C
+implementation, independent review (REVIEWER != AUTHOR), `build_production_extensions.py`
+rebuild, restart-gated deploy, one readout window to itself.
+
+**Confounds:** none live -- this is offline against a frozen ruler. The screen uses a
+Python-path implementation if that is cheaper to write; that is acceptable HERE because
+the measurement is target QUALITY vs a frozen ruler, not throughput (where the Python
+path is known to be under-credited). Before deploy, diff the measured file against
+production's.
+
+**Context this sits in:** the loop is at a fixed point. Frozen probe regret is flat over
+the last 100 iters (era +0.0002/100it, in-window -0.0003/100it) against an exponential
+asymptote fitted at 0.0703 (95% CI [0.0701,0.0705]) -- 95% of the way spent, and 5% is
+NOT reachable by waiting. The teacher beats the student by only +5.46 cp [+1.46,+9.46] on
+top-1 with 88% ties. Window is REFUTED as the cause: full since iter 149, composition
+stationary across all 10 age deciles (G11 ok), out-of-window minus in-window probe gap
+SHRANK 0.00274 -> 0.00077. The lever has to be the target.
+
+### AMENDMENT (same session, BEFORE the screen was written or run): the yardstick I
+### pre-committed above CANNOT DETECT THIS CHANGE. Replacing it.
+
+Derived the escape bound before implementing, and it invalidates the threshold. Root
+sigma is `c_scale * (c_visit + max_visit)` with `q_visit_exp=1.0`, `c_visit=50`,
+`c_scale=0.025`, and `completed` normalized to [0,1], so Q moves a logit by at most that
+scale. At a representative `max_visit=100`, sigma = 3.75.
+
+Unvisited moves TODAY are not at zero Q credit -- they get `completed = mixed_value`,
+i.e. roughly MID-range. So the change moves a tail move from mid to its true normalized
+Q: a swing of +/- 1.88 logits, i.e. **up to 6.5x target mass in EITHER direction**.
+
+| consequence | value |
+|---|---|
+| tail move needs this prior to overtake p_top=0.65 | **> 10%** |
+| actual tail-move priors | **< 1%** |
+| so: does the argmax move? | **almost never** |
+| a move at 1e-5 becomes | 6.5e-5 (representable, gets gradient) |
+| a move at 1e-8 becomes | 6.5e-8 (**still under the fp16 floor**) |
+
+**Therefore the SUCCESS threshold above ("top-1 improves >= 1.0 cp") is structurally
+unreachable even if the change works perfectly.** Running that screen would have killed
+a working change on a metric that cannot see it. This is the same class of error as
+judging policy on E[regret] (08-08 AMENDMENT) -- picking a ruler before checking it can
+resolve the effect.
+
+**REPLACEMENT YARDSTICK.** The change re-ranks the TAIL, so measure the tail:
+
+- **PRIMARY (deciding):** per-position Spearman rho between assigned target probability
+  and true deep-SF cp loss, computed OVER THE PREVIOUSLY-UNVISITED MOVES ONLY, paired
+  across arms. **SUCCESS: mean rho improves >= 0.05 with a paired 95% CI excluding 0.**
+  Sharpness-invariant by construction (rank correlation), which E[regret] is not.
+- **SECONDARY (reported, not deciding):** top-1 and E[regret], both expected to be ~flat.
+- **PRE-COMMITTED PREDICTION, as an implementation guard:** top-1 changes in **< 2%** of
+  positions. If the argmax moves a LOT, the implementation is wrong -- it is redistributing
+  search budget away from the top moves (variant A) rather than adding round-1 evals
+  (variant B). A large top-1 swing FAILS the screen regardless of its sign.
+- **KILL:** rho does not improve significantly, OR E[regret]/top-1 REGRESS significantly,
+  OR the bit-identical control on `n_legal <= 32` fails.
+
+**Variant locked: (B).** Exhaustive round 1 (one eval per legal move) THEN top-32
+sequential halving on the remaining budget, costing +1.17% root evals. NOT (A)
+(`m = legal.size`), which would split the same 256 sims over ~40 candidates and pay for
+tail coverage out of top-move depth -- that confounds the screen irrecoverably.
+
+**Honest scope limit, recorded now so it is not oversold later.** This improves the
+target's TAIL distribution. It will not move the argmax, and the loop's problem is a
++5.46 cp teacher-student gap on a net that already tracks its target closely. A rho win
+is necessary, not sufficient; the confirming instrument is the arena or the ratchet, not
+this screen.
+
+### AMENDMENT 2 (same session, still BEFORE any screen ran): THE FROZEN AUDIT SET
+### STRUCTURALLY CANNOT SCREEN THIS CHANGE. Screen withdrawn.
+
+Checked whether the replacement yardstick was computable before building the screen.
+It is not, and the reason is structural rather than fixable by picking a third metric.
+
+The frozen ruler is MultiPV 10: it scores **exactly 10 moves per position** (mean
+listed 9.41 over the whole set, 10.00 on the subset that matters). The tail this
+change acts on is by definition the LOW-PRIOR moves. SF lists its BEST moves, which
+the net's prior mostly also ranks high. Measured on `checkpoint_000331` over all 1,702
+audit positions with `n_legal > 32`:
+
+| quantity | value |
+|---|---|
+| ruler-listed moves examined | 17,020 |
+| ... falling OUTSIDE the net's top-32 | **133 (0.78%)** |
+| positions with >= 1 scorable tail move | **101 / 1702 (5.9%)** |
+| mean scorable tail moves per position | 0.078 |
+
+Spearman rho needs >= 2 scored tail moves in a position; almost every one of the 101
+has exactly 1. **The primary metric is undefined on essentially the whole set.** Third
+instance this session of a ruler chosen before checking it can resolve the effect
+(E[regret] vs sharpness; the top-1 threshold; the sims-64 test regime). The pattern is
+now explicit enough to be a method rule: COMPUTE THE INSTRUMENT'S RESOLUTION ON THE
+ACTUAL DATA BEFORE COMMITTING A THRESHOLD TO IT.
+
+**This is also evidence AGAINST the change, not just against the screen.** 99.22% of
+SF's top-10 moves are already inside the net's top-32. So the moves that exhaustive
+expansion would newly evaluate are, by the deep ruler's own judgement, almost always
+bad ones. The mechanism (target ranking the tail by prior alone, unopposed) is real and
+verified in code, but the measurable upside is small. Caveat in both directions: the
+ruler only lists 10, so a move SF ranks 11th-20th could be decent and buried, and we
+cannot see it -- that is exactly the blind spot, and it is unmeasurable with this set.
+
+**Options, none launched:**
+1. Re-label a subset with MultiPV = n_legal to score the whole move list. Definitive,
+   creates a NEW ruler version for those rows (`docs/eval_protocol.md`: the set freezes;
+   re-labelling is a ruler change and invalidates prior records for those positions).
+2. Narrow to a sign test on the 133 observations: does expansion raise target mass on
+   ruler-endorsed moves the prior buried? Cheap, tests the MECHANISM, proves nothing
+   about strength, n=133.
+3. Skip offline entirely, go live with an arena/ratchet readout -- but the ledger's own
+   rule (~0.02 Elo/iter vs a ~2.74 Elo/DAY instrument) says do not, absent a >=5-8
+   Elo/day prior.
+4. **KILL on cost-of-evidence.** The upside we can see is 0.78% of ruler-endorsed moves;
+   the change is restart-gated, data-affecting, and costs a readout window.
+
+**Recommendation: (1) on ~500 positions if the lever is wanted, else (4).** Not (3):
+spending a readout window on a change whose visible upside is under 1% of scored moves
+is exactly the unfalsifiable-experiment trap.
+
+**PR #372 stands as reviewed code with the flag default OFF and no config plumbing.**
+It is correct and tested; it is simply not yet justified. No revert needed.
+
+## 2026-08-08 (night) — MEASUREMENT: are the moves the target zeroes actually bad? YES
+
+**Question (user):** "we shouldn't train so many moves to 0% because they probably
+aren't all 0% win chance." Concerns the MASS the target assigns, not the argmax — a
+different claim from the one the withdrawn root-expansion screen addressed.
+
+**Instrument:** `data/audit_set_v1.jsonl.shallow_sf.jsonl` — banked SF **MultiPV 40 @
+50k nodes**, i.e. WIDER but SHALLOWER than the frozen ruler (MultiPV 10 @ >=1M).
+NOT comparable to any frozen-set record; used only to separate "loses a little" from
+"loses a lot", which 50k nodes resolves. Restricted to the 2,291 positions where
+MultiPV 40 covers EVERY legal move (n_legal 33-40); mate-containing positions dropped
+rather than cp-folded (known mate<->cp contradiction, N1/N2). 1,200 sampled.
+Checkpoint `data/ruler_reads_20260808/trainer.pt` (lc0_root_legacy_meta/v2_threats/
+lc0_1858). Repro: `scratchpad/zeroed_move_quality.py`.
+
+At 256 sims topk(32) binds, so the prior-only tail is exactly the legal moves outside
+the net's top-32 prior — obtainable from ONE forward pass, no search, so this did not
+put 256-sim GPU work next to the live trainer.
+
+**Result — the premise is REFUTED for the prior-only tail (5,154 moves):**
+
+| | cp loss vs best |
+|---|---|
+| tail (outside top-32 prior) | mean 552, p10 **278**, median **538**, p90 843 |
+| candidates (top-32 prior) | mean 248, median 175, p90 568 |
+
+Only **0.19%** of tail moves are within 50cp of best and **1.2%** within 100cp. The
+BEST tail move in a position has median loss 435cp; only **0.58%** of positions have
+any tail move within 50cp. Tail prior mass: mean 6.2e-5, median 1.3e-7. Zeroing them
+is approximately correct, and root expansion would be buying evaluations of moves that
+lose ~5 pawns.
+
+**But the same run reframes the concern rather than closing it.** Per position there
+are on average **5.71 moves within 50cp** of best (median 4; 10.9 within 100cp), and
+the net's prior already puts **73.5% mean / 87.2% median** of its mass on them, with
+top-1 prior 0.618 mean. The prior's mass allocation is sound. So the open question is
+not the tail — it is whether the SEARCH TARGET, which is sharper than the prior,
+concentrates past those ~4-6 near-best moves and drags the net with it. That is
+exactly the shape of the 08-08 confidence-inflation finding (entropy -0.21/-0.29 nats,
+accuracy flat +0.7pp/-0.1pp, ECE worse).
+
+**Verdict:** root expansion KILLED on evidence, not on cost-of-evidence — the moves it
+would evaluate are measurably worthless. A uniform-over-legal target floor aimed at the
+tail is ALSO not indicated by this data.
+
+**Limitation, stated:** the audit set is a curated SF-blindspot set, not a sample of
+live selfplay positions. The tail result is strong enough (median 538cp) that
+representativeness is unlikely to reverse it, but the near-best-move counts should be
+re-measured on live rows before any target-shape change is pre-registered.
+
+**Next, if pursued:** join `audit_targets` search-visit distributions with these
+per-move cp values and ask how much target mass sits on the moves within 50cp. That
+needs the sanctioned tool at small batch with `--gpu-mem-fraction`, not a hand-rolled
+256-sim run.
+
+### AMENDMENT (same night) — re-scored on RANKING ACCURACY, which is the right metric
+
+The entry above judged the tail by "cp within X of best". That is an imposed threshold,
+the same error this session logged three times against rulers. Re-scored as **pairwise
+concordance of the net prior against SF's cp ordering** (0.5 = chance), same 1,200
+positions, same MultiPV-40 ruler:
+
+| region | concordance |
+|---|---|
+| all legal | 0.807 |
+| cross-boundary (tail vs candidate pairs) | **0.898** |
+| within candidates (top-32) | 0.784 |
+| **within tail** | **0.600** |
+
+**The boundary is well placed** (0.898) — the prior does know tail moves are worse.
+**But the ordering INSIDE the tail is near-chance (0.600)**, and because every tail move
+carries the same `completed_q`, that prior ordering IS the target there. The target
+asserts a confident ranking over ~11% of legal moves that is barely better than a coin
+flip. The user's structural objection is CORRECT and the previous entry's framing could
+not see it.
+
+Separation is likewise not clean: 10.2% of (tail, candidate) pairs are inverted, 90.3%
+of positions contain at least one inversion, and a mean 6.58 candidates are worse than
+the best tail move (best tail move ranks 26.3 of ~36, vs 33 if the tail were strictly
+worst). Restricting the comparison to prior-top-4/8/16 — a proxy for the moves that
+actually carry target mass — collapses the inversion rate to 0.83%/1.55%/3.11%, so the
+mis-ordering does not reach the moves that matter.
+
+**What does NOT change:** the tail carries mean 6.2e-5 of target mass, so the CE
+gradient on those coordinates is negligible. A near-noise ordering at ~0 weight is a
+defect in the target's CONTENT but not in its EFFECT, and root expansion's authority is
+bounded at +/-1.88 logits (6.5x) — not enough to move a 1e-7 move regardless. Root
+expansion stays KILLED, now for the right reason: it would improve the ordering of moves
+that carry no weight.
+
+**The well-posed successor question:** does the 256-sim search improve pairwise
+concordance over the raw prior WITHIN the top-32, where the mass is? Prior is 0.784
+there. Related but not identical to the 08-08 top-1 teacher-vs-student read (+5.46cp,
+88% ties). Instrument: join `audit_targets` visit distributions with these per-move cp
+values and score concordance, mass-weighted and unweighted. Sanctioned tool, small
+batch, `--gpu-mem-fraction`. NOT pre-registered yet.
+
+## 2026-08-08 (night) — 256 SIMS OF SEARCH BUY +0.77pp OF RANKING ACCURACY AND −0.081 NATS OF ENTROPY
+
+**The stall, stated mechanically.** Paired, same 400 positions, both arms scored against
+the same banked SF MultiPV-40 @50k ruler. Training shape read off the live yaml (sims
+256, topk 32, c_scale 0.025, vloss_weight 1, add_noise=False as in `audit_targets`).
+GPU capped at fraction 0.25, batch 16. Repro `scratchpad/search_vs_prior_ranking.py`.
+
+Pairwise concordance vs SF's cp ordering (0.5 = chance):
+
+| region | net prior | 256-sim search | delta |
+|---|---|---|---|
+| within top-32, unweighted | 0.7821 | 0.7898 | **+0.0077** |
+| within top-32, mass-weighted | 0.8908 | 0.9058 | +0.0150 |
+| all legal, unweighted | 0.8017 | 0.8011 | −0.0006 |
+| all legal, mass-weighted | 0.9019 | 0.9156 | +0.0137 |
+
+Paired delta within top-32: **+0.0077, bootstrap 95% CI [+0.0065, +0.0088]**, search
+better in 75.3% of positions. Real, and tiny.
+
+**Entropy: prior 1.1851 → search 1.1039 nats.** Top-1 agreement 92%.
+
+**So the target adds 0.77pp of ranking accuracy and 0.081 nats of confidence.** The net
+is being taught to be substantially MORE SURE about an ordering that is BARELY BETTER.
+That is the confidence-inflation finding of the same morning (entropy −0.21/−0.29 nats,
+accuracy flat, ECE worse) traced to its origin: it is not a training-dynamics artifact,
+it is what the target literally contains. And it is the plateau: with the teacher this
+close to the student, CE against it converges to a fixed point, which is the fitted
+asymptote 0.0703.
+
+**This closes the search-side axis.** More sims, different c_scale, root expansion,
+mixture gates — all of them tune a teacher whose entire informational advantage is
+0.77pp. Nothing on that axis can be worth 5-8 Elo/day
+(memory: most-experiments-here-are-unfalsifiable).
+
+**Implication for the intervention.** Every term in the target is a function of the net
+(prior, completed_q, root_q), so the loop cannot lift itself. The lever must inject a
+signal from OUTSIDE the net↔search loop, or stop teaching unearned confidence. The two
+candidates, one to be chosen and pre-registered separately (one data-affecting change
+per readout window):
+
+- **A. Blend the SF soft label into the MAIN policy target.** Largest measured upside
+  (+30.35cp [+24.95, +35.75] vs the trained target on top-1) and it is genuinely
+  external. Confounds: SF label scored by an SF ruler (needs an lc0/BT4 conjugate
+  ruler); lists only ~9 of ~21 legal moves; `policy_sf` upweighting previously HURT
+  (different head -- opponent reply -- so a caution, not a refutation).
+- **B. Stop the target sharpening the net past its information content.** Directly
+  targets the measured defect and is config-side and cheap to revert, but it adds no
+  information -- it only slows convergence to the fixed point and keeps the prior wide
+  enough for Gumbel to sample new moves.
+
+NOT pre-registered. No live change made.
+
+## PREREG 2026-08-08 (night) — OFFLINE SCREEN: two levers against the fixed point
+
+**Motivation (measured, same night):** 256 sims of search improve ranking concordance
+over the raw net prior by **+0.0077 [+0.0065, +0.0088]** within top-32 while dropping
+entropy **1.185 → 1.104 nats**. The target teaches more confidence than information.
+Every term in it is a function of the net, so the search-side axis is closed.
+
+**Both arms are OFFLINE (`scripts/retarget_retrain.py`). No live change. No restart.**
+
+### Arms
+
+- **`soften`** — new key `policy_target_temp` (default **1.0 = bit-identical no-op**).
+  Main policy target is retempered `p' ∝ p^(1/T)` over its existing support, then
+  renormalized. Screen value **T = 1.30**. Zeros stay zero: tonight's measurement says
+  the zeroed moves lose a median 538cp, so resurrecting them is NOT the intent —
+  the intent is to stop asserting near-certainty among the moves that do carry mass.
+- **`sfblend`** — new key `policy_target_sf_blend` (default **0.0 = bit-identical
+  no-op**). `p' = (1-w)·policy_t + w·sf_policy_t`, renormalized. Screen value
+  **w = 0.30**. **GATED on `has_sf_policy`**: a row without an SF label must keep its
+  pure target. Blending an absent (all-zero) target would zero the row — that is the
+  failure this repo keeps finding, so the gate is the load-bearing part and gets its
+  own test.
+- **`control`** — same rig, same seed, both keys at their defaults. REQUIRED: the rig
+  must regenerate its own baseline; comparisons against a previously-banked number are
+  invalid here (`async_sync_path_moves_the_training_target`).
+
+### Deciding yardstick — ONE, and conjugate to NEITHER arm
+
+Paired arena, candidate vs the `control` arm's checkpoint, **matched_sims 32**,
+`--search-shape training`, fixed seed 42, **n = 400 games**, ONE ARENA AT A TIME
+(concurrent/compiled arenas have OOMed training twice):
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --cand runs/retarget/<arm>.pt --ref runs/retarget/control.pt \
+  --games 400 --seed 42 --matched-sims 32 --search-shape training \
+  --concurrency 16 --gpu-mem-fraction 0.25 \
+  --out data/screen_20260808/<arm>_vs_control.jsonl
+```
+
+Game outcomes are unconfounded by both interventions. **Concordance-vs-SF is explicitly
+NOT the deciding metric**: arm `sfblend` trains on SF labels and an SF ruler would be
+conjugate to it, which is the exact trap logged three times today. Concordance and
+entropy ARE recorded per arm as diagnostics, flagged as SF-biased toward `sfblend`.
+
+### Pre-committed thresholds
+
+- **PROMOTE to a live prereg**: arm beats `control` by **≥ +15 Elo with the 95% CI
+  excluding 0**. (At n=400 the CI half-width is ~±32 Elo, so this bar demands a
+  genuinely large offline effect — deliberately, because a small one cannot be
+  resolved here and chasing it would be the unfalsifiability trap.)
+- **KILL**: arm is **≤ −15 Elo** with CI excluding 0, or its CI spans 0. A null is a
+  KILL at this stage, not a "run it longer".
+- **NO PARTIAL CREDIT** from the diagnostics. If arena says null, the arm dies even if
+  concordance improved.
+
+### Confounds
+
+Two arms share a readout window but touch DIFFERENT keys and are each compared to the
+SAME `control`, so they are independent contrasts, not an overlap. They must NOT be
+combined into one arm without its own entry. Rig caveats inherited: cold optimizer, so
+absolute trajectories differ from live; `sf_p0_policy_target`/`sf_volatility_target`
+masked in every arm under target rebuild, identically, so deltas stay paired.
+
+**Status: PREREG ONLY. Knobs not yet implemented, nothing launched.**
+
+## AMENDMENT 2026-08-09 to the PREREG above — the `sfblend` arm is RETRACTED and re-specified as `w_sf_own`, and the CE ruler is fixed
+
+Independent review of PR #373 (author did not self-review) found the `sfblend` arm as
+pre-registered would have measured something other than what it claimed. **Nothing had
+been launched**, so this is a pre-launch correction, not a retracted verdict.
+
+### B1 — the arm was reading the WRONG target
+
+`sf_policy_t` is the **OPPONENT's reply distribution**, queried at P1 after the net's
+move and POV-flipped. It belongs to a different position in a different legal space
+(`replay/sample.py:73` — separate `legal_mask` and `sf_legal_mask`;
+`docs/model_heads.md:14`; CLAUDE.md's own non-obvious-facts list). The reviewer measured
+**83.6% mean / 87.5% median of its support illegal at P0**, with at least one illegal
+index in **100%** of positions.
+
+It would not have crashed. `masked_base` adds `-1e9` to illegal logits and soft-CE's
+gradient is `softmax − target`, so the gradient stays bounded (norm 0.417 in the
+reviewer's worked case) while `policy_ce` reads ~3e8 and the head is pushed, every step,
+toward moves that cannot be played. **A "sfblend is worse" verdict would have been a fake
+negative about a target that was never the SF label for that position.**
+
+### The re-specification: `w_sf_own`, not a new knob
+
+**Soft cross-entropy is LINEAR in the target.** `CE(q, (1−w)p + w·s)` is exactly
+`(1−w)·CE(q,p) + w·CE(q,s)`. So blending a distribution into the target is a
+re-parameterisation of adding a weighted CE term against it — and that term already
+exists: `w_sf_own` trains `policy_own` (the head MCTS reads) against
+`sf_p0_policy_target`, the **same-position** SF label, masked to `has_sf_p0`, with its
+own `m_sf_own` metric. `losses.py:742` says so in prose: *"Same legal space as the main
+policy."*
+
+The new knob was therefore duplication whose only distinguishing feature was the defect.
+It is **removed from PR #373**, which now ships `policy_target_temp` alone. The arm
+becomes **config-only, no code**.
+
+**Dose.** Production is `w_policy: 1.0`, `w_sf_own: 0.0`. `m_policy` is a masked mean
+over net rows; `m_sf_own` over `has_sf_p0` rows only — **coverage 0.2304** (live trial
+`379f6`, iter 516, `has_sf_p0_frac`). So on a labelled row the SF teacher's weight
+relative to the self target is `(w_sf_own / w_policy) / coverage = 4.35 × w_sf_own`:
+
+| `w_sf_own` | equivalent target-blend on a labelled row |
+|---|---|
+| 0.069 | 0.30 — matches the pre-registered dose exactly |
+| **0.10** | **0.43** |
+
+**Screening at `w_sf_own: 0.10`**, a deliberate increase over the pre-registered 0.30,
+recorded here BEFORE launch. Two reasons: `w_sf_own` **adds** a term rather than shrinking
+the self target, so it is the weaker intervention at equal arithmetic dose; and 0.10 is
+the value that was live on the 13a9f lineage and was lost at the 08-06 relaunch because it
+was never committed to the yaml (`uncommitted_live_yaml_edits_lose_proven_wins`), so this
+also re-screens a setting the loop used to have.
+
+⚑ **The whole screen must run with `--no-rebuild-sf-targets`.** `rebuild_sf_targets` is
+forced ON by default in the rig, and it masks `has_sf_p0` **unconditionally**
+(`target_builder.py:703,739` — `CROSS_PLY_SF_FLAGS`), which would make this arm a silent
+no-op. The flag is global, not variant-overridable, so all three arms take it. That is
+strictly better anyway: neither arm is an SF-target param or a sampling knob, so stored
+targets are exactly what live training consumes. **This supersedes the "masked in every
+arm" sentence in the prereg's Confounds line.**
+
+### B2 — the ruler moved with the arm
+
+`_loss_kwargs` fed BOTH the training step and the holdout/EMA eval. The minimum of a
+cross-entropy **is** the target's entropy, so retempering raises `policy_ce` by **~0.62
+nats at T=1.30 for an unchanged model** (reviewer's arithmetic on a net that predicts the
+target exactly: 2.1781 → 2.7968). Every arm-vs-baseline CE comparison would have been two
+different rulers — `a_ruler_change_must_invalidate_its_records`, and the rig prints
+exactly that number in `final_metrics`.
+
+Fixed in PR #373: `Trainer._eval_loss_kwargs` pins the target reshape off for eval and
+changes nothing else. Loss WEIGHTS stay as configured, deliberately — pinning those would
+make eval's `total` stop matching the trained objective.
+
+**The deciding yardstick was already the paired arena, so the prereg's verdict rule is
+unaffected.** What this fixes is the diagnostics: `policy_ce` is now comparable across
+arms. ⚠ `scripts/holdout_policy_screen.py:207` builds the target WITHOUT the reshape, so
+under a non-default `policy_target_temp` that script and the in-trainer holdout measure
+different things. Do not mix them.
+
+### Also fixed pre-launch (non-blocking findings)
+
+- **Validation.** `policy_target_temp` was accepted at `0.0` (ZeroDivisionError *inside*
+  the training step, one iteration after a live push), negative (inverts the target's
+  ordering while still summing to 1.0), and non-finite. All refused at the boundary.
+- **Not a loss weight.** Moved out of `TRAINER_WEIGHT_KEYS` — that list is pushed onto the
+  trainer every iteration and copied wholesale by the salvage-donor overlay
+  (`trainable_init.py:320`). It re-interprets rows already in the window, the same class as
+  `wdl_terminal_outcome_plies`, so it is now **startup-only** and a mid-run edit warns.
+- **Tests.** The first version's own claims did not hold: 6 of 14 mutants survived it,
+  including deleting the gate its docstring called "the part worth reviewing hardest".
+  Rewritten; all 8 applicable mutants now die, with a surviving null control.
+
+**Status: still PREREG ONLY. Nothing launched, no live change, no restart.** Arms now:
+`soften` (`policy_target_temp=1.30`, needs PR #373 merged), `sfblend` → **`w_sf_own=0.10`**
+(no code), `control`. Thresholds, arena command, n, seed and the null-is-a-kill rule are
+unchanged.
+
+## 2026-08-09 (05:0x-05:3x) — OPERATIONAL: the ack-gated pause window, executed and measured
+
+The 08-08 entry recorded that an uncontended ratchet is **~2.5x more games in LESS wall
+time**, and then nothing was wired up, so the 08-09 ratchet ran beside training again and
+**truncated the lineage series at 106/200 with a CI spanning zero** — an unreadable
+result, caused entirely by contention. Iterations stretched **245s -> 611s** across it and
+recovered to **297s** the moment it finished, which is the contention proof.
+
+**Re-ran that same series inside a deliberate pause window. Full n, same direction:**
+
+| run | games | Elo iter514 vs iter399 | CI |
+|---|---|---|---|
+| beside training | 106/200 | −46.2 | [−108.1, +13.0] |
+| **pause window** | **200/200** | **−31.4** | **[−73.8, +10.2]** |
+
+**VERDICT on the readout: no detectable strength change iter399 -> iter514.** A null on a
+full sample, NOT a loss. Consistent with the plateau: 115 iterations at ~0.02 Elo/iter is
+far below what n=200 resolves (+/-43 Elo). Do not read −31.4 as a regression.
+
+### The procedure that worked (ORDER IS THE WHOLE TRICK)
+
+1. Snapshot each worker log's BYTE OFFSET.
+2. `touch <work_dir>/tune/pause.txt`.
+3. **Wait for `.paused_<trial_id>.ack`** — NOT a timer, and NOT "an ack exists".
+4. `pkill -TERM -f -- '-m chess_anti_engine\.worker( |$)'`.
+5. Run the job on a free machine.
+6. `rm pause.txt`.
+
+**Why the ack gate is load-bearing:** `_wait_if_paused` (`tune/trainable.py:998`) parks at
+the TOP of the iteration, and `_revive_fleet` is called INSIDE
+`_ingest_distributed_selfplay` (`trainable_phases.py:1082`). So revive is inert only while
+parked. SIGTERM before the ack and the driver simply relaunches the workers mid-ingest.
+
+**Measured cost:** park 135s (bounded by one iteration); drain 55s; 93 games / 6,378
+records banked with `skipped=0`; arena 200 games in ~21 min; total pause ~26 min. The
+spanning iteration 568 shows 1733s, as expected.
+
+**Resume CONFIRMED, not assumed:** `outcome_stats.resumed_inflight_games=224` on iter 568
+and all four `selfplay_resume/` dirs empty. Falling file counts alone would NOT have proven
+this — `resume.py` also has a stale-file cleanup path, so "files disappeared" is equally
+consistent with deletion. The counter is the discriminator.
+
+### Three traps this run exposed, all of which would silently break a codified version
+
+- ⚑ **A STALE ACK FROM A DEAD TRIAL SITS IN THE TUNE DIR.**
+  `.paused_4c17c_00000.ack` was present from a trial that died while parked (the clear runs
+  in a `finally`, which a hard kill skips). Any wait that polls for "an ack" rather than
+  `.paused_<live_trial_id>.ack` returns TRUE INSTANTLY and kills the workers while revive
+  is still live — a guard that cannot fail.
+- ⚑ **REVIVED WORKERS TRUNCATE THEIR LOG FILES** (1.2MB -> 1,560 bytes). The suspend
+  evidence exists only BEFORE the resume, so offsets must be snapshotted pre-drain and read
+  pre-resume. Reading after would find nothing and report a false failure.
+- ⚑ **`selfplay_resume/` IS UNDER `runs/<run>/server/trials/<trial>/workers/`**, not the
+  Ray artifacts dir the worker's `--log-file` points at. Checking the artifacts path
+  reports `0 files` on a perfectly healthy drain. (My own first check did exactly this.)
+
+### Baseline I failed to take
+
+`resumed_inflight_games=224` exceeds the 93 games this drain banked, so the dirs almost
+certainly already held ~131 games from an earlier event. I did not count the resume dirs
+BEFORE draining, so the attribution is inferred, not measured. **Count them first next
+time** — otherwise the resume counter cannot be tied to the drain that produced it.
+
+### NOT done, deliberately
+
+`daily_gate_ratchet.sh` is UNCHANGED. One clean manual run does not justify an unattended
+cron that pauses production, and the three traps above are exactly what a codified version
+has to get right. Codify only after a second clean run, with the traps as its tests.
+
+---
+
+## PRE-REGISTRATION 2026-08-09 — search authority: `gumbel_c_scale` 0.025 -> 0.1 bundled with selfplay `policy_temp` 1.0 -> 1.5
+
+**STATUS: PRE-REGISTERED, NOT LAUNCHED.** Restart-gated and operator-authorised. No entry, no
+launch; this is the entry.
+
+### Hypothesis
+
+Search barely changes the prior, because we quartered its authority on 2026-08-06.
+
+`_sigma_scale` (`mcts/gumbel.py:322`) is `c_scale * (c_visit + max_visit)`, `c_visit=50`, and
+the exact C schedule at 256 sims / topk 32 is 30x1, 15x3, 8x7, 4x15, 2x32, 1x1 -> `max_visit`
+= 59. Improved policy is `softmax(log_prior/T + sigma*Qbar)`, `Qbar` in [-1,1].
+
+| `c_scale` | sigma | dQbar needed to flip top-1 (prior top1/top2 gap ~1.48) |
+|---|---|---|
+| **0.1** (library selfplay optimum, `SELFPLAY_GUMBEL_C_SCALE`) | 10.9 | 0.136 — routine |
+| **0.025** (live since `ed9de8ee9`) | 2.73 | 0.543 — near-decisive only |
+
+`mcts/gumbel.py:67` sets `SELFPLAY_GUMBEL_C_SCALE = 0.1` and the comment above
+`PLAY_SEARCH_DEFAULTS` states selfplay "intentionally keeps c_scale=0.1", that 0.025 and the
+root-log are "high-sim PLAY tunings", and that for low-sim selfplay they need "a live A/B,
+not an offline flip". `ed9de8ee9` performed exactly that offline flip, bundled with four
+other changes. `tests/test_selfplay_gumbel_c_scale` currently FAILS against the live yaml
+(`assert 0.025 == 0.1`) -- **this deployment restores a violated pinned invariant; it does
+not create a new setting.**
+
+### Why the two knobs are ONE change (bundle justification)
+
+They are parameters of the same operator and no instrument here can separate them by Elo
+(~0.02 Elo/iter against a best-case ~2.74 Elo/day ruler). Serialising costs a restart each
+and buys no attribution. The boundary that made `ed9de8ee9` unattributable was CROSSING
+SUBSYSTEMS (search shape + label quality + data composition); this bundle stays inside
+search. They are separable post-hoc anyway because their entropy signatures are OPPOSITE:
+
+| | KL(target\|\|prior) | H(target) | rare-move coverage |
+|---|---|---|---|
+| `c_scale` up | up | **DOWN** | flat |
+| `policy_temp` up | up | **UP** | up |
+
+Sizing follows from that: `c_scale` 0.1 costs **-0.226 nats** of target entropy and
+`policy_temp` 1.5 buys **+0.375**, so the bundle is net **~+0.15 above today**. `c_scale` 0.2
+is the PLAY optimum but costs -0.453, which T=1.5 cannot repay -- **0.1 is the largest
+`c_scale` at which T=1.5 covers the bill.** Do not take 0.2 without T~2.0.
+
+### Offline evidence already banked (PR #381, `scripts/probe_*.jsonl`, n=800 paired)
+
+| `c_scale` | KL | H(target) | argmax chg | paired dcp vs live |
+|---|---|---|---|---|
+| 0.025 (live) | 0.067 | 0.897 | 10.4% | — |
+| **0.1** | 0.380 | 0.671 | 26.4% | **-5.64 [-10.21, -1.07]** |
+| 0.2 | 0.668 | 0.444 | 34.6% | -8.00 [-13.77, -2.22] |
+| 0.4 | 1.074 | 0.094 | 40.6% | -6.43 (turning over) |
+
+Quality per change decays (-48.8 -> -28.3 cp) but never turns neutral; better/worse holds
+~58-69% vs 23-32%. **Negative control PASSES:** `sims=1` with noise on (a Gumbel-max sample
+of the prior, zero value information) changes 34.9% of moves and is **+7.60 cp WORSE**
+[+4.35, +10.85] -- so change RATE alone is never evidence, and this metric detects churn.
+⚠ Off-policy: banked positions were generated BY the linear-root search, so offline is
+decisive for a NO and only suggestive for a YES. That is why a live readout is required.
+
+### ONE deciding yardstick (exact command)
+
+    PYTHONPATH=. python3 - <<'EOF'
+    import json, statistics as st
+    d="runs/pbt2_small/tune/train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06"
+    rows=[json.loads(l) for l in open(d+"/result.json") if l.strip()]
+    FIRST=None   # <- set to the training_iteration of the FIRST row produced under the new config
+    w=[r for r in rows if r.get("training_iteration",0)>=FIRST+3][:6]
+    print("n windows:", len(w))
+    print("median priority_policy_kl:", st.median([r["priority_policy_kl"] for r in w]))
+    print("median data_policy_entropy:", st.median([r["data_policy_entropy"] for r in w]))
+    EOF
+
+Judged on iterations FIRST+3 .. FIRST+8 (skipping two for window turnover). Baselines,
+measured 2026-08-09 on the SAME rows and the SAME metric: `priority_policy_kl` median
+**0.0264** (mean 0.1309); `data_policy_entropy` last-10 mean **0.900**.
+
+### Pre-committed thresholds — BOTH reachable from live data
+
+- **SUCCESS:** median `priority_policy_kl` **>= 0.15** AND median `data_policy_entropy`
+  **>= 0.90**. (Search became informative AND the entropy bill was paid.)
+- **KILL:** median `data_policy_entropy` **< 0.75** across the window (net sharpening -- the
+  bundle failed at its own arithmetic), OR median `priority_policy_kl` **< 0.10** (the change
+  did not take effect -- treat as a plumbing failure, not a verdict).
+- Anything else is INDETERMINATE and holds for a second window. Stated so the rule is
+  exhaustive.
+
+⚑ `data_policy_entropy` >= 0.90 is deliberately set AT today's value, not above it: the point
+is that the bundle must not sharpen the target net-net. A one-sided "KL went up" rule would
+be satisfied by `c_scale` alone while quietly making the target near one-hot.
+
+### FIRST-ROW IN-EFFECT CHECK (before any of the above is read)
+
+A yaml edit plus restart may not be in effect. On the FIRST new row confirm all three, and
+abort the readout if any disagrees:
+1. `params.json` shows `gumbel_c_scale: 0.1` and `gumbel_policy_temp: 1.5`;
+2. the worker log prints the policy-temp line (PR #379's `policy_temp_active` predicate);
+3. `gumbel_policy_entropy_mean` moves off its **1.0635 (sd 0.01606)** baseline -- +0.375 nats
+   is ~23 sigma, so absence of movement is proof of non-deployment.
+
+### Confounds
+
+- The restart itself: boot shock, the **+0.110 post-restart winrate bias** (drop post-restart
+  rows before fitting any trend), drain transients, and the holdout ruler dying at restart.
+- The replay window holds ~a day of data made under `c_scale` 0.025, so a yaml revert is NOT
+  a rollback.
+- `policy_temp` and `c_scale` MULTIPLY on the flip condition (`T * sigma * dQbar > gap`), so
+  the bundle is a 6x step in search authority, not 4x + 1.5x.
+- ROOT NOISE IS ON ALL GAME (1.0 -> 0.5 across moves 12-15, never 0). Any arm compared
+  against "noise off past move 15" is comparing to a regime that does not exist.
+
+### Revert point — REQUIRED BEFORE LAUNCH, not yet taken
+
+    ./scripts/train.sh salvage-export --top-n 1 --metric training_iteration \
+      --out data/salvage/pre_search_authority_20260809
+
+`--metric training_iteration` is mandatory (the default picks the best-metric row, not
+current state). Safe to run while training continues.
+
+### Blocking prerequisites
+
+1. PR #379 (`policy_temp` plumbing) reviewed by a SEPARATE agent -- mutation testing is not
+   an independent review.
+2. `scripts/rare_sound_move_coverage.py` landed (its author declared the scratchpad
+   prototype a blocking prerequisite).
+3. The live-vs-main config divergence reconciled (PR #380 is BLOCKED and being reworked).
+4. The salvage export above.
+
+### NOT in this bundle, deliberately
+
+`mcts_simulations` 256 -> 320. Its stated justification (2 visits/candidate in round 1) was
+refuted by the same measurement that proposed it -- round-1 survival is FLAT at ~0.66 in both
+T and sims. And its value is unmeasurable until search works: "more sims buy nothing" was
+measured at sigma=2.73. Re-run the sims ladder AFTER this bundle reads out. Cost if taken
+anyway: full plies are 25% of plies but **73% of search work**, so 320 is **+18%** search
+work (~15% fewer games/h at a 92%-busy box), not the +6% a per-ply count suggests.
+
+The root LOG transform is also excluded: it is 17x the linear root at 256 sims (48.1 vs 2.83)
+and equivalent to `c_scale` ~0.45, past the 0.4 turnover -- and paired log-vs-linear was ns
+(-4.29 [-11.46, +2.88]). Functional FORM remains untested; those arms only separated
+magnitude.
+
+### AMENDMENT (same session, 2026-08-09) — the yardstick I just pre-registered CANNOT BE READ
+
+Caught by running it before trusting it. Two independent reasons, both fatal, and one of
+them is a new production finding.
+
+**1. `priority_policy_kl` is not an iteration metric.** It is a per-row OPTIONAL shard field
+(`replay/shard.py:142`, `_F16`, presence flag `has_priority_policy_kl`), not a key in
+`result.json`. The command I wrote reads `result.json`. It would have raised `KeyError` on
+first use -- the cheapest possible failure, and only because I ran it.
+
+**2. ⚑⚑ THE FIELD IS ABSENT FROM EVERY PRODUCTION SHARD.** Verified by a RECURSIVE walk of
+the newest shard (`shard_000172.zarr`, 21 arrays; the only `priority*` key is `priority`),
+and by a membership scan across all 10 shards on disk: **0 of 10 carry
+`priority_policy_kl`.**
+⚠ My FIRST scan was itself a bad instrument -- it printed `sorted(keys)[:8]` and checked only
+the root group, so it could not have seen a nested or late-alphabetical key. The 0/10 result
+is from the corrected recursive version. Do not cite the first pass.
+
+**CONSEQUENCE -- a new signature defect, mechanism NOT yet established.**
+`configs/pbt2_small.yaml:301-305` has `diff_focus_enabled: true` and
+`diff_focus_pol_scale: 3.5`, and `replay/disk_buffer.py:856` gates on
+`if self.diff_focus_pol_scale > 0 and "priority_policy_kl" in arrs and
+"has_priority_policy_kl" in arrs:` -- **a branch conditioned on the presence of the very
+field that is never written, so the diff-focus POLICY term is silently inert in
+production.** The value is assigned at `selfplay/network_turn.py:527` (C path) and `:658`
+(Python path) and passed at `finalize.py:1056`, so it is dropped somewhere between the record
+and the shard. **Establishing where is owed before any diff-focus claim is made.** This is
+NOT a consequence of this bundle and predates it.
+
+**3. AND SO THE 0.0264 BASELINE IS RETRACTED.** "Production's own stored
+`priority_policy_kl`, median 0.0264 / mean 0.1309" cannot have come from production shards,
+because production shards do not carry the field. It is a rig number of unestablished
+provenance, not a production-stored one, and it must not be used as a baseline. The
+competing 0.007 is from the harness that read entropy 0.629 against production's ~0.92 and is
+also void. **The best available estimate of KL(target||prior) at the live `c_scale` is 0.067**
+(PR #381's rig, frozen audit set, n=800) -- from the rig that came closest to the control,
+which still missed it by +0.053 nats. Treat it as a within-rig anchor for PAIRED deltas only.
+
+### CORRECTED yardstick
+
+**KL is not observable live.** The shards store neither the prior nor the KL, so KL can only
+come from an offline re-run rig. The live readout can see only ENTROPY. Splitting accordingly:
+
+**(A) LIVE, deciding, from `result.json` -- fields verified present on iter 667:**
+
+    PYTHONPATH=. python3 - <<'EOF'
+    import json, statistics as st
+    d="runs/pbt2_small/tune/train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06"
+    rows=[json.loads(l) for l in open(d+"/result.json") if l.strip()]
+    FIRST=None   # training_iteration of the FIRST row under the new config
+    w=[r for r in rows if r.get("training_iteration",0)>=FIRST+3][:6]
+    print("n:", len(w))
+    print("data_policy_entropy      median:", st.median([r["data_policy_entropy"] for r in w]))
+    print("gumbel_policy_entropy_mean median:", st.median([r["gumbel_policy_entropy_mean"] for r in w]))
+    print("gumbel_policy_eff_moves_mean median:", st.median([r["gumbel_policy_eff_moves_mean"] for r in w]))
+    EOF
+
+Baselines measured on the live trial 2026-08-09: `data_policy_entropy` last-10 mean
+**0.900** (iter 667 = 0.910); `gumbel_policy_entropy_mean` **1.0635, sd 0.01606`;
+`gumbel_policy_eff_moves_mean` last-10 **4.196**.
+
+- **SUCCESS:** `data_policy_entropy` median **>= 0.90** (the entropy bill is repaid) AND
+  `gumbel_policy_entropy_mean` up by **>= +0.20** (both knobs took effect).
+- **KILL:** `data_policy_entropy` median **< 0.75** (net sharpening -- the bundle failed at
+  its own arithmetic).
+- **PLUMBING FAILURE (not a verdict):** `gumbel_policy_entropy_mean` moves **< +0.10**
+  (~6 sd). Re-check deployment, do not record a verdict.
+- Anything else INDETERMINATE, hold for a second window.
+
+**(B) OFFLINE, confirmatory, PAIRED pre-vs-post on banked shards** using PR #381's probe at
+the same settings, reporting KL(target||prior) and change quality vs deep SF. **Paired
+within-rig delta only** -- the rig misses its own harness control by +0.053 nats, so no
+absolute KL from it is admissible. Gate it on reproducing the STORED target first.
+
+**The generalisable rule, which cost nothing here only because the command was run:**
+**an exact command is not a yardstick until it has been EXECUTED and produced a number.**
+Every field it names must be shown to exist in the artefact it reads -- and the check that
+shows it must itself be non-truncating and recursive.
+
+### AMENDMENT 2 (same session) — the AMENDMENT was wrong: I read a DEAD shard directory
+
+**Retracting most of Amendment 1.** I scanned `runs/pbt2_small/replay_shards/` — a top-level
+directory whose newest file is dated **2026-04-14**, four months dead. The LIVE trial's
+shards are at
+`runs/pbt2_small/replay/train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06/replay_shards/`
+(**815 shards**, newest `shard_003753.zarr`, **85 arrays**). `losses.py:32` states the real
+path in a comment; I did not read it before scanning.
+
+**This is [[sorted_glob_picks_the_dead_trial]] committed a second time — by me, in the same
+commit in which I was writing about instrument discipline.** The generalisable rule stands
+and now has a second instance: *"latest" must be demonstrated to track the live artefact.*
+An `ls` that returns files is not evidence they are the right files. **Check an mtime.**
+
+**What is actually true, measured on the newest LIVE shard (2000 policy rows):**
+
+| field | value |
+|---|---|
+| `priority_policy_kl` presence on policy rows | **100.0%** |
+| median | **0.0239** |
+| mean | **0.1198** |
+| p90 | **0.2845** |
+
+**RETRACTED from Amendment 1:**
+- ~~"the field is absent from every production shard"~~ — it is present at 100%.
+- ~~"the diff-focus POLICY term is silently inert in production"~~ — **NO SUCH DEFECT.**
+  `disk_buffer.py:856`'s guard finds the field and fires. Withdraw this entirely; it was
+  never a finding.
+- ~~"the 0.0264 baseline is retracted"~~ — **UN-retracted.** My independent re-measurement on
+  a different live shard gives **0.0239 / 0.1198** against the reported 0.0264 / 0.1309.
+  Those agree. The agent was reading production's stored field, exactly as it said.
+
+**STANDS from Amendment 1:** `priority_policy_kl` is a per-row SHARD field, NOT a
+`result.json` key, so the originally pre-registered command would still have raised
+`KeyError`. The yardstick did need fixing — just not for the reasons Amendment 1 gave.
+
+### FINAL yardstick (supersedes both prior versions)
+
+**(A) OFFLINE-from-live-shards, deciding.** Point at the LIVE trial's replay_shards by
+ABSOLUTE path, take the newest N shards by **mtime**, and print the shard basename and its
+mtime so a dead directory announces itself:
+
+    PYTHONPATH=. python3 - <<'EOF'
+    import glob, os, zarr, numpy as np, datetime as dt
+    D=("runs/pbt2_small/replay/"
+       "train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06/replay_shards")
+    sh=sorted(glob.glob(D+"/shard_*.zarr"), key=os.path.getmtime)[-8:]
+    print("newest:", os.path.basename(sh[-1]),
+          dt.datetime.fromtimestamp(os.path.getmtime(sh[-1])))  # ⚑ FAIL if not today
+    kl=[]; npol=0; nhas=0
+    for s in sh:
+        z=zarr.open(s,mode="r")
+        hp=np.asarray(z["has_policy"][:],dtype=bool)
+        sel=np.asarray(z["has_priority_policy_kl"][:],dtype=bool)&hp
+        npol+=int(hp.sum()); nhas+=int(sel.sum())
+        kl.append(np.asarray(z["priority_policy_kl"][:],dtype=np.float64)[sel])
+    a=np.concatenate(kl)
+    print("presence %.1f%%  median %.4f  mean %.4f" % (100*nhas/npol, np.median(a), a.mean()))
+    EOF
+
+**Baseline (live, 2026-08-09): presence 100.0%, median 0.0239, mean 0.1198.**
+⚑ **Presence < 99% aborts the readout** — a dropped field would otherwise silently change the
+denominator.
+
+- **SUCCESS:** median `priority_policy_kl` **>= 0.10** (from 0.0239) AND live
+  `data_policy_entropy` median **>= 0.90** (from 0.900).
+- **KILL:** `data_policy_entropy` median **< 0.75** (net sharpening).
+- **PLUMBING FAILURE, not a verdict:** median KL **< 0.05**, or `gumbel_policy_entropy_mean`
+  moves **< +0.10** off its 1.0635 (sd 0.01606) baseline.
+- Otherwise INDETERMINATE; hold one more window.
+
+**(B) LIVE entropy from `result.json`** as in Amendment 1 — those three fields were verified
+present on iter 667 and that part was correct.
+
+**The rule, now with two instances behind it:** an exact command is not a yardstick until it
+has been EXECUTED and produced a number — **and until the artefact it read has been shown to
+be the LIVE one by its mtime.** Both of my first two attempts produced confident, plausible,
+wrong output. Executing them is what caught both.
+
+### AMENDMENT 3 (2026-08-09) — the separability table's THIRD COLUMN IS FALSIFIED
+
+The bundle (`gumbel_c_scale` 0.025 → 0.1 **+** `gumbel_policy_temp` 1.0 → 1.5) was justified by
+the two knobs having **separable signatures**, so the shards could attribute them post-hoc:
+
+| | KL(target‖prior) | H(target) | rare-move coverage |
+|---|---|---|---|
+| `c_scale` up | up | DOWN | ~~**flat**~~ **FALSE** |
+| `policy_temp` up | up | UP | up |
+
+`scripts/rare_sound_move_coverage.py` (PR #382) now MEASURES that third column instead of
+predicting it. **`c_scale` is not flat in coverage — it is large, and it changes SIGN.**
+400 audit positions, 256 sims, position-paired, `tau=25cp`, `rho=0.01`, 95% cluster bootstrap:
+
+| `phi` | `c_scale` 0.025→0.1 | `policy_temp` 1.0→1.5 | bundle |
+|---|---|---|---|
+| 1e-4 | **−0.138** [−0.183, −0.098] | +0.112 [+0.076, +0.151] | **−0.006 [−0.050, +0.039] ns** |
+| 1e-3 | **−0.182** [−0.234, −0.131] | +0.256 [+0.208, +0.304] | +0.071 [+0.017, +0.124] |
+| 7e-3 | −0.062 [−0.096, −0.030] | +0.421 [+0.365, +0.479] | +0.203 |
+| 1e-2 | **+0.032** [+0.015, +0.053] | +0.382 [+0.326, +0.444] | +0.247 |
+
+**Mechanism — why the prediction was wrong.** `mcts/gumbel.py::_build_improved_policy_for_board`
+builds the improved policy over **EVERY LEGAL MOVE**, not over the Gumbel candidate set. So
+`sigma` reaches every entry of the stored target and **no mass floor is sigma-invariant**. The
+prediction assumed `policy_temp` alone controls support because it alone changes which moves
+become candidates — but candidate selection does not bound the target's support, and at
+`gumbel_topk: 32` it does not even bind in ~60% of positions.
+
+**⚑⚑ THE TRAP, AND WHY THIS HAD TO BE PINNED BEFORE THE READOUT.** At `phi = 1e-4` the two
+halves **CANCEL to a null** (−0.006, ns). Reading coverage there would have reported *"nothing
+happened"* while **both knobs fired hard in opposite directions** — a blind ruler of exactly
+the kind logged in [[compute_instrument_resolution_before_the_threshold]]. With four `phi`
+values on the table and no pin, picking one after seeing the data is a garden of forking paths.
+
+**PINNED NOW, BEFORE ANY LIVE ROW EXISTS: attribution is read at `phi = 1e-2` ONLY**, with
+`tau = 25cp`, `rho = 0.01`. At that floor `c_scale` moves coverage ~12x less than
+`policy_temp` (+0.032 vs +0.382), so it is the one cell where coverage still discriminates.
+A bundle delta **≥ +0.15** at `phi = 1e-2` is unreachable by `c_scale` alone and therefore
+attributes the move to `policy_temp`.
+
+**Coverage is the ATTRIBUTION instrument, not the deciding yardstick.** SUCCESS / KILL /
+PLUMBING-FAILURE remain exactly as in Amendment 2 (`priority_policy_kl` + `data_policy_entropy`).
+Amendment 3 changes only how the bundle is decomposed afterwards.
+
+**Live baseline** (40 newest shards BY MTIME, newest `shard_003811.zarr` 2026-08-09 14:49,
+4516 pairs): coverage **0.8131 / 0.5819 / 0.2143 / 0.1455** at `phi` 1e-4 / 1e-3 / 7e-3 / 1e-2.
+
+**Resolution, computed BEFORE the threshold:** 95% half-width on live shards **0.012** at
+`phi`=1e-2 (0.018 at 1e-3); audit rig 0.019 at 1e-2. The `policy_temp` effect is 4-30x the
+floor. ~50 audit positions resolve the `policy_temp` half at `phi`=1e-2.
+
+**Negative control PASSES and ships as a test:** 8000 live rows at `phi`=1e-3, real **0.5819**
+→ target-shuffled **0.3891 [0.3740, 0.4047]** against a chance base rate of **0.3217**.
+
+**Alignment re-verified empirically** (`--check-alignment`, 40 live shards): `sf_p0_regret`
+scores moves legal in THIS row at **1.0000** (n=5243); `sf_multipv_raw` ids are legal only
+**0.1007** of the time, confirming it belongs to the PREVIOUS ply. The script uses
+`sf_p0_regret`.
+
+**Two standing caveats on this instrument.**
+1. `sf_p0_regret` exists on only **23.5%** of net-turn policy rows (it needs two consecutive
+   full plies), which is the sample-size constraint on the shard rig. The script aborts below
+   a 5% presence floor.
+2. Production `sf_multipv` is now **6**, so "sound" on shards is drawn from ≤6 scored moves,
+   while the audit rig has MultiPV ≥10 at ≥1M nodes. **The two rigs are NOT comparable in
+   LEVEL — only within-rig deltas are admissible.**
+
+⚠ The isolation arms above were measured at 256 sims on the frozen audit set, i.e. OFF-POLICY
+for a live run. The `phi`=1e-2 discrimination claim should be re-checked at the deployed sim
+count before the flat cell is leaned on for a verdict.
+
+**The reusable rule:** a predicted signature is a hypothesis, not a property. This table sat in
+a pre-registration for a day reading as fact; one measurement falsified a third of it. **Measure
+the discriminator before you rely on it to discriminate** — and had the bundle deployed first,
+the null at `phi`=1e-4 would have looked like a clean negative result.
+
+### AMENDMENT 4 (2026-08-09) — RETRACTING AMENDMENT 3's PIN, and a confound on the PRIMARY yardstick
+
+Independent review of PR #382 (posted at `#issuecomment-5233512682`) **falsifies the
+`phi = 1e-2` attribution pin** I set in Amendment 3, and surfaces a selection effect that
+touches the deciding yardstick, not merely the attribution one. Amendment 3's pin is
+**WITHDRAWN**. Coverage is NOT a usable attribution instrument today.
+
+**⚑⚑ B1 — THE PINNED CELL FAILS THE SCRIPT'S OWN NEGATIVE CONTROL, IN THE WRONG DIRECTION.**
+The control had only ever been run at `phi = 1e-3`. Run at the pinned cell (8-20 shuffle seeds):
+
+| cell | real | target-shuffled | chance |
+|---|---|---|---|
+| `phi=1e-2`, `tau=25`, `rho=0.01` | **0.1304** | **0.2331 ± 0.0095** | 0.1961 |
+| `phi=1e-3`, `tau=25`, `rho=0.01` | 0.5780 | 0.3893 ± 0.0109 | 0.3137 |
+
+**The shuffle BEATS the real metric by +0.103 (~11 shuffle-SDs), and the real value sits
+BELOW chance.** Not noise: the shuffle wins in **9 of 16** `(tau, rho)` cells at `phi=1e-2` —
+the entire `rho <= 0.02` region — and the sign only flips at `rho = 0.05`. Interpretation: at
+that floor the statistic measures how well the target keeps rare moves **rare**, with
+soundness entering **NEGATIVELY**. It therefore cannot key off `policy_temp`, because both
+knobs flatten the target through the same channel. **A metric a shuffle beats is not measuring
+the association it names** [[shuffle_the_labels_negative_control]].
+
+**⚑⚑ B2 — `diff_focus` RE-COMPOSES THE STORED POPULATION AS A FUNCTION OF THE VERY KL THE
+BUNDLE RAISES. THIS HITS THE DECIDING YARDSTICK, NOT JUST ATTRIBUTION.** Verified on the
+production C path:
+
+    keep_prob = clamp(3 * (6 * q_surprise + 3.5 * KL(prior || improved)), 0.025, 1)
+
+and `finalize.py:910` drops the row. Live now: `keep_limited_frac 0.387`, `keep_rate 0.796`.
+Raising KL raises `keep_prob` for every row, re-admitting **~15% of rows drawn entirely from
+the low-KL, low-coverage tail**. So the bundle changes WHICH ROWS EXIST, as a monotone
+function of the treatment.
+
+Consequence for Amendment 2's SUCCESS rule (median `priority_policy_kl` >= 0.10): the stored
+population is *already* KL-selected, and the treatment dilutes it with previously-excluded
+low-KL rows. The measured median is therefore **not a clean estimate of the KL shift** — the
+bias is toward UNDER-reading the effect, which makes a PASS still meaningful but a
+FAIL/INDETERMINATE uninterpretable. **This must be carried as a Confound on the primary
+readout, and the yardstick should be recomputed on a population not selected by KL** (e.g.
+restrict to `keep_prob` saturated at 1.0, where selection cannot vary).
+The only population guard in place (`sf_p0_regret` presence rate) is a WITHIN-population ratio
+and is structurally blind to this — a gate that cannot fail [[a_gate_that_cannot_fail]].
+
+**⚑ B3 — THE 12x RATIO IS A BETWEEN-RIG TRANSFER THE LEDGER'S OWN CAVEAT FORBIDS.** Live
+coverage falls **0.8218 -> 0.1304** across `phi` 1e-4 -> 1e-2 (~-0.15 per e-fold). A `+0.382`
+`policy_temp` delta is **arithmetically impossible** from a 0.1304 baseline, so the audit rig
+sits far up the curve and its `c_scale` zero-crossing has no reason to land at the same `phi`
+live. Amendment 3 stated the two rigs are not comparable in level and then reasoned across
+them anyway, one paragraph later.
+
+**⚑ B4 — AMENDMENT 3's HEADLINE TABLE IS NOT REPRODUCIBLE FROM THE PR.** `paired_delta_ci` is
+**never called by `main()`**, there is no compare CLI, and no banked artifact exists on disk.
+Every number in the falsifying table came from a harness that is not in the PR, so **the arm
+isolation and the `phi=1e-4` cancellation could not be verified by the reviewer.** The
+FEN-pairing assertion the docstring promises is also absent. Amendment 3's table stands as
+UNVERIFIED pending the harness landing with its dump banked
+[[bank_the_dump_not_just_the_number]].
+
+**⚑ B5 — the calibration rig is off-policy beyond the caveat already stated.** `SimShape`
+hardcodes `gumbel_scale=1.0` with no flag, while live decays to **0.5 from move 15** and
+**88.9% of stored rows are at ply >= 30**; and it runs `tb_probe=None` against live
+`syzygy_in_search: true`.
+
+**What survived attack, and is worth keeping:** the ply alignment reproduces (`sf_p0_regret`
+1.0000 legal, n=5090; `sf_multipv_raw` 0.1039, n=22904) **and the encoding is consistent** —
+`sf_multipv_raw`'s move column is compact-remapped, so 0.1039 is real ply misalignment, not a
+4672-vs-1858 artifact. The **23.5% `sf_p0_regret` slice is NOT outcome-conditioned** (target
+entropy 0.9736 vs 0.9910; `n_legal` 26.80 vs 26.98 against its complement) — the selection
+worry is answered. Shard selection is mtime-based and mutation-proved. The cluster bootstrap
+is genuinely by position, though an unclustered mutation passes all 20 tests, so it is
+unguarded. Bare `./scripts/lint.sh` exit 0.
+
+**STATUS: the bundle has NO working post-hoc attribution instrument.** Since separable
+signatures were the stated justification for bundling two knobs in one restart, this is a
+decision point, not a detail. Options, to be decided before launch:
+(a) land the compare harness + a `phi`/`rho` cell that PASSES its negative control, then pin;
+(b) deploy and accept that `c_scale` and `policy_temp` cannot be separated afterwards;
+(c) deploy one knob.
+**Entropy signatures (Amendment 3, column 2) remain opposite and are unaffected by B1** — they
+may still separate the two, but that has not been demonstrated on live rows either.
+
+**The reusable rule, third instance today:** *run the negative control AT THE CELL YOU INTEND
+TO USE.* Amendment 3 pinned `phi=1e-2` on a discrimination ratio while the only control that
+had ever been run was at `phi=1e-3` — a different cell, and as it turns out one of the few
+where the metric works at all.
+
+### AMENDMENT 5 (2026-08-09) — CONFOUNDS: the confirmed `policy_temp` side-channel, and the 1.9x figure is dead
+
+**⚑⚑ `gumbel_policy_temp` CHANGES WHICH ROWS EXIST, not merely their targets.** Chain confirmed
+on the production path by the PR #379 author at my request (I recorded an inferred version of
+this earlier; this is the traced one, and it corrects it):
+
+1. `network_turn.py:508` hands `c_process_ply` the **UNTEMPERED** `pol_logits_full` —
+   `apply_policy_temp` returns `pol / pt`, a NEW array, so the caller's copy is never mutated —
+   alongside the **TEMPERED** `probs_arr`.
+2. `_mcts_tree.c` derives `kl` from that pair, then
+   `difficulty = q_surprise*q_weight + kl*pol_scale`,
+   `keep_prob = clamp(df_min, 1, difficulty*slope)`; writes `priority_out=difficulty` (:4864),
+   `priority_policy_kl_out=kl` (:4865), `keep_out=keep_prob` (:4866).
+3. **Two downstream effects, both moving together:** `keep_prob` → `finalize.py:910` **DROPS**
+   policy rows with probability `1 - keep_prob` (row SURVIVAL); `priority` (which embeds
+   `kl*pol_scale`) → `disk_buffer.py:732` **replay SAMPLING WEIGHT**.
+
+Because the reference prior stays untempered while the search output softens, **`kl` rises
+monotonically in T**, so raising `policy_temp` simultaneously raises the deciding yardstick
+(`priority_policy_kl`), re-admits rows that diff-focus was dropping, and re-weights replay
+sampling. This compounds Amendment 4's B2 — there the selection moved because `c_scale` raises
+KL; here it moves again because `policy_temp` does.
+
+**⚑ CORRECTION to what I recorded from the review:** `sample_weight` is **NOT** diff-focus
+derived. It is the **soft-resign weight** (`_compute_resign_weights`,
+`network_turn.py:451-464`, driven by consecutive low-winrate plies). It gets conflated with
+`keep_prob` because both gate the same `if` block at `finalize.py:908-911`.
+**CONFOUNDS reads: `keep_prob` (row survival) + `priority` (sampling weight). NOT
+`sample_weight`.**
+
+**⚑⚑ THE "~1.9x bf16 COST" IS FALSE — MEASURED.** `policy_temp != 1.0` disables the
+compact-legal bf16 leaf transport, and the code comment claimed ~1.9x end-to-end. The broker
+measurement is **0.87–1.01x, NON-MONOTONE, inside ±13% noise** — i.e. no detectable cost. The
+1.9x came from a direct-evaluator path that has no bf16 transport to lose in the first place.
+The figure has been removed from the `gumbel_c.py` warning and replaced with provenance.
+⇒ **The games/h objection to `T=1.5` is withdrawn**, and the proposed "temper at the source to
+keep bf16 enabled" optimisation is **NOT needed** — it would buy a cost that does not exist.
+This is [[check_the_resource_is_binding]]: the resource was never binding.
+
+**⚑ ARENA YARDSTICK DISCONTINUITY (new, from PR #379 fix 1).** `resolve_search_shape("training")`
+now carries `policy_temp`, so arenas follow `gumbel_policy_temp` automatically. This is correct
+— without it, `--search-shape training` would have measured **T=1.0** while the live run ran
+1.5, silently. But it means **the first arena run after the yaml flip measures a different
+search shape than every arena before it.** No existing arena result is re-based (production's
+1.0 is exactly `GumbelConfig().policy_temp`, so today it is a bit-identical no-op), but any
+pre/post arena comparison across the flip is comparing two shapes. Note it beside any arena
+number quoted in this readout window.
+
+### AMENDMENT 6 (2026-08-09) — DECISION: DEPLOY ONE KNOB. "Honest" and "flat" are disjoint.
+
+PR #382's rework (`6b63a9266`) answers Amendment 4's open question, and the answer is
+structural rather than a tuning miss.
+
+**The negative control now runs at EVERY cell.** On live shards (`tau=25 rho=0.01`, 16 seeds)
+the control PASSES at `phi <= 3e-3` (+7.3 SD at 1e-3, +1.2 at 3e-3) and **INVERTS from 5e-3
+up** (−2.5 at 7e-3, −4.1 at 1e-2, −5.3 at 2e-2). Isolation arms were re-run **on the live
+population at the live shape** (`--mode research`, same shard rows, stored `x` planes as
+`pre_pol_logits`, `gumbel_scale 0.5`, 256 sims, topk 32, 600 paired rows; harness fidelity vs
+production's stored target **0.8133 argmax / 0.1423 TV**, legal-mismatch **0/600**):
+
+| `phi` | control | verdict | `c_scale` 0.025→0.1 | `policy_temp` 1.0→1.5 |
+|---|---|---|---|---|
+| 1e-3 | +9.04 | PASS | −0.183 [−0.233,−0.135] | +0.286 [+0.234,+0.338] |
+| 3e-3 | +1.37 | PASS | −0.149 [−0.203,−0.098] | +0.367 [+0.315,+0.422] |
+| 5e-3 | −6.02 | INVERTED | −0.044 [−0.080,−0.006] | +0.441 [+0.387,+0.500] |
+| 1e-2 | −9.53 | INVERTED | **+0.031** [+0.006,+0.058] | +0.413 [+0.356,+0.469] |
+
+**⚑⚑ THE CONTROL CROSSING (~5e-3) SITS BELOW THE `c_scale` ZERO-CROSSING (~8e-3), SO THE
+HONEST CELLS AND THE FLAT CELLS DO NOT OVERLAP.** The mechanism: **soundness is a Q-proxy and
+`c_scale` is the gain on Q**, so anything that responds to soundness must respond to
+`c_scale`. This is not fixable by search — 128 cells with >=50 pairs: 81 pass the control, 39
+are `c_scale`-quiet, **2 are both**, and those sit at `rho=0.05` where "rare" (0.05) is barely
+below uniform (1/27 ~ 0.037).
+
+Best survivor, `tau=50 rho=0.05 phi=2e-2` (928 pairs, control +5.9 SD): `c_scale` **−0.0593**
+[−0.0833,−0.0350], `policy_temp` **+0.2381** [+0.2096,+0.2667], bundle **+0.0765**. It is a
+**one-sided** rule: `Δ >= +0.05` ⇒ `policy_temp` fired; **`Δ <= 0` is INDETERMINATE, never
+"policy_temp did not fire"** — the halves cancel and the bundle is a third of the T-only
+effect.
+
+## DECISION: the bundle is UNBUNDLED. Deploy `gumbel_c_scale` 0.025 -> 0.1 ALONE.
+
+A one-sided instrument cannot carry the attribution the bundle was justified by. Combined with
+Amendment 5 (both knobs move `keep_prob`/`priority`, so BOTH confound the deciding yardstick
+through the same channel), bundling now costs attribution on every axis and buys only one
+restart. Reasons for `c_scale` as the single arm, in order:
+
+1. **It is a violated pin, not a preference.** `SELFPLAY_GUMBEL_C_SCALE = 0.1` is the library's
+   declared selfplay optimum and `tests/test_selfplay_gumbel_c_scale.py` FAILS today with
+   `assert 0.025 == 0.1`, twice. Those two failures turning green is a free deployment proof.
+2. **It has offline paired quality evidence**; `policy_temp`'s live effect has none.
+   PR #381, n=800 paired: 0.025→0.1 is **−5.64 cp [−10.21, −1.07]** better.
+3. **It raises the actual training signal ~5.7x** — KL(target‖prior) 0.067 -> 0.380 — and KL,
+   not entropy, is the signal [[kl_target_prior_is_the_training_signal]].
+4. **One knob = one source for the `keep_prob`/`priority` confound**, instead of two.
+
+⚠ **The known cost, stated rather than hidden:** `c_scale` 0.1 alone LOWERS target entropy
+~0.226 nats (~0.92 -> ~0.69), and our targets are already ~2x sharper than lc0's. That was the
+entire reason for pairing it with `policy_temp` (+0.375). **We accept it for this window**
+because entropy is not the training signal and KL is; if the readout shows a sharpening
+failure, `policy_temp` 1.5 is the pre-sized, already-plumbed follow-up arm — and it will then
+be attributable, because it will be alone.
+
+**`gumbel_policy_temp` still ships in the yaml at its no-op default 1.0** (PR #379), so the
+follow-up costs a yaml reload rather than another restart.
+
+**Coverage's role is demoted accordingly:** it is no longer an attribution instrument. It
+becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read at
+`tau=50 rho=0.05 phi=2e-2` only, with `Δ <= 0` explicitly not a negative.
+
+### AMENDMENT 7 (2026-08-09) — REVERSING AMENDMENT 6: deploy BOTH knobs after all
+
+**Amendment 6's unbundling decision is WITHDRAWN.** Josh's objection is correct and it defeats
+the reasoning I used:
+
+> *"if it hurts us or does not much we won't learn much since it doesn't have softening yet"*
+
+**The `c_scale`-only arm is not a clean single-variable test — it is a test of a configuration
+we already have reason to believe is harmful on a known axis.** `c_scale` 0.1 alone lowers
+target entropy ~0.226 nats, taking the stored target from **~0.92 to ~0.69** against lc0's
+**1.39-1.89** [[training_temp_exceeds_strength_optimal_temp]] — i.e. from ~2x sharper than lc0
+to **~3x sharper**, moving FURTHER along the axis independently identified as the defect.
+
+⇒ A null or a regression from that arm is **ambiguous between "search authority does not help"
+and "the sharpening ate the gain"**, and the response to either reading is to run the pair. The
+single-knob arm therefore costs a full readout window and returns us to the bundle. That is the
+[[most_experiments_here_are_unfalsifiable]] filter applied to my own proposal: an arm whose
+plausible outcomes do not change the next action is not worth a window.
+
+**Amendment 6 also over-priced the attribution loss.** If the bundle WORKS we keep both knobs
+and attribution changes no decision; decomposition only becomes decision-relevant if it FAILS,
+which is exactly when the single-knob arm should be run. **Correct order: test the believed-best
+configuration first, decompose on failure.** Amendment 6 inverted that.
+
+**⚑ CORRECTION to Amendment 6's own summary:** it said separability was lost "on every axis."
+That overstates it. **The ENTROPY signature was never falsified** — only the coverage column
+was (Amendment 3 / Amendment 4). It stands as a DEPLOYMENT check with measured coefficients:
+
+| knob | ΔH(target) |
+|---|---|
+| `c_scale` 0.025 → 0.1 | **−0.226** |
+| `policy_temp` 1.0 → 1.5 | **+0.375** |
+| bundle (predicted net) | **~+0.15** |
+
+## RESTORED DESIGN — the bundle, with honest instruments
+
+Deploy **`gumbel_c_scale` 0.025 → 0.1 AND `gumbel_policy_temp` 1.0 → 1.5** in one restart.
+
+**SUCCESS / KILL remain Amendment 2's**, with Amendment 4's B2 correction: compute the median
+`priority_policy_kl` only on rows where `keep_prob` saturates at 1.0, so the diff-focus
+selection effect cannot move the denominator.
+
+**What we can and cannot conclude, stated before launch:**
+- **CAN (deployment):** both knobs fired — realized ΔH(target) consistent with ~+0.15 net, and
+  `gumbel_policy_entropy_mean` off its baseline by >= +0.10 (**measured** sd 0.0162 over the
+  last 60 iters ⇒ 6.2 sigma; +0.375 nats would be 23.2 sigma).
+- **CAN (one-sided):** coverage `Δ >= +0.05` at `tau=50 rho=0.05 phi=2e-2` ⇒ `policy_temp`
+  fired. **`Δ <= 0` proves NOTHING** (Amendment 6's table).
+- **CANNOT:** decompose a null or a regression into per-knob contributions. **Pre-committed
+  response to a null/regression: run `c_scale` 0.1 ALONE as the decomposition arm** — by then
+  it is decision-relevant, which is precisely what it is not today.
+
+**Confounds carried forward:** Amendment 5's `keep_prob` (row survival) + `priority` (sampling
+weight) side-channel, driven by BOTH knobs; the restart itself (boot shock, +0.110 post-restart
+winrate bias, drain transients, holdout ruler death); PR #375's ruler-ID change and
+`progress.csv` rotation riding along with the reconciliation; the arena search-shape
+discontinuity from PR #379 fix 1.
+
+**The transferable rule:** *an arm whose plausible outcomes all lead to the same next action is
+not worth a readout window.* Check that BEFORE optimising the arm for attribution quality —
+attribution is only valuable on outcomes that would change what you do next.
+
+### AMENDMENT 8 (2026-08-09) — the two entropies are DIFFERENT POPULATIONS, and only one is a clean in-effect instrument
+
+Caught while re-reading the bundle's in-effect baseline. Amendment 7's table quotes ΔH(target)
+of **−0.226** (`c_scale`) and **+0.375** (`policy_temp`), and the live in-effect metric is
+`gumbel_policy_entropy_mean`. **Those are not the same quantity and the coefficients must not be
+applied to that metric.** The tell was arithmetic: the live metric reads **1.0578** while the
+"our targets are ~2x sharper than lc0's" finding measured H(target) = **0.924**.
+
+| | `gumbel_policy_entropy_mean` | H(stored target) |
+|---|---|---|
+| population | **ALL `_NetRecord`s, pre-drop** | banked STORED rows |
+| denominator | `gumbel_policy_diag_n` | rows actually written to shards |
+| `keep_prob` / `sample_weight` gated? | **NO** | **YES** |
+| fast (playout-capped) plies included? | yes | no — dropped |
+| measured | **1.0578**, sd **0.0152** (iters 662-721) | 0.924 (67,783 banked rows) |
+
+**Established by call graph, not by name:** `_compute_gumbel_policy_game_stats(records)` is called
+with the full per-game record list (`finalize.py:1471-1474` and `:1490-1494`), whereas the
+`sample_weight` and `keep_prob` drops (`finalize.py:909-911`) happen inside the sample-BUILDING
+loop that produces `game_samples`. `_compute_diff_focus_game_stats(records, game_samples)` takes
+both lists; the gumbel-policy one takes only `records`. **The population difference fully explains
+1.0578 vs 0.924 without either number being wrong.**
+
+## Consequences for the bundle's deployment check
+
+1. **`gumbel_policy_entropy_mean` is the CLEAN in-effect instrument** precisely because its
+   denominator is *not* gated by `keep_prob` — the Amendment 5 side-channel that BOTH knobs drive.
+   This is [[never_condition_a_control_on_its_own_outcome]] satisfied by construction.
+   Re-read baseline **1.0578**, sd **0.0152** (last 60 iters; sd is stable at 0.0152-0.0164 across
+   30/60/120-iteration windows, and the prereg's 1.0635 sits only −0.4 sd away, so the prereg
+   number stands). The **+0.10 nats / 6.6 sigma** bar is the in-effect gate and it is SOUND.
+2. **⚑ Do NOT quote −0.226 / +0.375 as predictions for `gumbel_policy_entropy_mean`.** They were
+   derived on the stored-target population. Amendment 7's table is correct about the SIGNS and
+   about H(target); a prior draft of this session's arithmetic converted them to sigma-multiples
+   of the live metric (+24.7 sigma etc.) — **that conversion is void** and no magnitude
+   prediction for the live metric is pre-registered.
+3. **H(stored target) is NOT a clean signature instrument**, because both knobs move it by TWO
+   routes: the reshape itself, and the change in WHICH rows survive `keep_prob`. Report it, but
+   never as sole evidence of which knob fired.
+4. The one-sided coverage rule (`Δ >= +0.05` at `tau=50 rho=0.05 phi=2e-2` ⇒ `policy_temp` fired)
+   is unaffected — it is a paired same-row comparison.
+
+**The transferable rule:** *two metrics with the same word in their name are not the same
+measurement.* Before comparing a live metric against a banked coefficient, establish that both
+were computed over the same POPULATION — check the denominator's call graph, not the metric's
+name. A ~13% level difference (1.058 vs 0.924) was the only visible symptom, and it is exactly the
+size that reads as ordinary drift.
+
+### AMENDMENT 9 (2026-08-09) — the `c_scale` arm is a REVERT of an unreviewed regression, and CI is structurally blind to it
+
+Surfaced by the PR #378 re-review and then EXECUTED here. It changes how the bundle's `c_scale`
+arm should be described, and it is a live defect in its own right.
+
+**1. Production has been running the WORST measured rung.** `mcts/gumbel.py:56-66` is the single
+source of truth and carries a measurement at *exactly our sim count*:
+
+> selfplay @256 sims (2026-06-16 puzzle screen, n=1000): **0.1 -> 0.688** accuracy,
+> 0.05 -> 0.652, **0.025 -> 0.598. Lowering it HURTS the RL regime.**
+
+`SELFPLAY_GUMBEL_C_SCALE = 0.1` is the pin. Live has run **0.025 at 256 sims** since `ed9de8ee9`
+flipped it — **~9.0 accuracy points below the pinned value, on a direct n=1000 measurement at our
+own sim budget.**
+
+**2. The guard exists, is correct, and cannot fire.** `tests/test_selfplay_gumbel_c_scale.py`
+asserts `flat["gumbel_c_scale"] == SELFPLAY_GUMBEL_C_SCALE` on `PRODUCTION_CONFIG`. Executed
+just now:
+
+| branch | committed `gumbel_c_scale` | pin test |
+|---|---|---|
+| `origin/main` — what CI runs | **0.1** | passes |
+| `ops/live-20260725` — what production LOADS | **0.025** | **FAILS x2** (`assert 0.025 == 0.1`) |
+
+The test is not broken. **It is never run against the file production actually loads**, because
+the whole divergence lives on the live branch and CI only ever sees `main`.
+[[ci_gate_reports_into_a_void]] x [[live_yaml_diverged_from_main_608_968]] = a green gate over a
+violated pin, for the entire life of the divergence.
+
+**3. Consequence for Amendment 7.** The `c_scale` 0.025 -> 0.1 arm is **not primarily an
+experiment** — it is a revert to a pinned, measured optimum, and the bundle's real novelty is
+`policy_temp`. Two things follow:
+- The offline paired evidence quoted earlier (−5.64 cp [−10.21, −1.07], n=800) is now the
+  *weaker* of two independent supports; the n=1000 puzzle screen at our sim count is the stronger.
+- Deploying the bundle turns two currently-RED tests GREEN on the live branch. **That is a
+  required post-restart check**: run `PYTHONPATH=. python3 -m pytest
+  tests/test_selfplay_gumbel_c_scale.py` IN THE LIVE TREE and require 0 failures. It is a
+  file-level check, not an in-effect check — it does not replace the worker-log proof.
+
+**4. The residual defect is NOT closed by the bundle.** Setting `c_scale` to 0.1 makes this
+particular pin true again; it does nothing about the fact that **no CI gate reads the live yaml**.
+Any of the other 600+ diverged lines can violate a pin the same way and stay green. Filed as a
+follow-up, and note the honest scope: reconciling live -> main removes THIS instance by making the
+two files agree, but only until they diverge again.
+
+**The transferable rule:** *before citing a passing test as evidence about production, check which
+FILE it read.* A config-pinning test is only as good as the config it opens, and in a repo where
+the production config lives on a branch CI never builds, "the test passes" and "production obeys
+the pin" are unrelated statements.
+
+### AMENDMENT 10 (2026-08-09) — RETRACTING Amendment 7's one-sided coverage rule
+
+Amendment 7 listed three things the bundle readout CAN and CANNOT establish. **The second one is
+now withdrawn.** The PR #382 re-review killed it on four independent grounds, each executed:
+
+> ~~**CAN (one-sided):** coverage `Δ >= +0.05` at `tau=50 rho=0.05 phi=2e-2` ⇒ `policy_temp` fired.~~
+
+1. **The threshold sits INSIDE the CI of the effect it must detect.** Bundle coverage delta is
+   **+0.0765 [+0.0469, +0.1058]** and the rule fires at **+0.05**. A rule whose trigger point lies
+   within its own effect's interval decides on noise.
+2. **The harness's own bias at that cell is the size of the effect.** Arm A *is* production's
+   shape, so `stored − A` is pure harness error: measured **+0.0450 [+0.0036, +0.0886]** (the PR's
+   own bank says +0.0571). Compare `c_scale` **−0.0593**, whose SIGN carries the entire
+   attribution. Across the bank's 128 cells, **|harness error| >= |c_scale effect| in 46/128**.
+3. **The two selection criteria are the same variable.** corr(control margin, |d_c|/|d_T|) =
+   **+0.785**, and the two surviving cells sit at the **6th and 10th percentile** of control
+   strength among the 81 that pass. The survivor is the last cell before the crossing the
+   docstring itself says makes the metric unusable. That is
+   [[never_condition_a_control_on_its_own_outcome]] one level up — at CELL SELECTION rather than
+   row selection.
+4. **The PASS has no resolution.** Row-resampling the survivor's control margin gives
+   **+2.06 ± 1.39, 95% [−0.06, +5.18]** — **22% of draws FAIL the gate.**
+
+Plus a fifth that is fatal on its own: **every quoted CI is a PAIRED-RIG CI, and the live readout
+is UNPAIRED ACROSS TIME.** Carrying a paired offline interval onto an unpaired live comparison is
+the forbidden between-rig transfer [[a8_polar_steps_aborted_cross_run_ratio]].
+
+**What survives, and what this changes about the deploy.**
+
+| check | status |
+|---|---|
+| Plumbing in-effect: `gumbel_policy_temp=1.5 tempered=True` in the worker log (`worker.py:4458`), and `gumbel_c_scale 0.1` in the published reco | **STANDS** — this is the one that matters |
+| `gumbel_policy_entropy_mean` off baseline 1.0578 by >= +0.10 (6.6 sigma, sd 0.0152) | **STANDS** (Amendment 8: clean denominator) |
+| Coverage one-sided rule | **RETRACTED** |
+| Decompose a null into per-knob contributions | still **CANNOT** (unchanged) |
+
+**This does not weaken the case for deploying the bundle — it strengthens it.** The coverage rule
+was the last remaining reason to prefer the unbundled arm, and it is now void. Combined with
+Amendment 9 (`c_scale` 0.025 -> 0.1 is a REVERT to a pinned optimum measured at our own sim count,
+not an experimental arm), the bundle is **one revert plus one genuine experiment**. There was
+never as much attribution at stake as Amendment 6 priced in.
+
+**A separate defect the same review found, and it is the house signature:** the harness's fidelity
+check is *called* a gate and **cannot fail** — no threshold, no abort, not read by any verdict.
+Driven to `sims 2 / topk 2 / c_scale 5.0 / T 8.0 / gumbel_scale 4.0`, fidelity craters to argmax
+0.54 / TV 0.72 and the script still prints `PASS +19.57` and exits 0 — **the broken shape passes
+the negative control HARDER than the honest one** (+19.57 vs +1.56). Also inert: the
+stale-reference-prior guard, because `model_step`/`model_sha256` are `None` on all 8 newest live
+shards, so `read_stats.model_steps == []` and `--compare-to` can never refuse across producing
+nets. Both are [[a_gate_that_cannot_fail]].
+
+**The transferable rule:** *a selection rule correlated with the outcome it selects on is not a
+filter, it is the hypothesis.* Before trusting a cell chosen by a control, correlate the control's
+margin against the effect being attributed. At +0.785 here, "passes the control" and "shows the
+effect" were nearly the same statement, and the grid search was choosing the answer.
+
+### AMENDMENT 11 (2026-08-09) — the two knobs' entropy effects are NOT ADDITIVE, and the bundle may net to ~ZERO softening
+
+From the PR #379 re-review, which built its own harness at the exact production kwarg set and
+production shape (256 sims / topk 32 / c_scale 0.025) rather than reading the code.
+
+**Measured improved-policy entropy vs `policy_temp`** (reviewer's fixture):
+
+| T | 0.5 | 1.0 | 1.2 | **1.5** | 2.0 |
+|---|---|---|---|---|---|
+| H | 1.1021 | **1.9991** | 2.2130 | **2.4833** | 2.7143 |
+
+**And the interaction, which is the finding:** `c_scale` 0.025 -> 0.1 costs **−0.29 nats at T=1.0**
+but **−0.40 nats at T=1.5**. The knobs are **sub-additive in the direction that hurts us**:
+flattening the prior gives `sigma·Q̄` more room to re-concentrate, so the sharpening arm bites
+HARDER once the softening arm is on.
+
+⇒ **The bundle's net is not the +0.149 that Amendment 7's table implies.** On these numbers it is
+roughly `+0.375 … +0.484` minus `0.40` = **approximately ZERO**, and the sign is not reliable.
+
+## What this changes
+
+**The honest description of the experiment is no longer "raise search authority AND soften."**
+It is **"raise search authority at approximately CONSTANT target entropy."** That is arguably a
+*cleaner* isolation — it removes entropy as a confound from the search-authority question — but it
+is **not** the thing the softening rationale asked for, and Amendment 7 should be read with that
+correction. **The entropy bill goes largely unpaid at T=1.5.**
+
+**Decision, and the reasoning, recorded rather than buried:** proceed at **T=1.5**.
+- lc0 trains at **1.36-2.20**, so 1.5 is the conservative end of a range someone else has
+  validated; 2.0 is a materially bigger jump on an axis we have never run live.
+- `c_scale` 0.1 is a REVERT to a pinned optimum measured at our own sim count (Amendment 9), so
+  the bundle's downside is bounded by a configuration the repo already believes in.
+- If the readout comes back with target entropy FLAT and no strength change, **T=2.0 is the
+  pre-committed follow-up**, not a new hypothesis. On the table above it buys ~+0.715 against
+  `c_scale`'s −0.40..−0.45, netting ~+0.27 — i.e. it is the first setting that actually pays the
+  bill.
+
+**⚑ Do not convert any number in this amendment into sigma of `gumbel_policy_entropy_mean`.**
+Amendment 8 applies: this is a THIRD population (the reviewer's fixture's improved-policy
+entropy, H≈2.0 at production shape) and is not the stored-target population (0.924) nor the live
+all-records metric (1.0578). Its transferable content is the **SIGN and the INTERACTION**, not the
+magnitudes.
+
+## Two corrections to the review's third blocker
+
+1. **"The repo yaml differs on `gumbel_topk` (16 vs 32) and `gumbel_scale` (0.75 vs 1.0), so a
+   restart moves four search knobs"** — the divergence is REAL (verified: live 32/1.0, main
+   16/0.75) but it does **not** apply to this procedure. We fast-forward `main` INTO live; the
+   merged config blob is byte-identical to live's (`893220d21` both sides), so those two knobs do
+   not move. The hazard is restarting **ONTO** main, which is a different operation and is already
+   the standing prohibition. **Exactly two search knobs move.**
+2. **"`gumbel_policy_temp` is the ONLY data-affecting change this window"** — correct as filed,
+   that line is now FALSE and is superseded by Amendment 7. `c_scale` moves in the same window by
+   design.
+
+**Also owed and now stated:** the diff-focus `keep_prob` + `priority` side-channel (Amendment 5) is
+driven by BOTH knobs and belongs on the CONFOUNDS line, where it had been agreed in-thread but
+never written down.
+
+**The transferable rule:** *two levers measured one-at-a-time do not add.* Before quoting a
+bundle's net effect as the sum of its arms, measure the arms AT EACH OTHER'S SETTINGS. Here the
+cross-term was 38% of the smaller arm and flipped the predicted net from clearly-positive to
+indistinguishable-from-zero.
+
+### AMENDMENT 12 (2026-08-09) — every replay shard is written with NULL provenance
+
+Surfaced by PR #382's rework and confirmed here by reading the call site.
+`DiskReplayBuffer._flush_shard_arrays` (`replay/disk_buffer.py:1580`) calls
+
+```python
+saved_path = save_local_shard_arrays(path, arrs=arrs)     # <-- no meta=
+```
+
+while `save_local_shard_arrays` (`replay/shard.py:1495-1500`) takes
+`meta: ShardMeta | dict | None = None`. **So `ShardMeta` is None on every shard this path
+writes** — `model_step` and `model_sha256` included. Independently corroborated: all 8 newest live
+shards report `model_step is None`, so `read_stats.model_steps == []`.
+
+**Consequences, in order of importance:**
+
+1. **No shard can be attributed to the net that produced it.** This is a standing blind spot in
+   the data pipeline, not a diagnostic-script problem.
+2. It is why #382's stale-reference-prior guard was inert: `--compare-to` had nothing to compare,
+   so absent provenance read as "fine". [[a_gate_that_cannot_fail]] with an unusual root cause —
+   the guard was written correctly against a field that is never populated.
+3. **Bears on the open prev-model-share question** (16.3% -> 56.5%, cause NOT established). The
+   composition itself is measurable from SERVER-side counters (`n_cur`/`n_prev`,
+   `distributed_stale_games`), which is how the drift was found — but the per-shard attribution
+   that would let us reconstruct history from the bank does not exist. Any retrospective
+   "which net made this data" analysis is impossible on shards already written, and will stay
+   impossible until `meta=` is passed.
+
+**Not fixed here, and deliberately.** Populating `meta` is a data-pipeline change; the protocol's
+one-data-affecting-change-per-window rule puts it behind the search-authority readout. Filed
+rather than done. Note the asymmetry when it IS done: it fixes shards written AFTERWARD only —
+the existing window can never be back-filled, so the sooner it lands the less history is lost.
+
+**The transferable rule:** *a guard against a field can be perfectly correct and still never fire,
+if nothing ever writes the field.* Reviewing the guard proves nothing; check the WRITER. The
+question is not "does this code compare provenance correctly" but "is provenance ever non-null on
+the production path".
+
+## TRAINING STOPPED 2026-08-09 20:03 — iteration 735, trial 379f6 (user decision)
+
+Stopped at Josh's instruction ("I think training isn't helping"), to price a rollback before
+resuming. Clean teardown: `train.sh stop` exit 0, watchdog stopped FIRST (it auto-recovers on
+STALLED and would have relaunched training mid-teardown), **2304 in-flight games SUSPENDED**
+across 4 workers rather than discarded — so no resume point pays the drain-transient bias.
+Final checkpoint banked out of the tune dir md5-verified as
+`data/ratchet/snapshots/ck_2026-08-09_iter735_FINAL.pt` (`e6283b98…`).
+
+### ⚑ THE PREMISE NEEDS CORRECTING: the loop is FLAT, not DEGRADING
+
+`data/ratchet/ratchet.csv` measures each iteration against a FIXED anchor (boot512 =
+`boot_snap_recheck_0711_0404.pt`, this lineage's actual bootstrap checkpoint per `params.json`).
+
+**⚑ Only rows labelled `training` are comparable.** `daily_gate_ratchet.sh:131` declares an
+INSTRUMENT BREAK: rows before 2026-07-29 were measured on the play shape at `vloss_weight=0` and
+are labelled `legacy_play_vloss0`; `ratchet_slope.py` refuses to fit across labels. An earlier
+draft of this analysis quoted iter 122's −11.1 alongside current rows — **void, wrong ruler.**
+
+Current lineage (fresh from boot512 on 08-06 23:51), all `training`, all `matched_sims 32`:
+
+| iter | vs boot512 | 95% CI | n |
+|---|---|---|---|
+| 249 | +88.7 | [+18.0, +167.6] | 76 |
+| 399 | +66.8 | [+24.5, +111.2] | 200 |
+| 514 | +105.5 | [+62.1, +152.4] | 190 |
+
+**Transitivity fails in BOTH directions, which is the finding:**
+
+| link | direct | predicted from anchors |
+|---|---|---|
+| 399 vs 249 | **+19.1** (n=200) | +66.8 − 88.7 = −21.9 |
+| 514 vs 399 | **−31.4** (n=200) | +105.5 − 66.8 = +38.7 |
+
+Discrepancies **−41** and **+70**, opposite signs ⇒ noise, not trend. At n≈200 each point carries
+±43 (SE ≈ 22), so a difference of two points has SE ≈ 31. **Every current-lineage measurement is
+consistent with one flat line at ~+85 Elo over boot512, unchanged since iteration 249.**
+
+⇒ **The loop banked ~85 Elo in its first 249 iterations and produced nothing measurable in the
+next 265.** That is stagnation at the [[rl_loop_is_at_a_self_referential_fixed_point]], not the
+[[rl_loop_is_degrading_play_strength]] pattern of the PREVIOUS lineage (whose comparable
+`training` rows at iter 478 read −39.8 and −110.5 vs boot512 — that lineage genuinely degraded).
+
+**Consequence for the rollback question: rolling back to 514 or 399 costs nothing and gains
+nothing.** Rollback is not the lever. The only unmeasured stretch is **514 → 735** (221 iters,
+~19 h), which is the sole place a real loss could hide.
+
+### Recoverable resume points (the tune dir is NOT the menu)
+
+`tune_num_to_keep: 6` had already pruned everything below 729. The real menu is
+`data/ratchet/snapshots/` (iters 249 / 399 / 514 preserved, ~685 MB each) plus
+`data/salvage/pre_search_authority_20260809` (ckpt 671 WITH its 817-shard replay window — the
+only candidate that carries data as well as weights) and the live dir's 729-734.
+
+### IN FLIGHT — the deciding measurement
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate data/ratchet/snapshots/ck_2026-08-09_iter735_FINAL.pt \
+  --reference data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+  --mode matched_sims --search-shape training --sims 32 --games 800 \
+  --max-concurrent-games 32 --device cuda --seed 42
+```
+Ruler matched to the series exactly (`matched_sims 32`, `training`, seed 42) so the point lands on
+the existing curve; **4x the games** because the GPU is now free and ±43 cannot resolve this.
+
+**Pre-committed reading, before the number is seen:**
+- **|Δ| CI includes 0** ⇒ 514→735 changed nothing. **Resume from 735.** No Elo is recovered by
+  rolling back, and 735 alone carries the live replay window.
+- **CI excludes 0, 735 WORSE** ⇒ resume from 514, and the loss is priced exactly.
+- **CI excludes 0, 735 BETTER** ⇒ the flat-line reading is wrong above 514; resume from 735 and
+  re-open whether the plateau is real.
+
+**The transferable rule:** *a series of noisy anchored measurements is not a trend until the
+direct links agree with it.* Chaining A-vs-anchor and B-vs-anchor to infer A-vs-B is only valid if
+A-vs-B measured directly reproduces the difference. Here it did not, twice, in opposite
+directions — and that inconsistency is the evidence that the apparent rise was noise.
+
+### VERDICT (2026-08-09, same session) — CI includes 0 ⇒ RESUME FROM 735
+
+**Result: 800 games, +13.0 Elo, 95% CI [-6.6, +32.8].** Pentanomial (candidate POV)
+`{WW 56, WD_DW 72, DD_WL 160, LD_DL 70, LL 42}`, score 0.5188 +/- 0.0144 SE.
+Log `data/ratchet/rollback_20260809/arena_735_vs_514.log`, appended to `runs/arena_results.jsonl`.
+
+The reading was stable throughout and never left the null: -17.4, -3.8, +4.8, -9.0, -2.8, +2.4,
++10.0, +14.3, +2.4, +14.0, +11.7, **+13.0**. Branch 1 of the pre-committed rule fires:
+**resume from 735.** Directionally positive, so branch 2 (735 worse) is excluded on its own terms.
+
+**The candidate arm was verified to BE the resume artifact**, not a copy of it:
+`ck_2026-08-09_iter735_FINAL.pt` is byte-identical to `ckpt/trainer.pt` and to
+`checkpoint_000734/trainer.pt` (md5 `e6283b98345be2ef74532d015d4710d8`). `checkpoint_000734` is
+0-indexed = iteration 735. So [[diff_the_file_you_measured_against_production]] is satisfied by
+hash on the candidate side.
+
+### THE PREMISE OF THE STOP WAS WRONG — the loop is NOT flat
+
+Training was stopped on "training isn't helping," read off flat winrate. **Winrate is the
+CONTROLLED variable** (`sf_pid_target_winrate: 0.5`); the PID holds it at setpoint by moving the
+handicap, so a strengthening model produces a **falling `wdl_regret` limit**, not a rising
+winrate. Lower regret = SF picks from a narrower band = STRONGER SF.
+
+| span | delta `wdl_regret` | 95% CI (residual bootstrap, n=487) |
+|---|---|---|
+| 249 -> 735 | **-0.00935** | [-0.01027, -0.00844] |
+| 514 -> 735 (arena's span) | **-0.00328** | [-0.00478, -0.00174] |
+
+Both exclude 0. The model held 50% against a progressively de-handicapped Stockfish.
+
+**Confound ruled out.** [[winrate_spike_restart_sampling_bias]] (+0.110) pushes the SAME direction
+and there were 9 restart-sized gaps in the span. Per-iteration delta-regret: post-restart (first
+20 iters) **-3.10e-5** [-1.47e-4, +8.5e-5] n=103 vs quiet **-2.40e-5** [-8.7e-5, +3.9e-5] n=384 —
+indistinguishable, and contribution is proportional to iteration share (21% of iters -> 26% of
+tightening). **A ramp, not a stack of steps.** The prev-model-share drift pushes the OPPOSITE way,
+so it masks the gain rather than manufacturing it.
+
+⚠ **Do not read this trend off block means** — only 5/9 50-iteration blocks decline, because
+within-block sd (~0.003) swamps a 50-iter drift (~0.001). The OLS over 487 points is the
+instrument; the block table is not.
+
+**On-curriculum, not stalled.** Regret runs 0.1 -> `sf_pid_wdl_regret_stage_end` 0.0075; at 0.0538
+we are ~50% through stage 1, `regret_stage_complete=False`. `sf_nodes` pinned at exactly 75000 all
+run is therefore CORRECT — `pid.py:880` gates the nodes lever behind stage completion, and the
+comment at `:875` says the gate exists to stop nodes "making SF steadily harder behind our backs."
+⚠ `pid_nodes_active` is NOT usable as evidence: `trainable_report.py:746` emits a literal `0` in
+the no-PID-update branch, so 0 is ambiguous. Realized `sf_nodes` is the unambiguous instrument.
+
+### Why rolling back costs far more than the arena difference
+
+A `data/ratchet/snapshots/*.pt` is **bare weights — no `pid_state.json` sibling**. Warm-starting
+from one resets the PID to `sf_pid_wdl_regret_start: 0.1`, discarding **all 486 iterations** of
+curriculum progress, not the 221 intended. `checkpoint_000734/pid_state.json` carries
+`wdl_regret 0.0552`, `regret_history`, `nodes_history`, `regret_stage_complete=False`. A resume in
+place also keeps the 820-shard / 3.1 GB live replay window
+(`runs/pbt2_small/replay/train_trial_379f6.../replay_shards`, spanning 07:24-20:01 today) and the
+optimizer state. LR is flat at 6e-5 across 249/399/514/735, so no warm-start regime hazard
+distinguishes the candidates. Only real alternative is
+`data/salvage/pre_search_authority_20260809` (ckpt 671, regret 0.0550, 817 shards) — equivalent
+but 64 iterations older with no measured advantage. **Strictly dominated.**
+
+### The ruler this exposed as missing
+
+There is **no `wdl_regret` -> Elo calibration**, so -0.0033 over 514-735 cannot be priced: it is
+consistent with anything from ~0 to ~20 Elo, and the arena's +/-20 cannot resolve it. That gap is
+why a genuinely progressing loop read as a plateau. **Pre-registerable next build:** hold the net
+FIXED and run paired arenas of SF-at-regret-r1 vs SF-at-regret-r2 across the realized 0.10-0.05
+range, fitting Elo(regret). It is a property of the opponent ladder, so it is measured once and
+then every future iteration's regret row becomes a strength readout at zero marginal cost —
+against a current best instrument of ~2.74 Elo/DAY. Any such rig must hold the controller fixed
+and must not condition on the winrate the controller regulates
+([[never_condition_a_control_on_its_own_outcome]]).
+
+### AMENDMENT 13 — the in-effect check CANNOT be read on the first post-restart row
+
+Bundle deployed 2026-08-09 21:00 (commit `7f4304db9`, code `53eed819e` = main + PR #379 `9e176ceab`).
+Resumed from `checkpoint_000734` (= iteration 735). Verified in effect on the production path:
+all four workers logged `gumbel_policy_temp=1.5 tempered=True` (unanchored grep, paths re-derived
+from `--log-file` under the new Ray session dir).
+
+**Iteration 736 read `gumbel_policy_entropy_mean` = 1.0180, delta -0.0396 vs the 1.0576/0.0159
+baseline (n=74, iters 662-735) — the WRONG DIRECTION, and it is NOT a verdict.**
+
+```
+resumed_inflight_games = 489        total_games_ingested = 494       => 99.0%
+```
+
+C14b resumes suspended in-flight games across a restart, so **99% of the first row's games were
+played under the OLD config** (c_scale 0.025, policy_temp 1.0). The row measures the pre-bundle
+search almost purely.
+
+⇒ **RULE: after any restart that changes a SELFPLAY-SEARCH knob, the statistical in-effect check
+is unreadable until `outcome_stats.resumed_inflight_games / total_games_ingested` has fallen to a
+small fraction.** Gate the read on that ratio, not on an iteration count. This is the price of the
+C14b fix and it is worth paying — the alternative was the drain transient — but it silently
+inverts the first row of every search-knob readout. At ~494 games/iter the cohort should flush
+within ~1-2 iterations; re-read then.
+
+Note this ALSO closes the C14b verification debt: `resumed_inflight_games > 0` at a teardown was
+owed since 2026-07-30 and is now observed at **489**.
+
+### INSTRUMENT BREAK — the `--search-shape training` ruler moved twice
+
+`resolve_search_shape("training")` reads the LIVE YAML (`arena_standard.py`, via
+`production_selfplay_search_config()`); it hardcodes nothing. So the ratchet/arena ruler is
+whatever production is running at the time:
+
+| window | c_scale | policy_temp | topk |
+|---|---|---|---|
+| before 2026-08-06 | 0.1 | 1.0 | 16 |
+| 2026-08-06 (`ed9de8ee9`) .. 2026-08-09 | **0.025** | 1.0 | 32 |
+| from 2026-08-09 (this bundle) | **0.1** | **1.5** | 32 |
+
+**`--search-shape training` rows are NOT comparable across those two boundaries** on c_scale or
+policy_temp. [[a_ruler_change_must_invalidate_its_records]].
+
+**The topk column is the exception and does NOT break the series.** `gumbel.py:737` caps the
+candidate set: `m_cap = max(2, (sim_budget + 1) // 2)`, `m = max(2, min(topk, legal, m_cap))`.
+Every ratchet arena runs **sims=32**, so `m_cap = 16` and topk 16 vs 32 realize the SAME m=16.
+**`topk` BINDS iff `sim_budget > 2*topk`; it is INERT iff `sim_budget <= 2*topk`.** At production's
+256 sims, topk 32 gives m=32 vs m=16 (binds); at 32 sims both 16 and 32 give m=16 (inert).
+⚠ ERRATUM 2026-08-09: an earlier revision of this line read "topk only bites ABOVE 2x the sim
+budget", which is the TRANSPOSE and is false — at sims=32, `topk=8` yields **m=8**, i.e. topk
+binds well below that. The worked examples were right; the generalisation was backwards, and it
+is exactly the sentence a sims-ladder designer would act on. Caught by the PR #383 reviewer.
+The symbol is **`_select_top_m_with_gumbel`** (main lines 687-717), NOT `_init_board_search_state`,
+which only calls it.
+⇒ The 08-06 topk change is invisible to every 32-sim ruler we own, and the old "training must
+differ from play on topk" guard in `test_arena_search_shape_plumbing.py` is asserting an
+invariant that production has legitimately abandoned. Hygiene PR in flight; **no production knob
+changes** (topk 32 is intended and stays).
+
+
+### AMENDMENT 14 — RETRACTED: the "+0.10 entropy" in-effect threshold is INVALID for this bundle
+
+The restart runbook pre-registered *"`gumbel_policy_entropy_mean` off baseline 1.0578 by >= +0.10"*
+as the statistical in-effect check. **That threshold is void, and it was void when written.**
+
+`gumbel.py:350`: `sigma = c_scale * (c_visit + max_visit)`, and the improved policy is
+`softmax(log_prior/T + sigma * Qbar)`. The two knobs therefore act on entropy in OPPOSITE
+directions:
+
+| knob | move | effect on sigma / prior | effect on entropy |
+|---|---|---|---|
+| `gumbel_c_scale` | 0.025 -> 0.1 | sigma **2.65 -> 10.6** (4x); Q dominates | **DOWN** (sharper) |
+| `gumbel_policy_temp` | 1.0 -> 1.5 | `log_prior/1.5`, prior flattened | **UP** (softer) |
+
+The c_scale move is the larger one, so the EXPECTED net sign is **negative or ~zero**, not
++0.10. This is the same non-additivity Amendment 11 already recorded ("the bundle nets ~zero
+softening") — the threshold contradicted an amendment in this very document. Writing it was a
+[[compute_instrument_resolution_before_the_threshold]] failure of a new kind: not "can the ruler
+resolve the effect" but **"does the metric even move monotonically in the intervention".**
+
+**Observed, and now correctly interpreted as NON-DIAGNOSTIC:**
+
+| iter | entropy | delta vs 1.0576 | resumed / total |
+|---|---|---|---|
+| 736 | 1.0180 | -0.0396 (-2.5 sd) | 489/494 = **99.0%** |
+| 737 | 1.0078 | -0.0498 (-3.1 sd) | 441/493 = **89.5%** |
+
+Doubly unreadable: the rows are dominated by resumed pre-bundle games (Amendment 13), AND the
+metric is not monotone in the intervention. Do not compute a verdict from either row.
+
+**THE VALID IN-EFFECT PROOF IS THE DIRECT OBSERVATION, AND IT PASSED.** All four workers logged
+`gumbel_policy_temp=1.5 tempered=True` at 21:00:20 — a brand-new key travelling
+yaml -> TrialConfig -> worker, observed on the production selfplay path. `gumbel_c_scale` shares
+that transport (`network_turn.py:272/274/275` read the same `search` object; both keys sit in the
+same `config_yaml.py:131` pinned list) and the realized config reads 0.1.
+
+**Standing rule this yields: a statistical in-effect proxy is only valid if the intervention moves
+it MONOTONICALLY. For a bundle of knobs with opposing signs on the proxy, there is no threshold to
+pre-register — use the direct plumbing observation and pick a separate, conjugate metric for the
+outcome.** For this bundle the outcome yardstick remains the deciding arena, NOT entropy.
+
+### AMENDMENT 15 — entropy readout CLOSED (A11 confirmed); a NEW pre-registration on the regret rate
+
+**Entropy, read on clean rows (Amendment 13's gate satisfied):**
+
+| iter | entropy | delta vs 1.0576 | resumed% |
+|---|---|---|---|
+| 742 | 1.0346 | -0.0230 | 6.9% |
+| 743 | **1.0528** | **-0.0047** | **5.5%** |
+
+**Net effect on `gumbel_policy_entropy_mean` is ~ZERO** (-0.005 on the cleanest row; -0.014 mean of
+the two). This is a positive confirmation of **Amendment 11's prediction that the bundle nets
+~zero softening** — the 4x sigma sharpening from `c_scale` and the T=1.5 prior softening cancel.
+It is ALSO the final proof that Amendment 14's retraction was correct: the pre-registered
+"+0.10" would have declared a hard FAILURE on a bundle behaving exactly as predicted.
+
+### THE REAL SIGNAL, AND ITS CONFOUND — pre-registered before the deciding number exists
+
+```
+raw winrate 736..743:  0.4506 0.5292 0.5504 0.5588 0.5986 0.5934 0.6158 0.6214
+ema  winrate 736..743: 0.5065 0.5076 0.5097 0.5122 0.5165 0.5204 0.5251 0.5299
+wdl_regret  736..743:  0.05520 ............................................ 0.05115
+```
+| window | regret rate |
+|---|---|
+| historic 249-735 (486 iters) | **-2.55e-5** /iter |
+| post-bundle 736-743 (7 iters) | **-5.79e-4** /iter = **22.7x** |
+
+**TWO HYPOTHESES, BOTH PREDICTING THIS SHAPE. Do not adjudicate on the current rows.**
+- **H1 (real):** the bundle raised play strength; winrate rose; the controller is correctly
+  converting it into difficulty. Expected under [[pid_absorbs_strength_gains_into_difficulty]].
+- **H2 (artifact):** the documented post-restart winrate bias
+  ([[winrate_spike_restart_sampling_bias]], +0.110) plus the C14b completion-ORDER residual
+  (open task: the resume fixed the ply ramp, NOT completion order). Iter 736 was 99% resumed
+  LONG games at raw 0.4506; as short fresh games dominate the completing cohort, raw winrate
+  climbs for reasons unrelated to strength.
+
+**PRE-COMMITTED READ, at iteration ~765** (≈20 further iterations: the EMA's alpha 0.05 gives a
+~20-iteration time constant, and mean game residence is ~4.7 iterations at 2304 in-flight /
+~490 ingested per iter, so both transients are spent):
+- **raw winrate holds >= 0.58 AND regret still falling faster than 1e-4/iter** ⇒ consistent with
+  H1. Bank a checkpoint and run a paired arena vs `ck_2026-08-09_iter735_FINAL.pt` — the arena,
+  not the winrate, is the verdict.
+- **raw winrate decays below 0.55 and the regret rate relaxes toward the historic -2.5e-5** ⇒ H2;
+  the burst was the restart transient and the bundle is unproven.
+- **raw winrate stays high but regret STOPS falling** ⇒ neither; check the airbag
+  (`sf_pid_regret_crash_ease_*`) and whether a clamp or `min_games_between_adjust` is binding.
+
+⚠ **RISK IF H2:** the controller is tightening on a possibly-inflated winrate, so it may
+OVER-tighten and then have to ease. A regret undershoot followed by an airbag ease is itself
+evidence for H2 — record it if seen. ⚠ Do NOT read the winrate as a strength yardstick under
+EITHER hypothesis; it is the controlled variable. The regret rate is a progress indicator only
+because the setpoint is fixed.
+
+### AMENDMENT 16 — H2 LARGELY EXCLUDED by its own mandated discriminator; weight shifts to H1
+
+Amendment 15 hedged between H1 (real strength gain) and H2 (post-restart completion-order bias).
+**Run the discriminator the audit mandates and H2 does not survive it.**
+
+`docs/rl_loop_audit.md` C14b is explicit that after the resume fix the ply series is BLIND
+("anyone using the ply ramp to ask 'is this window contaminated?' now gets NO from a contaminated
+window") and that the replacement is **`curriculum_draw_rate`** vs its pre-teardown mean.
+
+| | value |
+|---|---|
+| pre-restart steady state, iters 700-735 (n=36) | **0.4976 +/- 0.0770** |
+| C14's hold rule: mean - 2sd | **0.3436** |
+| post-restart rows 736-744 | 0.5058 0.5439 0.6115 0.4454 0.4648 0.4176 0.4526 0.4272 0.4605 |
+| **minimum** | **0.4176 — never breaches the gate** |
+
+Contrast the KNOWN-contaminated 07-30 teardown B, which the audit priced at -0.0116:
+`0.222 / 0.048 / 0.013 / 0.081 / 0.202 / 0.327 / 0.437 / 0.566 / 0.591` — a collapse to **0.013**
+and a nine-iteration recovery. **We have no collapse whatsoever.** `avg_plies_draw` is flat at
+126-139 across the window (informative here only because it AGREES; per C14b it cannot be relied
+on alone).
+
+⇒ **The completion-order signature is ABSENT.** The observed sequence — raw winrate 0.4506 -> 0.6214,
+controller tightens regret **-0.00482 over 8 iterations**, winrate falls back to 0.5461 (+0.8 sd
+vs the pre-restart 0.5085 +/- 0.0456) — is the textbook absorption of a REAL gain described in
+[[pid_absorbs_strength_gains_into_difficulty]], observed live for the first time.
+
+**Correction to my own reading:** I flagged the 744 winrate drop (0.6214 -> 0.5461, coinciding with
+`resumed%` reaching 0.8%) as evidence FOR H2. That was wrong-headed — a fall back toward the 0.50
+setpoint is exactly what a SUCCESSFUL controller produces after absorbing a gain, so it does not
+discriminate. **The discriminating variable was the draw rate all along, and it was one query away.**
+[[guard_must_share_the_criterion_instrument]]: I reached for a symptom instead of the instrument
+the audit had already designated.
+
+**Still standing, and unchanged:** the iteration-765 read, and the rule that **the verdict is the
+paired arena, never the winrate**. What A16 changes is the prior, not the protocol. Magnitude to
+respect: -0.00482 in 8 iterations vs -0.00935 across the whole 486-iteration span 249-735 — if it
+holds, this window did half of the run's lifetime difficulty progress. That is large enough to be
+worth confirming and large enough to be suspicious of; the arena settles it.
+
+### OPS HAZARD (measured 2026-08-09) — a live yaml edit to a VALIDATED key can KILL the run
+
+Surfaced by the PR #379 round-5 reviewer as a side note; confirmed here by execution.
+`gumbel_policy_temp` is now IN the live yaml and a **T=2.0 follow-up is pre-committed**, so this
+is live-relevant, not theoretical.
+
+| live-yaml edit | what happens |
+|---|---|
+| UNKNOWN key | `_reload_yaml_into_config` rejects the reload, prints a warning, process keeps the OLD config — **trial SURVIVES** |
+| KNOWN key, INVALID value (`gumbel_policy_temp: 0.0`) | reload SUCCEEDS, then `TrialConfig.from_dict` raises `ValueError` — **TRIAL DIES** |
+| KNOWN key, valid value (`2.0`) | applied, realized `gumbel_policy_temp=2.0` |
+
+Mechanism: `trainable.py:952` opens `try:` with **no `except` anywhere in the iteration loop** —
+only a `finally`. The per-iteration reload at `:962` and `TrialConfig.from_dict` at `:963` both sit
+inside it, so a validator `ValueError` propagates out of the loop and ends the trial.
+
+**CLAUDE.md documented only the SOFT mode** ("an unknown key rejects the WHOLE reload"), which
+reads as though every bad live edit is survivable. It is not, and the failure modes are opposite:
+the *unrecognised* key is safe, the *recognised* one is lethal. CLAUDE.md corrected in this commit.
+
+⇒ **Dry-run every live edit to a validated key on a COPY before writing the live file:**
+```
+PYTHONPATH=. python3 -c "import yaml; from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults; \
+from chess_anti_engine.tune.trial_config import TrialConfig; \
+TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open('<COPY>')))); print('OK')"
+```
+Verified today: `2.0` passes this check, so the pre-committed T=2.0 follow-up is safe to apply live.
+
+Note this is a DIFFERENT hazard from [[wiring_a_dead_knob_can_arm_a_crash]]: there, wiring a
+previously-inert knob armed a crash path. Here the knob is correctly wired and correctly
+validated — it is the ABSENCE of an `except` around the reload that converts a rejected value
+into a killed run.

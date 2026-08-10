@@ -162,3 +162,87 @@ Goal: design a lower-duplication key ownership scheme that avoids silent stale
 worker settings or missing live loss-weight sync. Include migration steps,
 tests, and what not to centralize.
 ```
+
+---
+
+## Prune Backlog (2026-08-08)
+
+Surveyed while the loop is LIVE and finally producing a positive strength
+signal, so nothing here is scheduled yet. **Rule: no data-affecting prune
+during an open readout window**, and one item per window when they do start.
+Tier 1 is safe any time; Tiers 2-4 want a stable period and a salvage
+snapshot. Verify every removal against `docs/experiment_ledger.md` first — a
+FAILED verdict makes a flag removable; a LIVE-UNREAD one does not.
+
+### Tier 1 — housekeeping, zero risk, no restart
+
+- Repo root holds ~9 stray `logfile*.txt` from restart sessions. Keep the ones
+  cited by ledger entries (move to `data/` beside the evidence they support),
+  delete the rest.
+- `configs/pbt2_small.yaml.bak_pre_v2layer_20260617` — git already holds that
+  history; delete.
+- Untracked one-off scripts in `scripts/` (`bench_aot_startup_lazy.py`,
+  `monitor_sf_refute_outcomes.py`, `topup_c17_post_arm.sh`,
+  `vr_game_ply_breakdown.py`, `vr_loss_share.py`): commit with a stated purpose
+  or move out of the repo.
+- Verification: `git status --short` clean of strays; `./scripts/lint.sh`.
+
+### Tier 2 — dead experiment surface (ledger-gated)
+
+- 14 `configs/exp_*.yaml`. The four `exp_v3_*` feature adds are covered by a
+  conclusive negative ("input features exhausted"); wide-chain likewise. Each
+  removal is yaml + flag + gated code + tests, together.
+- Individually refuted knobs whose plumbing survives:
+  `selfplay.record_fast_ply_value` (REVERTED, trunk dilution),
+  `replay_sf_gap_priority_signed` (never reached the production buffer),
+  the `diff_focus_*` family (parked on defaults).
+- Why it matters: a live config key that no longer means anything is exactly
+  this codebase's signature defect surface.
+
+### Tier 3 — GPBT/PBT scaffolding (largest single reduction, highest risk)
+
+GPBT is wired but effectively off; production pins every hyperparameter and
+runs a population of one, yet trial/perturbation machinery shapes the whole
+driver, checkpointing, resume, and directory layout. Collapsing to a
+single-trial train loop is the biggest complexity win available and the
+riskiest diff. Stable-period only, salvage snapshot first, own ledger entry.
+
+### Tier 4 — legacy duality
+
+- `v1` 146-plane encoding path + conversion script, once no v1 shards matter
+  (this lineage has been `v2_threats` throughout).
+- `configs/default.yaml` (unused reference model; drags a param-count test).
+- `scripts/` is 216 files, mostly one-off analyses whose conclusions live in
+  the ledger. Keep the protocol instruments CLAUDE.md names; archive the rest
+  (git history preserves them). Motivation is not code weight — it is that
+  every stale script is a future "ran the wrong ruler" hazard.
+
+### Investigated and REJECTED — do not schedule
+
+**4672 → 1858 action-space unification.** Independent investigation
+2026-08-07 (full writeup in that session; verdict recorded here so it is not
+re-proposed):
+
+- The performance premise is REFUTED in both directions. Decoding compact ids
+  by table (0.77 us @ k=40) beats the 4672 arithmetic `id//73, id%73`
+  (3.26 us); the C side is already table-driven (`POLICY_LUT[2][4672]`, and a
+  compact LUT would be *smaller*). "1858 would be slower" is false.
+- The split is load-bearing for STRUCTURAL reasons: the policy head's own
+  geometry is 8x8x73 and 1858 is a gather out of it
+  (`model/transformer.py:209-222`); 4672 is the interop anchor for LC0/BT4
+  nets whose 1858 ordering differs from ours (`onnx/load.py:163-180`); and the
+  whole CBoard/tree move API plus persisted `move_idx_history` speak 4672.
+- Cost of keeping it is ~nil: production leaf transport is compact-legal bf16
+  and never materialises a 4672 array; residual glue is <=0.6% of search, and
+  search is minor against SF at ~95% of loop cost.
+- Cost of changing it: ~30 conversion sites, 3 C translation units, 74 of 305
+  test files, a rebuild+restart window, a resume-format bump, and only
+  argmax-equivalence provable — in the code path where C17 cost 7.4cp.
+
+Carve-outs that do NOT require unification, if ever wanted: compact
+`_NetRecord.policy_probs`/`legal_mask` at capture (~21% less per-record
+memory — gate on worker RSS actually binding, which it is not post-fix);
+narrow the two C per-ply record buffers (`_mcts_tree.c:4737-4757,4889`);
+delete unread `policy_encoding=` kwargs and the unreachable width-alignment
+arms in `train/losses.py` (fold into an unrelated PR, do not spend a review
+slot).
