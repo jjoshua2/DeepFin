@@ -459,6 +459,24 @@ So the fix silences three of the four arms outright and leaves exactly the one a
 units it changed. That residual fire is the ruler problem above, not a regime problem, and
 it is why the band re-derivation is a precondition rather than a follow-up.
 
+### EVERY OTHER CONSTANT THAT LIVES IN `priority` UNITS (audited, all inert today)
+
+`priority` is a stored column, so enabling normalization redefines the units of
+everything downstream that compares against it by an absolute number. Audited:
+
+| constant | production value | live? | consequence when the flag flips |
+|---|---|---|---|
+| `replay_sf_gap_priority_weight` | 0 (branch needs > 0) | **no** — experiment #104 KILLED | the gap boost is added to `priority` in RAW units; would need re-scaling by the reference quantile |
+| `replay_fast_low_surprise_priority` | 1.0 (branch needs < 1.0) | **no** | ironically IMPROVES: fast rows arrive at a neutral 1.0, which under normalization is exactly the median instead of an arbitrary point (raw median 0.50 pre / 1.42 post). `record_fast_ply_value` is OFF anyway |
+| `_accumulate_priority_mass` `kl_term`/`qd_term` | n/a | **yes** | multiplies the RAW stored `kl`/`q_delta` by today's weights and compares against the STORED priority mass — so `replay_pmass_kl_share` gains a SECOND way to misreport, on top of the `pol_scale` one #172 already documents. Use `replay_pmass_kl_raw_mean` |
+
+**Decision: change none of them in this PR.** The first two are inert (their
+branches are gated off), and `replay_pmass_kl_share` was already declared
+unguardable by #172 for the same class of reason. Recorded here as a launch
+precondition rather than left as a comment: whoever flips the flag must re-derive
+the first two if they are ever enabled together with it, and must not read
+`replay_pmass_kl_share` afterwards at all.
+
 ### SECOND FIX IN THE SAME PR — task #173, Python/C KL divergence
 
 `network_turn.py` floored both distributions at 1e-12 and summed over all 4672 entries;
