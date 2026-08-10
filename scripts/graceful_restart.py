@@ -212,7 +212,7 @@ def _pid_exists(pid: int) -> bool:
     """Is ``pid`` a live process — counting a zombie as gone.
 
     ⚑ DELIBERATE DUPLICATE of ``chess_anti_engine.tune.process_cleanup._pid_exists``,
-    kept in sync by hand. This script is documented (README, AGENTS.md) as
+    kept in sync by hand. This script is documented (README, docs/operations.md) as
     ``python3 scripts/graceful_restart.py`` with no ``PYTHONPATH=.``, so it must
     stay stdlib-only; importing the shared helper would break the documented
     invocation. If you change one, change the other.

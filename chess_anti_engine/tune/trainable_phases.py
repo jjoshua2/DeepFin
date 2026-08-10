@@ -530,12 +530,27 @@ def _run_holdout_evaluation(
             )
         else:
             test_metrics, source_iter = None, -1
-  # The SAME predicate the mutator uses, not a proxy for it:
+  # The SAME predicate the APPENDING mutator uses, not a proxy for it:
   # ``_ingest_train_arrays`` appends to the holdout on exactly
   # ``holdout_frac > 0.0 and (not holdout_frozen)``. A guard that checked only
   # ``holdout_frozen`` would skip forever under ``holdout_fraction: 0`` (where
   # nothing can be appended and the async path is perfectly safe), and one that
   # checked only the fraction would not see the freeze at all.
+  #
+  # THERE ARE THREE HOLDOUT MUTATORS AND THIS GUARD COVERS ONE. The second is
+  # ``_maybe_reset_holdout_on_drift``'s ``holdout_buf.clear()``, and it is
+  # deliberately NOT folded in here: whether a reset fires depends on drift
+  # metrics computed a full iteration after the ``start()`` this guard would
+  # have to veto, so it is unknowable at this point in time and no predicate
+  # written here could be honest about it. That mutator orders itself against
+  # the eval at its own site instead, by draining before it clears. The third
+  # is ``holdout_state.load_holdout_rows``, which needs no ordering construct
+  # because it runs during buffer construction, before ``train_trial`` binds an
+  # eval handle at all. If a FOURTH ever appears it belongs in one of those
+  # three buckets -- the tests that pin the enumeration and the by-construction
+  # exemption are `test_every_holdout_buffer_writer_is_ordered_against_the_eval`
+  # and `test_the_init_time_holdout_writer_cannot_race_the_eval_thread` in
+  # tests/test_deterministic_holdout_eval.py.
         holdout_can_grow = float(tc.holdout_fraction) > 0.0 and not holdout_frozen
         if len(holdout_buf) >= tc.batch_size and holdout_can_grow:
             print(

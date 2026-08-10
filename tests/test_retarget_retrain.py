@@ -7,6 +7,7 @@ the knob under test. These tests pin the guardrails that enforce that.
 from __future__ import annotations
 
 import inspect
+import json
 import sys
 from pathlib import Path
 
@@ -484,12 +485,20 @@ def test_main_makes_arm1s_pool_the_reference_and_never_pre_globs(
         return _shards(*(f"shard_{i:06d}.zarr" for i in range(len(scans))))
 
     got: list[list[Path] | None] = []
+    got_draws: list[dict | None] = []
     arm1_pool = _shards("shard_000042.zarr", "shard_000043.zarr")
+    arm1_draws = {"batches_drawn": 1600.0, "transient_cuda_retry_batches": 0.0}
 
     def _fake_variant(**kw) -> dict:
         snap = kw["shard_snapshot"]
         got.append(None if snap is None else list(snap))
-        return {"variant": kw["name"], "shard_pool": [str(p) for p in arm1_pool]}
+        d = kw["draw_snapshot"]
+        got_draws.append(None if d is None else dict(d))
+        return {
+            "variant": kw["name"],
+            "shard_pool": [str(p) for p in arm1_pool],
+            "draws": dict(arm1_draws),
+        }
 
     monkeypatch.setattr(rr, "iter_shard_paths", _growing)
     monkeypatch.setattr(rr, "_run_variant", _fake_variant)
@@ -520,6 +529,13 @@ def test_main_makes_arm1s_pool_the_reference_and_never_pre_globs(
         f"main() globbed the replay dir {len(scans)}x; the reference must come "
         "from arm 1's buffer, and a pre-startup glob re-introduces the false abort"
     )
+    # Same discipline for the DRAW reference (F4): arm 1 defines it, later arms
+    # are measured against arm 1's counts, and main() invents nothing.
+    assert got_draws[0] is None, (
+        f"arm 1 was handed a draw reference it did not produce: {got_draws[0]}"
+    )
+    assert got_draws[1] == arm1_draws, got_draws
+    assert got_draws[2] == arm1_draws, got_draws
 
 
 def test_the_reference_source_matches_what_the_buffer_scans(tmp_path) -> None:
@@ -619,7 +635,14 @@ def _variant_harness(monkeypatch, buf_cls, *, train: bool = False) -> None:
         )
 
     def _train_steps(*_a, **_k):
-        return type("_M", (), {"loss": 1.0})()
+  # Carries the draw-provenance pair because `TrainMetrics` does. The stub
+  # omitted them and passed only because `_run_variant` read them through
+  # `getattr(..., 0.0)`; that default is gone, so a stub that does not model
+  # the real object now fails here instead of silently feeding the de-pairing
+  # guard two zeros.
+        return type("_M", (), {
+            "loss": 1.0, "batches_drawn": 1.0, "transient_cuda_retry_batches": 0.0,
+        })()
 
     trainer_ns = {"train_steps": _train_steps if train else _no_training,
                   "save": lambda *_a, **_k: None}
@@ -722,3 +745,367 @@ def test_a_depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir(
         f"failure -- the guard now runs AFTER the empty-pool check: {msg}"
     )
     assert "wrong --replay-dir" not in msg, msg
+
+
+# ── F3: an override key that reaches nothing must fail the sweep ────────────
+#
+# ⚑ THE 2026-07-06 DOSE SCREEN SHIPPED A NO-OP AS A RESULT. Its arms were
+# launched with `sf_gap_priority_signed=...`; `TrialConfig.from_dict` drops
+# unknown keys in silence and `retarget_report.json` recorded the override as
+# applied, so four arms of GPU time measured the control twice. An independent
+# review of PR #373 reproduced the same shape with one doubled letter
+# (`policy_target_tempp=1.5`), inside the instrument a ledger entry designates
+# as deciding. These pin the guard AND its exemptions -- a guard that refused
+# real knobs would be worse than none, because operators would delete it.
+
+
+def _prod_flat() -> dict:
+    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+    return flatten_run_config_defaults(load_yaml_file(Path("configs/pbt2_small.yaml")))
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "policy_target_tempp",     # the review's doubled letter
+        "policy_target_temp_",     # trailing underscore
+        "policy_temp",             # plausible wrong name
+        "sf_gap_priority_signed",  # the ACTUAL 2026-07-06 key
+        "definitely_not_a_key",
+    ],
+)
+def test_a_dead_variant_key_ABORTS_instead_of_training_the_control_twice(
+    key: str,
+) -> None:
+    with pytest.raises(SystemExit) as ei:
+        rr._assert_overrides_reach_the_trainer(
+            name="arm", overrides={key: 1.5}, base_config=_prod_flat(),
+        )
+    msg = str(ei.value)
+    assert key in msg, msg
+    assert "reach NOTHING" in msg, msg
+
+
+# ── codex P1: a SWEEP-LEVEL key is not variant-overridable ──────────────────
+#
+# ⚑ The reachability guard above asks the wrong question for one class of key.
+# `batch_size` IS a TrialConfig field, so it passes the probe honestly -- and
+# `main()` still resolves it ONCE off `base_config`/argv and hands the same
+# value to every arm, so `--variant arm:batch_size=1024` trains identically to
+# the control while `retarget_report.json` records the override as applied.
+# Reachability is satisfied; SHADOWING is the defect.
+
+
+@pytest.mark.parametrize(
+    "key", ["batch_size", "steps", "device", "gpu_mem_fraction",
+            "checkpoint", "replay_dir", "rebuild_sf_targets"],
+)
+def test_a_SWEEP_LEVEL_key_is_refused_as_a_variant_override(key: str) -> None:
+    with pytest.raises(SystemExit) as ei:
+        rr._parse_variant(f"arm:{key}=1024")
+    assert key in str(ei.value), str(ei.value)
+
+
+def test_the_shadowed_key_set_is_DERIVED_from_the_signature_not_hand_listed() -> None:
+    """A hand-kept list is covered the day someone remembers it. This one is
+    covered the day a parameter is added -- so pin the derivation, not the
+    membership: every name in the set must really be a `_run_variant` parameter,
+    and the real collisions with production config keys must be in it."""
+    import inspect
+    shadowed = rr._sweep_level_keys()
+    params = set(inspect.signature(rr._run_variant).parameters)
+    assert shadowed <= params, sorted(shadowed - params)
+    flat = _prod_flat()
+    assert {"batch_size", "steps", "device"} <= shadowed
+    # only keys that COLLIDE with a real config key can bite; the rest are inert
+    assert shadowed & set(flat), "the guard covers no real config key at all"
+
+
+def test_the_reachability_probe_would_have_PASSED_the_shadowed_key() -> None:
+    """The reason this needed its own guard rather than a wider reachability
+    probe. If this ever starts failing, the two guards have converged and one
+    of them is redundant -- decide which, do not leave both."""
+    assert rr._override_key_reaches_the_trainer("batch_size", _prod_flat())
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("policy_target_temp", 1.5),           # read off the flat dict by the Trainer
+        ("sf_policy_temp", 0.006),             # documented target knob
+        ("replay_sf_gap_priority_weight", 30), # documented sampling knob
+        ("lr", 1e-4),                          # plain config key
+        ("seed", 1),                           # the null-arm knob the ledger needs
+    ],
+)
+def test_the_guard_does_NOT_refuse_a_key_that_really_reaches_an_arm(
+    key: str, value: float,
+) -> None:
+    """The exemption half. `policy_target_temp` is the interesting one: it is
+    NOT a TrialConfig field and is absent from the shipped yaml, so only the
+    behavioural probe (does it move `trainer_kwargs_from_config`?) admits it."""
+    rr._assert_overrides_reach_the_trainer(
+        name="arm", overrides={key: value}, base_config=_prod_flat(),
+    )
+
+
+def test_policy_target_temp_is_admitted_by_the_BEHAVIOURAL_probe_only() -> None:
+    """Pin WHY it is admitted, so a future refactor that drops the probe and
+    keeps only the allowlist halves turns this red instead of silently
+    refusing the very knob PR #373 exists for."""
+    from chess_anti_engine.tune.trial_config import TrialConfig
+    flat = _prod_flat()
+    assert "policy_target_temp" not in flat
+    assert not hasattr(TrialConfig.from_dict({}), "policy_target_temp")
+    assert rr._override_key_reaches_the_trainer("policy_target_temp", flat)
+
+
+def test_the_dead_key_guard_runs_BEFORE_the_checkpoint_is_loaded(
+    monkeypatch, tmp_path,
+) -> None:
+    """A guard that fires after `torch.load` + CUDA init costs the operator the
+    startup every time; worse, on the real path it would sit behind work that
+    can fail for unrelated reasons. Drive `_run_variant` and require the abort
+    with `torch.load` never called."""
+    def _no_load(*_a, **_k):
+        raise AssertionError("torch.load ran before the dead-key guard aborted")
+
+    monkeypatch.setattr(torch, "load", _no_load)
+    with pytest.raises(SystemExit) as ei:
+        rr._run_variant(
+            name="arm", overrides={"policy_target_tempp": 1.5},
+            base_config=_prod_flat(),
+            checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
+            steps=1, batch_size=2, device="cpu", out_dir=tmp_path,
+            shard_snapshot=None,
+        )
+    assert "reach NOTHING" in str(ei.value)
+
+
+# ── F4: a transient-CUDA retry de-pairs the arms, silently ──────────────────
+#
+# `_assert_shards_unchanged` pins the POOL. `Trainer.train_steps` catches a
+# transient CUDA error and calls `add_retry_batches(...)`, which pulls
+# replacement batches and advances the buffer's private RNG -- so one retry in
+# ONE arm desynchronises its rows from every other arm's permanently, with the
+# pool untouched. It was reported only as a `logging.warning`.
+
+
+def test_draw_guard_passes_when_both_arms_drew_the_same_batches() -> None:
+    same = {"batches_drawn": 1600.0, "transient_cuda_retry_batches": 0.0}
+    rr._assert_draws_unchanged(observed=dict(same), snapshot=dict(same), name="arm2")
+
+
+def test_draw_guard_fires_when_a_LATER_arm_retried() -> None:
+    with pytest.raises(SystemExit) as ei:
+        rr._assert_draws_unchanged(
+            observed={"batches_drawn": 1603.0, "transient_cuda_retry_batches": 3.0},
+            snapshot={"batches_drawn": 1600.0, "transient_cuda_retry_batches": 0.0},
+            name="arm2",
+        )
+    msg = str(ei.value)
+    assert "de-paired" in msg
+    assert "1600" in msg, msg
+    assert "1603" in msg, msg
+
+
+def test_draw_guard_fires_when_ARM_1_ITSELF_retried() -> None:
+    """⚑ The case a plain equality check misses. Arm 1 defines the reference, so
+    its counts always equal themselves -- but if arm 1 retried, the REFERENCE
+    sequence is already the perturbed one and no later arm can disagree with
+    it. A non-zero retry count is fatal on its own."""
+    retried = {"batches_drawn": 1603.0, "transient_cuda_retry_batches": 3.0}
+    with pytest.raises(SystemExit) as ei:
+        rr._assert_draws_unchanged(
+            observed=dict(retried), snapshot=dict(retried), name="ctrl",
+        )
+    assert "de-paired" in str(ei.value)
+
+
+def test_draw_guard_fires_on_a_count_mismatch_with_NO_retry_recorded() -> None:
+    """Belt and braces: any future path that changes the draw count without
+    going through `add_retry_batches` must still abort."""
+    with pytest.raises(SystemExit):
+        rr._assert_draws_unchanged(
+            observed={"batches_drawn": 1599.0, "transient_cuda_retry_batches": 0.0},
+            snapshot={"batches_drawn": 1600.0, "transient_cuda_retry_batches": 0.0},
+            name="arm2",
+        )
+
+
+def test_the_draw_guard_runs_on_the_real_call_path_and_lands_in_the_report(
+    monkeypatch, tmp_path,
+) -> None:
+    """Both halves at once: `_run_variant` must ABORT on a retried arm, and a
+    clean arm must record its draw counts in the summary that becomes
+    `retarget_report.json` -- a number nobody can read is not a guard."""
+    class _FakeBuf:
+        def __init__(self, *_a, **_k) -> None: ...
+        def _snapshot_shards(self) -> list[Path]:
+            return _shards("shard_000001.zarr")
+        def __len__(self) -> int:
+            return 10_000
+        def close(self) -> None: ...
+
+    class _Cfg:
+        input_extra_features = "v2_threats"
+
+    retries = {"n": 0.0}
+
+    class _Metrics:
+        loss = 1.0
+        batches_drawn = 1600.0
+        @property
+        def transient_cuda_retry_batches(self) -> float:
+            return retries["n"]
+
+    class _T:
+        def train_steps(self, *_a, **_k):
+            return _Metrics()
+        def save(self, path) -> None:
+            Path(path).write_text("x")
+
+    monkeypatch.setattr(rr, "DiskReplayBuffer", _FakeBuf)
+    monkeypatch.setattr(rr, "model_config_from_arch", lambda _a: _Cfg())
+    monkeypatch.setattr(rr, "build_model", lambda _cfg: _tiny_net())
+    monkeypatch.setattr(rr, "load_state_dict_tolerant", lambda *a, **k: None)
+    monkeypatch.setattr(rr, "trainer_kwargs_from_config", lambda _c: {})
+    monkeypatch.setattr(rr, "Trainer", lambda *a, **k: _T())
+    monkeypatch.setattr(rr, "_assert_replay_planes_match", lambda *a, **k: None)
+    monkeypatch.setattr(rr, "TrialConfig", type("_TC", (), {"from_dict": staticmethod(lambda _c: _FakeTC())}))
+    monkeypatch.setattr(torch, "load", lambda *a, **k: {"model": {}, "arch": {}})
+
+    def _run():
+        return rr._run_variant(
+            name="ctrl", overrides={}, base_config={"seed": 0},
+            checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
+            steps=1, batch_size=2, device="cpu", out_dir=tmp_path,
+            shard_snapshot=None,
+        )
+
+    summary = _run()
+    assert summary["draws"] == {
+        "batches_drawn": 1600.0, "transient_cuda_retry_batches": 0.0,
+    }, "the draw counts never reached retarget_report.json"
+
+    retries["n"] = 4.0
+    with pytest.raises(SystemExit) as ei:
+        _run()
+    assert "de-paired" in str(ei.value)
+
+
+class _FakeTC:
+    """Minimal stand-in for TrialConfig on the mocked `_run_variant` path."""
+    replay_upgrade_v1_planes = False
+    shuffle_buffer_size = 1
+    shard_size = 1
+    shuffle_refresh_interval = 1
+    shuffle_refresh_shards = 1
+    replay_shard_recency_exponent = 1.0
+    shuffle_draw_cap_frac = 1.0
+    shuffle_wl_max_ratio = 1.0
+    replay_sf_gap_priority_weight = 0.0
+    replay_sf_gap_priority_signed = False
+    replay_fast_low_surprise_priority = 0.0
+    diff_focus_pol_scale = 0.0
+    diff_focus_q_weight = 0.0
+
+
+# ── codex P3: the abort path must BANK what the completed arms drew ─────────
+#
+# ⚑ The de-pairing guards raise inside `_run_variant`, and the report was
+# written only after every arm returned. So the one path whose whole purpose is
+# provenance ("the sweep is void, here is what the arms drew") wrote nothing --
+# and in a REUSED --out-dir the previous run's report survived the abort and
+# read as a clean sweep of the run that had just failed. `bank the dump`.
+
+
+def _drive_main(monkeypatch, tmp_path, variants: list[str], run_variant) -> None:
+    monkeypatch.setattr(rr, "_run_variant", run_variant)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["retarget_retrain.py", "--config", "configs/pbt2_small.yaml",
+         "--checkpoint", str(tmp_path / "ckpt.pt"),
+         "--replay-dir", str(tmp_path / "shards"),
+         "--out-dir", str(tmp_path / "out"), "--steps", "1",
+         *[a for v in variants for a in ("--variant", v)]],
+    )
+    rr.main()
+
+
+def _summary(name: str) -> dict:
+    return {"variant": name, "shard_pool": ["a.zarr"],
+            "draws": {"batches_drawn": 8.0, "transient_cuda_retry_batches": 0.0}}
+
+
+def test_an_ABORTED_sweep_still_writes_the_completed_arms_provenance(
+    monkeypatch, tmp_path,
+) -> None:
+    calls: list[str] = []
+
+    def _run(*, name: str, **_k: object) -> dict:
+        calls.append(name)
+        if name == "arm":
+            raise SystemExit("replay DRAW SEQUENCE de-paired at variant 'arm'")
+        return _summary(name)
+
+    with pytest.raises(SystemExit):
+        _drive_main(monkeypatch, tmp_path, ["ctrl:", "arm:lr=1e-4"], _run)
+
+    report = tmp_path / "out" / "retarget_report.json"
+    assert report.exists(), "the abort path wrote no report at all"
+    payload = json.loads(report.read_text())
+    assert "de-paired" in payload["aborted"], payload["aborted"]
+    assert [s["variant"] for s in payload["completed_variants"]] == ["ctrl"]
+    assert payload["completed_variants"][0]["draws"]["batches_drawn"] == 8.0
+    assert calls == ["ctrl", "arm"]
+
+
+def test_a_STALE_report_is_gone_BEFORE_the_first_arm_runs(
+    monkeypatch, tmp_path,
+) -> None:
+    """⚑ MUTATION NOTE, and the reason this asserts mid-sweep rather than after.
+
+    Deleting `report.unlink(...)` and checking the file AFTERWARDS is an
+    EQUIVALENT MUTANT: the `finally:` rewrites the report on every exit path, so
+    a post-hoc read cannot tell the unlink apart from the overwrite. The unlink
+    earns its place only for the exits `finally` does not get -- SIGKILL, the
+    OOM killer, a box reboot part-way through a 21-hour sweep -- after which a
+    reused `--out-dir` still holds the PREVIOUS run's clean two-arm report and
+    an operator reads it as this run's.
+
+    That window is observable without killing a process: while the sweep is
+    running, the report on disk must never be a previous run's. Assert it from
+    inside the first arm.
+    """
+    out = tmp_path / "out"
+    out.mkdir(parents=True)
+    stale = out / "retarget_report.json"
+    stale.write_text(json.dumps([_summary("ctrl"), _summary("arm")]))
+    seen: list[bool] = []
+
+    def _run(**_k: object) -> dict:
+        seen.append(stale.exists())
+        raise SystemExit("boom on the first arm")
+
+    with pytest.raises(SystemExit):
+        _drive_main(monkeypatch, tmp_path, ["ctrl:"], _run)
+
+    assert seen == [False], (
+        "a previous run's retarget_report.json was still on disk while this "
+        "sweep was running; a hard kill here leaves it there to be misread"
+    )
+    payload = json.loads(stale.read_text())
+    assert isinstance(payload, dict), "the stale two-arm list survived the abort"
+    assert payload["completed_variants"] == []
+    assert "boom" in payload["aborted"]
+
+
+def test_a_CLEAN_sweep_still_writes_a_plain_list(monkeypatch, tmp_path) -> None:
+    """The null half: banking on abort must not change the shape every existing
+    reader (and the ledger's `jq '.[].overrides'` step) parses."""
+    _drive_main(monkeypatch, tmp_path, ["ctrl:", "arm:lr=1e-4"],
+                lambda *, name, **_k: _summary(name))
+    payload = json.loads((tmp_path / "out" / "retarget_report.json").read_text())
+    assert isinstance(payload, list)
+    assert [s["variant"] for s in payload] == ["ctrl", "arm"]

@@ -31,6 +31,7 @@ from chess_anti_engine.mcts.gumbel import (
     _policy_logits_to_full,
 )
 from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI, run_gumbel_root_many_c
+from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.mcts.puct_vl import PucvChunker
@@ -144,6 +145,22 @@ _ABORT_MIN_STABLE_CHUNKS = 2
 # full _chunk_sims. Lower-bounding nps means we under-spend the budget, never over.
 _BOOTSTRAP_NPS_PER_MS = 6.0
 _MIN_FIRST_CHUNK = 64
+
+# Where each PUCT path keeps the family it will actually descend on. All four
+# snapshot the values at CONSTRUCTION, so these -- not the shared `GumbelConfig`
+# a setter writes -- are the live objects `realized_search_values` must read.
+# WalkerPoolConfig / MultiGpuPucvConfig / RootParallelGumbelConfig share the
+# dataclass field names; PucvChunker keeps them in private attributes.
+_PUCT_DESCENT_FIELDS: tuple[str, ...] = (
+    "c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction", "vloss_weight",
+)
+_PUCV_CHUNKER_ATTRS: dict[str, str] = {
+    "c_puct": "_c_puct",
+    "cpuct_factor": "_cpuct_factor",
+    "cpuct_base": "_cpuct_base",
+    "fpu_reduction": "_fpu_red",
+    "vloss_weight": "_vloss",
+}
 
 # Batch-time-variance clock margin. The deadline is only checked BETWEEN chunks,
 # and a chunk (one GPU batch) can't be interrupted once launched — so a chunk that
@@ -364,6 +381,11 @@ class SearchWorker:
   # Clock-margin width in std-devs of measured chunk wall-time (see
   # `_BATCH_MARGIN_SIGMAS`). Set via UCI `ClockBatchMarginSigmas`; 0 disables.
         self._batch_margin_sigmas: float = _BATCH_MARGIN_SIGMAS
+  # Root Gumbel-noise strength, UCI `GumbelScale`. 0 = deterministic search,
+  # which is what every build before this option did (the chunk hard-coded
+  # `add_noise=False`). See `set_root_noise_scale` for why this is a worker
+  # field and not `GumbelConfig.gumbel_scale`.
+        self._root_noise_scale: float = 0.0
   # Per-search Welford accumulator of chunk durations (ms), reset in `run()`.
         self._batch_n: int = 0
         self._batch_mean_ms: float = 0.0
@@ -779,6 +801,207 @@ class SearchWorker:
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
         )
+
+  # ─── realized search configuration ─────────────────────────────────────────
+  # The readback an operator uses to prove what the engine ran. Both methods
+  # read the LIVE objects, never the requested options: `UseVL=true` against an
+  # evaluator without the slot API is accepted and then falls through to
+  # classic Gumbel, and an EngineOptions-derived answer would confidently
+  # report a path that never ran.
+  #
+  # "Live object" has to mean the object the DESCENT dereferences, not the one
+  # the setter writes. `realized_search_values` sourced the PUCT family from
+  # `self._cfg` while every PUCT descent reads a construction-time snapshot in
+  # its own pool/chunker config -- so the readback could not witness the very
+  # defect `rebuild_puct_helpers` exists to fix, and printed `CPuct = 99.0
+  # [LIVE]` byte-identically whether or not the rebuild ran. A readback that
+  # re-reads the request is not evidence about the search. `_puct_descent_values`
+  # below closes that; everything it does not cover is `self._cfg`, and that IS
+  # the live source for those fields (see the docstring).
+
+    def realized_search_path(self) -> str:
+        """Which search path a `run()` right now would actually dispatch to.
+
+        Mirrors `_run_one_chunk`'s branch order exactly. Note `searchmoves`
+        routes that ONE move back onto the classic Gumbel path regardless of
+        installed pools -- that is per-`go` and not part of the configuration,
+        so it is not reported here.
+        """
+        if self._rpg_pool is not None:
+            return "rpg"
+        if self._pucv_pool is not None:
+            return "pucv_pool"
+        if self._walker_pool is not None:
+            return "walker"
+        if self._pucv is not None:
+            return "pucv"
+        return "gumbel"
+
+    def _puct_descent_values(self) -> dict[str, float | int]:
+        """The PUCT family as the LIVE descent object holds it; `{}` on gumbel.
+
+        Branch order mirrors `realized_search_path` so the readback can never
+        answer off a pool the dispatch would not reach.
+        """
+        pool = (
+            self._rpg_pool if self._rpg_pool is not None else
+            self._pucv_pool if self._pucv_pool is not None else
+            self._walker_pool
+        )
+        if pool is not None:
+            cfg = pool._cfg
+            return {f: getattr(cfg, f) for f in _PUCT_DESCENT_FIELDS}
+        if self._pucv is not None:
+            return {
+                field: getattr(self._pucv, attr)
+                for field, attr in _PUCV_CHUNKER_ATTRS.items()
+            }
+        return {}
+
+    def realized_search_values(self) -> dict[str, float | int | bool]:
+        """Every registered search parameter's value as the search will read it.
+
+        Keyed by `SearchOption.field`. The four worker-level entries are not
+        `GumbelConfig` fields at all -- `vloss_weight` and `minibatch_size` are
+        function ARGUMENTS of `run_gumbel_root_many_c`, which is exactly why no
+        `dataclasses.replace`-based override surface ever reached them and why
+        every arena before 2026-07-28 silently ran `vloss_weight=0`.
+
+        "As the search will read it" is meant literally, and it costs the
+        `_puct_descent_values` override to be true. Every PUCT path snapshots
+        `c_puct` / `cpuct_factor` / `cpuct_base` / `fpu_reduction` /
+        `vloss_weight` into its own config at construction, so answering those
+        from `self._cfg` would be re-reading the REQUEST -- and the readback
+        would then certify `CPuct = 99.0 [LIVE]` on a pool still descending on
+        2.5, which is exactly the failure it is supposed to expose. It stayed
+        wrong for a reachable reason too: `rebuild_puct_helpers` closes before
+        it rebuilds, so a `_build_walker_pool` that raises leaves the CLOSED
+        pool installed with the old config, and a `_cfg`-sourced readback would
+        certify the new value while the next `go` errors out.
+
+        Everything not in that override does come off `self._cfg`, and for
+        those fields `_cfg` IS the live object, not a proxy for it: the classic
+        Gumbel chunk `dataclasses.replace`s `_cfg` per call, `RootParallelGumbelPool`
+        dereferences the shared config at candidate-selection time, and
+        `chunk_sims` / `minibatch_size` / `root_noise_scale` are read off the
+        worker fields returned here.
+        """
+        cfg = self._cfg
+        out: dict[str, float | int | bool] = {
+            "chunk_sims": int(self._chunk_sims),
+            "vloss_weight": int(self._vloss_weight),
+            "minibatch_size": int(self._minibatch_size),
+            "root_noise_scale": float(self._root_noise_scale),
+        }
+        for opt in SEARCH_OPTIONS:
+            if opt.field in out:
+                continue
+            value = getattr(cfg, opt.field)
+            out[opt.field] = (
+                bool(value) if isinstance(value, bool) else
+                int(value) if isinstance(value, int) else float(value)
+            )
+        for field, value in self._puct_descent_values().items():
+            out[field] = (
+                int(value) if isinstance(value, int) else float(value)
+            )
+        return out
+
+    def set_gumbel_field(self, field: str, value: float | int | bool) -> None:
+        """Set one `GumbelConfig` field on the config the search reads.
+
+        `self._cfg` is the object every path reads its shape off, and the
+        classic Gumbel chunk `dataclasses.replace`s it per call, so a plain
+        assignment IS live there. The PUCT helpers (walker pool / PucvChunker /
+        multi-GPU pool / RPG) copy c_puct & friends at CONSTRUCTION time, so
+        for those the assignment alone is inert and something must rebuild
+        them: `Engine._sync_cpuct_to_worker` routes RPG to
+        `_reinstall_rpg_if_active`, the multi-GPU pool to
+        `_install_multi_gpu_pucv_pool`, and walker / single-thread PucvChunker
+        to `rebuild_puct_helpers` below.
+        """
+        setattr(self._cfg, field, value)
+
+    def rebuild_puct_helpers(self) -> None:
+        """Re-materialize the helpers that snapshot c_puct & friends at build.
+
+        The walker pool copies the family into its own `WalkerPoolConfig` and
+        `PucvChunker` copies it into `_c_puct` / `_fpu_red` / `_cpuct_*`, both
+        at CONSTRUCTION. Writing `_cfg.c_puct` therefore does not reach either
+        descent, which is the "accepted, certified realized, and then ignored"
+        failure this whole option surface exists to prevent — and it is worse
+        than dead, because the stale value silently lands later on the next
+        command that happens to rebuild (`VLossWeight`, `MaxBatch`, ...).
+
+        Deliberately does NOT reset the tree, and that is a TRADE-OFF, not a
+        clean win -- measured, not asserted. On pucv with the tree reused
+        across two `go`s (`test_a_mid_tree_puct_change_keeps_the_tree_and_is_a_hybrid`):
+
+            A  default throughout                     go2 = (1921, 14753)
+            B  c_puct=99 from construction            go2 = (1921, 15144)
+            C  default go -> setoption 99 -> go       go2 = (1921, 15094)
+
+        `C` equals NEITHER. The accumulated visit distribution is itself a
+        function of the old constant, so until the tree turns over the search
+        is a hybrid of two regimes rather than the one the operator configured.
+        Q and N stay individually meaningful; the SELECTION they feed does not
+        become the new configuration's selection immediately.
+
+        Kept anyway: discarding a tree mid-game (or mid-ponder) to honour a
+        `setoption` is the worse failure, and at handshake time -- the
+        TCEC/cutechess case this surface exists for -- the tree is empty and the
+        question does not arise. Note the asymmetry with the row directly above
+        it in `searchconfig`: `VLossWeight` DOES reset, because vloss-adjusted Q
+        is not comparable across weights, whereas these only bias selection.
+
+        Also deliberately does not set `Engine._warmup_dirty`. Re-warming exists
+        for knobs that RESHAPE the batch (Threads, LeafGather, VLGather,
+        MinibatchSize); a rebuilt chunker reallocates the same shapes against
+        the same evaluator, so the captured graph stays valid.
+        """
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+            self._walker_pool = self._build_walker_pool(self._n_walkers)
+        if self._pucv is not None:
+            self._pucv = self._build_pucv()
+
+    def set_root_noise_scale(self, scale: float) -> None:
+        """Root Gumbel-noise strength for match play. 0 = deterministic.
+
+        The worker field, not `GumbelConfig.gumbel_scale`, is the source of
+        truth: the classic chunk has always forced `add_noise=False`, so the
+        dataclass field was unreadable from here, and its library default of
+        1.0 would silently switch noise ON for every existing SearchWorker
+        caller the moment the gate moved.
+
+        The mirror into `_cfg` is what makes the option reach the OTHER Gumbel
+        path: `RootParallelGumbelPool` reads `add_noise`/`gumbel_scale` off the
+        shared config by reference at candidate-selection time, so writing them
+        here reaches an installed RPG pool live, with no reinstall. Without the
+        mirror this option would be a textbook silent null on `rpg`.
+        """
+        self._root_noise_scale = max(0.0, float(scale))
+        self._cfg.add_noise = self._root_noise_scale > 0.0
+        self._cfg.gumbel_scale = self._root_noise_scale
+
+    def set_chunk_sims(self, n: int) -> None:
+        """Sims per search chunk. Read fresh by `_chunk_budget` each chunk."""
+        self._chunk_sims = max(1, int(n))
+
+    def set_vloss_weight(self, n: int) -> None:
+        """Virtual-loss weight. Live for the Gumbel chunk (passed per call);
+        the pooled PUCT paths bake it into their config at construction, so
+        rebuild whichever one is installed."""
+        n = max(0, int(n))
+        if n == self._vloss_weight:
+            return
+        self._vloss_weight = n
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+            self._walker_pool = self._build_walker_pool(self._n_walkers)
+        if self._pucv is not None:
+            self._pucv = self._build_pucv()
+        self.reset_tree()
 
     def set_eval_cache_entries(self, n: int) -> None:
         """Set eval-cache capacity for newly built search helpers.
@@ -1959,7 +2182,14 @@ class SearchWorker:
             cfg=dataclasses.replace(
                 self._cfg,
                 simulations=chunk,
-                add_noise=False,
+  # `add_noise` was hard-coded False here, which made the whole root-noise
+  # mechanism unreachable from the engine. Deriving the gate from the scale
+  # keeps the default (scale 0.0) bit-identical to that while giving
+  # `GumbelScale` somewhere to land. `temperature` stays 0: match play picks
+  # the best-scored survivor, noise only perturbs which candidates get looked
+  # at, not which of them is finally played.
+                add_noise=self._root_noise_scale > 0.0,
+                gumbel_scale=self._root_noise_scale,
                 temperature=0.0,
             ),
             evaluator=self._evaluator,

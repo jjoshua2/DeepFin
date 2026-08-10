@@ -13,8 +13,18 @@ rather than asserting that a field was assigned:
   ``gumbel_policy_diagnostics(...)["entropy"]`` --- literally the per-ply term
   that is summed into the published ``gumbel_policy_entropy_mean``.
 * ``test_tempering_disables_the_compact_bf16_leaf_transport`` watches which
-  evaluator method the search calls, which pins BOTH the cost mechanism and the
-  invariant that leaf priors are never left untempered.
+  evaluator method the search calls, and with what input dtype, which pins the
+  cost mechanism on both of the transports the gate switches.
+* ``test_the_dense_leaf_prior_is_tempered_exactly_once`` asserts on the array
+  ``continue_gumbel_sims`` is HANDED. ⚑ The published in-effect proof
+  (``gumbel_policy_entropy_mean``) is computed from the correctly-tempered ROOT,
+  so it fires at full pre-registered strength even if leaf priors are left
+  untempered --- it cannot tell "working" from "half-working". The dense leaf is
+  new production code (before this PR ``policy_temp`` was unreachable, so
+  ``_use_legal_bf16`` was always True and that branch never ran in selfplay) and
+  the gate this PR adds forces it whenever T != 1. A leaf ``T^2`` and a wholly
+  untempered leaf both survived this file plus five other suites with ZERO kills
+  until this guard existed.
 * ``test_null_control_...`` is the null control: it must pass under every
   mutation of the plumbing, so a mutation run that kills everything is
   recognisable as a broken harness rather than a good test suite.
@@ -39,8 +49,14 @@ from typing import Any
 import numpy as np
 import pytest
 
-from chess_anti_engine.moves import MODEL_POLICY_SIZE, POLICY_SIZE
+from chess_anti_engine.moves import (
+    MODEL_POLICY_SIZE,
+    POLICY_SIZE,
+    policy_batch_to_full_if_needed,
+)
 from chess_anti_engine.mcts.gumbel import (
+    POLICY_TEMP_MAX,
+    POLICY_TEMP_MIN,
     GumbelConfig,
     apply_policy_temp,
     gumbel_policy_diagnostics,
@@ -67,13 +83,36 @@ class _StubEvaluator:
     different order once the priors change.
     """
 
-    supports_input_bf16_bits = False
     pads_batches_internally = True
 
-    def __init__(self, *, legal_bf16: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        legal_bf16: bool = True,
+        input_bf16: bool = False,
+        compact_root: bool = False,
+        policy_width: int = _EVAL_POLICY,
+    ) -> None:
         self._legal_bf16 = bool(legal_bf16)
+        self.supports_input_bf16_bits = bool(input_bf16)
+        self.supports_compact_root_policy = bool(compact_root)
+        self._policy_width = int(policy_width)
         self.dense_calls = 0
         self.legal_bf16_calls = 0
+        # Which evaluator method received each batch, in call order. The ROOT is
+        # always evaluated first, so ``calls[0]`` names the ROOT transport --- the
+        # only outside-visible signal of which root branch gumbel_c chose.
+        self.calls: list[str] = []
+        # ⚑ The dtype of ``x`` IS the input transport: gumbel_c allocates the
+        # leaf encode buffer ``np.uint16 if _use_input_bf16 else np.float32``
+        # (gumbel_c.py:1213). Recording it is the only way to observe the bf16
+        # INPUT half of the gate from outside the search.
+        self.leaf_input_dtypes: list[np.dtype[Any]] = []
+        # Raw, PRE-temperature leaf logits, most recent batch first. The dense
+        # leaf arm evaluates and then immediately hands the tempered result to
+        # ``continue_gumbel_sims``, so "last returned" is the batch the tree is
+        # about to receive.
+        self.last_leaf_policy: np.ndarray | None = None
 
     @property
     def supports_legal_bf16(self) -> bool:
@@ -94,22 +133,29 @@ class _StubEvaluator:
         n = int(arr.shape[0])
         flat = arr.reshape(n, -1)
         keys = (flat * np.arange(1, flat.shape[1] + 1, dtype=np.float32)).sum(axis=1)
-        pol = np.empty((n, _EVAL_POLICY), dtype=np.float32)
+        width = self._policy_width
+        pol = np.empty((n, width), dtype=np.float32)
         wdl = np.empty((n, 3), dtype=np.float32)
         for i, key in enumerate(keys):
             seed = int(abs(float(key)) * 97.0) & 0x7FFFFFFF if np.isfinite(key) else 0
             rng = np.random.default_rng(seed)
-            pol[i] = (rng.standard_normal(_EVAL_POLICY) * 2.5).astype(np.float32)
+            pol[i] = (rng.standard_normal(width) * 2.5).astype(np.float32)
             wdl[i] = (rng.standard_normal(3) * 0.5).astype(np.float32)
         return pol, wdl
 
     def evaluate_encoded(self, x: np.ndarray, relations=None):
         assert relations is None
         self.dense_calls += 1
-        return self._dense_logits(x)
+        self.calls.append("evaluate_encoded")
+        self.leaf_input_dtypes.append(np.asarray(x).dtype)
+        pol, wdl = self._dense_logits(x)
+        self.last_leaf_policy = pol.copy()
+        return pol, wdl
 
     def evaluate_legal_bf16(self, x, legal_flat, legal_counts):
         self.legal_bf16_calls += 1
+        self.calls.append("evaluate_legal_bf16")
+        self.leaf_input_dtypes.append(np.asarray(x).dtype)
         pol, wdl = self._dense_logits(x)
         counts = np.asarray(legal_counts, dtype=np.int64)
         flat = np.asarray(legal_flat, dtype=np.int64)
@@ -155,6 +201,8 @@ def _run_production_shape(
     pre_pol: np.ndarray | None = None,
     pre_wdl: np.ndarray | None = None,
     cached_root: bool = True,
+    tree: Any = None,
+    add_noise: bool = True,
 ):
     """Run the C Gumbel search with the kwarg set production actually uses.
 
@@ -163,6 +211,25 @@ def _run_production_shape(
     ``target_batch`` and ``vloss_weight``. ``cached_root=False`` drops only the
     two ``pre_*`` arrays, which is the UCI-style path where the search evaluates
     its own roots --- used by the exactly-once parity test below.
+
+    ``per_game_add_noise`` is ``True``, not ``False``: production computes
+    ``noise_py = [scale > 0.0 for scale in scale_py]``
+    (``network_turn.py``, ``_run_network_turn_group``) and every full-sim ply
+    carries a positive Gumbel scale, so root noise is ON for every ply this
+    experiment is measured over. Passing ``[False]`` also silently made the
+    accompanying ``per_game_gumbel_scale=[1.0]`` inert, i.e. two of the three
+    ``per_game_*`` lists the docstring claims to mirror were not being
+    exercised at all.
+
+    ``tree`` lets a caller substitute a recorder for the C ``MCTSTree`` and
+    observe what the LEAF transport is handed; ``None`` means a fresh tree.
+
+    NOT mirrored, so the docstring does not imply otherwise: ``root_node_ids``
+    is ``None`` here where production passes ``[state.root_ids[...]]``, so the
+    tree-REUSE branch (``gumbel_c.py:797-812``) is never taken. Every ply here
+    is a cold root. That matters for reading the leaf test above --- in
+    production a reused root is not re-expanded, so from ply 2 onward the root
+    prior IS the leaf transport's output and a leaf break compounds.
 
     Uses the PRODUCTION mapping (`build_selfplay_gumbel_config`) so a break in
     the SearchConfig -> GumbelConfig wiring shows up here, not only in a
@@ -189,9 +256,9 @@ def _run_production_shape(
         cfg=cfg, evaluator=ev, cboards=cboards,
         pre_pol_logits=pre_pol if cached_root else None,
         pre_wdl_logits=pre_wdl if cached_root else None,
-        tree=MCTSTree(), root_node_ids=None,
+        tree=MCTSTree() if tree is None else tree, root_node_ids=None,
         per_game_simulations=[sims] * n,
-        per_game_add_noise=[False] * n,
+        per_game_add_noise=[bool(add_noise)] * n,
         per_game_gumbel_scale=[1.0] * n,
         allow_terminal_root_shortcuts=True, return_diagnostics=True,
         vloss_weight=1, target_batch=0,
@@ -289,19 +356,33 @@ def test_tempering_disables_the_compact_bf16_leaf_transport() -> None:
     half-applied intervention that would still look 'in effect' at the root.
     (2) It is the whole measured cost: dense float32 POLICY_SIZE leaf transport
     instead of compact bf16, plus the loss of the bf16 INPUT transport that is
-    gated on the same boolean.
+    gated on the same boolean (``_use_input_bf16 = _has_input_bf16 and
+    _use_legal_bf16``, gumbel_c.py:1198).
 
-    Asserted by watching which evaluator method the search calls, so it cannot
-    be satisfied by a comment or by reading the source.
+    BOTH halves are observed, not just the first. The input half is read off the
+    DTYPE the evaluator is handed: gumbel_c allocates the leaf encode buffer as
+    ``np.uint16 if _use_input_bf16 else np.float32`` (gumbel_c.py:1213), so
+    uint16 in means the bf16 input transport is live and float32 means it was
+    lost. An earlier revision of this docstring claimed to pin the input half
+    while the stub reported ``supports_input_bf16_bits = False``, which made
+    ``_use_input_bf16`` False in BOTH arms --- the claim was unobservable, so
+    the stub now opts in.
+
+    Asserted by watching which evaluator method the search calls and with what,
+    so it cannot be satisfied by a comment or by reading the source.
     """
-    ev_flat = _StubEvaluator(legal_bf16=True)
+    ev_flat = _StubEvaluator(legal_bf16=True, input_bf16=True)
     _ents, _p, _m, _e = _search_entropies(1.0, evaluator=ev_flat)
     assert ev_flat.legal_bf16_calls > 0, (
         "T=1.0 must keep the compact bf16 leaf transport --- if this fails the "
         "cost table in the ledger was measured against the wrong baseline"
     )
+    assert set(ev_flat.leaf_input_dtypes) == {np.dtype(np.uint16)}, (
+        "T=1.0 must keep the bf16 INPUT transport too; the leaf encode buffer "
+        f"came through as {sorted({str(d) for d in ev_flat.leaf_input_dtypes})}"
+    )
 
-    ev_temp = _StubEvaluator(legal_bf16=True)
+    ev_temp = _StubEvaluator(legal_bf16=True, input_bf16=True)
     _ents2, _p2, _m2, _e2 = _search_entropies(1.5, evaluator=ev_temp)
     assert ev_temp.legal_bf16_calls == 0, (
         "T=1.5 used the compact bf16 leaf transport, whose C softmax has no "
@@ -309,6 +390,224 @@ def test_tempering_disables_the_compact_bf16_leaf_transport() -> None:
         "were tempered"
     )
     assert ev_temp.dense_calls > 0
+    assert set(ev_temp.leaf_input_dtypes) == {np.dtype(np.float32)}, (
+        "T=1.5 kept the bf16 INPUT transport: it is gated on the same boolean "
+        "as the leaf transport, so the ledger's cost line is measuring one "
+        f"fallback where production takes two. Saw "
+        f"{sorted({str(d) for d in ev_temp.leaf_input_dtypes})}"
+    )
+
+
+def test_the_root_noise_the_harness_mirrors_is_not_an_inert_flag() -> None:
+    """``per_game_add_noise=True`` is production's value AND a live one.
+
+    ``_run_mcts_group`` computes ``noise_py = [scale > 0.0 for scale in
+    scale_py]``, which is True on every full-sim ply, so root Gumbel noise is on
+    for every ply this experiment is measured over. An earlier revision of this
+    harness passed ``[False]``, which also made the ``per_game_gumbel_scale``
+    list it passes alongside inert --- two of the three ``per_game_*`` lists the
+    docstring claims to mirror were doing nothing.
+
+    Setting it right is only half the fix: a flag that production sets and the
+    search ignores is the same defect one layer down. So compare the two arms at
+    the SAME seed and require them to differ. If they do not, the harness is not
+    running the noisy regime it says it runs, whatever the argument says.
+    """
+    _b_on, probs_on, acts_on, _m1, _d1, _e1 = _run_production_shape(1.5, add_noise=True)
+    _b_off, probs_off, acts_off, _m2, _d2, _e2 = _run_production_shape(
+        1.5, add_noise=False,
+    )
+    differs = list(acts_on) != list(acts_off) or any(
+        float(np.max(np.abs(np.asarray(probs_on[i], dtype=np.float64)
+                            - np.asarray(probs_off[i], dtype=np.float64)))) > 0.0
+        for i in range(len(probs_on))
+    )
+    assert differs, (
+        "per_game_add_noise made no difference to the search: the harness is "
+        "claiming production's noisy root regime while running the deterministic "
+        "one, and every entropy number above is measured off the wrong regime"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The DENSE LEAF prior --- the transport this experiment switches on
+# ---------------------------------------------------------------------------
+
+
+class _LeafTransportRecorder:
+    """Proxy for the C ``MCTSTree`` that records what the LEAF transport is HANDED.
+
+    ⚑ Why the observation has to be here and nowhere else. The pre-registered
+    in-effect proof for this experiment is ``gumbel_policy_entropy_mean``, which
+    is built from the ROOT improved policy. Leave the leaf priors untempered and
+    that metric still moves its full pre-registered amount --- the proof cannot
+    tell "working" from "half-working", which is exactly the half-applied
+    intervention ``test_tempering_disables_the_compact_bf16_leaf_transport``
+    names as its own motivation. So the leaf needs its own observation.
+
+    Intercepting ``_policy_logits_to_full`` does NOT substitute: a regression
+    that tempers again *outside* that function is invisible to a spy inside it.
+    What the tree receives is the last value before the priors enter the search,
+    so that is what gets asserted on.
+    """
+
+    def __init__(self, tree: Any, evaluator: _StubEvaluator, temp: float) -> None:
+        self._tree = tree
+        self._evaluator = evaluator
+        self._temp = float(temp)
+        self.dense_leaf_batches = 0
+        self.bf16_leaf_batches = 0
+        self.residuals: list[float] = []
+
+    def __getattr__(self, name: str) -> Any:
+  # Reached only for names the proxy does not define, so the hasattr()
+  # probes gumbel_c uses to choose a leaf transport still see the real
+  # tree's API and the transport gate is not perturbed by the recorder.
+        return getattr(object.__getattribute__(self, "_tree"), name)
+
+    def continue_gumbel_sims(self, pol: np.ndarray, wdl: np.ndarray) -> Any:
+        raw = self._evaluator.last_leaf_policy
+        assert raw is not None, "the dense leaf arm ran without an evaluator call"
+        got = np.asarray(pol, dtype=np.float32)
+        rows = int(got.shape[0])
+        want = policy_batch_to_full_if_needed(
+            np.asarray(raw[:rows], dtype=np.float32) / np.float32(self._temp),
+            fill_value=-1e9,
+        )
+        self.dense_leaf_batches += 1
+        self.residuals.append(float(np.max(np.abs(got.astype(np.float64) - want))))
+        return self._tree.continue_gumbel_sims(pol, wdl)
+
+    def continue_gumbel_sims_legal_bf16(self, pol: np.ndarray, wdl: np.ndarray) -> Any:
+        self.bf16_leaf_batches += 1
+        return self._tree.continue_gumbel_sims_legal_bf16(pol, wdl)
+
+
+@pytest.mark.parametrize(
+    "width", [POLICY_SIZE, MODEL_POLICY_SIZE], ids=["full_leaf", "compact_leaf"],
+)
+@pytest.mark.parametrize("temp", [1.0, 1.5, 0.4])
+def test_the_dense_leaf_prior_is_tempered_exactly_once(temp: float, width: int) -> None:
+    """``continue_gumbel_sims`` must receive ``to_full(raw_leaf_logits / T)``.
+
+    The deciding leaf test. ``gumbel_c.py:1302`` is new production code: before
+    this PR ``policy_temp`` was unreachable, so ``_use_legal_bf16`` was always
+    True and the dense leaf branch never ran in selfplay. The gate this PR adds
+    FORCES that branch whenever T != 1, and it compounds --- a reused root
+    (``gumbel_c.py:797-812``) is not re-expanded, so from ply 2 onward the root
+    prior production searches from IS the leaf transport's output.
+
+    T=1.0 is the control, and it is a real one rather than a skipped case: the
+    ``legal_bf16=False`` evaluator forces the dense branch at every temperature,
+    so this same assertion runs at T=1.0, where both a leaf ``T^2`` and a wholly
+    untempered leaf are arithmetic no-ops and must stay green.
+
+    Both leaf widths are covered because ``_policy_logits_to_full`` divides
+    BEFORE it scatters: production's compact ``lc0_1858`` head exercises the
+    composition, a full-4672 evaluator exercises the division alone.
+    """
+    ev = _StubEvaluator(legal_bf16=False, policy_width=width)
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    rec = _LeafTransportRecorder(MCTSTree(), ev, temp)
+    _run_production_shape(temp, evaluator=ev, tree=rec)
+
+    assert rec.dense_leaf_batches > 0, (
+        "no dense leaf batch reached the tree, so this test asserted nothing --- "
+        "the leaf transport moved and the guard needs re-pointing"
+    )
+    assert rec.bf16_leaf_batches == 0
+    assert max(rec.residuals) == 0.0, (
+        f"T={temp}, leaf width {width}: the prior the LEAF transport handed the "
+        f"tree is not to_full(raw/T) --- max|leaf_prior - to_full(raw/T)| = "
+        f"{max(rec.residuals)} over {rec.dense_leaf_batches} batches. Either the "
+        "leaf is tempered a second time (T^2) or not at all; both leave the root "
+        "correctly tempered, so gumbel_policy_entropy_mean would still fire its "
+        "full pre-registered effect on a half-applied intervention."
+    )
+
+
+@pytest.mark.parametrize("temp", [1.0, 1.5])
+def test_the_production_gate_sends_tempered_priors_to_the_dense_leaf(temp: float) -> None:
+    """The same invariant on the branch the PRODUCTION gate actually selects.
+
+    The test above forces the dense arm by taking ``evaluate_legal_bf16`` away.
+    This one leaves the evaluator fully capable, exactly as the broker is, and
+    observes the routing the ``policy_temp_active`` gate performs: at T=1.0 the
+    tree must see ONLY compact bf16 leaf batches, at T=1.5 ONLY dense ones ---
+    and those dense ones must carry the tempered prior.
+    """
+    ev = _StubEvaluator(legal_bf16=True)
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    rec = _LeafTransportRecorder(MCTSTree(), ev, temp)
+    _run_production_shape(temp, evaluator=ev, tree=rec)
+
+    if temp == 1.0:
+        assert rec.bf16_leaf_batches > 0, (
+            "T=1.0 must keep the compact bf16 leaf transport; the ledger's cost "
+            "table was measured against that baseline"
+        )
+        assert rec.dense_leaf_batches == 0, (
+            "T=1.0 fell back to the dense leaf transport, so the ledger's cost "
+            "baseline is the expensive path, not the cheap one"
+        )
+        return
+
+    assert rec.dense_leaf_batches > 0, (
+        "T != 1 must route every leaf batch through the tempering-aware dense "
+        "transport --- the C bf16 softmax has no temperature hook"
+    )
+    assert rec.bf16_leaf_batches == 0, (
+        "T != 1 still used the compact bf16 leaf transport for some batches: "
+        "those leaf priors are UNTEMPERED while the root's are tempered"
+    )
+    assert max(rec.residuals) == 0.0, (
+        f"T={temp}: dense leaf prior != to_full(raw/T), max residual "
+        f"{max(rec.residuals)} over {rec.dense_leaf_batches} batches"
+    )
+
+
+@pytest.mark.parametrize("temp", [1.0, 1.5])
+def test_tempering_disables_the_compact_root_transport(temp: float) -> None:
+    """The OTHER gate this PR adds, and the only one that skips tempering wholesale.
+
+    ``_use_compact_root`` (gumbel_c.py:593-602) gained a
+    ``not policy_temp_active(...)`` clause in this PR. It has to be there: the
+    compact-root arm assigns ``_root_compact_logits`` and the tempering line
+    below is guarded by ``if _root_compact_logits is None`` (gumbel_c.py:689),
+    so with the clause removed the ROOT prior is not tempered at all --- not
+    doubled, not halved, simply skipped, while every leaf is tempered normally.
+
+    Observable from outside because the two root branches call DIFFERENT
+    evaluator methods: compact-root evaluates the root through
+    ``evaluate_legal_bf16``, the dense root through ``evaluate_encoded``. The
+    root is always the first batch, so ``calls[0]`` names the branch taken.
+
+    ⚑ Reachability, so a later reader does not over- or under-read this: the
+    gate needs ``pre_pol_logits is None`` (the search evaluates its own roots)
+    AND a broker-class evaluator advertising ``supports_compact_root_policy``,
+    and no production caller combines them today --- selfplay always passes
+    cached root logits. It is guarded anyway because "no caller does this today"
+    is the same class of argument as ``gate_games: 0``: a config fact, not an
+    invariant, and this line is one ``pre_pol_logits`` refactor away from live.
+    """
+    ev = _StubEvaluator(legal_bf16=True, input_bf16=True, compact_root=True)
+    _run_production_shape(temp, evaluator=ev, cached_root=False)
+
+    assert ev.calls, "the search never called the evaluator"
+    if temp == 1.0:
+        assert ev.calls[0] == "evaluate_legal_bf16", (
+            "T=1.0 must keep the compact root transport; if this fails the gate "
+            "is off for a reason unrelated to policy_temp and this test is "
+            "no longer observing what it claims"
+        )
+        return
+    assert ev.calls[0] == "evaluate_encoded", (
+        "T != 1 used the compact ROOT transport, which bypasses "
+        "_policy_logits_to_full entirely (gumbel_c.py:689): the root prior "
+        "would be UNTEMPERED while every leaf prior was tempered"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -466,28 +765,113 @@ def test_a_change_restarts_the_worker_session() -> None:
     assert "gumbel_policy_temp" in WorkerSession._RESUME_COMPAT_EXEMPT_KEYS
 
 
-@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
-def test_a_non_positive_temperature_is_rejected_not_swallowed(bad: float) -> None:
-    """``apply_policy_temp`` treats <= 0 as a no-op --- reject it at load.
+_REJECTED_TEMPS = [
+    0.0,
+    -1.0,
+    float("nan"),
+    float("inf"),
+  # ⚑ Finite, positive, and still degenerate. 1e300 divides every float32
+  # logit to exactly 0.0 -- a uniform prior, i.e. search with the policy head
+  # switched off -- and 1e-300 divides them to +/-inf. `math.isfinite` closes
+  # the `inf` LITERAL, not the pathology, so the band closes the class.
+    1e300,
+    1e-300,
+  # ⚑ LITERALS, deliberately not written relative to POLICY_TEMP_MIN/MAX.
+  # Everything below that was relative -- these two entries, and the accepted
+  # set in the twin test -- simply FOLLOWS the band, so widening the band to
+  # [1e-30, 1e30] re-opened the exact pathology the band was added to close
+  # with nothing failing. A test that derives its expectation from the thing
+  # under test cannot fail. 100.0 and 0.001 pin the band's MAGNITUDE: moving a
+  # bound past either is now a deliberate act that has to edit this list.
+    100.0,
+    0.001,
+    POLICY_TEMP_MAX * 1.0001,
+    POLICY_TEMP_MIN * 0.9999,
+]
+
+
+@pytest.mark.parametrize("bad", _REJECTED_TEMPS)
+def test_a_degenerate_temperature_is_rejected_not_swallowed(bad: float) -> None:
+    """``apply_policy_temp`` treats out-of-band values as no-ops --- reject at load.
 
     Otherwise ``gumbel_policy_temp: 0`` is accepted by the validator, published
-    to every worker, and does nothing: a knob that cannot fail.
+    to every worker, and does nothing: a knob that cannot fail. And
+    ``gumbel_policy_temp: 1e300`` is worse than nothing -- accepted, published,
+    ACTIVE, and it deletes the policy prior.
     """
     with pytest.raises(ValueError, match="gumbel_policy_temp"):
         TrialConfig.from_dict({"gumbel_policy_temp": bad})
 
 
-@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
+@pytest.mark.parametrize("good", [POLICY_TEMP_MIN, 0.4, 1.0, 1.5, 2.5, POLICY_TEMP_MAX])
+def test_the_band_admits_every_temperature_anyone_actually_uses(good: float) -> None:
+    """The band must not be so tight it rejects the experiment it is guarding.
+
+    A bound is only defensible if its accepted set is checked too; otherwise
+    "reject absurd values" quietly becomes "reject the value going live".
+    Endpoints are inclusive, and 1.5 (production) / 1.2 (the decided floor) /
+    0.4 and 2.5 (the values these tests search at) all sit inside.
+    """
+    assert TrialConfig.from_dict({"gumbel_policy_temp": good}).gumbel_policy_temp == good
+    assert policy_temp_active(good) == (good != 1.0)
+
+
+def test_the_band_edges_still_leave_a_prior_worth_having() -> None:
+    """The band's PURPOSE, asserted on behaviour instead of on its own numbers.
+
+    Both parametrised tests above take their edge cases from
+    ``POLICY_TEMP_MIN``/``POLICY_TEMP_MAX``, so widening the band moves them
+    too and neither can ever fail --- a test that derives its expectations from
+    the thing under test is decoration. The literals now in ``_REJECTED_TEMPS``
+    fix that at two fixed points; this fixes it at the concept.
+
+    The band exists so that a value the loader ACCEPTS still leaves a usable
+    prior. That is checkable directly: temper a realistic 16-nat logit spread at
+    each edge and require the prior to survive it.
+
+    * At the soft edge the ordering must still carry real mass --- top:bottom at
+      least 2:1. A 16-nat spread gives 2.23 at T=20 and 1.17 at T=100, so this
+      binds at T ~= 23 and no widening past that can pass.
+    * At the sharp edge the tempered logits must stay finite. This is the
+      ``1e-300 -> +/-inf`` failure, and float32 overflows around T ~= 1e-38.
+    """
+    logits = np.array([[8.0, 4.0, 0.0, -4.0, -8.0]], dtype=np.float32)
+
+    soft = apply_policy_temp(
+        logits, cfg=dataclasses.replace(GumbelConfig(), policy_temp=POLICY_TEMP_MAX),
+    )
+    e = np.exp(soft.astype(np.float64) - soft.max())
+    p = e / e.sum()
+    ratio = float(p.max() / p.min())
+    assert ratio >= 2.0, (
+        f"at POLICY_TEMP_MAX={POLICY_TEMP_MAX} the prior is effectively uniform "
+        f"(top:bottom {ratio:.3f} on a 16-nat spread): the loader would accept a "
+        f"value that searches with the policy head switched off, which is the "
+        f"pathology the band was added to close"
+    )
+
+    sharp = apply_policy_temp(
+        logits, cfg=dataclasses.replace(GumbelConfig(), policy_temp=POLICY_TEMP_MIN),
+    )
+    assert np.all(np.isfinite(sharp)), (
+        f"at POLICY_TEMP_MIN={POLICY_TEMP_MIN} tempering overflows float32 to "
+        f"+/-inf: {sharp}"
+    )
+    assert float(sharp.max() - sharp.min()) > 0.0
+
+
+@pytest.mark.parametrize("bad", _REJECTED_TEMPS)
 def test_every_temperature_the_loader_rejects_is_inert_in_the_search(bad: float) -> None:
     """The predicate must agree with the loader on EVERY entry point.
 
     The yaml is validated, but ``scripts/arena_standard.py --cand-gumbel
-    policy_temp=inf`` reaches ``dataclasses.replace`` without that validator.
+    policy_temp=1e300`` reaches ``dataclasses.replace`` without that validator.
     ``inf`` used to satisfy ``policy_temp_active`` and turn the prior uniform
     (``logits/inf`` is all zeros) --- an arena searching with its policy head
     effectively off, while the realized-shape log line reported tempering as
     working. ``policy_temp_active`` is THE definition of "tempering is on", so
-    the same four values the loader refuses must be no-ops here.
+    every value the loader refuses must be a no-op here: same instrument, same
+    rejection set, no entry point left holed.
     """
     assert not policy_temp_active(bad)
     cfg = dataclasses.replace(GumbelConfig(), policy_temp=bad)

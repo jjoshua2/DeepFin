@@ -90,6 +90,14 @@ PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
     "c_scale_root": 7.0,
     "q_visit_exp_root": -1.0,
     "topk": 32,
+  # 1.0 is a numeric no-op (`apply_policy_temp` returns the logits unchanged),
+  # so adding it here changed no search. It is here because ABSENCE was the
+  # defect: `policy_temp` is a live positive control in the very audit that
+  # named the four inert knobs, and it was the one shape knob no play-path
+  # config surface could set -- not this dict, not `--*-gumbel`'s realized
+  # dump, not the UCI CLI. A knob that cannot be set is not "at its default",
+  # it is unreachable, and an unreachable knob reads as a settled question.
+    "policy_temp": 1.0,
 }
 
 # GumbelConfig fields that PROVABLY cannot change a Gumbel search's output, and
@@ -111,6 +119,53 @@ PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
 INERT_GUMBEL_KNOBS: frozenset[str] = frozenset(
     {"c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction"}
 )
+
+# GumbelConfig fields the C fast path (`run_gumbel_root_many_c`) does not
+# implement. They are NOT inert -- `run_gumbel_root_many` (Python) really acts
+# on them -- but they are dropped WITHOUT A WORD by whichever dispatcher picks
+# the C path, which is the other way a knob returns a flawless null.
+#
+# The guard therefore has to live on the DISPATCH, not on a CLI parser: the CLI
+# is not what chooses the path. `selfplay.match.pick_moves_for_boards` already
+# routes volatility-enabled configs to the Python path and warns
+# (`warn_volatility_python_path`); `assert_c_path_can_run` is the same contract
+# stated once, so a NEW python-only field cannot be added without a dispatcher
+# either honouring it or refusing loudly. See
+# `tests/test_uci_search_options.py::test_the_c_path_refuses_a_python_only_knob`.
+PY_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset(
+    {"volatility_q_scale", "volatility_fpu"}
+)
+
+
+def python_only_knobs_set(cfg: GumbelConfig) -> tuple[str, ...]:
+    """Python-path-only fields on ``cfg`` that are at a non-default value."""
+    base = GumbelConfig()
+    return tuple(
+        sorted(
+            k for k in PY_ONLY_GUMBEL_KNOBS
+            if float(getattr(cfg, k)) != float(getattr(base, k))
+        )
+    )
+
+
+def assert_c_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
+    """Refuse to enter the C Gumbel path with a Python-only knob set.
+
+    Raising beats warning here. A warning on a knob that silently does nothing
+    still produces a complete, reproducible, wrong measurement; the caller's
+    only correct moves are to drop to the Python path or to zero the knob, and
+    both are things the caller must decide.
+    """
+    offenders = python_only_knobs_set(cfg)
+    if not offenders:
+        return
+    raise ValueError(
+        f"{where}: {', '.join(offenders)} are Python-path only; call "
+        "run_gumbel_root_many (mcts/gumbel.py) instead. The C path has no code "
+        "for them, so it would drop them silently and return a search that "
+        "looks like a clean null. Zero them, or route to the Python path "
+        "(see PY_ONLY_GUMBEL_KNOBS)."
+    )
 
 # Lc0 classic-search defaults (Oct 2025 engine flags page) for the UCI engine's
 # PUCT descent -- the walker pool and the multi-GPU PUCV pool, which really do
@@ -230,6 +285,27 @@ class GumbelConfig:
     volatility_factor_clip: float = 4.0
 
 
+# Sanity band for the policy prior temperature, in the ONE place both the
+# loader (`trial_config._policy_temperature`) and the hot-path predicate
+# (`policy_temp_active`) read it from.
+#
+# ⚑ These are semantic bounds, not float32 bounds, and deliberately far tighter.
+# The float32 cliffs are ~1e-38 (a logit of magnitude 1 divides to +inf) and
+# ~1e39 (every logit divides to zero / denormal, i.e. an exactly uniform prior).
+# Anything past ~20 is already uniform IN EFFECT long before it is numerically
+# invalid --- at T=1e300 `apply_policy_temp` returns all-zero logits, which is
+# search with the policy head switched off, and `math.isfinite` waves it
+# through. That is the failure the band exists to close, so the band has to sit
+# where the knob stops being a temperature rather than where IEEE754 stops.
+#
+# 0.05 / 20.0 are 8x beyond the widest values anything here has used: the
+# sharpest tested is 0.4, the softest 2.5, and production runs 1.5 with a
+# decided floor of 1.2. A run wanting more than a 13x departure from production
+# is not tuning a prior temperature and should say so in the ledger first.
+POLICY_TEMP_MIN = 0.05
+POLICY_TEMP_MAX = 20.0
+
+
 def policy_temp_active(policy_temp: float) -> bool:
     """True when ``policy_temp`` will actually change the priors.
 
@@ -239,23 +315,24 @@ def policy_temp_active(policy_temp: float) -> bool:
     operator-facing claim can never drift apart: a guard has to share the
     criterion's instrument or it is guarding a different question.
 
-    ``<= 0`` and non-finite (``nan``/``inf``) both read as *off* rather than
-    raising because this is the hot path; config loading rejects all of them
-    (``trial_config._positive_float``) so they cannot reach here from the yaml
-    in the first place.
+    Out-of-band values read as *off* rather than raising because this is the hot
+    path; config loading rejects the same set (``trial_config._policy_temperature``)
+    so they cannot reach here from the yaml in the first place.
 
-    ⚑ ``inf`` is excluded deliberately, not incidentally. ``nan`` already fell
-    out as off via ``pt > 0.0``, but ``inf`` used to read as ACTIVE, and
-    ``apply_policy_temp`` then returns all-zero logits --- a uniform prior over
-    every legal move, i.e. search with the policy head switched off, announced
-    in the realized-shape log line as tempering working normally. The yaml
-    cannot deliver it, but ``arena_standard.py --cand-gumbel policy_temp=inf``
-    reaches ``dataclasses.replace`` without passing the loader's validator. The
-    predicate is THE definition of "tempering is on", so it has to agree with
-    the loader rather than leave one entry point a hole.
+    ⚑ The band, not just ``isfinite``, is what makes this safe. ``nan`` falls out
+    via the comparison and ``inf`` used to read as ACTIVE --- ``apply_policy_temp``
+    then returns all-zero logits, a uniform prior over every legal move,
+    announced in the realized-shape log line as tempering working normally. But
+    ``isfinite`` closes only the literal: ``1e300`` produces the identical
+    all-zero prior and ``1e-300`` produces all-inf, both finite and both
+    ACTIVE under a bare ``pt > 0``. The yaml cannot deliver any of them, but
+    ``arena_standard.py --cand-gumbel policy_temp=1e300`` reaches
+    ``dataclasses.replace`` without passing the loader's validator. This
+    predicate is THE definition of "tempering is on", so it agrees with the
+    loader on the whole rejection set rather than leaving one entry point a hole.
     """
     pt = float(policy_temp)
-    return math.isfinite(pt) and pt > 0.0 and pt != 1.0
+    return math.isfinite(pt) and POLICY_TEMP_MIN <= pt <= POLICY_TEMP_MAX and pt != 1.0
 
 
 def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:

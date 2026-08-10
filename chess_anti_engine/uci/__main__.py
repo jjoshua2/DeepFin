@@ -11,10 +11,12 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import io
+from collections.abc import Mapping
 import logging
 import os
 import sys
 import threading
+from typing import TypedDict
 
 import chess
 import numpy as np
@@ -36,6 +38,7 @@ from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_VLOSS_WEIGHT,
     GumbelConfig,
 )
+from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS, SearchOption
 
 from .engine import Engine, EngineOptions, _emit_info_string, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
@@ -527,6 +530,17 @@ def _build_engine(
   # dropping). Verified no-op/improvement 256->16k, fixes the 32k reversal.
     c_scale_root: float = 7.0,
     q_visit_exp_root: float = -1.0,
+  # Search-time policy-prior temperature (UCI `PolicyTemperature`). 1.0 is a
+  # no-op; it had no plumbing here at all before, which is why no play-path
+  # config could set it. != 1.0 drops the compact-legal bf16 leaf transport;
+  # the ~1.9x that was long quoted for it is a DIRECT-evaluator number that did
+  # not reproduce on the broker path (0.87-1.01x) — see docs/operations.md
+  # "The cost of PolicyTemperature != 1.0".
+    policy_temp: float = 1.0,
+    halving_div: int = 2,
+  # Root Gumbel-noise strength (UCI `GumbelScale`). 0 = the deterministic
+  # search every prior build ran.
+    root_noise_scale: float = 0.0,
     n_walkers: int,
     vloss_weight: int,
     walker_gather: int,
@@ -564,6 +578,8 @@ def _build_engine(
             q_global_scale=q_global_scale,
             c_scale_root=c_scale_root,
             q_visit_exp_root=q_visit_exp_root,
+            policy_temp=policy_temp,
+            halving_div=halving_div,
             add_noise=False,
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
@@ -577,6 +593,7 @@ def _build_engine(
         pucv_vloss_mode=pucv_vloss_mode,
         eval_cache_entries=eval_cache_entries,
     )
+    worker.set_root_noise_scale(root_noise_scale)
     # Same default Engine applies when options is None; resolved here too so
     # the RPG install below reads concrete knobs.
     opts = options if options is not None else EngineOptions()
@@ -611,6 +628,17 @@ def _build_engine(
             worker.install_multi_gpu_pucv(
                 factories, gather=effective_gather, as_factories=True,
             )
+  # Advertise what was BUILT, not what EngineOptions happens to default to.
+  # These knobs arrive as CLI args and land on the worker; the handshake reads
+  # EngineOptions. Copying worker -> options here makes the worker the single
+  # direction of truth, so `--c-scale 0.3` can never be advertised as 0.025.
+  #
+  # AFTER the pool installs, not before: `realized_search_values` answers the
+  # PUCT family off the installed descent object, so a copy taken before
+  # `install_root_parallel_gumbel` reads the classic-Gumbel config and then
+  # advertises it for a search that is about to run on the RPG pool's.
+    for _opt in SEARCH_OPTIONS:
+        opts.set_search_value(_opt.field, worker.realized_search_values()[_opt.field])
     return engine
 
 
@@ -682,7 +710,13 @@ def _resolve_multi_gpu_startup(
     return root_gumbel, pucv_fallback, pucv_fallback and not root_gumbel
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    """The CLI. Split out of ``main`` so a test can read the REAL defaults.
+
+    ``_seed_search_options_from_args`` claims every registry option is seeded
+    from a named argparse ``dest``; that claim is only checkable if the parser
+    can be built without running the engine.
+    """
     p = argparse.ArgumentParser(prog="chess-anti-engine-uci")
   # --checkpoint is required, but we accept DEEPFIN_CKPT as the default so
   # the `deepfin` console-script entry point (from pyproject.toml) can be
@@ -707,6 +741,31 @@ def main() -> int:
                         "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
                         "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
     p.add_argument("--c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="Gumbel c_visit constant (default: 50.0)")
+    p.add_argument(
+        "--policy-temp", type=float, default=float(PLAY_SEARCH_DEFAULTS["policy_temp"]),
+        help="search-time temperature on the policy PRIOR (logits/T) before it "
+             "seeds the tree. >1 softens, <1 sharpens, 1.0 (default) = no-op. "
+             "Also UCI `PolicyTemperature`, range 0.5-5.0. != 1.0 disables the "
+             "compact-legal bf16 leaf transport; the ~1.9x that cost was long "
+             "quoted at was measured on the DIRECT evaluator (which has no bf16 "
+             "transport to lose) and did NOT reproduce on the broker path "
+             "(0.87-1.01x) — measure on your own transport, do not budget 1.9x. "
+             "NOT policy_target_temp, which is a training-time knob on the "
+             "policy TARGET and never runs during play.",
+    )
+    p.add_argument(
+        "--halving-div", type=int, default=2,
+        help="Gumbel sequential-halving divisor: each round keeps "
+             "ceil(n_cands/div). 2 = standard halving (default). Also UCI "
+             "`HalvingDiv`.",
+    )
+    p.add_argument(
+        "--gumbel-scale", type=float, default=0.0,
+        help="root Gumbel-noise strength for match play (default 0.0 = the "
+             "deterministic search every prior build ran). >0 re-enables root "
+             "noise at that strength for opening diversity. Also UCI "
+             "`GumbelScale`.",
+    )
   # PUCT-descent knobs (walker pool / multi-GPU PUCV). They do NOT reach the
   # Gumbel search -- see mcts.gumbel.INERT_GUMBEL_KNOBS -- which is why their
   # defaults come from PLAY_PUCT_DEFAULTS and not PLAY_SEARCH_DEFAULTS.
@@ -860,6 +919,237 @@ def main() -> int:
                    ),
                    help="shared TorchInductor/Triton cache root (env: DEEPFIN_COMPILE_CACHE; "
                    "default: ~/.cache/deepfin/worker_cache)")
+    return p
+
+
+# Registry field -> the argparse `dest` that decides its value AT STARTUP.
+# `None` means "no CLI argument": the worker is built at the registry default
+# and the handshake already advertises it.
+#
+# This map exists because `uci` is answered from `startup_options` on the READER
+# thread while the worker is still being built on the build thread, so the copy
+# `_build_engine` makes worker -> options lands strictly AFTER the first
+# handshake a GUI ever sees. Without seeding, `--c-scale 0.077 --topk 9` was
+# advertised as 0.025 / 32 on that first `uci` and only corrected on a second
+# one most GUIs never send. `_seed_search_options_from_args` REFUSES to run when
+# a registry entry is missing here, so a new option cannot quietly go back to
+# advertising a default the engine is not running.
+_SEARCH_OPTION_ARG: Mapping[str, str | None] = {
+    "policy_temp": "policy_temp",
+    "c_scale": "c_scale",
+    "c_visit": "c_visit",
+    "c_scale_root": "c_scale_root",
+    "c_visit_root": "c_visit_root",
+    "q_visit_exp": "q_visit_exp",
+    "q_visit_exp_root": "q_visit_exp_root",
+    "q_visit_floor": "q_visit_floor",
+    "q_global_scale": "q_global_scale",
+    "halving_div": "halving_div",
+    "topk": "topk",
+    "root_noise_scale": "gumbel_scale",
+    "chunk_sims": "chunk_sims",
+    "vloss_weight": "vloss_weight",
+  # No CLI flag: `run_gumbel_root_many_c(target_batch=...)` starts at 0 (the
+  # C-side default) and only a `setoption` moves it.
+    "minibatch_size": None,
+    "c_puct": "c_puct",
+    "cpuct_factor": "cpuct_factor",
+    "cpuct_base": "cpuct_base",
+    "fpu_reduction": "fpu_reduction",
+}
+
+
+class _EngineSearchKwargs(TypedDict):
+    """Per-key types for the search kwargs, so `**`-splatting stays checked.
+
+    A plain `dict[str, float | int | bool]` collapses `chunk_sims: int` and
+    `c_scale: float` into one union, and `_build_engine(**that)` then type-errors
+    on every int/bool parameter. Widening `_build_engine` or suppressing the
+    diagnostic would both trade a real check for quiet — this keeps it.
+    """
+
+    chunk_sims: int
+    topk: int
+    c_scale: float
+    c_visit: float
+    c_puct: float
+    cpuct_factor: float
+    cpuct_base: float
+    fpu_reduction: float
+    c_visit_root: float
+    q_visit_floor: float
+    q_visit_exp: float
+    q_global_scale: bool
+    c_scale_root: float
+    q_visit_exp_root: float
+    policy_temp: float
+    halving_div: int
+    root_noise_scale: float
+    vloss_weight: int
+
+
+def _engine_search_kwargs(args: argparse.Namespace) -> _EngineSearchKwargs:
+    """The search kwargs ``main()`` hands ``_build_engine`` — the ENGINE's source.
+
+    Extracted from ``main()``'s call so it can be read without starting an
+    engine, and it is deliberately spelled out here rather than derived from
+    ``_SEARCH_OPTION_ARG``: production really does pass every search value
+    straight off ``args``, independently of that map, and a test asserting
+    "the first handshake matches the engine that is about to be built" needs
+    its two sides to come from two sources.
+
+    ⚑ This is the fix for a control conditioned on its own outcome. The old
+    test built its ``_build_engine`` kwargs from ``_SEARCH_OPTION_ARG``, so
+    demoting an option to ``None`` (`_SEARCH_OPTION_ARG["cpuct_factor"] = None`,
+    reviewer mutant `n2`) removed it from the EXPECTATION as well as from the
+    seeding, and both sides fell back to the same default. The mutant survived
+    all 193 tests while `--cpuct-factor 7.0` really did produce a first
+    handshake of 3.89 against an engine running 7.0.
+    """
+    return {
+        "chunk_sims": int(args.chunk_sims), "topk": int(args.topk),
+        "c_scale": float(args.c_scale), "c_visit": float(args.c_visit),
+        "c_puct": float(args.c_puct),
+        "cpuct_factor": float(args.cpuct_factor),
+        "cpuct_base": float(args.cpuct_base),
+        "fpu_reduction": float(args.fpu_reduction),
+        "c_visit_root": float(args.c_visit_root),
+        "q_visit_floor": float(args.q_visit_floor),
+        "q_visit_exp": float(args.q_visit_exp),
+        "q_global_scale": bool(args.q_global_scale),
+        "c_scale_root": float(args.c_scale_root),
+        "q_visit_exp_root": float(args.q_visit_exp_root),
+        "policy_temp": float(args.policy_temp),
+        "halving_div": int(args.halving_div),
+        "root_noise_scale": float(args.gumbel_scale),
+        "vloss_weight": int(args.vloss_weight),
+    }
+
+
+def _seed_search_options_from_args(
+    options: EngineOptions, args: argparse.Namespace,
+) -> None:
+    """Point ``options`` at the values the worker is ABOUT to be built with.
+
+    Coerces through ``SearchOption.kind`` so the handshake prints the same type
+    the ``setoption`` handler would parse back, and REFUSES a value outside the
+    option's own advertised ``lo``/``hi``.
+
+    ⚑ The range check is not decoration: seeding is what MAKES the handshake
+    print the CLI value, so without it this helper is the thing that mints a
+    self-contradictory declaration. Measured before the check:
+
+        --topk 1        -> option name Topk type spin default 1 min 2 max 256
+        --policy-temp 0 -> option name PolicyTemperature type string default 0.0
+
+    ``Topk default 1 min 2`` is a declaration a GUI can be defeated by: echo the
+    advertised default back and the engine answers ``info string Topk: 1 is out
+    of range [2, 256]; keeping 1``. ``PolicyTemperature 0.0`` is worse -- it is
+    a value the search does not run (``policy_temp_active(0.0)`` is False), so
+    the artifact this whole commit exists to make truthful would be advertising
+    a temperature the engine is not using. Before seeding, the first handshake
+    printed the in-range registry default: wrong, but not self-inconsistent. The
+    symptom is created here, so the fix belongs here.
+
+    REFUSE rather than clamp: ``setoption`` refuses out-of-range and keeps the
+    current value, and a startup that silently ran 2 for a requested 1 would be
+    the same accepted-then-ignored defect with a friendlier face. Every argparse
+    default is in band (``test_every_cli_default_is_inside_its_advertised_range``),
+    so this cannot fire on an unmodified command line.
+    """
+    unmapped = [o.name for o in SEARCH_OPTIONS if o.field not in _SEARCH_OPTION_ARG]
+    if unmapped:
+        raise AssertionError(
+            f"search options with no startup source: {unmapped}. Add them to "
+            "_SEARCH_OPTION_ARG (or map them to None if no CLI flag sets "
+            "them) — otherwise the first `uci` advertises a default the "
+            "engine is not running."
+        )
+    for opt in SEARCH_OPTIONS:
+        dest = _SEARCH_OPTION_ARG[opt.field]
+        if dest is None:
+            continue
+        raw = getattr(args, dest)
+        value: float | int | bool
+        if opt.kind == "check":
+            value = bool(raw)
+        elif opt.kind == "spin":
+            value = int(raw)
+        else:
+            value = float(raw)
+        _refuse_out_of_range_startup_value(opt, dest, value)
+        options.set_search_value(opt.field, value)
+
+
+def _refuse_out_of_range_startup_value(
+    opt: SearchOption, dest: str, value: float | int | bool,
+) -> None:
+    """The startup half of the ``setoption`` range check, same bounds object.
+
+    Reads ``opt.lo`` / ``opt.hi`` -- the very numbers ``declaration()`` prints
+    in the ``min``/``max`` fields and ``_set_search_option`` enforces -- so the
+    advertised range, the accepted range and the startup range cannot drift.
+
+    ``check`` options have no range; float (``string``) options advertise theirs
+    in the docs rather than on the handshake line, but the handler enforces it,
+    so startup does too.
+    """
+    if isinstance(value, bool) or opt.lo is None or opt.hi is None:
+        return
+    if opt.lo <= float(value) <= opt.hi:
+        return
+    flag = "--" + dest.replace("_", "-")
+    raise SystemExit(
+        f"{flag} {value!r}: {opt.name} accepts [{opt.lo}, {opt.hi}]. The "
+        "engine's own `setoption` handler refuses this value, so starting on "
+        "it would advertise a default the engine would not accept back — and "
+        f"for PolicyTemperature it is also a value the search does not run. "
+        "Refusing to start."
+    )
+
+
+def _startup_engine_options(
+    args: argparse.Namespace,
+    *,
+    search_parallel: str,
+    restore_multi_gpu_pucv: bool,
+) -> EngineOptions:
+    """The options object the pre-build ``uci`` handshake is answered from.
+
+    Construction and search-option seeding live together on purpose: a separate
+    ``_seed_search_options_from_args(...)`` call at the call site is a line
+    somebody can drop, and the symptom would be a silently wrong handshake
+    rather than an error.
+    """
+    options = EngineOptions(
+        threads=max(1, int(args.walkers)),
+        leaf_gather=max(1, int(args.walker_gather)),
+        use_multi_gpu_pucv=restore_multi_gpu_pucv,
+        pucv_pending_mode=str(args.pucv_pending_mode),
+        search_parallel=search_parallel,
+        vl_gather=max(32, int(args.vl_gather)),
+        max_batch=max(64, int(args.max_batch)),
+        eval_cache_entries=max(0, int(args.eval_cache_entries)),
+  # Clamp the time knobs (like the spin options above): a non-positive
+  # time_budget_scale would collapse every move to the 20ms floor, and a
+  # negative abort_factor would abort the instant the move leads. 0.0 is the
+  # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
+        abort_factor=max(0.0, float(args.abort_factor)),
+        time_budget_scale=max(0.1, float(args.time_budget_scale)),
+  # <= 0 is the OFF sentinel (preserved through the clamp); positive values are
+  # clamped to (0, 1] inside limits_from_go so an out-of-range soft target can't
+  # exceed the hard deadline.
+        optimum_fraction=min(1.0, float(args.optimum_fraction)),
+        moves_horizon=max(1, int(args.moves_horizon)),
+    )
+  # The whole search surface — including the CPuct family, which used to be
+  # spelled out as three constructor keywords here.
+    _seed_search_options_from_args(options, args)
+    return options
+
+
+def main() -> int:
+    p = _build_parser()
     args = p.parse_args()
 
     if not args.checkpoint:
@@ -904,29 +1194,10 @@ def main() -> int:
     ) = _resolve_multi_gpu_startup(
         str(args.search_parallel), args.multi_gpu_pucv, len(devices),
     )
-    startup_options = EngineOptions(
-        threads=max(1, int(args.walkers)),
-        leaf_gather=max(1, int(args.walker_gather)),
-        use_multi_gpu_pucv=restore_multi_gpu_pucv,
-        pucv_pending_mode=str(args.pucv_pending_mode),
+    startup_options = _startup_engine_options(
+        args,
         search_parallel="gumbel" if use_root_parallel_gumbel else "pucv",
-        cpuct=float(args.c_puct),
-        cpuct_factor=float(args.cpuct_factor),
-        cpuct_base=float(args.cpuct_base),
-        vl_gather=max(32, int(args.vl_gather)),
-        max_batch=max(64, int(args.max_batch)),
-        eval_cache_entries=max(0, int(args.eval_cache_entries)),
-  # Clamp the time knobs (like the spin options above): a non-positive
-  # time_budget_scale would collapse every move to the 20ms floor, and a
-  # negative abort_factor would abort the instant the move leads. 0.0 is the
-  # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
-        abort_factor=max(0.0, float(args.abort_factor)),
-        time_budget_scale=max(0.1, float(args.time_budget_scale)),
-  # <= 0 is the OFF sentinel (preserved through the clamp); positive values are
-  # clamped to (0, 1] inside limits_from_go so an out-of-range soft target can't
-  # exceed the hard deadline.
-        optimum_fraction=min(1.0, float(args.optimum_fraction)),
-        moves_horizon=max(1, int(args.moves_horizon)),
+        restore_multi_gpu_pucv=restore_multi_gpu_pucv,
     )
 
   # Background-build so `uci` can be answered before model load finishes.
@@ -1025,16 +1296,8 @@ def main() -> int:
             )
             engine_ref[0] = _build_engine(
                 evaluator=evaluator, primary_device=devices[0],
-                chunk_sims=args.chunk_sims, topk=args.topk,
-                c_scale=args.c_scale, c_visit=args.c_visit,
-                c_puct=args.c_puct,
-                cpuct_factor=float(args.cpuct_factor),
-                cpuct_base=float(args.cpuct_base),
-                fpu_reduction=args.fpu_reduction,
-                c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
-                q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
-                c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
-                n_walkers=n_walkers, vloss_weight=int(args.vloss_weight),
+                **_engine_search_kwargs(args),
+                n_walkers=n_walkers,
                 walker_gather=walker_gather,
                 pucv_vloss_mode=1 if args.pucv_pending_mode == "virtual-mean" else 0,
                 max_batch=startup_options.max_batch,

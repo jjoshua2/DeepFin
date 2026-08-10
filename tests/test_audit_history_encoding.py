@@ -406,6 +406,7 @@ def _run_net_candidates(
     at._net_candidates(
         [chess.Board(f) for f in FENS], checkpoint="unused", device="cpu",
         batch_size=4, seed=0, profiles={"search": profile}, stored_x=stored_x,
+        requested_gumbel_overrides=(),
     )
     return evaluator
 
