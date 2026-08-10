@@ -28,7 +28,11 @@ from typing import Any
 import pytest
 import torch
 
-from chess_anti_engine.train.losses import compute_loss, retemper_main_policy_target
+from chess_anti_engine.train.losses import (
+    compute_loss,
+    policy_target_temp_active,
+    retemper_main_policy_target,
+)
 from chess_anti_engine.train.trainer import Trainer
 
 WIDTH = 8
@@ -788,6 +792,144 @@ def test_the_startup_line_fires_for_the_CONTROL_arm_too(
     the log would prove nothing. The default must print too."""
     _trainer(tmp_path)
     line = _startup_temp_line(capsys)
-    assert "policy_target_temp=1 " in line
+    assert "policy_target_temp=1.0 " in line
     assert "reshape_active=False" in line
-    assert "eval_pinned_temp=1" in line
+
+
+@pytest.mark.parametrize("temp", [1.0, 1.3, 2.2])
+def test_the_startup_line_READS_the_eval_pin_rather_than_asserting_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], temp: float,
+) -> None:
+    """⚑ REVIEW FINDING F5. `eval_pinned_temp=1` used to be a string LITERAL in
+    the f-string -- a claim, not a measurement, in the one line whose entire
+    justification is that it reports realized values. Under a mutant that
+    un-pins the eval ruler (`_eval_loss_kwargs` returning `self.policy_target_temp`)
+    the literal kept asserting the pin while the ruler moved with the arm.
+
+    Now it is a read of `_eval_loss_kwargs`, which is only constructible at the
+    END of `__init__` -- hence the print's placement. Assert the printed field
+    against the property, at temperatures where a literal `1` and the real read
+    would diverge if the pin ever broke.
+    """
+    t = _trainer(tmp_path, policy_target_temp=temp)
+    line = _startup_temp_line(capsys)
+    printed = float(line.split("eval_pinned_temp=")[1].split()[0])
+    assert printed == pytest.approx(t._eval_loss_kwargs["policy_target_temp"]), (
+        "eval_pinned_temp is not a read of _eval_loss_kwargs -- it is a claim"
+    )
+    assert printed == 1.0, "the eval ruler is no longer pinned"
+
+
+class _UnpinnedEvalTrainer(Trainer):
+    """A Trainer whose eval ruler is NOT pinned to 1.0.
+
+    The only fixture that can tell a real read of ``_eval_loss_kwargs`` apart
+    from the string literal the field used to be: on the production class the
+    pin IS 1.0, so a literal `1.0` agrees with the property by coincidence and
+    every assertion comparing the two passes. Here the property returns
+    something else, so the printed field must move with it.
+    """
+
+    @property
+    def _eval_loss_kwargs(self) -> dict[str, Any]:
+        return {**self._loss_kwargs, "policy_target_temp": 7.25}
+
+
+def test_eval_pinned_temp_is_a_READ_and_not_a_LITERAL(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ THE MUTANT THIS EXISTS FOR: `f"eval_pinned_temp=1.0"`. It survives every
+    test that compares the printed field to `_eval_loss_kwargs`, because on the
+    real class both are 1.0 -- the assertion checks the literal against itself.
+    Subclassing moves the property away from 1.0, and only a genuine read
+    follows it."""
+    _UnpinnedEvalTrainer(
+        _TinyPolicyModel(), device="cpu", lr=1e-3, optimizer="adamw",
+        use_amp=False, log_dir=tmp_path, tb_log_interval=1000,
+        prefetch_batches=False, policy_target_temp=1.3,
+    )
+    line = _startup_temp_line(capsys)
+    printed = float(line.split("eval_pinned_temp=")[1].split()[0])
+    assert printed == pytest.approx(7.25), (
+        "eval_pinned_temp did not follow _eval_loss_kwargs -- it is a hard-coded "
+        f"claim, not a measurement (line: {line!r})"
+    )
+
+
+def test_the_startup_line_survives_a_full_round_trip_of_the_value(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ REVIEW FINDING F7. `.6g` rendered `1.0000001` as `1` -- self-contradictory
+    beside `reshape_active=True`, and byte-identical to the control arm's field.
+    `!r` is shortest-round-trip, so the text must reconstruct the exact float."""
+    temp = 1.0000001
+    t = _trainer(tmp_path, policy_target_temp=temp)
+    line = _startup_temp_line(capsys)
+    printed_text = line.split("policy_target_temp=")[1].split()[0]
+    assert float(printed_text) == t.policy_target_temp
+    assert printed_text != "1", (
+        "the arm's value renders identically to the control's -- an operator "
+        "reading this line cannot tell the two arms apart"
+    )
+    assert "reshape_active=True" in line
+
+
+# ── The shared predicate, pinned ON ITS OWN ─────────────────────────────────
+#
+# ⚑ REVIEW FINDING F6, and it is the cost of sharing an instrument. Every test
+# above reads `reshape_active` and compares it to the OBSERVED early return --
+# but both sides call `policy_target_temp_active`, so a change to the
+# predicate's BOUNDARY moves them together and the comparison is satisfied by
+# construction. The reviewer's mutant
+#
+#     return float(temp) != 1.0   ->   return abs(float(temp) - 1.0) > 1e-3
+#
+# passed the whole file. Sharing the definition was right; it just means the
+# definition needs coverage that does not go through either consumer.
+
+
+@pytest.mark.parametrize(
+    ("temp", "expected"),
+    [
+        (1.0, False),          # the ONLY value that is off
+        (1.0000001, True),     # inside a 1e-3 dead-band: kills that mutant
+        (1.0001, True),        # inside a 1e-3 dead-band: kills that mutant
+        (0.9999, True),        # inside it from below
+        (1.001, True),         # the dead-band's own edge
+        (0.5, True),           # the accepted floor
+        (1.2, True), (1.5, True), (2.2, True),
+        (float("nan"), True),  # invalid, but "does it bite" is still yes
+        (float("inf"), True),
+    ],
+)
+def test_policy_target_temp_active_is_exact_at_1_with_NO_dead_band(
+    temp: float, expected: bool,
+) -> None:
+    """1.0 and only 1.0 is off. A tolerance band here would silently train a
+    near-1.0 arm as the control while the log line reported it as armed."""
+    assert policy_target_temp_active(temp) is expected
+
+
+@pytest.mark.parametrize("temp", [1.0000001, 1.0001, 0.9999, 1.001])
+def test_a_near_one_temperature_REALLY_reshapes_the_target(temp: float) -> None:
+    """The predicate's answer has to match the arithmetic at the same boundary,
+    checked WITHOUT going through the predicate: a fresh tensor object back from
+    `retemper_main_policy_target` is the observable that the early return did
+    not fire."""
+    probe = _target([[0.7, 0.2, 0.07, 0.03]])
+    out = retemper_main_policy_target(probe, temp=temp)
+    assert out is not probe, f"temp={temp} took the identity early return"
+    assert not torch.equal(out, probe), f"temp={temp} left the target unchanged"
+
+
+def test_policy_target_temp_active_is_the_predicate_the_early_return_USES(
+) -> None:
+    """The two must not merely agree on today's values -- the early return has to
+    be the predicate's negation for every probe, including the boundary ones the
+    parametrisations above pin."""
+    probe = _target([[0.6, 0.25, 0.1, 0.05]])
+    for temp in (0.5, 0.9999, 1.0, 1.0000001, 1.001, 1.2, 2.2):
+        took_identity = retemper_main_policy_target(probe, temp=temp) is probe
+        assert took_identity is (not policy_target_temp_active(temp)), (
+            f"temp={temp}: the early return and the predicate disagree"
+        )

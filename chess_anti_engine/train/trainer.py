@@ -1064,6 +1064,19 @@ class TrainMetrics:
   # divided by matrix_lr_multiplier.
     opt_lr_mean: float = 0.0
     opt_lr_max: float = 0.0
+  # ⚑ DRAW-SEQUENCE PROVENANCE — the other half of "same seed, same rows".
+  # `batches_drawn` is the total microbatches this call pulled from the buffer,
+  # and `transient_cuda_retry_batches` is how many of them were REPLACEMENT
+  # draws after a transient CUDA error (`train_steps`' retry path calls
+  # `add_retry_batches`, which advances the buffer's RNG). A single retry in one
+  # arm of a paired offline A/B desynchronises that arm's row sequence from the
+  # other's PERMANENTLY, for every subsequent step, and it was previously
+  # visible only as a `logging.warning` — nothing in a report or a metrics row
+  # recorded it, so a silently de-paired sweep looked exactly like a clean one.
+  # `scripts/retarget_retrain.py` asserts both are equal across arms.
+  # Expected to be exactly 0.0 in a healthy run.
+    batches_drawn: float = 0.0
+    transient_cuda_retry_batches: float = 0.0
 
 
 # Map compute_loss dict keys → TrainMetrics field names where they differ.
@@ -2081,28 +2094,6 @@ class Trainer:
   # test or the offline rig can call the helper without a Trainer.
         self.policy_target_temp = float(policy_target_temp)
         retemper_main_policy_target(torch.ones(1, 2), temp=self.policy_target_temp)
-  # ⚑ THE ONLY ARTIFACT THAT NAMES THE REALIZED TARGET TEMPERATURE. Everything
-  # else a reader might reach for reports a DIFFERENT number: `params.json` is
-  # the LAUNCH config (and says nothing about what the constructor accepted),
-  # and `scripts/audit_targets.py`'s "production training target" row is
-  # rebuilt from the flat `temperature` key -- the selfplay SAMPLING
-  # temperature, an unrelated knob -- so it reads identically whether or not
-  # this one is live. Without this line an arm whose value never reached
-  # `compute_loss` is indistinguishable from one whose did reach it, which is this
-  # codebase's signature defect (a value accepted and then silently ignored).
-  # UNCONDITIONAL on purpose: the control arm's `1.0` has to be a positive
-  # record, not an absent line that could equally mean "old code".
-  # `reshape_active` comes from `policy_target_temp_active`, the same predicate
-  # `retemper_main_policy_target` gates its early return on, so the claim and
-  # the arithmetic cannot drift apart.
-  # print(), NOT logging.info() -- the trial actor installs no logging handler,
-  # so an INFO record is discarded; see the export_swa comment below.
-        print(
-            f"[trainer] policy_target_temp={self.policy_target_temp:.6g} "
-            f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
-            "eval_pinned_temp=1",
-            flush=True,
-        )
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
@@ -2194,6 +2185,48 @@ class Trainer:
         self._swa_freq = max(1, int(swa_freq))
         self._swa_model: torch.optim.swa_utils.AveragedModel | None = None
         self._init_swa()
+
+  # ⚑ THE ONLY ARTIFACT THAT NAMES THE REALIZED TARGET TEMPERATURE. Everything
+  # else a reader might reach for reports a DIFFERENT number: `params.json` is
+  # the LAUNCH config (and says nothing about what the constructor accepted),
+  # `scripts/retarget_retrain.py` never writes one at all, and
+  # `scripts/audit_targets.py`'s "production training target" row is rebuilt
+  # from the flat `temperature` key -- the selfplay SAMPLING temperature, an
+  # unrelated knob -- so it reads identically whether or not this one is live.
+  # Without this line an arm whose value never reached `compute_loss` is
+  # indistinguishable from one whose did reach it, which is this codebase's
+  # signature defect (a value accepted and then silently ignored).
+  #
+  # ⚑ LAST STATEMENT OF `__init__`, and that placement is load-bearing. Review
+  # found `eval_pinned_temp=1` written as a string LITERAL when the print sat
+  # beside the assignment above -- a claim, not a measurement, in the one line
+  # whose entire justification is that it reports realized values. It cannot be
+  # a real read up there: `_loss_kwargs` touches `self.w_future` and every other
+  # weight, so reading `_eval_loss_kwargs` mid-constructor raises
+  # `AttributeError: 'Trainer' object has no attribute 'w_future'`. Down here all
+  # three fields are reads of state the training step will actually use. Keep any
+  # new attribute assignment ABOVE this print.
+  #
+  # UNCONDITIONAL on purpose: the control arm's `1.0` has to be a positive
+  # record, not an absent line that could equally mean "old code".
+  # `reshape_active` comes from `policy_target_temp_active`, the same predicate
+  # `retemper_main_policy_target` gates its early return on, so the claim and
+  # the arithmetic cannot drift apart.
+  # `!r`, not `.6g`: review found `.6g` renders 1.0000001 as `1`, which is both
+  # self-contradictory next to `reshape_active=True` and indistinguishable from
+  # the control arm. `repr` is shortest-round-trip, so the printed text always
+  # reconstructs the float that was installed.
+  # print(), NOT logging.info() -- the trial actor installs no logging handler,
+  # so an INFO record is discarded; see the export_swa comment below.
+  # ⚑ NO `^` ANCHOR when grepping for this. Ray prefixes actor stdout with
+  # `(train_trial pid=NNNN)` and an ANSI colour code, so an anchored grep
+  # returns 0 matches on a real trial log and reads as "the arm never ran".
+        print(
+            f"[trainer] policy_target_temp={self.policy_target_temp!r} "
+            f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
+            f"eval_pinned_temp={self._eval_loss_kwargs['policy_target_temp']!r}",
+            flush=True,
+        )
 
     def _init_swa(self) -> None:
         """(Re)initialize SWA from current model weights.
@@ -3498,6 +3531,7 @@ class Trainer:
         clip_counts: dict[str, int] = {
             "clipped": 0, "adaptive_clip": 0, "hard_clip": 0, "nonfinite_grad": 0,
         }
+        transient_cuda_retry_batches = 0
 
         _log = logging.getLogger(__name__)
 
@@ -3539,7 +3573,12 @@ class Trainer:
                 except RuntimeError as exc:
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
-                    batch_iter.add_retry_batches(batch_iter.consumed - consumed_before_attempt)
+                    _retry_batches = batch_iter.consumed - consumed_before_attempt
+                    batch_iter.add_retry_batches(_retry_batches)
+  # Counted, not merely logged. These replacement draws advance the buffer's
+  # RNG, so an arm that retried and an arm that did not are no longer sampling
+  # the same rows — see the TrainMetrics field comment.
+                    transient_cuda_retry_batches += int(_retry_batches)
                     _log.warning("Transient CUDA error (attempt %d/3), retrying: %s", _attempt + 1, exc)
                     torch.cuda.synchronize()
                     torch.cuda.empty_cache()
@@ -3589,6 +3628,11 @@ class Trainer:
             train_samples_seen=int(train_samples_seen),
             opt_lr_mean=float(sum(lr_samples) / len(lr_samples)) if lr_samples else 0.0,
             opt_lr_max=float(max(lr_samples)) if lr_samples else 0.0,
+  # `batch_iter.consumed` survives `close()`, and it is the TOTAL microbatches
+  # this call pulled from the buffer -- retries included. Two paired arms that
+  # disagree on it did not sample the same rows, whatever their shard pools say.
+            batches_drawn=float(batch_iter.consumed),
+            transient_cuda_retry_batches=float(transient_cuda_retry_batches),
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
