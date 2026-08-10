@@ -38048,3 +38048,43 @@ OVER-tighten and then have to ease. A regret undershoot followed by an airbag ea
 evidence for H2 — record it if seen. ⚠ Do NOT read the winrate as a strength yardstick under
 EITHER hypothesis; it is the controlled variable. The regret rate is a progress indicator only
 because the setpoint is fixed.
+
+### AMENDMENT 16 — H2 LARGELY EXCLUDED by its own mandated discriminator; weight shifts to H1
+
+Amendment 15 hedged between H1 (real strength gain) and H2 (post-restart completion-order bias).
+**Run the discriminator the audit mandates and H2 does not survive it.**
+
+`docs/rl_loop_audit.md` C14b is explicit that after the resume fix the ply series is BLIND
+("anyone using the ply ramp to ask 'is this window contaminated?' now gets NO from a contaminated
+window") and that the replacement is **`curriculum_draw_rate`** vs its pre-teardown mean.
+
+| | value |
+|---|---|
+| pre-restart steady state, iters 700-735 (n=36) | **0.4976 +/- 0.0770** |
+| C14's hold rule: mean - 2sd | **0.3436** |
+| post-restart rows 736-744 | 0.5058 0.5439 0.6115 0.4454 0.4648 0.4176 0.4526 0.4272 0.4605 |
+| **minimum** | **0.4176 — never breaches the gate** |
+
+Contrast the KNOWN-contaminated 07-30 teardown B, which the audit priced at -0.0116:
+`0.222 / 0.048 / 0.013 / 0.081 / 0.202 / 0.327 / 0.437 / 0.566 / 0.591` — a collapse to **0.013**
+and a nine-iteration recovery. **We have no collapse whatsoever.** `avg_plies_draw` is flat at
+126-139 across the window (informative here only because it AGREES; per C14b it cannot be relied
+on alone).
+
+⇒ **The completion-order signature is ABSENT.** The observed sequence — raw winrate 0.4506 -> 0.6214,
+controller tightens regret **-0.00482 over 8 iterations**, winrate falls back to 0.5461 (+0.8 sd
+vs the pre-restart 0.5085 +/- 0.0456) — is the textbook absorption of a REAL gain described in
+[[pid_absorbs_strength_gains_into_difficulty]], observed live for the first time.
+
+**Correction to my own reading:** I flagged the 744 winrate drop (0.6214 -> 0.5461, coinciding with
+`resumed%` reaching 0.8%) as evidence FOR H2. That was wrong-headed — a fall back toward the 0.50
+setpoint is exactly what a SUCCESSFUL controller produces after absorbing a gain, so it does not
+discriminate. **The discriminating variable was the draw rate all along, and it was one query away.**
+[[guard_must_share_the_criterion_instrument]]: I reached for a symptom instead of the instrument
+the audit had already designated.
+
+**Still standing, and unchanged:** the iteration-765 read, and the rule that **the verdict is the
+paired arena, never the winrate**. What A16 changes is the prior, not the protocol. Magnitude to
+respect: -0.00482 in 8 iterations vs -0.00935 across the whole 486-iteration span 249-735 — if it
+holds, this window did half of the run's lifetime difficulty progress. That is large enough to be
+worth confirming and large enough to be suspicious of; the arena settles it.
