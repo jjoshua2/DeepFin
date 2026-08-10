@@ -39222,3 +39222,60 @@ iterations) is large if regret means anything at all.
 
 **Cost:** ~40 min of paused training (~8 iterations) for both series.
 **Revert/anchor:** nothing to revert — the run is stopped and resumes unchanged.
+
+### VERDICT 2026-08-10 17:0x — **REFUTED**, and the ladder says the run has given back its whole gain
+
+Both series completed at the full 400 games, parked, `matched_sims 32`, `--search-shape
+training`, seed 42.
+
+| series | pentanomial (cand POV) | score | Elo | 95% CI |
+|---|---|---|---|---|
+| `vs_iter735` | WW 19 / WD_DW 21 / DD_WL 76 / LD_DL 50 / LL 34 | 0.4263 | **−51.6** | [−80.5, −23.5] |
+| `vs_boot512` | WW 28 / WD_DW 46 / DD_WL 65 / LD_DL 33 / LL 28 | 0.5162 | **+11.3** | [−18.4, +41.2] |
+
+**The pre-committed rule fires REFUTED**: ≥300 games (400), point estimate NEGATIVE on the
+calibration arm, CI clear of zero. **`wdl_regret` does not track play strength over this
+window.** Regret fell 0.0560 → 0.0363 (−35%) while the net lost ~52 Elo. No calibration
+constant is published; **Task #170 is answered in the negative — regret is not a usable
+everyday strength ruler**, and any entry in this file that inferred progress from a falling
+regret limit is suspect.
+
+⇒ Retract the "iters 730-780 was a large real move" reading written earlier today. The PID
+was tightening difficulty for a reason other than the model improving, and the post-780
+easing was the airbag responding to genuine weakness, not controller ringing. **Hypothesis
+(B) wins.**
+
+#### ⚑⚑ THE LADDER AGAINST THE FROZEN ANCHOR — the run peaked at ~iter 514 and has declined since
+
+Same anchor (`boot_snap_recheck_0711_0404.pt`), same `training` shape, one lineage
+(boot512 --fresh, 2026-08-04):
+
+| iter | Elo vs boot512 | 95% CI | games |
+|---|---|---|---|
+| 249 | +88.7 | [+18.0, +167.6] | 76 |
+| 399 | +66.8 | [+24.5, +111.2] | 200 |
+| **514** | **+105.5** | [+62.1, +152.4] | 190 |
+| 768 | +58.5 | [−8.4, +130.0] | 84 |
+| **862** | **+11.3** | [−18.4, +41.2] | **400** |
+
+**~94 Elo lost from the iter-514 peak, and iter 862 is now statistically indistinguishable
+from the bootstrap net it started from.** The iter-514 and iter-862 CIs do not overlap, and
+the 862 row is the best-powered of the series (400 games vs 190).
+
+**⚑ TWO INDEPENDENT MEASUREMENTS AGREE, WHICH IS WHY THIS IS NOT AN ARENA ARTIFACT.**
+Today's two series were run separately against different references:
+`iter862 − iter735 = −51.6` and `iter862 − boot512 = +11.3` imply
+**iter735 − boot512 ≈ +62.9**; the ratchet independently measured iter768 vs boot512 at
+**+58.5** on 2026-08-09. Agreement to 4.4 Elo across separate matches, opponents and days.
+
+#### Consequences
+
+1. **Do not resume training as if nothing happened.** ~350 iterations since the peak have
+   made the net worse. The pause is not costing us progress; continuing may be.
+2. **The best net we have is NOT the newest.** `ck_2026-08-09_iter514.pt` is the banked
+   peak. Any promotion/serving decision should use it, not iter 862.
+3. **This is the second time this run family has degraded play strength**
+   (cf. the −48.6 Elo finding). The earlier one was diagnosed as distribution drift; that
+   hypothesis is now live again with a much stronger instrument behind it.
+4. **The external Cheese-2400 check is now a cross-instrument validation of a
+   run-level regression**, not a curiosity. Both nets, node-limited, frozen thereafter.
