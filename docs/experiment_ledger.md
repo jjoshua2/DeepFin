@@ -39100,3 +39100,71 @@ Recorded here so the next session does not rediscover them as a mystery:
 **NOT a merge regression:** the 7-8 `test_uci_smoke` / `test_uci_walker_pool` failures are
 5 s subprocess timeouts that reproduce IDENTICALLY on unmodified `origin/main` in a
 worktree on this same loaded box. Environmental, pre-existing.
+
+### VERDICT 2026-08-10 — the code-parity restart null: **PASS on the regret axis**
+
+Pre-committed rule: *"no step exceeding 2x the historical per-iteration change
+(2.5e-5/iter) sustained over 10 iterations."* Threshold = 5.0e-5/iter.
+
+Measured on the 15 clean post-restart iterations (835-849), 10-iteration bin means:
+
+| bin | regret | ema_wr |
+|---|---|---|
+| 820-829 (pre-restart) | 0.03602 | 0.4942 |
+| 830-839 (spans restart) | 0.03574 | 0.4958 |
+| 840-849 (post-restart) | 0.03602 | 0.4925 |
+
+Step across the restart = **+2.8e-5/iter**, inside the 5.0e-5 threshold, and the series
+is continuous with the pre-restart level (820-829 and 840-849 agree to 5 decimal places).
+⇒ **PASS. Nothing claimed default-off took effect.** Corroborated directly rather than
+only statistically by `policy_target_temp=1.0 reshape_active=False`.
+
+**The entropy axis of this entry is still UNREAD** — it needs compacted post-restart
+shards, which do not exist yet. Do not mark the entry closed on the regret axis alone.
+
+---
+
+## ⚑⚑ FINDING 2026-08-10 — THE POST-BUNDLE REGRET GAIN STOPPED AT ~ITER 780 AND IS BEING GIVEN BACK
+
+**An OLS slope on this series is a lying summary and was nearly reported as one.** The
+post-bundle window fits `+5.6e-5/iter, SIG` — which reads as "regret rising, we are going
+backwards". The 10-iteration bins show it is not a ramp at all:
+
+| bin | regret | ema_wr |
+|---|---|---|
+| 700-709 | 0.05909 | 0.4892 |
+| 730-739 | 0.05602 | 0.5103 |
+| 750-759 | 0.03913 | 0.5424 |
+| **776 (floor)** | **0.03026** | — |
+| 780-789 | 0.03143 | 0.5184 |
+| 800-809 | 0.03305 | 0.5026 |
+| 820-829 | 0.03602 | 0.4942 |
+| 840-849 | 0.03602 | 0.4925 |
+
+**Two regimes, not one trend:**
+1. **Iters ~730-780: a large real move.** Regret **0.0560 -> 0.0303 (-46%)** while winrate
+   ROSE to **0.5424**. Both favourable at once: the controller tightened difficulty AND the
+   model still won more. This is the strongest signal the loop has produced in this run.
+2. **Iters ~780-849: giveback, then flat.** Regret **0.0303 -> 0.0360 (+0.0061, ~24% of the
+   gain returned)** while winrate fell **0.5424 -> 0.4925**, i.e. through the 0.500 setpoint.
+   The last ~50 iterations are flat at 0.033-0.036.
+
+**⚑ THE CAUSAL READ IS NOT DECIDABLE FROM LIVE TELEMETRY.** Two hypotheses produce this
+exact signature and the PID makes them observationally identical:
+- **(A) Controller ringing.** Winrate overshot to 0.54, the controller tightened hard,
+  over-tightened, winrate fell under setpoint, the airbag eased regret back. A damped
+  oscillation around 0.500 — the controller SUCCEEDING, no strength lost.
+- **(B) Real strength loss.** The model actually got weaker after ~780 (window turnover onto
+  harder, worse-outcome games), winrate fell for that reason, and the airbag eased
+  difficulty to compensate.
+
+Under (A) we keep the gain; under (B) we are handing it back. `wdl_regret` cannot separate
+them **because it is the controller's actuator, not our net's score**
+(`sf_played_regret_is_the_pid_actuator`). **Only a paired arena against a FROZEN opponent
+discriminates**, and no strength measurement has been taken since the ratchet was stopped:
+the last usable row is 2026-08-09 iter 514.
+
+⇒ **This is the moment to spend a pause window**, and the test doubles as the first point
+of the long-missing regret->Elo calibration (Task #170). Anchors are already banked:
+`data/ratchet/snapshots/ck_2026-08-09_iter735_FINAL.pt` sits at the TOP of the drop
+(regret ~0.056) and `ck_2026-08-10_iter768.pt` mid-way; the live net is at 0.036.
