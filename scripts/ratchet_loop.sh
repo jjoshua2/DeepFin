@@ -189,7 +189,12 @@ poll_once () {
     # asking again. CI caught it (three tests, rc=127) because the test sandbox
     # copies only the scripts it names. "Degrades to the old behaviour" has to
     # be a branch, not a hope.
-    local pause_ok=0 pause_fails=0
+    # `fail_day` is local too: `read` leaves its targets UNCHANGED when the file
+    # is missing, so an undeclared one would carry the previous poll's date into
+    # this poll's comparison. Harmless today only because `pause_fails` is
+    # re-initialised to 0 on every call — i.e. the guard is doing nothing and the
+    # safety comes from somewhere else, which is the shape worth not shipping.
+    local pause_ok=0 pause_fails=0 fail_day=
     read -r fail_day pause_fails < "$PAUSE_FAIL_STATE" 2>/dev/null || true
     [ "${fail_day:-}" = "$today" ] || pause_fails=0
     if [ "${CAE_RATCHET_PAUSE_WINDOW:-1}" = "1" ]; then

@@ -37672,9 +37672,19 @@ consistent with deletion. The counter is the discriminator.
   in a `finally`, which a hard kill skips). Any wait that polls for "an ack" rather than
   `.paused_<live_trial_id>.ack` returns TRUE INSTANTLY and kills the workers while revive
   is still live — a guard that cannot fail.
-- ⚑ **REVIVED WORKERS TRUNCATE THEIR LOG FILES** (1.2MB -> 1,560 bytes). The suspend
+- ⚑ **A REVIVED WORKER'S LOG PATH IS A FRESH FILE** (1.2MB -> 1,560 bytes). The suspend
   evidence exists only BEFORE the resume, so offsets must be snapshotted pre-drain and read
   pre-resume. Reading after would find nothing and report a false failure.
+  **CORRECTION (PR #374): the observation is real, the stated mechanism was not.** This
+  said "revived workers TRUNCATE their log files". They do not: `logging.FileHandler`
+  opens in APPEND mode (`worker.py`), and `_rotate_worker_logs`
+  (`tune/distributed_runtime.py`) RENAMES the previous generation to `worker.log.1`
+  before the replacement process opens anything. The consequence and the operational
+  rule are unchanged — after the revive the recorded path is a NEW file and the
+  pre-drain byte offset is past its end — but the evidence is not destroyed, it moved
+  to `worker.log.1`, which is where to look for it. (That rotation exists because
+  something DID truncate in place during the 2026-08-04 cold start, and that cause was
+  never identified; it is not the revive.)
 - ⚑ **`selfplay_resume/` IS UNDER `runs/<run>/server/trials/<trial>/workers/`**, not the
   Ray artifacts dir the worker's `--log-file` points at. Checking the artifacts path
   reports `0 files` on a perfectly healthy drain. (My own first check did exactly this.)
