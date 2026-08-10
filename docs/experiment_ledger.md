@@ -37404,3 +37404,81 @@ the existing window can never be back-filled, so the sooner it lands the less hi
 if nothing ever writes the field.* Reviewing the guard proves nothing; check the WRITER. The
 question is not "does this code compare provenance correctly" but "is provenance ever non-null on
 the production path".
+
+## TRAINING STOPPED 2026-08-09 20:03 — iteration 735, trial 379f6 (user decision)
+
+Stopped at Josh's instruction ("I think training isn't helping"), to price a rollback before
+resuming. Clean teardown: `train.sh stop` exit 0, watchdog stopped FIRST (it auto-recovers on
+STALLED and would have relaunched training mid-teardown), **2304 in-flight games SUSPENDED**
+across 4 workers rather than discarded — so no resume point pays the drain-transient bias.
+Final checkpoint banked out of the tune dir md5-verified as
+`data/ratchet/snapshots/ck_2026-08-09_iter735_FINAL.pt` (`e6283b98…`).
+
+### ⚑ THE PREMISE NEEDS CORRECTING: the loop is FLAT, not DEGRADING
+
+`data/ratchet/ratchet.csv` measures each iteration against a FIXED anchor (boot512 =
+`boot_snap_recheck_0711_0404.pt`, this lineage's actual bootstrap checkpoint per `params.json`).
+
+**⚑ Only rows labelled `training` are comparable.** `daily_gate_ratchet.sh:131` declares an
+INSTRUMENT BREAK: rows before 2026-07-29 were measured on the play shape at `vloss_weight=0` and
+are labelled `legacy_play_vloss0`; `ratchet_slope.py` refuses to fit across labels. An earlier
+draft of this analysis quoted iter 122's −11.1 alongside current rows — **void, wrong ruler.**
+
+Current lineage (fresh from boot512 on 08-06 23:51), all `training`, all `matched_sims 32`:
+
+| iter | vs boot512 | 95% CI | n |
+|---|---|---|---|
+| 249 | +88.7 | [+18.0, +167.6] | 76 |
+| 399 | +66.8 | [+24.5, +111.2] | 200 |
+| 514 | +105.5 | [+62.1, +152.4] | 190 |
+
+**Transitivity fails in BOTH directions, which is the finding:**
+
+| link | direct | predicted from anchors |
+|---|---|---|
+| 399 vs 249 | **+19.1** (n=200) | +66.8 − 88.7 = −21.9 |
+| 514 vs 399 | **−31.4** (n=200) | +105.5 − 66.8 = +38.7 |
+
+Discrepancies **−41** and **+70**, opposite signs ⇒ noise, not trend. At n≈200 each point carries
+±43 (SE ≈ 22), so a difference of two points has SE ≈ 31. **Every current-lineage measurement is
+consistent with one flat line at ~+85 Elo over boot512, unchanged since iteration 249.**
+
+⇒ **The loop banked ~85 Elo in its first 249 iterations and produced nothing measurable in the
+next 265.** That is stagnation at the [[rl_loop_is_at_a_self_referential_fixed_point]], not the
+[[rl_loop_is_degrading_play_strength]] pattern of the PREVIOUS lineage (whose comparable
+`training` rows at iter 478 read −39.8 and −110.5 vs boot512 — that lineage genuinely degraded).
+
+**Consequence for the rollback question: rolling back to 514 or 399 costs nothing and gains
+nothing.** Rollback is not the lever. The only unmeasured stretch is **514 → 735** (221 iters,
+~19 h), which is the sole place a real loss could hide.
+
+### Recoverable resume points (the tune dir is NOT the menu)
+
+`tune_num_to_keep: 6` had already pruned everything below 729. The real menu is
+`data/ratchet/snapshots/` (iters 249 / 399 / 514 preserved, ~685 MB each) plus
+`data/salvage/pre_search_authority_20260809` (ckpt 671 WITH its 817-shard replay window — the
+only candidate that carries data as well as weights) and the live dir's 729-734.
+
+### IN FLIGHT — the deciding measurement
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate data/ratchet/snapshots/ck_2026-08-09_iter735_FINAL.pt \
+  --reference data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+  --mode matched_sims --search-shape training --sims 32 --games 800 \
+  --max-concurrent-games 32 --device cuda --seed 42
+```
+Ruler matched to the series exactly (`matched_sims 32`, `training`, seed 42) so the point lands on
+the existing curve; **4x the games** because the GPU is now free and ±43 cannot resolve this.
+
+**Pre-committed reading, before the number is seen:**
+- **|Δ| CI includes 0** ⇒ 514→735 changed nothing. **Resume from 735.** No Elo is recovered by
+  rolling back, and 735 alone carries the live replay window.
+- **CI excludes 0, 735 WORSE** ⇒ resume from 514, and the loss is priced exactly.
+- **CI excludes 0, 735 BETTER** ⇒ the flat-line reading is wrong above 514; resume from 735 and
+  re-open whether the plateau is real.
+
+**The transferable rule:** *a series of noisy anchored measurements is not a trend until the
+direct links agree with it.* Chaining A-vs-anchor and B-vs-anchor to infer A-vs-B is only valid if
+A-vs-B measured directly reproduces the difference. Here it did not, twice, in opposite
+directions — and that inconsistency is the evidence that the apparent rise was noise.
