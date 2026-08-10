@@ -301,6 +301,7 @@ def build_recommended_worker(
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
+        "gumbel_policy_temp": float(config.get("gumbel_policy_temp", 1.0)),
         "gumbel_target_batch": int(config.get("gumbel_target_batch", 0)),
         "gumbel_vloss_weight": int(config.get("gumbel_vloss_weight", 0)),
   # volatility_q_scale / volatility_fpu / volatility_anchor are DELIBERATELY not
