@@ -70,9 +70,20 @@ PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
 # different (mcts/gumbel.py, tests/test_selfplay_gumbel_c_scale.py):
 #
 #   play      the tuned UCI/match shape — c_scale 0.025, topk 32, LOG root
-#             (c_scale_root 7 / q_visit_exp_root -1), vloss_weight 3.
-#   training  what production selfplay actually runs — c_scale 0.1, topk 16,
-#             LINEAR root, vloss_weight/target_batch from the production yaml.
+#             (c_scale_root 7 / q_visit_exp_root -1), vloss_weight 3. These are
+#             constants in mcts/gumbel.py, so they are safe to quote here.
+#   training  what production selfplay actually runs. NOT quoted here on
+#             purpose: every value is READ FROM `PRODUCTION_CONFIG` at call
+#             time (see `resolve_search_shape`), so it tracks the yaml. Fixed
+#             is the LINEAR root — the training shape leaves the root-transform
+#             sentinels at their GumbelConfig defaults and never takes play's
+#             log root. Run `--search-shape training` and read the realized
+#             values the script prints if you need today's numbers.
+#
+# An earlier revision of this comment quoted "c_scale 0.1, topk 16". Commit
+# ed9de8ee9 (2026-08-06) moved production selfplay to topk 32 and the comment
+# silently became false. The shape logic never did — it reads the yaml. Do not
+# reintroduce literals for the training shape.
 #
 # Until 2026-07-29 this script picked `play` for every run and never said so:
 # `_parse_gumbel_overrides` seeded itself from PLAY_SEARCH_DEFAULTS even with no
@@ -1175,10 +1186,12 @@ def run_arena(
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
             f"{{{'|'.join(SEARCH_SHAPES)}}}. 'training' is what production selfplay "
-            "runs (c_scale 0.1, topk 16, linear root, yaml vloss_weight); 'play' is "
-            "the tuned UCI/match shape (c_scale 0.025, topk 32, log root, "
-            "vloss_weight 3). There is no default because the silent one was wrong "
-            "for every arena in docs/experiment_ledger.md."
+            f"runs, read from {PRODUCTION_CONFIG.name} at run time (linear root; "
+            "c_scale/topk/vloss_weight/target_batch all come from that yaml, so "
+            "they are not quoted here); 'play' is the tuned UCI/match shape "
+            "(c_scale 0.025, topk 32, log root, vloss_weight 3). There is no "
+            "default because the silent one was wrong for every arena in "
+            "docs/experiment_ledger.md."
         )
     if mode == "matched_time" and (search_candidate is not None or search_reference is not None):
         raise SystemExit(
@@ -1408,11 +1421,14 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     # run_arena refuses matched_sims without it.
     p.add_argument("--search-shape", choices=SEARCH_SHAPES, default=None,
                    help="REQUIRED for matched_sims: which search to measure. "
-                        "'training' = what production selfplay runs (c_scale 0.1, "
-                        "topk 16, linear root, vloss_weight/target_batch from "
-                        f"{PRODUCTION_CONFIG.name}); 'play' = the tuned UCI/match "
-                        "shape (c_scale 0.025, topk 32, log root, vloss_weight 3). "
-                        "Use 'training' to judge anything about the training loop.")
+                        "'training' = what production selfplay runs: linear root, "
+                        "with c_scale/topk/vloss_weight/target_batch read from "
+                        f"{PRODUCTION_CONFIG.name} at run time (deliberately not "
+                        "quoted here — they change with the config; the realized "
+                        "values are printed at startup and stored in the result "
+                        "record). 'play' = the tuned UCI/match shape (c_scale "
+                        "0.025, topk 32, log root, vloss_weight 3). Use 'training' "
+                        "to judge anything about the training loop.")
     p.add_argument("--games", type=int, default=1000,
                    help="total games; must be even — games/2 opening pairs (default: 1000)")
     p.add_argument("--openings", type=Path, default=None,

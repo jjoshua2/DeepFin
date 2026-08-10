@@ -12,7 +12,18 @@ both of which invalidated published Elo (docs/experiment_ledger.md 2026-07-28):
    and 27.5% at 256 — production's own budget.
 2. ``scripts/arena_standard.py`` seeded every run from ``PLAY_SEARCH_DEFAULTS``
    even with no flag, so every arena silently measured the UCI/play shape
-   (c_scale 0.025, topk 32, log root) instead of training's (0.1, 16, linear).
+   (c_scale 0.025, topk 32, LOG root) instead of the training shape, which is
+   read from the production yaml and uses the LINEAR root.
+
+Do NOT re-quote the training shape's numbers anywhere in this file. They move
+with the config: ``ed9de8ee9`` (2026-08-06) took production selfplay from
+``gumbel_topk: 16`` to 32, which falsified two literal ``== 16`` expectations
+PR #286 had left behind. Those failures did not show up in CI, because CI runs
+against the *committed* ``configs/pbt2_small.yaml`` and the live production yaml
+is edited in place and lags behind it — so a literal here fails first against
+the run that matters and only later against the gate. Assert relationships
+(base vs override, training vs play) or read the value back from
+``production_selfplay_search_config()``.
 
 The shape is now a required choice with no default, and the realized values are
 printed and stored in the JSONL record.
@@ -284,22 +295,44 @@ def test_the_play_shape_is_the_engine_play_shape() -> None:
     assert side.target_batch == PLAY_SEARCH_TARGET_BATCH
 
 
-def test_the_training_shape_is_not_the_play_shape() -> None:
-    """The regression that invalidated the sims ladder.
+def test_the_training_shape_uses_the_linear_root_not_the_play_log_root() -> None:
+    """The root TRANSFORM is what still separates the two shapes.
 
-    Root breadth (topk) and the root transform are the two knobs a sims ladder
-    is most sensitive to: under the play shape the root candidate set doubles
-    between the 32- and 256-sim rungs, so the ladder varies breadth AND depth.
+    This test used to also assert ``training["topk"] != play["topk"]``, on the
+    theory that the shapes must differ on every knob. They need not, and today
+    they do not: ``ed9de8ee9`` (2026-08-06) moved production selfplay to
+    ``gumbel_topk: 32`` — the same breadth the play shape uses — deliberately.
+    A shape difference is not the invariant; carrying production's actual value
+    is, and ``test_the_training_shape_is_what_the_worker_would_actually_run``
+    (equality against ``production_selfplay_search_config()``) plus
+    ``test_a_config_value_actually_reaches_the_arenas_training_shape`` (the
+    non-vacuous yaml->arena discriminator) already cover that. This one keeps
+    only the separation it uniquely owns.
+
+    On the old docstring's sims-ladder worry: ``topk`` is capped in
+    ``mcts/gumbel.py::_init_board_search_state`` by
+    ``m_cap = max(2, (sim_budget + 1) // 2)``, so it changes nothing at or below
+    2x the sim budget — at the ratchet's 32 sims, ``topk`` 16 and 32 both give
+    ``m = 16``. Breadth only varies across a ladder whose upper rungs are large
+    enough for ``m_cap`` to stop binding (at 256 sims, ``topk`` 32 gives
+    ``m = 32``); read a ladder's breadth off ``min(topk, m_cap)`` per rung, not
+    off ``topk``.
     """
     training = resolve_search_shape("training").realized_gumbel()
     play = resolve_search_shape("play").realized_gumbel()
 
-    assert training["c_scale"] != play["c_scale"]
-    assert training["topk"] != play["topk"]
     # Linear root, i.e. the sentinels — NOT the play shape's log root.
     assert training["c_scale_root"] == GumbelConfig().c_scale_root
     assert training["q_visit_exp_root"] == GumbelConfig().q_visit_exp_root
     assert training["c_visit_root"] == GumbelConfig().c_visit_root
+    # ...and `play` really does transform the root differently, so the three
+    # asserts above separate two shapes rather than restating a dataclass
+    # default against nothing.
+    assert (play["c_scale_root"], play["q_visit_exp_root"], play["c_visit_root"]) != (
+        training["c_scale_root"],
+        training["q_visit_exp_root"],
+        training["c_visit_root"],
+    )
 
 
 def test_the_training_shape_is_what_the_worker_would_actually_run() -> None:
@@ -324,12 +357,13 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
 ) -> None:
     """The discriminating test: change the yaml, the arena must follow.
 
-    The comparison above cannot fail on today's shipped config, because every
-    value it checks happens to equal the dataclass default (``gumbel_topk: 16``
-    is ``GumbelConfig.topk``, and ``main``'s yaml does not set
-    ``gumbel_vloss_weight`` at all). A check that cannot fail is not a check —
-    this one runs the whole channel against values chosen to differ from every
-    default in sight.
+    The comparison above is only as strong as the config it runs against: any
+    knob whose production value happens to equal the ``GumbelConfig`` /
+    ``SearchConfig`` default is checked by a comparison that would also pass if
+    the yaml never reached the arena at all, and which knobs those are moves
+    with every config edit. A check that can silently stop being a check is not
+    a check — this one runs the whole channel against values chosen to differ
+    from every default in sight, and asserts that at the bottom.
     """
     import yaml as _yaml
 
@@ -406,12 +440,13 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
 
 def test_an_override_layers_on_top_of_the_shape_and_is_recorded() -> None:
     """``--cand-gumbel`` still works, and the provenance string says so."""
-    side = apply_search_overrides(
-        resolve_search_shape("training"), spec="c_scale=0.05", vloss_weight=4,
-    )
+    base = resolve_search_shape("training")
+    side = apply_search_overrides(base, spec="c_scale=0.05", vloss_weight=4)
 
     assert side.realized_gumbel()["c_scale"] == 0.05
-    assert side.realized_gumbel()["topk"] == 16  # untouched by the override
+    # Untouched by the override — compared against the BASE shape, not against
+    # a literal: the literal here was production's topk, and it went stale.
+    assert side.realized_gumbel()["topk"] == base.realized_gumbel()["topk"]
     assert side.vloss_weight == 4
     assert "c_scale=0.05" in side.source
     assert "vloss_weight=4" in side.source
@@ -439,6 +474,7 @@ def test_an_override_naming_a_nonexistent_knob_is_rejected_at_parse_time() -> No
 def test_the_record_stores_the_search_that_produced_the_elo() -> None:
     """A result row must be re-interpretable years later without its argv."""
     summary = summarize_pentanomial(pentanomial_counts([2.0, 1.0]))
+    training = resolve_search_shape("training")
     record = build_result_record(
         summary,
         mode="matched_sims", candidate="c.pt", reference="r.pt",
@@ -446,7 +482,7 @@ def test_the_record_stores_the_search_that_produced_the_elo() -> None:
         sims_candidate=32, sims_reference=32, ms_per_move=None,
         temperature=0.1, gumbel_add_noise=True, max_plies=10,
         seed=0, device="cpu", duration_s=0.0,
-        search_candidate=resolve_search_shape("training"),
+        search_candidate=training,
         search_reference=resolve_search_shape("play"),
     )
 
@@ -454,9 +490,15 @@ def test_the_record_stores_the_search_that_produced_the_elo() -> None:
     assert record["search_reference"]["shape"] == "play"
     assert record["search_reference"]["vloss_weight"] == PLAY_SEARCH_VLOSS_WEIGHT
     # The REALIZED knobs, not just the ones that were overridden: a reader must
-    # be able to see c_scale on a row that never passed --cand-gumbel.
-    assert record["search_candidate"]["gumbel"]["c_scale"] == pytest.approx(0.1)
-    assert record["search_reference"]["gumbel"]["c_scale"] == pytest.approx(0.025)
+    # be able to see c_scale on a row that never passed --cand-gumbel. Checked
+    # against the shape that was handed in (and, for play, its constant) rather
+    # than against production's number of the day, which goes stale.
+    assert record["search_candidate"]["gumbel"]["c_scale"] == pytest.approx(
+        training.realized_gumbel()["c_scale"]
+    )
+    assert record["search_reference"]["gumbel"]["c_scale"] == pytest.approx(
+        PLAY_SEARCH_DEFAULTS["c_scale"]
+    )
     assert record["search_candidate"]["source"]
 
 
