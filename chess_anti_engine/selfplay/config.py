@@ -50,6 +50,18 @@ class SearchConfig:
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
     gumbel_topk: int = 16
+    # lc0's PolicyTemperature for SELFPLAY search: the policy-head logits are
+    # divided by this before they seed the tree, at the root AND at every leaf
+    # (mcts.gumbel.apply_policy_temp, shared by the Python and C paths).
+    # >1 softens the prior, <1 sharpens it, 1.0 = exact no-op.
+    #
+    # 1.0 is the production default and keeps the search bit-identical. It is
+    # NOT free to move: policy_temp != 1.0 disables the compact-legal bf16 leaf
+    # transport in gumbel_c (the C bf16 leaf softmax has no temperature hook,
+    # so the alternative would be UNTEMPERED leaf priors), and with it the bf16
+    # input transport. Price it on the broker path before raising it --- see
+    # docs/experiment_ledger.md, "selfplay search policy temperature".
+    gumbel_policy_temp: float = 1.0
     gumbel_c_scale: float = SELFPLAY_GUMBEL_C_SCALE
     gumbel_scale: float = 1.0
     gumbel_scale_after: float = 0.0
