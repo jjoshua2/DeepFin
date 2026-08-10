@@ -599,56 +599,187 @@ def test_has_inflight_tracks_the_real_start_collect_lifecycle() -> None:
     assert ev.has_inflight() is False
 
 
-def test_the_holdout_mutators_are_both_ordered_against_the_eval() -> None:
-    """Enumerate the writers, so a third one cannot be added unnoticed.
+_HOLDOUT_WRITE_METHODS = frozenset({"clear", "add_many_arrays", "add_many", "add"})
 
-    The async eval reads `holdout_buf` from its own thread; every writer of
-    that buffer has to be ordered against it somewhere. Today there are two,
-    handled in two different places for a structural reason:
+
+def _holdout_buffer_writers() -> dict[str, str]:
+    """Every function in the package that writes a `*holdout*`-named buffer.
+
+    Maps function name -> ``module:lineno`` of its first write, so a failure
+    message can point at the offending site instead of just naming it.
+
+    Scans the WHOLE ``chess_anti_engine`` package rather than a hand-listed
+    tuple of modules. A curated tuple has the same defect one level up -- a new
+    writer landing in a module nobody remembered to list escapes it -- and that
+    is the failure this enumeration exists to prevent.
+    """
+    import ast
+
+    import chess_anti_engine
+
+    pkg_root = Path(chess_anti_engine.__file__).resolve().parent
+    writers: dict[str, str] = {}
+    for path in sorted(pkg_root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+  # Innermost enclosing function for every node. ``ast.walk`` is breadth-first
+  # from the root, so an outer def is seen before the defs nested in it and the
+  # inner assignment wins -- a write in a closure is attributed to the closure.
+        owner: dict[int, str] = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for node in ast.walk(fn):
+                    owner[id(node)] = fn.name
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr not in _HOLDOUT_WRITE_METHODS:
+                continue
+            target = func.value
+  # ``ast.Attribute`` as well as ``ast.Name``: `self.holdout_buf.clear()` is a
+  # write through a receiver that IS named holdout, and keying only on Name let
+  # it through (#352 review, probe D4).
+            if isinstance(target, ast.Name):
+                receiver = target.id
+            elif isinstance(target, ast.Attribute):
+                receiver = target.attr
+            else:
+                continue
+            if "holdout" not in receiver:
+                continue
+  # A write outside any def would be import-time and unattributable; name it so
+  # the assert below fails rather than silently dropping it.
+            key = owner.get(id(node), f"<module level in {path.name}>")
+            writers.setdefault(key, f"{path.relative_to(pkg_root)}:{node.lineno}")
+    return writers
+
+
+def test_every_holdout_buffer_writer_is_ordered_against_the_eval() -> None:
+    """Enumerate the writers, so a new one cannot be added unnoticed.
+
+    The async eval reads `holdout_buf` from its own thread, so every writer of
+    that buffer has to be ordered against it somewhere. Package-wide there are
+    THREE, and they are ordered in three different ways for structural reasons:
 
       `_ingest_train_arrays`          -> the START-side guard in
                                          `_run_holdout_evaluation` (this file)
       `_maybe_reset_holdout_on_drift` -> drains at its own site, because
                                          whether it fires is unknowable at
                                          start() time
+      `load_holdout_rows`             -> ordered BY CONSTRUCTION: it runs
+                                         inside `_init_replay_buffers`, before
+                                         `train_trial` has an eval handle at
+                                         all, so there is nothing to order
+                                         against. Proved, not asserted, by
+                                         `test_the_init_time_holdout_writer_
+                                         cannot_race_the_eval_thread` below --
+                                         a claimed exemption nobody checks is
+                                         the same defect as a wrong count.
 
-    This asserts the SET of writers, not the handling -- the two behaviours are
-    pinned by their own tests. A new `.clear()`/`add_many_arrays` on a holdout
-    buffer fails here and sends the author to pick one of the two places.
+    This asserts the SET of writers, not the handling -- each behaviour is
+    pinned by its own test. A new `.clear()`/`add_many_arrays` on a holdout
+    buffer fails here and sends the author to pick one of the three.
 
     LIMIT, stated rather than implied: the scan keys on a receiver NAMED
     `*holdout*`, so a write through a differently-named alias (`hb = holdout_buf;
     hb.clear()`) is invisible to it. It is a tripwire for the ordinary case, not
-    a proof of absence -- which is why the two real behaviours are pinned by
+    a proof of absence -- which is why the real behaviours are pinned by
     behavioural tests and this only guards the enumeration.
+    """
+    found = _holdout_buffer_writers()
+
+    assert set(found) == {
+        "_ingest_train_arrays", "_maybe_reset_holdout_on_drift", "load_holdout_rows",
+    }, (
+        "the set of holdout-buffer writers changed. Every writer must be "
+        "ordered against the async eval thread: the start-side guard in "
+        "_run_holdout_evaluation, a drain at the writer's own site the way "
+        "_maybe_reset_holdout_on_drift does, or -- for an init-time writer -- a "
+        "proof that it cannot overlap the eval thread at all. Found: "
+        f"{sorted(found.items())}"
+    )
+
+
+def test_the_init_time_holdout_writer_cannot_race_the_eval_thread() -> None:
+    """`load_holdout_rows`'s exemption, proved from the code rather than claimed.
+
+    It is the one writer with no ordering construct at its site, on the grounds
+    that it runs before an eval thread exists. Two structural facts make that
+    true, and both are checked here so the exemption cannot quietly rot:
+
+    1. REACHABILITY -- `load_holdout_rows` is called only from
+       `_restore_holdout_buffer`, which is called only from
+       `_init_replay_buffers`. It is buffer construction, not a loop-time
+       mutator.
+    2. ORDER IN `train_trial` -- the `_init_replay_buffers` call precedes every
+       binding of the name `async_test_eval`. At the moment the holdout rows
+       are loaded the eval handle does not exist in the frame, so no thread can
+       be reading the buffer; the handle is only bound to a real
+       `AsyncTestEval` later, by `_lazy_construct_iter_helpers` inside the loop.
+
+    If either stops holding, `load_holdout_rows` needs a drain like
+    `_maybe_reset_holdout_on_drift`, and the enumeration test above must move
+    it out of the by-construction bucket.
     """
     import ast
     import inspect
 
-    import chess_anti_engine.tune.distributed_runtime as dr
-    import chess_anti_engine.tune.trainable as tr
+    import chess_anti_engine
+    from chess_anti_engine.tune import trainable
 
-    found: set[str] = set()
-    for module in (tr, dr):
-        tree = ast.parse(inspect.getsource(module))
-        for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for node in ast.walk(fn):
-                if not isinstance(node, ast.Call):
-                    continue
-                f = node.func
-                if not isinstance(f, ast.Attribute) or f.attr not in {
-                    "clear", "add_many_arrays", "add_many", "add",
-                }:
-                    continue
-                target = f.value
-                if isinstance(target, ast.Name) and "holdout" in target.id:
-                    found.add(fn.name)
+    pkg_root = Path(chess_anti_engine.__file__).resolve().parent
 
-    assert found == {"_ingest_train_arrays", "_maybe_reset_holdout_on_drift"}, (
-        "the set of holdout-buffer writers changed. Every writer must be "
-        "ordered against the async eval thread: either the start-side guard in "
-        "_run_holdout_evaluation, or a drain at the writer's own site the way "
-        f"_maybe_reset_holdout_on_drift does. Found: {sorted(found)}"
+    def _callers_of(name: str) -> set[str]:
+        callers: set[str] = set()
+        for path in sorted(pkg_root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for node in ast.walk(fn):
+                    if (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id == name
+                    ):
+                        callers.add(fn.name)
+        return callers
+
+    assert _callers_of("load_holdout_rows") == {"_restore_holdout_buffer"}, (
+        "load_holdout_rows gained a caller outside buffer construction; its "
+        "by-construction exemption in the enumeration test no longer holds"
+    )
+    assert _callers_of("_restore_holdout_buffer") == {"_init_replay_buffers"}, (
+        "_restore_holdout_buffer gained a caller outside _init_replay_buffers; "
+        "the init-time holdout write may now run while an eval is in flight"
+    )
+
+    fn = next(
+        node
+        for node in ast.walk(ast.parse(inspect.getsource(trainable)))
+        if isinstance(node, ast.FunctionDef) and node.name == "train_trial"
+    )
+    init_lines = [
+        node.lineno
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_init_replay_buffers"
+    ]
+    assert len(init_lines) == 1, (
+        f"expected one _init_replay_buffers call in train_trial, got {init_lines}"
+    )
+    eval_bindings = [
+        node.lineno
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Name)
+        and node.id == "async_test_eval"
+        and isinstance(node.ctx, ast.Store)
+    ]
+    assert eval_bindings, "train_trial no longer binds async_test_eval at all"
+    assert min(eval_bindings) > init_lines[0], (
+        "train_trial binds async_test_eval at line "
+        f"{min(eval_bindings)}, at or before the _init_replay_buffers call at "
+        f"line {init_lines[0]}. The init-time holdout write is no longer "
+        "ordered by construction and needs a drain of its own"
     )

@@ -519,16 +519,20 @@ def _run_holdout_evaluation(
   # nothing can be appended and the async path is perfectly safe), and one that
   # checked only the fraction would not see the freeze at all.
   #
-  # THERE ARE TWO HOLDOUT MUTATORS AND THIS GUARD COVERS ONE. The other is
+  # THERE ARE THREE HOLDOUT MUTATORS AND THIS GUARD COVERS ONE. The second is
   # ``_maybe_reset_holdout_on_drift``'s ``holdout_buf.clear()``, and it is
   # deliberately NOT folded in here: whether a reset fires depends on drift
   # metrics computed a full iteration after the ``start()`` this guard would
   # have to veto, so it is unknowable at this point in time and no predicate
   # written here could be honest about it. That mutator orders itself against
-  # the eval at its own site instead, by draining before it clears. If a third
-  # holdout mutator ever appears, it belongs in one of those two places -- the
-  # test that pins this is `test_the_holdout_mutators_are_both_ordered_against
-  # _the_eval` in tests/test_deterministic_holdout_eval.py.
+  # the eval at its own site instead, by draining before it clears. The third
+  # is ``holdout_state.load_holdout_rows``, which needs no ordering construct
+  # because it runs during buffer construction, before ``train_trial`` binds an
+  # eval handle at all. If a FOURTH ever appears it belongs in one of those
+  # three buckets -- the tests that pin the enumeration and the by-construction
+  # exemption are `test_every_holdout_buffer_writer_is_ordered_against_the_eval`
+  # and `test_the_init_time_holdout_writer_cannot_race_the_eval_thread` in
+  # tests/test_deterministic_holdout_eval.py.
         holdout_can_grow = float(tc.holdout_fraction) > 0.0 and not holdout_frozen
         if len(holdout_buf) >= tc.batch_size and holdout_can_grow:
             print(

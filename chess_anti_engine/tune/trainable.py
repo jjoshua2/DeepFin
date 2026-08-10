@@ -509,9 +509,11 @@ def _maybe_reset_holdout_on_drift(
     """Clear holdout when input-drift L2 crosses threshold; bumps generation
     counter to mark which holdout the test_loss in this row reflects.
 
-    THE SECOND HOLDOUT MUTATOR (audit L2 residual). ``_ingest_train_arrays`` is
-    the one the ``_run_holdout_evaluation`` guard keys on; this is the other,
-    and it runs at the same point in the iteration -- after the previous
+    THE ONLY LOOP-TIME HOLDOUT MUTATOR THE START-SIDE GUARD CANNOT COVER (audit
+    L2 residual). ``_ingest_train_arrays`` is the one that guard keys on, and
+    ``holdout_state.load_holdout_rows`` needs no ordering at all because it runs
+    during buffer construction; this one is neither, and it runs at the worst
+    possible point in the iteration -- after the previous
     iteration's ``AsyncTestEval.start()`` and BEFORE the ``collect()`` that
     ends it -- so the eval thread can be walking the very buffer being cleared.
     The start-side guard cannot cover this one: whether a reset fires depends
