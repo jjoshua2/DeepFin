@@ -90,13 +90,19 @@ class _StubEvaluator:
         *,
         legal_bf16: bool = True,
         input_bf16: bool = False,
+        compact_root: bool = False,
         policy_width: int = _EVAL_POLICY,
     ) -> None:
         self._legal_bf16 = bool(legal_bf16)
         self.supports_input_bf16_bits = bool(input_bf16)
+        self.supports_compact_root_policy = bool(compact_root)
         self._policy_width = int(policy_width)
         self.dense_calls = 0
         self.legal_bf16_calls = 0
+        # Which evaluator method received each batch, in call order. The ROOT is
+        # always evaluated first, so ``calls[0]`` names the ROOT transport --- the
+        # only outside-visible signal of which root branch gumbel_c chose.
+        self.calls: list[str] = []
         # ⚑ The dtype of ``x`` IS the input transport: gumbel_c allocates the
         # leaf encode buffer ``np.uint16 if _use_input_bf16 else np.float32``
         # (gumbel_c.py:1213). Recording it is the only way to observe the bf16
@@ -140,6 +146,7 @@ class _StubEvaluator:
     def evaluate_encoded(self, x: np.ndarray, relations=None):
         assert relations is None
         self.dense_calls += 1
+        self.calls.append("evaluate_encoded")
         self.leaf_input_dtypes.append(np.asarray(x).dtype)
         pol, wdl = self._dense_logits(x)
         self.last_leaf_policy = pol.copy()
@@ -147,6 +154,7 @@ class _StubEvaluator:
 
     def evaluate_legal_bf16(self, x, legal_flat, legal_counts):
         self.legal_bf16_calls += 1
+        self.calls.append("evaluate_legal_bf16")
         self.leaf_input_dtypes.append(np.asarray(x).dtype)
         pol, wdl = self._dense_logits(x)
         counts = np.asarray(legal_counts, dtype=np.int64)
@@ -560,6 +568,48 @@ def test_the_production_gate_sends_tempered_priors_to_the_dense_leaf(temp: float
     )
 
 
+@pytest.mark.parametrize("temp", [1.0, 1.5])
+def test_tempering_disables_the_compact_root_transport(temp: float) -> None:
+    """The OTHER gate this PR adds, and the only one that skips tempering wholesale.
+
+    ``_use_compact_root`` (gumbel_c.py:593-602) gained a
+    ``not policy_temp_active(...)`` clause in this PR. It has to be there: the
+    compact-root arm assigns ``_root_compact_logits`` and the tempering line
+    below is guarded by ``if _root_compact_logits is None`` (gumbel_c.py:689),
+    so with the clause removed the ROOT prior is not tempered at all --- not
+    doubled, not halved, simply skipped, while every leaf is tempered normally.
+
+    Observable from outside because the two root branches call DIFFERENT
+    evaluator methods: compact-root evaluates the root through
+    ``evaluate_legal_bf16``, the dense root through ``evaluate_encoded``. The
+    root is always the first batch, so ``calls[0]`` names the branch taken.
+
+    ⚑ Reachability, so a later reader does not over- or under-read this: the
+    gate needs ``pre_pol_logits is None`` (the search evaluates its own roots)
+    AND a broker-class evaluator advertising ``supports_compact_root_policy``,
+    and no production caller combines them today --- selfplay always passes
+    cached root logits. It is guarded anyway because "no caller does this today"
+    is the same class of argument as ``gate_games: 0``: a config fact, not an
+    invariant, and this line is one ``pre_pol_logits`` refactor away from live.
+    """
+    ev = _StubEvaluator(legal_bf16=True, input_bf16=True, compact_root=True)
+    _run_production_shape(temp, evaluator=ev, cached_root=False)
+
+    assert ev.calls, "the search never called the evaluator"
+    if temp == 1.0:
+        assert ev.calls[0] == "evaluate_legal_bf16", (
+            "T=1.0 must keep the compact root transport; if this fails the gate "
+            "is off for a reason unrelated to policy_temp and this test is "
+            "no longer observing what it claims"
+        )
+        return
+    assert ev.calls[0] == "evaluate_encoded", (
+        "T != 1 used the compact ROOT transport, which bypasses "
+        "_policy_logits_to_full entirely (gumbel_c.py:689): the root prior "
+        "would be UNTEMPERED while every leaf prior was tempered"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The T^2 hazard on the cached root prior --- the branch production always takes
 # ---------------------------------------------------------------------------
@@ -726,6 +776,15 @@ _REJECTED_TEMPS = [
   # the `inf` LITERAL, not the pathology, so the band closes the class.
     1e300,
     1e-300,
+  # ⚑ LITERALS, deliberately not written relative to POLICY_TEMP_MIN/MAX.
+  # Everything below that was relative -- these two entries, and the accepted
+  # set in the twin test -- simply FOLLOWS the band, so widening the band to
+  # [1e-30, 1e30] re-opened the exact pathology the band was added to close
+  # with nothing failing. A test that derives its expectation from the thing
+  # under test cannot fail. 100.0 and 0.001 pin the band's MAGNITUDE: moving a
+  # bound past either is now a deliberate act that has to edit this list.
+    100.0,
+    0.001,
     POLICY_TEMP_MAX * 1.0001,
     POLICY_TEMP_MIN * 0.9999,
 ]
@@ -755,6 +814,50 @@ def test_the_band_admits_every_temperature_anyone_actually_uses(good: float) -> 
     """
     assert TrialConfig.from_dict({"gumbel_policy_temp": good}).gumbel_policy_temp == good
     assert policy_temp_active(good) == (good != 1.0)
+
+
+def test_the_band_edges_still_leave_a_prior_worth_having() -> None:
+    """The band's PURPOSE, asserted on behaviour instead of on its own numbers.
+
+    Both parametrised tests above take their edge cases from
+    ``POLICY_TEMP_MIN``/``POLICY_TEMP_MAX``, so widening the band moves them
+    too and neither can ever fail --- a test that derives its expectations from
+    the thing under test is decoration. The literals now in ``_REJECTED_TEMPS``
+    fix that at two fixed points; this fixes it at the concept.
+
+    The band exists so that a value the loader ACCEPTS still leaves a usable
+    prior. That is checkable directly: temper a realistic 16-nat logit spread at
+    each edge and require the prior to survive it.
+
+    * At the soft edge the ordering must still carry real mass --- top:bottom at
+      least 2:1. A 16-nat spread gives 2.23 at T=20 and 1.17 at T=100, so this
+      binds at T ~= 23 and no widening past that can pass.
+    * At the sharp edge the tempered logits must stay finite. This is the
+      ``1e-300 -> +/-inf`` failure, and float32 overflows around T ~= 1e-38.
+    """
+    logits = np.array([[8.0, 4.0, 0.0, -4.0, -8.0]], dtype=np.float32)
+
+    soft = apply_policy_temp(
+        logits, cfg=dataclasses.replace(GumbelConfig(), policy_temp=POLICY_TEMP_MAX),
+    )
+    e = np.exp(soft.astype(np.float64) - soft.max())
+    p = e / e.sum()
+    ratio = float(p.max() / p.min())
+    assert ratio >= 2.0, (
+        f"at POLICY_TEMP_MAX={POLICY_TEMP_MAX} the prior is effectively uniform "
+        f"(top:bottom {ratio:.3f} on a 16-nat spread): the loader would accept a "
+        f"value that searches with the policy head switched off, which is the "
+        f"pathology the band was added to close"
+    )
+
+    sharp = apply_policy_temp(
+        logits, cfg=dataclasses.replace(GumbelConfig(), policy_temp=POLICY_TEMP_MIN),
+    )
+    assert np.all(np.isfinite(sharp)), (
+        f"at POLICY_TEMP_MIN={POLICY_TEMP_MIN} tempering overflows float32 to "
+        f"+/-inf: {sharp}"
+    )
+    assert float(sharp.max() - sharp.min()) > 0.0
 
 
 @pytest.mark.parametrize("bad", _REJECTED_TEMPS)
