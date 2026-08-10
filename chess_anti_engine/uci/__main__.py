@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import io
+from collections.abc import Mapping
 import logging
 import os
 import sys
@@ -593,12 +594,6 @@ def _build_engine(
     # Same default Engine applies when options is None; resolved here too so
     # the RPG install below reads concrete knobs.
     opts = options if options is not None else EngineOptions()
-  # Advertise what was BUILT, not what EngineOptions happens to default to.
-  # These knobs arrive as CLI args and land on the worker; the handshake reads
-  # EngineOptions. Copying worker -> options here makes the worker the single
-  # direction of truth, so `--c-scale 0.3` can never be advertised as 0.025.
-    for _opt in SEARCH_OPTIONS:
-        opts.set_search_value(_opt.field, worker.realized_search_values()[_opt.field])
     engine = Engine(
         worker,
         rebuild_evaluator=rebuild_evaluator,
@@ -630,6 +625,17 @@ def _build_engine(
             worker.install_multi_gpu_pucv(
                 factories, gather=effective_gather, as_factories=True,
             )
+  # Advertise what was BUILT, not what EngineOptions happens to default to.
+  # These knobs arrive as CLI args and land on the worker; the handshake reads
+  # EngineOptions. Copying worker -> options here makes the worker the single
+  # direction of truth, so `--c-scale 0.3` can never be advertised as 0.025.
+  #
+  # AFTER the pool installs, not before: `realized_search_values` answers the
+  # PUCT family off the installed descent object, so a copy taken before
+  # `install_root_parallel_gumbel` reads the classic-Gumbel config and then
+  # advertises it for a search that is about to run on the RPG pool's.
+    for _opt in SEARCH_OPTIONS:
+        opts.set_search_value(_opt.field, worker.realized_search_values()[_opt.field])
     return engine
 
 
@@ -701,7 +707,13 @@ def _resolve_multi_gpu_startup(
     return root_gumbel, pucv_fallback, pucv_fallback and not root_gumbel
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    """The CLI. Split out of ``main`` so a test can read the REAL defaults.
+
+    ``_seed_search_options_from_args`` claims every registry option is seeded
+    from a named argparse ``dest``; that claim is only checkable if the parser
+    can be built without running the engine.
+    """
     p = argparse.ArgumentParser(prog="chess-anti-engine-uci")
   # --checkpoint is required, but we accept DEEPFIN_CKPT as the default so
   # the `deepfin` console-script entry point (from pyproject.toml) can be
@@ -901,6 +913,119 @@ def main() -> int:
                    ),
                    help="shared TorchInductor/Triton cache root (env: DEEPFIN_COMPILE_CACHE; "
                    "default: ~/.cache/deepfin/worker_cache)")
+    return p
+
+
+# Registry field -> the argparse `dest` that decides its value AT STARTUP.
+# `None` means "no CLI argument": the worker is built at the registry default
+# and the handshake already advertises it.
+#
+# This map exists because `uci` is answered from `startup_options` on the READER
+# thread while the worker is still being built on the build thread, so the copy
+# `_build_engine` makes worker -> options lands strictly AFTER the first
+# handshake a GUI ever sees. Without seeding, `--c-scale 0.077 --topk 9` was
+# advertised as 0.025 / 32 on that first `uci` and only corrected on a second
+# one most GUIs never send. `_seed_search_options_from_args` REFUSES to run when
+# a registry entry is missing here, so a new option cannot quietly go back to
+# advertising a default the engine is not running.
+_SEARCH_OPTION_ARG: Mapping[str, str | None] = {
+    "policy_temp": "policy_temp",
+    "c_scale": "c_scale",
+    "c_visit": "c_visit",
+    "c_scale_root": "c_scale_root",
+    "c_visit_root": "c_visit_root",
+    "q_visit_exp": "q_visit_exp",
+    "q_visit_exp_root": "q_visit_exp_root",
+    "q_visit_floor": "q_visit_floor",
+    "q_global_scale": "q_global_scale",
+    "halving_div": "halving_div",
+    "topk": "topk",
+    "root_noise_scale": "gumbel_scale",
+    "chunk_sims": "chunk_sims",
+    "vloss_weight": "vloss_weight",
+  # No CLI flag: `run_gumbel_root_many_c(target_batch=...)` starts at 0 (the
+  # C-side default) and only a `setoption` moves it.
+    "minibatch_size": None,
+    "c_puct": "c_puct",
+    "cpuct_factor": "cpuct_factor",
+    "cpuct_base": "cpuct_base",
+    "fpu_reduction": "fpu_reduction",
+}
+
+
+def _seed_search_options_from_args(
+    options: EngineOptions, args: argparse.Namespace,
+) -> None:
+    """Point ``options`` at the values the worker is ABOUT to be built with.
+
+    Coerces through ``SearchOption.kind`` so the handshake prints the same type
+    the ``setoption`` handler would parse back.
+    """
+    unmapped = [o.name for o in SEARCH_OPTIONS if o.field not in _SEARCH_OPTION_ARG]
+    if unmapped:
+        raise AssertionError(
+            f"search options with no startup source: {unmapped}. Add them to "
+            "_SEARCH_OPTION_ARG (or map them to None if no CLI flag sets "
+            "them) — otherwise the first `uci` advertises a default the "
+            "engine is not running."
+        )
+    for opt in SEARCH_OPTIONS:
+        dest = _SEARCH_OPTION_ARG[opt.field]
+        if dest is None:
+            continue
+        raw = getattr(args, dest)
+        value: float | int | bool
+        if opt.kind == "check":
+            value = bool(raw)
+        elif opt.kind == "spin":
+            value = int(raw)
+        else:
+            value = float(raw)
+        options.set_search_value(opt.field, value)
+
+
+def _startup_engine_options(
+    args: argparse.Namespace,
+    *,
+    search_parallel: str,
+    restore_multi_gpu_pucv: bool,
+) -> EngineOptions:
+    """The options object the pre-build ``uci`` handshake is answered from.
+
+    Construction and search-option seeding live together on purpose: a separate
+    ``_seed_search_options_from_args(...)`` call at the call site is a line
+    somebody can drop, and the symptom would be a silently wrong handshake
+    rather than an error.
+    """
+    options = EngineOptions(
+        threads=max(1, int(args.walkers)),
+        leaf_gather=max(1, int(args.walker_gather)),
+        use_multi_gpu_pucv=restore_multi_gpu_pucv,
+        pucv_pending_mode=str(args.pucv_pending_mode),
+        search_parallel=search_parallel,
+        vl_gather=max(32, int(args.vl_gather)),
+        max_batch=max(64, int(args.max_batch)),
+        eval_cache_entries=max(0, int(args.eval_cache_entries)),
+  # Clamp the time knobs (like the spin options above): a non-positive
+  # time_budget_scale would collapse every move to the 20ms floor, and a
+  # negative abort_factor would abort the instant the move leads. 0.0 is the
+  # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
+        abort_factor=max(0.0, float(args.abort_factor)),
+        time_budget_scale=max(0.1, float(args.time_budget_scale)),
+  # <= 0 is the OFF sentinel (preserved through the clamp); positive values are
+  # clamped to (0, 1] inside limits_from_go so an out-of-range soft target can't
+  # exceed the hard deadline.
+        optimum_fraction=min(1.0, float(args.optimum_fraction)),
+        moves_horizon=max(1, int(args.moves_horizon)),
+    )
+  # The whole search surface — including the CPuct family, which used to be
+  # spelled out as three constructor keywords here.
+    _seed_search_options_from_args(options, args)
+    return options
+
+
+def main() -> int:
+    p = _build_parser()
     args = p.parse_args()
 
     if not args.checkpoint:
@@ -945,29 +1070,10 @@ def main() -> int:
     ) = _resolve_multi_gpu_startup(
         str(args.search_parallel), args.multi_gpu_pucv, len(devices),
     )
-    startup_options = EngineOptions(
-        threads=max(1, int(args.walkers)),
-        leaf_gather=max(1, int(args.walker_gather)),
-        use_multi_gpu_pucv=restore_multi_gpu_pucv,
-        pucv_pending_mode=str(args.pucv_pending_mode),
+    startup_options = _startup_engine_options(
+        args,
         search_parallel="gumbel" if use_root_parallel_gumbel else "pucv",
-        cpuct=float(args.c_puct),
-        cpuct_factor=float(args.cpuct_factor),
-        cpuct_base=float(args.cpuct_base),
-        vl_gather=max(32, int(args.vl_gather)),
-        max_batch=max(64, int(args.max_batch)),
-        eval_cache_entries=max(0, int(args.eval_cache_entries)),
-  # Clamp the time knobs (like the spin options above): a non-positive
-  # time_budget_scale would collapse every move to the 20ms floor, and a
-  # negative abort_factor would abort the instant the move leads. 0.0 is the
-  # maximally-aggressive-but-valid abort_factor (stop on any positive lead).
-        abort_factor=max(0.0, float(args.abort_factor)),
-        time_budget_scale=max(0.1, float(args.time_budget_scale)),
-  # <= 0 is the OFF sentinel (preserved through the clamp); positive values are
-  # clamped to (0, 1] inside limits_from_go so an out-of-range soft target can't
-  # exceed the hard deadline.
-        optimum_fraction=min(1.0, float(args.optimum_fraction)),
-        moves_horizon=max(1, int(args.moves_horizon)),
+        restore_multi_gpu_pucv=restore_multi_gpu_pucv,
     )
 
   # Background-build so `uci` can be answered before model load finishes.

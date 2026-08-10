@@ -138,6 +138,81 @@ def test_the_guard_passes_when_the_override_really_landed() -> None:
 # --- the expectation cannot be omitted ---------------------------------------
 
 
+class _RanPastTheGuard(AssertionError):
+    """`_net_candidates` reached the search with a mismatched request."""
+
+
+class _GuardTripwire:
+    """An evaluator that must never be called.
+
+    Makes the kill EXPLICIT rather than incidental: with the guard's call site
+    removed, `_net_candidates` walks on to the forward pass, and the failure
+    then names the reason instead of being an incidental `AttributeError` on a
+    thin stub that a later, fatter stub would silence.
+    """
+
+    def evaluate_encoded(self, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise _RanPastTheGuard(
+            "_net_candidates evaluated positions while the requested --gumbel "
+            "overrides were absent from every profile: the "
+            "_assert_overrides_dispatched call site is gone"
+        )
+
+
+def test_net_candidates_actually_invokes_the_dispatch_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard's INVOCATION, not its logic.
+
+    Every other test in this file calls `_assert_overrides_dispatched` by hand,
+    so replacing the call inside `_net_candidates` with `pass` passed 8/8 --
+    the guard could be deleted from the production path in silence, which is
+    the same shape as the `if p.overrides:` defect one level up.
+
+    This drives the real `_net_candidates` far enough to reach the guard. The
+    model load and the evaluator are the only things between the entry point
+    and the check, so stubbing exactly those two keeps the call site itself
+    unstubbed: with the call removed the function walks straight past the
+    mismatch and no SystemExit is raised.
+    """
+    import chess
+
+    import chess_anti_engine.inference as inference
+    import chess_anti_engine.uci.model_loader as model_loader
+
+    model = SimpleNamespace(
+        eval=lambda: None,
+        input_history_encoding="legacy",
+        input_extra_features="v1",
+        policy_encoding="lc0_1858",
+        use_dynamic_relations=False,
+    )
+    monkeypatch.setattr(
+        model_loader, "load_model_from_checkpoint", lambda *a, **k: model,
+    )
+    monkeypatch.setattr(
+        inference, "LocalModelEvaluator", lambda *a, **k: _GuardTripwire(),
+    )
+
+  # Profiles carry NOTHING while the request asks for policy_temp=2.2: the
+  # dropped-keyword case, which is the one the guard exists for.
+    profiles, _ = at.profiles_for_audit(_args(gumbel=None), {})
+    assert all(p.overrides == () for p in profiles.values())
+
+    with pytest.raises(SystemExit) as excinfo:
+        at._net_candidates(
+            [chess.Board()],
+            checkpoint="unused-the-loader-is-stubbed",
+            device="cpu",
+            batch_size=1,
+            seed=0,
+            profiles=profiles,
+            requested_gumbel_overrides=(("policy_temp", 2.2),),
+        )
+    assert "dropped between the command line" in str(excinfo.value)
+
+
 def test_net_candidates_requires_the_request_rather_than_defaulting_it() -> None:
     """`requested_gumbel_overrides` must have NO default.
 

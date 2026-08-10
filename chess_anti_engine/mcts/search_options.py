@@ -102,8 +102,17 @@ class SearchOption:
         Taking the CURRENT value rather than ``self.default`` is deliberate:
         ``--c-scale`` and friends can move the startup value, and a handshake
         that advertises a default the engine is not running is the same lie in
-        a smaller font. ``tests/test_uci_search_options.py`` asserts the
-        advertised default equals the value read back off the live worker.
+        a smaller font.
+
+        The guard is ``test_the_printed_handshake_advertises_the_live_worker``
+        in ``tests/test_uci_search_options.py``, which parses the PRINTED
+        ``option name`` lines. An earlier revision of this docstring named a
+        test asserting the same thing; that test compared
+        ``EngineOptions.search_value`` against the worker and never called
+        ``emit_handshake``, so reverting this line to ``self.default`` passed
+        the whole file. A comment naming a guard that does not exist is worse
+        than no comment — the printed line is the artifact an operator reads,
+        so the test reads the printed line.
         """
         if self.kind == "check":
             return f"option name {self.name} type check default {'true' if current else 'false'}"

@@ -310,6 +310,21 @@ unparseable value is refused with an `info string` and the previous value is
 kept. Defaults are advertised from the value the worker was actually built
 with, not a retyped constant.
 
+That holds for the **first** `uci` too, which is the only one most GUIs send.
+`uci` is answered on the reader thread from `startup_options` while the model
+is still loading on the build thread, so the worker → options copy at the end
+of `_build_engine` lands *after* the handshake a GUI sees. Until 2026-08-09 the
+first handshake therefore advertised the registry defaults: launching with
+`--c-scale 0.077 --topk 9 --policy-temp 1.5 --chunk-sims 777` advertised
+`0.025 / 32 / 1.0 / 2048`, and only a second `uci` reported the truth.
+`_startup_engine_options` now seeds the whole surface from the parsed CLI
+before the build thread starts (`_SEARCH_OPTION_ARG` maps every registry field
+to its argparse `dest`, and refuses to run if one is missing), and the copy
+`_build_engine` takes is deferred until after the multi-GPU / RPG pool
+installs, because `realized_search_values()` reads the PUCT family off the
+installed descent object. `searchconfig` remains the authority for what a
+*running* search is using.
+
 | option | type | range | default | live on | notes |
 |---|---|---|---|---|---|
 | `PolicyTemperature` | string | 0.5 – 5.0 | 1.0 | gumbel, rpg | prior temperature (logits/T); >1 softens. **Costs search time when ≠ 1.0 — see below.** |
@@ -399,6 +414,20 @@ Note the asymmetry with the row above it in `searchconfig`: `VLossWeight` *does*
 reset the tree, because vloss-adjusted `Q` is not comparable across weights.
 `test_a_mid_tree_puct_change_keeps_the_tree_and_is_a_hybrid` pins the decision
 in both directions.
+
+`VLossWeight`'s delivery on the shipped default (`Threads 2` → `walker`) rests
+entirely on the pool rebuild inside `SearchWorker.set_vloss_weight`. The
+`_reinstall_configured_search_path()` that `_apply_search_option` calls next
+*looks* like a second cover and is not: with `search_parallel="pucv"`,
+multi-GPU off and not leaving Gumbel, that method falls through every branch
+and does nothing. Measured with the rebuild removed — the engine prints
+`VLossWeight set to 17` while `WalkerPoolConfig.vloss_weight` and
+`searchconfig` both stay at 3. `MinibatchSize` has the matching one-liner:
+it reshapes the leaf batch the cudagraph was captured at, so it sets
+`_warmup_dirty` and the next idle `isready` re-captures **before** the clock
+starts. Both are pinned behaviourally
+(`test_vloss_weight_reaches_the_walker_pool_on_the_shipped_default`,
+`test_minibatch_size_marks_the_captured_cudagraph_stale`).
 
 `QVisitExpRoot` is the second kind, and its arms are exact — read off the C, no
 threshold, nothing fitted:

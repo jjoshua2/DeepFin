@@ -206,17 +206,25 @@ def test_the_engine_flag_and_the_worker_default_are_the_same_constant() -> None:
     engine's search; it reads PLAY_SEARCH_VLOSS_WEIGHT, so the engine has to be
     reading it too, not a duplicated literal.
 
-    The argparse half is checked structurally because the UCI parser is built
-    inline inside ``main()`` and cannot be obtained without starting an engine.
-    A literal ``default=3`` is an ``ast.Constant`` and fails here.
+    Two halves, because neither alone is enough. The REALIZED default is read
+    off the actual parser -- ``_build_parser()`` exists so the CLI can be built
+    without starting an engine -- which catches a value that drifted. The
+    STRUCTURAL half then requires it to be spelled as the shared constant: a
+    literal ``default=3`` is an ``ast.Constant``, agrees with the value check
+    today, and drifts silently the day the constant moves.
     """
     from chess_anti_engine.uci import __main__ as uci_main
 
     sig_default = inspect.signature(SearchWorker.__init__).parameters["vloss_weight"].default
     assert sig_default == PLAY_SEARCH_VLOSS_WEIGHT
 
+    parser_default = {
+        a.dest: a.default for a in uci_main._build_parser()._actions
+    }["vloss_weight"]
+    assert parser_default == PLAY_SEARCH_VLOSS_WEIGHT
+
     defaults: list[ast.expr] = []
-    for node in ast.walk(ast.parse(inspect.getsource(uci_main.main))):
+    for node in ast.walk(ast.parse(inspect.getsource(uci_main._build_parser))):
         if not isinstance(node, ast.Call) or not node.args:
             continue
         first = node.args[0]

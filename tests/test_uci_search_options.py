@@ -24,10 +24,14 @@ harness is noisy rather than because the knob works.
 """
 from __future__ import annotations
 
+import argparse
+import contextlib
 import dataclasses
+import io
 import pathlib
 import re
 import threading
+from types import SimpleNamespace
 
 import chess
 import numpy as np
@@ -49,7 +53,7 @@ from chess_anti_engine.mcts.search_options import (
     realized_rows,
 )
 from chess_anti_engine.moves import POLICY_SIZE
-from chess_anti_engine.uci.engine import Engine, EngineOptions
+from chess_anti_engine.uci.engine import Engine, EngineOptions, emit_handshake
 from chess_anti_engine.uci.protocol import parse_command
 from chess_anti_engine.uci.search import SearchWorker
 from chess_anti_engine.uci.walker_pool import WalkerPoolConfig
@@ -418,6 +422,81 @@ def test_minibatch_size_is_inert_off_the_classic_gumbel_path(
         engine._worker.close()
 
 
+def test_minibatch_size_marks_the_captured_cudagraph_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MinibatchSize reshapes the leaf batch the cudagraph was captured at.
+
+    `_apply_search_option` sets `_warmup_dirty` so the next idle `isready`
+    re-captures BEFORE the clock starts. Nothing pinned it: dropping the flag
+    passed the whole file, and the symptom would have been a cold capture paid
+    mid-move on the first `go` after a config change — i.e. on the clock.
+
+    Observed through the real command path and the real `isready` handler, so
+    this fails on the flag AND on the re-warm that reads it.
+    """
+    engine = _make_engine()
+    warmups: list[int] = []
+    monkeypatch.setattr(engine, "warmup_search", lambda: warmups.append(1))
+    try:
+        _setoption(engine, "setoption name MinibatchSize value 128")
+        assert engine._warmup_dirty is True
+        engine.dispatch(parse_command("isready"))
+        assert warmups == [1], "isready did not re-warm the reshaped search path"
+
+  # NULL CONTROL: a shape knob the C reads per call needs no re-capture, so
+  # the flag must not simply be set by every setoption.
+        _setoption(engine, "setoption name QVisitExp value 0.5")
+        assert engine._warmup_dirty is False
+        engine.dispatch(parse_command("isready"))
+        assert warmups == [1]
+    finally:
+        engine._worker.close()
+
+
+def test_vloss_weight_reaches_the_walker_pool_on_the_shipped_default() -> None:
+    """Threads=2 is the shipped default, and the walker pool copies
+    `vloss_weight` into `WalkerPoolConfig` at CONSTRUCTION.
+
+    So `SearchWorker.set_vloss_weight`'s pool rebuild is the part that makes the
+    option real. `Engine._apply_search_option` also calls
+    `_reinstall_configured_search_path()`, which LOOKS like a second cover — but
+    on the default configuration (`search_parallel="pucv"`, multi-GPU off, not
+    leaving Gumbel) that method falls through every branch and does nothing.
+    Measured with the rebuild removed: the engine prints "VLossWeight set to 17"
+    while the pool keeps descending on 3 and `realized_search_values()` reports
+    3. Accepted, echoed, and ignored.
+    """
+    engine = _make_engine(threads=2)
+    try:
+        assert engine._worker.realized_search_path() == "walker"
+        before = engine._worker.realized_search_values()["vloss_weight"]
+        assert before != 17
+        _setoption(engine, "setoption name VLossWeight value 17")
+        assert engine._worker.realized_search_values()["vloss_weight"] == 17
+        assert engine._worker._walker_pool is not None
+        assert engine._worker._walker_pool._cfg.vloss_weight == 17
+    finally:
+        engine._worker.close()
+
+
+def test_the_worker_setter_rebuilds_the_pool_without_the_engine() -> None:
+    """`SearchWorker.set_vloss_weight`'s OWN contract, no Engine involved.
+
+    The method is public and the pool rebuild is inside it; a caller that is
+    not the UCI handler gets no `_reinstall_configured_search_path` at all.
+    """
+    engine = _make_engine(threads=2)
+    worker = engine._worker
+    try:
+        assert worker._walker_pool is not None
+        worker.set_vloss_weight(17)
+        assert worker._walker_pool is not None
+        assert worker._walker_pool._cfg.vloss_weight == 17
+    finally:
+        worker.close()
+
+
 def test_searchconfig_reports_the_path_that_actually_ran(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -547,6 +626,246 @@ def test_advertised_defaults_match_the_live_worker() -> None:
         assert realized["policy_temp"] == pytest.approx(1.5)
     finally:
         engine._worker.close()
+
+
+def _printed_handshake_defaults(options: EngineOptions) -> dict[str, str]:
+    """`{option name: advertised default}` parsed out of the PRINTED handshake.
+
+    The printed line is the artifact. `test_advertised_defaults_match_the_live_worker`
+    above compares `EngineOptions.search_value` with the worker and never calls
+    `emit_handshake`, so reverting `declaration()` to `opt.default` passed the
+    entire file (reviewer measurement: 83/83). Everything below reads stdout.
+    """
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        emit_handshake(options)
+    out: dict[str, str] = {}
+    for line in buf.getvalue().splitlines():
+        m = re.match(r"option name (\S+) type \S+ default (\S+)", line)
+        if m is not None:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def _fmt_expected(opt, value: float | int | bool) -> str:
+    """How `declaration()` renders `value` — computed from the value, not from
+    the registry, so this helper cannot agree with a `self.default` mutant."""
+    if opt.kind == "check":
+        return "true" if value else "false"
+    if opt.kind == "spin":
+        return str(int(value))
+    return repr(float(value))
+
+
+def test_the_printed_handshake_advertises_the_live_worker() -> None:
+    """THE guard `SearchOption.declaration`'s docstring claims.
+
+    Kills the `opt.declaration(opt.default)` mutant: the CLI values below are
+    all off-default, so a registry-default handshake prints 0.025 / 32 / 1.0 /
+    2048 for a worker running 0.077 / 9 / 1.5 / 777.
+    """
+    from chess_anti_engine.uci.__main__ import _build_engine
+
+    planes = input_plane_count("v2_threats")
+    options = EngineOptions()
+    engine = _build_engine(
+        evaluator=_DetEval(planes), primary_device="cpu",
+        chunk_sims=777, topk=9, c_scale=0.077, policy_temp=1.5,
+        halving_div=4, root_noise_scale=0.25, q_global_scale=True,
+        n_walkers=1, vloss_weight=2, walker_gather=1, pucv_vloss_mode=0,
+        max_batch=64, vl_gather=64, eval_cache_entries=0,
+        use_multi_gpu_pucv=False, input_extra_features="v2_threats",
+        options=options,
+    )
+    try:
+        realized = engine._worker.realized_search_values()
+        printed = _printed_handshake_defaults(engine._options)
+        for opt in SEARCH_OPTIONS:
+            assert opt.name in printed, f"{opt.name} is not in the handshake at all"
+            assert printed[opt.name] == _fmt_expected(opt, realized[opt.field]), (
+                f"the handshake advertises {opt.name}={printed[opt.name]} while "
+                f"the worker runs {realized[opt.field]}"
+            )
+        # ...and the off-default values really are off-default, so the
+        # comparison above had something to catch.
+        assert printed["ChunkSims"] == "777"
+        assert printed["Topk"] == "9"
+        assert printed["PolicyTemperature"] == "1.5"
+        assert printed["CScale"] == "0.077"
+        assert printed["HalvingDiv"] == "4"
+        assert printed["GumbelScale"] == "0.25"
+        assert printed["QGlobalScale"] == "true"
+    finally:
+        engine._worker.close()
+
+
+def test_the_first_uci_advertises_the_engine_that_is_about_to_be_built() -> None:
+    """The FIRST handshake — the one a GUI sends before the model is loaded.
+
+    `__main__` answers `uci` from `startup_options` and `continue`s BEFORE
+    `engine_ready.wait()`, while `_build_engine`'s worker -> options copy runs
+    on the build thread. So a handshake sourced from bare `EngineOptions`
+    defaults advertised `--c-scale 0.077 --topk 9 --policy-temp 1.5
+    --chunk-sims 777` as 0.025 / 32 / 1.0 / 2048 and only corrected itself on a
+    second `uci` most GUIs never send. Measured before the fix: 4 option lines
+    differed from the search that then ran.
+
+    This drives the REAL parser and the REAL startup-options factory, then
+    builds the engine from the same `args`, so a drift between the two
+    (a new CLI flag, a renamed `dest`) fails here rather than in a match log.
+    """
+    from chess_anti_engine.uci.__main__ import (
+        _SEARCH_OPTION_ARG,
+        _build_engine,
+        _build_parser,
+        _startup_engine_options,
+    )
+
+    args = _build_parser().parse_args([
+        "--checkpoint", "unused-by-this-test",
+        "--c-scale", "0.077", "--topk", "9", "--policy-temp", "1.5",
+        "--chunk-sims", "777", "--halving-div", "4", "--gumbel-scale", "0.25",
+        "--q-global-scale", "--vloss-weight", "5", "--c-puct", "3.25",
+        "--fpu-reduction", "0.9", "--c-visit-root", "123.0",
+        "--walkers", "2",
+    ])
+    startup_options = _startup_engine_options(
+        args, search_parallel="pucv", restore_multi_gpu_pucv=False,
+    )
+    first_uci = _printed_handshake_defaults(startup_options)
+
+    planes = input_plane_count("v2_threats")
+  # Every kwarg by REGISTRY FIELD NAME, so the test carries no second copy of
+  # the arg->field mapping it is checking.
+    built_from = {
+        opt.field: getattr(args, dest)
+        for opt in SEARCH_OPTIONS
+        if (dest := _SEARCH_OPTION_ARG[opt.field]) is not None
+    }
+    engine = _build_engine(
+        evaluator=_DetEval(planes), primary_device="cpu",
+        n_walkers=int(args.walkers), walker_gather=1, pucv_vloss_mode=0,
+        max_batch=64, vl_gather=64, eval_cache_entries=0,
+        use_multi_gpu_pucv=False, input_extra_features="v2_threats",
+        options=EngineOptions(),
+        **built_from,
+    )
+    try:
+        realized = engine._worker.realized_search_values()
+        for opt in SEARCH_OPTIONS:
+            assert first_uci[opt.name] == _fmt_expected(opt, realized[opt.field]), (
+                f"the FIRST `uci` advertises {opt.name}={first_uci[opt.name]} "
+                f"while the engine it is about to build runs "
+                f"{realized[opt.field]}"
+            )
+        assert first_uci["CScale"] == "0.077"
+        assert first_uci["Topk"] == "9"
+        assert first_uci["ChunkSims"] == "777"
+        assert first_uci["VLossWeight"] == "5"
+    finally:
+        engine._worker.close()
+
+
+def test_the_startup_copy_is_taken_after_the_multi_gpu_pool_installs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_build_engine`'s worker -> options copy must be the LAST thing it does.
+
+    `realized_search_values` answers the PUCT family off the INSTALLED descent
+    object, so a copy taken before `install_multi_gpu_pucv` /
+    `install_root_parallel_gumbel` reads the classic-Gumbel config and then
+    advertises it for a search that runs on the pool's.
+
+    The pool itself is stubbed — the property under test is the ORDER of the
+    copy relative to the install, not the pool — and its `_cfg` carries values
+    no other object in the build has, so agreement cannot be a coincidence.
+    """
+    from chess_anti_engine.uci.__main__ import _build_engine
+
+    installed_cfg = SimpleNamespace(
+        c_puct=8.125, cpuct_factor=6.5, cpuct_base=4321.0,
+        fpu_reduction=-2.25, vloss_weight=11,
+    )
+
+    class _StubPool:
+        _cfg = installed_cfg
+
+        def close(self) -> None:
+            return None
+
+    def _fake_install(
+        self: SearchWorker, evaluators_or_factories: object, **kwargs: object,
+    ) -> None:
+        del evaluators_or_factories, kwargs
+        self._pucv_pool = _StubPool()  # pyright: ignore[reportAttributeAccessIssue]
+
+    monkeypatch.setattr(SearchWorker, "install_multi_gpu_pucv", _fake_install)
+
+    planes = input_plane_count("v2_threats")
+    options = EngineOptions()
+    engine = _build_engine(
+        evaluator=_DetEval(planes), primary_device="cpu",
+        chunk_sims=256, topk=9,
+        c_puct=1.75, cpuct_factor=3.89, cpuct_base=38739.0, fpu_reduction=0.33,
+        n_walkers=1, vloss_weight=2, walker_gather=1, pucv_vloss_mode=0,
+        max_batch=64, vl_gather=64, eval_cache_entries=0,
+        use_multi_gpu_pucv=True,
+        rebuild_multi_gpu_pucv_factories=lambda _mb, _g: [object(), object()],
+        input_extra_features="v2_threats",
+        options=options,
+    )
+    try:
+        assert engine._worker.realized_search_path() == "pucv_pool"
+        printed = _printed_handshake_defaults(engine._options)
+        assert printed["CPuct"] == "8.125", (
+            "the handshake advertises the pre-install c_puct while the "
+            "installed pool descends on 8.125"
+        )
+        assert printed["FpuReduction"] == "-2.25"
+        assert printed["VLossWeight"] == "11"
+    finally:
+        engine._worker._pucv_pool = None
+        engine._worker.close()
+
+
+def test_every_registry_option_has_a_named_startup_source() -> None:
+    """A new option must declare where its startup value comes from.
+
+    Without this, adding a registry entry silently reverts the first handshake
+    to advertising a default the engine is not running — the exact defect
+    above, one option at a time.
+    """
+    from chess_anti_engine.uci.__main__ import _SEARCH_OPTION_ARG, _build_parser
+
+    dests = {a.dest for a in _build_parser()._actions}
+    for opt in SEARCH_OPTIONS:
+        assert opt.field in _SEARCH_OPTION_ARG, (
+            f"{opt.name} has no entry in _SEARCH_OPTION_ARG"
+        )
+        dest = _SEARCH_OPTION_ARG[opt.field]
+        assert dest is None or dest in dests, (
+            f"{opt.name} is seeded from args.{dest}, which the CLI does not define"
+        )
+
+
+def test_seeding_refuses_a_registry_option_with_no_startup_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The startup guard must be able to FIRE, not just be written down.
+
+    Its job is to turn "a new option quietly advertises the wrong default" into
+    a loud failure at engine start, so the failure mode has to be reachable.
+    """
+    from chess_anti_engine.uci import __main__ as uci_main
+
+    unmapped = dataclasses.replace(
+        SEARCH_OPTIONS[0], name="NewlyAdded", field="field_nobody_mapped",
+    )
+    monkeypatch.setattr(uci_main, "SEARCH_OPTIONS", (*SEARCH_OPTIONS, unmapped))
+    with pytest.raises(AssertionError, match="no startup source"):
+        uci_main._seed_search_options_from_args(
+            EngineOptions(), argparse.Namespace(),
+        )
 
 
 def test_every_registry_field_resolves_on_engine_options() -> None:
