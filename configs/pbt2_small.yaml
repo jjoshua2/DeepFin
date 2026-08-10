@@ -419,8 +419,16 @@ train:
   sf_wdl_draw_scale: 0.55
   sf_wdl_floor_at_regret: 0.1
   # DELETED sf_wdl_temperature: 1.0 is the IDENTITY; losses.py:192 skips the p^(1/T) softening at exactly 1.0
-  # DELETED sf_search_dampen_sf_low: 0.0 = off (trainer.py:1845, losses.py:256)
-  # DELETED sf_search_dampen_sf_high: 0.0 = off (trainer.py:1846, losses.py:257)
+  # ⚑ RESTORED 2026-08-10. These were deleted as "0.0 = off", which is true about
+  # their VALUE and irrelevant to their PRESENCE: scripts/value_optimism.py:143
+  # lists both in _CROSSCHECK_YAML_VS_PARAMS and :219 raises SystemExit when a
+  # listed key is ABSENT, so deleting them broke that ruler outright rather than
+  # leaving it on a default. PR #380's reviewer caught the same thing and main
+  # retained them; the live yaml carried the unreviewed over-deletion. 0.0 is the
+  # consumers' default (trial_config.py:787-788), so restoring them changes nothing
+  # about training. A PRESENCE CHECK IS NOT A VALUE READ -- do not re-delete these.
+  sf_search_dampen_sf_low: 0.0
+  sf_search_dampen_sf_high: 0.0
   accum_steps: 1
   warm_start_lr_max_ratio: 2.0
   # FLIP 72 -> 1000 (2026-08-05 boot-hygiene package, diagnosis D3): iteration 1 of a fresh
