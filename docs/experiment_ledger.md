@@ -38962,3 +38962,97 @@ Note this is a DIFFERENT hazard from [[wiring_a_dead_knob_can_arm_a_crash]]: the
 previously-inert knob armed a crash path. Here the knob is correctly wired and correctly
 validated — it is the ABSENCE of an `except` around the reload that converts a rejected value
 into a killed run.
+
+---
+
+## PRE-REGISTERED 2026-08-10 — CODE-PARITY RESTART: live branch merged onto `origin/main`
+
+**Status: NOT YET LAUNCHED.** Branch `ops/live-merge-main` (`040bad0f1`) is built,
+conflict-resolved and verified; the live tree fast-forwards onto it at the restart.
+
+### What is being deployed
+
+Everything merged to `main` since the live branch forked: **#373** (policy target
+temperature, **default-off**), **#377 + #386** (UCI search options and two guard
+holes), **#379** (`gumbel_policy_temp`, the *reviewed* cut), **#380** (22
+audited-inert yaml keys), **#385** (draw-provenance counters; two temperatures
+separated), plus #131 / #352 / #378 / #383.
+
+Also, and independent of the merge: `sf_search_dampen_sf_low` / `_high` are
+**RESTORED** to the live yaml (`534b6397d`). They had been deleted as "0.0 = off",
+which is true of their VALUE and irrelevant to their PRESENCE:
+`scripts/value_optimism.py:143` lists both in `_CROSSCHECK_YAML_VS_PARAMS` and `:219`
+raises `SystemExit` when a listed key is absent. **The value-optimism ruler has been
+unable to run against production at all** — not degraded, not defaulted, exited at
+startup. 0.0 is exactly the consumers' default (`trial_config.py:787-788`), so
+restoring them changes nothing about training.
+
+### HYPOTHESIS — this restart is a NO-OP for training, and that is falsifiable
+
+Every training-path item above is either default-off (#373), already live under a
+different implementation at the identical value (#379: the live branch ran
+`gumbel_policy_temp: 1.5` through its own pre-merge code; main's differs only by
+adding a `[0.05, 20.0]` band on the loader and the hot-path predicate), off the
+training path entirely (#377/#386 are UCI), or metrics-only (#385).
+
+⇒ **Prediction: nothing in the training signal moves beyond known restart artifacts.**
+This is the point of writing it down. "Default-off" is a claim about a knob taking no
+effect, and a knob that silently takes effect anyway is this repo's signature defect —
+so the null gets a pre-registered threshold like any other arm.
+
+### DECIDING YARDSTICK (one command)
+
+```
+python3 - <<'PY'
+import glob, numpy as np, zarr
+# stored policy_target entropy, COMPACTED shards only, hourly, 24h either side
+PY
+```
+i.e. the same stored-target entropy instrument used for the search-authority bundle:
+compacted shards only, hourly buckets, **excluding the first post-restart bucket**.
+Paired against the pre-restart 24h window.
+
+### PRE-COMMITTED THRESHOLDS
+
+- **PASS (the null holds):** hourly stored-target entropy stays within **±0.03 nats**
+  of the pre-restart trailing-6h mean, once the first two post-restart buckets are
+  dropped; AND `opponent_wdl_regret_limit` shows no step exceeding **2×** the historical
+  per-iteration change (2.5e-5/iter) sustained over 10 iterations.
+- **FAIL (something claimed default-off is not off):** either bound breached. On a
+  breach the FIRST suspect is #373's `policy_target_temp` — confirm by reading the
+  realized value out of the new trial's `params.json`, not out of the yaml.
+- **This entry is UNREADABLE, not PASS, if** the run does not reach ~10 clean
+  post-restart iterations. A short window cannot distinguish a null from a step.
+
+### CONFOUNDS — all three are restart artifacts, none is signal
+
+1. **Post-restart winrate reads ≈ +0.110 too high** (sampling bias). `pid_ema_winrate`
+   is not readable for the first several iterations.
+2. **The first post-restart row is ~99% RESUMED pre-change games.** Gate on the
+   resumed RATIO, not the row index.
+3. **zclip's adaptive EMA is not checkpointed** ⇒ the first iterations run a
+   hard-cap-only regime.
+4. **#373 moves the holdout ruler ids**, so the best model is handed over **once** at
+   this restart. EXPECTED, not a regression, and not evidence about the null.
+
+### REVERT POINT
+
+`data/salvage/pre_mainmerge_20260810` (banked 2026-08-10 before the restart, with
+`--metric training_iteration`). Restore = `./scripts/train.sh salvage-restart <pool>`.
+A branch revert alone is NOT a rollback: the replay window holds ~a day of data.
+
+### VERIFICATION ALREADY DONE (before launch, not after)
+
+- **Boot fuse, both directions.** `origin/main`'s `flatten_run_config_defaults`
+  accepts the live yaml (309 keys) and `TrialConfig.from_dict` builds, with
+  `gumbel_policy_temp 1.5 / gumbel_c_scale 0.1 / gumbel_topk 32` intact. This is the
+  check that matters: at LAUNCH an unknown key raises in `run.py:~94` **before
+  argparse and outside any `try`**, so the process never starts — the survivable
+  "unknown key rejects the reload" mode exists only mid-run.
+- **No `.c`/`.h` changed in the merge** ⇒ **no extension rebuild**, which removes the
+  restart's most failure-prone step.
+- **The merge left the live yaml byte-identical.** `main`'s copy is a stale reference,
+  not a competing production config: of 290 shared keys 25 differ and every one is
+  live's tuned value against an old one (`sf_nodes` 75000 vs 5000, `sf_multipv` 6 vs
+  40, `w_sf_own_regret` 0.0 vs 0.7). Taking any of main's would have silently
+  rewritten production.
