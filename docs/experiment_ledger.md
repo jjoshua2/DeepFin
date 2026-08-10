@@ -39328,3 +39328,97 @@ finding.** The 84-game 768 row (CI ±69) carries most of the turning-point argum
 
 Cost: ~75 min parked. Training stays STOPPED — it is currently losing ~0.5 Elo/iteration,
 so the pause is not the expensive part.
+
+---
+
+## 2026-08-10 — ⚑⚑ MECHANISM FOUND: the iter-736 bundle disabled the diff-focus curriculum by SCALE DRIFT
+
+**PRE-REGISTERED BEFORE THE LADDER'S `iter735` ROW LANDED.** The powered ladder
+(prereg `97e39a96f`) is running with `iter735_vs_boot` FIRST; this entry is written and
+committed while that series is still playing, so the prediction below is falsifiable by
+the very next number that arrives.
+
+### The observation (offline, `progress.csv`, no new compute)
+
+Binned every numeric metric in the trial by 25 iterations. One transition dominates the
+run, at **iter 726-750** — the search-authority bundle restart at iter 736:
+
+| metric | 650-725 (pre) | 851-875 (now) | change |
+|---|---|---|---|
+| `replay_pmass_kl_share` | 0.368 | 0.865 | +135% |
+| `replay_pmass_qd_share` | 0.632 | 0.135 | −79% |
+| `replay_priority_mean` | 1.10 | 4.32 | +293% |
+| `replay_priority_std` | 1.30 | 7.58 | +483% |
+| `diff_focus_keep_rate` | 0.798 | 0.957 | +20% |
+| `diff_focus_keep_limited_frac` | 0.367 | 0.113 | −69% |
+| `grad_norm_mean` | 2.00 | 7.97 | +298% |
+| **`grad_hard_clip_rate`** | **0.000** | **0.811** | **0 → 81% of steps** |
+| `gumbel_policy_entropy_mean` | 1.057 | 1.222 | +16% |
+| `policy_loss` | 0.934 | 1.283 | +37% |
+| `sf_move_acc` | 0.210 | 0.163 | −22% |
+
+Decomposing the priority mass: `qd_term` is **flat** (−8%); `kl_term` rose **9.1x**.
+The entire move is the KL term.
+
+### The mechanism
+
+`selfplay/network_turn.py:650`:
+
+```python
+difficulty = q_surprise * df_q_w + kl * df_p_s      # 6.0 and 3.5, live yaml 307-311
+keep_prob  = max(df_min, min(1.0, difficulty * df_slope))   # slope 3.0, min 0.025
+```
+
+**One unnormalized quantity drives two mechanisms**: the replay sampling priority AND
+`keep_prob`, which decides which plies are recorded at all. `kl` is
+KL(search target ‖ policy prior) — exactly what the bundle's `gumbel_policy_temp: 1.5`
+was designed to raise. It did: target entropy +16%, and because the prior is peaked, a
+16% entropy rise moved the KL **9.1x**.
+
+Consequences, none of them configured by anyone:
+
+1. **The diff-focus curriculum silently switched itself off.** `difficulty * 3.0` now
+   exceeds the clamp for nearly every row, so `keep_prob → 1`. Selective keeping went
+   0.798 → 0.957 and the clamp binds on 11% of rows instead of 37%. The mechanism that
+   chose *which positions to train on* is inert — not by a config change, by scale drift
+   underneath a fixed clamp.
+2. **The surprise half of sampling collapsed onto a KL tail** — priority std 1.30 → 7.58.
+3. **Gradients went out of the regime the clipper was tuned for**: `grad_hard_clip_rate`
+   0.000 → 0.811. Four steps in five are now magnitude-capped, so the optimizer is
+   running direction-only most of the time — the regime already refuted as a
+   generalization factor (task #112).
+4. **It has not equilibrated.** At iter 875 `grad_norm_mean` is still climbing and
+   `kl_share` is still rising. The loop is inside a positive feedback: softer target →
+   higher KL → priority and keep concentrate on high-KL rows → the net trains toward the
+   soft target → higher KL.
+
+This is the codebase's signature defect in a form not previously catalogued: not a knob
+that never arrives, but **a knob whose effect depends on the absolute scale of a quantity
+a different change moved**. `diff_focus_slope: 3.0` was calibrated against a KL that no
+longer exists. Nothing warns, because every key was accepted and every value is in range.
+
+### PREDICTION — falsifiable by the row now playing
+
+If the iter-736 bundle is the primary cause of the decline, the pre-bundle stretch must be
+**flat**, and the fall concentrated after 736:
+
+- **CONFIRMED** if powered `iter735` lands within the powered `iter514` CI (i.e. the
+  514→735 stretch is flat), and `iter768` and `iter862` fall below both.
+- **REFUTED — the decline predates the bundle** if powered `iter735` lands clearly below
+  powered `iter514` with non-overlapping CIs. The bundle would then be an aggravator on
+  top of an earlier cause, and this entry must be demoted to a contributing factor. **The
+  offline mechanism above stays true either way — it is measured, not inferred — but it
+  would stop being the explanation for the Elo loss.**
+- If the ladder's transitivity check (prereg `97e39a96f`) fails, this prediction is void
+  along with every other boot512-referenced reading.
+
+**I am not proposing a fix in this entry.** Three candidate levers exist
+(renormalize the KL term against a running scale; re-calibrate `diff_focus_slope`/
+`pol_scale` for the new KL; revert the temperature bundle), they trade off against each
+other, and picking one before the ladder discriminates would be choosing a remedy for a
+cause that has not finished being established.
+
+Confounds: the iter-736 restart also carried the rest of the search-authority bundle, so
+"the bundle" is not resolved into its individual keys by this evidence. The `main` merge
+restart at iter 834 sits inside the "now" window but no step is visible there in any of
+the above series.
