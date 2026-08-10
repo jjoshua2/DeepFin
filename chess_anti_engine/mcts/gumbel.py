@@ -239,12 +239,23 @@ def policy_temp_active(policy_temp: float) -> bool:
     operator-facing claim can never drift apart: a guard has to share the
     criterion's instrument or it is guarding a different question.
 
-    ``<= 0`` reads as *off* rather than raising because this is the hot path;
-    config loading rejects it (``trial_config._positive_float``) so a 0 cannot
-    reach here from the yaml in the first place.
+    ``<= 0`` and non-finite (``nan``/``inf``) both read as *off* rather than
+    raising because this is the hot path; config loading rejects all of them
+    (``trial_config._positive_float``) so they cannot reach here from the yaml
+    in the first place.
+
+    ⚑ ``inf`` is excluded deliberately, not incidentally. ``nan`` already fell
+    out as off via ``pt > 0.0``, but ``inf`` used to read as ACTIVE, and
+    ``apply_policy_temp`` then returns all-zero logits --- a uniform prior over
+    every legal move, i.e. search with the policy head switched off, announced
+    in the realized-shape log line as tempering working normally. The yaml
+    cannot deliver it, but ``arena_standard.py --cand-gumbel policy_temp=inf``
+    reaches ``dataclasses.replace`` without passing the loader's validator. The
+    predicate is THE definition of "tempering is on", so it has to agree with
+    the loader rather than leave one entry point a hole.
     """
     pt = float(policy_temp)
-    return pt > 0.0 and pt != 1.0
+    return math.isfinite(pt) and pt > 0.0 and pt != 1.0
 
 
 def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:

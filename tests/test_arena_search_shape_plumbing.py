@@ -440,6 +440,7 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
     raw["selfplay"]["gumbel_vloss_weight"] = 2
     raw["selfplay"]["gumbel_topk"] = 24
     raw["selfplay"]["gumbel_c_scale"] = 0.077
+    raw["selfplay"]["gumbel_policy_temp"] = 1.7
     patched = tmp_path / "patched.yaml"
     patched.write_text(_yaml.safe_dump(raw), encoding="utf-8")
     monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)
@@ -449,9 +450,22 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
     assert side.vloss_weight == 2, "the published vloss_weight never reached the arena"
     assert side.realized_gumbel()["topk"] == 24
     assert side.realized_gumbel()["c_scale"] == pytest.approx(0.077)
-    # None of the three is a default, so none can pass by accident.
+    # ⚑ policy_temp must be checked BY VALUE here, not only for key presence.
+    # `test_the_realized_view_is_not_just_the_override_dict` pins the key SET, so
+    # it catches a deleted `policy_temp` and NOT a hard-coded one; and the drift
+    # guard's `pinned` is also `set(...gumbel)`, so a constant leaves the key
+    # present and the "provably inert today" branch unreachable. With production
+    # about to run T=1.5, a collapsed-to-1.0 line here would make every
+    # `--search-shape training` arena — the Cheese-tail yardstick included —
+    # measure a sharper prior than the live run trains on, with CI green.
+    assert side.realized_gumbel()["policy_temp"] == pytest.approx(1.7), (
+        "the published gumbel_policy_temp never reached the arena's training "
+        "shape: the arena would search at a temperature production does not run"
+    )
+    # None of the four is a default, so none can pass by accident.
     assert GumbelConfig().topk != 24
     assert GumbelConfig().c_scale != 0.077
+    assert GumbelConfig().policy_temp != 1.7
     assert SearchConfig().gumbel_vloss_weight != 2
 
 
