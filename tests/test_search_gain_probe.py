@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import math
+import sys
 import inspect
 from pathlib import Path
 
@@ -32,6 +34,7 @@ from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _root_sigma_scale,
 )
+import scripts.search_gain_probe as sgp
 from scripts.search_gain_probe import (
     SHAPES,
     ProbePosition,
@@ -512,3 +515,135 @@ def test_the_shape_gate_and_fidelity_gate_render_a_verdict_not_just_a_number() -
     )
     assert "FIDELITY GATE @" in shard_text
     assert "FAIL" in shard_text.split("FIDELITY GATE @")[1].split("\n")[0]
+
+
+# ---------------------------------------------------------------------------
+# Codex review of PR #381, triaged 2026-08-11. All four FAIL on the pre-fix
+# module. These are the findings that change what a reported NUMBER MEANS.
+# ---------------------------------------------------------------------------
+
+
+def test_prior_is_scored_at_the_shapes_policy_temperature() -> None:
+    """The C search divides root logits by `policy_temp`; the prior must too --
+    EXACTLY ONCE.
+
+    ⚑ THIS TEST MUST CALL `_score_one`. Its first version computed two softmaxes
+    inline and asserted that temperature flattens a distribution -- a true fact
+    about arithmetic that holds whatever the module does. It passed with
+    `_score_one` replaced by an always-failing stub, and it therefore did not
+    catch the double-tempering the same PR introduced (prior reported at
+    T^2=2.25 beside a T=1.5 search). A gate that cannot fire, inside the PR that
+    exists to fix gates that cannot fire.
+
+    So: drive the REAL scorer, and pin the answer against BOTH wrong values --
+    the un-tempered T=1.0 and the twice-tempered T^2.
+
+    Temperature is strictly monotone, so no ORDINAL statistic moves; what moves
+    is `prior_top1_p`, the gaps, KL(target||prior) and the recovered sigma span.
+    """
+    board = chess.Board()
+    ucis, idxs = legal_full_indices(board)
+    pos = ProbePosition(
+        fen=board.fen(), board=board, phase=-1, audit=None,
+        stored_regret_cp=np.zeros(4672, dtype=np.float64),
+    )
+    # A spread that makes the three candidate temperatures numerically distinct.
+    raw = np.arange(len(ucis), dtype=np.float64) / 3.0
+    logits = np.full(4672, -1e9, dtype=np.float32)
+    logits[idxs] = raw.astype(np.float32)
+    probs = np.zeros(4672, dtype=np.float64)
+    probs[idxs] = 1.0 / len(ucis)
+
+    def top1_at(temp: float) -> float:
+        lg = raw / temp
+        lg = lg - lg.max()
+        e = np.exp(lg)
+        return float((e / e.sum()).max())
+
+    temp = 1.5
+    shape = dataclasses.replace(SHAPES["live_selfplay_20260809"], policy_temp=temp)
+    row = _score_one(
+        pos=pos, board=board, sims=32, shape=shape, pol_logits_row=logits,
+        search_probs=probs, search_action=int(idxs[0]),
+        tree=None, root_id=-1, ctrl_rng=np.random.default_rng(1),
+    )
+
+    once, never, twice = top1_at(temp), top1_at(1.0), top1_at(temp * temp)
+    # The three are genuinely different, or the assertions below prove nothing.
+    assert not np.isclose(once, never)
+    assert not np.isclose(once, twice)
+    assert np.isclose(row.prior_top1_p, once, rtol=1e-6), (
+        f"prior must be at T={temp}: got {row.prior_top1_p!r}, "
+        f"T=1.0 would be {never!r}, T^2 would be {twice!r}"
+    )
+    assert not np.isclose(row.prior_top1_p, never), "prior is UNTEMPERED"
+    assert not np.isclose(row.prior_top1_p, twice), "prior is tempered TWICE"
+
+    # And the ordinal readout is unmoved -- why the 2026-08-11 verdict survived.
+    row_t1 = _score_one(
+        pos=pos, board=board, sims=32,
+        shape=dataclasses.replace(SHAPES["live_selfplay_20260809"], policy_temp=1.0),
+        pol_logits_row=logits, search_probs=probs, search_action=int(idxs[0]),
+        tree=None, root_id=-1, ctrl_rng=np.random.default_rng(1),
+    )
+    assert row.prior_move == row_t1.prior_move
+    assert row.prior_rank_of_search == row_t1.prior_rank_of_search
+
+
+def test_temperature_flattening_is_not_by_itself_evidence_of_wiring() -> None:
+    """The arithmetic the previous test mistook for a wiring check.
+
+    Kept, DEMOTED, and named for what it is: a property of softmax, not of this
+    module. It must never again stand in for the `_score_one` call above.
+    """
+    logits = np.array([2.0, 1.0, 0.0], dtype=np.float64)
+
+    def prior_at(temp: float) -> np.ndarray:
+        lg = logits / max(1e-6, temp)
+        lg = lg - lg.max()
+        e = np.exp(lg)
+        return e / e.sum()
+
+    p1, p15 = prior_at(1.0), prior_at(1.5)
+    # The ordering is identical -- this is why the ordinal readouts survived.
+    assert list(np.argsort(-p1)) == list(np.argsort(-p15))
+    # The probabilities are NOT, which is what the defect corrupted.
+    assert not np.allclose(p1, p15)
+    assert p15[0] < p1[0], "a higher temperature must flatten the top prior mass"
+
+
+def test_rate_ci_keeps_a_nonzero_width_at_both_boundaries() -> None:
+    """Wald returned [0,0] / [1,1] and claimed certainty from a finite sample."""
+    p, lo, hi = sgp._rate_ci(0, 40)
+    assert p == 0.0
+    assert lo == 0.0
+    assert hi > 0.0, "a zero observed rate must still have a nonzero upper bound"
+    p, lo, hi = sgp._rate_ci(40, 40)
+    assert p == 1.0
+    assert hi == 1.0
+    assert lo < 1.0, "an all-changes rate must still have a below-one lower bound"
+    # An interior rate stays sane and contains the point estimate.
+    p, lo, hi = sgp._rate_ci(10, 40)
+    assert lo < p < hi
+    # n == 0 is UNKNOWN, not zero.
+    assert all(math.isnan(v) for v in sgp._rate_ci(0, 0))
+
+
+@pytest.mark.parametrize("spec", ["8,0,32", "8,-4", "0"])
+def test_nonpositive_simulation_rungs_are_rejected(
+    spec: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search clamps to 1 sim, so a 0 rung would be reported but never run.
+
+    `main` reads `sys.argv` rather than taking argv, so the flags go in through
+    monkeypatch. The rejection must land BEFORE the checkpoint is touched --
+    the path below does not exist and the run must still die on `--sims`.
+    """
+    monkeypatch.setattr(
+        sys, "argv",
+        ["search_gain_probe.py", "--shape", next(iter(SHAPES)),
+         "--sims", spec, "--checkpoint", "nope.pt"],
+    )
+    with pytest.raises(SystemExit) as ei:
+        sgp.main()
+    assert "nonpositive" in str(ei.value) or "empty list" in str(ei.value)
