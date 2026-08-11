@@ -1349,7 +1349,12 @@ def run_gumbel_root_many_c(
                 completed_q[j] = root_q_i
                 visits[j] = 0.0
 
-        logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _completed_q_transform(
+  # The C search returns the TREE; the improved policy on top of it is built
+  # here, in Python. That is why the decoupled target sigma needs no .c change
+  # and no extension rebuild -- both search paths converge on this arithmetic.
+  # Mirrors gumbel.py::_build_improved_policy_for_board exactly.
+        log_prior = np.log(np.maximum(pri[legal], 1e-12))
+        imp_all = _softmax(log_prior + _completed_q_transform(
             actions=legal,
             priors=pri[legal],
             visits=visits,
@@ -1357,10 +1362,26 @@ def run_gumbel_root_many_c(
             raw_value=root_q_i,
             cfg=cfg,
             root=True,
+        ))
+  # The STORED row may use a smaller sigma than the PLAYED move did. Written
+  # out long-hand rather than via a helper closure: this is inside the
+  # per-board loop, so a closure captures loop variables (ruff B023) and
+  # widens their narrowed types back to `| None`.
+        target_cap = int(cfg.target_max_visit_cap)
+        imp_store = imp_all if target_cap <= 0 else _softmax(
+            log_prior + _completed_q_transform(
+                actions=legal,
+                priors=pri[legal],
+                visits=visits,
+                qvalues=completed_q,
+                raw_value=root_q_i,
+                cfg=cfg,
+                root=True,
+                max_visit_cap=target_cap,
+            ),
         )
-        imp_all = _softmax(logits_imp)
         probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
-        probs[legal] = imp_all.astype(np.float32)
+        probs[legal] = imp_store.astype(np.float32)
 
         best_a = int(remaining[0])
   # Gumbel sequential halving leaves the survivor at remaining[0]; map that
