@@ -40323,3 +40323,84 @@ value. And the c_scale=1.0 anomaly is described, not explained: the per-position
 distribution was not dumped, so "heavy tail" is inferred from the mean/win-rate disagreement
 rather than measured directly. **If anyone proposes raising c_scale on the strength of that
 +0.0242, dumping that distribution is the prerequisite, not an optional extra.**
+
+---
+
+## 2026-08-11 — UNTEMPERING SCREEN, FIRST READOUT: NOT A PASS, AND THE BAR WAS NEAR-UNMEETABLE
+
+**Status: READ OUT at n=1200. Does NOT clear its pre-committed threshold.** Raw dumps banked at
+`scratchpad/untemper_screen_20260811/`. Code: `c5d1b4882` (#390), knob DEFAULT OFF.
+
+### Both negative controls PASS
+At `policy_temp=1.0` the two arms are **bit-identical, 200/200 rows**, at BOTH topk=16 and the
+production topk=32. The knob is genuinely inert when there is no temperature to undo.
+⚠ My first control was BROKEN and reported FAIL: I compared the whole dump with `cmp`, and every
+row echoes its own arm identity as `"gumbel_overrides": {...,"target_untempered_prior": 0|1}`, so
+that field always differs. **A control that compares the record INCLUDING which arm produced it
+can never pass** — the mirror of a gate that cannot fail. Fixed by excluding the label field.
+
+### ⚑ THE PRE-REGISTRATION MEASURED THE WRONG WIDTH
+The prereg names the `policy_temp` trap (the committed yaml has no such key ⇒ a checkout scores
+T=1.0 where the knob is a provable no-op) and **misses the sibling key one line over**: training
+rows take `topk` from `--config` (`audit_targets.py:474`), `--config` defaults to the COMMITTED
+`configs/pbt2_small.yaml` which says **`gumbel_topk: 16`**, while the LIVE yaml says **32**.
+`--gumbel-topk` cannot fix it — it is PLAY-only by design (`:557`). Both widths are reported below.
+
+### Results — delta = OFF − ON, so POSITIVE means the fix is BETTER
+
+| | top1 (cp) **THE DECIDER** | exp (cp) | entropy (nats) |
+|---|---|---|---|
+| **production topk=32** | **+1.479 [−1.216, +4.174]** | +3.872 [+2.347, +5.397] | +0.149 [+0.137, +0.161] |
+| sensitivity topk=16 | **−0.250 [−2.039, +1.539]** | +2.083 [+1.014, +3.153] | +0.111 [+0.100, +0.123] |
+
+**VERDICT BY THE PRE-COMMITTED RULE: NOT A SUCCESS.** The rule was *"top1 improves ≥1.0 cp with a
+paired 95% CI excluding 0; anything else, including no significant improvement, is a KILL."* The
+production point estimate (+1.48) clears the 1.0 cp bar but **its CI includes zero**, and the
+topk=16 arm has the WRONG SIGN. By the letter, this is a kill.
+
+**⚑⚑ BUT THE INSTRUMENT COULD NOT HAVE DELIVERED A PASS. `top1` IS 94.1% TIED** — the argmax
+changes in only ~5.9% of positions, so n=1200 buys ~71 informative rows and a CI half-width of
+**±2.7 cp against a ±1.0 cp bar.** Reaching that bar needs **n ≈ 8,716**; the frozen audit set
+holds **4,000**, and it FREEZES by protocol. ⇒ **The threshold was unmeetable on this instrument
+at any sample size it can supply.** A pre-registration that never computed its own resolution
+[[compute_instrument_resolution_before_the_threshold]] — written by the change's author and
+approved by me.
+
+**`exp` moved significantly and MUST NOT be counted.** The prereg forbids deciding on it, because
+E[regret] rewards sharpness and this knob sharpens by construction — scoring the intervention in
+the unit it moves mechanically. Reporting it as the win would be the exact error the prereg was
+written to prevent. Same for entropy: H falling 0.925→0.776 confirms the MECHANISM is operating
+as designed (it is one of the three valid mechanism yardsticks) but it is **not a quality verdict**.
+
+### ⚑ PRE-REGISTERED NOW, BEFORE THE FULL-SET NUMBER EXISTS
+
+A full-set (n=4000) re-run at production shape is in flight. **Decision rule UNCHANGED** — only
+the sample size rises, which is not a post-hoc threshold move. Committing the reading in advance:
+
+- **If the full set clears ≥1.0 cp with CI excluding 0** → SUCCESS, proceed to the live arm.
+- **If it does not** → the single-pass screen has said all it can, and the honest conclusion is
+  **one of two things, which must be distinguished rather than chosen for convenience**:
+  1. the fix genuinely does not improve single-pass target quality — a real negative; or
+  2. **single-pass target quality is the WRONG QUESTION for a compounding fix.** The hypothesis is
+     about a CLOSED LOOP over generations (`L → L/T → target → net learns → L/T again`, contraction
+     ratio `1/T` per pass). One application of the target-building step is structurally incapable
+     of exhibiting a geometric feedback effect.
+- **(2) is only admissible because it is written here BEFORE the number arrives.** Invoked
+  afterwards it would be rationalisation. And it is not a free pass: it converts into a NEW
+  pre-registration for a **multi-generation offline rig** — fixed banked position pool, build
+  targets → train → REBUILD targets from the new net → repeat 3–5 generations, both arms, with
+  `H(target)` and `KL(prior‖target)` tracked per generation. The prediction that discriminates
+  them is sharp: **OFF must DIVERGE across generations and ON must stay flat.** That rig is the
+  only offline instrument that can see the claimed mechanism, and it is still cheaper than a
+  day-plus live window.
+
+### Standing limits on ALL offline screening of this change
+- **An arena is structurally blind to it** — play is untouched; the tempered prior still drives
+  candidate selection. Games cannot answer this question at any sample size.
+- **A live winrate readout is a gate that cannot fail** — the PID regulates winrate to 0.60 by
+  moving SF's difficulty, so a real gain is absorbed as "SF got harder"
+  [[pid_absorbs_strength_gains_into_difficulty]].
+- **Offline is DECISIVE FOR A "NO" and only SUGGESTIVE FOR A "YES"** — banked positions were
+  generated BY the incumbent search, so they are on-policy for OFF and off-policy for ON.
+- ⇒ the only confirmation is a day-plus live window judged by a **paired arena vs a FROZEN anchor
+  at ≥300 games** [[regret_does_not_track_strength_run_regressed]].
