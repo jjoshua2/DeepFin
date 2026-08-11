@@ -274,6 +274,7 @@ def build_selfplay_gumbel_config(
         policy_temp=float(search.gumbel_policy_temp),
         c_scale=float(search.gumbel_c_scale),
         target_max_visit_cap=int(search.gumbel_target_max_visit_cap),
+        target_untempered_prior=bool(search.gumbel_target_untempered_prior),
         add_noise=True,
         gumbel_scale=1.0,
         input_history_encoding=game.input_history_encoding,
