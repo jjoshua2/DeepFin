@@ -1244,6 +1244,11 @@ def test_a_bare_research_run_is_off_production_by_default(tmp_path: Path) -> Non
     Exercised through `main` so this pins the WIRING, not just the predicate --
     the pre-fix module reached neither `assert_calibrated` branch here and went
     on to do the work.
+
+    The check sits AFTER the required-argument check and BEFORE shard
+    selection: `tmp_path` exists (so `--replay-dir` is satisfied) but holds no
+    shards, and the calibration refusal must still arrive first because it
+    costs a second where the re-search costs minutes.
     """
     with pytest.raises(SystemExit) as ei:
         rsmc.main([
@@ -1252,6 +1257,19 @@ def test_a_bare_research_run_is_off_production_by_default(tmp_path: Path) -> Non
             "--checkpoint", str(tmp_path / "nope.pt"),
         ])
     assert "no calibration" in str(ei.value)
+
+
+def test_a_missing_replay_dir_is_reported_before_the_calibration_refusal(
+) -> None:
+    """Argument validation precedes semantic validation.
+
+    Regression guard: the first version of this fix ran the calibration check
+    ahead of the `--replay-dir` check, so an operator who simply forgot the
+    flag was told about calibration instead. CI caught it; this pins the order.
+    """
+    with pytest.raises(SystemExit) as ei:
+        rsmc.main(["--mode", "research", "--checkpoint", "nope.pt"])
+    assert "requires --replay-dir" in str(ei.value)
 
 
 def test_diff_focus_shift_refuses_moved_populations_and_unmeasured_ones() -> None:

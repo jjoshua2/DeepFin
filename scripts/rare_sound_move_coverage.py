@@ -2452,15 +2452,19 @@ def main(argv: list[str] | None = None) -> int:
         parse_production_shape(args.production_shape)
         if args.production_shape else None
     )
-    if args.mode == "research":
-        require_calibration_anchor(
-            production_shape_mismatches(
-                _build_shape(args), int(args.sims), declared=declared_prod),
-            calibration=args.calibration, compare_to=args.compare_to,
-        )
     if args.mode in ("shards", "research"):
         if not args.replay_dir:
             raise SystemExit(f"--mode {args.mode} requires --replay-dir (ABSOLUTE path)")
+        # AFTER the required-argument check -- an operator who forgot
+        # `--replay-dir` must be told THAT, not told about calibration -- and
+        # BEFORE `select_shards`, so an unanchored arm costs a second rather
+        # than a full re-search.
+        if args.mode == "research":
+            require_calibration_anchor(
+                production_shape_mismatches(
+                    _build_shape(args), int(args.sims), declared=declared_prod),
+                calibration=args.calibration, compare_to=args.compare_to,
+            )
         sel = select_shards(args.replay_dir, args.shards)
         print(f"[shards] {args.replay_dir}")
         print(f"[shards] {sel.describe()}")
