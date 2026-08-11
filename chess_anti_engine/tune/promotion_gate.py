@@ -173,28 +173,29 @@ puts it at **mean 229, max 357**, over the 264 cap on **26 of 145** iterations,
 worst the (17, 61) row at ~35% over. That row is also 379f6's ONLY nonzero
 ``distributed_stale_games`` (346).
 
-⚑⚑ **THAT ESTIMATE DOES NOT SHOW THE CAP BINDING -- IT SHOWS ITS OWN
-ASSUMPTION FAILING, AND AN EARLIER REVISION READ IT THE FIRST WAY.**
-``matching_games`` is ALREADY POST-CAP, and ``_process_shard_with_prev_cap``
-bounds prev-ingested at ``prev_max_games`` plus at most one shard's overshoot
-whenever ``cap_prev`` holds -- which is every usable row, since both arms
-non-empty implies ``len(accepted_model_shas) > 1``. So a quantity the code
-truncates at 264 must PILE UP at 264. It does not::
+⚑⚑ **AND THAT ESTIMATE CANNOT ADJUDICATE, BECAUSE THE INSTRUMENT IS COARSER
+THAN THE QUESTION.** ``matching_games`` is ALREADY POST-CAP, and
+``_process_shard_with_prev_cap`` demotes the prev SHA only at the first SHARD
+boundary at or past ``prev_max_games`` -- so a capped iteration lands anywhere
+in ``[264, 264 + S)``, where S is one shard. Measured over the 1,226 processed
+shards of the two trials, S has median **89 (379f6) / 100 (5ce02)**, p90 105 /
+121: roughly **35% of the cap itself**. The observed over-cap estimates run
+264 to **357**, and ``[264, 264 + S)`` covers **all 27 of them**. ⇒ "over the
+cap" and "capped, with overshoot" are OBSERVATIONALLY IDENTICAL at this shard
+size, and no threshold inside the window can separate them.
 
-    [210,240) 48   [240,264) 33   [264,290) 21   [290,320) 5   [320,400) 1
-                             ^ cap = 264, and the tail runs smoothly through it
-
-    P(est >= 264) under N(229.0, 37.4) = 0.174  ->  expected 26.7, observed 27
-    P(est >= 290)                      = 0.051  ->  expected  7.8, observed  6
-    P(est >= 320)                      = 0.007  ->  expected  1.1, observed  1
-
-The over-cap count is exactly what an UNCAPPED distribution predicts, to within
-noise, at every threshold. ⇒ the estimator is not tracking the capped quantity,
-and it is biased in the direction that inflates prev. The worst row shows the
-mechanism: for the cap to have bound at 264 there, the two cohorts' curriculum
-fractions would have to be 23.1% (prev) against 8.9% (cur) -- a **2.6x** mix
-difference between two halves of ONE fleet running ONE ``selfplay_fraction``,
-i.e. the assumption failing by 2.6x exactly where the estimate leans hardest.
+⚑ An earlier revision argued the opposite from this same data -- that the
+estimates run smoothly through 264 with no pile-up, therefore the estimator is
+"detecting its own assumption failing" and "biased toward inflating prev". That
+inference is void twice over: truncation CONSERVES the mass above the bound
+(it moves values down INTO the window, it does not remove rows), so the count
+at 264 carries no information about truncation under any reference
+distribution; and every threshold that revision tested (264, 290, 320) lies
+inside the window. It also read a "2.6x mix anomaly" off the worst row by
+assuming the cap bound at exactly 264 -- solve for the binding point instead
+and the implied ratio is 2.61x at 264, 1.69x at 310 and **1.00x at 357**, which
+is inside the median-shard window. The second piece of evidence was the first
+one's assumption restated.
 
 ⇒ **UNMEASURED. Not "never binds" -- and not "binds" either.** A directional
 read needs a per-SHA count across both game types, which nothing records.

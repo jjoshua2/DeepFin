@@ -40048,34 +40048,43 @@ iteration's curriculum prev share gives **mean 229, max 357**, over the 264 cap 
 145** iterations, worst the **(17, 61)** row — also 379f6's only nonzero
 `distributed_stale_games` (346).
 
-### ⚑⚑ AND A FIFTH ROUND KILLED THE REPLACEMENT CONCLUSION TOO — ON THE SAME PATTERN
+### ⚑⚑ THREE SUCCESSIVE CONCLUSIONS ON THIS ONE PARAGRAPH WERE WRONG
 
-I wrote "⇒ the cap plausibly BINDS on the highest-prev-share iterations". **Withdrawn.** The
-estimator estimates prev-SHA games *ingested*, and `matching_games` is **already post-cap** —
-`_process_shard_with_prev_cap` truncates prev-ingested at 264 (+ one shard's overshoot) on
-every usable row. A truncated quantity must **pile up at the bound**. It does not:
+Round 4 said the cap "plausibly BINDS". Round 5 replaced that with "the estimator is
+detecting its own assumption failing, biased toward inflating prev", on the grounds that a
+truncated quantity must pile up at its bound and these estimates run smoothly through 264.
+**Both withdrawn.** The pile-up test has no power, for a reason stated two sentences above it
+in the same paragraph and then ignored: `_process_shard_with_prev_cap` demotes the prev SHA
+at the first **shard boundary** at or past 264, so a capped iteration lands anywhere in
+`[264, 264 + S)`.
 
-```
-[210,240) 48   [240,264) 33   [264,290) 21   [290,320) 5   [320,400) 1
-                        ^ cap = 264, tail runs smoothly through it
+**S is not small.** Measured over the 1,226 processed shards of the two trials, games per
+shard has median **89 (379f6) / 100 (5ce02)**, p90 105 / 121 — roughly **35% of the cap**.
+The observed over-cap estimates run 264 to **357**, and the window covers **all 27**. So
+"over the cap" and "capped, with overshoot" are observationally identical here.
 
-P(est ≥ 264) under N(229.0, 37.4) = 0.174 → expected 26.7, observed 27
-P(est ≥ 290)                      = 0.051 → expected  7.8, observed  6
-P(est ≥ 320)                      = 0.007 → expected  1.1, observed  1
-```
+Two further defects in that argument, both fatal on their own:
 
-The over-cap count is what an **uncapped** distribution predicts, to noise, at every
-threshold. ⇒ the estimator is not tracking the capped quantity; it is detecting **its own
-assumption failing**, biased toward inflating prev. At the worst row, for the cap to have
-bound the two cohorts' curriculum fractions would have to differ **2.6×** within one fleet
-running one `selfplay_fraction`.
+- **Truncation conserves the mass above the bound** — it moves values down *into* the window,
+  it does not remove rows from the `>264` region. So the count at 264 carries no information
+  about truncation under *any* reference distribution, and "27 observed vs 26.7 expected" was
+  structurally uninformative. All three thresholds tested (264, 290, 320) lie inside the
+  window; the only one with power is ~353–385, where n ≈ 1.
+- **The "2.6× mix anomaly" assumed the cap bound at exactly 264.** Solve for the binding point
+  instead: 2.61× at 264, 1.69× at 310, **1.00× at 357** — inside the median-shard window. The
+  second piece of evidence was the first one's assumption restated.
 
-⇒ **UNMEASURED. Not "never binds" and not "binds".** ⚑⚑ **THE REUSABLE PART: an estimator
-built on an assumption, applied to a quantity the code TRUNCATES, will read "over the bound"
-exactly when its assumption fails — and the two are indistinguishable without checking for the
-truncation edge. Check for the edge before reading the exceedance.** Three successive
-conclusions on this one paragraph were wrong; nothing in this entry's step-leg finding depends
-on any of them, and it is recorded because the *shape* is the finding.
+⇒ **UNMEASURED, and this estimate cannot adjudicate.** A directional read needs a per-SHA
+count across both game types, which nothing records.
+
+⚑⚑ **THE REUSABLE PART — and it is the rule that would have caught all three rounds:
+COMPUTE THE INSTRUMENT'S RESOLUTION BEFORE READING A THRESHOLD.** Here the resolution is the
+shard granularity, ~89–100 games against a 264 cap. Every one of the three wrong conclusions
+was a directional read taken off an instrument whose resolution had not been computed — and
+the third was taken while the paragraph itself *stated* the resolution ("plus at most one
+shard's overshoot") one sentence earlier. Nothing in this entry's step-leg finding depends on
+any of them; this is recorded because the *shape* is the finding.
+[[compute_instrument_resolution_before_the_threshold]]
 
 **Confounds:** none — the gate is in shadow mode and this PR changes documentation and tests
 only. The 96-iteration series spans the 08-11 04:19 restart, a lineage boundary for *weights*

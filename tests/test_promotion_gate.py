@@ -3396,22 +3396,29 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
         "attribution is per-SHARD by ``model_sha256`` and a shard carries both "
         "game types from one model, so the two shares should TRACK (an "
         "assumption, not a construction)",
-        # ⚑ item 1: the withdrawn directional read, and why it was wrong.
-        "THAT ESTIMATE DOES NOT SHOW THE CAP BINDING -- IT SHOWS ITS OWN "
-        "ASSUMPTION FAILING",
+        # item 1: the withdrawn directional reads -- BOTH of them, since
+        # round 4's "plausibly BINDS" and round 5's "the estimator is
+        # detecting its own assumption failing" were each overturned by the
+        # pass after them.
+        "AND THAT ESTIMATE CANNOT ADJUDICATE, BECAUSE THE INSTRUMENT IS "
+        "COARSER THAN THE QUESTION",
         "``matching_games`` is ALREADY POST-CAP",
-        "The over-cap count is exactly what an UNCAPPED distribution predicts, "
-        "to within noise, at every threshold",
-        "a **2.6x** mix difference between two halves of ONE fleet running ONE "
-        "``selfplay_fraction``",
         '**UNMEASURED. Not "never binds" -- and not "binds" either.**',
-        # ⛑ ...and the EVIDENCE for the withdrawal, which a sweep rewrote
-        # freely: the histogram and the tail table are what turn "26 over the
-        # cap" from an overflow finding into an assumption-failure finding.
-        # Pinning the conclusion while leaving its evidence loose is how the
-        # previous two conclusions survived.
-        "[210,240) 48 [240,264) 33 [264,290) 21 [290,320) 5 [320,400) 1",
-        "^ cap = 264, and the tail runs smoothly through it",
+        # ⛑ ...and the EVIDENCE for the withdrawal. A sixth review pass
+        # DELETED the previous evidence (a pile-up test on the estimates) and
+        # replaced it with a resolution argument, because the pile-up test had
+        # no power: see the comment on the shard-size figures below.
+        "demotes the prev SHA only at the first SHARD boundary at or past "
+        "``prev_max_games``",
+        "S has median **89 (379f6) / 100 (5ce02)**, p90 105 / 121: roughly "
+        "**35% of the cap itself**",
+        "``[264, 264 + S)`` covers **all 27 of them**",
+        '"over the cap" and "capped, with overshoot" are OBSERVATIONALLY '
+        "IDENTICAL at this shard size, and no threshold inside the window can "
+        "separate them",
+        "truncation CONSERVES the mass above the bound",
+        "the implied ratio is 2.61x at 264, 1.69x at 310 and **1.00x at 357**",
+        "The second piece of evidence was the first one's assumption restated",
         "FALSE AS WRITTEN: it is nonzero on 8 rows",
         "a nonzero reading has two causes and a zero reading has two "
         "explanations",
@@ -3437,28 +3444,18 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
     for c, pv, w, d, lo in _POST_BOOT_ITERATIONS:
         assert c + pv == w + d + lo, (c, pv, w, d, lo)
 
-    # ⛑ THE TAIL TABLE IS ARITHMETIC, so derive it rather than needle it. The
-    # quoted probabilities must be the normal tail of the quoted N(229.0, 37.4)
-    # at the quoted thresholds, and each "expected" must be that probability
-    # times the row count. This cannot check the DATA (progress.csv is runtime
-    # output) but it does check that the block is internally consistent -- a
-    # mutation that moves P(est>=264) to 0.004 to manufacture an overflow
-    # finding now fails on the arithmetic rather than on a string.
-    for thresh, prob, expected in ((264, 0.174, 26.7),
-                                   (290, 0.051, 7.8),
-                                   (320, 0.007, 1.1)):
-        derived = 0.5 * math.erfc((thresh - 229.0) / (37.4 * math.sqrt(2.0)))
-        # ⛑ Tolerance 0.001, not 1e-6: the docstring quotes mean and sd to one
-        # decimal, and re-deriving from the ROUNDED parameters moves the tail
-        # by up to 7e-4 (it was computed from the full-precision moments). The
-        # check is "these digits are consistent with that normal", which is
-        # what a reader can verify -- not "this reproduces to floating point",
-        # which would fail on the rounding the docstring itself performs.
-        assert derived == pytest.approx(prob, abs=0.001), (thresh, derived)
-        assert derived * 153 == pytest.approx(expected, abs=0.15), (thresh, derived)
-        assert f"P(est >= {thresh})" in flat(doc), thresh
-        assert f"expected {expected}" in flat(doc), thresh
-
+    # ⛑ THE PILE-UP TEST IS GONE, AND ITS TESTS WITH IT. A previous revision
+    # derived a normal tail table here so the docstring's P(est>=264)=0.174
+    # etc. could not be mutated. The block it guarded has been deleted: the
+    # cap demotes at the first SHARD boundary past 264, shards run to a median
+    # of ~89-100 games, so a capped iteration lands anywhere in [264, ~360)
+    # -- which covers every over-cap observation. The test could not have
+    # caught that, because it checked the arithmetic of the tail against its
+    # own quoted moments and never asked whether the thresholds had any power.
+    # ⚑ A derivation that is internally consistent and externally meaningless
+    # is the same defect as a gate that cannot fail, one level up. What
+    # replaces it is a needle on the RESOLUTION figures above, which are a
+    # measurement (1,226 shard filenames) rather than an inference.
     for withdrawn in ("is a CEILING that never binds",
                       "the cap plausibly BINDS",
                       "the cap never binds on the"):
