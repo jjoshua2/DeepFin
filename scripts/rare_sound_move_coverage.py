@@ -277,6 +277,7 @@ import math
 import os
 import sys
 import time
+import dataclasses
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -779,6 +780,9 @@ class ShardReadStats:
     # different producing nets are not the same measurement.
     model_steps: list[int] = field(default_factory=list)
     model_sha_prefixes: list[str] = field(default_factory=list)
+    # Rows dropped for a non-finite target/regret. Under `assert_population`'s
+    # 1% tolerance these used to be scored as uncovered instead.
+    dropped_non_finite: int = 0
 
 
 def assert_required_fields(z: object, path: str) -> None:
@@ -864,9 +868,25 @@ def assert_same_producing_net(
     means populating ``ShardMeta`` at ``disk_buffer.py:1580``, which is an
     ingest-path change and out of scope for a diagnostic script.
     """
+    # ⚑ THE STEP IS NOT THE IDENTITY. Two PBT trials, or two lineages, reach the
+    # same `model_step` with different weights -- and they reuse shard basenames
+    # and indices, so nothing else in this comparison would notice. The sha was
+    # already collected and simply never read: the house defect, in the guard
+    # written to catch the house defect.
     steps_b = sorted(set(stats.model_steps))
+    shas_b = sorted(set(stats.model_sha_prefixes))
     read_a = prov_a.get("read_stats")
     steps_a = sorted(set(read_a.get("model_steps", []))) if isinstance(read_a, dict) else []
+    shas_a = (
+        sorted(set(read_a.get("model_sha_prefixes", [])))
+        if isinstance(read_a, dict) else []
+    )
+    if shas_a and shas_b and shas_a != shas_b:
+        raise SystemExit(
+            f"refusing to difference arms produced by different nets: arm A "
+            f"model_sha={shas_a}, this run={shas_b} (steps {steps_a} vs {steps_b} "
+            "-- equal steps do NOT imply equal weights across trials or lineages)"
+        )
     if not steps_a or not steps_b:
         if allow_missing:
             print(
@@ -924,6 +944,16 @@ class ResearchSpec:
     shape: SimShape
     sims: int
     syzygy_path: str | None = None
+    # ⚑ RECORDED IS NOT USED. The runner hard-coded its Gumbel RNG seed while
+    # provenance banked `args.seed`, so `--seed` moved the bootstraps and the
+    # shuffles but NOT the search itself: the recorded seed did not reproduce
+    # the arm it was recorded for.
+    seed: int = 20260809
+    # The producing checkpoint's own extra-feature encoding. Left at the
+    # `GumbelConfig` default, a legacy `v1` (146-plane) checkpoint got its ROOT
+    # from the shard's stored planes and its CHILDREN re-encoded to 175, which
+    # the model cannot consume.
+    input_extra_features: str = "v2_threats"
 
 
 @dataclass(frozen=True)
@@ -1072,6 +1102,11 @@ def read_shard_rows(
     evaluator = LocalModelEvaluator(model, device=device)
     compact_to_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)
 
+    if research is not None:
+        research = dataclasses.replace(
+            research, input_extra_features=str(
+                getattr(model, "input_extra_features", "v2_threats")),
+        )
     searcher = _ResearchRunner(research, device=device, evaluator=evaluator,
                                hist=ck_hist) if research is not None else None
 
@@ -1163,6 +1198,19 @@ def read_shard_rows(
                         fidelity.tv_sum += 0.5 * float(np.abs(a - b).sum())
                     tgt_full = fresh
                 reg_row = regret[k]
+                # ⚑ TOLERATED IS NOT HARMLESS. `assert_population` permits up to
+                # 1% non-finite `policy_target` / `sf_p0_regret` rows before it
+                # aborts, and those rows were still appended: a NaN target reads
+                # as UNCOVERED at every threshold and a NaN regret empties the
+                # scored mask, so corruption UNDER the abort threshold moved both
+                # the numerator and the denominator with nothing saying so.
+                # Dropped and counted instead -- the count is printed and banked.
+                if not (
+                    bool(np.all(np.isfinite(tgt_full[lm])))
+                    and bool(np.all(np.isfinite(reg_row[lm])))
+                ):
+                    stats.dropped_non_finite += 1
+                    continue
                 scored_full = _scored_mask_from_regret(reg_row)
                 prior = e / s
                 row_key = f"{base}:{int(idx[k])}"
@@ -1235,7 +1283,7 @@ class _ResearchRunner:
         self.device = device
         self.evaluator = evaluator
         self.hist = hist
-        self.rng = np.random.default_rng(20260809)
+        self.rng = np.random.default_rng(int(spec.seed))
         self.tb_probe = None
         if spec.syzygy_path:
             from chess_anti_engine.tablebase import SyzygyProbe
@@ -1250,6 +1298,7 @@ class _ResearchRunner:
             q_visit_exp_root=float(sh.q_visit_exp_root),
             halving_div=int(sh.halving_div), add_noise=bool(sh.add_noise),
             gumbel_scale=float(sh.gumbel_scale), input_history_encoding=hist,
+            input_extra_features=str(spec.input_extra_features),
         )
 
     def run(
@@ -1953,6 +2002,17 @@ def scan_bank(
     """
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     arms = payload.get("arms", {})
+    # ⚑ THE BANK'S DELTAS ARE ALL `paired_vs_A`. With `--scan-ref-arm` set to
+    # anything else the CELLS and CONTROLS come from that arm while the EFFECTS
+    # still come from the A-referenced table, so the pass/quiet counts mix two
+    # different references and mean nothing.
+    if str(ref_arm) != "A":
+        raise SystemExit(
+            f"--scan-ref-arm={ref_arm!r}: this bank schema stores deltas only as "
+            "`paired_vs_A`, so a non-A reference would pair that arm's control "
+            "with effects measured against A. Re-bank the deltas against "
+            f"{ref_arm!r}, or scan with --scan-ref-arm A."
+        )
     paired = payload.get("paired_vs_A", {})
     for label, where in ((ref_arm, arms), (c_arm, paired), (t_arm, paired)):
         if label not in where:
@@ -2492,6 +2552,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[research] {fid.report()} in {time.perf_counter() - t0:.1f}s")
             provenance["fidelity"] = asdict(fid)
             fid.assert_within(tol, is_production_shape=is_prod)
+        if stats.dropped_non_finite:
+            print(f"[rows] DROPPED {stats.dropped_non_finite} row(s) for a "
+                  "non-finite policy_target/sf_p0_regret. They are under "
+                  "assert_population's tolerance, so the run continues -- but "
+                  "they are excluded from coverage rather than scored as "
+                  "uncovered.")
         provenance["read_stats"] = asdict(stats)
         title = (f"coverage over {len(rows)} live shard rows"
                  + (" [RE-SEARCHED]" if research is not None else ""))
@@ -2585,10 +2651,21 @@ def main(argv: list[str] | None = None) -> int:
                 f"refusing to compare readouts taken against different reference "
                 f"priors: arm A used {ck_a!r}, this run used {args.checkpoint!r}"
             )
-        assert_same_producing_net(
-            stats, prov_a,
-            allow_missing=bool(args.allow_missing_shard_provenance),
-        )
+        # Simulated arms are paired by AUDIT-POSITION key and have no producing
+        # shards at all, so the shard-provenance guard has nothing to check and
+        # its UNKNOWN branch would fire unconditionally -- forcing the operator
+        # to pass an unrelated `--allow-missing-shard-provenance`, which then
+        # ALSO waives the guard for any shard-backed arm in the same session.
+        # An escape hatch reached for the wrong reason stops being a record.
+        if args.mode in ("shards", "research"):
+            assert_same_producing_net(
+                stats, prov_a,
+                allow_missing=bool(args.allow_missing_shard_provenance),
+            )
+        else:
+            print("[provenance] simulate mode: no producing shards on either "
+                  "side, so the producing-net guard does not apply (arms are "
+                  "paired by audit-position key)")
         provenance["provenance_unverified"] = bool(
             args.allow_missing_shard_provenance
         )

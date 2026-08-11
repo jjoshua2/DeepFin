@@ -1299,3 +1299,56 @@ def test_load_banked_cells_returns_empty_for_a_dump_without_cells(
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"provenance": {}, "per_row": []}), encoding="utf-8")
     assert rsmc.load_banked_cells(p) == []
+
+
+def test_producing_net_guard_compares_the_sha_not_only_the_step() -> None:
+    """Two lineages reach the same `model_step` with different weights.
+
+    `model_sha_prefixes` was already collected and never read -- the house
+    defect inside the guard written to catch the house defect.
+    """
+    stats = rsmc.ShardReadStats()
+    stats.model_steps.extend([57999])
+    stats.model_sha_prefixes.extend(["aaaaaaaaaaaa"])
+    prov_same_step_other_net = {
+        "read_stats": {"model_steps": [57999],
+                       "model_sha_prefixes": ["bbbbbbbbbbbb"]},
+    }
+    with pytest.raises(SystemExit) as ei:
+        rsmc.assert_same_producing_net(
+            stats, prov_same_step_other_net, allow_missing=False)
+    assert "different nets" in str(ei.value)
+    # Same sha AND same step is accepted.
+    rsmc.assert_same_producing_net(
+        stats,
+        {"read_stats": {"model_steps": [57999],
+                        "model_sha_prefixes": ["aaaaaaaaaaaa"]}},
+        allow_missing=False,
+    )
+
+
+def test_research_spec_carries_the_seed_and_the_extra_feature_encoding() -> None:
+    """`--seed` moved the bootstraps but not the search; v1 checkpoints crashed."""
+    spec = rsmc.ResearchSpec(
+        shape=rsmc.SimShape(c_scale=0.1, policy_temp=1.5), sims=32)
+    assert spec.seed == 20260809
+    assert spec.input_extra_features == "v2_threats"
+    moved = dataclasses.replace(spec, seed=7, input_extra_features="v1")
+    assert (moved.seed, moved.input_extra_features) == (7, "v1")
+
+
+def test_scan_refuses_a_non_A_reference_against_an_A_referenced_bank(
+    tmp_path: Path,
+) -> None:
+    """Cells from one arm, deltas from `paired_vs_A`: two different references."""
+    bank = tmp_path / "bank.json"
+    bank.write_text(json.dumps({
+        "arms": {"A": {"cells": []}, "B": {"cells": []}},
+        "paired_vs_A": {"B": [], "C": []},
+    }), encoding="utf-8")
+    with pytest.raises(SystemExit) as ei:
+        rsmc.scan_bank(
+            bank, ref_arm="B", c_arm="B", t_arm="C", quiet_ratio=0.25,
+            min_pairs=50,
+        )
+    assert "paired_vs_A" in str(ei.value)
