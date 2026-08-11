@@ -146,12 +146,24 @@ FLOOR ``min_games_per_side: 15`` ADMITS. That is spelled out under "WHAT THE
 STEP LEG COSTS AND WHAT IT BUYS" below; it is a real finding of this revision,
 not a rounding change.
 
-Note ``distributed_prev_model_max_fraction: 0.60`` is a CEILING that never
-binds -- ``distributed_stale_games`` is 0 on every recent iteration
-(re-verified 2026-08-11 on trial 5ce02), and a binding cap would have to
-discard prev shards into ``stale_*``. Sizing this gate off 0.60 gives 95/143
-and a standard error of 31 Elo. Always take the realized split from the gate's
-counters, never the cap and never a timestamp proxy.
+Note ``distributed_prev_model_max_fraction: 0.60`` is NOT a ceiling on the
+gate's split, and reading it as one is a category error: the cap is
+``ceil(0.60 * target_games)`` over the WHOLE iteration's ingest
+(``_ingest_distributed_selfplay``, target ~488 realized), while the gate's arms
+are the curriculum subset averaging 50/46. ~293 prev games are permitted
+against a prev ARM that has never exceeded 163.
+
+⚑ And ``distributed_stale_games`` does not test it. An earlier revision of this
+paragraph claimed the cap "never binds -- ``distributed_stale_games`` is 0 on
+every recent iteration (re-verified 2026-08-11 on trial 5ce02)". It is nonzero
+on 8 of the 134 rows on disk (379f6 iter 836; 5ce02 iters 2, 3, 7, 10, 11, 35,
+36 -- the last two inside the very window this module banks), so the stamp was
+false as written; and ``_process_shard_with_prev_cap`` funnels cap-demoted prev
+shards and generic non-accepted SHAs into the SAME ``stale_*`` counter, so even
+a correct reading of it could not attribute. Sizing this gate off 0.60 would
+give 95/143 and a standard error of 31 Elo. Always take the realized split from
+the gate's counters, never the cap, never a timestamp proxy, and never a
+counter that aggregates two causes.
 
 **The observed spread is pure binomial noise -- there is NO detectable
 anchor-drift variance**, and an earlier revision of this module claimed the
@@ -366,9 +378,14 @@ This is the "a gate sized on a shape it no longer runs at" failure, found by
 re-deriving the table rather than by anything firing.
 
 ⚑ **0.106% is the worst ADMITTED shape, not the operating cost.** Over the 96
-shapes the gate actually saw the expected rate is **0.0021%** and the worst
-REALIZED shape (17/61) is **0.0194%** -- every measured iteration is inside
-budget. The breach lives at the un-realized 15/15 corner. Costing the worst
+shapes the gate actually saw, each simulated at ITS OWN realized W/D/L, the MC
+expected rate is **0.0023%** and the worst REALIZED shape (17/61) is
+**0.0241%** -- every measured iteration is inside budget, the worst at 60% of
+it. ⚑ Quote those from the MC, not the closed form, which reads 0.0021% /
+0.0194% here: at 17/61 the floor does NOT bind, so the closed form is
+*anti*-conservative by 24% -- the opposite of its direction at the floored
+shapes, and the reason "the closed form is conservative" is not a safe
+shortcut at any shape you have not checked. The breach lives at the un-realized 15/15 corner. Costing the worst
 ADMITTED shape is nevertheless the convention ``demote_step_elo`` was
 originally sized under (it was quoted at 197/15, not at 197/38), so the
 comparison is like-for-like and the finding stands.
@@ -395,10 +412,15 @@ the alarm's operating point.
 **It does NOT catch a -100 step** and nothing at this sample size can: one
 anchored sample carries 49-88 Elo of binomial noise, so a -100 step is under
 2.5 sigma and buying it would cost a false brake every few hundred iterations.
-The honest claim is "a one-iteration step of about -206 Elo or worse, at 50%
-power; -269 or worse at 90%" at the realized shape, and that is the claim the
-tests assert. Both numbers moved ~15 Elo further from zero when the shape
-changed; the retired -195/-249 pair is optimistic and must not be requoted.
+The honest claim is "a one-iteration step of about -205 Elo or worse, at 50%
+power; -268 or worse at 90%" at the realized shape, and that is the claim the
+tests assert (and the table above, and the ``demote_step_elo`` comment -- three
+copies, one number). ⚑ A previous revision wrote -206 / -269 here while the
+table said -205 / -268: those are the GRAND-POOL sd's figures (49.21 Elo se
+against the shipped 48.76), i.e. the wrong statistic surviving in the one place
+the correction did not reach. -269 is also the 15/15 FIFTY-percent figure, so
+the slip was self-camouflaging. The retired -195/-249 pair moved by 10 and 19
+Elo respectively and is optimistic; it must not be requoted.
 
 THE PID LAG DOES NOT CANCEL -- THE ANCHORED DELTA CARRIES A CONTROLLER TERM
 ----------------------------------------------------------------------------
@@ -572,7 +594,10 @@ ELO_PER_SCORE_AT_HALF = 400.0 / (math.log(10.0) * 0.25)
 # between-iteration 0.002231. **The within figure is the analogue of this
 # constant** -- `_arm_score_var` measures each arm around its OWN mean, and the
 # between term is common to both arms of an iteration so it cancels in `delta`.
-# 0.3446 vs 0.3447 is 0.02%: CONFIRMED, not changed.
+# 0.3446 vs 0.3447 is 0.02%: CONFIRMED, not changed. ⚑ And "the shipped
+# constant is LOW" would NOT be the fail-safe reading even if it were true: a
+# NARROWER se makes elo_hi SMALLER and the leg fires MORE readily. The constant
+# stands because it is ACCURATE.
 #
 # ⚑ An earlier revision of this comment quoted the GRAND-POOL sd (0.3479, which
 # includes the between term) as "the re-measured value", concluded the shipped
@@ -968,10 +993,15 @@ class GateConfig:
     # because at the SAME admission cost it has the narrower se and so beats 22
     # on BOTH axes at once -- false-brake 0.0176% vs 0.0346%, and 50% power at
     # -236 vs -244. 26 is where admissions start to cost (93/96). Not applied
-    # here because ``gate_min_games_per_side`` is also pinned in the production
-    # yaml, whose own comment requires a ledger line for a change to the
-    # alarm's operating point; the two must move together or the docs go stale
-    # again by the mechanism this whole section exists to record.
+    # here because ``gate_min_games_per_side`` is ALSO pinned in the LIVE
+    # (uncommitted) ``configs/pbt2_small.yaml``, whose own comment requires a
+    # ledger line for a change to the alarm's operating point; the two must
+    # move together or the docs go stale again by the mechanism this whole
+    # section exists to record. ⚑ Do not look for that second copy in the
+    # COMMITTED yaml -- it ships no ``gate_*`` keys at all (see its own comment
+    # saying they are "deliberately NOT listed here yet"), so
+    # ``gate_config_from_dict`` falls back to this default and the committed
+    # tree has exactly ONE copy. The live file has the other.
     min_games_per_side: int = 15
     # -25, and the derivation is a FALSE-BRAKE BUDGET, not a sigma count. A
     # 4-sigma line (-45) was the first choice and it does not deliver what the
@@ -1024,8 +1054,10 @@ class GateConfig:
     # the worst shape the constant admits. See ``min_games_per_side`` above for
     # the remedy (25 -> 0.0176% MC) and why it is not applied here.
     # ⚑ 0.1063% is the worst ADMITTED shape, not the operating rate: over the
-    # 96 shapes the gate actually saw the expected rate is 0.0021% and the
-    # worst realized one (17/61) is 0.0194%, both inside budget. And it is not
+    # 96 shapes the gate actually saw, each at its OWN W/D/L, the MC expected
+    # rate is 0.0023% and the worst realized one (17/61) is 0.0241%, both
+    # inside budget. (Closed form reads 0.0021% / 0.0194% -- at 17/61 the floor
+    # does not bind and it is anti-conservative by 24%.) And it is not
     # a ceiling either -- drawing 15/15 from the widest single iteration (own
     # score sd 0.386) the MC reads 0.2426%, 2.33x the aggregate.
     #

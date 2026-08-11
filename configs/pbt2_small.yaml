@@ -1206,10 +1206,25 @@ tune:
   # That is what gate_demote_step_elo is for: a SECOND leg on THIS iteration's
   # own sample, evaluated before the min_iters window check, OR-ed into demote
   # only (it can never create a promote). It ships at -125 on the same
-  # false-brake budget as the window line: 0.02-1.31 spurious holds per 8000
-  # null iterations across the admissible arm shapes. It catches a step of
-  # about -195 Elo at 50% power and -249 at 90%, and it does NOT catch a -100
-  # step -- one anchored sample carries 42-64 Elo of binomial noise.
+  # false-brake budget as the window line: at most 0.04% spurious holds.
+  #
+  # ⚑ RETIRED 2026-08-11 (PR #395). This block used to read "0.02-1.31 spurious
+  # holds per 8000 null iterations across the admissible arm shapes. It catches
+  # a step of about -195 Elo at 50% power and -249 at 90% ... one anchored
+  # sample carries 42-64 Elo of binomial noise." Every one of those numbers is
+  # the PRE-08-04 197/38 lineage, and the first is the exact claim PR #395
+  # RETRACTS: re-derived at the realized 50/46 composition, the range across
+  # ADMISSIBLE shapes is 0.0013% to 0.106% -- up to 8.5 spurious holds per
+  # 8000, not 1.31 -- because gate_min_games_per_side: 15 admits a 15/15 shape
+  # that is 2.6x OUTSIDE the 0.04% budget. Current figures:
+  #   realized 50/46: se 48.8 Elo, 0.0013%, 50% power -205, 90% -268
+  #   worst admitted 15/15: se 87.5 Elo, 0.1063% (MC), 50% -269, 90% -381
+  #   operating cost over the 96 realized shapes: 0.0023% mean, 0.0241% worst
+  # It still does NOT catch a -100 step -- one anchored sample now carries
+  # 49-88 Elo of binomial noise, so the retired 42-64 was optimistic too.
+  # The full derivation, both instruments and the min_games_per_side: 25
+  # remedy are in promotion_gate.py's "WHAT THE STEP LEG COSTS AND WHAT IT
+  # BUYS". ⚑ Do not requote -195/-249 or the 0.02-1.31 range.
   #
   # SHADOW-MODE READOUT: watch gate_would_demote, not gate_decision.
   # gate_decision == 1 covers FOUR situations (nothing fired; shadow suppressed

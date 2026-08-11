@@ -1976,8 +1976,9 @@ this paragraph supersedes the mechanism sketch above where they differ.**
 - **(2) as implemented:** `gate_demote_step_elo: -125` leg on the iteration's OWN
   sample, evaluated before `min_iters`, OR-ed into demote, pooled-variance floor
   load-bearing. ⚑ **SUPERSEDED 2026-08-11 — the 197/38 shape below is the PRE-08-04
-  lineage measured by a timestamp PROXY. Realized is 50.3/46.4 (`score_se` 49.2 Elo,
-  fires at ≈−206), and at that shape the leg's false-brake budget is BREACHED by the
+  lineage measured by a timestamp PROXY. Realized is 50.3/46.4 (`score_se` 48.8 Elo,
+  fires at ≈−205 — ⚑ NOT 49.2/−206, which is the same figure at the rejected
+  grand-pool sd), and at that shape the leg's false-brake budget is BREACHED by the
   `min_games_per_side: 15` floor. See the 2026-08-11 correction entry at the end of
   this file; do not requote the numbers in this bullet.**
   Measured: at 197/38 games `score_se` = 42.4 Elo so the leg fires at
@@ -39979,8 +39980,11 @@ because being low would be safe.
 ### Two further scope corrections
 
 - **0.1063% is the worst ADMITTED shape, not the operating cost.** Over the 96 shapes the
-  gate actually saw the expected rate is **0.0021%** and the worst REALIZED shape (17/61) is
-  **0.0194%** — every measured iteration is inside budget. The breach lives at the
+  gate actually saw, each simulated at ITS OWN W/D/L, the MC expected rate is **0.0023%** and
+  the worst REALIZED shape (17/61) is **0.0241%** — every measured iteration is inside budget,
+  the worst at 60% of it. ⚑ Quote those from the MC: the closed form reads 0.0021% / 0.0194%,
+  and at 17/61 the pooled floor does NOT bind, so it is *anti*-conservative by 24% — the
+  opposite of its direction at the floored shapes. The breach lives at the
   un-realized 15/15 corner. Costing the worst admitted shape is still the convention
   `demote_step_elo` was sized under (quoted at 197/15, not 197/38), so the finding stands.
 - **Nor is it a ceiling.** The pooled floor does not bind on every iteration; realized
@@ -40005,10 +40009,14 @@ the SAME admission cost it has the narrower `se`, so it dominates 22 on both axe
 — false-brake 0.0176% vs 0.0346% AND 50% power at −236 vs −244. 26 is where admissions
 start to cost.
 
-**Not applied in this PR.** `gate_min_games_per_side` is pinned in `configs/pbt2_small.yaml`,
-whose own comment requires a ledger line for any change to the alarm's operating point —
-this is that line — and the two copies must move together or the docs go stale again by the
-same mechanism. Follow-up PR only; nothing is at risk meanwhile because `gate_mode: shadow`
+**Not applied in this PR.** `gate_min_games_per_side` is pinned in the **LIVE
+(uncommitted)** `configs/pbt2_small.yaml:703`, whose own comment requires a ledger line for
+any change to the alarm's operating point — this is that line — and the two copies must move
+together or the docs go stale again by the same mechanism. ⚑ The **committed**
+`configs/pbt2_small.yaml` ships no `gate_*` keys at all (its own comment says they are
+"deliberately NOT listed here yet"), so `gate_config_from_dict` falls back to the code
+default and the committed tree has exactly ONE copy. A follow-up author who greps the
+committed yaml for the second copy will find nothing — it is in the live file. Follow-up PR only; nothing is at risk meanwhile because `gate_mode: shadow`
 means no decision this leg reaches takes effect.
 
 **Yardstick / kill rule for the follow-up.** Not a training readout — the deciding numbers
