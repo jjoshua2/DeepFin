@@ -277,7 +277,8 @@ import math
 import os
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+import dataclasses
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 import numpy as np
@@ -779,6 +780,9 @@ class ShardReadStats:
     # different producing nets are not the same measurement.
     model_steps: list[int] = field(default_factory=list)
     model_sha_prefixes: list[str] = field(default_factory=list)
+    # Rows dropped for a non-finite target/regret. Under `assert_population`'s
+    # 1% tolerance these used to be scored as uncovered instead.
+    dropped_non_finite: int = 0
 
 
 def assert_required_fields(z: object, path: str) -> None:
@@ -864,27 +868,63 @@ def assert_same_producing_net(
     means populating ``ShardMeta`` at ``disk_buffer.py:1580``, which is an
     ingest-path change and out of scope for a diagnostic script.
     """
+    # ⚑ THE STEP IS NOT THE IDENTITY. Two PBT trials, or two lineages, reach the
+    # same `model_step` with different weights -- and they reuse shard basenames
+    # and indices, so nothing else in this comparison would notice. The sha was
+    # already collected and simply never read: the house defect, in the guard
+    # written to catch the house defect.
     steps_b = sorted(set(stats.model_steps))
+    shas_b = sorted(set(stats.model_sha_prefixes))
     read_a = prov_a.get("read_stats")
     steps_a = sorted(set(read_a.get("model_steps", []))) if isinstance(read_a, dict) else []
-    if not steps_a or not steps_b:
+    shas_a = (
+        sorted(set(read_a.get("model_sha_prefixes", [])))
+        if isinstance(read_a, dict) else []
+    )
+    if shas_a and shas_b and shas_a != shas_b:
+        raise SystemExit(
+            f"refusing to difference arms produced by different nets: arm A "
+            f"model_sha={shas_a}, this run={shas_b} (steps {steps_a} vs {steps_b} "
+            "-- equal steps do NOT imply equal weights across trials or lineages)"
+        )
+    # ⚑ COMPLETENESS, not mere non-contradiction. The SHA check above can only
+    # fire when BOTH sides carry a SHA, and the step check below proves nothing
+    # on its own: `model_step` is a per-trial counter, so equal steps across
+    # trials or lineages are equal COUNTERS, not equal WEIGHTS -- that is the
+    # whole reason the SHA comparison exists. An earlier revision required only
+    # that steps be present and equal, which accepted "equal step, SHA ABSENT on
+    # one side" as verified identity: exactly the condition the guard is for.
+    # Missing SHA is therefore routed to the SAME unverifiable branch as missing
+    # steps. Absent provenance is not evidence of a match.
+    missing = [
+        name for name, got in (
+            ("arm A model_steps", steps_a), ("this run model_steps", steps_b),
+            ("arm A model_sha_prefixes", shas_a), ("this run model_sha_prefixes", shas_b),
+        ) if not got
+    ]
+    if missing:
+        detail = (
+            f"arm A model_steps={steps_a or 'ABSENT'}, this run="
+            f"{steps_b or 'ABSENT'}; arm A model_sha={shas_a or 'ABSENT'}, "
+            f"this run={shas_b or 'ABSENT'}"
+        )
         if allow_missing:
             print(
-                "[provenance] ⚑ UNVERIFIABLE: the shards carry no producing-net id "
-                f"(arm A model_steps={steps_a or 'ABSENT'}, this run="
-                f"{steps_b or 'ABSENT'}). Proceeding only because "
-                "--allow-missing-shard-provenance was given; this comparison is "
-                "NOT proved to be against one producing net."
+                "[provenance] ⚑ UNVERIFIABLE: the shards do not fully identify the "
+                f"producing net -- ABSENT: {', '.join(missing)} ({detail}). "
+                "Proceeding only because --allow-missing-shard-provenance was "
+                "given; this comparison is NOT proved to be against one "
+                "producing net."
             )
             return
         raise SystemExit(
-            "refusing to difference two arms whose producing net is UNKNOWN: "
-            f"arm A model_steps={steps_a or 'ABSENT'}, this run="
-            f"{steps_b or 'ABSENT'}. The trial's replay shards are written by "
-            "DiskReplayBuffer._flush_shard_arrays with no ShardMeta, so model_step "
-            "and model_sha256 are None on every one of them. Absent provenance is "
-            "not evidence of a match. Pass --allow-missing-shard-provenance to "
-            "proceed on the record that this is unverified."
+            "refusing to difference two arms whose producing net is UNKNOWN -- "
+            f"ABSENT: {', '.join(missing)} ({detail}). The trial's replay shards "
+            "are written by DiskReplayBuffer._flush_shard_arrays with no "
+            "ShardMeta, so model_step and model_sha256 are None on every one of "
+            "them. Absent provenance is not evidence of a match. Pass "
+            "--allow-missing-shard-provenance to proceed on the record that this "
+            "is unverified."
         )
     if steps_a != steps_b:
         raise SystemExit(
@@ -924,6 +964,16 @@ class ResearchSpec:
     shape: SimShape
     sims: int
     syzygy_path: str | None = None
+    # ⚑ RECORDED IS NOT USED. The runner hard-coded its Gumbel RNG seed while
+    # provenance banked `args.seed`, so `--seed` moved the bootstraps and the
+    # shuffles but NOT the search itself: the recorded seed did not reproduce
+    # the arm it was recorded for.
+    seed: int = 20260809
+    # The producing checkpoint's own extra-feature encoding. Left at the
+    # `GumbelConfig` default, a legacy `v1` (146-plane) checkpoint got its ROOT
+    # from the shard's stored planes and its CHILDREN re-encoded to 175, which
+    # the model cannot consume.
+    input_extra_features: str = "v2_threats"
 
 
 @dataclass(frozen=True)
@@ -1072,6 +1122,11 @@ def read_shard_rows(
     evaluator = LocalModelEvaluator(model, device=device)
     compact_to_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)
 
+    if research is not None:
+        research = dataclasses.replace(
+            research, input_extra_features=str(
+                getattr(model, "input_extra_features", "v2_threats")),
+        )
     searcher = _ResearchRunner(research, device=device, evaluator=evaluator,
                                hist=ck_hist) if research is not None else None
 
@@ -1163,6 +1218,19 @@ def read_shard_rows(
                         fidelity.tv_sum += 0.5 * float(np.abs(a - b).sum())
                     tgt_full = fresh
                 reg_row = regret[k]
+                # ⚑ TOLERATED IS NOT HARMLESS. `assert_population` permits up to
+                # 1% non-finite `policy_target` / `sf_p0_regret` rows before it
+                # aborts, and those rows were still appended: a NaN target reads
+                # as UNCOVERED at every threshold and a NaN regret empties the
+                # scored mask, so corruption UNDER the abort threshold moved both
+                # the numerator and the denominator with nothing saying so.
+                # Dropped and counted instead -- the count is printed and banked.
+                if not (
+                    bool(np.all(np.isfinite(tgt_full[lm])))
+                    and bool(np.all(np.isfinite(reg_row[lm])))
+                ):
+                    stats.dropped_non_finite += 1
+                    continue
                 scored_full = _scored_mask_from_regret(reg_row)
                 prior = e / s
                 row_key = f"{base}:{int(idx[k])}"
@@ -1235,7 +1303,7 @@ class _ResearchRunner:
         self.device = device
         self.evaluator = evaluator
         self.hist = hist
-        self.rng = np.random.default_rng(20260809)
+        self.rng = np.random.default_rng(int(spec.seed))
         self.tb_probe = None
         if spec.syzygy_path:
             from chess_anti_engine.tablebase import SyzygyProbe
@@ -1250,6 +1318,7 @@ class _ResearchRunner:
             q_visit_exp_root=float(sh.q_visit_exp_root),
             halving_div=int(sh.halving_div), add_noise=bool(sh.add_noise),
             gumbel_scale=float(sh.gumbel_scale), input_history_encoding=hist,
+            input_extra_features=str(spec.input_extra_features),
         )
 
     def run(
@@ -1458,19 +1527,70 @@ PRODUCTION_SEARCH_SHAPE: dict[str, float] = {
 }
 PRODUCTION_SIMS = 256
 
+# ⚑ THE OTHER EIGHT KNOBS. Every one of these is a `SimShape` field, every one
+# is passed into the `GumbelConfig` that drives the re-search, and four of them
+# (`c_visit`, `halving_div`, `vloss_weight`, `add_noise`) are settable from the
+# CLI. The earlier `is_production_shape` compared only the four headline knobs
+# plus `sims`, so `--c-visit 200 --no-noise` was still classified as PRODUCTION
+# and its `stored - re-searched` delta was printed as "PURE HARNESS ERROR" --
+# then usable as the calibration that certifies every other arm. A gate that
+# checks four of twelve inputs is not a gate.
+PRODUCTION_SEARCH_SHAPE_REST: dict[str, float] = {
+    "c_visit": 50.0,
+    "c_visit_root": -1.0,
+    "c_scale_root": -1.0,
+    "q_visit_exp": 1.0,
+    "q_visit_exp_root": 99.0,
+    "halving_div": 2.0,
+    "vloss_weight": 1.0,
+    "add_noise": 1.0,
+}
+
+# ⚑ EXHAUSTIVE BY CONSTRUCTION, NOT BY REVIEW. Adding a field to `SimShape`
+# without declaring its production value now fails at import rather than
+# silently widening the set of shapes that pass as the calibration arm.
+_SHAPE_FIELD_NAMES = {f.name for f in fields(SimShape)}
+_DECLARED_SHAPE_KEYS = set(PRODUCTION_SEARCH_SHAPE) | set(PRODUCTION_SEARCH_SHAPE_REST)
+if _SHAPE_FIELD_NAMES != _DECLARED_SHAPE_KEYS:
+    raise AssertionError(
+        "PRODUCTION_SEARCH_SHAPE + PRODUCTION_SEARCH_SHAPE_REST must name EVERY "
+        "SimShape field, because every one of them reaches the re-search. "
+        f"undeclared={sorted(_SHAPE_FIELD_NAMES - _DECLARED_SHAPE_KEYS)} "
+        f"stale={sorted(_DECLARED_SHAPE_KEYS - _SHAPE_FIELD_NAMES)}"
+    )
+
+
+def production_shape_mismatches(
+    shape: SimShape, sims: int, *, declared: dict[str, float] | None = None,
+) -> list[str]:
+    """Every field on which ``shape``/``sims`` differs from production.
+
+    Empty means this run IS the calibration arm. The list is returned rather
+    than a bool so the caller can say WHICH knob disqualified the run --
+    "not production-shaped" with no field named is the kind of message that
+    gets read as a formality.
+    """
+    ref = dict(PRODUCTION_SEARCH_SHAPE_REST)
+    ref.update(declared or PRODUCTION_SEARCH_SHAPE)
+    bad: list[str] = []
+    for name in sorted(_SHAPE_FIELD_NAMES):
+        want = ref.get(name)
+        if want is None:
+            continue
+        got = float(getattr(shape, name))
+        if not math.isclose(got, float(want)):
+            bad.append(f"{name}={got!r} (production {float(want)!r})")
+    want_sims = int(ref.get("sims", PRODUCTION_SIMS))
+    if int(sims) != want_sims:
+        bad.append(f"sims={int(sims)} (production {want_sims})")
+    return bad
+
 
 def is_production_shape(
     shape: SimShape, sims: int, *, declared: dict[str, float] | None = None,
 ) -> bool:
     """Is this run the calibration arm rather than an experimental arm?"""
-    ref = declared or PRODUCTION_SEARCH_SHAPE
-    return (
-        math.isclose(shape.c_scale, ref["c_scale"])
-        and math.isclose(shape.policy_temp, ref["policy_temp"])
-        and int(shape.topk) == int(ref["topk"])
-        and math.isclose(shape.gumbel_scale, ref["gumbel_scale"])
-        and int(sims) == int(ref.get("sims", PRODUCTION_SIMS))
-    )
+    return not production_shape_mismatches(shape, sims, declared=declared)
 
 
 def parse_production_shape(spec: str) -> dict[str, float]:
@@ -1713,6 +1833,8 @@ def print_paired(
     label_a: str,
     label_b: str,
     bias: dict[tuple[float, float, float], float] | None = None,
+    control_a: dict[tuple[float, float, float], tuple[float, float, float]]
+    | None = None,
 ) -> list[dict[str, object]]:
     """Paired A->B deltas per cell, carrying each cell's control verdict along.
 
@@ -1731,10 +1853,16 @@ def print_paired(
     [[compute_instrument_resolution_before_the_threshold]].
     """
     assert_paired(rows_a, rows_b)
+    ctrl_a = control_a or {}
     print(f"\n=== paired delta {label_a} -> {label_b} "
           f"({len(rows_a)} paired positions) ===")
+    if not ctrl_a:
+        print("[control] arm A banked NO per-cell control (pre-dates the field or "
+              "was summary-only): ctrl_A reads `--`, which means UNKNOWN. It does "
+              "NOT mean the control passed.")
     print(f"{'tau_cp':>7} {'rho':>7} {'phi':>8} {'cov_A':>8} {'cov_B':>8} "
-          f"{'delta':>9} {'95% CI':>19} {'ctrl_A':>8} {'biasA':>8} {'resolved':>10}")
+          f"{'delta':>9} {'95% CI':>19} {'ctrl_A':>8} {'ctrl_B':>8} {'biasA':>8} "
+          f"{'resolved':>10}")
     out: list[dict[str, object]] = []
     n_unresolved = 0
     for c in cells:
@@ -1748,8 +1876,17 @@ def print_paired(
             rows_a, rows_b, tau_cp=c.tau_cp, rho=c.rho, phi=c.phi,
             resamples=resamples, seed=seed,
         )
-        m = c.control_margin
-        ctrl = f"{m:+8.2f}" if math.isfinite(m) else "      --"
+        # ⚑ ctrl_A MUST COME FROM ARM A. `cells` is computed from rows_b, so
+        # `c.control_margin` is arm B's control -- it was printed under the
+        # header `ctrl_A` and serialized as `control_margin_a`. When the target
+        # shape changes the control can change with it, so a reader validating
+        # "arm A's control was clean" was reading arm B's number. Both are now
+        # shown, each under its own name, and A's is read from A's own bank.
+        mb = c.control_margin
+        ma, ma_lo, ma_hi = ctrl_a.get(
+            (c.tau_cp, c.rho, c.phi), (float("nan"),) * 3)
+        ctrl_a_s = f"{ma:+8.2f}" if math.isfinite(ma) else "      --"
+        ctrl_b_s = f"{mb:+8.2f}" if math.isfinite(mb) else "      --"
         bz = (bias or {}).get((c.tau_cp, c.rho, c.phi), float("nan"))
         bstr = f"{bz:+8.4f}" if math.isfinite(bz) else "      --"
         if math.isfinite(bz) and math.isfinite(d):
@@ -1758,11 +1895,14 @@ def print_paired(
         else:
             resolved = "no-bias"
         print(f"{c.tau_cp:7.0f} {c.rho:7.3f} {c.phi:8.1e} {a:8.4f} {b:8.4f} "
-              f"{d:+9.4f} [{lo:+.4f},{hi:+.4f}] {ctrl} {bstr} {resolved:>10}")
+              f"{d:+9.4f} [{lo:+.4f},{hi:+.4f}] {ctrl_a_s} {ctrl_b_s} {bstr} "
+              f"{resolved:>10}")
         out.append({
             "tau_cp": c.tau_cp, "rho": c.rho, "phi": c.phi,
             "coverage_a": a, "coverage_b": b, "delta": d, "ci_lo": lo, "ci_hi": hi,
-            "control_margin_a": m, "harness_bias_a": bz, "resolved": resolved,
+            "control_margin_a": ma, "control_margin_a_ci_lo": ma_lo,
+            "control_margin_a_ci_hi": ma_hi, "control_margin_b": mb,
+            "harness_bias_a": bz, "resolved": resolved,
         })
     if bias:
         print(f"[bias] {n_unresolved}/{len(cells)} cells have |harness bias| >= "
@@ -1882,6 +2022,17 @@ def scan_bank(
     """
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     arms = payload.get("arms", {})
+    # ⚑ THE BANK'S DELTAS ARE ALL `paired_vs_A`. With `--scan-ref-arm` set to
+    # anything else the CELLS and CONTROLS come from that arm while the EFFECTS
+    # still come from the A-referenced table, so the pass/quiet counts mix two
+    # different references and mean nothing.
+    if str(ref_arm) != "A":
+        raise SystemExit(
+            f"--scan-ref-arm={ref_arm!r}: this bank schema stores deltas only as "
+            "`paired_vs_A`, so a non-A reference would pair that arm's control "
+            "with effects measured against A. Re-bank the deltas against "
+            f"{ref_arm!r}, or scan with --scan-ref-arm A."
+        )
     paired = payload.get("paired_vs_A", {})
     for label, where in ((ref_arm, arms), (c_arm, paired), (t_arm, paired)):
         if label not in where:
@@ -1942,6 +2093,44 @@ def read_diff_focus(progress_csv: str) -> dict[str, float]:
     return {}
 
 
+# The two knobs that decide WHICH rows enter the stored population. `keep_rate`
+# is the realized fraction kept; `keep_limited_frac` is the fraction that hit the
+# clamp. `keep_prob_mean` is the intended rate and moves with them, so it is
+# compared too. `training_iteration` is provenance, not a population knob, and
+# is deliberately NOT compared.
+DIFF_FOCUS_POPULATION_KEYS = (
+    "diff_focus_keep_rate",
+    "diff_focus_keep_limited_frac",
+    "diff_focus_keep_prob_mean",
+)
+
+
+def diff_focus_shift(
+    a: dict[str, float] | None, b: dict[str, float] | None, *, tol: float,
+) -> list[str]:
+    """Population knobs that moved between two arms, beyond ``tol``.
+
+    ⚑ UNMEASURED IS NOT UNCHANGED. If either arm has no diff_focus record the
+    comparison is reported as UNVERIFIABLE and listed, because "we did not look"
+    must not read the same as "it did not move" -- that equivalence is the
+    house defect this whole module is instrumented against.
+    """
+    if not a or not b:
+        which = "arm A" if not a else "this run"
+        if not a and not b:
+            which = "both arms"
+        return [f"{which} recorded NO diff_focus (pass --progress-csv to measure it)"]
+    out: list[str] = []
+    for k in DIFF_FOCUS_POPULATION_KEYS:
+        va, vb = a.get(k), b.get(k)
+        if va is None or vb is None:
+            out.append(f"{k} missing on {'arm A' if va is None else 'this run'}")
+            continue
+        if abs(float(va) - float(vb)) > tol:
+            out.append(f"{k} {float(va):.4f} -> {float(vb):.4f}")
+    return out
+
+
 def _parse_floats(spec: str) -> tuple[float, ...]:
     return tuple(float(v) for v in spec.split(",") if v.strip())
 
@@ -1987,6 +2176,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--c-visit", type=float, default=50.0)
     ap.add_argument("--halving-div", type=int, default=2)
     ap.add_argument("--vloss-weight", type=int, default=1)
+    ap.add_argument("--diff-focus-tolerance", type=float, default=0.02,
+                    help="max absolute move in a diff_focus population knob "
+                         "before a --compare-to delta is refused as confounded")
+    ap.add_argument("--allow-diff-focus-shift", action="store_true",
+                    help="proceed with a --compare-to delta whose diff_focus "
+                         "population moved; the confound is printed and banked")
     ap.add_argument("--syzygy-path", default=None,
                     help="tablebase dir; live runs syzygy_in_search: true")
     ap.add_argument("--no-noise", action="store_true",
@@ -2104,6 +2299,59 @@ def load_row_keys(path: Path) -> list[str]:
     return keys
 
 
+def load_banked_cells(path: Path) -> list[dict[str, object]]:
+    """A banked dump's top-level ``cells`` list, or [] if it has none.
+
+    ``load_dump`` deliberately returns only rows + provenance, and the control
+    lives on the CELLS. Older dumps predate the field, so absence is reported
+    as unknown by the caller and never as "the control was fine".
+    """
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    cells = payload.get("cells")
+    return [c for c in cells if isinstance(c, dict)] if isinstance(cells, list) else []
+
+
+def _control_map(
+    cells: list[dict[str, object]],
+) -> dict[tuple[float, float, float], tuple[float, float, float]]:
+    """Cell -> (margin, ci_lo, ci_hi) reconstructed from a BANKED arm's cells.
+
+    ``control_margin`` is a ``@property``, so ``asdict`` never wrote it; it is
+    recomputed here from the stored ``coverage`` / ``shuffled_mean`` /
+    ``shuffled_sd`` by the same formula ``CoverageCell.control_margin`` uses.
+    """
+    def num(value: object, default: float = float("nan")) -> float:
+        """A JSON scalar as a float. Anything else is UNKNOWN, i.e. NaN.
+
+        `json.loads` hands back `object`, and a silent `float(None) -> 0.0`
+        here would turn "this arm banked no control" into "its control was
+        exactly at the null" -- the same absent-reads-as-fine failure the rest
+        of this module refuses.
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    out: dict[tuple[float, float, float], tuple[float, float, float]] = {}
+    for c in cells:
+        key = (num(c.get("tau_cp")), num(c.get("rho")), num(c.get("phi")))
+        if not all(math.isfinite(k) for k in key):
+            continue
+        cov = num(c.get("coverage"))
+        mu = num(c.get("shuffled_mean"))
+        sd = num(c.get("shuffled_sd"))
+        margin = (
+            (cov - mu) / sd
+            if (math.isfinite(cov) and math.isfinite(mu) and sd > 0.0)
+            else float("nan")
+        )
+        out[key] = (margin, num(c.get("margin_ci_lo")), num(c.get("margin_ci_hi")))
+    return out
+
+
 def _bias_map(prov: dict[str, object]) -> dict[tuple[float, float, float], float]:
     """The banked per-cell harness bias of an arm, keyed by cell."""
     rows = prov.get("harness_bias")
@@ -2115,6 +2363,33 @@ def _bias_map(prov: dict[str, object]) -> dict[tuple[float, float, float], float
             out[(float(r["tau_cp"]), float(r["rho"]), float(r["phi"]))] = float(
                 r["bias"])
     return out
+
+
+def require_calibration_anchor(
+    shape_gap: list[str], *, calibration: Path | None, compare_to: Path | None,
+) -> None:
+    """An off-production arm may only be RUN next to a calibration.
+
+    ⚑ `assert_calibrated` STATED THIS REQUIREMENT AND COULD NOT ENFORCE IT.
+    It was reached only via `--calibration`, or via `--compare-to` in research
+    mode; with neither flag both branches were skipped and the command printed
+    cells and exited 0 having asserted nothing. That is the default path, not a
+    corner: `--gumbel-scale` defaults to 1.0 against production's 0.5, so a bare
+    `--mode research` run is off-production before the operator types anything.
+
+    Checked BEFORE shard selection so it costs a second rather than a full
+    re-search, and so it is reachable without a shard bank.
+    """
+    if not shape_gap or calibration is not None or compare_to is not None:
+        return
+    raise SystemExit(
+        "refusing to report an off-production arm with no calibration: "
+        + "; ".join(shape_gap)
+        + ". An arm's coverage is only interpretable next to a production-shaped "
+        "arm whose stored-minus-re-searched delta bounds the harness error. "
+        "Pass --calibration <dump> or --compare-to <dump>, or run the production "
+        "shape itself."
+    )
 
 
 def _build_shape(args: argparse.Namespace) -> SimShape:
@@ -2200,6 +2475,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode in ("shards", "research"):
         if not args.replay_dir:
             raise SystemExit(f"--mode {args.mode} requires --replay-dir (ABSOLUTE path)")
+        # AFTER the required-argument check -- an operator who forgot
+        # `--replay-dir` must be told THAT, not told about calibration -- and
+        # BEFORE `select_shards`, so an unanchored arm costs a second rather
+        # than a full re-search.
+        if args.mode == "research":
+            require_calibration_anchor(
+                production_shape_mismatches(
+                    _build_shape(args), int(args.sims), declared=declared_prod),
+                calibration=args.calibration, compare_to=args.compare_to,
+            )
         sel = select_shards(args.replay_dir, args.shards)
         print(f"[shards] {args.replay_dir}")
         print(f"[shards] {sel.describe()}")
@@ -2225,10 +2510,21 @@ def main(argv: list[str] | None = None) -> int:
             shape = _build_shape(args)
             research = ResearchSpec(
                 shape=shape, sims=int(args.sims), syzygy_path=args.syzygy_path,
+                # ⚑ `--seed` is a REAL knob here: ResearchSpec.seed drives the
+                # re-search RNG, so omitting it left the dataclass default
+                # (20260809) in force and every `--seed N` run was the same run
+                # under a different label -- while the provenance block dutifully
+                # banked `args.seed` as if it had been used. A value accepted and
+                # then silently ignored, and the reason the banked seed and the
+                # realized seed have to be the same object.
+                seed=int(args.seed),
             )
             fid = ResearchFidelity()
             stored_rows = []
-            is_prod = is_production_shape(shape, int(args.sims), declared=declared_prod)
+            shape_gap = production_shape_mismatches(
+                shape, int(args.sims), declared=declared_prod)
+            is_prod = not shape_gap
+            provenance["shape_mismatches_vs_production"] = list(shape_gap)
             provenance["shape"] = asdict(shape)
             provenance["sims"] = args.sims
             provenance["is_production_shape"] = is_prod
@@ -2288,6 +2584,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[research] {fid.report()} in {time.perf_counter() - t0:.1f}s")
             provenance["fidelity"] = asdict(fid)
             fid.assert_within(tol, is_production_shape=is_prod)
+        if stats.dropped_non_finite:
+            print(f"[rows] DROPPED {stats.dropped_non_finite} row(s) for a "
+                  "non-finite policy_target/sf_p0_regret. They are under "
+                  "assert_population's tolerance, so the run continues -- but "
+                  "they are excluded from coverage rather than scored as "
+                  "uncovered.")
         provenance["read_stats"] = asdict(stats)
         title = (f"coverage over {len(rows)} live shard rows"
                  + (" [RE-SEARCHED]" if research is not None else ""))
@@ -2381,13 +2683,69 @@ def main(argv: list[str] | None = None) -> int:
                 f"refusing to compare readouts taken against different reference "
                 f"priors: arm A used {ck_a!r}, this run used {args.checkpoint!r}"
             )
-        assert_same_producing_net(
-            stats, prov_a,
-            allow_missing=bool(args.allow_missing_shard_provenance),
-        )
+        # Simulated arms are paired by AUDIT-POSITION key and have no producing
+        # shards at all, so the shard-provenance guard has nothing to check and
+        # its UNKNOWN branch would fire unconditionally -- forcing the operator
+        # to pass an unrelated `--allow-missing-shard-provenance`, which then
+        # ALSO waives the guard for any shard-backed arm in the same session.
+        # An escape hatch reached for the wrong reason stops being a record.
+        if args.mode in ("shards", "research"):
+            assert_same_producing_net(
+                stats, prov_a,
+                allow_missing=bool(args.allow_missing_shard_provenance),
+            )
+        else:
+            print("[provenance] simulate mode: no producing shards on either "
+                  "side, so the producing-net guard does not apply (arms are "
+                  "paired by audit-position key)")
         provenance["provenance_unverified"] = bool(
             args.allow_missing_shard_provenance
         )
+        # ⚑ THE REFUSAL `read_diff_focus`'s DOCSTRING PROMISES. It says the
+        # value is "returned so both readouts can record it and the delta can be
+        # refused when it moved" -- and nothing refused. `diff_focus` drops
+        # policy rows as a function of the same KL the arms move, so the two
+        # arms' STORED POPULATIONS differ and the coverage delta is confounded
+        # by re-composition. `assert_population`'s rate check is invariant to a
+        # uniform keep_prob shift and cannot see it.
+        #
+        # ⚑ AND IT IS SHARD-BACKED, so it carries the SAME simulate-mode
+        # exemption as the producing-net guard directly above. `diff_focus`
+        # provenance is read off the stored shards; in simulate mode NEITHER arm
+        # has any, `diff_focus_shift(None, None)` reports a shift, and the run
+        # dies unless the operator passes `--allow-diff-focus-shift` -- an
+        # unrelated waiver, reached for the wrong reason, which then also waives
+        # a REAL diff_focus shift for any shard-backed arm in the same session.
+        # That is precisely the escape-hatch defect the block above fixes, so
+        # fixing one and not the other left `--mode simulate --compare-to`
+        # unreachable without it.
+        if args.mode in ("shards", "research"):
+            df_b = provenance.get("diff_focus")
+            df_a = prov_a.get("diff_focus")
+            shifted = diff_focus_shift(
+                df_a if isinstance(df_a, dict) else None,
+                df_b if isinstance(df_b, dict) else None,
+                tol=float(args.diff_focus_tolerance),
+            )
+        else:
+            shifted = []
+            print("[diff_focus] simulate mode: neither arm is shard-backed, so "
+                  "there is no stored population to re-compose and the "
+                  "diff_focus gate does not apply")
+        provenance["diff_focus_shift"] = shifted
+        if shifted:
+            msg = ("refusing to difference two arms whose diff_focus population "
+                   "changed: " + "; ".join(shifted) + ". These knobs decide WHICH "
+                   "rows are stored, so the delta mixes a coverage change with a "
+                   "population change.")
+            if args.allow_diff_focus_shift:
+                print(f"[diff_focus] ⚑ CONFOUNDED, proceeding on the record: {msg}")
+                provenance["diff_focus_shift_allowed"] = True
+            else:
+                raise SystemExit(
+                    msg + " Pass --allow-diff-focus-shift to proceed on the "
+                    "record that this comparison is confounded."
+                )
         if args.mode == "research" and args.calibration is None:
             assert_calibrated(
                 this_shape=_build_shape(args), this_sims=int(args.sims),
@@ -2398,6 +2756,7 @@ def main(argv: list[str] | None = None) -> int:
             rows_a, rows, cells=cells, resamples=int(args.bootstrap),
             seed=int(args.seed), label_a=str(args.compare_to.name), label_b="this run",
             bias=_bias_map(prov_a),
+            control_a=_control_map(load_banked_cells(args.compare_to)),
         )
 
     if args.out is not None:

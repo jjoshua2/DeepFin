@@ -827,15 +827,43 @@ def test_absent_provenance_can_be_overridden_only_explicitly(capsys) -> None:
 def test_different_producing_nets_are_refused() -> None:
     with pytest.raises(SystemExit, match="different nets"):
         rsmc.assert_same_producing_net(
-            rsmc.ShardReadStats(model_steps=[41, 41]),
-            {"read_stats": {"model_steps": [40]}}, allow_missing=False,
+            rsmc.ShardReadStats(model_steps=[41, 41], model_sha_prefixes=["aaaa"]),
+            {"read_stats": {"model_steps": [40], "model_sha_prefixes": ["bbbb"]}},
+            allow_missing=False,
         )
 
 
 def test_the_same_producing_net_is_accepted() -> None:
     rsmc.assert_same_producing_net(
-        rsmc.ShardReadStats(model_steps=[42, 42]),
-        {"read_stats": {"model_steps": [42]}}, allow_missing=False,
+        rsmc.ShardReadStats(model_steps=[42, 42], model_sha_prefixes=["aaaa"]),
+        {"read_stats": {"model_steps": [42], "model_sha_prefixes": ["aaaa"]}},
+        allow_missing=False,
+    )
+
+
+def test_equal_model_step_with_an_absent_sha_is_NOT_verified_identity() -> None:
+    """⚑ The hole the completeness rewrite closes.
+
+    The SHA comparison can only fire when BOTH sides carry a SHA, and
+    `model_step` is a PER-TRIAL counter -- equal steps across trials or lineages
+    are equal COUNTERS, not equal WEIGHTS, which is the entire reason the SHA
+    check exists. The previous revision required only that steps be present and
+    equal, so "step 42 both sides, SHA absent on one" sailed through as verified
+    identity: the guard reported success on precisely the input it was written
+    to catch. Absent provenance is not evidence of a match.
+    """
+    for a_sha, b_sha in ((["aaaa"], []), ([], ["aaaa"]), ([], [])):
+        with pytest.raises(SystemExit, match="UNKNOWN"):
+            rsmc.assert_same_producing_net(
+                rsmc.ShardReadStats(model_steps=[42], model_sha_prefixes=list(b_sha)),
+                {"read_stats": {"model_steps": [42], "model_sha_prefixes": list(a_sha)}},
+                allow_missing=False,
+            )
+    # ...and the waiver still works, on the record, naming what is absent.
+    rsmc.assert_same_producing_net(
+        rsmc.ShardReadStats(model_steps=[42], model_sha_prefixes=[]),
+        {"read_stats": {"model_steps": [42], "model_sha_prefixes": ["aaaa"]}},
+        allow_missing=True,
     )
 
 
@@ -1147,3 +1175,226 @@ def test_the_unsafe_pinned_cell_is_named_as_unsafe_in_the_docstring() -> None:
     assert "RETRACTED" in head, "the retraction must precede the claim it retracts"
     assert "UNSAFE" in head
     assert "INVERT" in head.upper()
+
+
+# ---------------------------------------------------------------------------
+# The gates (Codex review of PR #382, findings triaged 2026-08-11)
+#
+# Every test below FAILS on the pre-fix module. They are the four ways this rig
+# could certify an arm it had not actually validated -- which matters more now
+# that an offline screen is the only affordable adjudication we own: a 400-game
+# arena resolves +/-30 Elo and the loop's own rate is under that.
+# ---------------------------------------------------------------------------
+
+
+def test_declared_production_shape_names_every_simshape_field() -> None:
+    """A new SimShape field must not silently widen the calibration arm.
+
+    `is_production_shape` compared four of twelve fields. The other eight are
+    all passed into the GumbelConfig that drives the re-search, so a run that
+    moved one was classified PRODUCTION and its stored-minus-re-searched delta
+    printed as pure harness error.
+    """
+    names = {f.name for f in dataclasses.fields(rsmc.SimShape)}
+    declared = set(rsmc.PRODUCTION_SEARCH_SHAPE) | set(
+        rsmc.PRODUCTION_SEARCH_SHAPE_REST)
+    assert names == declared, (
+        f"undeclared={sorted(names - declared)} stale={sorted(declared - names)}"
+    )
+
+
+def _prod_shape():
+    """A SimShape carrying production's value for EVERY field.
+
+    Field types are recovered from a probe instance rather than from
+    ``f.type``: ``from __future__ import annotations`` makes those strings, and
+    a test that reads an annotation as a type is one Python release from
+    silently passing.
+    """
+    ref = dict(rsmc.PRODUCTION_SEARCH_SHAPE_REST)
+    ref.update(rsmc.PRODUCTION_SEARCH_SHAPE)
+    probe = rsmc.SimShape(c_scale=0.0, policy_temp=1.0)
+    kwargs = {
+        f.name: type(getattr(probe, f.name))(ref[f.name])
+        for f in dataclasses.fields(rsmc.SimShape)
+    }
+    return rsmc.SimShape(**kwargs)
+
+
+def _moved(shape, field_name: str):
+    """``shape`` with one field moved OFF production, bools included."""
+    cur = getattr(shape, field_name)
+    if isinstance(cur, bool):
+        return dataclasses.replace(shape, **{field_name: not cur})
+    return dataclasses.replace(shape, **{field_name: type(cur)(float(cur) + 7.0)})
+
+
+def test_the_declared_production_shape_is_production_shaped() -> None:
+    """The control: the declared values must classify as production."""
+    assert rsmc.production_shape_mismatches(_prod_shape(), rsmc.PRODUCTION_SIMS) == []
+    assert rsmc.is_production_shape(_prod_shape(), rsmc.PRODUCTION_SIMS)
+
+
+@pytest.mark.parametrize("field_name", sorted(rsmc.PRODUCTION_SEARCH_SHAPE_REST))
+def test_moving_any_active_knob_disqualifies_the_production_shape(
+    field_name: str,
+) -> None:
+    """Each of the eight non-headline knobs must break production-shapedness.
+
+    Four of them (`c_visit`, `halving_div`, `vloss_weight`, `add_noise`) are
+    settable straight from the CLI, so this was reachable with two flags.
+    """
+    moved = _moved(_prod_shape(), field_name)
+    gap = rsmc.production_shape_mismatches(moved, rsmc.PRODUCTION_SIMS)
+    assert any(g.startswith(f"{field_name}=") for g in gap), gap
+    assert not rsmc.is_production_shape(moved, rsmc.PRODUCTION_SIMS)
+
+
+def test_sims_still_disqualifies_the_production_shape() -> None:
+    assert not rsmc.is_production_shape(_prod_shape(), rsmc.PRODUCTION_SIMS * 2)
+
+
+def test_require_calibration_anchor_fires_and_accepts_either_anchor() -> None:
+    """The requirement `assert_calibrated` stated but could not enforce."""
+    gap = ["gumbel_scale=1.0 (production 0.5)"]
+    with pytest.raises(SystemExit) as ei:
+        rsmc.require_calibration_anchor(gap, calibration=None, compare_to=None)
+    assert "off-production arm with no calibration" in str(ei.value)
+    # Either anchor satisfies it, and a production-shaped run needs neither.
+    rsmc.require_calibration_anchor(gap, calibration=Path("cal.json"), compare_to=None)
+    rsmc.require_calibration_anchor(gap, calibration=None, compare_to=Path("a.json"))
+    rsmc.require_calibration_anchor([], calibration=None, compare_to=None)
+
+
+def test_a_bare_research_run_is_off_production_by_default(tmp_path: Path) -> None:
+    """The default path is the broken one: --gumbel-scale defaults to 1.0.
+
+    Exercised through `main` so this pins the WIRING, not just the predicate --
+    the pre-fix module reached neither `assert_calibrated` branch here and went
+    on to do the work.
+
+    The check sits AFTER the required-argument check and BEFORE shard
+    selection: `tmp_path` exists (so `--replay-dir` is satisfied) but holds no
+    shards, and the calibration refusal must still arrive first because it
+    costs a second where the re-search costs minutes.
+    """
+    with pytest.raises(SystemExit) as ei:
+        rsmc.main([
+            "--mode", "research",
+            "--replay-dir", str(tmp_path),
+            "--checkpoint", str(tmp_path / "nope.pt"),
+        ])
+    assert "no calibration" in str(ei.value)
+
+
+def test_a_missing_replay_dir_is_reported_before_the_calibration_refusal(
+) -> None:
+    """Argument validation precedes semantic validation.
+
+    Regression guard: the first version of this fix ran the calibration check
+    ahead of the `--replay-dir` check, so an operator who simply forgot the
+    flag was told about calibration instead. CI caught it; this pins the order.
+    """
+    with pytest.raises(SystemExit) as ei:
+        rsmc.main(["--mode", "research", "--checkpoint", "nope.pt"])
+    assert "requires --replay-dir" in str(ei.value)
+
+
+def test_diff_focus_shift_refuses_moved_populations_and_unmeasured_ones() -> None:
+    """`read_diff_focus`'s docstring promised this refusal; nothing did it.
+
+    Includes the UNMEASURED case: absent must not read as unchanged.
+    """
+    a = {"diff_focus_keep_rate": 0.80, "diff_focus_keep_limited_frac": 0.37,
+         "diff_focus_keep_prob_mean": 0.80}
+    same = dict(a)
+    moved = dict(a, diff_focus_keep_rate=0.96)
+    assert rsmc.diff_focus_shift(a, same, tol=0.02) == []
+    assert any("keep_rate" in m for m in rsmc.diff_focus_shift(a, moved, tol=0.02))
+    # inside tolerance
+    assert rsmc.diff_focus_shift(
+        a, dict(a, diff_focus_keep_rate=0.81), tol=0.02) == []
+    # unmeasured on either side is a refusal, not a pass
+    assert rsmc.diff_focus_shift(None, same, tol=0.02)
+    assert rsmc.diff_focus_shift(a, None, tol=0.02)
+    assert rsmc.diff_focus_shift({}, {}, tol=0.02)
+
+
+def test_control_map_reads_arm_as_own_margin_not_the_current_runs() -> None:
+    """`ctrl_A` was arm B's control printed under arm A's name.
+
+    `control_margin` is a @property, so `asdict` never wrote it; it has to be
+    reconstructed from the banked coverage/shuffled_mean/shuffled_sd.
+    """
+    cells = [{"tau_cp": 25.0, "rho": 0.01, "phi": 1e-3, "coverage": 0.50,
+              "shuffled_mean": 0.30, "shuffled_sd": 0.10,
+              "margin_ci_lo": 1.2, "margin_ci_hi": 2.8}]
+    got = rsmc._control_map(cells)
+    assert got[(25.0, 0.01, 1e-3)] == pytest.approx((2.0, 1.2, 2.8))
+    # A cell with no usable null yields NaN, never a number.
+    nan_cells = [dict(cells[0], shuffled_sd=0.0)]
+    assert math.isnan(rsmc._control_map(nan_cells)[(25.0, 0.01, 1e-3)][0])
+    # An unparsable cell is dropped rather than defaulted.
+    assert rsmc._control_map([{"tau_cp": "x"}]) == {}
+
+
+def test_load_banked_cells_returns_empty_for_a_dump_without_cells(
+    tmp_path: Path,
+) -> None:
+    """Absence reads as UNKNOWN. The caller prints `--`, not a passing control."""
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"provenance": {}, "per_row": []}), encoding="utf-8")
+    assert rsmc.load_banked_cells(p) == []
+
+
+def test_producing_net_guard_compares_the_sha_not_only_the_step() -> None:
+    """Two lineages reach the same `model_step` with different weights.
+
+    `model_sha_prefixes` was already collected and never read -- the house
+    defect inside the guard written to catch the house defect.
+    """
+    stats = rsmc.ShardReadStats()
+    stats.model_steps.extend([57999])
+    stats.model_sha_prefixes.extend(["aaaaaaaaaaaa"])
+    prov_same_step_other_net = {
+        "read_stats": {"model_steps": [57999],
+                       "model_sha_prefixes": ["bbbbbbbbbbbb"]},
+    }
+    with pytest.raises(SystemExit) as ei:
+        rsmc.assert_same_producing_net(
+            stats, prov_same_step_other_net, allow_missing=False)
+    assert "different nets" in str(ei.value)
+    # Same sha AND same step is accepted.
+    rsmc.assert_same_producing_net(
+        stats,
+        {"read_stats": {"model_steps": [57999],
+                        "model_sha_prefixes": ["aaaaaaaaaaaa"]}},
+        allow_missing=False,
+    )
+
+
+def test_research_spec_carries_the_seed_and_the_extra_feature_encoding() -> None:
+    """`--seed` moved the bootstraps but not the search; v1 checkpoints crashed."""
+    spec = rsmc.ResearchSpec(
+        shape=rsmc.SimShape(c_scale=0.1, policy_temp=1.5), sims=32)
+    assert spec.seed == 20260809
+    assert spec.input_extra_features == "v2_threats"
+    moved = dataclasses.replace(spec, seed=7, input_extra_features="v1")
+    assert (moved.seed, moved.input_extra_features) == (7, "v1")
+
+
+def test_scan_refuses_a_non_A_reference_against_an_A_referenced_bank(
+    tmp_path: Path,
+) -> None:
+    """Cells from one arm, deltas from `paired_vs_A`: two different references."""
+    bank = tmp_path / "bank.json"
+    bank.write_text(json.dumps({
+        "arms": {"A": {"cells": []}, "B": {"cells": []}},
+        "paired_vs_A": {"B": [], "C": []},
+    }), encoding="utf-8")
+    with pytest.raises(SystemExit) as ei:
+        rsmc.scan_bank(
+            bank, ref_arm="B", c_arm="B", t_arm="C", quiet_ratio=0.25,
+            min_pairs=50,
+        )
+    assert "paired_vs_A" in str(ei.value)
