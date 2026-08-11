@@ -41665,3 +41665,64 @@ and together they demoted a 25-hour experiment's headline mechanism from "the fi
 The reason they nearly did not happen is that the bundle was already justified by a story that
 explained everything, and a story that explains everything is the thing to point an instrument at
 first [[most_experiments_here_are_unfalsifiable]].
+
+## 2026-08-11 — PRE-FLIGHT COMPLETE: THE RESTART IS ARMED (NOT LAUNCHED)
+
+Every launch precondition from the pre-registration above, executed and verified.
+
+| # | precondition | status |
+|---|---|---|
+| 1 | #390/#391/#392 on `ops/live-20260725` | ✅ branch level with `main` (0 behind), 8 PRs carried |
+| 2 | extensions rebuilt (`_mcts_tree.c` +52/−7 from #392) | ✅ `.so` md5 `bf84306a…` → `3cfae7e2…`, imports clean |
+| 3 | `salvage_seed_pool_dir` set in the YAML, not the CLI | ✅ `c62eb8ff2` |
+| 4 | both config fuses dry-run clean | ✅ on a copy AND again on the live file |
+| 5 | the yaml is COMMITTED | ✅ `c62eb8ff2`, pushed |
+
+Backups: `scratchpad/LIVE_YAML_BACKUP_20260811_prerestart.yaml` (pre-edit),
+`scratchpad/LIVE_YAML_BACKUP_20260810_225306.yaml`.
+Frozen arena anchor: `data/ratchet/snapshots/ck_resume_iter672.pt`.
+
+**LAUNCH COMMAND (awaiting Josh — agents do not start training):**
+```
+./scripts/train.sh salvage-restart data/salvage/pre_search_authority_20260809
+```
+
+### ⚑ THE `_check_target_only_knobs_require_zero_temperature` FUSE — VERIFIED BY VALUE READ
+
+#391 ships a guard that **refuses** `gumbel_target_max_visit_cap` / `_untempered_prior`
+alongside any positive move temperature: at temperature > 0 the played move is re-drawn from
+the STORED (modified) policy in `_resample_actions_with_temperature`, so the knobs stop being
+target-only and **would change PLAY** — which would silently destroy the whole premise that the
++271 Elo of search is retained unchanged.
+
+It is called from `flatten_run_config_defaults:501`, i.e. **on the LAUNCH path**, not only on
+reload. Ran it directly against the live yaml — all five realized temperatures read **0.0**
+through the guard's OWN resolver (`temperature`, `_after`, `_endgame`, `selfplay_temperature`,
+`selfplay_temperature_endgame`), both knobs read ON, **guard PASSES**. This is a value read, not
+a presence check: the live yaml sets every temperature to 0.0 EXPLICITLY, which is exactly the
+form the guard demands, because an absent key realizes as 1.0 / 0.6, not 0.0
+[[reco_diff_misses_absent_keys]].
+
+### Full suite: 4875 passed, 14 failed — and the 14 are accounted for
+
+Baseline established by restoring the PRE-EDIT yaml and re-running the same 8 files:
+**11 of the 14 were already red before this change** (the config-hygiene family:
+`test_deletion_annotations` ×6, `test_diff_focus_norm::…group_default_off`,
+`test_era_forgetting_probe`, `test_promotion_gate` ×2, `test_replay_shard_recency_exponent`).
+
+The change adds exactly **three**:
+
+1. `test_target_sigma_decoupling::test_production_leaves_the_cap_off` — **red BY DESIGN.** Its
+   whole assertion is that production has not turned the cap on. We just did.
+2. `test_untempered_target_prior::test_production_leaves_the_knob_off` — same, for #390.
+3. `test_trainable_config_ops::test_restart_required_keys_match_the_reloader` — **a test-harness
+   collision, not a production defect.** The test derives a synthetic config from production and
+   flips each restart-required key in turn; now that the cap is ON in production, flipping a
+   TEMPERATURE key trips the fuse above, so the reload raises instead of "skipping" and the
+   assertion fails. Production itself passes the fuse (verified above).
+
+⚠ **But (3) leaves a real COVERAGE hole**, and it should be recorded rather than waved through:
+while the cap is on, that test can no longer verify restart-required *skipping* for the five
+temperature keys, because every mutation of them now fails the whole reload. **Task #180.**
+The honest reading is that this is the guard doing its job and the test needing to set the
+temperatures explicitly to 0.0 in its mutated configs.
