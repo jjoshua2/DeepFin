@@ -86,13 +86,20 @@ def test_the_cap_softens_the_target_monotonically() -> None:
     assert kls == sorted(kls, reverse=True), f"KL(target||prior) not falling: {kls}"
 
 
-def test_the_cap_is_exactly_a_smaller_search_budget() -> None:
-    """'Trust it like a shallow search' must be literally true, not a fudge.
+def test_the_cap_shrinks_sigma_and_ONLY_sigma() -> None:
+    """The cap's units, and the exact boundary of the "shallow search" analogy.
 
-    The claim in the config comment is that capping max_visit at N gives the
-    same sigma a search whose max_visit really was N would have produced. If
-    that ever stops holding, the knob's units stop meaning anything and the
-    ledger entry describing it becomes wrong.
+    Capping max_visit at N gives the sigma a search whose max_visit really was N
+    would have produced -- that much is exact, and if it stops holding the
+    knob's units stop meaning anything.
+
+    ⚑ But "the cap IS a smaller search budget" is FALSE, and the second half of
+    this test is what stops that phrasing coming back. A genuinely shallower
+    search also changes the visit-weighted ``mixed_value``, hence the value
+    imputed to every UNVISITED child. The cap does not touch it. The two agree
+    only where the mix-value branch is untaken, i.e. every child visited -- and
+    at production's sims/legal-move ratio that is the exception. The knob is
+    "search deep, TRUST the result like a shallow search", nothing more.
     """
     cfg = GumbelConfig(c_scale=0.1, c_visit=50.0)
     for n in (1, 12, 30):
@@ -113,6 +120,26 @@ def test_the_cap_is_exactly_a_smaller_search_budget() -> None:
             raw_value=0.0, cfg=cfg, root=True,
         )
         np.testing.assert_allclose(capped, native, rtol=0.0, atol=0.0)
+
+    # ...and the boundary itself. With two children UNVISITED the mix-value
+    # branch is live, and the capped transform is NOT the shallow one. Asserting
+    # the DIFFERENCE is what keeps the docstring honest: if someone later makes
+    # the cap rewrite `visits` as well, this goes red and they have to decide
+    # that deliberately rather than by phrasing.
+    unvisited = np.array([59.0, 20.0, 12.0, 0.0, 0.0])
+    capped = _completed_q_transform(
+        actions=_ACTIONS, priors=_PRIORS, visits=unvisited, qvalues=_QVALUES,
+        raw_value=0.0, cfg=cfg, root=True, max_visit_cap=12,
+    )
+    native = _completed_q_transform(
+        actions=_ACTIONS, priors=_PRIORS, visits=np.minimum(unvisited, 12.0),
+        qvalues=_QVALUES, raw_value=0.0, cfg=cfg, root=True,
+    )
+    assert np.abs(capped - native).max() > 1e-3, (
+        "the capped and the genuinely-shallow transforms agreed even with "
+        "unvisited children -- either the mix-value branch stopped depending on "
+        "the visit counts, or the cap grew a second effect"
+    )
 
 
 class _Evaluator:
@@ -182,6 +209,23 @@ def test_both_search_paths_honour_the_cap(path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# The all-zero temperature block the production yaml pins, as a dict. Every one
+# of the ten lines is written out because that is the point: an ABSENT key is
+# not 0.0.
+_COLD = {
+    "temperature": 0.0,
+    "temperature_drop_plies": 0,
+    "temperature_after": 0.0,
+    "temperature_decay_start_move": 20,
+    "temperature_decay_moves": 0,
+    "temperature_endgame": 0.0,
+    "selfplay_temperature": 0.0,
+    "selfplay_temperature_decay_start_move": 1,
+    "selfplay_temperature_decay_moves": 60,
+    "selfplay_temperature_endgame": 0.0,
+}
+
+
 def test_the_cap_is_refused_alongside_a_positive_move_temperature() -> None:
     """The isolation claim holds ONLY at temperature 0, so the pair is refused.
 
@@ -194,7 +238,12 @@ def test_the_cap_is_refused_alongside_a_positive_move_temperature() -> None:
     """
     from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
-    base = {"selfplay": {"gumbel_target_max_visit_cap": 12, "temperature": 0.0}}
+    # ⚑ The safe pairing is the WHOLE cold block, not `temperature: 0.0` alone:
+    # an omitted `temperature_endgame` realizes 0.6 and an omitted
+    # `temperature_decay_moves` realizes 60, so `{"temperature": 0.0}` on its own
+    # is a config that plays at 0.6 from move 80 onward. This test used to assert
+    # that config LOADED.
+    base = {"selfplay": {**_COLD, "gumbel_target_max_visit_cap": 12}}
     flatten_run_config_defaults(base)  # the safe pairing must still load
 
     with pytest.raises(ValueError, match="positive move temperature"):
@@ -206,3 +255,159 @@ def test_the_cap_is_refused_alongside_a_positive_move_temperature() -> None:
     flatten_run_config_defaults(
         {"selfplay": {"gumbel_target_max_visit_cap": 0, "temperature": 0.35}},
     )
+
+
+def _realized_max_temperature(flat: dict[str, object]) -> float:
+    """The hottest ply the RUN would actually play, from the loader's own values.
+
+    Deliberately routed through ``TrialConfig.from_dict`` and
+    ``temperature_for_ply`` -- the two things the run itself uses -- rather than
+    re-reading ``flat``. A guard has to share the criterion's instrument, so the
+    test that judges the guard has to share it too, or it is just a second copy
+    of the guard agreeing with the first.
+    """
+    from chess_anti_engine.selfplay.temperature import temperature_for_ply
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    tc = TrialConfig.from_dict(dict(flat))
+    hottest = 0.0
+    # Both arms: curriculum games read `temperature*`, pure-selfplay games read
+    # `selfplay_temperature*` and fall back to the former when it is None.
+    for sp in (False, True):
+        for ply in range(1, 121):
+            hottest = max(hottest, temperature_for_ply(
+                ply=ply,
+                temperature=(
+                    float(tc.selfplay_temperature)
+                    if sp and tc.selfplay_temperature is not None
+                    else float(tc.temperature)
+                ),
+                drop_plies=int(tc.temperature_drop_plies),
+                after=float(tc.temperature_after),
+                decay_start_move=(
+                    int(tc.selfplay_temperature_decay_start_move)
+                    if sp and tc.selfplay_temperature_decay_start_move is not None
+                    else int(tc.temperature_decay_start_move)
+                ),
+                decay_moves=(
+                    int(tc.selfplay_temperature_decay_moves)
+                    if sp and tc.selfplay_temperature_decay_moves is not None
+                    else int(tc.temperature_decay_moves)
+                ),
+                endgame=(
+                    float(tc.selfplay_temperature_endgame)
+                    if sp and tc.selfplay_temperature_endgame is not None
+                    else float(tc.temperature_endgame)
+                ),
+            ))
+    return hottest
+
+
+@pytest.mark.parametrize(
+    "selfplay",
+    [
+        # ⚑⚑ THE REGRESSION. A yaml that simply OMITS the temperature block --
+        # the deletion `configs/pbt2_small.yaml` warns about in its own comment
+        # -- realizes temperature 1.0 / endgame 0.6 / decay_moves 60, i.e. EVERY
+        # ply is re-drawn from the stored (capped) policy. The guard used to
+        # read the absent keys as 0.0 and wave it through.
+        pytest.param({}, id="no temperature block at all"),
+        # ...and the same for each key on its own, on top of the cold block, so
+        # shortening `_MOVE_TEMPERATURE_KEYS` cannot pass either.
+        pytest.param({**_COLD, "temperature": 0.35}, id="temperature"),
+        pytest.param(
+            {**_COLD, "temperature_drop_plies": 4, "temperature_after": 0.35},
+            id="temperature_after",
+        ),
+        pytest.param(
+            {**_COLD, "temperature_decay_moves": 60, "temperature_endgame": 0.35},
+            id="temperature_endgame",
+        ),
+        pytest.param({**_COLD, "selfplay_temperature": 0.35}, id="selfplay_temperature"),
+        pytest.param(
+            {**_COLD, "selfplay_temperature_decay_moves": 60,
+             "selfplay_temperature_endgame": 0.35},
+            id="selfplay_temperature_endgame",
+        ),
+        # The cold block itself must stay ACCEPTED, or the guard is a
+        # temperature ban and production could not run the cap at all.
+        pytest.param(dict(_COLD), id="the production cold block"),
+    ],
+)
+def test_the_guard_agrees_with_the_temperature_the_run_would_actually_play(
+    selfplay: dict[str, object],
+) -> None:
+    """⟺, not ⟸. The guard must refuse EXACTLY the configs that are hot.
+
+    Both halves matter and each catches a different mutant:
+
+    * refuse-when-hot catches a SHORTENED ``_MOVE_TEMPERATURE_KEYS`` and the
+      absent-key default reading 0.0 when the loader reads 1.0;
+    * accept-when-cold catches a guard that just bans the cap.
+
+    The hot/cold verdict is computed from ``TrialConfig.from_dict`` +
+    ``temperature_for_ply``, so this cannot be satisfied by a second copy of the
+    guard's own arithmetic.
+    """
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    with_cap = {"selfplay": {**selfplay, "gumbel_target_max_visit_cap": 12}}
+    without = {"selfplay": dict(selfplay)}
+
+    # The cap being OFF must never refuse anything, hot or cold.
+    hot = _realized_max_temperature(flatten_run_config_defaults(without))
+
+    if hot > 0.0:
+        with pytest.raises(ValueError, match="positive move temperature"):
+            flatten_run_config_defaults(with_cap)
+    else:
+        flatten_run_config_defaults(with_cap)
+
+
+def test_the_guards_absent_key_defaults_are_the_loaders_defaults() -> None:
+    """Pin the table against ``TrialConfig.from_dict``, key by key.
+
+    The table above is a hand-written copy of the loader's defaults, and a
+    hand-written copy is exactly the thing that drifts. This reads each default
+    back out of the loader on an EMPTY config, so changing one there without
+    changing it here goes red.
+    """
+    from chess_anti_engine.tune.trial_config import TrialConfig
+    from chess_anti_engine.utils.config_yaml import _MOVE_TEMPERATURE_KEYS
+
+    empty = TrialConfig.from_dict({})
+    for key, absent in _MOVE_TEMPERATURE_KEYS:
+        realized = getattr(empty, key)
+        if absent is None:
+            assert realized is None, (
+                f"{key} is listed as 'absent means fall back to another key', "
+                f"but the loader realizes it as {realized!r}"
+            )
+        else:
+            assert float(realized) == pytest.approx(absent), (
+                f"{key}: the guard assumes an absent key realizes as {absent}, "
+                f"the loader realizes {realized!r}"
+            )
+
+
+def test_production_leaves_the_cap_off() -> None:
+    """Merging this must not change the live run.
+
+    #390 pins its own knob this way; without the same test here, merging THIS
+    branch on its own leaves nothing asserting that the committed production
+    config still runs the cap at 0. The ledger entry decides when it goes on,
+    and CLAUDE.md rule 1 says no entry, no launch -- and the entry records that
+    the one screen taken so far is NEGATIVE.
+    """
+    from pathlib import Path
+
+    from chess_anti_engine.utils.config_yaml import (
+        flatten_run_config_defaults,
+        load_yaml_file,
+    )
+
+    repo = Path(__file__).resolve().parents[1]
+    flat = flatten_run_config_defaults(
+        load_yaml_file(str(repo / "configs" / "pbt2_small.yaml")),
+    )
+    assert int(flat.get("gumbel_target_max_visit_cap", 0) or 0) == 0

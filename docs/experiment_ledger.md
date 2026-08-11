@@ -39360,3 +39360,96 @@ has been deployed.
 `./scripts/lint.sh` with no arguments is clean apart from the 132
 `reportMissingModuleSource` errors an unbuilt-C-extension worktree always emits.
 Mutation results are in the PR conversation, survivors included.
+
+---
+
+## 2026-08-10 — PREREG (not launched) + a NEGATIVE screen: decouple the STORED target's sigma
+
+**Status: CODE MERGED-PENDING, DEFAULT OFF (`0`), NEVER RUN — and its one
+measurement so far is NEGATIVE.** `gumbel_target_max_visit_cap`
+(PR #391, `feat/target-sigma-decouple`).
+
+### Hypothesis
+
+σ(q) in `softmax(log_prior + σ·Q̄)` does two jobs with one number: how far
+search-Q may outrank the prior for the move actually PLAYED, and how sharp the
+row written to the shard is. A move the target never puts mass on is a move the
+next generation's prior stops proposing, so search never revisits it, whereas a
+play-time error costs one game. ⇒ the strength-optimal σ is an UPPER BOUND on
+the training-optimal σ, and one number for both pins the target to that bound.
+The knob clamps the `max_visit` feeding σ for the stored target only — "search
+deep, TRUST the result like a shallow search" — and is sims-invariant by
+construction, which a bare `c_scale` override is not.
+
+⚑ It shrinks σ and ONLY σ. It is **not** "the transform a smaller search would
+have produced": the completed-Q vector, the visit-weighted `mixed_value` and
+therefore the value imputed to every UNVISITED child all still come from the
+full search. The two coincide only when every child is visited. Pinned both
+ways in `tests/test_target_sigma_decoupling.py::
+test_the_cap_shrinks_sigma_and_ONLY_sigma`.
+
+### ⚑⚑ THE ONE MEASUREMENT TAKEN SO FAR IS NEGATIVE — do not read this entry as a pending win
+
+An 8-row ranking ladder (Spearman of the search-target ranking against a deep-SF
+reference) scored the CAPPED target **+0.0144** against **+0.0179** for the
+uncapped one, while raising `H(target)` 0.891 → 1.005. **The cap COSTS ranking
+quality on the only ruler it has been put in front of.** It is 8 rows with no CI,
+so it is a screen and not a verdict — but it is the wrong sign, and the burden is
+now on the mechanism to beat that, not on a reviewer to disprove it.
+
+⇒ **`0` is not a placeholder default awaiting a launch; it is where the evidence
+currently points.** This PR merges a mechanism and its guard, not a result.
+
+### Yardstick — ONE, exact, before it may ever go non-zero
+
+Target QUALITY against the frozen deep-SF audit set, paired per position, on the
+production TRAINING target rows. **NOT an arena** — arenas play and store no
+training rows, so an arena is structurally blind to this knob by design.
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+      --audit-set data/audit_set_v1.jsonl --batch-size 64 --gpu-mem-fraction 0.3 \
+      --gumbel target_max_visit_cap=0 --gumbel-training-rows \
+      --dump-per-position scratchpad/sigmacap_off.jsonl
+    # ...same command with target_max_visit_cap=<cap> -> scratchpad/sigmacap_on.jsonl
+    PYTHONPATH=. python3 scripts/paired_compare.py \
+      scratchpad/sigmacap_off.jsonl scratchpad/sigmacap_on.jsonl \
+      --join-key key --field cand.train.top1 --field cand.train.entropy
+
+`--gumbel-training-rows` is REQUIRED: `--gumbel` alone overrides the PLAY row
+only, i.e. it would measure a TARGET-side knob on the play policy — a perfectly
+reproducible null. Judge on **TOP-1 regret**, which is sharpness-invariant; the
+knob moves `entropy` mechanically, so deciding on an entropy-weighted statistic
+would score the intervention in the unit it moves by construction.
+
+**Pre-committed thresholds.**
+- **SUCCESS:** `cand.train.top1` improves by **≥ 1.0 cp** with a paired 95% CI
+  excluding 0 — i.e. it has to REVERSE the ladder screen above, not merely fail
+  to reproduce it.
+- **KILL:** no significant improvement, or any significant regression.
+- **NEGATIVE CONTROL (structural, ships as a test):** `cap = 0` and
+  `cap > max_visit` must both be BIT-IDENTICAL to the code before the knob
+  existed, on BOTH search paths
+  (`tests/test_target_sigma_decoupling.py::test_both_search_paths_honour_the_cap`,
+  `::test_the_default_is_off_and_bit_identical`).
+
+### Confounds
+
+None while it stays at 0. If it is ever launched it MUST NOT share a readout
+window with `gumbel_target_untempered_prior` (the stacked PR #390) — they are two
+adjustments to the two terms of the SAME softmax and their effects are not
+separable from one shard measurement.
+
+⚑ Both are refused at config load alongside any positive move temperature:
+`selfplay/network_turn.py:_resample_actions_with_temperature` re-draws the played
+move from the RETURNED (modified) policy, which would silently convert a
+target-only knob into a search change. **An ABSENT temperature key is not 0.0** —
+it realizes as the loader's default (1.0 for `temperature`, 0.6 for
+`temperature_endgame`), so the guard reads each key at its realized default and
+the ten `temperature*` lines in `configs/pbt2_small.yaml` must stay pinned.
+
+### Revert point
+
+Not required to MERGE (default off, bit-identical, `configs/pbt2_small.yaml`
+unchanged). Required before any live arm: `./scripts/train.sh salvage-export
+--top-n 1 --metric training_iteration --out data/salvage/pre_sigma_cap`.

@@ -499,16 +499,42 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
-# Every selfplay knob that can make a ply's move temperature positive. Listed
-# rather than pattern-matched on "temperature" so that adding a new schedule key
-# forces a decision here instead of quietly widening the hole.
-_MOVE_TEMPERATURE_KEYS = (
-    "temperature",
-    "temperature_after",
-    "temperature_endgame",
-    "selfplay_temperature",
-    "selfplay_temperature_endgame",
+# Every selfplay knob that can make a ply's move temperature positive, PAIRED
+# WITH THE VALUE THE RUN REALIZES WHEN THE KEY IS ABSENT. Listed rather than
+# pattern-matched on "temperature" so that adding a new schedule key forces a
+# decision here instead of quietly widening the hole.
+#
+# ⚑⚑ The realized default is the whole guard. ``flatten_run_config_defaults``
+# copies only the keys the yaml actually CONTAINS, so a plain ``flat.get(k, 0.0)``
+# reads a MISSING ``temperature:`` line as 0.0 -- while ``TrialConfig.from_dict``
+# realizes it as 1.0 and ``build_recommended_worker`` publishes 1.0 to the
+# worker. Read that way the guard fails open on exactly the config
+# ``configs/pbt2_small.yaml`` warns about in its own comment ("without them
+# `temperature` defaults to 1.0, `temperature_endgame` to 0.6") -- a presence
+# check wearing a value check's costume, which is this repo's signature defect.
+# Every default below is the one ``TrialConfig.from_dict`` applies, and
+# ``tests/test_target_sigma_decoupling.py`` pins the pairing against the loader
+# and against ``temperature_for_ply`` BY EXECUTION rather than by eye.
+#
+# ``None`` means "absent is not an independent source of heat": the two
+# ``selfplay_*`` keys are ``None`` when absent and then fall back to their
+# non-selfplay counterparts (``selfplay/network_turn.py:~755``), which are
+# already listed here with their own realized defaults.
+_MOVE_TEMPERATURE_KEYS: tuple[tuple[str, float | None], ...] = (
+    ("temperature", 1.0),
+    ("temperature_after", 0.0),
+    ("temperature_endgame", 0.6),
+    ("selfplay_temperature", None),
+    ("selfplay_temperature_endgame", None),
 )
+
+
+def _realized_move_temperature(flat: dict[str, Any], key: str, absent: float | None) -> float:
+    """What ``key`` is worth to the RUN, including when the yaml omits it."""
+    raw = flat.get(key)
+    if raw is None:  # `flat` has already dropped explicit nulls
+        return 0.0 if absent is None else float(absent)
+    return float(raw)
 
 
 def _check_target_sigma_cap_requires_zero_temperature(flat: dict[str, Any]) -> None:
@@ -534,7 +560,8 @@ def _check_target_sigma_cap_requires_zero_temperature(flat: dict[str, Any]) -> N
     if int(flat.get("gumbel_target_max_visit_cap", 0) or 0) <= 0:
         return
     hot = sorted(
-        k for k in _MOVE_TEMPERATURE_KEYS if float(flat.get(k, 0.0) or 0.0) > 0.0
+        key for key, absent in _MOVE_TEMPERATURE_KEYS
+        if _realized_move_temperature(flat, key, absent) > 0.0
     )
     if not hot:
         return
@@ -545,8 +572,9 @@ def _check_target_sigma_cap_requires_zero_temperature(flat: dict[str, Any]) -> N
         f"re-drawn from the stored (capped) policy in "
         f"selfplay/network_turn.py:_resample_actions_with_temperature, so the "
         f"knob would change PLAY too and no strength readout taken with it on "
-        f"would be interpretable. Set the temperatures to 0.0, or leave the cap "
-        f"at 0."
+        f"would be interpretable. Set the temperatures to 0.0 EXPLICITLY -- an "
+        f"absent key is not 0.0, it realizes as the loader's default (1.0 for "
+        f"`temperature`, 0.6 for `temperature_endgame`) -- or leave the cap at 0."
     )
 
 

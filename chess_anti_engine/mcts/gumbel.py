@@ -556,10 +556,21 @@ def _completed_q_transform(
     ``fpu_penalty`` is subtracted from the unvisited-children mix value
     (volatility_fpu). Both default to the exact legacy behavior.
 
-    ``max_visit_cap`` > 0 clamps the ``max_visit`` that feeds sigma(q), i.e. it
-    computes the transform as if the search had run a SMALLER budget. Used only
-    by the stored-target arm of the improved policy (see
+    ``max_visit_cap`` > 0 clamps the ``max_visit`` that feeds sigma(q). Used
+    only by the stored-target arm of the improved policy (see
     ``GumbelConfig.target_max_visit_cap``); 0 = no clamp = legacy.
+
+    ⚑ It shrinks SIGMA ONLY -- it is not "the transform a smaller search would
+    have produced", and must not be described that way. The completed-Q vector
+    still comes from the full search: the visit counts, the visit-weighted
+    ``mixed_value`` and therefore the value imputed to every UNVISITED child are
+    all untouched. The two coincide exactly only when every child is visited, so
+    the mix-value branch is untaken -- which at production's sims/legal-move
+    ratio is the exception, not the rule (with two unvisited children out of
+    five the capped and genuinely-shallow transforms differ by ~0.03 in Q-scale
+    units). The honest statement is the one in
+    ``GumbelConfig.target_max_visit_cap``: search deep, TRUST the result like a
+    shallow search.
     """
     actions_arr = np.asarray(actions, dtype=np.int64)
     visits_f = np.asarray(visits, dtype=np.float64)
