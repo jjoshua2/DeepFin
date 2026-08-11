@@ -41883,3 +41883,94 @@ rule in [[most_experiments_here_are_unfalsifiable]], now with a measured number 
 **"no change detected, instrument-limited"**, NOT "the fix did nothing".
 
 Raw: `runs/arena_results.jsonl`. Arithmetic re-derived 2026-08-11, not copied from above.
+
+---
+
+## 2026-08-11 — TASK #168 CLOSED: **NULL.** Prev-model share did NOT drift. The "16.3% → 56.5%" compared two different instruments on two different lineages.
+
+Screened offline, CPU-only, while training ran (no GPU contention). Source: the 862
+per-iteration scalars in trial `379f6`'s ten `events.out.tfevents.*` files — the ONLY surviving
+per-iteration record, since `progress.csv` rotates at every restart (29 rows left).
+
+### The measurement
+
+`gate_games_cur` / `gate_games_prev`, the exact counters the 2026-08-09 note read:
+
+| iteration band | cur | prev | **prev share** |
+|---|---|---|---|
+| 1–249 (**the +85 Elo era**) | 948.0 | 1301.9 | **0.577** |
+| 250–399 | 997.6 | 1324.2 | 0.570 |
+| 400–513 | 985.2 | 1308.9 | 0.571 |
+| 514–600 | 1014.8 | 1272.1 | 0.556 |
+| 601–700 | 986.7 | 1357.8 | 0.579 |
+| 701–735 (pre-bundle) | 941.0 | 1492.5 | 0.610 |
+| 736–800 (post-bundle) | 960.1 | 1252.7 | 0.566 |
+| 801–862 | 1178.0 | 1149.5 | 0.494 |
+
+**FLAT at ~0.57 for all 862 iterations.** No drift, no trend, no step at 736. The band with the
+LOWEST prev share (801–862, 0.494) is the band that LOST 52 Elo, and the band at 0.577 is the
+one that gained ~85.
+
+### Why "16.3% → 56.5%" looked like a 3.5× drift
+
+The two numbers are **not the same measurement and not the same run**:
+
+| | the "16.3%" | the "56.5%" |
+|---|---|---|
+| instrument | shard `.zattrs` binned by `generated_at_unix` against `progress.csv` | the `gate_games_cur/prev` counters |
+| quantity | games/iteration attributed by model sha (197 vs 38) | gate-window accumulator ratio |
+| lineage | iters 164–219 of an **earlier run** (`promotion_gate.py:98-104`) | iters 664–677 of the **boot512 lineage** |
+
+Run the *same* instrument across the *same* lineage and it reads 0.577 at iteration 1.
+⇒ **[[same_name_different_population]], third instance this week.** A docstring number was
+compared to a live counter and the difference was booked as a regression.
+
+### The stale-ingest claim, corrected but not withdrawn
+
+Position-weighted `distributed_stale_positions / (matching + stale)`:
+
+| band | mean | p90 |
+|---|---|---|
+| 1–249 | 0.048 | 0.148 |
+| 400–513 | 0.009 | 0.040 |
+| 601–700 | 0.068 | 0.206 |
+| 736–800 | 0.043 | 0.120 |
+| 801–862 | 0.029 | 0.000 |
+
+Stale games ARE ingested and trained on — that part of the 08-09 note stands, and
+`distributed_stale_games` is NOT "0 on every recent iteration" as `promotion_gate.py:107-109`
+still claims. But the magnitude was overstated: **"~27% of recent training data is off-policy"
+read a per-iteration MAXIMUM (234 games, 33%) as a typical value. The mean is 1–7%.**
+
+### Verdicts
+
+- **#168 CLOSED — NULL.** It is not the cause of the flat stretch and not the cause of the
+  736→862 loss. It was promoted to "leading hypothesis" on 2026-08-11 (entry `a88074189`) on the
+  strength of the artifact; **that promotion is withdrawn.**
+- **57% prev-model data is demonstrably compatible with gaining 85 Elo** — the loop did exactly
+  that at that composition. So even a real drift to 57% could not have explained a stall.
+- `promotion_gate.py:98-115` still carries the stale docstring measurement. Fix owed: restate it
+  as lineage-scoped and cite the live counter instead. Filed as a follow-up, not done here.
+
+### ⚑ A SEPARATE, REAL DEFECT FOUND WHILE BUILDING THIS SCREEN
+
+`DiskReplayBuffer._flush_shard_arrays` (`replay/disk_buffer.py:1610-1621`) calls
+`save_local_shard_arrays(path, arrs=arrs)` **with no `meta=`**, so `_meta_dict(None, ...)`
+returns `asdict(ShardMeta(positions=n))` — every provenance field `None`. Verified on the bank:
+**all 817 salvage shards and all 10,485 live replay shards have `model_step`, `model_sha256`
+and `generated_at_unix` present-as-keys and set to `None`**, while the pre-ingest server inbox
+shard read `model_step=58761, sha=d3df2220…`.
+
+This is the signature defect in its purest form: **the key is present, so every presence check
+passes and every `.attrs["model_step"]` read returns `None` instead of raising.** And it is
+structural, not an omission — the buffer re-chunks rows from many source shards into uniform
+2000-row shards, so a per-SHARD field cannot survive; only a per-ROW array could.
+
+Consequence: **the training window carries no model provenance at all.** No staleness-aware
+sampling, no off-policy fraction on the data the trainer actually ate, and no back-fill — a fix
+helps only shards written after it lands. The composition series above exists only because the
+tfevents counters are computed server-side, before ingest.
+
+⚠ This CORRECTS my own memory note of 2026-08-11 08:36, which claimed the salvage pool's `.attrs`
+were "the only surviving provenance". They are not; they are `None`. The note generalised from a
+single pre-ingest inbox shard to a bank of post-ingest ones without reading the bank.
