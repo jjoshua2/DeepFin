@@ -38241,6 +38241,8 @@ HONEST CELLS AND THE FLAT CELLS DO NOT OVERLAP.** The mechanism: **soundness is 
 are `c_scale`-quiet, **2 are both**, and those sit at `rho=0.05` where "rare" (0.05) is barely
 below uniform (1/27 ~ 0.037).
 
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
+
 Best survivor, `tau=50 rho=0.05 phi=2e-2` (928 pairs, control +5.9 SD): `c_scale` **−0.0593**
 [−0.0833,−0.0350], `policy_temp` **+0.2381** [+0.2096,+0.2667], bundle **+0.0765**. It is a
 **one-sided** rule: `Δ >= +0.05` ⇒ `policy_temp` fired; **`Δ <= 0` is INDETERMINATE, never
@@ -38272,6 +38274,8 @@ be attributable, because it will be alone.
 
 **`gumbel_policy_temp` still ships in the yaml at its no-op default 1.0** (PR #379), so the
 follow-up costs a yaml reload rather than another restart.
+
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
 
 **Coverage's role is demoted accordingly:** it is no longer an attribution instrument. It
 becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read at
@@ -38319,6 +38323,8 @@ Deploy **`gumbel_c_scale` 0.025 → 0.1 AND `gumbel_policy_temp` 1.0 → 1.5** i
 `priority_policy_kl` only on rows where `keep_prob` saturates at 1.0, so the diff-focus
 selection effect cannot move the denominator.
 
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
+
 **What we can and cannot conclude, stated before launch:**
 - **CAN (deployment):** both knobs fired — realized ΔH(target) consistent with ~+0.15 net, and
   `gumbel_policy_entropy_mean` off its baseline by >= +0.10 (**measured** sd 0.0162 over the
@@ -38363,6 +38369,8 @@ both lists; the gumbel-policy one takes only `records`. **The population differe
 1.0578 vs 0.924 without either number being wrong.**
 
 ## Consequences for the bundle's deployment check
+
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
 
 1. **`gumbel_policy_entropy_mean` is the CLEAN in-effect instrument** precisely because its
    denominator is *not* gated by `keep_prob` — the Amendment 5 side-channel that BOTH knobs drive.
