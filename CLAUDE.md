@@ -215,6 +215,45 @@ Consequential and not apparent from the code:
   LOWERS regret to raise difficulty and RAISES it as an airbag on low winrate. Training
   targets are always best-move based and never depend on which handicapped move SF
   actually played.
+- **⚑⚑ `wdl_regret` MEASURES THE AGENT (net + search), NEVER THE NET. Do not read a regret
+  move as a strength verdict without first checking what changed in the search.** The PID
+  drives regret to hold curriculum winrate at `sf_pid_target_winrate` (0.5), and that
+  winrate is produced by the net PLUS its search. So a search-config change injects a STEP
+  into the regret series that is arithmetically indistinguishable from the net improving.
+  - **MEASURED, not argued.** At iter 736 `gumbel_c_scale` went 0.025 → 0.1 (`7f4304db9`,
+    2026-08-09 20:58) — worth **+245 Elo with the SAME weights on both sides**. Regret fell
+    **0.0538 → 0.0334 (−38%) in ~25 iterations**. Over that SAME window the paired arena
+    with the same search both sides and only the WEIGHTS differing read **−51.6 Elo**. ⇒
+    **regret reported strong progress while the net measurably degraded.** The ruler gives a
+    FALSE POSITIVE for exactly the failure mode it would be needed to catch: search tuned up
+    while the net rots reads as success.
+  - ⇒ **regret is a net signal ONLY while the search config is FROZEN.** Frozen since
+    2026-08-09 20:58. Touching `gumbel_c_scale`, `gumbel_policy_temp`, `mcts_simulations`,
+    `gumbel_topk` or the root transform VOIDS the series and needs a fresh baseline.
+  - **A restart that restores PID state RE-INJECTS the step.** `salvage_restore_pid_state:
+    true` from `pre_search_authority_20260809` restored regret **0.0550** (calibrated at
+    `c_scale` 0.025; old run iter 672 read 0.0549 — exact fingerprint) into a run using 0.1.
+    The 2026-08-11 run's **0.055 → 0.025 over iters 1-39 is the SAME +271 Elo search gain
+    being absorbed a SECOND time**, not learning.
+  - **DYNAMIC EQUILIBRIUM: a continuously improving net NEVER settles at setpoint.** The
+    controller lands a persistent positive winrate OFFSET (379f6: mean **0.5035**, last-200
+    **0.5057** against a 0.500 target) and regret ramps at the rate that matches. So "wait
+    for it to equalize" is wrong — the offset and the ramp ARE the signal, and a winrate
+    sitting exactly at 0.500 with flat regret means the net is FLAT.
+  - **Difficulty is 2-D: regret AND `sf_nodes`.** Check nodes before reading regret — a
+    regret drop paid for by a node drop is not a difficulty rise. (379f6: `sf_nodes` pinned
+    at 75000 for all 862 iterations, so that run's ramp was pure difficulty.)
+  - **PROVISIONAL scale, NOT a calibration: Δregret 0.0095 ≈ 51.6 Elo ⇒ ~5.4 Elo per 0.001
+    regret**, from two confounded endpoints (neither equilibrated; the eras also differ in
+    the diff_focus clip regime). Task #170 owes the real one. It is stated here as a
+    FALSIFIER for that experiment, not as a number to quote.
+  - **"Better than last time" is cleared by ZERO improvement**, because last time was
+    degrading. A regret floor below 379f6's 0.033–0.036 means "we did not lose the 51.6
+    Elo", not "we gained".
+  - ⚑ **Do NOT tune search toward the play optimum for arena numbers.** `c_scale` play
+    optimum is ~0.2, the target-quality `better_in` peak is **0.1**, and production runs 0.1
+    deliberately. Moving to 0.2 would raise agent strength, lower regret, look like progress
+    on BOTH instruments, and tell us nothing about the net — while giving up target quality.
 - `selfplay.record_fast_ply_value` is OFF in production — tried and REVERTED for trunk
   dilution. Check the ledger before re-enabling.
 - Production input is 175 planes (`v2_threats`); `v1`'s 146 planes are legacy. Production
