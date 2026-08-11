@@ -42342,3 +42342,53 @@ above. Only the SHAPE ACROSS RUNGS is, and the shift is identical for every rung
 ⚑ Incidental: `ck_resume_iter672` fits these rows BEST (0.0524), better than iter 735
 (0.0585) and the live net (0.0569), all separated by many SEMs. Small, and consistent with
 recency — but it is one more reading on which the resume point was not the worse net.
+
+---
+
+## 2026-08-11 — THE ANCHORED GATE'S −26 ELO IS A COMPLETION-ORDER ARTIFACT (task #187)
+
+**The alarm.** `gate_delta_elo` on the live trial drifted −1.9 → **−30.0** over 25 post-resume
+iterations, with the 95% CI **excluding zero from iteration 10 onward** and still excluding it
+now (−25.9 [−45.1, −6.6] at iter 25). `gate_sample_confound_elo` is small in that window
+(−1.3 to −7.8), so PID difficulty drift does not account for it. Taken at face value this says
+**every publish makes the model ~26 Elo worse**, which would be the flat-run mechanism.
+The gate is in SHADOW (`gate_would_demote` 0), so nothing acted on it.
+
+**Why it is not that.** The gate buckets each iteration's arriving games into `cur` (produced
+by the model published this iteration) and `prev` (the previous one). ⚑ **That split is also a
+LATENCY split**: a game short enough to finish inside one iteration lands in `cur`, a slower
+one lands in `prev`. If score depends on completion latency the buckets are not exchangeable,
+and the gate reads a game-length effect as a model regression. This is task #80's open
+C14b residual — the resume fix addressed the ply RAMP, not completion ORDER.
+
+**Measured directly**, on the one surface where provenance survives — the server's
+`processed/` shards still carry `model_step` and `generated_at_unix`; ingest nulls both
+(task #181). `scratchpad/gate_latency_bias.py`, CPU-only, 181 shards / 26 model steps:
+
+| latency (s since that model's first shard) | shards | games | score | Elo | plies/game |
+|---|---|---|---|---|---|
+| 0–55 | 36 | 686 | 0.5722 | +50.5 | 115.7 |
+| 56–139 | 37 | 730 | 0.5466 | +32.5 | 117.3 |
+| 141–249 | 36 | 640 | 0.5828 | +58.1 | 118.5 |
+| 258–412 | 37 | 222 | 0.6149 | +81.3 | 111.7 |
+| 412–11774 | 37 | 722 | **0.6406** | +100.4 | 99.3 |
+
+**Late-arriving games score +0.0684 [+0.032, +0.105] higher — +49.9 Elo**, monotone over the
+last three bins, and they are ~16 plies SHORTER. (The interval uses the EXACT per-game
+variance for a score on {0, 0.5, 1}; the sd ≤ 0.5 bound gives ±0.053 and nearly hides it.)
+
+⇒ **the latency confound is ~+50 Elo on `prev`, i.e. ~−50 Elo on `cur − prev` — LARGER than
+the −26 the gate reports and in the same direction.** The gate's negative reading is
+consistent with zero real per-publish regression.
+
+### Kill rule and limits, stated rather than implied
+
+- **VERDICT: the −26 Elo is NOT evidence of a per-publish regression.** Do not quote
+  `gate_delta_elo` as a strength signal until the bias is either removed or subtracted.
+- The bias magnitude is **not tightly estimated** (±0.037 on a 0.068 effect) and my latency
+  proxy is `generated_at_unix − min(generated_at_unix)` per `model_step`, not a true
+  publish timestamp. So "≈ −50 Elo of bias" bounds the direction, not the size.
+- A full attribution would need `cur`/`prev` split by latency *inside* the gate, which is
+  where the fix belongs (task #80).
+- ⚠ This does NOT rehabilitate the gate as a ratchet — the module's own docstring already
+  proves no gate can ratchet at this loop's improvement rate.
