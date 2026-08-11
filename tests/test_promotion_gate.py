@@ -3352,6 +3352,17 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
                     .split("**The observed spread is pure binomial noise")[0])
     for phrase in (
         "The cap is ``ceil(0.60 * games_per_iter)`` over ALL matching games",
+        # ⚑ The identity is the load-bearing line -- the paragraph names it as
+        # the part that does NOT drift while the row counts do, and a mutation
+        # changed "residual 0" to "residual 12" with the suite green. It can
+        # only be pinned as TEXT: it is a statement about ``progress.csv``,
+        # which is runtime output and is not in the repo, so no test can
+        # re-derive it the way the banked-row figures are re-derived. Pinning
+        # the sentence is the most this suite can do; re-running the check is a
+        # human step, and that limit is the reason it is written out in full.
+        "matching_games - selfplay_games == gate_sample_games_cur + "
+        "gate_sample_games_prev (residual 0 on every row; 148 of them as of "
+        "2026-08-11)",
         "both post-boot trials launched at ``games_per_iter: 440`` with no "
         "ramp, so the cap is **264**",
         "max **66** over the 145 rows where both arms are non-empty",
