@@ -42743,3 +42743,52 @@ The pool decline is REAL but MIS-ATTRIBUTED, and its cost is NOT throughput. Do 
 defects worth deciding are (1) the absolute bar with no calibration control, and
 (2) retire-without-feed. Options recorded in the session summary; none launched.
 
+
+## 2026-08-11 — CORRECTION to the seed-pool entry: THE POOL IS PINNED AT ITS OWN BAR (task #184)
+
+Weakens the entry above (`8c873141c`). Josh's objection: a mass retirement at a model
+shift may be FINE, because it IS a different model with different blind spots. Correct,
+and my control could not reject it.
+
+### What I retract
+"The halving was caused by a GLOBAL value-calibration shift" is NOT established.
+* My first control was the median of the fixed 800 cumulative seeds. **All 800 are
+  blind-spot seeds, i.e. all objectively LOST.** Centring by them controls for pessimism
+  relative to other lost positions, NOT for global pessimism. It cannot answer the question.
+* The seeds/control rig (`scratchpad/seed_shift_control.py`, 275 pre-retirement seeds vs
+  400 audit FENs, paired within population) returns differential **−0.0102 ± 0.0218** —
+  no differential. But its PRE arm is INVALID: iter735 reads those seeds at median
+  **−0.426** while the live pool sat at **−0.20** in that era. The population was SELECTED
+  to read ≈−0.20 under ck_860, not under iter735 — conditioning on the outcome again
+  [[never_condition_a_control_on_its_own_outcome]]. `ck_860` is not on disk; the
+  transition is not reconstructible.
+
+### ⚑⚑ WHAT REPLACES IT — A STRUCTURAL PROPERTY, MEASURED
+Active-pool median `net_q` over **675 reads / 4 days** is FLAT at **≈ −0.20** against a
+retirement bar of **−0.40**: −0.195, −0.203, −0.214, −0.209, −0.195 ... one excursion to
+**−0.421** (08-11 08:37, the mass event), then back to **−0.207** by 08-11 11:19.
+
+It is flat because the CONTROL LOOP puts it there: retire below −0.4 (2 consecutive),
+re-feed above −0.2. **The active pool is continuously re-selected into the band just above
+the retirement bar.** That is why the 200 crossers sat bunched at median −0.256.
+
+⇒ **A pool held at its own threshold sheds a large fraction on ANY perturbation** — a
+genuinely different model, a calibration wobble, or noise. **The mass retirement is
+therefore UNINFORMATIVE IN BOTH DIRECTIONS**: not evidence of a defect, and not evidence
+the new model learned 117 blind spots. The gap between the retire bar (−0.4) and the
+refeed bar (−0.2) is what pins the pool, and it is the real knob.
+
+### What still stands unchanged
+* **164 seeds are permanently lost** — 3 above the −0.2 refeed bar, 141 still ≤ −0.4.
+  Retirement is one-way in the direction a downward move sends things.
+* **Pool size is NOT the binding resource** — `ceil(0.08*440)=36` seeded games/iter at
+  BOTH pool sizes, confirmed in live worker logs. Unaffected by this correction.
+* Feed arm off since Jul 24 (18 days) against 3081 vetted staged candidates.
+
+### Consequence for the options
+Option 1 (calibrate the bar) is DEAD — not because it failed its test, but because the
+test that killed it was itself invalid, AND the structural finding says the bar's
+CALIBRATION is not the defect; its DISTANCE from the refeed bar is. Option 2 (hold
+retirement across model discontinuities) survives with a better rationale: a pool sitting
+on its own trigger must not fire during the one moment the net is known to move.
+
