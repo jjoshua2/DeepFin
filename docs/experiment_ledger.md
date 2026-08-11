@@ -41787,3 +41787,99 @@ made under the OLD search shape, since the window was reseeded from an 817-shard
 `--search-shape training`, seed 42. SUCCESS ≥ +30 Elo CI-excluding-0; KILL ≤ −30 likewise.
 Attribution rule from the amendment: **a win is credited to the resume point and #392 first**,
 because #390/#391 priced NEUTRAL offline.
+
+---
+
+## 2026-08-11 — ⚑⚑ CORRECTION: "−28 Elo over 514→735" AND "~94 Elo lost from the peak" ARE BOTH DIFFERENCING ARTIFACTS. THE DIRECT LINKS SAY FLAT.
+
+Prompted by Josh: *"is it possible the 28 Elo loss was noise? the 672 we resumed from seemed
+like it beat 514 head to head... I think it had just stopped improving and was bouncing around
+flat."* Checked against `runs/arena_results.jsonl` rather than against this document. **He is
+right on both counts, and two headline numbers in this ledger — including ones I wrote — do not
+survive the check.**
+
+### The two ways to compare two checkpoints, and they disagree
+
+**(A) DIFFERENCED** — subtract two independent anchored arenas vs `boot512`
+(`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt`), all n=400, `c_scale 0.1`:
+
+| link | Δ | 95% CI of the difference |
+|---|---|---|
+| 735 − 514 | −28.3 | [−73.0, +16.3] — **includes 0** |
+| 672 − 514 | −27.4 | [−71.6, +16.8] — **includes 0** |
+| 768 − 735 | −19.2 | [−63.2, +24.9] — **includes 0** |
+| 862 − 735 | −75.6 | [−119.5, −31.7] — excludes 0 |
+| 862 − 514 | −103.9 | [−146.8, −61.0] — excludes 0 |
+
+**(B) DIRECT** — one paired arena, same openings, both nets in the same games:
+
+| link | Δ | 95% CI | n | shape |
+|---|---|---|---|---|
+| 735 vs 514 | **+13.0** | [−6.6, +32.8] | 800 | c_scale 0.025 |
+| 514 vs 672 | **−18.3** | [−46.9, +10.2] | 400 | c_scale 0.1 |
+| 768 vs 735 | **−23.5** | [−54.2, +6.9] | 400 | c_scale 0.1 |
+| 862 vs 514 | **−21.7** | [−49.7, +5.9] | 400 | c_scale 0.1 |
+| 862 vs 735 | **−51.6** | [−80.5, −23.5] | 400 | c_scale 0.1 |
+
+### Three corrections
+
+1. **"−28 Elo over 514→735, −0.13 Elo/iter, a monotone decline that PREDATES the bundle" is
+   WITHDRAWN.** It was never significant *even on its own data* — differencing the two anchored
+   arenas gives [−73.0, +16.3]. And the direct 800-game link reads **+13.0 [−6.6, +32.8]**, which
+   **excludes −28.3**. Both methods say the same thing: nothing measurable happened over those
+   221 iterations. I wrote "−0.13 Elo/iter" by subtracting two point estimates and reading the
+   result as a rate. That is precisely the error this ledger had already named on 2026-08-09 —
+   *"a series of noisy anchored measurements is not a trend until the direct links agree with
+   it"* — committed one day before I did it again.
+2. **"~94 Elo lost from the iter-514 peak" is CONTRADICTED, not merely weakened.** Differencing
+   says −103.9 [−146.8, −61.0]; the DIRECT 400-game arena says **−21.7 [−49.7, +5.9]**. The two
+   intervals do not overlap. They cannot both be right, and the direct paired arena is the one
+   that shares openings and games. ⇒ **the total loss from the peak is ~22 Elo and is not
+   distinguishable from zero.**
+3. **Exactly ONE direct link in the entire lineage excludes zero: `862 vs 735 = −51.6
+   [−80.5, −23.5]`.** That is the post-bundle stretch, 736→862 — the window in which
+   `grad_hard_clip_rate` went 0.000 → 0.908 and `diff_focus_keep_rate` 0.80 → 0.957.
+
+### The corrected shape of the run
+
+| stretch | direct verdict |
+|---|---|
+| 249 → 514 → 672 → 735 | **FLAT.** Every direct link's CI includes 0, and the signs alternate (+19.1, −31.4, −18.3, +13.0). One line at ~+90 to +115 over boot512. |
+| 736 → 862 | **A REAL LOSS of ~52 Elo**, CI-separated, coincident with the diff_focus scale-drift defect. |
+
+⇒ **The run did not decline for 486 iterations and then fall off a cliff. It went flat after
+~iter 249 and then lost ~52 Elo in one specific 126-iteration window.**
+
+### What this changes
+
+- **It raises #392's standing and lowers the rest of the bundle's.** The only stretch with a
+  measurable loss is the only stretch with a measured defect, and #392 is the fix aimed at it.
+  #390/#391 remain hygiene (priced NEUTRAL offline, entry `a88074189`).
+- **It vindicates the resume point.** `514 vs 672 = −18.3 [−46.9, +10.2]` ⇒ resuming from 672
+  rather than the "peak" 514 costs nothing measurable. The rollback debate was moot.
+- **⚑ IT MOVES THE PROBLEM.** Josh's framing is the correct one and supersedes the regression
+  hunt: *"that is bad enough — to stop improving thousands of Elo below Stockfish and perfect
+  play."* The question is no longer "what broke at iteration X". It is **why 486 iterations of
+  selfplay produce no measurable Elo**, which is [[rl_loop_is_at_a_self_referential_fixed_point]]
+  and task #168, not a regression.
+
+### ⚑⚑ THE INSTRUMENT CANNOT SEE THE LOOP'S GROWTH RATE — this is now a blocker
+
+A 400-game paired arena resolves ≈ ±30 Elo. The loop's demonstrated rate over 249→735 is
+**bounded above by ~30 Elo per 486 iterations**, i.e. below the resolution of the only ruler we
+trust. Consequences, all of which have already bitten:
+
+- Every 300-iteration readout, including the one pre-registered for iter 972, is **pre-destined
+  to read null** unless the intervention is worth ≫30 Elo. Its `±30` SUCCESS/KILL thresholds are
+  not a test of the loop; they are a test of whether we broke something badly.
+- "Flat" and "slowly declining at ≤0.06 Elo/iter" are **not distinguishable** by anything we own.
+- The temptation this creates is exactly the one that produced corrections 1 and 2: differencing
+  under-powered readings to manufacture a trend.
+
+⇒ **Two consequences are pre-committed here.** (i) No experiment goes live on a hypothesis
+whose predicted effect is under ~40 Elo unless it can be screened OFFLINE first — the standing
+rule in [[most_experiments_here_are_unfalsifiable]], now with a measured number attached.
+(ii) The iter-972 readout keeps its ±30 thresholds but its verdict language changes: a null is
+**"no change detected, instrument-limited"**, NOT "the fix did nothing".
+
+Raw: `runs/arena_results.jsonl`. Arithmetic re-derived 2026-08-11, not copied from above.
