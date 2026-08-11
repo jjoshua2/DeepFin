@@ -3332,6 +3332,20 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
     sds = _per_iteration_score_sds()
     assert (f"score sd runs **{sds[0][0]:.3f} to {sds[-1][0]:.3f}**"
             in flat_step), (sds[0][0], sds[-1][0])
+    # ⚑ ...and the DIRECTION that range implies, which is the whole reason the
+    # range is quoted. A sweep rewrote it to "sits ABOVE that range ... can
+    # never under-state" -- the "the floor is conservative" error this PR spent
+    # two rounds killing -- and it passed, because only the digits were pinned.
+    assert sds[0][0] < _POOLED_GAME_SCORE_SD < sds[-1][0], (sds[0][0], sds[-1][0])
+    assert ("the pooled floor 0.3447 sits inside that range, so it OVER-states "
+            "on some iterations and UNDER-states on others") in flat_step
+
+    # ⚑ item 2/[02]: the drift disclaimer is the mitigation for the row counts
+    # this paragraph itself flags as moving. Deleting it was a free mutation.
+    assert ("The run is live, so the ROW COUNTS here (148 / 145 / 26) drift "
+            "upward with every iteration and the counts alone are not the "
+            "claim; the identity above and the sub-count relation are, and "
+            "those do not move. Re-derive rather than re-quote.") in flat(doc)
     wc, wp, ww, wd, wl = sds[-1][1]
     assert (f"(**{int(wc)}/{int(wp)}, w/d/l {ww}/{wd}/{wl}, own sd "
             f"{sds[-1][0]:.3f}**)") in flat_step, sds[-1]
@@ -3354,21 +3368,43 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
         "The cap is ``ceil(0.60 * games_per_iter)`` over ALL matching games",
         # ⚑ The identity is the load-bearing line -- the paragraph names it as
         # the part that does NOT drift while the row counts do, and a mutation
-        # changed "residual 0" to "residual 12" with the suite green. It can
-        # only be pinned as TEXT: it is a statement about ``progress.csv``,
-        # which is runtime output and is not in the repo, so no test can
-        # re-derive it the way the banked-row figures are re-derived. Pinning
-        # the sentence is the most this suite can do; re-running the check is a
-        # human step, and that limit is the reason it is written out in full.
+        # changed "residual 0" to "residual 12" with the suite green. ⚑ "No
+        # test can re-derive it" was too strong, though: HALF of it is already
+        # in this file. See the assertion below the loop -- the curriculum half
+        # is derived from ``_POST_BOOT_ITERATIONS``, and only the
+        # ``matching_games - selfplay_games`` half still needs runtime data
+        # that is not in the repo. Banking a second 148-row table to close the
+        # other half would add a hand-transcription to keep in sync, which is
+        # the failure this whole PR is about; re-running that check stays a
+        # human step, and the sentence carries it.
         "matching_games - selfplay_games == gate_sample_games_cur + "
         "gate_sample_games_prev (residual 0 on every row; 148 of them as of "
         "2026-08-11)",
         "both post-boot trials launched at ``games_per_iter: 440`` with no "
         "ramp, so the cap is **264**",
         "max **66** over the 145 rows where both arms are non-empty",
-        "mean 229, max 357** -- **26 of 145 iterations OVER the 264 cap**",
-        "the cap plausibly BINDS on the highest-prev-share iterations",
-        'the honest state is "unmeasured", not "never binds"',
+        "**mean 229, max 357**, over the 264 cap on **26 of 145** iterations",
+        # ⚑ items 2/[03] and 2/[04]: the two SENTENCES the numbers rest on.
+        # A sweep rewrote the category-error claim to its opposite ("directly
+        # comparable ... comparing them is sound") and upgraded the estimator's
+        # assumption to a construction ("per-GAME ... identical by
+        # construction"), both green. The suite pinned every NUMBER in this
+        # paragraph and none of the reasoning that gives them meaning -- the
+        # same shape as the fail-safe-direction defect two rounds earlier.
+        "is a sub-count of the quantity the cap bounds, and comparing them is "
+        "a category error whichever way it comes out",
+        "attribution is per-SHARD by ``model_sha256`` and a shard carries both "
+        "game types from one model, so the two shares should TRACK (an "
+        "assumption, not a construction)",
+        # ⚑ item 1: the withdrawn directional read, and why it was wrong.
+        "THAT ESTIMATE DOES NOT SHOW THE CAP BINDING -- IT SHOWS ITS OWN "
+        "ASSUMPTION FAILING",
+        "``matching_games`` is ALREADY POST-CAP",
+        "The over-cap count is exactly what an UNCAPPED distribution predicts, "
+        "to within noise, at every threshold",
+        "a **2.6x** mix difference between two halves of ONE fleet running ONE "
+        "``selfplay_fraction``",
+        '**UNMEASURED. Not "never binds" -- and not "binds" either.**',
         "FALSE AS WRITTEN: it is nonzero on 8 rows",
         "a nonzero reading has two causes and a zero reading has two "
         "explanations",
@@ -3386,7 +3422,18 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
     # True``. A mutation restored the retracted "never binds" claim to the HEAD
     # of the paragraph, kept the historical sentence, and the suite stayed
     # green -- a guard written for a finding that could not guard it.
-    assert "is a CEILING that never binds" not in prev_cap, prev_cap
+    # ⚑ THE CURRICULUM HALF OF THE IDENTITY, DERIVED. The two gate arms sum to
+    # the iteration's curriculum W/D/L on every banked row -- that is exactly
+    # "the arms partition the curriculum games", the repo-side half of the
+    # sentence above. It costs one line and turns half a text pin into a
+    # measurement.
+    for c, pv, w, d, lo in _POST_BOOT_ITERATIONS:
+        assert c + pv == w + d + lo, (c, pv, w, d, lo)
+
+    for withdrawn in ("is a CEILING that never binds",
+                      "the cap plausibly BINDS",
+                      "the cap never binds on the"):
+        assert withdrawn not in prev_cap, withdrawn
     assert prev_cap.lstrip().startswith(
         "`` IS NOT COMPARABLE TO THE GATE'S SPLIT"), prev_cap[:120]
     for phrase in (

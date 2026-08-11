@@ -165,14 +165,39 @@ alone are not the claim; the identity above and the sub-count relation are, and
 those do not move. Re-derive rather than re-quote.
 
 ⚑ AND THE COMPARABLE QUANTITY IS NOT RECORDED. Nothing logs prev-SHA games
-across BOTH game types. Estimating it by applying each iteration's curriculum
-prev share to its whole ingest (attribution is per-shard by ``model_sha256``
-and a shard carries both types from one model, so the shares should track) puts
-it at **mean 229, max 357** -- **26 of 145 iterations OVER the 264 cap**, worst
-the (17, 61) row at ~35% over. That row is also 379f6's ONLY nonzero
-``distributed_stale_games`` (346). ⇒ **the cap plausibly BINDS on the
-highest-prev-share iterations**, and the honest state is "unmeasured", not
-"never binds".
+across BOTH game types. The obvious estimate -- apply each iteration's
+curriculum prev share to its whole ingest, on the assumption that attribution
+is per-SHARD by ``model_sha256`` and a shard carries both game types from one
+model, so the two shares should TRACK (an assumption, not a construction) --
+puts it at **mean 229, max 357**, over the 264 cap on **26 of 145** iterations,
+worst the (17, 61) row at ~35% over. That row is also 379f6's ONLY nonzero
+``distributed_stale_games`` (346).
+
+⚑⚑ **THAT ESTIMATE DOES NOT SHOW THE CAP BINDING -- IT SHOWS ITS OWN
+ASSUMPTION FAILING, AND AN EARLIER REVISION READ IT THE FIRST WAY.**
+``matching_games`` is ALREADY POST-CAP, and ``_process_shard_with_prev_cap``
+bounds prev-ingested at ``prev_max_games`` plus at most one shard's overshoot
+whenever ``cap_prev`` holds -- which is every usable row, since both arms
+non-empty implies ``len(accepted_model_shas) > 1``. So a quantity the code
+truncates at 264 must PILE UP at 264. It does not::
+
+    [210,240) 48   [240,264) 33   [264,290) 21   [290,320) 5   [320,400) 1
+                             ^ cap = 264, and the tail runs smoothly through it
+
+    P(est >= 264) under N(229.0, 37.4) = 0.174  ->  expected 26.7, observed 27
+    P(est >= 290)                      = 0.051  ->  expected  7.8, observed  6
+    P(est >= 320)                      = 0.007  ->  expected  1.1, observed  1
+
+The over-cap count is exactly what an UNCAPPED distribution predicts, to within
+noise, at every threshold. ⇒ the estimator is not tracking the capped quantity,
+and it is biased in the direction that inflates prev. The worst row shows the
+mechanism: for the cap to have bound at 264 there, the two cohorts' curriculum
+fractions would have to be 23.1% (prev) against 8.9% (cur) -- a **2.6x** mix
+difference between two halves of ONE fleet running ONE ``selfplay_fraction``,
+i.e. the assumption failing by 2.6x exactly where the estimate leans hardest.
+
+⇒ **UNMEASURED. Not "never binds" -- and not "binds" either.** A directional
+read needs a per-SHA count across both game types, which nothing records.
 
 ⚑ Two revisions asserted otherwise on bad evidence, and the shape of both
 mistakes is worth more than the conclusion:

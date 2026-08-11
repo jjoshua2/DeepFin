@@ -40042,15 +40042,40 @@ wrong in both of its numbers, and wrong in this entry's own signature way:
 - And I then compared a curriculum-only count against an all-games budget — the very category
   error the paragraph correctly identifies in its first sentence.
 
-With matched denominators the conclusion **inverts**. The accounting is exact
-(`matching_games − selfplay_games == gate_sample_games_cur + gate_sample_games_prev`,
-residual 0 on all 148 rows), so estimating prev-SHA totals by each iteration's curriculum
-prev share gives **mean 229, max 357 — 26 of 145 iterations over the 264 cap**, worst the
-**(17, 61)** row at ~35% over. That row is also 379f6's ONLY nonzero `distributed_stale_games`
-(346). ⇒ **the cap plausibly BINDS on the highest-prev-share iterations.** The honest state is
-**unmeasured**, not "never binds" — nothing logs prev-SHA games across both game types.
-Nothing in this entry's step-leg finding depends on it; it is recorded because the *shape* of
-the mistake is the finding.
+The accounting is exact (`matching_games − selfplay_games == gate_sample_games_cur +
+gate_sample_games_prev`, residual 0 on all 148 rows), so estimating prev-SHA totals by each
+iteration's curriculum prev share gives **mean 229, max 357**, over the 264 cap on **26 of
+145** iterations, worst the **(17, 61)** row — also 379f6's only nonzero
+`distributed_stale_games` (346).
+
+### ⚑⚑ AND A FIFTH ROUND KILLED THE REPLACEMENT CONCLUSION TOO — ON THE SAME PATTERN
+
+I wrote "⇒ the cap plausibly BINDS on the highest-prev-share iterations". **Withdrawn.** The
+estimator estimates prev-SHA games *ingested*, and `matching_games` is **already post-cap** —
+`_process_shard_with_prev_cap` truncates prev-ingested at 264 (+ one shard's overshoot) on
+every usable row. A truncated quantity must **pile up at the bound**. It does not:
+
+```
+[210,240) 48   [240,264) 33   [264,290) 21   [290,320) 5   [320,400) 1
+                        ^ cap = 264, tail runs smoothly through it
+
+P(est ≥ 264) under N(229.0, 37.4) = 0.174 → expected 26.7, observed 27
+P(est ≥ 290)                      = 0.051 → expected  7.8, observed  6
+P(est ≥ 320)                      = 0.007 → expected  1.1, observed  1
+```
+
+The over-cap count is what an **uncapped** distribution predicts, to noise, at every
+threshold. ⇒ the estimator is not tracking the capped quantity; it is detecting **its own
+assumption failing**, biased toward inflating prev. At the worst row, for the cap to have
+bound the two cohorts' curriculum fractions would have to differ **2.6×** within one fleet
+running one `selfplay_fraction`.
+
+⇒ **UNMEASURED. Not "never binds" and not "binds".** ⚑⚑ **THE REUSABLE PART: an estimator
+built on an assumption, applied to a quantity the code TRUNCATES, will read "over the bound"
+exactly when its assumption fails — and the two are indistinguishable without checking for the
+truncation edge. Check for the edge before reading the exceedance.** Three successive
+conclusions on this one paragraph were wrong; nothing in this entry's step-leg finding depends
+on any of them, and it is recorded because the *shape* is the finding.
 
 **Confounds:** none — the gate is in shadow mode and this PR changes documentation and tests
 only. The 96-iteration series spans the 08-11 04:19 restart, a lineage boundary for *weights*
