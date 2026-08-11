@@ -42264,3 +42264,81 @@ The ratio **falls** with difficulty. Extrapolating off the easy subpopulation th
   game outcome and identical positions resolve differently — but it is the value head's own noise
   floor, measured, and it is enormous next to the policy floor. Consistent with
   [[value_head_converged_on_a_compressed_target]].
+
+---
+
+## 2026-08-11 — ABSORPTION WORKS. THE NET FITS THE SEARCH TARGET 10x BETTER ACROSS THE RUN AND GAINS NO ELO (task #185)
+
+The entry above established that ~85% of the 0.115-nat training signal is learnable. This
+asks whether the trainer takes it.
+
+**Design.** Provenance cannot answer it directly — ingested shards carry `model_step=None`
+(task #181), so "the net that made this row" is unknowable. Instead a LADDER of checkpoints
+is scored on the IDENTICAL rows with the IMPORTED production formula
+(`selfplay/network_turn.py::_policy_kl`, KL(prior ‖ search target), support-restricted).
+Rig: `scratchpad/absorption_probe.py`. Pool: `pre_search_authority_20260809`,
+60 shards × 400 rows = **22,956 scored rows**, forward-only, `--gpu-mem-fraction 0.10`
+alongside live training.
+
+| checkpoint | KL(prior ‖ stored target) | sem | top-1 agreement |
+|---|---|---|---|
+| iter 8 | 0.60545 | 0.00575 | 0.6508 |
+| iter 249 | 0.22618 | 0.00313 | 0.7779 |
+| iter 514 | 0.14284 | 0.00225 | 0.8332 |
+| **iter 672** (resume point) | **0.05239** | 0.00069 | 0.8904 |
+| iter 735 (FINAL) | 0.05846 | 0.00072 | 0.8793 |
+| live ckpt 18 (abs ~690) | 0.05688 | 0.00071 | 0.8855 |
+| — recorded AT GENERATION | 0.11159 | — | — |
+| — uniform-over-legal control | 4.06498 | — | — |
+| — shuffled-target control | ~1.40 | — | — |
+
+**Monotone, 11.6x, and every step is dozens of SEMs.** The trained nets sit at HALF the
+KL recorded when the rows were made, and 2.6–4.3x the target-noise floor (0.012–0.020).
+
+### The controls are load-bearing here
+
+- **uniform 4.065** — 71x `kl_now`: the encoding/masking pipeline is sound, not accidentally
+  scoring noise.
+- **shuffled ~1.40** — 25x `kl_now`, so the fit is row-specific. ⚑ The FIRST version of this
+  control read 0.283 and was WRONG: `_policy_kl` restricts to shared support and returns
+  **0.0** when the intersection is empty, which for two unrelated positions is the common
+  case. An unrestricted shuffle therefore reports a *lower* KL than the true pairing — a
+  negative control that passes while measuring nothing. Fixed by requiring ≥5 shared
+  support entries (10.7% of pairs qualify) and reporting the discarded fraction.
+
+### What this kills, and what it leaves
+
+**Every mechanical explanation for the flat run is now dead:**
+
+| hypothesis | status |
+|---|---|
+| the teacher goes quiet (fixed point) | dead — `priority_policy_kl` flat across deciles |
+| the target is noise | dead — floor is 10–17% of the residual |
+| data composition drift (#168) | dead — prev share flat ~0.57 for 862 iters |
+| **the trainer does not absorb the signal** | **dead — 11.6x monotone fit improvement** |
+
+⇒ **The loop absorbs a real, learnable, search-generated improvement signal, monotonically,
+for 862 iterations — and the arena does not move.** Fitting the search target better is not
+the same thing as playing better.
+
+### ⚠ THE ONE READING THIS CANNOT DISTINGUISH — and the arm that can
+
+Every rung trained on these rows, so the table measures **FIT, not GENERALISATION**. Against
+[[policy_head_memorises_the_window]] and the measured +13% rise in holdout policy CE over the
+same iterations, memorisation is the live alternative and it predicts exactly this table.
+The held-out arm is running now: the same six rungs on `pre_zclip65_20260727`, a pool from
+the lineage the 2026-08-04 `--fresh` boot replaced, so **no rung ever trained on a row of it**.
+
+Pre-committed reading, written before the numbers land:
+- ladder **declines** on held-out rows ⇒ generalisation is real, and the defect is that
+  policy-prior quality does not convert to Elo — points at the SEARCH/value side.
+- ladder **flat** on held-out rows ⇒ the 11.6x is memorisation of the window, and the defect
+  is in the trainer's generalisation — points at capacity/regularisation/views.
+
+⚠ Confound to carry into the readout: the held-out pool is a different era (different net,
+different PID regime, pre-#392 KL convention), so its LEVEL is not comparable to the table
+above. Only the SHAPE ACROSS RUNGS is, and the shift is identical for every rung.
+
+⚑ Incidental: `ck_resume_iter672` fits these rows BEST (0.0524), better than iter 735
+(0.0585) and the live net (0.0569), all separated by many SEMs. Small, and consistent with
+recency — but it is one more reading on which the resume point was not the worse net.
