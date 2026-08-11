@@ -3405,6 +3405,13 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
         "a **2.6x** mix difference between two halves of ONE fleet running ONE "
         "``selfplay_fraction``",
         '**UNMEASURED. Not "never binds" -- and not "binds" either.**',
+        # ⛑ ...and the EVIDENCE for the withdrawal, which a sweep rewrote
+        # freely: the histogram and the tail table are what turn "26 over the
+        # cap" from an overflow finding into an assumption-failure finding.
+        # Pinning the conclusion while leaving its evidence loose is how the
+        # previous two conclusions survived.
+        "[210,240) 48 [240,264) 33 [264,290) 21 [290,320) 5 [320,400) 1",
+        "^ cap = 264, and the tail runs smoothly through it",
         "FALSE AS WRITTEN: it is nonzero on 8 rows",
         "a nonzero reading has two causes and a zero reading has two "
         "explanations",
@@ -3429,6 +3436,28 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
     # measurement.
     for c, pv, w, d, lo in _POST_BOOT_ITERATIONS:
         assert c + pv == w + d + lo, (c, pv, w, d, lo)
+
+    # ⛑ THE TAIL TABLE IS ARITHMETIC, so derive it rather than needle it. The
+    # quoted probabilities must be the normal tail of the quoted N(229.0, 37.4)
+    # at the quoted thresholds, and each "expected" must be that probability
+    # times the row count. This cannot check the DATA (progress.csv is runtime
+    # output) but it does check that the block is internally consistent -- a
+    # mutation that moves P(est>=264) to 0.004 to manufacture an overflow
+    # finding now fails on the arithmetic rather than on a string.
+    for thresh, prob, expected in ((264, 0.174, 26.7),
+                                   (290, 0.051, 7.8),
+                                   (320, 0.007, 1.1)):
+        derived = 0.5 * math.erfc((thresh - 229.0) / (37.4 * math.sqrt(2.0)))
+        # ⛑ Tolerance 0.001, not 1e-6: the docstring quotes mean and sd to one
+        # decimal, and re-deriving from the ROUNDED parameters moves the tail
+        # by up to 7e-4 (it was computed from the full-precision moments). The
+        # check is "these digits are consistent with that normal", which is
+        # what a reader can verify -- not "this reproduces to floating point",
+        # which would fail on the rounding the docstring itself performs.
+        assert derived == pytest.approx(prob, abs=0.001), (thresh, derived)
+        assert derived * 153 == pytest.approx(expected, abs=0.15), (thresh, derived)
+        assert f"P(est >= {thresh})" in flat(doc), thresh
+        assert f"expected {expected}" in flat(doc), thresh
 
     for withdrawn in ("is a CEILING that never binds",
                       "the cap plausibly BINDS",
