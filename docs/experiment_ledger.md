@@ -42457,3 +42457,63 @@ per-WINDOW WSD sawtooth (`lr_release_start_frac: 0.8`, `lr_release_min_scale: 0.
 checkpoints are written at the END of each ~88-step window, i.e. **at the trough by
 construction**. `trainer.py` and `docs/rl_loop_audit.md` I19 already say so. The measurement was
 real; the reading was an artifact of WHEN the checkpoint samples it.
+
+---
+
+## 2026-08-11 — ⚑⚑ THE VALUE HEAD HAS NOT IMPROVED SINCE ITERATION 8 (task #186)
+
+The absorption rig's forward pass already returns WDL, so the value arm was free. Same 22,956
+in-window rows, same rungs, now with **PAIRED** per-row differences (dumps banked to
+`scratchpad/v2_*.rows.npz`).
+
+| checkpoint | policy KL | Δ policy KL vs iter249 (paired, 95%) | **wdl CE** | Δ wdl CE vs iter249 (paired, 95%) |
+|---|---|---|---|---|
+| iter 8 | 0.6055 | +0.3793 [+0.3695, +0.3891] | **0.8004** | **−0.0328 [−0.0365, −0.0292]** |
+| iter 249 | 0.2262 | — | 0.8332 | — |
+| iter 514 | 0.1428 | −0.0833 [−0.0879, −0.0788] | 0.8329 | −0.0003 [−0.0021, +0.0015] |
+| iter 672 | 0.0524 | −0.1738 [−0.1797, −0.1679] | 0.8180 | −0.0152 [−0.0176, −0.0128] |
+| iter 735 | 0.0585 | −0.1677 [−0.1736, −0.1618] | 0.8165 | −0.0167 [−0.0192, −0.0143] |
+| live (~690) | 0.0589 | −0.1673 [−0.1732, −0.1614] | 0.8176 | −0.0156 [−0.0180, −0.0132] |
+
+**On the identical rows over the identical span, policy KL fell 4.0x and value CE moved 1.9%.
+The iter-8 net has the BEST value CE of the whole ladder** (0.8004, better than the live net by
+0.0172 with a paired CI excluding zero).
+
+### Is the value head merely saturated at its label's noise floor? Partly — but only half way
+
+The outcome label is irreducibly noisy (54.0% of duplicate-input groups disagree), so a flat CE
+could just mean "at the floor". Measured on the same duplicate groups (Miller-Madow corrected,
+row-weighted):
+
+    marginal    H(wdl)   = 1.0889 nats   (W/D/L = 0.340 / 0.274 / 0.386)
+    conditional H(wdl|x) = 0.5487 nats   <- the CE floor for this label
+    value head             0.8176 nats
+
+⇒ the head captures **(1.0889 − 0.8176) / (1.0889 − 0.5487) = 50.2%** of the available
+information, and has captured about that much since iteration 8.
+
+⚠ **The floor estimate is crude and biased LOW.** Groups average 2.76 rows, so it is driven
+almost entirely by the 54% disagreement rate; and duplicated positions are opening-biased and
+plausibly more predictable than the bank average, which pushes the true floor UP and the
+headroom DOWN. Treat "~50% of the signal is unused" as an order of magnitude, not a number.
+
+### Why this matters more than the policy result
+
+**`wdl` is the only value head MCTS uses** (`sf_eval` and `categorical` are auxiliary —
+CLAUDE.md). So the loop spends 690 iterations driving the policy prior into the replay window —
+which the held-out arm shows does not generalise — and leaves the head that actually steers the
+search where it was at iteration 8. That is a coherent account of a run whose losses move and
+whose arena does not.
+
+⚑ Consistent with [[value_head_converged_on_a_compressed_target]] (~73% policy prior / ~27%
+value in the trunk gradient) and with the +66.8 Elo policy-shape result having been
+**VALUE-driven** [[ruler_proxy_shape_beats_sim_count]].
+
+### What this does NOT license
+
+- CE is a FIT statistic, fooled by calibration; the VALUE yardstick is `scripts/value_regret.py`
+  (deep-SF 1-ply regret). **A flat CE ladder is a strong hint, not the verdict.** The
+  value_regret ladder over the same six checkpoints is the owed confirmation, and it is the one
+  number that would justify re-weighting the loss.
+- No loss-weight change on the strength of this. One data-affecting change per readout window,
+  pre-registered, and Josh's call.
