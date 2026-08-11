@@ -39926,81 +39926,100 @@ not a transient.
 `demote_step_elo: -125` was sized on a FALSE-BRAKE BUDGET of at most 0.04% spurious
 holds. Recomputing `se = 0.3447*sqrt(1/n_cur + 1/n_prev)*ELO_PER_SCORE_AT_HALF`:
 
-| shape | se | fires below | spurious/8000 | rate | 50% power | 90% power |
+| shape | se | fires below | normal | **MC of the shipped rule** | 50% power | 90% power |
 |---|---|---|---|---|---|---|
-| 50/46 realized | 49.2 | −206 | 0.11 | 0.0014% | −206 | −269 |
-| 50/15 | 71.1 | −242 | 2.67 | 0.0334% | −242 | −333 |
-| 15/15 **worst admitted** | 88.3 | −270 | **8.82** | **0.1103%** | −270 | −383 |
-| *retired 197/38* | *42.4* | *−195* | *0.02* | *0.0002%* | *−195* | *−249* |
-| *retired 197/15* | *64.2* | *−231* | *1.31* | *0.0163%* | *−231* | *−313* |
+| 50/46 realized | 48.8 | −205 | 0.0013% | **0.0013%** | −205 | −268 |
+| 50/15 | 70.5 | −241 | 0.0314% | **0.0262%** | −241 | −331 |
+| 15/15 **worst admitted** | 87.5 | −269 | 0.1055% | **0.1063%** | −269 | −381 |
+| 25/25 proposed floor | 67.7 | −236 | 0.0241% | **0.0176%** | −236 | −323 |
+| 22/22 | 72.2 | −244 | 0.0368% | **0.0346%** | −244 | −336 |
+| *retired 197/38* | *42.4* | *−195* | *0.0002%* | — | *−195* | *−249* |
+| *retired 197/15* | *64.2* | *−231* | *0.0163%* | — | *−231* | *−313* |
 
-**The worst shape `min_games_per_side: 15` admits is 2.8x OUTSIDE the budget.** The old
-docs quoted 197/15 as "the worst shape `min_games_per_side` admits" — it never was.
-`usable` floors BOTH arms, so 15/15 was always admissible; at n_cur ~197 it needed a 92%
-collapse of the cur arm and nobody costed it. At n_cur ~50 it needs 70%, and the smallest
-arms in 96 iterations are **cur 17 / prev 25**.
+**The worst shape `min_games_per_side: 15` admits is 2.6x OUTSIDE the budget**, on the
+closed form, on a Monte-Carlo of the shipped rule, and on an independent reviewer's third
+instrument. The old docs quoted 197/15 as "the worst shape `min_games_per_side` admits" —
+it never was. `usable` floors BOTH arms, so 15/15 was always admissible; at n_cur ~197 it
+needed a 92% collapse of the cur arm and nobody costed it. At n_cur ~50 it needs 70%, and
+the smallest arms in 96 iterations are **cur 17 / prev 25**.
 
-⚑ **The `sd` was re-measured too, and that is the review finding that changed the
-answer.** `_POOLED_GAME_SCORE_SD = 0.3447` came off the SAME retired 418-shard
-reconstruction as the retired `n`. Re-measuring `n` and inheriting `sd` would have
-repeated this entry's own mistake one level down. Measured over the same 96 iterations
-(`pid_curriculum_w/d/l`, 9282 games): **0.3479**. The shipped constant is 0.9% LOW, which
-narrows `score_se` and makes the leg fire LESS readily — the fail-safe direction — so it
-is documented, not changed.
+### ⚑ THE `sd` WAS RE-DERIVED TOO — AND THE FIRST RE-DERIVATION WAS THE WRONG STATISTIC
 
-⚑ **0.1103% is a LOWER bound.** `score_se` takes `max(observed_arm_var, sd**2)` per arm,
-so the pooled floor gives the NARROWEST se and therefore the LOWEST spurious rate; the
-rate is `Phi(-125/se - z)`, increasing in `se`. An earlier revision of the module
-docstring called the floor "the worst case for the false-brake budget", which inverts it.
-Realized per-iteration score sd over the 96 runs **0.300–0.386**; at the observed maximum
-a 15/15 iteration reads se 98.0 and **0.1743%**, 1.58x the floor-only figure and 4.4x the
-budget. The floor alone cannot *guarantee* the budget at any admissible shape — that needs
-a lower line or a variance-aware one, and it is named here as open rather than claimed.
+`_POOLED_GAME_SCORE_SD = 0.3447` came off the SAME retired 418-shard reconstruction as the
+retired `n`, so re-measuring `n` while inheriting `sd` would have repeated this entry's own
+mistake one level down. A review round caught exactly that. **The re-measurement that
+followed was then wrong in a subtler way, and that is the reusable lesson.** Over the same
+96 iterations:
 
-⚑ **And 0.1103% is not the operating cost.** Over the 96 shapes the gate actually saw the
-expected rate is **0.0023%** and the worst REALIZED shape (17/61) is **0.0207%** — every
-measured iteration is inside budget. The breach lives at the un-realized 15/15 corner.
-Costing the worst ADMITTED shape is nevertheless the convention `demote_step_elo` was
-originally sized under (quoted at 197/15, not 197/38), so the comparison is like-for-like
-and the finding stands.
+```
+grand pool 0.121002  =  within-iteration 0.118771  +  between-iteration 0.002231
+                        (sd 0.3446)                    (drift in the PID setpoint)
+```
 
-This is a *documentation* failure with a *quantitative* consequence, and the way it was
-found is the reusable part: nothing fired, nothing looked wrong, and the stale table would
-have kept reading green forever. It surfaced only from re-deriving the numbers when the
-composition was re-measured — and the `sd` half surfaced only from an independent review
-asking what ELSE in the formula came from the retired lineage. ⇒ **a constant sized
-against a measured quantity owes a re-derivation of EVERY measured input, not just the one
-that prompted the re-check**, and the test that guards it must assert the CURRENT verdict
-(here: "outside budget"), never a shape-free "inside budget" that passes under both.
+The first correction quoted the **grand pool, 0.3479**, concluded "the shipped constant is
+0.9% LOW", and rebuilt the whole 22-vs-25 argument on it. But `_arm_score_var` measures each
+arm around **that arm's own mean**, and the between-iteration term is common to both arms of
+an iteration so it **cancels in `delta`**. Neither consumer ever sees it. The analogue is the
+**within** figure, **0.3446** — the shipped constant is correct to **0.02%**, not 0.9% low.
 
-### DECIDED, not deferred: raise `gate_min_games_per_side` 15 → **25**
+⇒ **Re-measuring the right quantity and re-measuring a nearby wrong one look identical
+until someone asks which one the code consumes.** The check "is this input also from the
+retired lineage?" was necessary and caught a real gap; it was not sufficient.
 
-25/25 gives se 68.4 and **0.0257%**, a **36% margin** under the bound, at a measured
-admission cost of **95/96 vs 96/96 — one iteration in ninety-six**.
+### ⚑ AND THE FAIL-SAFE DIRECTION WAS INVERTED
 
-⚑ **22 was the first proposal and is REJECTED.** It reads **0.0390% against a 0.0400%
-bound** — a 2.6% margin that a third-decimal move in `sd` erases, which is exactly what
-re-measuring `sd` demonstrated — and it admits the same 95/96, so it buys nothing. 26 is
-where admissions start to cost (93/96). (40 remains out on the original argument, 59/96,
-though now for a different reason: at 197/38 only the prev arm could be short, at 50/46
-both are — of the 37 rejected iterations 18 are short on cur and 19 on prev.)
+The first correction argued a low floor is "conservative, so leave it". It is not.
+`elo_hi = delta + z·se` and the leg fires when `elo_hi < −125`, so a **narrower** `se`
+makes `elo_hi` **smaller** and the leg fires **MORE** readily. MC at 15/15 is monotone in
+the floor: 0.3300 → 0.109%, 0.3447 → 0.108%, 0.3600 → 0.102%. The module's two adjacent
+comments had it right all along ("can only make the step leg harder to fire"; "overstating
+is the fail-safe direction"). The constant is left alone because it is **accurate**, not
+because being low would be safe.
 
-**Not applied in this PR.** `gate_min_games_per_side` is pinned in
-`configs/pbt2_small.yaml`, whose own comment requires a ledger line for any change to the
-alarm's operating point — this is that line — and the two copies must move together or the
-docs go stale again by the same mechanism. Follow-up PR only; nothing is at risk in the
-meantime because `gate_mode: shadow` means no decision this leg reaches takes effect.
+### Two further scope corrections
+
+- **0.1063% is the worst ADMITTED shape, not the operating cost.** Over the 96 shapes the
+  gate actually saw the expected rate is **0.0021%** and the worst REALIZED shape (17/61) is
+  **0.0194%** — every measured iteration is inside budget. The breach lives at the
+  un-realized 15/15 corner. Costing the worst admitted shape is still the convention
+  `demote_step_elo` was sized under (quoted at 197/15, not 197/38), so the finding stands.
+- **Nor is it a ceiling.** The pooled floor does not bind on every iteration; realized
+  per-iteration score sd runs **0.300–0.386**. Drawing 15/15 from the widest single
+  iteration the MC reads **0.2426%**, **2.33x** the aggregate. (A previous revision put this
+  at 1.58x from a fixed-`se` normal approximation, which cannot see the plug-in `se`
+  collapsing to the floor while `delta` is drawn at the wider true spread.)
+
+### DECIDED: raise `gate_min_games_per_side` 15 → **25** — and NOT because 22 fails
+
+| floor | MC false-brake | margin vs 0.04% | admits | 50% power |
+|---|---|---|---|---|
+| 15 (shipped) | **0.1063%** | **−166%** | 96/96 | −269 |
+| 22 | 0.0346% | +13% | 95/96 | −244 |
+| **25** | **0.0176%** | **+56%** | **95/96** | **−236** |
+| 26 | — | — | 93/96 | — |
+
+⚑ **22 clears the budget.** An earlier revision "REJECTED" it on "0.0390%, a 2.6% margin
+that a third-decimal move in sd erases" — that figure was the wrong-`sd` closed form, and
+the closed form is itself up to 27% conservative at these `n`. **25 is chosen because at
+the SAME admission cost it has the narrower `se`, so it dominates 22 on both axes at once**
+— false-brake 0.0176% vs 0.0346% AND 50% power at −236 vs −244. 26 is where admissions
+start to cost.
+
+**Not applied in this PR.** `gate_min_games_per_side` is pinned in `configs/pbt2_small.yaml`,
+whose own comment requires a ledger line for any change to the alarm's operating point —
+this is that line — and the two copies must move together or the docs go stale again by the
+same mechanism. Follow-up PR only; nothing is at risk meanwhile because `gate_mode: shadow`
+means no decision this leg reaches takes effect.
 
 **Yardstick / kill rule for the follow-up.** Not a training readout — the deciding numbers
-are arithmetic and are asserted in `tests/test_promotion_gate.py`
-(`test_step_leg_false_brake_budget_and_power_reproduce`):
-`_step_leg_budget(_step_leg_se_elo(25, 25))[1] / 8000 < 0.0004` with a >30% margin, and
-`admits == {15: 96, 22: 95, 25: 95, 26: 93, 40: 59}` over the banked
-`_POST_BOOT_ITERATIONS`. If a future lineage moves the shape or the sd again, both flip
-and the table above must be re-derived rather than re-quoted.
+are simulation and are asserted in `tests/test_promotion_gate.py`
+(`test_step_leg_false_brake_budget_and_power_reproduce`): `_step_leg_mc_rate(25, 25, line=-125)` < 0.0004
+with a >30% margin, `_step_leg_mc_rate(15, 15, line=-125)` > 0.0004, and
+`admits == {15: 96, 22: 95, 25: 95, 26: 93, 40: 59}` over the banked `_POST_BOOT_ITERATIONS`.
+If a future lineage moves the shape or the sd again, these flip and the table must be
+re-derived rather than re-quoted.
 
-**Confounds:** none — the gate is in shadow mode and this PR changes documentation and
-tests only. The 96-iteration series spans the 08-11 04:19 restart, which is a lineage
-boundary for *weights* but not for the *arm-size* or *score-sd* statistics being measured;
-the two trials agree to within 2.5 games/iteration on both arms, which is the check that
-it does not matter here.
+**Confounds:** none — the gate is in shadow mode and this PR changes documentation and tests
+only. The 96-iteration series spans the 08-11 04:19 restart, a lineage boundary for *weights*
+but not for the *arm-size* or *score-sd* statistics measured; the two trials agree to within
+2.5 games/iteration on both arms, which is the check that it does not matter here.
