@@ -42517,3 +42517,70 @@ value in the trunk gradient) and with the +66.8 Elo policy-shape result having b
   number that would justify re-weighting the loss.
 - No loss-weight change on the strength of this. One data-affecting change per readout window,
   pre-registered, and Josh's call.
+
+---
+
+## 2026-08-11 — ⚑⚑ CLOSING THE DAY: PAIRED, HELD-OUT, BOTH HEADS — AND ITER 8 BEATS THE HEAD NET ON VALUE
+
+Final form of tasks #185/#186: both pools, both heads, **paired per-row 95% CIs** on identical
+rows (dumps `scratchpad/v2_*.rows.npz`). Baseline rung = iter 249.
+
+**IN-WINDOW (`pre_search_authority_20260809`, n = 22,956)**
+
+| checkpoint | policy KL | Δ vs 249 | wdl CE | Δ vs 249 |
+|---|---|---|---|---|
+| iter 8 | 0.6055 | +0.3793 [+0.3695, +0.3891] | 0.8004 | **−0.0328 [−0.0365, −0.0292]** |
+| iter 249 | 0.2262 | — | 0.8332 | — |
+| iter 514 | 0.1428 | −0.0833 [−0.0879, −0.0788] | 0.8329 | −0.0003 [−0.0021, +0.0015] |
+| iter 672 | 0.0524 | −0.1738 [−0.1797, −0.1679] | 0.8180 | −0.0152 [−0.0176, −0.0128] |
+| iter 735 | 0.0585 | −0.1677 [−0.1736, −0.1618] | 0.8165 | −0.0167 [−0.0192, −0.0143] |
+| live ~690 | 0.0589 | −0.1673 [−0.1732, −0.1614] | 0.8176 | −0.0156 [−0.0180, −0.0132] |
+
+**HELD-OUT (`pre_restart_bundle_20260731`, pre-08-04-boot, n = 23,609 — no rung trained on it)**
+
+| checkpoint | policy KL | Δ vs 249 | wdl CE | Δ vs 249 |
+|---|---|---|---|---|
+| iter 8 | 1.8053 | +0.2290 [+0.2124, +0.2455] | 0.8476 | **−0.0331 [−0.0370, −0.0292]** |
+| iter 249 | 1.5764 | — | 0.8807 | — |
+| iter 514 | 1.5459 | −0.0305 [−0.0402, −0.0208] | 0.8780 | −0.0027 [−0.0045, −0.0009] |
+| iter 672 | 1.5398 | −0.0366 [−0.0478, −0.0253] | 0.8765 | −0.0042 [−0.0062, −0.0022] |
+| iter 735 | 1.5380 | −0.0384 [−0.0501, −0.0266] | 0.8767 | −0.0040 [−0.0061, −0.0019] |
+| live ~690 | 1.5379 | −0.0384 [−0.0499, −0.0270] | 0.8769 | −0.0038 [−0.0058, −0.0018] |
+
+### Three findings, all paired and all out of sample where it matters
+
+1. **Policy: iter 249 → live is −74% in-window and −2.4% held-out.** Both CIs exclude zero, so
+   the loop IS learning something transferable — **31x less of it than the in-window number
+   advertises**. The window fit is mostly memorisation.
+2. **Value: −1.9% in-window, −0.4% held-out.** The head MCTS actually reads is, to a good
+   approximation, where it was 440 iterations ago.
+3. ⚑⚑ **iter 8 has the BEST value CE of every rung, in BOTH pools, by −0.033 with CIs
+   excluding zero.** iter 8 is 1,795 optimizer steps into the 08-04 fresh boot, i.e.
+   essentially still **boot512's inherited value head**.
+
+⇒ **This lineage DEGRADED the value head relative to what it inherited, and never recovered it,
+while the policy head memorised the replay window.** That is a complete and self-consistent
+account of the standing arena result that `iter862 ≈ boot512`
+[[regret_does_not_track_strength_run_regressed]] — the net gained a window-specific policy prior
+and lost value quality, and the two roughly cancel.
+
+### Limits, stated
+
+- CE is a FIT statistic and is fooled by calibration. **`scripts/value_regret.py` (deep-SF 1-ply
+  regret) over these same six checkpoints is the owed confirmation** and the only thing that
+  would justify touching a loss weight. Until it runs, #3 is a strong hint with a clean
+  experimental design behind it, not a verdict.
+- The held-out pools carry an earlier lineage's search targets; the "stale teacher" objection
+  from the previous entry still applies to the POLICY column. It does **not** apply to the value
+  column: `wdl_target` is the game OUTCOME, not a teacher's output, so the value comparison is
+  clean.
+- iter 8 vs later is confounded with the fresh-boot transient. It is not confounded with the
+  eval set, which neither net ever saw.
+
+### Owed next, in order
+
+1. `value_regret.py` ladder over the six checkpoints (deep-SF ruler, the real one).
+2. A same-era, game-disjoint held-out set for the policy column (per-trial `holdout.npz`).
+3. Only then: a pre-registered recipe lever, and **Josh's call** — `train_views_per_position`
+   (4.31), window size (1.5M), `feature_dropout_p` (0.0 for this whole lineage). Nothing
+   training-affecting gets launched from this session.
