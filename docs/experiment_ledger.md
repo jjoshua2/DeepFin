@@ -40495,3 +40495,133 @@ the flag" — it is **make every instrument print its REALIZED shape next to pro
 when they differ**, the way `arena_standard.py` already does
 (`[arena] SEARCH candidate: ... [pbt2_small.yaml -> reco -> worker SearchConfig + CLI(...)]`).
 That is the one instrument tonight that could not have made this mistake.
+
+## 2026-08-11 — ⚑⚑ PRE-REGISTRATION: THE SEARCH/TARGET DECOUPLING RESTART (resume iter 672)
+
+**Status: PRE-REGISTERED, NOT YET LAUNCHED.** Protocol rule 1. Nothing below is a verdict.
+
+### The finding this is built on
+
+Same weights on BOTH sides, only the search knobs varied (`arena_standard.py --cand-gumbel /
+--ref-gumbel`, `ck_2026-08-09_iter514.pt`, `matched_sims 32`, `--search-shape training`, 400
+games each, `scratchpad/searchshape_20260811/`):
+
+| arm | change vs iter-735 shape | Elo | 95% CI |
+|---|---|---|---|
+| A bundle | `c_scale` 0.025→0.1 **and** `policy_temp` 1.0→1.5 | **+271.0** | [+235.0, +312.5] |
+| B | `c_scale` 0.025→0.1 only | **+245.1** | [+209.9, +285.3] |
+| C | `policy_temp` 1.0→1.5 only | **+32.2** | [+3.3, +61.6] |
+
+Additive within CI (245.1 + 32.2 = 277.3 vs 271.0). **The iter-736 bundle bought ~271 Elo of
+SEARCH, and ~90% of it is `c_scale`.** Meanwhile the WEIGHTS lost ~94 Elo from the iter-514 peak
+[[regret_does_not_track_strength_run_regressed]]. Both are true at once, and the PID's actuator is
+the reconciliation: it cut SF's handicap 0.0575 → 0.0341 (~37% harder) and held winrate at 0.50.
+
+⇒ **The restart keeps the search and repairs the target.** Reverting `c_scale` would throw away a
+measured +245 Elo.
+
+### Hypothesis
+
+The stored completed-Q target is `softmax(log_prior + σ·Q̄)` with
+**σ = `c_scale`·(`c_visit` + `max_visit`)**, `c_visit` = 50. At 256 sims the survivor reaches
+`max_visit` = 56 ⇒ **σ = 10.60**; at 50 sims `max_visit` = 5 ⇒ **σ = 5.50**. The iter-736 bundle
+multiplied σ by 4 (`c_scale` ×4) on top of that. With a TEMPERED prior at T = 1.5 the training
+fixed point is `L* = σQ̄·T/(T−1)` = **3σQ̄**. So the target the net chases got sharper than any
+target the net can represent, and it re-sharpens every generation. **Search got better; the thing
+search was asked to teach got worse.** Three keys, one intervention — make the STORED target
+independent of the PLAYED search budget and of T:
+
+| key | PR | what it does | played move affected? |
+|---|---|---|---|
+| `gumbel_target_max_visit_cap: 5` | #391 | pins the target's σ to the 50-sim value (5.50) while play keeps all 256 sims | **NO** — target only |
+| `gumbel_target_untempered_prior: true` | #390 | removes T from the fixed point | **NO** — target only |
+| `diff_focus_norm_enabled: true` | #392 | re-normalises the difficulty metric so `keep_prob`/priority stop tracking the target's absolute scale | training-side only |
+
+**⚑ The played search is BYTE-IDENTICAL to iters 736–862.** That is load-bearing for the
+secondary signal below.
+
+### THE DECIDING YARDSTICK — one command
+
+Direct paired arena, new checkpoint against the **frozen resume anchor**
+`data/ratchet/snapshots/ck_resume_iter672.pt` (copied from the salvage pool 2026-08-10 23:12,
+`trainer.pt` of `checkpoint_000671`, identical dict schema to the ratchet snapshots):
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate <checkpoint at iter 972> \
+  --reference data/ratchet/snapshots/ck_resume_iter672.pt \
+  --mode matched_sims --search-shape training --sims 32 --games 400 --seed 42
+```
+
+Direct and paired — NOT a difference of two vs-anchor rows. Both sides get the same search, so
+this measures **weights only**, which is exactly the quantity that regressed.
+
+**Window: 300 iterations (672 → 972), ~25h at ~300 s/iter.**
+
+### Pre-committed thresholds
+
+Instrument resolution first [[compute_instrument_resolution_before_the_threshold]]: 400 games in
+this rig gives a 95% CI half-width of **≈±30 Elo** (measured: the iter-862 row was [−18.4, +41.2]).
+A ±25 threshold would be below resolution, so it is not used.
+
+- **SUCCESS: ≥ +30 Elo with the CI excluding 0.** The loop is gaining again; keep the bundle,
+  extend the window, and re-baseline the ratchet on the new lineage.
+- **KILL: ≤ −30 Elo with the CI excluding 0.** The decline continued through the fix; revert to
+  the pre-bundle target (all three keys off) and the diagnosis is wrong.
+- **INCONCLUSIVE (−30, +30):** extend to iter 1122 (another 150 iters) and re-read once. A second
+  inconclusive read = the intervention is smaller than the instrument and gets dropped.
+
+**The kill rule is reachable, which is what makes it a discriminator:** the old regime lost
+≈0.13 Elo/iter (iter 514 +105.5 → 735 +86.9, 221 iters), so 300 iterations of "nothing changed"
+projects to **−39 Elo** — past the kill line.
+
+### Secondary, NON-deciding
+
+`opponent_wdl_regret_limit`. Normally forbidden across eras
+[[a_ruler_change_must_invalidate_its_records]] — but the played search is unchanged from iters
+736–862, so for the first time this is a valid cross-era comparison. Settled band to beat:
+**0.0341–0.0361**. Expect a one-time re-baseline over the first ~50 iterations (old weights, new
+search) — **do not read it before iter 722.** It is insensitive (it read ≈flat through a real
+28-Elo decline), so it can support the arena but can never overturn it.
+
+### Confounds — stated, not minimised
+
+1. **Three keys in one window**, against protocol rule 4. Justification: they are one mechanism
+   (decouple the stored target's sharpness from the played budget and from T), and separating them
+   costs 3 × 25h of a loop that is currently losing Elo. If the read is INCONCLUSIVE, the untempering
+   is dropped first (see 3).
+2. **The resume discards 190 iterations of weights and the whole replay window.** The window is
+   reseeded from the salvage pool's 817 shards, all made under the OLD search shape at
+   `c_scale` 0.025 — so the first ~2 iterations of ingest are off-policy by construction
+   [[proxy_must_be_monotone_in_the_intervention]]. Gate any early reading on the resumed ratio.
+3. **`gumbel_target_untempered_prior` did NOT pass its own offline screen.** n=4000 frozen set,
+   `top1 +0.393 [−0.699, +1.485]`, 93–94% ties — killed as a standalone promotion the same day.
+   It is carried here on MECHANISM (it is what removes T from the fixed point), not on evidence,
+   and it is the first thing to drop. Its `exp` (+2.208) and entropy (+0.171) effects were
+   significant but pre-committed as non-deciding.
+4. `diff_focus_pol_scale` is deliberately LEFT at 3.5. `norm_slope` (1.62) REPLACES
+   `diff_focus_slope`; also applying the runbook's `pol_scale → 0.45` point calibration would
+   double-correct.
+
+### Revert points
+
+| label | path | contents |
+|---|---|---|
+| resume point / revert target | `data/salvage/pre_search_authority_20260809` | iter 672, `checkpoint_000671`, 817 shards, 2026-08-09T14:19:22 |
+| frozen arena anchor | `data/ratchet/snapshots/ck_resume_iter672.pt` | the same weights, single file |
+| banked peak | `data/ratchet/snapshots/ck_2026-08-09_iter514.pt` | iter 514, +105.5 vs boot512 — **still the best net in the run** |
+| live yaml pre-change | `scratchpad/LIVE_YAML_BACKUP_20260810_225306.yaml` | |
+
+### Launch preconditions (all must hold — a restart is a LAUNCH, not a reload)
+
+1. #390, #391, #392 all on `ops/live-20260725`. **An unknown yaml key is FATAL AT LAUNCH**
+   (`run.py:~94`, outside any `try`) — the code must define all eight keys before the yaml names them.
+2. `python3 scripts/build_production_extensions.py` **in the live tree**: #392 changes
+   `_mcts_tree.c` (+52/−7), so the rebuild is MANDATORY, not optional.
+3. `salvage_seed_pool_dir` set **in the yaml**, not on the CLI — the reload clobbers the flag and
+   `salvage-restart` would silently start RANDOM-INIT.
+4. Both config fuses dry-run clean on a COPY:
+   `TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open(<copy>))))`.
+   ✅ Run 2026-08-10: **LAUNCH + VALUE FUSES BOTH CLEAR.**
+5. The yaml is **committed**. Not committed = not deployed
+   [[uncommitted_live_yaml_edits_lose_proven_wins]].
