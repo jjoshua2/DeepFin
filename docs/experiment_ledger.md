@@ -42167,3 +42167,39 @@ reader will reach for `prior_entropy` from the same JSON.
   search experiment would reach for first. Filed as task #183 with the other nine #381 findings.
 - ⚑ **Any banked `*_w` or `entropy_nats.prior` number from a `--policy-temp != 1.0` run of
   either rig is void.** Ordinal rows from the same runs are fine.
+
+---
+
+## 2026-08-11 — TASK #183: #381's ten findings triaged → PR #394 (four fixed, six catalogued with reasons)
+
+All ten reproduced as real. PR #394 takes the four that **change what a reported number means**;
+the other six are recorded with the reason each needs a decision rather than a patch, so nothing
+sits as an unresolved "later" (CLAUDE.md §Reviews).
+
+| # | finding | disposition |
+|---|---|---|
+| 1 | the prior was scored at T=1 while the search ran at `policy_temp` | **FIXED** |
+| 5 | `_rate_ci` was Wald: `[0,0]` at k=0, `[1,1]` at k=n | **FIXED** (Wilson) |
+| 10 | nonpositive `--sims` rungs reported but clamped to 1 and never run | **FIXED** |
+| 7 | Syzygy absent from provenance — production-equivalent and smoke runs indistinguishable | **FIXED** |
+| 3 | `q_visit_floor` / `q_global_scale` absent from `SearchShape` | **deferred with a reason** — the probe cannot reproduce a live config that sets them. The biggest of the six; needs the additive floor threaded through `root_q_scale`, i.e. a change to the shape CONTRACT |
+| 4 | shard-source quality verdicts derive `regret_search` from placeholder-filled `sf_p0_regret` | **deferred** — better/worse rates can track MultiPV coverage; needs a labelling/gating decision |
+| 6 | the sign-flip permutation test assumes exchangeable signs | **deferred** — bounded, heavily-tied regrets may violate it; needs a replacement test justified, not swapped |
+| 2, 9 | shard policy width assumed compact-1858; optional fields read by direct lookup | **deferred** — "the advertised source does not load" is a crash, not a lie; both want the repo shard loader |
+| 8 | the sigma check treats a degenerate flat-Q range as proof the shape did not run | **deferred** — a false-alarm class |
+
+### The finding with consequences beyond its own script
+
+**#1 is the defect that produced this morning's `policy_temp` verdict**, via the sibling rig
+`scratchpad/search_vs_prior_ranking.py` (now also fixed). The verdict survives on the ordinal
+invariance proved in the entry above. **Both rigs are now consistent**, so a future
+`--policy-temp != 1.0` run of either gives a prior that matches the search that ran.
+
+### Combined Codex precision across #381 + #382
+
+**21 findings, 20 real, 1 already handled on `main`.** That is high enough that the backlog was
+worth working and low enough that applying it unread would have shipped one no-op change. Every
+one was reproduced against `main` before being accepted.
+
+⚠ Both #393 and #394 were authored by the main session and say so; each needs a separate
+reviewer before merge.
