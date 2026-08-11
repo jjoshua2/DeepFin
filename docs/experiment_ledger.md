@@ -42203,3 +42203,64 @@ one was reproduced against `main` before being accepted.
 
 ⚠ Both #393 and #394 were authored by the main session and say so; each needs a separate
 reviewer before merge.
+
+---
+
+## 2026-08-11 — THE TARGET-NOISE FLOOR: ~85% OF THE TRAINING SIGNAL IS LEARNABLE AND NEVER ABSORBED
+
+**Question.** `priority_policy_kl` — per-row KL(search target ‖ net prior) — sits at ~0.115 nats
+and does not move across 862 iterations or across priority deciles (entry above). Two readings:
+**(a)** the residual is IRREDUCIBLE, i.e. the same input carries different targets on different
+visits so no network can close it; **(b)** the network never absorbs a signal that is there.
+
+**Instrument.** `scratchpad/target_noise_floor.py`, CPU-only, 103 s over the whole
+`pre_search_authority_20260809` pool: 817 shards, **1,499,910 rows**, coverage 1.0000.
+The network sees exactly `x`, so byte-identical `x` with differing `policy_target` is noise it
+structurally cannot fit. Per group of identical inputs the floor is mean_i KL(p_i ‖ p̄) — exactly
+the excess CE the CE-optimal single predictor (p̄) still pays.
+
+**Result.**
+
+| quantity | value |
+|---|---|
+| distinct inputs | 1,489,060 |
+| duplicate-input groups | 6,169 (17,019 rows, **1.13%** of the bank) |
+| **floor** KL, group-mean / row-weighted / median | **0.00987 / 0.01200 / 0.00217** nats |
+| live `priority_policy_kl` on **the same rows** | **0.07180** nats |
+
+⇒ **(a) is REFUTED.** The floor is **14–17%** of the residual on the matched population.
+
+**The extrapolation is defended, not assumed.** The duplicated subpopulation is opening-biased
+and easier than the bank (live KL 0.072 vs 0.115), so the ratio was binned by each group's own
+live KL [[same_name_different_population]]:
+
+| live-KL bin | groups | floor | live | floor/live |
+|---|---|---|---|---|
+| 0.00–0.02 | 3147 | 0.00256 | 0.00729 | 0.351 |
+| 0.02–0.05 | 1241 | 0.00594 | 0.03274 | 0.182 |
+| 0.05–0.10 | 746 | 0.01056 | 0.07159 | 0.147 |
+| **0.10–0.20** (contains the bank mean) | 494 | **0.02015** | 0.13922 | **0.145** |
+| 0.20–0.40 | 291 | 0.02901 | 0.27992 | 0.104 |
+| 0.40+ | 238 | 0.07832 | 0.77468 | 0.101 |
+
+The ratio **falls** with difficulty. Extrapolating off the easy subpopulation therefore
+**over**states the floor — the conclusion is conservative in the direction that matters.
+
+### What this does and does not say
+
+- It does **not** say a flat KL is a defect. A constant policy-improvement KL is what a healthy
+  AlphaZero-style loop looks like: absorb the improvement, search improves again.
+- It **does** delete the "the target is just noisy" explanation for the flat strength. There is
+  ~0.10 nats/row of genuine, learnable policy improvement in the bank, every iteration.
+- ⇒ the next question is the discriminating one, and it is one forward pass:
+  **does the current net actually close it on old rows?** Task #185.
+
+### Two incidental findings
+
+- **78 groups (1.3%) have byte-identical targets** and **266 groups (4.3%) contain two rows with
+  the same `(game_id, ply_index)`** — true duplicate ROWS, ~530 rows in 1.5M (0.035%). Too small
+  to matter for training; recorded so nobody rediscovers it as a scandal.
+- **The `wdl_target` disagrees inside 54.0% of duplicate groups.** Expected — the label is the
+  game outcome and identical positions resolve differently — but it is the value head's own noise
+  floor, measured, and it is enormous next to the policy floor. Consistent with
+  [[value_head_converged_on_a_compressed_target]].
