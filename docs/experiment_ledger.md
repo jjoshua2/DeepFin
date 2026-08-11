@@ -40174,3 +40174,83 @@ that **KL(prior‖target) is a SHARD field, not a `result.json` key** — the pe
 guard in PR #388 structurally cannot see it, which is exactly why the quantity that moved
 11.8x looked ordinary in every live metric outside the diff-focus family. A shard-side
 reader is the follow-up the guard does not cover.
+
+---
+
+## 2026-08-10 — ⚑⚑ RANKING LADDER: SEARCH IS NOT INERT, `c_scale` 0.1 WAS THE RIGHT HALF OF THE BUNDLE, AND OPTION B IS NEGATIVE
+
+**Status: READ OUT. Three verdicts, one of them against a claim I made in this document.**
+
+Instrument: `scratchpad/search_vs_prior_ranking.py` — Spearman of the search-target ranking
+against a deep-SF reference, on the frozen audit set, scored on the top-`topk` prior moves.
+Runner `scratchpad/ladder_20260810/run_rank.sh`, 8 rows, strictly serial behind the arena
+queue, raw output banked at `scratchpad/ladder_20260810/run_rank.out`. All rows are the SAME
+checkpoint and the SAME positions — only the search shape changes.
+
+| row | sims | topk | c_scale | prior ρ | search ρ | Δ | 95% CI | better_in | H(search) |
+|---|---|---|---|---|---|---|---|---|---|
+| r0 repro banked | 256 | 32 | 0.025 | 0.7821 | 0.7898 | **+0.0077** | [0.0065, 0.0088] | 0.752 | 1.104 |
+| r1 | 32 | 16 | 0.1 | 0.7205 | 0.7291 | +0.0086 | [0.0021, 0.0146] | 0.590 | 1.014 |
+| r2 | 50 | 16 | 0.1 | 0.7205 | 0.7287 | +0.0082 | [0.0014, 0.0146] | 0.583 | 0.991 |
+| r3 | 128 | 32 | 0.1 | 0.7821 | 0.7972 | +0.0151 | [0.0129, 0.0174] | 0.790 | 0.946 |
+| **r4 THE LIVE SHAPE** | 256 | 32 | 0.1 | 0.7821 | 0.8000 | **+0.0179** | [0.0153, 0.0203] | 0.797 | 0.891 |
+| r5 | 512 | 32 | 0.1 | 0.7821 | 0.8118 | **+0.0297** | [0.0267, 0.0325] | 0.865 | 0.826 |
+| r6 option B σ≈50 | 256 | 32 | 0.0569 | 0.7821 | 0.7965 | +0.0144 | [0.0125, 0.0163] | 0.795 | 1.005 |
+| r7 option B lower | 256 | 32 | 0.05 | 0.7821 | 0.7956 | +0.0135 | [0.0118, 0.0153] | 0.802 | 1.022 |
+
+**Instrument validated before any verdict:** r0 reproduces the banked measurement to the
+digit (0.7821 / 0.7898 / +0.0077). This is the check that was skipped the first time.
+
+### V1 — ⚑ RETRACTION: "search is WORSE than the prior at low sims" IS REFUTED
+
+I claimed earlier in this session, from a ρ=0.503 reading, that search *degrades* the ranking
+at 32 sims. **False. Search beats the prior at EVERY sim count on this ladder**, including 32
+(+0.0086) and 50 (+0.0082), both CIs excluding zero. The ρ=0.503 number was never banked —
+a direct violation of this document's own "bank the dump, not just the number" rule, and the
+reason it survived long enough to be quoted. **It is withdrawn.**
+
+⚠ **The 32/50-sim rows are NOT comparable to the 128/256/512 rows**: they ran at `topk=16`,
+and `search_vs_prior_ranking.py` computes `top32 = np.argsort(-prior)[:args.topk]`, so the
+column named `prior_top32` is a DIFFERENT POPULATION when topk≠32 (visible directly: prior ρ
+is 0.7205 there vs 0.7821 everywhere else). A matched-topk low-sim comparison is still owed.
+Same-name-different-measurement, in a column I wrote myself.
+
+### V2 — `c_scale` 0.025 → 0.1 MORE THAN DOUBLED THE TARGET'S RANKING QUALITY
+
+At matched sims=256 and matched topk=32, the only difference between r0 and r4 is `c_scale`:
+**+0.0077 → +0.0179, better_in 0.752 → 0.797, non-overlapping CIs.** ⇒ **The bundle's
+`c_scale` change was CORRECT and must be KEPT through the revert.** This is the measurement
+behind "the bundle IMPROVED SEARCH and DEGRADED THE NET" two entries above — the two levers
+in that bundle were not equally bad, and reverting both would throw away the good one.
+`gumbel_policy_temp: 1.5` is the hazard (it compounds through the target's `log_prior` term);
+`c_scale: 0.1` is a win.
+
+### V3 — MORE SIMS IS CLEARLY BETTER; SEARCH IS NOT INERT AT THE TARGET
+
+Within matched topk=32: **+0.0151 (128) → +0.0179 (256) → +0.0297 (512)**, monotone, CIs
+separated at the ends. ⇒ the open question "IS SEARCH INERT?" is answered NO **for target
+quality**. It remains open for PLAY strength, where 3 sim doublings bought only +5.8 Elo —
+and those are different questions about the same knob. **Target ranking improving with sims
+while play strength barely moves is itself the interesting result**, and it is consistent
+with the loop's problem being what happens to the target AFTER search produces it.
+
+### V4 — ⚑ OPTION B (`gumbel_target_max_visit_cap`) IS NEGATIVE ON ITS ONLY MEASUREMENT
+
+Rows r6/r7 emulate the cap by lowering `c_scale` to the σ the cap would produce. **The cap
+COSTS ranking quality: +0.0144 (σ≈50) and +0.0135 (σ lower) against +0.0179 uncapped**, CIs
+separated, while raising H(target) 0.891 → 1.005 / 1.022. So it does exactly what it was
+built to do — softens the target — and the softer target is a WORSE RANKING.
+
+⇒ **PR #391 ships DEFAULT-OFF (`gumbel_target_max_visit_cap: 0`) and stays off.** It is
+banked as a mechanism with a measured negative, not as a pending win. Any future non-zero
+value needs a fresh pre-registration that names what this ladder failed to capture — the
+honest candidate being that ranking quality at the top of the prior is not the same as the
+target's teaching value in the loop, which this instrument cannot see.
+
+### What this does NOT establish
+
+The ruler here is **ranking agreement with deep SF on the frozen audit set**, not Elo and
+not training value. A better-ranked target is a plausible but unproven route to a stronger
+net — the loop's failure mode all along has been targets that look good by a static ruler
+while the closed loop degrades. **None of V1–V4 is a strength verdict.** The only trusted
+strength ruler remains a paired arena vs a FROZEN anchor at ≥300 games.
