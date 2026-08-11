@@ -42104,3 +42104,66 @@ reading. Worth reusing whenever the question is *can this gate fire*, because re
 
 ⚠ PR #393 was authored by the main session; per CLAUDE.md the reviewer must not be the author,
 and the PR says so. It needs a separate pass before merge.
+
+---
+
+## 2026-08-11 — ⚑ THE `policy_temp` VERDICT WAS RUN ON A RIG WITH A REAL PRIOR-TEMPERATURE DEFECT. **It survives, on an invariance argument — and that was luck, not design.**
+
+Found while triaging Codex finding P2 on #381 (*"Score priors at the configured policy
+temperature"*): `search_gain_probe.py` builds the reported prior from UNSCALED logits while the
+C search divides its root logits by `policy_temp`. **Checked whether the rig that produced this
+morning's verdict has the same defect. It does.**
+
+`scratchpad/search_vs_prior_ranking.py:151-155`:
+
+```python
+lg = pol_logits[j, idxs].astype(np.float64)
+lg -= lg.max()
+prior = np.exp(lg)          # <- no /policy_temp
+prior /= prior.sum()
+```
+
+while line 114 passes `policy_temp=float(args.policy_temp)` into the `GumbelConfig` that runs.
+⇒ in the **t3 arm the search ran at T=1.5 against a prior reported at T=1.0.** The two arms of
+the 2×2 were therefore NOT scored against the same reference.
+
+### Why the verdict stands anyway
+
+**Softmax temperature is a strictly monotone transform of the logits, so it cannot change the
+prior's RANKING.** Every statistic the verdict was read off is purely ordinal:
+
+| statistic | how it is computed | temp-invariant? |
+|---|---|---|
+| `prior_top32`, `search_top32` | `concordance()`, which uses only the SIGNS of pairwise differences (`ds > 0` / `ds < 0`) | **YES** |
+| `paired_delta_top32_search_minus_prior` (Δρ) | difference of two `concordance` values | **YES** |
+| `frac_positions_search_better` (`better_in`) | sign of that difference | **YES** |
+| the top-32 slice itself | `np.argsort(-prior)[:topk]` | **YES** |
+| `entropy_nats.search` (the H 0.891 → 1.131 quoted) | entropy of the SEARCH target, which genuinely moves with T | not affected by the defect |
+| `prior_*_w` (weighted concordance, `w=sc`) | probability-weighted | **NO — contaminated** |
+| `entropy_nats.prior` | entropy of the prior | **NO — contaminated** |
+
+The ledger's `policy_temp` 2×2, the `c_scale` ladder and the cap/untempering screen were all
+read off rows in the invariant half. **`a88074189`'s REFUTED verdict and the NEUTRAL bundle
+pricing both stand.**
+
+### The part that is not comfortable
+
+**Nothing in the design put those readouts in the invariant half.** The rig also computes
+`prior_all_w` / `prior_top32_w` and `entropy_nats.prior`, any of which would have been quoted
+without hesitation, and any of which would have been wrong. The verdict survived because the
+robust statistic happened to be chosen for a different reason — `better_in` was picked because
+the mean is *"the lying summary above the peak"*, not because it is temperature-invariant.
+
+⇒ **METHOD RULE: when an instrument's defect is found AFTER a verdict was read off it, do not
+ask "is the verdict still true". Ask WHICH STATISTICS the defect can reach, prove the ones used
+are outside that set, and record both the proof and the contaminated set** — because the next
+reader will reach for `prior_entropy` from the same JSON.
+
+### Actions
+
+- `scratchpad/search_vs_prior_ranking.py` — prior now scaled by `policy_temp`, with a comment
+  recording that the ordinal statistics were unaffected and the weighted/entropy ones were.
+- `scripts/search_gain_probe.py` (tracked) carries the same defect and is the tool a future
+  search experiment would reach for first. Filed as task #183 with the other nine #381 findings.
+- ⚑ **Any banked `*_w` or `entropy_nats.prior` number from a `--policy-temp != 1.0` run of
+  either rig is void.** Ordinal rows from the same runs are fine.
