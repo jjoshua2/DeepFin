@@ -989,10 +989,16 @@ tune:
   #
   # NOTE distributed_prev_model_max_fraction: 0.60 below is a CEILING THAT
   # NEVER BINDS -- distributed_stale_games is 0 on every recent iteration, and
-  # a binding cap would have to discard prev shards into stale_*. The realized
-  # split, measured from 418 processed shard .zattrs over iters 164-219, is
-  # n_cur ~= 197 / n_prev ~= 38 (prev share 16.3%). Anything sized off the 0.60
-  # is wrong, and on the wrong side of the split.
+  # a binding cap would have to discard prev shards into stale_*. Anything sized
+  # off the 0.60 is wrong, and on the wrong side of the split.
+  #
+  # ⚑ RETIRED -- see chess_anti_engine/tune/promotion_gate.py. This block used
+  # to give the realized split as "n_cur ~= 197 / n_prev ~= 38 (prev share
+  # 16.3%), measured from 418 processed shard .zattrs over iters 164-219". That
+  # was a TIMESTAMP PROXY for the model_sha256 partition the gate actually uses,
+  # on the lineage the 2026-08-04 fresh boot replaced. The gate's own
+  # per-iteration counters over 96 post-boot iterations read n_cur 50.3 /
+  # n_prev 46.4, prev share 48.0%. Do not size anything off 197/38 either.
   #
   # What it can resolve, so nobody reads it as a ratchet: per-iteration
   # standard error 45.6 Elo MEASURED, against a loop that gains ~0.02

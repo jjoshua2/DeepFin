@@ -1149,10 +1149,16 @@ tune:
   #
   # NOTE distributed_prev_model_max_fraction: 0.60 below is a CEILING THAT
   # NEVER BINDS -- distributed_stale_games is 0 on every recent iteration, and
-  # a binding cap would have to discard prev shards into stale_*. The realized
-  # split, measured from 418 processed shard .zattrs over iters 164-219, is
-  # n_cur ~= 197 / n_prev ~= 38 (prev share 16.3%). Anything sized off the 0.60
-  # is wrong, and on the wrong side of the split.
+  # a binding cap would have to discard prev shards into stale_*. Anything sized
+  # off the 0.60 is wrong, and on the wrong side of the split.
+  #
+  # ⚑ RETIRED -- see chess_anti_engine/tune/promotion_gate.py. This block used
+  # to give the realized split as "n_cur ~= 197 / n_prev ~= 38 (prev share
+  # 16.3%), measured from 418 processed shard .zattrs over iters 164-219". That
+  # was a TIMESTAMP PROXY for the model_sha256 partition the gate actually uses,
+  # on the lineage the 2026-08-04 fresh boot replaced. The gate's own
+  # per-iteration counters over 96 post-boot iterations read n_cur 50.3 /
+  # n_prev 46.4, prev share 48.0%. Do not size anything off 197/38 either.
   #
   # What it can resolve, so nobody reads it as a ratchet: per-iteration
   # standard error 45.6 Elo MEASURED, against a loop that gains ~0.02
@@ -1162,6 +1168,14 @@ tune:
   # "41.5 predicted from binomial alone", implying excess variance. That
   # comparison used 1/mean(n); the honest per-window figure is 61.1 Elo, so
   # 45.6 is BELOW binomial, not above.)
+  #
+  # ⚑ 45.6 and every power figure below it were measured on the PRE-08-04
+  # lineage at n_cur ~197 / n_prev ~38. The realized shape is now 50.3/46.4,
+  # whose independent-binomial factor is 15% larger, so 45.6 is an OPTIMISTIC
+  # figure and the power numbers with it. It owes a re-measurement on this
+  # lineage; the direction moves "no gate can ratchet at 0.02 Elo/iteration"
+  # further from the line, not closer, which is why nothing is gated on it.
+  # See promotion_gate.py's module docstring.
   #
   # At the default 24-iteration window (~4.5 h) the window se is 9.3 Elo and
   # the shipped demote line is -45 -> -25. QUOTE THE LINE WITH THE CLAIM:

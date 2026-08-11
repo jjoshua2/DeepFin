@@ -1975,7 +1975,12 @@ this paragraph supersedes the mechanism sketch above where they differ.**
   isn't measuring the controller.** Stated in the module in three places.
 - **(2) as implemented:** `gate_demote_step_elo: -125` leg on the iteration's OWN
   sample, evaluated before `min_iters`, OR-ed into demote, pooled-variance floor
-  load-bearing. Measured: at 197/38 games `score_se` = 42.4 Elo so the leg fires at
+  load-bearing. ⚑ **SUPERSEDED 2026-08-11 — the 197/38 shape below is the PRE-08-04
+  lineage measured by a timestamp PROXY. Realized is 50.3/46.4 (`score_se` 49.2 Elo,
+  fires at ≈−206), and at that shape the leg's false-brake budget is BREACHED by the
+  `min_games_per_side: 15` floor. See the 2026-08-11 correction entry at the end of
+  this file; do not requote the numbers in this bullet.**
+  Measured: at 197/38 games `score_se` = 42.4 Elo so the leg fires at
   delta < ≈**−195**; −300/−600 one-shots demote **100/100 at latency 0**; −200 fires
   62%; **−100 stays blind, documented**; healthy null 0 spurious demotes in 6000
   iterations (~1.5e-5/iter analytic). Latency docs corrected to steady-state (−100
@@ -39923,32 +39928,62 @@ holds. Recomputing `se = 0.3447*sqrt(1/n_cur + 1/n_prev)*ELO_PER_SCORE_AT_HALF`:
 
 | shape | se | fires below | spurious/8000 | rate | 50% power | 90% power |
 |---|---|---|---|---|---|---|
-| 50/46 realized | 48.8 | −205 | 0.10 | 0.0013% | −205 | −268 |
-| 15/15 **worst admitted** | 87.5 | −269 | **8.44** | **0.1055%** | −269 | −381 |
+| 50/46 realized | 49.2 | −206 | 0.11 | 0.0014% | −206 | −269 |
+| 50/15 | 71.1 | −242 | 2.67 | 0.0334% | −242 | −333 |
+| 15/15 **worst admitted** | 88.3 | −270 | **8.82** | **0.1103%** | −270 | −383 |
 | *retired 197/38* | *42.4* | *−195* | *0.02* | *0.0002%* | *−195* | *−249* |
 | *retired 197/15* | *64.2* | *−231* | *1.31* | *0.0163%* | *−231* | *−313* |
 
-**The worst shape `min_games_per_side: 15` admits is 2.6x OUTSIDE the budget.** The old
+**The worst shape `min_games_per_side: 15` admits is 2.8x OUTSIDE the budget.** The old
 docs quoted 197/15 as "the worst shape `min_games_per_side` admits" — it never was.
 `usable` floors BOTH arms, so 15/15 was always admissible; at n_cur ~197 it needed a 92%
 collapse of the cur arm and nobody costed it. At n_cur ~50 it needs 70%, and the smallest
 arms in 96 iterations are **cur 17 / prev 25**.
 
+⚑ **The `sd` was re-measured too, and that is the review finding that changed the
+answer.** `_POOLED_GAME_SCORE_SD = 0.3447` came off the SAME retired 418-shard
+reconstruction as the retired `n`. Re-measuring `n` and inheriting `sd` would have
+repeated this entry's own mistake one level down. Measured over the same 96 iterations
+(`pid_curriculum_w/d/l`, 9282 games): **0.3479**. The shipped constant is 0.9% LOW, which
+narrows `score_se` and makes the leg fire LESS readily — the fail-safe direction — so it
+is documented, not changed.
+
+⚑ **0.1103% is a LOWER bound.** `score_se` takes `max(observed_arm_var, sd**2)` per arm,
+so the pooled floor gives the NARROWEST se and therefore the LOWEST spurious rate; the
+rate is `Phi(-125/se - z)`, increasing in `se`. An earlier revision of the module
+docstring called the floor "the worst case for the false-brake budget", which inverts it.
+Realized per-iteration score sd over the 96 runs **0.300–0.386**; at the observed maximum
+a 15/15 iteration reads se 98.0 and **0.1743%**, 1.58x the floor-only figure and 4.4x the
+budget. The floor alone cannot *guarantee* the budget at any admissible shape — that needs
+a lower line or a variance-aware one, and it is named here as open rather than claimed.
+
+⚑ **And 0.1103% is not the operating cost.** Over the 96 shapes the gate actually saw the
+expected rate is **0.0023%** and the worst REALIZED shape (17/61) is **0.0207%** — every
+measured iteration is inside budget. The breach lives at the un-realized 15/15 corner.
+Costing the worst ADMITTED shape is nevertheless the convention `demote_step_elo` was
+originally sized under (quoted at 197/15, not 197/38), so the comparison is like-for-like
+and the finding stands.
+
 This is a *documentation* failure with a *quantitative* consequence, and the way it was
-found is the reusable part: nothing fired, nothing looked wrong, and the stale table
-would have kept reading green forever. It surfaced only from re-deriving the numbers when
-the composition was re-measured. ⇒ **a constant sized against a measured shape owes a
-re-derivation every time the shape is re-measured**, and the test that guards it must
-assert the CURRENT verdict (here: "outside budget"), never a shape-free "inside budget"
-that passes under both.
+found is the reusable part: nothing fired, nothing looked wrong, and the stale table would
+have kept reading green forever. It surfaced only from re-deriving the numbers when the
+composition was re-measured — and the `sd` half surfaced only from an independent review
+asking what ELSE in the formula came from the retired lineage. ⇒ **a constant sized
+against a measured quantity owes a re-derivation of EVERY measured input, not just the one
+that prompted the re-check**, and the test that guards it must assert the CURRENT verdict
+(here: "outside budget"), never a shape-free "inside budget" that passes under both.
 
-### DECIDED, not deferred: raise `gate_min_games_per_side` 15 → 22
+### DECIDED, not deferred: raise `gate_min_games_per_side` 15 → **25**
 
-22/22 gives se 72.2 and **0.0368%**, back inside the budget. Measured admission cost over
-the same 96 iterations: **95/96 vs 96/96 — one iteration in ninety-six**. (40 remains out
-on the original argument, 59/96, though now for a different reason: at 197/38 only the
-prev arm could be short, at 50/46 both are — of the 37 rejected iterations 18 are short on
-cur and 19 on prev.)
+25/25 gives se 68.4 and **0.0257%**, a **36% margin** under the bound, at a measured
+admission cost of **95/96 vs 96/96 — one iteration in ninety-six**.
+
+⚑ **22 was the first proposal and is REJECTED.** It reads **0.0390% against a 0.0400%
+bound** — a 2.6% margin that a third-decimal move in `sd` erases, which is exactly what
+re-measuring `sd` demonstrated — and it admits the same 95/96, so it buys nothing. 26 is
+where admissions start to cost (93/96). (40 remains out on the original argument, 59/96,
+though now for a different reason: at 197/38 only the prev arm could be short, at 50/46
+both are — of the 37 rejected iterations 18 are short on cur and 19 on prev.)
 
 **Not applied in this PR.** `gate_min_games_per_side` is pinned in
 `configs/pbt2_small.yaml`, whose own comment requires a ledger line for any change to the
@@ -39956,14 +39991,16 @@ alarm's operating point — this is that line — and the two copies must move t
 docs go stale again by the same mechanism. Follow-up PR only; nothing is at risk in the
 meantime because `gate_mode: shadow` means no decision this leg reaches takes effect.
 
-**Yardstick / kill rule for the follow-up.** Not a training readout — the deciding number
-is arithmetic and is asserted in `tests/test_promotion_gate.py`:
-`_step_leg_budget(_step_leg_se_elo(22, 22))[1] / 8000 < 0.0004`, together with
-`admits(22) == 95` over the banked `_POST_BOOT_SHAPES`. If a future lineage moves the
-shape again, both flip and the table above must be re-derived rather than re-quoted.
+**Yardstick / kill rule for the follow-up.** Not a training readout — the deciding numbers
+are arithmetic and are asserted in `tests/test_promotion_gate.py`
+(`test_step_leg_false_brake_budget_and_power_reproduce`):
+`_step_leg_budget(_step_leg_se_elo(25, 25))[1] / 8000 < 0.0004` with a >30% margin, and
+`admits == {15: 96, 22: 95, 25: 95, 26: 93, 40: 59}` over the banked
+`_POST_BOOT_ITERATIONS`. If a future lineage moves the shape or the sd again, both flip
+and the table above must be re-derived rather than re-quoted.
 
 **Confounds:** none — the gate is in shadow mode and this PR changes documentation and
-tests only. The 96-iteration shape series spans the 08-11 04:19 restart, which is a
-lineage boundary for *weights* but not for the *arm-size* statistic being measured; the
-two trials agree to within 2.5 games/iteration on both arms, which is the check that it
-does not matter here.
+tests only. The 96-iteration series spans the 08-11 04:19 restart, which is a lineage
+boundary for *weights* but not for the *arm-size* or *score-sd* statistics being measured;
+the two trials agree to within 2.5 games/iteration on both arms, which is the check that
+it does not matter here.

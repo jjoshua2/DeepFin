@@ -293,28 +293,38 @@ it can never turn a demote into a promote, and it is not consulted at all on
 the promote path.
 
 WHAT THE STEP LEG COSTS AND WHAT IT BUYS. Every row is
-``se = 0.3447 * sqrt(1/n_cur + 1/n_prev) * ELO_PER_SCORE_AT_HALF``, the leg
-fires at ``-125 - 1.645*se``, and the spurious column is that threshold under
-N(0, se) times 8000 null iterations:
+``se = sd * sqrt(1/n_cur + 1/n_prev) * ELO_PER_SCORE_AT_HALF``, the leg fires
+at ``-125 - 1.645*se``, and the spurious column is that threshold under
+N(0, se) times 8000 null iterations.
 
-    shape       se       fires at    spurious/8000   50% power   90% power
-    50/46  *    48.8    delta<-205    0.10  0.0013%    -205 Elo    -268 Elo
-    50/15       70.5    delta<-241    2.52  0.0314%    -241 Elo    -331 Elo
-    15/15  **   87.5    delta<-269    8.44  0.1055%    -269 Elo    -381 Elo
+⚑ TWO ``sd``s, and the distinction is load-bearing. ``_POOLED_GAME_SCORE_SD``
+= **0.3447** is what the SHIPPED code computes with -- and it too came off the
+418-shard PRE-08-04 reconstruction, so re-measuring ``n`` while leaving ``sd``
+alone would repeat this section's own mistake one level down. Re-measured over
+the SAME 96 iterations (``pid_curriculum_w/d/l``, 9282 games): **0.3479**. The
+shipped constant is 0.9% LOW, which is the fail-safe direction (narrower se =>
+the leg fires LESS readily), so it is not changed here; the table gives both.
+
+    shape       se(0.3447 / 0.3479)   fires at   spurious/8000    90% power
+    50/46  *      48.8 / 49.2        delta<-206   0.10  0.0014%    -269 Elo
+    50/15         70.5 / 71.1        delta<-242   2.67  0.0334%    -333 Elo
+    15/15  **     87.5 / 88.3        delta<-270   8.82  0.1103%    -383 Elo
+    25/25  ***    67.7 / 68.4        delta<-238   2.06  0.0257%    -325 Elo
     ---- retired, PRE-08-04 lineage, quoted only so the change is legible ----
-    197/38      42.4    delta<-195    0.02  0.0002%    -195 Elo    -249 Elo
-    197/15      64.2    delta<-231    1.31  0.0163%    -231 Elo    -313 Elo
+    197/38        42.4               delta<-195   0.02  0.0002%    -249 Elo
+    197/15        64.2               delta<-231   1.31  0.0163%    -313 Elo
 
-    *  the realized shape, from the gate's own counters over 96 iterations
-    ** the WORST shape ``min_games_per_side: 15`` admits -- both arms at the
-       floor, which is what the constant literally permits
+    *   the realized shape, from the gate's own counters over 96 iterations
+    **  the WORST shape ``min_games_per_side: 15`` admits -- both arms at the
+        floor, which is what the constant literally permits
+    *** the proposed floor; see below
 
 ``demote_step_elo`` ships at **-125**, chosen on the same FALSE-BRAKE BUDGET as
 ``demote_delta_elo``: at most 0.04% spurious holds, the upper bound the window
 leg was sized against.
 
 ⚑ **AT THE CURRENT COMPOSITION THAT BUDGET IS VIOLATED AT THE WORST ADMITTED
-SHAPE -- 0.1055%, 2.6x over.** The 15/15 row was always the true worst case;
+SHAPE -- 0.1103%, 2.8x over.** The 15/15 row was always the true worst case;
 the retired docs quoted 197/15 instead, which is not the worst shape the
 constant admits, it is the worst shape the OLD composition made *likely*. With
 ``n_cur`` ~197 a 15/15 iteration needed a 92% collapse of the cur arm. With
@@ -323,20 +333,42 @@ iterations are cur 17 / prev 25 -- close enough that the row has to be costed,
 not waved away. This is the "a gate sized on a shape it no longer runs at"
 failure, found by re-deriving the table rather than by anything firing.
 
-The measured fix is ``min_games_per_side: 22``: 22/22 gives se 72.2 and 2.94
-spurious per 8000 = **0.0368%**, back inside the budget, and over the same 96
-iterations a floor of 22 admits **95/96** where 15 admits 96/96 -- one
-iteration in ninety-six. It is NOT changed here, because the constant is pinned
-in the production yaml as well and that file's own comment requires a ledger
-line for any change to the alarm's operating point. Until it is raised, quote
-the leg's false-brake cost as **0.11%, not 0.016%**.
+⚑ **0.1103% is a LOWER BOUND, not the rate.** ``score_se`` takes
+``max(observed_arm_var, _POOLED_GAME_SCORE_SD**2)`` per arm, so the floor is
+the NARROWEST se the leg can act on and therefore the LOWEST spurious rate --
+an earlier revision of this section and of ``_step_leg_se_elo``'s docstring
+called it the worst case, which inverts the direction. Realized per-iteration
+score sd over the 96 ranges **0.300 to 0.386**; wherever it exceeds 0.3447 the
+floor stops binding, se widens, and the leg fires MORE readily. At the observed
+maximum 0.386 a 15/15 iteration reads se 98.0 and **0.1743%**, 1.58x the
+floor-only figure and 4.4x the budget. The floor alone therefore cannot
+*guarantee* the budget at any admissible shape -- that would need a lower line
+or a variance-aware one, and it is named here as open rather than claimed.
+
+⚑ And symmetrically, **do not quote 0.1103% as the leg's operating cost.**
+Averaged over the 96 shapes the gate actually saw it is **0.0023%**, and the
+worst REALIZED shape (17/61) is **0.0207%** -- every measured iteration is
+inside budget. The breach lives at the un-realized 15/15 corner. Costing the
+worst ADMITTED shape is nevertheless the convention ``demote_step_elo`` was
+originally sized under (it was quoted at 197/15, not at 197/38), so the
+comparison is like-for-like and the finding stands.
+
+The measured fix is ``min_games_per_side: 25``. At the re-measured ``sd`` that
+is **0.0257%**, a 36% margin under the bound, and over the same 96 iterations
+it admits **95/96** where 15 admits 96/96 -- one iteration in ninety-six. ⚑ 22
+was the first proposal and is REJECTED: it reads 0.0390% against a 0.0400%
+bound, a 2.6% margin that a third-decimal move in ``sd`` erases, and it buys
+nothing over 25 in admissions (both 95/96). 26 is where admissions start to
+cost (93/96). It is NOT changed here, because the constant is pinned in the
+production yaml as well and that file's own comment requires a ledger line for
+any change to the alarm's operating point.
 
 **It does NOT catch a -100 step** and nothing at this sample size can: one
 anchored sample carries 49-88 Elo of binomial noise, so a -100 step is under
 2.5 sigma and buying it would cost a false brake every few hundred iterations.
-The honest claim is "a one-iteration step of about -205 Elo or worse, at 50%
-power; -270 or worse at 90%" at the realized shape, and that is the claim the
-tests assert. Both numbers moved ~10 Elo further from zero when the shape
+The honest claim is "a one-iteration step of about -206 Elo or worse, at 50%
+power; -269 or worse at 90%" at the realized shape, and that is the claim the
+tests assert. Both numbers moved ~15 Elo further from zero when the shape
 changed; the retired -195/-249 pair is optimistic and must not be requoted.
 
 THE PID LAG DOES NOT CANCEL -- THE ANCHORED DELTA CARRIES A CONTROLLER TERM
@@ -502,6 +534,16 @@ ELO_PER_SCORE_AT_HALF = 400.0 / (math.log(10.0) * 0.25)
 # module docstring works through. max(observed, pooled) is conservative in both
 # directions: it can only WIDEN the interval, so it can only make the step leg
 # harder to fire, never easier.
+#
+# ⚑ 0.3447 IS ITSELF A PRE-08-04 FIGURE, from the same 418-shard timestamp
+# reconstruction the module docstring retires for `n`. Re-measured 2026-08-11
+# over the 96 post-boot iterations (`pid_curriculum_w/d/l`, 9282 games):
+# **0.3479**. Deliberately NOT updated: the shipped value is 0.9% LOW, which
+# narrows `score_se` and therefore makes the leg fire LESS readily -- the
+# fail-safe direction for something whose only action is to demote -- and
+# changing it would move the gate's behaviour inside a docs PR. Every figure
+# in the module docstring's step-leg table is given at both values so the
+# sensitivity is visible rather than assumed.
 _POOLED_GAME_SCORE_SD = 0.3447
 
 # How many ulps of the window's own scale still count as "no spread at all".
@@ -871,16 +913,23 @@ class GateConfig:
     #
     # ⚑ But 15 is too LOW for the current shape, and the module docstring's
     # step-leg table now says so. ``usable`` floors BOTH arms, so 15 literally
-    # admits a 15/15 iteration; that shape carries se 87.5 Elo and pushes the
-    # step leg's false-brake rate to 0.1055%, 2.6x the 0.04% budget it was
-    # sized against. It was never costed because at n_cur ~197 a 15/15
-    # iteration needed a 92% collapse of the cur arm; at n_cur ~50 it needs
-    # 70%, and the smallest arms in 96 iterations are cur 17 / prev 25.
-    # MEASURED remedy: 22. It restores 0.0368% and admits 95/96 where 15
-    # admits 96/96 -- one iteration in ninety-six. Not applied here because
-    # ``gate_min_games_per_side`` is also pinned in the production yaml, whose
-    # own comment requires a ledger line for a change to the alarm's operating
-    # point; the two must move together or the docs go stale again.
+    # admits a 15/15 iteration; that shape carries se 88.3 Elo and pushes the
+    # step leg's false-brake rate to 0.1103%, 2.8x the 0.04% budget it was
+    # sized against -- and that is a LOWER bound, because ``score_se`` floors
+    # the per-arm variance and realized per-iteration score sd runs as high as
+    # 0.386. It was never costed because at n_cur ~197 a 15/15 iteration needed
+    # a 92% collapse of the cur arm; at n_cur ~50 it needs 70%, and the
+    # smallest arms in 96 iterations are cur 17 / prev 25.
+    #
+    # MEASURED remedy: **25** -- 0.0257%, a 36% margin, admitting 95/96 where
+    # 15 admits 96/96 (one iteration in ninety-six). 22 was proposed first and
+    # REJECTED on review: 0.0390% against a 0.0400% bound is a 2.6% margin that
+    # a third-decimal move in the pooled sd erases, and it admits exactly the
+    # same 95/96. 26 is where admissions start to cost (93/96). Not applied
+    # here because ``gate_min_games_per_side`` is also pinned in the production
+    # yaml, whose own comment requires a ledger line for a change to the
+    # alarm's operating point; the two must move together or the docs go stale
+    # again by the mechanism this whole section exists to record.
     min_games_per_side: int = 15
     # -25, and the derivation is a FALSE-BRAKE BUDGET, not a sigma count. A
     # 4-sigma line (-45) was the first choice and it does not deliver what the
@@ -916,25 +965,31 @@ class GateConfig:
     # the three things the docs name as what this gate catches, are all steps.
     #
     # -125, on the SAME false-brake budget that sized ``demote_delta_elo``.
-    # One anchored sample carries 48.8 Elo of binomial se at the REALIZED shape
+    # One anchored sample carries 49.2 Elo of binomial se at the REALIZED shape
     # (n_cur 50.3 / n_prev 46.4, measured over 96 iterations of trials 379f6 +
-    # 5ce02) and 87.5 at the worst shape ``min_games_per_side: 15`` admits
-    # (15/15). At -125 the leg fires when the sample delta is below -205
-    # (realized) / -269 (worst), which under a null of N(0, se) is 0.10 / 8.44
-    # spurious holds per 8000 iterations -- 0.0013% and ⚑ **0.1055%**.
+    # 5ce02) and 88.3 at the worst shape ``min_games_per_side: 15`` admits
+    # (15/15). At -125 the leg fires when the sample delta is below -206
+    # (realized) / -270 (worst), which under a null of N(0, se) is 0.11 / 8.82
+    # spurious holds per 8000 iterations -- 0.0014% and ⚑ **0.1103%**.
+    # (Both at the re-measured pooled sd 0.3479; at the shipped 0.3447 floor
+    # they read 48.8 / 87.5 Elo and 0.0013% / 0.1055%.)
     #
     # The second of those is OUTSIDE the 0.04% upper bound the window line was
-    # sized against, by 2.6x. The retired numbers this comment used to carry
+    # sized against, by 2.8x -- and is a LOWER bound, since ``score_se`` floors
+    # the per-arm variance. The retired numbers this comment used to carry
     # (42.4 / 64.2 Elo, -195 / -231, 0.02 / 1.31, "0.016%, inside") were the
     # PRE-08-04 lineage at 197/38, and its worst row was 197/15, which is not
     # the worst shape the constant admits. See ``min_games_per_side`` above for
-    # the measured remedy (22 -> 0.0368%) and why it is not applied here.
+    # the measured remedy (25 -> 0.0257%) and why it is not applied here.
+    # ⚑ 0.1103% is the worst ADMITTED shape, not the operating rate: over the
+    # 96 shapes the gate actually saw the expected rate is 0.0023% and the
+    # worst realized one (17/61) is 0.0207%, both inside budget.
     #
-    # WHAT IT DOES NOT BUY: a -100 step. 50% power lands at -205 Elo and 90% at
-    # -268 (realized shape). Nothing at this sample size can do better -- a
+    # WHAT IT DOES NOT BUY: a -100 step. 50% power lands at -206 Elo and 90% at
+    # -269 (realized shape). Nothing at this sample size can do better -- a
     # -100 step is under 2.5 sigma of ONE sample -- and buying it would cost a
     # false brake every few hundred iterations. Quote the leg as "a step of
-    # about -205 or worse", never as "any bad merge".
+    # about -206 or worse", never as "any bad merge".
     demote_step_elo: float = -125.0
     alpha: float = 0.05
     max_hold_iters: int = 12
