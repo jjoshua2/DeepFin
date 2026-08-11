@@ -419,19 +419,47 @@ def test_it_is_refused_alongside_a_positive_move_temperature() -> None:
     """
     from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
+    from tests.test_target_sigma_decoupling import _COLD
+
+    # ⚑ The safe pairing is the WHOLE cold block, not `temperature: 0.0` alone.
+    # An ABSENT key is not 0.0 -- it realizes as the loader's default, so an
+    # omitted `temperature_endgame` is 0.6 and an omitted
+    # `temperature_decay_moves` is 60. Imported from the parent knob's suite
+    # rather than copied, because two hand-maintained copies of the cold block
+    # is how one of them ends up wrong.
     flatten_run_config_defaults(
-        {"selfplay": {"gumbel_target_untempered_prior": True, "temperature": 0.0}},
+        {"selfplay": {**_COLD, "gumbel_target_untempered_prior": True}},
     )
 
     with pytest.raises(ValueError, match="positive move temperature"):
         flatten_run_config_defaults(
-            {"selfplay": {"gumbel_target_untempered_prior": True, "temperature": 0.35}},
+            {"selfplay": {**_COLD, "gumbel_target_untempered_prior": True,
+                          "temperature": 0.35}},
         )
     # ...and OFF must leave a hot temperature alone, or the guard is just a
     # temperature ban wearing a different name.
     flatten_run_config_defaults(
-        {"selfplay": {"gumbel_target_untempered_prior": False, "temperature": 0.35}},
+        {"selfplay": {**_COLD, "gumbel_target_untempered_prior": False,
+                      "temperature": 0.35}},
     )
+
+
+def test_the_flag_is_refused_on_a_yaml_that_simply_OMITS_the_temperature_block() -> None:
+    """The absent-key half of the guard, for THIS knob rather than the cap's.
+
+    ``flatten_run_config_defaults`` copies only the keys the yaml contains, so a
+    config with no ``temperature*`` lines at all realizes ``temperature = 1.0``,
+    ``temperature_endgame = 0.6`` and ``temperature_decay_moves = 60`` -- every
+    ply re-drawn from the stored (untempered-prior) policy. The guard has to
+    refuse it. See ``test_target_sigma_decoupling`` for the ⟺ table that pins
+    every key and every default against the loader.
+    """
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    with pytest.raises(ValueError, match="positive move temperature"):
+        flatten_run_config_defaults(
+            {"selfplay": {"gumbel_target_untempered_prior": True}},
+        )
 
 
 def test_the_shared_guard_uses_each_knobs_own_coercion() -> None:
