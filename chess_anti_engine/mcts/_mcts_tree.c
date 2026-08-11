@@ -4640,7 +4640,8 @@ static PyTypeObject MCTSTreeType = {
  * batch_process_ply(cboards_list, pol_logits, wdl_logits, actions, values,
  *                   mcts_probs,
  *                   df_enabled, df_q_weight, df_pol_scale, df_min, df_slope,
- *                   input_history_lc0_root)
+ *                   [input_history_lc0_root, n_extra, with_relations,
+ *                    df_norm_scale, df_norm_slope, df_norm_clip])
  *   -> (sample_x, sample_probs, sample_wdl_net, sample_wdl_search,
  *       sample_priority, sample_priority_policy_kl, sample_priority_q_delta,
  *       sample_keep_prob, sample_legal_mask,
@@ -4659,13 +4660,26 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     int n_extra = FEAT_EXTRA_V1;
     int with_relations = 0;
     double df_q_weight, df_pol_scale, df_min, df_slope;
+    /* Scale-free normalization, all optional and all 0.0 = OFF. Appended
+     * AFTER the existing optional ints so every existing caller keeps working
+     * unchanged and takes the original arithmetic. */
+    double df_norm_scale = 0.0, df_norm_slope = 0.0, df_norm_clip = 0.0;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOidddd|iii",
+    if (!PyArg_ParseTuple(args, "OOOOOOidddd|iiiddd",
                           &cboards_list, &pol_obj, &wdl_obj, &actions_obj,
                           &values_obj, &mcts_probs_obj,
                           &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope,
-                          &input_history_lc0_root, &n_extra, &with_relations))
+                          &input_history_lc0_root, &n_extra, &with_relations,
+                          &df_norm_scale, &df_norm_slope, &df_norm_clip))
         return NULL;
+    if (df_norm_scale > 0.0 && !(df_norm_slope > 0.0)) {
+        /* Arming the branch with a zero slope would clamp every keep_prob to
+         * df_min and discard ~97.5% of plies. Refuse loudly rather than let a
+         * half-populated config quietly gut the ply supply. */
+        PyErr_SetString(PyExc_ValueError,
+                        "df_norm_scale > 0 requires df_norm_slope > 0");
+        return NULL;
+    }
     if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2) {
         PyErr_Format(PyExc_ValueError,
                      "n_extra must be %d (v1) or %d (v2_threats), got %d",
@@ -4854,14 +4868,42 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         float q_delta = best_q - orig_q;
         float q_surprise = fabsf(q_delta);
 
-        /* Difficulty / keep_prob */
+        /* Difficulty / keep_prob.
+         *
+         * df_norm_scale > 0 selects the SCALE-FREE branch: `difficulty` is
+         * divided by a running reference quantile of this worker's own recent
+         * policy-bearing plies (computed in Python, see
+         * selfplay/diff_focus_norm.py) so the fixed clamp below is expressed in
+         * units of "typical difficulty right now" rather than in nats. The
+         * unnormalized branch's thresholds silently decalibrate whenever an
+         * unrelated search change moves the scale of `kl` -- measured 11.7x on
+         * 2026-08-09. df_norm_scale == 0 (the default) keeps the original
+         * arithmetic bit-for-bit, including for callers that never pass it. */
         float difficulty = q_surprise * (float)df_q_weight + kl * (float)df_pol_scale;
         if (!isfinite(difficulty)) difficulty = 1.0f;
+        float priority = difficulty;
         float keep_prob = 1.0f;
-        if (df_enabled)
+        if (df_norm_scale > 0.0) {
+            /* df_norm_slope is a SEPARATE knob from df_slope: the two are in
+             * different units and reusing one value for both would be a silent
+             * recalibration of the ply-selection curriculum. */
+            float dn = difficulty / (float)df_norm_scale;
+            priority = dn;
+            if (df_norm_clip > 0.0 && priority > (float)df_norm_clip)
+                priority = (float)df_norm_clip;
+            if (df_enabled)
+                keep_prob = fmaxf((float)df_min, fminf(1.0f, dn * (float)df_norm_slope));
+        } else if (df_enabled) {
             keep_prob = fmaxf((float)df_min, fminf(1.0f, difficulty * (float)df_slope));
+        }
 
-        priority_out[i] = difficulty;
+        /* priority_policy_kl_out / priority_q_delta_out stay RAW under both
+         * branches. Python re-derives the raw difficulty from them to feed the
+         * quantile window (a normalized value fed back into its own estimator
+         * would pin the reference at 1.0 and freeze the scale), and the
+         * `replay_pmass_kl_raw_mean` telemetry added by task #172 reads them
+         * expecting config-free units. */
+        priority_out[i] = priority;
         priority_policy_kl_out[i] = kl;
         priority_q_delta_out[i] = q_delta;
         keep_out[i] = keep_prob;
@@ -5610,7 +5652,10 @@ static PyMethodDef module_methods[] = {
     {"batch_process_ply", py_batch_process_ply, METH_VARARGS,
      "batch_process_ply(cboards, pol, wdl, actions, values, probs, "
      "df_enabled, df_q_w, df_pol_s, df_min, df_slope, "
-     "[input_history_lc0_root]) -> tuple of arrays"},
+     "[input_history_lc0_root, n_extra, with_relations, "
+     "df_norm_scale, df_norm_slope, df_norm_clip]) -> tuple of arrays. "
+     "df_norm_scale > 0 divides difficulty by it before the keep clamp and "
+     "uses df_norm_slope in place of df_slope; 0 = original arithmetic."},
     {"batch_compute_relations", py_batch_compute_relations, METH_VARARGS,
      "batch_compute_relations(cboards, out[N,5,64,64] u8) -> None. "
      "Dynamic board-relation matrices; GIL released."},

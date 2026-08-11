@@ -263,6 +263,291 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-10) — SCALE-FREE diff-focus difficulty (`diff_focus_norm_*`), PR for task #171 + #173
+
+**Status: plumbing only, DEFAULT OFF, bit-identical. NOTHING IS LIVE.** Training is
+stopped by operator decision and this entry does not ask for a restart. Every number
+below was measured BEFORE any threshold in this entry was chosen.
+
+### The defect (measured, not inferred)
+
+`difficulty = |q_delta| * diff_focus_q_weight + kl * diff_focus_pol_scale` drives BOTH
+`keep_prob = clamp(difficulty * diff_focus_slope, diff_focus_min, 1.0)` — which plies
+are RECORDED AT ALL — and the stored `priority` the replay sampler draws on. Both
+thresholds are FIXED ABSOLUTE numbers, but `kl` is KL(policy prior ‖ search visit
+target), whose scale is a property of the SEARCH configuration. The diff-focus group
+does not own that scale and cannot see it move.
+
+On 2026-08-09 the search-authority bundle moved it. Reconstructed from banked shards
+of trial `379f6` (`priority_policy_kl` + `priority_q_delta` columns, Horvitz-Thompson
+reweighted by `1/keep_prob` back to the pre-keep ply population — the reconstruction
+reproduces the live telemetry to 0.003 on both arms in both eras, which is what makes
+it usable):
+
+| population | HT mean `kl` | HT median `difficulty` | `keep_rate` | `keep_limited_frac` |
+|---|---|---|---|---|
+| pre-bundle (≤ iter 735, n=9,484 kept) | 0.0851 | 0.5014 | 0.8029 (telemetry 0.800) | 0.3677 (telemetry 0.379) |
+| current (≥ iter 736, n=744,715 kept) | 0.9918 | 1.4195 | 0.9556 (telemetry 0.958) | 0.1143 (telemetry 0.109) |
+
+`kl` moved **11.7x**, the difficulty median **2.83x**. No diff-focus key changed and no
+value left its range. `grad_hard_clip_rate` 0.0000 → 0.8236, onset exactly iter 782,
+and it read 0.0000 at all eight prior restarts (iters 1, 22, 152, 157, 166, 189, 401,
+736) — so this is not a restart artifact.
+
+⚑ **A NEW SPECIES OF THE SIGNATURE DEFECT, worth naming.** The usual form is a value
+accepted and then silently ignored. This is a knob whose CALIBRATION silently depends
+on the absolute scale of a quantity that a DIFFERENT, unrelated change is free to move.
+Every value was read and applied; the numbers simply stopped being comparable to the
+constants they were compared against. A config diff cannot see it, and task #172's
+guard (merged, `b8b6bbd0c`) is the alarm for it — not the fix.
+
+⚑ **CORRECTION to the brief this work was assigned from.** Two of its four metric names
+are wrong, and both wrong ones are FLAT. `diff_focus_sample_weight_mean` is 0.9987 →
+0.9985 and `diff_focus_sample_weight_limited_frac` is 0.0023 → 0.0025 — the soft-resign
+weight arm never moved and was never binding. The 0.798 → 0.957 and 0.367 → 0.113 moves
+belong to `diff_focus_keep_prob_mean`/`_keep_rate` and `diff_focus_keep_limited_frac`.
+`same name != same measurement`; do not quote the sample-weight columns for this incident.
+
+### HYPOTHESIS
+
+Dividing `difficulty` by a running reference quantile of the SAME worker's recent
+policy-bearing plies, before the fixed clamp, makes the realized curriculum invariant to
+the scale of `kl`, so an unrelated search change can no longer silently disable ply
+selection. It should NOT materially change the realized regime when the scale is stable.
+
+### WHAT IT DOES NOT CLAIM
+
+It does not restore any Elo, does not address the target-drift loop the amplifier sits
+on, and does not fix the COMPOSITION shift (`kl_share` 0.37 → 0.87). Scale-normalization
+pins the scale, not the mixture. The composition change is a genuine change in the
+signal, instrumented by #172's `replay_pmass_kl_raw_mean`, and is a separate question.
+
+### CALIBRATION — and why NOT against iters 560-735
+
+`diff_focus_norm_slope = 1.62` is solved so the normalized keep-rate reproduces the mean
+realized keep-rate of the **whole healthy era, iters 1-735 = 0.8156**, not the 0.8029 of
+iters 560-735. That window is the BOTTOM of a 700-iteration monotone drift
+(keep_rate 0.8434 → 0.8029, `diff_focus_priority_mean` 1.0290 → 0.9022), and #172's
+review already had to widen its bands for exactly this reason.
+
+**That drift is itself the same defect.** Rescaling the measured iter-735 difficulty
+distribution by the 1.1405 ratio the `priority_mean` telemetry implies reproduces
+keep_rate 0.8245 against a telemetry 0.8434 — i.e. most of the 700-iteration "drift" is
+a slow scale drift, not a change in what the curriculum was selecting. Under median
+normalization both eras collapse to the same 0.8156 by construction. So the wider healthy
+band is not a range this fix has to accommodate; it is a range this fix removes.
+
+### THE FIX, and where it lives
+
+`difficulty / q50(recent difficulties)`, with `diff_focus_norm_slope` REPLACING
+`diff_focus_slope` (different units — reusing one number would be a silent recalibration)
+and `diff_focus_norm_clip = 8.0` capping the stored `priority` in units of the same
+quantile. Median, not a robust z-score: `difficulty` is non-negative and right-skewed and
+`difficulty == 0` must keep mapping to `min_keep`, so a location shift is not admissible;
+scale-only normalization keeps zero at zero, is equivariant under `d -> c*d`, and at the
+median has a 50% breakdown point. Reference-quantile sweep (each re-solving the slope):
+p25 +0.007 cross-era drift, p40 +0.023, **p50 +0.020**, p60 +0.011, p75 −0.015,
+p90 −0.095. Flat between p25 and p60; p50 chosen for the breakdown point and exposed as
+`diff_focus_norm_quantile` so it is movable without a code change.
+
+**WRITE time, not load time.** `keep_prob` is irreversible — an unrecorded ply cannot be
+recovered at load — so the decision that actually went inert can only be fixed in the
+worker. Normalizing at write time additionally makes stored priorities from different
+eras COMPARABLE (each row carries its own era's percentile), which `_shape_shuffle_priority`
+structurally cannot do: it rescales a whole chunk and cannot know which era produced it.
+
+**The estimator's population is ONE WORKER's last 8192 policy-bearing plies.** Not a
+global quantile, and calling it one would be `same name != same measurement`. Justified
+because the quantity is a property of the (published net, search config) pair, identical
+across workers at any instant. Cost, measured on 744,715 real rows: an 8192-sample median
+has relative sd 1.81%, so two workers' scales agree within 7.2% at 95% — negligible
+against the 2.83x shift it absorbs. Only `has_policy` rows are observed, because those are
+exactly the rows whose `keep_prob` is consumed.
+
+**Warm-up is the OLD behaviour, not a third one.** Below `diff_focus_norm_warmup` the
+scale is 0.0, which is the same sentinel as "disabled", so the C path takes the original
+unnormalized branch. It is observable without new plumbing: once armed, stored priority
+is capped at `diff_focus_norm_clip`, so **`diff_focus_priority_max <= diff_focus_norm_clip`
+in `progress.csv` is a sufficient armed-check** and cannot hold on the unarmed path
+(measured unarmed max: 96.0 against a clip of 8.0). Plus a one-shot `log.warning`.
+
+### THE ONE DECIDING YARDSTICK (exact command)
+
+Run on banked shards spanning both regimes, with NO training and NO GPU:
+
+```
+PYTHONPATH=. python3 - <<'EOF'
+import glob, os, datetime, numpy as np, zarr
+QW, PS, SLOPE, MINK, NSLOPE = 6.0, 3.5, 3.0, 0.025, 1.62
+B = datetime.datetime(2026, 8, 9, 20, 30).timestamp()
+ps = sorted(glob.glob("runs/pbt2_small/replay/train_trial_379f6*/replay_shards/*.zarr"))
+def load(paths):
+    kl, qd = [], []
+    for p in paths:
+        z = zarr.open(p, mode="r")
+        m = (np.asarray(z["has_priority_policy_kl"][:]).astype(bool)
+             & np.asarray(z["has_priority_q_delta"][:]).astype(bool)
+             & np.asarray(z["has_policy"][:]).astype(bool))
+        kl.append(np.asarray(z["priority_policy_kl"][:])[m].astype(np.float64))
+        qd.append(np.asarray(z["priority_q_delta"][:])[m].astype(np.float64))
+    return np.abs(np.concatenate(qd)) * QW + np.concatenate(kl) * PS
+def wq(x, w, q):
+    o = np.argsort(x); c = np.cumsum(w[o]); return float(x[o][np.searchsorted(c, q)])
+for name, sel in (("PRE", lambda t: t < B), ("POST", lambda t: t >= B)):
+    d = load([p for p in ps if sel(os.path.getmtime(p))][-400:])
+    w = 1.0 / np.clip(d * SLOPE, MINK, 1.0); w /= w.sum()
+    med = wq(d, w, 0.5)
+    raw = float((w * np.clip(d * SLOPE, MINK, 1.0)).sum())
+    nrm = float((w * np.clip(d / med * NSLOPE, MINK, 1.0)).sum())
+    nlim = float((w * (np.clip(d / med * NSLOPE, MINK, 1.0) < 1.0)).sum())
+    print(f"{name}: raw keep={raw:.4f}  NORMED keep={nrm:.4f}  NORMED keep_limited={nlim:.4f}")
+EOF
+```
+
+**Run verbatim 2026-08-10, before this rule was written (`a required command must be RUN
+before it is written into a protocol`):**
+
+```
+PRE: raw keep=0.8029  NORMED keep=0.8153  NORMED keep_limited=0.3483
+POST: raw keep=0.9556  NORMED keep=0.8364  NORMED keep_limited=0.3474
+```
+
+Quote THESE figures, not the 4-decimal values in the calibration section above — those
+come from an era split by exact mtime rather than the `[-400:]` slice this command uses,
+and differ in the 4th decimal (0.8156 vs 0.8153). Same conclusion, different slice; the
+command's own output is the authoritative one because it is what a reader reproduces.
+
+### PRE-COMMITTED DECISION RULE (judged on the command above, before any launch)
+
+* **SUCCESS** — the PRE→POST change in normalized `keep_rate` is **≤ 0.05** in absolute
+  value, AND the PRE→POST change in normalized `keep_limited_frac` is **≤ 0.05**, AND
+  both normalized values sit inside #172's invariant bands (`keep_rate` 0.55-0.90,
+  `keep_limited_frac` 0.18-0.60) in BOTH eras.
+* **KILL** — either normalized arm moves **> 0.10** across the eras, or either normalized
+  value falls outside #172's bands in either era. A normalization that does not collapse
+  the eras is not worth the new failure surface and must not be enabled.
+* **Measured at pre-registration time by the command above: normalized keep_rate
+  0.8153 → 0.8364 (+0.0211), normalized keep_limited_frac 0.3483 → 0.3474 (−0.0009)** —
+  against raw +0.1527 and −0.2534. Both inside #172's bands in both eras. This CLEARS the success rule, which is
+  why the entry exists before the flag can be flipped, not after.
+
+### NEGATIVE CONTROL (required; a pass without it is void)
+
+`tests/test_diff_focus_norm.py::test_negative_control_scaling_difficulty_leaves_the_normalized_regime_invariant`
+scales `difficulty` across 5000x (0.02x/1x/10x/100x) on identical real positions,
+THROUGH the C production path, and requires the normalized mean `keep_prob` and mean
+`priority` invariant to 1e-6. It also asserts the UN-normalized arm MOVES by > 0.5, so an
+inert fixture fails rather than passes. On real shard data the same control gives raw keep
+0.119/0.521/0.956/0.997/0.997 across 0.01x-100x against a normalized 0.8368 at every
+point.
+
+### INTERACTION WITH #172 (merged `b8b6bbd0c`) — COMPOSES, and INVALIDATES two of its arms
+
+Disjoint files; no conflict; not redundant (that is the alarm, this is the fix).
+
+* `diff_focus_keep_rate` and `diff_focus_keep_limited_frac` are weight-INVARIANT, stay
+  valid, and the fix brings BOTH back inside band (0.8368 and 0.3467).
+* ⚑ `diff_focus_priority_mean` (band 0.40-1.90) and `replay_priority_mean` (0.45-2.20) are
+  CONFIG-SCALED — #172's own header says they must be re-derived whenever a diff-focus
+  weight changes, and this changes the units of the very column they read. Measured under
+  normalization: `diff_focus_priority_mean` 1.67 (PRE) / 2.06 (POST), i.e. the POST value
+  is ALREADY outside the existing upper bound. **Their bands are NOT changed by this PR**,
+  because the PR ships OFF and the current bands are correct for the current production.
+* ⚑ **LAUNCH PRECONDITION, not a note.** Enabling `diff_focus_norm_enabled` must, in the
+  SAME change, re-derive those two bands (measured starting point: ~1.2-2.6 for
+  `diff_focus_priority_mean`) AND accept that `replay_priority_mean` is UNREADABLE for
+  ~133 iterations while the ~1.5M-row window turns over mixing raw-unit and
+  normalized-unit priorities. `a ruler change must invalidate its records`.
+
+**Verified by EXECUTION against the merged `evaluate_diff_focus_regime`, not by reading
+its band table** (`enabled=True`, `trial_iterations_completed=10`, real denominators):
+
+| report fed to the guard | alarm | detail |
+|---|---|---|
+| current production (iter 862) | **1** | `keep_rate=0.9568>0.9` + `keep_limited_frac=0.1088<0.18` + `priority_mean=4.1008>1.9` + `replay_priority_mean=3.9400>2.2` |
+| normalized, PRE-bundle data | **0** | *(clean)* |
+| normalized, POST-bundle data | **1** | `priority_mean=2.0591>1.9` — the config-scaled arm ONLY |
+
+So the fix silences three of the four arms outright and leaves exactly the one arm whose
+units it changed. That residual fire is the ruler problem above, not a regime problem, and
+it is why the band re-derivation is a precondition rather than a follow-up.
+
+### EVERY OTHER CONSTANT THAT LIVES IN `priority` UNITS (audited, all inert today)
+
+`priority` is a stored column, so enabling normalization redefines the units of
+everything downstream that compares against it by an absolute number. Audited:
+
+| constant | production value | live? | consequence when the flag flips |
+|---|---|---|---|
+| `replay_sf_gap_priority_weight` | 0 (branch needs > 0) | **no** — experiment #104 KILLED | the gap boost is added to `priority` in RAW units; would need re-scaling by the reference quantile |
+| `replay_fast_low_surprise_priority` | 1.0 (branch needs < 1.0) | **no** | ironically IMPROVES: fast rows arrive at a neutral 1.0, which under normalization is exactly the median instead of an arbitrary point (raw median 0.50 pre / 1.42 post). `record_fast_ply_value` is OFF anyway |
+| `_accumulate_priority_mass` `kl_term`/`qd_term` | n/a | **yes** | multiplies the RAW stored `kl`/`q_delta` by today's weights and compares against the STORED priority mass — so `replay_pmass_kl_share` gains a SECOND way to misreport, on top of the `pol_scale` one #172 already documents. Use `replay_pmass_kl_raw_mean` |
+
+**Decision: change none of them in this PR.** The first two are inert (their
+branches are gated off), and `replay_pmass_kl_share` was already declared
+unguardable by #172 for the same class of reason. Recorded here as a launch
+precondition rather than left as a comment: whoever flips the flag must re-derive
+the first two if they are ever enabled together with it, and must not read
+`replay_pmass_kl_share` afterwards at all.
+
+### SECOND FIX IN THE SAME PR — task #173, Python/C KL divergence
+
+`network_turn.py` floored both distributions at 1e-12 and summed over all 4672 entries;
+`_mcts_tree.c` iterates legal moves and SKIPS a term when either side underflows.
+Quantified on 2,400 real production (prior, visit) pairs — stored `x` and `policy_target`
+from live shards, priors from a CPU forward pass of live `checkpoint_000861`:
+
+| population | legal/pos | with visits | prior mass unvisited | KL C | KL Python | mean diff | rows differing >1e-6 | max diff |
+|---|---|---|---|---|---|---|---|---|
+| pre-bundle | 27.6 | 22.1 (80.1%) | 0.0009 | 0.3705 | 0.3897 | +0.0193 | 60.50% | 3.26 |
+| post-bundle | 28.0 | 25.5 (90.9%) | 0.0023 | 0.6047 | 0.6642 | +0.0595 | 51.25% | 23.29 |
+
+**C is correct and Python was changed to match it.** (1) Production runs C, so every
+calibrated constant and every stored `priority` is denominated in C's value. (2) Python's
+extra mass is dominated by `-log(1e-12) = 27.63`, a constant nobody chose on evidence —
+moving eps to 1e-10 moves the metric ~15%; a statistic whose magnitude is a free parameter
+of its own implementation is not a measurement. (3) The true KL is +infinity whenever the
+search leaves prior mass unvisited, which is the normal case. Worst single row: 23.29 nats
+= +81.5 difficulty at `pol_scale=3.5`, more than the entire observed dynamic range.
+Pinned by `test_python_and_c_kl_agree_on_sparse_targets`, with
+`test_the_old_floored_kl_really_did_diverge` guarding that pin from going vacuous.
+
+### CONFOUNDS / OPS
+
+* Ships OFF; the only production-visible change with the flag off is that the Python
+  FALLBACK path (C extension unavailable) now computes the same KL as C.
+* ⚑ Adds six live yaml keys. Per the launch rule, code that predates them **cannot boot**
+  against this yaml (`run.py:~94`, outside any `try`). This PR must be merged before any
+  restart onto a branch lacking them.
+* Requires `python3 scripts/build_production_extensions.py` after pull (`.c` changed).
+* Only the SIX NORM keys ride the reco. The five original `diff_focus_*` keys remain
+  unplumbed — plumbing them changes the live keep-probability and needs its own entry.
+* ⚑ `diff_focus_norm_enabled: true` with `diff_focus_norm_slope: 0` is refused at
+  `SelfplayState.create`, not thousands of plies later inside the C call. Added by the
+  independent review: the C guard is correct but fires only on the first ply batch AFTER
+  `norm_warmup`, and names `df_norm_slope` rather than the yaml key. `a dead knob can arm
+  a crash` — the launch check for that pair is now the session refusing to start.
+
+### FOUND BY THE INDEPENDENT REVIEW (2026-08-10) — the last plumbing link was untested
+
+Everything the PR originally asserted stopped at `DiffFocusConfig`. Nothing observed
+`SelfplayState.create` turning that config into a live estimator, nor the estimator's
+scale reaching `batch_process_ply`'s argument list. Two mutations proved the gap real —
+`SelfplayState.create` returning `diff_focus_norm=None` unconditionally (`norm_enabled`
+accepted and silently ignored, in the one function that decides whether the feature
+exists) and `_append_records_via_c` handing C `diff_focus.slope` in place of
+`norm_slope` — and **both left the ENTIRE suite green**. Closed by four tests that read
+the stored `_NetRecord.priority`/`keep_prob` off the real append path; both mutations are
+now red. The reviewer separately re-ran the negative control with the fix mutated out of
+`_mcts_tree.c` (control goes red) and reproduced the yardstick block above verbatim.
+
+### REVERT POINT
+
+None taken: the change is default-off and touches no weights, no optimizer state and no
+replay content. The revert is `diff_focus_norm_enabled: false`, which is also the shipped
+value. A revert point becomes MANDATORY before the flag is first flipped, because from
+that moment the stored `priority` column changes units.
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-09) — selfplay search policy temperature (`gumbel_policy_temp` 1.0 → 1.5), PR #379
 
 > **⚑ SUPERSEDED THE SAME DAY — THE HEADER AND STATUS BELOW ARE NO LONGER TRUE.**

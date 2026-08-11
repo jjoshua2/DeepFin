@@ -123,6 +123,41 @@ class DiffFocusConfig:
     slope: float = 3.0
     min_keep: float = 0.025
 
+  # ── Scale-free normalization (default OFF = bit-identical to the above) ──
+  # `slope`/`min_keep` above are FIXED ABSOLUTE thresholds on a `difficulty`
+  # whose scale is set by KL(prior || search target) -- i.e. by the SEARCH
+  # config, which the diff-focus group does not own. The 2026-08-09 search
+  # bundle moved that scale ~11.7x and silently saturated the clamp
+  # (keep_rate 0.803 -> 0.956). See selfplay/diff_focus_norm.py for the
+  # mechanism and the measured population definition.
+  #
+  # When `norm_enabled`, `difficulty` is divided by a running reference
+  # quantile of this worker's own recent policy-bearing plies before the
+  # clamp, and `norm_slope` REPLACES `slope` (they are in different units --
+  # reusing one number for both would be a silent recalibration).
+    norm_enabled: bool = False
+  # Ring size, in policy-bearing plies, of the per-worker quantile window.
+  # 8192 puts the median's relative sd at 1.81% on real post-bundle data.
+    norm_window: int = 8192
+  # Plies required before the estimator arms. Below it the ORIGINAL
+  # unnormalized branch runs, so warm-up is a documented regime, not a
+  # third behaviour.
+    norm_warmup: int = 1024
+  # Reference quantile. Median: keeps zero at zero, equivariant under any
+  # positive rescaling, 50% breakdown point.
+    norm_quantile: float = 0.5
+  # Replaces `slope` when normalization is active. 1.62 reproduces the mean
+  # realized keep_rate of the whole healthy era (iters 1-735 of trial 379f6,
+  # mean 0.8156) -- NOT the 0.8029 of iters 560-735, which is the bottom of a
+  # 700-iteration monotone drift that is itself an artifact of the same
+  # unnormalized scale.
+    norm_slope: float = 1.62
+  # Upper cap on the normalized `priority`, in units of the reference
+  # quantile. 0 disables. Bounds how far the replay sampler can concentrate
+  # on the extreme tail; does not affect `keep_prob`, which already saturates
+  # at 1.0 far below this (at 1/norm_slope = 0.62 of the reference quantile).
+    norm_clip: float = 8.0
+
 
 @dataclass(frozen=True)
 class GameConfig:

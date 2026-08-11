@@ -77,6 +77,7 @@ def _refute_state(
         search=SearchConfig(),
         opening=opening,
         diff_focus=DiffFocusConfig(),
+        diff_focus_norm=None,
         game=GameConfig(),
         batch_size=n,
         continuous=False,
