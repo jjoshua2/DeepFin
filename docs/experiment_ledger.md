@@ -40447,3 +40447,51 @@ the diff-focus curriculum collapsing (`keep_rate` 0.803→0.957, `keep_limited_f
 broke", and the PRE-736 decline remains UNEXPLAINED** — with prev-model share drift 16.3%→56.5%
 [[prev_model_share_drifted_16_to_56]] the standing candidate. **Do not let the elegance of the
 compounding algebra outrank the fact that the decline started before the mechanism existed.**
+
+---
+
+## 2026-08-11 — ⚑⚑ ERRATUM: THE RANKING LADDER NEVER RAN PRODUCTION'S TEMPERATURE
+
+**`scratchpad/search_vs_prior_ranking.py` constructed `GumbelConfig(...)` without
+`policy_temp`, so it took the dataclass default `1.0`. Production runs
+`gumbel_policy_temp: 1.5`.** Every row that instrument has ever produced — including the one
+this ledger labelled **"r4 THE LIVE SHAPE"** — ran at T=1.0. It was the live `c_scale` at the
+wrong temperature. Flag added, plumbed, and recorded in the output provenance 2026-08-11.
+
+**What SURVIVES.** The `c_scale` comparison is matched on everything else, so
+**+0.0077 → +0.0179 for 0.025 → 0.1 stands as a c_scale verdict AT T=1.0**, and "keep
+`c_scale: 0.1`" stands. Same for the sims monotonicity and for option B's negative screen —
+all were internally matched. **Only the "this is production's shape" LABEL is withdrawn.**
+
+**What was NEVER MEASURED — and it is the load-bearing premise.** The standing story is *"the
+search-param change improved SEARCH but degraded the TRAINING TARGET, and the PRs give us both
+halves."* The second clause has **no quality evidence behind it at all**. What exists is
+`H(target)` 0.9849→1.2136 and `KL(prior‖target)` ×11.8 — both **drift**, and this document's own
+rule is that *"the target moved a lot is NOT the target got worse."* The only direct
+target-QUALITY measurements we have say the opposite or nothing:
+- the ladder (at T=1.0) says the `c_scale` half made the target **BETTER**;
+- the deep-SF screen of the untempering fix says removing the tempering is worth
+  **+0.393 cp [−0.699, +1.485]** — i.e. **the tempering is not costing measurable quality**;
+- nothing has ever scored a T=1.5 target against a T=1.0 target on quality.
+
+⇒ **QUEUED: a 2×2** (`c_scale` 0.025/0.1 × `policy_temp` 1.0/1.5, sims 256, topk 32, matched
+positions), `run_temp2x2.sh`, serial behind the search-shape arena. t0/t1 must reproduce
++0.0077/+0.0179 or nothing is believable. **Pre-committed: if T=1.5 degrades the target, t3 < t1
+with separated CIs. If t3 ≥ t1, the "policy_temp degraded the target" premise is REFUTED on the
+quality axis** and the case against `policy_temp` reduces to drift statistics that are not
+verdicts.
+
+### ⚑ THIS IS THE THIRD "THE INSTRUMENT DID NOT RUN PRODUCTION'S SHAPE" TONIGHT
+
+1. `audit_targets.py` scored the training rows at **topk 16** (committed yaml) vs live **32**,
+   and `--gumbel-topk` is PLAY-only so it could not be overridden;
+2. `search_gain_probe.py` (#381) read an **untempered prior** while its search seeded from
+   `logits/policy_temp` — a no-op at T=1.0, invisible until someone ran T=1.5;
+3. this one.
+
+**All three are the same defect: an instrument's default silently standing in for a production
+value, with nothing asserting the difference.** The fix that generalises is not "remember to pass
+the flag" — it is **make every instrument print its REALIZED shape next to production's and fail
+when they differ**, the way `arena_standard.py` already does
+(`[arena] SEARCH candidate: ... [pbt2_small.yaml -> reco -> worker SearchConfig + CLI(...)]`).
+That is the one instrument tonight that could not have made this mistake.
