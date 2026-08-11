@@ -42392,3 +42392,68 @@ consistent with zero real per-publish regression.
   where the fix belongs (task #80).
 - ⚠ This does NOT rehabilitate the gate as a ratchet — the module's own docstring already
   proves no gate can ratchet at this loop's improvement rate.
+
+---
+
+## 2026-08-11 — THE HELD-OUT ARM: THE POLICY HEAD STOPPED GENERALISING AT ~ITER 249 (task #185)
+
+The entry above measured FIT and flagged that every rung had trained on the rows. This is the
+pre-committed held-out arm. **Pools from BEFORE the 2026-08-04 `--fresh` boot, which started
+with an empty buffer — so no rung ever trained on a row of either.** Identical rig, identical
+formula, 60 shards × 400 rows each.
+
+| checkpoint | IN-window (08-09) | HELD-OUT 07-31 | HELD-OUT 07-27 |
+|---|---|---|---|
+| iter 8 | 0.60545 | 1.80532 | 1.97729 |
+| iter 249 | 0.22618 | 1.57635 | 1.78327 |
+| iter 514 | 0.14284 | 1.54588 | 1.78472 |
+| iter 672 | 0.05239 | 1.53979 | 1.78581 |
+| iter 735 | 0.05846 | 1.53797 | 1.78617 |
+| live (~690) | 0.05688 | 1.53739 | 1.78743 |
+| **iter 249 → live** | **÷3.98** | **−2.5%** | **+0.2% (wrong sign)** |
+| uniform control | 4.065 | 5.004 | 5.367 |
+
+**Over the same ~440 iterations the net fit the window 4x better and out-of-window rows not
+at all.** That is memorisation, and it dates the onset to **~iter 249**, not to any of the
+events the run has been blamed on.
+
+### The two objections, both measured rather than argued
+
+**(1) "1.78 is a floor — those pools are unfittable."** No. `target_noise_floor.py` on the same
+pools: **07-27 floor 0.024 (group-mean) / 0.045 (row-weighted)**, **07-31 floor 0.0426**. The
+ladder sits at **36–42x the floor** out-of-window against **4.75x** in-window. There is an
+enormous amount of fittable signal there and the net stopped taking it.
+
+**(2) "The 07-27 policy encoding might differ."** Ruled out: the top-1 target index histograms
+agree across all three pools (108, 388, 389, 332, 361, 195, 871 appear in every one) and
+`policy_encoding` reads `lc0_1858` in each. Legal-move means 26.8 / 27.2 / 29.1 differ as a
+position mix, not as a layout.
+
+### ⚠ The objection that SURVIVES, and it is not small
+
+Both held-out pools were produced by a **weaker, earlier-lineage net's search**. A stronger net
+*should* disagree with a weaker teacher, so "flat KL to a stale teacher" is not unambiguously
+"failed to generalise". Two things bound it but do not kill it: our nets do beat the pools'
+own generating nets (07-31 stored-at-generation 1.764 vs our 1.537), and the ladder is still
+36x its own noise floor. **The clean version needs a same-era, game-disjoint held-out set**
+(the per-trial `holdout.npz`), which is owed before this is quoted as settled.
+
+Second limit: these are LEVEL sems (~0.014), not paired ones — a re-run banking per-row dumps
+is in flight. That cannot rescue the headline, though: 3.98x vs 1.02x is far outside anything
+a paired interval would change.
+
+### Consequence for what to try next
+
+The live candidates are now training-recipe levers, not data or search ones:
+`train_views_per_position` (4.31), window size (1.5M), and `feature_dropout_p` — **0.0 for this
+entire lineage**, turned off at the 08-04 boot. Any of these is one yaml key and
+training-affecting ⇒ **needs a pre-registration and Josh's go, and must not be launched from
+this session.**
+
+⚑ **NEAR-MISS, recorded so the next reader does not repeat it.** Reading the live optimizer I
+found every param group at exactly 0.100 of its base LR on all six checkpoints and nearly filed
+"the run has trained at 1/10 LR for its whole life". It has not: `_SqrtReleaseLRScheduler` is a
+per-WINDOW WSD sawtooth (`lr_release_start_frac: 0.8`, `lr_release_min_scale: 0.1`), and
+checkpoints are written at the END of each ~88-step window, i.e. **at the trough by
+construction**. `trainer.py` and `docs/rl_loop_audit.md` I19 already say so. The measurement was
+real; the reading was an artifact of WHEN the checkpoint samples it.
