@@ -146,24 +146,57 @@ FLOOR ``min_games_per_side: 15`` ADMITS. That is spelled out under "WHAT THE
 STEP LEG COSTS AND WHAT IT BUYS" below; it is a real finding of this revision,
 not a rounding change.
 
-Note ``distributed_prev_model_max_fraction: 0.60`` is NOT a ceiling on the
-gate's split, and reading it as one is a category error: the cap is
-``ceil(0.60 * target_games)`` over the WHOLE iteration's ingest
-(``_ingest_distributed_selfplay``, target ~488 realized), while the gate's arms
-are the curriculum subset averaging 50/46. ~293 prev games are permitted
-against a prev ARM that has never exceeded 163.
+⚑ ``distributed_prev_model_max_fraction: 0.60`` IS NOT COMPARABLE TO THE
+GATE'S SPLIT, and two revisions of this paragraph got it wrong in two different
+directions. The cap is ``ceil(0.60 * games_per_iter)`` over ALL matching games
+of the iteration (``_ingest_distributed_selfplay``; both post-boot trials
+launched at ``games_per_iter: 440`` with no ramp, so the cap is **264**), while
+the gate's arms are the CURRICULUM subset only. The accounting is exact and
+checkable::
 
-⚑ And ``distributed_stale_games`` does not test it. An earlier revision of this
-paragraph claimed the cap "never binds -- ``distributed_stale_games`` is 0 on
-every recent iteration (re-verified 2026-08-11 on trial 5ce02)". It is nonzero
-on 8 of the 134 rows on disk (379f6 iter 836; 5ce02 iters 2, 3, 7, 10, 11, 35,
-36 -- the last two inside the very window this module banks), so the stamp was
-false as written; and ``_process_shard_with_prev_cap`` funnels cap-demoted prev
-shards and generic non-accepted SHAs into the SAME ``stale_*`` counter, so even
-a correct reading of it could not attribute. Sizing this gate off 0.60 would
-give 95/143 and a standard error of 31 Elo. Always take the realized split from
-the gate's counters, never the cap, never a timestamp proxy, and never a
-counter that aggregates two causes.
+    matching_games - selfplay_games == gate_sample_games_cur + gate_sample_games_prev
+                     (residual 0 on every row; 148 of them as of 2026-08-11)
+
+So the gate's prev arm -- max **66** over the 145 rows where both arms are
+non-empty -- is a sub-count of the quantity the cap bounds, and comparing them
+is a category error whichever way it comes out. ⚑ The run is live, so the ROW
+COUNTS here (148 / 145 / 26) drift upward with every iteration and the counts
+alone are not the claim; the identity above and the sub-count relation are, and
+those do not move. Re-derive rather than re-quote.
+
+⚑ AND THE COMPARABLE QUANTITY IS NOT RECORDED. Nothing logs prev-SHA games
+across BOTH game types. Estimating it by applying each iteration's curriculum
+prev share to its whole ingest (attribution is per-shard by ``model_sha256``
+and a shard carries both types from one model, so the shares should track) puts
+it at **mean 229, max 357** -- **26 of 145 iterations OVER the 264 cap**, worst
+the (17, 61) row at ~35% over. That row is also 379f6's ONLY nonzero
+``distributed_stale_games`` (346). ⇒ **the cap plausibly BINDS on the
+highest-prev-share iterations**, and the honest state is "unmeasured", not
+"never binds".
+
+⚑ Two revisions asserted otherwise on bad evidence, and the shape of both
+mistakes is worth more than the conclusion:
+
+* "the cap never binds -- ``distributed_stale_games`` is 0 on every recent
+  iteration (re-verified 2026-08-11 on trial 5ce02)". FALSE AS WRITTEN: it is
+  nonzero on 8 rows (379f6 iter 836; 5ce02 iters 2, 3, 7, 10, 11, 35, 36 --
+  the last two inside the very window this module banks). And it could not
+  adjudicate even if it were zero: ``_process_shard_with_prev_cap`` funnels
+  cap-demoted prev shards and generic non-accepted SHAs into the SAME
+  ``stale_*`` counter, so a nonzero reading has two causes and a zero reading
+  has two explanations.
+* "~293 prev games are permitted against a prev ARM that has never exceeded
+  163". BOTH numbers wrong: 293 is ``0.60 * 488``, the REALIZED mean ingest
+  substituted for the CONFIG target the code multiplies (realized overshoots
+  because whole shards land at once) -- the same wrong-denominator error this
+  whole module docstring exists to correct, committed inside the correction.
+  And 163 is ``max(gate_sample_games_prev)`` over rows the gate EXCLUDES (5ce02
+  iter 1 is 0/163, an unusable boot row); over usable rows it is 66.
+
+Sizing this gate off 0.60 would give 95/143 and a standard error of 31 Elo.
+Always take the realized split from the gate's counters, never the cap, never a
+timestamp proxy, never a counter that aggregates two causes, and never a
+realized mean where the code reads a configured target.
 
 **The observed spread is pure binomial noise -- there is NO detectable
 anchor-drift variance**, and an earlier revision of this module claimed the
@@ -392,8 +425,10 @@ comparison is like-for-like and the finding stands.
 
 ⚑ **The floor does not bind on every iteration, and where it does not the leg
 fires harder.** Realized per-iteration score sd runs **0.300 to 0.386** over the
-96. Drawing 15/15 from the single widest iteration (34/54, w/d/l 30/35/23, own
-sd 0.386) the MC reads **0.2426%** -- **2.33x** the aggregate. A previous
+96 -- the pooled floor 0.3447 sits inside that range, so it OVER-states on some
+iterations and UNDER-states on others. Drawing 15/15 from the single widest
+iteration (**34/54, w/d/l 30/35/23, own sd 0.386**) the MC reads **0.2426%** --
+**2.33x** the aggregate. A previous
 revision put this at 1.58x from a fixed-``se`` normal approximation; that
 understates it, because the approximation cannot see the plug-in ``se``
 collapsing to the floor while ``delta`` is drawn at the wider true spread.

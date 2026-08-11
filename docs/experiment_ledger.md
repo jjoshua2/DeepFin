@@ -40027,6 +40027,31 @@ with a >30% margin, `_step_leg_mc_rate(15, 15, line=-125)` > 0.0004, and
 If a future lineage moves the shape or the sd again, these flip and the table must be
 re-derived rather than re-quoted.
 
+### ⚑ AND A FOURTH ROUND FOUND THE SAME ERROR *INSIDE* THE CORRECTION
+
+The one paragraph I flagged to the reviewer as least verified — the prev-model cap — was
+wrong in both of its numbers, and wrong in this entry's own signature way:
+
+- **`~293 permitted` was `0.60 × 488`**, the REALIZED mean ingest, where the code computes
+  `ceil(0.60 × games_per_iter)` from the CONFIG target. Both post-boot trials launched at
+  `games_per_iter: 440` with no ramp, so the cap is **264**. Realized overshoots the target
+  because whole shards land at once. ⇒ **a wrong-denominator figure, quoted as operative,
+  committed inside the entry whose subject is wrong-denominator figures quoted as operative.**
+- **`prev arm has never exceeded 163` was `max(gate_sample_games_prev)` over rows the gate
+  EXCLUDES** (5ce02 iter 1 is 0/163, an unusable boot row). Over usable rows it is **66**.
+- And I then compared a curriculum-only count against an all-games budget — the very category
+  error the paragraph correctly identifies in its first sentence.
+
+With matched denominators the conclusion **inverts**. The accounting is exact
+(`matching_games − selfplay_games == gate_sample_games_cur + gate_sample_games_prev`,
+residual 0 on all 148 rows), so estimating prev-SHA totals by each iteration's curriculum
+prev share gives **mean 229, max 357 — 26 of 145 iterations over the 264 cap**, worst the
+**(17, 61)** row at ~35% over. That row is also 379f6's ONLY nonzero `distributed_stale_games`
+(346). ⇒ **the cap plausibly BINDS on the highest-prev-share iterations.** The honest state is
+**unmeasured**, not "never binds" — nothing logs prev-SHA games across both game types.
+Nothing in this entry's step-leg finding depends on it; it is recorded because the *shape* of
+the mistake is the finding.
+
 **Confounds:** none — the gate is in shadow mode and this PR changes documentation and tests
 only. The 96-iteration series spans the 08-11 04:19 restart, a lineage boundary for *weights*
 but not for the *arm-size* or *score-sd* statistics measured; the two trials agree to within

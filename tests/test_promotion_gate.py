@@ -1451,6 +1451,24 @@ def _within_iteration_score_sd() -> float:
     return math.sqrt(_score_var_decomposition()[1])
 
 
+def _per_iteration_score_sds() -> list[tuple[float, tuple[int, int, int, int, int]]]:
+    """``[(own score sd, row), ...]`` ascending, over the 96 banked iterations.
+
+    The docstring's "the floor does not bind on every iteration" paragraph is
+    three data statements in prose -- the range, the identity of the widest
+    row, and its own sd -- and a mutation sweep rewrote all three freely. They
+    are derived here so the prose is pinned to the rows.
+    """
+    out: list[tuple[float, tuple[int, int, int, int, int]]] = []
+    for row in _POST_BOOT_ITERATIONS:
+        _c, _p, w, d, lo = row
+        n = w + d + lo
+        mean = (w + 0.5 * d) / n
+        var = (w * (1 - mean) ** 2 + d * (0.5 - mean) ** 2 + lo * mean ** 2) / n
+        out.append((math.sqrt(var), row))
+    return sorted(out)
+
+
 def _score_var_decomposition() -> tuple[float, float, float]:
     """``(grand, within, between)`` per-game score variance over the 96 rows.
 
@@ -3274,6 +3292,7 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
     assert "The analogue of the constant is the WITHIN-iteration figure, 0.3446" in flat(step_section)
     assert "a NARROWER ``se`` makes ``elo_hi`` SMALLER and the leg fires MORE readily" in flat(step_section)
     assert "NOT because 22 fails" in flat(step_section)
+
     assert "0.3479" in step_section
     assert "That was the wrong statistic" in flat(step_section)
     assert "worst case for the false-brake budget" not in flat(step_section)
@@ -3307,6 +3326,21 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
             f"+ between-iteration {between_var:.6f}") in flat_step
     assert f"(sd **{math.sqrt(within_var):.4f}**)" in flat_step
 
+    # ⚑ The three prose figures a sweep rewrote freely, pinned to the banked
+    # rows rather than to themselves. Each is a DATA statement sitting inside a
+    # sentence, which is the shape that keeps escaping the table needles.
+    sds = _per_iteration_score_sds()
+    assert (f"score sd runs **{sds[0][0]:.3f} to {sds[-1][0]:.3f}**"
+            in flat_step), (sds[0][0], sds[-1][0])
+    wc, wp, ww, wd, wl = sds[-1][1]
+    assert (f"(**{int(wc)}/{int(wp)}, w/d/l {ww}/{wd}/{wl}, own sd "
+            f"{sds[-1][0]:.3f}**)") in flat_step, sds[-1]
+    # ... and "needs a 70% one" is the collapse of the cur arm that 15/15 costs
+    # at the realized shape, i.e. 1 - floor / n_cur, to the nearest 10%.
+    n_cur_mean = st.mean([c for c, _ in _POST_BOOT_SHAPES])
+    collapse = round(100 * (1 - GateConfig().min_games_per_side / n_cur_mean), -1)
+    assert f"needs a {collapse:.0f}% one" in flat_step, (collapse, n_cur_mean)
+
     # ⚑ AND THE THREE SENTENCES ROUND 3 CORRECTED. Each was FIXED in the
     # module and then left unneedled, so a mutation sweep restored all three
     # with the suite green -- fixing prose without pinning it is the same
@@ -3317,17 +3351,33 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
     prev_cap = flat(doc.split("distributed_prev_model_max_fraction: 0.60")[1]
                     .split("**The observed spread is pure binomial noise")[0])
     for phrase in (
-        "the cap is ``ceil(0.60 * target_games)`` over the WHOLE iteration's "
-        "ingest",
-        "It is nonzero on 8 of the 134 rows on disk",
-        "funnels cap-demoted prev shards and generic non-accepted SHAs into "
-        "the SAME ``stale_*`` counter, so even a correct reading of it could "
-        "not attribute",
-        "never a counter that aggregates two causes",
+        "The cap is ``ceil(0.60 * games_per_iter)`` over ALL matching games",
+        "both post-boot trials launched at ``games_per_iter: 440`` with no "
+        "ramp, so the cap is **264**",
+        "max **66** over the 145 rows where both arms are non-empty",
+        "mean 229, max 357** -- **26 of 145 iterations OVER the 264 cap**",
+        "the cap plausibly BINDS on the highest-prev-share iterations",
+        'the honest state is "unmeasured", not "never binds"',
+        "FALSE AS WRITTEN: it is nonzero on 8 rows",
+        "a nonzero reading has two causes and a zero reading has two "
+        "explanations",
+        "293 is ``0.60 * 488``, the REALIZED mean ingest substituted for the "
+        "CONFIG target the code multiplies",
+        "163 is ``max(gate_sample_games_prev)`` over rows the gate EXCLUDES",
+        "never a counter that aggregates two causes, and never a realized mean "
+        "where the code reads a configured target",
     ):
         assert phrase in prev_cap, phrase
-    assert "is 0 on every recent iteration (re-verified" not in prev_cap or (
-        "An earlier revision of this" in prev_cap)
+    # ⚑ UNCONDITIONAL. The previous form was
+    #     assert "<retracted stamp>" not in prev_cap or "An earlier revision"
+    #            in prev_cap
+    # whose right disjunct is permanently true, so the whole thing was ``X or
+    # True``. A mutation restored the retracted "never binds" claim to the HEAD
+    # of the paragraph, kept the historical sentence, and the suite stayed
+    # green -- a guard written for a finding that could not guard it.
+    assert "is a CEILING that never binds" not in prev_cap, prev_cap
+    assert prev_cap.lstrip().startswith(
+        "`` IS NOT COMPARABLE TO THE GATE'S SPLIT"), prev_cap[:120]
     for phrase in (
         "is ALSO pinned in the LIVE (uncommitted) ``configs/pbt2_small.yaml``",
         "Do not look for that second copy in the COMMITTED yaml -- it ships no "
@@ -3401,8 +3451,15 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
         ):
             assert phrase in flat_yaml, (cfg, phrase)
         # the retired sentence survives ONLY inside the retirement block
-        head = flat_yaml.partition("RETIRED 2026-08-11 (PR #395)")[0]
-        assert "about -195 Elo at 50% power and -249 at 90%" not in head, cfg
+        # ⚑ COUNT over the WHOLE file, not just the text BEFORE the stamp. A
+        # prefix-only check let a mutation APPEND the retired sentence after
+        # the retirement block in both configs with the suite green -- the
+        # retired figure may appear exactly once, inside the block that
+        # disowns it, and nowhere else.
+        retired = "about -195 Elo at 50% power and -249 at 90%"
+        assert flat_yaml.count(retired) == 1, (cfg, flat_yaml.count(retired))
+        block = flat_yaml.partition("RETIRED 2026-08-11 (PR #395)")[2]
+        assert retired in block.partition("The full derivation")[0], cfg
 
 
 def test_documented_time_to_trip_is_the_steady_state_number() -> None:
@@ -3974,9 +4031,17 @@ def test_the_retired_prev_share_is_labelled_retired_and_not_quotable() -> None:
                         ("5ce02", _POST_BOOT_SHAPES[27:])):
         c = st.mean([x for x, _ in rows])
         pv = st.mean([y for _, y in rows])
-        assert f"{label} {c:.1f}/{pv:.1f}" in flat_doc, (label, c, pv)
-        assert f"{100 * pv / (c + pv):.1f}%" in flat_doc, (label, c, pv)
-        assert f"({len(rows)})" in flat_doc, (label, len(rows))
+        # ⚑ ONE clause, not three needles. Searching the whole docstring for a
+        # bare "48.4%" or "(27)" is satisfied by the OTHER trial's figure: a
+        # mutation swapped 379f6's share to 5ce02's and escaped, because the
+        # digits it wrote were present elsewhere. Same defect as the digit
+        # fragments in the step-leg table, one section over.
+        share = f"(share {100 * pv / (c + pv):.1f}%)" if label == "379f6" \
+            else f"({100 * pv / (c + pv):.1f}%)"
+        assert f"{label} {c:.1f}/{pv:.1f} {share}" in flat_doc, (label, c, pv)
+    assert (f"379f6 ({len(_POST_BOOT_SHAPES[:27])}) + "
+            f"5ce02 ({len(_POST_BOOT_SHAPES[27:])}) = "
+            f"{len(_POST_BOOT_SHAPES)})") in flat_doc
 
 
 def test_shard_meta_records_the_difficulty_each_arm_played_at() -> None:
