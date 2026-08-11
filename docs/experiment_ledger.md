@@ -41974,3 +41974,80 @@ tfevents counters are computed server-side, before ingest.
 ⚠ This CORRECTS my own memory note of 2026-08-11 08:36, which claimed the salvage pool's `.attrs`
 were "the only surviving provenance". They are not; they are `None`. The note generalised from a
 single pre-ingest inbox shard to a bank of post-ingest ones without reading the bank.
+
+---
+
+## 2026-08-11 — OFFLINE SCREEN: the teacher's signal is CONSTANT, the training loss improves, and the arena does not move. **The losses are not coupled to strength.**
+
+CPU-only, run while training held the GPU. Two instruments: the 862 per-iteration scalars in
+trial `379f6`'s tfevents, and the per-row `priority_policy_kl` array in the 817 banked salvage
+shards. **All readings below are confined to iterations 1–735**, which share one search shape —
+736+ is the bundle and must not be compared across that line.
+
+### 1. Is the loop at a "search becomes inert" fixed point? **NO.**
+
+`priority_policy_kl` = KL(search target ‖ net prior), the actual per-row training signal
+[[kl_target_prior_is_the_training_signal]]. Read directly off the bank (coverage 1.0000,
+1,499,910 rows), binned by ingest order — the window spans ~139 iterations, roughly 533→672:
+
+| decile (oldest→newest) | mean KL |
+|---|---|
+| 1 | 0.11523 |
+| 5 | 0.11259 |
+| 10 | 0.11679 |
+
+**+1.4% end to end, no trend.** The search keeps disagreeing with the prior by the same amount,
+iteration after iteration. ⇒ **The teacher never goes quiet.** The hypothesis I raised earlier
+today — "search barely beats the prior, so the target is nearly the net itself and flat is the
+expected outcome" — is **not supported**. Whatever is wrong is downstream of the teacher.
+
+### 2. What the loss curves do over the same stretch
+
+| band | policy train | policy HOLDOUT | **gap** | wdl train | wdl holdout |
+|---|---|---|---|---|---|
+| 1–100 | 1.0057 | 1.2560 | **+0.2503** | 0.8119 | 0.8291 |
+| 250–399 | 0.9513 | 1.3408 | **+0.3895** | 0.8099 | 0.8263 |
+| 514–600 | 0.9426 | 1.3818 | **+0.4393** | 0.8041 | 0.8258 |
+| 701–735 | 0.9343 | 1.4203 | **+0.4860** | 0.7966 | 0.8260 |
+
+- Policy train falls monotonically, policy holdout **rises monotonically**, every band, no
+  reversal. **The generalization gap DOUBLES.**
+- **The value head does none of this**: `wdl` holdout is flat to four decimals (0.8291 →
+  0.8260) while its train loss falls. Same net, same window, same holdout rows. The divergence
+  is POLICY-ONLY.
+
+### 3. ⚠ The holdout CE cannot be read as proof of overfitting
+
+The discriminator is in the same data. `data_drift_policy_entropy_holdout` is **FLAT at ~0.985**
+across the whole run while `data_drift_policy_entropy_train` falls **0.9273 → 0.8683**. The two
+populations have drifted apart: live targets are getting sharper, the frozen holdout's are not.
+A CE against a stale target convention rises whether or not the net degrades
+[[exposure_recency_dominates_heldout_ce]]. **So reading 2 supports "train and holdout distributions
+diverged", and does NOT by itself establish memorisation.**
+
+### 4. What IS established, by putting §1–§3 against the arena
+
+Over iterations 249→735 the direct paired arenas show **no measurable Elo change**
+(correction entry above). In the same stretch: teacher signal **constant**, policy train loss
+**−7%**, wdl train loss **−1.9%**, holdout policy CE **+13%**, holdout wdl CE **flat**.
+
+⇒ **Every loss we optimize and every loss we monitor moved, in both directions, while playing
+strength did not move at all.** That is the finding. It is not "the loss is going the wrong way";
+it is that **the loss is not coupled to the objective in either direction**, so no amount of
+reading it — train or holdout, policy or value — can tell us whether an intervention helped.
+
+This is the mechanism behind [[most_experiments_here_are_unfalsifiable]] and it compounds with
+the instrument-resolution result above: the cheap signals are uninformative and the trustworthy
+one (±30 Elo at 400 games) is coarser than the effect we are hunting.
+
+**⇒ The next lever must be chosen for EFFECT SIZE, not for plausibility.** An intervention worth
+<40 Elo cannot be adjudicated by anything currently in the repo.
+
+### ⚑ Instrument note — do not repeat this misread
+
+`gumbel_policy_argmax_is_action_frac` (flat at 0.764 for 735 iterations) looks like
+"how often search agrees with the prior". **It is not.** `network_turn.py:200-218` computes it
+AFTER final temperature resampling, comparing the played action to the argmax of the SEARCH
+policy. It is a play-temperature diagnostic and says nothing about search-vs-prior. The
+search-vs-prior quantity is `priority_policy_kl`, used in §1. I nearly wrote the wrong one into
+this ledger — [[same_name_different_population]] again, at the metric-name level.
