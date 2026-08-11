@@ -94,21 +94,58 @@ Three changes of kind, not of tuning:
 
 WHAT IT CAN AND CANNOT RESOLVE -- READ THIS BEFORE TRUSTING A VERDICT
 ---------------------------------------------------------------------
-These numbers are MEASURED, not derived from the config. Binning 418 processed
-shard ``.zattrs`` by ``generated_at_unix`` against ``progress.csv`` timestamps
-over live iterations 164-219 (every window contains exactly two shas, which is
-what the publish cadence predicts):
+These numbers are MEASURED, not derived from the config.
 
-    n_cur ~= **197** games/iteration, n_prev ~= **38** (prev share **16.3%**)
+⚑ THE COMPOSITION MOVED, AND THE PROXY THAT FIRST MEASURED IT WAS THE WRONG
+INSTRUMENT. Both halves matter, so both are kept here.
+
+*Superseded (2026-07, PRE-08-04 lineage, PROXY instrument).* Binning 418
+processed shard ``.zattrs`` by ``generated_at_unix`` against ``progress.csv``
+timestamps over live iterations 164-219 gave::
+
+    n_cur ~= 197 games/iteration, n_prev ~= 38 (prev share 16.3%)
     per-iteration anchored delta: mean **-4.3 Elo**, sd **45.6 Elo** (n=53)
     that mean is **BOUNDED, NOT MEASURED**: se 6.26, 95% CI **[-16.6, +7.9]**,
     t = -0.69 -- indistinguishable from zero and spanning 25 Elo
 
+The delta statistics stand as a measurement of that lineage (and everything
+below is built on them). Do not quote that split. Timestamp-binning attributes a shard to the iteration
+its generation time falls in; the gate attributes a shard by its
+``model_sha256`` (``_process_shard``). Those agree only where publish and
+iteration boundaries coincide, which they do not, so the proxy and the gate
+were never measuring the same partition -- and the lineage it was taken on was
+replaced by the 2026-08-04 fresh boot.
+
+*Current (2026-08-11, live trial ``5ce02`` iter 20, THE GATE'S OWN COUNTERS --
+``gate_iters`` / ``gate_games_cur`` / ``gate_games_prev``, i.e. by definition
+the partition the gate acts on)*::
+
+    window: gate_iters 22, games_cur 1054, games_prev 1193
+         => ~47.9 cur + ~54.2 prev per iteration, prev share **53.1%**
+    this iteration's own sample: 66 cur / 49 prev (115 games, share 42.6%)
+    previous trial (379f6, 28 iterations): pooled prev share 49.2%
+
+So the prev share is **~3x** the retired figure and total games/iteration is
+roughly **half** of it. Some of that gap is the instrument change and some is
+real; the two cannot be separated after the fact, which is the reason the proxy
+number is retired rather than adjusted.
+
+The consequence for everything below: the independent-binomial per-iteration se
+scales as ``sd * sqrt(1/n_cur + 1/n_prev)``. At 197/38 that factor is 0.1772;
+at 48/54 it is 0.1984 -- **+12%**, because the old shape was dominated by its
+tiny ``n_prev`` and the new one is balanced. The empirical ``sd 45.6 Elo`` below
+was MEASURED on the old lineage and is not re-derivable from ``n``, so it is
+left as-is and the power table with it -- but it is now an OPTIMISTIC figure by
+roughly that 12%, and it owes a re-measurement on this lineage. That moves the
+"no gate can ratchet at 0.02 Elo/iteration" conclusion further from the line,
+not closer, which is why nothing downstream is gated on the re-measurement.
+
 Note ``distributed_prev_model_max_fraction: 0.60`` is a CEILING that never
-binds -- ``distributed_stale_games`` is 0 on every recent iteration, and a
-binding cap would have to discard prev shards into ``stale_*``. Sizing this
-gate off 0.60 gives 95/143 and a standard error of 31 Elo. Always take the
-realized split from shard data, never the cap.
+binds -- ``distributed_stale_games`` is 0 on every recent iteration
+(re-verified 2026-08-11 on trial 5ce02), and a binding cap would have to
+discard prev shards into ``stale_*``. Sizing this gate off 0.60 gives 95/143
+and a standard error of 31 Elo. Always take the realized split from the gate's
+counters, never the cap and never a timestamp proxy.
 
 **The observed spread is pure binomial noise -- there is NO detectable
 anchor-drift variance**, and an earlier revision of this module claimed the

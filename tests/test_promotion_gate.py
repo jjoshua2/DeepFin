@@ -3337,6 +3337,44 @@ def test_the_module_no_longer_claims_the_pid_cancels() -> None:
     assert "does NOT\n  # apply during a break" in yaml_src
 
 
+def test_the_retired_prev_share_is_labelled_retired_and_not_quotable() -> None:
+    """MUTATION: re-promote ``16.3%`` to a live figure, or drop the instrument
+    stamp, and this fails.
+
+    The ``16.3%`` prev share sat in this docstring for weeks as a bare
+    "MEASURED" number.  It was measured by binning shard ``.zattrs``
+    ``generated_at_unix`` against iteration timestamps -- a PROXY for the
+    ``model_sha256`` partition the gate actually uses -- and on a lineage the
+    2026-08-04 fresh boot replaced.  The gate's own counters read 53.1% on
+    2026-08-11.  Anyone sizing a window off 16.3% would size it off a number
+    that is wrong by 3x, from the module that owns the correct one.
+
+    So the test pins the SHAPE of the correction, not just the digits: the old
+    figure must still be present (retired numbers are kept, not deleted --
+    deleting one invites its rediscovery), it must be labelled superseded, and
+    the replacement must name the instrument it came from.
+    """
+    doc = promotion_gate.__doc__ or ""
+
+    # The retired figure is kept and explicitly disowned.
+    assert "16.3%" in doc
+    assert "Do not quote that split" in doc
+    assert "Superseded" in doc or "superseded" in doc
+    assert "PROXY instrument" in doc
+
+    # The replacement names the instrument -- the gate's own counters, by name.
+    for counter in ("gate_iters", "gate_games_cur", "gate_games_prev"):
+        assert counter in doc, counter
+    assert "53.1%" in doc
+
+    # And the reason the two disagree is stated, not left for the reader.
+    assert "model_sha256" in doc
+
+    # The downstream consequence is spelled out rather than silently ignored:
+    # the shipped power table was measured under the OLD shape.
+    assert "OPTIMISTIC" in doc.upper()
+
+
 def test_shard_meta_records_the_difficulty_each_arm_played_at() -> None:
     """MUTATION: drop ``opponent_wdl_regret_limit`` from ``ShardMeta``, or drop
     the per-arm accumulation from ``_process_shard``.
