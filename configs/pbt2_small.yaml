@@ -94,7 +94,7 @@ worker_wheel_path: null
 # ⚑ COST, STATED: naming this key here CLOBBERS any `--salvage-seed-pool-dir` CLI value
 # (the live-yaml reload overlays it). If you ever want a salvage-pool restart, blank or
 # delete this line in the SAME action as passing the CLI flag.
-salvage_seed_pool_dir: ""
+salvage_seed_pool_dir: "/home/josh/projects/chess/data/salvage/pre_search_authority_20260809"
 salvage_restore_donor_config: false
 salvage_restore_full_trainer_state: true
 salvage_restore_pid_state: true
@@ -258,6 +258,18 @@ selfplay:
   # and 0.025 had cut sigma 10.6 -> 2.65. policy_temp 1.5 is the softening arm.
   gumbel_c_scale: 0.1
   gumbel_policy_temp: 1.5
+  # sigma_target decoupled from sigma_play. sigma = c_scale*(c_visit + max_visit); the
+  # 256-sim survivor accrues max_visit 56 (schedule 1,3,7,15,30) and a 50-sim search
+  # accrues 5, so cap 5 gives the STORED target a 50-sim sigma while PLAY keeps the full
+  # 256-sim search. Play is untouched -> the measured +271 Elo search gain is retained.
+  # ⚠ NOT the fix: priced 2026-08-11 on the target-quality axis and it came out NEUTRAL
+  # (better_in 0.777 vs 0.770, inside noise). Carried as hygiene -- it removes a real
+  # coupling of the target to the played sim budget. Do not call it the fix in a readout.
+  gumbel_target_max_visit_cap: 5
+  # Untempered prior in the STORED target only; candidate selection stays tempered.
+  # ⚠ Also NEUTRAL (better_in 0.785 vs 0.770) and it did NOT pass its own offline screen
+  # (top1 +0.393 [-0.699, +1.485]). First key to drop if the readout is inconclusive.
+  gumbel_target_untempered_prior: true
   gumbel_scale: 1.0
   gumbel_scale_after: 0.5
   gumbel_scale_decay_start_move: 12
@@ -309,6 +321,29 @@ selfplay:
   diff_focus_pol_scale: 3.5
   diff_focus_slope: 3.0
   diff_focus_min: 0.025
+  # ⚑ THE ONE CHANGE HERE WITH A MEASURED DEFECT BEHIND IT (tasks #171/#173). The
+  # iter-736 search change moved `difficulty`'s absolute scale with no key edited and no
+  # value out of range, and the fixed thresholds above went with it:
+  #   keep_prob_mean      0.800  -> 0.958
+  #   keep_limited_frac   0.3786 -> 0.1088
+  #   priority_std        1.236  -> 7.389
+  #   grad_hard_clip_rate 0.0    -> 0.824   (onset iter 782)
+  # Normalising by a running reference quantile makes the keep/priority gates mean the
+  # same thing across a search change. norm_slope REPLACES diff_focus_slope (different
+  # units) -- diff_focus_pol_scale is deliberately LEFT at 3.5, because also applying the
+  # runbook's pol_scale -> 0.45 point calibration would double-correct.
+  diff_focus_norm_enabled: true
+  # The five below are pinned EQUAL to the code defaults (selfplay/config.py:138-159,
+  # trial_config.py:320-325) rather than omitted. An absent key is not "off", it is the
+  # realized default, and this file is the only place the realized value is readable.
+  diff_focus_norm_window: 8192
+  diff_focus_norm_warmup: 1024
+  diff_focus_norm_quantile: 0.5
+  # 1.62 reproduces the mean realized keep_rate of the whole healthy era (iters 1-735 of
+  # trial 379f6, mean 0.8156) -- NOT the 0.8029 of iters 560-735, which is the bottom of
+  # a 700-iteration drift that is itself an artifact of this same unnormalized scale.
+  diff_focus_norm_slope: 1.62
+  diff_focus_norm_clip: 8.0
   # PIN (both). Unpublished, pinned equal to the worker dataclass defaults; tripwire value
   # only. Deleting them is neutral today and stops being neutral the day they are wired.
   categorical_bins: 32
