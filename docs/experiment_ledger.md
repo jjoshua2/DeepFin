@@ -42051,3 +42051,56 @@ AFTER final temperature resampling, comparing the played action to the argmax of
 policy. It is a play-temperature diagnostic and says nothing about search-vs-prior. The
 search-vs-prior quantity is `priority_policy_kl`, used in §1. I nearly wrote the wrong one into
 this ledger — [[same_name_different_population]] again, at the metric-name level.
+
+---
+
+## 2026-08-11 — TASK #178: the #382 Codex findings triaged, 10 accepted / 1 REJECTED → PR #393
+
+Read the inline threads (`gh api repos/{owner}/{repo}/pulls/382/comments` — `reviewDecision`
+is a false negative here, the findings live in COMMENTS). **Every finding was reproduced
+against `main` before being accepted**, and every fix ships with a test that is RED on `main`.
+
+**Why a research script earned this much work.** Today's two other entries establish that a
+400-game arena resolves ±30 Elo while the loop's own rate is under that, so an OFFLINE screen
+is the only affordable adjudication left. A screen whose gates cannot fire is worse than no
+screen, because it returns a verdict.
+
+| # | finding | verdict |
+|---|---|---|
+| 1 | `assert_calibrated` unreachable with neither `--calibration` nor `--compare-to` — and that is the DEFAULT path (`--gumbel-scale` defaults to 1.0 vs production 0.5) | FIXED |
+| 2 | `is_production_shape` compared 4 of `SimShape`'s 12 fields; all 12 reach the re-search and 4 of the missing 8 are CLI flags | FIXED |
+| 3 | `ctrl_A` / `control_margin_a` was arm **B**'s control | FIXED |
+| 4 | a `--compare-to` delta across a changed `diff_focus` population was not refused — `read_diff_focus`'s own docstring promises the refusal | FIXED |
+| 5 | producing-net guard compared `model_step` but never the collected `model_sha_prefixes` | FIXED |
+| 6 | `--mode simulate --compare-to` could only ever hit the UNKNOWN-provenance branch | FIXED |
+| 7 | a legacy v1 checkpoint got a 146-plane root and 175-plane children | FIXED |
+| 9 | `--seed` moved bootstraps and shuffles but NOT the search; provenance banked it anyway | FIXED |
+| 10 | non-finite rows under `assert_population`'s 1% tolerance were scored as UNCOVERED | FIXED |
+| 11 | `--scan-ref-arm != A` paired that arm's control with `paired_vs_A` effects | FIXED |
+| 8 | "do not label shuffled deltas as harness bias" | **REJECTED** |
+
+**#8 rejected because it is already handled on `main`.** The shuffle is applied at
+`rows = shuffled_rows(...)` BEFORE the bias block, and that branch sets `stored_rows = None`
+and prints that the table is SUPPRESSED. The bias block is guarded by `if stored_rows:`.
+⇒ **11 findings, 10 real. The bot's precision here is ~91%, which is high enough to be worth
+reading and not high enough to apply unread.**
+
+### Two findings are the house defect INSIDE the guards written to catch it
+
+- **#5**: `model_sha_prefixes` was collected on every shard and never read — a value accepted
+  and then ignored, in `assert_same_producing_net`.
+- **#9**: provenance banked `args.seed` while `_ResearchRunner` hard-coded `20260809`. **The
+  recorded seed did not reproduce the arm it was recorded for.**
+
+Both are [[reachability_cannot_be_grepped_by_source_name]] in its cheapest form: the symbol is
+present, assigned, and banked, and nothing consumes it.
+
+### Method note earned
+
+**#1 was proved by AST, not by eye.** Walking the `if` chain enclosing each `assert_calibrated`
+call site printed the two guards and made "unreachable with neither flag" a fact rather than a
+reading. Worth reusing whenever the question is *can this gate fire*, because reading a 2400-line
+`main` for reachability is exactly where a careful reviewer says "it's probably called somewhere".
+
+⚠ PR #393 was authored by the main session; per CLAUDE.md the reviewer must not be the author,
+and the PR says so. It needs a separate pass before merge.
