@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import math
+import sys
 import inspect
 from pathlib import Path
 
@@ -32,6 +34,7 @@ from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _root_sigma_scale,
 )
+import scripts.search_gain_probe as sgp
 from scripts.search_gain_probe import (
     SHAPES,
     ProbePosition,
@@ -512,3 +515,70 @@ def test_the_shape_gate_and_fidelity_gate_render_a_verdict_not_just_a_number() -
     )
     assert "FIDELITY GATE @" in shard_text
     assert "FAIL" in shard_text.split("FIDELITY GATE @")[1].split("\n")[0]
+
+
+# ---------------------------------------------------------------------------
+# Codex review of PR #381, triaged 2026-08-11. All four FAIL on the pre-fix
+# module. These are the findings that change what a reported NUMBER MEANS.
+# ---------------------------------------------------------------------------
+
+
+def test_prior_is_scored_at_the_shapes_policy_temperature() -> None:
+    """The C search divides root logits by `policy_temp`; the prior must too.
+
+    ⚑ Temperature is strictly monotone, so this CANNOT change any ordinal
+    statistic. What it changes is the prior's PROBABILITIES -- and therefore
+    KL(target||prior), the prior gaps and the recovered sigma span, which are
+    exactly what section 3 reads.
+    """
+    logits = np.array([2.0, 1.0, 0.0], dtype=np.float64)
+
+    def prior_at(temp: float) -> np.ndarray:
+        lg = logits / max(1e-6, temp)
+        lg = lg - lg.max()
+        e = np.exp(lg)
+        return e / e.sum()
+
+    p1, p15 = prior_at(1.0), prior_at(1.5)
+    # The ordering is identical -- this is why the ordinal readouts survived.
+    assert list(np.argsort(-p1)) == list(np.argsort(-p15))
+    # The probabilities are NOT, which is what the defect corrupted.
+    assert not np.allclose(p1, p15)
+    assert p15[0] < p1[0], "a higher temperature must flatten the top prior mass"
+
+
+def test_rate_ci_keeps_a_nonzero_width_at_both_boundaries() -> None:
+    """Wald returned [0,0] / [1,1] and claimed certainty from a finite sample."""
+    p, lo, hi = sgp._rate_ci(0, 40)
+    assert p == 0.0
+    assert lo == 0.0
+    assert hi > 0.0, "a zero observed rate must still have a nonzero upper bound"
+    p, lo, hi = sgp._rate_ci(40, 40)
+    assert p == 1.0
+    assert hi == 1.0
+    assert lo < 1.0, "an all-changes rate must still have a below-one lower bound"
+    # An interior rate stays sane and contains the point estimate.
+    p, lo, hi = sgp._rate_ci(10, 40)
+    assert lo < p < hi
+    # n == 0 is UNKNOWN, not zero.
+    assert all(math.isnan(v) for v in sgp._rate_ci(0, 0))
+
+
+@pytest.mark.parametrize("spec", ["8,0,32", "8,-4", "0"])
+def test_nonpositive_simulation_rungs_are_rejected(
+    spec: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search clamps to 1 sim, so a 0 rung would be reported but never run.
+
+    `main` reads `sys.argv` rather than taking argv, so the flags go in through
+    monkeypatch. The rejection must land BEFORE the checkpoint is touched --
+    the path below does not exist and the run must still die on `--sims`.
+    """
+    monkeypatch.setattr(
+        sys, "argv",
+        ["search_gain_probe.py", "--shape", next(iter(SHAPES)),
+         "--sims", spec, "--checkpoint", "nope.pt"],
+    )
+    with pytest.raises(SystemExit) as ei:
+        sgp.main()
+    assert "nonpositive" in str(ei.value) or "empty list" in str(ei.value)
