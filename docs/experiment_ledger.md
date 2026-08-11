@@ -40254,3 +40254,72 @@ not training value. A better-ranked target is a plausible but unproven route to 
 net — the loop's failure mode all along has been targets that look good by a static ruler
 while the closed loop degrades. **None of V1–V4 is a strength verdict.** The only trusted
 strength ruler remains a paired arena vs a FROZEN anchor at ≥300 games.
+
+---
+
+## 2026-08-10 — `c_scale` LADDER: 0.1 IS AT THE PEAK. THE MEAN IS A LYING SUMMARY ABOVE IT.
+
+**Question** (from the ranking ladder two entries above): target ranking rose 0.025 → 0.1, and
+the PLAY optimum was separately measured ~0.2. Is the live 0.1 still BELOW the TARGET optimum
+— i.e. is there a yaml-only Elo lever sitting there?
+
+**Answer: NO on the robust statistic. `c_scale: 0.1` is already the peak.** Matched sims=256,
+topk=32, one checkpoint, 400 positions, only `c_scale` varying. Row `c4_repro_live` reproduces
+the banked 0.1 row to the digit before any verdict. Raw:
+`scratchpad/ladder_20260810/rank/*.json`, runner `run_cscale.sh`.
+
+| c_scale | Δρ (mean) | 95% CI | **better_in** | H(search) | top1 agree w/ prior |
+|---|---|---|---|---|---|
+| 0.025 | +0.0077 | [+0.0065, +0.0088] | 0.752 | 1.104 | 0.920 |
+| **0.1 (LIVE)** | +0.0179 | [+0.0153, +0.0203] | **0.797 ← PEAK** | 0.891 | 0.758 |
+| 0.15 | +0.0178 | [+0.0148, +0.0208] | 0.772 | 0.792 | 0.720 |
+| 0.2 (play opt) | +0.0188 | [+0.0156, +0.0221] | 0.745 | 0.730 | 0.678 |
+| 0.3 | +0.0165 | [+0.0131, +0.0200] | 0.705 | 0.591 | 0.623 |
+| 0.5 | +0.0140 | [+0.0101, +0.0180] | 0.647 | 0.454 | 0.578 |
+| 1.0 | **+0.0242** | [+0.0192, +0.0292] | 0.677 | 0.319 | 0.538 |
+
+### ⚑⚑ THE TWO STATISTICS DISAGREE, AND THE MEAN IS THE UNRELIABLE ONE
+
+`Δρ (mean)` is **flat** across 0.1 / 0.15 / 0.2 (+0.0179 / +0.0178 / +0.0188, CIs fully
+overlapping — this is ONE value, not a rise), dips through 0.3–0.5, then **spikes to +0.0242
+at 1.0**. Meanwhile `better_in` — the fraction of POSITIONS where the search target ranks
+better than the prior — falls **monotonically** from its 0.797 peak at 0.1 all the way to
+0.647, and is still only 0.677 at 1.0.
+
+**A higher mean with a lower win rate over positions is the signature of a heavy tail**: at
+c_scale 1.0 the target wins BIG in a minority of positions and loses in many more. This
+document's own rule — *an OLS slope on an oscillating series is a lying summary, BIN IT* —
+applies to a mean over positions exactly as it does to a mean over iterations.
+**⇒ Do NOT read the +0.0242 at c_scale 1.0 as "1.0 is better than 0.1".** It is better on
+average and worse more often, and a TRAINING TARGET is consumed per-position.
+
+### The mechanism, which makes the disagreement expected rather than mysterious
+
+The improved policy is `softmax(log_prior + sigma*Qbar)` with `sigma = c_scale*(c_visit +
+max_visit)`. As `c_scale` grows the `log_prior` term is swamped and **the ranking converges on
+Qbar's ordering alone.** The ladder shows exactly that: `top1_agreement_prior_vs_search` decays
+0.920 → 0.538, and H(search) collapses 1.104 → 0.319. So the c_scale=1.0 row is approximately
+**"rank by Q̄ alone"**, and its profile — higher mean concordance, lower per-position win rate —
+is the direct measurement that **Gumbel's policy-improvement guarantee is about the BLEND, not
+about Q̄**. Dropping the prior does not dominate the blend; it trades breadth for tails.
+
+### Verdicts
+
+1. **KEEP `gumbel_c_scale: 0.1` through the revert.** It is the peak of `better_in` and
+   statistically tied for the best mean. There is no free lever here.
+2. **`sigma_play` ≠ `sigma_target` is now MEASURED, not argued.** Play optimum ~0.2, target
+   optimum 0.1 on the robust statistic — adjacent but not equal, and both far below the
+   Q̄-only regime. The standing "one number, two jobs" tension is real and SMALL. It does not
+   justify a new knob on this evidence [[option B is already measured negative]].
+3. **The `_all` columns are not usable for this question** and were not used: search only ever
+   visits the top-`topk` candidates, so `concordance/search_all` (0.7775 vs prior 0.8017 at the
+   live shape) is dominated by the unvisited tail keeping an unimproved order. `top32` is the
+   only population the intervention touches. Same-name-different-population, in the same file.
+
+### What this does NOT establish
+
+Ranking concordance against a **shallow** SF ruler (multipv40 @50k) is not Elo and not training
+value. And the c_scale=1.0 anomaly is described, not explained: the per-position delta
+distribution was not dumped, so "heavy tail" is inferred from the mean/win-rate disagreement
+rather than measured directly. **If anyone proposes raising c_scale on the strength of that
++0.0242, dumping that distribution is the prerequisite, not an optional extra.**
