@@ -16,6 +16,7 @@ import math
 import random
 import statistics as st
 from pathlib import Path
+from collections.abc import Sequence
 from typing import ClassVar
 
 import numpy as np
@@ -34,6 +35,8 @@ from chess_anti_engine.tune.distributed_runtime import (
 )
 from chess_anti_engine.tune import promotion_gate
 from chess_anti_engine.tune.promotion_gate import (
+    elo_from_score_delta,
+    _POOLED_GAME_SCORE_SD,
     _CADENCE_RATIO_MAX,
     _CADENCE_RATIO_MIN,
     _DEGENERATE_SE_ULPS,
@@ -780,16 +783,40 @@ def test_measured_live_shape_admits_most_iterations() -> None:
     (``distributed_stale_games == 0`` throughout). A floor of 40 sits at the
     median and disqualifies ~70% of iterations, pinning the effective window at
     K=9-12 and making ``gate_delta_elo`` repeat verbatim across rows.
+
+    Re-verified on the CURRENT lineage, where the arms are balanced at ~50/46
+    rather than 197/38: over the 96 banked post-boot iterations a floor of 40
+    admits 59/96 -- the same verdict on 40, for a DIFFERENT reason. At 197/38
+    only the prev arm could ever be short. At 50/46 BOTH are, near-equally: of
+    the 37 iterations a floor of 40 rejects, 18 are short on cur and 19 on
+    prev. The shipped floor now has to survive on two arms, not the one the
+    2026-07 measurement watched.
     """
-    assert GateConfig().min_games_per_side <= 20
+    floor = GateConfig().min_games_per_side
+    assert floor <= 20
     live_prev_counts = (1, 21, 25, 33, 52, 68, 99)  # measured quantiles
     admitted = sum(
         1 for n in live_prev_counts
-        if AnchoredSample(0, cur_w=197, prev_w=n).usable(
-            min_games_per_side=GateConfig().min_games_per_side,
-        )
+        if AnchoredSample(0, cur_w=197, prev_w=n).usable(min_games_per_side=floor)
     )
     assert admitted >= 6, "the shipped floor disqualifies most live iterations"
+
+    # The same claim against the current lineage, through ``usable`` itself.
+    def admits(f: int) -> int:
+        return sum(1 for c, p in _POST_BOOT_SHAPES
+                   if AnchoredSample(0, cur_w=c, prev_w=p).usable(
+                       min_games_per_side=f))
+
+    assert admits(floor) == len(_POST_BOOT_SHAPES)
+    assert admits(40) == 59, admits(40)
+    # ... and BOTH arms now bind, near-equally. Under the old 197/38 shape the
+    # cur arm could not be the short one; a first draft of this test asserted
+    # cur now DOMINATES and the data said 18 vs 19 -- close, and not what was
+    # claimed. Pinned as the measurement rather than as the story.
+    killed_by_40 = [(c, p) for c, p in _POST_BOOT_SHAPES if c < 40 or p < 40]
+    short_cur = sum(1 for c, _ in killed_by_40 if c < 40)
+    short_prev = sum(1 for _, p in killed_by_40 if p < 40)
+    assert (len(killed_by_40), short_cur, short_prev) == (37, 18, 19)
 
 
 def test_one_sided_sample_is_never_usable() -> None:
@@ -1351,6 +1378,191 @@ _LIVE_WINDOWS = (
     (219, 50, 103, 51, 1, 11, 3),
 )
 _N_LIVE = len(_LIVE_WINDOWS)
+
+# ``_POST_BOOT_SHAPES`` is the CURRENT lineage's per-iteration (n_cur, n_prev),
+# read straight off the gate's own ``gate_sample_games_cur`` /
+# ``gate_sample_games_prev`` columns in ``progress.csv`` -- the same partition
+# the gate acts on, so unlike ``_LIVE_WINDOWS`` (a timestamp PROXY on a lineage
+# the 2026-08-04 fresh boot replaced) there is no instrument gap to argue about.
+# Every usable row (both arms non-empty) of both post-boot trials: 379f6 (27)
+# and 5ce02 (69), read 2026-08-11.
+#
+# Each row is ``(n_cur, n_prev, w, d, l)``. The W/D/L half is that iteration's
+# curriculum result split (``pid_curriculum_w/d/l``) and it is here for one
+# reason: the per-game score sd is the OTHER factor in every standard error
+# below, and re-measuring ``n`` while taking ``sd`` on trust would repeat, one
+# level down, exactly the mistake this whole revision exists to correct. A
+# review round found that first draft doing precisely that.
+_POST_BOOT_ITERATIONS = (
+    (17, 61, 18, 37, 23), (36, 62, 23, 52, 23), (59, 46, 25, 50, 30), (46, 53, 25, 44, 30),
+    (39, 49, 22, 44, 22), (52, 46, 28, 43, 27), (62, 50, 22, 56, 34), (52, 47, 21, 46, 32),
+    (48, 30, 24, 33, 21), (53, 55, 26, 59, 23), (48, 39, 21, 46, 20), (65, 44, 32, 50, 27),
+    (47, 61, 19, 59, 30), (66, 37, 30, 51, 22), (37, 61, 25, 57, 16), (65, 44, 21, 60, 28),
+    (62, 45, 37, 49, 21), (71, 48, 31, 61, 27), (51, 49, 16, 54, 30), (49, 43, 24, 42, 26),
+    (61, 28, 24, 45, 20), (55, 43, 28, 48, 22), (58, 35, 26, 46, 21), (52, 45, 21, 47, 29),
+    (46, 51, 18, 60, 19), (50, 41, 22, 51, 18), (60, 38, 20, 47, 31), (41, 62, 29, 50, 24),
+    (45, 55, 42, 42, 16), (36, 44, 26, 36, 18), (36, 49, 28, 41, 16), (51, 49, 48, 35, 17),
+    (49, 57, 39, 57, 10), (32, 40, 22, 35, 15), (29, 51, 25, 35, 20), (39, 46, 28, 38, 19),
+    (52, 49, 31, 51, 19), (44, 48, 35, 45, 12), (36, 52, 21, 55, 12), (39, 51, 32, 41, 17),
+    (40, 51, 26, 54, 11), (55, 48, 28, 55, 20), (39, 49, 19, 51, 18), (50, 25, 22, 37, 16),
+    (54, 34, 23, 43, 22), (66, 49, 43, 51, 21), (73, 35, 37, 58, 13), (45, 58, 36, 46, 21),
+    (45, 48, 27, 50, 16), (70, 41, 36, 54, 21), (34, 54, 30, 35, 23), (68, 25, 21, 55, 17),
+    (69, 52, 32, 65, 24), (61, 40, 30, 42, 29), (71, 30, 37, 44, 20), (41, 36, 27, 33, 17),
+    (55, 45, 19, 59, 22), (59, 42, 23, 57, 21), (42, 29, 19, 35, 17), (46, 40, 25, 41, 20),
+    (49, 66, 30, 59, 26), (37, 46, 18, 46, 19), (45, 47, 24, 57, 11), (65, 44, 22, 59, 28),
+    (40, 46, 24, 42, 20), (40, 64, 18, 57, 29), (57, 40, 18, 47, 32), (44, 45, 21, 44, 24),
+    (37, 53, 20, 52, 18), (49, 36, 22, 46, 17), (45, 38, 24, 36, 23), (62, 39, 21, 60, 20),
+    (44, 62, 26, 57, 23), (34, 48, 19, 49, 14), (44, 50, 21, 56, 17), (47, 53, 23, 55, 22),
+    (41, 44, 18, 42, 25), (60, 45, 17, 55, 33), (62, 36, 17, 62, 19), (36, 49, 20, 47, 18),
+    (81, 38, 32, 62, 25), (35, 65, 24, 61, 15), (50, 46, 20, 51, 25), (64, 47, 30, 54, 27),
+    (53, 48, 25, 57, 19), (57, 44, 26, 58, 17), (41, 45, 15, 48, 23), (54, 41, 24, 48, 23),
+    (58, 43, 24, 49, 28), (69, 54, 23, 70, 30), (46, 58, 23, 57, 24), (58, 39, 20, 55, 22),
+    (52, 45, 27, 53, 17), (50, 44, 19, 48, 27), (54, 50, 24, 52, 28), (47, 63, 21, 64, 25),
+)
+_POST_BOOT_SHAPES = tuple((c, p) for c, p, *_ in _POST_BOOT_ITERATIONS)
+
+
+def _within_iteration_score_sd() -> float:
+    """The per-game score sd that ``_POOLED_GAME_SCORE_SD`` is an estimate OF.
+
+    ⚑ NOT the grand pool over all 9282 games. ``_arm_score_var`` measures each
+    arm's variance around THAT ARM's own mean, and the between-iteration term
+    (drift in the PID setpoint) is common to both arms of an iteration, so it
+    cancels in ``delta`` and neither consumer ever sees it. Over the 96 banked
+    iterations the decomposition is grand 0.121002 = within 0.118771 + between
+    0.002231, i.e. within-sd 0.3446 against a grand-pool 0.3479.
+
+    A revision of this file asserted the GRAND-POOL figure as "the re-measured
+    value, so the shipped constant is 0.9% low", and the whole 22-vs-25
+    argument was first written on it. Re-measuring the right quantity and
+    re-measuring a nearby wrong one look identical until someone asks which one
+    the code consumes.
+
+    ⚑ ONE residual approximation, stated rather than hidden: ``progress.csv``
+    carries a single POOLED ``pid_curriculum_w/d/l`` per iteration, not a
+    per-arm split, so this centres each iteration on ITS OWN pooled mean where
+    ``_arm_score_var`` centres on each ARM's mean. Under the null the two
+    coincide. With a real cur-vs-prev gap the pooled centring absorbs that gap
+    into the within term, so this figure is a slight OVER-estimate -- and an
+    over-estimate is the direction that makes the leg fire LESS, so it cannot
+    manufacture the breach the docstring reports. Closing it needs per-arm W/D/L
+    at ingest, which the gate does not currently record.
+    """
+    return math.sqrt(_score_var_decomposition()[1])
+
+
+def _per_iteration_score_sds() -> list[tuple[float, tuple[int, int, int, int, int]]]:
+    """``[(own score sd, row), ...]`` ascending, over the 96 banked iterations.
+
+    The docstring's "the floor does not bind on every iteration" paragraph is
+    three data statements in prose -- the range, the identity of the widest
+    row, and its own sd -- and a mutation sweep rewrote all three freely. They
+    are derived here so the prose is pinned to the rows.
+    """
+    out: list[tuple[float, tuple[int, int, int, int, int]]] = []
+    for row in _POST_BOOT_ITERATIONS:
+        _c, _p, w, d, lo = row
+        n = w + d + lo
+        mean = (w + 0.5 * d) / n
+        var = (w * (1 - mean) ** 2 + d * (0.5 - mean) ** 2 + lo * mean ** 2) / n
+        out.append((math.sqrt(var), row))
+    return sorted(out)
+
+
+def _score_var_decomposition() -> tuple[float, float, float]:
+    """``(grand, within, between)`` per-game score variance over the 96 rows.
+
+    ⚑ The three are quoted in the module docstring's step-leg section, and the
+    whole point of that block is that only ONE of them is the analogue of
+    ``_POOLED_GAME_SCORE_SD``. Deriving all three here means the docstring's
+    decomposition line is pinned to the data rather than to itself.
+    """
+    within_num = 0.0
+    grand_num = 0.0
+    games = 0
+    grand_mean = sum(w + 0.5 * d for _c, _p, w, d, _l in _POST_BOOT_ITERATIONS)
+    games = sum(w + d + l for _c, _p, w, d, l in _POST_BOOT_ITERATIONS)
+    grand_mean /= games
+    for _c, _p, w, d, l in _POST_BOOT_ITERATIONS:
+        n = w + d + l
+        mean = (w + 0.5 * d) / n
+        within_num += w * (1 - mean) ** 2 + d * (0.5 - mean) ** 2 + l * mean ** 2
+        grand_num += (w * (1 - grand_mean) ** 2 + d * (0.5 - grand_mean) ** 2
+                      + l * grand_mean ** 2)
+    within = within_num / games
+    grand = grand_num / games
+    return grand, within, grand - within
+
+
+def _step_leg_se_elo(n_cur: float, n_prev: float,
+                     *, sd: float = _POOLED_GAME_SCORE_SD) -> float:
+    """The step leg's binomial se in Elo at a given arm shape, closed form.
+
+    ⚑ This is the CHEAP instrument and it is not accurate enough to size the
+    floor with -- it runs up to 27% conservative at these ``n`` because the
+    gate's plug-in ``se`` is itself noisy and often falls back to the pooled
+    floor. Use ``_step_leg_mc_rate`` to decide anything; use this only for the
+    ``se`` column and for the retired rows, which were quoted this way.
+
+    ⚑ Direction, because a revision of this docstring had it backwards: the
+    leg fires when ``elo_hi = delta + z*se`` drops below the line, so a
+    NARROWER ``se`` makes it fire MORE readily, not less.
+    """
+    return sd * math.sqrt(1.0 / n_cur + 1.0 / n_prev) * ELO_PER_SCORE_AT_HALF
+
+
+def _step_leg_mc_rate(n_cur: int, n_prev: int, *, line: float,
+                      replicates: int = 25_000, seed: int = 0,
+                      wdl: Sequence[tuple[int, int, int]] | None = None) -> float:
+    """False-brake rate of the SHIPPED rule under a null, by simulation.
+
+    The exact instrument: draw both arms from each banked iteration's own
+    realized W/D/L (so both arms share that iteration's difficulty, which is
+    what makes it a null), rebuild ``AnchoredSample.score_se`` exactly as
+    shipped -- pooled floor included -- and fire on ``elo_hi < line``.
+    """
+    rng = np.random.default_rng(seed)
+    floor = _POOLED_GAME_SCORE_SD ** 2
+    z = _Z_ONE_SIDED[0.05]
+    # ``elo_from_score_delta`` is monotone; invert the line once into score space
+    lo, hi = -0.9, 0.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if elo_from_score_delta(mid) < line:
+            lo = mid
+        else:
+            hi = mid
+    thresh = 0.5 * (lo + hi)
+
+    def arm(n: int, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        c = rng.multinomial(n, p, size=replicates).astype(np.float64)
+        mean = (c[:, 0] + 0.5 * c[:, 1]) / n
+        var = np.maximum(0.0, (c[:, 0] + 0.25 * c[:, 1]) / n - mean * mean)
+        return mean, np.maximum(var, floor)
+
+    rows = wdl if wdl is not None else [r[2:] for r in _POST_BOOT_ITERATIONS]
+    fired = total = 0
+    for w, d, l in rows:
+        p = np.asarray([w, d, l], dtype=np.float64)
+        p /= p.sum()
+        m_c, v_c = arm(n_cur, p)
+        m_p, v_p = arm(n_prev, p)
+        hi_bound = (m_c - m_p) + z * np.sqrt(v_c / n_cur + v_p / n_prev)
+        fired += int(np.count_nonzero(hi_bound < thresh))
+        total += replicates
+    return fired / total
+
+
+def _step_leg_budget(se_elo: float, *, line: float) -> tuple[float, float]:
+    """``(delta the leg fires below, spurious holds per 8000 null iterations)``.
+
+    ``line`` is REQUIRED on purpose. A ``= -125.0`` default here would be a
+    second, dormant copy of ``demote_step_elo`` in the file whose whole subject
+    is duplicated constants going stale.
+    """
+    fires_at = line - _Z_ONE_SIDED[0.05] * se_elo
+    p_null = 0.5 * (1.0 + math.erf((fires_at / se_elo) / math.sqrt(2.0)))
+    return fires_at, p_null * 8000.0
 
 
 def _live_samples() -> list[AnchoredSample]:
@@ -2823,38 +3035,515 @@ def test_step_leg_false_brake_budget_and_power_reproduce() -> None:
             0, cur_d=nc, prev_d=npv,
         ).score_se * ELO_PER_SCORE_AT_HALF
 
-    realized, worst = se_elo(197, 38), se_elo(197, 15)
-    assert realized == pytest.approx(42.4, abs=1.5)
-    assert worst == pytest.approx(64.2, abs=2.0)
+    # The shape is DERIVED from the banked per-iteration counters, never typed.
+    n_cur = st.mean([c for c, _ in _POST_BOOT_SHAPES])
+    n_prev = st.mean([p for _, p in _POST_BOOT_SHAPES])
+    assert (round(n_cur, 1), round(n_prev, 1)) == (50.3, 46.4), (n_cur, n_prev)
 
-    def norm_sf(x: float) -> float:
-        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+    # ⚑ ``sd`` is RE-DERIVED from the same 96 iterations, and on the RIGHT
+    # statistic. A review round caught the previous draft re-measuring ``n``
+    # and inheriting ``sd``; the draft after that re-measured ``sd`` but used
+    # the GRAND POOL, which carries a between-iteration term that cancels in
+    # ``delta`` and never reaches ``_arm_score_var``.
+    within = _within_iteration_score_sd()
+    assert round(within, 4) == 0.3446, within
+    assert within == pytest.approx(_POOLED_GAME_SCORE_SD, rel=0.001), (
+        "the shipped constant is an estimate of the WITHIN-iteration sd; if "
+        "this drifts, every row of the docstring's step-leg table moves"
+    )
+    # the grand pool, for contrast -- the number the wrong draft quoted
+    w = sum(r[2] for r in _POST_BOOT_ITERATIONS)
+    d = sum(r[3] for r in _POST_BOOT_ITERATIONS)
+    lo = sum(r[4] for r in _POST_BOOT_ITERATIONS)
+    games = w + d + lo
+    gm = (w + 0.5 * d) / games
+    grand = math.sqrt((w * (1 - gm) ** 2 + d * (0.5 - gm) ** 2
+                       + lo * gm ** 2) / games)
+    assert (games, round(grand, 4)) == (9282, 0.3479), (games, grand)
+    # ⚑ NOT ``grand > within`` -- a group-mean sum-of-squares decomposition
+    # guarantees that for ANY data, so it is a tautology, not a check. What is
+    # data-dependent, and what the docstring's "the difference is real but
+    # small" turns on, is the SIZE of the between term.
+    assert (grand ** 2 - within ** 2) == pytest.approx(0.002231, abs=5e-6)
+    assert 0.008 < (grand / within - 1.0) < 0.012, (grand, within)
 
+    floor = GateConfig().min_games_per_side
     line = GateConfig().demote_step_elo
-    for se, budget, p50, p90 in ((realized, 0.05, 195.0, 249.0),
-                                 (worst, 1.5, 231.0, 313.0)):
-        fires_at = line - z * se           # sample delta must be below this
-        p_null = norm_sf(fires_at / se)
-        assert p_null * 8000 < budget, (se, p_null * 8000)
-        assert -fires_at == pytest.approx(p50, abs=6.0)
-        assert -(fires_at - 1.2816 * se) == pytest.approx(p90, abs=8.0)
+    # ``usable`` floors BOTH arms, so the worst shape the constant admits is
+    # floor/floor -- NOT "realized cur / floor prev", which is what the retired
+    # docs quoted (197/15). That substitution is the whole defect below: it is
+    # only the worst REACHABLE shape, and only under the old composition.
+    realized, worst = _step_leg_se_elo(n_cur, n_prev), _step_leg_se_elo(floor, floor)
+    assert realized == pytest.approx(48.8, abs=0.5)
+    assert worst == pytest.approx(87.5, abs=0.5)
+    # The helper must agree with the se the SHIPPED ``AnchoredSample`` computes
+    # -- this is the line the score_se mutation above breaks.
+    for nc, npv in ((50, 46), (floor, floor), (25, 25), (22, 22)):
+        assert _step_leg_se_elo(nc, npv) == pytest.approx(se_elo(nc, npv), rel=1e-9)
+
+    for se, p50, p90 in ((realized, 205.0, 268.0), (worst, 269.0, 381.0)):
+        fires_at, _ = _step_leg_budget(se, line=line)
+        assert fires_at == pytest.approx(line - z * se, rel=1e-12)
+        assert -fires_at == pytest.approx(p50, abs=2.0)
+        assert -(fires_at - 1.2816 * se) == pytest.approx(p90, abs=2.0)
+
+    # ⚑ THE DECIDING INSTRUMENT is the MC of the SHIPPED rule, not the closed
+    # form. A review round showed the closed form runs up to 27% conservative
+    # at these n -- enough that the previous draft "REJECTED" a floor of 22 on
+    # a 2.6% margin that is really 13%.
+    mc = {s: _step_leg_mc_rate(s, s, line=line) for s in (floor, 22, 25)}
+    mc_realized = _step_leg_mc_rate(50, 46, line=line)
+    assert mc[floor] == pytest.approx(0.001063, rel=0.10), mc
+    assert mc[22] == pytest.approx(0.000346, rel=0.15), mc
+    assert mc[25] == pytest.approx(0.000176, rel=0.20), mc
+    assert mc_realized == pytest.approx(0.000013, rel=0.50)
+    # ⚑ The closed form is conservative AT THE FLOORED SHAPES ONLY, and the
+    # docs must not generalise that. At 22/22 and 25/25 both arms sit at the
+    # pooled floor and it over-states; at the realized 17/61 shape the floor
+    # does NOT bind and it UNDER-states by ~24% (0.0194% closed form against
+    # 0.0241% MC). That asymmetry is why the operating-cost figures in the
+    # docstring are quoted from the MC.
+    for s in (22, 25):
+        assert _step_leg_budget(_step_leg_se_elo(s, s), line=line)[1] / 8000.0 > mc[s]
+    worst_c, worst_p, worst_w, worst_d, worst_l = max(
+        _POST_BOOT_ITERATIONS,
+        key=lambda r: _step_leg_se_elo(r[0], r[1]))
+    assert (int(worst_c), int(worst_p)) == (17, 61), (worst_c, worst_p)
+    worst_cf = _step_leg_budget(
+        _step_leg_se_elo(worst_c, worst_p), line=line)[1] / 8000.0
+    worst_mc = _step_leg_mc_rate(int(worst_c), int(worst_p), line=line,
+                                 replicates=400_000, seed=17,
+                                 wdl=[(worst_w, worst_d, worst_l)])
+    assert worst_cf == pytest.approx(0.000194, rel=0.05), worst_cf
+    assert worst_mc == pytest.approx(0.000241, rel=0.20), worst_mc
+    assert worst_cf < worst_mc, (
+        "the closed form UNDER-states where the pooled floor does not bind; "
+        "if this flips, the docstring's 'quote the MC here' note is wrong"
+    )
+
+    # ⚑ THE FINDING, asserted AS a finding rather than as a passing budget: the
+    # shipped floor lets the leg OUT of the 0.04% false-brake bound it was
+    # sized against. A test that merely asserted "inside budget" would have
+    # gone green forever on the stale 197/15 row -- which is exactly how this
+    # survived a lineage change. If ``min_games_per_side`` is raised the sense
+    # of these assertions flips and the docstring must be rewritten with them;
+    # ``test_the_step_leg_shape_is_quoted_from_the_current_lineage`` forces it.
+    assert mc[floor] > 0.0004, mc[floor]
+    assert mc[floor] / 0.0004 == pytest.approx(2.66, rel=0.12)
+    # ... and BOTH candidate floors clear it. 25 is chosen because at the same
+    # admission cost it has the narrower se, so it beats 22 on false-brake AND
+    # on power -- not because 22 fails, which is what the previous draft said.
+    assert mc[22] < 0.0004
+    assert mc[25] < 0.0004
+    assert mc[25] < mc[22]
+    # (``_step_leg_se_elo(25,25) < _step_leg_se_elo(22,22)`` is NOT asserted:
+    # sd*sqrt(2/n) is monotone in n by construction, so it holds for any data
+    # and pins nothing. The 25-over-22 claim is carried by ``mc`` and
+    # ``admits``, both of which are functions of the banked rows.)
+    admits = {f: sum(1 for c, p in _POST_BOOT_SHAPES if c >= f and p >= f)
+              for f in (15, 22, 25, 26, 40)}
+    assert admits == {15: 96, 22: 95, 25: 95, 26: 93, 40: 59}, admits
+    assert admits[22] == admits[25], "the 25-over-22 argument needs equal admission"
+
+    # ⚑ and the floor does not bind on every iteration: where an arm's own
+    # variance exceeds it, se widens and the leg fires HARDER. Pin the realized
+    # spread the docs quote, and the worst single iteration's own rate.
+    per_iter = []
+    for _c, _p, ww, dd, ll in _POST_BOOT_ITERATIONS:
+        tot = ww + dd + ll
+        m = (ww + 0.5 * dd) / tot
+        per_iter.append(math.sqrt((ww * (1 - m) ** 2 + dd * (0.5 - m) ** 2
+                                   + ll * m ** 2) / tot))
+    assert (round(min(per_iter), 3), round(max(per_iter), 3)) == (0.300, 0.386)
+    widest = max(_POST_BOOT_ITERATIONS, key=lambda r: per_iter[
+        _POST_BOOT_ITERATIONS.index(r)])
+    at_widest = _step_leg_mc_rate(floor, floor, line=line, replicates=200_000,
+                                  wdl=[widest[2:]])
+    assert at_widest == pytest.approx(0.002426, rel=0.10), at_widest
+    assert at_widest / mc[floor] == pytest.approx(2.33, rel=0.15)
+
+    # The operating rate is NOT the worst-admitted rate, and the docs say both.
+    rates = [_step_leg_budget(_step_leg_se_elo(c, p), line=line)[1] / 8000.0
+             for c, p in _POST_BOOT_SHAPES]
+    assert st.mean(rates) == pytest.approx(0.0000206, rel=0.05)
+    assert max(rates) < 0.0004, "every REALIZED shape is inside budget"
+    assert max(rates) == pytest.approx(0.000194, rel=0.05)
+    assert min(_POST_BOOT_SHAPES, key=lambda r: r[0])[0] == 17
+    assert min(_POST_BOOT_SHAPES, key=lambda r: r[1])[1] == 25
 
     # THE STATED BLIND SPOT: a -100 step does not fire at the realized shape.
-    g = _gate(min_games_per_side=15)
+    g = _gate(min_games_per_side=floor)
     shift = -100.0 / ELO_PER_SCORE_AT_HALF
-    cur_w = round((0.50 + shift) * 197)
-    g.observe(AnchoredSample(0, cur_w=cur_w, cur_d=0, cur_l=197 - cur_w,
-                             prev_w=19, prev_d=0, prev_l=19))
+    n, m = round(n_cur), round(n_prev)
+    cur_w = round((0.50 + shift) * n)
+    g.observe(AnchoredSample(0, cur_w=cur_w, cur_d=0, cur_l=n - cur_w,
+                             prev_w=m // 2, prev_d=0, prev_l=m - m // 2))
     assert g.decide().decision != DECISION_DEMOTE, (
         "the docs must not claim the step leg catches -100"
     )
 
     # The pooled floor is load-bearing: an all-draws arm must not read se 0.
-    all_draws = AnchoredSample(0, cur_d=197, prev_d=38)
+    all_draws = AnchoredSample(0, cur_d=50, prev_d=46)
     assert all_draws.score_se > 0.0
     assert all_draws.score_se == pytest.approx(
-        math.sqrt(0.3447 ** 2 / 197 + 0.3447 ** 2 / 38), rel=1e-9,
+        math.sqrt(0.3447 ** 2 / 50 + 0.3447 ** 2 / 46), rel=1e-9,
     )
+
+
+def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
+    """MUTATION: leave ``197/38`` standing as "the realized shape" in EITHER of
+    the two copies, or quote the retired ``42.4`` / ``-195`` / ``-249`` as
+    current.
+
+    The first revision of the prev-share retirement (PR #395) rewrote the
+    composition section and left the step leg's whole cost/benefit table --
+    docstring AND the comment beside ``demote_step_elo`` -- still denominated
+    in ``n_cur ~197, n_prev ~38``, a lineage the 2026-08-04 fresh boot replaced.
+    Both copies literally said "at the realized shape". The retirement test
+    passed the entire time, because it only inspected the composition section.
+
+    So this pins the SHAPE-DEPENDENT numbers in both copies, and pins the
+    retired ones as retired -- kept, since deleting a wrong number invites its
+    rediscovery, but never presentable as current.
+    """
+    doc = promotion_gate.__doc__ or ""
+    src = inspect.getsource(promotion_gate)
+    step_comment = src.split("demote_step_elo: float")[0].split(
+        "# -125, on the SAME false-brake budget")[1]
+
+    # -- copy 1: the module docstring's step-leg table ----------------------
+    # ⚑ NEEDLE THE WHOLE ROW, not digits. A review round mutated 37 of 58
+    # figures without a single failure, because every needle was a fragment
+    # that also occurred elsewhere in the same slice ("-206" appears in the
+    # table AND in the prose; "25" occurs in "25/25", "prev 25", "0.0176").
+    # Fixing the two instances found earlier fixed two instances; this fixes
+    # the class.
+    step_section = doc.split("WHAT THE STEP LEG COSTS AND WHAT IT BUYS")[1]
+    table = {" ".join(ln.split()) for ln in step_section.splitlines()}
+    for row in (
+        "50/46  *    48.8   delta<-205  0.0013%   0.0013%     -205 Elo   -268 Elo",
+        "50/15       70.5   delta<-241  0.0314%   0.0262%     -241 Elo   -331 Elo",
+        "15/15  **   87.5   delta<-269  0.1055%   0.1063%     -269 Elo   -381 Elo",
+        "25/25  ***  67.7   delta<-236  0.0241%   0.0176%     -236 Elo   -323 Elo",
+        "22/22       72.2   delta<-244  0.0368%   0.0346%     -244 Elo   -336 Elo",
+        "197/38      42.4   delta<-195  0.0002%      --       -195 Elo   -249 Elo",
+        "197/15      64.2   delta<-231  0.0163%      --       -231 Elo   -313 Elo",
+    ):
+        assert " ".join(row.split()) in table, row
+
+    # -- copy 2: the comment shipped next to ``demote_step_elo`` -------------
+    flat_comment = " ".join(step_comment.replace("#", " ").split())
+    for phrase in (
+        "carries 48.8 Elo of binomial se at the REALIZED shape",
+        "87.5 at the worst shape ``min_games_per_side: 15`` admits",
+        "below -205 (realized) / -269 (worst)",
+        "gives 0.0013% / 0.1055%",
+        "gives 0.0013% / ⚑ **0.1063%**",
+        "OUTSIDE the 0.04% upper bound",
+        "by 2.6x",
+        "the remedy (25 -> 0.0176% MC)",
+        "the MC expected rate is 0.0023% and the worst realized one (17/61) "
+        "is 0.0241%",
+        "Closed form reads 0.0021% / 0.0194% -- at 17/61 the floor does not "
+        "bind and it is anti-conservative by 24%",
+        "the MC reads 0.2426%, 2.33x the aggregate",
+        "50% power lands at -205 Elo and 90% at -268",
+    ):
+        assert phrase in flat_comment, phrase
+
+    # -- copy 3: the comment shipped next to ``min_games_per_side`` ----------
+    floor_comment = src.split("# 15, not 40")[1].split("min_games_per_side: int")[0]
+    flat_floor = " ".join(floor_comment.replace("#", " ").split())
+    for phrase in (
+        "that shape carries se 87.5 Elo",
+        "false-brake rate at 0.1063%",
+        "the closed form says 0.1055%",
+        "2.6x the 0.04% budget",
+        "reads 0.2426%, 2.33x the aggregate",
+        "smallest arms in 96 iterations are cur 17 / prev 25",
+        "MEASURED remedy: **25** -- 0.0176% MC",
+        "admits 95/96 where 15 admits 96/96",
+        "⚑ NOT because 22 fails: 22 reads 0.0346% MC against the 0.0400% bound, a 13% margin",
+        "false-brake 0.0176% vs 0.0346%, and 50% power at -236 vs -244",
+        "26 is where admissions start to cost (93/96)",
+    ):
+        assert phrase in flat_floor, phrase
+
+    # The retired shape may appear ONLY under an explicit retirement label.
+    def flat(s: str) -> str:
+        return " ".join(s.replace("#", " ").split())
+
+    for copy_name, text in (("docstring", step_section),
+                            ("GateConfig comment", step_comment)):
+        norm = flat(text)
+        assert "197/38" in norm or "197 / n_prev 38" in norm, copy_name
+        assert "retired" in norm.lower(), copy_name
+        for stale in ("realized shape (n_cur ~197", "realized shape (n_cur 197",
+                      "at the realized shape (n_cur"):
+            assert stale not in norm, (copy_name, stale)
+    # ... and prove the needle CAN fire, against the exact text it retires.
+    assert "at the realized shape (n_cur" in flat(
+        "WHAT THE STEP LEG COSTS AND WHAT IT BUYS, at the realized shape\n"
+        "    # (n_cur ~197, n_prev ~38, pooled per-game score sd 0.3447)")
+
+    # ⚑ The TWO corrections this section exists to record, as sentences,
+    # because both were asserted the other way round in a previous revision
+    # and neither is recoverable from the numbers alone.
+    assert "The analogue of the constant is the WITHIN-iteration figure, 0.3446" in flat(step_section)
+    assert "a NARROWER ``se`` makes ``elo_hi`` SMALLER and the leg fires MORE readily" in flat(step_section)
+    assert "NOT because 22 fails" in flat(step_section)
+
+    assert "0.3479" in step_section
+    assert "That was the wrong statistic" in flat(step_section)
+    assert "worst case for the false-brake budget" not in flat(step_section)
+
+    # ⚑ The docstring's PROSE figures, needled as whole clauses. A mutation
+    # sweep put 7 of 18 changes through the assertions above untouched --
+    # every one of them landed in a sentence that only the two COMMENT copies
+    # were needled for, so the docstring said one thing and the comments
+    # another and nothing failed. Each clause below is the only place its
+    # number appears in this section.
+    flat_step = flat(step_section)
+    for clause in (
+        '0.106%, 2.6x over**, on BOTH instruments',
+        'the shipped constant is 0.9% low". That was the wrong',
+        "the MC expected rate is **0.0023%** and the worst REALIZED shape "
+        "(17/61) is **0.0241%** -- every measured iteration is inside budget, "
+        "the worst at 60% of it",
+        "which reads 0.0021% / 0.0194% here: at 17/61 the floor does NOT bind, "
+        "so the closed form is *anti*-conservative by 24%",
+        "the MC reads **0.2426%** -- **2.33x** the aggregate",
+        "(both 95/96 over the 96 iterations, where 15 admits 96/96)",
+        "26 is where admissions start to cost (93/96)",
+    ):
+        assert clause in flat_step, clause
+
+    # ... and the variance decomposition is pinned to the DATA, not to itself:
+    # the docstring's three figures are re-derived from the banked W/D/L. This
+    # is the block whose first revision quoted the wrong one of the three.
+    grand, within_var, between_var = _score_var_decomposition()
+    assert (f"grand pool {grand:.6f} = within-iteration {within_var:.6f} "
+            f"+ between-iteration {between_var:.6f}") in flat_step
+    assert f"(sd **{math.sqrt(within_var):.4f}**)" in flat_step
+
+    # ⚑ The three prose figures a sweep rewrote freely, pinned to the banked
+    # rows rather than to themselves. Each is a DATA statement sitting inside a
+    # sentence, which is the shape that keeps escaping the table needles.
+    sds = _per_iteration_score_sds()
+    assert (f"score sd runs **{sds[0][0]:.3f} to {sds[-1][0]:.3f}**"
+            in flat_step), (sds[0][0], sds[-1][0])
+    # ⚑ ...and the DIRECTION that range implies, which is the whole reason the
+    # range is quoted. A sweep rewrote it to "sits ABOVE that range ... can
+    # never under-state" -- the "the floor is conservative" error this PR spent
+    # two rounds killing -- and it passed, because only the digits were pinned.
+    assert sds[0][0] < _POOLED_GAME_SCORE_SD < sds[-1][0], (sds[0][0], sds[-1][0])
+    assert ("the pooled floor 0.3447 sits inside that range, so it OVER-states "
+            "on some iterations and UNDER-states on others") in flat_step
+
+    # ⚑ item 2/[02]: the drift disclaimer is the mitigation for the row counts
+    # this paragraph itself flags as moving. Deleting it was a free mutation.
+    assert ("The run is live, so the ROW COUNTS here (148 / 145 / 26) drift "
+            "upward with every iteration and the counts alone are not the "
+            "claim; the identity above and the sub-count relation are, and "
+            "those do not move. Re-derive rather than re-quote.") in flat(doc)
+    wc, wp, ww, wd, wl = sds[-1][1]
+    assert (f"(**{int(wc)}/{int(wp)}, w/d/l {ww}/{wd}/{wl}, own sd "
+            f"{sds[-1][0]:.3f}**)") in flat_step, sds[-1]
+    # ... and "needs a 70% one" is the collapse of the cur arm that 15/15 costs
+    # at the realized shape, i.e. 1 - floor / n_cur, to the nearest 10%.
+    n_cur_mean = st.mean([c for c, _ in _POST_BOOT_SHAPES])
+    collapse = round(100 * (1 - GateConfig().min_games_per_side / n_cur_mean), -1)
+    assert f"needs a {collapse:.0f}% one" in flat_step, (collapse, n_cur_mean)
+
+    # ⚑ AND THE THREE SENTENCES ROUND 3 CORRECTED. Each was FIXED in the
+    # module and then left unneedled, so a mutation sweep restored all three
+    # with the suite green -- fixing prose without pinning it is the same
+    # defect one level down, which is the defect this PR is about.
+    assert ("about -205 Elo or worse, at 50% power; -268 or worse at 90%"
+            in flat_step), "the grand-pool -206/-269 pair must not return"
+    assert "-206 / -269" in flat_step, "...and the slip stays on the record"
+    prev_cap = flat(doc.split("distributed_prev_model_max_fraction: 0.60")[1]
+                    .split("**The observed spread is pure binomial noise")[0])
+    for phrase in (
+        "The cap is ``ceil(0.60 * games_per_iter)`` over ALL matching games",
+        # ⚑ The identity is the load-bearing line -- the paragraph names it as
+        # the part that does NOT drift while the row counts do, and a mutation
+        # changed "residual 0" to "residual 12" with the suite green. ⚑ "No
+        # test can re-derive it" was too strong, though: HALF of it is already
+        # in this file. See the assertion below the loop -- the curriculum half
+        # is derived from ``_POST_BOOT_ITERATIONS``, and only the
+        # ``matching_games - selfplay_games`` half still needs runtime data
+        # that is not in the repo. Banking a second 148-row table to close the
+        # other half would add a hand-transcription to keep in sync, which is
+        # the failure this whole PR is about; re-running that check stays a
+        # human step, and the sentence carries it.
+        "matching_games - selfplay_games == gate_sample_games_cur + "
+        "gate_sample_games_prev (residual 0 on every row; 148 of them as of "
+        "2026-08-11)",
+        "both post-boot trials launched at ``games_per_iter: 440`` with no "
+        "ramp, so the cap is **264**",
+        "max **66** over the 145 rows where both arms are non-empty",
+        "**mean 229, max 357**, over the 264 cap on **26 of 145** iterations",
+        # ⚑ items 2/[03] and 2/[04]: the two SENTENCES the numbers rest on.
+        # A sweep rewrote the category-error claim to its opposite ("directly
+        # comparable ... comparing them is sound") and upgraded the estimator's
+        # assumption to a construction ("per-GAME ... identical by
+        # construction"), both green. The suite pinned every NUMBER in this
+        # paragraph and none of the reasoning that gives them meaning -- the
+        # same shape as the fail-safe-direction defect two rounds earlier.
+        "is a sub-count of the quantity the cap bounds, and comparing them is "
+        "a category error whichever way it comes out",
+        "attribution is per-SHARD by ``model_sha256`` and a shard carries both "
+        "game types from one model, so the two shares should TRACK (an "
+        "assumption, not a construction)",
+        # item 1: the withdrawn directional reads -- BOTH of them, since
+        # round 4's "plausibly BINDS" and round 5's "the estimator is
+        # detecting its own assumption failing" were each overturned by the
+        # pass after them.
+        "AND THAT ESTIMATE CANNOT ADJUDICATE, BECAUSE THE INSTRUMENT IS "
+        "COARSER THAN THE QUESTION",
+        "``matching_games`` is ALREADY POST-CAP",
+        '**UNMEASURED. Not "never binds" -- and not "binds" either.**',
+        # ⛑ ...and the EVIDENCE for the withdrawal. A sixth review pass
+        # DELETED the previous evidence (a pile-up test on the estimates) and
+        # replaced it with a resolution argument, because the pile-up test had
+        # no power: see the comment on the shard-size figures below.
+        "demotes the prev SHA only at the first SHARD boundary at or past "
+        "``prev_max_games``",
+        "S has median **89 (379f6) / 100 (5ce02)**, p90 105 / 121: roughly "
+        "**35% of the cap itself**",
+        "``[264, 264 + S)`` covers **all 27 of them**",
+        '"over the cap" and "capped, with overshoot" are OBSERVATIONALLY '
+        "IDENTICAL at this shard size, and no threshold inside the window can "
+        "separate them",
+        "truncation CONSERVES the mass above the bound",
+        "the implied ratio is 2.61x at 264, 1.69x at 310 and **1.00x at 357**",
+        "The second piece of evidence was the first one's assumption restated",
+        "FALSE AS WRITTEN: it is nonzero on 8 rows",
+        "a nonzero reading has two causes and a zero reading has two "
+        "explanations",
+        "293 is ``0.60 * 488``, the REALIZED mean ingest substituted for the "
+        "CONFIG target the code multiplies",
+        "163 is ``max(gate_sample_games_prev)`` over rows the gate EXCLUDES",
+        "never a counter that aggregates two causes, and never a realized mean "
+        "where the code reads a configured target",
+    ):
+        assert phrase in prev_cap, phrase
+    # ⚑ UNCONDITIONAL. The previous form was
+    #     assert "<retracted stamp>" not in prev_cap or "An earlier revision"
+    #            in prev_cap
+    # whose right disjunct is permanently true, so the whole thing was ``X or
+    # True``. A mutation restored the retracted "never binds" claim to the HEAD
+    # of the paragraph, kept the historical sentence, and the suite stayed
+    # green -- a guard written for a finding that could not guard it.
+    # ⚑ THE CURRICULUM HALF OF THE IDENTITY, DERIVED. The two gate arms sum to
+    # the iteration's curriculum W/D/L on every banked row -- that is exactly
+    # "the arms partition the curriculum games", the repo-side half of the
+    # sentence above. It costs one line and turns half a text pin into a
+    # measurement.
+    for c, pv, w, d, lo in _POST_BOOT_ITERATIONS:
+        assert c + pv == w + d + lo, (c, pv, w, d, lo)
+
+    # ⛑ THE PILE-UP TEST IS GONE, AND ITS TESTS WITH IT. A previous revision
+    # derived a normal tail table here so the docstring's P(est>=264)=0.174
+    # etc. could not be mutated. The block it guarded has been deleted: the
+    # cap demotes at the first SHARD boundary past 264, shards run to a median
+    # of ~89-100 games, so a capped iteration lands anywhere in [264, ~360)
+    # -- which covers every over-cap observation. The test could not have
+    # caught that, because it checked the arithmetic of the tail against its
+    # own quoted moments and never asked whether the thresholds had any power.
+    # ⚑ A derivation that is internally consistent and externally meaningless
+    # is the same defect as a gate that cannot fail, one level up. What
+    # replaces it is a needle on the RESOLUTION figures above, which are a
+    # measurement (1,226 shard filenames) rather than an inference.
+    for withdrawn in ("is a CEILING that never binds",
+                      "the cap plausibly BINDS",
+                      "the cap never binds on the"):
+        assert withdrawn not in prev_cap, withdrawn
+    assert prev_cap.lstrip().startswith(
+        "`` IS NOT COMPARABLE TO THE GATE'S SPLIT"), prev_cap[:120]
+    for phrase in (
+        "is ALSO pinned in the LIVE (uncommitted) ``configs/pbt2_small.yaml``",
+        "Do not look for that second copy in the COMMITTED yaml -- it ships no "
+        "``gate_*`` keys at all",
+        "the committed tree has exactly ONE copy",
+    ):
+        assert phrase in flat(floor_comment), phrase
+
+    # And the arithmetic behind every quoted figure reproduces from the banked
+    # per-iteration rows -- the docs are pinned to data, not to each other.
+    n_cur = st.mean([c for c, _ in _POST_BOOT_SHAPES])
+    n_prev = st.mean([p for _, p in _POST_BOOT_SHAPES])
+    assert _step_leg_se_elo(n_cur, n_prev) == pytest.approx(48.8, abs=0.05)
+    assert _step_leg_se_elo(15, 15) == pytest.approx(87.5, abs=0.05)
+    assert _step_leg_se_elo(25, 25) == pytest.approx(67.7, abs=0.05)
+    assert _step_leg_se_elo(22, 22) == pytest.approx(72.2, abs=0.05)
+    assert _step_leg_se_elo(197, 38) == pytest.approx(42.4, abs=0.05)
+    assert _step_leg_se_elo(197, 15) == pytest.approx(64.2, abs=0.05)
+    assert _within_iteration_score_sd() == pytest.approx(0.3446, abs=0.00005)
+
+    # -- copy 4: the comment shipped beside ``_POOLED_GAME_SCORE_SD`` ---------
+    # ⚑ This copy carries the SAME decomposition and the SAME direction claim
+    # as the docstring, and until a mutation sweep found it, only the docstring
+    # was pinned -- so "within-iteration 0.218771 (sd 0.4446)" and a re-inverted
+    # "the shipped constant is LOW, which is fail-safe" both passed. Two copies
+    # of one fact, one of them free to disagree, is the exact defect this whole
+    # PR is about.
+    sd_comment = src.split("# harder to fire, never easier.")[1].split(
+        "_POOLED_GAME_SCORE_SD = ")[0]
+    flat_sd = flat(sd_comment)
+    assert (f"within-iteration {within_var:.6f} (sd **{math.sqrt(within_var):.4f}**) "
+            f"plus between-iteration {between_var:.6f}") in flat_sd, flat_sd
+    for phrase in (
+        f"{math.sqrt(within_var):.4f} vs {_POOLED_GAME_SCORE_SD} is 0.02%: "
+        f"CONFIRMED, not changed",
+        "The within figure is the analogue of this constant",
+        "a NARROWER se makes elo_hi SMALLER and the leg fires MORE readily",
+        "The constant stands because it is ACCURATE",
+        "quoted the GRAND-POOL sd (0.3479",
+    ):
+        assert phrase in flat_sd, phrase
+    if "LOW, which is fail-safe." in flat_sd:
+        assert "would NOT be" in flat_sd, flat_sd
+
+    # -- copy 5: BOTH yaml files -------------------------------------------
+    # The yamls carry their own prose copy of the step leg's cost, and this
+    # file already pins yaml text for two other claims -- but not for this one,
+    # so the production config went on asserting "0.02-1.31 spurious holds per
+    # 8000 across the admissible arm shapes" (i.e. 0.0002-0.016%) for an entire
+    # revision of the correction that exists to retract exactly that sentence.
+    for cfg in ("configs/pbt2_small.yaml", "configs/scratch_pc.yaml"):
+        yaml_src = (Path(__file__).resolve().parents[1] / cfg).read_text()
+        # ⚑ strip the LEADING comment marker per line, never every "#" -- a
+        # blanket replace eats the "#395" in the retirement stamp and the
+        # needle then fails for a reason that has nothing to do with the claim.
+        flat_yaml = " ".join(" ".join(
+            ln.strip().lstrip("#") for ln in yaml_src.splitlines()).split())
+        assert "RETIRED 2026-08-11 (PR #395)" in flat_yaml, cfg
+        for phrase in (
+            "the range across ADMISSIBLE shapes is 0.0013% to 0.106% -- up to "
+            "8.5 spurious holds per 8000, not 1.31",
+            "gate_min_games_per_side: 15 admits a 15/15 shape that is 2.6x "
+            "OUTSIDE the 0.04% budget",
+            "realized 50/46: se 48.8 Elo, 0.0013%, 50% power -205, 90% -268",
+            "worst admitted 15/15: se 87.5 Elo, 0.1063% (MC), 50% -269, 90% -381",
+            "operating cost over the 96 realized shapes: 0.0023% mean, 0.0241% worst",
+            "one anchored sample now carries 49-88 Elo of binomial noise, so "
+            "the retired 42-64 was optimistic too",
+            "Do not requote -195/-249 or the 0.02-1.31 range",
+            "45.6 is an OPTIMISTIC figure",
+        ):
+            assert phrase in flat_yaml, (cfg, phrase)
+        # the retired sentence survives ONLY inside the retirement block
+        # ⚑ COUNT over the WHOLE file, not just the text BEFORE the stamp. A
+        # prefix-only check let a mutation APPEND the retired sentence after
+        # the retirement block in both configs with the suite green -- the
+        # retired figure may appear exactly once, inside the block that
+        # disowns it, and nowhere else.
+        retired = "about -195 Elo at 50% power and -249 at 90%"
+        assert flat_yaml.count(retired) == 1, (cfg, flat_yaml.count(retired))
+        block = flat_yaml.partition("RETIRED 2026-08-11 (PR #395)")[2]
+        assert retired in block.partition("The full derivation")[0], cfg
 
 
 def test_documented_time_to_trip_is_the_steady_state_number() -> None:
@@ -2937,9 +3626,14 @@ def test_every_shipped_gate_constant_is_pinned_by_value(
 
     Every headline number in this module's docs is quoted AT these values --
     the 9.3 Elo window se, the 92.5% power, the 0.02/8000 false-brake budget,
-    the 42.4 Elo sample se, the "96% of iterations admitted" floor. A silent
+    the 48.8 Elo sample se, the "96/96 iterations admitted" floor. A silent
     change to any of them makes the whole document a description of a different
-    gate.
+    gate. (42.4 Elo and 0.02/8000 are the RETIRED pre-08-04 pair, kept in the
+    docs under a retirement label; the current sample se is **48.8** at the
+    realized 50/46 shape. ⚑ NOT 49.2 -- that is the same figure computed at the
+    GRAND-POOL sd 0.3479, the statistic this file rejects in
+    ``_within_iteration_score_sd``, and it survived here through one revision
+    of the correction. See the module docstring's step-leg table.)
     """
     assert getattr(GateConfig(), field) == shipped, (
         f"{yaml_key}'s dataclass default drifted from the documented value"
@@ -2957,6 +3651,17 @@ def test_min_games_per_side_is_pinned_from_BOTH_sides() -> None:
     Five games a side is ~150 Elo of binomial se on ONE anchored delta -- six
     times the demote line -- so admitting a 5-vs-5 iteration puts pure noise
     into the window mean with the same weight as a 197-game row.
+
+    ⚑ THIS TEST'S LOWER PIN IS A WEAKER BOUND THAN THE STEP LEG'S, AND SAYS SO.
+    A review round found it certifying 15 as acceptable (87.5 < 4x25 = 100)
+    while ``test_step_leg_false_brake_budget_and_power_reproduce`` reads the
+    SAME 87.5 as 2.6x outside the step leg's false-brake budget. Both are
+    correct: this is a "does one row swamp the WINDOW MEAN" bound against
+    ``demote_delta_elo``, the other is a "does one row trip the STEP leg on its
+    own" bound against ``demote_step_elo``, and the step leg is strictly
+    tighter because it acts on a single sample. Where they disagree the step
+    leg governs. The 4x rule is kept because it is what kills 15 -> 5; it must
+    not be read as a certificate that 15 is well-sized.
     """
     floor = GateConfig().min_games_per_side
     assert floor == 15
@@ -2964,13 +3669,23 @@ def test_min_games_per_side_is_pinned_from_BOTH_sides() -> None:
     assert floor <= 20
     # Lower pin, by consequence rather than by taste: one iteration at the
     # floor must not carry more than ~4x the demote line's worth of noise
-    # (at 15/15 the pooled-floor se is 87.5 Elo).
+    # (at 15/15 the pooled-floor se is 87.5 Elo). See the docstring: this is
+    # the WINDOW-MEAN bound, deliberately looser than the step leg's.
     at_floor = AnchoredSample(
         0, cur_d=floor, prev_d=floor,
     ).score_se * ELO_PER_SCORE_AT_HALF
     assert at_floor < 4.0 * abs(GateConfig().demote_delta_elo), (
         f"a floor of {floor} admits an iteration whose own se is "
         f"{at_floor:.0f} Elo"
+    )
+    # ... and the tighter bound is failed at this floor, on purpose, so the two
+    # tests cannot be read as agreeing that 15 is fine.
+    step_rate = _step_leg_mc_rate(floor, floor,
+                                  line=GateConfig().demote_step_elo)
+    assert step_rate > 0.0004, (
+        "if the step leg's budget now holds at this floor, the docstring's "
+        "'0.1063%, 2.6x over' and this docstring's reconciliation are both "
+        "stale -- rewrite them in the same commit"
     )
     assert floor >= 10, "below ~10 games a side an iteration is a coin flip"
     # And the arithmetic that makes 5 unacceptable, so the bound above is not
@@ -3335,6 +4050,82 @@ def test_the_module_no_longer_claims_the_pid_cancels() -> None:
     # The -4.3 bound must be labelled as not applying during a break, in both.
     assert "Do not quote -4.3 Elo" in doc
     assert "does NOT\n  # apply during a break" in yaml_src
+
+
+def test_the_retired_prev_share_is_labelled_retired_and_not_quotable() -> None:
+    """MUTATION: re-promote ``16.3%`` to a live figure, or drop the instrument
+    stamp, and this fails.
+
+    The ``16.3%`` prev share sat in this docstring for weeks as a bare
+    "MEASURED" number.  It was measured by binning shard ``.zattrs``
+    ``generated_at_unix`` against iteration timestamps -- a PROXY for the
+    ``model_sha256`` partition the gate actually uses -- and on a lineage the
+    2026-08-04 fresh boot replaced.  The gate's own counters read 48.0% over
+    96 iterations of the two post-boot trials.  Anyone sizing a window off
+    16.3% would size it off a number that is wrong by 3x, from the module that
+    owns the correct one.
+
+    So the test pins the SHAPE of the correction, not just the digits: the old
+    figure must still be present (retired numbers are kept, not deleted --
+    deleting one invites its rediscovery), it must be labelled superseded, and
+    the replacement must name the instrument it came from.
+    """
+    doc = promotion_gate.__doc__ or ""
+
+    # The retired figure is kept and explicitly disowned.
+    assert "16.3%" in doc
+    assert "do not quote that split" in doc.lower()
+    assert "Superseded" in doc or "superseded" in doc
+    assert "PROXY instrument" in doc
+
+    # The replacement names the instrument -- the gate's own counters, by name.
+    for counter in ("gate_sample_games_cur", "gate_sample_games_prev"):
+        assert counter in doc, counter
+    assert "48.0%" in doc
+
+    # And the reason the two disagree is stated, not left for the reader.
+    assert "model_sha256" in doc
+
+    # The downstream consequence is spelled out rather than silently ignored:
+    # the shipped power table was measured under the OLD shape.
+    assert "OPTIMISTIC" in doc.upper()
+
+    # ⚑ AND THE REPLACEMENT FIGURES ARE PINNED TO DATA, not merely present.
+    # A mutation sweep changed every number in the "Current (2026-08-11, THE
+    # GATE'S OWN COUNTERS...)" block -- 50.3 -> 60.3, 46.4 -> 36.4, the trial
+    # split, the smallest arms, the row counts -- and this test stayed green,
+    # because it only checked that "48.0%" and the counter NAMES appeared. The
+    # retired numbers were pinned while their replacements were free. Each is
+    # now re-derived from ``_POST_BOOT_ITERATIONS``, which is itself the
+    # verbatim counter series.
+    cur = st.mean([c for c, _ in _POST_BOOT_SHAPES])
+    prev = st.mean([p for _, p in _POST_BOOT_SHAPES])
+    flat_doc = " ".join(doc.split())
+    assert f"n_cur = **{cur:.1f}** games/iteration" in flat_doc, cur
+    assert f"n_prev = **{prev:.1f}**" in flat_doc, prev
+    assert f"(prev share **{100 * prev / (cur + prev):.1f}%**)" in flat_doc
+    assert (f"smallest arms actually realized: cur "
+            f"{min(c for c, _ in _POST_BOOT_SHAPES)}, "
+            f"prev {min(p for _, p in _POST_BOOT_SHAPES)}") in flat_doc
+    assert f"= {len(_POST_BOOT_SHAPES)})" in flat_doc, len(_POST_BOOT_SHAPES)
+    # ... including the per-trial agreement, which is the check that makes the
+    # 08-11 restart a non-issue for THESE statistics (it is a lineage boundary
+    # for weights, not for arm sizes).
+    for label, rows in (("379f6", _POST_BOOT_SHAPES[:27]),
+                        ("5ce02", _POST_BOOT_SHAPES[27:])):
+        c = st.mean([x for x, _ in rows])
+        pv = st.mean([y for _, y in rows])
+        # ⚑ ONE clause, not three needles. Searching the whole docstring for a
+        # bare "48.4%" or "(27)" is satisfied by the OTHER trial's figure: a
+        # mutation swapped 379f6's share to 5ce02's and escaped, because the
+        # digits it wrote were present elsewhere. Same defect as the digit
+        # fragments in the step-leg table, one section over.
+        share = f"(share {100 * pv / (c + pv):.1f}%)" if label == "379f6" \
+            else f"({100 * pv / (c + pv):.1f}%)"
+        assert f"{label} {c:.1f}/{pv:.1f} {share}" in flat_doc, (label, c, pv)
+    assert (f"379f6 ({len(_POST_BOOT_SHAPES[:27])}) + "
+            f"5ce02 ({len(_POST_BOOT_SHAPES[27:])}) = "
+            f"{len(_POST_BOOT_SHAPES)})") in flat_doc
 
 
 def test_shard_meta_records_the_difficulty_each_arm_played_at() -> None:
