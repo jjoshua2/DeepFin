@@ -41726,3 +41726,64 @@ while the cap is on, that test can no longer verify restart-required *skipping* 
 temperature keys, because every mutation of them now fails the whole reload. **Task #180.**
 The honest reading is that this is the guard doing its job and the test needing to set the
 temperatures explicitly to 0.0 in its mutated configs.
+
+## 2026-08-11 04:19 — ⚑ LAUNCHED (Josh authorised the full 3-key bundle)
+
+Trial `train_trial_5ce02_00000`, driver PID 193094, log `/tmp/chess_training.log`.
+Josh's call, with the "priced NEUTRAL" evidence in hand: *"I wasn't confident about all 3 but we
+need to try something."* Recorded so the readout is judged against the decision that was actually
+made, not a tidier one.
+
+### Verified IN EFFECT, by value read — not by presence check
+
+**1. It resumed from the salvage pool and did NOT silently start random-init** (the documented
+blocker):
+```
+[trial] salvage warmstart loaded slot=0 of 1 from data/salvage/pre_search_authority_20260809
+[trial] salvage PID overrides from manifest row: nodes<-sf_nodes_next, ema_winrate<-pid_ema_winrate
+[trial] Seeded 817 replay shards from salvage slot 0
+[trial] buffer init: startup_source=salvage seeded=True len(buf)=1499910 capacity=1500000 tracked_shards=817
+[trial] holdout init: restored_rows=2000 frozen=True generation=1 ruler=v1:full_pass:78aaaf430abf66f1
+[trial] export_swa: step=57999 tensors=496 params=63084128 digest=8341ed1937d2c30f
+```
+`params=63084128` matches the pinned 63.08M count, so the restored net is the right architecture.
+
+**2. All three knobs REACH THE WORKER.** Read off the PUBLISHED reco
+(`runs/pbt2_small/server/trials/5ce02_00000/publish/manifest.json` → `recommended_worker`),
+which is what the worker actually consumes — not off the yaml:
+
+| key | published value |
+|---|---|
+| `gumbel_target_max_visit_cap` | **5** |
+| `gumbel_target_untempered_prior` | **True** |
+| `diff_focus_norm_enabled` | **True** |
+| `diff_focus_norm_slope` | **1.62** |
+| `gumbel_c_scale` / `gumbel_policy_temp` | 0.1 / 1.5 |
+| `gumbel_topk` / `mcts_simulations` | 32 / 256 |
+| `opponent_wdl_regret_limit` | 0.05503 (restored from the pool's PID state) |
+
+This is the check that this codebase's signature defect demands — a knob accepted into the yaml
+and then never delivered. It is delivered.
+
+**3. Selfplay is producing.** 4 workers leased, 2 shards each, 4 in `inbox/_pending`, newest
+write 26 s old at 04:34.
+
+### The regret baseline to compare against, and when
+
+`opponent_wdl_regret_limit` restored to **0.05503** — the iter-672 (pre-search-change) value.
+The played search is now the POST-736 shape, so expect a one-time downward re-baseline over the
+first ~50 iterations as the controller re-finds setpoint against the stronger effective search.
+**Do not read it before iter 722.** Settled band to beat: **0.0341–0.0361**.
+
+⚠ And post-restart winrate reads ~+0.110 high for the first rows
+[[winrate_spike_restart_sampling_bias]]; the first ~2 iterations of ingest are also ~99% shards
+made under the OLD search shape, since the window was reseeded from an 817-shard pool banked
+2026-08-09. **Gate any early reading on the resumed ratio, not on the raw number.**
+
+### The readout stands as pre-registered
+
+300 iterations (672 → 972), then the ONE deciding command: direct paired arena vs
+`data/ratchet/snapshots/ck_resume_iter672.pt`, 400 games, `matched_sims 32`,
+`--search-shape training`, seed 42. SUCCESS ≥ +30 Elo CI-excluding-0; KILL ≤ −30 likewise.
+Attribution rule from the amendment: **a win is credited to the resume point and #392 first**,
+because #390/#391 priced NEUTRAL offline.
