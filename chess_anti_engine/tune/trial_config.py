@@ -213,6 +213,16 @@ class TrialConfig:
   # the live yaml asked for 1.
     gumbel_target_batch: int = 0
     gumbel_vloss_weight: int = 0
+  # Decouples the STORED target's sigma from the PLAYED move's sigma by
+  # clamping max_visit for the target arm only. 0 = off/bit-identical.
+  # See mcts.gumbel.GumbelConfig.target_max_visit_cap for why the two want
+  # different numbers.
+    gumbel_target_max_visit_cap: int = 0
+  # Undoes gumbel_policy_temp on the STORED target's log_prior term only, so
+  # the tempering that widens candidate selection stops compounding through the
+  # loop's own training target. False = off/bit-identical.
+  # See mcts.gumbel.GumbelConfig.target_untempered_prior for the fixed point.
+    gumbel_target_untempered_prior: bool = False
     volatility_q_scale: float = 0.0
     volatility_fpu: float = 0.0
     volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
@@ -606,6 +616,12 @@ class TrialConfig:
             ),
             gumbel_target_batch=max(0, int(config.get("gumbel_target_batch", 0))),
             gumbel_vloss_weight=max(0, int(config.get("gumbel_vloss_weight", 0))),
+            gumbel_target_max_visit_cap=max(
+                0, int(config.get("gumbel_target_max_visit_cap", 0)),
+            ),
+            gumbel_target_untempered_prior=bool(
+                config.get("gumbel_target_untempered_prior", False),
+            ),
             volatility_q_scale=float(config.get("volatility_q_scale", 0.0)),
             volatility_fpu=float(config.get("volatility_fpu", 0.0)),
             volatility_anchor=float(config.get("volatility_anchor", DEFAULT_VOLATILITY_ANCHOR)),

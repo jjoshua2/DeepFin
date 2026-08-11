@@ -46,6 +46,7 @@ from chess_anti_engine.stockfish import DifficultyPID, StockfishPool, StockfishU
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.train.trainer import TrainMetrics
 from chess_anti_engine.tune._utils import concat_array_batches as _concat_array_batches
+from chess_anti_engine.tune.diff_focus_guard import evaluate_diff_focus_regime
 from chess_anti_engine.tune.distributed_runtime import (
     _ensure_distributed_workers,
     _ensure_inference_broker,
@@ -1412,6 +1413,23 @@ def _finalize_iteration(
     )
 
     report_dict.update(replay_priority_stats or {})
+  # AFTER the priority-mass merge and BEFORE the report: the guard reads the
+  # very dict that is about to be logged, so the number it alarms on and the
+  # number an operator reads out of progress.csv are the same float. Adding
+  # these two columns rotates progress.csv rather than misaligning it
+  # (`_rotate_progress_csv_if_schema_changed`, harness.py).
+    report_dict.update(
+        evaluate_diff_focus_regime(
+            report_dict,
+            enabled=bool(tc.diff_focus_enabled),
+            # ⚑ `completed_iterations`, NOT `iteration_idx`. The latter is the
+            # GLOBAL counter, restored from the donor's trial_meta on a salvage
+            # warm start -- it comes back as ~672, so a warmup expressed in it
+            # would never engage on exactly the restart the warmup exists for.
+            trial_iterations_completed=int(completed_iterations),
+            report_iteration=int(iteration_idx),
+        ),
+    )
     tune_report_fn(report_dict, checkpoint=checkpoint)
 
   # Write compact status row (best-effort — never crash the trial).

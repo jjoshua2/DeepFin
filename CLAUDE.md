@@ -74,30 +74,56 @@ The run is usually live. These break production:
   part of the tree and is re-read every iteration, so a branch switch silently reverts
   live experiments (2026-07-02: rolled back three experiments for 3 iterations). Use
   `git worktree` for all branch work, and merge PRs touching the live yaml promptly.
-- **The live-yaml validator is all-or-nothing**: an unknown key rejects the WHOLE
-  reload. Add config keys only after restarting onto code that defines them.
-- **⚑ An UNKNOWN key is the SAFE failure. A KNOWN key with an INVALID VALUE KILLS THE RUN.**
-  Two opposite modes **on the mid-run RELOAD path** — measured 2026-08-09, do not conflate them:
-  - *unknown key* → the reload is rejected, a warning prints, the process keeps the OLD
-    config, **the trial survives**;
-  - *known key, out-of-range value* → the reload SUCCEEDS, then `TrialConfig.from_dict`
-    (`trainable.py:963`) raises `ValueError` **inside the `try:` at `:952`, which has no
-    `except` — only a `finally`** — so **the trial dies mid-iteration**.
+- **⚑ A bad live-yaml edit has three outcomes, not one. Establish which CATEGORY the key
+  is in BEFORE you edit** — (a) not in the yaml schema, (b) in the schema, read by
+  `TrialConfig.from_dict`, and validated, (c) in the schema but never validated. All
+  measured 2026-08-09, re-verified against `main` 2026-08-10.
+  - **(a) Not in the schema.** MID-RUN: `_reload_yaml_into_config`
+    (`tune/trainable_config_ops.py`) catches the `ValueError`, logs `YAML reload failed`,
+    and keeps the OLD config — the WHOLE reload is rejected, **the trial survives**. AT
+    LAUNCH the same `ValueError` is fatal: `run.py` calls `flatten_run_config_defaults`
+    before the main argument parser is built and outside any `try`, so **the process never
+    starts** and there is no old config to fall back to. ⇒ **restarting onto code that
+    predates a live yaml key does not silently revert, it fails to boot.** Before ANY
+    restart, diff the live yaml's KEYS against the target branch's SCHEMA
+    (`utils/config_yaml.py`), not against the target branch's yaml — and add a new key to
+    the live yaml only AFTER restarting onto code that defines it. This is why a PR that
+    adds a live key must be merged before the branch it is missing from can be restarted
+    onto.
+  - **(b) In the schema, validated by `from_dict`, value out of range.** The reload
+    SUCCEEDS, then `TrialConfig.from_dict` (`tune/trial_config.py`) raises inside
+    `train_trial`'s iteration-loop `try:` — which has a `finally:` and **zero `except`** —
+    so `_cleanup_trial_resources` runs and **the trial dies mid-iteration**. Measured on
+    `gumbel_policy_temp` (band `[0.05, 20.0]`, endpoints inclusive): `0.0`, `0.02` and
+    `200` each kill it, `2.0` applies cleanly. The realistic trigger is a decimal typo.
+    This belongs to EVERY `TrialConfig` validator — a band does not create the hazard, it
+    only widens the trigger set.
+  - **(c) In the schema, NOT validated** — the schema accepts it, nothing range-checks it,
+    the overlay applies it, and its consumer gets it raw: `zclip_max_norm: 1e-9` lands
+    silently. Neither a crash nor a rejection — **silent wrongness**, and the slowest of
+    the three to notice. Two sub-shapes, and the second is the dangerous one:
+    - never read by `from_dict` at all — `w_wdl`, `zclip_max_norm`, and most of the live
+      yaml's `train:` section. These reach their consumer through the raw `config` dict
+      instead.
+    - **read by `from_dict`, but with no validator** — most of the constructor, including
+      **`lr`** (`lr=float(config["lr"]) if "lr" in config else 0.0003`). ⚑ Do not read
+      "not validated" as "inert": `lr` is a `TrialConfig` field, it IS read, and a live
+      `lr: 0.3` is accepted and applied to the running trainer (GPBT: LR > 0.003 destroys
+      the model). Only a NON-NUMERIC value trips it, and then `float()` raises inside
+      `from_dict` and it dies as category (b).
 
-  Measured: `gumbel_policy_temp: 0.0` kills it; `2.0` applies cleanly; an unknown key is
-  survivable. ⇒ **A live edit to a VALIDATED key is not a soft operation.** Dry-run it on a
-  COPY first — `TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open(<copy>))))`
-  — and only then write the live file.
-- **⚑⚑ "An unknown key is survivable" is TRUE ONLY MID-RUN. AT LAUNCH IT IS FATAL.**
-  `run.py:~94` calls `flatten_run_config_defaults(cfg)` **before argparse**, outside any
-  `try`, so an unknown key there raises and the process **never starts** — there is no
-  "old config" to fall back to. Verified 2026-08-09 by running `origin/main`'s
-  `flatten_run_config_defaults` against the live yaml:
-  `ValueError: Unknown keys in yaml 'selfplay:' section: ['gumbel_policy_temp']`.
-  ⇒ **Restarting onto code that predates a live yaml key does not silently revert — it fails
-  to boot.** Before ANY restart, diff the live yaml's keys against the target branch's
-  schema, not just against `main`'s yaml. This is why a PR that adds a live key must be
-  merged before the branch it is missing from can ever be restarted onto.
+    ⚑ Do not test membership by `.get("<key>", ...)`: `from_dict` reads `lr` by
+    SUBSCRIPT, so a `.get`-only scan reports the single most consequential key in the
+    file as unread. `sf_pid_*` splits: 4 of its 40 schema keys (`sf_pid_enabled`,
+    `sf_pid_ema_alpha`, `sf_pid_target_winrate`, `sf_pid_wdl_regret_max`) are read by
+    `from_dict`; the other 36 are not.
+
+  ⇒ "an unknown key rejects the whole reload" is category (a) MID-RUN only; it is wrong
+  about (b) and about (c). **A live edit to a validated key is not a soft operation.**
+  Dry-run on a COPY first —
+  `TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open(<copy>))))` —
+  and only then write the live file. Note the dry-run proves only that the value SURVIVES
+  category (b); it says nothing about category (c), which by construction cannot fail it.
 - **Never run a 256+ sim arena concurrent with training** — GPU OOM crashed the run
   2026-06-18. sims-1/32 arenas and `audit_targets`/`value_regret` at small batch with
   `--gpu-mem-fraction` are safe.

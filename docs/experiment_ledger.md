@@ -37672,9 +37672,19 @@ consistent with deletion. The counter is the discriminator.
   in a `finally`, which a hard kill skips). Any wait that polls for "an ack" rather than
   `.paused_<live_trial_id>.ack` returns TRUE INSTANTLY and kills the workers while revive
   is still live — a guard that cannot fail.
-- ⚑ **REVIVED WORKERS TRUNCATE THEIR LOG FILES** (1.2MB -> 1,560 bytes). The suspend
+- ⚑ **A REVIVED WORKER'S LOG PATH IS A FRESH FILE** (1.2MB -> 1,560 bytes). The suspend
   evidence exists only BEFORE the resume, so offsets must be snapshotted pre-drain and read
   pre-resume. Reading after would find nothing and report a false failure.
+  **CORRECTION (PR #374): the observation is real, the stated mechanism was not.** This
+  said "revived workers TRUNCATE their log files". They do not: `logging.FileHandler`
+  opens in APPEND mode (`worker.py`), and `_rotate_worker_logs`
+  (`tune/distributed_runtime.py`) RENAMES the previous generation to `worker.log.1`
+  before the replacement process opens anything. The consequence and the operational
+  rule are unchanged — after the revive the recorded path is a NEW file and the
+  pre-drain byte offset is past its end — but the evidence is not destroyed, it moved
+  to `worker.log.1`, which is where to look for it. (That rotation exists because
+  something DID truncate in place during the 2026-08-04 cold start, and that cause was
+  never identified; it is not the revive.)
 - ⚑ **`selfplay_resume/` IS UNDER `runs/<run>/server/trials/<trial>/workers/`**, not the
   Ray artifacts dir the worker's `--log-file` points at. Checking the artifacts path
   reports `0 files` on a perfectly healthy drain. (My own first check did exactly this.)
@@ -38231,6 +38241,8 @@ HONEST CELLS AND THE FLAT CELLS DO NOT OVERLAP.** The mechanism: **soundness is 
 are `c_scale`-quiet, **2 are both**, and those sit at `rho=0.05` where "rare" (0.05) is barely
 below uniform (1/27 ~ 0.037).
 
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
+
 Best survivor, `tau=50 rho=0.05 phi=2e-2` (928 pairs, control +5.9 SD): `c_scale` **−0.0593**
 [−0.0833,−0.0350], `policy_temp` **+0.2381** [+0.2096,+0.2667], bundle **+0.0765**. It is a
 **one-sided** rule: `Δ >= +0.05` ⇒ `policy_temp` fired; **`Δ <= 0` is INDETERMINATE, never
@@ -38262,6 +38274,8 @@ be attributable, because it will be alone.
 
 **`gumbel_policy_temp` still ships in the yaml at its no-op default 1.0** (PR #379), so the
 follow-up costs a yaml reload rather than another restart.
+
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
 
 **Coverage's role is demoted accordingly:** it is no longer an attribution instrument. It
 becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read at
@@ -38309,6 +38323,8 @@ Deploy **`gumbel_c_scale` 0.025 → 0.1 AND `gumbel_policy_temp` 1.0 → 1.5** i
 `priority_policy_kl` only on rows where `keep_prob` saturates at 1.0, so the diff-focus
 selection effect cannot move the denominator.
 
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
+
 **What we can and cannot conclude, stated before launch:**
 - **CAN (deployment):** both knobs fired — realized ΔH(target) consistent with ~+0.15 net, and
   `gumbel_policy_entropy_mean` off its baseline by >= +0.10 (**measured** sd 0.0162 over the
@@ -38353,6 +38369,8 @@ both lists; the gumbel-policy one takes only `records`. **The population differe
 1.0578 vs 0.924 without either number being wrong.**
 
 ## Consequences for the bundle's deployment check
+
+> ⚑ **RETRACTED by AMENDMENT 10 (2026-08-09)** — this cell's own negative control INVERTS at `rho = 0.01, phi = 1e-2`, its harness bias is the size of the effect whose SIGN carried the rule, and its PASS was a point estimate with no interval. Read the paragraph below as the record of a claim that was WITHDRAWN, not as a live rule. Do not pin any cell of `scripts/rare_sound_move_coverage.py` as a decision rule.
 
 1. **`gumbel_policy_entropy_mean` is the CLEAN in-effect instrument** precisely because its
    denominator is *not* gated by `keep_prob` — the Amendment 5 side-channel that BOTH knobs drive.
@@ -38965,6 +38983,628 @@ into a killed run.
 
 ---
 
+## 2026-08-09 — the ack-gated pause window: the nightly ratchet runs with training PARKED (PR #374, ops)
+
+**Status: LIVE-UNREAD.** Default ON. Not a training-target change — it changes
+when the daily strength ratchet takes the GPU, and therefore how much training
+the observer eats. It gets an entry because it is a data-affecting change to the
+production loop (it parks selfplay for ~35 min/day) and because
+`scripts/pause_window.sh` and `tests/test_pause_window.py` both cite this entry
+by name.
+
+### Hypothesis
+
+The daily ratchet and selfplay contend for the same CPU (Stockfish is ~95% of
+loop cost), and the contention is expensive in BOTH directions: the arena
+truncates against its `--max-seconds` budget, and training iterations stretch.
+Running the whole ratchet inside a pause window — training parked, selfplay
+drained — buys a full-resolution arena row for FEWER lost training iterations
+than running it beside training costs.
+
+The second half is the non-obvious one and is the whole reason the default is
+ON. The intuitive accounting says parking is strictly worse: parked iterations
+are 100% lost, contended ones only slowed. That is wrong, and the measurement
+below is why.
+
+### The measurement (2026-08-09, supervised, n=1 window)
+
+Both readouts are the SAME series — same candidate/reference snapshots, same
+seed 42, same `--sims 32 --games 200 --max-concurrent-games 16 --no-compile`,
+differing only in `--label`. Source: `runs/arena_results.jsonl`.
+
+| | label | games | wall | Elo (95% CI) | half-width |
+|---|---|---|---|---|---|
+| beside training | `ratchet_2026-08-09_iter514_vs_prev` | **106/200** | 2520.3s | −46.2 [−108.1, +13.0] | 60.5 |
+| pause window | `pausewindow_2026-08-09_iter514_vs_prev` | **200/200** | 1160.1s | −31.4 [−73.8, +10.2] | 42.0 |
+
+**1.89× the games in 0.46× the wall time = 4.10× games/second.** The contended
+run hit its budget at 53/100 opening pairs (`truncated: true`), so it reported
+at 53% of the resolution it was configured for. ⚑ Both readouts are NULLS and
+both CIs span zero; "unreadable" here means TRUNCATED, not "spans zero". 115
+iterations at the standing ~0.02 Elo/iter is far below what n=200 resolves, so a
+null is the expected result and is not evidence about the loop.
+
+Park 135s, drain 55s, 93 games / 6,378 records banked with `skipped=0`.
+
+### ⚑ Numbers in the earlier script header that do NOT survive their source
+
+Recorded because the header asserted them and nothing in the repo could check
+them. All three are now corrected in `scripts/pause_window.sh`:
+
+* **"~2.5× more games"** — 200/106 is **1.89×**. The 2.5× is not reproducible
+  from either artifact; the defensible throughput statement is 4.10× games/s.
+* **"iterations stretched 245s → 611s"** — 611.3s (iter 518) is not the peak.
+  The pre-arena median was 247.8s and the peak was **1628.0s** (iter 520).
+* **"recovered to 297s the moment it ended"** — it did not. The first post-arena
+  iteration was 350.3s (iter 524) and ~250s was not seen again until iter 534,
+  roughly 50 minutes later. 297.6s is iter 516, which is BEFORE the arena.
+
+### The cost accounting the PR was missing: ITERATIONS LOST PER READABLE ROW
+
+From `result.json` of `train_trial_379f6_00000_..._2026-08-06_23-51-06`, same
+trial, same day, `time_this_iter_s` and `train_steps_used`.
+
+**Beside training** (the 08-09 ratchet, two series, 00:11:48 → 01:46:04):
+
+```
+local baseline, iters 508-516 : 2305.9s / 9 iters = 256.2 s/iter (751 steps)
+contended,      iters 517-523 : 5651.5s / 7 iters (455.8, 611.3, 735.9,
+                                1628.0, 533.6, 866.0, 820.9), 681 steps
+5651.5 / 256.2 = 22.1 iterations would have fitted;  7 ran
+```
+
+⇒ **15.1 iterations lost** (1,160 optimizer steps). Recovery is not free either:
+iters 524-533 took 3048.6s where the baseline fits 11.9, a further ~1.9, so
+**~17 including recovery.** Delivered: 2 rows, one of them truncated at 53%.
+
+**Parked** (the same evening's re-run, one series):
+
+```
+local baseline, iters 559-567 : 2642.7s / 9 iters = 293.6 s/iter
+the window     , iter  568    : 1732.5s / 1 iter (park + drain + 1160.1s arena)
+1732.5 / 293.6 = 5.90 iterations would have fitted;  1 ran
+```
+
+⇒ **4.9 iterations lost** for one complete 200-game row. No relaunch penalty is
+visible: iter 569 was 230.1s, FASTER than the pre-window baseline.
+
+**What the default-ON configuration will actually cost.** The loop wraps BOTH
+series in one window. Uncontended, `vs_boot512` took 645.4s (`--compile on`,
+measured 2026-08-08 16:10 while training was down between iters 400 and 401 —
+uncontended, but NOT through this wrapper, so treat it as an estimate).
+
+⚑ **BUILD IT FROM THE MEASUREMENT, NOT FROM THE PARTS.** An earlier version of
+this row summed components — 135s park + 55s drain + 1160.1s + 645.4s ≈ 1995s →
+6.8 — and in doing so dropped **382s (22%)** of its own measured overhead. The
+window iteration was **1732.5s** for park + drain + a 1160.1s arena, i.e. 382s
+more than those parts account for: the fleet relaunch (model reload, AOT
+compile, re-lease), which is real, was measured, and does not appear in any
+component. Rebuilt on the one number actually observed:
+
+```
+(1732.5 + 645.4) / 293.6 = 8.10 baseline iterations of wall time
+                       1 iteration actually ran
+                    ⇒ 7.1 lost, for TWO complete rows
+```
+
+| | iterations lost | full-resolution rows | **lost per readable row** |
+|---|---|---|---|
+| beside training (measured) | 15.1 (17 with recovery) | 1 of 2 | **15.1** |
+| pause window, both series (projected) | **7.1** | 2 | **3.55** |
+
+The decision is unchanged (3.55 ≪ 15.1), but a projection assembled from parts
+rather than from the measurement is the exact arithmetic the yardstick above
+exists to replace — and that yardstick was itself broken. Both are fixed here.
+
+### DECISION: default ON. Kept.
+
+Parking costs **less than half** what contention costs *and* is the only one of
+the two that reliably returns a row at its designed resolution. The reviewer's
+objection — "a daily observer that eats half a day of the training it observes
+is worse than no observer", `daily_gate_ratchet.sh:32-38` — is honoured by this
+change rather than violated by it: the observer's appetite goes DOWN, from ~15
+iterations to ~7. The intuition that parking must be worse fails because
+contention does not merely slow the arena, it stretches training iterations
+~2.9× for 94 minutes, which is a bigger bill than 33 minutes of zero.
+
+⚠ **n=1, and the projection is not a measurement.** The 7.1 is arithmetic over
+one measured window plus one uncontended arena that did not go through the
+wrapper. The yardstick below is what turns it into a measurement.
+
+### Yardstick (pre-registered, ONE deciding command)
+
+⚑ **THE FIRST VERSION OF THIS BLOCK WAS A GATE THAT COULD NOT FAIL, and it was
+the one command CLAUDE.md protocol #1 requires.** It selected the trial with
+`sorted(glob("train_trial_*"))[-1]`, which is LEXICOGRAPHIC: `'3' < 'd'`, so it
+picked the dead `train_trial_d2003_..._2026-08-05` (104 rows, last row 08-06)
+rather than the live `379f6`. Three consequences, each fatal: the median came
+from a cold-start trial (524.5s, so the threshold was 1573s); it reported 7
+stretched iterations on night ONE, before any window had run; and its output was
+**stationary** — five nights produce byte-identical results, because the trial it
+reads stopped appending three days ago. The kill rule could not fire in either
+direction. Found by an independent reviewer EXECUTING it against the live tune
+dir. Recorded rather than quietly replaced, because a pre-registered yardstick
+that cannot move is worse than none: it looks like evidence.
+
+Two further defects the rewrite fixes: the `3 × median` threshold **missed the
+contended shoulder** (on 08-09 it catches iters 520/522/523 but not 517-519 at
+455.8/611.3/735.9s, so it under-reports the very case it must catch), and
+per-iteration thresholding cannot separate one night's ratchet from another's.
+The episode is therefore bounded by the arena's OWN artefacts.
+
+After the first FIVE unattended nights, run from the live run's root (the paths
+`runs/pbt2_small/tune` and `runs/arena_results.jsonl` are relative to it; from
+anywhere else it dies on an empty `max()` rather than reporting anything):
+
+```bash
+PYTHONPATH=. python3 - <<'PY'
+import json, datetime, pathlib, statistics
+
+# NEWEST BY DATA, never sorted(). Mirrors train_watchdog.newest_trial_dir:
+# a trial with data outranks an empty one, then most recent write wins.
+def newest(p):
+    for n in ("result.json", "progress.csv"):
+        f = p / n
+        if f.is_file():
+            return (1, f.stat().st_mtime)
+    return (0, p.stat().st_mtime)
+
+tune = pathlib.Path("runs/pbt2_small/tune")
+t = max((p for p in tune.glob("train_trial_*") if p.is_dir()), key=newest)
+print("TRIAL:", t.name)
+
+iters = []
+for line in (t / "result.json").open():
+    if not line.strip():
+        continue
+    d = json.loads(line)
+    if d.get("timestamp") is None:
+        continue
+    iters.append((d["training_iteration"], d["timestamp"] - d["time_this_iter_s"],
+                  d["timestamp"], d["time_this_iter_s"]))
+
+# The episode comes from the ARENA's own rows, not a threshold on iteration
+# time: [ts - duration_s, ts] per arena, unioned. Rows predating the
+# `truncated` key are skipped rather than defaulted.
+days = {}
+for line in open("runs/arena_results.jsonl"):
+    if not line.strip():
+        continue
+    a = json.loads(line)
+    if not str(a.get("label", "")).startswith("ratchet_"):
+        continue
+    if a.get("duration_s") is None or a.get("truncated") is None:
+        continue
+    end = datetime.datetime.fromisoformat(a["ts"]).timestamp()
+    day = datetime.datetime.fromtimestamp(end).date()
+    days.setdefault(day, []).append((end - a["duration_s"], end, bool(a["truncated"])))
+
+# ⚑ FIVE CALENDAR NIGHTS, not `sorted(days)[-5:]`. A night on which no ratchet
+# ran has no key at all, so slicing the keys silently pulls in an earlier,
+# pre-change, contended day and reports it as one of the five.
+last = max(days) if days else datetime.date.today()
+window = [last - datetime.timedelta(days=i) for i in range(4, -1, -1)]
+
+print(f"{'date':12s} {'in':>3s} {'base_s':>7s} {'LOST':>6s} {'full-res/rows':>13s}")
+for day in window:
+    ivs = days.get(day)
+    if not ivs:
+        print(f"{day.isoformat():12s}   -- NO RATCHET ROW for this night --")
+        continue
+    inw = [x for x in iters if any(x[2] > lo and x[1] < hi for lo, hi, _ in ivs)]
+    out = [x for x in iters
+           if datetime.datetime.fromtimestamp(x[2]).date() == day and x not in inw]
+    full = sum(1 for _, _, trunc in ivs if not trunc)
+    if not inw or not out:
+        print(f"{day.isoformat():12s}   -- no overlap with training iterations; "
+              f"{full}/{len(ivs)} full-res. INVESTIGATE before reading anything else")
+        continue
+    med = statistics.median([x[3] for x in out])          # that night's OWN baseline
+    lost = sum(x[3] for x in inw) / med - len(inw)
+    print(f"{day.isoformat():12s} {len(inw):3d} {med:7.1f} {lost:6.1f} "
+          f"{full:>6d}/{len(ivs):<6d}  iters {inw[0][0]}-{inw[-1][0]}")
+PY
+```
+
+⚑ **Proof it moves — VERBATIM output, run read-only against the live tree on
+2026-08-09.** Nothing elided: the two `no overlap` lines are real and are what
+the window looks like when the arenas of a night belong to a PREVIOUS trial.
+
+```
+TRIAL: train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06
+date          in  base_s   LOST full-res/rows
+2026-08-05     -- no overlap with training iterations; 0/2 full-res. INVESTIGATE before reading anything else
+2026-08-06     -- no overlap with training iterations; 0/1 full-res. INVESTIGATE before reading anything else
+2026-08-07     3   250.9    2.5      0/1       iters 9-11
+2026-08-08     4   240.5   12.9      2/3       iters 254-257
+2026-08-09     8   261.5   14.7      0/2       iters 516-523
+```
+
+Three things this shows that a described check could not. It selects `379f6`,
+the live trial, rather than `d2003`. It **moves** — 2.5, 12.9, 14.7 — so the
+rule can fire in either direction, and it fires on the status quo (14.7 and 12.9
+against a KILL bar of 12). And the 08-09 row is the contended ratchet this
+change exists to replace: **14.7 independently reproduces the 15.1 derived by
+hand above from a completely different method** (per-iteration wall time against
+a local median, versus arena-bounded episodes), which is the cross-check the
+first version could not offer.
+
+⚑ **The 08-09 row is computed from a file that is still being appended to, so it
+DRIFTS.** LOST has read 15.4, then 15.0 (an independent reviewer), then 14.7;
+re-running the block above a few minutes after the paste moved `base_s` 261.5 →
+261.6, because iterations completing tonight keep re-centering tonight's own
+baseline median. Read the current night as "about 15", not as a constant. This
+does not weaken the rule: the SUCCESS bar (≤9) and the KILL bar (>12) are set
+far enough from ~15 and from the projected ~7 that a ±0.7 wobble cannot decide
+either, and a night stops moving once it is no longer the current one.
+
+⚑ **The three outcomes are EXHAUSTIVE.** An earlier version left LOST in (9, 12]
+with 6-7 full-resolution rows matching neither rule, i.e. a pre-registered
+decision procedure with a hole in it — which is a slower version of a gate that
+cannot fail, because the reading then gets argued rather than applied.
+
+**SUCCESS** (keep default ON): every night in the window reports **LOST ≤ 9**,
+AND **≥ 8 of the 10 rows** (2/night × 5) are full-resolution. On the measurement
+above, a parked night should land near 6-7.
+
+**KILL** (flip `CAE_RATCHET_PAUSE_WINDOW` to default 0, in the same session):
+**two or more** nights report **LOST > 12** — at which point parking is no
+cheaper than the contention it replaces and the 3.55 above was wrong — **or**
+fewer than **6 of 10** rows are full-resolution, which means parking did not buy
+the resolution that is the entire justification.
+
+**INCONCLUSIVE** (anything else — one bad night, or 6-7 good rows): run **five
+more nights** and apply the same rule to the second window. Do NOT read it as a
+pass; "no kill" is not "success", and the ledger's own standing rule is that a
+deferred verdict is not a verdict. If the second window is also inconclusive,
+that is a KILL by default: a change whose benefit cannot be demonstrated in ten
+nights is not paying for the complexity.
+
+A night reported as `NO RATCHET ROW` does not count toward the five — extend the
+window instead. A night reported as `no overlap` is a defect in the readout, not
+a result; investigate before reading any other row.
+
+**Also a kill, independently:** any night where `data/ratchet/pause_window_fails`
+reaches the `CAE_RATCHET_PAUSE_MAX_FAILS` cap twice in five days. The wrapper
+falling back to contended readings on a schedule is worse than not wrapping.
+⚑ That counter is exercised end-to-end by
+`test_the_pause_fail_cap_counts_up_and_then_stops_asking` — it previously
+incremented in code that no test executed, which is a KILL criterion reading a
+number nothing proved ever moved.
+
+
+### Confounds
+
+* One data-affecting change in this window: nothing else in this PR touches
+  training. But the pause DOES change the data — ~33 min/night of no selfplay,
+  and a fleet suspend/resume cycle per night. If a later readout blames a
+  selfplay-composition change dated after 2026-08-09, this is in the frame.
+* `resumed_inflight_games` after the window summed to **2,963** across iters
+  568-585 (0 on every row from 515 through 567, then 224, 456, 477, 454, 399,
+  … 1, back to 0 at iter 586) against **93 games banked** by the drain. ⚑ The
+  PR called this counter "a total" and inferred the resume dirs held ~131 games.
+  Both are wrong: `finalize.py:485-488` increments it once per FINALIZED game
+  carrying `resumed_from_disk`, so these are 2,963 DISTINCT games and the
+  counter is per-ingest, not cumulative. The 32× gap is **UNEXPLAINED**. The
+  pre-drain `selfplay_resume/` baseline the wrapper now takes is what would
+  explain it; until a window runs with that baseline recorded, the attribution
+  of banked→resumed is not established. Do not cite 224 as "this drain resumed
+  224 games".
+
+### Scope boundaries (each pinned by a test in `tests/test_pause_window.py`)
+
+* The drain is a **gate**: `pgrep` rc≥2 is fatal, zero matched workers refuses
+  BEFORE the marker, a worker surviving SIGTERM aborts the job.
+* A wrapper failure exits **7**, outside every status the ratchet family
+  produces (0, 1 RETRY, 2 usage, 3 the arena's no-pairs, 5 NO_RETRY), and the
+  loop falls back to a contended reading after `CAE_RATCHET_PAUSE_MAX_FAILS=2`
+  so a day still gets measured.
+* The ack gate tests **freshness by mtime**, never existence, and never deletes
+  an ack — `graceful_restart.py` uses acks as its primary pause detector.
+* An interrupt kills the job's **process group** and waits for it. One SIGTERM
+  to the direct child leaves the arena alive, and the next poll would open a
+  second one — which CLAUDE.md forbids outright.
+
+### The watchdog interaction, and what this change does about it
+
+`train_watchdog.decide()` returned PAUSED-HELD whenever the loop was flat and a
+`pause.txt` existed, STALLED required `pause_txt is None`, and
+`watchdog_loop.sh:53` recovers only on rc==3. So while ANY marker was held,
+auto-recovery was **structurally unable to fire** and `recover_stall.sh:31` —
+the one line that removes a marker — was unreachable. This PR makes a held
+marker a nightly event, so "production is parked" and "the ratchet is running"
+became the same alert.
+
+Fixed rather than documented-around: the marker records `pid=` and `started=`,
+the watchdog returns a new **PAUSE-ABANDONED (exit 6)** for a marker that NAMES
+ITS OWNER whose owner is gone (or which has been held past
+`--pause-max-minutes`, default 180 = 30 min ack wait + `BUDGET_MIN=90` plus
+headroom), and `watchdog_loop.sh` removes exactly that marker. ⚑ The gate is
+"the marker names its owner", never the age: `graceful_restart.py` writes prose
+with no `pid=`, and an operator's pause must outlast any bound. Deliberately NOT
+`recover_stall.sh`: nothing is wedged, so SIGKILLing a healthy stack to delete
+one file is the more destructive fix.
+
+⚑ **The exit code was 5 and had to move to 6.** This branch was cut from a main
+that stopped at `EXIT_ERROR = 4`; PR #371 landed `EXIT_CRASHED = 5` on main
+while it was open. Two states on one exit code would have made
+`watchdog_loop.sh` try to clear a pause marker on a CRASHED verdict — the same
+"one signal, two meanings" defect this state exists to remove, one level up.
+⚑ **Git did not surface it.** The two sides appended to the same *block* but not
+the same *line*, so `git merge` resolved that hunk cleanly; it was caught by
+reading `origin/main` after noticing unrelated edits in the live tree. A merge
+that applies without conflict is not evidence that two changes compose.
+
+### ⚑ MERGING DOES NOT DEPLOY THIS
+
+`train.sh:156-159` starts `ratchet_loop.sh` once, only when `pgrep` finds none,
+and `stop()` never stops it — and a long-running bash keeps the file it was
+launched with. After merge, the live loop runs the OLD ratchet_loop.sh with no
+window until someone kills it.
+
+⚑ **AND THE ORDER OF THE TWO RESTARTS MATTERS.** The loops keep their old text,
+but everything they INVOKE (`train_watchdog.py`, `pause_window.sh`,
+`daily_gate_ratchet.sh`) is re-exec'd every poll and flips immediately. So the
+moment the tree carries this change you get a NEW `train_watchdog.py` returning
+exit 6 driven by an OLD `watchdog_loop.sh` with no exit-6 branch: an abandoned
+window is alerted on and NEVER CLEARED — the precise failure the branch was
+added to fix. Restart `watchdog_loop.sh` BEFORE `ratchet_loop.sh`, or the new
+nightly failure mode is armed with its recovery disabled.
+
+⚑ The live branch is also **1 commit behind main, missing `28bff3df5` (#371)**
+itself, and its running `watchdog_loop.sh` is a hand-reduced THIRD version
+(+12/−113 vs main: #371's seams but none of its `alert_write`/`alert_once`
+machinery). So the live tree's uncommitted edits must be reconciled BEFORE the
+merge — and never with `git checkout --` or `git stash`, which CLAUDE.md bans
+here and which would discard the watchdog that is currently running.
+
+Full procedure, both halves, and the per-half log line that proves it took
+effect are in `docs/operations.md` ("The nightly pause window"). Nothing here
+has been deployed.
+
+### Verification
+
+`tests/test_pause_window.py` (28) + `tests/test_train_watchdog.py` (45) pass;
+`./scripts/lint.sh` with no arguments is clean apart from the 132
+`reportMissingModuleSource` errors an unbuilt-C-extension worktree always emits.
+Mutation results are in the PR conversation, survivors included.
+
+---
+
+## 2026-08-10 — PREREG (not launched) + a NEGATIVE screen: decouple the STORED target's sigma
+
+**Status: CODE MERGED-PENDING, DEFAULT OFF (`0`), NEVER RUN — and its one
+measurement so far is NEGATIVE.** `gumbel_target_max_visit_cap`
+(PR #391, `feat/target-sigma-decouple`).
+
+### Hypothesis
+
+σ(q) in `softmax(log_prior + σ·Q̄)` does two jobs with one number: how far
+search-Q may outrank the prior for the move actually PLAYED, and how sharp the
+row written to the shard is. A move the target never puts mass on is a move the
+next generation's prior stops proposing, so search never revisits it, whereas a
+play-time error costs one game. ⇒ the strength-optimal σ is an UPPER BOUND on
+the training-optimal σ, and one number for both pins the target to that bound.
+The knob clamps the `max_visit` feeding σ for the stored target only — "search
+deep, TRUST the result like a shallow search" — and is sims-invariant by
+construction, which a bare `c_scale` override is not.
+
+⚑ It shrinks σ and ONLY σ. It is **not** "the transform a smaller search would
+have produced": the completed-Q vector, the visit-weighted `mixed_value` and
+therefore the value imputed to every UNVISITED child all still come from the
+full search. The two coincide only when every child is visited. Pinned both
+ways in `tests/test_target_sigma_decoupling.py::
+test_the_cap_shrinks_sigma_and_ONLY_sigma`.
+
+### ⚑⚑ THE ONE MEASUREMENT TAKEN SO FAR IS NEGATIVE — do not read this entry as a pending win
+
+An 8-row ranking ladder (Spearman of the search-target ranking against a deep-SF
+reference) scored the CAPPED target **+0.0144** against **+0.0179** for the
+uncapped one, while raising `H(target)` 0.891 → 1.005. **The cap COSTS ranking
+quality on the only ruler it has been put in front of.** It is 8 rows with no CI,
+so it is a screen and not a verdict — but it is the wrong sign, and the burden is
+now on the mechanism to beat that, not on a reviewer to disprove it.
+
+⇒ **`0` is not a placeholder default awaiting a launch; it is where the evidence
+currently points.** This PR merges a mechanism and its guard, not a result.
+
+### Yardstick — ONE, exact, before it may ever go non-zero
+
+Target QUALITY against the frozen deep-SF audit set, paired per position, on the
+production TRAINING target rows. **NOT an arena** — arenas play and store no
+training rows, so an arena is structurally blind to this knob by design.
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+      --audit-set data/audit_set_v1.jsonl --batch-size 64 --gpu-mem-fraction 0.3 \
+      --gumbel target_max_visit_cap=0 --gumbel-training-rows \
+      --dump-per-position scratchpad/sigmacap_off.jsonl
+    # ...same command with target_max_visit_cap=<cap> -> scratchpad/sigmacap_on.jsonl
+    PYTHONPATH=. python3 scripts/paired_compare.py \
+      scratchpad/sigmacap_off.jsonl scratchpad/sigmacap_on.jsonl \
+      --join-key key --field cand.train.top1 --field cand.train.entropy
+
+`--gumbel-training-rows` is REQUIRED: `--gumbel` alone overrides the PLAY row
+only, i.e. it would measure a TARGET-side knob on the play policy — a perfectly
+reproducible null. Judge on **TOP-1 regret**, which is sharpness-invariant; the
+knob moves `entropy` mechanically, so deciding on an entropy-weighted statistic
+would score the intervention in the unit it moves by construction.
+
+**Pre-committed thresholds.**
+- **SUCCESS:** `cand.train.top1` improves by **≥ 1.0 cp** with a paired 95% CI
+  excluding 0 — i.e. it has to REVERSE the ladder screen above, not merely fail
+  to reproduce it.
+- **KILL:** no significant improvement, or any significant regression.
+- **NEGATIVE CONTROL (structural, ships as a test):** `cap = 0` and
+  `cap > max_visit` must both be BIT-IDENTICAL to the code before the knob
+  existed, on BOTH search paths
+  (`tests/test_target_sigma_decoupling.py::test_both_search_paths_honour_the_cap`,
+  `::test_the_default_is_off_and_bit_identical`).
+
+### Confounds
+
+None while it stays at 0. If it is ever launched it MUST NOT share a readout
+window with `gumbel_target_untempered_prior` (the stacked PR #390) — they are two
+adjustments to the two terms of the SAME softmax and their effects are not
+separable from one shard measurement.
+
+⚑ Both are refused at config load alongside any positive move temperature:
+`selfplay/network_turn.py:_resample_actions_with_temperature` re-draws the played
+move from the RETURNED (modified) policy, which would silently convert a
+target-only knob into a search change. **An ABSENT temperature key is not 0.0** —
+it realizes as the loader's default (1.0 for `temperature`, 0.6 for
+`temperature_endgame`), so the guard reads each key at its realized default and
+the ten `temperature*` lines in `configs/pbt2_small.yaml` must stay pinned.
+
+### Revert point
+
+Not required to MERGE (default off, bit-identical, `configs/pbt2_small.yaml`
+unchanged). Required before any live arm: `./scripts/train.sh salvage-export
+--top-n 1 --metric training_iteration --out data/salvage/pre_sigma_cap`.
+
+---
+
+## 2026-08-10 — PREREG (not launched): take `policy_temp` OUT of the STORED target's `log_prior`
+
+**Status: CODE MERGED-PENDING, DEFAULT OFF, NEVER RUN.** `gumbel_target_untempered_prior`
+(PR: `fix/untemper-target-prior`, stacks on `feat/target-sigma-decouple`). This entry exists
+so that rule 1 is satisfied BEFORE anyone sets it non-default; nothing below has been
+measured on a net.
+
+### Hypothesis
+
+The Gumbel improved policy is `softmax(log_prior + sigma*Qbar)` and `log_prior` is the
+**TEMPERED** prior — `gumbel.py:_policy_logits_to_full` divides the policy logits by
+`policy_temp` before they seed the tree, and the improved-policy build then reads
+`log(pri)` off that same tempered prior. Production runs `gumbel_policy_temp: 1.5`
+(live yaml line 260; **the committed `configs/pbt2_small.yaml` does NOT carry the key** —
+see the gate-that-cannot-fail warning below). The stored improved policy is the next
+generation's TRAINING TARGET, so the division re-enters the target every pass:
+
+```
+L -> L/T -> target = L/T + sigma*Qbar -> the head learns it -> L/T again
+fixed point:  L* = sigma*Qbar * T/(T-1)  =  3*sigma*Qbar  at T=1.5
+```
+
+The contraction ratio on everything the head knows that search did not tell it is `1/T`, so
+that component decays geometrically and the attractor is a policy determined ENTIRELY by Q.
+**lc0 is safe at PolicyTemperature 1.45 because it trains on VISIT COUNTS**, which carry no
+additive `log_prior` term, so no version of this recursion exists there. Gumbel-MuZero's
+completed-Q target does. Same knob, different target algebra, opposite safety.
+
+Consistent with the 2026-08-10 readout above (`46c1489e6`): H(stored target) 0.9849 ->
+1.2136 past its pre-registered 1.14 bar, `KL(prior‖target)` median x11.8.
+
+**The fix:** tempered prior for CANDIDATE SELECTION (which is what temperature is actually
+for — it puts more moves INTO the search), untempered prior in the STORED target's
+`log_prior` term. Play is untouched, so an arena is structurally blind to it.
+
+### ⚑ TWO THINGS THAT WOULD MAKE THIS A GATE THAT CANNOT FAIL
+
+1. **`policy_temp == 1.0` makes the knob a provable no-op** (there is no temperature to
+   undo; shipped as a bit-identical test). The committed production yaml has **no
+   `gumbel_policy_temp` key at all**, so `audit_targets.py --config configs/pbt2_small.yaml`
+   run from a checkout would score `T = 1.0` and return a clean null under a heading naming
+   the knob. The yardstick below therefore sets `policy_temp=1.5` explicitly rather than
+   inheriting it. Diff the file you measure against production first
+   [[diff_the_file_you_measured_against_production]].
+2. **`--gumbel` alone does NOT reach the training rows.** Rows (d)/(e) are the production
+   training target and are overridden only under `--gumbel-training-rows`. Without it this
+   is a TARGET-side knob measured on the PLAY row: a perfectly reproducible null.
+
+### Yardstick — ONE, exact
+
+Target QUALITY against the frozen deep-SF audit set, paired per position, on the
+production TRAINING target rows. **NOT an arena** (blind by construction), and **NOT the
+KL** (see the next section).
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+      --audit-set data/audit_set_v1.jsonl --batch-size 64 --gpu-mem-fraction 0.3 \
+      --gumbel policy_temp=1.5,target_untempered_prior=0 --gumbel-training-rows \
+      --dump-per-position scratchpad/untemper_off.jsonl
+    # ...same command with target_untempered_prior=1 -> scratchpad/untemper_on.jsonl
+    PYTHONPATH=. python3 scripts/paired_compare.py \
+      scratchpad/untemper_off.jsonl scratchpad/untemper_on.jsonl \
+      --join-key key --field cand.train.top1 --field cand.train.exp \
+      --field cand.train.entropy
+
+`ck_2026-08-09_iter514.pt` because it is the FROZEN best net, not a live Ray checkpoint
+(Ray prunes those). Judge on **TOP-1 regret**, which is sharpness-invariant; `exp` is
+reported alongside but does not decide, because E[regret] rewards sharpness and this knob
+sharpens the target by construction — deciding on `exp` would be scoring the intervention
+in the unit it moves mechanically.
+
+**Pre-committed thresholds.**
+- **SUCCESS:** `cand.train.top1` improves by **>= 1.0 cp** with a paired 95% CI excluding 0.
+- **KILL:** no significant improvement, OR any significant regression on `top1`.
+- **NEGATIVE CONTROL (structural, ships as a test):** with `policy_temp=1.0` the two arms
+  must be **BIT-IDENTICAL** — there is no temperature to undo, so any difference means the
+  implementation altered something it was not supposed to and NO number from the screen is
+  trustworthy. `tests/test_untempered_target_prior.py::
+  test_the_knob_is_inert_when_there_is_no_temperature_to_undo`, both search paths.
+- **GPU budget:** the standing ~30 min/day outside training, and it must run in a pause
+  window, not beside the queued arena/ladder.
+
+Only if this passes does anything else happen: prereg for the live arm (a live readout is a
+day-plus, paired-CI, learning-quality window), independent review with REVIEWER != AUTHOR,
+and a restart-gated deploy. ⚑ Adding `gumbel_target_untempered_prior` to the live yaml
+requires the PR to be MERGED FIRST — an unknown key is fatal AT LAUNCH
+[[unknown_key_safe_bad_value_lethal]].
+
+### ⚑⚑ ERRATUM AGAINST THIS CHANGE'S OWN MOTIVATION: "KL(prior‖target) must fall" is FALSE as stated
+
+The obvious acceptance test — *with the fix on, the number that rose 11.8x must fall* — was
+pre-registered by the change's brief and **does not survive being computed.** In logit space
+the stored target's displacement from the head's own policy is
+
+```
+    fix ON :  S                       where S = sigma*Qbar
+    fix OFF:  S - (1 - 1/T) * L
+```
+
+so removing the tempering moves the target CLOSER to the prior **only on rows where search
+DISAGREES with the prior**. On rows where search AGREES — the majority, which is exactly why
+the live *median* KL is only 0.0238 — the `-(1-1/T)L` term was CANCELLING part of `S`, and
+taking it away moves the target FURTHER away. Measured on both search paths (random-prior
+net, production `c_scale=0.1`, T=1.5): `KL(prior‖target)` **0.7717 -> 0.9338** (C path) and
+**1.0257 -> 1.1799** (Python path) — it goes UP. Both directions are pinned as tests so that
+nobody later "fixes" the sign by making the knob do something other than remove `T`.
+
+What IS unconditional, and is what the tests assert instead:
+- **sigma = 0** (`c_scale=0`, search contributes nothing): the target must BE the head's
+  policy. Fix ON gives `KL(prior‖target) = 0.0000`; fix OFF gives **0.0910**, and that 0.0910
+  is exactly `KL(softmax(L) ‖ softmax(L/T))` — the target displaced from the prior for a
+  reason that has nothing to do with search. That displacement is the term that compounds.
+- **H(stored target) falls** in every configuration measured (sigma=0: 2.7931 -> 2.2966;
+  production sigma: 1.6895 -> 1.3743 C, 1.4981 -> 1.2182 Python). H(target) is the
+  pre-registered quantity that overshot its 1.14 bar, and it moves the right way.
+- **The loop map's contraction ratio** on the head's own information is `1/T` OFF and `1` ON,
+  with OFF converging onto `3*sigma*Qbar` — asserted directly, 30 iterations.
+
+⇒ **This is a live instance of [[proxy_must_be_monotone_in_the_intervention]]**: KL is not
+monotone in this intervention, so it cannot be its yardstick in either direction. And per
+this document's standing rule, none of the above is evidence of change QUALITY anyway —
+the `sims=1` control changes 34.9% of moves and is **+7.60 cp WORSE**. Only the deep-SF
+audit read decides.
+
+### Confounds
+
+None while it stays off. If it is ever launched live it MUST NOT share a readout window
+with `gumbel_target_max_visit_cap` (the parent PR) — they are two adjustments to the two
+terms of the SAME softmax and their effects are not separable from one shard measurement.
+Both are refused at config load alongside any positive move temperature: at
+`temperature > 0` the played move is re-drawn from the RETURNED (modified) policy in
+`selfplay/network_turn.py:_resample_actions_with_temperature`, which would silently convert
+a target-only knob into a search change and make every strength readout uninterpretable.
+
+### Revert point
+
+Not required to MERGE (default off, bit-identical, `configs/pbt2_small.yaml` unchanged and
+pinned by a test). Required before any live arm: the usual
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out
+data/salvage/pre_untempered_target` — a yaml revert is not a rollback, the replay window
+holds ~a day of data made under the old target.
 ## PRE-REGISTERED 2026-08-10 — CODE-PARITY RESTART: live branch merged onto `origin/main`
 
 **Status: NOT YET LAUNCHED.** Branch `ops/live-merge-main` (`040bad0f1`) is built,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from tests.script_loading import load_script_module
@@ -20,6 +21,9 @@ def _snap(
     trial_dir: str | None = "train_trial_abc_00000",
     progress_file: str | None = None,
     intentional_stop: bool = False,
+    pause_owner_pid: int | None = None,
+    pause_owner_alive: bool | None = None,
+    pause_age_minutes: float | None = None,
 ):
     return wd.ProgressSnapshot(
         pid=pid,
@@ -31,6 +35,9 @@ def _snap(
         trial_dir=trial_dir,
         progress_file=progress_file,
         intentional_stop=intentional_stop,
+        pause_owner_pid=pause_owner_pid,
+        pause_owner_alive=pause_owner_alive,
+        pause_age_minutes=pause_age_minutes,
     )
 
 
@@ -522,3 +529,471 @@ def test_notify_cmd_failsoft(tmp_path: Path, capsys) -> None:
     ])
     assert code == wd.EXIT_CRASHED
     assert capsys.readouterr().out.strip().startswith("watchdog: CRASHED")
+
+
+# ── PAUSE-ABANDONED: the state that makes auto-recovery reachable ────────────
+# ⚑ WHY THIS EXISTS. `decide()` returns PAUSED-HELD whenever the loop is flat
+# AND a pause.txt is present, and STALLED requires `pause_txt is None`;
+# `watchdog_loop.sh` recovers only on STALLED. So while ANY marker is held the
+# recovery branch -- and `recover_stall.sh`'s `rm -f ... pause.txt` with it --
+# is unreachable BY CONSTRUCTION. scripts/pause_window.sh makes a held marker a
+# nightly event, so a window that dies holding one parks production until a
+# human notices. The marker discriminates: pause_window.sh writes `pid=`,
+# graceful_restart.py writes prose.
+
+_OWNED = "pause_window.sh pid=4242 started=2026-08-09T05:03:54-04:00\njob=bash x\n"
+_OPERATOR = "graceful restart in progress\n"
+
+
+def _paused_snap(
+    *,
+    pid: int | None = 1234,
+    pid_alive: bool = True,
+    intentional_stop: bool = False,
+    rows: int = 42,
+    rows_prev: int | None = 42,
+    minutes_flat: float = 15.0,
+    pause_owner_pid: int | None = None,
+    pause_owner_alive: bool | None = None,
+    pause_age_minutes: float | None = None,
+):
+    """A flat loop with a marker present -- the PAUSED-HELD baseline.
+
+    Spelled out rather than `**kw` onto `_snap`: a dict of mixed value types
+    erases every parameter type on the way through, which is 11 basedpyright
+    errors and, worse, means a typo'd kwarg name would be accepted here.
+    """
+    return _snap(
+        pid=pid,
+        pid_alive=pid_alive,
+        intentional_stop=intentional_stop,
+        pause_txt="runs/pbt2_small/tune/pause.txt",
+        rows=rows,
+        rows_prev=rows_prev,
+        minutes_flat=minutes_flat,
+        pause_owner_pid=pause_owner_pid,
+        pause_owner_alive=pause_owner_alive,
+        pause_age_minutes=pause_age_minutes,
+    )
+
+
+def test_a_held_marker_whose_owner_is_gone_is_recoverable() -> None:
+    """The failure this state exists for: the wrapper died holding the marker."""
+    v = wd.decide(
+        _paused_snap(pause_owner_pid=4242, pause_owner_alive=False, pause_age_minutes=3.0),
+        stall_minutes=90.0,
+    )
+    assert v.state == wd.STATE_PAUSE_ABANDONED
+    assert v.exit_code == wd.EXIT_PAUSE_ABANDONED
+    assert "pause_abandoned=owner_pid_4242_is_gone" in v.format_line()
+
+
+def test_a_held_marker_whose_owner_is_ALIVE_is_left_alone() -> None:
+    """⚑ THE NEGATIVE CONTROL. The nightly window is exactly this state, and
+    clearing it would resume training into the arena it is running."""
+    v = wd.decide(
+        _paused_snap(pause_owner_pid=4242, pause_owner_alive=True, pause_age_minutes=12.0),
+        stall_minutes=90.0,
+    )
+    assert v.state == wd.STATE_PAUSED_HELD
+    assert v.exit_code == wd.EXIT_PAUSED_HELD
+
+
+def test_an_owned_marker_held_past_the_bound_is_recoverable() -> None:
+    """The owner can be alive and wedged. One window is bounded by the ack wait
+    (30 min) plus BUDGET_MIN=90, so 180 is 50% headroom, not a guess."""
+    v = wd.decide(
+        _paused_snap(pause_owner_pid=4242, pause_owner_alive=True, pause_age_minutes=181.0),
+        stall_minutes=90.0,
+    )
+    assert v.state == wd.STATE_PAUSE_ABANDONED
+    assert "pause_abandoned=held_181min_over_180" in v.format_line()
+
+
+def test_an_OPERATORS_marker_is_never_abandoned_however_old() -> None:
+    """⚑ THE ONE THAT MUST NOT REGRESS. `graceful_restart.py` writes no `pid=`,
+    and an operator's pause is allowed to outlast any bound we could pick --
+    clearing it resumes the run they deliberately parked. The gate is therefore
+    "the marker names its owner", never the age.
+    """
+    v = wd.decide(
+        _paused_snap(pause_owner_pid=None, pause_owner_alive=None, pause_age_minutes=10_000.0),
+        stall_minutes=90.0,
+    )
+    assert v.state == wd.STATE_PAUSED_HELD, (
+        "an unowned marker was judged abandoned: the watchdog would delete an "
+        "operator's pause"
+    )
+
+
+def test_an_abandoned_marker_over_a_GROWING_loop_is_still_OK() -> None:
+    """Flatness is the whole reason PAUSED-HELD is not reported at every poll:
+    a marker set moments ago over a loop still writing rows is not a problem."""
+    v = wd.decide(
+        _paused_snap(rows=43, rows_prev=42, pause_owner_pid=4242, pause_owner_alive=False),
+        stall_minutes=90.0,
+    )
+    assert v.state == wd.STATE_OK
+
+
+def test_a_dead_pid_still_outranks_an_abandoned_pause() -> None:
+    """The dead-PID split (#371) runs FIRST: a crashed trainer with a stale
+    pause marker is CRASHED, not a pause to be tidied up. Clearing the marker
+    there would resume nothing and hide the outage behind a housekeeping line.
+    """
+    crashed = wd.decide(
+        _paused_snap(pid=None, pid_alive=False, pause_owner_pid=1, pause_owner_alive=False),
+        stall_minutes=90.0,
+    )
+    stopped = wd.decide(
+        _paused_snap(
+            pid=None, pid_alive=False, intentional_stop=True,
+            pause_owner_pid=1, pause_owner_alive=False,
+        ),
+        stall_minutes=90.0,
+    )
+    assert crashed.state == wd.STATE_CRASHED
+    assert stopped.state == wd.STATE_STOPPED
+
+
+def test_parse_pause_marker_reads_pause_window_sh_format() -> None:
+    """Against the literal bytes scripts/pause_window.sh writes."""
+    started = "2026-08-09T05:03:54"
+    import datetime as dt
+    now = dt.datetime.fromisoformat(started).timestamp() + 600.0
+    pid, age = wd.parse_pause_marker(
+        f"pause_window.sh pid=4242 started={started}\njob=bash scripts/daily_gate_ratchet.sh\n",
+        mtime=None, now=now,
+    )
+    assert pid == 4242
+    assert age is not None
+    assert abs(age - 10.0) < 0.1
+
+
+def test_parse_pause_marker_rejects_the_operators_marker() -> None:
+    pid, age = wd.parse_pause_marker(_OPERATOR, mtime=1000.0, now=99_000.0)
+    assert pid is None, "an operator's marker was given an owner"
+    assert age is None, (
+        "an unowned marker was given an age; nothing downstream may act on it, "
+        "so reporting one is an invitation to"
+    )
+
+
+def test_parse_pause_marker_falls_back_to_mtime_without_started() -> None:
+    pid, age = wd.parse_pause_marker("pause_window.sh pid=7\n", mtime=1000.0, now=1600.0)
+    assert pid == 7
+    assert age == 10.0
+
+
+def test_parse_pause_marker_survives_a_corrupt_started_field() -> None:
+    pid, age = wd.parse_pause_marker(
+        "pause_window.sh pid=7 started=NOT-A-DATE\n", mtime=1000.0, now=1600.0,
+    )
+    assert (pid, age) == (7, 10.0)
+
+
+def test_build_snapshot_reads_the_marker_and_checks_its_owner(tmp_path: Path) -> None:
+    """End to end from real files: the parse, the liveness check, and the
+    verdict, so a snapshot that never populates the fields cannot pass."""
+    work = tmp_path / "runs" / "x"
+    tune = work / "tune"
+    (tune / "train_trial_a_00000").mkdir(parents=True)
+    (tune / "train_trial_a_00000" / "progress.csv").write_text("h\n1\n2\n")
+    # A pid that cannot be alive: our own children are reaped, so use a pid the
+    # kernel will not have (kill -0 raises ProcessLookupError).
+    dead = 4_000_000
+    (tune / "pause.txt").write_text(f"pause_window.sh pid={dead} started=2026-08-09T05:03:54\n")
+    pidfile = tmp_path / "pid"
+    pidfile.write_text(f"{os_getpid()}\n")
+    state = tmp_path / "state.json"
+
+    snap, new_state = wd.build_snapshot(
+        pidfile=pidfile, work_dir=work, state_path=state,
+        stop_marker=tmp_path / 'no_marker',
+    )
+    assert snap.pause_owner_pid == dead
+    assert snap.pause_owner_alive is False
+    wd.save_state(state, new_state)
+    # Second pass: rows are unchanged, so the loop is flat and the verdict lands.
+    snap2, _ = wd.build_snapshot(
+        pidfile=pidfile, work_dir=work, state_path=state,
+        stop_marker=tmp_path / 'no_marker',
+    )
+    v = wd.decide(snap2, stall_minutes=90.0)
+    assert v.state == wd.STATE_PAUSE_ABANDONED, v.format_line()
+
+
+def test_build_snapshot_leaves_an_unreadable_marker_as_paused_held(tmp_path: Path) -> None:
+    """Fail-soft: a marker we cannot parse is reported, never cleared."""
+    work = tmp_path / "runs" / "x"
+    tune = work / "tune"
+    (tune / "train_trial_a_00000").mkdir(parents=True)
+    (tune / "train_trial_a_00000" / "progress.csv").write_text("h\n1\n")
+    (tune / "pause.txt").write_text(_OPERATOR)
+    pidfile = tmp_path / "pid"
+    pidfile.write_text(f"{os_getpid()}\n")
+    state = tmp_path / "state.json"
+
+    _, new_state = wd.build_snapshot(
+        pidfile=pidfile, work_dir=work, state_path=state,
+        stop_marker=tmp_path / 'no_marker',
+    )
+    wd.save_state(state, new_state)
+    snap2, _ = wd.build_snapshot(
+        pidfile=pidfile, work_dir=work, state_path=state,
+        stop_marker=tmp_path / 'no_marker',
+    )
+    assert snap2.pause_owner_pid is None
+    assert wd.decide(snap2, stall_minutes=90.0).state == wd.STATE_PAUSED_HELD
+
+
+# ── watchdog_loop.sh: the branch that actually CLEARS the marker ─────────────
+# The verdict above is only worth having if something acts on it, and "acts on
+# it" is a shell branch. These drive the real loop against a sandbox using the
+# seams #371 already established (WATCHDOG_ROOT / WATCHDOG_MAX_ITERS /
+# WATCHDOG_MARKER / WATCHDOG_STATEF / WATCHDOG_LOGF / WATCHDOG_ALERTF /
+# WATCHDOG_LAST_ALERT_F / WATCHDOG_RECOVER_STAMP) plus TRAIN_PIDFILE, so this
+# can run at all without reading or writing the LIVE run's /tmp state.
+
+LOOP_SH = Path(__file__).resolve().parents[1] / "scripts" / "watchdog_loop.sh"
+WATCHDOG_PY = Path(__file__).resolve().parents[1] / "scripts" / "train_watchdog.py"
+
+# A pid the kernel will not have. `kill -0` on it raises ProcessLookupError,
+# which is what makes the marker's owner "gone".
+DEAD_PID = 4_000_000
+
+
+def _loop_sandbox(tmp_path: Path, marker_text: str):
+    import shutil
+
+    root = tmp_path / "repo"
+    (root / "scripts").mkdir(parents=True)
+    shutil.copy(LOOP_SH, root / "scripts" / LOOP_SH.name)
+    shutil.copy(WATCHDOG_PY, root / "scripts" / WATCHDOG_PY.name)
+    # Present so a wrong branch is a RECORDED wrong branch rather than a 127.
+    recovered = root / "recover_stall_ran"
+    stall = root / "scripts" / "recover_stall.sh"
+    stall.write_text(f"#!/bin/bash\ntouch {recovered}\n")
+    stall.chmod(0o755)
+
+    tune = root / "runs" / "pbt2_small" / "tune"
+    (tune / "train_trial_a_00000").mkdir(parents=True)
+    (tune / "train_trial_a_00000" / "progress.csv").write_text("h\n1\n2\n")
+    marker = tune / "pause.txt"
+    marker.write_text(marker_text)
+    return root, marker, recovered
+
+
+def _run_loop_once(root: Path, tmp_path: Path, **env_extra: str):
+    """Two passes: the first arms the flatness clock, the second is flat."""
+    import subprocess
+
+    alive = subprocess.Popen(["sleep", "600"])
+    pidfile = root / "trainer.pid"
+    pidfile.write_text(f"{alive.pid}\n")
+    logf = tmp_path / "watchdog.log"
+    alertf = tmp_path / "watchdog_alerts.log"
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "WATCHDOG_ROOT": str(root),
+        "WATCHDOG_MAX_ITERS": "1",
+        "WATCHDOG_EVERY": "1",
+        "WATCHDOG_STATEF": str(tmp_path / "wd_state.json"),
+        "WATCHDOG_MARKER": str(tmp_path / "no_such_stop_marker"),
+        "WATCHDOG_LOGF": str(logf),
+        "WATCHDOG_ALERTF": str(alertf),
+        "WATCHDOG_LAST_ALERT_F": str(tmp_path / "last_alert"),
+        "WATCHDOG_LAST_ESCALATE_F": str(tmp_path / "last_escalate"),
+        "WATCHDOG_RECOVER_STAMP": str(tmp_path / "recover_stamp"),
+        "TRAIN_PIDFILE": str(pidfile),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        **env_extra,
+    }
+    try:
+        out = ""
+        for _ in range(2):
+            r = subprocess.run(
+                ["bash", "scripts/watchdog_loop.sh"],
+                cwd=str(root), capture_output=True, text=True,
+                check=False, timeout=120, env=env,
+            )
+            out += r.stdout + r.stderr
+    finally:
+        alive.terminate()
+        alive.wait()
+    return (
+        out
+        + (logf.read_text() if logf.exists() else "")
+        + (alertf.read_text() if alertf.exists() else "")
+    )
+
+
+def test_the_loop_clears_a_marker_whose_owner_is_gone(tmp_path: Path) -> None:
+    """⚑ THE WHOLE POINT. Before this branch existed, a held marker made the
+    STALLED verdict unreachable, so nothing in the stack could ever remove one
+    -- `recover_stall.sh:31` is the only line that does, and it runs only on
+    exit 3, which a held marker forbids.
+    """
+    root, marker, recovered = _loop_sandbox(
+        tmp_path, f"pause_window.sh pid={DEAD_PID} started=2026-08-09T05:03:54\njob=x\n",
+    )
+    out = _run_loop_once(root, tmp_path)
+
+    assert not marker.exists(), f"the abandoned marker survived:\n{out}"
+    assert "CLEARED" in out, out
+    assert not recovered.exists(), (
+        "it force-recovered a healthy stack: nothing was wedged, one file needed "
+        "deleting, and recover_stall.sh SIGKILLs the whole run"
+    )
+
+
+def test_the_loop_does_NOT_clear_an_operators_marker(tmp_path: Path) -> None:
+    """⚑ THE NEGATIVE CONTROL, and the one that must never regress:
+    `graceful_restart.py` writes prose with no `pid=`, and deleting it resumes
+    a run the operator deliberately parked."""
+    root, marker, recovered = _loop_sandbox(tmp_path, "graceful restart in progress\n")
+    out = _run_loop_once(root, tmp_path)
+
+    assert marker.exists(), f"an operator's pause was deleted by the watchdog:\n{out}"
+    assert "PAUSED-HELD" in out, out
+    assert "CLEARED" not in out, out
+    assert not recovered.exists()
+
+
+def test_the_loop_does_NOT_clear_a_marker_whose_owner_is_alive(tmp_path: Path) -> None:
+    """The nightly window itself. Clearing it resumes training into the arena.
+
+    `started=` is NOW, not a literal: the first draft of this test hardcoded a
+    timestamp and the age bound fired on it instead, which would have passed
+    the "marker survives" assertion for the wrong reason on the day it was
+    written and failed the day after.
+    """
+    import datetime as dt
+
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    root, marker, _ = _loop_sandbox(
+        tmp_path, f"pause_window.sh pid={os_getpid()} started={now}\n",
+    )
+    out = _run_loop_once(root, tmp_path)
+
+    assert marker.exists(), f"the LIVE pause window's marker was deleted:\n{out}"
+    assert "PAUSED-HELD" in out, out
+
+
+def test_auto_recover_off_disables_the_clearing_too(tmp_path: Path) -> None:
+    """One switch, both recoveries: an operator who turned recovery off must not
+    find a different recovery still running."""
+    root, marker, _ = _loop_sandbox(
+        tmp_path, f"pause_window.sh pid={DEAD_PID} started=2026-08-09T05:03:54\n",
+    )
+    out = _run_loop_once(root, tmp_path, WATCHDOG_AUTO_RECOVER="0")
+
+    assert marker.exists(), f"WATCHDOG_AUTO_RECOVER=0 did not disable it:\n{out}"
+    assert "PAUSE-ABANDONED" in out, f"the verdict must still be REPORTED:\n{out}"
+
+
+def test_the_intentional_stop_marker_suppresses_the_clearing(tmp_path: Path) -> None:
+    root, marker, _ = _loop_sandbox(
+        tmp_path, f"pause_window.sh pid={DEAD_PID} started=2026-08-09T05:03:54\n",
+    )
+    stop = tmp_path / "stop_marker"
+    stop.write_text("")
+    out = _run_loop_once(root, tmp_path, WATCHDOG_MARKER=str(stop))
+
+    assert marker.exists(), f"a deliberate stop did not suppress the clearing:\n{out}"
+
+
+def test_a_CRASHED_trainer_does_not_get_its_pause_marker_tidied_away(tmp_path: Path) -> None:
+    """⚑ THE EXIT-CODE COLLISION, pinned where it would actually have hurt.
+
+    This branch first numbered PAUSE-ABANDONED 5, which #371 had already taken
+    for CRASHED. With both at 5, a trainer that DIED while a pause window held
+    the marker would reach the clearing branch: the marker would be deleted,
+    the alert would read like routine housekeeping, and the outage — the exact
+    thing #371 exists to make legible — would be hidden behind it.
+
+    Nothing about the numbers is asserted here. The observable is: dead
+    trainer + an owned marker => the marker is still there afterwards.
+    """
+    root, marker, recovered = _loop_sandbox(
+        tmp_path, f"pause_window.sh pid={DEAD_PID} started=2026-08-09T05:03:54\n",
+    )
+    # A pidfile naming a pid that is not alive: the trainer crashed, and the
+    # intentional-stop marker is absent (`_run_loop_once` points it at a path
+    # that does not exist), so the verdict is CRASHED rather than STOPPED.
+    import subprocess
+
+    pidfile = root / "trainer.pid"
+    pidfile.write_text(f"{DEAD_PID}\n")
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "WATCHDOG_ROOT": str(root),
+        "WATCHDOG_MAX_ITERS": "1",
+        "WATCHDOG_EVERY": "1",
+        "WATCHDOG_STATEF": str(tmp_path / "wd_state.json"),
+        "WATCHDOG_MARKER": str(tmp_path / "no_such_stop_marker"),
+        "WATCHDOG_LOGF": str(tmp_path / "watchdog.log"),
+        "WATCHDOG_ALERTF": str(tmp_path / "watchdog_alerts.log"),
+        "WATCHDOG_LAST_ALERT_F": str(tmp_path / "last_alert"),
+        "WATCHDOG_LAST_ESCALATE_F": str(tmp_path / "last_escalate"),
+        "WATCHDOG_RECOVER_STAMP": str(tmp_path / "recover_stamp"),
+        "TRAIN_PIDFILE": str(pidfile),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    out = ""
+    for _ in range(2):
+        r = subprocess.run(
+            ["bash", "scripts/watchdog_loop.sh"], cwd=str(root),
+            capture_output=True, text=True, check=False, timeout=120, env=env,
+        )
+        out += r.stdout + r.stderr
+    out += (tmp_path / "watchdog.log").read_text() if (tmp_path / "watchdog.log").exists() else ""
+
+    assert "CRASHED" in out, f"the dead trainer must report CRASHED:\n{out}"
+    assert marker.exists(), (
+        f"a CRASHED trainer's pause marker was cleared as though the window had "
+        f"been abandoned; the outage now reads as housekeeping:\n{out}"
+    )
+    assert "CLEARING ABANDONED PAUSE MARKER" not in out, out
+    assert not recovered.exists()
+
+
+def test_a_marker_it_CANNOT_remove_is_not_reported_as_cleared_every_poll(
+    tmp_path: Path,
+) -> None:
+    """⚑ #2: THE ONE BRANCH THAT BYPASSED `alert_once`, ASSERTING SOMETHING THAT
+    DID NOT HAPPEN.
+
+    If `rm -f` fails — read-only or full filesystem, EPERM on a sticky dir — the
+    old code still wrote "CLEARED abandoned pause marker", and wrote it every
+    poll for as long as the condition lasted. That is exactly the
+    27-identical-lines behaviour #371 exists to kill, reintroduced by the PR
+    that cites #371, in a message that was also false.
+
+    Both halves are asserted: the outcome is named honestly, and it is said
+    ONCE.
+    """
+    root, marker, _ = _loop_sandbox(
+        tmp_path, f"pause_window.sh pid={DEAD_PID} started=2026-08-09T05:03:54\n",
+    )
+    tune = marker.parent
+    tune.chmod(0o555)                     # the rm will fail; the marker survives
+    try:
+        out = _run_loop_once(root, tmp_path)
+        alerts = (tmp_path / "watchdog_alerts.log")
+        alert_text = alerts.read_text() if alerts.exists() else ""
+    finally:
+        tune.chmod(0o755)
+
+    assert marker.exists(), "fixture broken: the marker was removable after all"
+    assert "COULD NOT REMOVE" in out, (
+        f"a failed removal was not surfaced:\n{out}"
+    )
+    assert "CLEARED ABANDONED" not in out, (
+        f"it claimed to have cleared a marker that is still there:\n{out}"
+    )
+  # `_run_loop_once` runs TWO polls, and the condition persists across both.
+    assert alert_text.count("COULD NOT REMOVE") == 1, (
+        "the un-removable marker was alerted on every poll -- the "
+        f"27-identical-lines behaviour, in the branch that skipped alert_once:\n{alert_text}"
+    )

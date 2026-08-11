@@ -272,6 +272,8 @@ _SENTINELS: dict[str, tuple[str, object]] = {
     "gumbel_policy_temp": ("gumbel_policy_temp", 1.63),
     "gumbel_target_batch": ("gumbel_target_batch", 3),
     "gumbel_vloss_weight": ("gumbel_vloss_weight", 2),
+    "gumbel_target_max_visit_cap": ("gumbel_target_max_visit_cap", 9),
+    "gumbel_target_untempered_prior": ("gumbel_target_untempered_prior", True),
     "gumbel_c_scale": ("gumbel_c_scale", 0.077),
     "gumbel_scale": ("gumbel_scale", 0.31),
     "gumbel_scale_after": ("gumbel_scale_after", 0.29),

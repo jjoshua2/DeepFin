@@ -24,9 +24,26 @@
 # vmbus wedge (memory: wsl2-gpu-vmbus-wedge-signature): the trainer wedges alive
 # and `train.sh stop` can't help because ray stop needs the dead GPU.
 #
+# ABANDONED-PAUSE RECOVERY (exit 6, added 2026-08-09 with scripts/pause_window.sh;
+# 5 is CRASHED, taken by #371 -- see EXIT_PAUSE_ABANDONED below).
+# A held pause.txt makes the stall path structurally unreachable: `decide()`
+# returns PAUSED-HELD whenever the loop is flat AND a marker exists, and STALLED
+# requires no marker — so a wrapper that dies holding one parks production until
+# a human notices, and no amount of waiting turns it into an exit 3. The nightly
+# pause window makes that failure a live possibility rather than a thought
+# experiment, so the watchdog now separates the two cases and this loop clears
+# ONLY the recoverable one. Deliberately NOT recover_stall.sh: nothing is
+# wedged, so SIGKILLing a healthy stack to delete one file would be the more
+# destructive fix. The marker is removed and the trial resumes at its next
+# `pause_poll_seconds`.
+#
 # Guards that keep this from fighting the operator or flapping:
-#   * ONLY STALLED (exit 3) triggers recovery — STOPPED (exit 1, PID gone) never
-#     does, so a manual `kill` / deliberate stop is left alone (could be intended).
+#   * ONLY STALLED (exit 3) triggers the force-recovery — STOPPED (exit 1, PID
+#     gone) never does, so a manual `kill` / deliberate stop is left alone.
+#   * Only a marker that NAMES ITS OWNER (`pid=`, written by pause_window.sh)
+#     can be cleared, and the removal re-checks that here rather than trusting
+#     the parsed verdict line — an operator's graceful_restart.py marker carries
+#     no pid and must outlive any bound we could pick.
 #   * The intentional-stop marker suppresses recovery entirely.
 #   * Anti-flap: after a recovery, refuse to auto-recover again for
 #     $RECOVER_COOLDOWN_S (default 2h) — a re-stall that soon means restart isn't
@@ -63,6 +80,10 @@ WATCHDOG_EVERY="${WATCHDOG_EVERY:-600}"
 AUTO_RECOVER="${WATCHDOG_AUTO_RECOVER:-1}"
 RECOVER_COOLDOWN_S="${RECOVER_COOLDOWN_S:-7200}"
 EXIT_STALLED=3
+# ⚑ 6, NOT 5: origin/main already spends 5 on CRASHED (#371). Kept in step with
+# train_watchdog.py's EXIT_PAUSE_ABANDONED, and there is no --once here because
+# main's WATCHDOG_MAX_ITERS already provides the same seam.
+EXIT_PAUSE_ABANDONED=6
 # Last state we ALERTED on, so a persisting condition alerts ONCE per episode
 # rather than once per poll. The 2026-08-08 outage wrote 27 identical STOPPED
 # lines over 4h32m; a file that repeats itself every 10 minutes is a log, not
@@ -74,6 +95,10 @@ LAST_ALERT_F="${WATCHDOG_LAST_ALERT_F:-/tmp/chess_watchdog_last_alert}"
 # persisting stall inside the cooldown must not re-say it every 10 minutes
 # either. Both keys clear together when the state goes back to OK.
 LAST_ESCALATE_F="${WATCHDOG_LAST_ESCALATE_F:-/tmp/chess_watchdog_last_escalate}"
+# And the abandoned-pause branch dedupes on its own key too, for the same
+# reason: a marker that cannot be removed is ONE piece of news, not one per
+# poll. Keyed on outcome+path, so a different marker still alerts immediately.
+LAST_CLEAR_F="${WATCHDOG_LAST_CLEAR_F:-/tmp/chess_watchdog_last_clear}"
 
 stamp(){ date '+%m-%d %H:%M:%S'; }
 
@@ -203,6 +228,65 @@ while true; do
             echo "$now" > "$RECOVER_STAMP"
             # Run recovery to completion before the next poll (it restarts the stack).
             bash scripts/recover_stall.sh >> "$LOGF" 2>&1
+        fi
+    fi
+
+    # ── clear an ABANDONED pause marker (wrapper died holding it) ────────
+    # No cooldown, and no alert_once: this removes one file and cannot restart
+    # anything, so the anti-flap reasoning guarding recover_stall.sh does not
+    # apply, and it is self-limiting -- once the marker is gone the trial
+    # resumes, rows grow, and the verdict is OK. Every firing is therefore a
+    # distinct event by construction, like the FIRING branch above.
+    # `alert_write`, not `tee -a ... >> "$ALERTF"`: the append is CHECKED, which
+    # is the property #371 added this helper for.
+    if [ "$AUTO_RECOVER" = 1 ] && [ "$RC" = "$EXIT_PAUSE_ABANDONED" ] && [ ! -f "$MARKER" ]; then
+        pm=$(printf '%s\n' "$LINE" | sed -n 's/.* pause_txt=\([^ ]*\).*/\1/p')
+        # ⚑ RE-CHECK `pid=` HERE. The verdict already required a self-identifying
+        # marker, but this is the line that DELETES, and it must not depend on a
+        # sed of a human-readable status string having parsed the right path. An
+        # operator's graceful_restart.py marker ("graceful restart in progress")
+        # has no pid= and can never pass this.
+        if [ -n "$pm" ] && [ -f "$pm" ] && grep -q 'pid=[0-9]' "$pm"; then
+            held=$(tr '\n' ' ' < "$pm")
+            # ⚑ BRANCH ON THE rm, AND DEDUPE. If the removal fails (read-only or
+            # full filesystem, EPERM on a sticky dir) the old code still wrote
+            # "CLEARED abandoned pause marker" -- a message asserting something
+            # that did not happen -- and it wrote it EVERY POLL forever, because
+            # this is the one branch that bypasses `alert_once`. That is #371's
+            # 27-identical-lines behaviour reintroduced in the branch added by
+            # the PR that cites #371. Reproduced: 4 identical lines on an
+            # unwritable tune dir. Keyed on the marker path, so a genuinely new
+            # abandoned window still alerts.
+            if rm -f "$pm" 2>/dev/null && [ ! -e "$pm" ]; then
+                # ⚑ N9: SAY WHAT WAS ACTUALLY CLEARED. `find_pause_txt` prefers
+                # the root marker and we re-parse and remove that ONE path, but
+                # `_resolve_pause_marker_paths` also honours per-trial
+                # `train_trial_*/pause.txt`. With a second marker present the
+                # trial stays parked while the alert said "CLEARING" --
+                # fail-safe (the next verdict is PAUSED-HELD again) but the
+                # alert overstated it, and an operator reading "cleared" and
+                # seeing no resume looks in the wrong place. Count what is left
+                # and name it.
+                still=$(ls -1 "$(dirname "$pm")"/pause.txt \
+                              "$(dirname "$pm")"/train_trial_*/pause.txt 2>/dev/null | wc -l)
+                echo "$(stamp) CLEARED abandoned pause marker $pm — held: $held" >> "$LOGF"
+                if [ "$still" -gt 0 ]; then
+                    alert_once "$LAST_CLEAR_F" "cleared-partial:$pm" \
+                        "CLEARED abandoned pause marker $pm (held: $held) but $still OTHER pause marker(s) REMAIN — the trial stays PARKED: $MSG" || true
+                else
+                    alert_once "$LAST_CLEAR_F" "cleared:$pm" \
+                        "CLEARED ABANDONED PAUSE MARKER $pm — held: $held: $MSG" || true
+                fi
+            else
+                # NOT cleared. Say that, once, rather than claiming success at
+                # every poll for as long as the filesystem stays unwritable.
+                echo "$(stamp) FAILED to remove abandoned pause marker $pm" >> "$LOGF"
+                alert_once "$LAST_CLEAR_F" "rm-failed:$pm" \
+                    "COULD NOT REMOVE abandoned pause marker $pm (held: $held) — production stays PARKED and this needs a human: $MSG" || true
+            fi
+        else
+            alert_once "$LAST_CLEAR_F" "unclearable:$pm" \
+                "PAUSE-ABANDONED but the marker was not clearable (parsed path='$pm') — NEEDS HUMAN: $MSG" || true
         fi
     fi
 
