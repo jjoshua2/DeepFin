@@ -3307,6 +3307,35 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
             f"+ between-iteration {between_var:.6f}") in flat_step
     assert f"(sd **{math.sqrt(within_var):.4f}**)" in flat_step
 
+    # ⚑ AND THE THREE SENTENCES ROUND 3 CORRECTED. Each was FIXED in the
+    # module and then left unneedled, so a mutation sweep restored all three
+    # with the suite green -- fixing prose without pinning it is the same
+    # defect one level down, which is the defect this PR is about.
+    assert ("about -205 Elo or worse, at 50% power; -268 or worse at 90%"
+            in flat_step), "the grand-pool -206/-269 pair must not return"
+    assert "-206 / -269" in flat_step, "...and the slip stays on the record"
+    prev_cap = flat(doc.split("distributed_prev_model_max_fraction: 0.60")[1]
+                    .split("**The observed spread is pure binomial noise")[0])
+    for phrase in (
+        "the cap is ``ceil(0.60 * target_games)`` over the WHOLE iteration's "
+        "ingest",
+        "It is nonzero on 8 of the 134 rows on disk",
+        "funnels cap-demoted prev shards and generic non-accepted SHAs into "
+        "the SAME ``stale_*`` counter, so even a correct reading of it could "
+        "not attribute",
+        "never a counter that aggregates two causes",
+    ):
+        assert phrase in prev_cap, phrase
+    assert "is 0 on every recent iteration (re-verified" not in prev_cap or (
+        "An earlier revision of this" in prev_cap)
+    for phrase in (
+        "is ALSO pinned in the LIVE (uncommitted) ``configs/pbt2_small.yaml``",
+        "Do not look for that second copy in the COMMITTED yaml -- it ships no "
+        "``gate_*`` keys at all",
+        "the committed tree has exactly ONE copy",
+    ):
+        assert phrase in flat(floor_comment), phrase
+
     # And the arithmetic behind every quoted figure reproduces from the banked
     # per-iteration rows -- the docs are pinned to data, not to each other.
     n_cur = st.mean([c for c, _ in _POST_BOOT_SHAPES])
