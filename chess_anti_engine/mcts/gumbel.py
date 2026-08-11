@@ -234,6 +234,61 @@ class GumbelConfig:
     # c_scale (to enable sublinear q_visit_exp) without inflating the early-round
     # floor that over-trusts noisy Q at high sims. C path only; < 0 = legacy.
     q_visit_floor: float = -1.0
+    # ── sigma does two jobs with one number; this splits them ──────────────
+    # The improved policy softmax(log_prior + sigma*Qbar) is used for TWO
+    # different purposes that want DIFFERENT sigmas:
+    #   PLAY   -- the move actually made. Wants the strength-optimal sigma; the
+    #             c_scale sweep put that near 0.2 for this net.
+    #   TARGET -- the row stored for training. Wants a SMALLER sigma, because a
+    #             move the target never puts mass on is a move the next
+    #             generation's prior stops proposing, so search never revisits
+    #             it. Sharpening the target is not free the way sharpening play
+    #             is: play errors cost one game, target errors are absorbed.
+    # ⇒ the strength-optimal sigma is an UPPER BOUND on the training-optimal
+    # sigma, and running one number for both pins the target to that bound.
+    #
+    # This knob expresses the split the way the operator thinks about it --
+    # "search deep, but only TRUST the result as much as a shallow search" --
+    # by clamping the max_visit that feeds sigma for the STORED target only:
+    #     sigma_target = c_scale * (c_visit + min(max_visit, cap))
+    # Sims-invariant by construction: raise `mcts_simulations` later and the
+    # target's trust stays put, which a bare c_scale override cannot do.
+    #
+    # 0 = OFF and bit-identical (one sigma, current behaviour). The played move
+    # is NEVER affected: sequential halving keeps the uncapped sigma, and so
+    # does the temperature sample. That also means an arena is structurally
+    # blind to this knob -- the only yardsticks are target quality against the
+    # deep-SF ruler and, downstream, a training run.
+    target_max_visit_cap: int = 0
+    # ── the OTHER term of the same softmax: log_prior ─────────────────────
+    # `policy_temp` divides the policy-head logits before they seed the tree,
+    # so the prior that reaches `softmax(log_prior + sigma*Qbar)` is the
+    # TEMPERED one. That is right for CANDIDATE SELECTION -- softening the
+    # prior is how temperature puts more moves INTO the search -- and wrong for
+    # the row we store, because the stored row is the next generation's
+    # training target and the head is tempered AGAIN on the next pass:
+    #     L -> L/T -> target = L/T + sigma*Qbar -> head learns it -> L/T again
+    # whose fixed point is L* = sigma*Qbar * T/(T-1), i.e. 3*sigma*Qbar at
+    # T=1.5. The policy head's independently learned information is discounted
+    # geometrically toward a target determined ENTIRELY by Q.
+    #
+    # lc0 runs PolicyTemperature 1.45 safely because it trains on VISIT COUNTS,
+    # which carry no additive log_prior term, so tempering never re-enters the
+    # target algebraically. Gumbel-MuZero's completed-Q target does. Same knob,
+    # different target algebra, opposite safety.
+    #
+    # Measured on live shards 2026-08-10 (ledger commit 46c1489e6): stored
+    # H(policy_target) 0.9849 -> 1.2136 against a pre-registered 1.14 plateau
+    # bar, and median KL(prior||target) up 11.8x. In a loop that is converging
+    # that KL SHRINKS; it grew an order of magnitude because the target kept
+    # running away from the head chasing it.
+    #
+    # True = keep the tempered prior for candidate selection and undo the
+    # temperature in the STORED target's log_prior term only. False = OFF and
+    # bit-identical. Like `target_max_visit_cap` this leaves the played move on
+    # the tempered arm, so an arena cannot see it -- the yardstick is target
+    # quality against the deep-SF audit set.
+    target_untempered_prior: bool = False
     # Sequential-halving divisor: each round keeps ceil(n_cands/halving_div).
     # 2 = standard halving (keep top half; default). 3/4 = more aggressive
     # elimination (fewer rounds, visits concentrate on survivors sooner).
@@ -348,6 +403,64 @@ def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
     pol = apply_policy_temp(np.asarray(pol_logits, dtype=np.float32), cfg=cfg)
     return policy_batch_to_full_if_needed(pol, fill_value=-1e9)
+
+
+def target_log_prior(log_prior: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
+    """The STORED improved policy's ``log_prior`` term, with ``policy_temp`` undone.
+
+    Returns ``log_prior`` ITSELF (same object, so callers can test identity and
+    skip the second softmax entirely) whenever the two terms coincide: the knob
+    is off, or tempering was not applied in the first place.
+
+    ── why multiplying by T *is* the raw-logit derivation, not an approximation
+
+    Both call sites build the prior as a softmax over the search's legal set of
+    the ALREADY-TEMPERED logits (``gumbel._masked_priors``; the inline root
+    softmax in ``gumbel_c``), and ``apply_policy_temp`` is literally
+    ``logits / T``. So for every legal action ``a``::
+
+        log pri[a] = raw[a]/T - logsumexp(raw[legal]/T)
+        T * log pri[a] = raw[a] - T*logsumexp(raw[legal]/T)
+
+    The subtracted term does not depend on ``a``, and the improved policy is a
+    softmax, which is invariant to an additive constant. ``T * log_prior`` is
+    therefore EXACTLY the untempered log-prior the raw logits would have given,
+    not a reconstruction of it -- no second softmax, no extra array.
+
+    ── why not plumb the raw logits down instead
+
+    They are not uniformly available. ``_build_improved_policy_for_board`` sees
+    only ``_BoardSearchState.priors``, and ``gumbel_c``'s compact-root arm never
+    materialises full-width logits at all (it receives bf16 logits for the legal
+    subset). Carrying them to both sites would add two new hot-path shapes to
+    recompute a value that is already exact here.
+
+    ── the two places the identity has an edge, both harmless
+
+    * ``log_prior`` is floored at ``log(1e-12)``. A prior AT that floor scales to
+      ``T*log(1e-12)`` rather than its true (smaller) untempered value, i.e. this
+      over-states a move that already holds < 1e-12 of the prior mass. After the
+      softmax it is ~1e-18 either way; both arms round it to nothing.
+    * The identity assumes ``pri`` is a PURE tempered softmax over the search's
+      legal set. It is -- Gumbel adds its noise to the SCORE, not to the prior,
+      and ``gumbel_c`` prunes terminal-draw moves BEFORE the softmax, not after.
+      That assumption is not left as a comment:
+      ``tests/test_untempered_target_prior.py`` runs both search paths and
+      compares against a prior recomputed from the model's raw logits.
+
+    ⚑ The gate is ``policy_temp_active``, THE definition of "tempering is on",
+    shared with ``apply_policy_temp``. It has to be the same predicate: a
+    non-active-but-finite ``policy_temp`` (1e300, 1e-300, nan) leaves the priors
+    UNTEMPERED, and undoing a temperature that was never applied would multiply
+    the log-prior by 1e300. A guard that does not share the criterion's
+    instrument is guarding a different question.
+    """
+    if not bool(cfg.target_untempered_prior):
+        return log_prior
+    pt = float(getattr(cfg, "policy_temp", 1.0))
+    if not policy_temp_active(pt):
+        return log_prior
+    return log_prior * pt
 
 
 def gumbel_policy_diagnostics(
@@ -522,12 +635,29 @@ def _completed_q_transform(
     sigma_factor: float = 1.0,
     fpu_penalty: float = 0.0,
     root: bool = False,
+    max_visit_cap: int = 0,
 ) -> np.ndarray:
     """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores.
 
     ``sigma_factor`` scales the sigma(q) constant (volatility_q_scale) and
     ``fpu_penalty`` is subtracted from the unvisited-children mix value
     (volatility_fpu). Both default to the exact legacy behavior.
+
+    ``max_visit_cap`` > 0 clamps the ``max_visit`` that feeds sigma(q). Used
+    only by the stored-target arm of the improved policy (see
+    ``GumbelConfig.target_max_visit_cap``); 0 = no clamp = legacy.
+
+    ⚑ It shrinks SIGMA ONLY -- it is not "the transform a smaller search would
+    have produced", and must not be described that way. The completed-Q vector
+    still comes from the full search: the visit counts, the visit-weighted
+    ``mixed_value`` and therefore the value imputed to every UNVISITED child are
+    all untouched. The two coincide exactly only when every child is visited, so
+    the mix-value branch is untaken -- which at production's sims/legal-move
+    ratio is the exception, not the rule (with two unvisited children out of
+    five the capped and genuinely-shallow transforms differ by ~0.03 in Q-scale
+    units). The honest statement is the one in
+    ``GumbelConfig.target_max_visit_cap``: search deep, TRUST the result like a
+    shallow search.
     """
     actions_arr = np.asarray(actions, dtype=np.int64)
     visits_f = np.asarray(visits, dtype=np.float64)
@@ -551,6 +681,8 @@ def _completed_q_transform(
     max_q = float(completed.max())
     completed = (completed - min_q) / max(max_q - min_q, float(epsilon))
     max_visit = int(visits_f.max(initial=0.0))
+    if max_visit_cap > 0 and max_visit > max_visit_cap:
+        max_visit = int(max_visit_cap)
     scale = (
         _root_sigma_scale(max_visit=max_visit, cfg=cfg)
         if root
@@ -988,20 +1120,51 @@ def _build_improved_policy_for_board(
         n = 0 if ch is None else int(ch.N)
         visits[i] = float(n)
         qvalues[i] = (-ch.W / n) if (ch is not None and n > 0) else float(root_q)
-    logits_imp = np.log(np.maximum(pri[legal], 1e-12)) + _completed_q_transform(
+    log_prior = np.log(np.maximum(pri[legal], 1e-12))
+    sigma_factor = _volatility_sigma_factor(root.vol, cfg)
+    fpu_penalty = _volatility_fpu_penalty(root.vol, cfg)
+
+  # imp_all drives the PLAYED move (the temperature sample); imp_store is what
+  # is written to the shard. They are the SAME object unless one of the two
+  # target-only knobs is set, so the off path computes exactly once, as before.
+  # Kept parallel to the C path's copy in gumbel_c.py -- change both together.
+    q_play = _completed_q_transform(
         actions=legal,
         priors=pri[legal],
         visits=visits,
         qvalues=qvalues,
         raw_value=float(root_q),
         cfg=cfg,
-        sigma_factor=_volatility_sigma_factor(root.vol, cfg),
-        fpu_penalty=_volatility_fpu_penalty(root.vol, cfg),
+        sigma_factor=sigma_factor,
+        fpu_penalty=fpu_penalty,
         root=True,
     )
-    imp_all = _softmax(logits_imp)
+    imp_all = _softmax(log_prior + q_play)
+  # Two independent target-only adjustments, one to each term of the same
+  # softmax: `target_max_visit_cap` shrinks sigma on the Q term,
+  # `target_untempered_prior` undoes policy_temp on the prior term. Either off
+  # arm reuses the play-side value rather than recomputing an identical one, so
+  # turning on only one of them costs only that one.
+    target_cap = int(cfg.target_max_visit_cap)
+    log_prior_store = target_log_prior(log_prior, cfg=cfg)
+    if target_cap <= 0 and log_prior_store is log_prior:
+        imp_store = imp_all
+    else:
+        q_store = q_play if target_cap <= 0 else _completed_q_transform(
+            actions=legal,
+            priors=pri[legal],
+            visits=visits,
+            qvalues=qvalues,
+            raw_value=float(root_q),
+            cfg=cfg,
+            sigma_factor=sigma_factor,
+            fpu_penalty=fpu_penalty,
+            root=True,
+            max_visit_cap=target_cap,
+        )
+        imp_store = _softmax(log_prior_store + q_store)
     probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
-    probs[legal] = imp_all.astype(np.float32)
+    probs[legal] = imp_store.astype(np.float32)
 
     best_a = int(remaining[0])
   # Gumbel sequential halving leaves the survivor at remaining[0]; map

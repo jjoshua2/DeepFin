@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,7 @@ _SELFPLAY_KEYS = (
     "playout_cap_fraction", "full_ply_pair_fraction", "fast_simulations",
     "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_policy_temp",
     "gumbel_target_batch", "gumbel_vloss_weight",
+    "gumbel_target_max_visit_cap", "gumbel_target_untempered_prior",
     "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
     "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
     "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
@@ -496,7 +498,110 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     flat = {k: v for k, v in out.items() if v is not None}
     _check_sparse_sf_policy_flags(flat)
     _check_volatility_search_unsupported(flat)
+    _check_target_only_knobs_require_zero_temperature(flat)
     return flat
+
+
+# Every selfplay knob that can make a ply's move temperature positive, PAIRED
+# WITH THE VALUE THE RUN REALIZES WHEN THE KEY IS ABSENT. Listed rather than
+# pattern-matched on "temperature" so that adding a new schedule key forces a
+# decision here instead of quietly widening the hole.
+#
+# ⚑⚑ The realized default is the whole guard. ``flatten_run_config_defaults``
+# copies only the keys the yaml actually CONTAINS, so a plain ``flat.get(k, 0.0)``
+# reads a MISSING ``temperature:`` line as 0.0 -- while ``TrialConfig.from_dict``
+# realizes it as 1.0 and ``build_recommended_worker`` publishes 1.0 to the
+# worker. Read that way the guard fails open on exactly the config
+# ``configs/pbt2_small.yaml`` warns about in its own comment ("without them
+# `temperature` defaults to 1.0, `temperature_endgame` to 0.6") -- a presence
+# check wearing a value check's costume, which is this repo's signature defect.
+# Every default below is the one ``TrialConfig.from_dict`` applies, and
+# ``tests/test_target_sigma_decoupling.py`` pins the pairing against the loader
+# and against ``temperature_for_ply`` BY EXECUTION rather than by eye.
+#
+# ``None`` means "absent is not an independent source of heat": the two
+# ``selfplay_*`` keys are ``None`` when absent and then fall back to their
+# non-selfplay counterparts (``selfplay/network_turn.py:~755``), which are
+# already listed here with their own realized defaults.
+_MOVE_TEMPERATURE_KEYS: tuple[tuple[str, float | None], ...] = (
+    ("temperature", 1.0),
+    ("temperature_after", 0.0),
+    ("temperature_endgame", 0.6),
+    ("selfplay_temperature", None),
+    ("selfplay_temperature_endgame", None),
+)
+
+
+def _realized_move_temperature(flat: dict[str, Any], key: str, absent: float | None) -> float:
+    """What ``key`` is worth to the RUN, including when the yaml omits it."""
+    raw = flat.get(key)
+    if raw is None:  # `flat` has already dropped explicit nulls
+        return 0.0 if absent is None else float(absent)
+    return float(raw)
+
+
+# Selfplay knobs that change the STORED improved policy and deliberately leave
+# the PLAYED move alone. Each is a separate adjustment to one term of the same
+# softmax(log_prior + sigma*Qbar); both share the identical temperature
+# exposure, so they share one guard rather than growing a second copy of it.
+#
+# The value is paired with the coercion `TrialConfig.from_dict` applies to it,
+# not with a generic truthiness test: the cap is `max(0, int(v))`, so a yaml
+# `0.5` REALIZES as 0 = off, and a guard using `float(v) > 0` would refuse a
+# pairing the run would not actually have been in. A guard has to share the
+# criterion's instrument.
+_TARGET_ONLY_KNOBS: tuple[tuple[str, Callable[[Any], bool]], ...] = (
+    # shrinks sigma on the Q term
+    ("gumbel_target_max_visit_cap", lambda v: max(0, int(v)) > 0),
+    # undoes policy_temp on the prior term
+    ("gumbel_target_untempered_prior", bool),
+)
+
+
+def _check_target_only_knobs_require_zero_temperature(flat: dict[str, Any]) -> None:
+    """The target-only knobs are only ISOLATED at move temperature 0.
+
+    They change the improved policy that gets STORED and leave the played move
+    where it was -- but only because the played move is the sequential-halving
+    survivor, drawn inside the search from the UNMODIFIED arm. At a POSITIVE
+    move temperature,
+    ``selfplay/network_turn.py:_resample_actions_with_temperature`` re-draws the
+    move from the RETURNED policy, which is the modified one, so either knob
+    would silently start changing play as well as the target.
+
+    That would be worse than a bug: every strength readout taken while one was
+    on would be measuring a search change attributed to a target change.
+    Production runs all of these at 0.0 today, so this refuses a combination
+    nobody is running rather than breaking one somebody is.
+
+    A hard error, not a clamp, for the same reason as the volatility check: a
+    clamp re-creates the accepted-and-silently-ignored shape. If the pairing is
+    ever genuinely wanted, the fix is to return the play policy and the target
+    policy separately from the search -- not to relax this.
+    """
+    on = sorted(
+        key for key, realizes_on in _TARGET_ONLY_KNOBS
+        if flat.get(key) is not None and realizes_on(flat[key])
+    )
+    if not on:
+        return
+    hot = sorted(
+        key for key, absent in _MOVE_TEMPERATURE_KEYS
+        if _realized_move_temperature(flat, key, absent) > 0.0
+    )
+    if not hot:
+        return
+    raise ValueError(
+        f"{on} is set together with a positive move temperature ({hot}). These "
+        f"are TARGET-only knobs only while the played move is the halving "
+        f"survivor; at temperature > 0 the move is re-drawn from the stored "
+        f"(modified) policy in "
+        f"selfplay/network_turn.py:_resample_actions_with_temperature, so they "
+        f"would change PLAY too and no strength readout taken with them on "
+        f"would be interpretable. Set the temperatures to 0.0 EXPLICITLY -- an "
+        f"ABSENT key is not 0.0, it realizes as the loader's default (1.0 for "
+        f"`temperature`, 0.6 for `temperature_endgame`) -- or leave {on} off."
+    )
 
 
 # The evaluators a distributed selfplay worker can actually hold. None of them

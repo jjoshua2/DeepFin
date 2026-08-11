@@ -895,7 +895,8 @@ class WorkerSession:
         if not bool(args.allow_overrides):
             _server_managed_keys = [
                 "max_plies", "mcts", "mcts_simulations", "playout_cap_fraction",
-                "fast_simulations", "gumbel_topk",
+                "fast_simulations", "gumbel_topk", "gumbel_target_max_visit_cap",
+                "gumbel_target_untempered_prior",
                 "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
                 "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
                 "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
@@ -3484,12 +3485,18 @@ class WorkerSession:
   # experiment that never ran.
         "gumbel_target_batch",
         "gumbel_vloss_weight",
-  # Same reason: the diff-focus norm group is baked into a frozen
-  # DiffFocusConfig at session start, and `norm_enabled` additionally decides
-  # whether SelfplayState.create builds a normalizer at all. A restart is also
-  # the CORRECT semantics rather than merely the achievable one -- changing the
-  # window, quantile or slope invalidates the quantile window that was
-  # accumulated under the old settings, and a restart discards it.
+  # Same reason: _build_selfplay_configs freezes it into SearchConfig at
+  # session start, so a mid-flight change would be accepted and never reach
+  # a search -- the exact shape of a verdict for an experiment that never ran.
+        "gumbel_target_max_visit_cap",
+        "gumbel_target_untempered_prior",
+  # Same reason again, plus a second one: the diff-focus norm group is baked
+  # into a frozen DiffFocusConfig at session start, and `norm_enabled`
+  # additionally decides whether SelfplayState.create builds a normalizer at
+  # all. A restart is also the CORRECT semantics rather than merely the
+  # achievable one -- changing the window, quantile or slope invalidates the
+  # quantile window accumulated under the old settings, and a restart
+  # discards it.
         "diff_focus_norm_enabled",
         "diff_focus_norm_window",
         "diff_focus_norm_warmup",
@@ -3611,6 +3618,7 @@ class WorkerSession:
   # swap does (which already happens every iteration); each ply keeps a valid
   # target for its own position.
         "gumbel_target_batch", "gumbel_vloss_weight",
+        "gumbel_target_max_visit_cap", "gumbel_target_untempered_prior",
         "mcts_simulations", "fast_simulations", "mcts", "playout_cap_fraction",
         "full_ply_pair_fraction",
         "gumbel_topk", "gumbel_policy_temp",
@@ -3837,6 +3845,12 @@ class WorkerSession:
                 ),
                 gumbel_vloss_weight=self._resolve_reco(
                     reco, "gumbel_vloss_weight", 0, int,
+                ),
+                gumbel_target_max_visit_cap=self._resolve_reco(
+                    reco, "gumbel_target_max_visit_cap", 0, int,
+                ),
+                gumbel_target_untempered_prior=self._resolve_reco(
+                    reco, "gumbel_target_untempered_prior", False, bool,
                 ),
                 volatility_q_scale=self._resolve_reco(reco, "volatility_q_scale", 0.0),
                 volatility_fpu=self._resolve_reco(reco, "volatility_fpu", 0.0),
