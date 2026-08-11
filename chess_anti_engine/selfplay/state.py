@@ -33,6 +33,7 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
+from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     resolve_slot_opening,
@@ -613,6 +614,37 @@ def _probe_c_extensions() -> _CExtensionCaps:
     )
 
 
+def _build_diff_focus_normalizer(
+    diff_focus: DiffFocusConfig,
+) -> DiffFocusNormalizer | None:
+    """The normalizer for ``diff_focus``, or None when the group is off.
+
+    ⚑ ``norm_slope`` is validated HERE even though this function never uses it.
+    ``_mcts_tree.c`` refuses ``df_norm_scale > 0`` with a non-positive
+    ``df_norm_slope`` -- correctly, since a zero slope would clamp every
+    ``keep_prob`` to ``min_keep`` and discard ~97.5% of plies -- but that refusal
+    only fires on the first ply batch AFTER ``norm_warmup`` plies have been
+    observed, i.e. thousands of games into a session, and it names the C argument
+    rather than the yaml key. A value that is accepted at configuration time and
+    detonates later is this codebase's `a dead knob can arm a crash`. Refuse at
+    construction instead, naming the key the operator actually typed.
+    """
+    if not bool(diff_focus.norm_enabled):
+        return None
+    if not float(diff_focus.norm_slope) > 0.0:
+        raise ValueError(
+            "diff_focus_norm_enabled requires diff_focus_norm_slope > 0, got "
+            f"{float(diff_focus.norm_slope)!r}; it REPLACES diff_focus_slope "
+            "when normalization is armed, so 0 would clamp every keep_prob to "
+            "diff_focus_min",
+        )
+    return DiffFocusNormalizer(
+        window=int(diff_focus.norm_window),
+        warmup=int(diff_focus.norm_warmup),
+        quantile=float(diff_focus.norm_quantile),
+    )
+
+
 @dataclass
 class SelfplayState:
     """Bundle of mutable state driving one ``play_batch`` invocation.
@@ -647,6 +679,12 @@ class SelfplayState:
     search: SearchConfig
     opening: OpeningConfig
     diff_focus: DiffFocusConfig
+  # Per-worker running robust scale for `difficulty`. None when
+  # diff_focus.norm_enabled is off, so the feature's presence is a real
+  # object-vs-None read rather than a flag consulted in three places. Lives on
+  # the state because ONE instance must span every ply batch of a session: the
+  # quantile window is the point, and a per-call estimator would never arm.
+    diff_focus_norm: DiffFocusNormalizer | None
     game: GameConfig
     batch_size: int
     continuous: bool
@@ -841,6 +879,7 @@ class SelfplayState:
             search=search,
             opening=opening,
             diff_focus=diff_focus,
+            diff_focus_norm=_build_diff_focus_normalizer(diff_focus),
             game=game,
             batch_size=batch_size,
             continuous=continuous,

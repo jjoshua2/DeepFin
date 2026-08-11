@@ -563,6 +563,28 @@ selfplay:
   diff_focus_pol_scale: 3.5
   diff_focus_slope: 3.0
   diff_focus_min: 0.025
+  # ⚑ The five keys above are NOT read by the distributed worker -- it takes
+  # DiffFocusConfig() defaults and they are pinned equal to them as config
+  # honesty (tests/test_reco_coverage.py). The six below ARE plumbed through
+  # build_recommended_worker -> worker -> DiffFocusConfig, so they are real
+  # knobs. Task #171: `difficulty` is unnormalized, so diff_focus_slope/_min are
+  # fixed thresholds on a quantity whose scale belongs to the SEARCH config. The
+  # 2026-08-09 bundle moved KL ~11.7x and saturated the clamp (keep_rate 0.803
+  # -> 0.956) with no key changed and no value out of range. When enabled,
+  # `difficulty` is divided by a running per-worker reference quantile first and
+  # diff_focus_norm_slope REPLACES diff_focus_slope (different units).
+  # DEFAULT OFF and bit-identical. Do not enable without the ledger entry's
+  # readout: it changes which plies are recorded and how they are sampled.
+  diff_focus_norm_enabled: false
+  diff_focus_norm_window: 8192
+  diff_focus_norm_warmup: 1024
+  diff_focus_norm_quantile: 0.5
+  # 1.62 reproduces the mean realized keep_rate of the whole healthy era
+  # (iters 1-735 of trial 379f6, mean 0.8156), not the 0.8029 of iters 560-735
+  # -- that window is the BOTTOM of a 700-iteration drift which is itself an
+  # artifact of this same unnormalized scale.
+  diff_focus_norm_slope: 1.62
+  diff_focus_norm_clip: 8.0
 
   categorical_bins: 32
   hlgauss_sigma: 0.04

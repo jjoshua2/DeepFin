@@ -116,6 +116,7 @@ _SELFPLAY_CFGS_DOUBLE: dict[str, Any] = {
     "temp": TemperatureConfig(),
     "search": _SEARCH,
     "opening": _OPENING,
+    "diff_focus": _DIFF_FOCUS,
     "game": _game_config(),
 }
 

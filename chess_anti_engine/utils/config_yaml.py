@@ -153,6 +153,8 @@ _SELFPLAY_KEYS = (
     "timeout_adjudication_threshold",
     "diff_focus_enabled", "diff_focus_q_weight", "diff_focus_pol_scale",
     "diff_focus_slope", "diff_focus_min",
+    "diff_focus_norm_enabled", "diff_focus_norm_window", "diff_focus_norm_warmup",
+    "diff_focus_norm_quantile", "diff_focus_norm_slope", "diff_focus_norm_clip",
     "categorical_bins", "hlgauss_sigma", "categorical_blend_frac",
     "categorical_search_blend_frac",
     "record_lc0_root_input",

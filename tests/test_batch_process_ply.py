@@ -10,6 +10,7 @@ import pytest
 
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+from chess_anti_engine.selfplay.network_turn import _policy_kl
 from chess_anti_engine.moves import (
     POLICY_SIZE,
     index_to_move,
@@ -49,10 +50,11 @@ def _python_process_ply(board, pol_logits, wdl_logits, action, value, mcts_probs
     else:
         raw = mask.astype(np.float32) / mask.sum()
 
-    # KL divergence
-    imp = np.maximum(mcts_probs, 1e-12)
-    raw_c = np.maximum(raw, 1e-12)
-    kl = float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
+    # KL divergence. Call the PRODUCTION helper rather than re-deriving it: this
+    # reference used to carry its own floor-both-at-1e-12 formula, which is the
+    # very divergence task #173 removed, so a local copy here would quietly
+    # become the third implementation and re-license the drift.
+    kl = _policy_kl(raw, mcts_probs, mask)
 
     # WDL softmax
     w, d, l = wdl_logits

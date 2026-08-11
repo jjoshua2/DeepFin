@@ -315,6 +315,14 @@ class TrialConfig:
     diff_focus_pol_scale: float = 3.5
     diff_focus_slope: float = 3.0
     diff_focus_min: float = 0.025
+  # Scale-free normalization of `difficulty` (task #171). Default OFF and
+  # bit-identical; see selfplay/diff_focus_norm.py.
+    diff_focus_norm_enabled: bool = False
+    diff_focus_norm_window: int = 8192
+    diff_focus_norm_warmup: int = 1024
+    diff_focus_norm_quantile: float = 0.5
+    diff_focus_norm_slope: float = 1.62
+    diff_focus_norm_clip: float = 8.0
 
   # --- Stockfish ---
     stockfish_path: str = ""
@@ -772,6 +780,12 @@ class TrialConfig:
             diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 3.5)),
             diff_focus_slope=float(config.get("diff_focus_slope", 3.0)),
             diff_focus_min=float(config.get("diff_focus_min", 0.025)),
+            diff_focus_norm_enabled=bool(config.get("diff_focus_norm_enabled", False)),
+            diff_focus_norm_window=int(config.get("diff_focus_norm_window", 8192)),
+            diff_focus_norm_warmup=int(config.get("diff_focus_norm_warmup", 1024)),
+            diff_focus_norm_quantile=float(config.get("diff_focus_norm_quantile", 0.5)),
+            diff_focus_norm_slope=float(config.get("diff_focus_norm_slope", 1.62)),
+            diff_focus_norm_clip=float(config.get("diff_focus_norm_clip", 8.0)),
 
   # --- Stockfish ---
             stockfish_path=str(config.get("stockfish_path", "")),
