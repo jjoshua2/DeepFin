@@ -524,12 +524,77 @@ def test_the_shape_gate_and_fidelity_gate_render_a_verdict_not_just_a_number() -
 
 
 def test_prior_is_scored_at_the_shapes_policy_temperature() -> None:
-    """The C search divides root logits by `policy_temp`; the prior must too.
+    """The C search divides root logits by `policy_temp`; the prior must too --
+    EXACTLY ONCE.
 
-    ⚑ Temperature is strictly monotone, so this CANNOT change any ordinal
-    statistic. What it changes is the prior's PROBABILITIES -- and therefore
-    KL(target||prior), the prior gaps and the recovered sigma span, which are
-    exactly what section 3 reads.
+    ⚑ THIS TEST MUST CALL `_score_one`. Its first version computed two softmaxes
+    inline and asserted that temperature flattens a distribution -- a true fact
+    about arithmetic that holds whatever the module does. It passed with
+    `_score_one` replaced by an always-failing stub, and it therefore did not
+    catch the double-tempering the same PR introduced (prior reported at
+    T^2=2.25 beside a T=1.5 search). A gate that cannot fire, inside the PR that
+    exists to fix gates that cannot fire.
+
+    So: drive the REAL scorer, and pin the answer against BOTH wrong values --
+    the un-tempered T=1.0 and the twice-tempered T^2.
+
+    Temperature is strictly monotone, so no ORDINAL statistic moves; what moves
+    is `prior_top1_p`, the gaps, KL(target||prior) and the recovered sigma span.
+    """
+    board = chess.Board()
+    ucis, idxs = legal_full_indices(board)
+    pos = ProbePosition(
+        fen=board.fen(), board=board, phase=-1, audit=None,
+        stored_regret_cp=np.zeros(4672, dtype=np.float64),
+    )
+    # A spread that makes the three candidate temperatures numerically distinct.
+    raw = np.arange(len(ucis), dtype=np.float64) / 3.0
+    logits = np.full(4672, -1e9, dtype=np.float32)
+    logits[idxs] = raw.astype(np.float32)
+    probs = np.zeros(4672, dtype=np.float64)
+    probs[idxs] = 1.0 / len(ucis)
+
+    def top1_at(temp: float) -> float:
+        lg = raw / temp
+        lg = lg - lg.max()
+        e = np.exp(lg)
+        return float((e / e.sum()).max())
+
+    temp = 1.5
+    shape = dataclasses.replace(SHAPES["live_selfplay_20260809"], policy_temp=temp)
+    row = _score_one(
+        pos=pos, board=board, sims=32, shape=shape, pol_logits_row=logits,
+        search_probs=probs, search_action=int(idxs[0]),
+        tree=None, root_id=-1, ctrl_rng=np.random.default_rng(1),
+    )
+
+    once, never, twice = top1_at(temp), top1_at(1.0), top1_at(temp * temp)
+    # The three are genuinely different, or the assertions below prove nothing.
+    assert not np.isclose(once, never)
+    assert not np.isclose(once, twice)
+    assert np.isclose(row.prior_top1_p, once, rtol=1e-6), (
+        f"prior must be at T={temp}: got {row.prior_top1_p!r}, "
+        f"T=1.0 would be {never!r}, T^2 would be {twice!r}"
+    )
+    assert not np.isclose(row.prior_top1_p, never), "prior is UNTEMPERED"
+    assert not np.isclose(row.prior_top1_p, twice), "prior is tempered TWICE"
+
+    # And the ordinal readout is unmoved -- why the 2026-08-11 verdict survived.
+    row_t1 = _score_one(
+        pos=pos, board=board, sims=32,
+        shape=dataclasses.replace(SHAPES["live_selfplay_20260809"], policy_temp=1.0),
+        pol_logits_row=logits, search_probs=probs, search_action=int(idxs[0]),
+        tree=None, root_id=-1, ctrl_rng=np.random.default_rng(1),
+    )
+    assert row.prior_move == row_t1.prior_move
+    assert row.prior_rank_of_search == row_t1.prior_rank_of_search
+
+
+def test_temperature_flattening_is_not_by_itself_evidence_of_wiring() -> None:
+    """The arithmetic the previous test mistook for a wiring check.
+
+    Kept, DEMOTED, and named for what it is: a property of softmax, not of this
+    module. It must never again stand in for the `_score_one` call above.
     """
     logits = np.array([2.0, 1.0, 0.0], dtype=np.float64)
 

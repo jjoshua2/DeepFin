@@ -644,7 +644,7 @@ def run_probe(
     import torch
 
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig, apply_policy_temp
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -711,18 +711,13 @@ def run_probe(
             with torch.no_grad():
                 pol_logits, _wdl = evaluator.evaluate_encoded(xs)
             pol_logits = np.asarray(pol_logits, dtype=np.float32)
-            # ⚑ TEMPER FIRST, exactly as `gumbel._policy_logits_to_full` does.
-            # The search seeds its tree from `logits / policy_temp`, so the
-            # improved policy is softmax(log(tempered prior) + sigma(Qbar)).
-            # Reading `sigma_span_observed` and `q_scale_needed` off an
-            # UNTEMPERED prior silently folds the temperature into both: at
-            # T=1.5 the prior logit gaps shrink by 1.5x, so section 3's
-            # "P(gap < q_scale)" was overstated and section 6's inversion
-            # solved the wrong equation the moment `gumbel_policy_temp` left 1.0
-            # -- which it did, on the live yaml, on 2026-08-09.
-            pol_logits = np.asarray(
-                apply_policy_temp(pol_logits, cfg=cfg), dtype=np.float32,
-            )
+            # ⚑ RAW logits leave this function. `policy_temp` is applied EXACTLY
+            # ONCE, inside `_score_one`, at the point of use. Tempering here as
+            # well produced a prior at T^2: the first revision of this fix
+            # divided in both places, so a T=1.5 run reported `prior_top1_p`
+            # 0.0752 where the search's own T=1.5 prior is 0.0898 -- replacing a
+            # T=1.0 error with a T=2.25 one. These logits feed NOTHING else: the
+            # C search re-evaluates internally from `cfg` and never sees them.
             if pol_logits.shape[1] != POLICY_SIZE:
                 pol_logits = policy_batch_to_full_if_needed(
                     pol_logits, policy_encoding=pol_enc, fill_value=-1e9,
