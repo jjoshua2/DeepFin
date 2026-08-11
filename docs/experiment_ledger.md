@@ -39890,3 +39890,80 @@ pinned by a test). Required before any live arm: the usual
 `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out
 data/salvage/pre_untempered_target` — a yaml revert is not a rollback, the replay window
 holds ~a day of data made under the old target.
+
+## 2026-08-11 — CORRECTION: the promotion gate's step leg was sized on a shape it no longer runs at, and at the CURRENT shape its false-brake budget is BREACHED by the floor it ships with (task #182)
+
+`docs/experiment_ledger.md:1978` records "at 197/38 games `score_se` = 42.4 Elo so the
+leg fires at ...". That measurement stands **for the pre-08-04 lineage** and is left in
+place as history. It must not be quoted going forward, for two independent reasons.
+
+**1. The instrument was a proxy.** 197/38 came from binning shard `.zattrs`
+`generated_at_unix` against `progress.csv` timestamps. The gate partitions by
+`model_sha256` (`_process_shard`). Those agree only where publish and iteration
+boundaries coincide, which they do not.
+
+**2. The composition moved.** Read off the gate's OWN per-iteration counters
+(`gate_sample_games_cur` / `gate_sample_games_prev`), every usable iteration of both
+post-boot trials — 379f6 (27) + 5ce02 (69) = **96**:
+
+| | old (proxy, pre-08-04) | current (gate counters, 96 iters) |
+|---|---|---|
+| n_cur | ~197 | **50.3** |
+| n_prev | ~38 | **46.4** |
+| prev share | 16.3% | **48.0%** |
+
+The shape went from cur-dominated to **balanced**, which is the fact everything below
+turns on. Both trials agree (379f6 52.1/46.3, 5ce02 49.6/46.4), so this is the lineage,
+not a transient.
+
+### The consequence, and it is not cosmetic
+
+`demote_step_elo: -125` was sized on a FALSE-BRAKE BUDGET of at most 0.04% spurious
+holds. Recomputing `se = 0.3447*sqrt(1/n_cur + 1/n_prev)*ELO_PER_SCORE_AT_HALF`:
+
+| shape | se | fires below | spurious/8000 | rate | 50% power | 90% power |
+|---|---|---|---|---|---|---|
+| 50/46 realized | 48.8 | −205 | 0.10 | 0.0013% | −205 | −268 |
+| 15/15 **worst admitted** | 87.5 | −269 | **8.44** | **0.1055%** | −269 | −381 |
+| *retired 197/38* | *42.4* | *−195* | *0.02* | *0.0002%* | *−195* | *−249* |
+| *retired 197/15* | *64.2* | *−231* | *1.31* | *0.0163%* | *−231* | *−313* |
+
+**The worst shape `min_games_per_side: 15` admits is 2.6x OUTSIDE the budget.** The old
+docs quoted 197/15 as "the worst shape `min_games_per_side` admits" — it never was.
+`usable` floors BOTH arms, so 15/15 was always admissible; at n_cur ~197 it needed a 92%
+collapse of the cur arm and nobody costed it. At n_cur ~50 it needs 70%, and the smallest
+arms in 96 iterations are **cur 17 / prev 25**.
+
+This is a *documentation* failure with a *quantitative* consequence, and the way it was
+found is the reusable part: nothing fired, nothing looked wrong, and the stale table
+would have kept reading green forever. It surfaced only from re-deriving the numbers when
+the composition was re-measured. ⇒ **a constant sized against a measured shape owes a
+re-derivation every time the shape is re-measured**, and the test that guards it must
+assert the CURRENT verdict (here: "outside budget"), never a shape-free "inside budget"
+that passes under both.
+
+### DECIDED, not deferred: raise `gate_min_games_per_side` 15 → 22
+
+22/22 gives se 72.2 and **0.0368%**, back inside the budget. Measured admission cost over
+the same 96 iterations: **95/96 vs 96/96 — one iteration in ninety-six**. (40 remains out
+on the original argument, 59/96, though now for a different reason: at 197/38 only the
+prev arm could be short, at 50/46 both are — of the 37 rejected iterations 18 are short on
+cur and 19 on prev.)
+
+**Not applied in this PR.** `gate_min_games_per_side` is pinned in
+`configs/pbt2_small.yaml`, whose own comment requires a ledger line for any change to the
+alarm's operating point — this is that line — and the two copies must move together or the
+docs go stale again by the same mechanism. Follow-up PR only; nothing is at risk in the
+meantime because `gate_mode: shadow` means no decision this leg reaches takes effect.
+
+**Yardstick / kill rule for the follow-up.** Not a training readout — the deciding number
+is arithmetic and is asserted in `tests/test_promotion_gate.py`:
+`_step_leg_budget(_step_leg_se_elo(22, 22))[1] / 8000 < 0.0004`, together with
+`admits(22) == 95` over the banked `_POST_BOOT_SHAPES`. If a future lineage moves the
+shape again, both flip and the table above must be re-derived rather than re-quoted.
+
+**Confounds:** none — the gate is in shadow mode and this PR changes documentation and
+tests only. The 96-iteration shape series spans the 08-11 04:19 restart, which is a
+lineage boundary for *weights* but not for the *arm-size* statistic being measured; the
+two trials agree to within 2.5 games/iteration on both arms, which is the check that it
+does not matter here.

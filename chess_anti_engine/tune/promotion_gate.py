@@ -108,37 +108,43 @@ timestamps over live iterations 164-219 gave::
     that mean is **BOUNDED, NOT MEASURED**: se 6.26, 95% CI **[-16.6, +7.9]**,
     t = -0.69 -- indistinguishable from zero and spanning 25 Elo
 
-The delta statistics stand as a measurement of that lineage (and everything
-below is built on them). Do not quote that split. Timestamp-binning attributes a shard to the iteration
-its generation time falls in; the gate attributes a shard by its
-``model_sha256`` (``_process_shard``). Those agree only where publish and
-iteration boundaries coincide, which they do not, so the proxy and the gate
-were never measuring the same partition -- and the lineage it was taken on was
-replaced by the 2026-08-04 fresh boot.
+The delta statistics stand as a measurement of that lineage, and everything
+below is built on them -- but **do not quote that split**. Timestamp-binning
+attributes a shard to the iteration its generation time falls in; the gate
+attributes a shard by its ``model_sha256`` (``_process_shard``). Those agree
+only where publish and iteration boundaries coincide, which they do not, so the
+proxy and the gate were never measuring the same partition -- and the lineage it
+was taken on was replaced by the 2026-08-04 fresh boot.
 
-*Current (2026-08-11, live trial ``5ce02`` iter 20, THE GATE'S OWN COUNTERS --
-``gate_iters`` / ``gate_games_cur`` / ``gate_games_prev``, i.e. by definition
-the partition the gate acts on)*::
+*Current (2026-08-11, THE GATE'S OWN PER-ITERATION COUNTERS --
+``gate_sample_games_cur`` / ``gate_sample_games_prev``, i.e. by definition the
+partition the gate acts on, pooled over every usable iteration of BOTH
+post-boot trials: 379f6 (27) + 5ce02 (69) = 96)*::
 
-    window: gate_iters 22, games_cur 1054, games_prev 1193
-         => ~47.9 cur + ~54.2 prev per iteration, prev share **53.1%**
-    this iteration's own sample: 66 cur / 49 prev (115 games, share 42.6%)
-    previous trial (379f6, 28 iterations): pooled prev share 49.2%
+    n_cur = **50.3** games/iteration, n_prev = **46.4** (prev share **48.0%**)
+    smallest arms actually realized: cur 17, prev 25
+    both trials agree: 379f6 52.1/46.3 (share 47.1%), 5ce02 49.6/46.4 (48.4%)
 
 So the prev share is **~3x** the retired figure and total games/iteration is
 roughly **half** of it. Some of that gap is the instrument change and some is
 real; the two cannot be separated after the fact, which is the reason the proxy
-number is retired rather than adjusted.
+number is retired rather than adjusted. The shape is now essentially BALANCED,
+which is the fact everything below turns on.
 
-The consequence for everything below: the independent-binomial per-iteration se
-scales as ``sd * sqrt(1/n_cur + 1/n_prev)``. At 197/38 that factor is 0.1772;
-at 48/54 it is 0.1984 -- **+12%**, because the old shape was dominated by its
-tiny ``n_prev`` and the new one is balanced. The empirical ``sd 45.6 Elo`` below
-was MEASURED on the old lineage and is not re-derivable from ``n``, so it is
-left as-is and the power table with it -- but it is now an OPTIMISTIC figure by
-roughly that 12%, and it owes a re-measurement on this lineage. That moves the
+The consequence: the independent-binomial per-iteration se scales as
+``sd * sqrt(1/n_cur + 1/n_prev)``. At 197/38 that factor is 0.1772; at 50/46 it
+is 0.2038 -- **+15%**, because the old shape was dominated by its tiny
+``n_prev`` and the new one is balanced. The empirical ``sd 45.6 Elo`` below was
+MEASURED on the old lineage and is not re-derivable from ``n``, so it is left
+as-is and the power table with it -- but it is now an OPTIMISTIC figure by
+roughly that 15%, and it owes a re-measurement on this lineage. That moves the
 "no gate can ratchet at 0.02 Elo/iteration" conclusion further from the line,
 not closer, which is why nothing downstream is gated on the re-measurement.
+
+⚑ THE STEP LEG'S FALSE-BRAKE BUDGET DOES **NOT** SURVIVE THE NEW SHAPE AT THE
+FLOOR ``min_games_per_side: 15`` ADMITS. That is spelled out under "WHAT THE
+STEP LEG COSTS AND WHAT IT BUYS" below; it is a real finding of this revision,
+not a rounding change.
 
 Note ``distributed_prev_model_max_fraction: 0.60`` is a CEILING that never
 binds -- ``distributed_stale_games`` is 0 on every recent iteration
@@ -286,23 +292,52 @@ when a step leg has to work, and it is OR-ed into the demote condition only --
 it can never turn a demote into a promote, and it is not consulted at all on
 the promote path.
 
-WHAT THE STEP LEG COSTS AND WHAT IT BUYS, at the realized shape (n_cur ~197,
-n_prev ~38, pooled per-game score sd 0.3447 -> sample se **42.4 Elo**), and at
-the worst shape ``min_games_per_side`` admits (197/15 -> se **64.2 Elo**):
+WHAT THE STEP LEG COSTS AND WHAT IT BUYS. Every row is
+``se = 0.3447 * sqrt(1/n_cur + 1/n_prev) * ELO_PER_SCORE_AT_HALF``, the leg
+fires at ``-125 - 1.645*se``, and the spurious column is that threshold under
+N(0, se) times 8000 null iterations:
 
-    line   shape     fires at        spurious per 8000     50% power   90% power
-    -125   197/38    delta < -195    0.02 null iters       -195 Elo    -249 Elo
-    -125   197/15    delta < -231    1.31 null iters       -231 Elo    -313 Elo
+    shape       se       fires at    spurious/8000   50% power   90% power
+    50/46  *    48.8    delta<-205    0.10  0.0013%    -205 Elo    -268 Elo
+    50/15       70.5    delta<-241    2.52  0.0314%    -241 Elo    -331 Elo
+    15/15  **   87.5    delta<-269    8.44  0.1055%    -269 Elo    -381 Elo
+    ---- retired, PRE-08-04 lineage, quoted only so the change is legible ----
+    197/38      42.4    delta<-195    0.02  0.0002%    -195 Elo    -249 Elo
+    197/15      64.2    delta<-231    1.31  0.0163%    -231 Elo    -313 Elo
+
+    *  the realized shape, from the gate's own counters over 96 iterations
+    ** the WORST shape ``min_games_per_side: 15`` admits -- both arms at the
+       floor, which is what the constant literally permits
 
 ``demote_step_elo`` ships at **-125**, chosen on the same FALSE-BRAKE BUDGET as
-``demote_delta_elo``: 1.31 spurious holds per 8000 null iterations at the worst
-admissible shape is 0.016%, inside the 0.04% upper bound the window leg was
-sized against. **It does NOT catch a -100 step** and nothing at this sample
-size can: one anchored sample carries 42-64 Elo of binomial noise, so a
--100 step is under 2.5 sigma and buying it would cost a false brake every few
-hundred iterations. The honest claim is "a one-iteration step of about -200 Elo
-or worse, at 50% power; -250 or worse at 90%", and that is the claim the tests
-assert.
+``demote_delta_elo``: at most 0.04% spurious holds, the upper bound the window
+leg was sized against.
+
+⚑ **AT THE CURRENT COMPOSITION THAT BUDGET IS VIOLATED AT THE WORST ADMITTED
+SHAPE -- 0.1055%, 2.6x over.** The 15/15 row was always the true worst case;
+the retired docs quoted 197/15 instead, which is not the worst shape the
+constant admits, it is the worst shape the OLD composition made *likely*. With
+``n_cur`` ~197 a 15/15 iteration needed a 92% collapse of the cur arm. With
+``n_cur`` ~50 it needs a 70% one, and the smallest arms actually realized in 96
+iterations are cur 17 / prev 25 -- close enough that the row has to be costed,
+not waved away. This is the "a gate sized on a shape it no longer runs at"
+failure, found by re-deriving the table rather than by anything firing.
+
+The measured fix is ``min_games_per_side: 22``: 22/22 gives se 72.2 and 2.94
+spurious per 8000 = **0.0368%**, back inside the budget, and over the same 96
+iterations a floor of 22 admits **95/96** where 15 admits 96/96 -- one
+iteration in ninety-six. It is NOT changed here, because the constant is pinned
+in the production yaml as well and that file's own comment requires a ledger
+line for any change to the alarm's operating point. Until it is raised, quote
+the leg's false-brake cost as **0.11%, not 0.016%**.
+
+**It does NOT catch a -100 step** and nothing at this sample size can: one
+anchored sample carries 49-88 Elo of binomial noise, so a -100 step is under
+2.5 sigma and buying it would cost a false brake every few hundred iterations.
+The honest claim is "a one-iteration step of about -205 Elo or worse, at 50%
+power; -270 or worse at 90%" at the realized shape, and that is the claim the
+tests assert. Both numbers moved ~10 Elo further from zero when the shape
+changed; the retired -195/-249 pair is optimistic and must not be requoted.
 
 THE PID LAG DOES NOT CANCEL -- THE ANCHORED DELTA CARRIES A CONTROLLER TERM
 ----------------------------------------------------------------------------
@@ -823,11 +858,29 @@ class GateConfig:
     mode: str = MODE_OFF
     window_iters: int = 24
     min_iters: int = 8
-    # 15, not 40. MEASURED over live iters 164-219: the prev arm realizes ~38
-    # games/iteration (median 33), not the 143 the 0.60 cap suggests, so a
-    # floor of 40 disqualifies 70% of iterations, pins the effective window at
-    # K=9-12, and makes ``gate_delta_elo`` repeat verbatim across consecutive
-    # rows -- an inert series that reads exactly like a live one. 15 keeps 96%.
+    # 15, not 40 -- and this constant is now UNDER-SIZED, see below.
+    #
+    # 40 is out on the same measurement under both compositions. Old lineage
+    # (iters 164-219): the prev arm realized ~38 games/iteration (median 33),
+    # not the 143 the 0.60 cap suggests. Current lineage (96 usable iterations
+    # of trials 379f6 + 5ce02, the gate's OWN per-iteration counters): 50.3 cur
+    # / 46.4 prev, and a floor of 40 admits only 59/96. Either way a floor of
+    # 40 pins the effective window at K=9-12 and makes ``gate_delta_elo``
+    # repeat verbatim across consecutive rows -- an inert series that reads
+    # exactly like a live one.
+    #
+    # ⚑ But 15 is too LOW for the current shape, and the module docstring's
+    # step-leg table now says so. ``usable`` floors BOTH arms, so 15 literally
+    # admits a 15/15 iteration; that shape carries se 87.5 Elo and pushes the
+    # step leg's false-brake rate to 0.1055%, 2.6x the 0.04% budget it was
+    # sized against. It was never costed because at n_cur ~197 a 15/15
+    # iteration needed a 92% collapse of the cur arm; at n_cur ~50 it needs
+    # 70%, and the smallest arms in 96 iterations are cur 17 / prev 25.
+    # MEASURED remedy: 22. It restores 0.0368% and admits 95/96 where 15
+    # admits 96/96 -- one iteration in ninety-six. Not applied here because
+    # ``gate_min_games_per_side`` is also pinned in the production yaml, whose
+    # own comment requires a ledger line for a change to the alarm's operating
+    # point; the two must move together or the docs go stale again.
     min_games_per_side: int = 15
     # -25, and the derivation is a FALSE-BRAKE BUDGET, not a sigma count. A
     # 4-sigma line (-45) was the first choice and it does not deliver what the
@@ -863,18 +916,25 @@ class GateConfig:
     # the three things the docs name as what this gate catches, are all steps.
     #
     # -125, on the SAME false-brake budget that sized ``demote_delta_elo``.
-    # One anchored sample carries 42.4 Elo of binomial se at the realized shape
-    # (n_cur 197 / n_prev 38) and 64.2 at the worst shape ``min_games_per_side``
-    # admits (197/15). At -125 the leg fires when the sample delta is below
-    # -195 (realized) / -231 (worst), which under a null of N(0, se) is
-    # 0.02 / 1.31 spurious holds per 8000 iterations -- 0.016%, inside the
-    # 0.04% upper bound the window line was sized against.
+    # One anchored sample carries 48.8 Elo of binomial se at the REALIZED shape
+    # (n_cur 50.3 / n_prev 46.4, measured over 96 iterations of trials 379f6 +
+    # 5ce02) and 87.5 at the worst shape ``min_games_per_side: 15`` admits
+    # (15/15). At -125 the leg fires when the sample delta is below -205
+    # (realized) / -269 (worst), which under a null of N(0, se) is 0.10 / 8.44
+    # spurious holds per 8000 iterations -- 0.0013% and ⚑ **0.1055%**.
     #
-    # WHAT IT DOES NOT BUY: a -100 step. 50% power lands at -195 Elo and 90% at
-    # -249 (realized shape). Nothing at this sample size can do better -- a
+    # The second of those is OUTSIDE the 0.04% upper bound the window line was
+    # sized against, by 2.6x. The retired numbers this comment used to carry
+    # (42.4 / 64.2 Elo, -195 / -231, 0.02 / 1.31, "0.016%, inside") were the
+    # PRE-08-04 lineage at 197/38, and its worst row was 197/15, which is not
+    # the worst shape the constant admits. See ``min_games_per_side`` above for
+    # the measured remedy (22 -> 0.0368%) and why it is not applied here.
+    #
+    # WHAT IT DOES NOT BUY: a -100 step. 50% power lands at -205 Elo and 90% at
+    # -268 (realized shape). Nothing at this sample size can do better -- a
     # -100 step is under 2.5 sigma of ONE sample -- and buying it would cost a
     # false brake every few hundred iterations. Quote the leg as "a step of
-    # about -200 or worse", never as "any bad merge".
+    # about -205 or worse", never as "any bad merge".
     demote_step_elo: float = -125.0
     alpha: float = 0.05
     max_hold_iters: int = 12
