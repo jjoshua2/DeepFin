@@ -42671,3 +42671,75 @@ The paired CIs were correct and tight; they were tight around the wrong quantity
 on.** The training loss is chosen for optimisation, not for measurement; here it inverted.
 The cost of the check was ~15 minutes of GPU beside live training, after the wrong conclusion
 had already been written into the ledger and memory.
+
+## 2026-08-11 — THE SEED POOL DID NOT "HALVE FROM LEARNING": AN ABSOLUTE net_q BAR MET A GLOBAL CALIBRATION SHIFT (task #184)
+
+FINDING, not an experiment. No change made; options below are un-launched.
+
+### The alarm
+Pool 273 -> 136 in ~6h after the 08-11 04:19 resume. One read did it:
+`ckpt=5` (08:37) retired 117 seeds in a single step, off a `resolved=138/267` read.
+
+### The instrument
+`scripts/blindspot_retire_step.py` retires a seed after 2 CONSECUTIVE reads of
+`net_q = W-L <= -0.4` ("AWARE" — the net now reads the position as losing, so the
+blind spot is fixed). `net_q` is an ABSOLUTE value-head output with **no control for
+the net's global value calibration**.
+
+### The measurement (banked, zero GPU — `retire_netq_<tag>.jsonl` per-seed dumps)
+Paired over the 800 seeds present in both the last pre-restart read (`tag=860`,
+08-10 15:03) and the first post-restart read (`tag=0`, 08-11 05:03):
+
+| | tag=860 | tag=0 |
+|---|---|---|
+| ALL 800 median net_q | −0.453 | **−0.641** |
+| ACTIVE pool median net_q | −0.188 | **−0.447** |
+| ACTIVE aware (<= −0.4) | **27** | **153** |
+
+* paired median shift **−0.0896**, mean **−0.1397**; **585 of 800 seeds moved DOWN**.
+* **200 seeds crossed INTO aware, 31 crossed out.**
+* the crossers sat at median **−0.256** at tag=860 — i.e. **bunched just above the bar**.
+  A uniform downward shift pushed them over. That is the signature of a threshold on an
+  uncalibrated absolute quantity, not of 200 blind spots being individually fixed.
+
+### ⚑ THE RETIREMENT FIRED ON A NET THAT IS WORSE BY THE DESIGNATED VALUE RULER
+`value_regret` OVERALL, same monitor cycles: **ckpt 860 = 60.0 cp -> ckpt 0 = 66.6 cp**
+(+6.6 cp, i.e. WORSE). The rollback to iter 672 degraded the value head, and the retire
+step responded by declaring 117 blind spots RESOLVED. The mechanism ran BACKWARDS.
+
+### It clusters on model discontinuities
+Over all **1429** retire reads: aware% median **6.3**, p90 **15.5**. Only **2 of 1429**
+reads exceeded 40% — **both on 08-11 (56.0% and 51.7%), immediately after the resume**.
+The 3rd-largest ever (08-05 00:03, 137 retired, 31.4%) is immediately after the 08-04
+fresh boot. ⇒ mass retirement is a RESTART artifact, not a learning signal.
+
+### The casualties are NOT recoverable by probation
+164 seeds active at tag=860 are retired at tag=31. Their net_q NOW: median −0.600;
+**3 above the −0.2 refeed bar, 20 in the (−0.4,−0.2] dead band, 141 still <= −0.4**
+(109 of them <= −0.5). Probation is designed to catch regression, and a seed parked
+below the bar by a global shift never regresses above −0.2. **The 164 are gone.**
+
+### ⚑⚑ BUT POOL SIZE IS NOT THE BINDING RESOURCE — MEASURED, NOT ASSUMED
+`opening_fen_dole_max_games = ceil(opening_fen_dole_max_fraction * games_per_iter)`
+= `ceil(0.08 * 440)` = **36**. Live worker logs, every iteration, all 4 workers:
+
+    dole: capped seeded games 151+136 -> 19+17 (max 36)
+    dole: capped seeded games 133+120 -> 19+17 (max 36)
+
+The cap binds by **7-14x** at BOTH pool sizes. Seeded games/iter is **36 before and
+after the halving**. What changed is only the ROTATION PERIOD: at pool 273 a seed came
+up every ~15 iterations; at 136, every ~7. **The halving did not reduce blind-spot
+exposure — it DOUBLED the exposure per surviving seed.** The lever that controls
+blind-spot training volume is `opening_fen_dole_max_fraction`, and nothing else.
+
+### Supply
+`data/harvest/staged_candidates.txt` holds **3081** deep-SF-vetted candidates.
+`auto_feed_disabled` has been set since **Jul 24 14:48 (18 days)**, so the flywheel's
+feed arm is off while its retire arm runs every iteration — a **one-way ratchet**.
+
+### Verdict
+The pool decline is REAL but MIS-ATTRIBUTED, and its cost is NOT throughput. Do not
+"fix" it by refilling the pool: that changes rotation period, not exposure. The two
+defects worth deciding are (1) the absolute bar with no calibration control, and
+(2) retire-without-feed. Options recorded in the session summary; none launched.
+
