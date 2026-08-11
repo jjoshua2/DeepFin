@@ -42792,3 +42792,92 @@ CALIBRATION is not the defect; its DISTANCE from the refeed bar is. Option 2 (ho
 retirement across model discontinuities) survives with a better rationale: a pool sitting
 on its own trigger must not fire during the one moment the net is known to move.
 
+
+
+---
+
+## 2026-08-11 — PRE-REGISTRATION: the iter-138 pause readout (LIVE-UNREAD until the arms return)
+
+**Why now.** `wdl_regret` stopped improving at iter ~85 and has run BACKWARDS since, while
+`ema_winrate` fell through the 0.500 setpoint:
+
+| iters | `wdl_regret` | `ema_winrate` |
+|---|---|---|
+| 35–51 | 0.0264 | 0.5305 |
+| 52–68 | 0.0257 | 0.5125 |
+| **69–85** | **0.0253** ← floor | 0.5025 |
+| 86–102 | 0.0263 | 0.4952 |
+| 103–119 | 0.0271 | 0.4925 |
+| 120–138 | 0.0280 | **0.4918** |
+
+`sf_nodes` pinned at 75000 for all 138 iterations, so this is difficulty, not a nodes
+artifact. The 0.0495 → 0.0253 fall over iters 1–39 is the `c_scale` 0.025→0.1 search gain
+being absorbed a SECOND time by the restored PID state, not learning. Rising regret + winrate
+below setpoint is the signature 379f6 ended on — the run that measured **−51.6 Elo** against a
+frozen anchor. ⚑ Regret measures the AGENT, so this is a FLATNESS detector only; the arms
+below are the actual verdict.
+
+**Trial** `5ce02`, iter 138. Weights banked OUT of the Ray dir first (Ray prunes live
+checkpoints): `data/ratchet/snapshots/ck_2026-08-11_5ce02_iter138`.
+
+**Method:** FULL STOP of training (user decision, 2026-08-11), then run the arms with the GPU
+free. Pause-and-run, never side-by-side.
+
+### Arm 1 — PRIMARY: paired arena vs the resume point
+
+`ck_2026-08-11_5ce02_iter138` vs `data/ratchet/snapshots/ck_resume_iter672.pt`, **400 games**,
+paired openings, `--mode matched_sims --sims 32 --search-shape training --seed 42`. Same
+search BOTH sides, so only the WEIGHTS differ.
+
+⚑ This is the only arm that answers the question actually being asked: **the 138 iterations
+since the 08-11 04:19 restart resumed FROM iter672, so this is a direct before/after on the
+same lineage** with no cross-era confound.
+
+- **PRE-COMMITTED RULE.** 400 games resolves **±30 Elo**, so:
+  - `elo_lo > 0` (CI excludes zero, positive) ⇒ **WORKED**, the loop is gaining; resume as-is.
+  - CI contains 0 ⇒ **FLAT.** 138 iterations bought nothing measurable. This is the
+    expected outcome given the regret series, and it is a KILL for "keep running unchanged".
+  - `elo_hi < 0` ⇒ **REGRESSED**; roll back to iter672 and treat the restart's changes as the
+    suspect set.
+- ⚑ **"Better than last time" is cleared by ZERO improvement** — 379f6 was degrading, so
+  beating it is not a gain. The bar here is against zero, not against −51.6.
+
+### Arm 2 — Cheese, at the BANKED time control
+
+`scripts/match_vs_uci.py`, engine B = `/home/josh/local_engines/cheese/cheese-321-linux-pext`,
+**`--clock-base-ms 60000 --clock-inc-ms 1000 --clock-grace-ms 100`**, openings
+`runs/matches/openings_2move_balanced_100.epd`, `--option-b Hash=512`, `--move-log-out`.
+
+⚑⚑ **MEASURED THIS SESSION — DO NOT NODE-LIMIT CHEESE.** Cheese DOES honour `go nodes`
+(24,442/50,000; 188,179/200,000; 761,178/1,000,000 — always at-or-under). But
+`UCI_LimitStrength` + `UCI_Elo 2400` is implemented as a **TIME** handicap, not a search-size
+one: `go nodes 200000` returns the **identical 188,179 nodes** at 2400 as at full strength,
+taking **4.56s instead of 0.12s** (38x). ⇒ **a node-limited match at `UCI_Elo 2400` silently
+faces a FULL-STRENGTH-SEARCH Cheese wearing a "2400" label.** The banked Cheese history was
+taken at a 60s+1s CLOCK (`scratchpad/cheese_match_tonight.sh`), so the clock is also the only
+setting comparable to it. [[same_name_different_population]]
+
+- **The confound this creates, and how it is handled.** A clock ruler turns OUR speedups into
+  phantom Elo, which is why node limits are normally preferred. Since the clock is forced
+  here, the confound is MEASURED instead of assumed away: `--move-log-out` records our
+  per-move nodes and nps, and the readout reports them against the banked run's. **If our nps
+  moved materially, the Cheese delta is not attributable to the net** and the arm reports as
+  CONFOUNDED rather than as a verdict.
+- **Judged by the Cheese tail**, not by a generic score line [[flywheel_judge_by_cheese_not_generic_arena]].
+
+### Arm 3 — the two offline rulers, paired against the banked dumps
+
+- `scripts/value_regret.py --batch-size 128` vs `data/ruler_baselines_20260806/value_regret_boot512_dump.jsonl`
+- `scripts/audit_targets.py --batch-size 64` vs `data/ruler_baselines_20260806/audit_targets_boot512_dump.jsonl`
+
+Batch sizes are PINNED by `require_same_ruler` — they are part of the ruler's identity and
+cannot be shrunk to buy GPU margin. Paired CIs via `scripts/paired_compare.py`. These are the
+DESIGNATED head-level yardsticks; CE/loss are not, and reading a head off its training loss is
+the error that produced an inverted verdict on 08-11 [[value_head_frozen_since_iter8]].
+
+**Confounds:** none introduced — no training-affecting change is being made. The run is
+stopped, not modified. The 138 iterations under test span no config edit; search has been
+FROZEN since 2026-08-09 20:58, which is what makes Arm 1 a weights-only comparison.
+
+**Verdict:** LIVE-UNREAD. To be recorded the same session the arms return, judged by the
+pre-committed rules above and not by post-hoc reading.
