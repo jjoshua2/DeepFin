@@ -42584,3 +42584,24 @@ and lost value quality, and the two roughly cancel.
 3. Only then: a pre-registered recipe lever, and **Josh's call** — `train_views_per_position`
    (4.31), window size (1.5M), `feature_dropout_p` (0.0 for this whole lineage). Nothing
    training-affecting gets launched from this session.
+
+### Ruler control for the value_regret ladder (2026-08-11)
+
+Before running the ladder, boot512 was re-scored with the settings the ladder uses, to prove
+they do not move the ruler [[a_ruler_change_must_invalidate_its_records]]:
+
+    PYTHONPATH=. nice -n 10 python3 scripts/value_regret.py \
+      --checkpoint scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt \
+      --max-positions 2000 --batch-size 128 --pos-chunk 32 --gpu-mem-fraction 0.13 \
+      --dump-per-position scratchpad/valreg_ladder_20260811/boot512_dump.jsonl
+
+| quantity | banked 2026-08-06 | this re-run | Δ |
+|---|---|---|---|
+| OVERALL | 70.8 cp | **70.7 cp** | −0.1 |
+| endgame | 81.4 | 81.3 | −0.1 |
+| middlegame | 53.9 | 53.9 | 0.0 |
+| TAIL >100cp | 18.7% | 18.7% | 0.0 |
+
+⇒ `--pos-chunk 32` / `--gpu-mem-fraction 0.13` (needed to run beside live training) are
+**ruler-neutral**; the canonical `--batch-size 128` pin is kept. The ladder rows below are
+therefore comparable to the banked boot512 baseline, not only to each other.
