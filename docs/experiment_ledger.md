@@ -40625,3 +40625,118 @@ search) — **do not read it before iter 722.** It is insensitive (it read ≈fl
    ✅ Run 2026-08-10: **LAUNCH + VALUE FUSES BOTH CLEAR.**
 5. The yaml is **committed**. Not committed = not deployed
    [[uncommitted_live_yaml_edits_lose_proven_wins]].
+
+## 2026-08-11 — ⚑⚑ THE `policy_temp` 2×2 READS OUT **REFUTED**, AND THE RESTART BUNDLE PRICES OUT **NEUTRAL** ON TARGET QUALITY
+
+Both readouts below were **pre-committed before the numbers existed**. Both go against the
+hypothesis the restart was built on. Recording them as they fell.
+
+### 1. THE 2×2 — verdict: **REFUTED** (pre-committed rule, applied verbatim)
+
+`scratchpad/ladder_20260810/run_temp2x2.sh`, sims 256, topk 32, 400 positions, one checkpoint
+(`data/ruler_reads_20260808/trainer.pt`), only `c_scale` and `policy_temp` varying.
+
+| arm | T | `c_scale` | Δρ | 95% CI | **better_in** | H(search) |
+|---|---|---|---|---|---|---|
+| t0 | 1.0 | 0.025 | +0.0077 | [0.0065, 0.0088] | 0.752 | 1.104 |
+| t1 | 1.0 | 0.1 | +0.0179 | [0.0153, 0.0203] | 0.797 | 0.891 |
+| t2 | 1.5 | 0.025 | +0.0109 | [0.0095, 0.0124] | 0.785 | 1.486 |
+| **t3** | **1.5** | **0.1** | **+0.0184** | [0.0156, 0.0213] | 0.770 | 1.131 |
+
+**Instrument check passed exactly**: t0 and t1 reproduce the banked +0.0077 / +0.0179 to the
+digit. `policy_temp` does not enter σ (`σ = c_scale·(c_visit + max_visit)`), so t1 vs t3 is a
+**matched-σ** comparison — it isolates T cleanly.
+
+**Pre-committed rule was: "if T=1.5 degrades the target, t3 < t1 with separated CIs; if t3 ≥ t1
+the premise is REFUTED on the quality axis."** t3 = +0.0184 ≥ t1 = +0.0179, CIs almost fully
+overlapping. ⇒ **REFUTED.** `gumbel_policy_temp: 1.5` did not degrade the stored target's move
+quality. It also makes the target **softer**, not sharper (H 0.891 → 1.131), which is the
+opposite direction from the "the target ran away by sharpening" story.
+
+### 2. PRICING THE RESTART BUNDLE ITSELF — verdict: **NEUTRAL**
+
+I was about to launch a 25-hour experiment while reading the σ-cap's cost off the `c_scale`
+ladder by **interpolation**. That is not a measurement. Rig patched to expose both keys
+(`scratchpad/rank_cap.py`, runner `scratchpad/run_cap.sh`, in the merge392 worktree since the
+live branch does not yet carry #390/#391). Everything matched to t3: `c_scale` 0.1, T 1.5,
+sims 256, topk 32, 400 positions, same checkpoint.
+
+| arm | Δρ | 95% CI | **better_in** | H(search) | top1 agree w/ prior |
+|---|---|---|---|---|---|
+| **k0 control** (= t3, live shape) | +0.0184 | [0.0156, 0.0213] | 0.770 | 1.131 | 0.705 |
+| k1 `cap 5` (#391) | +0.0160 | [0.0139, 0.0182] | **0.777** | 1.334 | 0.787 |
+| k2 `cap 5` + untempered | +0.0126 | [0.0108, 0.0143] | 0.775 | 1.018 | 0.833 |
+| k3 untempered only (#390) | +0.0178 | [0.0154, 0.0201] | **0.785** | 0.889 | 0.752 |
+
+**k0 reproduces t3 to five decimals (+0.018412 vs +0.0184, better_in 0.770, H 1.131)** — the
+negative control passes, so the rows are believable.
+
+**On `better_in` — the statistic this ledger already ruled is the robust one and the mean the
+lying summary — every bundle variant is at or slightly above the live shape** (0.777 / 0.775 /
+0.785 vs 0.770). But n=400 gives SE ≈ 0.021 on a fraction near 0.77, so a 0.015 difference is
+**well inside noise**. The mean Δρ falls for the cap (−0.0024) and falls further for the pair
+(−0.0058), which is the expected consequence of shrinking σ on the Q term — and the same
+statistic this document already declined to trust in isolation.
+
+⇒ **Honest verdict: the bundle has NO MEASURABLE EFFECT on stored-target quality, in either
+direction.** It is SAFE to ship (it does not corrupt the target). It is NOT offline-validated as
+a fix, because there is nothing here for it to fix.
+
+### 3. ⚑⚑ THE CONSEQUENCE: THE RESTART'S STATED MECHANISM IS NOT SUPPORTED BY ANY OFFLINE RIG
+
+Three independent offline instruments have now been pointed at "the iter-736 search change
+corrupted the training target", and **all three decline to support it**:
+
+1. the `c_scale` ladder — `c_scale: 0.1` sits at the **peak** of `better_in`, i.e. the live σ is
+   already at the measured target optimum, not past it;
+2. the 2×2 — T=1.5 does not degrade the target (**REFUTED**, above);
+3. the untempering screen — `top1 +0.393 [−0.699, +1.485]`, no effect.
+
+And the timeline never fitted either: **the weights lost ~28 Elo over iters 514 → 735, entirely
+BEFORE the search change at 736**, at the old `c_scale` 0.025 / T 1.0 shape where the compounding
+mechanism provably does not exist. A cause cannot postdate its effect.
+
+**What survives, and it is not nothing:**
+
+- **The resume point is worth ~50 Elo on its own.** iter 672 weights vs iter 862 weights, both
+  measured against boot512 (+62.9 derived / +11.3). That is banked, not hypothesised.
+- **The +271 Elo of search is retained** by keeping `c_scale` 0.1 / T 1.5.
+- **#392 is supported by LIVE TELEMETRY, not by this rig.** The iter-736 change moved the
+  difficulty metric's absolute scale and the keep/priority gates went with it — `keep_prob_mean`
+  0.800 → **0.958**, `keep_limited_frac` 0.3786 → **0.1088**, `priority_std` 1.236 → **7.389**,
+  `grad_hard_clip_rate` 0.0 → **0.824** (onset iter 782). Those are measurements of a regime
+  break, and `diff_focus_norm_enabled` addresses exactly it. **This is the one bundle member with
+  a demonstrated defect behind it**, and the target-quality rig above is the wrong instrument for
+  it — diff_focus acts on WHICH ROWS ARE KEPT AND HOW THEY ARE WEIGHTED, not on the target's shape.
+- **#390 and #391 ride along as neutral.** They cost nothing measurable and they remove a real
+  coupling (`σ_target` to the played sim budget, and to T). They are now **hygiene, not the fix**,
+  and must not be described as the fix in any later readout.
+
+### 4. AMENDMENT TO THE PRE-REGISTRATION IMMEDIATELY ABOVE
+
+The **yardstick, window and thresholds stand unchanged** — 300 iterations, direct paired arena
+vs `data/ratchet/snapshots/ck_resume_iter672.pt`, 400 games, ±30 Elo. What changes is what a
+result will MEAN:
+
+- The entry's "Hypothesis" section is **downgraded from mechanism to conjecture.** It is not
+  supported offline and the timeline contradicts it.
+- **A SUCCESS therefore does NOT confirm the target-corruption story.** The restart changes four
+  things at once (better weights, retained search, diff_focus normalisation, target decoupling),
+  and three offline rigs say the last one is inert. Attribute a win to #392 and the resume point
+  first, and say so.
+- **A KILL is now the more informative outcome**, because it points at the hypothesis that never
+  went away and that the timeline actually fits: **data composition drift** — prev-model share
+  16.3% → 56.5% [[prev_model_share_drifted_16_to_56]], task #168 — which was already running
+  during 514 → 735.
+- ⇒ **Task #168 is promoted to the leading hypothesis for the decline.** The restart is worth
+  running anyway (better weights + retained search + a measured telemetry fix), but it should not
+  be counted on to answer the question.
+
+### The method rule this earns
+
+**PRICE THE INTERVENTION ON THE AXIS IT CLAIMS TO FIX, BEFORE THE LAUNCH, NOT AFTER.** Both
+readouts above were cheap — the 2×2 took 113 seconds of GPU and the cap ladder ~2 minutes —
+and together they demoted a 25-hour experiment's headline mechanism from "the fix" to "hygiene".
+The reason they nearly did not happen is that the bundle was already justified by a story that
+explained everything, and a story that explains everything is the thing to point an instrument at
+first [[most_experiments_here_are_unfalsifiable]].
