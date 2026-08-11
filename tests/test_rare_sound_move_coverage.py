@@ -827,15 +827,43 @@ def test_absent_provenance_can_be_overridden_only_explicitly(capsys) -> None:
 def test_different_producing_nets_are_refused() -> None:
     with pytest.raises(SystemExit, match="different nets"):
         rsmc.assert_same_producing_net(
-            rsmc.ShardReadStats(model_steps=[41, 41]),
-            {"read_stats": {"model_steps": [40]}}, allow_missing=False,
+            rsmc.ShardReadStats(model_steps=[41, 41], model_sha_prefixes=["aaaa"]),
+            {"read_stats": {"model_steps": [40], "model_sha_prefixes": ["bbbb"]}},
+            allow_missing=False,
         )
 
 
 def test_the_same_producing_net_is_accepted() -> None:
     rsmc.assert_same_producing_net(
-        rsmc.ShardReadStats(model_steps=[42, 42]),
-        {"read_stats": {"model_steps": [42]}}, allow_missing=False,
+        rsmc.ShardReadStats(model_steps=[42, 42], model_sha_prefixes=["aaaa"]),
+        {"read_stats": {"model_steps": [42], "model_sha_prefixes": ["aaaa"]}},
+        allow_missing=False,
+    )
+
+
+def test_equal_model_step_with_an_absent_sha_is_NOT_verified_identity() -> None:
+    """⚑ The hole the completeness rewrite closes.
+
+    The SHA comparison can only fire when BOTH sides carry a SHA, and
+    `model_step` is a PER-TRIAL counter -- equal steps across trials or lineages
+    are equal COUNTERS, not equal WEIGHTS, which is the entire reason the SHA
+    check exists. The previous revision required only that steps be present and
+    equal, so "step 42 both sides, SHA absent on one" sailed through as verified
+    identity: the guard reported success on precisely the input it was written
+    to catch. Absent provenance is not evidence of a match.
+    """
+    for a_sha, b_sha in ((["aaaa"], []), ([], ["aaaa"]), ([], [])):
+        with pytest.raises(SystemExit, match="UNKNOWN"):
+            rsmc.assert_same_producing_net(
+                rsmc.ShardReadStats(model_steps=[42], model_sha_prefixes=list(b_sha)),
+                {"read_stats": {"model_steps": [42], "model_sha_prefixes": list(a_sha)}},
+                allow_missing=False,
+            )
+    # ...and the waiver still works, on the record, naming what is absent.
+    rsmc.assert_same_producing_net(
+        rsmc.ShardReadStats(model_steps=[42], model_sha_prefixes=[]),
+        {"read_stats": {"model_steps": [42], "model_sha_prefixes": ["aaaa"]}},
+        allow_missing=True,
     )
 
 

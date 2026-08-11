@@ -887,24 +887,44 @@ def assert_same_producing_net(
             f"model_sha={shas_a}, this run={shas_b} (steps {steps_a} vs {steps_b} "
             "-- equal steps do NOT imply equal weights across trials or lineages)"
         )
-    if not steps_a or not steps_b:
+    # ⚑ COMPLETENESS, not mere non-contradiction. The SHA check above can only
+    # fire when BOTH sides carry a SHA, and the step check below proves nothing
+    # on its own: `model_step` is a per-trial counter, so equal steps across
+    # trials or lineages are equal COUNTERS, not equal WEIGHTS -- that is the
+    # whole reason the SHA comparison exists. An earlier revision required only
+    # that steps be present and equal, which accepted "equal step, SHA ABSENT on
+    # one side" as verified identity: exactly the condition the guard is for.
+    # Missing SHA is therefore routed to the SAME unverifiable branch as missing
+    # steps. Absent provenance is not evidence of a match.
+    missing = [
+        name for name, got in (
+            ("arm A model_steps", steps_a), ("this run model_steps", steps_b),
+            ("arm A model_sha_prefixes", shas_a), ("this run model_sha_prefixes", shas_b),
+        ) if not got
+    ]
+    if missing:
+        detail = (
+            f"arm A model_steps={steps_a or 'ABSENT'}, this run="
+            f"{steps_b or 'ABSENT'}; arm A model_sha={shas_a or 'ABSENT'}, "
+            f"this run={shas_b or 'ABSENT'}"
+        )
         if allow_missing:
             print(
-                "[provenance] ⚑ UNVERIFIABLE: the shards carry no producing-net id "
-                f"(arm A model_steps={steps_a or 'ABSENT'}, this run="
-                f"{steps_b or 'ABSENT'}). Proceeding only because "
-                "--allow-missing-shard-provenance was given; this comparison is "
-                "NOT proved to be against one producing net."
+                "[provenance] ⚑ UNVERIFIABLE: the shards do not fully identify the "
+                f"producing net -- ABSENT: {', '.join(missing)} ({detail}). "
+                "Proceeding only because --allow-missing-shard-provenance was "
+                "given; this comparison is NOT proved to be against one "
+                "producing net."
             )
             return
         raise SystemExit(
-            "refusing to difference two arms whose producing net is UNKNOWN: "
-            f"arm A model_steps={steps_a or 'ABSENT'}, this run="
-            f"{steps_b or 'ABSENT'}. The trial's replay shards are written by "
-            "DiskReplayBuffer._flush_shard_arrays with no ShardMeta, so model_step "
-            "and model_sha256 are None on every one of them. Absent provenance is "
-            "not evidence of a match. Pass --allow-missing-shard-provenance to "
-            "proceed on the record that this is unverified."
+            "refusing to difference two arms whose producing net is UNKNOWN -- "
+            f"ABSENT: {', '.join(missing)} ({detail}). The trial's replay shards "
+            "are written by DiskReplayBuffer._flush_shard_arrays with no "
+            "ShardMeta, so model_step and model_sha256 are None on every one of "
+            "them. Absent provenance is not evidence of a match. Pass "
+            "--allow-missing-shard-provenance to proceed on the record that this "
+            "is unverified."
         )
     if steps_a != steps_b:
         raise SystemExit(
@@ -2490,6 +2510,14 @@ def main(argv: list[str] | None = None) -> int:
             shape = _build_shape(args)
             research = ResearchSpec(
                 shape=shape, sims=int(args.sims), syzygy_path=args.syzygy_path,
+                # ⚑ `--seed` is a REAL knob here: ResearchSpec.seed drives the
+                # re-search RNG, so omitting it left the dataclass default
+                # (20260809) in force and every `--seed N` run was the same run
+                # under a different label -- while the provenance block dutifully
+                # banked `args.seed` as if it had been used. A value accepted and
+                # then silently ignored, and the reason the banked seed and the
+                # realized seed have to be the same object.
+                seed=int(args.seed),
             )
             fid = ResearchFidelity()
             stored_rows = []
@@ -2680,13 +2708,30 @@ def main(argv: list[str] | None = None) -> int:
         # arms' STORED POPULATIONS differ and the coverage delta is confounded
         # by re-composition. `assert_population`'s rate check is invariant to a
         # uniform keep_prob shift and cannot see it.
-        df_b = provenance.get("diff_focus")
-        df_a = prov_a.get("diff_focus")
-        shifted = diff_focus_shift(
-            df_a if isinstance(df_a, dict) else None,
-            df_b if isinstance(df_b, dict) else None,
-            tol=float(args.diff_focus_tolerance),
-        )
+        #
+        # ⚑ AND IT IS SHARD-BACKED, so it carries the SAME simulate-mode
+        # exemption as the producing-net guard directly above. `diff_focus`
+        # provenance is read off the stored shards; in simulate mode NEITHER arm
+        # has any, `diff_focus_shift(None, None)` reports a shift, and the run
+        # dies unless the operator passes `--allow-diff-focus-shift` -- an
+        # unrelated waiver, reached for the wrong reason, which then also waives
+        # a REAL diff_focus shift for any shard-backed arm in the same session.
+        # That is precisely the escape-hatch defect the block above fixes, so
+        # fixing one and not the other left `--mode simulate --compare-to`
+        # unreachable without it.
+        if args.mode in ("shards", "research"):
+            df_b = provenance.get("diff_focus")
+            df_a = prov_a.get("diff_focus")
+            shifted = diff_focus_shift(
+                df_a if isinstance(df_a, dict) else None,
+                df_b if isinstance(df_b, dict) else None,
+                tol=float(args.diff_focus_tolerance),
+            )
+        else:
+            shifted = []
+            print("[diff_focus] simulate mode: neither arm is shard-backed, so "
+                  "there is no stored population to re-compose and the "
+                  "diff_focus gate does not apply")
         provenance["diff_focus_shift"] = shifted
         if shifted:
             msg = ("refusing to difference two arms whose diff_focus population "
