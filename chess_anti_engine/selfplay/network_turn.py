@@ -743,10 +743,16 @@ def _append_records_via_python(
         q_surprise = abs(q_delta)
 
         difficulty = q_surprise * df_q_w + kl * df_p_s
-        if not math.isfinite(difficulty):
-            difficulty = 1.0
+        # Fed to the estimator BEFORE the non-finite substitution, so this path
+        # matches _append_records_via_c: there the estimator is re-derived from
+        # the raw kl/q_delta columns and `observe` drops the non-finite rows.
+        # Folding the substituted 1.0 in instead -- which the substitution below
+        # would do -- lets a numerical accident drag the reference quantile, the
+        # exact thing DiffFocusNormalizer.observe's docstring says it does not.
         if row_has_policy:
             raw_difficulties.append(difficulty)
+        if not math.isfinite(difficulty):
+            difficulty = 1.0
         priority = difficulty
         keep_prob = 1.0
         # Mirrors _mcts_tree.c exactly, including the branch order: scale > 0

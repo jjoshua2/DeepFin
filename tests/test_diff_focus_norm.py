@@ -12,6 +12,7 @@ import re
 import types
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import Mock
 
 import chess
 import numpy as np
@@ -20,9 +21,21 @@ import pytest
 from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask
-from chess_anti_engine.selfplay.config import DiffFocusConfig
+from chess_anti_engine.selfplay.config import (
+    DiffFocusConfig,
+    GameConfig,
+    OpponentConfig,
+    SearchConfig,
+    TemperatureConfig,
+)
 from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
-from chess_anti_engine.selfplay.network_turn import _policy_kl, _raw_difficulty
+from chess_anti_engine.selfplay.network_turn import (
+    _append_records_via_c,
+    _policy_kl,
+    _raw_difficulty,
+)
+from chess_anti_engine.selfplay.opening import OpeningConfig
+from chess_anti_engine.selfplay.state import SelfplayState
 from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
 from chess_anti_engine.utils.config_yaml import SELFPLAY_CONFIG_KEYS
 from chess_anti_engine.worker import WorkerSession
@@ -425,6 +438,157 @@ def test_worker_reads_each_norm_key_by_name() -> None:
     block = block[: block.index('"game": GameConfig(')]
     for key in NORM_KEYS:
         assert re.search(rf'"{key}"', block), f"worker.py never reads {key}"
+
+
+# ── the LAST link: config -> SelfplayState -> the stored record ─────────────
+#
+# ⚑ Everything above stops at ``DiffFocusConfig``. Nothing above observes the
+# selfplay session turning that config into a live estimator, or the estimator's
+# scale reaching ``batch_process_ply``'s argument list. That gap was real: an
+# independent review mutated ``SelfplayState.create`` to pass
+# ``diff_focus_norm=None`` unconditionally -- i.e. ``norm_enabled`` accepted and
+# silently ignored, this codebase's signature defect, in the one function that
+# decides whether the feature exists -- and the ENTIRE suite stayed green. These
+# three tests are that mutation's kill.
+
+_APPEND_BATCH = 6
+
+
+def _session_state(diff_focus: DiffFocusConfig) -> SelfplayState:
+    """A real ``SelfplayState``, built the way ``play_batch`` builds one."""
+    evaluator = Mock(spec=["evaluate_encoded"])
+    stockfish = Mock(spec=["search", "nodes"])
+    stockfish.nodes = 0
+    return SelfplayState.create(
+        model=None,
+        device="cpu",
+        rng=np.random.default_rng(0),
+        stockfish=stockfish,
+        evaluator=evaluator,
+        batch_size=_APPEND_BATCH,
+        continuous=False,
+        target=_APPEND_BATCH,
+        opponent=OpponentConfig(),
+        temp=TemperatureConfig(),
+        search=SearchConfig(),
+        opening=OpeningConfig(),
+        diff_focus=diff_focus,
+        game=GameConfig(),
+    )
+
+
+def _append_one_ply(
+    state: SelfplayState, diff_focus: DiffFocusConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run the REAL C record-append path once; return stored priority/keep_prob.
+
+    Not ``_run_c``: this goes through ``_append_records_via_c``, which is the
+    function that reads ``state.diff_focus_norm`` and assembles the C argument
+    list. A test that calls ``batch_process_ply`` directly passes the scale in
+    by hand and therefore cannot see the plumbing between the two.
+    """
+    n = _APPEND_BATCH
+    rng = np.random.default_rng(7)
+    pol = (rng.standard_normal((n, POLICY_SIZE)) * 2.0).astype(np.float32)
+    wdl = rng.standard_normal((n, 3)).astype(np.float32)
+    probs = np.zeros((n, POLICY_SIZE), dtype=np.float32)
+    actions: list[int | None] = []
+    values: list[float | None] = []
+    for i in range(n):
+        legal = np.flatnonzero(legal_move_mask(state.boards[i]))
+        k = max(2, len(legal) // 4)
+        chosen = rng.choice(legal, size=k, replace=False)
+        visits = rng.integers(1, 40, size=k).astype(np.float32)
+        probs[i, chosen] = visits / visits.sum()
+        actions.append(int(chosen[0]))
+        values.append(float(rng.uniform(-0.9, 0.9)))
+    _append_records_via_c(
+        state, list(range(n)),
+        cb_encode_list=list(state.cboards[:n]),
+        pol_logits=pol, wdl_logits_raw=wdl,
+        actions=actions, values_list=values,
+        probs_list=[probs[i] for i in range(n)],
+        gumbel_diags=[None] * n, is_full_py=[True] * n,
+        sample_weights=[1.0] * n, diff_focus=diff_focus,
+    )
+    recs = [state.samples_per_game[i][0] for i in range(n)]
+    return (
+        np.array([float(r.priority) for r in recs]),
+        np.array([float(r.keep_prob) for r in recs]),
+    )
+
+
+def test_selfplay_state_builds_the_normalizer_only_when_the_knob_is_on() -> None:
+    """``norm_enabled`` must decide whether the estimator EXISTS, and the three
+    estimator knobs must reach the object rather than its defaults."""
+    assert _session_state(DiffFocusConfig()).diff_focus_norm is None
+    est = _session_state(
+        DiffFocusConfig(
+            norm_enabled=True, norm_window=64, norm_warmup=8, norm_quantile=0.4,
+        ),
+    ).diff_focus_norm
+    assert est is not None
+    est.observe(np.arange(1, 65, dtype=np.float64))
+    # q0.40 of 1..64 is 26.2; q0.50 (the default the knob must NOT have fallen
+    # back to) is 32.5, and a 8192-wide default ring would never have armed.
+    assert est.armed
+    assert est.scale == pytest.approx(26.2)
+
+
+def test_selfplay_state_refuses_an_armed_group_with_a_zero_slope() -> None:
+    """``_mcts_tree.c`` refuses this combination, but only on the first ply
+    batch after warm-up -- thousands of games in, naming a C argument rather
+    than the yaml key. `a dead knob can arm a crash`: refuse at construction."""
+    with pytest.raises(ValueError, match="diff_focus_norm_slope"):
+        _session_state(DiffFocusConfig(norm_enabled=True, norm_slope=0.0))
+
+
+@requires_c
+def test_the_record_append_path_stores_the_normalized_priority_and_keep_prob() -> None:
+    """THE end-to-end observation: an armed session stores different numbers.
+
+    Reads the ``_NetRecord``s that finalize.py later consumes -- ``priority`` is
+    the sampler's column and ``keep_prob`` is the drop probability -- so this
+    fails if the scale never reaches the C call, whatever the config objects say.
+    """
+    off = DiffFocusConfig()
+    raw_prio, _raw_keep = _append_one_ply(_session_state(off), off)
+
+    on = DiffFocusConfig(
+        norm_enabled=True, norm_window=64, norm_warmup=8,
+        norm_slope=1.62, norm_clip=8.0,
+    )
+    state = _session_state(on)
+    assert state.diff_focus_norm is not None
+    state.diff_focus_norm.observe(np.full(32, 0.5))
+    assert state.diff_focus_norm.scale == pytest.approx(0.5)
+    prio, keep = _append_one_ply(state, on)
+
+    assert not np.allclose(raw_prio, prio), "the estimator never reached the C call"
+    np.testing.assert_allclose(prio, np.minimum(raw_prio / 0.5, 8.0), rtol=1e-5)
+    np.testing.assert_allclose(
+        keep, np.clip(raw_prio / 0.5 * 1.62, 0.025, 1.0), rtol=1e-5,
+    )
+    # The window is also FED by this path, in RAW units: 32 pre-loaded + the
+    # policy-bearing rows of this ply. A normalized value fed back would pin the
+    # reference at 1.0 for ever.
+    assert state.diff_focus_norm.count == 32 + _APPEND_BATCH
+    assert state.diff_focus_norm.scale == pytest.approx(0.5)
+
+
+@requires_c
+def test_an_unarmed_session_records_exactly_the_pre_fix_numbers() -> None:
+    """Warm-up is the OLD behaviour, not a third one -- asserted on the stored
+    record, not on the sentinel that is supposed to produce it."""
+    off = DiffFocusConfig()
+    raw_prio, raw_keep = _append_one_ply(_session_state(off), off)
+    on = DiffFocusConfig(norm_enabled=True, norm_window=64, norm_warmup=64)
+    state = _session_state(on)
+    prio, keep = _append_one_ply(state, on)
+    np.testing.assert_array_equal(prio, raw_prio)
+    np.testing.assert_array_equal(keep, raw_keep)
+    assert state.diff_focus_norm is not None
+    assert not state.diff_focus_norm.armed
 
 
 def test_production_yaml_declares_the_group_default_off() -> None:

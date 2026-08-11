@@ -614,6 +614,37 @@ def _probe_c_extensions() -> _CExtensionCaps:
     )
 
 
+def _build_diff_focus_normalizer(
+    diff_focus: DiffFocusConfig,
+) -> DiffFocusNormalizer | None:
+    """The normalizer for ``diff_focus``, or None when the group is off.
+
+    ⚑ ``norm_slope`` is validated HERE even though this function never uses it.
+    ``_mcts_tree.c`` refuses ``df_norm_scale > 0`` with a non-positive
+    ``df_norm_slope`` -- correctly, since a zero slope would clamp every
+    ``keep_prob`` to ``min_keep`` and discard ~97.5% of plies -- but that refusal
+    only fires on the first ply batch AFTER ``norm_warmup`` plies have been
+    observed, i.e. thousands of games into a session, and it names the C argument
+    rather than the yaml key. A value that is accepted at configuration time and
+    detonates later is this codebase's `a dead knob can arm a crash`. Refuse at
+    construction instead, naming the key the operator actually typed.
+    """
+    if not bool(diff_focus.norm_enabled):
+        return None
+    if not float(diff_focus.norm_slope) > 0.0:
+        raise ValueError(
+            "diff_focus_norm_enabled requires diff_focus_norm_slope > 0, got "
+            f"{float(diff_focus.norm_slope)!r}; it REPLACES diff_focus_slope "
+            "when normalization is armed, so 0 would clamp every keep_prob to "
+            "diff_focus_min",
+        )
+    return DiffFocusNormalizer(
+        window=int(diff_focus.norm_window),
+        warmup=int(diff_focus.norm_warmup),
+        quantile=float(diff_focus.norm_quantile),
+    )
+
+
 @dataclass
 class SelfplayState:
     """Bundle of mutable state driving one ``play_batch`` invocation.
@@ -848,14 +879,7 @@ class SelfplayState:
             search=search,
             opening=opening,
             diff_focus=diff_focus,
-            diff_focus_norm=(
-                DiffFocusNormalizer(
-                    window=int(diff_focus.norm_window),
-                    warmup=int(diff_focus.norm_warmup),
-                    quantile=float(diff_focus.norm_quantile),
-                )
-                if bool(diff_focus.norm_enabled) else None
-            ),
+            diff_focus_norm=_build_diff_focus_normalizer(diff_focus),
             game=game,
             batch_size=batch_size,
             continuous=continuous,

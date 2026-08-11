@@ -522,6 +522,24 @@ Pinned by `test_python_and_c_kl_agree_on_sparse_targets`, with
 * Requires `python3 scripts/build_production_extensions.py` after pull (`.c` changed).
 * Only the SIX NORM keys ride the reco. The five original `diff_focus_*` keys remain
   unplumbed — plumbing them changes the live keep-probability and needs its own entry.
+* ⚑ `diff_focus_norm_enabled: true` with `diff_focus_norm_slope: 0` is refused at
+  `SelfplayState.create`, not thousands of plies later inside the C call. Added by the
+  independent review: the C guard is correct but fires only on the first ply batch AFTER
+  `norm_warmup`, and names `df_norm_slope` rather than the yaml key. `a dead knob can arm
+  a crash` — the launch check for that pair is now the session refusing to start.
+
+### FOUND BY THE INDEPENDENT REVIEW (2026-08-10) — the last plumbing link was untested
+
+Everything the PR originally asserted stopped at `DiffFocusConfig`. Nothing observed
+`SelfplayState.create` turning that config into a live estimator, nor the estimator's
+scale reaching `batch_process_ply`'s argument list. Two mutations proved the gap real —
+`SelfplayState.create` returning `diff_focus_norm=None` unconditionally (`norm_enabled`
+accepted and silently ignored, in the one function that decides whether the feature
+exists) and `_append_records_via_c` handing C `diff_focus.slope` in place of
+`norm_slope` — and **both left the ENTIRE suite green**. Closed by four tests that read
+the stored `_NetRecord.priority`/`keep_prob` off the real append path; both mutations are
+now red. The reviewer separately re-ran the negative control with the fix mutated out of
+`_mcts_tree.c` (control goes red) and reproduced the yardstick block above verbatim.
 
 ### REVERT POINT
 
