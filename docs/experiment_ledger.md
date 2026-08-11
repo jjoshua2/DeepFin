@@ -42605,3 +42605,69 @@ they do not move the ruler [[a_ruler_change_must_invalidate_its_records]]:
 ⇒ `--pos-chunk 32` / `--gpu-mem-fraction 0.13` (needed to run beside live training) are
 **ruler-neutral**; the canonical `--batch-size 128` pin is kept. The ladder rows below are
 therefore comparable to the banked boot512 baseline, not only to each other.
+
+---
+
+## 2026-08-11 — ⚑⚑ CORRECTION: THE VALUE HEAD DID IMPROVE. THE CE LADDER WAS INVERTED (task #186)
+
+**The entry "THE VALUE HEAD HAS NOT IMPROVED SINCE ITERATION 8" is WITHDRAWN.** Its instrument
+was `wdl` cross-entropy against the stored outcome label. The proper VALUE yardstick —
+`scripts/value_regret.py`, deep-SF 1-ply regret — says the opposite, and it is the ruler this
+project has already ruled must be used.
+
+Ladder, frozen `data/audit_set_v1.jsonl` v1-2k subset, `--batch-size 128` (canonical pin),
+ruler control above reproduces banked boot512 to 0.1 cp. **Lower is better.**
+
+| checkpoint | OVERALL cp | endgame | middlegame | >100cp | >300cp |
+|---|---|---|---|---|---|
+| boot512 (inherited) | 70.7 | 81.3 | 53.9 | 18.7% | 5.4% |
+| iter 8 | **73.5** | 81.1 | 61.5 | 18.6% | 5.7% |
+| iter 249 | 63.2 | 68.1 | 55.5 | 17.4% | 4.5% |
+| iter 514 | 60.5 | 64.3 | 54.5 | 17.3% | 4.4% |
+| iter 672 (resume point) | 66.0 | 71.4 | 57.3 | 18.3% | 4.9% |
+| iter 735 | 64.1 | 69.2 | 56.0 | 17.5% | 4.9% |
+| **live (~690)** | **60.4** | 64.6 | 53.7 | 16.6% | 4.3% |
+
+- **iter 8 → live: −13.1 cp (−17.8%).** iter 8 is the WORST rung, not the best.
+- **boot512 → live: −10.3 cp.** The lineage beat its inheritance on the value ruler.
+- Nearly all of it is **endgame** (81.1 → 64.6, −16.5 cp); middlegame moved −7.8 cp.
+
+### The two rulers are ANTI-CORRELATED across this ladder
+
+| | iter 8 | live | direction |
+|---|---|---|---|
+| wdl CE vs outcome label (in-window) | 0.8004 | 0.8176 | iter 8 "better" |
+| wdl CE vs outcome label (held-out) | 0.8476 | 0.8769 | iter 8 "better" |
+| **deep-SF 1-ply regret** | **73.5 cp** | **60.4 cp** | **live better** |
+
+⚑⚑ **This is not "CE is a weak proxy". On this ladder CE is an INVERTED one.** A head can be
+better calibrated against a noisy outcome label while RANKING moves worse, and ranking is what
+play consumes. `value_regret.py`'s own docstring says exactly this; CLAUDE.md says exactly this;
+the memory note says exactly this — and I ran the CE ladder as if it were evidence anyway.
+The paired CIs were correct and tight; they were tight around the wrong quantity.
+**Tight intervals on the wrong statistic are the most convincing way to be wrong.**
+
+### What survives, and what the corrected picture is
+
+- **SURVIVES: the policy memorisation result.** It is measured as KL against the stored SEARCH
+  TARGET with a held-out arm on pools no rung trained on — a different instrument, and its
+  held-out design is what makes it load-bearing. In-window −74% vs held-out −2.4%.
+- **DEAD: "the value head is frozen / degraded".** It improved 17.8%.
+- **DEAD, therefore: the tidy story that the lineage traded value for a memorised policy.**
+- **NEW AND UNCOMFORTABLE:** both offline rulers now show real improvement over boot512 —
+  value −10.3 cp, policy held-out −2.4% — while the paired arena says `iter862 ≈ boot512`.
+  ⇒ the question is no longer "which head broke" but **"why does measurable offline improvement
+  in BOTH heads not appear in play?"** Candidates, in order: the arena's ±30 Elo resolution is
+  simply larger than the gain [[compute_instrument_resolution_before_the_threshold]]; or the
+  play path converts them at a discount (search shape, temperature, the c_scale/policy_temp
+  regime already known to be worth hundreds of Elo).
+- ⚑ **Incidental but relevant to the rollback: iter 672 is the WORST post-boot rung on this
+  ruler (66.0) — worse than iter 514 (60.5) and iter 735 (64.1).** The resume point cost ~5.5 cp
+  of value regret relative to 514. The live net has since recovered past both (60.4).
+
+### Method rule earned (and it is not a new one — it is one I already had)
+
+**Before a head-level verdict, run the head's DESIGNATED yardstick, not the loss it is trained
+on.** The training loss is chosen for optimisation, not for measurement; here it inverted.
+The cost of the check was ~15 minutes of GPU beside live training, after the wrong conclusion
+had already been written into the ledger and memory.
