@@ -1975,7 +1975,13 @@ this paragraph supersedes the mechanism sketch above where they differ.**
   isn't measuring the controller.** Stated in the module in three places.
 - **(2) as implemented:** `gate_demote_step_elo: -125` leg on the iteration's OWN
   sample, evaluated before `min_iters`, OR-ed into demote, pooled-variance floor
-  load-bearing. Measured: at 197/38 games `score_se` = 42.4 Elo so the leg fires at
+  load-bearing. ⚑ **SUPERSEDED 2026-08-11 — the 197/38 shape below is the PRE-08-04
+  lineage measured by a timestamp PROXY. Realized is 50.3/46.4 (`score_se` 48.8 Elo,
+  fires at ≈−205 — ⚑ NOT 49.2/−206, which is the same figure at the rejected
+  grand-pool sd), and at that shape the leg's false-brake budget is BREACHED by the
+  `min_games_per_side: 15` floor. See the 2026-08-11 correction entry at the end of
+  this file; do not requote the numbers in this bullet.**
+  Measured: at 197/38 games `score_se` = 42.4 Elo so the leg fires at
   delta < ≈**−195**; −300/−600 one-shots demote **100/100 at latency 0**; −200 fires
   62%; **−100 stays blind, documented**; healthy null 0 spurious demotes in 6000
   iterations (~1.5e-5/iter analytic). Latency docs corrected to steady-state (−100
@@ -16729,6 +16735,25 @@ EFFECTIVE TARGET — is the object each arm scores. `b=c=0` reduces to `p_mcts`
   sufficient — nothing here licenses a live weight change.
 - The audit positions stand in for "a covered row". They are not drawn from the
   `has_sf_p0` subpopulation, which is selfplay-only, full-sim, prev-ply-full.
+
+### ⚑ THE ARENA CI DOES NOT COVER TRAINING-TRAJECTORY VARIANCE
+
+The 400-game paired CI is uncertainty **from the arena games, conditional on the particular
+networks these arms happened to train**. It contains NO between-trajectory variance, so a
+modest arena win is consistent with "this arm drew the luckier training run".
+
+Mitigation, and then a pre-committed reading rule:
+
+- All arms start from the **same replay snapshot and the same RNG seeds** wherever the
+  harness allows. The arms are function-identical at init, so this is achievable and it
+  removes the largest source of trajectory divergence.
+- **A win whose CI clears 0 but whose point estimate is under ~+40 Elo is a PROMISING
+  TRAJECTORY-level result, NOT an architecture win**, and must be replicated on a second
+  training seed before it is recorded as WORKED.
+- A large, persistent win (point estimate well above the replication bar, holding across
+  the readout window) is stronger evidence and may be recorded directly.
+- Do NOT pay for replication up front — run the first experiment, replicate only a
+  contender.
 
 ### Confounds
 
@@ -43462,3 +43487,453 @@ thing this change touched, did not move at all.
 live.** `test_uci_smoke`, arenas, and anything that captures a cudagraph belong in a
 pause window. The throughput readout for the arena comparison must come from a window
 with NO concurrent agent work.
+
+## 2026-08-11 — CORRECTION: the promotion gate's step leg was sized on a shape it no longer runs at, and at the CURRENT shape its false-brake budget is BREACHED by the floor it ships with (task #182)
+
+`docs/experiment_ledger.md:1978` records "at 197/38 games `score_se` = 42.4 Elo so the
+leg fires at ...". That measurement stands **for the pre-08-04 lineage** and is left in
+place as history. It must not be quoted going forward, for two independent reasons.
+
+**1. The instrument was a proxy.** 197/38 came from binning shard `.zattrs`
+`generated_at_unix` against `progress.csv` timestamps. The gate partitions by
+`model_sha256` (`_process_shard`). Those agree only where publish and iteration
+boundaries coincide, which they do not.
+
+**2. The composition moved.** Read off the gate's OWN per-iteration counters
+(`gate_sample_games_cur` / `gate_sample_games_prev`), every usable iteration of both
+post-boot trials — 379f6 (27) + 5ce02 (69) = **96**:
+
+| | old (proxy, pre-08-04) | current (gate counters, 96 iters) |
+|---|---|---|
+| n_cur | ~197 | **50.3** |
+| n_prev | ~38 | **46.4** |
+| prev share | 16.3% | **48.0%** |
+
+The shape went from cur-dominated to **balanced**, which is the fact everything below
+turns on. Both trials agree (379f6 52.1/46.3, 5ce02 49.6/46.4), so this is the lineage,
+not a transient.
+
+### The consequence, and it is not cosmetic
+
+`demote_step_elo: -125` was sized on a FALSE-BRAKE BUDGET of at most 0.04% spurious
+holds. Recomputing `se = 0.3447*sqrt(1/n_cur + 1/n_prev)*ELO_PER_SCORE_AT_HALF`:
+
+| shape | se | fires below | normal | **MC of the shipped rule** | 50% power | 90% power |
+|---|---|---|---|---|---|---|
+| 50/46 realized | 48.8 | −205 | 0.0013% | **0.0013%** | −205 | −268 |
+| 50/15 | 70.5 | −241 | 0.0314% | **0.0262%** | −241 | −331 |
+| 15/15 **worst admitted** | 87.5 | −269 | 0.1055% | **0.1063%** | −269 | −381 |
+| 25/25 proposed floor | 67.7 | −236 | 0.0241% | **0.0176%** | −236 | −323 |
+| 22/22 | 72.2 | −244 | 0.0368% | **0.0346%** | −244 | −336 |
+| *retired 197/38* | *42.4* | *−195* | *0.0002%* | — | *−195* | *−249* |
+| *retired 197/15* | *64.2* | *−231* | *0.0163%* | — | *−231* | *−313* |
+
+**The worst shape `min_games_per_side: 15` admits is 2.6x OUTSIDE the budget**, on the
+closed form, on a Monte-Carlo of the shipped rule, and on an independent reviewer's third
+instrument. The old docs quoted 197/15 as "the worst shape `min_games_per_side` admits" —
+it never was. `usable` floors BOTH arms, so 15/15 was always admissible; at n_cur ~197 it
+needed a 92% collapse of the cur arm and nobody costed it. At n_cur ~50 it needs 70%, and
+the smallest arms in 96 iterations are **cur 17 / prev 25**.
+
+### ⚑ THE `sd` WAS RE-DERIVED TOO — AND THE FIRST RE-DERIVATION WAS THE WRONG STATISTIC
+
+`_POOLED_GAME_SCORE_SD = 0.3447` came off the SAME retired 418-shard reconstruction as the
+retired `n`, so re-measuring `n` while inheriting `sd` would have repeated this entry's own
+mistake one level down. A review round caught exactly that. **The re-measurement that
+followed was then wrong in a subtler way, and that is the reusable lesson.** Over the same
+96 iterations:
+
+```
+grand pool 0.121002  =  within-iteration 0.118771  +  between-iteration 0.002231
+                        (sd 0.3446)                    (drift in the PID setpoint)
+```
+
+The first correction quoted the **grand pool, 0.3479**, concluded "the shipped constant is
+0.9% LOW", and rebuilt the whole 22-vs-25 argument on it. But `_arm_score_var` measures each
+arm around **that arm's own mean**, and the between-iteration term is common to both arms of
+an iteration so it **cancels in `delta`**. Neither consumer ever sees it. The analogue is the
+**within** figure, **0.3446** — the shipped constant is correct to **0.02%**, not 0.9% low.
+
+⇒ **Re-measuring the right quantity and re-measuring a nearby wrong one look identical
+until someone asks which one the code consumes.** The check "is this input also from the
+retired lineage?" was necessary and caught a real gap; it was not sufficient.
+
+### ⚑ AND THE FAIL-SAFE DIRECTION WAS INVERTED
+
+The first correction argued a low floor is "conservative, so leave it". It is not.
+`elo_hi = delta + z·se` and the leg fires when `elo_hi < −125`, so a **narrower** `se`
+makes `elo_hi` **smaller** and the leg fires **MORE** readily. MC at 15/15 is monotone in
+the floor: 0.3300 → 0.109%, 0.3447 → 0.108%, 0.3600 → 0.102%. The module's two adjacent
+comments had it right all along ("can only make the step leg harder to fire"; "overstating
+is the fail-safe direction"). The constant is left alone because it is **accurate**, not
+because being low would be safe.
+
+### Two further scope corrections
+
+- **0.1063% is the worst ADMITTED shape, not the operating cost.** Over the 96 shapes the
+  gate actually saw, each simulated at ITS OWN W/D/L, the MC expected rate is **0.0023%** and
+  the worst REALIZED shape (17/61) is **0.0241%** — every measured iteration is inside budget,
+  the worst at 60% of it. ⚑ Quote those from the MC: the closed form reads 0.0021% / 0.0194%,
+  and at 17/61 the pooled floor does NOT bind, so it is *anti*-conservative by 24% — the
+  opposite of its direction at the floored shapes. The breach lives at the
+  un-realized 15/15 corner. Costing the worst admitted shape is still the convention
+  `demote_step_elo` was sized under (quoted at 197/15, not 197/38), so the finding stands.
+- **Nor is it a ceiling.** The pooled floor does not bind on every iteration; realized
+  per-iteration score sd runs **0.300–0.386**. Drawing 15/15 from the widest single
+  iteration the MC reads **0.2426%**, **2.33x** the aggregate. (A previous revision put this
+  at 1.58x from a fixed-`se` normal approximation, which cannot see the plug-in `se`
+  collapsing to the floor while `delta` is drawn at the wider true spread.)
+
+### DECIDED: raise `gate_min_games_per_side` 15 → **25** — and NOT because 22 fails
+
+| floor | MC false-brake | margin vs 0.04% | admits | 50% power |
+|---|---|---|---|---|
+| 15 (shipped) | **0.1063%** | **−166%** | 96/96 | −269 |
+| 22 | 0.0346% | +13% | 95/96 | −244 |
+| **25** | **0.0176%** | **+56%** | **95/96** | **−236** |
+| 26 | — | — | 93/96 | — |
+
+⚑ **22 clears the budget.** An earlier revision "REJECTED" it on "0.0390%, a 2.6% margin
+that a third-decimal move in sd erases" — that figure was the wrong-`sd` closed form, and
+the closed form is itself up to 27% conservative at these `n`. **25 is chosen because at
+the SAME admission cost it has the narrower `se`, so it dominates 22 on both axes at once**
+— false-brake 0.0176% vs 0.0346% AND 50% power at −236 vs −244. 26 is where admissions
+start to cost.
+
+**Not applied in this PR.** `gate_min_games_per_side` is pinned in the **LIVE
+(uncommitted)** `configs/pbt2_small.yaml:703`, whose own comment requires a ledger line for
+any change to the alarm's operating point — this is that line — and the two copies must move
+together or the docs go stale again by the same mechanism. ⚑ The **committed**
+`configs/pbt2_small.yaml` ships no `gate_*` keys at all (its own comment says they are
+"deliberately NOT listed here yet"), so `gate_config_from_dict` falls back to the code
+default and the committed tree has exactly ONE copy. A follow-up author who greps the
+committed yaml for the second copy will find nothing — it is in the live file. Follow-up PR only; nothing is at risk meanwhile because `gate_mode: shadow`
+means no decision this leg reaches takes effect.
+
+**Yardstick / kill rule for the follow-up.** Not a training readout — the deciding numbers
+are simulation and are asserted in `tests/test_promotion_gate.py`
+(`test_step_leg_false_brake_budget_and_power_reproduce`): `_step_leg_mc_rate(25, 25, line=-125)` < 0.0004
+with a >30% margin, `_step_leg_mc_rate(15, 15, line=-125)` > 0.0004, and
+`admits == {15: 96, 22: 95, 25: 95, 26: 93, 40: 59}` over the banked `_POST_BOOT_ITERATIONS`.
+If a future lineage moves the shape or the sd again, these flip and the table must be
+re-derived rather than re-quoted.
+
+### ⚑ AND A FOURTH ROUND FOUND THE SAME ERROR *INSIDE* THE CORRECTION
+
+The one paragraph I flagged to the reviewer as least verified — the prev-model cap — was
+wrong in both of its numbers, and wrong in this entry's own signature way:
+
+- **`~293 permitted` was `0.60 × 488`**, the REALIZED mean ingest, where the code computes
+  `ceil(0.60 × games_per_iter)` from the CONFIG target. Both post-boot trials launched at
+  `games_per_iter: 440` with no ramp, so the cap is **264**. Realized overshoots the target
+  because whole shards land at once. ⇒ **a wrong-denominator figure, quoted as operative,
+  committed inside the entry whose subject is wrong-denominator figures quoted as operative.**
+- **`prev arm has never exceeded 163` was `max(gate_sample_games_prev)` over rows the gate
+  EXCLUDES** (5ce02 iter 1 is 0/163, an unusable boot row). Over usable rows it is **66**.
+- And I then compared a curriculum-only count against an all-games budget — the very category
+  error the paragraph correctly identifies in its first sentence.
+
+The accounting is exact (`matching_games − selfplay_games == gate_sample_games_cur +
+gate_sample_games_prev`, residual 0 on all 148 rows), so estimating prev-SHA totals by each
+iteration's curriculum prev share gives **mean 229, max 357**, over the 264 cap on **26 of
+145** iterations, worst the **(17, 61)** row — also 379f6's only nonzero
+`distributed_stale_games` (346).
+
+### ⚑⚑ THREE SUCCESSIVE CONCLUSIONS ON THIS ONE PARAGRAPH WERE WRONG
+
+Round 4 said the cap "plausibly BINDS". Round 5 replaced that with "the estimator is
+detecting its own assumption failing, biased toward inflating prev", on the grounds that a
+truncated quantity must pile up at its bound and these estimates run smoothly through 264.
+**Both withdrawn.** The pile-up test has no power, for a reason stated two sentences above it
+in the same paragraph and then ignored: `_process_shard_with_prev_cap` demotes the prev SHA
+at the first **shard boundary** at or past 264, so a capped iteration lands anywhere in
+`[264, 264 + S)`.
+
+**S is not small.** Measured over the 1,226 processed shards of the two trials, games per
+shard has median **89 (379f6) / 100 (5ce02)**, p90 105 / 121 — roughly **35% of the cap**.
+The observed over-cap estimates run 264 to **357**, and the window covers **all 27**. So
+"over the cap" and "capped, with overshoot" are observationally identical here.
+
+Two further defects in that argument, both fatal on their own:
+
+- **Truncation conserves the mass above the bound** — it moves values down *into* the window,
+  it does not remove rows from the `>264` region. So the count at 264 carries no information
+  about truncation under *any* reference distribution, and "27 observed vs 26.7 expected" was
+  structurally uninformative. All three thresholds tested (264, 290, 320) lie inside the
+  window; the only one with power is ~353–385, where n ≈ 1.
+- **The "2.6× mix anomaly" assumed the cap bound at exactly 264.** Solve for the binding point
+  instead: 2.61× at 264, 1.69× at 310, **1.00× at 357** — inside the median-shard window. The
+  second piece of evidence was the first one's assumption restated.
+
+⇒ **UNMEASURED, and this estimate cannot adjudicate.** A directional read needs a per-SHA
+count across both game types, which nothing records.
+
+⚑⚑ **THE REUSABLE PART — and it is the rule that would have caught all three rounds:
+COMPUTE THE INSTRUMENT'S RESOLUTION BEFORE READING A THRESHOLD.** Here the resolution is the
+shard granularity, ~89–100 games against a 264 cap. Every one of the three wrong conclusions
+was a directional read taken off an instrument whose resolution had not been computed — and
+the third was taken while the paragraph itself *stated* the resolution ("plus at most one
+shard's overshoot") one sentence earlier. Nothing in this entry's step-leg finding depends on
+any of them; this is recorded because the *shape* is the finding.
+[[compute_instrument_resolution_before_the_threshold]]
+
+**Confounds:** none — the gate is in shadow mode and this PR changes documentation and tests
+only. The 96-iteration series spans the 08-11 04:19 restart, a lineage boundary for *weights*
+but not for the *arm-size* or *score-sd* statistics measured; the two trials agree to within
+2.5 games/iteration on both arms, which is the check that it does not matter here.
+
+---
+
+## 2026-08-12 — PREREG Tier-13: the shared policy adapter, A/B/C (`policy_embedding_mode`) — **NOT LAUNCHED**
+
+**Status: PRE-REGISTERED, awaiting Josh's go-ahead + a GPU pause. Do not launch from this
+entry alone.** Code is PR #398 (`feat/shared-policy-embedding`).
+
+### Hypothesis
+
+lc0/Chessformer build ONE policy embedding and hand it to every policy head, which keeps
+only its own Q/K. We build four fully independent `AttentionPolicyHead`s straight off the
+trunk, so the auxiliary policy losses reach `policy_own` only through the GLOBAL trunk — a
+representation that must simultaneously serve the value heads. The claim under test is
+**policy-specific shared representation**, and it decomposes into three mechanisms that the
+arms separate:
+
+1. **gradient DELIVERY** — soft's gradient never reaches the parameters `policy_own` uses.
+   ⚑ **ALREADY REJECTED** by the 2026-08-12 grad-share probe (soft 94.1% vs own 94.7%
+   trunk share). This arm is NOT testing that, and an earlier draft of this entry said it
+   was.
+2. **reparameterization GEOMETRY** — `A_h S` and `A'_h` span the same function class but
+   are different points under the same gradient steps. Arm B isolates this.
+3. **representational CAPACITY** — a policy-only nonlinearity the trunk does not have.
+   Unique to arm C.
+
+### Arms — and ⚑ AOT MUST BE OFF IN ALL THREE
+
+```
+DECIDED 2026-08-12: run ALL THREE arms (A+B+C), not A+B.
+
+common donor:  data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218  (global_iter 890)
+               + the SAME replay snapshot and the SAME RNG seeds / data ordering
+               as far as the harness allows
+all arms:      policy_sf ON, w_soft UNCHANGED, SWA off (production swa_start: -1),
+               AOT OFF (both distributed_inference_aot_dir and
+               distributed_worker_aot_dir cleared)
+compare at:    MATCHED TRAINING ITERATION
+
+A (control)  policy_embedding_mode: off
+B            policy_embedding_mode: linear          <- identity-init, zero added capacity
+C            policy_embedding_mode: residual_mish   <- zero-init, t + mish(Wt+b)
+```
+
+**Why all three, and not A+B.** The third arm costs one extra treatment on top of a control
+already being paid for, and it buys the decomposition:
+
+| contrast | isolates |
+|---|---|
+| **B − A** | shared policy-only reparameterization GEOMETRY |
+| **C − B** | incremental value of nonlinear policy-specific CAPACITY |
+| **C − A** | practical value of the full nonlinear adapter |
+
+`C − B` is the only clean way to price capacity, and **C can work even if B is null** —
+"shared linear factorization does not help" does not imply "policy-specific nonlinear
+processing does not help".
+
+⚑ **Why AOT off in ALL arms, including the control.** PR #398's guard REFUSES the
+conjunction (adapter enabled AND any AOT dir configured) — conservatively, because it does
+not inspect package architecture, so even a correctly rebuilt package is refused. Left
+alone, that would give A a live AOT serving path while B and C fall back to eager, and the
+arms would then differ in **how the selfplay prior is computed** as well as in topology.
+The control must give up AOT too. Clear BOTH `distributed_inference_aot_dir` and
+`distributed_worker_aot_dir` for every arm.
+
+⚑ **`policy_sf` stays ON in all arms.** Removing it is unrelated cleanup and it forces the
+optimizer-layout reset (deleted params cannot be spliced), which would land on one arm only.
+
+⚑ **A FRESH trial, not a resume.** `policy_embedding_mode` is a
+`_RESUME_CONSTRUCTION_BOUND_KEY`: a live-yaml edit is SKIPPED on resume with a warning.
+
+**Fallback if the budget shrinks: A+B.** B tests the remaining live mechanism (geometry)
+without confounding it with capacity. But A+B+C is the DECIDED design.
+
+### Yardstick — ONE, exact
+
+Paired arena, treatment vs control, same search both sides, weights the only difference:
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --model-a <arm>/checkpoint_XXXX --model-b <control>/checkpoint_XXXX \
+  --games 400 --matched_sims 32 --seed 42 --search-shape training
+```
+
+**Success:** lower CI bound > 0 at 400 games (~±30 Elo resolution).
+**Kill:** point estimate < −15 Elo at 400 games, or any arm's
+**`policy_ce` HIGHER (worse) than control by >10%** at matched iteration.
+
+⚑ An earlier draft said "`policy_ce` **diverging** from control by >10%", which is
+two-sided and would therefore KILL an arm whose policy CE came in 12% BETTER. A gate that
+fires on success is this repo's signature defect wearing the opposite mask. This leg is a
+CATASTROPHIC-TRAINING guard only; the arena and held-out generalization remain the verdict,
+and a large in-window CE improvement that does NOT show up in the arena is a finding
+([[absorption_works_fit_does_not_buy_elo]]), not a kill.
+Read at matched TRAINING ITERATION, not wall clock — the adapter adds a GEMM.
+
+### Sizing input — MEASURED 2026-08-12, and it CORRECTS my own earlier number
+
+Population-gradient probe (`probe_cosine_v4.py`, ckpt118, whole trunk, 24 shards / 46,848
+positions split into two DISJOINT halves, `policy_ce` vs `soft_policy_ce`):
+
+| K | positions/estimate | r_own | r_soft | cross | c_latent | R_deatt |
+|---|---|---|---|---|---|---|
+| 1 | 64 | +0.107 | +0.127 | +0.115 | +0.982 | 0.725 |
+| 4 | 256 | +0.270 | +0.312 | +0.253 | +0.872 | 0.690 |
+| 16 | 1024 | +0.518 | +0.555 | +0.465 | +0.867 | 0.659 |
+| 64 | 4096 | **+0.785** | **+0.818** | **+0.700** | **+0.874** | **0.646** |
+
+`c_latent = cross / sqrt(r_own · r_soft)` — deattenuated by BOTH reliabilities.
+`R_deatt = sqrt(<g1,g2>_soft / <g1,g2>_own)` — **noise-CORRECTED**, not unbiased. The
+inner product of two independent estimates is unbiased for ‖G‖²; its square root, and a
+ratio of two such roots, are NOT (Jensen). The correction is still the right one to apply,
+because E‖ḡ‖² carries a noise term and E‖ḡ‖ ≠ ‖Eḡ‖ — the claim to avoid is the word
+"unbiased", not the estimator.
+
+⇒ `G_own + G_soft ≈ **1.565**·G_own + **0.314**·G_⊥` — a **1.565× raw-gradient COMPONENT
+along G_own** plus a 0.314 orthogonal part, i.e. the summed population gradient sits about
+**11.3° off** the own-policy gradient.
+
+⚑ **DO NOT call the 1.565 an "LR multiplier". An earlier version of this entry did.**
+Production optimizes the matrix group with **Aurora**, whose updates are
+scale-INVARIANT: multiplying a matrix gradient by a scalar does NOT scale its update, and
+Adam-style normalization makes gradient scaling unlike an LR change either. So for the
+group that holds 28.6% of trainable params, the collinear 0.565 is largely ABSORBED and
+**the 0.314 orthogonal / directional part is the operative change**. Naming it an LR
+multiplier would predict the wrong thing on the actual optimizer
+[[matrix_weight_decay_is_decorative]].
+
+**Owed follow-up (NOT blocking Tier-13, since `w_soft` is held fixed):** measure what soft
+changes AFTER the optimizer, not in gradient space — same weights and identical optimizer
+state, `update_A = optimizer(policy_ce)` vs `update_B = optimizer(policy_ce +
+soft_policy_ce)`, then compare `cos(Δθ_A, Δθ_B)` and ‖Δθ‖ **separately for the Aurora and
+AdamW groups**. That is the version of this measurement that is actually about the update.
+
+⚑ **TWO of my own earlier numbers are RETRACTED by this.**
+- The "~1.4×" read off the within-batch cosine 0.885 came from single-batch norms whose
+  reliability is ~0.1. It was right by accident, not by instrument.
+- v3's `cross/ceiling = 0.973` OVERSTATED redundancy twice over: it divided by `r_own`
+  alone (valid only if both estimators are equally reliable — they are not, `r_soft` is
+  consistently higher), and its two "disjoint" estimates were drawn WITH REPLACEMENT from
+  ONE 2000-position shard, so 4096 draws per side overlapped almost completely and both
+  estimates converged to the same finite-sample mean. The honest figure is **0.874**, and
+  c_latent is stable across K=4/16/64 — which is the check that the correction is a
+  correction and not a fit.
+
+⇒ **soft is NOT a pure LR multiplier**, so `w_soft` is a separate experiment. **Hold
+`w_soft` FIXED for this topology arm** or the two questions mix.
+
+### Confounds
+
+The adapter warm-starts with its optimizer moments spliced
+(`_FRESH_PARAM_NAME_SUFFIXES`), so donor moments survive — but **SWA is reinitialised** on
+any arm that changes topology. Acceptable only because production runs `swa_start: -1`;
+re-check if that ever changes. Param delta at width 512: **+262,656** (+0.42%).
+
+### Revert point
+
+**TAKEN 2026-08-12** — `data/salvage/pre_policy_adapter_20260812`, 3.7G,
+**804 replay shards**, `slot=00 metric=218.000 iter=218
+ckpt=checkpoint_000218 (newest on disk: checkpoint_000218)`, exported with
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration`.
+
+The dry-run first confirmed `stale_result_rows=False` and
+`checkpoint_source=result_row_checkpoint` with `row_checkpoint == newest_on_disk`, which is
+the check that the pool is CURRENT state and not the best-metric row.
+
+⚑ `shards=804`, not 0 — PR #290's fix (salvage-export used to bank an EMPTY replay window,
+which would have made this "revert point" restore weights into a cold buffer) is confirmed
+still in effect on this branch's code. A pool with 0 shards is not a revert point.
+
+Paired banked anchor for the yardstick: `data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218`
+(global_iter 890) — copied OUT of the tune dir, because Ray prunes live checkpoints.
+
+---
+
+## 2026-08-12 — VERDICT (task #192): iter218 vs iter138 paired arena is a **NULL**. 80 iterations bought nothing measurable.
+
+**Owed since the sims-100/topk-16 deploy.** Run during a full training stop, GPU otherwise idle.
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218/trainer.pt \
+  --reference data/ratchet/snapshots/ck_2026-08-11_5ce02_iter138/trainer.pt \
+  --mode matched_sims --sims 32 --search-shape training \
+  --games 400 --seed 42 --max-concurrent-games 16
+```
+
+**Result: 400 games / 200 pairs, score 0.4950, Elo −3.5, 95% CI [−33.9, +26.9].**
+Pentanomial (candidate POV) `{WW: 32, WD_DW: 31, DD_WL: 67, LD_DL: 41, LL: 29}`.
+
+Both checkpoints are the same lineage (5ce02): iter138 = global_iter **811**,
+iter218 = global_iter **890**, same `holdout_generation` 2. **79 global iterations apart.**
+
+### Verdict by the pre-committed rule
+
+| leg | bar | observed | |
+|---|---|---|---|
+| success | lower CI bound > 0 | −33.9 | **not met** |
+| kill | point estimate < −15 Elo | −3.5 | **not met** |
+
+⇒ **NULL — no gain and no regression, at ±30 Elo resolution.** This is a "not resolved"
+verdict, not a "flat" one: the instrument cannot distinguish 0 from ±30 Elo, and 79
+iterations of a healthy loop should clear that. Consistent with
+[[regret_does_not_track_strength_run_regressed]] — the run continues to go SIDEWAYS.
+
+### ⚑ THE INTERMEDIATE READ +112.3 ELO. STOPPING THERE WOULD HAVE MANUFACTURED A WIN.
+
+At the first report — 16 games / 8 pairs — this arena printed **Elo +112.3, CI [−48.5,
++349.3]**. The final answer is **−3.5**. The intermediate was not "an early signal that
+later washed out", it was noise with a CI 12× the final one, and the only thing that
+prevented it from entering the record as a result was refusing to read it. Optional
+stopping on a rolling arena is not a small bias here; it is the difference between a
++112 Elo "win" and a null. Same failure the Cheese 12-pair 0.6875 result carries
+[[flywheel_judge_by_cheese_not_generic_arena]].
+
+### ⚑⚑ WHAT IS CONFOUNDED IS THE CAUSAL READING — **NOT** THE NUMBER
+
+**The canonical statement of this result:**
+
+> iter218 vs iter138 under the current sims-100 / topk-16 search: **−3.5 Elo, 95% CI
+> [−33.9, +26.9], pre-registered verdict NULL. Does not isolate ordinary training progress
+> from adaptation to the search-shape change.**
+
+`--search-shape training` resolves to the CURRENT yaml. Both sides play the IDENTICAL
+search — printed and checked, `c_scale=0.1 c_visit=50.0 policy_temp=1.5 topk=16
+tree_reuse=cold` on both. **−3.5 is therefore an UNBIASED estimate** of the operational
+question *"which set of weights is stronger under today's search?"*. It needs no correction
+and must not be discounted.
+
+⚑ **AN EARLIER VERSION OF THIS ENTRY SAID "the confound favours the candidate, so the
+unconfounded difference is ≤ −3.5". THAT INFERENCE IS WRONG and is retracted.** It treated
+a CAUSAL confound as if it were a BIAS on the statistic, and then "corrected" a number that
+was never biased. The two are different objects:
+
+| | |
+|---|---|
+| **estimand the arena answers** | which weights play better under today's search — **unbiased, −3.5** |
+| **estimand it does NOT answer** | *why* the weights differ — training progress vs adaptation to the new search regime |
+
+iter218 had training exposure to sims-100 / topk-16; iter138 did not. That makes the CAUSAL
+attribution unavailable. It does not make the head-to-head unfair, and there is no
+"unconfounded weights difference" hiding behind the observed one waiting to be recovered by
+subtraction — that would be a different counterfactual quantity, not a debiased version of
+this one. ⇒ **Quote −3.5 as measured. State the causal limitation in words, never as an
+adjustment.** [[same_name_different_population]]
+
+⚑ And this says NOTHING about whether the sims-100 deploy helped: that change is in the
+SEARCH, and this arena holds search fixed on both sides by construction
+[[wdl_regret_measures_agent_not_net]].
+
+### Instrument checks passed
+
+- candidate and reference are DISTINCT full paths, not a `slot_000` substring match — the
+  trap that once faked 70 Elo [[no_rollback_target_the_run_is_a_plateau]].
+- iter218 was copied OUT of the live tune dir before use (Ray prunes live checkpoints).
+- 200 pairs, so the pentanomial CI is the paired one, not a trinomial understatement.

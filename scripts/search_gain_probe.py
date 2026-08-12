@@ -644,7 +644,7 @@ def run_probe(
     import torch
 
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig, apply_policy_temp
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -711,18 +711,13 @@ def run_probe(
             with torch.no_grad():
                 pol_logits, _wdl = evaluator.evaluate_encoded(xs)
             pol_logits = np.asarray(pol_logits, dtype=np.float32)
-            # ⚑ TEMPER FIRST, exactly as `gumbel._policy_logits_to_full` does.
-            # The search seeds its tree from `logits / policy_temp`, so the
-            # improved policy is softmax(log(tempered prior) + sigma(Qbar)).
-            # Reading `sigma_span_observed` and `q_scale_needed` off an
-            # UNTEMPERED prior silently folds the temperature into both: at
-            # T=1.5 the prior logit gaps shrink by 1.5x, so section 3's
-            # "P(gap < q_scale)" was overstated and section 6's inversion
-            # solved the wrong equation the moment `gumbel_policy_temp` left 1.0
-            # -- which it did, on the live yaml, on 2026-08-09.
-            pol_logits = np.asarray(
-                apply_policy_temp(pol_logits, cfg=cfg), dtype=np.float32,
-            )
+            # ⚑ RAW logits leave this function. `policy_temp` is applied EXACTLY
+            # ONCE, inside `_score_one`, at the point of use. Tempering here as
+            # well produced a prior at T^2: the first revision of this fix
+            # divided in both places, so a T=1.5 run reported `prior_top1_p`
+            # 0.0752 where the search's own T=1.5 prior is 0.0898 -- replacing a
+            # T=1.0 error with a T=2.25 one. These logits feed NOTHING else: the
+            # C search re-evaluates internally from `cfg` and never sees them.
             if pol_logits.shape[1] != POLICY_SIZE:
                 pol_logits = policy_batch_to_full_if_needed(
                     pol_logits, policy_encoding=pol_enc, fill_value=-1e9,
@@ -812,7 +807,21 @@ def _score_one(
         regrets = np.full(len(ucis), np.nan, dtype=np.float64)
         covered = set()
 
-    logits = pol_logits_row[idxs].astype(np.float64)
+    # ⚑ THE PRIOR MUST BE SCORED AT THE SHAPE'S OWN TEMPERATURE. The C search
+    # divides its ROOT logits by `policy_temp` before selecting candidates, and
+    # this scored the reported prior from the UNSCALED logits -- so an
+    # `--override policy_temp=1.5` run reported a T=1.0 prior beside a T=1.5
+    # search. That contaminates `KL(target||prior)`, the prior gaps, the
+    # recovered sigma span and the sigma-inversion thresholds.
+    #
+    # ⚑ AND NOTE WHAT IT DOES *NOT* TOUCH. Temperature is a strictly monotone
+    # transform, so every ORDINAL statistic -- `order`, `prior_top`,
+    # `rank_of`, any rank correlation -- was and is unaffected. The 2026-08-11
+    # `policy_temp` verdict survived this exact defect in the sibling rig for
+    # that reason, and that was luck, not design: the same JSON also carried
+    # probability-weighted rows that would have been wrong. See the ledger
+    # entry "the policy_temp rig scores the prior at the wrong temperature".
+    logits = pol_logits_row[idxs].astype(np.float64) / max(1e-6, float(shape.policy_temp))
     logits -= logits.max()
     e = np.exp(logits)
     prior = e / e.sum()
@@ -1039,11 +1048,22 @@ def _sign_flip_p(deltas: np.ndarray, rng: np.random.Generator, n_perm: int = 100
 
 
 def _rate_ci(k: int, n: int) -> tuple[float, float, float]:
-    if n == 0:
+    """Point estimate and 95% WILSON interval for a binomial rate.
+
+    ⚑ NOT WALD. The Wald interval collapses to [0, 0] at k=0 and [1, 1] at
+    k=n, claiming certainty from a finite sample -- and those are exactly the
+    cases this instrument exists to produce: a low-simulation rung or a control
+    arm that changes no move at all would have reported a zero change rate with
+    a zero upper bound. Wilson keeps a nonzero width at both boundaries.
+    """
+    if n <= 0:
         return float("nan"), float("nan"), float("nan")
+    z = 1.96
     p = k / n
-    se = math.sqrt(max(p * (1.0 - p), 0.0) / n)
-    return p, max(0.0, p - 1.96 * se), min(1.0, p + 1.96 * se)
+    denom = 1.0 + z * z / n
+    centre = (p + z * z / (2.0 * n)) / denom
+    half = (z / denom) * math.sqrt(p * (1.0 - p) / n + z * z / (4.0 * n * n))
+    return p, max(0.0, centre - half), min(1.0, centre + half)
 
 
 def report(rows: list[RowResult], shape: SearchShape, *, rng: np.random.Generator) -> str:
@@ -1461,6 +1481,17 @@ def main() -> None:
         )
 
     sims_list = [int(s) for s in str(args.sims).split(",") if s.strip()]
+    # `run_gumbel_root_many_c` clamps the budget to >= 1, so a 0 or negative
+    # rung would be RUN at 1 sim and REPORTED as the value the operator typed.
+    # A row that names a budget nothing ran at is worse than a crash.
+    bad_sims = [v for v in sims_list if v <= 0]
+    if bad_sims:
+        raise SystemExit(
+            f"--sims {bad_sims} is nonpositive; the search clamps to 1 simulation "
+            "and the report would name a budget that never ran"
+        )
+    if not sims_list:
+        raise SystemExit("--sims parsed to an empty list")
     shape = SHAPES[args.shape]
     if args.shape_yaml is not None:
         if not args.shape_yaml.exists():
@@ -1504,6 +1535,13 @@ def main() -> None:
             "gumbel_scale": float(args.gumbel_scale), "seed": int(args.seed),
             "position_source": args.position_source, "source": src,
             "n_positions": len(positions),
+            # Tablebase probing changes root and leaf values and therefore the
+            # selected moves, so a production-equivalent run and a smoke-set run
+            # are DIFFERENT measurements. Recorded explicitly, with the enabled
+            # flag separate from the path, so absent never reads as "off by
+            # design" -- production is the colon-separated 3-4-5 + 6 pair.
+            "syzygy_enabled": bool(args.syzygy_path),
+            "syzygy_path": str(args.syzygy_path) if args.syzygy_path else None,
         })
     try:
         rows = run_probe(

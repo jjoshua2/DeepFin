@@ -22,6 +22,11 @@ from chess_anti_engine.utils.architecture import (
 )
 
 _VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
+# Bin count of the categorical (HL-Gauss) value output. Defined here rather than
+# imported because `model/` does not depend on `train/`;
+# `tests/test_categorical_head_coupled.py::test_head_bin_count_is_pinned_to_the_target_builder`
+# pins it to `train.targets.DEFAULT_CATEGORICAL_BINS` so the two cannot drift.
+CATEGORICAL_HEAD_BINS = 32
 _ARC_POS_CHANNELS = 64
 _ARC_RELATION_CHANNELS = 5
 _NUM_PHASE_BUCKETS = 3
@@ -338,6 +343,42 @@ class ValueHead(nn.Module):
         nn.init.normal_(out.weight, std=0.01)
         nn.init.zeros_(out.bias)
 
+    @property
+    def hidden_dim(self) -> int:
+        """Width of the shared activation ``hidden()`` returns."""
+        return cast("nn.Linear", self.net[0]).out_features
+
+    def hidden(self, x: torch.Tensor) -> torch.Tensor:
+        """The 128-d activation the output projection reads from.
+
+        Split out so an auxiliary head can be attached to the SAME representation
+        the main output uses (lc0's value-embedding topology) rather than reaching
+        it only by back-propagating through the whole trunk. ``net`` is indexed
+        rather than restructured so every existing ``net.0`` / ``net.2`` parameter
+        key stays byte-identical for checkpoint loading; ``_assert_net_layout``
+        makes a future edit to ``net`` fail loudly instead of silently feeding an
+        aux head the wrong tensor.
+        """
+        self._assert_net_layout()
+        projected = F.mish(self.token_proj(x))  # (B, 64, token_dim)
+        flat = projected.flatten(1)  # (B, 64 * token_dim)
+        return self.net[1](self.net[0](flat))
+
+    def head_from_hidden(self, h: torch.Tensor) -> torch.Tensor:
+        """Apply the output projection to an activation from ``hidden()``."""
+        return self.net[2](h)
+
+    def _assert_net_layout(self) -> None:
+        if not (
+            len(self.net) == 3
+            and isinstance(self.net[0], nn.Linear)
+            and isinstance(self.net[2], nn.Linear)
+        ):
+            raise RuntimeError(
+                "ValueHead.net layout changed; hidden()/head_from_hidden() index it "
+                "positionally and must be updated together with it"
+            )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
   # x: (B, 64, embed_dim)
         projected = F.mish(self.token_proj(x))  # (B, 64, token_dim)
@@ -640,6 +681,27 @@ class TransformerBlock(nn.Module):
         return x
 
 
+POLICY_EMBEDDING_MODES = ("off", "linear", "residual_mish")
+
+
+def _normalize_policy_embedding_mode(value: object) -> str:
+    """Validate the shared-policy-adapter mode.
+
+    ⚑ Raises on an unknown value rather than falling back to "off". A silent
+    fallback is this codebase's signature defect: the arm would come up healthy,
+    train the CONTROL topology, and the whole readout window would be recorded
+    against the wrong architecture.
+    """
+    mode = str(value or "off").strip().lower()
+    if mode in ("", "none", "false"):
+        mode = "off"
+    if mode not in POLICY_EMBEDDING_MODES:
+        raise ValueError(
+            f"policy_embedding_mode={value!r} is not one of {POLICY_EMBEDDING_MODES}"
+        )
+    return mode
+
+
 @dataclass
 class TransformerConfig:
     in_planes: int
@@ -681,6 +743,16 @@ class TransformerConfig:
     phase_output_adapter: bool = False
     phase_output_adapter_dim: int = 64
     phase_smolgen: bool = False
+  # Attach the 32-bin categorical value output to ``value_wdl``'s hidden
+  # activation instead of giving it a standalone ValueHead. This is lc0's
+  # value-embedding topology: the distributional aux target then supervises the
+  # SAME representation the scalar/WDL output reads from, rather than reaching it
+  # only by back-propagating through the whole trunk. Costs ~4.1k params instead
+  # of ~1.12M, and adds only new state_dict keys so a checkpoint trained with the
+  # standalone head warm-starts with every shared tensor byte-identical.
+    categorical_head_coupled: bool = False
+    policy_embedding_mode: str = "off"
+    enable_policy_sf_head: bool = True
     phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (
         DEFAULT_PHASE_PIECE_THRESHOLDS
     )
@@ -995,12 +1067,76 @@ class ChessNet(nn.Module):
 
         self.policy_own = AttentionPolicyHead(output_embed_dim)
         self.policy_soft = AttentionPolicyHead(output_embed_dim)
-        self.policy_sf = AttentionPolicyHead(output_embed_dim)
+        # policy_sf is trained only through `w_sf_move`, which has been 0.0 in
+        # production: ~530k parameters receiving zero gradient that are still built,
+        # checkpointed and published every iteration. `losses.py` treats a missing
+        # `policy_sf` output as a zero loss and RAISES if `w_sf_move` is positive
+        # while the head is absent, so switching this off cannot silently disarm
+        # the teacher. (`w_sf_own` / `w_sf_own_regret` train `policy_own` via the
+        # sf_p0 terms -- they do not read this head.)
+        self.enable_policy_sf_head = bool(cfg.enable_policy_sf_head)
+        self.policy_sf: AttentionPolicyHead | None = (
+            AttentionPolicyHead(output_embed_dim) if self.enable_policy_sf_head else None
+        )
         self.policy_future = AttentionPolicyHead(output_embed_dim)
+
+        # lc0 builds ONE policy embedding and hands it to every policy head, which
+        # keeps only its own Q/K. Here all four heads project straight off the
+        # trunk, so an auxiliary policy loss can reach `policy_own` only through
+        # the global trunk -- a representation that must simultaneously serve the
+        # value heads. A shared adapter gives the auxiliaries a policy-SPECIFIC
+        # representation that `policy_own` necessarily reads.
+        #
+        # ⚑ THREE MECHANISMS ARE IN PLAY AND THE MODES SEPARATE THEM. Collapsing
+        # them is what an earlier revision of this comment got wrong:
+        #   1. gradient DELIVERY -- does the aux loss reach shared params at all.
+        #      REJECTED by the 2026-08-12 grad-share probe (soft 94.1% vs own
+        #      94.7% trunk share), so no mode tests it.
+        #   2. reparameterization GEOMETRY -- `A_h S` spans the same function class
+        #      as `A'_h`, but gradient descent on `(S, A_h)` does NOT follow the
+        #      same trajectory as on `A'_h`. A policy-only factorization may be a
+        #      better place for an already-aligned gradient than the global trunk,
+        #      which must also serve value. `linear` isolates this. ⚑ The gradient
+        #      cosine does NOT bound it: cosine limits how much NEW INFORMATION
+        #      soft carries, not how much the parameterization matters.
+        #   3. representational CAPACITY -- genuinely new nonlinear policy-specific
+        #      processing. `residual_mish` bundles (2) and (3).
+        #
+        # Both modes are exactly FUNCTION-PRESERVING at init, so either warm-starts
+        # from a checkpoint without the layer bit-identically and neither arm pays a
+        # boot shock the other does not:
+        #   linear         p = W t + b,          W = I, b = 0
+        #   residual_mish  p = t + mish(W t + b), W = b = 0  (`mish(0) == 0` exactly)
+        self.policy_embedding_mode = _normalize_policy_embedding_mode(
+            cfg.policy_embedding_mode
+        )
+        self.policy_embedding: nn.Linear | None = None
+        if self.policy_embedding_mode != "off":
+            emb = nn.Linear(output_embed_dim, output_embed_dim)
+            with torch.no_grad():
+                if self.policy_embedding_mode == "linear":
+                    nn.init.eye_(emb.weight)
+                else:
+                    nn.init.zeros_(emb.weight)
+                nn.init.zeros_(emb.bias)
+            self.policy_embedding = emb
 
         self.value_wdl = ValueHead(output_embed_dim, 3)
         self.value_sf_eval = ValueHead(output_embed_dim, 3)
-        self.value_categorical = ValueHead(output_embed_dim, 32)
+  # Exactly one of these is built; see TransformerConfig.categorical_head_coupled.
+  # Coupled = lc0's topology (aux reads value_wdl's own embedding); standalone =
+  # the legacy independent head, which Tier-10/Tier-11 measured as a two-instrument
+  # NULL even after its target was repaired.
+        self.categorical_head_coupled = bool(cfg.categorical_head_coupled)
+        self.value_categorical: ValueHead | None = None
+        self.value_categorical_coupled: nn.Linear | None = None
+        if self.categorical_head_coupled:
+            coupled = nn.Linear(self.value_wdl.hidden_dim, CATEGORICAL_HEAD_BINS)
+            nn.init.normal_(coupled.weight, std=0.01)
+            nn.init.zeros_(coupled.bias)
+            self.value_categorical_coupled = coupled
+        else:
+            self.value_categorical = ValueHead(output_embed_dim, CATEGORICAL_HEAD_BINS)
 
         self.volatility = VolatilityHead(output_embed_dim)
         self.sf_volatility = VolatilityHead(output_embed_dim)
@@ -1191,6 +1327,23 @@ class ChessNet(nn.Module):
             t = phase_output_adapter(t, phase_idx)
         return cast(torch.Tensor, t), relations_f
 
+    def _policy_tokens(self, t: torch.Tensor) -> torch.Tensor:
+        """Tokens the policy heads read: the trunk output, or the shared policy
+        embedding when enabled.
+
+        ⚑ EVERY path that computes a policy must go through here. `policy_own` is
+        the search prior, and `forward_legal_policy` / `forward_legal_policy_rows`
+        / the `_inference_only` branch are the paths selfplay and UCI actually
+        take -- a path that skipped this would make the deployed prior diverge
+        from the trained one silently.
+        """
+        emb = self.policy_embedding
+        if emb is None:
+            return t
+        if self.policy_embedding_mode == "linear":
+            return emb(t)
+        return t + F.mish(emb(t))
+
     def forward_legal_policy(
         self,
         x: torch.Tensor,
@@ -1207,7 +1360,9 @@ class ChessNet(nn.Module):
                 relations_f,
             )
         return {
-            "policy_own": self.policy_own.forward_legal(t, legal_flat, legal_counts, ft_bias=pol_ft_bias),
+            "policy_own": self.policy_own.forward_legal(
+                self._policy_tokens(t), legal_flat, legal_counts, ft_bias=pol_ft_bias
+            ),
             "wdl": self.value_wdl(t),
         }
 
@@ -1227,7 +1382,9 @@ class ChessNet(nn.Module):
                 relations_f,
             )
         return {
-            "policy_own": self.policy_own.forward_legal_rows(t, legal_flat, legal_rows, ft_bias=pol_ft_bias),
+            "policy_own": self.policy_own.forward_legal_rows(
+                self._policy_tokens(t), legal_flat, legal_rows, ft_bias=pol_ft_bias
+            ),
             "wdl": self.value_wdl(t),
         }
 
@@ -1259,19 +1416,37 @@ class ChessNet(nn.Module):
 
         if self._inference_only:
             return {
-                "policy_own": self.policy_own(t, ft_bias=pol_ft_bias),
+                "policy_own": self.policy_own(self._policy_tokens(t), ft_bias=pol_ft_bias),
                 "wdl": self.value_wdl(t),
             }
 
-        return {
-            "policy_own": self.policy_own(t, ft_bias=pol_ft_bias),
-            "policy_soft": self.policy_soft(t),
-            "policy_sf": self.policy_sf(t),
-            "policy_future": self.policy_future(t),
-            "wdl": self.value_wdl(t),
+  # Coupled: one pass through value_wdl's body feeds BOTH outputs, so the
+  # categorical gradient lands on the same hidden activation the WDL logits are
+  # read from. Standalone: the legacy independent head, unchanged.
+        if self.value_categorical_coupled is not None:
+            value_hidden = self.value_wdl.hidden(t)
+            wdl_out = self.value_wdl.head_from_hidden(value_hidden)
+            categorical_out = self.value_categorical_coupled(value_hidden)
+        else:
+            if self.value_categorical is None:
+                raise RuntimeError("neither categorical head was constructed")
+            wdl_out = self.value_wdl(t)
+            categorical_out = self.value_categorical(t)
+
+        # One shared policy representation for EVERY policy head -- that sharing is
+        # the whole point. The value heads keep reading the raw trunk `t`.
+        pol_t = self._policy_tokens(t)
+        out: dict[str, torch.Tensor] = {
+            "policy_own": self.policy_own(pol_t, ft_bias=pol_ft_bias),
+            "policy_soft": self.policy_soft(pol_t),
+            "policy_future": self.policy_future(pol_t),
+            "wdl": wdl_out,
             "sf_eval": self.value_sf_eval(t),
-            "categorical": self.value_categorical(t),
+            "categorical": categorical_out,
             "volatility": self.volatility(t),
             "sf_volatility": self.sf_volatility(t),
             "moves_left": self.moves_left(t),
         }
+        if self.policy_sf is not None:
+            out["policy_sf"] = self.policy_sf(pol_t)
+        return out

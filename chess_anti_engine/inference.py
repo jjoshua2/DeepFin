@@ -12,7 +12,7 @@ import threading
 import time
 import zlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace as dataclass_replace
+from dataclasses import dataclass, fields as dataclass_fields, replace as dataclass_replace
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -3493,6 +3493,36 @@ class MultiSlotInferenceClient:
 # ---------------------------------------------------------------------------
 
 
+# Every ModelConfig field is architecture identity EXCEPT these. Excluding a
+# field means "two models differing only here may share a cached broker model",
+# so the set is deliberately tiny: `use_gradient_checkpointing` is normalized to
+# False on both sides before the key is built and changes no tensor shape.
+_NON_IDENTITY_MODEL_CONFIG_FIELDS = frozenset({"use_gradient_checkpointing"})
+
+
+def model_config_identity_key(model_cfg: ModelConfig) -> tuple:
+    """Architecture identity of a published model, for the shared broker's
+    "different model config, skipping" guard.
+
+    Derived from `dataclasses.fields` rather than hand-enumerated. The previous
+    hand-written tuple listed 35 of 41 fields and had silently drifted: it
+    omitted `input_extra_features`, `history_rep_fix`, `use_dynamic_relations`,
+    `policy_dynamic_relations` and `dynamic_relation_count` -- all of which
+    change tensor shapes -- so a broker holding a v1 (146-plane) model would
+    accept a v2_threats (175-plane) publish as "the same config" and load it
+    into the wrong architecture. Deriving the key makes a newly added
+    ModelConfig field default to BEING identity, which is the safe direction.
+    """
+    return tuple(
+        getattr(model_cfg, name)
+        for name in sorted(
+            f.name
+            for f in dataclass_fields(ModelConfig)
+            if f.name not in _NON_IDENTITY_MODEL_CONFIG_FIELDS
+        )
+    )
+
+
 class SharedSlotBroker:
     """Multi-trial inference broker sharing one compiled model.
 
@@ -3695,42 +3725,7 @@ class SharedSlotBroker:
             model_config_from_manifest_dict(mc),
             use_gradient_checkpointing=False,
         )
-        config_key = (
-            model_cfg.kind,
-            model_cfg.embed_dim,
-            model_cfg.num_layers,
-            model_cfg.num_heads,
-            model_cfg.embed_dim_by_layer,
-            model_cfg.ffn_mult,
-            model_cfg.ffn_mult_by_layer,
-            model_cfg.use_smolgen,
-            model_cfg.use_nla,
-            model_cfg.use_qk_rmsnorm,
-            model_cfg.input_pos_encoding,
-            model_cfg.use_deepnorm,
-            model_cfg.policy_encoding,
-            model_cfg.input_history_encoding,
-            model_cfg.input_global_embedding,
-            model_cfg.input_global_embedding_channels,
-            model_cfg.input_square_embedding,
-            model_cfg.qkv_projection,
-            model_cfg.smolgen_mode,
-            model_cfg.smolgen_pooling,
-            model_cfg.smolgen_hidden_channels,
-            model_cfg.smolgen_hidden_sz,
-            model_cfg.smolgen_gen_sz,
-            model_cfg.smolgen_bias_scale,
-            model_cfg.smolgen_bias_norm,
-            model_cfg.arc_attention_bias,
-            model_cfg.smolgen_relation_basis,
-            model_cfg.smolgen_relation_norm,
-            model_cfg.smolgen_relation_coeff_norm,
-            model_cfg.smolgen_relation_scale,
-            model_cfg.phase_output_adapter,
-            model_cfg.phase_output_adapter_dim,
-            model_cfg.phase_smolgen,
-            model_cfg.phase_piece_thresholds,
-        )
+        config_key = model_config_identity_key(model_cfg)
         if self._model_config_key is not None and config_key != self._model_config_key:
             print(
                 f"[shared-broker] WARNING: trial {trial_id} has different model config, skipping",

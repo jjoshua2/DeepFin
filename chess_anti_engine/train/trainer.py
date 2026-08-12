@@ -2272,12 +2272,68 @@ class Trainer:
   # ⚑ NO `^` ANCHOR when grepping for this. Ray prefixes actor stdout with
   # `(train_trial pid=NNNN)` and an ANSI colour code, so an anchored grep
   # returns 0 matches on a real trial log and reads as "the arm never ran".
+        self._assert_gated_heads_exist()
+
         print(
             f"[trainer] policy_target_temp={self.policy_target_temp!r} "
             f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
             f"eval_pinned_temp={self._eval_loss_kwargs['policy_target_temp']!r}",
             flush=True,
         )
+
+    def _assert_gated_heads_exist(self) -> None:
+        """⚑ FAIL CLOSED on a positive weight whose head was DELIBERATELY not built.
+
+        `enable_policy_sf_head: false` omits `policy_sf` entirely, and
+        `compute_loss` treats a missing optional head as a zero loss -- correct
+        for partial-model rigs, but it would let someone turn the SF-move teacher
+        on against a net that has no head to train, see a clean run, and read the
+        whole readout window as if the teacher had been training. That is this
+        codebase's signature defect (a value accepted and then silently ignored).
+
+        `w_sf_move` is the ONLY weight that reads `policy_sf`; `w_sf_own` and
+        `w_sf_own_regret` train `policy_own` through the sf_p0 terms.
+
+        ⚑ TWO THINGS REVIEW FOUND WRONG with the obvious implementation, both of
+        which this docstring exists to keep fixed:
+
+        1. **Trigger on the DELIBERATE CHOICE, not on `policy_sf is None`.** Every
+           test double and partial-model rig in the repo lacks the attribute, so
+           the `is None` form refused to construct 107 of them. `ChessNet` records
+           `enable_policy_sf_head`, so its ABSENCE means "not a net that made this
+           choice" and the guard must stay silent.
+        2. **A construction-time check CANNOT FIRE for the case named above.**
+           `w_sf_move` is in `TRAINER_WEIGHT_KEYS`, and `_sync_trainer_weights`
+           does `setattr(trainer, wk, ...)` EVERY ITERATION so live-yaml and PB2
+           changes take effect immediately (`_apply_donor_config_overlay` is a
+           second post-construction writer). Measured: construct at 0.0, sync to
+           0.15, and `sf_move_ce` is 0.0 with no exception. ⇒ the check must be
+           re-evaluated after every possible mutation, not only at construction.
+
+        ⚑ 3. **AND IT MUST NOT BE EVALUATED IN `_loss_kwargs`, WHICH IS WHERE (2)
+           FIRST PUT IT.** `_loss_kwargs` is on the HOLDOUT RULER's call graph:
+           `eval_ruler_id_for` derives the ruler identity from
+           `call_closure(Trainer._compute_metrics)`, which reaches
+           `_eval_loss_kwargs` -> `_loss_kwargs`. Adding a frame there changed the
+           pinned id (`v1:full_pass:73ff47d368fbe10e` ->
+           `...:05909d0fdfd8bbad`) and CI caught it -- a ruler-identity change
+           invalidates every best-model comparison across it, which is strictly
+           worse than the defect this guard prevents. ⇒ it is called from the TOP
+           OF `train_steps` (every iteration, training-only call graph) and once
+           from `__init__` so an already-wrong launch config fails before any
+           compute. Do not move it back onto anything `_compute_metrics` reaches.
+        """
+        model = getattr(self.model, "_orig_mod", self.model)
+        # Absent attribute => not a net that opted out => nothing to check.
+        if getattr(model, "enable_policy_sf_head", True):
+            return
+        if float(self.w_sf_move) > 0.0:
+            raise ValueError(
+                f"w_sf_move={float(self.w_sf_move)} > 0 but the model was built "
+                "with enable_policy_sf_head=false, so there is no `policy_sf` head "
+                "to train; rebuild with enable_policy_sf_head=true or set "
+                "w_sf_move=0.0",
+            )
 
     def _init_swa(self) -> None:
         """(Re)initialize SWA from current model weights.
@@ -3566,6 +3622,22 @@ class Trainer:
         return step_n_micro, opt_step_time_s
 
     def train_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
+        # ⚑ Re-checked EVERY iteration, and this placement is load-bearing TWICE.
+        #
+        # (a) `w_sf_move` is re-`setattr`'d by `_sync_trainer_weights` on every
+        #     iteration so live-yaml and PB2 edits take effect immediately, so a
+        #     construction-time check alone CANNOT fire for the case the guard
+        #     exists for. `train_steps` runs after that sync and before any
+        #     gradient is applied.
+        # (b) ⚑ It must NOT live in `_loss_kwargs`. `eval_ruler_id_for` derives the
+        #     holdout ruler's identity from `call_closure(_compute_metrics)`, which
+        #     reaches `_eval_loss_kwargs` -> `_loss_kwargs`; adding a frame there
+        #     CHANGED THE RULER ID and `test_the_production_ruler_id_is_pinned`
+        #     caught it. A ruler-identity change invalidates every best-model
+        #     comparison across it, which is far worse than the defect the guard
+        #     prevents. Training-only placement keeps the measurement's call graph
+        #     byte-identical.
+        self._assert_gated_heads_exist()
         self.model.train()
         train_wall_start = time.perf_counter()
 
@@ -3757,7 +3829,19 @@ class Trainer:
   # file (matches the export_swa path; previously diverged).
         atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
 
-    _FRESH_PARAM_NAME_SUFFIXES = ("dynamic_relation_weight", "policy_relation_weight")
+    # `policy_embedding.*` belongs here for the same reason as the relation weights:
+    # zero-init, function-preserving, ADDED params. Without it, enabling the shared
+    # policy adapter falls into the reinit path, which resets every moment AND the
+    # scheduler AND skips `load_zclip_state` -- forcing the control arm to absorb an
+    # identical boot shock just to stay comparable. Spliced, the embedding-ON arm
+    # keeps its donor moments. (Removing `policy_sf` deletes params and cannot be
+    # spliced -- that direction still resets.)
+    _FRESH_PARAM_NAME_SUFFIXES = (
+        "dynamic_relation_weight",
+        "policy_relation_weight",
+        "policy_embedding.weight",
+        "policy_embedding.bias",
+    )
 
     def _remap_optimizer_state_for_new_params(self, ckpt_opt: dict) -> dict | None:
         """Remap a donor optimizer state dict around newly added parameters.

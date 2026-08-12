@@ -36,6 +36,25 @@ from chess_anti_engine.uci.model_loader import (
 
 VALUE_HEADS = ("value_wdl", "value_sf_eval", "value_categorical")
 
+# The categorical head has two mutually exclusive shapes: the standalone
+# `ValueHead` and the coupled 32-way Linear on `value_wdl`'s hidden. Exactly one
+# is constructed and the other attribute is None, so a fixed name list hard-exits
+# ("model missing head") on whichever topology it was not written for.
+_ALTERNATIVE_HEAD_NAMES = {"value_categorical": ("value_categorical_coupled",)}
+
+
+def _resolve_head(model: nn.Module, head_name: str) -> tuple[str, nn.Module]:
+    """The module for `head_name`, accepting its known alternative spellings.
+
+    Still exits when NONE of the candidates is a live module: silently skipping
+    a head would leave it un-reinitialised while the script reported success.
+    """
+    for candidate in (head_name, *_ALTERNATIVE_HEAD_NAMES.get(head_name, ())):
+        head = getattr(model, candidate, None)
+        if isinstance(head, nn.Module):
+            return candidate, head
+    sys.exit(f"model missing head: {head_name}")
+
 
 def _checkpoint_model_config(ckpt: dict, ckpt_path: Path) -> ModelConfig:
     """Load the checkpoint's actual architecture, failing loud if absent."""
@@ -72,11 +91,9 @@ def main() -> None:
 
     reinit_param_names: list[str] = []
     for head_name in VALUE_HEADS:
-        head = getattr(model, head_name, None)
-        if not isinstance(head, nn.Module):
-            sys.exit(f"model missing head: {head_name}")
+        resolved_name, head = _resolve_head(model, head_name)
         for pname, p in head.named_parameters():
-            reinit_param_names.append(f"{head_name}.{pname}")
+            reinit_param_names.append(f"{resolved_name}.{pname}")
             with torch.no_grad():
                 if p.dim() >= 2:
                     nn.init.xavier_uniform_(p, gain=0.1)
