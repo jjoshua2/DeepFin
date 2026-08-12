@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import logging
+import shutil
 import os
 import re
 import secrets
@@ -32,6 +33,7 @@ from chess_anti_engine.replay.shard import (
     is_tmp_shard_name,
     samples_to_arrays,
     save_local_shard_arrays,
+    shard_meta_violations,
     validate_array_declarations,
 )
 # Module scope, unlike `create_app`'s local `.lease` import: `lease_authorizes_upload`
@@ -760,6 +762,83 @@ def _stamp_shard_username(zarr_root: Path, username: str) -> None:
     atomic_write_text(attrs_path, json.dumps(raw, indent=4, sort_keys=True))
 
 
+def prune_retained_dir(
+    root: Path,
+    *,
+    max_bytes: int,
+    max_entries: int,
+    log: logging.Logger | None = None,
+) -> tuple[int, int]:
+    """Evict oldest-first from a retention directory. Returns (entries, bytes) freed.
+
+    ⚑ THE SINK HAD NO CEILING. Every malformed upload is retained under
+    ``quarantine/`` with a reason sidecar, and each may be as large as the
+    per-request upload limit. Individual size was capped; cumulative size was
+    not, by any account, trial, or server-wide budget -- so an authenticated
+    client could fill the disk with repeated invalid uploads, and disk
+    exhaustion stops the training server. Retention is also the thing that
+    makes the directory useful, so the fix is a bound, not deletion.
+
+    Oldest-first by mtime: a quarantined shard is for diagnosing a defect that
+    is happening NOW, so the newest entries are the ones worth keeping. Both
+    limits are enforced; either can bind.
+
+    ⚑ Failure is per-entry and non-fatal. This runs on the upload path, and a
+    sweep that raised would turn "we could not tidy up" into "the upload
+    failed" -- strictly worse than the unbounded growth it is fixing.
+    """
+    if not root.is_dir():
+        return (0, 0)
+    entries: list[tuple[float, Path, int]] = []
+    for p in root.iterdir():
+        if p.name.endswith(".reason.txt"):
+      # Sidecars are accounted with their shard, not as entries in their own
+      # right -- counting them would halve the effective entry budget and
+      # evict a sidecar while keeping the shard it explains.
+            continue
+        try:
+            st = p.stat()
+            size = st.st_size
+            if p.is_dir():
+                size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+            entries.append((st.st_mtime, p, int(size)))
+        except OSError:
+            continue
+
+    entries.sort(key=lambda t: t[0])
+    total_bytes = sum(e[2] for e in entries)
+    freed_entries = 0
+    freed_bytes = 0
+
+    for _mtime, path, size in entries:
+        over_bytes = max_bytes > 0 and total_bytes > max_bytes
+        over_count = max_entries > 0 and (len(entries) - freed_entries) > max_entries
+        if not (over_bytes or over_count):
+            break
+        try:
+            sidecar = path.with_suffix(path.suffix + ".reason.txt")
+            extra = 0
+            if sidecar.exists():
+                extra = sidecar.stat().st_size
+                sidecar.unlink(missing_ok=True)
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+        total_bytes -= size + extra
+        freed_bytes += size + extra
+        freed_entries += 1
+
+    if freed_entries and log is not None:
+        log.info(
+            "quarantine retention: evicted %d entr%s (%d bytes) from %s",
+            freed_entries, "y" if freed_entries == 1 else "ies", freed_bytes, root,
+        )
+    return (freed_entries, freed_bytes)
+
+
 def lease_authorizes_upload(
     lease: dict[str, Any] | None,
     *,
@@ -1294,6 +1373,11 @@ def create_app(
     publish_dir: str = "publish",
     inbox_dir: str = "inbox",
     quarantine_dir: str = "quarantine",
+    quarantine_max_bytes: int = 4 * 1024 * 1024 * 1024,
+    quarantine_max_entries: int = 200,
+    arena_max_body_bytes: int = 1024 * 1024,
+    arena_user_max_bytes: int = 256 * 1024 * 1024,
+    arena_user_max_entries: int = 5000,
     users_db: str = "users.json",
     opening_book_path: str | None = None,
     opening_book_path_2: str | None = None,
@@ -2848,6 +2932,24 @@ def create_app(
                     )
                 except Exception:
                     tmp.unlink(missing_ok=True)
+          # ⚑ Swept HERE, on the write, not on a timer: this directory only
+          # grows when something is already going wrong, so the sweep runs
+          # exactly as often as it needs to and never when it does not, and
+          # there is no background task that can fail silently. Each entry can
+          # be as large as the per-request upload cap and nothing else bounded
+          # the total.
+          #
+          # OUTSIDE the try above on purpose -- inside it, a sweep failure
+          # would run that block's `tmp.unlink` recovery and be logged as a
+          # failure to quarantine, which is a different and much more alarming
+          # thing than "we could not tidy up".
+                with contextlib.suppress(OSError):
+                    prune_retained_dir(
+                        qdir,
+                        max_bytes=int(quarantine_max_bytes),
+                        max_entries=int(quarantine_max_entries),
+                        log=log,
+                    )
                 if tmp_zarr is not None:
                     delete_shard_path(tmp_zarr)
 
@@ -2877,6 +2979,33 @@ def create_app(
                 return {"stored": False, "rejected": True, "reason": identity_reason}
 
             positions = int(shard_arrs["x"].shape[0])
+
+      # ⚑ The counter channel is the least protected and the most
+      # consequential. The arrays are Blosc/zstd compressed, so a corrupt
+      # block fails to decompress loudly into quarantine; `.zattrs` is plain
+      # JSON, where a flipped digit stays valid JSON with a wrong number --
+      # and `wins`/`draws`/`losses` become the PID's curriculum winrate.
+      #
+      # Terminal (`rejected`), not 422: an arithmetic inconsistency is a
+      # permanent property of these bytes, so retrying resends the same bad
+      # shard forever. That is the opposite call from the digest mismatch,
+      # which is transient by nature. The violation text names the exact
+      # predicate and both values, so a false positive is diagnosable from
+      # one log line rather than by bisecting the fleet.
+            meta_violations = shard_meta_violations(meta, positions=positions)
+            if meta_violations:
+                tmp.unlink(missing_ok=True)
+                delete_shard_path(tmp_zarr)
+                log.warning(
+                    "rejecting shard from %s: inconsistent metadata: %s",
+                    username, "; ".join(meta_violations),
+                )
+                return {
+                    "stored": False,
+                    "rejected": True,
+                    "reason": "inconsistent shard metadata: " + "; ".join(meta_violations),
+                }
+
             tmp.unlink(missing_ok=True)
             upload_seen_key = (trial_key, sha)
             now_unix = time.time()
@@ -3204,6 +3333,27 @@ def create_app(
 
         body = json.dumps(payload, sort_keys=True).encode("utf-8")
 
+  # ⚑ THE COMMENT BELOW USED TO SAY "unbounded by anything except the size
+  # guard above". There is no size guard above -- `max_upload_mb` is enforced
+  # in the SHARD route only, and this route accepts an arbitrary dict, keeps
+  # every extra field, and names the file after the sha of the whole body. So
+  # each distinct body persists a NEW file, forever, with no cap and no
+  # retention: an authenticated client fills the disk with unique bodies, and
+  # a full disk stops the training server.
+  #
+  # ⚑ Honest about what this cap is: the body is already parsed by the time we
+  # see it (`payload: dict = Body(...)`), so this bounds what reaches DISK, not
+  # what is parsed into memory. Disk is the exhaustion axis the finding is
+  # about; capping the parse needs a streaming `Request` handler.
+        if len(body) > int(arena_max_body_bytes) > 0:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"arena result body is {len(body)} bytes, over the "
+                    f"{int(arena_max_body_bytes)} byte limit"
+                ),
+            )
+
         sha = hashlib.sha256(body).hexdigest()
         out = user_dir / f"{sha}.json"
         if not out.exists():
@@ -3213,6 +3363,18 @@ def create_app(
             # size guard above, so it stalls every other route for its
             # duration.
             await run_in_threadpool(out.write_bytes, body)
+      # Per-user bound. Sized in entries as well as bytes because the sink's
+      # growth mode is MANY SMALL unique bodies, not a few large ones -- a
+      # byte budget alone would let an account burn inodes indefinitely.
+            with contextlib.suppress(OSError):
+                await run_in_threadpool(
+                    lambda: prune_retained_dir(
+                        user_dir,
+                        max_bytes=int(arena_user_max_bytes),
+                        max_entries=int(arena_user_max_entries),
+                        log=log,
+                    ),
+                )
 
         return {
             "stored": True,
