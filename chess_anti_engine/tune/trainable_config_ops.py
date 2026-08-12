@@ -828,6 +828,7 @@ _DRIVER_LAUNCH_FIXED_KEYS = frozenset({
     "distributed_upload_compact_shard_size",
     "distributed_upload_compact_max_age_seconds",
     "worker_self_register",
+    "require_worker_lease",
   # Read through a LOOP VARIABLE (`base_config.get(cfg_key)`), which is why the
   # coverage test has to account for non-literal reads rather than skip them.
   # Both are also `restart_required` on the TRIAL axis, and that is not a

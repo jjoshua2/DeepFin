@@ -297,6 +297,53 @@ multiply every limit by the worker count.
 `reason_code` after the human reason (`... (reason_code=worker_too_old)`), so a rejection
 can be classified without parsing prose that is free to change.
 
+### Requiring a lease for uploads
+
+```yaml
+tune:
+  require_worker_lease: true   # DEFAULT false
+```
+
+⚑⚑ **Do NOT set this on the in-tree fleet — it takes ingest to ZERO.** The
+driver launches every worker with `--trial-id`, which sets `fixed_trial_id`,
+which skips lease negotiation entirely. A driver-launched worker therefore
+*structurally* never obtains or sends a lease id and is refused **403 on every
+upload, forever**. Measured on this server: 821,818 uploads, zero leases ever
+issued, one `/v1/lease_trial` request and it was a 401.
+
+It is restart-gated like `worker_self_register`, so it detonates only after a
+full `run.py` restart — and then the trainer starves against
+`distributed_wait_timeout_seconds`. It is for a volunteer deployment whose
+workers negotiate their own leases.
+
+**Independently of the flag**, a lease id that IS supplied must now belong to
+the authenticated account, be unexpired, and match the route's trial. Today's
+driver-launched workers send none, so this is inert on the in-tree fleet.
+
+⚑ **A lease is attribution, NOT trial isolation.** `/v1/lease_trial` honours the
+caller's requested trial whenever it names a *published* trial, so an
+authenticated worker still chooses its own assignment and then passes the
+upload check legitimately. What the lease buys is that an upload is tied to an
+issued, expiring, named grant that can be revoked — not a restriction on which
+trial a worker can reach. Production publishes one trial, so the set it may
+choose from is a singleton; this only becomes a real question if multi-trial
+PBT is ever exposed to untrusted volunteers, and closing it then means making
+the server assign the trial instead of honouring the request.
+
+### Cleartext transport
+
+The worker refuses `http://` to a **non-loopback** server and exits, because
+HTTP Basic sends a reusable credential on every request and the same channel
+carries the manifest sha256 that is the only integrity check on the model
+checkpoint. Loopback is exempt, which is what the driver hands in-tree workers
+(`distributed_server_host: 0.0.0.0` resolves to `http://127.0.0.1:<port>`).
+
+⚑ **An off-box LAN worker will refuse to start.** `configs/pbt2_small.yaml`
+publishes `distributed_server_public_url: http://192.168.1.212:45453`, and that
+is exactly the shape the guard rejects. Until the server speaks TLS, start such
+workers with `--allow-cleartext-http` (or `allow_cleartext_http: true` in
+`worker.yaml`).
+
 ### Banning someone
 
 ```bash
@@ -323,14 +370,64 @@ so a banned client cannot spend the server's PBKDF2 budget.
 ### Quarantining a banned volunteer's shards
 
 **A ban is not retroactive** — it stops future uploads and leaves everything
-already ingested in place. Shards carry a `username` attribute, so a banned
-volunteer's contributions can be found and quarantined after the fact. Use the existing
-tooling rather than writing new tooling:
+already ingested in place.
+
+**Read `contributors`, not `username`.** `username` on a shard the server
+compacted is `server_compactor` — the compactor merges several uploaders, so no
+single one owns the output — and reading it was the documented procedure until
+2026-08-12, which meant a ban had nothing left on disk to act on. Compacted
+shards now carry a `contributors` list of
+`{"username", "start", "count"}` entries over the shard's own row order, so one
+contributor's rows can be excised instead of the whole shard being discarded.
+⚑ **Trust `username`/`contributors` only when `provenance_verified` is true.**
+The server stamps both from the **authenticated** account — never from the
+uploader's own claim, or one volunteer could aim your ban at another — and sets
+`provenance_verified: true` at the same time. It also **clears** any
+`contributors` list the uploader shipped — that field is server-owned, so on a
+raw single-uploader shard anything present came out of the tarball.
+
+⚑ **The marker alone is not the evidence — the server-side watermark is.**
+`.zattrs` travels *inside* the uploaded tarball, so a shard staged by a server
+from **before 2026-08-12** carries whatever the uploader wrote there, and that
+includes a hand-written `provenance_verified: true` next to someone else's
+name. Nothing inside such a shard can be checked, because it predates the code
+doing the checking. On its first boot after that date the server therefore
+writes `<server-root>/provenance_migration.json`, recording every shard already
+staged; those are re-seeded with a `null` contributor no matter what their
+attrs claim, and only shards that arrived afterwards — and so went through the
+stamp — are attributable. A null is honest; a possibly-wrong name gets the
+wrong person quarantined.
+
+Do not delete that file. If it goes missing the server re-snapshots on the next
+boot, which marks the *then-pending* shards legacy and loses their attribution
+— safe, but lossy.
+
+The read is:
+
+```python
+if not attrs.get("provenance_verified"):
+    continue                      # unverifiable; do not attribute to anyone
+rows = attrs.get("contributors") or [
+    {"username": attrs.get("username"), "start": 0, "count": attrs["positions"]}
+]
+rows = [r for r in rows if r["username"] is not None]
+```
+
+`contributors` is absent on raw single-uploader shards, where `username` is
+still the answer. ⚑ Note the **last** line: a re-seeded shard can produce
+`[{"username": None, ...}]`, which is a *truthy* list, so `contributors or …`
+will NOT fall through to `username` — filter the nulls or the predicate gets
+`None` handed to it.
+
+Use the existing tooling rather than writing new tooling:
 
 - `scripts/quarantine_desync_shards.py` already builds a quarantine **manifest**
   from a predicate over shards, and `scripts/build_era_probe_set.py` refuses any
   shard a manifest names — so a manifest is the mechanism a downstream consumer
-  already honours. Point its predicate at the banned `username` attribute.
+  already honours. Point its predicate at the banned name using the
+  `contributors`-then-`username` read above. ⚑ The predicate is shard-level, so
+  it quarantines whole shards; the row ranges are recorded so a future
+  row-exact excision tool has what it needs, but that tool does not exist yet.
 - The server also maintains `<server_root>/quarantine/`, with client reports
   under `quarantine/client_reports/` from `/v1/report_bad_shard`.
 
