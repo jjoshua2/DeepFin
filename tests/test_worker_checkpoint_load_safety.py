@@ -146,6 +146,9 @@ def test_upload_digest_header_name_is_shared_not_duplicated() -> None:
     for path in (WORKER_PY, app_py):
         src = path.read_text(encoding="utf-8")
         assert "UPLOAD_CONTENT_SHA256_HEADER" in src, f"{path.name} does not use the shared constant"
-        assert f'"{UPLOAD_CONTENT_SHA256_HEADER}"' not in src, (
-            f"{path.name} re-spells the header as a literal instead of importing it"
+        # ⚑ Match the NAME anywhere, in any quoting. Checking only the
+        # double-quoted form let `alias='X-CAE-Content-SHA256'` (single quotes)
+        # through -- a guard that cannot fail on the thing it names.
+        assert UPLOAD_CONTENT_SHA256_HEADER not in src, (
+            f"{path.name} re-spells the header literally instead of importing the constant"
         )

@@ -878,12 +878,24 @@ def pack_shard_for_upload(shard_path: str | Path) -> tuple[str, io.BytesIO]:
     return p.stem + UPLOAD_TAR_SUFFIX, buf
 
 
-# A zarr shard is a handful of arrays, each chunked into a bounded number of
-# files: the largest production shard observed carries well under a thousand
-# members. The cap exists because declared BYTES and member COUNT are
-# independent complexity axes -- an archive of a million zero-byte members
-# declares zero payload bytes, passes `max_extract_bytes`, and still burns a
-# million inodes and a million path resolutions in the walk below.
+# MEASURED, not guessed: a real 2000-position production shard
+# (`runs/pbt2_small/.../replay_shards/shard_001224.zarr`) tars to 513 members --
+# 85 arrays x (4 chunks + `.zarray`) plus directories. At the server's own
+# position ceiling (`DEFAULT_MAX_SHARD_POSITIONS`, 50,000) the same shape gives
+# ~8,500, so this cap sits ~2.35x above the largest upload the server will
+# accept. ⚑ That margin shrinks as arrays are ADDED (an older shard has 75
+# arrays, today's has 85) -- re-measure before assuming it still holds.
+#
+# The cap exists because declared BYTES and member COUNT are independent
+# complexity axes: an archive of zero-byte members declares zero payload,
+# passes `max_extract_bytes`, and still burns one inode and one path resolution
+# per member in the walk below.
+#
+# ⚑ It bounds the EXTRACTION WALK, not the parse. `getmembers()` below
+# materializes every TarInfo before this check can fire -- measured at ~43.7 MB
+# peak for 100k members, and the 256 MB request cap allows ~524k members
+# (~229 MB) regardless of this value. Bounding the parse means streaming the
+# members, which `extractall` then re-walks; that is a separate change.
 MAX_UPLOAD_TAR_MEMBERS = 20000
 # Longest legitimate member is `<shard>.zarr/<array>/<chunk indices>`; 4096 is
 # PATH_MAX-shaped headroom, not a fit to observed names.

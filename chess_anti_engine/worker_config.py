@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -44,11 +43,10 @@ def save_worker_config(path: str | Path, cfg: dict[str, Any]) -> None:
         mode=0o600 if has_password else None,
     )
 
-  # Backstop for the destination: atomic_write_text re-applies `mode` after the
-  # writer returns, but an already-existing worker.yaml written by an older
-  # version keeps its own permissions through os.replace on some filesystems.
-    if has_password:
-        try:
-            os.chmod(p, 0o600)
-        except OSError:
-            pass  # Windows / non-POSIX filesystem — chmod is best-effort
+  # ⚑ No backstop chmod here, deliberately. The first version of this kept one,
+  # justified by "an existing worker.yaml written by an older version keeps its
+  # own permissions through os.replace". That was MEASURED FALSE: os.replace
+  # moves the tmp INODE over the destination name, so the old inode's mode
+  # cannot survive -- pre-creating the destination at 0644 and writing with
+  # mode=0o600 yields 0600 before any extra chmod. Dead code justified by a
+  # wrong premise is worse than no code.

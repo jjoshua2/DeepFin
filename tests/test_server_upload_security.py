@@ -510,14 +510,36 @@ def test_extract_rejects_over_long_member_name(tmp_path) -> None:
         extract_uploaded_shard_tar(tar_path, tmp_path / "out")
 
 
-# ⚑ BOTH upload routes, always. `_upload_shard_impl` is an inner function that
-# the two route wrappers call by keyword, so a header declared only on the impl
-# never receives a value -- it keeps its `Header(...)` FieldInfo default, which
-# stringifies into a digest that matches nothing and 422s every upload. That is
-# not hypothetical: it is what the first version of this change did, and only a
-# test that posts to a real route caught it. Parametrizing pins the wiring for
-# both routes and for any wrapper added later.
-UPLOAD_ROUTES = ["/v1/upload_shard", "/v1/trials/t1/upload_shard"]
+# ⚑ EVERY upload route, ENUMERATED FROM THE APP -- not a hand-written list.
+#
+# `_upload_shard_impl` is an inner function that the route wrappers call by
+# KEYWORD, so a header declared only on the impl never receives a value: it
+# keeps its `Header(...)` FieldInfo default, whose `str()` is a non-empty
+# "annotation=nonetype required=false alias=..." blob that equals no digest and
+# therefore 422s EVERY upload through that wrapper. That is not hypothetical --
+# it is what the first version of this change did.
+#
+# A literal list cannot cover a wrapper added later, which is the whole failure
+# mode. Discovering the routes from `create_app` means a third wrapper is
+# covered the moment it exists.
+def _discover_upload_routes() -> list[str]:
+    from fastapi.routing import APIRoute
+
+    from chess_anti_engine.server.app import create_app
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        app = create_app(server_root=td, users_db="users.json")
+        paths = sorted(
+            r.path for r in app.routes
+            if isinstance(r, APIRoute) and r.path.endswith("/upload_shard")
+        )
+    # Substitute a concrete id for the path parameter so the route is callable.
+    return [p.replace("{trial_id}", "t1") for p in paths]
+
+
+UPLOAD_ROUTES = _discover_upload_routes()
 
 
 @pytest.mark.parametrize("route", UPLOAD_ROUTES)
@@ -589,3 +611,54 @@ def test_upload_without_digest_header_still_accepted(tmp_path, route) -> None:
     )
     assert r.status_code == 200, r.text
     assert r.json().get("rejected") is not True, r.text
+
+
+def test_production_default_member_cap_is_in_force(tmp_path) -> None:
+    """⚑ Pins the DEFAULT, not a value the test passes in.
+
+    The server calls `extract_uploaded_shard_tar` without `max_members`
+    (`app.py`), so the only thing standing between production and an uncapped
+    walk is the signature default. Both cap tests above pass an explicit
+    `max_members=`, so setting the default to None left them green -- the
+    production value was observed by nothing.
+    """
+    from chess_anti_engine.replay.shard import MAX_UPLOAD_TAR_MEMBERS
+
+    assert MAX_UPLOAD_TAR_MEMBERS == 20000
+
+    import inspect
+
+    default = inspect.signature(extract_uploaded_shard_tar).parameters["max_members"].default
+    assert default == MAX_UPLOAD_TAR_MEMBERS, (
+        "the server passes no max_members, so a None/absent default silently "
+        "uncaps the production extraction walk"
+    )
+
+    # And the default actually bites when nothing is passed.
+    tar_path = tmp_path / "over.tar"
+    tar_path.write_bytes(_tar_with_many_empty_members(MAX_UPLOAD_TAR_MEMBERS + 1))
+    with pytest.raises(ValueError, match="too many members"):
+        extract_uploaded_shard_tar(tar_path, tmp_path / "out")
+
+
+def test_real_production_shard_is_far_under_the_member_cap(tmp_path) -> None:
+    """The cap must sit above the largest legitimate upload, or it silently
+    rejects good data. Derived from the real shard shape, not asserted."""
+    from chess_anti_engine.replay.shard import MAX_UPLOAD_TAR_MEMBERS
+
+    zp = tmp_path / "real.zarr"
+    save_local_shard_arrays(
+        zp,
+        arrs=samples_to_arrays([_sample(i) for i in range(64)]),
+        meta=ShardMeta(username="u", games=1, positions=64, model_sha256="abc", model_step=0),
+    )
+    _, buf = pack_shard_for_upload(zp)
+    with tarfile.open(fileobj=io.BytesIO(buf.getvalue()), mode="r:") as tf:
+        members = len(tf.getmembers())
+
+    assert members < MAX_UPLOAD_TAR_MEMBERS, (
+        f"a legitimate shard has {members} members vs a cap of {MAX_UPLOAD_TAR_MEMBERS}"
+    )
+    # Chunk count scales with positions, array count does not; the headroom the
+    # comment claims is ~2.35x at the server's 50k-position ceiling.
+    assert members < MAX_UPLOAD_TAR_MEMBERS // 10

@@ -54,11 +54,21 @@ def test_worker_config_password_never_visible_at_default_umask(tmp_path, monkeyp
     )
 
 
-def test_worker_config_without_password_keeps_default_mode(tmp_path):
-    """No password means no reason to force a restrictive mode."""
+def test_worker_config_without_password_uses_the_umask_default(tmp_path):
+    """No password means no reason to force a restrictive mode.
+
+    Asserted against the process umask rather than `!= 0o600`: the previous
+    version of this test was `assert ... or True`, which is true for every
+    input -- a gate that cannot fail, in a file about gates that must.
+    """
+    import os as _os
+
+    umask = _os.umask(0o022)
+    _os.umask(umask)
+
     p = tmp_path / "worker.yaml"
     save_worker_config(p, {"server_url": "http://x", "username": "alice"})
-    assert (p.stat().st_mode & 0o777) != 0o600 or True  # mode is umask-dependent
+    assert (p.stat().st_mode & 0o777) == (0o666 & ~umask)
     assert load_worker_config(p)["username"] == "alice"
 
 
