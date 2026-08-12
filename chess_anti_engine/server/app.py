@@ -448,12 +448,37 @@ class _SeedDoleGate:
         self.rearm_consumed = 0
         self.rearm_skipped = 0
         self.rearm_bad = 0
+        # Idempotency record for the winner of each trial's current iteration.
+        #
+        # ⚑ A SIDECAR, not a key inside the state file. That file's loader does
+        # `int(v)` over EVERY value, so one nested entry would raise, the whole
+        # load would fall back to `{}`, and the gate would forget which
+        # iterations were already claimed -- re-granting a dole that had
+        # already been handed out. A separate file also means an older server
+        # reading these directories is unaffected, and this server reading an
+        # older directory simply starts with no winners (every claim is then a
+        # first claim, which is exactly today's behaviour).
+        self._winners: dict[str, dict[str, Any]] = {}
         if state_path is not None and state_path.exists():
             try:
                 loaded = json.loads(state_path.read_text(encoding="utf-8"))
                 self._last_iter = {str(k): int(v) for k, v in dict(loaded).items()}
             except Exception:
                 self._last_iter = {}
+        wp = self._winners_path()
+        if wp is not None and wp.exists():
+            try:
+                loaded_w = json.loads(wp.read_text(encoding="utf-8"))
+                self._winners = {
+                    str(k): dict(v) for k, v in dict(loaded_w).items() if isinstance(v, dict)
+                }
+            except Exception:
+                self._winners = {}
+
+    def _winners_path(self) -> Path | None:
+        if self._state_path is None:
+            return None
+        return self._state_path.with_suffix(self._state_path.suffix + ".winners.json")
 
     def _persist(self) -> None:
         if self._state_path is None:
@@ -465,6 +490,18 @@ class _SeedDoleGate:
             tmp.replace(self._state_path)
         except Exception:
             pass  # in-memory state still holds; durability is best-effort
+        wp = self._winners_path()
+        if wp is None:
+            return
+        try:
+            wtmp = wp.with_suffix(wp.suffix + ".tmp")
+            wtmp.write_text(json.dumps(self._winners), encoding="utf-8")
+            wtmp.replace(wp)
+        except Exception:
+      # Same best-effort contract as above. Losing this file costs
+      # idempotency (a retried claim looks new), never correctness: the
+      # monotonic gate in the main state file still refuses a second grant.
+            pass
 
     def _consume_rearm_unlocked(
         self, publish_dir: Path | None, training_iteration: int,
@@ -530,6 +567,8 @@ class _SeedDoleGate:
         *,
         publish_dir: Path | None = None,
         allow_rearm: bool = False,
+        claim_id: str | None = None,
+        manifest_revision: str | None = None,
     ) -> bool:
         """Claim the dole for ``(trial_key, training_iteration)``.
 
@@ -565,8 +604,8 @@ class _SeedDoleGate:
         async with self._loop_lock():
             rearm = bool(allow_rearm)
             if publish_dir is not None:
-                # File wins over the kwarg when both are set; under the lock so
-                # rename + claim decision is one critical section.
+            # File wins over the kwarg when both are set; under the lock so
+            # rename + claim decision is one critical section.
                 rearm = await run_in_threadpool(
                     functools.partial(
                         self._consume_rearm_unlocked,
@@ -575,12 +614,41 @@ class _SeedDoleGate:
                         trial_key=trial_key,
                     ),
                 )
+            # ⚑ IDEMPOTENT REPLAY, and it has to come BEFORE the monotonic test.
+            # The grant is persisted server-side and only THEN sent, so a dropped
+            # response leaves the server believing the dole was handed out while the
+            # worker never learned it won. Without this, the retry hits `iteration >
+            # last` as False and the single seed opportunity for that iteration is
+            # silently lost -- the exact "server thinks seeding happened, it didn't"
+            # failure this whole change is about, reintroduced by the extra round
+            # trip the change itself adds.
+            #
+            # Keyed on ALL THREE of iteration, revision and claim_id: a different
+            # worker (different claim_id) must still lose, and the same worker
+            # replaying against a DIFFERENT manifest revision is not the same
+            # request and must not inherit the win.
+            if claim_id is not None:
+                w = self._winners.get(trial_key)
+                if (
+                    isinstance(w, dict)
+                    and int(w.get("iteration", -1)) == int(training_iteration)
+                    and str(w.get("claim_id") or "") == str(claim_id)
+                    and str(w.get("revision") or "") == str(manifest_revision or "")
+                ):
+                    return True
+
             last = int(self._last_iter.get(trial_key, -1))
             if rearm and last == int(training_iteration):
                 last = int(training_iteration) - 1
                 self._last_iter[trial_key] = last
             if int(training_iteration) > last:
                 self._last_iter[trial_key] = int(training_iteration)
+                if claim_id is not None:
+                    self._winners[trial_key] = {
+                        "iteration": int(training_iteration),
+                        "claim_id": str(claim_id),
+                        "revision": str(manifest_revision or ""),
+                    }
                 await run_in_threadpool(self._persist)
                 return True
             return False
