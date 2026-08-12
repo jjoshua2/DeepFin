@@ -23,7 +23,8 @@ from chess_anti_engine.utils.architecture import (
 
 _VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
 # Bin count of the categorical (HL-Gauss) value output. Defined here rather than
-# imported because `model/` does not depend on `train/`; `tests/test_value_heads.py`
+# imported because `model/` does not depend on `train/`;
+# `tests/test_categorical_head_coupled.py::test_head_bin_count_is_pinned_to_the_target_builder`
 # pins it to `train.targets.DEFAULT_CATEGORICAL_BINS` so the two cannot drift.
 CATEGORICAL_HEAD_BINS = 32
 _ARC_POS_CHANNELS = 64

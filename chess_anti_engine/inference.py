@@ -3730,6 +3730,7 @@ class SharedSlotBroker:
             model_cfg.phase_output_adapter_dim,
             model_cfg.phase_smolgen,
             model_cfg.phase_piece_thresholds,
+            model_cfg.categorical_head_coupled,
         )
         if self._model_config_key is not None and config_key != self._model_config_key:
             print(

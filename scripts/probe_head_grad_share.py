@@ -66,6 +66,12 @@ DEFAULT_GPU_MEM_FRACTION = 0.15
 HEAD_PREFIXES = frozenset({
     "policy_own", "policy_soft", "policy_sf", "policy_future",
     "value_wdl", "value_sf_eval", "value_categorical",
+    # Distinct top-level attribute, so the `value_categorical` entry above does
+    # NOT cover it: classification splits on the first dotted component and
+    # tests set membership. Left out, the coupled aux head's own 32-way Linear
+    # counts as TRUNK and inflates exactly the value-head trunk share this
+    # probe exists to measure.
+    "value_categorical_coupled",
     "volatility", "sf_volatility", "moves_left",
 })
 

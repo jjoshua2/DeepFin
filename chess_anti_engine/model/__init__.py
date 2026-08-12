@@ -31,7 +31,10 @@ from .transformer import ChessNet, TransformerConfig
 # the same version — both prevent silent architecture mismatch on skew.
 # v17: history_rep_fix (defaulting it would silently feed a rep-fix-trained
 # model legacy repetition planes at eval time).
-ARCH_SCHEMA_VERSION = 17
+# v18: categorical_head_coupled (defaulting it builds the standalone
+# `value_categorical` head for a checkpoint that has none, so the arena/UCI
+# loader would score a DEFAULTED architecture and report it as the coupled arm).
+ARCH_SCHEMA_VERSION = 18
 
 
 @dataclass
@@ -185,6 +188,14 @@ _RESUME_CONFIG_OWNED_ENCODING_KEYS = (
     # use_dynamic_relations builds them at the config's count rather than the
     # donor's stale default.
     "dynamic_relation_count",
+    # Which categorical value head exists (standalone ValueHead vs the 32-way
+    # Linear on value_wdl's hidden). Config-owned for the same reason as the
+    # keys above: the flag's whole purpose is a deliberate warm-start migration
+    # off a checkpoint built with the other head, and the two heads share no
+    # state_dict keys, so the tolerant loader zero-inits the new one and drops
+    # the old. Checkpoint-owned, it would silently revert to the donor's layout
+    # on every resume and the experiment could never actually run.
+    "categorical_head_coupled",
 )
 
 
