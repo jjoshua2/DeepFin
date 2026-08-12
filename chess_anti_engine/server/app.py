@@ -2626,6 +2626,38 @@ def create_app(
         except HTTPException:
             return None
 
+    def _auth_existing_user(
+        request: Request, creds: HTTPBasicCredentials = Depends(basic),
+    ) -> str:
+        """Required auth that will NEVER self-register.
+
+        The counterpart to `_auth_user_optional` for routes where anonymous
+        access is not allowed at all. Use this, not `_auth_user`, for any route
+        that does not specifically intend to enrol new volunteers --
+        `_auth_user`'s TOFU branch turns an unknown credential into a NEW
+        ACCOUNT, which is a state change most routes have no reason to perform.
+        A telemetry GET doing exactly that is what prompted the shared
+        `allow_register` parameter.
+
+        ⚑ IT DOES NOT CATCH. `_authenticate`'s HTTPException propagates
+        unchanged, because flattening it to a bare 401 destroys three distinct
+        answers: 403 banned, 403 disabled, and 429 + `Retry-After`. Both 403s
+        are load-bearing by explicit design here ("401 reads as 'your password
+        is wrong' and invites a retry loop; 403 tells the client to stop"), and
+        a throttled client told "bad password" retries immediately and keeps
+        its own window pinned. An earlier draft of this function caught
+        everything; an independent review measured the collapse.
+
+        ⚑ It lives here, in the PR that ROUTES to it, deliberately. It was
+        first written one PR earlier with no caller, where `gc.get_objects()`
+        found zero references to it after `create_app` returned and vulture
+        could not flag it at the repo's confidence threshold -- so "lint is
+        clean" was not evidence it was wired, and its only test was a source
+        grep that could not fail on behaviour. That is how the status
+        flattening above shipped unnoticed.
+        """
+        return _authenticate(request, creds, allow_register=False)
+
     def _record_bad_shard_report(
         trial_id: str | None,
         *,
