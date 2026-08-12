@@ -290,7 +290,7 @@ def test_an_identical_same_iteration_republish_still_delivers_a_second_dose(
     would silently skip every rearm -- with all the server-side rearm tests
     still green, because the server's behaviour was never the problem.
 
-    The distinguishing value is the server's monotone `grant_seq`.
+    The distinguishing value is the server's opaque `grant_token`.
     """
     app = _setup(tmp_path, iteration=20)
     fen_path = tmp_path / "blindspot.txt"
@@ -309,11 +309,11 @@ def test_an_identical_same_iteration_republish_still_delivers_a_second_dose(
 
     first = asyncio.run(poll_and_claim())
     assert first["granted"] is True
-    assert first["grant_seq"] > 0
+    assert first["grant_token"]
 
     # The winner re-asking without a republish must get the SAME sequence back.
     replay = asyncio.run(poll_and_claim())
-    assert replay["grant_seq"] == first["grant_seq"], "a replay looked like a new dose"
+    assert replay["grant_token"] == first["grant_token"], "a replay looked like a new dose"
 
     # Now the real rearm: republish the SAME iteration with the SAME config.
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
@@ -321,10 +321,250 @@ def test_an_identical_same_iteration_republish_still_delivers_a_second_dose(
 
     assert rearmed["revision"] == first["revision"], (
         "the premise of this test no longer holds -- an identical republish now "
-        "changes the revision, so re-check whether grant_seq is still needed"
+        "changes the revision, so re-check whether grant_token is still needed"
     )
     assert rearmed["granted"] is True
-    assert rearmed["grant_seq"] > first["grant_seq"], (
-        "an identical same-iteration republish did not issue a new grant sequence, so "
-        "the worker cannot tell the rearmed dose from the one it already played"
+    assert rearmed["grant_token"] != first["grant_token"], (
+        "an identical same-iteration republish reused the grant token, so the worker "
+        "cannot tell the rearmed dose from the one it already played"
     )
+
+
+def _uvicorn_effective_level(logger_name: str) -> int:
+    """Effective level of `logger_name` under uvicorn's real config.
+
+    ⚑ Computed in a SUBPROCESS on purpose. pytest's logging plugin installs its
+    own root handler and level, so measuring this in-process reports pytest's
+    configuration rather than production's -- which is exactly how the first
+    version of the test below passed with the bug present.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import logging, logging.config;"
+        "from uvicorn.config import LOGGING_CONFIG;"
+        "logging.config.dictConfig(LOGGING_CONFIG);"
+        f"print(logging.getLogger({logger_name!r}).getEffectiveLevel())"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    return int(out.stdout.strip())
+
+
+def test_the_grant_line_survives_uvicorn_logging_config(tmp_path: Path) -> None:
+    """⚑⚑ THE YARDSTICK'S OWN INSTRUMENT HAS TO FIRE IN PRODUCTION.
+
+    MEASURED on the live server root: 167MB of `server.log`, ZERO `seed dole
+    GRANTED` lines, while `seed_dole_gate.json` showed the gate past iteration
+    2000. The grants happened; the log did not. `run_server.py` calls
+    `uvicorn.run(..., log_level="info")` and uvicorn's LOGGING_CONFIG leaves
+    `chess_anti_engine.server` at effective WARNING with no handlers, so INFO
+    records from this package are discarded at the logger.
+
+    Not a cosmetic logging nit: this line IS the ledger's Layer-1 yardstick, so
+    at INFO the rule reads 0/10 on a healthy run and fires its own KILL AND
+    REVERT -- and reads 0 on the old code too, so it cannot tell broken from
+    fixed.
+
+    ⚑ It compares the level the code LOGS AT against the level uvicorn LETS
+    THROUGH, both measured rather than assumed. A first version attached a
+    handler and asserted the record arrived; pytest's logging plugin had already
+    lowered the levels, so it passed with `_log.info` restored. Vacuous.
+    """
+    import logging
+
+    from chess_anti_engine.server import app as app_mod
+
+    emitted: list[int] = []
+
+    class _RecordingLogger:
+        def __init__(self, inner: logging.Logger) -> None:
+            self._inner = inner
+
+        def __getattr__(self, name: str):
+            return getattr(self._inner, name)
+
+        def warning(self, *_a, **_k) -> None:
+            emitted.append(logging.WARNING)
+
+        def info(self, *_a, **_k) -> None:
+            emitted.append(logging.INFO)
+
+        def debug(self, *_a, **_k) -> None:
+            emitted.append(logging.DEBUG)
+
+    app = _setup(tmp_path)
+    real = app_mod._log
+    app_mod._log = _RecordingLogger(real)  # type: ignore[assignment]
+    try:
+        async def _run() -> None:
+            async with await _client(app) as client:
+                headers = _manifest_poll_headers(worker_id="w")
+                m = (await client.get(MANIFEST, headers=headers)).json()
+                r = await client.post(
+                    CLAIM,
+                    json={"claim_id": "A", "manifest_revision": m["manifest_revision"]},
+                    auth=("u", "p"), headers=headers,
+                )
+                r.raise_for_status()
+                assert r.json()["granted"] is True
+
+        asyncio.run(_run())
+    finally:
+        app_mod._log = real  # type: ignore[assignment]
+
+    assert emitted, "the grant path logged nothing at all"
+    threshold = _uvicorn_effective_level("chess_anti_engine.server")
+    assert max(emitted) >= threshold, (
+        f"the grant is logged at {max(emitted)} but uvicorn leaves this logger at "
+        f"{threshold}, so the line is discarded in production and the ledger's "
+        "Layer-1 yardstick reads 0 on a healthy system"
+    )
+
+
+def test_pause_is_not_bound_into_the_revision(tmp_path: Path) -> None:
+    """⚑⚑ THE `live()` / `get()` SPLIT IS THE DESIGN, AND IT WAS ENFORCED BY A
+    DOCSTRING ALONE.
+
+    A review mutated `_dole_live_decline` from `reader.live(...)` to
+    `reader.get(...)` -- binding `pause_selfplay` into the token -- and the
+    ENTIRE suite still passed. `pause_selfplay` is recomputed from a live 2s
+    queue-depth reading, so binding it churns the token constantly and every
+    claim comes back `revision_mismatch`: seeding permanently at zero, and
+    silently, since a declined claim is indistinguishable from no dole.
+    """
+    app = _setup(tmp_path)
+    mf_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
+
+    def revision() -> str:
+        async def _run() -> str:
+            async with await _client(app) as client:
+                r = await client.get(MANIFEST, headers=_manifest_poll_headers(worker_id="w"))
+                return str(r.json().get("manifest_revision") or "")
+        return asyncio.run(_run())
+
+    base = revision()
+    assert base
+
+    for where in ("recommended_worker", "backpressure"):
+        mf = json.loads(mf_path.read_text(encoding="utf-8"))
+        mf.setdefault(where, {})["pause_selfplay"] = True
+        mf_path.write_text(json.dumps(mf), encoding="utf-8")
+        assert revision() == base, (
+            f"{where}.pause_selfplay is bound into manifest_revision; it is recomputed "
+            "from live queue depth, so the token would churn and every claim would "
+            "fail as revision_mismatch -- silent seeding death"
+        )
+        mf = json.loads(mf_path.read_text(encoding="utf-8"))
+        mf[where].pop("pause_selfplay", None)
+        mf_path.write_text(json.dumps(mf), encoding="utf-8")
+
+
+def test_the_claim_ignores_a_client_supplied_training_iteration(tmp_path: Path) -> None:
+    """The POST body is an unvalidated `dict[str, Any]`. The iteration must come
+    from the server's own manifest snapshot, never from the caller -- otherwise
+    an authenticated client picks which iteration it consumes."""
+    app = _setup(tmp_path, iteration=7)
+
+    async def _run() -> dict:
+        async with await _client(app) as client:
+            headers = _manifest_poll_headers(worker_id="w")
+            m = (await client.get(MANIFEST, headers=headers)).json()
+            r = await client.post(
+                CLAIM,
+                json={
+                    "claim_id": "A",
+                    "manifest_revision": m["manifest_revision"],
+                    "training_iteration": 999999,
+                },
+                auth=("u", "p"), headers=headers,
+            )
+            r.raise_for_status()
+            return r.json()
+
+    body = asyncio.run(_run())
+    assert body["training_iteration"] == 7, (
+        "the claim honoured a client-supplied training_iteration"
+    )
+    gate = json.loads((tmp_path / "seed_dole_gate.json").read_text(encoding="utf-8"))
+    assert gate["trial_00000"] == 7, f"the gate was advanced to a client-chosen iteration: {gate}"
+
+
+def test_the_real_worker_claims_against_the_real_server(tmp_path: Path) -> None:
+    """⚑⚑ END TO END THROUGH THE ACTUAL `WorkerSession`, NOT A TEST DOUBLE.
+
+    The worker-level tests drive `_maybe_ingest_dole_flag` against a fake that
+    ignores `auth=` and `headers=` entirely. A review deleted `auth=self._auth`
+    from the real claim POST and the whole suite still passed -- while in
+    production that claim 401s, `_claim_seed_dole` turns a non-200 into a
+    warning, and blind-spot seeding goes to ZERO with nothing but a WARNING to
+    show for it.
+
+    Anything the worker must actually send -- credentials, compat headers --
+    is only covered by driving the real method against the real app.
+    """
+    import httpx as _httpx
+
+    from tests.test_worker_model_update import _dole_session_with_list
+
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=7, dole=1, fen_path=fen_path)
+    _seed_dole_user(tmp_path)
+    app = create_app(server_root=tmp_path, users_db="users.json")
+
+    class _RealTransportRequests:
+        """`requests`-shaped adapter over the ASGI app, so auth and headers are
+        genuinely transported and genuinely checked by the server."""
+
+        def post(
+            self,
+            url: str,
+            *,
+            json: object = None,
+            auth: tuple[str, str] | None = None,
+            headers: dict[str, str] | None = None,
+            _timeout: float | None = None,
+            **_kw: object,
+        ):
+            path = url.replace("http://testserver", "")
+            # ⚑ `auth` is forwarded EXACTLY as the worker passed it -- including
+            # None, which is what the missing-credentials regression looks like.
+            creds: object = auth if auth is not None else _httpx.USE_CLIENT_DEFAULT
+
+            async def _go():
+                async with _httpx.AsyncClient(
+                    transport=_httpx.ASGITransport(app=app), base_url="http://testserver",
+                ) as client:
+                    return await client.post(
+                        path, json=json, auth=creds, headers=headers,  # type: ignore[arg-type]
+                    )
+
+            return asyncio.run(_go())
+
+    session = _dole_session_with_list(tmp_path)
+    session.opening_fen_list_path = str(fen_path)
+    session._requests = _RealTransportRequests()
+    session._auth = ("u", "p")
+    session.server = "http://testserver"
+    session._dole_claim_key = None
+    session._dole_claim_id = ""
+    session._applied_dole_token = {}
+    session._live_dole_queue = []
+
+    async def _manifest() -> dict:
+        async with await _client(app) as client:
+            r = await client.get(MANIFEST, headers=_manifest_poll_headers(worker_id="w"))
+            r.raise_for_status()
+            return r.json()
+
+    manifest = asyncio.run(_manifest())
+    assert manifest["seed_dole_claim_endpoint"]
+    session._maybe_ingest_dole_flag(manifest)
+
+    assert _DOLE_SEED_FEN in session._live_dole_queue, (
+        "the real worker did not install the seed batch against the real server -- "
+        "check that the claim POST still sends credentials and compat headers"
+    )
+    gate = json.loads((tmp_path / "seed_dole_gate.json").read_text(encoding="utf-8"))
+    assert gate["trial_00000"] == 7

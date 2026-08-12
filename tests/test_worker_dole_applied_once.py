@@ -59,8 +59,9 @@ class _FakeRequests:
         # would make the fake refuse every later opportunity, which is a defect
         # in the double rather than in the worker.
         self.winners: dict[str, str] = {}
-        self._seq: dict[str, int] = {}
+        self._seq: dict[str, str] = {}
         self._n = 0
+        self._scope = "A"
         self._fail_first = fail_first
 
     def post(self, _url: str, *, json: dict, **_kwargs) -> _FakeResponse:
@@ -71,12 +72,12 @@ class _FakeRequests:
         if self._fail_first and len(self.posts) == 1:
             # The grant IS committed server-side; only the response is lost.
             raise ConnectionError("connection reset after the server committed")
-        seq = self._seq.setdefault(rev, 0) or 0
-        if granted and not seq:
+        tok = self._seq.get(rev, "")
+        if granted and not tok:
             self._n += 1
-            seq = self._n
-            self._seq[rev] = seq
-        return _FakeResponse({"granted": granted, "grant_seq": seq if granted else 0,
+            tok = f"{self._scope}-tok{self._n}"
+            self._seq[rev] = tok
+        return _FakeResponse({"granted": granted, "grant_token": tok if granted else "",
                               "reason_code": "granted"})
 
 
@@ -87,8 +88,7 @@ def _session(tmp_path: Path, requests):
     session.server = "http://testserver"
     session._dole_claim_key = None
     session._dole_claim_id = ""
-    session._applied_dole_seq = {}
-    session._legacy_dole_seq = {}
+    session._applied_dole_token = {}
     return session
 
 
@@ -149,7 +149,7 @@ def test_a_dropped_response_retries_and_still_applies_exactly_once(tmp_path: Pat
 
     session._maybe_ingest_dole_flag(_manifest())  # response lost
     assert session._live_dole_queue == [], "installed despite never seeing a grant"
-    assert session._applied_dole_seq == {}, (
+    assert session._applied_dole_token == {}, (
         "marked applied on a claim whose outcome was never observed -- the "
         "grant would be spent and the seeds never played"
     )
@@ -176,7 +176,7 @@ def test_a_failed_fen_load_does_not_mark_the_grant_applied(tmp_path: Path) -> No
     session.opening_fen_list_path = str(tmp_path / "does-not-exist.txt")
 
     session._maybe_ingest_dole_flag(_manifest())
-    assert session._applied_dole_seq == {}
+    assert session._applied_dole_token == {}
     assert session._live_dole_queue == []
 
 
@@ -209,37 +209,92 @@ def test_a_same_iteration_republish_is_a_new_opportunity(tmp_path: Path) -> None
 
 
 def test_a_trial_reassignment_does_not_suppress_the_new_trials_dose(tmp_path: Path) -> None:
-    """⚑⚑ `grant_seq` IS PER TRIAL ON THE SERVER; THE WORKER'S HIGH-WATER MARK
-    MUST BE TOO.
+    """⚑⚑ GRANT IDENTITY IS PER TRIAL ON THE SERVER.
 
     One `WorkerSession` outlives a trial reassignment -- `_negotiate_lease`
-    rewrites `self.leased_trial_id` in place and `run()` keeps the same object.
-    With a single global applied-sequence, trial A's seq 5 carries into trial
-    B, whose first grant is seq 1: `1 <= 5`, so the worker silently refuses B's
-    seed batch and stays unseeded until B independently reaches 6.
+    rewrites `self.leased_trial_id` in place and `run()` keeps the object -- so
+    the worker's "already applied" state must be per trial too.
 
-    ⚑ The sequences are built by DRIVING THE REAL PATH, not by pre-seeding the
-    counter. A first version of this test wrote trial A's value directly into
-    `_applied_dole_seq` under A's scope key -- which a scope-collapsing mutant
-    simply never reads, so the test passed with the bug reinstated. Vacuous.
+    ⚑ The state is built by DRIVING THE REAL PATH, not by pre-seeding it. A
+    first version wrote trial A's value straight into the applied map under A's
+    scope key, which a scope-collapsing mutant never reads -- so it passed with
+    the bug reinstated. Vacuous.
     """
     fake = _FakeRequests()
     session = _session(tmp_path, fake)
     session._live_dole_queue = []
 
-    # Trial A runs for a while: five genuine doses, so its sequence reaches 5.
     for n in range(5):
         session._maybe_ingest_dole_flag(_manifest(iteration=40 + n, revision=f"rev-a{n}"))
         session._live_dole_queue.clear()
-    assert max(session._applied_dole_seq.values()) == 5, session._applied_dole_seq
+    assert len(session._applied_dole_token) == 1, session._applied_dole_token
 
-    # Reassigned to a FRESH trial, whose server-side counter starts over at 1.
+    # Reassigned to a FRESH trial. Its server-side identity is independent, so
+    # a token collision across trials must not be possible in the first place.
     b = dict(_manifest(iteration=1, revision="rev-b0"))
     b["seed_dole_claim_endpoint"] = "/v1/trials/trial_00001/seed_dole_claim"
+    fake._scope = "B"
     fake._n = 0
 
     session._maybe_ingest_dole_flag(b)
     assert session._live_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B], (
-        "a low grant_seq from a newly assigned trial was mistaken for an "
-        "already-applied dose from the previous trial"
+        "a newly assigned trial's grant was mistaken for an already-applied "
+        "dose from the previous trial"
     )
+
+
+def test_a_worker_still_applies_doses_after_the_server_loses_its_sidecar(
+    tmp_path: Path,
+) -> None:
+    """The same regression seen from the WORKER, which is where it actually
+    bites: a persistent session that has applied several doses must keep
+    applying them after the server's grant identity is rebuilt from nothing.
+
+    With the old monotone counter the server restarted numbering at 1 while the
+    worker's high-water mark stood at 5, so the next five doses were skipped in
+    silence.
+    """
+    fake = _FakeRequests()
+    session = _session(tmp_path, fake)
+    session._live_dole_queue = []
+
+    for n in range(5):
+        session._maybe_ingest_dole_flag(_manifest(iteration=40 + n, revision=f"rev-{n}"))
+        session._live_dole_queue.clear()
+
+    # Server loses its grant-identity state and starts issuing from scratch,
+    # while the SAME worker session keeps its applied state.
+    fake._seq.clear()
+    fake._n = 0
+    fake.winners.clear()
+
+    session._maybe_ingest_dole_flag(_manifest(iteration=45, revision="rev-after-loss"))
+    assert session._live_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B], (
+        "the worker skipped a legitimate dose because the server's grant identity "
+        "restarted after losing its sidecar"
+    )
+
+
+def test_the_boundary_poll_guard_does_not_read_the_dead_legacy_flag() -> None:
+    """⚑⚑ THE GUARD THE COMMIT MESSAGE CALLS "ALREADY SPRUNG ONCE", WITH ZERO
+    COVERAGE UNTIL A REVIEW MUTATED IT BACK AND NOTHING FAILED.
+
+    `_dole_possible` gates the reco-changed boundary path. Reverting it to
+    `bool(manifest.get("dole_fen_seeds"))` passes every other test -- and that
+    field is permanently False under the new protocol, so the boundary path
+    would skip `_sync_opening_books` AND the dole entirely, silently, because
+    that ingest runs under `suppress(Exception)`.
+    """
+    from chess_anti_engine.worker import WorkerSession
+
+    claim_protocol = {
+        "seed_dole_claim_endpoint": "/v1/trials/trial_00000/seed_dole_claim",
+        "dole_fen_seeds": False,          # always false under the new protocol
+    }
+    assert WorkerSession._dole_possible(claim_protocol) is True, (
+        "the boundary-poll guard reads the dead legacy flag, so a claim-protocol "
+        "server's dole is skipped on every reco-changed poll"
+    )
+    # Legacy server: the flag is still the only signal.
+    assert WorkerSession._dole_possible({"dole_fen_seeds": True}) is True
+    assert WorkerSession._dole_possible({"dole_fen_seeds": False}) is False

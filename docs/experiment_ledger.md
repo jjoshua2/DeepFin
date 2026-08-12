@@ -466,6 +466,20 @@ criterion's instrument.
 grep -o "seed dole GRANTED: trial=[^ ]* iteration=[0-9]*" <server-root>/server.log \
   | sort -u | wc -l        # expect 10 distinct over 10 iterations
 ```
+
+⚑⚑ **THIS COMMAND READ 0 ON A HEALTHY PRODUCTION RUN AND THE RULE BELOW WOULD
+HAVE SAID KILL AND REVERT.** MEASURED 2026-08-12 on the live server root: 167MB
+of `server.log`, **zero** matches, while `seed_dole_gate.json` showed the gate
+past iteration 2000 — the grants were happening the whole time. Cause:
+`run_server.py` runs `uvicorn.run(..., log_level="info")`, and uvicorn's
+`LOGGING_CONFIG` leaves `chess_anti_engine.server` at effective **WARNING with
+no handlers**, so every INFO record from the package is discarded at the logger.
+The line is now `_log.warning`, and `test_the_grant_line_survives_uvicorn_logging_config`
+compares the level the code logs at against the level uvicorn lets through.
+
+⇒ **Before running this yardstick, confirm the instrument fires at all**: grep a
+recent `server.log` for any `seed dole GRANTED` line. Zero matches means the
+logging path is broken, NOT that seeding is.
 plus: no anonymous manifest GET mutates `seed_dole_gate.json`; a revision mismatch
 or pause leaves it untouched; a retry of the WINNING `claim_id` still returns
 granted.

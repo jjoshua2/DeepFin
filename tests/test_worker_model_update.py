@@ -1085,8 +1085,7 @@ def _dole_session_with_list(tmp_path: Path) -> WorkerSession:
     # instance state has to be seeded here as well.
     session._dole_claim_key = None
     session._dole_claim_id = ""
-    session._applied_dole_seq = {}
-    session._legacy_dole_seq = {}
+    session._applied_dole_token = {}
     return session
 
 

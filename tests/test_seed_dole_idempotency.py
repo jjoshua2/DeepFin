@@ -139,7 +139,7 @@ def test_a_crash_between_the_two_files_cannot_double_grant(tmp_path) -> None:
     path = tmp_path / "seed_dole_gate.json"
     path.write_text(json.dumps({"t": 9}), encoding="utf-8")
     path.with_suffix(path.suffix + ".winners.json").write_text(
-        json.dumps({"t": {"iteration": 10, "claim_id": "A", "revision": REV, "grant_seq": 4}}),
+        json.dumps({"t": {"iteration": 10, "claim_id": "A", "revision": REV, "grant_token": "tok-old"}}),
         encoding="utf-8",
     )
 
@@ -150,26 +150,27 @@ def test_a_crash_between_the_two_files_cannot_double_grant(tmp_path) -> None:
     )
 
 
-def test_a_replay_returns_the_same_grant_sequence(tmp_path) -> None:
-    """The sequence is the worker's "is this a new dose" answer, so a replay
-    must not look like a new one."""
+def test_a_replay_returns_the_same_grant_token(tmp_path) -> None:
+    """The token is the worker's "is this a new dose" answer, so a replay must
+    not look like a new one."""
     g = _SeedDoleGate(state_path=tmp_path / "seed_dole_gate.json")
-    first = asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV))
-    assert first > 0
-    assert asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV)) == first
+    first = asyncio.run(g.claim_token("t", 10, claim_id="A", manifest_revision=REV))
+    assert first
+    assert asyncio.run(g.claim_token("t", 10, claim_id="A", manifest_revision=REV)) == first
 
 
-def test_a_rearm_issues_a_new_grant_sequence(tmp_path) -> None:
+def test_a_rearm_issues_a_new_grant_token(tmp_path) -> None:
     """⚑ And the rearm must retire the old winner, or its replay would
     short-circuit and hand back the OLD sequence -- so the worker would skip
     the rearmed dose entirely."""
     g = _SeedDoleGate(state_path=tmp_path / "seed_dole_gate.json")
-    first = asyncio.run(g.claim_seq("t", 20, claim_id="A", manifest_revision=REV))
+    first = asyncio.run(g.claim_token("t", 20, claim_id="A", manifest_revision=REV))
     rearmed = asyncio.run(
-        g.claim_seq("t", 20, claim_id="A", manifest_revision=REV, allow_rearm=True),
+        g.claim_token("t", 20, claim_id="A", manifest_revision=REV, allow_rearm=True),
     )
-    assert rearmed > first, (
-        "a rearmed dose replayed the previous grant sequence, so the worker would "
+    assert rearmed, "the rearm did not grant at all"
+    assert rearmed != first, (
+        "a rearmed dose replayed the previous grant token, so the worker would "
         "treat the legitimately re-opened batch as one it had already applied"
     )
 
@@ -191,17 +192,17 @@ def test_a_grant_is_not_acknowledged_when_the_winner_cannot_be_persisted(tmp_pat
         return False
 
     g._persist_winner = _fail  # type: ignore[method-assign]
-    seq, new = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
-    assert (seq, new) == (0, False), "an undurable grant was acknowledged to the worker"
+    token, new = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
+    assert (token, new) == ("", False), "an undurable grant was acknowledged to the worker"
     assert not path.exists(), "the gate was advanced for a grant that was never acknowledged"
 
     # ⚑ And the failed attempt must leave nothing behind that a replay could
     # shortcut on -- otherwise the retry inherits a win that was never durable.
-    assert asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV)) == 0
+    assert asyncio.run(g.claim_token("t", 10, claim_id="A", manifest_revision=REV)) == ""
 
     # Once persistence works again, exactly one winner emerges.
     del g._persist_winner  # type: ignore[attr-defined]
-    assert asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV)) > 0
+    assert asyncio.run(g.claim_token("t", 10, claim_id="A", manifest_revision=REV))
     assert asyncio.run(g.claim("t", 10, claim_id="B", manifest_revision=REV)) is False
 
 
@@ -214,4 +215,86 @@ def test_a_replay_is_not_reported_as_a_new_grant(tmp_path) -> None:
     first = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
     replay = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
     assert first[1] is True
+    assert first[0]
     assert replay == (first[0], False)
+
+
+def test_losing_the_winner_sidecar_does_not_suppress_future_doses(tmp_path) -> None:
+    """⚑⚑ SIDECAR LOSS MUST NOT POISON THE WORKER'S "ALREADY APPLIED" STATE.
+
+    This was a real regression, and it is the reason grant identity is an
+    OPAQUE TOKEN rather than a monotone counter.
+
+    Sidecar loss is explicitly TOLERATED -- the gate keeps serving. But the
+    per-trial counter was rebuilt ONLY from that sidecar, so losing it reset
+    the numbering while the durable gate kept its iteration. MEASURED on the
+    counter design: five grants for trial T, delete only `*.winners.json`,
+    reload -- the gate still read iteration 10 and iteration 11 then issued
+    seq 1. A long-running worker holding applied seq 5 would compare `1 <= 5`
+    and SILENTLY SKIP the next five legitimate doses.
+
+    The bug was in encoding an EQUALITY question ("is this the dose I already
+    applied?") as an ORDERING one, which imported a dependency on the numbering
+    never restarting. A token cannot regress: a fresh one is simply != the
+    applied one, whatever the storage did.
+    """
+    path = tmp_path / "seed_dole_gate.json"
+    g = _SeedDoleGate(state_path=path)
+    tokens = [
+        asyncio.run(g.claim_token("T", i, claim_id=f"c{i}", manifest_revision=REV))
+        for i in range(6, 11)
+    ]
+    assert all(tokens), tokens
+    assert len(set(tokens)) == 5, tokens
+
+    # Lose ONLY the winner sidecar; the durable monotonic gate survives.
+    path.with_suffix(path.suffix + ".winners.json").unlink()
+    assert json.loads(path.read_text())["T"] == 10, "the gate itself was lost; wrong scenario"
+
+    g2 = _SeedDoleGate(state_path=path)
+    revived = asyncio.run(g2.claim_token("T", 11, claim_id="c11", manifest_revision=REV))
+    assert revived, "the next iteration was not grantable at all after sidecar loss"
+    assert revived not in tokens, (
+        "a grant issued after sidecar loss reused an identity the worker has already "
+        "applied, so a long-running worker would silently skip this dose"
+    )
+
+
+def test_the_winner_is_durable_before_the_gate_is(tmp_path) -> None:
+    """⚑⚑ THE WRITE ORDER ITSELF, WHICH WAS COMMENT-ONLY UNTIL A REVIEW MUTATED
+    IT AND NOTHING FAILED.
+
+    Reverting `_persist` to gate-then-winner passed the whole suite, because the
+    other durability tests exercise the RESULT of the ordering (reconciliation
+    on load) and not the ordering. Gate-first puts the unrecoverable outcome in
+    the crash window: the iteration is durably spent while the server no longer
+    knows which claim_id won, so the retry is refused and the dose is lost.
+
+    This observes the order directly, by recording when each file appears.
+    """
+    path = tmp_path / "seed_dole_gate.json"
+    winners = path.with_suffix(path.suffix + ".winners.json")
+    g = _SeedDoleGate(state_path=path)
+
+    order: list[str] = []
+    real_winner = g._persist_winner
+    real_gate = g._persist_gate
+
+    def _w() -> bool:
+        order.append("winner")
+        return real_winner()
+
+    def _g() -> None:
+        order.append("gate")
+        real_gate()
+
+    g._persist_winner = _w  # type: ignore[method-assign]
+    g._persist_gate = _g  # type: ignore[method-assign]
+
+    assert asyncio.run(g.claim_token("t", 10, claim_id="A", manifest_revision=REV))
+    assert order == ["winner", "gate"], (
+        f"persistence order is {order}; gate-first leaves a crash window in which the "
+        "dose is spent with no recoverable winner record"
+    )
+    assert winners.exists()
+    assert path.exists()

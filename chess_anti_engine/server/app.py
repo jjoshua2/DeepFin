@@ -459,7 +459,6 @@ class _SeedDoleGate:
         # older directory simply starts with no winners (every claim is then a
         # first claim, which is exactly today's behaviour).
         self._winners: dict[str, dict[str, Any]] = {}
-        self._grant_seq: dict[str, int] = {}
         if state_path is not None and state_path.exists():
             try:
                 loaded = json.loads(state_path.read_text(encoding="utf-8"))
@@ -475,14 +474,6 @@ class _SeedDoleGate:
                 }
             except Exception:
                 self._winners = {}
-        # The sequence rides the winner record, so it survives a restart with
-        # it. A worker holding seq N must not be handed N again for a new dose.
-        for _k, _w in self._winners.items():
-            try:
-                self._grant_seq[_k] = max(int(self._grant_seq.get(_k, 0)), int(_w.get("grant_seq", 0) or 0))
-            except Exception:
-                continue
-
         # ⚑⚑ RECONCILE THE WINNER RECORD INTO THE GATE. Without this, reversing
         # the write order (winner first, then gate) trades a lost dose for a
         # DOUBLE GRANT, which is worse. MEASURED: persist gate=9 and
@@ -513,7 +504,7 @@ class _SeedDoleGate:
         ⚑⚑ THE RETURN VALUE IS LOAD-BEARING: winner durability is a
         PRECONDITION FOR ACKNOWLEDGING A GRANT, not merely for advancing the
         gate. An earlier version returned early from persistence on failure but
-        still answered `granted=true, grant_seq=N`, so the worker installed and
+        still answered `granted=true` with a token, so the worker installed and
         played a dose the server had no durable record of. A crash then left
         neither winner nor gate, and a second worker won the same dose.
         """
@@ -615,14 +606,14 @@ class _SeedDoleGate:
         manifest_revision: str | None = None,
     ) -> bool:
         """Boolean form of :meth:`claim_seq`, for callers that only need won/lost."""
-        seq, _new = await self.claim_result(
+        token, _new = await self.claim_result(
             trial_key, training_iteration, publish_dir=publish_dir,
             allow_rearm=allow_rearm, claim_id=claim_id,
             manifest_revision=manifest_revision,
         )
-        return bool(seq)
+        return bool(token)
 
-    async def claim_seq(
+    async def claim_token(
         self,
         trial_key: str,
         training_iteration: int,
@@ -631,14 +622,14 @@ class _SeedDoleGate:
         allow_rearm: bool = False,
         claim_id: str | None = None,
         manifest_revision: str | None = None,
-    ) -> int:
-        """Sequence-only form of :meth:`claim_result`."""
-        seq, _new = await self.claim_result(
+    ) -> str:
+        """Token-only form of :meth:`claim_result`."""
+        token, _new = await self.claim_result(
             trial_key, training_iteration, publish_dir=publish_dir,
             allow_rearm=allow_rearm, claim_id=claim_id,
             manifest_revision=manifest_revision,
         )
-        return seq
+        return token
 
     async def claim_result(
         self,
@@ -649,15 +640,32 @@ class _SeedDoleGate:
         allow_rearm: bool = False,
         claim_id: str | None = None,
         manifest_revision: str | None = None,
-    ) -> tuple[int, bool]:
-        """Claim the dole; return (grant_seq, newly_issued).
+    ) -> tuple[str, bool]:
+        """Claim the dole; return (grant_token, newly_issued).
 
-        `grant_seq` is 0 when not granted. `newly_issued` distinguishes a fresh
-        grant from an idempotent REPLAY of one already held -- both return the
-        same positive sequence, and only the first is an event worth logging.
-        Without the flag the `seed dole GRANTED` line fires on every ~30s poll
-        of the winning worker, because the winner deliberately keeps asking.
-        That would make the yardstick's own instrument lie again.
+        `grant_token` is "" when not granted, and otherwise an OPAQUE id for
+        one dose: replayed unchanged for a retry, fresh for a rearm.
+
+        ⚑⚑ OPAQUE AND COMPARED BY EQUALITY, NOT A MONOTONE COUNTER. This was a
+        per-trial integer, and that encoded an ORDERING assumption the storage
+        cannot honour. The worker's question is "is this the dose I already
+        applied?", which is equality; making it "is this newer than what I
+        applied?" imported a dependency on the counter never restarting.
+
+        It restarts. `_grant_seq` was rebuilt only from the winner sidecar, and
+        sidecar loss is explicitly TOLERATED (the gate keeps serving). MEASURED:
+        issue five grants for trial T, delete only `*.winners.json`, reload --
+        the durable gate still reads iteration 10, but the counter is back to
+        0, so iteration 11 issues seq 1. A long-running worker holding applied
+        seq 5 then silently SKIPS the next five legitimate doses. Sidecar loss
+        went from "lose replay for an already-spent iteration" to "suppress
+        several future doses". An opaque token cannot regress that way: a fresh
+        one is simply != the applied one, whatever the storage did.
+
+        `newly_issued` distinguishes a fresh grant from a REPLAY -- both return
+        the same token, and only the first is worth logging. Without it the
+        `seed dole GRANTED` line fires on every ~30s poll of the winning
+        worker, since the winner deliberately keeps asking.
 
         ⚑ The SEQUENCE, not a bool, is the worker-facing answer. A replay of an
         already-won claim returns the SAME number, so the worker can tell "this
@@ -723,7 +731,7 @@ class _SeedDoleGate:
             # ⚑⚑ A REARM RETIRES THE OLD WINNER. A same-iteration republish
             # deliberately re-opens the gate for one more dose. If the previous
             # winner's record survived that, its replay would match here and
-            # short-circuit -- handing back the OLD grant_seq, so the worker
+            # short-circuit -- handing back the OLD grant_token, so the worker
             # would see "same dose I already applied" and skip the legitimately
             # rearmed batch. The rearm is a new opportunity; the old win must
             # stop being replayable at that point.
@@ -738,7 +746,7 @@ class _SeedDoleGate:
                     and str(w.get("claim_id") or "") == str(claim_id)
                     and str(w.get("revision") or "") == str(manifest_revision or "")
                 ):
-                    return int(w.get("grant_seq", 0) or 0), False
+                    return str(w.get("grant_token") or ""), False
 
             last = int(self._last_iter.get(trial_key, -1))
             if rearm and last == int(training_iteration):
@@ -754,7 +762,7 @@ class _SeedDoleGate:
                 # only on a genuine grant, so a replay returns the same number
                 # and a rearm returns a new one -- which is exactly the
                 # distinction "have I already applied this" requires.
-                seq = int(self._grant_seq.get(trial_key, 0)) + 1
+                token = secrets.token_hex(16)
                 if claim_id is not None:
                     # ⚑ Stage, persist, and only THEN commit in memory. If the
                     # sidecar write fails we must not acknowledge -- and we must
@@ -766,19 +774,18 @@ class _SeedDoleGate:
                         "iteration": int(training_iteration),
                         "claim_id": str(claim_id),
                         "revision": str(manifest_revision or ""),
-                        "grant_seq": seq,
+                        "grant_token": token,
                     }
                     if not await run_in_threadpool(self._persist_winner):
                         if previous is None:
                             self._winners.pop(trial_key, None)
                         else:
                             self._winners[trial_key] = previous
-                        return 0, False
-                self._grant_seq[trial_key] = seq
+                        return "", False
                 self._last_iter[trial_key] = int(training_iteration)
                 await run_in_threadpool(self._persist_gate)
-                return seq, True
-            return 0, False
+                return token, True
+            return "", False
 
 
 def consume_seed_dole_rearm(publish_dir: Path, training_iteration: int) -> bool:
@@ -3025,10 +3032,14 @@ def create_app(
         # claim now lives on the authenticated POST below.
         #
         # `dole_fen_seeds` stays in the response, always False, because a
-        # pre-change worker reads this field and REMOVING it would change its
-        # behaviour by KeyError rather than by protocol. Such a worker is
-        # refused by the PROTOCOL_VERSION bump instead, which is a loud failure
-        # rather than a silently unseeded fleet.
+        # pre-change worker reads it and an explicit False is a clearer contract
+        # than an absent key. (It would NOT KeyError -- both pre-change call
+        # sites use `manifest.get(...)`, so removal yields None and reads the
+        # same as False. An earlier version of this comment claimed otherwise.) Such a worker is kept
+        # out by the PACKAGE VERSION gate (0.0.3 via `min_worker_version`), NOT
+        # by a PROTOCOL_VERSION bump -- that was tried and reverted, because
+        # `_check_worker_compat` requires exact protocol equality and so breaks
+        # both deploy orders. See pyproject.toml and the ledger's ROLLOUT.
         reader = _ManifestReader(manifest)
         decline, _seeds, _iteration = _dole_static_decision(reader)
         manifest["dole_fen_seeds"] = False
@@ -3090,14 +3101,14 @@ def create_app(
         # Rearm file (if any) is consumed inside claim under the gate lock so
         # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
         # polls return above and never reach claim — they cannot burn rearm.
-        grant_seq, newly_issued = await seed_dole_gate.claim_result(
+        grant_token, newly_issued = await seed_dole_gate.claim_result(
             trial_key,
             iteration,
             publish_dir=_publish_root(trial_id),
             claim_id=str(payload.get("claim_id") or "") or None,
             manifest_revision=revision,
         )
-        granted = bool(grant_seq)
+        granted = bool(grant_token)
         # THE observation that proves the dole took effect. Everything upstream
         # of this line is a reason to decline, and each of those returns a
         # reason_code silently; without this, "seeding is working" and "seeding
@@ -3112,7 +3123,21 @@ def create_app(
         # emit this line every ~30s and turn "one line per iteration per trial"
         # -- which the ledger's yardstick relies on -- into a falsehood.
         if newly_issued:
-            _log.info(
+            # ⚑⚑ WARNING, NOT INFO, AND THAT IS NOT A SEVERITY CLAIM. MEASURED on
+            # the live server root: `server.log` is 167MB and contains ZERO
+            # `seed dole GRANTED` lines while `seed_dole_gate.json` shows the
+            # gate advanced past iteration 2000 -- the grants happened, the log
+            # did not. `run_server.py` calls `uvicorn.run(..., log_level="info")`,
+            # and uvicorn's LOGGING_CONFIG leaves `chess_anti_engine.server` at
+            # effective level WARNING with no handlers, so every INFO record from
+            # this package is discarded at the logger.
+            #
+            # This line is the ledger's Layer-1 yardstick. At INFO the yardstick
+            # reads 0/10 on a PERFECTLY HEALTHY run and its pre-committed rule
+            # then says KILL AND REVERT -- and its negative control reads 0 on
+            # the old code too, so it could not separate broken from fixed. An
+            # instrument that reads the same on both is measuring nothing.
+            _log.warning(
                 "seed dole GRANTED: trial=%s iteration=%d seeds=%d user=%s (%s)",
                 trial_key or "<default>",
                 iteration,
@@ -3122,11 +3147,12 @@ def create_app(
             )
         return {
             "granted": granted,
-            # ⚑ The worker keys "have I applied this dose" on grant_seq, NOT on
-            # (iteration, revision): an identical same-iteration republish
+            # ⚑ The worker keys "have I applied this dose" on grant_token, NOT
+            # on (iteration, revision): an identical same-iteration republish
             # yields the same revision, so that pair cannot distinguish a
-            # rearmed dose from the one already played.
-            "grant_seq": grant_seq,
+            # rearmed dose from the one already played. It is compared by
+            # EQUALITY -- see claim_result for why ordering is unsafe here.
+            "grant_token": grant_token,
             "reason_code": "granted" if granted else "already_claimed",
             "seeds": seeds if granted else 0,
             "training_iteration": iteration,

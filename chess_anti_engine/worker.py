@@ -1094,15 +1094,11 @@ class WorkerSession:
         self._dole_claim_key: tuple[str, int, str] | None = None
         self._dole_claim_id: str = ""
         # Set only once the grant is actually installed. See _maybe_ingest_dole_flag.
-        # ⚑ PER TRIAL SCOPE, NOT GLOBAL. `grant_seq` is a per-trial counter on
-        # the server, and ONE WorkerSession outlives a trial reassignment
-        # (`_negotiate_lease` rewrites `self.leased_trial_id` in place). A
-        # single global high-water mark therefore carries trial A's sequence
-        # into trial B: after applying A's seq 5, B's first grant of seq 1
-        # reads as `1 <= 5` and the worker silently refuses B's seed batch
-        # until B reaches 6.
-        self._applied_dole_seq: dict[str, int] = {}
-        self._legacy_dole_seq: dict[str, int] = {}
+        # ⚑ PER TRIAL SCOPE. Grant identity is per trial on the server, and ONE
+        # WorkerSession outlives a trial reassignment (`_negotiate_lease`
+        # rewrites `self.leased_trial_id` in place), so a single global mark
+        # would carry trial A's state into trial B.
+        self._applied_dole_token: dict[str, str] = {}
         self._live_dole_queue: list[str] | None = None
         self._pending_sf_refute: list[str] = []
         self._live_sf_refute_queue: list[str] | None = None
@@ -1993,13 +1989,16 @@ class WorkerSession:
             return True
         return bool(manifest.get("dole_fen_seeds"))
 
-    def _claim_seed_dole(self, manifest: dict) -> int:
-        """The grant sequence this worker holds, or 0 if it did not win.
+    def _claim_seed_dole(self, manifest: dict) -> str:
+        """The opaque grant token this worker holds, or "" if it did not win.
 
-        ⚑ A SEQUENCE, NOT A BOOL. The server replays an already-won claim with
-        the SAME number, so `granted=true` alone cannot distinguish "the dose I
-        already applied" from "a new dose". `(iteration, revision)` cannot
-        either -- an identical same-iteration rearm republish reproduces both.
+        ⚑ A TOKEN, NOT A BOOL AND NOT A COUNTER. The server replays an
+        already-won claim with the SAME token, so `granted=true` alone cannot
+        distinguish "the dose I already applied" from "a new dose", and
+        `(iteration, revision)` cannot either -- an identical same-iteration
+        rearm republish reproduces both. It is compared by EQUALITY: a monotone
+        counter would additionally assume the server's numbering never
+        restarts, and it does when the winner sidecar is lost.
 
         ⚑ WHY THE WORKER NOW ASKS INSTEAD OF BEING TOLD. The grant used to be a
         field the unauthenticated manifest GET set, so anyone who could reach
@@ -2026,11 +2025,10 @@ class WorkerSession:
             # increasing sequence so the applied-once comparison behaves
             # identically to the old "apply whenever the flag is true".
             if not bool(manifest.get("dole_fen_seeds")):
-                return 0
-            scope = self._dole_scope(manifest)
-            nxt = self._legacy_dole_seq.get(scope, 0) + 1
-            self._legacy_dole_seq[scope] = nxt
-            return nxt
+                return ""
+            # Legacy server: it grants on the GET, once. A fresh token per
+            # grant reproduces the old "apply whenever the flag is true".
+            return uuid.uuid4().hex
 
         key = self._dole_key(manifest)
         revision = key[2]
@@ -2049,22 +2047,19 @@ class WorkerSession:
                 # Not fatal and not retried here: the next poll re-asks with the
                 # same claim_id, so a transient failure costs latency, not the dole.
                 self.log.warning("dole: claim rejected with HTTP %d", r.status_code)
-                return 0
+                return ""
             body = r.json()
         except Exception as exc:
             self.log.warning("dole: claim failed: %s", exc)
-            return 0
+            return ""
         if not bool(body.get("granted")):
             # `already_claimed` is the normal steady state -- one worker wins per
             # iteration and the rest log nothing louder than debug.
             self.log.debug("dole: not granted (%s)", body.get("reason_code"))
-            return 0
-        # A server that grants without a sequence is pre-grant_seq; treat the
-        # grant as sequence 1 more than whatever we last applied so it is acted
-        # on exactly once rather than silently dropped.
-        return int(body.get("grant_seq", 0) or 0) or (
-            self._applied_dole_seq.get(self._dole_scope(manifest), 0) + 1
-        )
+            return ""
+        # A server that grants without a token predates it; synthesise one so
+        # the dose is acted on exactly once rather than silently dropped.
+        return str(body.get("grant_token") or "") or uuid.uuid4().hex
 
     def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
@@ -2115,10 +2110,10 @@ class WorkerSession:
         # republish produces a byte-identical manifest and therefore the same
         # revision, so the worker would suppress the rearmed dose it exists to
         # play. Only the server knows a rearm re-opened the gate, so the
-        # question has to be asked and answered by `grant_seq`.
+        # question has to be asked and answered by `grant_token`.
         scope = self._dole_scope(manifest)
-        grant_seq = self._claim_seed_dole(manifest)
-        if grant_seq <= self._applied_dole_seq.get(scope, 0):
+        grant_token = self._claim_seed_dole(manifest)
+        if not grant_token or grant_token == self._applied_dole_token.get(scope):
             return
         reco = manifest.get("recommended_worker") or {}
         n = int(reco.get("opening_fen_dole_per_iter", 0) or 0)
@@ -2185,7 +2180,7 @@ class WorkerSession:
         # the server's replay hands the grant back. Marking it at claim time
         # instead would turn a local load failure into a silently skipped dose
         # -- the grant spent, the seeds never played.
-        self._applied_dole_seq[scope] = grant_seq
+        self._applied_dole_token[scope] = grant_token
         self.log.info(
             "dole: received %d seed(s) x%d -> %s; sf_refute=%d (frac=%.2f plies=%d iter=%d)",
             len(seeds), n, dest, len(sf_queue), sf_frac, sf_plies, train_iter,
