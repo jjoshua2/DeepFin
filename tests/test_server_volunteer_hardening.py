@@ -9,6 +9,7 @@ these were, and refusing writes outside the lease the server actually handed out
 """
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -295,46 +296,129 @@ def test_cleartext_refusal_names_the_override() -> None:
 # The flag must actually reach the server
 # --------------------------------------------------------------------------
 
-def test_require_worker_lease_is_wired_end_to_end() -> None:
-    """A knob that never reaches its consumer is this repo's signature defect.
+def test_require_worker_lease_reaches_create_app(monkeypatch) -> None:
+    """Hop 3->4, EXECUTED: parse real argv and see what `create_app` receives.
 
-    `require_worker_lease` has to survive four hops -- yaml allowlist, the
-    driver's server command line, the `run_server` parser, and `create_app` --
-    and a break in ANY of them leaves a config key that is accepted, logged,
-    and inert. Source-level on purpose: `_launch_distributed_server` spawns a
-    real uvicorn, so the alternative to reading the call site is booting a
-    server in a unit test.
+    ⚑ THIS REPLACES A SUBSTRING GREP THAT COULD NOT FAIL. The first version
+    asserted `"require_worker_lease" in <source text>`, which stayed green when
+    `run_server` was mutated to pass `bool(args.worker_self_register)` -- a knob
+    silently driven by the WRONG flag -- and when the harness key was typo'd out
+    of existence. A presence check is not a value read; that is the exact defect
+    this PR is about.
     """
     import chess_anti_engine.server.app as app_mod
     import chess_anti_engine.server.run_server as run_server_mod
+    import uvicorn
+
+    seen: dict[str, object] = {}
+
+    def _fake_create_app(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    # `main()` does `from chess_anti_engine.server.app import create_app` at
+    # call time, so the source module is the binding that matters.
+    monkeypatch.setattr(app_mod, "create_app", _fake_create_app)
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+
+    for argv, expected in (([], False), (["--require-worker-lease"], True)):
+        seen.clear()
+        monkeypatch.setattr(
+            "sys.argv", ["run_server", "--server-root", "/tmp/x", *argv],
+        )
+        run_server_mod.main()
+        assert seen["require_worker_lease"] is expected, (
+            f"argv={argv!r} -> create_app got {seen.get('require_worker_lease')!r}"
+        )
+        # And it is not accidentally driven by the neighbouring flag.
+        assert seen["worker_self_register"] is False
+
+
+def test_require_worker_lease_reaches_the_server_command_line(monkeypatch, tmp_path) -> None:
+    """Hop 1->2, EXECUTED: drive the real driver and read the argv it builds."""
+    import chess_anti_engine.tune.distributed_runtime as dr_mod
     import chess_anti_engine.tune.harness as harness_mod
-    import chess_anti_engine.tune.trainable_config_ops as cfg_ops_mod
-    import chess_anti_engine.utils.config_yaml as config_yaml_mod
 
-    hops = {
-        # yaml key is accepted by the schema
-        "config_yaml allowlist": (config_yaml_mod, '"require_worker_lease"'),
-        # classified so the reload path knows it is launch-fixed
-        "launch-fixed classification": (cfg_ops_mod, '"require_worker_lease"'),
-        # driver bakes it into the server command line
-        "driver command line": (harness_mod, "--require-worker-lease"),
-        # the server's own parser accepts it
-        "run_server parser": (run_server_mod, "--require-worker-lease"),
-        # and hands it to the app
-        "create_app pass-through": (run_server_mod, "require_worker_lease=bool("),
-    }
-    def _src(mod) -> str:
-        path = getattr(mod, "__file__", None)
-        assert path, f"{mod.__name__} has no source file"
-        return Path(path).read_text(encoding="utf-8")
+    built: list[list[str]] = []
 
-    missing = [
-        name for name, (mod, needle) in hops.items() if needle not in _src(mod)
-    ]
-    assert not missing, f"require_worker_lease never reaches: {missing}"
+    def _fake_spawn(cmd, **_kwargs):
+        built.append([str(c) for c in cmd])
+        raise RuntimeError("stop after argv is built")
 
-    # And the consumer reads it, rather than only accepting it.
-    assert "if lease_id_hdr or require_worker_lease:" in _src(app_mod)
+    monkeypatch.setattr(dr_mod, "_spawn_with_reap", _fake_spawn)
+    # Credential provisioning reads a real secret from the environment; it is
+    # not what this test is about.
+    monkeypatch.setattr(
+        harness_mod, "_prepare_distributed_worker_auth",
+        lambda **kw: ("tester", None),
+    )
+
+    for value, expected in ((False, False), (True, True)):
+        built.clear()
+        cfg = {
+            # ⚑ Without this the function returns None before building
+            # anything -- a version of this test that omitted it "passed"
+            # while asserting on an empty list.
+            "distributed_workers_per_trial": 1,
+            "distributed_server_host": "127.0.0.1",
+            "distributed_server_port": 45999,
+            "require_worker_lease": value,
+        }
+        with contextlib.suppress(Exception):
+            harness_mod._launch_distributed_server(
+                base_config=cfg, work_dir=tmp_path / f"wd_{value}",
+            )
+        assert built, "driver never built a server command line"
+        assert ("--require-worker-lease" in built[0]) is expected, built[0]
+
+
+def test_cleartext_guard_is_on_the_worker_startup_path() -> None:
+    """The pure function is tested above; this proves it is CALLED.
+
+    ⚑ Deleting the entire `cleartext_transport_refusal(...)` call block from
+    `_merge_cli_with_yaml_defaults` left the whole suite green, because every
+    other cleartext test exercised the pure function directly. A guard nothing
+    proves is installed is a guard that can be removed by accident.
+    """
+    import argparse
+
+    from chess_anti_engine.worker import _merge_cli_with_yaml_defaults
+
+    class _Args(argparse.Namespace):
+        """Every worker arg defaults to None.
+
+        `main()` builds its parser inline, so there is no parser object to take
+        real defaults from; enumerating them by hand would make this test fail
+        whenever an unrelated worker flag is added, which is how a guard test
+        gets deleted rather than fixed.
+        """
+
+        def __getattr__(self, name: str):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return None
+
+    def _args(**over):
+        ns = _Args()
+        ns.allow_cleartext_http = False
+        for k, v in over.items():
+            setattr(ns, k, v)
+        return ns
+
+    # Remote http:// must abort startup.
+    with pytest.raises(SystemExit) as exc:
+        _merge_cli_with_yaml_defaults(_args(), {"server_url": "http://203.0.113.7:45453"})
+    assert "--allow-cleartext-http" in str(exc.value)
+
+    # The override lets it through.
+    ns = _args(allow_cleartext_http=True)
+    _merge_cli_with_yaml_defaults(ns, {"server_url": "http://203.0.113.7:45453"})
+    assert ns.server_url == "http://203.0.113.7:45453"
+
+    # And loopback -- what the driver actually hands in-tree workers -- is fine.
+    ns = _args()
+    _merge_cli_with_yaml_defaults(ns, {"server_url": "http://127.0.0.1:45453"})
+    assert ns.server_url == "http://127.0.0.1:45453"
 
 
 def test_require_worker_lease_defaults_off_everywhere() -> None:
@@ -344,3 +428,133 @@ def test_require_worker_lease_defaults_off_everywhere() -> None:
     from chess_anti_engine.server.app import create_app
 
     assert inspect.signature(create_app).parameters["require_worker_lease"].default is False
+
+
+def test_record_contribution_ignores_the_uploader_supplied_meta() -> None:
+    """Defence in depth, tested where it can actually fail.
+
+    ⚑ `test_compacted_shard_records_contributor_rows` cannot catch this. By the
+    time `add_upload` runs on the route, `_stamp_shard_username` has already
+    overwritten `meta["username"]`, so trusting the meta and trusting the
+    authenticated account are the SAME value there -- mutating `add_upload` to
+    `self._record_contribution(meta.get("username"), ...)`, the exact thing its
+    comment forbids, left the whole suite green.
+
+    Calling the accumulator directly is the only place the two sources differ.
+    """
+    from chess_anti_engine.server.app import _BufferedUploadAccumulator
+
+    acc = _BufferedUploadAccumulator(
+        trial_id="t1", model_sha256="sha", created_at_unix=0.0, last_update_unix=0.0,
+    )
+    acc.add_upload(
+        samples=[_sample(0), _sample(1)],
+        meta={"username": "LIAR", "games": 1},
+        now_unix=0.0,
+        username="alice",
+    )
+    assert [c["username"] for c in acc.contributor_rows] == ["alice"]
+
+
+def test_contiguous_uploads_from_one_user_coalesce() -> None:
+    """A 2000-row shard built from many small uploads must not carry hundreds
+    of entries -- and coalescing must not corrupt the ranges."""
+    from chess_anti_engine.server.app import _BufferedUploadAccumulator
+
+    acc = _BufferedUploadAccumulator(
+        trial_id="t1", model_sha256="sha", created_at_unix=0.0, last_update_unix=0.0,
+    )
+    for _ in range(5):
+        acc.add_upload(samples=[_sample(0)], meta={}, now_unix=0.0, username="alice")
+    acc.add_upload(samples=[_sample(0)], meta={}, now_unix=0.0, username="bob")
+    for _ in range(3):
+        acc.add_upload(samples=[_sample(0)], meta={}, now_unix=0.0, username="alice")
+
+    assert acc.contributor_rows == [
+        {"username": "alice", "start": 0, "count": 5},
+        {"username": "bob", "start": 5, "count": 1},
+        {"username": "alice", "start": 6, "count": 3},
+    ]
+    assert sum(c["count"] for c in acc.contributor_rows) == len(acc.samples)
+
+
+def test_unverified_pending_shard_does_not_launder_its_claim() -> None:
+    """A shard promoted by a server predating the stamp carries the UPLOADER'S
+    claim. Re-seeding it must record no contributor rather than a name that
+    might be someone else's -- otherwise a ban lands on the wrong volunteer."""
+    from chess_anti_engine.server.app import _BufferedUploadAccumulator
+
+    acc = _BufferedUploadAccumulator(
+        trial_id="t1", model_sha256="sha", created_at_unix=0.0, last_update_unix=0.0,
+    )
+    meta_unverified = {"username": "victim"}  # no provenance_verified marker
+    verified = bool(meta_unverified.get("provenance_verified"))
+    recovered = str(meta_unverified.get("username") or "") if verified else ""
+
+    acc.add_upload(
+        samples=[_sample(0)], meta=meta_unverified, now_unix=0.0,
+        username=recovered or None,
+    )
+    assert acc.contributor_rows == [{"username": None, "start": 0, "count": 1}]
+
+
+def test_stamp_writes_the_verified_marker(tmp_path) -> None:
+    """The marker is what separates evidence from a claim; if it is absent the
+    reseed path has no way to tell them apart."""
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, upload_compact_shard_size=10_000)
+
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", _tar_bytes(tmp_path / "s", username="LIAR"), "application/x-tar")},
+        headers=_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    pending = [p for p in (server_root / "inbox").rglob("*.zarr") if "_pending" in str(p)]
+    attrs = json.loads((pending[0] / ".zattrs").read_text())
+    assert attrs["username"] == "u"
+    assert attrs["provenance_verified"] is True
+
+
+def test_lease_with_no_trial_cannot_write_to_a_named_trial() -> None:
+    """Fail-open closed: `assign_trial_lease` can issue a trial-less lease when
+    no trials are available, and reading that as 'authorized for everything'
+    makes it a cross-trial token for its whole lifetime."""
+    lease = {"username": "alice", "trial_id": None, "expires_at_unix": 1 << 40}
+    assert lease_authorizes_upload(lease, username="alice", trial_id="t_victim", now_unix=0) is not None
+    # It may still use the shared default route.
+    assert lease_authorizes_upload(lease, username="alice", trial_id=None, now_unix=0) is None
+
+
+def test_lease_without_expiry_is_not_eternal() -> None:
+    """An absent or zero `expires_at_unix` is a malformed lease, not one that
+    never expires -- the one reading that grants more than a valid lease can."""
+    for bad in ({"username": "a", "trial_id": "t1"}, {"username": "a", "trial_id": "t1", "expires_at_unix": 0}):
+        reason = lease_authorizes_upload(bad, username="a", trial_id="t1", now_unix=10**9)
+        assert reason is not None, bad
+
+
+def test_cleartext_override_is_readable_from_worker_yaml() -> None:
+    """`docs/operations.md` documents `allow_cleartext_http: true` in
+    worker.yaml. A documented escape hatch the guard cannot see would be an
+    accepted-and-ignored value -- the defect this PR is about."""
+    import argparse
+
+    from chess_anti_engine.worker import _merge_cli_with_yaml_defaults
+
+    class _Args(argparse.Namespace):
+        def __getattr__(self, name: str):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return None
+
+    ns = _Args()
+    ns.allow_cleartext_http = False
+    _merge_cli_with_yaml_defaults(
+        ns, {"server_url": "http://203.0.113.7:45453", "allow_cleartext_http": True},
+    )
+    assert ns.server_url == "http://203.0.113.7:45453"

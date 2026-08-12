@@ -648,6 +648,13 @@ class ShardMeta:
   # answer -- read ``contributors or [{"username": username, ...}]``, never
   # ``contributors`` alone.
     contributors: list[dict[str, Any]] | None = None
+  # True only when the SERVER wrote `username` from the authenticated account.
+  # ⚑ Absent/False means the value is the UPLOADER'S OWN CLAIM and must not be
+  # treated as provenance: shards promoted by a server predating the stamp are
+  # still on disk and get re-seeded at restart, and a worker can put any name it
+  # likes in its own meta. A ban that trusted an unverified name would quarantine
+  # the wrong volunteer's rows -- laundering a claim into evidence.
+    provenance_verified: bool | None = None
     run_id: str | None = None
     generated_at_unix: int | None = None
     model_sha256: str | None = None

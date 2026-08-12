@@ -491,6 +491,12 @@ def _merge_cli_with_yaml_defaults(args, cfg: dict) -> None:
   # is read or sent, so a refusal costs nothing and cannot half-leak. Raising
   # `SystemExit` rather than warning, because a warning on a volunteer's
   # terminal is a warning nobody reads while the password goes out anyway.
+  # ⚑ The yaml key is read HERE, not in the flag loop further down: the refusal
+  # must see it, and the refusal has to happen before any credential is read.
+  # A `worker.yaml` override that the guard could not see would be a documented
+  # escape hatch that does nothing -- an accepted-and-ignored value.
+    if not getattr(args, "allow_cleartext_http", False) and cfg.get("allow_cleartext_http"):
+        args.allow_cleartext_http = True
     refusal = cleartext_transport_refusal(
         args.server_url, allow=bool(getattr(args, "allow_cleartext_http", False)),
     )
@@ -1571,6 +1577,23 @@ class WorkerSession:
                     self.log.warning(
                         "server did not accept pending shard %s; keeping for retry: %s",
                         sp, body,
+                    )
+                else:
+      # ⚑ Previously a BARE `break` for every non-200: both helpers above
+      # return "not accepted / not terminal", the 200-only branch is skipped,
+      # and the worker stopped uploading with NO client-side log line at all.
+      # The only signal anywhere was a server-side WARNING. Silent upload
+      # wedges are this project's recurring outage class, and the lease
+      # authorization added alongside this makes 403 the first DESIGNED
+      # non-200 on this route -- undiagnosable in the field without this.
+                    detail = ""
+                    try:
+                        detail = str(r.json().get("detail", ""))
+                    except Exception:
+                        detail = (r.text or "")[:200]
+                    self.log.warning(
+                        "server returned HTTP %s for pending shard %s; keeping for retry: %s",
+                        r.status_code, sp, detail,
                     )
                 break
         return last_uploaded_at

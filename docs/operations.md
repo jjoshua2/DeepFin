@@ -297,6 +297,43 @@ multiply every limit by the worker count.
 `reason_code` after the human reason (`... (reason_code=worker_too_old)`), so a rejection
 can be classified without parsing prose that is free to change.
 
+### Requiring a lease for uploads
+
+```yaml
+tune:
+  require_worker_lease: true   # DEFAULT false
+```
+
+⚑⚑ **Do NOT set this on the in-tree fleet — it takes ingest to ZERO.** The
+driver launches every worker with `--trial-id`, which sets `fixed_trial_id`,
+which skips lease negotiation entirely. A driver-launched worker therefore
+*structurally* never obtains or sends a lease id and is refused **403 on every
+upload, forever**. Measured on this server: 821,818 uploads, zero leases ever
+issued, one `/v1/lease_trial` request and it was a 401.
+
+It is restart-gated like `worker_self_register`, so it detonates only after a
+full `run.py` restart — and then the trainer starves against
+`distributed_wait_timeout_seconds`. It is for a volunteer deployment whose
+workers negotiate their own leases.
+
+**Independently of the flag**, a lease id that IS supplied must now belong to
+the authenticated account, be unexpired, and match the route's trial. Today's
+driver-launched workers send none, so this is inert on the in-tree fleet.
+
+### Cleartext transport
+
+The worker refuses `http://` to a **non-loopback** server and exits, because
+HTTP Basic sends a reusable credential on every request and the same channel
+carries the manifest sha256 that is the only integrity check on the model
+checkpoint. Loopback is exempt, which is what the driver hands in-tree workers
+(`distributed_server_host: 0.0.0.0` resolves to `http://127.0.0.1:<port>`).
+
+⚑ **An off-box LAN worker will refuse to start.** `configs/pbt2_small.yaml`
+publishes `distributed_server_public_url: http://192.168.1.212:45453`, and that
+is exactly the shape the guard rejects. Until the server speaks TLS, start such
+workers with `--allow-cleartext-http` (or `allow_cleartext_http: true` in
+`worker.yaml`).
+
 ### Banning someone
 
 ```bash
@@ -332,12 +369,30 @@ single one owns the output — and reading it was the documented procedure until
 shards now carry a `contributors` list of
 `{"username", "start", "count"}` entries over the shard's own row order, so one
 contributor's rows can be excised instead of the whole shard being discarded.
-Both values are server-stamped from the **authenticated** account, never from
-the uploader's own claim — otherwise one volunteer could aim your ban at another.
+⚑ **Trust `username`/`contributors` only when `provenance_verified` is true.**
+The server stamps both from the **authenticated** account — never from the
+uploader's own claim, or one volunteer could aim your ban at another — and sets
+`provenance_verified: true` at the same time. Shards promoted by a server from
+**before 2026-08-12** carry the uploader's own claim and no marker; those get
+re-seeded at restart with a `null` contributor rather than a name, because a
+null is honest and a possibly-wrong name gets the wrong person quarantined.
 
-The read is `contributors or [{"username": username, "start": 0, "count":
-positions}]`: `contributors` is absent on raw single-uploader shards, where
-`username` is still the answer, and on anything written before the field existed.
+The read is:
+
+```python
+if not attrs.get("provenance_verified"):
+    continue                      # unverifiable; do not attribute to anyone
+rows = attrs.get("contributors") or [
+    {"username": attrs.get("username"), "start": 0, "count": attrs["positions"]}
+]
+rows = [r for r in rows if r["username"] is not None]
+```
+
+`contributors` is absent on raw single-uploader shards, where `username` is
+still the answer. ⚑ Note the **last** line: a re-seeded shard can produce
+`[{"username": None, ...}]`, which is a *truthy* list, so `contributors or …`
+will NOT fall through to `username` — filter the nulls or the predicate gets
+`None` handed to it.
 
 Use the existing tooling rather than writing new tooling:
 

@@ -24,11 +24,17 @@ def main() -> None:
     )
     ap.add_argument(
         "--require-worker-lease", action="store_true",
-        help="Refuse shard uploads that do not carry an active lease owned by the "
-             "authenticated account and matching the route's trial. Default off, "
-             "because turning it on under a running fleet rejects every worker "
-             "that does not send a lease id. Flip it before opening the server "
-             "to volunteers.",
+        help="⚑ DO NOT SET THIS ON THE IN-TREE FLEET -- it takes ingest to ZERO. "
+             "Refuses shard uploads that do not carry an active lease owned by "
+             "the authenticated account and matching the route's trial. The "
+             "driver launches every worker with --trial-id, which sets "
+             "fixed_trial_id, which SKIPS lease negotiation entirely -- so a "
+             "driver-launched worker structurally never obtains or sends a lease "
+             "id and is refused 403 on every upload, forever. (Measured on the "
+             "live server: 821,818 uploads, zero leases ever issued.) This is "
+             "for a volunteer deployment whose workers negotiate leases, and it "
+             "is restart-gated, so it detonates only after a full run.py "
+             "restart. Default off.",
     )
     args = ap.parse_args()
 

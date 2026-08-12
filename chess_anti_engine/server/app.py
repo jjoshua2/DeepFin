@@ -34,12 +34,12 @@ from chess_anti_engine.replay.shard import (
     save_local_shard_arrays,
     validate_array_declarations,
 )
-from chess_anti_engine.utils.atomic import atomic_write_text
-from chess_anti_engine.utils.versioning import version_lt
 # Module scope, unlike `create_app`'s local `.lease` import: `lease_authorizes_upload`
 # is module level so the authorization rule can be tested as a pure function.
 # `server.lease` imports nothing from here, so this is not circular.
 from chess_anti_engine.server.lease import normalize_trial_id
+from chess_anti_engine.utils.atomic import atomic_write_text
+from chess_anti_engine.utils.versioning import version_lt
 import contextlib
 
 # Pending-upload staging dir name (server side of the wire protocol — see
@@ -718,7 +718,11 @@ def _stamp_shard_username(zarr_root: Path, username: str) -> None:
     if not isinstance(raw, dict):
         raise OSError(f"shard .zattrs is {type(raw).__name__}, expected object")
     raw["username"] = str(username)
-    attrs_path.write_text(json.dumps(raw, indent=4, sort_keys=True), encoding="utf-8")
+    raw["provenance_verified"] = True
+  # atomic_write_text, like every other write in this module: a torn `.zattrs`
+  # here cannot reach `_pending` (this runs pre-promote) but it does orphan an
+  # unloadable store under `inbox_root`.
+    atomic_write_text(attrs_path, json.dumps(raw, indent=4, sort_keys=True))
 
 
 def lease_authorizes_upload(
@@ -746,12 +750,27 @@ def lease_authorizes_upload(
         # Deliberately does not echo the lease's owner: the caller has already
         # proven they are not it.
         return "lease belongs to a different account"
+  # ⚑ NOT `if expires_at and ...`. An absent or zero `expires_at_unix` is not a
+  # lease that never expires, it is a malformed lease -- and treating it as
+  # eternal is the one reading that grants MORE access than any well-formed
+  # lease could. `prune_expired_leases` only runs when someone calls
+  # /v1/lease_trial, so nothing else would clean it up.
     expires_at = int(lease.get("expires_at_unix") or 0)
-    if expires_at and expires_at <= int(now_unix):
-        return "lease expired"
+    if expires_at <= int(now_unix):
+        return "lease expired or has no expiry"
     want = normalize_trial_id(trial_id)
     have = normalize_trial_id(lease.get("trial_id"))
-    if want is not None and have is not None and want != have:
+    if want is None:
+        # The default (no-trial) route is the shared one; any lease may use it.
+        return None
+  # ⚑ A lease with NO trial does NOT authorize a NAMED trial. The reverse
+  # direction above is deliberate; this one was a fail-open: `assign_trial_lease`
+  # can issue a trial-less lease when `available_trials` is empty, and reading
+  # that as "authorized for everything" turns it into a permanent cross-trial
+  # token for the life of the lease.
+    if have is None:
+        return f"lease is not scoped to a trial, cannot write to {want!r}"
+    if want != have:
         return f"lease is for trial {have!r}, not {want!r}"
     return None
 
@@ -829,12 +848,17 @@ _SHARD_META_FIELD_KINDS: dict[str, str] = {
     # ``positions``, ``run_id``).
     "version": "writer_owned",
     "username": "writer_owned",
-    # Writer-owned in the sense that the COMPACTOR assembles it, but it is the
-    # one writer-owned field carrying input provenance rather than discarding
-    # it: `username` on the output names this process, and `contributors` says
-    # whose rows it merged. Its own kind so the distinction is not lost the
-    # next time someone reads this table.
+    # Writer-owned: the COMPACTOR assembles it. It is the one writer-owned field
+    # that carries input provenance rather than discarding it -- `username` on
+    # the output names this process, `contributors` says whose rows it merged.
+    # ⚑ The VALUE here is documentation only. Nothing reads these strings; only
+    # `set(_SHARD_META_FIELD_KINDS)` is used, to assert the table and the
+    # dataclass agree. Do not add dispatch on them without changing that.
     "contributors": "writer_owned_provenance",
+    # Writer-owned: the compacted shard's provenance is verified exactly when
+    # every contributing upload's was, which is what `_record_contribution`
+    # enforces by refusing to record an unverified name at all.
+    "provenance_verified": "writer_owned_provenance",
     "generated_at_unix": "writer_owned",
     "positions": "writer_owned",
     "run_id": "writer_owned",
@@ -1176,6 +1200,7 @@ def _flush_buffered_upload_to_inbox(
         # exactly why it cannot answer "whose data is in here". That is what
         # `contributors` is for; see the ShardMeta field comment.
         contributors=[dict(entry) for entry in acc.contributor_rows] or None,
+        provenance_verified=True,
         run_id=acc.trial_id,
         generated_at_unix=int(now_unix),
         positions=int(acc.positions),
@@ -2594,8 +2619,13 @@ def create_app(
   # trial URL, and the lease was loaded only AFTER the shard had been stored,
   # purely to attribute throughput.
   #
-  # Running before the drain is the point -- a refusal after `await file.read()`
-  # has already paid for the whole upload.
+  # ⚑ This runs before the shard is written to `inbox_root`, NOT before the body
+  # is received. `file: UploadFile = File(...)` makes Starlette parse the whole
+  # multipart during dependency resolution, so the bytes are already spooled by
+  # the time this function is entered -- MEASURED: an 8 MB body is fully spooled
+  # before the 403. The check saves the copy into the inbox, the extract, and
+  # the validate; it does not save the transfer. The same is already true of the
+  # `max_bytes` guard below. Bounding the transfer needs middleware, not this.
   #
   # Two modes, because requiring a lease is a fleet-breaking change: when a
   # lease id IS supplied it must check out (that closes the cross-trial and
@@ -2797,11 +2827,16 @@ def create_app(
             except OSError as exc:
                 delete_shard_path(tmp_zarr)
                 log.exception("failed to stamp uploader identity onto extracted shard")
-                return {
-                    "stored": False,
-                    "rejected": True,
-                    "reason": f"provenance stamp failed: {type(exc).__name__}: {exc}",
-                }
+      # ⚑ HTTPException, NOT `{"rejected": True}`. `rejected` is TERMINAL on
+      # this route -- the worker quarantines its local pending shard and never
+      # retries it. A stamp failure is a LOCAL disk fault (ENOSPC, EACCES),
+      # which is transient and has nothing to do with the shard's validity, so
+      # returning `rejected` would destroy good selfplay over a full disk. A
+      # non-200 keeps the shard pending and resendable.
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"provenance stamp failed: {type(exc).__name__}: {exc}",
+                ) from exc
             try:
                 zarr_root.replace(pending_path)
             except Exception as exc:
@@ -3345,15 +3380,22 @@ def create_app(
                     last_update_unix=mtime,
                 )
                 upload_accumulators[acc_key] = acc
-            # Server-verified: `_stamp_shard_username` overwrote the worker's
-            # claim with the authenticated account before this shard was ever
-            # promoted to the pending dir, so reading it back here recovers
-            # provenance rather than trusting the uploader.
+            # ⚑ ONLY if the SERVER stamped it. `_stamp_shard_username` writes
+            # `provenance_verified` alongside the username, so a shard promoted
+            # by a server predating this change -- still on disk and re-seeded
+            # here after an upgrade -- carries the UPLOADER'S claim and is
+            # passed through as None instead. A null contributor is honest; a
+            # name that might be someone else's is how a ban lands on the wrong
+            # volunteer. REPRODUCED before this guard existed: a pre-upgrade
+            # shard uploaded by `mallory` claiming `victim` recovered as
+            # `victim`.
+            verified = bool(meta_dict.get("provenance_verified"))
+            recovered_user = str(meta_dict.get("username") or "") if verified else ""
             acc.add_upload(
                 samples=samples,
                 meta=meta_dict,
                 now_unix=mtime,
-                username=(str(meta_dict["username"]) if meta_dict.get("username") else None),
+                username=recovered_user or None,
             )
             acc.pending_paths.append(entry)
             if upload_sha is not None:
