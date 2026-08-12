@@ -231,7 +231,7 @@ selfplay:
   # PIN. Unreachable only because opening_book_prob is 1.0; keeping it means this deletion
   # is not conditional on another key not moving.
   random_start_plies: 2
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_860.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_138.txt
   # DELETED opening_fen_prob: 0.0, and structurally superseded: opening.py:79-88 disables the probabilistic draw entirely while opening_fen_dole_per_iter>0
   opening_fen_net_side_to_move: true
   opening_fen_dole_per_iter: 1
@@ -243,13 +243,13 @@ selfplay:
   sf_refute_opp_policy_net_blend: 0.0
   blindspot_harvest_out_path: /home/josh/projects/chess/data/harvest/blindspot_live.txt
   mcts: gumbel
-  mcts_simulations: 256
+  mcts_simulations: 100
   # ⚑ PIN. Inert ONLY because it equals mcts_simulations. `progressive_mcts` is not
   # settable from yaml and defaults True, so DELETING THIS LINE DROPS START SIMS 256 -> 50.
   mcts_start_simulations: 256
   playout_cap_fraction: 0.25
   fast_simulations: 32
-  gumbel_topk: 32
+  gumbel_topk: 16
   gumbel_vloss_weight: 1
   # 2026-08-09 search-authority bundle. BOTH knobs move together on purpose: they
   # MULTIPLY on the top-1 flip condition, and measured one-at-a-time they do NOT add
