@@ -1,4 +1,4 @@
-"""`policy_embedding_shared` — the lc0-style shared policy representation, and
+"""`policy_embedding_mode` — the shared policy adapter, and
 `enable_policy_sf_head` — dropping the permanently-dead `policy_sf` head.
 
 The experiment: lc0 builds ONE policy embedding and hands it to every policy
@@ -45,8 +45,13 @@ from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 _PLANES = 175
 
 
+# The two adapter modes that actually build a layer. Both are function-preserving at
+# init; they differ in WHICH mechanism the arm tests -- see `_policy_tokens`.
+_ADAPTER_MODES = ("linear", "residual_mish")
+
+
 def _cfg(
-    *, policy_embedding_shared: bool = False, enable_policy_sf_head: bool = True,
+    *, policy_embedding_mode: str = "off", enable_policy_sf_head: bool = True,
 ) -> ModelConfig:
     return ModelConfig(
         kind="transformer",
@@ -54,17 +59,17 @@ def _cfg(
         num_layers=2,
         num_heads=4,
         use_smolgen=False,
-        policy_embedding_shared=policy_embedding_shared,
+        policy_embedding_mode=policy_embedding_mode,
         enable_policy_sf_head=enable_policy_sf_head,
     )
 
 
 def _build(
-    *, policy_embedding_shared: bool = False, enable_policy_sf_head: bool = True,
+    *, policy_embedding_mode: str = "off", enable_policy_sf_head: bool = True,
 ) -> ChessNet:
     model = build_model(
         _cfg(
-            policy_embedding_shared=policy_embedding_shared,
+            policy_embedding_mode=policy_embedding_mode,
             enable_policy_sf_head=enable_policy_sf_head,
         )
     )
@@ -98,12 +103,13 @@ def _train_the_embedding(model: ChessNet, scale: float = 0.05) -> ChessNet:
 # --------------------------------------------------------------------------
 
 
-def test_the_shared_embedding_is_exactly_function_preserving_at_init() -> None:
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
+def test_the_shared_embedding_is_exactly_function_preserving_at_init(mode: str) -> None:
     """⚑ Zero-init + `mish(0) == 0` means the enabled net starts as a bit-identical
     copy of the disabled one, so a warm start from a checkpoint without the layer
     costs nothing. If this drifted, the arm would begin with a free boot shock and
     the readout would measure the shock."""
-    off, on = _build(), _build(policy_embedding_shared=True)
+    off, on = _build(), _build(policy_embedding_mode=mode)
     missing, unexpected = on.load_state_dict(off.state_dict(), strict=False)
     assert sorted(missing) == ["policy_embedding.bias", "policy_embedding.weight"]
     assert not unexpected
@@ -131,13 +137,57 @@ def test_the_shared_embedding_is_genuinely_NONLINEAR() -> None:
     Subtracting `f(0)` removes the bias, and the residual is linear for the affine
     mutant and still curved here.
     """
-    model = _train_the_embedding(_build(policy_embedding_shared=True), scale=0.5)
+    model = _train_the_embedding(_build(policy_embedding_mode="residual_mish"), scale=0.5)
     t = torch.randn(2, 64, 64)
     with torch.no_grad():
         at_zero = model._policy_tokens(torch.zeros_like(t))
         once = model._policy_tokens(t) - at_zero
         twice = model._policy_tokens(2 * t) - at_zero
     assert not torch.allclose(twice, 2 * once, atol=1e-4)
+
+
+def test_LINEAR_mode_is_exactly_affine_and_therefore_the_ISOLATION_arm() -> None:
+    """⚑ The complement of the nonlinearity test, and the reason both modes exist.
+
+    `linear` is `W t + b`. It spans the same function class as each head's Q/K on
+    the raw trunk, so it adds NO representational capacity -- which is precisely
+    what makes it the clean arm: it isolates **reparameterization geometry** (a
+    policy-only factorization `A_h S` trains on a different trajectory than
+    `A'_h`, even at equal function class) from the **capacity** that
+    `residual_mish` also adds.
+
+    ⚑ Affine, not linear: the bias means `f(2t) != 2 f(t)`. Subtracting `f(0)`
+    removes it, and THAT residual must be exactly homogeneous here -- the same
+    discriminator the nonlinearity test uses, read in the opposite direction.
+    """
+    model = _train_the_embedding(_build(policy_embedding_mode="linear"), scale=0.5)
+    t = torch.randn(2, 64, 64)
+    with torch.no_grad():
+        at_zero = model._policy_tokens(torch.zeros_like(t))
+        once = model._policy_tokens(t) - at_zero
+        twice = model._policy_tokens(2 * t) - at_zero
+    assert torch.allclose(twice, 2 * once, atol=1e-4)
+
+
+def test_an_unknown_mode_RAISES_rather_than_falling_back_to_off() -> None:
+    """⚑ A silent fallback to "off" is this codebase's signature defect: the arm
+    would come up healthy, train the CONTROL topology, and the whole readout
+    window would be recorded against the wrong architecture."""
+    with pytest.raises(ValueError, match="policy_embedding_mode"):
+        _build(policy_embedding_mode="residual_gelu")
+    with pytest.raises(ValueError, match="policy_embedding_mode"):
+        _build(policy_embedding_mode="shared")
+
+
+def test_the_two_modes_build_DIFFERENT_functions_once_trained() -> None:
+    """Same layer shape, same weights, different map -- otherwise the A/B/C
+    comparison would be measuring nothing."""
+    lin = _train_the_embedding(_build(policy_embedding_mode="linear"))
+    res = _train_the_embedding(_build(policy_embedding_mode="residual_mish"))
+    res.load_state_dict(lin.state_dict(), strict=False)
+    x = _planes()
+    with torch.no_grad():
+        assert not torch.allclose(lin(x)["policy_own"], res(x)["policy_own"], atol=1e-5)
 
 
 def test_disabled_the_embedding_is_not_built_and_the_tokens_pass_through() -> None:
@@ -167,8 +217,11 @@ _VALUE_OUTPUT_KEYS = (
 )
 
 
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
 @pytest.mark.parametrize("key", _POLICY_OUTPUT_KEYS)
-def test_EVERY_policy_head_gradient_REACHES_the_shared_representation(key: str) -> None:
+def test_EVERY_policy_head_gradient_REACHES_the_shared_representation(
+    key: str, mode: str,
+) -> None:
     """⚑ THE EXPERIMENT'S WHOLE HYPOTHESIS, stated as a measurement.
 
     Every policy head's loss must land on a parameter that `policy_own` -- the
@@ -181,18 +234,19 @@ def test_EVERY_policy_head_gradient_REACHES_the_shared_representation(key: str) 
     to the raw trunk with all 31 tests still passing -- and a head detached from
     the shared layer makes the arm measure something other than sharing.
     """
-    model = _train_the_embedding(_build(policy_embedding_shared=True))
+    model = _train_the_embedding(_build(policy_embedding_mode=mode))
     assert _grad_norm_on_embedding(model, key) > 0.0
 
 
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
 @pytest.mark.parametrize("key", _VALUE_OUTPUT_KEYS)
-def test_NO_value_head_reads_the_shared_policy_embedding(key: str) -> None:
+def test_NO_value_head_reads_the_shared_policy_embedding(key: str, mode: str) -> None:
     """The other half of the hypothesis: the representation is policy-SPECIFIC.
     If any value output read it, this would be another trunk layer and the arm
     would be testing depth, not sharing. Parametrized over ALL of them for the
     same reason as above -- checking only `wdl` and `sf_eval` left four
     unpinned."""
-    model = _train_the_embedding(_build(policy_embedding_shared=True))
+    model = _train_the_embedding(_build(policy_embedding_mode=mode))
     assert _grad_norm_on_embedding(model, key) == 0.0
 
 
@@ -221,11 +275,12 @@ def _policy_from_path(model: ChessNet, path: str, x: torch.Tensor) -> torch.Tens
     raise AssertionError(path)
 
 
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
 @pytest.mark.parametrize(
     "path",
     ["forward", "inference_only", "forward_legal_policy", "forward_legal_policy_rows"],
 )
-def test_EVERY_policy_path_reads_the_shared_embedding(path: str) -> None:
+def test_EVERY_policy_path_reads_the_shared_embedding(path: str, mode: str) -> None:
     """⚑⚑ THE DEPLOYMENT TEST. `policy_own` is the search prior, and selfplay/UCI
     do NOT take the training `forward`: they take the compact-legal paths and the
     `_inference_only` branch. A path that kept projecting off the raw trunk would
@@ -236,7 +291,7 @@ def test_EVERY_policy_path_reads_the_shared_embedding(path: str) -> None:
     path's output to CHANGE. A path that never called it is unaffected.
     """
     x = _planes()
-    trained = _train_the_embedding(_build(policy_embedding_shared=True))
+    trained = _train_the_embedding(_build(policy_embedding_mode=mode))
     with torch.no_grad():
         with_embedding = _policy_from_path(trained, path, x).clone()
         emb = trained.policy_embedding
@@ -247,10 +302,11 @@ def test_EVERY_policy_path_reads_the_shared_embedding(path: str) -> None:
     assert not torch.allclose(with_embedding, without, atol=1e-6)
 
 
-def test_the_compact_legal_paths_agree_with_the_full_forward() -> None:
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
+def test_the_compact_legal_paths_agree_with_the_full_forward(mode: str) -> None:
     """The four paths must be the SAME policy, not merely all non-trivial: a
     fresh `_policy_tokens` call per path is only correct if it is the same map."""
-    model = _train_the_embedding(_build(policy_embedding_shared=True))
+    model = _train_the_embedding(_build(policy_embedding_mode=mode))
     x = _planes(batch=2)
     with torch.no_grad():
         full = model(x)["policy_own"]
@@ -384,40 +440,54 @@ def test_compute_loss_still_tolerates_the_absent_head() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("field", ["policy_embedding_shared", "enable_policy_sf_head"])
-def test_flags_survive_the_manifest_round_trip(field: str) -> None:
-    for want in (True, False):
+_FIELD_VALUES = (
+    ("policy_embedding_mode", ("off", "linear", "residual_mish")),
+    ("enable_policy_sf_head", (True, False)),
+)
+
+
+@pytest.mark.parametrize(("field", "values"), _FIELD_VALUES)
+def test_flags_survive_the_manifest_round_trip(field: str, values: tuple) -> None:
+    for want in values:
         manifest = model_config_to_manifest_dict(dataclasses.replace(_cfg(), **{field: want}))
-        assert manifest[field] is want
-        assert getattr(model_config_from_manifest_dict(manifest), field) is want
+        assert manifest[field] == want
+        assert getattr(model_config_from_manifest_dict(manifest), field) == want
 
 
-@pytest.mark.parametrize("field", ["policy_embedding_shared", "enable_policy_sf_head"])
-@pytest.mark.parametrize("value", [True, False])
-def test_flags_reach_the_model_config_production_builds(field: str, value: bool) -> None:
+@pytest.mark.parametrize(("field", "values"), _FIELD_VALUES)
+def test_flags_reach_the_model_config_production_builds(field: str, values: tuple) -> None:
     """⚑ yaml -> TrialConfig -> ModelConfig. `model_config_from_flat_config` is
     NOT this path -- it is only reachable from `scripts/`, so a key that stops at
     the flat dict is dead in training while looking wired (measured on
     `categorical_head_coupled`, PR #397)."""
-    flat = flatten_run_config_defaults({"model": {field: value}, "train": {}})
-    built = _build_trial_model_config(TrialConfig.from_dict(flat))
-    assert getattr(built, field) is value
+    for value in values:
+        flat = flatten_run_config_defaults({"model": {field: value}, "train": {}})
+        built = _build_trial_model_config(TrialConfig.from_dict(flat))
+        assert getattr(built, field) == value
 
 
-@pytest.mark.parametrize("field", ["policy_embedding_shared", "enable_policy_sf_head"])
+@pytest.mark.parametrize("field", ["policy_embedding_mode", "enable_policy_sf_head"])
 def test_flags_are_accepted_by_the_yaml_schema(field: str) -> None:
     """Category-(a): a live-yaml key absent from the schema makes
     `flatten_run_config_defaults` raise, and it runs before the argument parser
     and outside any try -- the process would not boot."""
-    assert flatten_run_config_defaults({"model": {field: True}, "train": {}})[field] is True
+    assert field in flatten_run_config_defaults({"model": {field: True}, "train": {}})
     with pytest.raises(ValueError, match=f"{field}_typo"):
         flatten_run_config_defaults({"model": {f"{field}_typo": True}, "train": {}})
 
 
-@pytest.mark.parametrize("field", ["policy_embedding_shared", "enable_policy_sf_head"])
-@pytest.mark.parametrize(("checkpoint_value", "config_value"), [(False, True), (True, False)])
+@pytest.mark.parametrize(
+    ("field", "checkpoint_value", "config_value"),
+    [
+        ("policy_embedding_mode", "off", "residual_mish"),
+        ("policy_embedding_mode", "residual_mish", "off"),
+        ("policy_embedding_mode", "linear", "residual_mish"),
+        ("enable_policy_sf_head", False, True),
+        ("enable_policy_sf_head", True, False),
+    ],
+)
 def test_topology_migration_survives_resume(
-    field: str, checkpoint_value: bool, config_value: bool,
+    field: str, checkpoint_value: object, config_value: object,
 ) -> None:
     """⚑ Resume takes topology from the checkpoint's `arch`, so a flag outside
     `_RESUME_CONFIG_OWNED_ENCODING_KEYS` reverts to the donor on EVERY resume --
@@ -426,20 +496,21 @@ def test_topology_migration_survives_resume(
     arch = dataclasses.asdict(donor)
     arch["_schema_version"] = ARCH_SCHEMA_VERSION
     run_cfg = dataclasses.replace(donor, **{field: config_value})
-    assert getattr(resume_model_config_from_arch(arch, run_cfg), field) is config_value
+    assert getattr(resume_model_config_from_arch(arch, run_cfg), field) == config_value
 
 
-def test_resume_still_takes_real_topology_from_the_checkpoint() -> None:
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
+def test_resume_still_takes_real_topology_from_the_checkpoint(mode: str) -> None:
     """Negative control: widening the config-owned list must not let a SHAPE key
     escape the checkpoint."""
-    donor = dataclasses.replace(_cfg(policy_embedding_shared=True), num_layers=1)
+    donor = dataclasses.replace(_cfg(policy_embedding_mode=mode), num_layers=1)
     arch = dataclasses.asdict(donor)
     arch["_schema_version"] = ARCH_SCHEMA_VERSION
     run_cfg = dataclasses.replace(donor, num_layers=2)
     assert resume_model_config_from_arch(arch, run_cfg).num_layers == 1
 
 
-@pytest.mark.parametrize("field", ["policy_embedding_shared", "enable_policy_sf_head"])
+@pytest.mark.parametrize("field", ["policy_embedding_mode", "enable_policy_sf_head"])
 def test_the_flags_are_REFUSED_by_a_live_yaml_reload(field: str) -> None:
     """⚑⚑ HOW YOU TURN THESE ON, AND HOW YOU CANNOT. Every `ModelConfig` field is
     construction-bound, so editing the live yaml and restarting with `--resume`
@@ -464,7 +535,7 @@ def test_the_arena_loader_rebuilds_both_flags_from_a_saved_checkpoint(
     """
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
-    cfg = _cfg(policy_embedding_shared=True, enable_policy_sf_head=False)
+    cfg = _cfg(policy_embedding_mode="residual_mish", enable_policy_sf_head=False)
     # ⚑ `w_sf_move=0.0` is REQUIRED here, not incidental: the Trainer default is
     # 0.15, and the fail-closed guard rejects a positive weight against a net with
     # no `policy_sf` head. Production's live yaml already sets 0.0, but any fresh
@@ -483,7 +554,10 @@ def test_the_arena_loader_rebuilds_both_flags_from_a_saved_checkpoint(
     assert loaded.policy_sf is None
 
 
-def test_enabling_the_embedding_PRESERVES_optimizer_state(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
+def test_enabling_the_embedding_PRESERVES_optimizer_state(
+    mode: str, tmp_path: Path,
+) -> None:
     """⚑ The confound this removes, and why it is worth a test.
 
     Without `policy_embedding.*` in `_FRESH_PARAM_NAME_SUFFIXES`, warm-starting
@@ -510,7 +584,7 @@ def test_enabling_the_embedding_PRESERVES_optimizer_state(tmp_path: Path) -> Non
     banked = len(donor.opt.state)
     assert banked > 0
 
-    arm_cfg = _cfg(policy_embedding_shared=True)
+    arm_cfg = _cfg(policy_embedding_mode=mode)
     arm = Trainer(
         build_model(arm_cfg), device="cpu", lr=1e-3, optimizer="adamw",
         warmup_steps=10, warmup_lr_start=1e-5, use_amp=False,
@@ -543,7 +617,7 @@ def test_the_AOT_path_REFUSES_to_serve_a_prior_without_the_adapter(
     with pytest.raises(ValueError, match="distributed_inference_aot_dir"):
         _launch_inference_broker(
             config={
-                "policy_embedding_shared": True,
+                "policy_embedding_mode": True,
                 "distributed_inference_aot_dir": "data/aot_models_512",
                 "distributed_server_root": str(tmp_path / "srv"),
             },
@@ -554,10 +628,11 @@ def test_the_AOT_path_REFUSES_to_serve_a_prior_without_the_adapter(
 
 
 @pytest.mark.parametrize(
-    ("shared", "aot_dir"), [(False, "data/aot_models_512"), (True, "")],
+    ("mode", "aot_dir"),
+    [("off", "data/aot_models_512"), ("residual_mish", ""), ("linear", "")],
 )
 def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
-    shared: bool, aot_dir: str, tmp_path: Path,
+    mode: str, aot_dir: str, tmp_path: Path,
 ) -> None:
     """Negative control. A guard that refuses every launch is not a guard --
     production runs AOT today with the adapter off, and the adapter is safe when
@@ -572,7 +647,7 @@ def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
     try:
         _launch_inference_broker(
             config={
-                "policy_embedding_shared": shared,
+                "policy_embedding_mode": mode,
                 "distributed_inference_aot_dir": aot_dir,
                 "distributed_server_root": str(tmp_path / "srv"),
             },
@@ -580,7 +655,14 @@ def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
             publish_dir=tmp_path / "pub",
             trial_dir=tmp_path / "trial",
         )
-    except Exception as exc:  # the launch fails for unrelated reasons; only the AOT text matters
+    except (NameError, AttributeError, TypeError):
+        # ⚑ RE-RAISE programming errors. An earlier revision of this test had a
+        # NameError in the config dict, and the broad `except` swallowed it -- the
+        # assert then ran against an empty string and PASSED. A negative control
+        # that cannot fail is worse than no control; only environment failures
+        # (no real server root) may be tolerated here.
+        raise
+    except Exception as exc:  # only the AOT message is under test
         raised = f"{type(exc).__name__}: {exc}"
     assert "distributed_inference_aot_dir" not in raised, raised
 
@@ -588,4 +670,4 @@ def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
 def test_arch_schema_version_was_bumped_for_these_fields() -> None:
     """Defaulting either field builds a different architecture, which is exactly
     what the constant documents itself for."""
-    assert ARCH_SCHEMA_VERSION >= 19
+    assert ARCH_SCHEMA_VERSION == 19

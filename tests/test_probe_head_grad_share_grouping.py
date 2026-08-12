@@ -114,7 +114,7 @@ def test_the_shared_policy_adapter_is_NOT_counted_as_trunk() -> None:
 
     model = build_model(ModelConfig(
         kind="transformer", embed_dim=32, num_layers=2, num_heads=4,
-        use_smolgen=False, policy_embedding_shared=True,
+        use_smolgen=False, policy_embedding_mode="residual_mish",
     ))
     _trunk, trunk_names, head_names, pol_shared = _classify_params(model)
 

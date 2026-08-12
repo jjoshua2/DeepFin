@@ -208,7 +208,7 @@ _MODEL_PASSTHROUGH = (
     "smolgen_relation_coeff_norm", "smolgen_relation_scale",
     "phase_output_adapter", "phase_output_adapter_dim", "phase_smolgen", "phase_piece_thresholds",
     "categorical_head_coupled",
-    "policy_embedding_shared",
+    "policy_embedding_mode",
     "enable_policy_sf_head",
 )
 

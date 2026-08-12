@@ -681,6 +681,27 @@ class TransformerBlock(nn.Module):
         return x
 
 
+POLICY_EMBEDDING_MODES = ("off", "linear", "residual_mish")
+
+
+def _normalize_policy_embedding_mode(value: object) -> str:
+    """Validate the shared-policy-adapter mode.
+
+    ⚑ Raises on an unknown value rather than falling back to "off". A silent
+    fallback is this codebase's signature defect: the arm would come up healthy,
+    train the CONTROL topology, and the whole readout window would be recorded
+    against the wrong architecture.
+    """
+    mode = str(value or "off").strip().lower()
+    if mode in ("", "none", "false"):
+        mode = "off"
+    if mode not in POLICY_EMBEDDING_MODES:
+        raise ValueError(
+            f"policy_embedding_mode={value!r} is not one of {POLICY_EMBEDDING_MODES}"
+        )
+    return mode
+
+
 @dataclass
 class TransformerConfig:
     in_planes: int
@@ -730,7 +751,7 @@ class TransformerConfig:
   # of ~1.12M, and adds only new state_dict keys so a checkpoint trained with the
   # standalone head warm-starts with every shared tensor byte-identical.
     categorical_head_coupled: bool = False
-    policy_embedding_shared: bool = False
+    policy_embedding_mode: str = "off"
     enable_policy_sf_head: bool = True
     phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (
         DEFAULT_PHASE_PIECE_THRESHOLDS
@@ -1063,23 +1084,41 @@ class ChessNet(nn.Module):
         # keeps only its own Q/K. Here all four heads project straight off the
         # trunk, so an auxiliary policy loss can reach `policy_own` only through
         # the global trunk -- a representation that must simultaneously serve the
-        # value heads. The shared embedding gives the auxiliaries a policy-SPECIFIC
+        # value heads. A shared adapter gives the auxiliaries a policy-SPECIFIC
         # representation that `policy_own` necessarily reads.
         #
-        # Zero-init residual: p = t + mish(W t + b) with W = b = 0. `mish(0) == 0`
-        # exactly, so at init p == t and the net warm-starts from a checkpoint
-        # without this layer bit-identically, while still being a genuine NONLINEAR
-        # shared map once trained. An identity-initialised plain Linear would
-        # instead compose with each head's linear Q/K into another linear map --
-        # adding no representational content and testing only gradient coupling,
-        # which the 2026-08-12 grad-share probe already rejected (soft 94.1% vs own
-        # 94.7% trunk share).
-        self.policy_embedding_shared = bool(cfg.policy_embedding_shared)
+        # ⚑ THREE MECHANISMS ARE IN PLAY AND THE MODES SEPARATE THEM. Collapsing
+        # them is what an earlier revision of this comment got wrong:
+        #   1. gradient DELIVERY -- does the aux loss reach shared params at all.
+        #      REJECTED by the 2026-08-12 grad-share probe (soft 94.1% vs own
+        #      94.7% trunk share), so no mode tests it.
+        #   2. reparameterization GEOMETRY -- `A_h S` spans the same function class
+        #      as `A'_h`, but gradient descent on `(S, A_h)` does NOT follow the
+        #      same trajectory as on `A'_h`. A policy-only factorization may be a
+        #      better place for an already-aligned gradient than the global trunk,
+        #      which must also serve value. `linear` isolates this. ⚑ The gradient
+        #      cosine does NOT bound it: cosine limits how much NEW INFORMATION
+        #      soft carries, not how much the parameterization matters.
+        #   3. representational CAPACITY -- genuinely new nonlinear policy-specific
+        #      processing. `residual_mish` bundles (2) and (3).
+        #
+        # Both modes are exactly FUNCTION-PRESERVING at init, so either warm-starts
+        # from a checkpoint without the layer bit-identically and neither arm pays a
+        # boot shock the other does not:
+        #   linear         p = W t + b,          W = I, b = 0
+        #   residual_mish  p = t + mish(W t + b), W = b = 0  (`mish(0) == 0` exactly)
+        self.policy_embedding_mode = _normalize_policy_embedding_mode(
+            cfg.policy_embedding_mode
+        )
         self.policy_embedding: nn.Linear | None = None
-        if self.policy_embedding_shared:
+        if self.policy_embedding_mode != "off":
             emb = nn.Linear(output_embed_dim, output_embed_dim)
-            nn.init.zeros_(emb.weight)
-            nn.init.zeros_(emb.bias)
+            with torch.no_grad():
+                if self.policy_embedding_mode == "linear":
+                    nn.init.eye_(emb.weight)
+                else:
+                    nn.init.zeros_(emb.weight)
+                nn.init.zeros_(emb.bias)
             self.policy_embedding = emb
 
         self.value_wdl = ValueHead(output_embed_dim, 3)
@@ -1301,6 +1340,8 @@ class ChessNet(nn.Module):
         emb = self.policy_embedding
         if emb is None:
             return t
+        if self.policy_embedding_mode == "linear":
+            return emb(t)
         return t + F.mish(emb(t))
 
     def forward_legal_policy(

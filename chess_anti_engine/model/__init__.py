@@ -34,7 +34,7 @@ from .transformer import ChessNet, TransformerConfig
 # v18: categorical_head_coupled (defaulting it builds the standalone
 # `value_categorical` head for a checkpoint that has none, so the arena/UCI
 # loader would score a DEFAULTED architecture and report it as the coupled arm).
-# v19: policy_embedding_shared / enable_policy_sf_head. Defaulting the first
+# v19: policy_embedding_mode / enable_policy_sf_head. Defaulting the first
 # drops the shared policy embedding, so the arena/UCI loader would score a net
 # whose search prior is read straight off the trunk -- a DIFFERENT policy from
 # the trained one -- and report it as the shared-embedding arm. Defaulting the
@@ -93,7 +93,7 @@ class ModelConfig:
   # (lc0 value-embedding topology) instead of a standalone ValueHead. Part of
   # checkpoint identity: the two topologies have different state_dict keys.
     categorical_head_coupled: bool = False
-    policy_embedding_shared: bool = False
+    policy_embedding_mode: str = "off"
     enable_policy_sf_head: bool = True
     phase_piece_thresholds: tuple[int, int] = DEFAULT_PHASE_PIECE_THRESHOLDS
 
@@ -159,7 +159,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         phase_output_adapter_dim=int(mc.get("phase_output_adapter_dim", 64)),
         phase_smolgen=bool(mc.get("phase_smolgen", False)),
         categorical_head_coupled=bool(mc.get("categorical_head_coupled", False)),
-        policy_embedding_shared=bool(mc.get("policy_embedding_shared", False)),
+        policy_embedding_mode=str(mc.get("policy_embedding_mode", "off")),
         enable_policy_sf_head=bool(mc.get("enable_policy_sf_head", True)),
         phase_piece_thresholds=normalize_phase_piece_thresholds(mc.get("phase_piece_thresholds")),
     )
@@ -212,7 +212,7 @@ _RESUME_CONFIG_OWNED_ENCODING_KEYS = (
     # function-preserving, and dropping policy_sf removes state_dict keys the
     # tolerant loader is happy to ignore -- so checkpoint-owned, BOTH would
     # silently revert on every resume and neither experiment could run.
-    "policy_embedding_shared",
+    "policy_embedding_mode",
     "enable_policy_sf_head",
 )
 
@@ -345,7 +345,7 @@ def model_config_from_flat_config(
         phase_output_adapter_dim=int(cfg.get("phase_output_adapter_dim", 64)),
         phase_smolgen=bool(cfg.get("phase_smolgen", False)),
         categorical_head_coupled=bool(cfg.get("categorical_head_coupled", False)),
-        policy_embedding_shared=bool(cfg.get("policy_embedding_shared", False)),
+        policy_embedding_mode=str(cfg.get("policy_embedding_mode", "off")),
         enable_policy_sf_head=bool(cfg.get("enable_policy_sf_head", True)),
         phase_piece_thresholds=normalize_phase_piece_thresholds(
             cfg.get("phase_piece_thresholds")
@@ -408,7 +408,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "phase_output_adapter_dim": int(cfg.phase_output_adapter_dim),
         "phase_smolgen": bool(cfg.phase_smolgen),
         "categorical_head_coupled": bool(cfg.categorical_head_coupled),
-        "policy_embedding_shared": bool(cfg.policy_embedding_shared),
+        "policy_embedding_mode": str(cfg.policy_embedding_mode),
         "enable_policy_sf_head": bool(cfg.enable_policy_sf_head),
         "phase_piece_thresholds": list(normalize_phase_piece_thresholds(cfg.phase_piece_thresholds)),
     }
@@ -502,7 +502,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             phase_output_adapter_dim=int(cfg.phase_output_adapter_dim),
             phase_smolgen=bool(cfg.phase_smolgen),
             categorical_head_coupled=bool(cfg.categorical_head_coupled),
-            policy_embedding_shared=bool(cfg.policy_embedding_shared),
+            policy_embedding_mode=str(cfg.policy_embedding_mode),
             enable_policy_sf_head=bool(cfg.enable_policy_sf_head),
             phase_piece_thresholds=normalize_phase_piece_thresholds(cfg.phase_piece_thresholds),
         )

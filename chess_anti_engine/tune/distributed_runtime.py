@@ -1294,9 +1294,11 @@ def _launch_inference_broker(
     # and AOT covers only exact batch buckets, so uncovered sizes fall through to the
     # eager path WITH the adapter, making the served policy a mixture keyed on batch
     # size. Refuse rather than serve a prior that is not the one being trained.
-    if _aot_dir_configured(config) and bool(config.get("policy_embedding_shared", False)):
+    if _aot_dir_configured(config) and str(
+        config.get("policy_embedding_mode", "off") or "off"
+    ).lower() not in ("off", "", "none"):
         raise ValueError(
-            "policy_embedding_shared=true with distributed_inference_aot_dir="
+            "policy_embedding_mode is not off, with distributed_inference_aot_dir="
             f"{_aot_dir_configured(config)!r}: the AOT packages were compiled without the shared policy "
             "adapter and would serve a DIFFERENT prior than the one being trained. "
             "Rebuild the packages (scripts/build_aot_packages.py) or clear "

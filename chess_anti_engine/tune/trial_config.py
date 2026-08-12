@@ -167,7 +167,7 @@ class TrialConfig:
     phase_smolgen: bool = False
     phase_piece_thresholds: tuple[int, int] = DEFAULT_PHASE_PIECE_THRESHOLDS
     categorical_head_coupled: bool = False
-    policy_embedding_shared: bool = False
+    policy_embedding_mode: str = "off"
     enable_policy_sf_head: bool = True
 
   # --- Training ---
@@ -583,7 +583,7 @@ class TrialConfig:
                 config.get("phase_piece_thresholds")
             ),
             categorical_head_coupled=bool(config.get("categorical_head_coupled", False)),
-            policy_embedding_shared=bool(config.get("policy_embedding_shared", False)),
+            policy_embedding_mode=str(config.get("policy_embedding_mode", "off")),
             enable_policy_sf_head=bool(config.get("enable_policy_sf_head", True)),
 
   # --- Training ---
