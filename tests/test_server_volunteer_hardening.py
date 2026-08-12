@@ -733,3 +733,260 @@ def test_worker_logs_a_warning_on_a_non_200_upload(tmp_path, caplog) -> None:
     assert "lease not authorized" in text, "the server's reason never reached the worker log"
     # And the shard is retained for retry, not quarantined.
     assert list(pending.glob("*.zarr")), "a non-200 must not delete the pending shard"
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 (Codex, PR #400). Each test below names the finding it pins.
+# ---------------------------------------------------------------------------
+
+
+def test_strict_config_bool_refuses_the_quoted_string() -> None:
+    """⚑ `bool("false") is True`. That is the whole finding.
+
+    YAML makes `false` and `"false"` visually identical in a config file and
+    opposite in Python, and for these two keys the typo fails toward the
+    dangerous answer in BOTH directions -- ingest to zero, or credentials in
+    the clear.
+    """
+    from chess_anti_engine.utils.config_yaml import strict_config_bool
+
+    assert strict_config_bool(True, key="k", source="s") is True
+    assert strict_config_bool(False, key="k", source="s") is False
+
+    for bad in ("false", "true", "no", "", 0, 1, None, [], {}):
+        with pytest.raises(ValueError, match="must be a boolean"):
+            strict_config_bool(bad, key="k", source="s")
+
+
+def test_quoted_false_does_not_enable_lease_enforcement(monkeypatch, tmp_path) -> None:
+    """Hop 1->2 under the typo, EXECUTED against the real driver.
+
+    Pre-fix this appended `--require-worker-lease`, and because driver-launched
+    workers never negotiate a lease that is ingest-to-zero at the next restart
+    -- caused by typing the word that means "off".
+    """
+    import chess_anti_engine.tune.distributed_runtime as dr_mod
+    import chess_anti_engine.tune.harness as harness_mod
+
+    built: list[list[str]] = []
+
+    def _fake_spawn(cmd, **_kwargs):
+        built.append([str(c) for c in cmd])
+        raise RuntimeError("stop after argv is built")
+
+    monkeypatch.setattr(dr_mod, "_spawn_with_reap", _fake_spawn)
+    monkeypatch.setattr(
+        harness_mod, "_prepare_distributed_worker_auth", lambda **kw: ("tester", None),
+    )
+
+    for key in ("require_worker_lease", "worker_self_register"):
+        built.clear()
+        cfg = {
+            "distributed_workers_per_trial": 1,
+            "distributed_server_host": "127.0.0.1",
+            "distributed_server_port": 45999,
+            key: "false",
+        }
+        with pytest.raises(ValueError, match="must be a boolean"):
+            harness_mod._launch_distributed_server(
+                base_config=cfg, work_dir=tmp_path / f"wd_{key}",
+            )
+        # ⚑ The load-bearing half: it must fail BEFORE spawning, not spawn a
+        # misconfigured server and then complain.
+        assert not built, f"a server was launched despite a bad {key!r}: {built}"
+
+
+def test_quoted_false_does_not_enable_the_cleartext_override() -> None:
+    """Same defect, worker side, worse consequence: it sends the password."""
+    import argparse
+
+    from chess_anti_engine.worker import _merge_cli_with_yaml_defaults
+
+    class _Args(argparse.Namespace):
+        def __getattr__(self, name: str):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return None
+
+    ns = _Args()
+    ns.allow_cleartext_http = False
+    with pytest.raises(ValueError, match="must be a boolean"):
+        _merge_cli_with_yaml_defaults(
+            ns,
+            {"server_url": "http://203.0.113.7:45453", "allow_cleartext_http": "false"},
+        )
+    assert ns.allow_cleartext_http is False, "the string enabled the override"
+
+    # A real boolean still works, in both directions.
+    ns = _Args()
+    ns.allow_cleartext_http = False
+    _merge_cli_with_yaml_defaults(
+        ns, {"server_url": "http://203.0.113.7:45453", "allow_cleartext_http": True},
+    )
+    assert ns.allow_cleartext_http is True
+
+
+def test_loopback_exemption_covers_the_whole_127_range() -> None:
+    """`127.0.0.0/8` is all loopback, not just `127.0.0.1`.
+
+    Refusing `127.0.0.2` would push a user to set the security override on a
+    host where nothing can observe the traffic -- which teaches them to set it
+    where something can.
+    """
+    from chess_anti_engine.worker import cleartext_transport_refusal
+
+    for host in ("127.0.0.1", "127.0.0.2", "127.1.2.3", "[::1]", "localhost", "0.0.0.0"):
+        assert cleartext_transport_refusal(f"http://{host}:45453", allow=False) is None, host
+
+    # Negative control: the exemption did not swallow everything.
+    for host in ("203.0.113.7", "10.0.0.5", "example.com", "[2001:db8::1]"):
+        assert cleartext_transport_refusal(f"http://{host}:45453", allow=False) is not None, host
+
+
+def test_stamp_clears_uploader_supplied_contributors(tmp_path) -> None:
+    """⚑ Stamping `verified` over a forged contributor list is WORSE than not
+    stamping: the quarantine procedure reads `contributors` in preference to
+    `username` exactly when the shard is marked verified.
+    """
+    import json as _json
+
+    from chess_anti_engine.server.app import _stamp_shard_username
+
+    zroot = tmp_path / "shard_000001.zarr"
+    zroot.mkdir()
+    (zroot / ".zattrs").write_text(_json.dumps({
+        "username": "victim",
+        "contributors": [{"username": "victim", "start": 0, "end": 999}],
+        "games": 1,
+    }), encoding="utf-8")
+
+    _stamp_shard_username(zroot, "mallory")
+
+    attrs = _json.loads((zroot / ".zattrs").read_text(encoding="utf-8"))
+    assert attrs["username"] == "mallory"
+    assert attrs["provenance_verified"] is True
+    assert "contributors" not in attrs, (
+        "uploader-supplied contributor list survived the stamp and is now "
+        "carried under the server's own attestation"
+    )
+    # Untouched fields stay untouched.
+    assert attrs["games"] == 1
+
+
+def test_forged_verified_marker_on_a_legacy_shard_is_not_trusted(tmp_path) -> None:
+    """⚑ THE MARKER IS INSIDE THE UPLOAD. That is the finding.
+
+    `test_unverified_pending_shard_does_not_launder_its_claim` plants a shard
+    with NO marker, which is the honest pre-upgrade shape -- and it passed
+    against a guard that read nothing but the marker. But `.zattrs` ships
+    inside the uploader's tarball and only `_stamp_shard_username` overwrites
+    it, so a shard staged by a server that predates the stamp carries whatever
+    the uploader wrote, INCLUDING `provenance_verified: true`. Adding one key
+    to that fixture defeated the guard completely and recovered `victim`.
+
+    Nothing inside the shard can settle this, because the forgeable case
+    predates the code doing the checking. `_legacy_unstamped_shard_keys`
+    records the pre-existing shards server-side on first boot; this asserts
+    that witness is what decides.
+    """
+    from chess_anti_engine.replay.shard import PENDING_DIR_NAME
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    pending = server_root / "inbox" / PENDING_DIR_NAME
+    pending.mkdir(parents=True, exist_ok=True)
+    zp = pending / "1000_deadbeef_aaaa.zarr"
+    save_local_shard_arrays(
+        zp,
+        arrs=samples_to_arrays([_sample(i) for i in range(2)]),
+        meta=ShardMeta(
+            username="victim", games=1, positions=2,
+            model_sha256="abc1234567", model_step=0,
+        ),
+    )
+    # The forgery: mallory's tarball asserts the server's own attestation.
+    attrs_path = zp / ".zattrs"
+    attrs = json.loads(attrs_path.read_text())
+    attrs["username"] = "victim"
+    attrs["provenance_verified"] = True
+    attrs_path.write_text(json.dumps(attrs, indent=4, sort_keys=True))
+
+    client = _build_client(
+        server_root, upload_compact_shard_size=3, upload_compact_max_age_seconds=1e9,
+    )
+    # The witness must exist on disk, outside anything an uploader can write.
+    watermark = server_root / "provenance_migration.json"
+    assert watermark.exists(), "no server-side provenance watermark was written"
+    assert "1000_deadbeef_aaaa.zarr" in watermark.read_text()
+
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", _tar_bytes(tmp_path / "fresh", n=1), "application/x-tar")},
+        headers=_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    shards = _compacted_shards(server_root)
+    assert shards, "no compacted shard was produced"
+    _, meta = load_shard_arrays(shards[0])
+    names = [c["username"] for c in (meta.get("contributors") or [])]
+    assert "victim" not in names, (
+        f"a FORGED verification marker was trusted and laundered: {names!r}"
+    )
+    assert names == [None, "u"], names
+
+
+def test_the_watermark_does_not_distrust_shards_the_server_stamped(tmp_path) -> None:
+    """⚑ NEGATIVE CONTROL. A watermark that distrusts everything would pass the
+    test above while destroying attribution for the entire fleet -- which is
+    the failure mode of a guard tuned only against its positive case.
+
+    Boot once to lay down the watermark, upload through the real route so the
+    shard is stamped by THIS build, then boot again on the same root. The
+    second boot's recovery must still attribute it.
+    """
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    # Boot 1: empty server, so the watermark records nothing.
+    first = _build_client(server_root, upload_compact_shard_size=10_000)
+    assert json.loads((server_root / "provenance_migration.json").read_text())[
+        "legacy_shards"
+    ] == []
+
+    r = first.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", _tar_bytes(tmp_path / "s", n=2), "application/x-tar")},
+        headers=_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert [p for p in (server_root / "inbox").rglob("*.zarr") if "_pending" in str(p)], (
+        "the upload did not stay pending; this test needs it to survive to boot 2"
+    )
+
+    # Boot 2: same root, shard still pending. It was stamped by this build, so
+    # it must NOT be swept up as legacy.
+    second = _build_client(
+        server_root, upload_compact_shard_size=3, upload_compact_max_age_seconds=1e9,
+    )
+    r = second.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", _tar_bytes(tmp_path / "s2", n=1), "application/x-tar")},
+        headers=_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    shards = _compacted_shards(server_root)
+    assert shards, "no compacted shard was produced"
+    _, meta = load_shard_arrays(shards[0])
+    names = [c["username"] for c in (meta.get("contributors") or [])]
+    assert None not in names, (
+        f"the watermark distrusted a shard this build stamped: {names!r}"
+    )
+    assert set(names) == {"u"}, names

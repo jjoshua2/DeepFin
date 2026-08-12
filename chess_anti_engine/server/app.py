@@ -719,21 +719,45 @@ def _stamp_shard_username(zarr_root: Path, username: str) -> None:
     if not isinstance(raw, dict):
         raise OSError(f"shard .zattrs is {type(raw).__name__}, expected object")
     raw["username"] = str(username)
+  # ⚑ CLEAR, do not merge. `contributors` is a SERVER-OWNED field: compaction
+  # builds it from `_BufferedUploadAccumulator.contributor_rows`, which is
+  # recorded from the authenticated session. A raw single-uploader shard has
+  # no legitimate contributor list at all -- so any `contributors` present
+  # here came out of the uploader's tarball.
+  #
+  # Stamping `provenance_verified` while leaving that list intact would be
+  # WORSE than not stamping: the documented quarantine procedure reads
+  # `contributors` in preference to `username` exactly when the shard is
+  # marked verified, so an uploader could hand us a list naming someone else
+  # and we would carry it under our own attestation. That is the laundering
+  # this stamp exists to stop, arriving through the field one line down from
+  # the one being fixed.
+    raw.pop("contributors", None)
     raw["provenance_verified"] = True
   # atomic_write_text so a torn `.zattrs` cannot exist even transiently -- it
   # runs pre-promote, so it could not reach `_pending` anyway, but a half-written
   # store orphaned under `inbox_root` is still worth not creating.
   #
-  # ⚑ durable=False. This is on EVERY /upload_shard, and fsync here is measured
-  # at 6.69 ms median / 7.65 ms p95 on this box's ext4 root (utils/atomic.py's
-  # own docstring records 11 ms median with a tail past 1.8 s) versus 0.08 ms
-  # without. It buys nothing: the array chunks `extract_uploaded_shard_tar`
-  # just wrote are never fsynced either, and a crash before `zarr_root.replace`
-  # discards the whole staging dir regardless. `app.py`'s user-stats write on
-  # this same route already passes durable=False for exactly this reason.
-    atomic_write_text(
-        attrs_path, json.dumps(raw, indent=4, sort_keys=True), durable=False,
-    )
+  # ⚑ DURABLE, deliberately -- a review asked for `durable=False` here and the
+  # answer is no. The measured saving is real (6.69 ms median / 7.65 ms p95 on
+  # this box's ext4 root, versus 0.08 ms) but it is the wrong trade twice over:
+  #
+  #   1. `test_only_the_per_upload_telemetry_writers_are_exempted` documents the
+  #      exemption as belonging to the per-upload COUNTER writers. This is not a
+  #      counter -- it is the security artifact this whole change exists to
+  #      create, and the one input to a ban decision.
+  #   2. The cost is NOT event-loop stall. This runs inside `_finish_upload`,
+  #      which is already on `run_in_threadpool` (audit A5), on a route that
+  #      does ~110 ms of blocking work per upload. So the fsync costs ~6% of one
+  #      upload's own thread and stalls nothing else -- far less than the
+  #      framing "on the hottest route" suggests.
+  #
+  # Non-durable would degrade SAFELY (a lost rename leaves the old `.zattrs`,
+  # whose absent `provenance_verified` makes the reseed path record `None`
+  # rather than a wrong name), so this is not a correctness argument. It is a
+  # judgement that best-effort persistence is not what a provenance record
+  # should have, for 6% of an off-loop path.
+    atomic_write_text(attrs_path, json.dumps(raw, indent=4, sort_keys=True))
 
 
 def lease_authorizes_upload(
@@ -753,6 +777,24 @@ def lease_authorizes_upload(
     ``trial_id`` of None is the default (no-trial) route, which every lease can
     write to; a lease pinned to a named trial may not use it to reach a
     DIFFERENT named trial.
+
+    ⚑ WHAT THIS DOES NOT BUY: trial isolation. `_choose_trial_for_lease`
+    (`server/lease.py`) honours the caller's `requested_trial_id` whenever it
+    names a PUBLISHED trial, so an authenticated worker still picks its own
+    assignment and then passes this check legitimately. What a lease adds is
+    ATTRIBUTION and REVOCABILITY -- an upload is tied to an issued, expiring,
+    named grant -- not a restriction on which trial a worker may reach. It is
+    not a regression either: without leases any authenticated worker can post
+    to any trial already.
+
+    Left as is deliberately rather than server-assigning the trial. The
+    requested id must already be in `available_trials`, so the choice is over
+    PUBLISHED trials only -- and production publishes one, which makes the set
+    a singleton and the exposure empty. Overriding the request is how the PBT
+    harness pins and rebalances workers across trials, so closing this would
+    change live assignment behaviour to remove an exposure that does not exist
+    in this deployment. Revisit if multi-trial PBT is ever opened to
+    untrusted volunteers; see `docs/operations.md`.
     """
     if lease is None:
         return "unknown or expired lease"
@@ -3439,7 +3481,24 @@ def create_app(
             # volunteer. REPRODUCED before this guard existed: a pre-upgrade
             # shard uploaded by `mallory` claiming `victim` recovered as
             # `victim`.
-            verified = bool(meta_dict.get("provenance_verified"))
+      # ⚑ TWO conditions, and the second is the load-bearing one. The marker
+      # alone proves nothing: `.zattrs` travels inside the uploader's tarball,
+      # so a shard staged by a server that predates the stamp carries the
+      # uploader's claim in the same field the stamp uses. `legacy_unstamped_shards`
+      # is the server-side witness that separates "we wrote this" from "they
+      # did" -- see `_legacy_unstamped_shard_keys`.
+            try:
+                shard_key = str(entry.relative_to(root))
+            except ValueError:
+        # A shard outside the server root cannot be matched against the
+        # watermark, so it cannot be shown to be post-stamp. Distrust it:
+        # `None` costs an attribution, the alternative bans a stranger.
+                shard_key = ""
+            verified = bool(
+                shard_key
+                and meta_dict.get("provenance_verified")
+                and shard_key not in legacy_unstamped_shards,
+            )
             recovered_user = str(meta_dict.get("username") or "") if verified else ""
             acc.add_upload(
                 samples=samples,
@@ -3452,6 +3511,90 @@ def create_app(
                 recent_upload_shas[(trial_key, upload_sha)] = mtime
             recovered += 1
         return recovered
+
+    def _upload_staging_dirs() -> list[Path]:
+        """Every dir that can hold a shard awaiting compaction."""
+        dirs = [inbox / _PENDING_DIR_NAME, inbox / _IN_FLIGHT_DIR_NAME]
+        trials_dir = root / "trials"
+        if trials_dir.is_dir():
+            for trial_dir in sorted(trials_dir.iterdir()):
+                if trial_dir.is_dir():
+                    ti = trial_dir / inbox_dir
+                    dirs.extend([ti / _PENDING_DIR_NAME, ti / _IN_FLIGHT_DIR_NAME])
+        return dirs
+
+    def _legacy_unstamped_shard_keys() -> frozenset[str]:
+        """Shards that were on disk BEFORE this server could stamp provenance.
+
+        ⚑ WHY A SERVER-SIDE FILE AND NOT A FLAG IN THE SHARD. `.zattrs` is
+        uploader-controlled: `extract_uploaded_shard_tar` writes whatever the
+        tarball contained, and only `_stamp_shard_username` overwrites the
+        provenance keys. So for any shard this build accepted, a
+        `provenance_verified` marker is server-written and trustworthy -- but
+        for a shard that a PREVIOUS build promoted into `_pending`, the marker
+        is whatever the uploader put there. `mallory` could have uploaded
+        `{"username": "victim", "provenance_verified": true}` months ago, and
+        the recovery scan would read it back as a verified attribution and ban
+        the wrong volunteer. Nothing INSIDE the shard can distinguish the two
+        cases, because the forgeable case predates the code doing the checking.
+
+        So the witness has to live where an uploader cannot reach. On the first
+        boot after this change, every shard already staged is recorded here as
+        legacy and permanently distrusted; anything arriving afterwards went
+        through the stamp. On a fresh server the snapshot is empty and this
+        costs nothing.
+
+        Failure is deliberately biased: an unreadable or absent watermark
+        re-snapshots, which distrusts MORE shards, never fewer. A lost
+        attribution shows up as a null contributor, which is honest; a wrong
+        one gets somebody banned for another person's uploads.
+        """
+        path = root / "provenance_migration.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("legacy_shards"), list):
+                return frozenset(str(e) for e in data["legacy_shards"])
+            log.warning("provenance watermark at %s is malformed; re-snapshotting", path)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            log.exception("could not read provenance watermark %s; re-snapshotting", path)
+
+        keys: set[str] = set()
+        for d in _upload_staging_dirs():
+            if not d.is_dir():
+                continue
+            for p in d.rglob(f"*{LOCAL_SHARD_SUFFIX}"):
+                with contextlib.suppress(ValueError):
+                    keys.add(str(p.relative_to(root)))
+        try:
+            atomic_write_text(
+                path,
+                json.dumps(
+                    {
+                        "created_unix": int(time.time()),
+                        "note": (
+                            "Shards staged before this server could stamp uploader "
+                            "provenance. Their in-shard `provenance_verified` marker "
+                            "is uploader-controlled and is NOT trusted."
+                        ),
+                        "legacy_shards": sorted(keys),
+                    },
+                    indent=2,
+                ),
+            )
+        except OSError:
+      # Not fatal: without the file we re-snapshot next boot, which distrusts
+      # the same set or a subset of it. Never trusts more.
+            log.exception("could not persist provenance watermark %s", path)
+        if keys:
+            log.warning(
+                "provenance migration: %d shard(s) staged before uploader stamping "
+                "will be recovered as UNATTRIBUTED", len(keys),
+            )
+        return frozenset(keys)
+
+    legacy_unstamped_shards = _legacy_unstamped_shard_keys()
 
     def _recover_pending_uploads() -> None:
         # Default (no-trial) inbox.

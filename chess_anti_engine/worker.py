@@ -5,6 +5,7 @@ from collections import deque
 import dataclasses
 import getpass
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -64,6 +65,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
+from chess_anti_engine.utils.config_yaml import strict_config_bool
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
     delete_shard_path,
@@ -447,7 +449,34 @@ _TYPED_OVERRIDE_FIELDS: tuple[tuple[str, str, type], ...] = (
 )
 
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "0.0.0.0"})
+_LOOPBACK_HOST_NAMES = frozenset({"localhost", "0.0.0.0"})
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True when traffic to `host` provably never leaves this machine.
+
+    ⚑ Not a string match against `127.0.0.1`. The whole of `127.0.0.0/8` is
+    loopback, and running local services on distinct addresses inside it
+    (`127.0.0.2`, ...) is a normal thing to do -- refusing those would push a
+    user to set the cleartext override on a host where nothing is at risk,
+    which trains them to set it where something is. `ipaddress` also gets
+    `::1` and IPv4-mapped forms right, which a literal set does not.
+
+    `0.0.0.0` is not loopback but is the address a locally-run server is
+    typically BOUND to and then dialled by, so it stays exempt by name.
+    """
+    h = host.strip().lower()
+    if not h:
+        return False
+    if h in _LOOPBACK_HOST_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+    # Not a literal IP -- a DNS name, which may resolve anywhere. Resolving it
+    # here would make the refusal depend on whatever the resolver says at
+    # startup, so treat it as remote.
+        return False
 
 
 def cleartext_transport_refusal(server_url: str, *, allow: bool) -> str | None:
@@ -475,7 +504,7 @@ def cleartext_transport_refusal(server_url: str, *, allow: bool) -> str | None:
     if parsed.scheme != "http":
         return None
     host = (parsed.hostname or "").strip().lower()
-    if host in _LOOPBACK_HOSTS:
+    if _is_loopback_host(host):
         return None
     return (
         f"refusing to send credentials in cleartext to {host or url!r} over http://. "
@@ -500,7 +529,18 @@ def _merge_cli_with_yaml_defaults(args, cfg: dict) -> None:
   # must see it, and the refusal has to happen before any credential is read.
   # A `worker.yaml` override that the guard could not see would be a documented
   # escape hatch that does nothing -- an accepted-and-ignored value.
-    if not getattr(args, "allow_cleartext_http", False) and cfg.get("allow_cleartext_http"):
+  # ⚑ strict_config_bool, not truthiness: `allow_cleartext_http: "false"` is a
+  # non-empty STRING and would ENABLE the escape hatch, sending reusable Basic
+  # credentials over the wire -- the failure this guard exists to prevent,
+  # reached by typing the word that means "don't".
+    if (
+        not getattr(args, "allow_cleartext_http", False)
+        and "allow_cleartext_http" in cfg
+        and strict_config_bool(
+            cfg.get("allow_cleartext_http"),
+            key="allow_cleartext_http", source="worker.yaml",
+        )
+    ):
         args.allow_cleartext_http = True
     refusal = cleartext_transport_refusal(
         args.server_url, allow=bool(getattr(args, "allow_cleartext_http", False)),

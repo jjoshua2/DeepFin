@@ -16,6 +16,7 @@ from chess_anti_engine.tune._utils import (
     terminate_process as _terminate_process,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+from chess_anti_engine.utils.config_yaml import strict_config_bool
 import contextlib
 
 
@@ -482,9 +483,23 @@ def _launch_distributed_server(
   # Flag-gated volunteer registration. Baked into the server command line, so
   # it is DRIVER-LAUNCH-FIXED (classified in trainable_config_ops) and takes a
   # full `run.py` restart to change -- not a trial restart, and not a reload.
-    if bool(base_config.get("worker_self_register", False)):
+  # ⚑ strict_config_bool, not bool(): `require_worker_lease: "false"` is a
+  # STRING, and a string is truthy. That typo would append the flag, and
+  # because driver-launched workers pin a fixed trial id they never negotiate
+  # a lease -- so every upload would 403 and ingest would go to zero at the
+  # next restart. `worker_self_register` gets the same treatment for the same
+  # reason in the opposite direction: quietly opening TOFU registration.
+  # Raising here is deliberate -- this runs at driver launch, so a bad value
+  # stops the process instead of starting a run that is misconfigured.
+    if strict_config_bool(
+        base_config.get("worker_self_register", False),
+        key="worker_self_register", source="run config",
+    ):
         cmd.append("--worker-self-register")
-    if bool(base_config.get("require_worker_lease", False)):
+    if strict_config_bool(
+        base_config.get("require_worker_lease", False),
+        key="require_worker_lease", source="run config",
+    ):
         cmd.append("--require-worker-lease")
     for cfg_key, flag in (
         ("opening_book_path", "--opening-book-path"),

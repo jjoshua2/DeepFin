@@ -320,6 +320,16 @@ workers negotiate their own leases.
 the authenticated account, be unexpired, and match the route's trial. Today's
 driver-launched workers send none, so this is inert on the in-tree fleet.
 
+⚑ **A lease is attribution, NOT trial isolation.** `/v1/lease_trial` honours the
+caller's requested trial whenever it names a *published* trial, so an
+authenticated worker still chooses its own assignment and then passes the
+upload check legitimately. What the lease buys is that an upload is tied to an
+issued, expiring, named grant that can be revoked — not a restriction on which
+trial a worker can reach. Production publishes one trial, so the set it may
+choose from is a singleton; this only becomes a real question if multi-trial
+PBT is ever exposed to untrusted volunteers, and closing it then means making
+the server assign the trial instead of honouring the request.
+
 ### Cleartext transport
 
 The worker refuses `http://` to a **non-loopback** server and exits, because
@@ -372,10 +382,25 @@ contributor's rows can be excised instead of the whole shard being discarded.
 ⚑ **Trust `username`/`contributors` only when `provenance_verified` is true.**
 The server stamps both from the **authenticated** account — never from the
 uploader's own claim, or one volunteer could aim your ban at another — and sets
-`provenance_verified: true` at the same time. Shards promoted by a server from
-**before 2026-08-12** carry the uploader's own claim and no marker; those get
-re-seeded at restart with a `null` contributor rather than a name, because a
-null is honest and a possibly-wrong name gets the wrong person quarantined.
+`provenance_verified: true` at the same time. It also **clears** any
+`contributors` list the uploader shipped — that field is server-owned, so on a
+raw single-uploader shard anything present came out of the tarball.
+
+⚑ **The marker alone is not the evidence — the server-side watermark is.**
+`.zattrs` travels *inside* the uploaded tarball, so a shard staged by a server
+from **before 2026-08-12** carries whatever the uploader wrote there, and that
+includes a hand-written `provenance_verified: true` next to someone else's
+name. Nothing inside such a shard can be checked, because it predates the code
+doing the checking. On its first boot after that date the server therefore
+writes `<server-root>/provenance_migration.json`, recording every shard already
+staged; those are re-seeded with a `null` contributor no matter what their
+attrs claim, and only shards that arrived afterwards — and so went through the
+stamp — are attributable. A null is honest; a possibly-wrong name gets the
+wrong person quarantined.
+
+Do not delete that file. If it goes missing the server re-snapshots on the next
+boot, which marks the *then-pending* shards legacy and loses their attribution
+— safe, but lossy.
 
 The read is:
 

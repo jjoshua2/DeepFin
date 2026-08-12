@@ -164,43 +164,66 @@ The main local throughput knobs a volunteer can set are:
 - number of worker processes via `python -m chess_anti_engine.worker_pool --workers N ...`
 - `--auto-tune` only adjusts `games_per_batch` inside one worker process
 
+> **Transport.** The worker sends HTTP Basic credentials on every request, and the
+> manifest it trusts for the model checkpoint's sha256 travels the same connection. So
+> a worker **refuses to start** against a remote `http://` URL: an on-path attacker
+> could take a reusable credential and swap the checkpoint it authenticates, together.
+> Use `https://` (terminate TLS at a reverse proxy — the server does not do it itself).
+> Loopback is exempt, so a server on the same machine needs nothing.
+>
+> On a LAN you control and do not want to put a certificate on, pass
+> `--allow-cleartext-http` to every worker command below and use the `http://HOST:45453`
+> form. It is an explicit override, not a default, because it is a real exposure on any
+> network you do not physically control:
+>
+> ```bash
+> python -m chess_anti_engine.worker \
+>   --server-url http://SERVER_HOST:45453 \
+>   --username alice \
+>   --stockfish-path /path/to/stockfish \
+>   --allow-cleartext-http
+> ```
+>
+> (Equivalently `allow_cleartext_http: true` in `worker.yaml` — it must be a real
+> boolean; the quoted string `"true"` is refused rather than guessed at.)
+
 ```bash
 python -m chess_anti_engine.worker \
-  --server-url http://SERVER_HOST:45453 \
+  --server-url https://SERVER_HOST \
   --username alice \
   --stockfish-path /path/to/stockfish
 
 # Or: download Stockfish from the server (if published in the manifest)
 python -m chess_anti_engine.worker \
-  --server-url http://SERVER_HOST:45453 \
+  --server-url https://SERVER_HOST \
   --username alice \
   --stockfish-from-server
 
 # Optional: allow self-update from a server-published wheel
 # (If the server blocks this worker as too old, the worker will fetch /v1/update_info to find the wheel.)
 python -m chess_anti_engine.worker \
-  --server-url http://SERVER_HOST:45453 \
+  --server-url https://SERVER_HOST \
   --username alice \
   --stockfish-from-server \
   --self-update
 
 # Same idea, shorter aliases:
 python -m chess_anti_engine.worker \
-  --server-url http://SERVER_HOST:45453 \
+  --server-url https://SERVER_HOST \
   --username alice \
   --binaries \
   --update
 
 # Optional: calibrate once, then future runs reuse <work_dir>/worker.yaml
 python -m chess_anti_engine.worker \
-  --server-url http://SERVER_HOST:45453 \
+  --server-url https://SERVER_HOST \
   --username alice \
   --stockfish-path /path/to/stockfish \
   --calibrate
 
 # Optional: continuously auto-tune games_per_batch (throughput only)
 python -m chess_anti_engine.worker \
-  --server-url http://SERVER_HOST:45453 \
+  --server-url https://SERVER_HOST \
   --username alice \
   --stockfish-path /path/to/stockfish \
   --sf-workers 4 \
@@ -210,7 +233,7 @@ python -m chess_anti_engine.worker \
 python -m chess_anti_engine.worker_pool \
   --workers 4 \
   --pool-work-dir worker_pool \
-  --server-url http://SERVER_HOST:45453 \
+  --server-url https://SERVER_HOST \
   --username alice \
   --binaries \
   --update
