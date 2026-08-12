@@ -44459,3 +44459,61 @@ output is three banked (Δr̄, ΔElo) ≈ (0, 0) points and no new ruler.
 
 **Cost: zero.** Every input is already being produced; this entry only fixes the analysis
 before the data can bias it.
+
+### Tier-13 PRE-ARENA AMENDMENT (2026-08-12 19:50) — the registered arena command DOES NOT RUN, plus four decidability pins
+
+An adversarial audit of the verdict pipeline (report: `scratchpad/tier13/audit_verdict_pipeline.md`,
+run while arm A trains, CPU-only) found the prereg's single frozen instrument invocation is not
+executable: it names `--model-a/--model-b/--matched_sims`, none of which exist in
+`scripts/arena_standard.py` (`--candidate`/`--reference` are `required=True`; the real flags are
+`--mode matched_sims --sims N`; `scripts/arena_standard.py:1481-1494`). It also still says
+`--games 400`, superseded by the 1600-game amendment. Registered INTENT (paired, matched-sims-32,
+training shape, seed 42, 1600 games) is unchanged — this amendment fixes SPELLING and pins every
+ambiguity found, BEFORE any arena runs, so no post-hoc freedom is created:
+
+**The three commands, frozen (run from `/home/josh/projects/chess`, all arms stopped, back-to-back
+in one session; `B=scratchpad/tier13/banked`):**
+```bash
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate $B/arm_B_iter100/trainer.pt --reference $B/arm_A_iter100/trainer.pt \
+  --mode matched_sims --sims 32 --search-shape training \
+  --games 1600 --seed 42 --max-concurrent-games 16 --label tier13_BvsA_iter100
+# C-B and C-A identical apart from paths and --label tier13_CvsB_iter100 / tier13_CvsA_iter100
+```
+
+**Pins (each is a decidability fix from the audit, S1-S5):**
+1. **Trajectory rule (S1), exact**: "architecture win pending a second seed" ⇔ JSONL
+   `elo_ci95[0] > 0` AND `elo < +40`. Full win ⇔ `elo_ci95[0] > 0` AND `elo >= +40`.
+   Kill ⇔ `elo < -15`. Fields as printed by `arena_standard.py:1098-1102`; the final JSONL
+   row is the reading — never a rolling intermediate.
+2. **The `policy_ce` kill gate (S2) reads column `policy_loss`** — `compute_loss`'s
+   `policy_ce` is renamed by `_LOSS_KEY_TO_METRIC_FIELD` (`train/trainer.py:1136`); verified
+   against arm A's live progress.csv header. Comparison at EQUAL `training_iteration`
+   (all arms are fresh trials numbering from 1). Not `soft_policy_loss`, not `sf_move_loss`.
+3. **Instrument identity (S3)**: `--search-shape training` re-reads the LIVE yaml at every
+   arena start. All three arenas run back-to-back; `sha256sum configs/pbt2_small.yaml`
+   recorded before the first; the three JSONL rows must carry equal `config_hash` and
+   identical realized-search dicts (expected: c_scale=0.1 topk=16 policy_temp=1.5
+   c_visit=50 vloss_weight=1 target_batch=0, cold tree). Any mismatch voids the mismatched
+   contrast.
+4. **Provenance (S4)**: run from the LIVE tree (script paths anchor at its own repo root);
+   `tail -1 runs/arena_results.jsonl` after each run must show `games: 1600, pairs: 800,
+   truncated: false` and the two DISTINCT full checkpoint paths. ⚑ The audit could not find
+   the task-#192 arena's JSONL row in any tree — that dump was never banked and the ledger
+   prose is its only record [[bank_the_dump_not_just_the_number]]; these three rows get
+   copied into `scratchpad/tier13/banked/arena_rows.jsonl` the same session.
+5. **Concurrency pinned (S5)**: `--max-concurrent-games 16` (the ±30.4 calibration's value;
+   the script has no `--gpu-mem-fraction`). No `--max-seconds`. ~80-100 min per contrast.
+6. **Banking layout + identity (B2)**: each `scratchpad/tier13/banked/arm_X_iter<N>/` is the
+   FULL copy of `checkpoint_0000{N-1}` made within ~5 iterations of the crossing (Ray keeps
+   only 6), with `trainer.pt` at its top level, PLUS the trial's `progress.csv` at arm stop.
+   Identity is read from `trial_meta.json`'s `global_iter`, not the dir name — arm A's
+   checkpoints continue the donor's counter (ck 000006 = global_iter 897 = donor 890 + 7),
+   so "arm iteration N" = global_iter 890+N for arm A; record the per-arm offset at bank time.
+
+Audit verdicts also worth their one line each: the loader path is fail-loud end-to-end and was
+verified empirically on arm A's live checkpoint (arch schema 19, mode `off`); the cold-compile
+issue #189 is wall-clock-only under matched_sims (a sims budget cannot be eaten by latency);
+seed 42 gives all three contrasts the same 800-opening pairing; the paired pentanomial CI is
+computed from what was SCORED with truncation flagged; and the target-only knobs the training
+shape omits are provably outside played-move selection (`mcts/gumbel.py:1131-1153`).
