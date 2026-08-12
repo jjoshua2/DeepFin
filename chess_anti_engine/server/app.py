@@ -2475,16 +2475,41 @@ def create_app(
         request: Request,
         creds: HTTPBasicCredentials | None = Depends(basic_optional),
     ) -> str | None:
-        """Authenticate if credentials were offered; otherwise return None.
+        """Authenticate an EXISTING account, or return None. Never registers.
 
-        ⚑ NOT a weaker `_auth_user`. It runs the SAME check -- bans, the per-IP
-        failed-sign-in throttle, verification -- and differs only in what it
-        does when there is nothing to check or the check fails: it returns None
-        instead of raising. A wrong password still costs the caller an entry in
-        the throttle, so this cannot be used as a free guessing oracle that the
-        authenticated routes would have charged for.
+        Runs the same checks as `_auth_user` -- bans, the per-IP failed-sign-in
+        throttle, verification -- and differs in two ways: it returns None
+        instead of raising, and it will NOT create an account. A wrong password
+        still costs the caller an entry in the throttle, so this is not a free
+        guessing oracle that the authenticated routes would have charged for.
+
+        ⚑⚑ THE NON-REGISTERING PART IS THE WHOLE POINT, and the first version
+        of this function got it wrong. `_auth_user` self-registers an unknown
+        username when `worker_self_register` is on (`_register_new_user`), so
+        delegating to it made a plain **GET of a telemetry route CREATE A USER
+        ACCOUNT** and then serve that invented account the unredacted view.
+        MEASURED: `GET /v1/worker_throughput` with `attacker_invented` /
+        a 10-char password added `attacker_invented` to `users.json` and
+        returned `last_hostname`.
+
+        That is the same defect shape as the finding this change exists to fix
+        -- a read-style public endpoint performing a state transition -- so the
+        fix reproduced the bug one route over. It is inert today
+        (`worker_self_register` defaults off) and would have armed itself
+        silently the day volunteer registration was enabled, which is exactly
+        the kind of latent trapdoor this repo keeps finding.
+
+        ⚑ The existence check must come BEFORE `_auth_user`, not inside it:
+        the registration happens during that call, so any "undo it afterwards"
+        approach would already have written the account to disk.
         """
         if creds is None:
+            return None
+        if auth_cache.users().get(str(creds.username)) is None:
+      # Unknown account: refuse WITHOUT registering, and without charging the
+      # throttle. No oracle is created -- the response body is byte-identical
+      # to the anonymous one either way, so an unknown name is indistinguishable
+      # from a wrong password from outside.
             return None
         try:
             return _auth_user(request, creds)

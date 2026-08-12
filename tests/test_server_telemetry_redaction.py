@@ -141,3 +141,69 @@ def test_a_bad_credential_is_not_an_error_but_is_not_trusted(tmp_path) -> None:
     r = client.get("/v1/worker_throughput", auth=("u", "wrong-password"))
     assert r.status_code == 200, r.text
     assert "josh-desktop" not in r.text
+
+
+def test_telemetry_get_never_registers_an_account(tmp_path) -> None:
+    """⚑⚑ REGRESSION (review finding, P1). The first version delegated to
+    `_auth_user`, which SELF-REGISTERS an unknown username when
+    `worker_self_register` is on -- so a plain **GET** of a telemetry route
+    created a user account and then served that invented account the
+    unredacted view.
+
+    MEASURED before the fix: `GET /v1/worker_throughput` as
+    `attacker_invented` / a 10-char password added `attacker_invented` to
+    `users.json` and returned `last_hostname`.
+
+    That is the same defect shape as the finding this change exists to fix -- a
+    read-style public endpoint performing a state transition -- reproduced one
+    route over. It was inert (`worker_self_register` defaults off) and would
+    have armed itself the day volunteer registration was enabled.
+
+    ⚑ The password must be long enough to REGISTER. A first version of this
+    probe used a 5-character password, registration failed the length rule, the
+    `except HTTPException` swallowed it, and the test reported "no account
+    created" -- a false negative that made the vulnerability look absent. The
+    positive control below is what makes this test trustworthy.
+    """
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    (server_root / "worker_throughput_by_gpu.json").write_text(json.dumps(_STATS))
+    users = server_root / "users.json"
+    before = set(json.loads(users.read_text()))
+
+    client = _build_client(server_root, worker_self_register=True)
+    r = client.get("/v1/worker_throughput", auth=("attacker_invented", "pw12345678"))
+
+    assert r.status_code == 200, r.text
+    after = set(json.loads(users.read_text()))
+    assert after == before, f"a telemetry GET created account(s): {sorted(after - before)}"
+    assert "josh-desktop" not in r.text, "an invented account was served host telemetry"
+
+
+def test_positive_control_self_registration_really_is_enabled(tmp_path) -> None:
+    """⚑ Proves the test above can FAIL. Without this, a flag that never
+    reached `create_app` -- or a password rejected for length -- would make the
+    regression test pass while measuring nothing at all.
+
+    `report_bad_shard` runs the full `_auth_user` path, so TOFU must fire there
+    under exactly the credentials the test above uses.
+    """
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    users = server_root / "users.json"
+    before = set(json.loads(users.read_text()))
+
+    client = _build_client(server_root, worker_self_register=True)
+    r = client.post(
+        "/v1/report_bad_shard",
+        auth=("attacker_invented", "pw12345678"),
+        json={"shard_name": "x.zarr", "reason": "test"},
+    )
+    assert r.status_code == 200, r.text
+    created = set(json.loads(users.read_text())) - before
+    assert created == {"attacker_invented"}, (
+        f"self-registration did not fire on a route where it should: {created}. "
+        "The regression test above is therefore not measuring anything."
+    )
