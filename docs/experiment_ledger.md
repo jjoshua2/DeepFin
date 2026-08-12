@@ -43944,15 +43944,36 @@ doc):
 ⚑ **#1 was checked hardest, because the arena IS this experiment's endpoint.** It fails
 because production sets `gumbel_target_max_visit_cap: 5` and `gumbel_target_untempered_prior:
 true` while `--search-shape training` does not carry them — so that shape measures a search
-production does not run. **Inert for Tier-13, unconditionally:** `arena_standard.py` resolves
-ONE `base = resolve_search_shape(...)` for the match and the per-side flags default to it, so
-both sides receive the SAME `GumbelConfig` and both take the same (default) value for those
-two fields. A field with an identical value on both sides cannot bias a paired contrast,
-whatever its semantics. Secondarily they are TARGET-only knobs at temperature 0 (all five
-temperature keys are explicitly `0.0` in the live yaml) and the arena builds no training
-targets. What the test legitimately flags is that `--search-shape training` does not
-reproduce production TARGET construction — a real issue for anyone reading the arena as a
-statement about target quality, and not what Tier-13 asks it.
+production does not run.
+
+**Why it is inert for Tier-13 — the NARROW argument, which is the only correct one.** Both
+omitted fields are **target-construction only and never enter played-move selection**.
+`chess_anti_engine/mcts/gumbel.py` says so at the field definitions: `target_max_visit_cap`
+— *"an arena is structurally blind to this knob — the only yardsticks are target quality
+against the deep-SF ruler and, downstream, a training run"*; `target_untempered_prior` —
+*"this leaves the played move on the tempered arm, so an arena cannot see it"*. The improved-
+policy code keeps `q_play` separate from the target-only adjustments. Omitting them therefore
+cannot change a single played move in these games.
+
+⚑⚑ **A PREVIOUS DRAFT OF THIS PARAGRAPH JUSTIFIED IT THE WRONG WAY AND THE ARGUMENT WAS
+FALSE.** It said: *"a field with an identical value on both sides cannot bias a paired
+contrast, whatever its semantics."* **That is not true in general.** A common search setting
+interacts with the two nets differently whenever one net benefits more from search than the
+other — which is not hypothetical here: `gumbel_c_scale` 0.025 → 0.1 was worth **+245 Elo
+with the SAME weights on both sides** [[wdl_regret_measures_agent_not_net]]. "Same on both
+sides" buys symmetry of the SETTING, not neutrality of the EFFECT. The safety of this
+particular omission rests entirely on the two knobs being outside the move-selection path,
+and nothing weaker.
+
+⚑ Also struck from that draft: *"target-only knobs at temperature 0"*. `arena_standard.py`
+defaults `--temperature` to **0.1**, not 0.0. The conclusion is unaffected — the source's
+play-inertness claim carries no temperature precondition, and the temperature sample operates
+on the played arm either way — but the stated rationale was factually wrong and is removed
+rather than left standing.
+
+What the test legitimately flags is that `--search-shape training` does not reproduce
+production TARGET construction — a real issue for anyone reading the arena as a statement
+about target quality, and not what Tier-13 asks it.
 
 None of the 16 touches model construction, `Trainer.load`, optimizer restoration, or the
 inference path.
