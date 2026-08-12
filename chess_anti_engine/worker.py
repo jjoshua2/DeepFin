@@ -2041,7 +2041,16 @@ class WorkerSession:
                 json={"claim_id": self._dole_claim_id, "manifest_revision": revision},
                 auth=self._auth,
                 headers=_worker_headers(),
-                timeout=30.0,
+                # ⚑ SHORTER THAN THE OTHER WORKER CALLS, DELIBERATELY. This POST
+                # now runs on the session-boundary path AHEAD of
+                # `_swap_model_from_manifest`, and it runs on every eligible
+                # poll rather than the ~once per iteration the old flag implied.
+                # At the usual 30s a wedged server would stall the model swap by
+                # 30s per boundary poll. The dose is best-effort here (the whole
+                # ingest is under `suppress(Exception)`) and the next poll
+                # retries with the same claim_id, so giving up early costs one
+                # poll of latency and never the dose.
+                timeout=10.0,
             )
             if r.status_code != 200:
                 # Not fatal and not retried here: the next poll re-asks with the
