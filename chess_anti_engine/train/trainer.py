@@ -2307,10 +2307,21 @@ class Trainer:
            does `setattr(trainer, wk, ...)` EVERY ITERATION so live-yaml and PB2
            changes take effect immediately (`_apply_donor_config_overlay` is a
            second post-construction writer). Measured: construct at 0.0, sync to
-           0.15, and `sf_move_ce` is 0.0 with no exception. ⇒ the check is
-           evaluated in `_loss_kwargs`, which is rebuilt every step, so it cannot
-           be bypassed by a NEW mutation site either. It is also called once from
-           `__init__` so an already-wrong launch config fails before any compute.
+           0.15, and `sf_move_ce` is 0.0 with no exception. ⇒ the check must be
+           re-evaluated after every possible mutation, not only at construction.
+
+        ⚑ 3. **AND IT MUST NOT BE EVALUATED IN `_loss_kwargs`, WHICH IS WHERE (2)
+           FIRST PUT IT.** `_loss_kwargs` is on the HOLDOUT RULER's call graph:
+           `eval_ruler_id_for` derives the ruler identity from
+           `call_closure(Trainer._compute_metrics)`, which reaches
+           `_eval_loss_kwargs` -> `_loss_kwargs`. Adding a frame there changed the
+           pinned id (`v1:full_pass:73ff47d368fbe10e` ->
+           `...:05909d0fdfd8bbad`) and CI caught it -- a ruler-identity change
+           invalidates every best-model comparison across it, which is strictly
+           worse than the defect this guard prevents. ⇒ it is called from the TOP
+           OF `train_steps` (every iteration, training-only call graph) and once
+           from `__init__` so an already-wrong launch config fails before any
+           compute. Do not move it back onto anything `_compute_metrics` reaches.
         """
         model = getattr(self.model, "_orig_mod", self.model)
         # Absent attribute => not a net that opted out => nothing to check.

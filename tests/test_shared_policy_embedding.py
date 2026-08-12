@@ -123,14 +123,49 @@ def test_the_shared_embedding_is_exactly_function_preserving_at_init(mode: str) 
         assert torch.equal(a[key], b[key]), key
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="production dtype path is CUDA-only")
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
+def test_function_preservation_HOLDS_IN_THE_PRODUCTION_DTYPE(mode: str) -> None:
+    """⚑ The CPU/FP32 `torch.equal` above is not the deployed arithmetic.
+
+    Production runs under CUDA + bf16 autocast (`Trainer._amp_context` pins
+    bf16). `linear` mode inserts an actual identity GEMM where there was no GEMM
+    at all, so "W = I is mathematically a no-op" is an argument about real
+    numbers, not about a bf16 tensor core accumulating 512 products. If the
+    insertion cost even one extra rounding of `t`, the arm would open with a free
+    numerical step against its control -- small, but attributed to the
+    architecture change by construction.
+
+    `residual_mish` gets the same check because `mish(0) == 0` is likewise exact
+    in fp32 and worth confirming rather than assuming in bf16.
+    """
+    off = _build().cuda()
+    on = _build(policy_embedding_mode=mode).cuda()
+    on.load_state_dict(off.state_dict(), strict=False)
+
+    x = _planes().cuda()
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        a, b = off(x), on(x)
+    for key in a:
+        assert torch.equal(a[key], b[key]), (
+            f"{key} differs under CUDA/bf16 by "
+            f"{(a[key].float() - b[key].float()).abs().max().item():.3e} "
+            "-- the adapter is NOT function-preserving in the deployed dtype"
+        )
+
+
 def test_the_shared_embedding_is_genuinely_NONLINEAR() -> None:
     """⚑ The reason the branch is `t + mish(W t + b)` and not an identity-init
     `nn.Linear`.
 
     A linear shared layer composes with each head's linear Q/K into another
-    linear map: it adds ZERO representational content and would test only
-    gradient coupling -- the mechanism the 2026-08-12 grad-share probe already
-    rejected (soft 94.1% vs own 94.7% trunk share).
+    linear map, so it adds ZERO representational CAPACITY. ⚑ That does not make
+    it inert, and an earlier version of this docstring wrongly said it "would
+    test only gradient coupling -- the mechanism the grad-share probe already
+    rejected". Equal function class is not equal optimization: `A_h S` and `A'_h`
+    reach different points under the same gradient steps. `linear` is the arm
+    that isolates that reparameterization geometry; see the ISOLATION-arm test
+    below. Only the CAPACITY mechanism is unique to `residual_mish`.
 
     ⚑ Plain homogeneity (`f(2t) == 2 f(t)`) is NOT the discriminator, and a mutant
     that drops `mish` survives it: `t + W t + b` is AFFINE, so its bias already
@@ -576,8 +611,23 @@ def test_the_arena_loader_rebuilds_both_flags_from_a_saved_checkpoint(
 
 
 @pytest.mark.parametrize("mode", _ADAPTER_MODES)
+@pytest.mark.parametrize(
+    ("optimizer", "scope"),
+    [
+        ("adamw", "default"),
+        # ⚑ PRODUCTION's layout, and the only one where the splice's per-group
+        # positional remap can actually go wrong. `matrix_optimizer_scope:
+        # mlp_out` puts block FFNs and attention out-projections in the Aurora
+        # group and everything else in AdamW, so there are TWO groups to remap
+        # independently -- and `policy_embedding.weight` matches NEITHER
+        # `.ffn.` NOR `.out_proj.` inside `blocks.`, so the new parameter lands
+        # in the AdamW group while the Aurora group's positions must survive
+        # untouched. A one-group test cannot observe that at all.
+        ("aurora", "mlp_out"),
+    ],
+)
 def test_the_splice_reattaches_moments_to_the_SAME_NAMED_parameters(
-    mode: str, tmp_path: Path,
+    mode: str, optimizer: str, scope: str, tmp_path: Path,
 ) -> None:
     """⚑ Counting state entries is NOT enough, and this repo is exactly where that
     matters.
@@ -589,13 +639,28 @@ def test_the_splice_reattaches_moments_to_the_SAME_NAMED_parameters(
     same COUNT, and silently wrong. That is the failure class this codebase is
     built around, so the assertion has to be per-NAME, not per-total.
 
-    Method: give every parameter a distinguishable `exp_avg` (its own index),
-    save, warm-start the adapter arm, then require each named parameter to carry
-    back the value that was banked under THAT name.
+    Method: give every parameter's every state tensor a distinguishable value,
+    save, warm-start the adapter arm, then require each (name, state_key) to
+    carry back the value that was banked under THAT pair.
+
+    ⚑ The fingerprint is DETERMINISTIC ENUMERATION (`idx + 0.5`), not
+    `abs(hash(name)) % 100_000`. Hash-derived values can collide, and a collision
+    is exactly the case where a mis-splice would pass -- two parameters swapping
+    moments is invisible if both carry the same number. Enumeration makes every
+    value distinct by construction. `+ 0.5` keeps it non-integral so a zeroed or
+    freshly-initialised slot can never accidentally equal one.
+
+    ⚑ And the state key is NOT hardcoded to `exp_avg`. Under production's
+    `aurora` + `mlp_out` the optimizer is an `AuroraWithAuxAdam` over FOUR param
+    groups, and the Aurora group's state is `momentum_buffer`, not
+    `exp_avg`/`exp_avg_sq`. An `exp_avg`-only assertion silently SKIPS all six
+    matrix-group tensors -- it would pass while the group whose remap is hardest
+    went entirely unchecked.
     """
     donor_cfg = _cfg()
     donor = Trainer(
-        build_model(donor_cfg), device="cpu", lr=1e-3, optimizer="adamw",
+        build_model(donor_cfg), device="cpu", lr=1e-3, optimizer=optimizer,
+        matrix_optimizer_scope=scope,
         warmup_steps=10, warmup_lr_start=1e-5, use_amp=False,
         log_dir=tmp_path / "donor", tb_log_interval=1000, prefetch_batches=False,
         model_config=donor_cfg,
@@ -604,26 +669,40 @@ def test_the_splice_reattaches_moments_to_the_SAME_NAMED_parameters(
         param.grad = torch.randn_like(param)
     donor.opt.step()
 
-    # Stamp a unique, order-sensitive fingerprint into each parameter's moment.
+    # Stamp a unique, order-sensitive fingerprint into every state tensor.
     donor_names = [n for n, p in donor.model.named_parameters() if p.requires_grad]
     by_id = {id(p): n for n, p in donor.model.named_parameters()}
-    banked: dict[str, float] = {}
+    banked: dict[tuple[str, str], float] = {}
+    stamp = 0
     for group in donor.opt.param_groups:
         for param in group["params"]:
             state = donor.opt.state.get(param)
-            if not state or "exp_avg" not in state:
+            if not state:
                 continue
             name = by_id[id(param)]
-            value = float(abs(hash(name)) % 100_000) + 0.5
-            state["exp_avg"] = torch.full_like(state["exp_avg"], value)
-            banked[name] = value
-    assert len(banked) >= len(donor_names) - 2
+            for key, value_t in state.items():
+                if not torch.is_tensor(value_t) or not value_t.is_floating_point():
+                    continue
+                stamp += 1
+                value = float(stamp) + 0.5
+                state[key] = torch.full_like(value_t, value)
+                banked[name, key] = value
+    # Distinct by construction -- the property the hash version only assumed.
+    assert len(set(banked.values())) == len(banked)
+    # Every trainable parameter carries state, and the matrix group is present.
+    assert {n for n, _ in banked} >= set(donor_names) - {"_embed_gate_mul_raw"}
+    if optimizer == "aurora":
+        assert any(k == "momentum_buffer" for _, k in banked), (
+            "the Aurora matrix group contributed no state -- this arm is not "
+            "exercising the multi-group remap it exists for"
+        )
     ckpt = tmp_path / "donor.pt"
     donor.save(ckpt)
 
     arm_cfg = _cfg(policy_embedding_mode=mode)
     arm = Trainer(
-        build_model(arm_cfg), device="cpu", lr=1e-3, optimizer="adamw",
+        build_model(arm_cfg), device="cpu", lr=1e-3, optimizer=optimizer,
+        matrix_optimizer_scope=scope,
         warmup_steps=10, warmup_lr_start=1e-5, use_amp=False,
         log_dir=tmp_path / "arm", tb_log_interval=1000, prefetch_batches=False,
         model_config=arm_cfg,
@@ -631,23 +710,28 @@ def test_the_splice_reattaches_moments_to_the_SAME_NAMED_parameters(
     arm.load(ckpt)
 
     arm_by_id = {id(p): n for n, p in arm.model.named_parameters()}
-    seen: dict[str, float] = {}
+    seen: dict[tuple[str, str], float] = {}
     for group in arm.opt.param_groups:
         for param in group["params"]:
             state = arm.opt.state.get(param)
-            if not state or "exp_avg" not in state:
+            if not state:
                 continue
-            seen[arm_by_id[id(param)]] = float(state["exp_avg"].flatten()[0])
+            name = arm_by_id[id(param)]
+            for key, value_t in state.items():
+                if torch.is_tensor(value_t) and value_t.is_floating_point():
+                    seen[name, key] = float(value_t.flatten()[0])
 
     # The adapter itself is NEW: it must get a fresh (zero) slot, not a donor one.
-    for name, value in seen.items():
+    for (name, key), value in seen.items():
         if name.startswith("policy_embedding"):
-            assert value == 0.0, f"{name} inherited a donor moment {value}"
+            assert value == 0.0, f"{name}.{key} inherited a donor moment {value}"
             continue
-        assert name in banked, f"{name} carries state that no donor parameter banked"
-        assert value == banked[name], (
-            f"{name} got the moment banked for a DIFFERENT parameter: "
-            f"{value} != {banked[name]}"
+        assert (name, key) in banked, (
+            f"{name}.{key} carries state that no donor parameter banked"
+        )
+        assert value == banked[name, key], (
+            f"{name}.{key} got the moment banked for a DIFFERENT parameter: "
+            f"{value} != {banked[name, key]}"
         )
     # ...and every donor parameter that banked a moment got it back.
     assert set(banked) <= set(seen), sorted(set(banked) - set(seen))
@@ -779,7 +863,7 @@ def test_the_AOT_refusal_names_a_remedy_that_actually_works() -> None:
         assert_no_aot_route_bypasses_the_policy_adapter,
     )
 
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ValueError, match="policy_embedding_mode is not off") as excinfo:
         assert_no_aot_route_bypasses_the_policy_adapter(
             {"policy_embedding_mode": "linear",
              "distributed_inference_aot_dir": "data/aot_models_512"},
