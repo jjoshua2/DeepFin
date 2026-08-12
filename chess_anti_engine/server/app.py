@@ -36,6 +36,7 @@ from chess_anti_engine.replay.shard import (
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
+from chess_anti_engine.version import UPLOAD_CONTENT_SHA256_HEADER
 import contextlib
 
 # Pending-upload staging dir name (server side of the wire protocol — see
@@ -2463,6 +2464,7 @@ def create_app(
         x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
         x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
+        x_cae_content_sha256: str | None = Header(None, alias=UPLOAD_CONTENT_SHA256_HEADER),
     ) -> Any:
         ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
@@ -2517,6 +2519,37 @@ def create_app(
                 h.update(chunk)
                 f.write(chunk)
         sha = h.hexdigest()
+
+  # End-to-end integrity check. `sha` is computed over what ARRIVED, so
+  # comparing it to a digest the worker computed over what it SENT is the
+  # only thing in this pipeline that can see a corrupted transfer at all.
+  # ⚑ VERIFY-IF-PRESENT, not require: a worker predating this header is a
+  # normal fleet state during a rolling upgrade, and refusing those uploads
+  # would take selfplay down for the length of the rollout. That means this
+  # is a CORRUPTION detector, not an authentication control -- an attacker
+  # simply omits the header, and one who supplies it just hashes their own
+  # forged bytes. Requiring it is a follow-up gated on the fleet's minimum
+  # worker version, not on this PR.
+  # ⚑ HTTPException, NOT a `{"rejected": True}` body. On this route those two
+  # are opposite instructions to the worker: `rejected` is TERMINAL -- the
+  # worker quarantines the local pending shard and never retries it
+  # (`_upload_response_rejection_reason` -> `_quarantine_rejected_pending_shard`).
+  # A digest mismatch is the one rejection here that is expected to be
+  # TRANSIENT, so treating it as terminal would let a single corrupted transfer
+  # permanently discard a shard of real selfplay. A non-200 leaves the pending
+  # shard in place and the worker resends it.
+        declared_sha = str(x_cae_content_sha256 or "").strip().lower()
+        if declared_sha and declared_sha != sha:
+            tmp.unlink(missing_ok=True)
+            log.warning(
+                "upload_shard digest mismatch from user=%s name=%s: declared=%s received=%s (%d bytes) "
+                "-- corrupted transfer, worker will retry",
+                username, upload_name, declared_sha, sha, n,
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=f"content sha256 mismatch: declared={declared_sha} received={sha}",
+            )
 
         def _finish_upload() -> Any:
             """Everything after the drain, on ONE thread (audit A5).
@@ -2778,6 +2811,7 @@ def create_app(
         x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
         x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
+        x_cae_content_sha256: str | None = Header(None, alias=UPLOAD_CONTENT_SHA256_HEADER),
     ) -> Any:
         return await _upload_shard_impl(
             None,
@@ -2788,6 +2822,7 @@ def create_app(
             x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_batch_elapsed_s=x_cae_batch_elapsed_s,
             x_cae_machine_id=x_cae_machine_id,
+            x_cae_content_sha256=x_cae_content_sha256,
         )
 
     @app.post("/v1/trials/{trial_id}/upload_shard")
@@ -2800,6 +2835,7 @@ def create_app(
         x_cae_worker_lease_id: str | None = Header(None, alias="X-CAE-Worker-Lease-ID"),
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
         x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
+        x_cae_content_sha256: str | None = Header(None, alias=UPLOAD_CONTENT_SHA256_HEADER),
     ) -> Any:
         return await _upload_shard_impl(
             trial_id,
@@ -2810,6 +2846,7 @@ def create_app(
             x_cae_worker_lease_id=x_cae_worker_lease_id,
             x_cae_batch_elapsed_s=x_cae_batch_elapsed_s,
             x_cae_machine_id=x_cae_machine_id,
+            x_cae_content_sha256=x_cae_content_sha256,
         )
 
     @app.post("/v1/report_bad_shard")
