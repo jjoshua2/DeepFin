@@ -40138,13 +40138,33 @@ arms separate:
 ### Arms — and ⚑ AOT MUST BE OFF IN ALL THREE
 
 ```
-same donor checkpoint, same optimizer state, policy_sf ON in all arms,
-SWA off (production runs swa_start: -1), AOT OFF in all arms
+DECIDED 2026-08-12: run ALL THREE arms (A+B+C), not A+B.
+
+common donor:  data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218  (global_iter 890)
+               + the SAME replay snapshot and the SAME RNG seeds / data ordering
+               as far as the harness allows
+all arms:      policy_sf ON, w_soft UNCHANGED, SWA off (production swa_start: -1),
+               AOT OFF (both distributed_inference_aot_dir and
+               distributed_worker_aot_dir cleared)
+compare at:    MATCHED TRAINING ITERATION
 
 A (control)  policy_embedding_mode: off
 B            policy_embedding_mode: linear          <- identity-init, zero added capacity
 C            policy_embedding_mode: residual_mish   <- zero-init, t + mish(Wt+b)
 ```
+
+**Why all three, and not A+B.** The third arm costs one extra treatment on top of a control
+already being paid for, and it buys the decomposition:
+
+| contrast | isolates |
+|---|---|
+| **B − A** | shared policy-only reparameterization GEOMETRY |
+| **C − B** | incremental value of nonlinear policy-specific CAPACITY |
+| **C − A** | practical value of the full nonlinear adapter |
+
+`C − B` is the only clean way to price capacity, and **C can work even if B is null** —
+"shared linear factorization does not help" does not imply "policy-specific nonlinear
+processing does not help".
 
 ⚑ **Why AOT off in ALL arms, including the control.** PR #398's guard REFUSES the
 conjunction (adapter enabled AND any AOT dir configured) — conservatively, because it does
@@ -40160,9 +40180,8 @@ optimizer-layout reset (deleted params cannot be spliced), which would land on o
 ⚑ **A FRESH trial, not a resume.** `policy_embedding_mode` is a
 `_RESUME_CONSTRUCTION_BOUND_KEY`: a live-yaml edit is SKIPPED on resume with a warning.
 
-**If only one treatment is affordable, run B.** It tests the remaining live mechanism
-(geometry) without confounding it with capacity; C then answers whether capacity buys
-anything beyond B.
+**Fallback if the budget shrinks: A+B.** B tests the remaining live mechanism (geometry)
+without confounding it with capacity. But A+B+C is the DECIDED design.
 
 ### Yardstick — ONE, exact
 
@@ -40305,18 +40324,39 @@ stopping on a rolling arena is not a small bias here; it is the difference betwe
 +112 Elo "win" and a null. Same failure the Cheese 12-pair 0.6875 result carries
 [[flywheel_judge_by_cheese_not_generic_arena]].
 
-### Confound, and its DIRECTION
+### ⚑⚑ WHAT IS CONFOUNDED IS THE CAUSAL READING — **NOT** THE NUMBER
 
-`--search-shape training` resolves to the CURRENT yaml, i.e. the sims-100 / topk-16 era.
-iter218 was trained under that shape; iter138 (global 811) was trained under sims-256 /
-topk-32. Both sides play the identical search — printed and checked, `c_scale=0.1
-c_visit=50.0 policy_temp=1.5 topk=16 tree_reuse=cold` on both — so this is a WEIGHTS
-comparison. But the shape being the newer one **favours the candidate**, so the
-unconfounded weights difference is if anything ≤ −3.5, not ≥. The null does not become a
-win under correction.
+**The canonical statement of this result:**
 
-⚑ This says NOTHING about whether the sims-100 deploy helped: that change is in the SEARCH,
-and this arena holds search fixed on both sides by construction
+> iter218 vs iter138 under the current sims-100 / topk-16 search: **−3.5 Elo, 95% CI
+> [−33.9, +26.9], pre-registered verdict NULL. Does not isolate ordinary training progress
+> from adaptation to the search-shape change.**
+
+`--search-shape training` resolves to the CURRENT yaml. Both sides play the IDENTICAL
+search — printed and checked, `c_scale=0.1 c_visit=50.0 policy_temp=1.5 topk=16
+tree_reuse=cold` on both. **−3.5 is therefore an UNBIASED estimate** of the operational
+question *"which set of weights is stronger under today's search?"*. It needs no correction
+and must not be discounted.
+
+⚑ **AN EARLIER VERSION OF THIS ENTRY SAID "the confound favours the candidate, so the
+unconfounded difference is ≤ −3.5". THAT INFERENCE IS WRONG and is retracted.** It treated
+a CAUSAL confound as if it were a BIAS on the statistic, and then "corrected" a number that
+was never biased. The two are different objects:
+
+| | |
+|---|---|
+| **estimand the arena answers** | which weights play better under today's search — **unbiased, −3.5** |
+| **estimand it does NOT answer** | *why* the weights differ — training progress vs adaptation to the new search regime |
+
+iter218 had training exposure to sims-100 / topk-16; iter138 did not. That makes the CAUSAL
+attribution unavailable. It does not make the head-to-head unfair, and there is no
+"unconfounded weights difference" hiding behind the observed one waiting to be recovered by
+subtraction — that would be a different counterfactual quantity, not a debiased version of
+this one. ⇒ **Quote −3.5 as measured. State the causal limitation in words, never as an
+adjustment.** [[same_name_different_population]]
+
+⚑ And this says NOTHING about whether the sims-100 deploy helped: that change is in the
+SEARCH, and this arena holds search fixed on both sides by construction
 [[wdl_regret_measures_agent_not_net]].
 
 ### Instrument checks passed
