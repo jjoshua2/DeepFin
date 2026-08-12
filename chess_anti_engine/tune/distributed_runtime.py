@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -1020,6 +1020,7 @@ def _build_distributed_worker_cmd(
         shared_cache_root = server_root / "worker_cache"
     shared_cache_root.mkdir(parents=True, exist_ok=True)
 
+    assert_no_aot_route_bypasses_the_policy_adapter(config)
     aot_dir = str(config.get("distributed_worker_aot_dir", "")).strip()
     threaded = bool(config.get("distributed_worker_threaded", False))
     if aot_dir and threaded:
@@ -1269,6 +1270,65 @@ def check_dynamic_relations_transport(config: dict) -> None:
         )
 
 
+# ⚑⚑ EVERY AOT ROUTE, not just the broker's. There are two, and both replace the
+# live `ChessNet.forward` with a graph compiled at package-build time:
+#   `distributed_inference_aot_dir` -> broker  (`inference.py`'s AOTEvaluator)
+#   `distributed_worker_aot_dir`    -> worker  (`worker --aot-dir`, same evaluator)
+# Rebinding only pushes the CONSTANTS the package asks for, so a package built
+# before the shared policy adapter existed simply never receives
+# `policy_embedding.*` -- and nothing raises, because `build_aot_constants` only
+# checks the package->model direction.
+_AOT_DIR_KEYS = ("distributed_inference_aot_dir", "distributed_worker_aot_dir")
+
+
+def _aot_dirs_configured(config: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        key: value
+        for key in _AOT_DIR_KEYS
+        if (value := str(config.get(key, "") or "").strip())
+    }
+
+
+def _policy_adapter_enabled(config: Mapping[str, Any]) -> bool:
+    return str(config.get("policy_embedding_mode", "off") or "off").strip().lower() not in (
+        "off", "", "none",
+    )
+
+
+def assert_no_aot_route_bypasses_the_policy_adapter(config: Mapping[str, Any]) -> None:
+    """Refuse any AOT route while the shared policy adapter is on.
+
+    The adapter changes `policy_own`, which IS the search prior. An AOT package
+    compiled without it serves a DIFFERENT policy than the one being trained, and
+    the divergence is maximally silent: both adapter modes are function-preserving
+    at init, so selfplay starts in EXACT agreement and drifts as the layer trains.
+    AOT also covers only exact batch buckets, so uncovered sizes fall through to
+    the eager path WITH the adapter -- the served policy becomes a mixture keyed on
+    batch size.
+
+    ⚑ DELIBERATELY CONSERVATIVE, and the message says so. This refuses on the
+    CONJUNCTION alone; it does not inspect package architecture, so a correctly
+    rebuilt package is refused too. Telling an operator to "rebuild the packages"
+    would be an impossible remedy. Making the guard precise means giving AOT
+    packages an architecture-identity manifest, which changes the live serving
+    path's failure mode on a missing manifest (refuse / fall back to eager / warn)
+    -- a production decision, not a side effect of an experiment PR.
+    """
+    if not _policy_adapter_enabled(config):
+        return
+    dirs = _aot_dirs_configured(config)
+    if not dirs:
+        return
+    named = ", ".join(f"{k}={v!r}" for k, v in sorted(dirs.items()))
+    raise ValueError(
+        f"policy_embedding_mode is not off, but an AOT route is configured ({named}). "
+        "The packages were compiled without the shared policy adapter and would "
+        "serve a DIFFERENT prior than the one being trained. Clear the AOT "
+        "director(y|ies) for this arm -- this guard does not verify package "
+        "architecture, so rebuilding them will not satisfy it.",
+    )
+
+
 def _launch_inference_broker(
     *,
     config: dict,
@@ -1276,6 +1336,7 @@ def _launch_inference_broker(
     publish_dir: Path,
     trial_dir: Path,
 ) -> subprocess.Popen[bytes]:
+    assert_no_aot_route_bypasses_the_policy_adapter(config)
     broker_artifact_root = trial_dir / "distributed_inference"
     broker_artifact_root.mkdir(parents=True, exist_ok=True)
     slot_prefix = _trial_slot_prefix(trial_id=trial_id)

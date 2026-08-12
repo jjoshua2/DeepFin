@@ -681,6 +681,27 @@ class TransformerBlock(nn.Module):
         return x
 
 
+POLICY_EMBEDDING_MODES = ("off", "linear", "residual_mish")
+
+
+def _normalize_policy_embedding_mode(value: object) -> str:
+    """Validate the shared-policy-adapter mode.
+
+    ⚑ Raises on an unknown value rather than falling back to "off". A silent
+    fallback is this codebase's signature defect: the arm would come up healthy,
+    train the CONTROL topology, and the whole readout window would be recorded
+    against the wrong architecture.
+    """
+    mode = str(value or "off").strip().lower()
+    if mode in ("", "none", "false"):
+        mode = "off"
+    if mode not in POLICY_EMBEDDING_MODES:
+        raise ValueError(
+            f"policy_embedding_mode={value!r} is not one of {POLICY_EMBEDDING_MODES}"
+        )
+    return mode
+
+
 @dataclass
 class TransformerConfig:
     in_planes: int
@@ -730,6 +751,8 @@ class TransformerConfig:
   # of ~1.12M, and adds only new state_dict keys so a checkpoint trained with the
   # standalone head warm-starts with every shared tensor byte-identical.
     categorical_head_coupled: bool = False
+    policy_embedding_mode: str = "off"
+    enable_policy_sf_head: bool = True
     phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (
         DEFAULT_PHASE_PIECE_THRESHOLDS
     )
@@ -1044,8 +1067,59 @@ class ChessNet(nn.Module):
 
         self.policy_own = AttentionPolicyHead(output_embed_dim)
         self.policy_soft = AttentionPolicyHead(output_embed_dim)
-        self.policy_sf = AttentionPolicyHead(output_embed_dim)
+        # policy_sf is trained only through `w_sf_move`, which has been 0.0 in
+        # production: ~530k parameters receiving zero gradient that are still built,
+        # checkpointed and published every iteration. `losses.py` treats a missing
+        # `policy_sf` output as a zero loss and RAISES if `w_sf_move` is positive
+        # while the head is absent, so switching this off cannot silently disarm
+        # the teacher. (`w_sf_own` / `w_sf_own_regret` train `policy_own` via the
+        # sf_p0 terms -- they do not read this head.)
+        self.enable_policy_sf_head = bool(cfg.enable_policy_sf_head)
+        self.policy_sf: AttentionPolicyHead | None = (
+            AttentionPolicyHead(output_embed_dim) if self.enable_policy_sf_head else None
+        )
         self.policy_future = AttentionPolicyHead(output_embed_dim)
+
+        # lc0 builds ONE policy embedding and hands it to every policy head, which
+        # keeps only its own Q/K. Here all four heads project straight off the
+        # trunk, so an auxiliary policy loss can reach `policy_own` only through
+        # the global trunk -- a representation that must simultaneously serve the
+        # value heads. A shared adapter gives the auxiliaries a policy-SPECIFIC
+        # representation that `policy_own` necessarily reads.
+        #
+        # ⚑ THREE MECHANISMS ARE IN PLAY AND THE MODES SEPARATE THEM. Collapsing
+        # them is what an earlier revision of this comment got wrong:
+        #   1. gradient DELIVERY -- does the aux loss reach shared params at all.
+        #      REJECTED by the 2026-08-12 grad-share probe (soft 94.1% vs own
+        #      94.7% trunk share), so no mode tests it.
+        #   2. reparameterization GEOMETRY -- `A_h S` spans the same function class
+        #      as `A'_h`, but gradient descent on `(S, A_h)` does NOT follow the
+        #      same trajectory as on `A'_h`. A policy-only factorization may be a
+        #      better place for an already-aligned gradient than the global trunk,
+        #      which must also serve value. `linear` isolates this. ⚑ The gradient
+        #      cosine does NOT bound it: cosine limits how much NEW INFORMATION
+        #      soft carries, not how much the parameterization matters.
+        #   3. representational CAPACITY -- genuinely new nonlinear policy-specific
+        #      processing. `residual_mish` bundles (2) and (3).
+        #
+        # Both modes are exactly FUNCTION-PRESERVING at init, so either warm-starts
+        # from a checkpoint without the layer bit-identically and neither arm pays a
+        # boot shock the other does not:
+        #   linear         p = W t + b,          W = I, b = 0
+        #   residual_mish  p = t + mish(W t + b), W = b = 0  (`mish(0) == 0` exactly)
+        self.policy_embedding_mode = _normalize_policy_embedding_mode(
+            cfg.policy_embedding_mode
+        )
+        self.policy_embedding: nn.Linear | None = None
+        if self.policy_embedding_mode != "off":
+            emb = nn.Linear(output_embed_dim, output_embed_dim)
+            with torch.no_grad():
+                if self.policy_embedding_mode == "linear":
+                    nn.init.eye_(emb.weight)
+                else:
+                    nn.init.zeros_(emb.weight)
+                nn.init.zeros_(emb.bias)
+            self.policy_embedding = emb
 
         self.value_wdl = ValueHead(output_embed_dim, 3)
         self.value_sf_eval = ValueHead(output_embed_dim, 3)
@@ -1253,6 +1327,23 @@ class ChessNet(nn.Module):
             t = phase_output_adapter(t, phase_idx)
         return cast(torch.Tensor, t), relations_f
 
+    def _policy_tokens(self, t: torch.Tensor) -> torch.Tensor:
+        """Tokens the policy heads read: the trunk output, or the shared policy
+        embedding when enabled.
+
+        ⚑ EVERY path that computes a policy must go through here. `policy_own` is
+        the search prior, and `forward_legal_policy` / `forward_legal_policy_rows`
+        / the `_inference_only` branch are the paths selfplay and UCI actually
+        take -- a path that skipped this would make the deployed prior diverge
+        from the trained one silently.
+        """
+        emb = self.policy_embedding
+        if emb is None:
+            return t
+        if self.policy_embedding_mode == "linear":
+            return emb(t)
+        return t + F.mish(emb(t))
+
     def forward_legal_policy(
         self,
         x: torch.Tensor,
@@ -1269,7 +1360,9 @@ class ChessNet(nn.Module):
                 relations_f,
             )
         return {
-            "policy_own": self.policy_own.forward_legal(t, legal_flat, legal_counts, ft_bias=pol_ft_bias),
+            "policy_own": self.policy_own.forward_legal(
+                self._policy_tokens(t), legal_flat, legal_counts, ft_bias=pol_ft_bias
+            ),
             "wdl": self.value_wdl(t),
         }
 
@@ -1289,7 +1382,9 @@ class ChessNet(nn.Module):
                 relations_f,
             )
         return {
-            "policy_own": self.policy_own.forward_legal_rows(t, legal_flat, legal_rows, ft_bias=pol_ft_bias),
+            "policy_own": self.policy_own.forward_legal_rows(
+                self._policy_tokens(t), legal_flat, legal_rows, ft_bias=pol_ft_bias
+            ),
             "wdl": self.value_wdl(t),
         }
 
@@ -1321,7 +1416,7 @@ class ChessNet(nn.Module):
 
         if self._inference_only:
             return {
-                "policy_own": self.policy_own(t, ft_bias=pol_ft_bias),
+                "policy_own": self.policy_own(self._policy_tokens(t), ft_bias=pol_ft_bias),
                 "wdl": self.value_wdl(t),
             }
 
@@ -1338,11 +1433,13 @@ class ChessNet(nn.Module):
             wdl_out = self.value_wdl(t)
             categorical_out = self.value_categorical(t)
 
-        return {
-            "policy_own": self.policy_own(t, ft_bias=pol_ft_bias),
-            "policy_soft": self.policy_soft(t),
-            "policy_sf": self.policy_sf(t),
-            "policy_future": self.policy_future(t),
+        # One shared policy representation for EVERY policy head -- that sharing is
+        # the whole point. The value heads keep reading the raw trunk `t`.
+        pol_t = self._policy_tokens(t)
+        out: dict[str, torch.Tensor] = {
+            "policy_own": self.policy_own(pol_t, ft_bias=pol_ft_bias),
+            "policy_soft": self.policy_soft(pol_t),
+            "policy_future": self.policy_future(pol_t),
             "wdl": wdl_out,
             "sf_eval": self.value_sf_eval(t),
             "categorical": categorical_out,
@@ -1350,3 +1447,6 @@ class ChessNet(nn.Module):
             "sf_volatility": self.sf_volatility(t),
             "moves_left": self.moves_left(t),
         }
+        if self.policy_sf is not None:
+            out["policy_sf"] = self.policy_sf(pol_t)
+        return out

@@ -30,6 +30,8 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
+from collections.abc import Sequence
+
 import numpy as np
 import torch
 
@@ -63,6 +65,16 @@ DEFAULT_GPU_MEM_FRACTION = 0.15
 # Head module attribute prefixes on ChessNet (transformer.py). Everything else
 # (embed, blocks, layer_smolgens/smolgen, width_adapters, global-board
 # preprocess/adapter, gates, phase_output_adapter) is the SHARED TRUNK.
+# ⚑ `policy_embedding` is the SHARED POLICY ADAPTER: policy-only, but shared by
+# every policy head, so it is neither a private head nor the global trunk. Listing
+# it here keeps it OUT of the trunk bucket -- unlisted, a policy-only module would
+# inflate the very "trunk share" this probe reports, and pre/post numbers would not
+# be the same measurement. `_classify_params` returns it as its own bucket so the
+# number is REPORTED rather than folded into either side -- lumping it with the
+# private head params would bias trunk share DOWN, and with the trunk UP, and the
+# whole question this instrument is being pointed at is how much lands on it.
+POLICY_SHARED_PREFIXES = frozenset({"policy_embedding"})
+
 HEAD_PREFIXES = frozenset({
     "policy_own", "policy_soft", "policy_sf", "policy_future",
     "value_wdl", "value_sf_eval", "value_categorical",
@@ -132,20 +144,28 @@ def check_grouping_partitions_components() -> None:
 
 def _classify_params(
     model: torch.nn.Module,
-) -> tuple[list[tuple[str, torch.nn.Parameter]], list[str], list[str]]:
+) -> tuple[list[tuple[str, torch.nn.Parameter]], list[str], list[str], list[str]]:
+    """Split parameters into (trunk, trunk_names, head_names, policy_shared_names).
+
+    Three buckets, not two: the shared policy adapter is policy-only yet shared by
+    every policy head, so it is neither the global trunk nor a private head.
+    """
     trunk: list[tuple[str, torch.nn.Parameter]] = []
     trunk_names: list[str] = []
     head_names: list[str] = []
+    policy_shared_names: list[str] = []
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
         top = name.split(".", 1)[0]
-        if top in HEAD_PREFIXES:
+        if top in POLICY_SHARED_PREFIXES:
+            policy_shared_names.append(name)
+        elif top in HEAD_PREFIXES:
             head_names.append(name)
         else:
             trunk.append((name, param))
             trunk_names.append(name)
-    return trunk, trunk_names, head_names
+    return trunk, trunk_names, head_names, policy_shared_names
 
 
 def _load_one_shard_arrays(model_cfg: Any, *, replay_dir: str) -> dict[str, np.ndarray]:
@@ -217,17 +237,46 @@ def _build_trainer(device: str, args: argparse.Namespace) -> tuple[Trainer, Any]
     return trainer, model_cfg
 
 
+def component_grad_norms(
+    tensor: torch.Tensor,
+    trunk_params: Sequence[torch.nn.Parameter],
+    policy_shared_params: Sequence[torch.nn.Parameter],
+) -> tuple[float, float]:
+    """Grad norm of one loss component on the trunk AND on the shared policy adapter.
+
+    ⚑ Both, in one place, because classifying the adapter out of the trunk only
+    stops it CONTAMINATING `trunk_share`; the shared-adapter experiment's whole
+    question is how much supervision lands ON it, so a run that never measures it
+    cannot read the experiment out. Returns 0.0 for the adapter when the model has
+    none, so callers need no branch.
+    """
+    trunk_g = _grad_norm(tensor, list(trunk_params))
+    shared_g = _grad_norm(tensor, list(policy_shared_params)) if policy_shared_params else 0.0
+    return trunk_g, shared_g
+
+
 def _measure(
     trainer: Trainer, model_cfg: Any, args: argparse.Namespace,
 ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
-    """Mean trunk-grad norm and mean loss value per component over N batches."""
+    """Mean grad norm (trunk AND shared policy adapter) + mean loss per component.
+
+    ⚑ The adapter is measured, not just CLASSIFIED. Keeping it out of the trunk
+    bucket only stops it contaminating `trunk_share`; for the shared-adapter
+    experiment the question IS how much supervision lands on that representation,
+    so a run that reports nothing about it cannot read the experiment out.
+    """
     model = trainer.model
     loss_kwargs = trainer._loss_kwargs
-    trunk, _names, _heads = _classify_params(model)
+    trunk, _names, _heads, pol_shared_names = _classify_params(model)
     trunk_params = [p for _, p in trunk]
+    shared_by_name = dict(model.named_parameters())
+    pol_shared_params = [
+        shared_by_name[n] for n in pol_shared_names if n in shared_by_name
+    ]
     measured = [*COMPONENT_ORDER, *DIAGNOSTIC_COMPONENTS]
 
     raw_sums: dict[str, float] = dict.fromkeys(measured, 0.0)
+    shared_sums: dict[str, float] = dict.fromkeys(measured, 0.0)
     raw_counts: dict[str, int] = dict.fromkeys(measured, 0)
     loss_val_sums: dict[str, float] = dict.fromkeys(measured, 0.0)
 
@@ -251,7 +300,11 @@ def _measure(
             tensor = losses[comp]
             if not tensor.requires_grad:
                 continue
-            raw_sums[comp] += _grad_norm(tensor, trunk_params)
+            trunk_g, shared_g = component_grad_norms(
+                tensor, trunk_params, pol_shared_params,
+            )
+            raw_sums[comp] += trunk_g
+            shared_sums[comp] += shared_g
             raw_counts[comp] += 1
             loss_val_sums[comp] += float(tensor.detach().item())
         # Free the graph for this batch.
@@ -262,6 +315,16 @@ def _measure(
     raw_norm = {c: raw_sums[c] / raw_counts[c] for c in measured if raw_counts[c] > 0}
     loss_val = {c: loss_val_sums[c] / raw_counts[c] for c in measured if raw_counts[c] > 0}
     weights = {ck: float(loss_kwargs.get(wk, 0.0)) for ck, wk in COMPONENT_WEIGHT_KEY.items()}
+    if pol_shared_params:
+        shared_norm = {
+            c: shared_sums[c] / raw_counts[c] for c in measured if raw_counts[c] > 0
+        }
+        print(json.dumps({
+            "event": "policy_shared_grad_norm",
+            "tensors": len(pol_shared_params),
+            "numel": sum(p.numel() for p in pol_shared_params),
+            "per_component": shared_norm,
+        }, indent=2), flush=True)
     return raw_norm, loss_val, weights
 
 
@@ -269,14 +332,20 @@ def _run(device: str, args: argparse.Namespace) -> dict[str, Any]:
     check_grouping_partitions_components()
     trainer, model_cfg = _build_trainer(device, args)
     trainer.model.train()
-    _trunk, trunk_names, head_names = _classify_params(trainer.model)
+    _trunk, trunk_names, head_names, pol_shared_names = _classify_params(trainer.model)
 
     print(json.dumps({
         "event": "param_classification",
         "trunk_param_tensors": len(trunk_names),
         "head_param_tensors": len(head_names),
+        "policy_shared_param_tensors": len(pol_shared_names),
         "trunk_examples": trunk_names[:6],
         "head_examples": head_names[:6],
+        "policy_shared": pol_shared_names,
+        # ⚑ Non-empty => "trunk share" EXCLUDES the shared policy adapter, so this
+        # run's numbers are NOT comparable with any run recorded before the adapter
+        # existed (e.g. the 2026-08-12 soft 94.1% / own 94.7% pair).
+        "trunk_share_comparable_with_pre_adapter_runs": not pol_shared_names,
     }, indent=2), flush=True)
 
     raw_norm, loss_val, weights = _measure(trainer, model_cfg, args)
