@@ -727,6 +727,7 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         phase_output_adapter_dim=tc.phase_output_adapter_dim,
         phase_smolgen=tc.phase_smolgen,
         phase_piece_thresholds=tc.phase_piece_thresholds,
+        categorical_head_coupled=tc.categorical_head_coupled,
     )
 
 
