@@ -484,6 +484,8 @@ def _launch_distributed_server(
   # full `run.py` restart to change -- not a trial restart, and not a reload.
     if bool(base_config.get("worker_self_register", False)):
         cmd.append("--worker-self-register")
+    if bool(base_config.get("require_worker_lease", False)):
+        cmd.append("--require-worker-lease")
     for cfg_key, flag in (
         ("opening_book_path", "--opening-book-path"),
         ("opening_book_path_2", "--opening-book-path-2"),

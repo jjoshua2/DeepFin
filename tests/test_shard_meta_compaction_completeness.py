@@ -147,6 +147,14 @@ def _expected_compacted_meta(a: dict[str, Any], b: dict[str, Any], *, now_unix: 
     expected["generated_at_unix"] = int(now_unix)
     expected["positions"] = int(total_positions)
     expected["run_id"] = TRIAL_ID
+    # writer_owned_provenance: the compactor assembles this from the
+    # AUTHENTICATED uploader of each contributing upload, in row order. Row
+    # ranges, not just a name set, so a ban can excise one contributor's rows
+    # instead of discarding a shard several volunteers contributed to.
+    expected["contributors"] = [
+        {"username": "alice", "start": 0, "count": 2},
+        {"username": "bob", "start": 2, "count": 2},
+    ]
     return expected
 
 
@@ -185,8 +193,14 @@ def test_compactor_carries_every_shard_meta_field(tmp_path: Path) -> None:
     )
     meta_a = _synthetic_upload_meta(variant=0)
     meta_b = _synthetic_upload_meta(variant=1)
-    acc.add_upload(samples=[_sample(0), _sample(1)], meta=meta_a, now_unix=100.0)
-    acc.add_upload(samples=[_sample(2), _sample(3)], meta=meta_b, now_unix=101.0)
+    # Distinct usernames so `contributors` has to carry BOTH -- a compactor that
+    # kept only the first or last uploader would still tile the rows correctly.
+    acc.add_upload(
+        samples=[_sample(0), _sample(1)], meta=meta_a, now_unix=100.0, username="alice",
+    )
+    acc.add_upload(
+        samples=[_sample(2), _sample(3)], meta=meta_b, now_unix=101.0, username="bob",
+    )
 
     now_unix = 12345.0
     out = _flush_buffered_upload_to_inbox(

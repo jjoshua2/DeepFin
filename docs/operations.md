@@ -323,14 +323,31 @@ so a banned client cannot spend the server's PBKDF2 budget.
 ### Quarantining a banned volunteer's shards
 
 **A ban is not retroactive** — it stops future uploads and leaves everything
-already ingested in place. Shards carry a `username` attribute, so a banned
-volunteer's contributions can be found and quarantined after the fact. Use the existing
-tooling rather than writing new tooling:
+already ingested in place.
+
+**Read `contributors`, not `username`.** `username` on a shard the server
+compacted is `server_compactor` — the compactor merges several uploaders, so no
+single one owns the output — and reading it was the documented procedure until
+2026-08-12, which meant a ban had nothing left on disk to act on. Compacted
+shards now carry a `contributors` list of
+`{"username", "start", "count"}` entries over the shard's own row order, so one
+contributor's rows can be excised instead of the whole shard being discarded.
+Both values are server-stamped from the **authenticated** account, never from
+the uploader's own claim — otherwise one volunteer could aim your ban at another.
+
+The read is `contributors or [{"username": username, "start": 0, "count":
+positions}]`: `contributors` is absent on raw single-uploader shards, where
+`username` is still the answer, and on anything written before the field existed.
+
+Use the existing tooling rather than writing new tooling:
 
 - `scripts/quarantine_desync_shards.py` already builds a quarantine **manifest**
   from a predicate over shards, and `scripts/build_era_probe_set.py` refuses any
   shard a manifest names — so a manifest is the mechanism a downstream consumer
-  already honours. Point its predicate at the banned `username` attribute.
+  already honours. Point its predicate at the banned name using the
+  `contributors`-then-`username` read above. ⚑ The predicate is shard-level, so
+  it quarantines whole shards; the row ranges are recorded so a future
+  row-exact excision tool has what it needs, but that tool does not exist yet.
 - The server also maintains `<server_root>/quarantine/`, with client reports
   under `quarantine/client_reports/` from `/v1/report_bad_shard`.
 

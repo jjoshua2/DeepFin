@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 from contextlib import nullcontext, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, overload
@@ -441,11 +442,60 @@ _TYPED_OVERRIDE_FIELDS: tuple[tuple[str, str, type], ...] = (
 )
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "0.0.0.0"})
+
+
+def cleartext_transport_refusal(server_url: str, *, allow: bool) -> str | None:
+    """Return a refusal message for an unencrypted non-loopback server URL.
+
+    The worker sends HTTP Basic credentials -- a reusable username/password,
+    not a scoped token -- on EVERY authenticated request, and the same cleartext
+    channel carries the manifest whose sha256 values are the only integrity
+    check on the model checkpoint and the optional self-update wheel. So an
+    on-path observer gets a credential that works on every route, and an on-path
+    *modifier* can rewrite an artifact and its expected digest together.
+
+    Loopback is exempt because there is no path to observe. `0.0.0.0` is in the
+    exempt set as the address a locally-run server is typically BOUND to and
+    then dialled by; it is not a routable destination.
+
+    Pure and module level so the rule is testable without constructing a worker.
+    """
+    if allow:
+        return None
+    url = str(server_url or "").strip()
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme != "http":
+        return None
+    host = (parsed.hostname or "").strip().lower()
+    if host in _LOOPBACK_HOSTS:
+        return None
+    return (
+        f"refusing to send credentials in cleartext to {host or url!r} over http://. "
+        "HTTP Basic auth and the model manifest both travel this connection, so an "
+        "on-path attacker can steal a reusable credential and swap the checkpoint "
+        "it authenticates. Use https:// (terminate TLS at a reverse proxy if the "
+        "server itself does not), or pass --allow-cleartext-http to override on a "
+        "network you control."
+    )
+
+
 def _merge_cli_with_yaml_defaults(args, cfg: dict) -> None:
     """Fill missing CLI fields from worker.yaml. CLI always wins."""
     args.server_url = (
         args.server_url or cfg.get("server_url") or "http://127.0.0.1:45453"
     )
+  # Checked HERE rather than at first request: this runs before any credential
+  # is read or sent, so a refusal costs nothing and cannot half-leak. Raising
+  # `SystemExit` rather than warning, because a warning on a volunteer's
+  # terminal is a warning nobody reads while the password goes out anyway.
+    refusal = cleartext_transport_refusal(
+        args.server_url, allow=bool(getattr(args, "allow_cleartext_http", False)),
+    )
+    if refusal is not None:
+        raise SystemExit(refusal)
     for field_name in _OR_FALLBACK_FIELDS:
         setattr(args, field_name, getattr(args, field_name) or cfg.get(field_name))
 
@@ -492,6 +542,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Distributed selfplay worker")
 
     ap.add_argument("--server-url", type=str, default=None)
+    ap.add_argument(
+        "--allow-cleartext-http",
+        action="store_true",
+        help=(
+            "Permit http:// to a non-loopback server. Sends your password in "
+            "cleartext on every request; only for a network you control."
+        ),
+    )
     ap.add_argument("--trial-id", type=str, default=None)
     ap.add_argument("--username", type=str, default=None)
     ap.add_argument("--password", type=str, default=None, help="If omitted, prompt (or loaded from config)")

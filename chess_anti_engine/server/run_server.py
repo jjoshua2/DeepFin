@@ -22,6 +22,14 @@ def main() -> None:
         help="Allow unknown usernames to create an account on first use (TOFU). "
              "Volunteer deployments only; default off.",
     )
+    ap.add_argument(
+        "--require-worker-lease", action="store_true",
+        help="Refuse shard uploads that do not carry an active lease owned by the "
+             "authenticated account and matching the route's trial. Default off, "
+             "because turning it on under a running fleet rejects every worker "
+             "that does not send a lease id. Flip it before opening the server "
+             "to volunteers.",
+    )
     args = ap.parse_args()
 
     try:
@@ -47,6 +55,7 @@ def main() -> None:
         opening_book_path=args.opening_book_path,
         opening_book_path_2=getattr(args, "opening_book_path_2", None),
         worker_self_register=bool(args.worker_self_register),
+        require_worker_lease=bool(args.require_worker_lease),
         max_upload_mb=int(args.max_upload_mb),
         min_workers_per_trial=int(args.min_workers_per_trial),
         max_worker_delta_per_rebalance=int(args.max_worker_delta_per_rebalance),

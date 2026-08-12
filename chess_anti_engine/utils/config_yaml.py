@@ -281,6 +281,7 @@ _TUNE_KEYS = (
     # RESTART-GATED: the server captures it at create_app time, so a live
     # reload cannot open or close registration on a running server.
     "worker_self_register",
+    "require_worker_lease",
     "distributed_inference_broker_enabled", "distributed_inference_shared_broker",
     "distributed_inference_batch_wait_ms",
     "distributed_inference_adaptive_idle_ms",

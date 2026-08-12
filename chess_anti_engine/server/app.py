@@ -36,6 +36,10 @@ from chess_anti_engine.replay.shard import (
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
+# Module scope, unlike `create_app`'s local `.lease` import: `lease_authorizes_upload`
+# is module level so the authorization rule can be tested as a pure function.
+# `server.lease` imports nothing from here, so this is not circular.
+from chess_anti_engine.server.lease import normalize_trial_id
 import contextlib
 
 # Pending-upload staging dir name (server side of the wire protocol — see
@@ -684,6 +688,74 @@ _QUEUED_GAMES_CACHE_TTL_S = 2.0
 _MAX_BAD_SHARD_REPORT_FIELD_CHARS = 512
 
 
+def _stamp_shard_username(zarr_root: Path, username: str) -> None:
+    """Write the authenticated uploader into an extracted shard's ``.zattrs``.
+
+    Zarr v2 keeps group attributes in a plain JSON file, so this is a
+    read-modify-write of one small text file rather than a re-serialization of
+    the arrays -- the shard's data is untouched and nothing is recompressed.
+
+    Raises ``OSError`` on failure. Deliberately not best-effort: a shard whose
+    recorded uploader is still the worker's own claim is the exact defect this
+    exists to close, and silently keeping it would be indistinguishable from
+    working.
+    """
+    attrs_path = zarr_root / ".zattrs"
+    try:
+        raw = json.loads(attrs_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+  # ⚑ Not "start from {}". Every shard this server accepts has already been
+  # through `load_shard_arrays`, so its attrs exist; an absent `.zattrs` means
+  # the store is not the zarr v2 layout this assumes (v3 keeps attributes in
+  # `zarr.json`). Writing a fresh `.zattrs` there would be ignored by the
+  # reader and the stamp would silently not exist -- the failure mode this
+  # whole change is about.
+        raise OSError(
+            f"no .zattrs at {attrs_path}; shard store layout is not zarr v2",
+        ) from exc
+    except ValueError as exc:
+        raise OSError(f"unreadable .zattrs: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise OSError(f"shard .zattrs is {type(raw).__name__}, expected object")
+    raw["username"] = str(username)
+    attrs_path.write_text(json.dumps(raw, indent=4, sort_keys=True), encoding="utf-8")
+
+
+def lease_authorizes_upload(
+    lease: dict[str, Any] | None,
+    *,
+    username: str,
+    trial_id: str | None,
+    now_unix: int,
+) -> str | None:
+    """Return a refusal reason, or None when the lease may write to this trial.
+
+    Module level and pure so the authorization rule can be asserted directly
+    rather than inferred from HTTP status codes -- the rule is the thing worth
+    testing, and a route test can only reach it through auth, headers and a
+    request body.
+
+    ``trial_id`` of None is the default (no-trial) route, which every lease can
+    write to; a lease pinned to a named trial may not use it to reach a
+    DIFFERENT named trial.
+    """
+    if lease is None:
+        return "unknown or expired lease"
+    lease_user = str(lease.get("username") or "")
+    if lease_user != str(username):
+        # Deliberately does not echo the lease's owner: the caller has already
+        # proven they are not it.
+        return "lease belongs to a different account"
+    expires_at = int(lease.get("expires_at_unix") or 0)
+    if expires_at and expires_at <= int(now_unix):
+        return "lease expired"
+    want = normalize_trial_id(trial_id)
+    have = normalize_trial_id(lease.get("trial_id"))
+    if want is not None and have is not None and want != have:
+        return f"lease is for trial {have!r}, not {want!r}"
+    return None
+
+
 def _merge_outcome_stats(dst: dict[str, int], src: Any) -> None:
     if not isinstance(src, dict):
         return
@@ -757,6 +829,12 @@ _SHARD_META_FIELD_KINDS: dict[str, str] = {
     # ``positions``, ``run_id``).
     "version": "writer_owned",
     "username": "writer_owned",
+    # Writer-owned in the sense that the COMPACTOR assembles it, but it is the
+    # one writer-owned field carrying input provenance rather than discarding
+    # it: `username` on the output names this process, and `contributors` says
+    # whose rows it merged. Its own kind so the distinction is not lost the
+    # next time someone reads this table.
+    "contributors": "writer_owned_provenance",
     "generated_at_unix": "writer_owned",
     "positions": "writer_owned",
     "run_id": "writer_owned",
@@ -881,6 +959,14 @@ class _BufferedUploadAccumulator:
     # a legitimate captured value, so ``identity_captured`` — not a None check
     # — is what distinguishes "nothing absorbed yet" from "absorbed a None".
     identity_captured: bool = False
+    # Security provenance: who contributed which rows, in this shard's own row
+    # order. Appended in upload order and never reordered, because
+    # `_flush_accumulator` writes `list(acc.samples)` straight through and
+    # `samples_to_arrays` preserves order -- the ranges are exact, not
+    # approximate. Consecutive uploads from the same user are coalesced so a
+    # 2000-row shard built from many small uploads does not carry hundreds of
+    # entries.
+    contributor_rows: list[dict[str, Any]] = field(default_factory=list)
     policy_encoding: str | None = None
     policy_size: int | None = None
     opponent_wdl_regret_limit: float | None = None
@@ -897,7 +983,14 @@ class _BufferedUploadAccumulator:
         samples: list[ReplaySample],
         meta: dict[str, Any],
         now_unix: float,
+        username: str | None = None,
     ) -> None:
+  # ⚑ Recorded BEFORE the extend, so `start` is the index this upload's rows
+  # begin at rather than the index they end at. Taken from the AUTHENTICATED
+  # account, never from `meta["username"]`: the meta is worker-authored, so
+  # trusting it would let one account attribute its rows to another and defeat
+  # the ban procedure this field exists to serve.
+        self._record_contribution(username, len(samples))
         self.samples.extend(samples)
         self.positions += len(samples)
         for field_name in _AGGREGATE_COUNTER_FIELDS:
@@ -956,6 +1049,20 @@ class _BufferedUploadAccumulator:
         self._absorb_identity(meta)
         _merge_outcome_stats(self.outcome_stats, meta.get("outcome_stats"))
         self.last_update_unix = float(now_unix)
+
+    def _record_contribution(self, username: str | None, n_rows: int) -> None:
+        if n_rows <= 0:
+            return
+        name = str(username) if username is not None else None
+        start = len(self.samples)
+        if self.contributor_rows:
+            last = self.contributor_rows[-1]
+            if last["username"] == name and int(last["start"]) + int(last["count"]) == start:
+                last["count"] = int(last["count"]) + int(n_rows)
+                return
+        self.contributor_rows.append(
+            {"username": name, "start": int(start), "count": int(n_rows)},
+        )
 
     def _absorb_identity(self, meta: dict[str, Any]) -> None:
         """Capture (first upload) or verify (later uploads) the identity fields.
@@ -1065,6 +1172,10 @@ def _flush_buffered_upload_to_inbox(
         # compacted shard's format version is the current one regardless of
         # what the contributing uploads were written by.
         username="server_compactor",
+        # `username` above is honest -- THIS process wrote the shard -- and is
+        # exactly why it cannot answer "whose data is in here". That is what
+        # `contributors` is for; see the ShardMeta field comment.
+        contributors=[dict(entry) for entry in acc.contributor_rows] or None,
         run_id=acc.trial_id,
         generated_at_unix=int(now_unix),
         positions=int(acc.positions),
@@ -1113,6 +1224,7 @@ def create_app(
     max_upload_positions: int = DEFAULT_MAX_SHARD_POSITIONS,
     max_upload_uncompressed_bytes: int = DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES,
     worker_self_register: bool = False,
+    require_worker_lease: bool = False,
 ):
     """Create the HTTP server.
 
@@ -2475,6 +2587,42 @@ def create_app(
                 reason=reason, code=code, worker_version=x_cae_worker_version,
                 worker_protocol=x_cae_protocol_version,
             )
+  # ⚑ AUTHORIZATION, BEFORE THE BODY IS READ. Authentication proves WHO is
+  # calling; it says nothing about WHICH trial they may write to. Leases bind
+  # a username to an assigned trial, and until now the upload routes ignored
+  # that binding entirely: any valid account could POST to any caller-chosen
+  # trial URL, and the lease was loaded only AFTER the shard had been stored,
+  # purely to attribute throughput.
+  #
+  # Running before the drain is the point -- a refusal after `await file.read()`
+  # has already paid for the whole upload.
+  #
+  # Two modes, because requiring a lease is a fleet-breaking change: when a
+  # lease id IS supplied it must check out (that closes the cross-trial and
+  # borrowed-lease holes for every worker that already sends one), and
+  # `require_worker_lease` additionally refuses uploads that supply none. The
+  # flag defaults off and is the switch to flip before opening the server to
+  # volunteers, not something to turn on under a running LAN fleet.
+        lease_id_hdr = str(x_cae_worker_lease_id or "").strip()
+        if lease_id_hdr or require_worker_lease:
+            if not lease_id_hdr:
+                raise HTTPException(
+                    status_code=403,
+                    detail="an active worker lease is required to upload",
+                )
+            reason = lease_authorizes_upload(
+                load_lease(leases_root=leases_root, lease_id=lease_id_hdr),
+                username=username,
+                trial_id=trial_id,
+                now_unix=int(time.time()),
+            )
+            if reason is not None:
+                log.warning(
+                    "upload_shard refused for user=%s trial=%s lease=%s: %s",
+                    username, trial_id, lease_id_hdr, reason,
+                )
+                raise HTTPException(status_code=403, detail=f"lease not authorized: {reason}")
+
   # Size guard: FastAPI doesn't enforce this automatically.
         max_bytes = int(max_upload_mb) * 1024 * 1024
         inbox_root = _inbox_root(trial_id)
@@ -2633,6 +2781,27 @@ def create_app(
             pending_path = pending_dir / (
                 f"{int(now_unix)}_{sha}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
             )
+  # ⚑ Overwrite the worker's `username` claim with the AUTHENTICATED account,
+  # in the in-memory meta and on disk, BEFORE the shard is promoted.
+  #
+  # Two reasons it has to happen here rather than at compaction time. First,
+  # the incoming value is worker-authored: an account could otherwise stamp
+  # another volunteer's name on its own shards and aim an eventual ban at
+  # them. Second, `_recover_pending_uploads` re-seeds accumulators from these
+  # pending shards after a restart and has no request to read a username from
+  # -- without the stamp, every shard that survived a restart would come back
+  # with unverified provenance or none at all.
+            meta["username"] = str(username)
+            try:
+                _stamp_shard_username(zarr_root, str(username))
+            except OSError as exc:
+                delete_shard_path(tmp_zarr)
+                log.exception("failed to stamp uploader identity onto extracted shard")
+                return {
+                    "stored": False,
+                    "rejected": True,
+                    "reason": f"provenance stamp failed: {type(exc).__name__}: {exc}",
+                }
             try:
                 zarr_root.replace(pending_path)
             except Exception as exc:
@@ -2699,6 +2868,7 @@ def create_app(
                         samples=arrays_to_samples(shard_arrs),
                         meta=meta,
                         now_unix=now_unix,
+                        username=str(username),
                     )
                     acc.pending_paths.append(pending_path)
                     recent_upload_shas[upload_seen_key] = now_unix
@@ -3175,7 +3345,16 @@ def create_app(
                     last_update_unix=mtime,
                 )
                 upload_accumulators[acc_key] = acc
-            acc.add_upload(samples=samples, meta=meta_dict, now_unix=mtime)
+            # Server-verified: `_stamp_shard_username` overwrote the worker's
+            # claim with the authenticated account before this shard was ever
+            # promoted to the pending dir, so reading it back here recovers
+            # provenance rather than trusting the uploader.
+            acc.add_upload(
+                samples=samples,
+                meta=meta_dict,
+                now_unix=mtime,
+                username=(str(meta_dict["username"]) if meta_dict.get("username") else None),
+            )
             acc.pending_paths.append(entry)
             if upload_sha is not None:
                 recent_upload_shas[(trial_key, upload_sha)] = mtime

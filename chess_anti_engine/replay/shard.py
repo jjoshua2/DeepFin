@@ -630,6 +630,24 @@ def sf_eval_pv_orphan_flags(
 class ShardMeta:
     version: int = SHARD_VERSION
     username: str | None = None
+  # ⚑ SECURITY PROVENANCE, not bookkeeping. ``username`` on a compacted shard
+  # names the COMPACTOR ("server_compactor"), because a compacted shard merges
+  # several uploaders and no single one owns it. That is correct as a writer
+  # identity and useless as provenance -- and `docs/operations.md`'s documented
+  # incident response ("shards carry a `username` attribute, so a banned
+  # volunteer's contributions can be found and quarantined after the fact")
+  # reads exactly that attribute. Compaction therefore destroyed the control
+  # the ban procedure depends on: after a ban there was nothing left on disk
+  # that said whose rows these were.
+  #
+  # Entries are ``{"username": str, "start": int, "count": int}`` over the
+  # shard's OWN row order, appended in upload order and never reordered, so a
+  # downstream tool can excise one contributor's rows instead of discarding
+  # the whole compacted shard. None on a shard written before this field
+  # existed and on raw single-uploader shards, where ``username`` is still the
+  # answer -- read ``contributors or [{"username": username, ...}]``, never
+  # ``contributors`` alone.
+    contributors: list[dict[str, Any]] | None = None
     run_id: str | None = None
     generated_at_unix: int | None = None
     model_sha256: str | None = None
