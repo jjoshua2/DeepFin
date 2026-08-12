@@ -155,6 +155,13 @@ def _expected_compacted_meta(a: dict[str, Any], b: dict[str, Any], *, now_unix: 
         {"username": "alice", "start": 0, "count": 2},
         {"username": "bob", "start": 2, "count": 2},
     ]
+    # writer_owned_provenance: a compacted shard is assembled by the server from
+    # uploads whose usernames it stamped itself, so its provenance is verified
+    # by construction. ⚑ This must be TRUE and not merely present: the reseed
+    # path keys off it to decide whether a recovered username is evidence or a
+    # worker's own claim, so a compactor that dropped it would silently make
+    # every restarted shard unattributable.
+    expected["provenance_verified"] = True
     return expected
 
 
