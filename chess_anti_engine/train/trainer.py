@@ -2553,9 +2553,6 @@ class Trainer:
 
     @property
     def _loss_kwargs(self) -> dict[str, Any]:
-        # ⚑ Re-checked EVERY step: `w_sf_move` is re-setattr'd each iteration by
-        # `_sync_trainer_weights`, so a construction-time check alone cannot fire.
-        self._assert_gated_heads_exist()
         return {
             "w_policy": self.w_policy, "w_soft": self.w_soft, "w_future": self.w_future,
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
@@ -3614,6 +3611,22 @@ class Trainer:
         return step_n_micro, opt_step_time_s
 
     def train_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
+        # ⚑ Re-checked EVERY iteration, and this placement is load-bearing TWICE.
+        #
+        # (a) `w_sf_move` is re-`setattr`'d by `_sync_trainer_weights` on every
+        #     iteration so live-yaml and PB2 edits take effect immediately, so a
+        #     construction-time check alone CANNOT fire for the case the guard
+        #     exists for. `train_steps` runs after that sync and before any
+        #     gradient is applied.
+        # (b) ⚑ It must NOT live in `_loss_kwargs`. `eval_ruler_id_for` derives the
+        #     holdout ruler's identity from `call_closure(_compute_metrics)`, which
+        #     reaches `_eval_loss_kwargs` -> `_loss_kwargs`; adding a frame there
+        #     CHANGED THE RULER ID and `test_the_production_ruler_id_is_pinned`
+        #     caught it. A ruler-identity change invalidates every best-model
+        #     comparison across it, which is far worse than the defect the guard
+        #     prevents. Training-only placement keeps the measurement's call graph
+        #     byte-identical.
+        self._assert_gated_heads_exist()
         self.model.train()
         train_wall_start = time.perf_counter()
 

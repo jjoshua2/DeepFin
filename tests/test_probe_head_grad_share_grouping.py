@@ -121,3 +121,73 @@ def test_the_shared_policy_adapter_is_NOT_counted_as_trunk() -> None:
     assert sorted(pol_shared) == ["policy_embedding.bias", "policy_embedding.weight"]
     assert not [n for n in trunk_names if n.startswith("policy_embedding")]
     assert not [n for n in head_names if n.startswith("policy_embedding")]
+
+
+def test_the_shared_adapter_grad_norm_is_MEASURED_not_just_classified() -> None:
+    """⚑ Classification alone is not a measurement.
+
+    Keeping `policy_embedding` out of the trunk bucket stops it inflating
+    `trunk_share`, but the shared-adapter experiment's central question is how much
+    supervision lands ON that representation. A probe that classifies it correctly
+    and then reports nothing about it cannot read the experiment out.
+
+    Asserted behaviourally on real gradients: a loss that depends on the adapter
+    must give it a POSITIVE norm, and one that does not must give exactly 0.0.
+    """
+    import torch
+
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.model.transformer import ChessNet
+    from scripts.probe_head_grad_share import _classify_params, component_grad_norms
+
+    model = build_model(ModelConfig(
+        kind="transformer", embed_dim=32, num_layers=2, num_heads=4,
+        use_smolgen=False, policy_embedding_mode="residual_mish",
+    ))
+    assert isinstance(model, ChessNet)
+    with torch.no_grad():  # off the zero init, or every norm is trivially 0
+        emb = model.policy_embedding
+        assert emb is not None
+        emb.weight.normal_(std=0.05)
+
+    trunk, _tn, _hn, shared_names = _classify_params(model)
+    trunk_params = [p for _, p in trunk]
+    by_name = dict(model.named_parameters())
+    shared_params = [by_name[n] for n in shared_names]
+    assert shared_params
+
+    out = model(torch.randn(2, 175, 8, 8))
+    trunk_g, shared_g = component_grad_norms(
+        out["policy_soft"].square().sum(), trunk_params, shared_params,
+    )
+    assert trunk_g > 0.0
+    assert shared_g > 0.0, "the adapter's gradient is not being measured"
+
+    # Negative control: a value head does not read the adapter, so 0.0 is a
+    # MEASURED zero rather than a missing measurement.
+    trunk_v, shared_v = component_grad_norms(
+        model(torch.randn(2, 175, 8, 8))["wdl"].square().sum(),
+        trunk_params, shared_params,
+    )
+    assert trunk_v > 0.0
+    assert shared_v == 0.0
+
+
+def test_component_grad_norms_returns_zero_when_the_model_has_no_adapter() -> None:
+    """Callers must not need a branch: `mode: off` builds no layer at all."""
+    import torch
+
+    from chess_anti_engine.model import ModelConfig, build_model
+    from scripts.probe_head_grad_share import _classify_params, component_grad_norms
+
+    model = build_model(ModelConfig(
+        kind="transformer", embed_dim=32, num_layers=2, num_heads=4, use_smolgen=False,
+    ))
+    trunk, _tn, _hn, shared_names = _classify_params(model)
+    assert not shared_names
+    trunk_g, shared_g = component_grad_norms(
+        model(torch.randn(2, 175, 8, 8))["policy_own"].square().sum(),
+        [p for _, p in trunk], [],
+    )
+    assert trunk_g > 0.0
+    assert shared_g == 0.0

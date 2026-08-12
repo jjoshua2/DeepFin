@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
@@ -372,6 +373,21 @@ def test_a_model_that_never_had_the_head_is_NOT_refused(tmp_path: Path) -> None:
     assert float(trainer._loss_kwargs["w_sf_move"]) == 0.15
 
 
+def _empty_buffer() -> Any:
+    """Minimal ReplayBuffer stand-in: the guard must fire BEFORE any batch is
+    drawn, so this never needs to yield one. Typed `Any` because the point is
+    precisely that `train_steps` must not get far enough to use it."""
+
+    class _EmptyBuffer:
+        def __len__(self) -> int:
+            return 0
+
+        def sample(self, *_a: object, **_kw: object) -> None:  # pragma: no cover
+            raise AssertionError("the guard must fire before any batch is drawn")
+
+    return _EmptyBuffer()
+
+
 def test_RAISING_w_sf_move_AFTER_construction_still_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -384,13 +400,18 @@ def test_RAISING_w_sf_move_AFTER_construction_still_fails_closed(
     second post-construction writer. Measured before the fix: construct at 0.0,
     sync to 0.15, `sf_move_ce` 0.0, no exception -- a gate that cannot fail.
 
-    So the check lives in `_loss_kwargs`, which is rebuilt on every step. This
-    test performs the setattr the sync loop performs.
+    ⚑ The check does NOT live in `_loss_kwargs`, though that was the first fix:
+    `eval_ruler_id_for` derives the holdout ruler's identity from
+    `call_closure(_compute_metrics)`, which reaches `_loss_kwargs`, so putting a
+    frame there CHANGED THE RULER ID -- invalidating every best-model comparison
+    across it. It lives at the top of `train_steps` instead: same every-iteration
+    coverage, training-only call graph. This test performs the setattr the sync
+    loop performs and drives the real entry point.
     """
     trainer = _make_trainer(_build(enable_policy_sf_head=False), tmp_path / "s", 0.0)
     trainer.w_sf_move = 0.15  # exactly what `_sync_trainer_weights` does
     with pytest.raises(ValueError, match="w_sf_move"):
-        _ = trainer._loss_kwargs
+        trainer.train_steps(_empty_buffer(), batch_size=2, steps=1)
 
 
 def test_a_positive_w_sf_move_on_a_net_without_the_head_FAILS_CLOSED(
@@ -555,19 +576,22 @@ def test_the_arena_loader_rebuilds_both_flags_from_a_saved_checkpoint(
 
 
 @pytest.mark.parametrize("mode", _ADAPTER_MODES)
-def test_enabling_the_embedding_PRESERVES_optimizer_state(
+def test_the_splice_reattaches_moments_to_the_SAME_NAMED_parameters(
     mode: str, tmp_path: Path,
 ) -> None:
-    """⚑ The confound this removes, and why it is worth a test.
+    """⚑ Counting state entries is NOT enough, and this repo is exactly where that
+    matters.
 
-    Without `policy_embedding.*` in `_FRESH_PARAM_NAME_SUFFIXES`, warm-starting
-    with the flag on falls into `Trainer.load`'s reinit path, which resets EVERY
-    moment, re-enters LR warmup, AND skips `load_zclip_state` (so the arm starts
-    in the fresh hard-cap-only zclip regime). The control arm would then have to
-    absorb an identical boot shock just to stay comparable, and the readout would
-    be measuring the shock. Spliced, the donor moments survive.
+    `_remap_optimizer_state_for_new_params` splices by POSITION inside each param
+    group and its own docstring warns the remap "relies on every unchanged
+    parameter retaining the same relative order". If the ordering assumption ever
+    broke, donor moments would land on the WRONG parameter -- accepted, non-empty,
+    same COUNT, and silently wrong. That is the failure class this codebase is
+    built around, so the assertion has to be per-NAME, not per-total.
 
-    Measured 86 -> 86 with the splice, 86 -> 0 without.
+    Method: give every parameter a distinguishable `exp_avg` (its own index),
+    save, warm-start the adapter arm, then require each named parameter to carry
+    back the value that was banked under THAT name.
     """
     donor_cfg = _cfg()
     donor = Trainer(
@@ -579,10 +603,23 @@ def test_enabling_the_embedding_PRESERVES_optimizer_state(
     for param in donor.model.parameters():
         param.grad = torch.randn_like(param)
     donor.opt.step()
+
+    # Stamp a unique, order-sensitive fingerprint into each parameter's moment.
+    donor_names = [n for n, p in donor.model.named_parameters() if p.requires_grad]
+    by_id = {id(p): n for n, p in donor.model.named_parameters()}
+    banked: dict[str, float] = {}
+    for group in donor.opt.param_groups:
+        for param in group["params"]:
+            state = donor.opt.state.get(param)
+            if not state or "exp_avg" not in state:
+                continue
+            name = by_id[id(param)]
+            value = float(abs(hash(name)) % 100_000) + 0.5
+            state["exp_avg"] = torch.full_like(state["exp_avg"], value)
+            banked[name] = value
+    assert len(banked) >= len(donor_names) - 2
     ckpt = tmp_path / "donor.pt"
     donor.save(ckpt)
-    banked = len(donor.opt.state)
-    assert banked > 0
 
     arm_cfg = _cfg(policy_embedding_mode=mode)
     arm = Trainer(
@@ -592,7 +629,164 @@ def test_enabling_the_embedding_PRESERVES_optimizer_state(
         model_config=arm_cfg,
     )
     arm.load(ckpt)
-    assert len(arm.opt.state) >= banked, "optimizer moments were reset, not spliced"
+
+    arm_by_id = {id(p): n for n, p in arm.model.named_parameters()}
+    seen: dict[str, float] = {}
+    for group in arm.opt.param_groups:
+        for param in group["params"]:
+            state = arm.opt.state.get(param)
+            if not state or "exp_avg" not in state:
+                continue
+            seen[arm_by_id[id(param)]] = float(state["exp_avg"].flatten()[0])
+
+    # The adapter itself is NEW: it must get a fresh (zero) slot, not a donor one.
+    for name, value in seen.items():
+        if name.startswith("policy_embedding"):
+            assert value == 0.0, f"{name} inherited a donor moment {value}"
+            continue
+        assert name in banked, f"{name} carries state that no donor parameter banked"
+        assert value == banked[name], (
+            f"{name} got the moment banked for a DIFFERENT parameter: "
+            f"{value} != {banked[name]}"
+        )
+    # ...and every donor parameter that banked a moment got it back.
+    assert set(banked) <= set(seen), sorted(set(banked) - set(seen))
+
+
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
+def test_SWA_is_NOT_preserved_across_the_topology_change(
+    mode: str, tmp_path: Path,
+) -> None:
+    """⚑ PINNING A KNOWN LIMITATION, not claiming it away.
+
+    The splice covers the OPTIMIZER. SWA is restored through a separate STRICT
+    `self._swa_model.load_state_dict(...)`, which the two new `policy_embedding.*`
+    keys make incompatible -- so the averaged weights and `n_averaged` are
+    REINITIALISED. An earlier version of this PR described the splice as removing
+    "the warm-start reset", full stop; that was true of the optimizer and false of
+    SWA, and review was right to reject the claim as unestablished.
+
+    Left as-is deliberately: production runs `swa_start: -1`, so `export_swa` never
+    publishes the averaged net and the reset carries no measurement. If SWA is ever
+    turned on for an arm using the adapter, this test is the thing that has to
+    change first.
+    """
+    donor_cfg = _cfg()
+    donor = Trainer(
+        build_model(donor_cfg), device="cpu", lr=1e-3, optimizer="adamw",
+        warmup_steps=10, warmup_lr_start=1e-5, use_amp=False,
+        log_dir=tmp_path / "sd", tb_log_interval=1000, prefetch_batches=False,
+        model_config=donor_cfg,
+    )
+    if getattr(donor, "_swa_model", None) is None:
+        pytest.skip("SWA is not constructed in this configuration")
+    donor.save(tmp_path / "sd.pt")
+
+    arm_cfg = _cfg(policy_embedding_mode=mode)
+    arm = Trainer(
+        build_model(arm_cfg), device="cpu", lr=1e-3, optimizer="adamw",
+        warmup_steps=10, warmup_lr_start=1e-5, use_amp=False,
+        log_dir=tmp_path / "sa", tb_log_interval=1000, prefetch_batches=False,
+        model_config=arm_cfg,
+    )
+    arm.load(tmp_path / "sd.pt")
+    swa = getattr(arm, "_swa_model", None)
+    assert swa is not None
+    assert int(swa.n_averaged.item()) == 0, (
+        "SWA now survives the topology change -- update this test AND the PR's "
+        "claim, which currently says it does not"
+    )
+
+
+@pytest.mark.parametrize("mode", _ADAPTER_MODES)
+@pytest.mark.parametrize(
+    "aot_key", ["distributed_inference_aot_dir", "distributed_worker_aot_dir"],
+)
+def test_EVERY_AOT_route_REFUSES_to_serve_a_prior_without_the_adapter(
+    aot_key: str, mode: str,
+) -> None:
+    """⚑⚑ THERE ARE TWO AOT ROUTES, and the first fix only covered one.
+
+    `distributed_inference_aot_dir` reaches the BROKER; `distributed_worker_aot_dir`
+    becomes `worker --aot-dir` and builds the same `AOTEvaluator` inside the worker.
+    Both replace `ChessNet.forward` with a graph frozen at package-build time and
+    rebind only the constants the PACKAGE asks for -- so a package built before the
+    adapter existed simply never receives `policy_embedding.*`, and nothing raises,
+    because `build_aot_constants` checks only the package->model direction.
+
+    Parametrized over the key AND the mode so neither a new route nor a new mode
+    can be added without a home here.
+    """
+    from chess_anti_engine.tune.distributed_runtime import (
+        assert_no_aot_route_bypasses_the_policy_adapter,
+    )
+
+    with pytest.raises(ValueError, match=aot_key):
+        assert_no_aot_route_bypasses_the_policy_adapter(
+            {"policy_embedding_mode": mode, aot_key: "data/aot_models_512"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("launcher", "aot_key"),
+    [
+        ("_launch_inference_broker", "distributed_inference_aot_dir"),
+        ("_launch_distributed_worker", "distributed_worker_aot_dir"),
+    ],
+)
+def test_BOTH_LAUNCHERS_call_the_refusal(
+    launcher: str, aot_key: str, tmp_path: Path,
+) -> None:
+    """⚑ Drives the real entry points, not the helper.
+
+    The previous version of this test called
+    `assert_no_aot_route_bypasses_the_policy_adapter` directly -- and a mutant that
+    deleted the CALL from `_launch_distributed_worker` while leaving the function
+    defined SURVIVED it. Testing the helper instead of the wiring is the trap this
+    repo punishes; both launchers get driven here.
+    """
+    import chess_anti_engine.tune.distributed_runtime as dr
+
+    fn = getattr(dr, launcher)
+    kwargs: dict[str, object] = {
+        "config": {
+            "policy_embedding_mode": "residual_mish",
+            aot_key: "data/aot_models_512",
+            "distributed_server_root": str(tmp_path / "srv"),
+        },
+        "trial_id": "t",
+        "trial_dir": tmp_path / "trial",
+    }
+    if launcher == "_launch_inference_broker":
+        kwargs["publish_dir"] = tmp_path / "pub"
+    else:
+        kwargs["worker_index"] = 0
+
+    with pytest.raises(ValueError, match=aot_key):
+        fn(**kwargs)
+
+
+def test_the_AOT_refusal_names_a_remedy_that_actually_works() -> None:
+    """⚑ The message must not promise an impossible fix.
+
+    The guard's condition is `adapter on AND an AOT dir configured` -- it does NOT
+    inspect package architecture, so a correctly REBUILT package is refused too.
+    An earlier message told the operator to "rebuild the packages", which this
+    guard would then reject anyway. Saying so explicitly is the difference between
+    a guard an operator can satisfy and one that reads as a bug.
+    """
+    from chess_anti_engine.tune.distributed_runtime import (
+        assert_no_aot_route_bypasses_the_policy_adapter,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        assert_no_aot_route_bypasses_the_policy_adapter(
+            {"policy_embedding_mode": "linear",
+             "distributed_inference_aot_dir": "data/aot_models_512"},
+        )
+    message = str(excinfo.value)
+    assert "Clear the AOT" in message
+    assert "rebuilding them will not satisfy it" in message
 
 
 def test_the_AOT_path_REFUSES_to_serve_a_prior_without_the_adapter(

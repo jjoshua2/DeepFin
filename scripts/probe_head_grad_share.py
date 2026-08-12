@@ -30,6 +30,8 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
+from collections.abc import Sequence
+
 import numpy as np
 import torch
 
@@ -235,17 +237,46 @@ def _build_trainer(device: str, args: argparse.Namespace) -> tuple[Trainer, Any]
     return trainer, model_cfg
 
 
+def component_grad_norms(
+    tensor: torch.Tensor,
+    trunk_params: Sequence[torch.nn.Parameter],
+    policy_shared_params: Sequence[torch.nn.Parameter],
+) -> tuple[float, float]:
+    """Grad norm of one loss component on the trunk AND on the shared policy adapter.
+
+    ⚑ Both, in one place, because classifying the adapter out of the trunk only
+    stops it CONTAMINATING `trunk_share`; the shared-adapter experiment's whole
+    question is how much supervision lands ON it, so a run that never measures it
+    cannot read the experiment out. Returns 0.0 for the adapter when the model has
+    none, so callers need no branch.
+    """
+    trunk_g = _grad_norm(tensor, list(trunk_params))
+    shared_g = _grad_norm(tensor, list(policy_shared_params)) if policy_shared_params else 0.0
+    return trunk_g, shared_g
+
+
 def _measure(
     trainer: Trainer, model_cfg: Any, args: argparse.Namespace,
 ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
-    """Mean trunk-grad norm and mean loss value per component over N batches."""
+    """Mean grad norm (trunk AND shared policy adapter) + mean loss per component.
+
+    ⚑ The adapter is measured, not just CLASSIFIED. Keeping it out of the trunk
+    bucket only stops it contaminating `trunk_share`; for the shared-adapter
+    experiment the question IS how much supervision lands on that representation,
+    so a run that reports nothing about it cannot read the experiment out.
+    """
     model = trainer.model
     loss_kwargs = trainer._loss_kwargs
-    trunk, _names, _heads, _pol_shared = _classify_params(model)
+    trunk, _names, _heads, pol_shared_names = _classify_params(model)
     trunk_params = [p for _, p in trunk]
+    shared_by_name = dict(model.named_parameters())
+    pol_shared_params = [
+        shared_by_name[n] for n in pol_shared_names if n in shared_by_name
+    ]
     measured = [*COMPONENT_ORDER, *DIAGNOSTIC_COMPONENTS]
 
     raw_sums: dict[str, float] = dict.fromkeys(measured, 0.0)
+    shared_sums: dict[str, float] = dict.fromkeys(measured, 0.0)
     raw_counts: dict[str, int] = dict.fromkeys(measured, 0)
     loss_val_sums: dict[str, float] = dict.fromkeys(measured, 0.0)
 
@@ -269,7 +300,11 @@ def _measure(
             tensor = losses[comp]
             if not tensor.requires_grad:
                 continue
-            raw_sums[comp] += _grad_norm(tensor, trunk_params)
+            trunk_g, shared_g = component_grad_norms(
+                tensor, trunk_params, pol_shared_params,
+            )
+            raw_sums[comp] += trunk_g
+            shared_sums[comp] += shared_g
             raw_counts[comp] += 1
             loss_val_sums[comp] += float(tensor.detach().item())
         # Free the graph for this batch.
@@ -280,6 +315,16 @@ def _measure(
     raw_norm = {c: raw_sums[c] / raw_counts[c] for c in measured if raw_counts[c] > 0}
     loss_val = {c: loss_val_sums[c] / raw_counts[c] for c in measured if raw_counts[c] > 0}
     weights = {ck: float(loss_kwargs.get(wk, 0.0)) for ck, wk in COMPONENT_WEIGHT_KEY.items()}
+    if pol_shared_params:
+        shared_norm = {
+            c: shared_sums[c] / raw_counts[c] for c in measured if raw_counts[c] > 0
+        }
+        print(json.dumps({
+            "event": "policy_shared_grad_norm",
+            "tensors": len(pol_shared_params),
+            "numel": sum(p.numel() for p in pol_shared_params),
+            "per_component": shared_norm,
+        }, indent=2), flush=True)
     return raw_norm, loss_val, weights
 
 
