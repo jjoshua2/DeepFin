@@ -43424,3 +43424,41 @@ extrapolates.**
 
 ⚑ This is a THROUGHPUT decomposition, not a strength result. The paired 400-game arena
 vs `ck_2026-08-11_5ce02_iter138` remains the only decider and is still owed.
+
+### 2026-08-12 — ⚑ I CONTAMINATED MY OWN THROUGHPUT SERIES FROM ~ITER 151. Do not read it.
+
+The sims-100 throughput numbers above are measured on iters 141-150. **Iterations
+151-162 are NOT usable** — I ran heavy verification work concurrently with live
+training: a full `pytest` suite, two repo-wide `lint.sh` passes, an independent review
+agent, and **two runs of `tests/test_uci_smoke.py`**. That last one is the serious
+error: `isready` deliberately re-warms the cudagraph before emitting `readyok`, so the
+UCI smoke tests are **GPU work**, run side-by-side with training in direct violation of
+[[pause_and_run_beats_concurrent_gpu_work]].
+
+| window | games | plies/game | time/iter | steps | candidates |
+|---|---|---|---|---|---|
+| 141-150 (clean) | 455 | 129.6 | 348s | 149 | 15.88 |
+| 151-159 | 418 | 125.4 | 337s | 113 | 14.30 |
+| 160-162 | **300** | 122.0 | **223s** | 77 | 14.28 |
+
+**The signature says STARVATION, not degradation, and the discriminator is the
+direction of the iteration TIME.** If the change were decaying, iterations would not
+get SHORTER. They do — because steps scale with ingested positions (views-targeting),
+so less selfplay data ⇒ fewer steps ⇒ a shorter iteration. And
+`gumbel_policy_candidate_count_mean` is FLAT at 14.28: the search config, the only
+thing this change touched, did not move at all.
+
+**What stands and what does not:**
+- The mechanism gate verdict **STANDS** — it was met at iters 145-148, inside the clean
+  window, before the heaviest contamination.
+- The `1.51x positions/s` figure **STANDS for 141-150** and must be quoted with that
+  window attached. Iters 151+ read 40.12/s and that number means nothing about sims-100.
+- **Nobody may read a decay trend out of iters 151-162.** Recording this because an
+  uncontaminated-looking CSV is exactly how a future session concludes "the change
+  degraded over time" from an artifact of my own tooling
+  [[diff_the_file_you_measured_against_production]].
+
+**Rule for the next agent, me included: no GPU-touching test suite while training is
+live.** `test_uci_smoke`, arenas, and anything that captures a cudagraph belong in a
+pause window. The throughput readout for the arena comparison must come from a window
+with NO concurrent agent work.
