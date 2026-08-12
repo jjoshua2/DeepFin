@@ -44381,3 +44381,28 @@ Residual (hygiene, NOT a Tier-13 hazard): `model_config_from_manifest_dict` defa
 ABSENT `policy_embedding_mode` to `'off'` — fail-open for manifests written by pre-#398
 code. All Tier-13 publishes come from current code, so inert here; flagged for the next
 config-hygiene PR alongside the same pattern on its 40+ sibling fields.
+
+### Tier-13 execution mechanics measured before the first transition (2026-08-12 19:35)
+
+Three facts the banking/transition plan depended on, measured on arm A's live trial dir
+rather than assumed:
+
+1. **Checkpoint index = iteration − 1.** After 8 completed iterations the newest dir is
+   `checkpoint_000007`. ⇒ "the iter-100 checkpoint" is **`checkpoint_000099`** — banking
+   a literal `checkpoint_000100` would grab iteration 101 (or nothing). All three arms'
+   arena checkpoints use index 99, consistently.
+2. **Ray prunes to the last 6** (`tune_num_to_keep: 6`, both yamls). At ~400 s/iter the
+   25/50/75 milestone checkpoints are DELETED ~40 min after their crossing. The
+   error/iter-100 watcher therefore could not protect them — the watcher now fires at
+   EVERY milestone (25 → 50 → 75 → 100, re-armed after each bank), and each bank copies
+   `checkpoint_0000{N-1}` plus the trial's `params.json` sibling into
+   `scratchpad/tier13/banked/<arm>_iter<N>/` (the checkpoint embeds `arch`, so params.json
+   is belt-and-braces for the loader's fallback path, not a requirement).
+3. **Nothing stops the trial at 100** — the arm yamls carry no iteration cap, so the trial
+   runs until `train.sh stop`. The watcher fires within ~60 s of row 100; the trial will be
+   early in iteration 101 when the stop lands. Harmless: the arena reads index 99, and the
+   overshoot iterations change nothing that is measured.
+
+Checkpoint dir contents verified while live: `trainer.pt`, `pid_state.json`,
+`holdout.npz`, `rng_state.json`, `trial_meta.json` — `trainer.pt` is what
+`load_model_from_checkpoint` resolves, present.
