@@ -478,24 +478,79 @@ def test_contiguous_uploads_from_one_user_coalesce() -> None:
     assert sum(c["count"] for c in acc.contributor_rows) == len(acc.samples)
 
 
-def test_unverified_pending_shard_does_not_launder_its_claim() -> None:
+def test_unverified_pending_shard_does_not_launder_its_claim(tmp_path) -> None:
     """A shard promoted by a server predating the stamp carries the UPLOADER'S
     claim. Re-seeding it must record no contributor rather than a name that
-    might be someone else's -- otherwise a ban lands on the wrong volunteer."""
-    from chess_anti_engine.server.app import _BufferedUploadAccumulator
+    might be someone else's -- otherwise a ban lands on the wrong volunteer.
 
-    acc = _BufferedUploadAccumulator(
-        trial_id="t1", model_sha256="sha", created_at_unix=0.0, last_update_unix=0.0,
-    )
-    meta_unverified = {"username": "victim"}  # no provenance_verified marker
-    verified = bool(meta_unverified.get("provenance_verified"))
-    recovered = str(meta_unverified.get("username") or "") if verified else ""
+    ⚑ ROUTE-LEVEL ON PURPOSE. The first version of this test recomputed the
+    production expression in its own body::
 
-    acc.add_upload(
-        samples=[_sample(0)], meta=meta_unverified, now_unix=0.0,
-        username=recovered or None,
+        verified = bool(meta.get("provenance_verified"))
+        recovered = str(meta.get("username") or "") if verified else ""
+
+    ...and then asserted on the result. That asserts the test's arithmetic, not
+    the server's: deleting `if verified else ""` from `_scan_pending_dir` left
+    the whole suite GREEN. A test that restates the code it is checking is the
+    same defect as a gate that cannot fail, and it was sitting in the fix for
+    the finding about laundering.
+
+    So this plants a genuinely unstamped pending shard on disk and boots the
+    real app, which runs `_recover_pending_uploads` at startup.
+    """
+    from chess_anti_engine.replay.shard import PENDING_DIR_NAME
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    # A pre-upgrade pending shard: uploaded by mallory, CLAIMING to be victim,
+    # with no `provenance_verified` marker because the old server never wrote one.
+    pending = server_root / "inbox" / PENDING_DIR_NAME
+    pending.mkdir(parents=True, exist_ok=True)
+    zp = pending / "1000_deadbeef_aaaa.zarr"
+    save_local_shard_arrays(
+        zp,
+        arrs=samples_to_arrays([_sample(i) for i in range(2)]),
+        meta=ShardMeta(
+            username="victim", games=1, positions=2,
+            model_sha256="abc1234567", model_step=0,
+        ),
     )
-    assert acc.contributor_rows == [{"username": None, "start": 0, "count": 1}]
+    # ⚑ Strip the key entirely rather than leaving it None. `asdict(ShardMeta)`
+    # writes every field, so a shard written by TODAY's code carries
+    # `provenance_verified: null`; a shard written by the OLD code has no such
+    # key at all. Both must be treated as unverified, and the fixture has to be
+    # the real pre-upgrade shape or it is not testing the upgrade case.
+    attrs_path = zp / ".zattrs"
+    attrs = json.loads(attrs_path.read_text())
+    attrs.pop("provenance_verified", None)
+    attrs_path.write_text(json.dumps(attrs, indent=4, sort_keys=True))
+    assert "provenance_verified" not in json.loads(attrs_path.read_text())
+
+    # Booting the app runs `_recover_pending_uploads`, which RE-SEEDS the
+    # accumulator but does not flush it; a real upload pushes it over the
+    # compaction threshold. The result is the mixed shard that makes the
+    # failure legible: recovered rows beside a freshly authenticated one.
+    client = _build_client(
+        server_root, upload_compact_shard_size=3, upload_compact_max_age_seconds=1e9,
+    )
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", _tar_bytes(tmp_path / "fresh", n=1), "application/x-tar")},
+        headers=_headers(),
+    )
+    assert r.status_code == 200, r.text
+
+    shards = _compacted_shards(server_root)
+    assert shards, "no compacted shard was produced"
+    _, meta = load_shard_arrays(shards[0])
+    names = [c["username"] for c in (meta.get("contributors") or [])]
+    assert "victim" not in names, (
+        f"an unverified claim was laundered into provenance: {names!r}"
+    )
+    assert names == [None, "u"], names
 
 
 def test_stamp_writes_the_verified_marker(tmp_path) -> None:
@@ -605,3 +660,76 @@ def test_a_real_issued_lease_still_authorizes_its_own_upload(tmp_path) -> None:
         "issuer produced a trial-less lease -- the tightened trial branch would "
         "refuse every named-trial upload"
     )
+
+
+def test_require_worker_lease_is_accepted_by_the_yaml_schema() -> None:
+    """Hop 0->1, the one hop the wiring tests still missed.
+
+    ⚑ Commenting the key out of `config_yaml._TUNE_KEYS` left the whole suite
+    green, yet it is load-bearing and FATAL: per CLAUDE.md an unknown key is
+    category (a), and `flatten_run_config_defaults` runs before the argument
+    parser and outside any try -- so the run does not start at all. Loud, but
+    "crosses four hops with a test asserting each" was only true of three.
+    """
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    flat = flatten_run_config_defaults({"tune": {"require_worker_lease": True}})
+    assert flat["require_worker_lease"] is True
+
+    # And the schema really is what admits it -- an unknown sibling is refused,
+    # so this is not passing because the validator accepts anything.
+    with pytest.raises(ValueError, match=r"[Uu]nknown"):
+        flatten_run_config_defaults({"tune": {"requre_worker_lease": True}})
+
+
+def test_worker_logs_a_warning_on_a_non_200_upload(tmp_path, caplog) -> None:
+    """Finding [8]'s fix, pinned.
+
+    Deleting the new non-200 branch left the suite green. It is observability
+    only -- but this PR creates the first DESIGNED 403 on the upload route, so
+    without a log line a lease misconfiguration is undiagnosable in the field,
+    and the PR's own cleartext test argues that a guard nothing proves is
+    installed is one that gets removed by accident.
+    """
+    import logging
+    import types
+
+    from chess_anti_engine.worker import WorkerSession
+
+    pending = tmp_path / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    save_local_shard_arrays(
+        pending / "shard_000001.zarr",
+        arrs=samples_to_arrays([_sample(0)]),
+        meta=ShardMeta(username="u", games=1, positions=1, model_sha256="abc", model_step=0),
+    )
+
+    class _Resp:
+        status_code = 403
+
+        @staticmethod
+        def json():
+            return {"detail": "lease not authorized: unknown or expired lease"}
+
+    class _Requests:
+        @staticmethod
+        def post(*_a, **_k):
+            return _Resp()
+
+    w = types.SimpleNamespace(
+        pending_dir=pending, leased_trial_id="", fixed_trial_id="",
+        trial_api_prefix="/v1", lease_id="", machine_id="m1",
+        log=logging.getLogger("test_worker_403"), last_successful_send_s=0.0,
+        args=types.SimpleNamespace(username="u", password="p"), _requests=_Requests,
+    )
+    w._server_url_for = lambda p: "http://server" + p
+    w._report_bad_pending_shard = lambda payload: None
+
+    with caplog.at_level(logging.WARNING, logger="test_worker_403"):
+        WorkerSession._upload_pending_shards_locked(w, default_elapsed_s=1.0)  # pyright: ignore[reportArgumentType]
+
+    text = caplog.text
+    assert "403" in text, f"no HTTP status in the worker log: {text!r}"
+    assert "lease not authorized" in text, "the server's reason never reached the worker log"
+    # And the shard is retained for retry, not quarantined.
+    assert list(pending.glob("*.zarr")), "a non-200 must not delete the pending shard"

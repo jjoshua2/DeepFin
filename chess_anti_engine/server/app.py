@@ -720,10 +720,20 @@ def _stamp_shard_username(zarr_root: Path, username: str) -> None:
         raise OSError(f"shard .zattrs is {type(raw).__name__}, expected object")
     raw["username"] = str(username)
     raw["provenance_verified"] = True
-  # atomic_write_text, like every other write in this module: a torn `.zattrs`
-  # here cannot reach `_pending` (this runs pre-promote) but it does orphan an
-  # unloadable store under `inbox_root`.
-    atomic_write_text(attrs_path, json.dumps(raw, indent=4, sort_keys=True))
+  # atomic_write_text so a torn `.zattrs` cannot exist even transiently -- it
+  # runs pre-promote, so it could not reach `_pending` anyway, but a half-written
+  # store orphaned under `inbox_root` is still worth not creating.
+  #
+  # ⚑ durable=False. This is on EVERY /upload_shard, and fsync here is measured
+  # at 6.69 ms median / 7.65 ms p95 on this box's ext4 root (utils/atomic.py's
+  # own docstring records 11 ms median with a tail past 1.8 s) versus 0.08 ms
+  # without. It buys nothing: the array chunks `extract_uploaded_shard_tar`
+  # just wrote are never fsynced either, and a crash before `zarr_root.replace`
+  # discards the whole staging dir regardless. `app.py`'s user-stats write on
+  # this same route already passes durable=False for exactly this reason.
+    atomic_write_text(
+        attrs_path, json.dumps(raw, indent=4, sort_keys=True), durable=False,
+    )
 
 
 def lease_authorizes_upload(
@@ -856,9 +866,12 @@ _SHARD_META_FIELD_KINDS: dict[str, str] = {
     # `set(_SHARD_META_FIELD_KINDS)` is used, to assert the table and the
     # dataclass agree. Do not add dispatch on them without changing that.
     "contributors": "writer_owned_provenance",
-    # Writer-owned: the compacted shard's provenance is verified exactly when
-    # every contributing upload's was, which is what `_record_contribution`
-    # enforces by refusing to record an unverified name at all.
+    # Writer-owned. ⚑ SHARD-LEVEL, and it means "this shard was assembled by a
+    # server that stamps", NOT "every row in it is attributable": an unverified
+    # contribution is recorded as `{"username": None}` and the flag is still
+    # written True. That is why `docs/operations.md` tells the reader to FILTER
+    # NULL usernames rather than trust the flag alone. Do not read it as a
+    # per-row guarantee.
     "provenance_verified": "writer_owned_provenance",
     "generated_at_unix": "writer_owned",
     "positions": "writer_owned",
@@ -2614,7 +2627,7 @@ def create_app(
                 reason=reason, code=code, worker_version=x_cae_worker_version,
                 worker_protocol=x_cae_protocol_version,
             )
-  # ⚑ AUTHORIZATION, BEFORE THE BODY IS READ. Authentication proves WHO is
+  # ⚑ AUTHORIZATION, BEFORE THE SHARD IS STORED. Authentication proves WHO is
   # calling; it says nothing about WHICH trial they may write to. Leases bind
   # a username to an assigned trial, and until now the upload routes ignored
   # that binding entirely: any valid account could POST to any caller-chosen
