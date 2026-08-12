@@ -23,6 +23,7 @@ this repo before:
 from __future__ import annotations
 
 import dataclasses
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -905,6 +906,24 @@ def test_the_AOT_path_REFUSES_to_serve_a_prior_without_the_adapter(
         )
 
 
+def _terminate_and_reap(proc: subprocess.Popen[bytes] | None) -> None:
+    """Stop a broker by HANDLE and block until the kernel has reaped it.
+
+    ⚑ By handle, never by name pattern. `pkill -f` / `pgrep -f` self-match the
+    caller's own cmdline and have caused a 4h46m production outage in this repo
+    (2026-08-10), so a "kill any stray brokers" sweep is not an option here even
+    in a test.
+    """
+    if proc is None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=30)
+
+
 @pytest.mark.parametrize(
     ("mode", "aot_dir"),
     [("off", "data/aot_models_512"), ("residual_mish", ""), ("linear", "")],
@@ -916,14 +935,20 @@ def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
     production runs AOT today with the adapter off, and the adapter is safe when
     AOT is not configured. Only the CONJUNCTION is the hazard.
 
-    Asserted by the absence of the AOT ValueError specifically: the call fails
-    later for unrelated reasons (no real server root), which is fine.
+    Asserted by the absence of the AOT ValueError specifically.
+
+    ⚑ The docstring used to continue "the call fails later for unrelated reasons
+    (no real server root), which is fine." THAT IS FALSE, and believing it is
+    what leaked the brokers: on both safe combinations the launch SUCCEEDS and
+    returns a live `subprocess.Popen`. Nothing downstream fails, so nothing tore
+    it down. The two safe rows are therefore the two rows that MUST clean up.
     """
     from chess_anti_engine.tune.distributed_runtime import _launch_inference_broker
 
     raised = ""
+    proc = None
     try:
-        _launch_inference_broker(
+        proc = _launch_inference_broker(
             config={
                 "policy_embedding_mode": mode,
                 "distributed_inference_aot_dir": aot_dir,
@@ -942,7 +967,69 @@ def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
         raise
     except Exception as exc:  # only the AOT message is under test
         raised = f"{type(exc).__name__}: {exc}"
+    finally:
+        # ⚑⚑ THE SAFE COMBINATIONS ACTUALLY LAUNCH A BROKER, AND AN EARLIER
+        # REVISION OF THIS TEST LEAKED IT. `_launch_inference_broker` returns a
+        # live `subprocess.Popen` — that is the whole point of the negative
+        # control, since the guard is being asserted NOT to fire. The result was
+        # 4 orphaned `python -m chess_anti_engine.inference` processes per test
+        # run (measured: 52 alive, oldest ~3h, after a handful of local runs),
+        # each holding a model and surviving the session that spawned it.
+        #
+        # The docstring used to claim "the call fails later for unrelated
+        # reasons (no real server root)". It does NOT fail — it succeeds and the
+        # broker idles forever. Terminate by the HANDLE we were given; never by
+        # name pattern (`pkill -f` self-matches and has caused a 4h46m outage
+        # here).
+        _terminate_and_reap(proc)
+    # ⚑⚑ THIS ASSERTION IS WHAT MAKES THE CLEANUP ABOVE MUTATION-VISIBLE, AND IT
+    # HAS TO LIVE IN *THIS* TEST. The first version of this fix pinned the
+    # teardown with a separate standalone test that launched its own broker and
+    # reaped it -- which proves a property of `_launch_inference_broker`, not
+    # that THIS test cleans up. Deleting the `finally:` above left that
+    # standalone test perfectly green while this test leaked again: a regression
+    # test for a leak, that cannot observe the leak.
+    #
+    # Mutation-verified 2026-08-12: with the `finally:` removed, this line fails
+    # on both safe rows.
+    assert proc is None or proc.poll() is not None, (
+        f"mode={mode!r} aot_dir={aot_dir!r}: the negative control launched a "
+        f"broker (pid {proc.pid if proc else None}) and did not reap it"
+    )
     assert "distributed_inference_aot_dir" not in raised, raised
+
+
+def test_the_launcher_returns_a_handle_that_can_actually_be_reaped(
+    tmp_path: Path,
+) -> None:
+    """Pins the CONTRACT the teardown depends on: `_launch_inference_broker`
+    hands back a real `subprocess.Popen` whose child dies on `terminate()`.
+
+    ⚑ This is NOT the regression test for the leak, and an earlier revision of
+    this PR wrongly presented it as one. It launches its own broker and reaps
+    it, so it stays green no matter what
+    `test_the_AOT_refusal_does_not_fire_on_either_safe_combination` does -- the
+    assertion that pins THAT test's cleanup has to live inside THAT test, and
+    now does. What this one buys is the other half: if the launcher ever starts
+    returning None, or wrapping the broker in a shell so the handle addresses a
+    parent that dies without its child, the teardown would silently stop working
+    and this test is what notices.
+    """
+    from chess_anti_engine.tune.distributed_runtime import _launch_inference_broker
+
+    proc = _launch_inference_broker(
+        config={
+            "policy_embedding_mode": "off",
+            "distributed_inference_aot_dir": "",
+            "distributed_server_root": str(tmp_path / "srv"),
+        },
+        trial_id="t",
+        publish_dir=tmp_path / "pub",
+        trial_dir=tmp_path / "trial",
+    )
+    assert proc is not None, "launcher returned no handle -- teardown is impossible"
+    _terminate_and_reap(proc)
+    assert proc.poll() is not None, "broker survived terminate() -- it would leak"
 
 
 def test_arch_schema_version_was_bumped_for_these_fields() -> None:
