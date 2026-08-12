@@ -14,6 +14,20 @@ PROTOCOL_VERSION = 2
 
 PACKAGE_NAME = "chess-anti-engine"
 
+# Worker-computed sha256 of the shard tarball, verified by the server against
+# the digest it computes over what it RECEIVED.
+#
+# ⚑ Defined once and imported by BOTH sides on purpose. A header is a string
+# matched by name across a process boundary, so two literals are one typo away
+# from a check that silently never fires -- the failure this repo sees most:
+# a value accepted and then ignored. There is no NOT-sent case to distinguish
+# from a MISSPELLED case at the server, because both look like "header absent",
+# and absent is the backward-compatible path.
+#
+# Not a PROTOCOL_VERSION bump: the server verifies the digest only when it is
+# present, so old workers and new servers interoperate unchanged.
+UPLOAD_CONTENT_SHA256_HEADER = "X-CAE-Content-SHA256"
+
 
 def package_version() -> str:
     try:

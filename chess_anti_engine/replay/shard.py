@@ -878,11 +878,24 @@ def pack_shard_for_upload(shard_path: str | Path) -> tuple[str, io.BytesIO]:
     return p.stem + UPLOAD_TAR_SUFFIX, buf
 
 
+# A zarr shard is a handful of arrays, each chunked into a bounded number of
+# files: the largest production shard observed carries well under a thousand
+# members. The cap exists because declared BYTES and member COUNT are
+# independent complexity axes -- an archive of a million zero-byte members
+# declares zero payload bytes, passes `max_extract_bytes`, and still burns a
+# million inodes and a million path resolutions in the walk below.
+MAX_UPLOAD_TAR_MEMBERS = 20000
+# Longest legitimate member is `<shard>.zarr/<array>/<chunk indices>`; 4096 is
+# PATH_MAX-shaped headroom, not a fit to observed names.
+MAX_UPLOAD_TAR_NAME_LEN = 4096
+
+
 def extract_uploaded_shard_tar(
     tar_path: str | Path,
     dest: str | Path,
     *,
     max_extract_bytes: int | None = None,
+    max_members: int | None = MAX_UPLOAD_TAR_MEMBERS,
 ) -> Path:
     """Safely extract a worker-uploaded zarr tarball at *tar_path* into *dest*.
 
@@ -902,7 +915,16 @@ def extract_uploaded_shard_tar(
     dest_resolved = dest.resolve()
     with tarfile.open(str(tar_path), mode="r:") as tf:
         declared_bytes = 0
-        for member in tf.getmembers():
+        members = tf.getmembers()
+        if max_members is not None and len(members) > int(max_members):
+            raise ValueError(
+                f"tar has too many members: {len(members)} > {int(max_members)}"
+            )
+        for member in members:
+            if len(member.name) > MAX_UPLOAD_TAR_NAME_LEN:
+                raise ValueError(
+                    f"rejected over-long member name: {len(member.name)} chars"
+                )
             if member.issym() or member.islnk():
                 raise ValueError(f"rejected link member: {member.name!r}")
             if not (member.isreg() or member.isdir()):
