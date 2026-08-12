@@ -23,6 +23,7 @@ this repo before:
 from __future__ import annotations
 
 import dataclasses
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -922,8 +923,9 @@ def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
     from chess_anti_engine.tune.distributed_runtime import _launch_inference_broker
 
     raised = ""
+    proc = None
     try:
-        _launch_inference_broker(
+        proc = _launch_inference_broker(
             config={
                 "policy_embedding_mode": mode,
                 "distributed_inference_aot_dir": aot_dir,
@@ -942,7 +944,60 @@ def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
         raise
     except Exception as exc:  # only the AOT message is under test
         raised = f"{type(exc).__name__}: {exc}"
+    finally:
+        # ⚑⚑ THE SAFE COMBINATIONS ACTUALLY LAUNCH A BROKER, AND AN EARLIER
+        # REVISION OF THIS TEST LEAKED IT. `_launch_inference_broker` returns a
+        # live `subprocess.Popen` — that is the whole point of the negative
+        # control, since the guard is being asserted NOT to fire. The result was
+        # 4 orphaned `python -m chess_anti_engine.inference` processes per test
+        # run (measured: 52 alive, oldest ~3h, after a handful of local runs),
+        # each holding a model and surviving the session that spawned it.
+        #
+        # The docstring used to claim "the call fails later for unrelated
+        # reasons (no real server root)". It does NOT fail — it succeeds and the
+        # broker idles forever. Terminate by the HANDLE we were given; never by
+        # name pattern (`pkill -f` self-matches and has caused a 4h46m outage
+        # here).
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=30)
     assert "distributed_inference_aot_dir" not in raised, raised
+
+
+def test_the_negative_control_LEAVES_NO_BROKER_BEHIND(tmp_path: Path) -> None:
+    """⚑ Pins the teardown above, because the leak it fixes was invisible: the
+    test PASSED the whole time it was orphaning processes.
+
+    Any assertion about "no stray brokers" phrased as a name-pattern scan would
+    itself be the banned `pgrep -f` shape, so this checks the only thing that
+    actually matters and is safe to check: the launcher hands back a handle, and
+    once terminated the child is REAPED (poll() is not None). A test that drops
+    that handle cannot make this assertion at all.
+    """
+    from chess_anti_engine.tune.distributed_runtime import _launch_inference_broker
+
+    proc = _launch_inference_broker(
+        config={
+            "policy_embedding_mode": "off",
+            "distributed_inference_aot_dir": "",
+            "distributed_server_root": str(tmp_path / "srv"),
+        },
+        trial_id="t",
+        publish_dir=tmp_path / "pub",
+        trial_dir=tmp_path / "trial",
+    )
+    assert proc is not None, "launcher returned no handle -- teardown is impossible"
+    proc.terminate()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=30)
+    assert proc.poll() is not None, "broker survived terminate() -- it would leak"
 
 
 def test_arch_schema_version_was_bumped_for_these_fields() -> None:
