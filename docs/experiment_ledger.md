@@ -43145,3 +43145,109 @@ queries) — but the table above says the prize is ~2.9 cp, so it is not worth t
 
 **Verdict: arm 1 FLAT, arm 2 ahead-but-truncated, arm 3 positive on value. No rollback
 target. `sf_label_nodes` and `sf_multipv` both CLOSED as measured negatives.**
+
+### 2026-08-12 — TIER-11 VERDICT: the blended-categorical repair is a TWO-INSTRUMENT NULL
+
+Tier-10 (2026-08-06) repaired the categorical head's target (raw ternary game
+outcome -> the WDL head's 0.69/0.31 blend) and judged it on a **200-game arena
+alone**, which resolves ~±46 Elo. It read NULL by its own pre-committed rule.
+That left the verdict resting on an instrument too coarse to see a modest value
+gain, so this fills the gap on the **already-banked** checkpoints — no retrain,
+no new compute. Ruler = `scripts/value_regret.py`, settings pinned to the
+2026-08-11 pause reads (`--max-positions 2000 --min-pieces 8 --batch-size 128
+--input-encoding fen_only`, 1723 positions) so the numbers sit on the same scale
+as iter138=57.7 / iter514=60.7 / iter672=66.0.
+
+| arm | 200g arena vs boot512 | value_regret | paired vs t6_base800 |
+|---|---|---|---|
+| `t6_base800` (categorical OFF) | −45.4 | 77.8 cp | — |
+| `t10_catfix` (w_cat 0.3, blended) | −47.2 [−93.7, −2.3] | 75.3 cp | **−2.49 cp [−6.25, +1.27] ns** |
+| `t10_catfix_low` (w_cat 0.1, blended) | −61.4 [−103.2, −21.4] | 76.0 cp | **−1.76 cp [−5.17, +1.65] ns** |
+
+n=1723, 0 unmatched, paired on FEN. The sensitive ruler AGREES with the coarse
+one. ⇒ **repairing the categorical head's TARGET is closed**: it is not the
+label, and it is not that Tier-10's arena was blind.
+
+⚑ Absolute levels (75–78 cp) are far worse than the live lineage (57.7) because
+these are 800-step offline retrains from a small pool — **relative reads only**,
+consistent with the frozen-head screen's floor-limit note.
+
+**What this leaves open.** The remaining structural difference from lc0 is
+TOPOLOGY. lc0 hangs scalar-value / categorical-value / value-error off ONE shared
+value embedding, so the aux loss supervises the representation the scalar head
+reads. Ours hung it off an independent `ValueHead` (1.12M params, own body); its
+gradient reached `value_wdl` only by diffusing through the whole 63M trunk —
+measured: with the standalone head a loss on `categorical` puts **exactly zero**
+gradient on `value_wdl.net[0].weight`. PR #397 adds `categorical_head_coupled`
+(default OFF, 4.1k params, warm-starts from iter138 byte-identical on every
+shared tensor). That arm is NOT yet run. If it also nulls, the categorical
+direction is closed entirely.
+
+### 2026-08-12 — PREREG: sims 256 -> 100, topk 32 -> 16 (throughput rebalance)
+
+**User-authorized 2026-08-12 (explicit, standing).** Resume trial `5ce02` from
+iter 139.
+
+**Hypothesis.** The loop is GPU-inference-bound while the CPU sits ~2/3 idle, so
+selfplay search depth is being bought at the price of data volume. Measured off
+`5ce02` progress.csv iter 139 (291.85s, 510 games, 63,872 plies, 11,490 rows) plus
+tonight's measured SF cost (138 ms/label single-threaded, from `label_floor.py`):
+
+- SF CPU: 11,490 labels x 138ms + 31,936 opponent searches x 52ms = **3,238 core-s
+  => 11.1 of 32 cores.** Not saturated.
+- MCTS: 31,936 net moves x 256 sims = **8.18M NN evals = 28,013/s**, sharing the
+  GPU with training.
+- Balance point: at **100 sims** the CPU need is 28.4 of ~28.8 usable cores. At 64
+  or 50 the CPU BINDS, so those deliver the same throughput as 100 with worse
+  targets. **100, not 50.**
+
+Expected: **1.8–2.5x more unique positions/iteration** at unchanged
+`train_views_per_position` (4.32) — more unique data, not more views. The trade is
+coherent because it degrades the POLICY target (absorption already complete, worth
+zero Elo) while leaving the SF-derived VALUE target untouched (41.6 cp of unfit
+headroom).
+
+**Settings.** `mcts_simulations: 256 -> 100`, `gumbel_topk: 32 -> 16`.
+`gumbel_c_scale` HELD at 0.1 and `gumbel_policy_temp` HELD at 1.5 — deliberately,
+to keep moving parts to a minimum. Justification for holding c_scale: DeepMind's
+Gumbel config is 50 sims / topk 16 / c_scale 0.1, so 100/16/0.1 sits on the SAFE
+side of a validated point (more search, same shape), and our own June sweep found
+0.1 optimal at 256 with 0.15/0.2 ≈ flat.
+
+**⚑ THIS VOIDS THE `wdl_regret` SERIES.** `mcts_simulations` and `gumbel_topk` are
+both search-config keys; per CLAUDE.md that voids the series frozen since
+2026-08-09 20:58 and needs a fresh baseline. Expect the PID to RAISE regret (easier
+SF) as our weaker-search agent's winrate falls — that is the controller working, not
+a strength verdict. **Do not read regret as a net signal until a fresh anchor exists.**
+
+**Yardstick (ONE, exact command).** Paired arena, weights-only, vs the frozen
+iter138 anchor, after >=1 full replay-window turnover (~24h):
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate <new checkpoint> \
+  --reference data/ratchet/snapshots/ck_2026-08-11_5ce02_iter138 \
+  --mode matched_sims --sims 32 --games 400 --seed 42 --search-shape training \
+  --label sims100_vs_iter138
+```
+Secondary (not deciding): `value_regret` paired vs
+`scratchpad/pause_20260811/value_regret_iter138_dump.jsonl` (57.69 cp).
+
+**Pre-committed rules.**
+- SUCCESS = arena point > +15 Elo AND CI lower bound > 0.
+- KILL = arena point < −25 Elo, OR realized positions/iteration fails to rise by
+  >=1.5x within 10 iterations (the mechanism did not happen — revert immediately,
+  the change bought nothing and cost target quality).
+- Anything else = NULL, revert to 256/32 at the next restart.
+
+**Throughput check at iteration ~10** (the mechanism gate, must pass before the
+Elo readout is even meaningful): `replay_positions_ingested` should rise from
+11,490 toward >=17,000, and `selfplay_games` from 510 toward >=900.
+
+**Revert point.** `data/salvage/pre_sims100_20260812` (weights+optimizer+PID+replay
+window) plus `data/ratchet/snapshots/ck_2026-08-11_5ce02_iter138`. Live yaml backed
+up to `scratchpad/restart_20260812/LIVE_BACKUP_prerestart.yaml`. ⚑ A yaml revert
+alone is NOT a rollback — the replay window will hold ~a day of sims-100 data.
+
+**Confounds.** None intended: this is the only training-affecting change in the
+window. The `opening_fen_list_path` retire_860 -> retire_138 edit was already live
+before this restart and is NOT part of this experiment.
