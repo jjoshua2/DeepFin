@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from typing import Any
 
 import torch
@@ -96,6 +97,16 @@ class AsyncTestEval:
         self._result: Any = None
         self._exc: BaseException | None = None
         self._source_iter: int = -1
+  # Batch-shape keys whose compiles this thread has already completed under
+  # the barrier (see start()). A NEW key means the next eval will trigger a
+  # dynamo (re)compile on the eval thread, so that start() must be a barrier
+  # again. Keyed on (len(holdout_buf), batch_size): the full-pass shapes are
+  # exactly the full batches plus the ragged tail those two determine. Both
+  # can change mid-run — a holdout drift reset refreezes at a different row
+  # count, and batch_size is absent from every declined-reload set — so
+  # "first start only" would be a gate that protects exactly once (review
+  # finding S1, PR #405).
+        self._compiled_shape_keys: set[tuple[int, int]] = set()
 
     def start(
         self,
@@ -118,11 +129,13 @@ class AsyncTestEval:
         thread because this path calls ``_compute_metrics`` directly, so the
         sync and async holdout evals would otherwise measure different things.
 
-        The FIRST call is SYNCHRONOUS: it blocks until the eval thread has
-        finished its first pass, because that pass performs the thread's only
-        ``torch.compile`` trace and a concurrent main-thread compiled forward
-        during that trace is fatal to the trial (see the compile-barrier
-        comment below). Every later call returns immediately as before.
+        A call whose batch shapes ``(len(holdout_buf), batch_size)`` this
+        thread has not yet compiled is SYNCHRONOUS: it blocks until that eval
+        completes, because the eval triggers a ``torch.compile`` trace on the
+        eval thread and a concurrent main-thread compiled forward during the
+        trace is fatal to the trial (see the compile-barrier comment below).
+        In steady state — same shapes every iteration — only the first call
+        blocks and every later call returns immediately as before.
         """
   # torch.compile prefixes parameter keys with `_orig_mod.`; strip so
   # the snapshot (uncompiled before apply_compile wraps it) loads them.
@@ -136,13 +149,13 @@ class AsyncTestEval:
             full_pass=bool(full_pass),
         )
 
-        first_start = False
+        shape_key = (len(holdout_buf), int(batch_size))
         with self._lock:
+            needs_barrier = shape_key not in self._compiled_shape_keys
             if self._thread is None:
   # Lazy init on first call so we can capture device/compile_mode/
   # model_cfg from the trainer's runtime config without forcing the
   # caller to pass them at construction time.
-                first_start = True
                 self._init_args = {
                     "model_cfg": model_cfg,
                     "device": device,
@@ -173,45 +186,69 @@ class AsyncTestEval:
 
         self._work_q.put(work)
 
-  # ⚑ COMPILE BARRIER: the FIRST eval is synchronous. torch.compile's trace
-  # phase (make_fx / proxy_tensor) sets `torch.fx._symbolic_trace`'s
-  # PROCESS-GLOBAL tracing flag and patches `nn.Module.__call__` process-wide,
-  # so while the eval thread lazily compiles its snapshot on its first
-  # forward, ANY dynamo-optimized call on the main thread — the training
-  # step, the era probe, a gate eval — raises
+  # ⚑ COMPILE BARRIER: an eval whose batch shapes this thread has not yet
+  # compiled is synchronous. torch.compile's trace phase (make_fx /
+  # proxy_tensor) sets `torch.fx._symbolic_trace`'s PROCESS-GLOBAL tracing
+  # flag and patches `nn.Module.__call__` process-wide, so while the eval
+  # thread lazily compiles its snapshot, ANY dynamo-optimized call on the
+  # main thread — the training step, the era probe, a gate eval — raises
   #   RuntimeError: Detected that you are using FX to symbolically trace a
   #   dynamo-optimized function
   # and kills the trial (observed 2026-08-12 16:39, trial d76cc, iteration 2;
   # docs/experiment_ledger.md "arm A CRASHED at iter 2"). Blocking here until
-  # the first eval finishes means the ONLY compile this thread ever performs
-  # cannot overlap main-thread work.
+  # that eval finishes means a compile on this thread cannot overlap
+  # main-thread work.
   #
-  # Once is enough BY CONSTRUCTION, not by luck: the L2 unfrozen-holdout skip
-  # in trainable_phases guarantees no async eval starts until the holdout
-  # buffer is frozen, so the first full pass sees every batch shape (full
-  # batches + the fixed tail) the thread will ever run, and weight reloads
-  # never invalidate dynamo guards. Later recompiles therefore do not happen
-  # on this thread, and later ``start()`` calls stay fully asynchronous.
+  # The barrier re-arms whenever (len(holdout_buf), batch_size) is a pair it
+  # has not seen: those two determine every shape in a full pass, and both
+  # can change mid-run (holdout drift reset; live batch_size edit). While
+  # they are stable — the common case, since the L2 unfrozen-holdout skip
+  # keeps the buffer frozen across evals — every start() after the first is
+  # fully asynchronous, and weight reloads never invalidate dynamo guards.
+  #
+  # The wait is UNBOUNDED, with loud progress prints: the one measured cold
+  # compile took >1800s (the trainer's, 2063s, same boot), so any finite
+  # budget small enough to matter disengages the barrier exactly on the cold
+  # boots it exists for (review finding B1, PR #405). Both eval-thread
+  # failure paths set ``_result_event``, so this only blocks forever if the
+  # compile itself is wedged — in which case the alternative was the crash.
   #
   # The barrier waits on ``_result_event`` WITHOUT consuming the result:
   # ``collect()`` still performs the read + bookkeeping. The result of the
-  # first eval is charged to the iteration that started it, exactly as before
-  # — only the wall clock moves (the compile cost lands here, once, instead
+  # barriered eval is charged to the iteration that started it, exactly as
+  # before — only the wall clock moves (the compile cost lands here instead
   # of racing the next iteration).
-        if first_start:
-            budget_s = 1800.0
-            if not self._result_event.wait(timeout=budget_s):
-                log.error(
-                    "AsyncTestEval first-eval compile barrier timed out after %.0fs; "
-                    "proceeding WITHOUT the barrier — if the eval thread is still "
-                    "compiling, a concurrent main-thread compiled forward can crash "
-                    "the trial (the 2026-08-12 FX-trace race)", budget_s,
+        if needs_barrier:
+            t0 = time.monotonic()
+            while not self._result_event.wait(timeout=300.0):
+                log.warning(
+                    "AsyncTestEval compile barrier still waiting after %.0fs "
+                    "(shapes %s; a cold max-autotune eval compile can exceed "
+                    "30 min — this is the barrier working, not a hang)",
+                    time.monotonic() - t0, shape_key,
                 )
+            with self._lock:
+                barrier_ok = self._exc is None
+                if barrier_ok:
+                    self._compiled_shape_keys.add(shape_key)
+            log.info(
+                "AsyncTestEval compile barrier released after %.1fs "
+                "(shapes %s, eval %s); later evals with these shapes run "
+                "asynchronously",
+                time.monotonic() - t0, shape_key,
+                "succeeded" if barrier_ok else "FAILED (will re-barrier)",
+            )
 
     def _loop(self) -> None:
         """Worker thread main loop. Builds the snapshot once; reuses it forever."""
         if self._init_args is None:
             log.error("AsyncTestEval._loop entered before init args were set")
+  # Release any barrier/collect waiter: with an unbounded barrier wait,
+  # returning without signalling would hang start() forever (review
+  # nit, PR #405 — same contract as the two failure paths below).
+            with self._lock:
+                self._exc = RuntimeError("AsyncTestEval init args were never set")
+            self._result_event.set()
             return
         try:
   # Pin the thread's default CUDA device for tensor allocations made

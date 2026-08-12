@@ -148,11 +148,21 @@ def test_first_start_is_a_compile_barrier(cfg_and_builder):
     trainer.model = model
     trainer._compute_metrics = _gated_eval
 
+    release_time: dict[str, float] = {}
+
     def _observer():
-        # While the eval is gated, start() must still be blocked. Record the
-        # observation, then release the eval so start() can return.
-        time.sleep(0.3)
+        # Hold the gate for 1.5s. While the eval is gated, start() must still
+        # be blocked. Record the observation, then release the eval so
+        # start() can return. The 1.5s hold plus the post-release latency
+        # bound below is what makes a fixed-sleep mutant fail: a sleep
+        # shorter than the hold returns before the eval finished, a sleep
+        # meaningfully longer than the hold blows the latency bound. Only a
+        # sleep landing within ~1s of the hold escapes both, and the real
+        # mechanism (waiting on the eval's completion event) satisfies both
+        # for ANY hold duration (review finding S2, PR #405).
+        time.sleep(1.5)
         overlap_seen["value"] = start_returned.is_set()
+        release_time["t"] = time.monotonic()
         release.set()
 
     obs = threading.Thread(target=_observer)
@@ -162,16 +172,89 @@ def test_first_start_is_a_compile_barrier(cfg_and_builder):
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
+    t_returned = time.monotonic()
     start_returned.set()
     obs.join(timeout=10.0)
     # The eval must have completed BEFORE start() returned...
     assert eval_finished.is_set(), "first start() returned before the first eval ran"
-    # ...and while the eval was still gated, start() had not yet returned.
+    # ...while the eval was still gated, start() had not yet returned...
     assert overlap_seen["value"] is False, (
         "first start() returned while the first eval (the compile) was still "
         "running -- the compile barrier is gone and the FX-trace race is back"
     )
+    # ...and start() returned BECAUSE the eval finished, not after some fixed
+    # sleep: it must unblock promptly once the gate opens.
+    latency = t_returned - release_time["t"]
+    assert latency < 1.0, (
+        f"start() returned {latency:.2f}s after the eval was released -- it is "
+        "not waiting on the eval's completion event"
+    )
     assert aer.collect(timeout=5.0) == ("GATED", 1)
+
+
+def test_barrier_rearms_when_batch_shapes_change(cfg_and_builder):
+    """The barrier must re-engage when (len(holdout_buf), batch_size) is a
+    pair the eval thread has not compiled yet.
+
+    Both components can change mid-run — a holdout drift reset refreezes at
+    a different row count, and batch_size is live-reloadable — and a changed
+    pair changes the full-pass batch shapes, which triggers a dynamo
+    recompile ON THE EVAL THREAD. A first-start-only barrier would protect
+    exactly once and then silently stop protecting (review finding S1,
+    PR #405).
+    """
+    import threading
+    model = _StubChessNet(dim=4)
+    gate = threading.Event()
+    eval_done = threading.Event()
+    calls = {"n": 0}
+
+    def _eval(**_kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return f"FAST{calls['n']}"
+        gate.wait(timeout=10.0)
+        eval_done.set()
+        return "REARMED"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _eval
+
+    aer = AsyncTestEval()
+    # Eval 1: first ever -> barrier (shapes (1, 4) now registered).
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == ("FAST1", 1)
+    # Eval 2: same shapes -> asynchronous (returns while nothing blocks it).
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    assert aer.collect(timeout=5.0) == ("FAST2", 2)
+    # Eval 3: batch_size changed -> NEW shape pair -> must barrier again.
+    def _release_later():
+        time.sleep(0.5)
+        gate.set()
+    rel = threading.Thread(target=_release_later)
+    rel.start()
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=8, steps=2, device="cpu", source_iter=3,
+    )
+    # Observe AT THE MOMENT start() RETURNS, before any join: an un-barriered
+    # start returns in microseconds, long before the 0.5s-gated eval has run,
+    # so sampling later (after join) would see the eval finished either way
+    # and the test could not observe the regression it exists for.
+    done_at_return = eval_done.is_set()
+    rel.join(timeout=10.0)
+    assert done_at_return, (
+        "start() with a NEW batch-shape pair returned before its eval ran -- "
+        "the barrier did not re-arm on a shape change"
+    )
+    assert aer.collect(timeout=5.0) == ("REARMED", 3)
 
 
 def test_second_start_stays_asynchronous(cfg_and_builder):
