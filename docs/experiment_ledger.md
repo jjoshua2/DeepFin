@@ -44043,6 +44043,47 @@ warning and **silently train the control under the treatment's name**
 [[merged_on_live_branch_still_never_ran]]. Verify on each arm's first row that the realized
 mode is the intended one before letting it run.
 
+### Execution protocol between arms — pre-registered, and the boring part is the point
+
+**Per-arm cycle, repeated identically for A, B, C:**
+1. Train to iteration 100. CPU-only observation throughout — no GPU diagnostics against a
+   live arm [[pause_and_run_beats_concurrent_gpu_work]].
+2. Stop the arm; copy its iter-100 checkpoint OUT of the tune dir (Ray prunes).
+3. GPU diagnostics may run ONLY here, with no arm training.
+4. Launch the next arm **from the original frozen donor** — never from the previous arm.
+
+⚑ **Diagnostics between arms are DESCRIPTIVE ONLY.** An interesting reading off arm A must
+not change anything about B or C. Doing so would make the arms differently treated and
+convert a controlled comparison into three unrelated runs — the asymmetric-treatment trap.
+Record the observation, change nothing.
+
+⚑ **REALIZED-CONFIG CHECK IS REQUIRED FOR EVERY ARM, NOT JUST A.** Read it off the TRIAL's
+own emitted config, never off the yaml that was fed in. For each arm verify: **fresh trial**
+(new trial id), `policy_embedding_mode` = the arm's intended mode, `distributed_inference_aot_dir`
+EMPTY, `salvage_seed_pool_dir` = the iter-218 donor, `salvage_restore_full_trainer_state` and
+`salvage_restore_pid_state` both True, and the arm's own `work_dir`.
+
+This matters most for B and C and it is not a formality: `policy_embedding_mode` is
+construction-bound, so a trial that resumed instead of starting fresh would **skip the key
+with a warning and instantiate the DONOR architecture** — `arm_B_linear.yaml` would produce a
+run that looks healthy in every log line while training the control
+[[merged_on_live_branch_still_never_ran]], and nothing downstream in the readout could
+distinguish it.
+
+Arm A verified 2026-08-12 at launch: trial `train_trial_d76cc_00000`, `policy_embedding_mode
+off`, AOT dir empty, donor `pre_policy_adapter_20260812`, both restore flags True,
+`work_dir …tier13_arm_A/tune`.
+
+**Timing / ETA accounting — iteration 1 is BOOT COST, not a rate.** Iteration 1 carries
+torch.compile, allocator and cache setup, replay-buffer warmup and worker startup, so it is
+systematically slower than steady state and is the wrong number for both the AOT-off cost
+estimate and the prediction of when the next arm starts. **Record iter 1 separately as boot
+cost; estimate steady state from the median of iterations 5–10** (or the first 5 clearly
+post-warmup iterations). The 332 s/iter production figure this experiment's cost was quoted
+against was itself a last-10 median of a long-running trial, so a warmup-inclusive arm number
+would not even be comparable to it [[post_restart_snapshot_is_not_steady_state]]. No
+execution change — this is accounting only.
+
 ### AOT-ON was investigated on Josh's instruction and REJECTED for Tier-13 — measured, not assumed
 
 Josh asked (2026-08-12, before launch) whether fresh architecture-matched AOT packages could
