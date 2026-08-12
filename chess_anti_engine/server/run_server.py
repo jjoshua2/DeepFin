@@ -22,6 +22,20 @@ def main() -> None:
         help="Allow unknown usernames to create an account on first use (TOFU). "
              "Volunteer deployments only; default off.",
     )
+    ap.add_argument(
+        "--require-worker-lease", action="store_true",
+        help="⚑ DO NOT SET THIS ON THE IN-TREE FLEET -- it takes ingest to ZERO. "
+             "Refuses shard uploads that do not carry an active lease owned by "
+             "the authenticated account and matching the route's trial. The "
+             "driver launches every worker with --trial-id, which sets "
+             "fixed_trial_id, which SKIPS lease negotiation entirely -- so a "
+             "driver-launched worker structurally never obtains or sends a lease "
+             "id and is refused 403 on every upload, forever. (Measured on the "
+             "live server: 821,818 uploads, zero leases ever issued.) This is "
+             "for a volunteer deployment whose workers negotiate leases, and it "
+             "is restart-gated, so it detonates only after a full run.py "
+             "restart. Default off.",
+    )
     args = ap.parse_args()
 
     try:
@@ -47,6 +61,7 @@ def main() -> None:
         opening_book_path=args.opening_book_path,
         opening_book_path_2=getattr(args, "opening_book_path_2", None),
         worker_self_register=bool(args.worker_self_register),
+        require_worker_lease=bool(args.require_worker_lease),
         max_upload_mb=int(args.max_upload_mb),
         min_workers_per_trial=int(args.min_workers_per_trial),
         max_worker_delta_per_rebalance=int(args.max_worker_delta_per_rebalance),

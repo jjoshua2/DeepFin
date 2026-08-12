@@ -7,6 +7,39 @@ from typing import Any
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
 
 
+def strict_config_bool(value: Any, *, key: str, source: str) -> bool:
+    """Read a security-sensitive config flag as a boolean, or raise.
+
+    ⚑ NOT `bool(value)`. YAML's quoting rules make `false` and `"false"` look
+    identical in a config file and opposite to Python: `bool("false")` is True.
+    For an ordinary tunable that is a nuisance; for these two keys it is an
+    outage or a credential leak, and in BOTH directions the typo fails toward
+    the dangerous answer --
+
+      * `require_worker_lease: "false"` enables lease enforcement. Today's
+        driver-launched workers use a fixed trial id and so never negotiate a
+        lease, which means every upload 403s and ingest goes to ZERO at the
+        next server restart.
+      * `allow_cleartext_http: "false"` disables the refusal and sends reusable
+        HTTP Basic credentials over the network in the clear -- the exact thing
+        the flag exists to prevent.
+
+    A silently-misread flag is this repo's signature defect (a value accepted
+    and then ignored), so these keys refuse anything that is not a real
+    boolean rather than guessing. `1`/`0` are rejected too: accepting them
+    would re-open the question of which other truthy spellings are meant, and
+    the answer must be "write true or false".
+    """
+    if isinstance(value, bool):
+        return value
+    raise ValueError(
+        f"{source}: {key!r} must be a boolean (true/false), got "
+        f"{type(value).__name__} {value!r}. Quoted values like \"false\" are "
+        "strings, and a string is truthy -- this key is refused rather than "
+        "guessed because misreading it is an outage or a credential leak.",
+    )
+
+
 def load_yaml_file(path: str | Path) -> dict[str, Any]:
     """Load a YAML file into a dict.
 
@@ -283,6 +316,7 @@ _TUNE_KEYS = (
     # RESTART-GATED: the server captures it at create_app time, so a live
     # reload cannot open or close registration on a running server.
     "worker_self_register",
+    "require_worker_lease",
     "distributed_inference_broker_enabled", "distributed_inference_shared_broker",
     "distributed_inference_batch_wait_ms",
     "distributed_inference_adaptive_idle_ms",
