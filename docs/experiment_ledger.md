@@ -16749,7 +16749,9 @@ Mitigation, and then a pre-committed reading rule:
   removes the largest source of trajectory divergence.
 - **A win whose CI clears 0 but whose point estimate is under ~+40 Elo is a PROMISING
   TRAJECTORY-level result, NOT an architecture win**, and must be replicated on a second
-  training seed before it is recorded as WORKED.
+  training seed before it is recorded as WORKED. ⚑ At 1600 games the CI can clear 0 from
+  about +15 Elo up, so this band is now REACHABLE rather than hypothetical — expect the
+  replication rule to actually fire.
 - A large, persistent win (point estimate well above the replication bar, holding across
   the readout window) is stronger evidence and may be recorded directly.
 - Do NOT pay for replication up front — run the first experiment, replicate only a
@@ -43765,8 +43767,31 @@ PYTHONPATH=. python3 scripts/arena_standard.py \
   --games 400 --matched_sims 32 --seed 42 --search-shape training
 ```
 
-**Success:** lower CI bound > 0 at 400 games (~±30 Elo resolution).
-**Kill:** point estimate < −15 Elo at 400 games, or any arm's
+**Success:** lower CI bound > 0 at **1600 games (~±15 Elo resolution)**.
+
+⚑⚑ **THE 400-GAME BAR WAS UNDERPOWERED AND IS RAISED. This is a POWER amendment made
+BEFORE launch, not after seeing a result.** Task #192 measured the instrument on this exact
+hardware and lineage: 200 pairs / 400 games gave a half-width of **±30.4 Elo**. Scaling as
+1/sqrt(pairs):
+
+| games | pairs | half-width |
+|---|---|---|
+| 400 | 200 | ±30.4 |
+| 800 | 400 | ±21.5 |
+| **1600** | **800** | **±15.2** |
+| 3200 | 1600 | ±10.7 |
+
+And the SAME task measured what this loop does on its own: **79 iterations of the control
+architecture moved Elo by −3.5 [−33.9, +26.9] — indistinguishable from zero.** So a
+treatment worth having may well sit in the 15–30 Elo band, which 400 games CANNOT resolve:
+the arms would land inside each other's CI and the entry would read "not resolved" no matter
+what the adapter did. Running three arms into an instrument that cannot see the effect is
+the expensive way to learn nothing
+[[compute_instrument_resolution_before_the_threshold]].
+
+⇒ **Each pairwise contrast (B−A, C−B, C−A) is read at 1600 games.** Cost is arena wall
+clock in a pause window, not training compute, and it is the cheap half of this experiment.
+**Kill:** point estimate < −15 Elo at 1600 games, or any arm's
 **`policy_ce` HIGHER (worse) than control by >10%** at matched iteration.
 
 ⚑ An earlier draft said "`policy_ce` **diverging** from control by >10%", which is
@@ -43853,6 +43878,85 @@ still in effect on this branch's code. A pool with 0 shards is not a revert poin
 
 Paired banked anchor for the yardstick: `data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218`
 (global_iter 890) — copied OUT of the tune dir, because Ray prunes live checkpoints.
+
+### EXECUTION AMENDMENT — pre-registered 2026-08-12, BEFORE launch (Josh)
+
+The endpoint is fixed here so there is no optional-stopping room later
+[[rolling_arena_optional_stopping_faked_112_elo]].
+
+**Training.** **100 iterations per arm**, SEQUENTIAL (A, then B, then C) — never
+concurrent. Checkpoint at **25 / 50 / 75 / 100**, and **no efficacy verdict before iter
+100**; the intermediate checkpoints exist for post-hoc trajectory reconstruction, not for
+a stopping decision. The only early architecture kill remains the one-sided
+`policy_ce > 10% worse than control` guard; anything else that stops an arm is an
+ordinary operational failure and must be recorded as such, not as a verdict.
+
+**Why 100 and not 40–50.** The three arms are FUNCTION-IDENTICAL at step zero (bit-exact
+off-vs-linear and off-vs-residual_mish under the production CUDA/BF16 autocast path, pinned
+by `test_function_preservation_HOLDS_IN_THE_PRODUCTION_DTYPE`). So the effect can only
+emerge THROUGH optimization. The ordinary-lineage comparison directly above this entry —
+iter218 vs iter138, 79 global iterations, **−3.5 Elo [−33.9, +26.9]** — shows the control
+loop moving ~0 at ±30 Elo resolution. That does not prove the adapter needs >79 iterations;
+it means a 30–50-iteration structural trial is unusually easy to call NULL for the wrong
+reason.
+
+**Suite gate.** The live branch's pytest run is red by **8 known failures** (all live-yaml
+tripwires + task #180) [[live_branch_suite_is_permanently_red]]. Pre-registered bar: **no
+increase above that baseline of 8.** "Tests pass" is not available as a gate here; the
+delta is.
+
+**Arenas — all THREE direct contrasts at 1600 games**, identical arena/search shape on
+every side:
+
+| contrast | question |
+|---|---|
+| **B − A** | linear shared-policy factorization effect |
+| **C − B** | incremental NONLINEAR policy-specific capacity |
+| **C − A** | practical full-adapter effect |
+
+⚑ **`C − A` IS NOT OPTIONAL.** `B−A` plus `C−B` gives C−A only under a transitive Elo
+model, and transitivity is exactly what a paired engine arena is entitled to violate. It
+has already failed against us once on the Cheese rungs
+[[flywheel_judge_by_cheese_not_generic_arena]]. The direct match also exposes matchup
+effects the two-hop sum cannot see, and it is cheap next to the training it adjudicates.
+
+Resolution: 1600 games = 800 pairs ⇒ **±15.2 Elo** (400g = ±30.4, 800g = ±21.5,
+3200g = ±10.7). The amendment from the original 400-game plan is made HERE, before launch,
+because at ±30 Elo the readings `A=0,B=+10,C=+30` / `A=0,B=+25,C=+25` /
+`A=0,B=+25,C=+5` are indistinguishable — and those are three different architectural
+conclusions. Having paid for three 100-iteration trajectories, saving arena games is false
+economy.
+
+**Trajectory rule (unchanged, and it binds even on a win).** A 1600-game CI that clears
+zero but lands below roughly **+40 Elo** is evidence of a promising training TRAJECTORY,
+not a confirmed architecture effect. Promotion to "architecture win" requires replication
+with a SECOND TRAINING SEED, and only for a contender.
+
+**PID wording — CORRECTED (Josh).** `salvage_restore_pid_state: true`, so all three arms
+START from the same donor controller state. That is common-mode **at t=0**; it does NOT
+"cancel over the run". Once A/B/C produce different policies they generate different
+selfplay, the controller tracks each arm separately, and the trajectories genuinely
+diverge — and that divergence is PART of the closed-loop training trajectory under test,
+not a nuisance term to be differenced away. Operationally nothing changes, because regret
+was already excluded from the verdict: the search config is frozen but the PID state is
+re-injected at launch, so no arm's regret series is a strength readout
+[[wdl_regret_measures_agent_not_net]]. **Arena is the endpoint.**
+
+**`categorical_head_coupled` is INHERITED, identical in all three arms, and deliberately
+untouched** (absent from the live yaml ⇒ realizes as its default). Tier-12 is a separate
+prereg (`9722e0fc0`) and must not be entangled with this one.
+
+**Cost — and a CORRECTION to the estimate given before this amendment.** Realized
+**332 s/iter** (mean of the last 10 iterations of trial `5ce02`, post sims-100). That
+number was measured with **AOT ON**, and all three arms run **AOT OFF** — the live AOT
+broker was measured at **+~24% pos/s at high load** (2026-07-16), so iteration time will
+rise by some fraction of that on the inference-bound part of the loop. Expect ~360–410
+s/iter, i.e. **~10–11.5 h per arm and ~30–34 h for the three**, not the ~28 h quoted from
+the AOT-on rate. The slowdown is **common-mode across all three arms**, so it costs wall
+clock and biases no contrast. AOT cannot simply be left on: its packages are built for the
+control topology and would silently bypass the adapter in B and C
+[[aot_broker_is_a_fifth_policy_path]]; per-arm AOT packages were explicitly deferred rather
+than built first.
 
 ---
 
