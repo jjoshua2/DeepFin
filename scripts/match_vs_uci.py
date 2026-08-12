@@ -60,6 +60,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0 or not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("must be a finite value > 0")
+    return parsed
+
+
 def _side_limit(*, time_ms: int, nodes: int | None) -> chess.engine.Limit:
     if nodes is not None:
         return chess.engine.Limit(nodes=nodes)
@@ -294,6 +301,43 @@ def _open_engine(
             str(binary), cwd=cwd or str(binary.parent), timeout=timeout_s,
         )
     return chess.engine.SimpleEngine.popen_uci(parts, cwd=cwd, timeout=timeout_s)
+
+
+def _open_warm_engine(
+    spec: str,
+    opts: dict[str, str],
+    *,
+    nodes: int | None,
+    label: str,
+    warmup_timeout_s: float,
+) -> chess.engine.SimpleEngine:
+    """Open an engine, warm it off-clock, and hand back a engine on the plain backstop.
+
+    ⚑ The relaxed deadline MUST NOT outlive the warmup. ``SimpleEngine.timeout`` is set
+    once at popen and re-read by EVERY later command, so leaving it raised would give the
+    whole match -- every per-game ``analysis()``, every ``configure()``, and the ``quit()``
+    calls in the teardown -- a multi-minute deadline instead of the finite backstop that
+    exists to catch a wedged engine (a real failure mode on this box: WSL2 vmbus GPU
+    wedges). So the timeout is raised ONLY across the warmup and restored immediately.
+
+    An engine given no warmup never leaves the backstop at all.
+    """
+    command_timeout = (
+        max(_ENGINE_COMMAND_TIMEOUT_S, warmup_timeout_s)
+        if nodes is not None
+        else _ENGINE_COMMAND_TIMEOUT_S
+    )
+    print(f"[match]   command timeout: {command_timeout:.0f}s during warmup, "
+          f"{_ENGINE_COMMAND_TIMEOUT_S:.0f}s thereafter")
+    eng = _open_engine(spec, timeout_s=command_timeout)
+    _set_options(eng, opts)
+    print(f"[match]   id={eng.id.get('name', '?')!r}")
+    try:
+        _warmup_engine(eng, nodes=nodes, label=label, timeout_s=warmup_timeout_s)
+    finally:
+        # Restore even if the warmup raised: a half-open engine still gets quit().
+        eng.timeout = _ENGINE_COMMAND_TIMEOUT_S
+    return eng
 
 
 def _set_options(eng: chess.engine.SimpleEngine, opts: dict[str, str]) -> None:
@@ -765,8 +809,15 @@ def main() -> None:
     p.add_argument("--warmup-nodes", type=_positive_int, default=None, help="run an unrated warmup search for both engines")
     p.add_argument("--warmup-nodes-a", type=_positive_int, default=None, help="run an unrated warmup search for engine A")
     p.add_argument("--warmup-nodes-b", type=_positive_int, default=None, help="run an unrated warmup search for engine B")
-    p.add_argument("--warmup-timeout-s", type=float, default=_WARMUP_TIMEOUT_S,
-                   help="off-clock warmup deadline; must exceed the one-time torch.compile of a neural engine")
+    p.add_argument("--warmup-timeout-s", type=_positive_float, default=_WARMUP_TIMEOUT_S,
+                   help=(
+                       "off-clock warmup deadline; must exceed the one-time torch.compile of a "
+                       f"neural engine. RAISES ONLY: the engine's per-command deadline is "
+                       f"max(this, {_ENGINE_COMMAND_TIMEOUT_S:.0f}s), so a value below "
+                       f"{_ENGINE_COMMAND_TIMEOUT_S:.0f} does NOT make the warmup fail faster than "
+                       f"{_ENGINE_COMMAND_TIMEOUT_S:.0f}s -- the floor keeps the uciok/isready "
+                       "handshake from timing out"
+                   ))
     p.add_argument("--option-a", action="append", default=[], help="Set UCI option on A (Name=Value)")
     p.add_argument("--option-b", action="append", default=[], help="Set UCI option on B (Name=Value)")
     p.add_argument(
@@ -835,39 +886,16 @@ def main() -> None:
         if args.move_log_out is not None:
             args.move_log_out.parent.mkdir(parents=True, exist_ok=True)
 
-        # ⚑ The engine's per-command deadline must cover the warmup's compile, because
-        # that is where a cold torch.compile actually stalls -- --warmup-timeout-s alone
-        # never reached it. An engine given a warmup gets the larger of the two; an
-        # engine with no warmup keeps the plain backstop.
-        command_timeout_a = (
-            max(_ENGINE_COMMAND_TIMEOUT_S, float(args.warmup_timeout_s))
-            if warmup_nodes_a is not None
-            else _ENGINE_COMMAND_TIMEOUT_S
-        )
         print(f"[match] opening A: {args.engine_a}")
-        print(f"[match]   command timeout: {command_timeout_a:.0f}s")
-        eng_a = _open_engine(args.engine_a, timeout_s=command_timeout_a)
-        _set_options(eng_a, opts_a)
-        print(f"[match]   id={eng_a.id.get('name', '?')!r}")
-        _warmup_engine(eng_a, nodes=warmup_nodes_a, label=args.label_a,
-                       timeout_s=float(args.warmup_timeout_s))
-
-        # Symmetric with A. Engine B is usually a native binary that needs neither, but
-        # B is also how a DeepFin-vs-DeepFin match is run, and --warmup-timeout-s used to
-        # apply to A only -- so B's warmup silently kept the 300s default no matter what
-        # was asked for.
-        command_timeout_b = (
-            max(_ENGINE_COMMAND_TIMEOUT_S, float(args.warmup_timeout_s))
-            if warmup_nodes_b is not None
-            else _ENGINE_COMMAND_TIMEOUT_S
+        eng_a = _open_warm_engine(
+            args.engine_a, opts_a, nodes=warmup_nodes_a, label=args.label_a,
+            warmup_timeout_s=float(args.warmup_timeout_s),
         )
         print(f"[match] opening B: {args.engine_b}")
-        print(f"[match]   command timeout: {command_timeout_b:.0f}s")
-        eng_b = _open_engine(args.engine_b, timeout_s=command_timeout_b)
-        _set_options(eng_b, opts_b)
-        print(f"[match]   id={eng_b.id.get('name', '?')!r}")
-        _warmup_engine(eng_b, nodes=warmup_nodes_b, label=args.label_b,
-                       timeout_s=float(args.warmup_timeout_s))
+        eng_b = _open_warm_engine(
+            args.engine_b, opts_b, nodes=warmup_nodes_b, label=args.label_b,
+            warmup_timeout_s=float(args.warmup_timeout_s),
+        )
         side_a = EngineSide(
             label=args.label_a,
             engine=eng_a,
