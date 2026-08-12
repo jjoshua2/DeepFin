@@ -2535,9 +2535,21 @@ def create_app(
         silently the day volunteer registration was enabled, which is exactly
         the kind of latent trapdoor this repo keeps finding.
 
-        ⚑ The existence check must come BEFORE `_auth_user`, not inside it:
-        the registration happens during that call, so any "undo it afterwards"
-        approach would already have written the account to disk.
+        ⚑⚑ DO NOT "FIX" THIS BY ADDING AN EXISTENCE PRE-CHECK. An earlier
+        version of this function did exactly that -- asked
+        `auth_cache.users().get(name) is None` before calling `_auth_user` --
+        on the reasoning that registration happens DURING that call, so it has
+        to be prevented beforehand. The reasoning is sound and the design is
+        still wrong: a pre-check is a SECOND read of `users()`, which makes the
+        existence decision and the registration decision separable, and an
+        independent review then measured both consequences. A `users.json`
+        rewrite landing between the two reads re-created a just-deleted account
+        with the attacker's password, and the early return skipped the ban
+        check, the per-IP throttle and the KDF, turning an anonymous route into
+        a free, ~18x-faster-on-a-miss username-enumeration oracle.
+
+        The registration decision belongs INSIDE `_authenticate`, as the
+        `allow_register` parameter, so there is one read and one decision.
         """
         if creds is None:
             return None
