@@ -40090,3 +40090,118 @@ any of them; this is recorded because the *shape* is the finding.
 only. The 96-iteration series spans the 08-11 04:19 restart, a lineage boundary for *weights*
 but not for the *arm-size* or *score-sd* statistics measured; the two trials agree to within
 2.5 games/iteration on both arms, which is the check that it does not matter here.
+
+---
+
+## 2026-08-12 — PREREG Tier-13: the shared policy adapter, A/B/C (`policy_embedding_mode`) — **NOT LAUNCHED**
+
+**Status: PRE-REGISTERED, awaiting Josh's go-ahead + a GPU pause. Do not launch from this
+entry alone.** Code is PR #398 (`feat/shared-policy-embedding`).
+
+### Hypothesis
+
+lc0/Chessformer build ONE policy embedding and hand it to every policy head, which keeps
+only its own Q/K. We build four fully independent `AttentionPolicyHead`s straight off the
+trunk, so the auxiliary policy losses reach `policy_own` only through the GLOBAL trunk — a
+representation that must simultaneously serve the value heads. The claim under test is
+**policy-specific shared representation**, and it decomposes into three mechanisms that the
+arms separate:
+
+1. **gradient DELIVERY** — soft's gradient never reaches the parameters `policy_own` uses.
+   ⚑ **ALREADY REJECTED** by the 2026-08-12 grad-share probe (soft 94.1% vs own 94.7%
+   trunk share). This arm is NOT testing that, and an earlier draft of this entry said it
+   was.
+2. **reparameterization GEOMETRY** — `A_h S` and `A'_h` span the same function class but
+   are different points under the same gradient steps. Arm B isolates this.
+3. **representational CAPACITY** — a policy-only nonlinearity the trunk does not have.
+   Unique to arm C.
+
+### Arms — and ⚑ AOT MUST BE OFF IN ALL THREE
+
+```
+same donor checkpoint, same optimizer state, policy_sf ON in all arms,
+SWA off (production runs swa_start: -1), AOT OFF in all arms
+
+A (control)  policy_embedding_mode: off
+B            policy_embedding_mode: linear          <- identity-init, zero added capacity
+C            policy_embedding_mode: residual_mish   <- zero-init, t + mish(Wt+b)
+```
+
+⚑ **Why AOT off in ALL arms, including the control.** PR #398's guard REFUSES the
+conjunction (adapter enabled AND any AOT dir configured) — conservatively, because it does
+not inspect package architecture, so even a correctly rebuilt package is refused. Left
+alone, that would give A a live AOT serving path while B and C fall back to eager, and the
+arms would then differ in **how the selfplay prior is computed** as well as in topology.
+The control must give up AOT too. Clear BOTH `distributed_inference_aot_dir` and
+`distributed_worker_aot_dir` for every arm.
+
+⚑ **`policy_sf` stays ON in all arms.** Removing it is unrelated cleanup and it forces the
+optimizer-layout reset (deleted params cannot be spliced), which would land on one arm only.
+
+⚑ **A FRESH trial, not a resume.** `policy_embedding_mode` is a
+`_RESUME_CONSTRUCTION_BOUND_KEY`: a live-yaml edit is SKIPPED on resume with a warning.
+
+**If only one treatment is affordable, run B.** It tests the remaining live mechanism
+(geometry) without confounding it with capacity; C then answers whether capacity buys
+anything beyond B.
+
+### Yardstick — ONE, exact
+
+Paired arena, treatment vs control, same search both sides, weights the only difference:
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --model-a <arm>/checkpoint_XXXX --model-b <control>/checkpoint_XXXX \
+  --games 400 --matched_sims 32 --seed 42 --search-shape training
+```
+
+**Success:** lower CI bound > 0 at 400 games (~±30 Elo resolution).
+**Kill:** point estimate < −15 Elo at 400 games, or any arm's `policy_ce` diverging from
+control by >10% at matched iteration.
+Read at matched TRAINING ITERATION, not wall clock — the adapter adds a GEMM.
+
+### Sizing input — MEASURED 2026-08-12, and it CORRECTS my own earlier number
+
+Population-gradient probe (`probe_cosine_v4.py`, ckpt118, whole trunk, 24 shards / 46,848
+positions split into two DISJOINT halves, `policy_ce` vs `soft_policy_ce`):
+
+| K | positions/estimate | r_own | r_soft | cross | c_latent | R_deatt |
+|---|---|---|---|---|---|---|
+| 1 | 64 | +0.107 | +0.127 | +0.115 | +0.982 | 0.725 |
+| 4 | 256 | +0.270 | +0.312 | +0.253 | +0.872 | 0.690 |
+| 16 | 1024 | +0.518 | +0.555 | +0.465 | +0.867 | 0.659 |
+| 64 | 4096 | **+0.785** | **+0.818** | **+0.700** | **+0.874** | **0.646** |
+
+`c_latent = cross / sqrt(r_own · r_soft)` — deattenuated by BOTH reliabilities.
+`R_deatt = sqrt(<g1,g2>_soft / <g1,g2>_own)` — unbiased for ‖G‖, because E‖ḡ‖² carries a
+noise term and E‖ḡ‖ ≠ ‖Eḡ‖.
+
+⇒ **soft acts like a 1.565× LR multiplier along the population policy gradient**
+(1 + w_soft/w_policy · R · c_latent, both weights 1.0), with an **orthogonal component of
+0.314 × ‖G_own‖** that `policy_ce` does not contain.
+
+⚑ **TWO of my own earlier numbers are RETRACTED by this.**
+- The "~1.4×" read off the within-batch cosine 0.885 came from single-batch norms whose
+  reliability is ~0.1. It was right by accident, not by instrument.
+- v3's `cross/ceiling = 0.973` OVERSTATED redundancy twice over: it divided by `r_own`
+  alone (valid only if both estimators are equally reliable — they are not, `r_soft` is
+  consistently higher), and its two "disjoint" estimates were drawn WITH REPLACEMENT from
+  ONE 2000-position shard, so 4096 draws per side overlapped almost completely and both
+  estimates converged to the same finite-sample mean. The honest figure is **0.874**, and
+  c_latent is stable across K=4/16/64 — which is the check that the correction is a
+  correction and not a fit.
+
+⇒ **soft is NOT a pure LR multiplier**, so `w_soft` is a separate experiment. **Hold
+`w_soft` FIXED for this topology arm** or the two questions mix.
+
+### Confounds
+
+The adapter warm-starts with its optimizer moments spliced
+(`_FRESH_PARAM_NAME_SUFFIXES`), so donor moments survive — but **SWA is reinitialised** on
+any arm that changes topology. Acceptable only because production runs `swa_start: -1`;
+re-check if that ever changes. Param delta at width 512: **+262,656** (+0.42%).
+
+### Revert point
+
+Not yet taken. `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration
+--out data/salvage/pre_policy_adapter_20260812` is REQUIRED before launch.
