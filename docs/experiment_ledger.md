@@ -44406,3 +44406,56 @@ rather than assumed:
 Checkpoint dir contents verified while live: `trainer.pt`, `pid_state.json`,
 `holdout.npz`, `rng_state.json`, `trial_meta.json` — `trainer.pt` is what
 `load_model_from_checkpoint` resolves, present.
+
+## 2026-08-12 — PREREG task #170 (opportunistic): regret→Elo consistency check off the Tier-13 arms
+
+**Registered BEFORE any Tier-13 arena has run and before any arm's regret window exists**
+(arm A is at iteration ~10 as this is written). The Tier-13 design incidentally produces
+the exact data the missing regret→Elo ruler needs, under conditions the June–August
+attempts never had: three nets trained under an IDENTICAL, FROZEN search config
+(sims 100 / topk 16 / c_scale 0.1 in every arm yaml, no search knob differs), a COMMON
+inherited PID state at t=0 (donor `pre_policy_adapter_20260812`, salvaged under the SAME
+sims-100 config — no cross-config step re-injection this time), and three direct paired
+arenas at ±15.2 Elo. So Δregret between arms is net-driven by construction, which is the
+condition [[wdl_regret_measures_agent_not_net]] says is required and we have never had.
+
+**Data (per arm X ∈ {A,B,C}), from the trial's own progress.csv — BANK the full CSV into
+`scratchpad/tier13/banked/<arm>_progress.csv` at each arm's stop:**
+- `wdl_regret` series, iterations 1–100 (column verified present on arm A's live rows).
+- `sf_nodes` series — VALIDITY GATE: difficulty is 2-D; every comparison below is void for
+  any iteration range where `sf_nodes` ≠ 75000 in ANY arm (arm A iters 1–7: 75000 ✓).
+- Covariates recorded, not modeled: mean `winrate` and `pid_regret_frozen` count over the
+  endpoint window; `opponent_strength_ema` at iteration 100.
+
+**Pre-committed statistics:**
+- Endpoint regret: r̄_X = mean(`wdl_regret`, iterations 81–100). (Window chosen for
+  transient decay; NOT claimed equilibrated — the dynamic-equilibrium caveat applies, but
+  it applies IDENTICALLY to all three arms, and the contrast is paired.)
+- Noise: se(r̄_X) from the 81–100 window by circular block bootstrap, block length 5
+  (the series is a controller output and autocorrelated; a plain sd/√20 understates it).
+- The three contrasts: Δr̄ = r̄_reference − r̄_candidate for exactly the arena pairings
+  (B−A, C−B, C−A), paired with the arenas' Elo ± 95% CI.
+
+**Pre-committed readout rules:**
+1. **Degeneracy gate first**: if max |Δr̄| < 2·max se(r̄) → the dataset cannot estimate a
+   slope; verdict "DEGENERATE — points banked, designated perturbation experiment still
+   owed"; no slope may be quoted from it.
+2. Else: slope k̂ = Σ(Δr̄·ΔElo)/Σ(Δr̄²) over the three contrasts (through-origin least
+   squares; ΔElo from the arenas), with CI by propagating both the arena CIs and se(r̄).
+3. **The provisional scale is the falsifier, not the prior**: CLAUDE.md states ~5.4 Elo
+   per 0.001 regret from two confounded endpoints. If k̂'s CI excludes 5.4/0.001, the
+   provisional number dies and CLAUDE.md gets corrected; if it contains it, the number is
+   promoted from "provisional" to "consistent at N=3", still not "calibrated".
+4. Directionality check independent of magnitude: sign(Δr̄) must agree with sign(ΔElo) for
+   every contrast whose arena CI excludes zero. A sign flip on a significant contrast is a
+   FAILED check and voids the slope regardless of rule 2's output.
+
+**What this is NOT**: a substitute for the designated calibration experiment (deliberate
+strength perturbation with PID re-equilibration). Three points from one donor, one
+architecture family, and a FROZEN blind-spot pool (monitor_fen paused for Tier-13 — the
+calibration reads the frozen-pool regime, production runs the flywheel) bound the slope at
+best. If rule 1 fires — plausible, since the arms may simply not differ — the honest
+output is three banked (Δr̄, ΔElo) ≈ (0, 0) points and no new ruler.
+
+**Cost: zero.** Every input is already being produced; this entry only fixes the analysis
+before the data can bias it.
