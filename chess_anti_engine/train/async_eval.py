@@ -117,6 +117,12 @@ class AsyncTestEval:
         G14). It has to be plumbed through here rather than decided inside the
         thread because this path calls ``_compute_metrics`` directly, so the
         sync and async holdout evals would otherwise measure different things.
+
+        The FIRST call is SYNCHRONOUS: it blocks until the eval thread has
+        finished its first pass, because that pass performs the thread's only
+        ``torch.compile`` trace and a concurrent main-thread compiled forward
+        during that trace is fatal to the trial (see the compile-barrier
+        comment below). Every later call returns immediately as before.
         """
   # torch.compile prefixes parameter keys with `_orig_mod.`; strip so
   # the snapshot (uncompiled before apply_compile wraps it) loads them.
@@ -130,11 +136,13 @@ class AsyncTestEval:
             full_pass=bool(full_pass),
         )
 
+        first_start = False
         with self._lock:
             if self._thread is None:
   # Lazy init on first call so we can capture device/compile_mode/
   # model_cfg from the trainer's runtime config without forcing the
   # caller to pass them at construction time.
+                first_start = True
                 self._init_args = {
                     "model_cfg": model_cfg,
                     "device": device,
@@ -164,6 +172,41 @@ class AsyncTestEval:
             self._result_event.clear()
 
         self._work_q.put(work)
+
+  # ⚑ COMPILE BARRIER: the FIRST eval is synchronous. torch.compile's trace
+  # phase (make_fx / proxy_tensor) sets `torch.fx._symbolic_trace`'s
+  # PROCESS-GLOBAL tracing flag and patches `nn.Module.__call__` process-wide,
+  # so while the eval thread lazily compiles its snapshot on its first
+  # forward, ANY dynamo-optimized call on the main thread — the training
+  # step, the era probe, a gate eval — raises
+  #   RuntimeError: Detected that you are using FX to symbolically trace a
+  #   dynamo-optimized function
+  # and kills the trial (observed 2026-08-12 16:39, trial d76cc, iteration 2;
+  # docs/experiment_ledger.md "arm A CRASHED at iter 2"). Blocking here until
+  # the first eval finishes means the ONLY compile this thread ever performs
+  # cannot overlap main-thread work.
+  #
+  # Once is enough BY CONSTRUCTION, not by luck: the L2 unfrozen-holdout skip
+  # in trainable_phases guarantees no async eval starts until the holdout
+  # buffer is frozen, so the first full pass sees every batch shape (full
+  # batches + the fixed tail) the thread will ever run, and weight reloads
+  # never invalidate dynamo guards. Later recompiles therefore do not happen
+  # on this thread, and later ``start()`` calls stay fully asynchronous.
+  #
+  # The barrier waits on ``_result_event`` WITHOUT consuming the result:
+  # ``collect()`` still performs the read + bookkeeping. The result of the
+  # first eval is charged to the iteration that started it, exactly as before
+  # — only the wall clock moves (the compile cost lands here, once, instead
+  # of racing the next iteration).
+        if first_start:
+            budget_s = 1800.0
+            if not self._result_event.wait(timeout=budget_s):
+                log.error(
+                    "AsyncTestEval first-eval compile barrier timed out after %.0fs; "
+                    "proceeding WITHOUT the barrier — if the eval thread is still "
+                    "compiling, a concurrent main-thread compiled forward can crash "
+                    "the trial (the 2026-08-12 FX-trace race)", budget_s,
+                )
 
     def _loop(self) -> None:
         """Worker thread main loop. Builds the snapshot once; reuses it forever."""

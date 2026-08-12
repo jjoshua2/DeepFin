@@ -78,32 +78,141 @@ def test_start_during_inflight_orphans_prior(cfg_and_builder, caplog):
     warn + accept the new work rather than raise. With the long-lived
     eval thread the prior eval's result gets dropped (collect after the
     new start sees only the new iter's metrics), but the warning is the
-    user-visible signal that something was abandoned."""
+    user-visible signal that something was abandoned.
+
+    The gated (still-running) eval is the SECOND one, not the first: the
+    first start() is now a synchronous compile barrier, so gating the
+    first eval would simply block that start() instead of producing an
+    in-flight overlap. Steady-state overlap — the thing this test pins —
+    only ever happens from the second start() onward."""
     import threading
     model = _StubChessNet(dim=4)
     block = threading.Event()
+    calls = {"n": 0}
 
-    def _slow_eval(**_kw):
+    def _first_fast_then_slow(**_kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "FIRST"
         block.wait(timeout=5.0)
         return "X"
 
     trainer = MagicMock()
     trainer.model = model
-    trainer._compute_metrics = _slow_eval
+    trainer._compute_metrics = _first_fast_then_slow
 
     aer = AsyncTestEval()
     aer.start(
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
+    assert aer.collect(timeout=5.0) == ("FIRST", 1)
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
     with caplog.at_level("WARNING"):
         aer.start(
             trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
-            batch_size=4, steps=2, device="cpu", source_iter=2,
+            batch_size=4, steps=2, device="cpu", source_iter=3,
         )
     assert any("previous eval" in r.getMessage() and "still running" in r.getMessage() for r in caplog.records)
     block.set()
     aer.collect(timeout=5.0)
+
+
+def test_first_start_is_a_compile_barrier(cfg_and_builder):
+    """The FIRST start() must not return until the first eval has finished.
+
+    That first eval is where the thread's only ``torch.compile`` trace
+    happens, and the trace sets a PROCESS-GLOBAL fx-tracing flag: a
+    concurrent main-thread compiled forward then dies with "Detected that
+    you are using FX to symbolically trace a dynamo-optimized function"
+    (killed Tier-13 arm A, 2026-08-12, trial d76cc iteration 2). The
+    barrier is the fix, so this test is its regression pin: it fails if
+    the wait in start() is removed.
+    """
+    import threading
+    model = _StubChessNet(dim=4)
+    release = threading.Event()
+    eval_finished = threading.Event()
+    start_returned = threading.Event()
+    overlap_seen: dict[str, bool | None] = {"value": None}
+
+    def _gated_eval(**_kw):
+        release.wait(timeout=10.0)
+        eval_finished.set()
+        return "GATED"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _gated_eval
+
+    def _observer():
+        # While the eval is gated, start() must still be blocked. Record the
+        # observation, then release the eval so start() can return.
+        time.sleep(0.3)
+        overlap_seen["value"] = start_returned.is_set()
+        release.set()
+
+    obs = threading.Thread(target=_observer)
+    obs.start()
+    aer = AsyncTestEval()
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    start_returned.set()
+    obs.join(timeout=10.0)
+    # The eval must have completed BEFORE start() returned...
+    assert eval_finished.is_set(), "first start() returned before the first eval ran"
+    # ...and while the eval was still gated, start() had not yet returned.
+    assert overlap_seen["value"] is False, (
+        "first start() returned while the first eval (the compile) was still "
+        "running -- the compile barrier is gone and the FX-trace race is back"
+    )
+    assert aer.collect(timeout=5.0) == ("GATED", 1)
+
+
+def test_second_start_stays_asynchronous(cfg_and_builder):
+    """Only the FIRST start() is synchronous; the second must return while
+    its eval is still running (the async design is the point of the module,
+    and an over-broad barrier would silently turn every eval synchronous)."""
+    import threading
+    model = _StubChessNet(dim=4)
+    block = threading.Event()
+    calls = {"n": 0}
+
+    def _first_fast_then_gated(**_kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "FIRST"
+        block.wait(timeout=10.0)
+        return "SECOND"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _first_fast_then_gated
+
+    aer = AsyncTestEval()
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == ("FIRST", 1)
+
+    t0 = time.monotonic()
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    elapsed = time.monotonic() - t0
+    # The gated eval holds for up to 10s; an asynchronous start returns in
+    # milliseconds. 2s is three orders of magnitude of slack, not a race.
+    assert elapsed < 2.0, f"second start() blocked for {elapsed:.1f}s -- barrier over-applied"
+    assert not block.is_set()
+    block.set()
+    assert aer.collect(timeout=5.0) == ("SECOND", 2)
 
 
 def test_snapshot_isolated_from_trainer_model(cfg_and_builder):
