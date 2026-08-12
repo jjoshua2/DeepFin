@@ -1356,24 +1356,50 @@ def shard_meta_violations(meta: dict[str, Any], *, positions: int) -> list[str]:
                 out.append(
                     f"wins+draws+losses={total} exceeds games={games}",
                 )
+    # ⚑⚑ SUMMED ONLY WHERE THE CHILDREN PARTITION THE PARENT, AND ONLY ONE
+    # GROUP DOES. `finalize.py` is `if is_sp: selfplay_games += 1 else:
+    # curriculum_games += 1` -- a strict partition, so the sum is sound.
+    #
+    # NOTHING ELSE IS. The adjudication and draw counters OVERLAP: `if
+    # was_adjudicated:` and `if result == "1/2-1/2":` are INDEPENDENT blocks
+    # (`finalize.py:510-558`), so a single adjudicated draw increments
+    # `selfplay_games`, `selfplay_adjudicated_games` AND `selfplay_draw_games`.
+    # Summing the children then reads 1+1=2 > 1 and TERMINALLY REJECTS a
+    # completely ordinary shard -- adjudicated draws are common, so this would
+    # have been mass rejection of real selfplay, i.e. ingest to zero.
+    #
+    # I shipped exactly that and an independent review caught it. The lesson is
+    # not "check the counters" but: a sum-of-children bound silently assumes a
+    # partition, and every group here EXCEPT one is a set of overlapping tags
+    # on the same game. Per-child `<=` assumes nothing.
         for parent, children in (
             ("games", ("selfplay_games", "curriculum_games")),
-            ("games", ("adjudicated_games",)),
-            ("games", ("checkmate_games", "stalemate_games")),
-            ("selfplay_games", ("selfplay_adjudicated_games", "selfplay_draw_games")),
-            ("curriculum_games", ("curriculum_adjudicated_games", "curriculum_draw_games")),
         ):
             p = values.get(parent)
-            if p is None:
-                continue
             present = [values[c] for c in children if c in values]
-            if not present:
+            if p is None or len(present) != len(children):
                 continue
             total = sum(present)
             if total > p:
-                out.append(
-                    f"{'+'.join(children)}={total} exceeds {parent}={p}",
-                )
+                out.append(f"{'+'.join(children)}={total} exceeds {parent}={p}")
+
+        for parent, child in (
+            ("games", "adjudicated_games"),
+            ("games", "tb_adjudicated_games"),
+            ("games", "total_draw_games"),
+            ("games", "checkmate_games"),
+            ("games", "stalemate_games"),
+            ("selfplay_games", "selfplay_adjudicated_games"),
+            ("selfplay_games", "selfplay_draw_games"),
+            ("curriculum_games", "curriculum_adjudicated_games"),
+            ("curriculum_games", "curriculum_draw_games"),
+        ):
+            p = values.get(parent)
+            c_val = values.get(child)
+            if p is None or c_val is None:
+                continue
+            if c_val > p:
+                out.append(f"{child}={c_val} exceeds {parent}={p}")
 
     declared_positions = values.get("positions")
     if declared_positions is not None and declared_positions != int(positions):

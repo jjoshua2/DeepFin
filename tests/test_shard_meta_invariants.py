@@ -82,6 +82,51 @@ def test_subset_counters_cannot_exceed_their_parent() -> None:
     assert any("exceeds curriculum_games=4" in s for s in v)
 
 
+def test_an_adjudicated_draw_is_not_a_violation() -> None:
+    """⚑⚑ REGRESSION. The first version of this validator summed the
+    adjudication and draw children against their parent, and an independent
+    review caught that they OVERLAP rather than partition.
+
+    `finalize.py:510-558` has `if was_adjudicated:` and `if result ==
+    "1/2-1/2":` as INDEPENDENT blocks, so ONE adjudicated draw increments
+    `selfplay_games`, `selfplay_adjudicated_games` AND `selfplay_draw_games`.
+    The sum then read 1+1=2 > 1 and TERMINALLY rejected the shard. Adjudicated
+    draws are ordinary, so that was mass rejection of real selfplay.
+
+    A sum-of-children bound silently assumes a partition. Only
+    selfplay/curriculum actually is one.
+    """
+    one_adjudicated_draw = {
+        "games": 1, "positions": 10,
+        "selfplay_games": 1,
+        "selfplay_adjudicated_games": 1,
+        "selfplay_draw_games": 1,
+        "adjudicated_games": 1,
+        "total_draw_games": 1,
+    }
+    assert shard_meta_violations(one_adjudicated_draw, positions=10) == []
+
+    # Same shape on the curriculum side.
+    assert shard_meta_violations({
+        "games": 1, "curriculum_games": 1,
+        "curriculum_adjudicated_games": 1, "curriculum_draw_games": 1,
+        "adjudicated_games": 1, "total_draw_games": 1,
+    }, positions=1) == []
+
+    # A whole batch of them -- every game adjudicated AND drawn.
+    assert shard_meta_violations({
+        "games": 64, "selfplay_games": 64,
+        "selfplay_adjudicated_games": 64, "selfplay_draw_games": 64,
+        "adjudicated_games": 64, "total_draw_games": 64,
+    }, positions=1) == []
+
+    # But a child genuinely exceeding its parent is still caught.
+    v = shard_meta_violations(
+        {"games": 5, "selfplay_games": 2, "selfplay_draw_games": 3}, positions=1,
+    )
+    assert any("selfplay_draw_games=3 exceeds selfplay_games=2" in s for s in v)
+
+
 def test_absent_and_unparseable_counters_are_ignored_not_rejected() -> None:
     """A shard from an older worker simply lacks these keys, and a
     non-numeric value is someone else's bug -- neither is evidence of
@@ -340,3 +385,127 @@ def test_arena_inbox_is_bounded_per_user(tmp_path) -> None:
 
     kept = list((server_root / "arena_inbox").rglob("*.json"))
     assert len(kept) <= 5, f"arena inbox grew unbounded: {len(kept)} files"
+
+
+def test_sidecar_bytes_count_toward_the_budget(tmp_path) -> None:
+    """⚑ REGRESSION (review finding). The sidecar's size was accounted only
+    AFTER its shard had been picked for eviction, so the loop could conclude
+    the directory was under budget while retained `.reason.txt` files still put
+    it over. The reason text is an exception message -- attacker-influenced and
+    unbounded -- so the ceiling could be walked straight past.
+    """
+    from chess_anti_engine.server.app import prune_retained_dir
+
+    q = tmp_path / "invalid"
+    q.mkdir()
+    # 100 bytes of shard each, but 5000 bytes of "reason" each.
+    for i in range(3):
+        p = q / f"s{i}.tar"
+        p.write_bytes(b"x" * 100)
+        p.with_suffix(p.suffix + ".reason.txt").write_text("E" * 5000)
+        import os
+        os.utime(p, (1_000_000 + i, 1_000_000 + i))
+
+    # Shards alone are 300 bytes -- under budget. With sidecars it is 15300.
+    prune_retained_dir(q, max_bytes=6000, max_entries=0)
+
+    actual = sum(f.stat().st_size for f in q.rglob("*") if f.is_file())
+    assert actual <= 6000, (
+        f"retention left {actual} bytes on disk against a 6000 byte budget -- "
+        "sidecars are not being counted"
+    )
+
+
+def test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids(tmp_path) -> None:
+    """⚑⚑ REGRESSION (review finding, P1). A quota rooted under a
+    CALLER-SELECTED path is not a quota.
+
+    `_normalize_trial_id` only syntax-checks the id and `_check_worker_compat`
+    admits a trial with no published manifest (legitimate before the first
+    publish), so a per-trial budget hands the client a fresh full allowance for
+    every well-formed id it invents. The budget is the USER'S, across trials.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, arena_user_max_entries=4, arena_user_max_bytes=0)
+
+    # Same account, a different invented trial id every time.
+    for i in range(15):
+        r = client.post(
+            f"/v1/trials/rotate_{i}/upload_arena_result",
+            auth=("u", "p"),
+            json=_arena_payload(generated_at_unix=1_700_000_000 + i),
+        )
+        assert r.status_code == 200, r.text
+
+    kept = list(server_root.rglob("arena_inbox/*/*.json"))
+    assert len(kept) <= 4, (
+        f"{len(kept)} arena results retained against a 4-entry per-user budget -- "
+        "rotating trial ids bought a fresh allowance each time"
+    )
+
+
+def test_quarantine_sweep_is_wired_to_the_upload_route(tmp_path) -> None:
+    """⚑⚑ REGRESSION (review finding, P2). Replacing the whole
+    `prune_retained_dir(qdir, ...)` call in the upload route with `pass` left
+    every one of the original tests GREEN: they all called the helper directly,
+    and only the ARENA path had a route-level test.
+
+    Quarantine growth is finding [4]'s headline sink, so nothing would have
+    noticed if a later refactor dropped the call. That is this codebase's
+    signature defect -- a value accepted and then silently ignored -- sitting
+    inside the fix for it.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    # Each POST is an unparseable "shard", so each lands in quarantine/invalid.
+    for i in range(10):
+        r = client.post(
+            "/v1/upload_shard",
+            auth=("u", "p"),
+            files={"file": (f"shard{i}.zarr.tar", b"not a tar at all %d" % i,
+                            "application/x-tar")},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("rejected") is True
+
+    kept = [
+        p for p in (server_root / "quarantine" / "invalid").iterdir()
+        if not p.name.endswith(".reason.txt")
+    ]
+    assert len(kept) <= 3, (
+        f"quarantine holds {len(kept)} entries against a 3-entry budget -- "
+        "the sweep is not wired to the upload route"
+    )
+
+
+def test_client_report_sink_is_bounded(tmp_path) -> None:
+    """⚑ The cheapest sink to spam: a small authenticated JSON POST, no tar
+    upload and no size cap. Bounding `quarantine/invalid` while leaving this
+    unbounded would close the headline sink and not the easy one."""
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    for i in range(12):
+        client.post(
+            "/v1/report_bad_shard",
+            auth=("u", "p"),
+            json={"shard_name": f"s{i}.zarr", "reason": "unreadable"},
+        )
+
+    qdir = server_root / "quarantine" / "client_reports"
+    if qdir.is_dir():
+        kept = [p for p in qdir.iterdir() if not p.name.endswith(".reason.txt")]
+        assert len(kept) <= 3, f"client_reports grew unbounded: {len(kept)}"

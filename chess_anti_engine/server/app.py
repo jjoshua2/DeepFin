@@ -762,6 +762,113 @@ def _stamp_shard_username(zarr_root: Path, username: str) -> None:
     atomic_write_text(attrs_path, json.dumps(raw, indent=4, sort_keys=True))
 
 
+def prune_retained_dirs(
+    roots: list[Path],
+    *,
+    max_bytes: int,
+    max_entries: int,
+    log: logging.Logger | None = None,
+) -> tuple[int, int]:
+    """`prune_retained_dir` over SEVERAL directories sharing ONE budget.
+
+    ⚑ WHY THIS EXISTS. Rooting a quota under a caller-selected path is not a
+    quota. The trial-scoped arena route writes to
+    `trials/<trial_id>/arena_inbox/<username>/`, and `_normalize_trial_id` only
+    SYNTAX-checks the id while `_check_worker_compat` deliberately admits a
+    trial whose manifest is not published yet (legitimate before the first
+    publish). So an authenticated client can rotate arbitrary well-formed trial
+    ids and be handed a fresh full allowance for each one -- preserving the
+    exact disk-exhaustion path the budget was added to close.
+
+    Rejecting unknown trials would close it too, and is the wrong trade: it
+    would refuse a real trial's uploads in the window before its first publish.
+    Accounting the user's directories across every trial as ONE budget removes
+    the bypass without making a legitimate early upload fail.
+
+    Found by review. The first version budgeted per directory.
+    """
+    entries: list[tuple[float, Path, int]] = []
+    for root in roots:
+        entries.extend(_retention_entries(root))
+    return _evict_oldest_first(
+        entries, max_bytes=max_bytes, max_entries=max_entries, log=log,
+        label=str(roots[0]) if roots else "<none>",
+    )
+
+
+def _retention_entries(root: Path) -> list[tuple[float, Path, int]]:
+    """(mtime, path, size) for each retained entry, sidecar size included."""
+    if not root.is_dir():
+        return []
+    out: list[tuple[float, Path, int]] = []
+    for p in root.iterdir():
+        if p.name.endswith(".reason.txt"):
+      # Sidecars are accounted WITH their shard, not as entries in their own
+      # right -- counting them separately would halve the effective entry
+      # budget and could evict a sidecar while keeping the shard it explains.
+            continue
+        try:
+            st = p.stat()
+            size = st.st_size
+            if p.is_dir():
+                size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+      # ⚑ The sidecar counts toward the budget FROM THE START, not only once
+      # its shard has been picked for eviction. Accounting it late let the
+      # loop conclude the directory was under `max_bytes` while retained
+      # `.reason.txt` files still put it over -- and the reason text is an
+      # exception message, attacker-influenced and unbounded, so the ceiling
+      # could be walked straight past. Found by review.
+            sidecar = p.with_suffix(p.suffix + ".reason.txt")
+            with contextlib.suppress(OSError):
+                if sidecar.is_file():
+                    size += sidecar.stat().st_size
+            out.append((st.st_mtime, p, int(size)))
+        except OSError:
+            continue
+    return out
+
+
+def _evict_oldest_first(
+    entries: list[tuple[float, Path, int]],
+    *,
+    max_bytes: int,
+    max_entries: int,
+    log: logging.Logger | None,
+    label: str,
+) -> tuple[int, int]:
+    """Evict oldest-first until both budgets are satisfied."""
+    entries.sort(key=lambda t: t[0])
+    total_bytes = sum(e[2] for e in entries)
+    freed_entries = 0
+    freed_bytes = 0
+
+    for _mtime, path, size in entries:
+        over_bytes = max_bytes > 0 and total_bytes > max_bytes
+        over_count = max_entries > 0 and (len(entries) - freed_entries) > max_entries
+        if not (over_bytes or over_count):
+            break
+        try:
+      # `size` ALREADY includes the sidecar, so it must not be added again --
+      # that would over-subtract and stop evicting while still over budget.
+            path.with_suffix(path.suffix + ".reason.txt").unlink(missing_ok=True)
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+        total_bytes -= size
+        freed_bytes += size
+        freed_entries += 1
+
+    if freed_entries and log is not None:
+        log.info(
+            "retention: evicted %d entr%s (%d bytes) from %s",
+            freed_entries, "y" if freed_entries == 1 else "ies", freed_bytes, label,
+        )
+    return (freed_entries, freed_bytes)
+
+
 def prune_retained_dir(
     root: Path,
     *,
@@ -781,62 +888,17 @@ def prune_retained_dir(
 
     Oldest-first by mtime: a quarantined shard is for diagnosing a defect that
     is happening NOW, so the newest entries are the ones worth keeping. Both
-    limits are enforced; either can bind.
+    limits are enforced; either can bind, and the entry count matters because
+    the growth mode is many small unique files.
 
     ⚑ Failure is per-entry and non-fatal. This runs on the upload path, and a
     sweep that raised would turn "we could not tidy up" into "the upload
     failed" -- strictly worse than the unbounded growth it is fixing.
     """
-    if not root.is_dir():
-        return (0, 0)
-    entries: list[tuple[float, Path, int]] = []
-    for p in root.iterdir():
-        if p.name.endswith(".reason.txt"):
-      # Sidecars are accounted with their shard, not as entries in their own
-      # right -- counting them would halve the effective entry budget and
-      # evict a sidecar while keeping the shard it explains.
-            continue
-        try:
-            st = p.stat()
-            size = st.st_size
-            if p.is_dir():
-                size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
-            entries.append((st.st_mtime, p, int(size)))
-        except OSError:
-            continue
-
-    entries.sort(key=lambda t: t[0])
-    total_bytes = sum(e[2] for e in entries)
-    freed_entries = 0
-    freed_bytes = 0
-
-    for _mtime, path, size in entries:
-        over_bytes = max_bytes > 0 and total_bytes > max_bytes
-        over_count = max_entries > 0 and (len(entries) - freed_entries) > max_entries
-        if not (over_bytes or over_count):
-            break
-        try:
-            sidecar = path.with_suffix(path.suffix + ".reason.txt")
-            extra = 0
-            if sidecar.exists():
-                extra = sidecar.stat().st_size
-                sidecar.unlink(missing_ok=True)
-            if path.is_dir():
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                path.unlink(missing_ok=True)
-        except OSError:
-            continue
-        total_bytes -= size + extra
-        freed_bytes += size + extra
-        freed_entries += 1
-
-    if freed_entries and log is not None:
-        log.info(
-            "quarantine retention: evicted %d entr%s (%d bytes) from %s",
-            freed_entries, "y" if freed_entries == 1 else "ies", freed_bytes, root,
-        )
-    return (freed_entries, freed_bytes)
+    return _evict_oldest_first(
+        _retention_entries(root),
+        max_bytes=max_bytes, max_entries=max_entries, log=log, label=str(root),
+    )
 
 
 def lease_authorizes_upload(
@@ -1573,6 +1635,26 @@ def create_app(
     def _quarantine_root(trial_id: str | None) -> Path:
         tid = _normalize_trial_id(trial_id)
         return quarantine if tid is None else (_trial_root(tid) / quarantine_dir)
+
+    def _arena_user_dirs_all_trials(username: str) -> list[Path]:
+        """Every arena directory this user can write to, across all trials.
+
+        The retention budget is theirs, not any single trial's -- see
+        `prune_retained_dirs` for why a per-trial budget is not a budget.
+        """
+        dirs: list[Path] = []
+        d = resolve_arena_user_dir(arena_inbox, username)
+        if d is not None:
+            dirs.append(d)
+        trials_dir = root / "trials"
+        if trials_dir.is_dir():
+            for trial_dir in sorted(trials_dir.iterdir()):
+                if not trial_dir.is_dir():
+                    continue
+                d = resolve_arena_user_dir(trial_dir / "arena_inbox", username)
+                if d is not None:
+                    dirs.append(d)
+        return dirs
 
     def _arena_inbox_root(trial_id: str | None) -> Path:
         tid = _normalize_trial_id(trial_id)
@@ -2382,6 +2464,18 @@ def create_app(
         }
         out = qdir / f"{int(now_unix)}_{secrets.token_hex(8)}.json"
         atomic_write_text(out, json.dumps(report, indent=2, sort_keys=True))
+  # ⚑ AFTER the write, not before. Sweeping first prunes to the budget and
+  # then adds one more, so the directory settles one entry OVER it every time.
+  # The cheapest sink to spam -- a small authenticated JSON POST, no tar and no
+  # size cap -- so bounding `quarantine/invalid` and not this one would close
+  # the headline sink and leave the easy one open.
+        with contextlib.suppress(Exception):
+            prune_retained_dir(
+                qdir,
+                max_bytes=int(quarantine_max_bytes),
+                max_entries=int(quarantine_max_entries),
+                log=log,
+            )
         log.warning(
             "worker reported bad shard trial=%s user=%s machine=%s shard=%s reason=%s",
             _normalize_trial_id(trial_id),
@@ -2943,7 +3037,7 @@ def create_app(
           # would run that block's `tmp.unlink` recovery and be logged as a
           # failure to quarantine, which is a different and much more alarming
           # thing than "we could not tidy up".
-                with contextlib.suppress(OSError):
+                with contextlib.suppress(Exception):
                     prune_retained_dir(
                         qdir,
                         max_bytes=int(quarantine_max_bytes),
@@ -3363,13 +3457,21 @@ def create_app(
             # size guard above, so it stalls every other route for its
             # duration.
             await run_in_threadpool(out.write_bytes, body)
-      # Per-user bound. Sized in entries as well as bytes because the sink's
-      # growth mode is MANY SMALL unique bodies, not a few large ones -- a
-      # byte budget alone would let an account burn inodes indefinitely.
+      # Per-user bound, sized in entries as well as bytes because the sink's
+      # growth mode is MANY SMALL unique bodies -- a byte budget alone lets an
+      # account burn inodes indefinitely.
+      #
+      # ⚑ ACROSS EVERY TRIAL, not just this one. `_normalize_trial_id` only
+      # SYNTAX-checks the id and `_check_worker_compat` admits a trial with no
+      # published manifest (legitimate before the first publish), so a
+      # per-trial budget hands an authenticated client a fresh full allowance
+      # for every well-formed id it invents -- which is the same unbounded
+      # path, wearing the quota as a hat. Found by review.
+            user_dirs = _arena_user_dirs_all_trials(username)
             with contextlib.suppress(OSError):
                 await run_in_threadpool(
-                    lambda: prune_retained_dir(
-                        user_dir,
+                    lambda: prune_retained_dirs(
+                        user_dirs,
                         max_bytes=int(arena_user_max_bytes),
                         max_entries=int(arena_user_max_entries),
                         log=log,
