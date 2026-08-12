@@ -2376,12 +2376,38 @@ def create_app(
         )
         return record
 
-    def _auth_user(
-        request: Request, creds: HTTPBasicCredentials = Depends(basic),
+    def _authenticate(
+        request: Request, creds: HTTPBasicCredentials, *, allow_register: bool,
     ) -> str:
         """Authenticate, without re-running PBKDF2 on a credential we already
         checked. See `VerifiedCredentialCache` for why that is sound and for
         what it deliberately does not cache (rejections).
+
+        ⚑⚑ `allow_register` IS A PARAMETER, NOT A PRE-CHECK, AND THAT IS THE
+        WHOLE POINT. The first version of the non-registering path asked
+        `auth_cache.users().get(name) is None` in a SEPARATE function and only
+        then called this one. That is two reads of `users()` with the existence
+        decision made on the first and the REGISTRATION decision made on the
+        second, so the two can disagree: a review measured a telemetry GET
+        RE-CREATING a just-deleted account (with the attacker's password) when
+        `users.json` was rewritten between them. A pre-check structurally
+        cannot fix that; only making it one read and one decision can.
+
+        It also fixes what that pre-check did to the throttle: returning early
+        on an unknown name skipped the ban check, the throttle AND the KDF, so
+        unauthenticated username enumeration became both free and ~18x faster
+        than probing a real name. Going through this function charges
+        `note_auth_failure` exactly as every other authenticated route does.
+        This does NOT make the check constant-time -- a known name still pays
+        PBKDF2 and an unknown one does not, which is pre-existing behaviour
+        here, not something `allow_register` introduces or repairs.
+
+        ⚑ NOT a FastAPI dependency. Keyword-only parameters with defaults are
+        interpreted by FastAPI as QUERY PARAMETERS, so exposing `allow_register`
+        on a `Depends(...)` callable would have published `?allow_register=` as
+        a caller-controlled switch on every authenticated route -- the exact
+        "a value accepted and then silently honoured" shape this codebase keeps
+        producing. The dependencies are the thin wrappers below.
 
         Order, and every step of it is load-bearing:
 
@@ -2424,7 +2450,7 @@ def create_app(
         rec = auth_cache.verify(username, str(creds.password))
         if rec is None:
             if known is None:
-                if not self_register_enabled:
+                if not allow_register:
                     access_guard.note_auth_failure(ip)
                     raise HTTPException(status_code=401, detail="unknown user")
                 try:
@@ -2471,6 +2497,16 @@ def create_app(
         access_guard.note_auth_success(ip)
         return username
 
+    def _auth_user(
+        request: Request, creds: HTTPBasicCredentials = Depends(basic),
+    ) -> str:
+        """Required auth for routes that DO enrol new volunteers (TOFU).
+
+        Registration still obeys `worker_self_register`; this is the only
+        wrapper that passes it through.
+        """
+        return _authenticate(request, creds, allow_register=self_register_enabled)
+
     def _auth_user_optional(
         request: Request,
         creds: HTTPBasicCredentials | None = Depends(basic_optional),
@@ -2505,49 +2541,10 @@ def create_app(
         """
         if creds is None:
             return None
-        return _verify_existing_account(request, creds)
-
-    def _verify_existing_account(
-        request: Request, creds: HTTPBasicCredentials,
-    ) -> str | None:
-        """THE one non-registering credential check. Returns None on any failure.
-
-        ⚑ Factored out so the non-registering property cannot be reimplemented
-        -- differently, and wrongly -- by the next caller that needs it. The
-        seed-dole claim endpoint needs exactly this primitive, and the bug this
-        function exists to prevent is subtle enough (`_auth_user` registers
-        DURING the call, so no after-the-fact undo is possible) that a second
-        hand-rolled version is a live risk rather than a hypothetical one.
-
-        Callers differ only in what they do with None: telemetry serves the
-        redacted view, a required-auth route answers 401.
-        """
-        if auth_cache.users().get(str(creds.username)) is None:
-      # Unknown account: refuse WITHOUT registering, and without charging the
-      # throttle. No oracle is created -- an unknown name is indistinguishable
-      # from a wrong password to the caller, since both yield the same answer.
-            return None
         try:
-            return _auth_user(request, creds)
+            return _authenticate(request, creds, allow_register=False)
         except HTTPException:
             return None
-
-    def _auth_existing_user(
-        request: Request, creds: HTTPBasicCredentials = Depends(basic),
-    ) -> str:
-        """Required auth that will NEVER self-register. 401 on any failure.
-
-        The counterpart to `_auth_user_optional` for routes where anonymous
-        access is not allowed at all. Use this, not `_auth_user`, for any route
-        added from here on that does not specifically intend to enrol new
-        volunteers -- `_auth_user`'s TOFU branch turns an unknown credential
-        into a NEW ACCOUNT, which is a state change most routes have no reason
-        to perform. A telemetry GET doing exactly that is what prompted this.
-        """
-        username = _verify_existing_account(request, creds)
-        if username is None:
-            raise HTTPException(status_code=401, detail="unknown user or bad password")
-        return username
 
     def _record_bad_shard_report(
         trial_id: str | None,

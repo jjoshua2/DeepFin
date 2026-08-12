@@ -209,31 +209,51 @@ def test_positive_control_self_registration_really_is_enabled(tmp_path) -> None:
     )
 
 
-def test_required_auth_primitive_also_never_registers() -> None:
-    """`_auth_existing_user` is what PR5's seed-claim endpoint will use.
+def test_an_unknown_name_on_a_public_route_is_charged_to_the_throttle(tmp_path) -> None:
+    """⚑⚑ THIS TEST REPLACES A SOURCE GREP THAT COULD NOT DO ITS JOB.
 
-    ⚑ It exists so the non-registering property is not reimplemented -- and
-    reimplemented WRONGLY -- by the next route that needs it. Both it and
-    `_auth_user_optional` route through one `_verify_existing_account`, so the
-    telemetry bug cannot reappear one endpoint over.
+    The old version asserted `"_auth_user(" not in <function source>`. It
+    passed only because the docstrings happened to write `_auth_user` without a
+    paren, so a future docstring could fail it with no behaviour change while
+    no behavioural regression could fail it at all -- wrong in both directions,
+    which is the worst kind of guard: it generates work and catches nothing.
+
+    What it should have been checking, and now does: the non-registering path
+    must not become a FREE username-enumeration oracle. An earlier version
+    returned early when the name was unknown, skipping the ban check, the
+    per-IP throttle AND the KDF. That made an anonymous sweep of a name
+    wordlist unthrottled and ~18x faster on a miss than a hit -- so an attacker
+    could separate real accounts from invented ones at full speed, on a route
+    reachable with no credential at all.
+
+    ⚑ It does NOT assert constant time. A known name pays PBKDF2 and an unknown
+    one does not; that is pre-existing behaviour on every route here. The
+    property under test is that the ATTEMPT IS COUNTED, so the existing per-IP
+    throttle applies to enumeration exactly as it applies to password guessing.
     """
-    import inspect
+    server_root = tmp_path
+    _seed_user(server_root)
+    users = server_root / "users.json"
+    before = set(json.loads(users.read_text()))
 
-    from chess_anti_engine.server import app as app_mod
+    client = _build_client(server_root, worker_self_register=True)
 
-    src = inspect.getsource(app_mod)
-    for name in ("_verify_existing_account", "_auth_existing_user"):
-        assert f"def {name}(" in src, f"{name} is missing"
+    # Sweep invented names against the credential-free telemetry route.
+    statuses = set()
+    for i in range(40):
+        r = client.get("/v1/worker_throughput", auth=(f"invented_{i}", "a-long-password"))
+        statuses.add(r.status_code)
 
-    # Both public entry points must delegate, not re-derive.
-    opt = src[src.index("def _auth_user_optional("):src.index("def _verify_existing_account(")]
-    req = src[src.index("def _auth_existing_user("):]
-    req = req[:req.index("\n    def ")] if "\n    def " in req else req
-    for label, body in (("_auth_user_optional", opt), ("_auth_existing_user", req)):
-        assert "_verify_existing_account(" in body, (
-            f"{label} does not delegate to the shared primitive; the "
-            "non-registering property is being re-derived"
-        )
-        assert "_auth_user(" not in body, (
-            f"{label} calls _auth_user directly, which self-registers"
-        )
+    # No account may be created by any of them.
+    assert set(json.loads(users.read_text())) == before, (
+        "a public GET self-registered an account"
+    )
+
+    assert statuses <= {200, 429}, f"unexpected statuses from the public route: {statuses}"
+    # The throttle must have engaged: a real user's wrong password from the
+    # same IP is now refused, which it would not be if misses were free.
+    probe = client.post("/v1/report_bad_shard", json={"shard": "x"}, auth=("u", "wrong"))
+    assert probe.status_code == 429, (
+        "40 unknown-name probes did not charge the per-IP failed-sign-in throttle, "
+        "so username enumeration on this route is unthrottled"
+    )
