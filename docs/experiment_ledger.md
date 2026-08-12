@@ -43946,6 +43946,30 @@ re-injected at launch, so no arm's regret series is a strength readout
 untouched** (absent from the live yaml ⇒ realizes as its default). Tier-12 is a separate
 prereg (`9722e0fc0`) and must not be entangled with this one.
 
+**A FOURTH differing key was added in preflight: `work_dir`.** The arm configs
+(`scratchpad/tier13/arm_{A_off,B_linear,C_residual_mish}.yaml`) differ from the live yaml
+in **four** flattened keys, not three: the treatment, AOT, the donor pool, and
+`work_dir: runs/pbt2_small` → `runs/tier13_arm_{A,B,C}`.
+
+`work_dir` is isolation, not treatment, and it is REQUIRED rather than tidy:
+**`tune_keep_last_experiments: 2`**, so with all three arms sharing one work dir arm A's
+experiment is the third-oldest by the time arm C starts and is **DELETED** — taking the
+iter-100 checkpoint that the `B−A` and `C−A` arenas depend on. Per-arm dirs also guarantee
+a fresh arm can never see a sibling's `experiment_state-*.json`.
+
+Asserted mechanically, and this is the preflight that must pass before every launch:
+- each arm vs the LIVE yaml: diff is exactly
+  `{policy_embedding_mode, distributed_inference_aot_dir, salvage_seed_pool_dir, work_dir}`
+- each arm vs each OTHER arm: diff is exactly `{policy_embedding_mode, work_dir}`
+
+⚑ Launch is `TRAIN_CONFIG=<arm yaml> TRAIN_WORK_DIR=runs/tier13_arm_<X> ./scripts/train.sh
+salvage-restart <donor>`. `salvage-restart` sets `has_salvage=1`, which suppresses
+train.sh's auto-resume ⇒ a **FRESH** trial. That is mandatory, not incidental:
+`policy_embedding_mode` is construction-bound, so a RESUMED trial would skip it with a
+warning and **silently train the control under the treatment's name**
+[[merged_on_live_branch_still_never_ran]]. Verify on each arm's first row that the realized
+mode is the intended one before letting it run.
+
 **Cost — and a CORRECTION to the estimate given before this amendment.** Realized
 **332 s/iter** (mean of the last 10 iterations of trial `5ce02`, post sims-100). That
 number was measured with **AOT ON**, and all three arms run **AOT OFF** — the live AOT
