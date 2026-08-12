@@ -86,10 +86,38 @@ def test_the_coupled_categorical_head_is_not_counted_as_trunk() -> None:
             kind="transformer", embed_dim=64, num_layers=2, num_heads=4,
             use_smolgen=False, categorical_head_coupled=coupled,
         ))
-        _trunk, trunk_names, head_names = _classify_params(model)
+        _trunk, trunk_names, head_names, _pol_shared = _classify_params(model)
         categorical = [n for n in trunk_names + head_names if n.startswith("value_categorical")]
         assert categorical, "the categorical head has no parameters at all"
         assert not [n for n in trunk_names if n.startswith("value_categorical")], (
             f"coupled={coupled}: categorical params classified as TRUNK: "
             f"{[n for n in trunk_names if n.startswith('value_categorical')]}"
         )
+
+
+def test_the_shared_policy_adapter_is_NOT_counted_as_trunk() -> None:
+    """⚑ The instrument this experiment is READ OUT ON must not fold a policy-only
+    module into the trunk.
+
+    `_classify_params` treats anything unlisted as shared trunk, so `policy_embedding`
+    would land there and inflate the very "trunk share" the probe reports -- the same
+    defect `value_categorical_coupled` had one PR earlier. It is its own bucket rather
+    than a head, because lumping it with private head params biases trunk share DOWN
+    and lumping it with the trunk biases it UP, and how much lands on it IS the
+    question.
+
+    ⚑ Also pins that pre-adapter numbers (the 2026-08-12 soft 94.1% / own 94.7% pair)
+    are NOT the same measurement as post-adapter ones.
+    """
+    from chess_anti_engine.model import ModelConfig, build_model
+    from scripts.probe_head_grad_share import _classify_params
+
+    model = build_model(ModelConfig(
+        kind="transformer", embed_dim=32, num_layers=2, num_heads=4,
+        use_smolgen=False, policy_embedding_shared=True,
+    ))
+    _trunk, trunk_names, head_names, pol_shared = _classify_params(model)
+
+    assert sorted(pol_shared) == ["policy_embedding.bias", "policy_embedding.weight"]
+    assert not [n for n in trunk_names if n.startswith("policy_embedding")]
+    assert not [n for n in head_names if n.startswith("policy_embedding")]

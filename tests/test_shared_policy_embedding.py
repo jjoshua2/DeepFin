@@ -161,25 +161,39 @@ def _grad_norm_on_embedding(model: ChessNet, output_key: str) -> float:
     return float(grad.norm())
 
 
-def test_the_soft_policy_gradient_REACHES_the_representation_the_prior_reads() -> None:
+_POLICY_OUTPUT_KEYS = ("policy_own", "policy_soft", "policy_sf", "policy_future")
+_VALUE_OUTPUT_KEYS = (
+    "wdl", "sf_eval", "categorical", "volatility", "sf_volatility", "moves_left",
+)
+
+
+@pytest.mark.parametrize("key", _POLICY_OUTPUT_KEYS)
+def test_EVERY_policy_head_gradient_REACHES_the_shared_representation(key: str) -> None:
     """⚑ THE EXPERIMENT'S WHOLE HYPOTHESIS, stated as a measurement.
 
-    `policy_soft`'s loss must land on a parameter that `policy_own` -- the head
-    MCTS reads as its search prior -- also reads. Both norms positive on the SAME
-    tensor is exactly that claim.
+    Every policy head's loss must land on a parameter that `policy_own` -- the
+    head MCTS reads as its search prior -- also reads. Positive norms on the SAME
+    tensor from ALL of them is exactly the claim "one shared policy
+    representation for EVERY policy head".
+
+    ⚑ Parametrized over the heads, not just the four CALL PATHS. Review found
+    that path coverage alone let `policy_future` and `policy_sf` silently revert
+    to the raw trunk with all 31 tests still passing -- and a head detached from
+    the shared layer makes the arm measure something other than sharing.
     """
     model = _train_the_embedding(_build(policy_embedding_shared=True))
-    assert _grad_norm_on_embedding(model, "policy_soft") > 0.0
-    assert _grad_norm_on_embedding(model, "policy_own") > 0.0
+    assert _grad_norm_on_embedding(model, key) > 0.0
 
 
-def test_the_VALUE_heads_do_not_read_the_shared_policy_embedding() -> None:
+@pytest.mark.parametrize("key", _VALUE_OUTPUT_KEYS)
+def test_NO_value_head_reads_the_shared_policy_embedding(key: str) -> None:
     """The other half of the hypothesis: the representation is policy-SPECIFIC.
-    If `wdl` read it too, this would just be another trunk layer and the arm
-    would be testing depth, not sharing."""
+    If any value output read it, this would be another trunk layer and the arm
+    would be testing depth, not sharing. Parametrized over ALL of them for the
+    same reason as above -- checking only `wdl` and `sf_eval` left four
+    unpinned."""
     model = _train_the_embedding(_build(policy_embedding_shared=True))
-    assert _grad_norm_on_embedding(model, "wdl") == 0.0
-    assert _grad_norm_on_embedding(model, "sf_eval") == 0.0
+    assert _grad_norm_on_embedding(model, key) == 0.0
 
 
 # --------------------------------------------------------------------------
@@ -276,6 +290,51 @@ def _make_trainer(model: ChessNet, log_dir: Path, w_sf_move: float) -> Trainer:
         warmup_lr_start=1e-5, use_amp=False, log_dir=log_dir,
         tb_log_interval=1000, prefetch_batches=False, w_sf_move=w_sf_move,
     )
+
+
+def test_a_model_that_never_had_the_head_is_NOT_refused(tmp_path: Path) -> None:
+    """⚑ REGRESSION for the review's first ship-blocker. Triggering on
+    `policy_sf is None` refused to construct 107 existing tests' models -- every
+    test double and partial-model rig lacks the attribute. The guard must key on
+    the DELIBERATE `enable_policy_sf_head=False` choice, which only a `ChessNet`
+    records, so a model that never made the choice is left alone at the default
+    `w_sf_move=0.15`.
+    """
+    class _Double(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lin = torch.nn.Linear(4, 4)
+
+        def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+            return {"policy_own": self.lin(x)}
+
+    trainer = Trainer(
+        _Double(), device="cpu", lr=1e-3, optimizer="adamw", warmup_steps=10,
+        warmup_lr_start=1e-5, use_amp=False, log_dir=tmp_path / "d",
+        tb_log_interval=1000, prefetch_batches=False,
+    )
+    assert float(trainer._loss_kwargs["w_sf_move"]) == 0.15
+
+
+def test_RAISING_w_sf_move_AFTER_construction_still_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ REGRESSION for the review's second ship-blocker: a construction-time
+    check CANNOT FIRE for the scenario the guard exists for.
+
+    `w_sf_move` is in `TRAINER_WEIGHT_KEYS`, and `_sync_trainer_weights` does
+    `setattr(trainer, wk, float(config[wk]))` EVERY ITERATION so live-yaml and
+    PB2 changes take effect immediately; `_apply_donor_config_overlay` is a
+    second post-construction writer. Measured before the fix: construct at 0.0,
+    sync to 0.15, `sf_move_ce` 0.0, no exception -- a gate that cannot fail.
+
+    So the check lives in `_loss_kwargs`, which is rebuilt on every step. This
+    test performs the setattr the sync loop performs.
+    """
+    trainer = _make_trainer(_build(enable_policy_sf_head=False), tmp_path / "s", 0.0)
+    trainer.w_sf_move = 0.15  # exactly what `_sync_trainer_weights` does
+    with pytest.raises(ValueError, match="w_sf_move"):
+        _ = trainer._loss_kwargs
 
 
 def test_a_positive_w_sf_move_on_a_net_without_the_head_FAILS_CLOSED(
@@ -422,6 +481,108 @@ def test_the_arena_loader_rebuilds_both_flags_from_a_saved_checkpoint(
     assert isinstance(loaded, ChessNet)
     assert loaded.policy_embedding is not None
     assert loaded.policy_sf is None
+
+
+def test_enabling_the_embedding_PRESERVES_optimizer_state(tmp_path: Path) -> None:
+    """⚑ The confound this removes, and why it is worth a test.
+
+    Without `policy_embedding.*` in `_FRESH_PARAM_NAME_SUFFIXES`, warm-starting
+    with the flag on falls into `Trainer.load`'s reinit path, which resets EVERY
+    moment, re-enters LR warmup, AND skips `load_zclip_state` (so the arm starts
+    in the fresh hard-cap-only zclip regime). The control arm would then have to
+    absorb an identical boot shock just to stay comparable, and the readout would
+    be measuring the shock. Spliced, the donor moments survive.
+
+    Measured 86 -> 86 with the splice, 86 -> 0 without.
+    """
+    donor_cfg = _cfg()
+    donor = Trainer(
+        build_model(donor_cfg), device="cpu", lr=1e-3, optimizer="adamw",
+        warmup_steps=10, warmup_lr_start=1e-5, use_amp=False,
+        log_dir=tmp_path / "donor", tb_log_interval=1000, prefetch_batches=False,
+        model_config=donor_cfg,
+    )
+    for param in donor.model.parameters():
+        param.grad = torch.randn_like(param)
+    donor.opt.step()
+    ckpt = tmp_path / "donor.pt"
+    donor.save(ckpt)
+    banked = len(donor.opt.state)
+    assert banked > 0
+
+    arm_cfg = _cfg(policy_embedding_shared=True)
+    arm = Trainer(
+        build_model(arm_cfg), device="cpu", lr=1e-3, optimizer="adamw",
+        warmup_steps=10, warmup_lr_start=1e-5, use_amp=False,
+        log_dir=tmp_path / "arm", tb_log_interval=1000, prefetch_batches=False,
+        model_config=arm_cfg,
+    )
+    arm.load(ckpt)
+    assert len(arm.opt.state) >= banked, "optimizer moments were reset, not spliced"
+
+
+def test_the_AOT_path_REFUSES_to_serve_a_prior_without_the_adapter(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE FIFTH POLICY PATH, which the PR originally missed.
+
+    The live yaml sets `distributed_inference_aot_dir: data/aot_models_512`. With
+    it set, the broker serves the prior from a pre-compiled AOTInductor graph and
+    never enters `ChessNet.forward`, so the shared adapter is bypassed --
+    silently, because `build_aot_constants` drops model constants the package did
+    not ask for, and `--verify` builds its reference from the same yaml so package
+    and reference lack the layer together.
+
+    Zero-init makes it worse, not better: selfplay would start in EXACT agreement
+    with training and diverge as the layer trains, and AOT covers only exact batch
+    buckets so uncovered sizes fall through to the eager path WITH the adapter --
+    a served policy that is a mixture keyed on batch size.
+    """
+    from chess_anti_engine.tune.distributed_runtime import _launch_inference_broker
+
+    with pytest.raises(ValueError, match="distributed_inference_aot_dir"):
+        _launch_inference_broker(
+            config={
+                "policy_embedding_shared": True,
+                "distributed_inference_aot_dir": "data/aot_models_512",
+                "distributed_server_root": str(tmp_path / "srv"),
+            },
+            trial_id="t",
+            publish_dir=tmp_path / "pub",
+            trial_dir=tmp_path / "trial",
+        )
+
+
+@pytest.mark.parametrize(
+    ("shared", "aot_dir"), [(False, "data/aot_models_512"), (True, "")],
+)
+def test_the_AOT_refusal_does_not_fire_on_either_safe_combination(
+    shared: bool, aot_dir: str, tmp_path: Path,
+) -> None:
+    """Negative control. A guard that refuses every launch is not a guard --
+    production runs AOT today with the adapter off, and the adapter is safe when
+    AOT is not configured. Only the CONJUNCTION is the hazard.
+
+    Asserted by the absence of the AOT ValueError specifically: the call fails
+    later for unrelated reasons (no real server root), which is fine.
+    """
+    from chess_anti_engine.tune.distributed_runtime import _launch_inference_broker
+
+    raised = ""
+    try:
+        _launch_inference_broker(
+            config={
+                "policy_embedding_shared": shared,
+                "distributed_inference_aot_dir": aot_dir,
+                "distributed_server_root": str(tmp_path / "srv"),
+            },
+            trial_id="t",
+            publish_dir=tmp_path / "pub",
+            trial_dir=tmp_path / "trial",
+        )
+    except Exception as exc:  # the launch fails for unrelated reasons; only the AOT text matters
+        raised = f"{type(exc).__name__}: {exc}"
+    assert "distributed_inference_aot_dir" not in raised, raised
 
 
 def test_arch_schema_version_was_bumped_for_these_fields() -> None:

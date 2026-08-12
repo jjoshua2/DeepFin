@@ -2282,25 +2282,45 @@ class Trainer:
         )
 
     def _assert_gated_heads_exist(self) -> None:
-        """⚑ FAIL CLOSED on a positive weight whose head was not built.
+        """⚑ FAIL CLOSED on a positive weight whose head was DELIBERATELY not built.
 
         `enable_policy_sf_head: false` omits `policy_sf` entirely, and
         `compute_loss` treats a missing optional head as a zero loss -- correct
         for partial-model rigs, but it would let someone turn the SF-move teacher
-        on in the live yaml against a net that has no head to train, see a clean
-        run, and read the whole readout window as if the teacher had been
-        training. That is this codebase's signature defect (a value accepted and
-        then silently ignored), so it is a launch-time error rather than a
-        per-batch one: it fires once, before any compute is spent.
+        on against a net that has no head to train, see a clean run, and read the
+        whole readout window as if the teacher had been training. That is this
+        codebase's signature defect (a value accepted and then silently ignored).
 
         `w_sf_move` is the ONLY weight that reads `policy_sf`; `w_sf_own` and
         `w_sf_own_regret` train `policy_own` through the sf_p0 terms.
+
+        ⚑ TWO THINGS REVIEW FOUND WRONG with the obvious implementation, both of
+        which this docstring exists to keep fixed:
+
+        1. **Trigger on the DELIBERATE CHOICE, not on `policy_sf is None`.** Every
+           test double and partial-model rig in the repo lacks the attribute, so
+           the `is None` form refused to construct 107 of them. `ChessNet` records
+           `enable_policy_sf_head`, so its ABSENCE means "not a net that made this
+           choice" and the guard must stay silent.
+        2. **A construction-time check CANNOT FIRE for the case named above.**
+           `w_sf_move` is in `TRAINER_WEIGHT_KEYS`, and `_sync_trainer_weights`
+           does `setattr(trainer, wk, ...)` EVERY ITERATION so live-yaml and PB2
+           changes take effect immediately (`_apply_donor_config_overlay` is a
+           second post-construction writer). Measured: construct at 0.0, sync to
+           0.15, and `sf_move_ce` is 0.0 with no exception. ⇒ the check is
+           evaluated in `_loss_kwargs`, which is rebuilt every step, so it cannot
+           be bypassed by a NEW mutation site either. It is also called once from
+           `__init__` so an already-wrong launch config fails before any compute.
         """
         model = getattr(self.model, "_orig_mod", self.model)
-        if float(self.w_sf_move) > 0.0 and getattr(model, "policy_sf", None) is None:
+        # Absent attribute => not a net that opted out => nothing to check.
+        if getattr(model, "enable_policy_sf_head", True):
+            return
+        if float(self.w_sf_move) > 0.0:
             raise ValueError(
-                f"w_sf_move={float(self.w_sf_move)} > 0 but the model has no "
-                "`policy_sf` head; rebuild with enable_policy_sf_head=true or set "
+                f"w_sf_move={float(self.w_sf_move)} > 0 but the model was built "
+                "with enable_policy_sf_head=false, so there is no `policy_sf` head "
+                "to train; rebuild with enable_policy_sf_head=true or set "
                 "w_sf_move=0.0",
             )
 
@@ -2533,6 +2553,9 @@ class Trainer:
 
     @property
     def _loss_kwargs(self) -> dict[str, Any]:
+        # ⚑ Re-checked EVERY step: `w_sf_move` is re-setattr'd each iteration by
+        # `_sync_trainer_weights`, so a construction-time check alone cannot fire.
+        self._assert_gated_heads_exist()
         return {
             "w_policy": self.w_policy, "w_soft": self.w_soft, "w_future": self.w_future,
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
@@ -3782,7 +3805,19 @@ class Trainer:
   # file (matches the export_swa path; previously diverged).
         atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
 
-    _FRESH_PARAM_NAME_SUFFIXES = ("dynamic_relation_weight", "policy_relation_weight")
+    # `policy_embedding.*` belongs here for the same reason as the relation weights:
+    # zero-init, function-preserving, ADDED params. Without it, enabling the shared
+    # policy adapter falls into the reinit path, which resets every moment AND the
+    # scheduler AND skips `load_zclip_state` -- forcing the control arm to absorb an
+    # identical boot shock just to stay comparable. Spliced, the embedding-ON arm
+    # keeps its donor moments. (Removing `policy_sf` deletes params and cannot be
+    # spliced -- that direction still resets.)
+    _FRESH_PARAM_NAME_SUFFIXES = (
+        "dynamic_relation_weight",
+        "policy_relation_weight",
+        "policy_embedding.weight",
+        "policy_embedding.bias",
+    )
 
     def _remap_optimizer_state_for_new_params(self, ckpt_opt: dict) -> dict | None:
         """Remap a donor optimizer state dict around newly added parameters.

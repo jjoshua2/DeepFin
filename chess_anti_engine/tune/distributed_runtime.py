@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -1269,6 +1269,10 @@ def check_dynamic_relations_transport(config: dict) -> None:
         )
 
 
+def _aot_dir_configured(config: Mapping[str, Any]) -> str:
+    return str(config.get("distributed_inference_aot_dir", "") or "").strip()
+
+
 def _launch_inference_broker(
     *,
     config: dict,
@@ -1276,11 +1280,33 @@ def _launch_inference_broker(
     publish_dir: Path,
     trial_dir: Path,
 ) -> subprocess.Popen[bytes]:
+    # ⚑⚑ THE FIFTH POLICY PATH. When an AOT package dir is set the broker serves the
+    # prior from a PRE-COMPILED AOTInductor graph and never enters `ChessNet.forward`,
+    # so `_policy_tokens` -- and with it the shared policy adapter -- is bypassed.
+    # `build_aot_constants` only raises when the PACKAGE wants an FQN the model lacks;
+    # constants the MODEL has and the package does not (exactly `policy_embedding.*`)
+    # are dropped without a word, and `--verify` cannot catch it because it builds its
+    # reference model from the SAME yaml, so package and reference lack the layer
+    # together (a guard that does not share the criterion's instrument).
+    #
+    # The failure is maximally silent: the adapter is zero-init, so selfplay would
+    # start EXACTLY in agreement with training and diverge as the layer trains --
+    # and AOT covers only exact batch buckets, so uncovered sizes fall through to the
+    # eager path WITH the adapter, making the served policy a mixture keyed on batch
+    # size. Refuse rather than serve a prior that is not the one being trained.
+    if _aot_dir_configured(config) and bool(config.get("policy_embedding_shared", False)):
+        raise ValueError(
+            "policy_embedding_shared=true with distributed_inference_aot_dir="
+            f"{_aot_dir_configured(config)!r}: the AOT packages were compiled without the shared policy "
+            "adapter and would serve a DIFFERENT prior than the one being trained. "
+            "Rebuild the packages (scripts/build_aot_packages.py) or clear "
+            "distributed_inference_aot_dir for this arm.",
+        )
     broker_artifact_root = trial_dir / "distributed_inference"
     broker_artifact_root.mkdir(parents=True, exist_ok=True)
     slot_prefix = _trial_slot_prefix(trial_id=trial_id)
     server_root = Path(str(config["distributed_server_root"]))
-    aot_dir = str(config.get("distributed_inference_aot_dir", "") or "").strip()
+    aot_dir = _aot_dir_configured(config)
     cmd = [
         sys.executable, "-m", "chess_anti_engine.inference",
         "--publish-dir", str(publish_dir),
