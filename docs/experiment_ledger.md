@@ -44236,3 +44236,59 @@ SEARCH, and this arena holds search fixed on both sides by construction
   trap that once faked 70 Elo [[no_rollback_target_the_run_is_a_plateau]].
 - iter218 was copied OUT of the live tune dir before use (Ray prunes live checkpoints).
 - 200 pairs, so the pentanomial CI is the paired one, not a trinomial understatement.
+
+### Tier-13 arm A CRASHED at iter 2 (2026-08-12 16:39) — a torch.compile thread race, NOT the treatment
+
+**What happened.** Trial `train_trial_d76cc_00000` (arm A, `policy_embedding_mode: 'off'`)
+completed iteration 1 (2063 s, boot cost) and died 10 minutes into iteration 2's first
+optimizer step:
+
+```
+RuntimeError: Detected that you are using FX to symbolically trace a dynamo-optimized function.
+```
+
+(`error.txt` in the trial dir; driver log `/tmp/chess_training.log` line 1216.)
+
+**Root cause — established from the stack + code, not guessed.** The training thread's
+forward (`train/trainer.py:3534`) walked through `torch/fx/_symbolic_trace.py`'s
+`module_call_wrapper` — meaning an FX trace with its PROCESS-WIDE `Module.__call__` patch
+was active at that moment. The tracer belongs to the async holdout eval thread
+(`train/async_eval.py`): it builds a fresh snapshot `ChessNet` and compiles it
+(`max-autotune-no-cudagraphs`) lazily on its FIRST forward, on its own thread. The
+make_fx/proxy-tensor phase of that compile patches module calls globally; a concurrent
+training forward on the dynamo-compiled trainer model hits dynamo's guard and raises. The
+driver log shows the collision directly: `async test eval did not finish within 10.0s;
+dropping iter 891's metrics` at 16:39:33, crash at 16:39:43 — the eval thread was still
+compiling when iteration 2's train_steps began.
+
+**Why this never fired in ~15 production restarts.** The race window is only the trace
+phase of the eval-thread compile, once per boot. Production restarts mostly re-boot the
+SAME model code, so dynamo/inductor caches are warm and the eval compile is short. Arm A
+was the first boot ever on PR #398's model code (the adapter module exists even in `off`
+mode), so BOTH compiles were fully cold — trainer compile ate 2063 s of iter 1, pushing
+the eval-thread compile into exact overlap with iter 2's training. Arms B and C have
+different topologies again (adapter params), so each arm boot re-rolls these dice —
+"survived before" was luck, not safety [[a_gate_that_cannot_fail]].
+
+**Verdict on arm A: OPERATIONAL FAILURE, per the prereg NOT an architecture kill.** One
+iteration trained; nothing about the treatment was measured. Arm A relaunches fresh from
+the SAME donor (`pre_policy_adapter_20260812`), iteration count restarts.
+
+**PROPOSED amendment (not applied yet — needs Josh's go, it deviates from the frozen
+"exactly 4 keys differ" preflight):** add a FIFTH common-mode key to all three arm yamls:
+`distributed_async_test_eval: false` (live yaml ships `true`). Verified in source:
+`tune/trainable.py:401` then never constructs `AsyncTestEval`, and
+`tune/trainable_phases.py:606` falls through to the sync main-thread
+`trainer.eval_full_pass` — no second compile thread exists, so the race is removed by
+MECHANISM, not by probability [[same_setting_both_sides_is_not_neutrality]]. Costs:
+holdout eval runs inline (~30–50 s/iter, common-mode across arms, on top of the AOT-off
+penalty), and `test_*` metrics lose their 1-iter lag (sync reports same-iter; the async
+path lags by 1 — `tune/trainable_report.py:463`). Neither touches training gradients or
+the arena endpoint. Post-condition on the FLATTENED dict required, per the arm-generator
+gotcha [[yaml_off_parses_as_boolean_false]].
+
+**Owed afterwards (production carries the same race at every restart):** a reviewed PR
+that serializes the eval thread's compiling first forward against the trainer's forward
+(a shared lock taken by the eval thread for its first call and by `_run_optimizer_step`
+per step), or pre-warms the eval compile before train_steps. Config-off is the Tier-13
+expedient, not the fix.
