@@ -869,6 +869,49 @@ def _evict_oldest_first(
     return (freed_entries, freed_bytes)
 
 
+
+# Fields that name the MACHINE rather than describe throughput. Redacted from
+# the public view of the throughput endpoints.
+#
+# ⚑ An allowlist would be the safer shape here and is deliberately not used:
+# the stats dict is an open-ended accumulator keyed by GPU model, and an
+# allowlist would silently drop any throughput field added later -- turning a
+# privacy control into a data-loss bug that nobody notices. A denylist fails
+# the other way: a NEW host-identifying field would leak until it is added
+# here. That is the better failure to have, because it is visible in review of
+# the code that adds the field, and `test_no_new_host_identifying_field_leaks`
+# pins the current shape so such a field cannot arrive unnoticed.
+HOST_IDENTIFYING_TELEMETRY_KEYS: frozenset[str] = frozenset({
+    "last_hostname", "last_cpu_count",
+})
+
+
+def redact_host_telemetry(stats: Any, *, authenticated: bool) -> Any:
+    """Strip machine-identifying fields unless the caller authenticated.
+
+    `/v1/worker_throughput` and `/v1/trial_throughput` take no credential --
+    they are what a dashboard polls -- and returned the raw accumulator,
+    including each worker's hostname and CPU count. That is operational
+    reconnaissance available to anyone who can reach the port.
+
+    Aggregate throughput is NOT redacted: it is the useful, non-identifying
+    part, and blanking it would push whoever monitors this toward giving the
+    dashboard a real credential, which is a worse outcome than the disclosure.
+    """
+    if authenticated or not isinstance(stats, dict):
+        return stats
+    out: dict[str, Any] = {}
+    for key, entry in stats.items():
+        if isinstance(entry, dict):
+            out[key] = {
+                k: v for k, v in entry.items()
+                if k not in HOST_IDENTIFYING_TELEMETRY_KEYS
+            }
+        else:
+            out[key] = entry
+    return out
+
+
 def prune_retained_dir(
     root: Path,
     *,
@@ -2242,6 +2285,10 @@ def create_app(
         return {"stored": False, "rejected": True, "reason": reason, "reason_code": code}
 
     basic = HTTPBasic()
+  # auto_error=False so an ABSENT credential yields None instead of a 401.
+  # These telemetry routes stay reachable without credentials -- they are
+  # what a dashboard polls -- but only the redacted view.
+    basic_optional = HTTPBasic(auto_error=False)
 
     def _client_ip(request: Request | None) -> str:
         """The peer address, or "" when there is no client (ASGI test transport).
@@ -2423,6 +2470,26 @@ def create_app(
             raise HTTPException(status_code=403, detail="user disabled")
         access_guard.note_auth_success(ip)
         return username
+
+    def _auth_user_optional(
+        request: Request,
+        creds: HTTPBasicCredentials | None = Depends(basic_optional),
+    ) -> str | None:
+        """Authenticate if credentials were offered; otherwise return None.
+
+        ⚑ NOT a weaker `_auth_user`. It runs the SAME check -- bans, the per-IP
+        failed-sign-in throttle, verification -- and differs only in what it
+        does when there is nothing to check or the check fails: it returns None
+        instead of raising. A wrong password still costs the caller an entry in
+        the throttle, so this cannot be used as a free guessing oracle that the
+        authenticated routes would have charged for.
+        """
+        if creds is None:
+            return None
+        try:
+            return _auth_user(request, creds)
+        except HTTPException:
+            return None
 
     def _record_bad_shard_report(
         trial_id: str | None,
@@ -2753,12 +2820,24 @@ def create_app(
         return _get_update_info_impl(trial_id)
 
     @app.get("/v1/worker_throughput")
-    def get_worker_throughput() -> Any:
-        return JSONResponse(content=_load_json_stats(stats_path))
+    def get_worker_throughput(
+        username: str | None = Depends(_auth_user_optional),
+    ) -> Any:
+        return JSONResponse(
+            content=redact_host_telemetry(
+                _load_json_stats(stats_path), authenticated=username is not None,
+            ),
+        )
 
     @app.get("/v1/trial_throughput")
-    def get_trial_throughput() -> Any:
-        return JSONResponse(content=_load_json_stats(trial_stats_path))
+    def get_trial_throughput(
+        username: str | None = Depends(_auth_user_optional),
+    ) -> Any:
+        return JSONResponse(
+            content=redact_host_telemetry(
+                _load_json_stats(trial_stats_path), authenticated=username is not None,
+            ),
+        )
 
     def _get_worker_wheel_impl(trial_id: str | None) -> Any:
         p = _artifact_from_publish("worker_wheel", default_name="worker.whl", trial_id=trial_id)
