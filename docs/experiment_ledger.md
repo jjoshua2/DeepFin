@@ -42881,3 +42881,124 @@ FROZEN since 2026-08-09 20:58, which is what makes Arm 1 a weights-only comparis
 
 **Verdict:** LIVE-UNREAD. To be recorded the same session the arms return, judged by the
 pre-committed rules above and not by post-hoc reading.
+
+
+---
+
+## 2026-08-11 — VERDICT (arms 1 + 3): the arena reads FLAT, and the value head measurably IMPROVED
+
+Reads out the pre-registration immediately above (`df704b45b`). Arms 1 and 3 are complete;
+arm 2 (Cheese) is in flight and is appended below when it lands.
+
+### Arm 1 — PRIMARY, paired arena vs the resume point: **FLAT**
+
+`ck_2026-08-11_5ce02_iter138` vs `ck_resume_iter672.pt`, 400 games, `matched_sims --sims 32
+--search-shape training --seed 42`, both sides logging the identical search config
+(`shape=training vloss_weight=1 target_batch=0 tree_reuse=cold c_scale=0.1 policy_temp=1.5
+topk=32`) — a weights-only comparison, as designed.
+
+| | value |
+|---|---|
+| Elo (candidate − reference) | **−9.56** |
+| 95% CI | **[−38.4, +19.1]** |
+| score | 0.4863 ± 0.0211 |
+| pentanomial (cand POV) | WW 25 / WD_DW 33 / DD_WL 76 / LD_DL 38 / LL 28 |
+| games / pairs | 400 / 200 |
+
+**The CI contains zero ⇒ FLAT by the pre-committed rule.** Not `elo_lo > 0` (WORKED), not
+`elo_hi < 0` (REGRESSED). Per the rule as written: *138 iterations bought nothing the arena
+can measure, and that is a KILL for "keep running unchanged".*
+
+⚑ **The standing "better than last time" trap does not rescue this.** 379f6 was degrading, so
+−9.6 being better than that run's −51.6 is not a gain. The bar was zero and the result
+straddles it.
+
+### Arm 3 — the offline rulers: the VALUE HEAD IMPROVED, within-lineage, CI excluding zero
+
+`value_regret --batch-size 128`, paired on 1723 positions, **0 unusable / 0 unmatched on both
+sides**, ruler identity confirmed equal (`input_encoding="fen_only"`, `batch_size=128`).
+
+| comparison | mean cp | paired delta | 95% CI | verdict |
+|---|---|---|---|---|
+| iter672 (resume point) | 65.97 | — | — | — |
+| **iter138 (today)** | **57.69** | **+8.28 cp better** | **[+2.78, +13.93]** | **B better** |
+| — endgame | n=1055 | +6.43 | [−1.57, +14.33] | ns |
+| — **middlegame** | n=668 | **+11.19** | **[+4.00, +18.75]** | **carries it** |
+
+Against the frozen boot512 bank the same day: value **+13.10 cp** [+5.93, +20.45]; policy
+prior **+10.70** [+8.11, +13.27]; training target **+11.57** [+7.94, +15.39]; and the
+**net+search play path +4.36 [−0.52, +9.33] — NOT significant.**
+
+### ⚑⚑ THE TWO ARMS DO NOT CONTRADICT EACH OTHER, AND SAYING THEY DO WOULD BE THE ERROR
+
+It is tempting to read "value up 8.28 cp, arena flat" as a fresh paradox. **It is not, and the
+resolution arithmetic has to be done before the claim is made** [[compute_instrument_resolution_before_the_threshold]]:
+
+- The arena at 400 games resolves **±30 Elo**. Its answer is "the true delta is somewhere in
+  [−38, +19]".
+- The value ruler at n=1723 paired positions resolves **±5.5 cp**. Its answer is "the true
+  delta is +8.28 cp, and it is not zero".
+
+**These are compatible for any conversion below roughly 3.5 Elo per cp.** Nothing here says
+the loop is gaining Elo; nothing here says it is not. **The arena did not measure a null — it
+failed to resolve.** The offline rulers are simply the better-powered instruments at this
+effect size, and they say the net moved in the right direction.
+
+⇒ **The blocking gap is task #170: there is still no `regret → Elo` calibration**, so an
+8.28 cp value gain cannot be converted into an expected arena effect, and therefore cannot be
+declared visible-or-not in advance. This readout is the third time that missing conversion has
+been the thing standing between two instruments and a verdict.
+
+### What this does and does not license
+
+1. **It does NOT license "resume unchanged".** The pre-committed kill fired. Whatever the
+   offline gain is worth, it is under the arena's resolution after 138 iterations (~19h), and
+   a loop whose progress is invisible to its own strength ruler is not a loop that should be
+   left running on the assumption that it is working.
+2. **It does NOT license a rollback to iter672 either.** `elo_hi < 0` did not fire, and the
+   within-lineage value ruler says iter138 is the BETTER net. Rolling back would discard a
+   measured +8.28 cp to chase a −9.6 ± 28 point estimate. **Keep iter138.**
+3. **The standing puzzle is now reproduced within a single lineage.** Previously "offline
+   rulers beat boot512 while the arena says iter862 ≈ boot512" was a cross-era observation
+   with a lineage confound. Here it is the same lineage, 138 iterations, same search both
+   sides: **offline up, play unresolved.**
+
+### Owed, and NOT run
+
+**`audit_targets` was never run on iter672**, so the POLICY comparison exists only against the
+frozen boot512 bank — the arena's exact question (iter672 → iter138) is answered for the value
+head and **unanswered for the policy head**. It was not run concurrently on purpose: the Cheese
+arm is a CLOCK match and GPU contention slows our engine 15–20x, which is a time-forfeit risk,
+not merely noise. Queued for after arm 2 lands.
+
+### ⚑ CORRECTION to the pre-registration's Cheese trap (measured after it was committed)
+
+The prereg states that `UCI_LimitStrength` "is implemented as a TIME handicap, not a
+search-size one". **That is true of the DEFAULT and it is not the whole option.** Cheese
+exposes a third option the prereg never named:
+
+```
+option name LimitStrengthMode type combo default speed var speed var nodes
+```
+
+Measured this session, same position, `go movetime 3000`:
+
+| setting | depth | nodes | time |
+|---|---|---|---|
+| full strength | 16 | 10,675,853 | 2779 ms |
+| `UCI_Elo 2400`, mode `speed` (**default**) | 11 | 328,033 | 2996 ms |
+| `UCI_Elo 2400`, mode `nodes` | 9 | 80,778 | **19 ms** |
+
+⇒ two consequences, and they point in opposite directions:
+- **The prereg's operational conclusion SURVIVES and is now positively verified.** Under a
+  CLOCK, the default `speed` mode is a genuine handicap: **32.5x fewer nodes in the same 3
+  seconds**. Arm 2's design is sound, and this was checked BEFORE the 2.6h of GPU went in
+  rather than assumed.
+- **The prereg's stated REASON was incomplete.** "Cannot be node-limited" is wrong as a
+  property of the engine — it is a property of the default mode. `LimitStrengthMode=nodes`
+  makes a node-limited handicapped match possible, which is the configuration a future
+  speed-independent Cheese ruler should use. The earlier probe read the default and
+  generalised it to the engine. [[reachability_cannot_be_grepped_by_source_name]]
+
+**Verdict: arm 1 FLAT (pre-committed KILL for resuming unchanged), arm 3 POSITIVE on value.
+Arm 2 pending.**
