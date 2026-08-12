@@ -558,3 +558,50 @@ def test_cleartext_override_is_readable_from_worker_yaml() -> None:
         ns, {"server_url": "http://203.0.113.7:45453", "allow_cleartext_http": True},
     )
     assert ns.server_url == "http://203.0.113.7:45453"
+
+
+def test_a_real_issued_lease_still_authorizes_its_own_upload(tmp_path) -> None:
+    """⚑ THE REGRESSION GUARD FOR THE FAIL-OPEN FIX.
+
+    Every other lease test builds the lease dict BY HAND, so none of them can
+    see a mismatch between what `assign_trial_lease` actually STORES and what
+    `lease_authorizes_upload` reads -- and tightening two fail-open branches is
+    exactly the change that could introduce one. A rule that rejects the
+    issuer's own leases would break the volunteer deployment the flag exists
+    for, while every hand-built test stayed green.
+
+    So this asks the REAL issuer for a lease and feeds it to the REAL rule.
+    """
+    import time
+
+    from chess_anti_engine.server.lease import assign_trial_lease
+
+    leases_root = tmp_path / "leases"
+    lease = assign_trial_lease(
+        leases_root=leases_root,
+        username="alice",
+        worker_info={"worker_id": "w1"},
+        available_trials=["trial_a"],
+        manifest_loader=lambda _tid: {"model": {}},
+    )
+
+    # The issuer's own output must satisfy the rule, on its own trial...
+    assert lease_authorizes_upload(
+        lease, username="alice", trial_id=str(lease["trial_id"]), now_unix=int(time.time()),
+    ) is None, f"the rule rejects a lease its own issuer just produced: {lease}"
+
+    # ...and on the shared default route.
+    assert lease_authorizes_upload(
+        lease, username="alice", trial_id=None, now_unix=int(time.time()),
+    ) is None
+
+    # The fields the tightened branches depend on must actually be populated;
+    # if the issuer stops setting either, the rule silently starts refusing.
+    assert int(lease.get("expires_at_unix") or 0) > int(time.time()), (
+        "issuer produced a lease with no future expiry -- the tightened expiry "
+        "branch would refuse every upload"
+    )
+    assert lease.get("trial_id"), (
+        "issuer produced a trial-less lease -- the tightened trial branch would "
+        "refuse every named-trial upload"
+    )
