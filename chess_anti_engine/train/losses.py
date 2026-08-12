@@ -904,6 +904,11 @@ def compute_loss(
     sf_pol_logits = outputs.get("policy_sf")
     sf_policy_target = batch.get("sf_policy_t")
     if sf_pol_logits is None:
+        # Deliberately tolerant: partial models (offline rigs, exported subsets)
+        # rely on "absent optional head -> zero loss". The `enable_policy_sf_head:
+        # false` + `w_sf_move > 0` combination that this tolerance would hide is
+        # caught ONCE at Trainer construction instead -- see
+        # `Trainer._assert_gated_heads_exist`.
         sf_move_ce = zero_loss
     else:
         masked_sf_logits = apply_policy_mask_to_logits(

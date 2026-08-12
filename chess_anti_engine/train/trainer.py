@@ -2272,12 +2272,37 @@ class Trainer:
   # ⚑ NO `^` ANCHOR when grepping for this. Ray prefixes actor stdout with
   # `(train_trial pid=NNNN)` and an ANSI colour code, so an anchored grep
   # returns 0 matches on a real trial log and reads as "the arm never ran".
+        self._assert_gated_heads_exist()
+
         print(
             f"[trainer] policy_target_temp={self.policy_target_temp!r} "
             f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
             f"eval_pinned_temp={self._eval_loss_kwargs['policy_target_temp']!r}",
             flush=True,
         )
+
+    def _assert_gated_heads_exist(self) -> None:
+        """⚑ FAIL CLOSED on a positive weight whose head was not built.
+
+        `enable_policy_sf_head: false` omits `policy_sf` entirely, and
+        `compute_loss` treats a missing optional head as a zero loss -- correct
+        for partial-model rigs, but it would let someone turn the SF-move teacher
+        on in the live yaml against a net that has no head to train, see a clean
+        run, and read the whole readout window as if the teacher had been
+        training. That is this codebase's signature defect (a value accepted and
+        then silently ignored), so it is a launch-time error rather than a
+        per-batch one: it fires once, before any compute is spent.
+
+        `w_sf_move` is the ONLY weight that reads `policy_sf`; `w_sf_own` and
+        `w_sf_own_regret` train `policy_own` through the sf_p0 terms.
+        """
+        model = getattr(self.model, "_orig_mod", self.model)
+        if float(self.w_sf_move) > 0.0 and getattr(model, "policy_sf", None) is None:
+            raise ValueError(
+                f"w_sf_move={float(self.w_sf_move)} > 0 but the model has no "
+                "`policy_sf` head; rebuild with enable_policy_sf_head=true or set "
+                "w_sf_move=0.0",
+            )
 
     def _init_swa(self) -> None:
         """(Re)initialize SWA from current model weights.

@@ -208,6 +208,8 @@ _MODEL_PASSTHROUGH = (
     "smolgen_relation_coeff_norm", "smolgen_relation_scale",
     "phase_output_adapter", "phase_output_adapter_dim", "phase_smolgen", "phase_piece_thresholds",
     "categorical_head_coupled",
+    "policy_embedding_shared",
+    "enable_policy_sf_head",
 )
 
 # train section: all 1:1 passthrough.
