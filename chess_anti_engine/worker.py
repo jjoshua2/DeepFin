@@ -1091,12 +1091,18 @@ class WorkerSession:
         self._pending_fen_dole: list[str] = []
         # One claim id per (training_iteration, manifest_revision), reused across
         # retries so a dropped grant response can be recovered. See _claim_seed_dole.
-        self._dole_claim_key: tuple[int, str] | None = None
+        self._dole_claim_key: tuple[str, int, str] | None = None
         self._dole_claim_id: str = ""
         # Set only once the grant is actually installed. See _maybe_ingest_dole_flag.
-        # Highest grant sequence actually installed. See _maybe_ingest_dole_flag.
-        self._applied_dole_seq: int = 0
-        self._legacy_dole_seq: int = 0
+        # ⚑ PER TRIAL SCOPE, NOT GLOBAL. `grant_seq` is a per-trial counter on
+        # the server, and ONE WorkerSession outlives a trial reassignment
+        # (`_negotiate_lease` rewrites `self.leased_trial_id` in place). A
+        # single global high-water mark therefore carries trial A's sequence
+        # into trial B: after applying A's seq 5, B's first grant of seq 1
+        # reads as `1 <= 5` and the worker silently refuses B's seed batch
+        # until B reaches 6.
+        self._applied_dole_seq: dict[str, int] = {}
+        self._legacy_dole_seq: dict[str, int] = {}
         self._live_dole_queue: list[str] | None = None
         self._pending_sf_refute: list[str] = []
         self._live_sf_refute_queue: list[str] | None = None
@@ -1943,9 +1949,29 @@ class WorkerSession:
         state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
 
     @staticmethod
-    def _dole_key(manifest: dict) -> tuple[int, str]:
-        """Identity of one dole opportunity: (iteration, manifest revision)."""
+    def _dole_scope(manifest: dict) -> str:
+        """Which trial's dole counters this manifest belongs to.
+
+        The claim endpoint carries the trial id, and it is present whenever the
+        server supports the claim protocol, so it needs no separate lookup and
+        cannot disagree with the route actually being POSTed to.
+        """
+        endpoint = manifest.get("seed_dole_claim_endpoint")
+        if isinstance(endpoint, str) and endpoint.strip():
+            return endpoint.strip()
+        return str(manifest.get("trial_id") or "")
+
+    @classmethod
+    def _dole_key(cls, manifest: dict) -> tuple[str, int, str]:
+        """Identity of one dole opportunity.
+
+        ⚑ TRIAL-SCOPED. Without the scope, two trials that happen to share an
+        iteration and revision would reuse one logical claim_id. The server
+        gates per trial so that is not a security hole, but it makes the
+        worker's own notion of "the same claim" incomplete.
+        """
         return (
+            cls._dole_scope(manifest),
             int(manifest.get("training_iteration", 0) or 0),
             str(manifest.get("manifest_revision") or ""),
         )
@@ -2001,11 +2027,13 @@ class WorkerSession:
             # identically to the old "apply whenever the flag is true".
             if not bool(manifest.get("dole_fen_seeds")):
                 return 0
-            self._legacy_dole_seq += 1
-            return self._legacy_dole_seq
+            scope = self._dole_scope(manifest)
+            nxt = self._legacy_dole_seq.get(scope, 0) + 1
+            self._legacy_dole_seq[scope] = nxt
+            return nxt
 
         key = self._dole_key(manifest)
-        revision = key[1]
+        revision = key[2]
         if self._dole_claim_key != key:
             self._dole_claim_key = key
             self._dole_claim_id = uuid.uuid4().hex
@@ -2034,7 +2062,9 @@ class WorkerSession:
         # A server that grants without a sequence is pre-grant_seq; treat the
         # grant as sequence 1 more than whatever we last applied so it is acted
         # on exactly once rather than silently dropped.
-        return int(body.get("grant_seq", 0) or 0) or (self._applied_dole_seq + 1)
+        return int(body.get("grant_seq", 0) or 0) or (
+            self._applied_dole_seq.get(self._dole_scope(manifest), 0) + 1
+        )
 
     def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
@@ -2086,8 +2116,9 @@ class WorkerSession:
         # revision, so the worker would suppress the rearmed dose it exists to
         # play. Only the server knows a rearm re-opened the gate, so the
         # question has to be asked and answered by `grant_seq`.
+        scope = self._dole_scope(manifest)
         grant_seq = self._claim_seed_dole(manifest)
-        if grant_seq <= self._applied_dole_seq:
+        if grant_seq <= self._applied_dole_seq.get(scope, 0):
             return
         reco = manifest.get("recommended_worker") or {}
         n = int(reco.get("opening_fen_dole_per_iter", 0) or 0)
@@ -2154,7 +2185,7 @@ class WorkerSession:
         # the server's replay hands the grant back. Marking it at claim time
         # instead would turn a local load failure into a silently skipped dose
         # -- the grant spent, the seeds never played.
-        self._applied_dole_seq = grant_seq
+        self._applied_dole_seq[scope] = grant_seq
         self.log.info(
             "dole: received %d seed(s) x%d -> %s; sf_refute=%d (frac=%.2f plies=%d iter=%d)",
             len(seeds), n, dest, len(sf_queue), sf_frac, sf_plies, train_iter,

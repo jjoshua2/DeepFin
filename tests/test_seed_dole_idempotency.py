@@ -172,3 +172,46 @@ def test_a_rearm_issues_a_new_grant_sequence(tmp_path) -> None:
         "a rearmed dose replayed the previous grant sequence, so the worker would "
         "treat the legitimately re-opened batch as one it had already applied"
     )
+
+
+def test_a_grant_is_not_acknowledged_when_the_winner_cannot_be_persisted(tmp_path) -> None:
+    """⚑⚑ WINNER DURABILITY IS A PRECONDITION FOR ACKNOWLEDGING, not merely
+    for advancing the gate.
+
+    An earlier version returned early from persistence on failure but still
+    answered `granted=true, grant_seq=N`. The worker would then install and
+    PLAY a dose the server had no durable record of; a crash left neither
+    winner nor gate, and a second worker won the same dose. Refusing to
+    acknowledge is what makes the failure a retry instead of a duplicate.
+    """
+    path = tmp_path / "seed_dole_gate.json"
+    g = _SeedDoleGate(state_path=path)
+
+    def _fail() -> bool:
+        return False
+
+    g._persist_winner = _fail  # type: ignore[method-assign]
+    seq, new = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
+    assert (seq, new) == (0, False), "an undurable grant was acknowledged to the worker"
+    assert not path.exists(), "the gate was advanced for a grant that was never acknowledged"
+
+    # ⚑ And the failed attempt must leave nothing behind that a replay could
+    # shortcut on -- otherwise the retry inherits a win that was never durable.
+    assert asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV)) == 0
+
+    # Once persistence works again, exactly one winner emerges.
+    del g._persist_winner  # type: ignore[attr-defined]
+    assert asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV)) > 0
+    assert asyncio.run(g.claim("t", 10, claim_id="B", manifest_revision=REV)) is False
+
+
+def test_a_replay_is_not_reported_as_a_new_grant(tmp_path) -> None:
+    """The winner re-POSTs every poll by design, so `newly_issued` is what the
+    `seed dole GRANTED` log line must key on. Keyed on `granted`, the line
+    would fire every ~30s and the ledger's "one line per iteration per trial"
+    yardstick would be measuring something else entirely."""
+    g = _SeedDoleGate(state_path=tmp_path / "seed_dole_gate.json")
+    first = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
+    replay = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
+    assert first[1] is True
+    assert replay == (first[0], False)

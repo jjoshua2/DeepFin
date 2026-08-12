@@ -306,8 +306,8 @@ until you have checked what our own client sends to X.**
 2. Move the claim to an **authenticated** endpoint the worker calls explicitly:
    `POST /v1/seed_dole_claim` and `/v1/trials/{trial_id}/seed_dole_claim`, using the
    Basic credentials the worker already holds for uploads.
-3. `PROTOCOL_VERSION` bump so a pre-change worker is refused rather than silently
-   never seeded.
+3. A **package version** bump (0.0.2 -> 0.0.3) so a pre-change worker is refused
+   rather than silently never seeded. ⚑ NOT a `PROTOCOL_VERSION` bump — see ROLLOUT.
 
 ⚑ NOT keyed on the lease id. The worker sends `lease_id` in
 `_manifest_poll_headers`, but in-tree workers have an EMPTY one (driver passes
@@ -395,17 +395,38 @@ one closed-LAN credential, and a lease does not turn a shared credential into
 per-worker identity. Anyone holding it already has the other authenticated worker
 operations. Lease binding belongs to a future volunteer-fleet identity project.
 
-### ROLLOUT (ordered; the reverse order fails silently)
+### ROLLOUT — ⚑⚑ THE OBVIOUS MECHANISM IS THE WRONG ONE
 
-1. Worker learns: if the manifest advertises `seed_dole_claim_endpoint`, POST there;
-   otherwise honour the legacy `dole_fen_seeds` field. Deploy workers.
-2. Then deploy the server that advertises the capability and makes GET manifest
-   side-effect-free.
-3. Then bump/enforce `PROTOCOL_VERSION` so an old worker is refused rather than
-   silently running unseeded.
+**Do NOT bump `PROTOCOL_VERSION`.** It was bumped 2 -> 3 in an earlier revision of
+this work and REVERTED, because there is no order in which that deploys:
+`_check_worker_compat` requires **exact** protocol equality (`got_p != req_p` ->
+426), not a minimum. So a new worker meets the not-yet-updated server and is
+refused **at the manifest poll** — it never reaches the legacy `dole_fen_seeds`
+fallback that was supposed to make worker-first safe. Server-first refuses every
+old worker symmetrically. Both orders take the fleet to zero for the length of
+the window.
 
-Flipping server and worker together risks the nastiest outcome available here:
-security fixed, everything apparently healthy, blind-spot seeding quietly at zero.
+The cutover is **`min_worker_version`**, already published on every manifest and
+already a `>=` comparison (`version_lt`), so it excludes stale workers without
+breaking the transition.
+
+1. Bump the package version to **0.0.3** and ship the new worker. It still speaks
+   protocol 2, and it honours the legacy `dole_fen_seeds` field when the server
+   does not advertise `seed_dole_claim_endpoint` — so it runs correctly against
+   the OLD server.
+2. Verify fleet adoption (every worker reporting 0.0.3).
+3. Deploy the new server. It advertises the claim endpoint and makes the manifest
+   GET side-effect-free; `min_worker_version` now refuses anything older.
+
+⚑⚑ **THE VERSION BUMP IS NOT COSMETIC AND IT IS NOT AUTOMATIC.** `version.py`
+reads `importlib.metadata`, **not `pyproject.toml`**, so editing that file does
+nothing until `pip install -e .` regenerates the installed metadata AND the
+worker wheel is rebuilt. A bare `train.sh restart` does neither. If the versions
+end up identical, a stale worker and a new-code worker are indistinguishable to
+`min_worker_version`, the stale one is admitted, and it reads
+`dole_fen_seeds: false` forever — **silently never seeded**, which is the exact
+failure this ordering exists to prevent. (Same trap as the 0.0.2 cutover; see
+`pyproject.toml`.)
 
 ### ⚑ IDEMPOTENT CLAIM (required; the protocol adds this failure, so it must fix it)
 
@@ -491,8 +512,10 @@ and the fixed system is measuring nothing.
 
 - Requires a full `run.py` restart (route + protocol change), so it cannot share a
   readout window with any other restart-gated change.
-- `PROTOCOL_VERSION` bump means old workers are 426'd — the fleet must be updated in
-  the same window, and a straggler worker is a seeding gap, not an error.
+- The 0.0.3 `min_worker_version` cutover means stale workers are refused once the
+  new server is up — the fleet must be updated FIRST, and a straggler is a seeding
+  gap, not an error. ⚑ Requires `pip install -e .` + a worker wheel rebuild, or the
+  gate cannot fire at all.
 - Blind-spot seeding affects training QUALITY, so if the wiring yardstick passes but
   seed-derived outcome keys (`curriculum_fenlist_*`) change materially, that is a
   separate readout and needs its own entry.

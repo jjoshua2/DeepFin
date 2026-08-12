@@ -87,8 +87,8 @@ def _session(tmp_path: Path, requests):
     session.server = "http://testserver"
     session._dole_claim_key = None
     session._dole_claim_id = ""
-    session._applied_dole_seq = 0
-    session._legacy_dole_seq = 0
+    session._applied_dole_seq = {}
+    session._legacy_dole_seq = {}
     return session
 
 
@@ -149,7 +149,7 @@ def test_a_dropped_response_retries_and_still_applies_exactly_once(tmp_path: Pat
 
     session._maybe_ingest_dole_flag(_manifest())  # response lost
     assert session._live_dole_queue == [], "installed despite never seeing a grant"
-    assert session._applied_dole_seq == 0, (
+    assert session._applied_dole_seq == {}, (
         "marked applied on a claim whose outcome was never observed -- the "
         "grant would be spent and the seeds never played"
     )
@@ -176,7 +176,7 @@ def test_a_failed_fen_load_does_not_mark_the_grant_applied(tmp_path: Path) -> No
     session.opening_fen_list_path = str(tmp_path / "does-not-exist.txt")
 
     session._maybe_ingest_dole_flag(_manifest())
-    assert session._applied_dole_seq == 0
+    assert session._applied_dole_seq == {}
     assert session._live_dole_queue == []
 
 
@@ -205,4 +205,41 @@ def test_a_same_iteration_republish_is_a_new_opportunity(tmp_path: Path) -> None
     assert session._live_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B]
     assert fake.posts[0]["claim_id"] != fake.posts[1]["claim_id"], (
         "a new opportunity reused the old claim_id"
+    )
+
+
+def test_a_trial_reassignment_does_not_suppress_the_new_trials_dose(tmp_path: Path) -> None:
+    """⚑⚑ `grant_seq` IS PER TRIAL ON THE SERVER; THE WORKER'S HIGH-WATER MARK
+    MUST BE TOO.
+
+    One `WorkerSession` outlives a trial reassignment -- `_negotiate_lease`
+    rewrites `self.leased_trial_id` in place and `run()` keeps the same object.
+    With a single global applied-sequence, trial A's seq 5 carries into trial
+    B, whose first grant is seq 1: `1 <= 5`, so the worker silently refuses B's
+    seed batch and stays unseeded until B independently reaches 6.
+
+    ⚑ The sequences are built by DRIVING THE REAL PATH, not by pre-seeding the
+    counter. A first version of this test wrote trial A's value directly into
+    `_applied_dole_seq` under A's scope key -- which a scope-collapsing mutant
+    simply never reads, so the test passed with the bug reinstated. Vacuous.
+    """
+    fake = _FakeRequests()
+    session = _session(tmp_path, fake)
+    session._live_dole_queue = []
+
+    # Trial A runs for a while: five genuine doses, so its sequence reaches 5.
+    for n in range(5):
+        session._maybe_ingest_dole_flag(_manifest(iteration=40 + n, revision=f"rev-a{n}"))
+        session._live_dole_queue.clear()
+    assert max(session._applied_dole_seq.values()) == 5, session._applied_dole_seq
+
+    # Reassigned to a FRESH trial, whose server-side counter starts over at 1.
+    b = dict(_manifest(iteration=1, revision="rev-b0"))
+    b["seed_dole_claim_endpoint"] = "/v1/trials/trial_00001/seed_dole_claim"
+    fake._n = 0
+
+    session._maybe_ingest_dole_flag(b)
+    assert session._live_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B], (
+        "a low grant_seq from a newly assigned trial was mistaken for an "
+        "already-applied dose from the previous trial"
     )
