@@ -1089,6 +1089,10 @@ class WorkerSession:
   # _dole_lock guards refill vs the session-boundary hand-off (drain itself is
   # lock-free — resolve_slot_opening pops exception-safely, atomic under the GIL).
         self._pending_fen_dole: list[str] = []
+        # One claim id per (training_iteration, manifest_revision), reused across
+        # retries so a dropped grant response can be recovered. See _claim_seed_dole.
+        self._dole_claim_key: tuple[int, str] | None = None
+        self._dole_claim_id: str = ""
         self._live_dole_queue: list[str] | None = None
         self._pending_sf_refute: list[str] = []
         self._live_sf_refute_queue: list[str] | None = None
@@ -1934,6 +1938,79 @@ class WorkerSession:
         )
         state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
 
+    @staticmethod
+    def _dole_possible(manifest: dict) -> bool:
+        """Cheap "might this poll be doled?" pre-check. NOT a claim.
+
+        ⚑ THIS GUARD IS A TRAP AND WAS ALREADY SPRUNG ONCE. It used to read
+        `dole_fen_seeds` directly, which the server no longer sets on the GET,
+        so under the new protocol it would have been False on every poll and the
+        boundary-poll path would have skipped the dole ENTIRELY -- silently,
+        because the ingest is best-effort there and swallows its own errors.
+        It gates only the cost of `_sync_opening_books`; the arbitration still
+        happens in `_claim_seed_dole`, so being permissive here is free.
+        """
+        endpoint = manifest.get("seed_dole_claim_endpoint")
+        if isinstance(endpoint, str) and endpoint.strip():
+            return True
+        return bool(manifest.get("dole_fen_seeds"))
+
+    def _claim_seed_dole(self, manifest: dict) -> bool:
+        """Whether THIS worker won this iteration's seed batch.
+
+        ⚑ WHY THE WORKER NOW ASKS INSTEAD OF BEING TOLD. The grant used to be a
+        field the unauthenticated manifest GET set, so anyone who could reach
+        the port won it and denied it to the real worker -- and blind-spot
+        seeding then stopped SILENTLY, because a stolen grant is indistinguishable
+        from no grant. The claim is now an authenticated POST.
+
+        ⚑ THE FALLBACK IS WHAT MAKES THE ROLLOUT SAFE. The capability is
+        advertised by the SERVER (`seed_dole_claim_endpoint`), so a worker
+        carrying this code keeps working against a server that does not -- it
+        honours the legacy field. That is the only order in which the fleet can
+        be updated first, and updating the server first would run every worker
+        unseeded while every health signal stayed green.
+
+        ⚑ ONE `claim_id` PER (iteration, revision), REUSED ON RETRY. The server
+        persists the grant and only then answers, so a dropped response leaves
+        the dole spent server-side while we never learned we won. Replaying the
+        SAME id is the only thing that recovers it; a fresh id per attempt would
+        read as a different worker and lose.
+        """
+        endpoint = manifest.get("seed_dole_claim_endpoint")
+        if not isinstance(endpoint, str) or not endpoint.strip():
+            return bool(manifest.get("dole_fen_seeds"))
+
+        revision = str(manifest.get("manifest_revision") or "")
+        iteration = int(manifest.get("training_iteration", 0) or 0)
+        key = (iteration, revision)
+        if self._dole_claim_key != key:
+            self._dole_claim_key = key
+            self._dole_claim_id = uuid.uuid4().hex
+        try:
+            r = self._requests.post(
+                self._server_url_for(endpoint.strip()),
+                json={"claim_id": self._dole_claim_id, "manifest_revision": revision},
+                auth=self._auth,
+                headers=_worker_headers(),
+                timeout=30.0,
+            )
+            if r.status_code != 200:
+                # Not fatal and not retried here: the next poll re-asks with the
+                # same claim_id, so a transient failure costs latency, not the dole.
+                self.log.warning("dole: claim rejected with HTTP %d", r.status_code)
+                return False
+            body = r.json()
+        except Exception as exc:
+            self.log.warning("dole: claim failed: %s", exc)
+            return False
+        granted = bool(body.get("granted"))
+        if not granted:
+            # `already_claimed` is the normal steady state -- one worker wins per
+            # iteration and the rest log nothing louder than debug.
+            self.log.debug("dole: not granted (%s)", body.get("reason_code"))
+        return granted
+
     def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
         whole FEN list and hand it to selfplay.
@@ -1959,7 +2036,7 @@ class WorkerSession:
         poll, so exactly one poll per iteration wins the claim — but a smoke
         config with sub-poll-interval iterations can advance past an unpolled
         iteration and skip its dole."""
-        if not bool(manifest.get("dole_fen_seeds")):
+        if not self._claim_seed_dole(manifest):
             return
         reco = manifest.get("recommended_worker") or {}
         n = int(reco.get("opening_fen_dole_per_iter", 0) or 0)
@@ -2111,7 +2188,7 @@ class WorkerSession:
   # _sync_assets below, so a changed opening_fen_list would otherwise load stale),
   # then refill the live queue (undrained seeds ride into the next session as
   # leftover). Both best-effort; the model swap still runs.
-                if bool(manifest.get("dole_fen_seeds")):
+                if self._dole_possible(manifest):
                     with suppress(Exception):
                         self._sync_opening_books(manifest)
                     with suppress(Exception):

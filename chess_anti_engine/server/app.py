@@ -2730,64 +2730,92 @@ def create_app(
         manifest = json.loads(mf.read_text(encoding="utf-8"))
         return _apply_dynamic_stale_pause(trial_id, manifest)
 
-    async def _resolve_dole_fen_seeds(trial_id: str | None, manifest: dict[str, Any]) -> bool:
-        """Whether THIS poll should receive the doled seed batch this iteration.
+    class _ManifestReader:
+        """A manifest accessor that RECORDS what the dole decision read.
 
-        True only when dole mode is on (recommended_worker.opening_fen_dole_per_iter
-        > 0), a FEN list is actually published (top-level ``opening_fen_list``
-        asset present), the task is selfplay, selfplay is NOT paused, and this poll
-        is the first for the current ``training_iteration`` (arbitrated by
-        ``seed_dole_gate``). Always resolved (True/False) so the worker sees an
-        explicit field."""
-        reco = manifest.get("recommended_worker")
-        if not isinstance(reco, dict):
-            return False
-        if int(reco.get("opening_fen_dole_per_iter", 0) or 0) <= 0:
-            return False
-        if not isinstance(manifest.get("opening_fen_list"), dict):
-            return False
-  # Only a selfplay task can play the seeds. An arena (or other) task would take
-  # the worker's non-selfplay path and never ingest, silently burning the single
-  # per-iteration claim; leave it unclaimed for a selfplay poll instead.
-        task = manifest.get("task") or {"type": "selfplay"}
-        if str((task if isinstance(task, dict) else {}).get("type", "selfplay")).lower() != "selfplay":
-            return False
-  # Don't burn the single per-iteration claim on a paused poll: the worker drops
-  # a paused manifest (returns None from _poll_manifest) before it can ingest the
-  # seeds, so claiming here would consume the dole without playing any games. The
-  # gate stays unclaimed so a later non-paused poll this iteration can win it.
-        backpressure = manifest.get("backpressure")
-        if bool(reco.get("pause_selfplay")) or (
-            isinstance(backpressure, dict) and bool(backpressure.get("pause_selfplay"))
-        ):
-            return False
-        trial_key = str(_normalize_trial_id(trial_id) or "")
-        training_iteration = int(manifest.get("training_iteration", 0) or 0)
-        # Rearm file (if any) is consumed inside claim under the gate lock so
-        # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
-        # polls return above and never reach claim — they cannot burn rearm.
-        granted = await seed_dole_gate.claim(
-            trial_key,
-            training_iteration,
-            publish_dir=_publish_root(trial_id),
-        )
-        # THE observation that proves the dole took effect. Everything upstream
-        # of this line is a reason to decline, and each of those returns False
-        # silently; without this, "seeding is working" and "seeding never fired
-        # once" are the same empty log. Emitted only on the grant, so it is one
-        # line per iteration per trial, not per poll. Seed count comes from the
-        # reco the worker is about to act on — the rearm file itself carries
-        # only `training_iteration` (writer: distributed_runtime.py), so there
-        # is no count to read there.
-        if granted:
-            _log.info(
-                "seed dole GRANTED: trial=%s iteration=%d seeds=%d (%s)",
-                trial_key or "<default>",
-                training_iteration,
-                int(reco.get("opening_fen_dole_per_iter", 0) or 0),
-                " ".join(f"{k}={v}" for k, v in seed_dole_gate.counters().items()),
-            )
-        return granted
+        ⚑⚑ THE REVISION TOKEN IS DERIVED FROM THIS RECORDING, NEVER FROM A
+        HAND-WRITTEN FIELD LIST. A hand-written list stops covering a field the
+        instant someone adds one to the eligibility check below, and it does so
+        SILENTLY: the binding quietly goes partial and the race the token exists
+        to close reopens without any test failing. Reading through this proxy
+        makes "what the decision depends on" and "what the token covers" the
+        same set by construction.
+
+        `get` is recorded and therefore covered. `live` is deliberately NOT
+        recorded -- see `_dole_live_decline`. The split exists so exempting a
+        field is an explicit, greppable act rather than an omission.
+        """
+
+        def __init__(self, manifest: dict[str, Any]) -> None:
+            self._manifest = manifest
+            self.reads: dict[str, Any] = {}
+
+        def _walk(self, path: tuple[str, ...], default: Any) -> Any:
+            node: Any = self._manifest
+            for key in path:
+                if not isinstance(node, dict):
+                    return default
+                node = node.get(key)
+            return default if node is None else node
+
+        def get(self, *path: str, default: Any = None) -> Any:
+            value = self._walk(path, default)
+            self.reads["/".join(path)] = value
+            return value
+
+        def live(self, *path: str, default: Any = None) -> Any:
+            return self._walk(path, default)
+
+        def revision(self) -> str:
+            payload = json.dumps(self.reads, sort_keys=True, default=repr)
+            return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+    def _dole_static_decision(reader: _ManifestReader) -> tuple[str | None, int, int]:
+        """Static dole eligibility. Returns (decline_reason, seeds, iteration).
+
+        ⚑ EVERY static read happens UNCONDITIONALLY, before any decline is
+        returned, so the revision digest covers the same field set on every
+        path. Short-circuiting the reads would make the token's meaning depend
+        on which branch a given snapshot took, and two snapshots that decline
+        for different reasons would then be indistinguishable from a match.
+        """
+        seeds = int(reader.get("recommended_worker", "opening_fen_dole_per_iter", default=0) or 0)
+        fen_list = reader.get("opening_fen_list")
+        task_type = str(reader.get("task", "type", default="selfplay") or "selfplay").lower()
+        iteration = int(reader.get("training_iteration", default=0) or 0)
+
+        if seeds <= 0:
+            return "dole_disabled", seeds, iteration
+        if not isinstance(fen_list, dict):
+            return "no_fen_list", seeds, iteration
+        # Only a selfplay task can play the seeds. An arena (or other) task would take
+        # the worker's non-selfplay path and never ingest, silently burning the single
+        # per-iteration claim; leave it unclaimed for a selfplay poll instead.
+        if task_type != "selfplay":
+            return "not_selfplay", seeds, iteration
+        return None, seeds, iteration
+
+    def _dole_live_decline(reader: _ManifestReader) -> str | None:
+        """The pause condition, which is INHERENTLY LIVE and so is not bound.
+
+        ⚑ MEASURED, not assumed: `pause_selfplay` is computed at serve time from
+        `_queued_games_by_model(...)` behind a 2s cache, so it flips many times
+        within one `training_iteration`. Binding it into the revision token
+        would churn the token on every queue-depth change and produce constant
+        spurious mismatches; so it is re-evaluated at claim time instead. That
+        fails safe in both directions -- a worker about to be paused simply
+        does not get the grant.
+
+        Don't burn the single per-iteration claim on a paused poll: the worker drops
+        a paused manifest (returns None from _poll_manifest) before it can ingest the
+        seeds, so claiming here would consume the dole without playing any games. The
+        gate stays unclaimed so a later non-paused poll this iteration can win it.
+        """
+        if bool(reader.live("recommended_worker", "pause_selfplay")):
+            return "paused"
+        if bool(reader.live("backpressure", "pause_selfplay")):
+            return "paused"
+        return None
 
     async def _serve_manifest(
         trial_id: str | None,
@@ -2809,8 +2837,111 @@ def create_app(
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
         )
-        manifest["dole_fen_seeds"] = await _resolve_dole_fen_seeds(trial_id, manifest)
+        # ⚑⚑ THIS ROUTE IS UNAUTHENTICATED AND MUST STAY SIDE-EFFECT-FREE.
+        # It used to call `seed_dole_gate.claim(...)` here, so any anonymous
+        # caller who could reach the port won the one-shot per-iteration grant
+        # and denied it to the real worker -- blind-spot seeding then stopped
+        # SILENTLY, because a stolen grant looks like absence, not error. The
+        # claim now lives on the authenticated POST below.
+        #
+        # `dole_fen_seeds` stays in the response, always False, because a
+        # pre-change worker reads this field and REMOVING it would change its
+        # behaviour by KeyError rather than by protocol. Such a worker is
+        # refused by the PROTOCOL_VERSION bump instead, which is a loud failure
+        # rather than a silently unseeded fleet.
+        reader = _ManifestReader(manifest)
+        decline, _seeds, _iteration = _dole_static_decision(reader)
+        manifest["dole_fen_seeds"] = False
+        if decline is None:
+            manifest["manifest_revision"] = reader.revision()
+            manifest["seed_dole_claim_endpoint"] = (
+                "/v1/seed_dole_claim"
+                if trial_id is None
+                else f"/v1/trials/{trial_id}/seed_dole_claim"
+            )
         return JSONResponse(content=manifest)
+
+    async def _serve_seed_dole_claim(
+        trial_id: str | None,
+        *,
+        username: str,
+        payload: dict[str, Any],
+        x_cae_worker_version: str | None,
+        x_cae_protocol_version: str | None,
+    ) -> Any:
+        """Authenticated, idempotent claim of this iteration's seed batch.
+
+        ⚑ ONE SNAPSHOT. The revision check, every eligibility decision and the
+        claim itself are all derived from THIS manifest object. Re-reading the
+        manifest between the revision check and `claim()` would reintroduce
+        exactly the race the token exists to close -- and the old
+        GET-plus-claim path was atomic by construction, so this property is
+        being PRESERVED, not added. Do not let it be refactored away.
+        """
+        # ⚑ The SAME compat headers as the GET, deliberately. Skipping the check
+        # here would leave one route on which a version-mismatched worker can
+        # still act -- and this is the route that hands out state. One compat
+        # policy, enforced everywhere a worker touches the dole.
+        manifest = await run_in_threadpool(
+            _get_manifest_impl,
+            trial_id,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+        )
+        reader = _ManifestReader(manifest)
+        decline, seeds, iteration = _dole_static_decision(reader)
+        revision = reader.revision()
+        if decline is not None:
+            return {"granted": False, "reason_code": decline, "manifest_revision": revision}
+
+        # ⚑ A MISMATCH MUST NO-OP WITHOUT BURNING THE CLAIM, leaving the gate
+        # unclaimed for a later correct poll. A mismatch that consumed the
+        # grant would turn a benign race into precisely the silent seeding loss
+        # this endpoint exists to prevent.
+        want = str(payload.get("manifest_revision") or "")
+        if want != revision:
+            return {"granted": False, "reason_code": "revision_mismatch", "manifest_revision": revision}
+
+        live_decline = _dole_live_decline(reader)
+        if live_decline is not None:
+            return {"granted": False, "reason_code": live_decline, "manifest_revision": revision}
+
+        trial_key = str(_normalize_trial_id(trial_id) or "")
+        # Rearm file (if any) is consumed inside claim under the gate lock so
+        # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
+        # polls return above and never reach claim — they cannot burn rearm.
+        granted = await seed_dole_gate.claim(
+            trial_key,
+            iteration,
+            publish_dir=_publish_root(trial_id),
+            claim_id=str(payload.get("claim_id") or "") or None,
+            manifest_revision=revision,
+        )
+        # THE observation that proves the dole took effect. Everything upstream
+        # of this line is a reason to decline, and each of those returns a
+        # reason_code silently; without this, "seeding is working" and "seeding
+        # never fired once" are the same empty log. Emitted only on the grant,
+        # so it is one line per iteration per trial, not per poll.
+        #
+        # ⚑ This line proves THE GATE ADVANCED -- not that the worker received
+        # the response, expanded the FENs, played them and uploaded them. The
+        # end-to-end check is the fenlist keys in ingested shards' outcome_stats.
+        if granted:
+            _log.info(
+                "seed dole GRANTED: trial=%s iteration=%d seeds=%d user=%s (%s)",
+                trial_key or "<default>",
+                iteration,
+                seeds,
+                username,
+                " ".join(f"{k}={v}" for k, v in seed_dole_gate.counters().items()),
+            )
+        return {
+            "granted": granted,
+            "reason_code": "granted" if granted else "already_claimed",
+            "seeds": seeds if granted else 0,
+            "training_iteration": iteration,
+            "manifest_revision": revision,
+        }
 
     @app.get("/v1/manifest")
     async def get_manifest(
@@ -2831,6 +2962,50 @@ def create_app(
     ) -> Any:
         return await _serve_manifest(
             trial_id,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+        )
+
+    # ⚑ `_auth_existing_user`, NOT `_auth_user`. The latter SELF-REGISTERS an
+    # unknown username when `worker_self_register` is on -- measured on the
+    # telemetry route, where a plain GET created an account. A claim endpoint
+    # that enrols its own attacker is not an authenticated endpoint.
+    #
+    # ⚑⚑ SCOPE, so this is not oversold: this closes UNAUTHENTICATED dole
+    # consumption for the current closed-fleet deployment. Existing-account
+    # authentication is NOT authorization against a malicious REGISTERED
+    # volunteer -- once `worker_self_register` is on, an attacker registers
+    # through the normal worker route and is an "existing account" on their
+    # next request. Before public self-registration is enabled, seed claims
+    # need lease/assignment binding or another per-worker authorization
+    # mechanism. See the ledger entry.
+    @app.post("/v1/seed_dole_claim")
+    async def post_seed_dole_claim(
+        payload: dict[str, Any] = Body(default_factory=dict),
+        username: str = Depends(_auth_existing_user),
+        x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
+        x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
+    ) -> Any:
+        return await _serve_seed_dole_claim(
+            None,
+            username=username,
+            payload=payload,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+        )
+
+    @app.post("/v1/trials/{trial_id}/seed_dole_claim")
+    async def post_trial_seed_dole_claim(
+        trial_id: str,
+        payload: dict[str, Any] = Body(default_factory=dict),
+        username: str = Depends(_auth_existing_user),
+        x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
+        x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
+    ) -> Any:
+        return await _serve_seed_dole_claim(
+            trial_id,
+            username=username,
+            payload=payload,
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
         )

@@ -10,7 +10,24 @@ from importlib import metadata
 #    per-iteration dole claim it would silently drop the seed batch; the exact
 #    protocol match (_check_worker_compat) now 426s such workers so they update
 #    or stop before they can poll.
-PROTOCOL_VERSION = 2
+# 3: the seed-dole claim moved OFF the unauthenticated manifest GET onto an
+#    authenticated ``POST /v1/seed_dole_claim``. The GET is now side-effect-free
+#    and always answers ``dole_fen_seeds: false``; a server that supports the
+#    claim advertises ``seed_dole_claim_endpoint`` + ``manifest_revision``.
+#
+#    ⚑ THE BUMP IS THE WHOLE SAFETY MECHANISM HERE, because the failure it
+#    prevents is silent. A version-2 worker only ever reads ``dole_fen_seeds``;
+#    against a version-3 server that field is permanently false, so the worker
+#    would poll happily, report healthy, upload shards, and NEVER seed a single
+#    blind-spot position. Nothing in the fleet's own telemetry distinguishes
+#    that from a run where seeding is working. 426ing the worker converts an
+#    invisible training-quality regression into a loud refusal.
+#
+#    ⚑ ROLLOUT ORDER IS NOT OPTIONAL: workers first, server second. A worker
+#    carrying this code still honours the legacy field when the server does not
+#    advertise the endpoint, so worker-first is safe; server-first is the
+#    silently-unseeded fleet described above, for as long as the gap lasts.
+PROTOCOL_VERSION = 3
 
 PACKAGE_NAME = "chess-anti-engine"
 
