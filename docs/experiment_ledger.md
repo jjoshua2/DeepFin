@@ -16736,6 +16736,25 @@ EFFECTIVE TARGET — is the object each arm scores. `b=c=0` reduces to `p_mcts`
 - The audit positions stand in for "a covered row". They are not drawn from the
   `has_sf_p0` subpopulation, which is selfplay-only, full-sim, prev-ply-full.
 
+### ⚑ THE ARENA CI DOES NOT COVER TRAINING-TRAJECTORY VARIANCE
+
+The 400-game paired CI is uncertainty **from the arena games, conditional on the particular
+networks these arms happened to train**. It contains NO between-trajectory variance, so a
+modest arena win is consistent with "this arm drew the luckier training run".
+
+Mitigation, and then a pre-committed reading rule:
+
+- All arms start from the **same replay snapshot and the same RNG seeds** wherever the
+  harness allows. The arms are function-identical at init, so this is achievable and it
+  removes the largest source of trajectory divergence.
+- **A win whose CI clears 0 but whose point estimate is under ~+40 Elo is a PROMISING
+  TRAJECTORY-level result, NOT an architecture win**, and must be replicated on a second
+  training seed before it is recorded as WORKED.
+- A large, persistent win (point estimate well above the replication bar, holding across
+  the readout window) is stronger evidence and may be recorded directly.
+- Do NOT pay for replication up front — run the first experiment, replicate only a
+  contender.
+
 ### Confounds
 
 None live — training is down, no other data-affecting change is in flight. The
@@ -40090,3 +40109,259 @@ any of them; this is recorded because the *shape* is the finding.
 only. The 96-iteration series spans the 08-11 04:19 restart, a lineage boundary for *weights*
 but not for the *arm-size* or *score-sd* statistics measured; the two trials agree to within
 2.5 games/iteration on both arms, which is the check that it does not matter here.
+
+---
+
+## 2026-08-12 — PREREG Tier-13: the shared policy adapter, A/B/C (`policy_embedding_mode`) — **NOT LAUNCHED**
+
+**Status: PRE-REGISTERED, awaiting Josh's go-ahead + a GPU pause. Do not launch from this
+entry alone.** Code is PR #398 (`feat/shared-policy-embedding`).
+
+### Hypothesis
+
+lc0/Chessformer build ONE policy embedding and hand it to every policy head, which keeps
+only its own Q/K. We build four fully independent `AttentionPolicyHead`s straight off the
+trunk, so the auxiliary policy losses reach `policy_own` only through the GLOBAL trunk — a
+representation that must simultaneously serve the value heads. The claim under test is
+**policy-specific shared representation**, and it decomposes into three mechanisms that the
+arms separate:
+
+1. **gradient DELIVERY** — soft's gradient never reaches the parameters `policy_own` uses.
+   ⚑ **ALREADY REJECTED** by the 2026-08-12 grad-share probe (soft 94.1% vs own 94.7%
+   trunk share). This arm is NOT testing that, and an earlier draft of this entry said it
+   was.
+2. **reparameterization GEOMETRY** — `A_h S` and `A'_h` span the same function class but
+   are different points under the same gradient steps. Arm B isolates this.
+3. **representational CAPACITY** — a policy-only nonlinearity the trunk does not have.
+   Unique to arm C.
+
+### Arms — and ⚑ AOT MUST BE OFF IN ALL THREE
+
+```
+DECIDED 2026-08-12: run ALL THREE arms (A+B+C), not A+B.
+
+common donor:  data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218  (global_iter 890)
+               + the SAME replay snapshot and the SAME RNG seeds / data ordering
+               as far as the harness allows
+all arms:      policy_sf ON, w_soft UNCHANGED, SWA off (production swa_start: -1),
+               AOT OFF (both distributed_inference_aot_dir and
+               distributed_worker_aot_dir cleared)
+compare at:    MATCHED TRAINING ITERATION
+
+A (control)  policy_embedding_mode: off
+B            policy_embedding_mode: linear          <- identity-init, zero added capacity
+C            policy_embedding_mode: residual_mish   <- zero-init, t + mish(Wt+b)
+```
+
+**Why all three, and not A+B.** The third arm costs one extra treatment on top of a control
+already being paid for, and it buys the decomposition:
+
+| contrast | isolates |
+|---|---|
+| **B − A** | shared policy-only reparameterization GEOMETRY |
+| **C − B** | incremental value of nonlinear policy-specific CAPACITY |
+| **C − A** | practical value of the full nonlinear adapter |
+
+`C − B` is the only clean way to price capacity, and **C can work even if B is null** —
+"shared linear factorization does not help" does not imply "policy-specific nonlinear
+processing does not help".
+
+⚑ **Why AOT off in ALL arms, including the control.** PR #398's guard REFUSES the
+conjunction (adapter enabled AND any AOT dir configured) — conservatively, because it does
+not inspect package architecture, so even a correctly rebuilt package is refused. Left
+alone, that would give A a live AOT serving path while B and C fall back to eager, and the
+arms would then differ in **how the selfplay prior is computed** as well as in topology.
+The control must give up AOT too. Clear BOTH `distributed_inference_aot_dir` and
+`distributed_worker_aot_dir` for every arm.
+
+⚑ **`policy_sf` stays ON in all arms.** Removing it is unrelated cleanup and it forces the
+optimizer-layout reset (deleted params cannot be spliced), which would land on one arm only.
+
+⚑ **A FRESH trial, not a resume.** `policy_embedding_mode` is a
+`_RESUME_CONSTRUCTION_BOUND_KEY`: a live-yaml edit is SKIPPED on resume with a warning.
+
+**Fallback if the budget shrinks: A+B.** B tests the remaining live mechanism (geometry)
+without confounding it with capacity. But A+B+C is the DECIDED design.
+
+### Yardstick — ONE, exact
+
+Paired arena, treatment vs control, same search both sides, weights the only difference:
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --model-a <arm>/checkpoint_XXXX --model-b <control>/checkpoint_XXXX \
+  --games 400 --matched_sims 32 --seed 42 --search-shape training
+```
+
+**Success:** lower CI bound > 0 at 400 games (~±30 Elo resolution).
+**Kill:** point estimate < −15 Elo at 400 games, or any arm's
+**`policy_ce` HIGHER (worse) than control by >10%** at matched iteration.
+
+⚑ An earlier draft said "`policy_ce` **diverging** from control by >10%", which is
+two-sided and would therefore KILL an arm whose policy CE came in 12% BETTER. A gate that
+fires on success is this repo's signature defect wearing the opposite mask. This leg is a
+CATASTROPHIC-TRAINING guard only; the arena and held-out generalization remain the verdict,
+and a large in-window CE improvement that does NOT show up in the arena is a finding
+([[absorption_works_fit_does_not_buy_elo]]), not a kill.
+Read at matched TRAINING ITERATION, not wall clock — the adapter adds a GEMM.
+
+### Sizing input — MEASURED 2026-08-12, and it CORRECTS my own earlier number
+
+Population-gradient probe (`probe_cosine_v4.py`, ckpt118, whole trunk, 24 shards / 46,848
+positions split into two DISJOINT halves, `policy_ce` vs `soft_policy_ce`):
+
+| K | positions/estimate | r_own | r_soft | cross | c_latent | R_deatt |
+|---|---|---|---|---|---|---|
+| 1 | 64 | +0.107 | +0.127 | +0.115 | +0.982 | 0.725 |
+| 4 | 256 | +0.270 | +0.312 | +0.253 | +0.872 | 0.690 |
+| 16 | 1024 | +0.518 | +0.555 | +0.465 | +0.867 | 0.659 |
+| 64 | 4096 | **+0.785** | **+0.818** | **+0.700** | **+0.874** | **0.646** |
+
+`c_latent = cross / sqrt(r_own · r_soft)` — deattenuated by BOTH reliabilities.
+`R_deatt = sqrt(<g1,g2>_soft / <g1,g2>_own)` — **noise-CORRECTED**, not unbiased. The
+inner product of two independent estimates is unbiased for ‖G‖²; its square root, and a
+ratio of two such roots, are NOT (Jensen). The correction is still the right one to apply,
+because E‖ḡ‖² carries a noise term and E‖ḡ‖ ≠ ‖Eḡ‖ — the claim to avoid is the word
+"unbiased", not the estimator.
+
+⇒ `G_own + G_soft ≈ **1.565**·G_own + **0.314**·G_⊥` — a **1.565× raw-gradient COMPONENT
+along G_own** plus a 0.314 orthogonal part, i.e. the summed population gradient sits about
+**11.3° off** the own-policy gradient.
+
+⚑ **DO NOT call the 1.565 an "LR multiplier". An earlier version of this entry did.**
+Production optimizes the matrix group with **Aurora**, whose updates are
+scale-INVARIANT: multiplying a matrix gradient by a scalar does NOT scale its update, and
+Adam-style normalization makes gradient scaling unlike an LR change either. So for the
+group that holds 28.6% of trainable params, the collinear 0.565 is largely ABSORBED and
+**the 0.314 orthogonal / directional part is the operative change**. Naming it an LR
+multiplier would predict the wrong thing on the actual optimizer
+[[matrix_weight_decay_is_decorative]].
+
+**Owed follow-up (NOT blocking Tier-13, since `w_soft` is held fixed):** measure what soft
+changes AFTER the optimizer, not in gradient space — same weights and identical optimizer
+state, `update_A = optimizer(policy_ce)` vs `update_B = optimizer(policy_ce +
+soft_policy_ce)`, then compare `cos(Δθ_A, Δθ_B)` and ‖Δθ‖ **separately for the Aurora and
+AdamW groups**. That is the version of this measurement that is actually about the update.
+
+⚑ **TWO of my own earlier numbers are RETRACTED by this.**
+- The "~1.4×" read off the within-batch cosine 0.885 came from single-batch norms whose
+  reliability is ~0.1. It was right by accident, not by instrument.
+- v3's `cross/ceiling = 0.973` OVERSTATED redundancy twice over: it divided by `r_own`
+  alone (valid only if both estimators are equally reliable — they are not, `r_soft` is
+  consistently higher), and its two "disjoint" estimates were drawn WITH REPLACEMENT from
+  ONE 2000-position shard, so 4096 draws per side overlapped almost completely and both
+  estimates converged to the same finite-sample mean. The honest figure is **0.874**, and
+  c_latent is stable across K=4/16/64 — which is the check that the correction is a
+  correction and not a fit.
+
+⇒ **soft is NOT a pure LR multiplier**, so `w_soft` is a separate experiment. **Hold
+`w_soft` FIXED for this topology arm** or the two questions mix.
+
+### Confounds
+
+The adapter warm-starts with its optimizer moments spliced
+(`_FRESH_PARAM_NAME_SUFFIXES`), so donor moments survive — but **SWA is reinitialised** on
+any arm that changes topology. Acceptable only because production runs `swa_start: -1`;
+re-check if that ever changes. Param delta at width 512: **+262,656** (+0.42%).
+
+### Revert point
+
+**TAKEN 2026-08-12** — `data/salvage/pre_policy_adapter_20260812`, 3.7G,
+**804 replay shards**, `slot=00 metric=218.000 iter=218
+ckpt=checkpoint_000218 (newest on disk: checkpoint_000218)`, exported with
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration`.
+
+The dry-run first confirmed `stale_result_rows=False` and
+`checkpoint_source=result_row_checkpoint` with `row_checkpoint == newest_on_disk`, which is
+the check that the pool is CURRENT state and not the best-metric row.
+
+⚑ `shards=804`, not 0 — PR #290's fix (salvage-export used to bank an EMPTY replay window,
+which would have made this "revert point" restore weights into a cold buffer) is confirmed
+still in effect on this branch's code. A pool with 0 shards is not a revert point.
+
+Paired banked anchor for the yardstick: `data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218`
+(global_iter 890) — copied OUT of the tune dir, because Ray prunes live checkpoints.
+
+---
+
+## 2026-08-12 — VERDICT (task #192): iter218 vs iter138 paired arena is a **NULL**. 80 iterations bought nothing measurable.
+
+**Owed since the sims-100/topk-16 deploy.** Run during a full training stop, GPU otherwise idle.
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218/trainer.pt \
+  --reference data/ratchet/snapshots/ck_2026-08-11_5ce02_iter138/trainer.pt \
+  --mode matched_sims --sims 32 --search-shape training \
+  --games 400 --seed 42 --max-concurrent-games 16
+```
+
+**Result: 400 games / 200 pairs, score 0.4950, Elo −3.5, 95% CI [−33.9, +26.9].**
+Pentanomial (candidate POV) `{WW: 32, WD_DW: 31, DD_WL: 67, LD_DL: 41, LL: 29}`.
+
+Both checkpoints are the same lineage (5ce02): iter138 = global_iter **811**,
+iter218 = global_iter **890**, same `holdout_generation` 2. **79 global iterations apart.**
+
+### Verdict by the pre-committed rule
+
+| leg | bar | observed | |
+|---|---|---|---|
+| success | lower CI bound > 0 | −33.9 | **not met** |
+| kill | point estimate < −15 Elo | −3.5 | **not met** |
+
+⇒ **NULL — no gain and no regression, at ±30 Elo resolution.** This is a "not resolved"
+verdict, not a "flat" one: the instrument cannot distinguish 0 from ±30 Elo, and 79
+iterations of a healthy loop should clear that. Consistent with
+[[regret_does_not_track_strength_run_regressed]] — the run continues to go SIDEWAYS.
+
+### ⚑ THE INTERMEDIATE READ +112.3 ELO. STOPPING THERE WOULD HAVE MANUFACTURED A WIN.
+
+At the first report — 16 games / 8 pairs — this arena printed **Elo +112.3, CI [−48.5,
++349.3]**. The final answer is **−3.5**. The intermediate was not "an early signal that
+later washed out", it was noise with a CI 12× the final one, and the only thing that
+prevented it from entering the record as a result was refusing to read it. Optional
+stopping on a rolling arena is not a small bias here; it is the difference between a
++112 Elo "win" and a null. Same failure the Cheese 12-pair 0.6875 result carries
+[[flywheel_judge_by_cheese_not_generic_arena]].
+
+### ⚑⚑ WHAT IS CONFOUNDED IS THE CAUSAL READING — **NOT** THE NUMBER
+
+**The canonical statement of this result:**
+
+> iter218 vs iter138 under the current sims-100 / topk-16 search: **−3.5 Elo, 95% CI
+> [−33.9, +26.9], pre-registered verdict NULL. Does not isolate ordinary training progress
+> from adaptation to the search-shape change.**
+
+`--search-shape training` resolves to the CURRENT yaml. Both sides play the IDENTICAL
+search — printed and checked, `c_scale=0.1 c_visit=50.0 policy_temp=1.5 topk=16
+tree_reuse=cold` on both. **−3.5 is therefore an UNBIASED estimate** of the operational
+question *"which set of weights is stronger under today's search?"*. It needs no correction
+and must not be discounted.
+
+⚑ **AN EARLIER VERSION OF THIS ENTRY SAID "the confound favours the candidate, so the
+unconfounded difference is ≤ −3.5". THAT INFERENCE IS WRONG and is retracted.** It treated
+a CAUSAL confound as if it were a BIAS on the statistic, and then "corrected" a number that
+was never biased. The two are different objects:
+
+| | |
+|---|---|
+| **estimand the arena answers** | which weights play better under today's search — **unbiased, −3.5** |
+| **estimand it does NOT answer** | *why* the weights differ — training progress vs adaptation to the new search regime |
+
+iter218 had training exposure to sims-100 / topk-16; iter138 did not. That makes the CAUSAL
+attribution unavailable. It does not make the head-to-head unfair, and there is no
+"unconfounded weights difference" hiding behind the observed one waiting to be recovered by
+subtraction — that would be a different counterfactual quantity, not a debiased version of
+this one. ⇒ **Quote −3.5 as measured. State the causal limitation in words, never as an
+adjustment.** [[same_name_different_population]]
+
+⚑ And this says NOTHING about whether the sims-100 deploy helped: that change is in the
+SEARCH, and this arena holds search fixed on both sides by construction
+[[wdl_regret_measures_agent_not_net]].
+
+### Instrument checks passed
+
+- candidate and reference are DISTINCT full paths, not a `slot_000` substring match — the
+  trap that once faked 70 Elo [[no_rollback_target_the_run_is_a_plateau]].
+- iter218 was copied OUT of the live tune dir before use (Ray prunes live checkpoints).
+- 200 pairs, so the pentanomial CI is the paired one, not a trinomial understatement.

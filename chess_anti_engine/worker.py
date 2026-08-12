@@ -102,7 +102,12 @@ from chess_anti_engine.stockfish.uci import (
 from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 from chess_anti_engine.utils.versioning import version_lt
-from chess_anti_engine.version import PACKAGE_NAME, PACKAGE_VERSION, PROTOCOL_VERSION
+from chess_anti_engine.version import (
+    PACKAGE_NAME,
+    PACKAGE_VERSION,
+    PROTOCOL_VERSION,
+    UPLOAD_CONTENT_SHA256_HEADER,
+)
 from chess_anti_engine.worker_assets import (
     _cached_sha_asset_needs_refresh,
     _download_and_verify_shared,
@@ -1532,6 +1537,14 @@ class WorkerSession:
                 elapsed_path.unlink(missing_ok=True)
                 continue
             files = {"file": (upload_name, payload, "application/x-tar")}
+  # End-to-end integrity: the server hashes what it RECEIVES, so without a
+  # digest computed here there is nothing to compare it against and a
+  # corrupted transfer is indistinguishable from an honest upload. Plain
+  # HTTP on the LAN means the only guard today is TCP's 16-bit checksum;
+  # the shard ARRAYS are incidentally protected because Blosc/zstd fails to
+  # decompress corrupt blocks, but `.zattrs` is uncompressed JSON where a
+  # flipped digit stays valid JSON with a wrong number.
+            payload_sha = hashlib.sha256(payload.getbuffer()).hexdigest()
             try:
                 r = self._requests.post(
                     self._server_url_for(self.trial_api_prefix + "/upload_shard"),
@@ -1539,6 +1552,7 @@ class WorkerSession:
                     auth=(str(self.args.username), str(self.args.password)),
                     headers={
                         **_worker_headers(machine_id=self.machine_id),
+                        UPLOAD_CONTENT_SHA256_HEADER: payload_sha,
                         **(
                             {"X-CAE-Worker-Lease-ID": str(self.lease_id)}
                             if str(self.lease_id).strip()
@@ -1613,7 +1627,15 @@ class WorkerSession:
                 model, int(client.input_planes),
                 where="worker inference slot (local model)",
             )
-        ckpt = torch.load(str(path), map_location="cpu")
+  # weights_only=True blocks arbitrary pickle execution on a file that came
+  # off the network. The manifest sha is verified before we get here, but the
+  # sha arrives over the SAME channel as the file, so it does not authenticate
+  # anything an on-path attacker could not also rewrite. Our published export
+  # is `{"model": state_dict, "arch": {...primitives...}}` -- measured: a full
+  # trainer.pt (model + opt + scheduler + zclip) loads clean under
+  # weights_only=True, and this payload is a strict subset of that.
+  # Same rationale as uci/model_loader.py.
+        ckpt = torch.load(str(path), map_location="cpu", weights_only=True)
         sd = ckpt.get("model", ckpt)
         load_state_dict_tolerant(model, sd, label=label)
         # `.to(device)` is the first driver-touching call on this path and the
