@@ -40203,5 +40203,18 @@ re-check if that ever changes. Param delta at width 512: **+262,656** (+0.42%).
 
 ### Revert point
 
-Not yet taken. `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration
---out data/salvage/pre_policy_adapter_20260812` is REQUIRED before launch.
+**TAKEN 2026-08-12** — `data/salvage/pre_policy_adapter_20260812`, 3.7G,
+**804 replay shards**, `slot=00 metric=218.000 iter=218
+ckpt=checkpoint_000218 (newest on disk: checkpoint_000218)`, exported with
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration`.
+
+The dry-run first confirmed `stale_result_rows=False` and
+`checkpoint_source=result_row_checkpoint` with `row_checkpoint == newest_on_disk`, which is
+the check that the pool is CURRENT state and not the best-metric row.
+
+⚑ `shards=804`, not 0 — PR #290's fix (salvage-export used to bank an EMPTY replay window,
+which would have made this "revert point" restore weights into a cold buffer) is confirmed
+still in effect on this branch's code. A pool with 0 shards is not a revert point.
+
+Paired banked anchor for the yardstick: `data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218`
+(global_iter 890) — copied OUT of the tune dir, because Ray prunes live checkpoints.
