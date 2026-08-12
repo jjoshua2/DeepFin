@@ -43900,10 +43900,62 @@ loop moving ~0 at ±30 Elo resolution. That does not prove the adapter needs >79
 it means a 30–50-iteration structural trial is unusually easy to call NULL for the wrong
 reason.
 
-**Suite gate.** The live branch's pytest run is red by **8 known failures** (all live-yaml
-tripwires + task #180) [[live_branch_suite_is_permanently_red]]. Pre-registered bar: **no
-increase above that baseline of 8.** "Tests pass" is not available as a gate here; the
-delta is.
+**Suite gate — SUPERSEDED BEFORE LAUNCH. The bar is an exact SET, not a count.**
+
+The originally pre-registered bar was "no increase above **8** known failures". ⚑ **That 8
+was WRONG for the code being launched**: it was measured on `007481dbe`, i.e. BEFORE the
+`origin/main` → live merge that brings PR #398/#399/#401. Re-measured on the actual launch
+state (`8e59dbedf`), the live branch fails **16**. The number was a stale input I supplied,
+not a moved goalpost — the treatment and the success criterion are untouched.
+
+**The frozen gate is set identity, not cardinality:**
+
+```
+observed_failed_node_ids == PREREGISTERED_SET   (below, 16 entries)
+```
+
+A count would pass while one failure swapped for another — which is precisely the defect
+`test_deletion_annotations` is itself written to catch ("Pinning the TOTAL would not have
+caught this: a citation relocated from one annotation block to another keeps the count").
+Set identity catches BOTH a new regression appearing AND an expected failure vanishing under
+cover of a new one.
+
+**Determinism established:** two independent full-suite runs on the identical tree produced
+**byte-identical sorted node-ID lists** (16 = 16, `diff` empty). Captured at
+`scratchpad/suite_baseline_20260812.txt` / `suite_baseline_run2.txt`.
+
+**Every member classified, and every one of the 8 NEW members verified GREEN on `main`'s
+tree** — so all 16 are live-yaml / live-doc divergence, present before Tier-13 touches
+anything, and unreachable by the arms (which change no yaml key the live file owns and no
+doc):
+
+| # | node id | class |
+|---|---|---|
+| 1 | `test_arena_search_shape_plumbing::test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert` | live-yaml, **3rd consequence of the #175/#176 deployments** — see below |
+| 2–7 | `test_deletion_annotations` ×6 | live-doc: annotation block vs the live yaml (e.g. `games_per_iter_start` unset here, set in main's) |
+| 8 | `test_diff_focus_norm::test_production_yaml_declares_the_group_default_off` | live-yaml tripwire (tasks #171/#172), inherited identically by all three arms |
+| 9 | `test_era_forgetting_probe::test_no_config_ships_any_of_the_five_probe_keys` | live-yaml tripwire (armed) |
+| 10–12 | `test_promotion_gate` ×3 | live-doc: yaml comment block lacks strings main's yaml carries |
+| 13 | `test_replay_shard_recency_exponent::test_no_live_config_ships_the_key_yet` | live-yaml tripwire (parked at neutral 1.0) |
+| 14 | `test_target_sigma_decoupling::test_production_leaves_the_cap_off` | live-yaml tripwire (#176 deployed) |
+| 15 | `test_trainable_config_ops::test_restart_required_keys_match_the_reloader` | task #180, known |
+| 16 | `test_untempered_target_prior::test_production_leaves_the_knob_off` | live-yaml tripwire (#175 deployed) |
+
+⚑ **#1 was checked hardest, because the arena IS this experiment's endpoint.** It fails
+because production sets `gumbel_target_max_visit_cap: 5` and `gumbel_target_untempered_prior:
+true` while `--search-shape training` does not carry them — so that shape measures a search
+production does not run. **Inert for Tier-13, unconditionally:** `arena_standard.py` resolves
+ONE `base = resolve_search_shape(...)` for the match and the per-side flags default to it, so
+both sides receive the SAME `GumbelConfig` and both take the same (default) value for those
+two fields. A field with an identical value on both sides cannot bias a paired contrast,
+whatever its semantics. Secondarily they are TARGET-only knobs at temperature 0 (all five
+temperature keys are explicitly `0.0` in the live yaml) and the arena builds no training
+targets. What the test legitimately flags is that `--search-shape training` does not
+reproduce production TARGET construction — a real issue for anyone reading the arena as a
+statement about target quality, and not what Tier-13 asks it.
+
+None of the 16 touches model construction, `Trainer.load`, optimizer restoration, or the
+inference path.
 
 **Arenas — all THREE direct contrasts at 1600 games**, identical arena/search shape on
 every side:
