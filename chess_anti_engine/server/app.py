@@ -3462,9 +3462,20 @@ def create_app(
           # date. Size is a permanent property of the bytes, so it is the one
           # that earns the terminal channel.
           #
-          # Additive and backward-compatible: a server that never sends this
-          # leaves the worker on its existing keep-and-retry path.
+          # ⚑ WIRE-compatible, NOT fully backward-compatible, and the
+          # difference matters. An OLD worker ignores `terminal`, so if it ever
+          # hits this limit it keeps the file and retains the head-of-line
+          # wedge -- the recovery is what the new worker adds, not what the
+          # server can impose. Rollout headroom is large (real payloads measure
+          # ~434 B against a 1 MiB default cap), so a mixed-version fleet is
+          # very unlikely to reach it, but "backward-compatible" would be an
+          # overclaim.
                 "terminal": True,
+          # A stable machine-readable code beside the prose. The worker
+          # switches on `terminal`, NOT on this -- but without it the only
+          # durable record of WHY is an English sentence, and human prose
+          # becomes the API the moment anyone greps for it.
+                "reason_code": "arena_body_too_large",
                 "reason": (
                     f"arena result body is {len(body)} bytes, over the "
                     f"{int(arena_max_body_bytes)} byte limit"
