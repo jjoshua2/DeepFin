@@ -151,6 +151,21 @@ class AsyncTestEval:
 
         shape_key = (len(holdout_buf), int(batch_size))
         with self._lock:
+  # A dead worker thread (init failure) never drains the maxsize=1
+  # queue, so the put below would block FOREVER once the queue holds
+  # the never-dequeued prior item — and with the unbounded barrier the
+  # wait after it would too. Fail the eval loudly instead (review
+  # follow-up, PR #405): collect() sees the exc and returns (None, -1).
+            if self._thread is not None and not self._thread.is_alive():
+                log.error(
+                    "AsyncTestEval worker thread is dead (init failure?); "
+                    "dropping the iter %d eval instead of queueing into a "
+                    "queue nothing drains", int(source_iter),
+                )
+                if self._exc is None:
+                    self._exc = RuntimeError("AsyncTestEval worker thread is dead")
+                self._result_event.set()
+                return
             needs_barrier = shape_key not in self._compiled_shape_keys
             if self._thread is None:
   # Lazy init on first call so we can capture device/compile_mode/
@@ -220,17 +235,29 @@ class AsyncTestEval:
   # of racing the next iteration).
         if needs_barrier:
             t0 = time.monotonic()
-            while not self._result_event.wait(timeout=300.0):
-                log.warning(
-                    "AsyncTestEval compile barrier still waiting after %.0fs "
-                    "(shapes %s; a cold max-autotune eval compile can exceed "
-                    "30 min — this is the barrier working, not a hang)",
-                    time.monotonic() - t0, shape_key,
-                )
-            with self._lock:
-                barrier_ok = self._exc is None
-                if barrier_ok:
-                    self._compiled_shape_keys.add(shape_key)
+            while True:
+                if not self._result_event.wait(timeout=300.0):
+                    log.warning(
+                        "AsyncTestEval compile barrier still waiting after %.0fs "
+                        "(shapes %s; a cold max-autotune eval compile can exceed "
+                        "30 min — this is the barrier working, not a hang)",
+                        time.monotonic() - t0, shape_key,
+                    )
+                    continue
+                with self._lock:
+                    if self._exc is not None or self._source_iter == int(source_iter):
+                        barrier_ok = self._exc is None
+                        if barrier_ok:
+                            self._compiled_shape_keys.add(shape_key)
+                        break
+  # A STALE eval set the event: one started before this call and
+  # abandoned by the drain above, completing mid-barrier. Its
+  # compile ran under the OLD shapes, so releasing here would mark
+  # the NEW key compiled without its compile ever having happened
+  # (review finding S3, PR #405). Consume the wakeup and keep
+  # waiting for OUR eval — identified by source_iter, which _loop
+  # writes under this same lock.
+                    self._result_event.clear()
             log.info(
                 "AsyncTestEval compile barrier released after %.1fs "
                 "(shapes %s, eval %s); later evals with these shapes run "

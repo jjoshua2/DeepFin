@@ -448,6 +448,132 @@ def test_second_iter_reuses_snap_with_new_weights(cfg_and_builder):
     aer.shutdown(timeout=5.0)
 
 
+def test_a_stale_evals_completion_does_not_release_a_rearmed_barrier(cfg_and_builder):
+    """A re-armed barrier must wait for ITS OWN eval, not any eval.
+
+    Scenario (review finding S3, PR #405, demonstrated against the previous
+    revision): eval N is still in flight when start() is called with NEW
+    batch shapes. The stale eval completes mid-barrier and sets
+    ``_result_event`` — releasing a barrier keyed to shapes whose compile
+    has not run, and marking the new shape key compiled. The barrier must
+    consume that stale wakeup and keep waiting for the eval it started,
+    identified by source_iter.
+    """
+    import threading
+    model = _StubChessNet(dim=4)
+    g2 = threading.Event()   # gates the STALE eval (iter 2, old shapes)
+    g3 = threading.Event()   # gates OUR eval (iter 3, new shapes)
+    done3 = threading.Event()
+    calls = {"n": 0}
+
+    def _eval(**_kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "FIRST"
+        if calls["n"] == 2:
+            g2.wait(timeout=10.0)
+            return "STALE"
+        g3.wait(timeout=10.0)
+        done3.set()
+        return "OURS"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _eval
+
+    start_returned = threading.Event()
+    stale_released_barrier: dict[str, bool | None] = {"value": None}
+
+    def _releaser():
+        # Complete the STALE eval first; the barrier must NOT release on it.
+        time.sleep(0.3)
+        g2.set()
+        time.sleep(0.7)
+        # If start() returned before OUR eval was even ungated, the stale
+        # completion released the barrier.
+        stale_released_barrier["value"] = start_returned.is_set()
+        g3.set()
+
+    aer = AsyncTestEval()
+    # Eval 1: registers shapes (1, 4) under the first barrier.
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == ("FIRST", 1)
+    # Eval 2: same shapes -> asynchronous; leave it IN FLIGHT (gated on g2).
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    rel = threading.Thread(target=_releaser)
+    rel.start()
+    # Eval 3: NEW shapes (1, 8) -> re-armed barrier, while eval 2 is in flight.
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=8, steps=2, device="cpu", source_iter=3,
+    )
+    done3_at_return = done3.is_set()
+    start_returned.set()
+    rel.join(timeout=10.0)
+    assert stale_released_barrier["value"] is False, (
+        "the STALE eval's completion released the re-armed barrier -- the new "
+        "shape key was marked compiled without its compile having run"
+    )
+    assert done3_at_return, (
+        "start() returned before its own eval completed"
+    )
+    assert aer.collect(timeout=5.0) == ("OURS", 3)
+
+
+def test_a_dead_worker_thread_fails_evals_instead_of_hanging(monkeypatch):
+    """If the eval thread died at init, later start() calls must fail loudly
+    and promptly — not block forever on the maxsize=1 queue nothing drains
+    (pre-existing hang surfaced by the PR #405 review; the unbounded barrier
+    made fixing it mandatory)."""
+    import threading
+
+    def _boom(_cfg):
+        raise RuntimeError("synthetic init failure")
+
+    monkeypatch.setattr("chess_anti_engine.train.async_eval.build_model", _boom)
+    model = _StubChessNet(dim=4)
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = MagicMock()
+
+    aer = AsyncTestEval()
+    # First start: init fails on the worker thread; the failure paths set
+    # _exc + _result_event, so the barrier releases with the error rather
+    # than hanging, and collect reports the failure as (None, -1).
+    aer.start(
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == (None, -1)
+
+    # Second start: the thread is dead and its queue still holds the first,
+    # never-dequeued work item. Run in a helper thread so a regression hangs
+    # THIS join instead of the whole test session.
+    finished = threading.Event()
+
+    def _second_start():
+        aer.start(
+            trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+            batch_size=4, steps=2, device="cpu", source_iter=2,
+        )
+        finished.set()
+
+    t = threading.Thread(target=_second_start, daemon=True)
+    t.start()
+    t.join(timeout=5.0)
+    assert finished.is_set(), (
+        "start() on a dead worker thread blocked (the maxsize=1 queue put) "
+        "instead of failing the eval loudly"
+    )
+    assert aer.collect(timeout=5.0) == (None, -1)
+
+
 def test_shutdown_joins_thread(cfg_and_builder):
     model = _StubChessNet(dim=4)
     trainer, _ = _make_trainer_stub(model, eval_payload="OK")
