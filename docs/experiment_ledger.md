@@ -43002,3 +43002,146 @@ Measured this session, same position, `go movetime 3000`:
 
 **Verdict: arm 1 FLAT (pre-committed KILL for resuming unchanged), arm 3 POSITIVE on value.
 Arm 2 pending.**
+
+
+---
+
+## 2026-08-11 — VERDICT COMPLETE: no rollback target exists, and the SF TEACHER IS NOT THE BOTTLENECK
+
+Closes the pre-registration at `df704b45b` (arms 1+3 recorded above at `caf72b2e7`). Adds
+arm 2, the direct iter514 head-to-head, and a new measurement that retires two proposed
+levers.
+
+### Arm 2 — Cheese @ `UCI_Elo 2400`, 60s+1s — **TRUNCATED, biased high**
+
+**12 complete opening pairs (24 games): paired score 0.6875 [0.5510, 0.8240] = +137 Elo
+[+36, +268].** The CI excludes 0.500.
+
+⚑⚑ **STOPPED EARLY BECAUSE IT LOOKED GOOD. That is optional stopping and it inflates both
+the point estimate and the significance.** The pre-registered block was 60 games. This
+number is "we are clearly ahead of this rung", NOT a banked baseline, and it must not be
+quoted as one. A clean figure needs the full pre-committed block.
+
+**⚑ THE BANKED "0.344 AT 2400" DID NOT EXIST.** Memory carried a comparison of
+"0.344 at `UCI_Elo` 2400 vs 0.050 at full strength". On disk the 2400 run
+(`deepfin_iter211_vs_cheese321_elo2400_20260617`) logged **5 of 30 games** and read 0.800;
+the 2000 run logged **zero**. So there was no completed handicapped baseline at all and
+tonight's is the FIRST. Memory corrected. [[same_name_different_population]]
+
+**Completed full-strength Cheese history, for the record:** ckpt722 (46M) **0.108**
+(Elo −366, 60g, 07-09); ckpt101 (512) **0.050** (Elo −512, 60g, 07-19).
+
+**⚑ THE CLOCK CONFOUND IS REAL AND WAS MEASURED, NOT ASSUMED.** Our median nps this run
+was **13,214** against **8,885** in the banked 07-19 run at the same 60s+1s clock — a
+**1.49x speedup**. Under a time control that is free Elo with no net improvement behind
+it. ⇒ tonight's number is a reading on the AGENT (net + search + speed) and is **NOT
+attributable to the net**. This is why the prereg required `--move-log-out`.
+
+**⚑ TRANSITIVITY SHOULD NOT BE ASSUMED, AND LIKELY FAILS AGAINST US.** `UCI_Elo` is a
+SPEED handicap of the same engine (measured: `movetime 3000` gives full strength 10.68M
+nodes/depth 16 vs 2400's 328k/depth 11 — 32.5x fewer nodes). Two consequences:
+- **The rung labels are not Elo.** 32.5x is ~5 node doublings; at ~50-70 Elo/doubling that
+  is ~250-350 Elo, not the 600 the 3000->2400 label implies. "2400" is plausibly ~2650-2750
+  in Cheese's own units.
+- **Our failure mode is opponent-dependent.** ~80% of Cheese losses are a SINGLE value
+  collapse [[cheese_loss_blunder_profile]]. A weak opponent often fails to punish a
+  hallucinated eval; a strong one converts every time. So our score should fall FASTER than
+  an Elo model predicts as Cheese strengthens. Elo transitivity assumes a uniform strength
+  axis; "usually fine, occasionally catastrophically wrong" violates exactly that.
+⇒ **do not extrapolate +137 at this rung to full strength.** The proper instrument is a
+NODE-LIMITED Cheese ladder (Cheese honours `go nodes`; `LimitStrengthMode` also has a
+`nodes` mode) at several rungs with one net — which also removes the nps confound above,
+since a clock ruler pays us for being faster. NOT YET RUN.
+
+### The direct iter514 head-to-head — **TIED. There is no rollback target.**
+
+Everything previously on disk routed iter514 -> iter138 through iter672. This replaces
+that inference with one match. Both sides logged identical search
+(`c_scale=0.1 policy_temp=1.5 topk=32 shape=training`), so weights-only.
+
+| instrument | iter514 vs iter138 | verdict |
+|---|---|---|
+| paired arena, 400 games | **+5.2 Elo [−24.5, +35.0]** | TIED |
+| `value_regret`, 1723 paired | 60.68 vs 57.69 = **+2.99 cp [−3.10, +9.35]** | ns (middlegame +8.32 [+0.07, +16.73] favours iter138) |
+
+⇒ **Keep iter138. Rolling back to the "banked peak" buys nothing and costs 158 iterations
+of data.** The "+105.5 vs boot512 peak, then −94" story was an artifact of differencing two
+separately-referenced ladder rows.
+
+**⚑ A RATING FIT OVER ALL DIRECT LINKS, AND THE NAME COLLISION IT EXPOSED.** Least-squares
+over the 10 direct paired links of the search-frozen era (boot512 anchored at 0):
+
+| net | Elo | | net | Elo |
+|---|---|---|---|---|
+| iter672 | +95.5 | | iter768 | +66.7 |
+| iter735 | +89.0 | | iter862 | +38.3 |
+| iter138 | +85.9 | | boot512 | 0 |
+| iter514 | +84.3 | | | |
+
+**RMS residual 15.5 Elo — exactly 400-game noise, so the link network is self-consistent.**
+iter672/735/138/514 span 11 Elo and are one undifferentiated plateau; only iter768 and
+iter862 sit genuinely below it. ⇒ **the lineage's entire measured gain is ~+90 Elo over
+boot512, essentially all of it earned by iter ~514.**
+
+⚑ A first pass at this fit returned **RMS 70.2** and a nonsensical ordering. Cause: the
+name map matched `slot_000` as a SUBSTRING, so a JULY salvage dir
+(`pre_durable_deploy_20260726/seeds/slot_000` = iter346) was scored as "iter672" at −193
+Elo. **The residual diagnostic is what caught it** — an inconsistency far above noise is a
+data-identity bug until proven otherwise. Match checkpoint paths EXACTLY, and always print
+residuals next to a fit. The prediction from the corrected fit (iter514 − iter138 = −1.6)
+matched the direct measurement (+5.2) to within 7 Elo.
+
+### ⚑⚑ NEW AND DECISIVE: THE SF TEACHER IS NOT THE BOTTLENECK — the head cannot fit the label it already has
+
+Prompted by the proposals "raise `sf_label_nodes`" and "if we are not using SF for policy,
+use MultiPV 1 for maximum label strength". Both are now measured negatives.
+
+**Method** (`scratchpad/label_floor.py`): the SAME metric `value_regret` uses — same audit
+set, same `--max-positions 2000` then `--min-pieces 8` filter order (1723 kept), same
+`move_regrets` scorer — with the evaluator swapped from our value head to Stockfish's own
+root `bestmove`. Searches use `fresh=True` so a warm TT cannot let one position steer the
+next. One thread, nice 19, ~4 min per arm.
+
+| evaluator, scored by the same >=1M-node ruler | overall | endgame | middlegame |
+|---|---|---|---|
+| SF label @ 200k, **MultiPV 6** (production) | **16.1** | 19.7 | 10.5 |
+| SF label @ 200k, **MultiPV 1** | **13.2** | 16.6 | 7.7 |
+| **our value head @ iter138** | **57.7** | 65.0 | 46.2 |
+
+Paired, 1723 positions, 0 unmatched:
+- **head − label(MultiPV 6) = +41.57 cp [+35.43, +47.81]**
+- head − label(MultiPV 1) = +44.54 cp [+38.35, +51.08]
+- **MultiPV 6 -> 1 = +2.97 cp [−0.27, +6.40] — NOT significant** (middlegame alone
+  +2.83 [+0.28, +6.14])
+
+⇒ **The head sits 41.6 cp from a target that is itself only 16.1 cp from the ruler — it is
+~3.6x further from the ruler than its own teacher is.** MultiPV 1 moves the target by
+2.9 cp, **~5% of the head's gap**, and pays for it by deleting the SF policy target AND
+(see below) the PID's actuator. Raising label nodes is worse: it chases a 16.1 cp residual
+while 41.6 cp of headroom sits untouched.
+
+**BIAS DIRECTION, CHECKED NOT ASSUMED.** `move_regrets` gives a move the deep MultiPV never
+listed the regret of the WORST listed line — an optimistic floor. The label arms picked an
+unlisted move only **0.75% / 0.70%** of the time; our weaker head does so more often and is
+therefore FLATTERED. So the true gap is **>= 41.6 cp** and the verdict is conservative.
+
+**⇒ THE BOTTLENECK IS RELOCATED, AND MY OWN EARLIER CLAIM IS CORRECTED.** I argued value was
+the bottleneck because the ruler measures the wrong distribution. That is not what the data
+says: the constraint is that **the head cannot fit a target already sitting in the replay
+buffer.** That points at capacity, views-per-position, or loss weighting — NOT at Stockfish,
+and not at label depth or width.
+
+### ⚑ MultiPV 1 WOULD ALSO BREAK THE CURRICULUM — a knob that silently reaches nothing
+
+`_choose_curriculum_opponent_move` (`selfplay/stockfish_turn.py:449-456`) picks uniform
+random among moves within `regret_limit` of best **from the MultiPV candidate list**. With
+MultiPV 1 that list has one entry, so the acceptable set is always `[best]` and the function
+returns SF's best move **regardless of `regret_limit`** — the PID handicap becomes a silent
+no-op. It cannot be scoped to labels as-is: `worker.py:3308` builds ONE `StockfishPool` and
+`stockfish/uci.py:410` sets MultiPV once at the engine handshake. The PID's only other lever
+floors at `sf_pid_min_nodes: 50000`, still far too strong. ⇒ run-killer, not a regression.
+The workable form is a POOL SPLIT (MultiPV 1 for label queries, >=6 for curriculum-move
+queries) — but the table above says the prize is ~2.9 cp, so it is not worth the plumbing.
+
+**Verdict: arm 1 FLAT, arm 2 ahead-but-truncated, arm 3 positive on value. No rollback
+target. `sf_label_nodes` and `sf_multipv` both CLOSED as measured negatives.**
