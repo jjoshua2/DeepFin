@@ -43390,3 +43390,37 @@ are 800-step offline retrains — **RELATIVE READS ONLY**.
 **⚑ Do not read this as a live-run proposal.** `w_categorical: 0.0` in the live yaml
 means the mechanism is inert in production; turning it on live is a SEPARATE
 data-affecting change needing its own entry and its own readout window.
+
+### 2026-08-12 — WHY the iteration got 15% longer: the loop flipped to TRAINING-DOMINATED
+
+The previous entry left "iterations got 15% longer" unexplained. Decomposed off
+`progress.csv` (`time_this_iter_s` vs `train_time_s`), iters 130-139 vs 141-151:
+
+| | pre | post | delta |
+|---|---|---|---|
+| iteration total | 301.8s | 350.8s | **+49.0s** |
+| ...training step | 74.1s | 195.2s | **+121.1s** |
+| ...everything else (selfplay/ingest) | 227.7s | 155.6s | **−72.1s** |
+
+**Training's share of wall-clock went 25% -> 56%.** The selfplay phase got 32%
+CHEAPER (fewer sims per move, as intended) and the training phase got 2.63x more
+expensive, netting +49s. So the +15% is not overhead — it is the GPU budget moving
+from search to gradient steps, which is exactly the trade the change was for.
+
+**⚑ BUT THE STEP ITSELF GOT 1.54x MORE EXPENSIVE.** Steps rose 1.72x (85.6 -> 146.9,
+as views-targeting predicts at constant `train_views_per_position` 4.31), while
+`train_time_s` rose **2.63x**. Per step: **0.865s -> 1.328s**; `trainer_steps_per_s`
+**1.16 -> 0.75**. The optimizer step alone went 0.317s -> 0.381s (1.20x). The extra
+cost is GPU contention: a denser selfplay stream (more games/s finishing, more
+inference) now shares the device with a training phase that runs 2.6x longer.
+
+**CONSEQUENCE FOR ANY FURTHER SIMS CUT.** The old CPU-balance argument said ~100 sims,
+not 50 [[loop_is_gpu_bound_cpu_two_thirds_idle]]. This is an INDEPENDENT second reason
+to stop here: training is now the MAJORITY of the iteration, and its cost rises
+super-linearly with ingest (1.72x steps for 2.63x time). Cutting sims further buys
+selfplay time we can no longer spend — the marginal ingested position costs more to
+train on than the last one did. **Do not read the 1.51x positions/s as a rate that
+extrapolates.**
+
+⚑ This is a THROUGHPUT decomposition, not a strength result. The paired 400-game arena
+vs `ck_2026-08-11_5ce02_iter138` remains the only decider and is still owed.
