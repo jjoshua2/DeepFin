@@ -869,6 +869,49 @@ def _evict_oldest_first(
     return (freed_entries, freed_bytes)
 
 
+
+# Fields that name the MACHINE rather than describe throughput. Redacted from
+# the public view of the throughput endpoints.
+#
+# ⚑ An allowlist would be the safer shape here and is deliberately not used:
+# the stats dict is an open-ended accumulator keyed by GPU model, and an
+# allowlist would silently drop any throughput field added later -- turning a
+# privacy control into a data-loss bug that nobody notices. A denylist fails
+# the other way: a NEW host-identifying field would leak until it is added
+# here. That is the better failure to have, because it is visible in review of
+# the code that adds the field, and `test_no_new_host_identifying_field_leaks`
+# pins the current shape so such a field cannot arrive unnoticed.
+HOST_IDENTIFYING_TELEMETRY_KEYS: frozenset[str] = frozenset({
+    "last_hostname", "last_cpu_count",
+})
+
+
+def redact_host_telemetry(stats: Any, *, authenticated: bool) -> Any:
+    """Strip machine-identifying fields unless the caller authenticated.
+
+    `/v1/worker_throughput` and `/v1/trial_throughput` take no credential --
+    they are what a dashboard polls -- and returned the raw accumulator,
+    including each worker's hostname and CPU count. That is operational
+    reconnaissance available to anyone who can reach the port.
+
+    Aggregate throughput is NOT redacted: it is the useful, non-identifying
+    part, and blanking it would push whoever monitors this toward giving the
+    dashboard a real credential, which is a worse outcome than the disclosure.
+    """
+    if authenticated or not isinstance(stats, dict):
+        return stats
+    out: dict[str, Any] = {}
+    for key, entry in stats.items():
+        if isinstance(entry, dict):
+            out[key] = {
+                k: v for k, v in entry.items()
+                if k not in HOST_IDENTIFYING_TELEMETRY_KEYS
+            }
+        else:
+            out[key] = entry
+    return out
+
+
 def prune_retained_dir(
     root: Path,
     *,
@@ -2242,6 +2285,10 @@ def create_app(
         return {"stored": False, "rejected": True, "reason": reason, "reason_code": code}
 
     basic = HTTPBasic()
+  # auto_error=False so an ABSENT credential yields None instead of a 401.
+  # These telemetry routes stay reachable without credentials -- they are
+  # what a dashboard polls -- but only the redacted view.
+    basic_optional = HTTPBasic(auto_error=False)
 
     def _client_ip(request: Request | None) -> str:
         """The peer address, or "" when there is no client (ASGI test transport).
@@ -2329,12 +2376,38 @@ def create_app(
         )
         return record
 
-    def _auth_user(
-        request: Request, creds: HTTPBasicCredentials = Depends(basic),
+    def _authenticate(
+        request: Request, creds: HTTPBasicCredentials, *, allow_register: bool,
     ) -> str:
         """Authenticate, without re-running PBKDF2 on a credential we already
         checked. See `VerifiedCredentialCache` for why that is sound and for
         what it deliberately does not cache (rejections).
+
+        ⚑⚑ `allow_register` IS A PARAMETER, NOT A PRE-CHECK, AND THAT IS THE
+        WHOLE POINT. The first version of the non-registering path asked
+        `auth_cache.users().get(name) is None` in a SEPARATE function and only
+        then called this one. That is two reads of `users()` with the existence
+        decision made on the first and the REGISTRATION decision made on the
+        second, so the two can disagree: a review measured a telemetry GET
+        RE-CREATING a just-deleted account (with the attacker's password) when
+        `users.json` was rewritten between them. A pre-check structurally
+        cannot fix that; only making it one read and one decision can.
+
+        It also fixes what that pre-check did to the throttle: returning early
+        on an unknown name skipped the ban check, the throttle AND the KDF, so
+        unauthenticated username enumeration became both free and ~18x faster
+        than probing a real name. Going through this function charges
+        `note_auth_failure` exactly as every other authenticated route does.
+        This does NOT make the check constant-time -- a known name still pays
+        PBKDF2 and an unknown one does not, which is pre-existing behaviour
+        here, not something `allow_register` introduces or repairs.
+
+        ⚑ NOT a FastAPI dependency. Keyword-only parameters with defaults are
+        interpreted by FastAPI as QUERY PARAMETERS, so exposing `allow_register`
+        on a `Depends(...)` callable would have published `?allow_register=` as
+        a caller-controlled switch on every authenticated route -- the exact
+        "a value accepted and then silently honoured" shape this codebase keeps
+        producing. The dependencies are the thin wrappers below.
 
         Order, and every step of it is load-bearing:
 
@@ -2377,7 +2450,7 @@ def create_app(
         rec = auth_cache.verify(username, str(creds.password))
         if rec is None:
             if known is None:
-                if not self_register_enabled:
+                if not allow_register:
                     access_guard.note_auth_failure(ip)
                     raise HTTPException(status_code=401, detail="unknown user")
                 try:
@@ -2423,6 +2496,67 @@ def create_app(
             raise HTTPException(status_code=403, detail="user disabled")
         access_guard.note_auth_success(ip)
         return username
+
+    def _auth_user(
+        request: Request, creds: HTTPBasicCredentials = Depends(basic),
+    ) -> str:
+        """Required auth for routes that DO enrol new volunteers (TOFU).
+
+        Registration still obeys `worker_self_register`; this is the only
+        wrapper that passes it through.
+        """
+        return _authenticate(request, creds, allow_register=self_register_enabled)
+
+    def _auth_user_optional(
+        request: Request,
+        creds: HTTPBasicCredentials | None = Depends(basic_optional),
+    ) -> str | None:
+        """Authenticate an EXISTING account, or return None. Never registers.
+
+        Runs the same checks as `_auth_user` -- bans, the per-IP failed-sign-in
+        throttle, verification -- and differs in two ways: it returns None
+        instead of raising, and it will NOT create an account. A wrong password
+        still costs the caller an entry in the throttle, so this is not a free
+        guessing oracle that the authenticated routes would have charged for.
+
+        ⚑⚑ THE NON-REGISTERING PART IS THE WHOLE POINT, and the first version
+        of this function got it wrong. `_auth_user` self-registers an unknown
+        username when `worker_self_register` is on (`_register_new_user`), so
+        delegating to it made a plain **GET of a telemetry route CREATE A USER
+        ACCOUNT** and then serve that invented account the unredacted view.
+        MEASURED: `GET /v1/worker_throughput` with `attacker_invented` /
+        a 10-char password added `attacker_invented` to `users.json` and
+        returned `last_hostname`.
+
+        That is the same defect shape as the finding this change exists to fix
+        -- a read-style public endpoint performing a state transition -- so the
+        fix reproduced the bug one route over. It is inert today
+        (`worker_self_register` defaults off) and would have armed itself
+        silently the day volunteer registration was enabled, which is exactly
+        the kind of latent trapdoor this repo keeps finding.
+
+        ⚑⚑ DO NOT "FIX" THIS BY ADDING AN EXISTENCE PRE-CHECK. An earlier
+        version of this function did exactly that -- asked
+        `auth_cache.users().get(name) is None` before calling `_auth_user` --
+        on the reasoning that registration happens DURING that call, so it has
+        to be prevented beforehand. The reasoning is sound and the design is
+        still wrong: a pre-check is a SECOND read of `users()`, which makes the
+        existence decision and the registration decision separable, and an
+        independent review then measured both consequences. A `users.json`
+        rewrite landing between the two reads re-created a just-deleted account
+        with the attacker's password, and the early return skipped the ban
+        check, the per-IP throttle and the KDF, turning an anonymous route into
+        a free, ~18x-faster-on-a-miss username-enumeration oracle.
+
+        The registration decision belongs INSIDE `_authenticate`, as the
+        `allow_register` parameter, so there is one read and one decision.
+        """
+        if creds is None:
+            return None
+        try:
+            return _authenticate(request, creds, allow_register=False)
+        except HTTPException:
+            return None
 
     def _record_bad_shard_report(
         trial_id: str | None,
@@ -2753,12 +2887,24 @@ def create_app(
         return _get_update_info_impl(trial_id)
 
     @app.get("/v1/worker_throughput")
-    def get_worker_throughput() -> Any:
-        return JSONResponse(content=_load_json_stats(stats_path))
+    def get_worker_throughput(
+        username: str | None = Depends(_auth_user_optional),
+    ) -> Any:
+        return JSONResponse(
+            content=redact_host_telemetry(
+                _load_json_stats(stats_path), authenticated=username is not None,
+            ),
+        )
 
     @app.get("/v1/trial_throughput")
-    def get_trial_throughput() -> Any:
-        return JSONResponse(content=_load_json_stats(trial_stats_path))
+    def get_trial_throughput(
+        username: str | None = Depends(_auth_user_optional),
+    ) -> Any:
+        return JSONResponse(
+            content=redact_host_telemetry(
+                _load_json_stats(trial_stats_path), authenticated=username is not None,
+            ),
+        )
 
     def _get_worker_wheel_impl(trial_id: str | None) -> Any:
         p = _artifact_from_publish("worker_wheel", default_name="worker.whl", trial_id=trial_id)
