@@ -1093,6 +1093,8 @@ class WorkerSession:
         # retries so a dropped grant response can be recovered. See _claim_seed_dole.
         self._dole_claim_key: tuple[int, str] | None = None
         self._dole_claim_id: str = ""
+        # Set only once the grant is actually installed. See _maybe_ingest_dole_flag.
+        self._applied_dole_key: tuple[int, str] | None = None
         self._live_dole_queue: list[str] | None = None
         self._pending_sf_refute: list[str] = []
         self._live_sf_refute_queue: list[str] | None = None
@@ -1939,6 +1941,14 @@ class WorkerSession:
         state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
 
     @staticmethod
+    def _dole_key(manifest: dict) -> tuple[int, str]:
+        """Identity of one dole opportunity: (iteration, manifest revision)."""
+        return (
+            int(manifest.get("training_iteration", 0) or 0),
+            str(manifest.get("manifest_revision") or ""),
+        )
+
+    @staticmethod
     def _dole_possible(manifest: dict) -> bool:
         """Cheap "might this poll be doled?" pre-check. NOT a claim.
 
@@ -1981,9 +1991,8 @@ class WorkerSession:
         if not isinstance(endpoint, str) or not endpoint.strip():
             return bool(manifest.get("dole_fen_seeds"))
 
-        revision = str(manifest.get("manifest_revision") or "")
-        iteration = int(manifest.get("training_iteration", 0) or 0)
-        key = (iteration, revision)
+        key = self._dole_key(manifest)
+        revision = key[1]
         if self._dole_claim_key != key:
             self._dole_claim_key = key
             self._dole_claim_id = uuid.uuid4().hex
@@ -2036,6 +2045,27 @@ class WorkerSession:
         poll, so exactly one poll per iteration wins the claim — but a smoke
         config with sub-poll-interval iterations can advance past an unpolled
         iteration and skip its dole."""
+        # ⚑⚑ APPLIED-ONCE, AND IT IS NOT THE SAME THING AS THE SERVER'S
+        # ONE-WINNER GATE. The gate answers "may this request be replayed"; it
+        # deliberately returns granted=true EVERY time for the winning
+        # (iteration, revision, claim_id), because that is what recovers a
+        # dropped response. This function answers the different question "have
+        # I already installed this grant", and only it can stop re-application.
+        #
+        # Without this check the two combine into repeated DELIVERY: the mid-
+        # session path calls this on every ~30s poll, the claim id is reused
+        # for the whole key, so every poll would win again and re-run the
+        # install below -- which does `live.clear()` then `extend`. An
+        # undrained queue would be reset to the head of the batch every poll,
+        # so the tail could never be reached; a drained one would simply replay
+        # the same seeds all iteration.
+        #
+        # ⚑ Every server-side test still passes in that broken state, because
+        # the server's one-winner invariant is genuinely intact. Only a
+        # worker-level test can see it.
+        key = self._dole_key(manifest)
+        if self._applied_dole_key == key:
+            return
         if not self._claim_seed_dole(manifest):
             return
         reco = manifest.get("recommended_worker") or {}
@@ -2097,6 +2127,13 @@ class WorkerSession:
                 live_sf.extend(sf_queue)
             else:
                 self._pending_sf_refute = list(sf_queue)
+        # ⚑ MARKED ONLY HERE, AFTER THE QUEUES ARE INSTALLED. Every early
+        # return above (FEN list failed to load, claim refused) leaves this
+        # unset ON PURPOSE, so the next poll retries with the SAME claim_id and
+        # the server's replay hands the grant back. Marking it at claim time
+        # instead would turn a local load failure into a silently skipped dose
+        # -- the grant spent, the seeds never played.
+        self._applied_dole_key = key
         self.log.info(
             "dole: received %d seed(s) x%d -> %s; sf_refute=%d (frac=%.2f plies=%d iter=%d)",
             len(seeds), n, dest, len(sf_queue), sf_frac, sf_plies, train_iter,

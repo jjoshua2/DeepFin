@@ -97,10 +97,23 @@ def test_winners_live_in_a_sidecar_not_the_state_file(tmp_path) -> None:
 
 
 def test_a_missing_sidecar_costs_idempotency_not_correctness(tmp_path) -> None:
-    """Losing the sidecar must never RE-GRANT. It degrades to today's
-    behaviour (a retry looks like a new claim and loses), which is the safe
-    direction: a lost grant is recoverable next iteration, a double grant
-    hands the same seeds to two workers."""
+    """Losing the sidecar must never RE-GRANT: a retry looks like a new claim
+    and loses.
+
+    ⚑ STATED HONESTLY, because an earlier version of this docstring oversold
+    it as "costs idempotency, never correctness". That is true only if
+    correctness means "never double-grant". Relative to THIS PR's actual
+    invariant -- the seeds get played -- losing the sidecar while the gate is
+    spent silently loses that iteration's dose, which is the very failure the
+    idempotency exists to prevent.
+
+    What makes the guarantee hold is the WRITE ORDER in `_persist`, not this
+    fallback: the winner is written BEFORE the gate, so a crash between them
+    leaves the gate unspent and the retry simply re-races. This test covers the
+    residual case where the sidecar is lost independently (deleted, or its
+    write failed while the gate's succeeded), and pins the safe direction for
+    it. The restart guarantee is "survives a restart once the winner record is
+    durable", which the ordering makes the common case."""
     path = tmp_path / "seed_dole_gate.json"
     g = _SeedDoleGate(state_path=path)
     assert asyncio.run(g.claim("t", 10, claim_id="A", manifest_revision=REV)) is True

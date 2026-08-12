@@ -483,25 +483,39 @@ class _SeedDoleGate:
     def _persist(self) -> None:
         if self._state_path is None:
             return
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        # ⚑⚑ WINNER FIRST, GATE SECOND. THE ORDER IS THE WHOLE DURABILITY
+        # ARGUMENT, because these are two files and there is no transaction
+        # across them -- a crash can always land between the writes.
+        #
+        # Gate-then-winner (the original order) puts the unrecoverable outcome
+        # in the window: the iteration is durably SPENT while the server no
+        # longer knows which claim_id won, so the worker's retry is refused and
+        # the dose is silently lost -- exactly the "server committed, response
+        # lost" case idempotency exists to survive.
+        #
+        # Winner-then-gate puts the RECOVERABLE outcome there instead: the
+        # winner is recorded but the gate is not advanced, so the retry simply
+        # re-races and wins. A crash in the window costs a re-race, never a
+        # lost dose.
+        wp = self._winners_path()
+        if wp is not None:
+            try:
+                wtmp = wp.with_suffix(wp.suffix + ".tmp")
+                wtmp.write_text(json.dumps(self._winners), encoding="utf-8")
+                wtmp.replace(wp)
+            except Exception:
+                # Best-effort, and safe in this direction: an absent winner
+                # record makes a retried claim look new, which the monotonic
+                # gate then refuses. That costs idempotency, not correctness --
+                # and unlike the reverse order, it cannot spend the gate.
+                pass
         try:
-            self._state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
             tmp.write_text(json.dumps(self._last_iter), encoding="utf-8")
             tmp.replace(self._state_path)
         except Exception:
             pass  # in-memory state still holds; durability is best-effort
-        wp = self._winners_path()
-        if wp is None:
-            return
-        try:
-            wtmp = wp.with_suffix(wp.suffix + ".tmp")
-            wtmp.write_text(json.dumps(self._winners), encoding="utf-8")
-            wtmp.replace(wp)
-        except Exception:
-      # Same best-effort contract as above. Losing this file costs
-      # idempotency (a retried claim looks new), never correctness: the
-      # monotonic gate in the main state file still refuses a second grant.
-            pass
 
     def _consume_rearm_unlocked(
         self, publish_dir: Path | None, training_iteration: int,
@@ -2811,6 +2825,27 @@ def create_app(
         on which branch a given snapshot took, and two snapshots that decline
         for different reasons would then be indistinguishable from a match.
         """
+        # ⚑⚑ THE CONTRACT IS EVERY `opening_fen_*` RECO KEY, NOT THE FOUR THIS
+        # FUNCTION HAPPENS TO BRANCH ON. Binding only the server's ELIGIBILITY
+        # inputs leaves the worker's ACTION inputs unbound, and the worker reads
+        # more of them than the server does -- `opening_fen_dole_max_games`,
+        # `opening_fen_sf_refute_frac`, `opening_fen_sf_refute_plies`. A
+        # same-iteration republish that changed only those would leave the
+        # revision identical, so the server would validate against manifest B
+        # while the worker applied manifest A's dosing. That is strictly WEAKER
+        # than the atomic GET+claim this token exists to restore, which is the
+        # opposite of the point.
+        #
+        # The prefix sweep is what makes it self-maintaining: a future
+        # `opening_fen_<anything>` is bound the day it is published, with no
+        # list to remember to update. ⚑ That property depends on the NAMING
+        # CONVENTION, so `test_every_dole_field_the_worker_reads_is_bound`
+        # cross-checks the worker's own reads against what this records.
+        reco_raw = reader.live("recommended_worker", default={})
+        for name in sorted(reco_raw if isinstance(reco_raw, dict) else {}):
+            if str(name).startswith("opening_fen_"):
+                reader.get("recommended_worker", str(name))
+
         seeds = int(reader.get("recommended_worker", "opening_fen_dole_per_iter", default=0) or 0)
         fen_list = reader.get("opening_fen_list")
         task_type = str(reader.get("task", "type", default="selfplay") or "selfplay").lower()

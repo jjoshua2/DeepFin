@@ -1081,6 +1081,11 @@ def _dole_session_with_list(tmp_path: Path) -> WorkerSession:
     session._live_states = []
     session._pending_fen_dole = []
     session._pending_sf_refute = []
+    # This fixture builds a session without running __init__, so new dole
+    # instance state has to be seeded here as well.
+    session._dole_claim_key = None
+    session._dole_claim_id = ""
+    session._applied_dole_key = None
     return session
 
 

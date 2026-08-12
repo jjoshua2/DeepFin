@@ -189,3 +189,85 @@ def test_the_manifest_advertises_the_endpoint_only_when_the_dole_is_live(tmp_pat
     manifest = asyncio.run(_run())
     assert "seed_dole_claim_endpoint" not in manifest
     assert manifest["dole_fen_seeds"] is False
+
+
+def _worker_dole_reco_keys() -> set[str]:
+    """Every `reco.get("...")` key the worker's dole path actually reads.
+
+    Derived from the worker source rather than listed here, so a field added to
+    the dole install path enters this test automatically -- which is the whole
+    point. A hand-maintained list would silently stop covering the newest field,
+    i.e. exactly the failure the test exists to prevent.
+    """
+    import inspect
+    import re
+
+    from chess_anti_engine.worker import WorkerSession
+
+    src = inspect.getsource(WorkerSession._maybe_ingest_dole_flag)
+    return set(re.findall(r'reco\.get\(\s*"([a-z_0-9]+)"', src))
+
+
+def test_every_dole_field_the_worker_reads_is_bound_by_the_revision(tmp_path: Path) -> None:
+    """⚑⚑ THE TOKEN MUST BIND WORKER *ACTION* INPUTS, NOT ONLY SERVER
+    *ELIGIBILITY* INPUTS.
+
+    An earlier version recorded only the four fields the server's own
+    eligibility check branches on. The worker reads more than that after it
+    wins -- `opening_fen_dole_max_games`, `opening_fen_sf_refute_frac`,
+    `opening_fen_sf_refute_plies`. So this was possible:
+
+        GET manifest A -> server republishes B in the same iteration, changing
+        only dole_max_games -> POST claim
+
+    A and B hash identically, the server validates against B, and the worker
+    applies A's dosing. That is strictly WEAKER than the atomic GET+claim the
+    token exists to restore.
+
+    This test is the cross-boundary check: it reads the field names off the
+    WORKER and asserts the SERVER's revision moves for each one.
+    """
+    keys = _worker_dole_reco_keys()
+    assert keys, "could not parse the worker's dole reco reads -- did the method move?"
+    # Sanity: the three that motivated this must be among them.
+    for expected in (
+        "opening_fen_dole_max_games",
+        "opening_fen_sf_refute_frac",
+        "opening_fen_sf_refute_plies",
+    ):
+        assert expected in keys, f"{expected} is no longer read; update this test deliberately"
+
+    app = _setup(tmp_path)
+    mf_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
+
+    def revision() -> str:
+        async def _run() -> str:
+            async with await _client(app) as client:
+                r = await client.get(MANIFEST, headers=_manifest_poll_headers(worker_id="w"))
+                r.raise_for_status()
+                return str(r.json().get("manifest_revision") or "")
+
+        return asyncio.run(_run())
+
+    base = revision()
+    assert base, "an eligible manifest published no revision"
+
+    for key in sorted(keys):
+        mf = json.loads(mf_path.read_text(encoding="utf-8"))
+        reco = mf.setdefault("recommended_worker", {})
+        current = reco.get(key)
+        # Perturb to a value that is different whatever the current one is.
+        reco[key] = 7 if current != 7 else 11
+        mf_path.write_text(json.dumps(mf), encoding="utf-8")
+        assert revision() != base, (
+            f"changing recommended_worker.{key} did not change manifest_revision, so a "
+            "same-iteration republish can make the worker apply stale dosing against a "
+            "claim the server validated on the new manifest"
+        )
+        # Restore for the next field.
+        if current is None:
+            reco.pop(key, None)
+        else:
+            reco[key] = current
+        mf_path.write_text(json.dumps(mf), encoding="utf-8")
+        assert revision() == base, f"restoring {key} did not restore the revision"
