@@ -231,6 +231,15 @@ def _node_timeout_s(nodes: int) -> float:
 # (max-autotune) of a neural engine, which can take well over a minute cold.
 _WARMUP_TIMEOUT_S = 300.0
 
+# ⚑ python-chess's PER-COMMAND deadline, passed to ``SimpleEngine.popen_uci(timeout=)``.
+# This is the deadline that actually kills a cold compile, NOT ``_WARMUP_TIMEOUT_S``:
+# ``_WARMUP_TIMEOUT_S`` bounds the node-counting loop that runs AFTER ``eng.analysis()``
+# has already returned, whereas the compile stalls INSIDE ``eng.analysis()``, which
+# python-chess bounds with this value. Raising --warmup-timeout-s alone therefore could
+# not extend a compile window (measured 2026-08-11: a 60-game Cheese block died at
+# exactly 300s of warmup under --warmup-timeout-s 1800), so ``main`` lifts BOTH.
+_ENGINE_COMMAND_TIMEOUT_S = 300.0
+
 
 def _info_int(value: Any) -> int | None:
     try:
@@ -256,12 +265,20 @@ def _score_cp(value: Any) -> int | None:
         return None
 
 
-def _open_engine(spec: str, cwd: str | None = None) -> chess.engine.SimpleEngine:
+def _open_engine(
+    spec: str,
+    cwd: str | None = None,
+    *,
+    timeout_s: float = _ENGINE_COMMAND_TIMEOUT_S,
+) -> chess.engine.SimpleEngine:
     """``spec`` is either a single binary path or a shell-style command.
 
     For single-binary specs, defaults to spawning with cwd set to the
     binary's directory — many engines (rofChade, Stockfish with NNUE
     sidecar) look for net/data files relative to cwd.
+
+    ``timeout_s`` is python-chess's PER-COMMAND deadline, and it is the one that
+    actually aborts a cold ``torch.compile``. See ``_warmup_engine``.
     """
     parts = shlex.split(spec)
     if not parts:
@@ -269,14 +286,14 @@ def _open_engine(spec: str, cwd: str | None = None) -> chess.engine.SimpleEngine
     # Generous per-command timeout: a neural engine's first command may pay a cold
     # torch.compile (max-autotune, up to a few minutes). python-chess defaults to
     # 10s, which aborts mid-compile (asyncio TimeoutError in analysis/play setup),
-    # so the off-clock warmup is meant to absorb it. 300s is a finite backstop that
-    # still catches a genuinely hung engine.
+    # so the off-clock warmup is meant to absorb it. The default is a finite backstop
+    # that still catches a genuinely hung engine; --warmup-timeout-s raises it.
     if len(parts) == 1 and Path(parts[0]).is_file():
         binary = Path(parts[0]).resolve()
         return chess.engine.SimpleEngine.popen_uci(
-            str(binary), cwd=cwd or str(binary.parent), timeout=300.0,
+            str(binary), cwd=cwd or str(binary.parent), timeout=timeout_s,
         )
-    return chess.engine.SimpleEngine.popen_uci(parts, cwd=cwd, timeout=300.0)
+    return chess.engine.SimpleEngine.popen_uci(parts, cwd=cwd, timeout=timeout_s)
 
 
 def _set_options(eng: chess.engine.SimpleEngine, opts: dict[str, str]) -> None:
@@ -818,18 +835,39 @@ def main() -> None:
         if args.move_log_out is not None:
             args.move_log_out.parent.mkdir(parents=True, exist_ok=True)
 
+        # ⚑ The engine's per-command deadline must cover the warmup's compile, because
+        # that is where a cold torch.compile actually stalls -- --warmup-timeout-s alone
+        # never reached it. An engine given a warmup gets the larger of the two; an
+        # engine with no warmup keeps the plain backstop.
+        command_timeout_a = (
+            max(_ENGINE_COMMAND_TIMEOUT_S, float(args.warmup_timeout_s))
+            if warmup_nodes_a is not None
+            else _ENGINE_COMMAND_TIMEOUT_S
+        )
         print(f"[match] opening A: {args.engine_a}")
-        eng_a = _open_engine(args.engine_a)
+        print(f"[match]   command timeout: {command_timeout_a:.0f}s")
+        eng_a = _open_engine(args.engine_a, timeout_s=command_timeout_a)
         _set_options(eng_a, opts_a)
         print(f"[match]   id={eng_a.id.get('name', '?')!r}")
         _warmup_engine(eng_a, nodes=warmup_nodes_a, label=args.label_a,
                        timeout_s=float(args.warmup_timeout_s))
 
+        # Symmetric with A. Engine B is usually a native binary that needs neither, but
+        # B is also how a DeepFin-vs-DeepFin match is run, and --warmup-timeout-s used to
+        # apply to A only -- so B's warmup silently kept the 300s default no matter what
+        # was asked for.
+        command_timeout_b = (
+            max(_ENGINE_COMMAND_TIMEOUT_S, float(args.warmup_timeout_s))
+            if warmup_nodes_b is not None
+            else _ENGINE_COMMAND_TIMEOUT_S
+        )
         print(f"[match] opening B: {args.engine_b}")
-        eng_b = _open_engine(args.engine_b)
+        print(f"[match]   command timeout: {command_timeout_b:.0f}s")
+        eng_b = _open_engine(args.engine_b, timeout_s=command_timeout_b)
         _set_options(eng_b, opts_b)
         print(f"[match]   id={eng_b.id.get('name', '?')!r}")
-        _warmup_engine(eng_b, nodes=warmup_nodes_b, label=args.label_b)
+        _warmup_engine(eng_b, nodes=warmup_nodes_b, label=args.label_b,
+                       timeout_s=float(args.warmup_timeout_s))
         side_a = EngineSide(
             label=args.label_a,
             engine=eng_a,

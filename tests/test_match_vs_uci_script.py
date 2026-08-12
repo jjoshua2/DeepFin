@@ -408,7 +408,8 @@ def test_main_quits_engine_a_if_engine_b_open_fails(
         def quit(self) -> None:
             self.quit_called = True
 
-    def fake_open_engine(spec: str):
+    def fake_open_engine(spec: str, cwd: str | None = None, *, timeout_s: float = 0.0):
+        del cwd, timeout_s
         if spec == "engine-b":
             raise RuntimeError("engine B failed")
         engine = FakeEngine()
@@ -423,3 +424,111 @@ def test_main_quits_engine_a_if_engine_b_open_fails(
 
     assert len(opened) == 1
     assert opened[0].quit_called is True
+
+
+def test_open_engine_forwards_timeout_to_popen_uci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The leg that proves the value reaches python-chess, not just our own signature."""
+    module = _load_match_vs_uci_module()
+    seen: dict[str, object] = {}
+
+    def fake_popen_uci(command: object, cwd: object = None, timeout: float | None = None):
+        del command, cwd
+        seen["timeout"] = timeout
+        return object()
+
+    monkeypatch.setattr(chess.engine.SimpleEngine, "popen_uci", staticmethod(fake_popen_uci))
+
+    module._open_engine("some-engine --flag", timeout_s=1800.0)
+
+    assert seen["timeout"] == 1800.0
+
+
+def test_warmup_timeout_raises_the_deadline_that_actually_binds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ REGRESSION: --warmup-timeout-s used to reach ONLY the post-``analysis()`` node
+    loop, while a cold torch.compile stalls INSIDE ``analysis()``, which python-chess
+    bounds with the popen_uci timeout. So the flag could not extend a compile window and
+    a 60-game Cheese block died at exactly 300s under ``--warmup-timeout-s 1800``.
+
+    Asserted on BOTH engines: B's warmup never received the flag at all.
+    """
+    module = _load_match_vs_uci_module()
+    timeouts: dict[str, float] = {}
+    warmups: dict[str, float] = {}
+
+    class FakeEngine:
+        id: ClassVar[dict[str, str]] = {"name": "fake"}
+        options: ClassVar[dict[str, object]] = {}
+
+        def quit(self) -> None:
+            return None
+
+    def fake_open_engine(spec: str, cwd: str | None = None, *, timeout_s: float = 0.0):
+        del cwd
+        timeouts[spec] = timeout_s
+        return FakeEngine()
+
+    def fake_warmup(eng: object, *, nodes: int | None, label: str, timeout_s: float = -1.0):
+        del eng, nodes
+        warmups[label] = timeout_s
+        if label == "B":  # both engines opened and both warmups reached by now
+            raise RuntimeError("stop after warmup")
+
+    monkeypatch.setattr(module, "_open_engine", fake_open_engine)
+    monkeypatch.setattr(module, "_warmup_engine", fake_warmup)
+    monkeypatch.setattr(sys, "argv", [
+        "match_vs_uci.py",
+        "--engine-a", "engine-a", "--engine-b", "engine-b",
+        "--warmup-nodes", "3000", "--warmup-timeout-s", "1800",
+    ])
+
+    with pytest.raises(RuntimeError, match="stop after warmup"):
+        module.main()
+
+    # The deadline that aborts the compile is raised, not left at the 300s default.
+    assert timeouts["engine-a"] == 1800.0
+    assert timeouts["engine-b"] == 1800.0
+    # And the flag reaches BOTH warmups; B's call site used to omit it entirely.
+    assert warmups["A"] == 1800.0
+    assert warmups["B"] == 1800.0
+
+
+def test_engine_command_timeout_stays_at_the_backstop_without_a_warmup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative control: no warmup means no reason to relax the hung-engine backstop.
+
+    Without this, the test above would pass on an implementation that simply hard-codes
+    a huge timeout everywhere -- which would silently disarm the guard that catches a
+    genuinely wedged engine.
+    """
+    module = _load_match_vs_uci_module()
+    timeouts: dict[str, float] = {}
+
+    class FakeEngine:
+        id: ClassVar[dict[str, str]] = {"name": "fake"}
+        options: ClassVar[dict[str, object]] = {}
+
+        def quit(self) -> None:
+            return None
+
+    def fake_open_engine(spec: str, cwd: str | None = None, *, timeout_s: float = 0.0):
+        del cwd
+        timeouts[spec] = timeout_s
+        if spec == "engine-b":
+            raise RuntimeError("stop before playing")
+        return FakeEngine()
+
+    monkeypatch.setattr(module, "_open_engine", fake_open_engine)
+    monkeypatch.setattr(sys, "argv", [
+        "match_vs_uci.py",
+        "--engine-a", "engine-a", "--engine-b", "engine-b",
+        "--warmup-timeout-s", "1800",
+    ])
+
+    with pytest.raises(RuntimeError, match="stop before playing"):
+        module.main()
+
+    assert timeouts["engine-a"] == module._ENGINE_COMMAND_TIMEOUT_S
+    assert timeouts["engine-b"] == module._ENGINE_COMMAND_TIMEOUT_S
