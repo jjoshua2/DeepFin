@@ -43299,3 +43299,35 @@ At iter 142 it reads **15,793 (+53% over the 10,314 baseline)** and still rising
 game count. Nothing in the prereg predicted it, so it is a finding, not a success.
 It also means `train_views_actual` stays pinned at 4.31-4.32 (views is a TARGET) —
 we are buying UNIQUE POSITIONS, which is what the generalisation failure needs.
+
+### 2026-08-12 — sims-100 MECHANISM GATE: **PASSES**, at 1.51x not 1.74x
+
+The corrected, mechanism-agnostic gate (`replay_positions_ingested >= 17,000`
+sustained 3 consecutive iterations) is **MET**: iters 145-148 read 19,221 /
+22,078 / 18,722 / 19,087 — four in a row, one more than required.
+
+| window | positions/iter | games | time/iter | candidates | views |
+|---|---|---|---|---|---|
+| pre, iters 130-139 | 10,141 | 403 | 301.8s | 23.7 | 4.31 |
+| post, iters 141-150 | **17,664** | 455 | 347.7s | 15.9 | 4.31 |
+| ratio | **1.74x** | 1.13x | 1.15x | 0.67 | 1.00 |
+
+**⚑ READ THE PER-SECOND NUMBER, NOT THE PER-ITERATION ONE.** Iterations also got
+**15% LONGER** (301.8s -> 347.7s), so the per-iteration ratio is not a throughput
+gain — it is partly a longer iteration. Normalised: **33.60 -> 50.81 positions/s
+= 1.51x**. That is BELOW the 1.8-2.5x band I predicted in the prereg
+[[loop_is_gpu_bound_cpu_two_thirds_idle]]. The prediction was optimistic; the
+mechanism gate passes on the quantity it was written on, and I am recording the
+miss rather than quietly re-baselining to the flattering ratio.
+
+**The iter-142 finding REPLICATES over 10 iterations**: games +13% and plies/game
+flat, so the budget still goes to **full-ply (labeled) fraction**, not more games.
+Views stay pinned at 4.31 (a TARGET), so the purchase is UNIQUE POSITIONS —
+which is what the measured generalisation failure needs.
+
+**STILL OWED, and the gate that actually decides this:** the paired 400-game arena
+vs `data/ratchet/snapshots/ck_2026-08-11_5ce02_iter138` after ~24h of window
+turnover. Throughput is not Elo. Nothing above is a strength verdict, and the
+pre-committed SUCCESS/KILL rules are unchanged.
+⚑ The `wdl_regret` series remains VOID for net-strength purposes — this change
+moved `mcts_simulations` and `gumbel_topk` [[wdl_regret_measures_agent_not_net]].
