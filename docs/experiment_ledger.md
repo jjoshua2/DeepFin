@@ -43331,3 +43331,62 @@ turnover. Throughput is not Elo. Nothing above is a strength verdict, and the
 pre-committed SUCCESS/KILL rules are unchanged.
 ⚑ The `wdl_regret` series remains VOID for net-strength purposes — this change
 moved `mcts_simulations` and `gumbel_topk` [[wdl_regret_measures_agent_not_net]].
+
+### 2026-08-12 — PREREG: Tier-12, the COUPLED categorical head (lc0's value topology)
+
+**NOT LAUNCHED.** This entry exists so the arm *can* be launched (protocol rule 1);
+it needs a GPU pause window and Josh's go-ahead. Code is PR #397 (unmerged).
+
+**Hypothesis.** Tier-10/11 closed the categorical head's TARGET as a two-instrument
+NULL. The remaining structural difference from lc0 is TOPOLOGY: lc0 hangs scalar
+value / categorical value / value-error off **ONE shared value embedding**, so the
+distributional aux supervises the representation the scalar head reads. Ours hung it
+on an independent `ValueHead` (own `token_proj` + own MLP, 1.12M params).
+**MEASURED: with the standalone head a loss on `categorical` puts EXACTLY ZERO
+gradient on `value_wdl.net[0].weight`.** We paid for the head and got none of the
+representation supervision that motivates it. PR #397 puts a 32-way `Linear` on
+`value_wdl`'s 128-d hidden — **4,128 params vs 1,118,496 (271x cheaper)** — and adds
+only NEW state_dict keys, so it warm-starts from iter138 byte-identical.
+
+**Arms** (same 800-step offline retrain protocol as Tier-10/11, so the banked
+`t6_base800` / `t10_catfix` / `t10_catfix_low` rows stay comparable):
+
+| arm | topology | `w_categorical` |
+|---|---|---|
+| `t6_base800` (BANKED) | — (categorical OFF) | 0.0 |
+| `t10_catfix` (BANKED) | standalone | 0.3 |
+| `t10_catfix_low` (BANKED) | standalone | 0.1 |
+| **`t12_coupled`** | **coupled** | 0.3 |
+| **`t12_coupled_low`** | **coupled** | 0.1 |
+
+**⚑⚑ BOTH ARMS MUST BE WARM-STARTED IDENTICALLY.** Enabling the flag on an existing
+checkpoint keeps the weights but **RESETS every optimizer moment and the scheduler**
+(the splice helper only handles a SHORTER donor; optimizer state carries no parameter
+names to realign on). A coupled arm compared against a run that KEPT its moments
+measures the optimizer reset, not the head. Pinned by test in PR #397.
+
+**DECIDING YARDSTICK** — the head's DESIGNATED ruler, never the loss it trains on
+[[value_head_frozen_since_iter8]]:
+
+```
+PYTHONPATH=. python3 scripts/value_regret.py --checkpoint <arm> --batch 128 \
+  --gpu-mem-fraction 0.15 --paired-against data/tier11/t6_base800
+```
+
+**PRE-COMMITTED THRESHOLDS** (n~1723 gives a paired CI of about +/-3.8 cp):
+- **WORKED**: paired `value_regret` vs `t6_base800` improves by **>= 5.0 cp** with the
+  95% CI EXCLUDING 0, on at least one of the two weights.
+- **FAILED / DIRECTION CLOSED**: neither arm's CI excludes 0 in the improving
+  direction. Then the categorical direction is **closed entirely** — target repaired
+  (Tier-10/11) and topology repaired (here) both null — and `w_categorical` should go
+  to 0.0 permanently and the head be deleted rather than carried.
+- Anything between is FAILED. "Promising" is not a verdict.
+
+**Confounds.** One data-affecting change only: topology. `w_categorical` is varied
+ACROSS arms, not within one, and the 0.1 arm is matched to lc0 CF-240M's lambda.
+Absolute levels (75-78 cp) are far worse than the live lineage (57.7) because these
+are 800-step offline retrains — **RELATIVE READS ONLY**.
+
+**⚑ Do not read this as a live-run proposal.** `w_categorical: 0.0` in the live yaml
+means the mechanism is inert in production; turning it on live is a SEPARATE
+data-affecting change needing its own entry and its own readout window.
