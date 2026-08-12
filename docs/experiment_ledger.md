@@ -43251,3 +43251,51 @@ alone is NOT a rollback — the replay window will hold ~a day of sims-100 data.
 **Confounds.** None intended: this is the only training-affecting change in the
 window. The `opening_fen_list_path` retire_860 -> retire_138 edit was already live
 before this restart and is NOT part of this experiment.
+
+### 2026-08-12 — sims-100 DEPLOY VERIFICATION + a MIS-SPECIFIED GATE I have to own
+
+**IT IS IN EFFECT.** Realized `gumbel_policy_candidate_count_mean` (= min(topk,
+legal), a BEHAVIOUR not a config echo), legal flat at ~26-27 throughout:
+
+| iter | candidates | Δ | games | plies | rows/game | positions | ema_winrate |
+|---|---|---|---|---|---|---|---|
+| 139 (pre) | 23.82 | — | 419 | 124.9 | 24.6 | 10,314 | 0.4897 |
+| 140 | 23.38 | −0.44 | 451 | 127.3 | 23.8 | 10,713 | 0.4885 |
+| 141 | 21.47 | **−1.91** | 425 | 130.1 | 33.5 | 14,237 | 0.4843 |
+| 142 | 19.33 | **−2.14** | 436 | 126.0 | 36.2 | 15,793 | 0.4762 |
+
+Iter 140 is ~all RESUMED pre-change games (the C14b in-flight resume), so the
+candidate mean is a MIXTURE that drains over several iterations. Monotone fall with
+ACCELERATING deltas + the winrate decline (weaker search ⇒ lower curriculum winrate,
+exactly as predicted) ⇒ deployed. Equilibrium should land just under 16.
+
+**⚑ MY PRE-COMMITTED MECHANISM GATE WAS MIS-SPECIFIED, AND ITS AUTOMATED FORM FIRED
+A FALSE "REVERT".** Two separate errors, both mine:
+
+1. **A static threshold on a draining mixture.** I wrote "candidates < 18" and
+   evaluated it at the first clean iteration. At iter 141 the true value was still
+   ~40% old-config searches. The bar was right; the *timing rule* was missing. A
+   proxy that equilibrates needs an EQUILIBRATION condition (|Δ| < 0.3 for 2
+   iterations), not a single read [[proxy_must_be_monotone_in_the_intervention]].
+
+2. **I ANDed a deciding quantity with my MODEL of how it would arrive.** The gate
+   was `positions >= 17,000 AND games >= 900`. Positions is the quantity that
+   matters; **games was my prediction of the route, and the prediction is wrong.**
+   Games are FLAT (~430) and plies/game flat (~126); the throughput went into
+   **rows per game: 24.6 -> 36.2**, i.e. the full-ply fraction rose 19.7% -> 28.7%.
+   Freed GPU budget is being spent making more plies FULL (labeled) rather than
+   playing more games. `games >= 900` can never pass and would have fired a
+   spurious revert on a change that is doing exactly what it was meant to do.
+   This is the `an_exit_code_is_an_or_over_axes` failure with the sign flipped —
+   an AND over a criterion and a mechanism guess.
+
+**CORRECTED MECHANISM GATE** (deciding quantity only, mechanism-agnostic):
+`replay_positions_ingested >= 17,000` sustained over 3 consecutive iterations.
+At iter 142 it reads **15,793 (+53% over the 10,314 baseline)** and still rising.
+**The SUCCESS/KILL Elo rules are UNCHANGED** — the paired 400g arena vs
+`ck_2026-08-11_5ce02_iter138` remains the decider, and nothing here relaxes it.
+
+**Unexplained and owed:** why the extra budget goes to full-ply fraction rather than
+game count. Nothing in the prereg predicted it, so it is a finding, not a success.
+It also means `train_views_actual` stays pinned at 4.31-4.32 (views is a TARGET) —
+we are buying UNIQUE POSITIONS, which is what the generalisation failure needs.
