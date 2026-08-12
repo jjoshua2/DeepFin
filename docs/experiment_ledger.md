@@ -44346,3 +44346,38 @@ Relaunch command (unchanged apart from env):
 — same donor, same work_dir (the crashed experiment dir remains alongside as evidence;
 `has_salvage=1` forces a FRESH trial). Realized-config verification from the trial's own
 emitted row is owed before the arm counts as running, as for every arm.
+
+### Tier-13 plumbing audit: policy_embedding_mode traced through all five model-construction seams — SOUND (2026-08-12 18:35)
+
+Audited before burning the arms' GPU-hours, per the standing bias (a value accepted then
+silently ignored). Question: can any path silently rebuild a B/C net WITHOUT the adapter
+and tolerant-load the checkpoint over it (⇒ fake null in every arena)? Verdict: **no path
+can, on current code** — each seam is either generic-by-construction or fail-loud:
+
+| seam | mechanism | verdict |
+|---|---|---|
+| trainer checkpoint | `Trainer.save` embeds `arch` via `dataclasses.asdict(ModelConfig)` (`train/trainer.py:3822`) — new fields ride along automatically | ✓ generic |
+| arena / UCI loader | `model_config_from_arch` (`uci/model_loader.py:104`): schema-versioned, REFUSES unknown keys, `ModelConfig(**payload)`; `require_complete=True` when arch came from the checkpoint | ✓ fail-loud |
+| publish → manifest | `model_config_to_manifest_dict` explicitly writes `policy_embedding_mode` (`model/__init__.py:411`); called with the TRIAL's model_cfg (`tune/distributed_runtime.py:679`) | ✓ |
+| worker | `model_config_from_manifest_dict` decode reads the mode (`model/__init__.py:162`); worker RAISES if the manifest lacks `model_config` (`worker.py:2201`) | ✓ |
+| shared broker | same decode; `model_config_identity_key` is `dataclass_fields`-derived with only `use_gradient_checkpointing` excluded, so the mode IS architecture identity (`inference.py:3496`) | ✓ |
+
+The sixth path — the AOT broker, the one `--verify` can't see — is OFF in all arms by
+construction (`distributed_inference_aot_dir: ''`).
+
+**Observed, not just read:** arm A's live manifest
+(`runs/pbt2_small/server/trials/train_trial_b384d_00000/publish/manifest.json`, mtime
+18:29) carries `model_config.policy_embedding_mode: 'off'` and
+`active_run_prefix.txt` = `b384d`. Note the arms share PRODUCTION's `server_root`
+(`distributed_server_root_override` inherited from the live yaml) — trial-scoped subdirs,
+no collision, and the prefix switch is what points workers at the arm.
+
+⇒ **Arm B/C launch verification gains a required step**: besides the trial's emitted
+config table (trainer side), read the published manifest's
+`model_config.policy_embedding_mode` (worker side) — `'linear'` / `'residual_mish'`
+respectively. The table alone cannot prove the workers see the adapter.
+
+Residual (hygiene, NOT a Tier-13 hazard): `model_config_from_manifest_dict` defaults an
+ABSENT `policy_embedding_mode` to `'off'` — fail-open for manifests written by pre-#398
+code. All Tier-13 publishes come from current code, so inert here; flagged for the next
+config-hygiene PR alongside the same pattern on its 40+ sibling fields.
