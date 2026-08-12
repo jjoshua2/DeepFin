@@ -43970,6 +43970,63 @@ warning and **silently train the control under the treatment's name**
 [[merged_on_live_branch_still_never_ran]]. Verify on each arm's first row that the realized
 mode is the intended one before letting it run.
 
+### AOT-ON was investigated on Josh's instruction and REJECTED for Tier-13 — measured, not assumed
+
+Josh asked (2026-08-12, before launch) whether fresh architecture-matched AOT packages could
+be built per arm rather than accepting the AOT-off throughput penalty, with the standing
+condition: **do not weaken the fail-closed guard merely to launch.** Investigated; the
+answer is that it is *feasible and clean* but **not worth it for this experiment**, so the
+pre-registered AOT-OFF fallback stands.
+
+**What was measured.**
+- Packages are **weight-agnostic** (`aot_inductor.package_constants_in_so=False`), so one
+  build serves every checkpoint of the same TOPOLOGY. Rebuilding is therefore about the
+  adapter, not the donor weights.
+- Build cost from the existing dir's own timestamps: **~2–3 min per batch bucket**, 21
+  buckets ⇒ **~45–60 min per arm**, **~2.5–3 h for three**.
+- Every package in `data/aot_models_512/` declares **455 constant FQNs**, extractable
+  OFFLINE with no CUDA (the `.pt2` is a zip; `original_fqn` is emitted in the generated
+  `wrapper.cpp`).
+- Against the live topology the model's 496 `state_dict` entries split as: **455 packaged**,
+  15 storage-ALIASES of packaged names (the tied `layer_smolgens.*.gen_weight.weight` —
+  16 keys, 1 storage), and **47 orphans** which are exactly the params of heads the
+  inference subgraph never computes (`moves_left`, `policy_future`, `policy_sf`,
+  `policy_soft`, `volatility`, `sf_volatility`, `value_categorical`, `value_sf_eval`, plus
+  `policy_own.log_temp` and `value_wdl.net.2.bias`).
+- **`linear` and `residual_mish` add EXACTLY TWO names**: `policy_embedding.weight` and
+  `policy_embedding.bias`. Nothing else moves.
+
+⇒ **A genuine fail-closed identity check exists and needs no manifest.** Rule: every model
+parameter must be (a) declared by the package, (b) a storage-alias of one that is, or (c) in
+a FROZEN, source-controlled list of the 47 non-inference-path params — otherwise refuse.
+This is strictly stronger than the current blanket "refuse any AOT route while the adapter is
+on", because it catches EVERY topology drift rather than this one, and it is conservative by
+construction: a new topology introduces new NAMES, and a new name is in none of the three
+buckets, so refusal fires. It is not a stamp that can drift — it reads the compiled graph's
+own constant list and compares against the live model.
+
+**Why it is still rejected here, and the reasoning is an asymmetry, not a cost tie.**
+The saving is ~4–7 h of training wall clock; the build is ~2.5–3 h, plus a new production
+guard that needs authoring, an INDEPENDENT review (I cannot review my own), and a merge.
+Roughly break-even on GPU. The asymmetry decides it:
+
+- **AOT OFF is common-mode.** It costs wall clock and biases **no contrast**. It cannot
+  corrupt the readout.
+- **A new guard that is wrong in the PERMISSIVE direction silently invalidates all ~30 GPU-
+  hours** — B and C would serve the control's prior from a stale graph, train the adapter,
+  and produce an arena number about the wrong architecture. That is exactly the failure
+  Tier-13 cannot detect from its own output [[aot_broker_is_a_fifth_policy_path]], and
+  exactly this repo's signature defect.
+
+Worst case with AOT off: the experiment finishes ~5 h later. Worst case with a wrong guard:
+30 GPU-hours answer the wrong question. **Take the wall clock.**
+
+**Banked, so the next attempt is cheap:** the hard part is done — the delta is proven to be
+exactly two parameters, the FQN extraction works offline, and the three-bucket rule above is
+specified. Building it as its own reviewed PR AFTER Tier-13 is the right sequencing, and is
+what the PR #398 reviewer originally advised ("I would not build the AOT
+architecture-manifest system before this experiment").
+
 **Cost — and a CORRECTION to the estimate given before this amendment.** Realized
 **332 s/iter** (mean of the last 10 iterations of trial `5ce02`, post sims-100). That
 number was measured with **AOT ON**, and all three arms run **AOT OFF** — the live AOT
