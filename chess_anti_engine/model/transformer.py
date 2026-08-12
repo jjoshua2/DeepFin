@@ -22,6 +22,10 @@ from chess_anti_engine.utils.architecture import (
 )
 
 _VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
+# Bin count of the categorical (HL-Gauss) value output. Defined here rather than
+# imported because `model/` does not depend on `train/`; `tests/test_value_heads.py`
+# pins it to `train.targets.DEFAULT_CATEGORICAL_BINS` so the two cannot drift.
+CATEGORICAL_HEAD_BINS = 32
 _ARC_POS_CHANNELS = 64
 _ARC_RELATION_CHANNELS = 5
 _NUM_PHASE_BUCKETS = 3
@@ -337,6 +341,42 @@ class ValueHead(nn.Module):
         out = cast("nn.Linear", self.net[2])
         nn.init.normal_(out.weight, std=0.01)
         nn.init.zeros_(out.bias)
+
+    @property
+    def hidden_dim(self) -> int:
+        """Width of the shared activation ``hidden()`` returns."""
+        return cast("nn.Linear", self.net[0]).out_features
+
+    def hidden(self, x: torch.Tensor) -> torch.Tensor:
+        """The 128-d activation the output projection reads from.
+
+        Split out so an auxiliary head can be attached to the SAME representation
+        the main output uses (lc0's value-embedding topology) rather than reaching
+        it only by back-propagating through the whole trunk. ``net`` is indexed
+        rather than restructured so every existing ``net.0`` / ``net.2`` parameter
+        key stays byte-identical for checkpoint loading; ``_assert_net_layout``
+        makes a future edit to ``net`` fail loudly instead of silently feeding an
+        aux head the wrong tensor.
+        """
+        self._assert_net_layout()
+        projected = F.mish(self.token_proj(x))  # (B, 64, token_dim)
+        flat = projected.flatten(1)  # (B, 64 * token_dim)
+        return self.net[1](self.net[0](flat))
+
+    def head_from_hidden(self, h: torch.Tensor) -> torch.Tensor:
+        """Apply the output projection to an activation from ``hidden()``."""
+        return self.net[2](h)
+
+    def _assert_net_layout(self) -> None:
+        if not (
+            len(self.net) == 3
+            and isinstance(self.net[0], nn.Linear)
+            and isinstance(self.net[2], nn.Linear)
+        ):
+            raise RuntimeError(
+                "ValueHead.net layout changed; hidden()/head_from_hidden() index it "
+                "positionally and must be updated together with it"
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
   # x: (B, 64, embed_dim)
@@ -681,6 +721,14 @@ class TransformerConfig:
     phase_output_adapter: bool = False
     phase_output_adapter_dim: int = 64
     phase_smolgen: bool = False
+  # Attach the 32-bin categorical value output to ``value_wdl``'s hidden
+  # activation instead of giving it a standalone ValueHead. This is lc0's
+  # value-embedding topology: the distributional aux target then supervises the
+  # SAME representation the scalar/WDL output reads from, rather than reaching it
+  # only by back-propagating through the whole trunk. Costs ~4.1k params instead
+  # of ~1.12M, and adds only new state_dict keys so a checkpoint trained with the
+  # standalone head warm-starts with every shared tensor byte-identical.
+    categorical_head_coupled: bool = False
     phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (
         DEFAULT_PHASE_PIECE_THRESHOLDS
     )
@@ -1000,7 +1048,20 @@ class ChessNet(nn.Module):
 
         self.value_wdl = ValueHead(output_embed_dim, 3)
         self.value_sf_eval = ValueHead(output_embed_dim, 3)
-        self.value_categorical = ValueHead(output_embed_dim, 32)
+  # Exactly one of these is built; see TransformerConfig.categorical_head_coupled.
+  # Coupled = lc0's topology (aux reads value_wdl's own embedding); standalone =
+  # the legacy independent head, which Tier-10/Tier-11 measured as a two-instrument
+  # NULL even after its target was repaired.
+        self.categorical_head_coupled = bool(cfg.categorical_head_coupled)
+        self.value_categorical: ValueHead | None = None
+        self.value_categorical_coupled: nn.Linear | None = None
+        if self.categorical_head_coupled:
+            coupled = nn.Linear(self.value_wdl.hidden_dim, CATEGORICAL_HEAD_BINS)
+            nn.init.normal_(coupled.weight, std=0.01)
+            nn.init.zeros_(coupled.bias)
+            self.value_categorical_coupled = coupled
+        else:
+            self.value_categorical = ValueHead(output_embed_dim, CATEGORICAL_HEAD_BINS)
 
         self.volatility = VolatilityHead(output_embed_dim)
         self.sf_volatility = VolatilityHead(output_embed_dim)
@@ -1263,14 +1324,27 @@ class ChessNet(nn.Module):
                 "wdl": self.value_wdl(t),
             }
 
+  # Coupled: one pass through value_wdl's body feeds BOTH outputs, so the
+  # categorical gradient lands on the same hidden activation the WDL logits are
+  # read from. Standalone: the legacy independent head, unchanged.
+        if self.value_categorical_coupled is not None:
+            value_hidden = self.value_wdl.hidden(t)
+            wdl_out = self.value_wdl.head_from_hidden(value_hidden)
+            categorical_out = self.value_categorical_coupled(value_hidden)
+        else:
+            if self.value_categorical is None:
+                raise RuntimeError("neither categorical head was constructed")
+            wdl_out = self.value_wdl(t)
+            categorical_out = self.value_categorical(t)
+
         return {
             "policy_own": self.policy_own(t, ft_bias=pol_ft_bias),
             "policy_soft": self.policy_soft(t),
             "policy_sf": self.policy_sf(t),
             "policy_future": self.policy_future(t),
-            "wdl": self.value_wdl(t),
+            "wdl": wdl_out,
             "sf_eval": self.value_sf_eval(t),
-            "categorical": self.value_categorical(t),
+            "categorical": categorical_out,
             "volatility": self.volatility(t),
             "sf_volatility": self.sf_volatility(t),
             "moves_left": self.moves_left(t),

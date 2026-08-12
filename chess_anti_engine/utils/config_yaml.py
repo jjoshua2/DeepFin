@@ -207,6 +207,7 @@ _MODEL_PASSTHROUGH = (
     "arc_attention_bias", "smolgen_relation_basis", "smolgen_relation_norm",
     "smolgen_relation_coeff_norm", "smolgen_relation_scale",
     "phase_output_adapter", "phase_output_adapter_dim", "phase_smolgen", "phase_piece_thresholds",
+    "categorical_head_coupled",
 )
 
 # train section: all 1:1 passthrough.

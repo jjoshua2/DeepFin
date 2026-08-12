@@ -81,6 +81,10 @@ class ModelConfig:
     phase_output_adapter: bool = False
     phase_output_adapter_dim: int = 64
     phase_smolgen: bool = False
+  # Attach the categorical value output to value_wdl's hidden activation
+  # (lc0 value-embedding topology) instead of a standalone ValueHead. Part of
+  # checkpoint identity: the two topologies have different state_dict keys.
+    categorical_head_coupled: bool = False
     phase_piece_thresholds: tuple[int, int] = DEFAULT_PHASE_PIECE_THRESHOLDS
 
 
@@ -144,6 +148,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         phase_output_adapter=bool(mc.get("phase_output_adapter", False)),
         phase_output_adapter_dim=int(mc.get("phase_output_adapter_dim", 64)),
         phase_smolgen=bool(mc.get("phase_smolgen", False)),
+        categorical_head_coupled=bool(mc.get("categorical_head_coupled", False)),
         phase_piece_thresholds=normalize_phase_piece_thresholds(mc.get("phase_piece_thresholds")),
     )
 
@@ -310,6 +315,7 @@ def model_config_from_flat_config(
         phase_output_adapter=bool(cfg.get("phase_output_adapter", False)),
         phase_output_adapter_dim=int(cfg.get("phase_output_adapter_dim", 64)),
         phase_smolgen=bool(cfg.get("phase_smolgen", False)),
+        categorical_head_coupled=bool(cfg.get("categorical_head_coupled", False)),
         phase_piece_thresholds=normalize_phase_piece_thresholds(
             cfg.get("phase_piece_thresholds")
         ),
@@ -370,6 +376,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "phase_output_adapter": bool(cfg.phase_output_adapter),
         "phase_output_adapter_dim": int(cfg.phase_output_adapter_dim),
         "phase_smolgen": bool(cfg.phase_smolgen),
+        "categorical_head_coupled": bool(cfg.categorical_head_coupled),
         "phase_piece_thresholds": list(normalize_phase_piece_thresholds(cfg.phase_piece_thresholds)),
     }
 
@@ -461,6 +468,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             phase_output_adapter=bool(cfg.phase_output_adapter),
             phase_output_adapter_dim=int(cfg.phase_output_adapter_dim),
             phase_smolgen=bool(cfg.phase_smolgen),
+            categorical_head_coupled=bool(cfg.categorical_head_coupled),
             phase_piece_thresholds=normalize_phase_piece_thresholds(cfg.phase_piece_thresholds),
         )
         return _attach_runtime_model_metadata(ChessNet(tcfg), cfg)
