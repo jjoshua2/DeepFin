@@ -337,3 +337,22 @@ def test_flag_is_accepted_by_the_yaml_schema() -> None:
         flatten_run_config_defaults(
             {"model": {"categorical_head_coupled_typo": True}, "train": {}}
         )
+
+
+def test_enabling_the_flag_is_REFUSED_by_a_live_yaml_reload() -> None:
+    """⚑⚑ HOW YOU ACTUALLY TURN THIS ON — and how you cannot.
+
+    Every `ModelConfig` field is construction-bound, so `_reload_yaml_into_config`
+    and `_patch_experiment_state_for_resume` both SKIP this key: editing the live
+    yaml and restarting with `--resume` leaves the trial building the STANDALONE
+    head while the yaml says otherwise. It is loud (a WARNING) rather than
+    silent, but the run comes up healthy and the whole readout window would be
+    recorded against the legacy topology.
+
+    ⇒ the coupled arm needs a FRESH (non-resumed) trial, or a salvage warm-start
+    whose launch config already carries the key. Pinned here because the failure
+    is a wrong verdict, not a crash.
+    """
+    from chess_anti_engine.tune.trainable_config_ops import _RESUME_CONSTRUCTION_BOUND_KEYS
+
+    assert "categorical_head_coupled" in _RESUME_CONSTRUCTION_BOUND_KEYS

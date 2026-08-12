@@ -67,3 +67,29 @@ def test_components_and_diagnostics_are_keys_compute_loss_returns() -> None:
     keys = set(compute_loss(outputs, batch))
     missing = sorted((set(COMPONENT_WEIGHT_KEY) | set(DIAGNOSTIC_COMPONENTS)) - keys)
     assert not missing, f"probe measures keys compute_loss does not return: {missing}"
+
+
+def test_the_coupled_categorical_head_is_not_counted_as_trunk() -> None:
+    """⚑ `_classify_params` splits on the FIRST dotted component and tests set
+    membership, so `value_categorical_coupled` is NOT covered by the
+    `value_categorical` entry — it is a distinct top-level attribute.
+
+    Left out of HEAD_PREFIXES it lands in the TRUNK, and the probe then reports
+    the value head's own 32-way Linear as trunk gradient, inflating the very
+    value-vs-policy trunk share this instrument exists to measure.
+    """
+    from chess_anti_engine.model import ModelConfig, build_model
+    from scripts.probe_head_grad_share import _classify_params
+
+    for coupled in (True, False):
+        model = build_model(ModelConfig(
+            kind="transformer", embed_dim=64, num_layers=2, num_heads=4,
+            use_smolgen=False, categorical_head_coupled=coupled,
+        ))
+        _trunk, trunk_names, head_names = _classify_params(model)
+        categorical = [n for n in trunk_names + head_names if n.startswith("value_categorical")]
+        assert categorical, "the categorical head has no parameters at all"
+        assert not [n for n in trunk_names if n.startswith("value_categorical")], (
+            f"coupled={coupled}: categorical params classified as TRUNK: "
+            f"{[n for n in trunk_names if n.startswith('value_categorical')]}"
+        )
