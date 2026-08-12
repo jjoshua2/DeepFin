@@ -56,6 +56,19 @@ trainer_running() {
 }
 
 while true; do
+    # ⚑ Opt-out sentinel, mirroring .ratchet_disabled (train.sh re-spawns this
+    # loop on every `start`, so killing the process is not durable). Needed
+    # because the flywheel reads the LIVE trial's checkpoints from $WORK_DIR but
+    # blindspot_retire_step.py repoints configs/pbt2_small.yaml UNCONDITIONALLY —
+    # during an experiment arm launched under TRAIN_WORK_DIR/TRAIN_CONFIG it
+    # contaminates the PRODUCTION yaml with arm-derived pool state (measured
+    # 2026-08-12 16:34: Tier-13 arm A's ck0 rewrote opening_fen_list_path
+    # retire_217 -> retire_0; reverted). The retire/feed flywheel also does GPU
+    # work every checkpoint, which contends with a live experiment arm.
+    # Delete the file to re-enable. NOTE a copy of this loop spawned BEFORE this
+    # sentinel existed keeps running the OLD code and must be killed by PID
+    # (memory: running-scripts-keep-the-old-file).
+    if [ -f .monitor_fen_disabled ]; then sleep 300; continue; fi
     if ! trainer_running; then sleep 300; continue; fi
     TRIAL=$(ls -dt "$WORK_DIR"/tune/train_trial_* 2>/dev/null | head -1)
     [ -n "$TRIAL" ] || { sleep 300; continue; }

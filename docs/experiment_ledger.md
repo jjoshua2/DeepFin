@@ -44292,3 +44292,57 @@ that serializes the eval thread's compiling first forward against the trainer's 
 (a shared lock taken by the eval thread for its first call and by `_run_optimizer_step`
 per step), or pre-warms the eval compile before train_steps. Config-off is the Tier-13
 expedient, not the fix.
+
+### Tier-13 relaunch amendment (user-authorized 2026-08-12): 5th common-mode key + observer quarantine
+
+Josh authorized the async-eval fix and a week of autonomous execution ("do whatever you
+think is best over the next week"). Applied before relaunching arm A:
+
+1. **5th common-mode key, all three arm yamls: `distributed_async_test_eval: false`**
+   (kills the compile-thread race that took down arm A). Post-conditions re-asserted on
+   the FLATTENED dicts: each arm differs from the live yaml in exactly
+   {`policy_embedding_mode`, `distributed_inference_aot_dir`, `salvage_seed_pool_dir`,
+   `work_dir`, `distributed_async_test_eval`}; arms pairwise differ only in
+   {`policy_embedding_mode`, `work_dir`}; `TrialConfig.from_dict` dry-run passes on all
+   three. Consequence for readers: arm rows report `test_*` same-iter (sync) instead of
+   lagged-by-1 (async) — do not compare arm `test_iter` semantics against production
+   rows without shifting.
+
+2. **The preflight assertion caught LIVE CONTAMINATION, not a drift in my configs:** the
+   re-run showed a 6th differing key, `opening_fen_list_path` — the running
+   `monitor_fen.sh` (spawned by arm A's launch with `TRAIN_WORK_DIR=runs/tier13_arm_A` in
+   its env) had read arm A's checkpoint 0 and had `blindspot_retire_step.py` repoint the
+   PRODUCTION yaml (`configs/pbt2_small.yaml`) at an arm-derived pool file
+   (`retire_217` → `retire_0`, 181 → 180 seeds, written 16:34). The arm never reads that
+   file — the damage was aimed at production's next boot. REVERTED to `retire_217`
+   (matches committed `7387f934f`). The derived `data/blindspot_fens_retire_0.txt` is left
+   on disk as the dump of record.
+
+3. **Blind-spot flywheel PAUSED for the whole of Tier-13** via a new `.monitor_fen_disabled`
+   sentinel (mirrors `.ratchet_disabled`; gate added at the top of `monitor_fen.sh`'s
+   loop). Reasons, in order: (a) its yaml write targets production unconditionally —
+   see 2; (b) it does GPU work at every checkpoint, and its env pins it to ARM A's
+   work_dir, so it would contend with arm A but not B/C — an asymmetric, non-common-mode
+   perturbation; (c) the pool is already FROZEN at retire_217 in every arm yaml, which is
+   the common-mode choice. Consequence: no seed retirement/feed during the arms; the dole
+   still serves the static retire_217 list. Delete the sentinel when production resumes.
+
+4. **Watchdog runs DETECT-ONLY for the week** (`WATCHDOG_AUTO_RECOVER=0` exported at every
+   arm launch). Reason: observers survive `train.sh stop` by design and `start_observers`'
+   pgrep guard blocks fresh spawns while an old one lives, so by arm B the resident
+   watchdog would hold ARM A's env — its auto-recovery on a wedge would tear down arm B
+   and resurrect arm A under B's name. Detect-only removes the hazard; wedges are handled
+   manually (babysitting cadence ~hourly). NOTE this also disables abandoned-pause
+   recovery (exit 6) for the duration.
+
+5. **The two observers spawned at 15:56 with arm-A env (watchdog `2648421`,
+   monitor_fen `2648425`) must be killed by PID before relaunch** — the zombie
+   monitor_fen executes the pre-sentinel code and would keep acting on the relaunched
+   arm's checkpoints. Kill is operator-executed (agent kill calls are permission-blocked
+   this session).
+
+Relaunch command (unchanged apart from env):
+`WATCHDOG_AUTO_RECOVER=0 TRAIN_CONFIG=scratchpad/tier13/arm_A_off.yaml TRAIN_WORK_DIR=runs/tier13_arm_A ./scripts/train.sh salvage-restart /home/josh/projects/chess/data/salvage/pre_policy_adapter_20260812`
+— same donor, same work_dir (the crashed experiment dir remains alongside as evidence;
+`has_salvage=1` forces a FRESH trial). Realized-config verification from the trial's own
+emitted row is owed before the arm counts as running, as for every arm.

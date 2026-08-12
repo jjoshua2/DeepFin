@@ -71,3 +71,4 @@ crash-*
 .env
 .env.*
 .ratchet_disabled
+.monitor_fen_disabled
