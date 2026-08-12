@@ -345,7 +345,12 @@ def test_arena_route_rejects_an_oversized_body(tmp_path) -> None:
         auth=("u", "p"),
         json=_arena_payload(padding="z" * 10_000),
     )
-    assert r.status_code == 413, r.text
+    # ⚑ Terminal on a 200, not a 413. The worker keeps ANY non-accepted
+    # response for retry and `break`s, and drains in sorted (timestamp) order,
+    # so a permanently-rejected file at the head of the queue blocks every
+    # later result forever. `rejected` is the protocol's terminal channel.
+    assert r.status_code == 200, r.text
+    assert r.json().get("rejected") is True, r.json()
     assert not list((server_root / "arena_inbox").rglob("*.json"))
 
 
@@ -509,3 +514,65 @@ def test_client_report_sink_is_bounded(tmp_path) -> None:
     if qdir.is_dir():
         kept = [p for p in qdir.iterdir() if not p.name.endswith(".reason.txt")]
         assert len(kept) <= 3, f"client_reports grew unbounded: {len(kept)}"
+
+
+def test_a_rejected_arena_result_does_not_block_the_queue(tmp_path) -> None:
+    """⚑ REGRESSION (review). The arena drain had NO terminal channel: any
+    non-accepted response was kept and `break`ed on, and files drain in sorted
+    (timestamp) order -- so one permanently-rejected result at the head of the
+    queue blocks every later one, forever.
+
+    Invisible until the body-size cap introduced the first permanent rejection
+    on this route.
+    """
+    import json as _json
+    import logging
+    import types
+
+    from chess_anti_engine.worker import WorkerSession
+
+    pending = tmp_path / "arena_pending"
+    pending.mkdir(parents=True)
+    rejected = tmp_path / "arena_rejected"
+    rejected.mkdir(parents=True)
+    # Oldest file is the poison one; a newer good one sits behind it.
+    (pending / "1000_bad.json").write_text(_json.dumps({"games": 1, "padding": "z" * 50}))
+    (pending / "2000_good.json").write_text(_json.dumps({"games": 1}))
+
+    posted: list[str] = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, rejected_: bool) -> None:
+            self._r = rejected_
+
+        def json(self):
+            return ({"stored": False, "rejected": True, "reason": "too big"}
+                    if self._r else {"stored": True})
+
+    class _Requests:
+        @staticmethod
+        def post(_url, **kw):
+            body = kw.get("json") or {}
+            big = "padding" in body
+            posted.append("bad" if big else "good")
+            return _Resp(big)
+
+    w = types.SimpleNamespace(
+        arena_pending_dir=pending, arena_rejected_dir=rejected,
+        leased_trial_id="", fixed_trial_id="", trial_api_prefix="/v1",
+        log=logging.getLogger("test_arena_wedge"), _arena_rejected_count=0,
+        _auth=("u", "p"), _requests=_Requests,
+    )
+    w._server_url_for = lambda p: "http://server" + p
+
+    WorkerSession._upload_pending_arena_results(w)  # pyright: ignore[reportArgumentType]
+
+    # ⚑ The load-bearing assertion: the GOOD result behind it was reached.
+    assert posted == ["bad", "good"], (
+        f"queue was head-of-line blocked by the rejected result: {posted}"
+    )
+    assert not (pending / "1000_bad.json").exists()
+    assert (rejected / "1000_bad.json").exists()
+    assert not (pending / "2000_good.json").exists()

@@ -3440,13 +3440,25 @@ def create_app(
   # what is parsed into memory. Disk is the exhaustion axis the finding is
   # about; capping the parse needs a streaming `Request` handler.
         if len(body) > int(arena_max_body_bytes) > 0:
-            raise HTTPException(
-                status_code=413,
-                detail=(
+      # ⚑ `rejected`, NOT 413. This route's client keeps ANY non-accepted
+      # response for retry and `break`s, and arena files are drained in sorted
+      # (timestamp) order -- so one permanently-rejected result sits at the
+      # head of the queue and blocks every later one, forever. A size
+      # violation is a permanent property of the file, so it needs the
+      # protocol's TERMINAL channel, which is `rejected` on a 200. The worker
+      # half of this is in `_upload_pending_arena_results`.
+            log.warning(
+                "rejecting oversized arena result from %s: %d bytes > %d limit",
+                username, len(body), int(arena_max_body_bytes),
+            )
+            return {
+                "stored": False,
+                "rejected": True,
+                "reason": (
                     f"arena result body is {len(body)} bytes, over the "
                     f"{int(arena_max_body_bytes)} byte limit"
                 ),
-            )
+            }
 
         sha = hashlib.sha256(body).hexdigest()
         out = user_dir / f"{sha}.json"
