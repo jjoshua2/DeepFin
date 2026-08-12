@@ -3454,6 +3454,17 @@ def create_app(
             return {
                 "stored": False,
                 "rejected": True,
+          # ⚑ `terminal`, distinct from `rejected`. NOT every rejection on this
+          # route is permanent: `_compat_rejection` also answers
+          # `rejected: True`, and that one is TRANSIENT -- the worker
+          # self-updates and the same file becomes uploadable. Discarding it
+          # would throw away arena results merely because a worker was out of
+          # date. Size is a permanent property of the bytes, so it is the one
+          # that earns the terminal channel.
+          #
+          # Additive and backward-compatible: a server that never sends this
+          # leaves the worker on its existing keep-and-retry path.
+                "terminal": True,
                 "reason": (
                     f"arena result body is {len(body)} bytes, over the "
                     f"{int(arena_max_body_bytes)} byte limit"

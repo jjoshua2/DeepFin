@@ -548,7 +548,7 @@ def test_a_rejected_arena_result_does_not_block_the_queue(tmp_path) -> None:
             self._r = rejected_
 
         def json(self):
-            return ({"stored": False, "rejected": True, "reason": "too big"}
+            return ({"stored": False, "rejected": True, "terminal": True, "reason": "too big"}
                     if self._r else {"stored": True})
 
     class _Requests:
