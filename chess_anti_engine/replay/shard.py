@@ -1278,6 +1278,141 @@ def validate_array_declarations(
                 )
 
 
+def shard_meta_violations(meta: dict[str, Any], *, positions: int) -> list[str]:
+    """Internal-consistency check on a shard's counter metadata.
+
+    ⚑ WHY THIS EXISTS AT ALL. The arrays get incidental but strong protection:
+    they are Blosc/zstd compressed, so a corrupt block fails to decompress,
+    loudly. ``.zattrs`` is plain uncompressed JSON, where a flipped digit stays
+    valid JSON with a wrong number. The least-protected channel feeds the most
+    consequential consumer -- ``wins``/``draws``/``losses`` become the PID's
+    curriculum winrate, which sets training difficulty.
+
+    ⚑ WHAT THIS IS NOT. It is not authentication. A worker that wants to forge
+    these numbers can forge a self-consistent set; nothing here stops that, and
+    there is no trusted server-side source to check them against (the server
+    never sees a game). It raises the cost of *silent* wrongness -- corruption,
+    and forgery that does not bother to stay consistent -- and that is all it
+    claims.
+
+    Every predicate below is `<=` or `>= 0`, and each is satisfied by
+    CONSTRUCTION rather than by observation of live data, so none can reject a
+    legitimate shard:
+
+    * ``w + d + l <= games``. NOT ``==``. `selfplay/finalize.py` increments
+      ``w``/``d``/``l`` only when ``not is_sp`` (curriculum games, not
+      selfplay) AND ``not source.startswith("fenlist")`` -- blind-spot seeds
+      force the net onto the historically-losing seat, so they are systematic
+      losses and are deliberately kept out of the PID's sample. Any shard
+      containing selfplay or seeded games has a STRICT inequality here, which
+      is why the obvious equality would reject nearly every real shard.
+    * ``selfplay_games + curriculum_games <= games`` -- same reasoning, kept
+      as `<=` rather than `==` so a future third game source cannot turn this
+      into an ingest outage.
+    * per-source subsets (adjudicated, draws, checkmate/stalemate) ``<=``
+      their parent count.
+    * every counter ``>= 0``. A negative games count is meaningless and would
+      corrupt the accumulator totals it is summed into.
+
+    ⚑ ``positions`` is the SERVER's own count (``shard_arrs["x"].shape[0]``),
+    not the uploader's. Deliberately NOT compared against ``games``: diff-focus
+    filtering can drop every position of a game, so ``games > positions`` is
+    legitimate. That predicate looks obvious and is wrong -- it is named here
+    so it does not get "fixed" back in.
+
+    Returns a list of human-readable violations; empty means consistent.
+    """
+    def _int(key: str) -> int | None:
+        if key not in meta:
+            return None
+        try:
+            return int(meta[key])
+        except (TypeError, ValueError):
+            return None
+
+    out: list[str] = []
+    counters = (
+        "games", "wins", "draws", "losses", "positions", "total_game_plies",
+        "adjudicated_games", "tb_adjudicated_games", "total_draw_games",
+        "selfplay_games", "selfplay_adjudicated_games", "selfplay_draw_games",
+        "curriculum_games", "curriculum_adjudicated_games", "curriculum_draw_games",
+        "checkmate_games", "stalemate_games", "plies_win", "plies_draw", "plies_loss",
+    )
+    values: dict[str, int] = {}
+    for key in counters:
+        v = _int(key)
+        if v is None:
+            continue
+        values[key] = v
+        if v < 0:
+            out.append(f"{key}={v} is negative")
+
+    games = values.get("games")
+    if games is not None and games >= 0:
+        wdl = [values.get(k) for k in ("wins", "draws", "losses")]
+        if all(v is not None for v in wdl):
+            total = sum(int(v) for v in wdl if v is not None)
+            if total > games:
+                out.append(
+                    f"wins+draws+losses={total} exceeds games={games}",
+                )
+    # ⚑⚑ SUMMED ONLY WHERE THE CHILDREN PARTITION THE PARENT, AND ONLY ONE
+    # GROUP DOES. `finalize.py` is `if is_sp: selfplay_games += 1 else:
+    # curriculum_games += 1` -- a strict partition, so the sum is sound.
+    #
+    # NOTHING ELSE IS. The adjudication and draw counters OVERLAP: `if
+    # was_adjudicated:` and `if result == "1/2-1/2":` are INDEPENDENT blocks
+    # (`finalize.py:510-558`), so a single adjudicated draw increments
+    # `selfplay_games`, `selfplay_adjudicated_games` AND `selfplay_draw_games`.
+    # Summing the children then reads 1+1=2 > 1 and TERMINALLY REJECTS a
+    # completely ordinary shard -- adjudicated draws are common, so this would
+    # have been mass rejection of real selfplay, i.e. ingest to zero.
+    #
+    # I shipped exactly that and an independent review caught it. The lesson is
+    # not "check the counters" but: a sum-of-children bound silently assumes a
+    # partition, and every group here EXCEPT one is a set of overlapping tags
+    # on the same game. Per-child `<=` assumes nothing.
+        for parent, children in (
+            ("games", ("selfplay_games", "curriculum_games")),
+        ):
+            p = values.get(parent)
+            present = [values[c] for c in children if c in values]
+            if p is None or len(present) != len(children):
+                continue
+            total = sum(present)
+            if total > p:
+                out.append(f"{'+'.join(children)}={total} exceeds {parent}={p}")
+
+        for parent, child in (
+            ("games", "adjudicated_games"),
+            ("games", "tb_adjudicated_games"),
+            ("games", "total_draw_games"),
+            ("games", "checkmate_games"),
+            ("games", "stalemate_games"),
+            ("selfplay_games", "selfplay_adjudicated_games"),
+            ("selfplay_games", "selfplay_draw_games"),
+            ("curriculum_games", "curriculum_adjudicated_games"),
+            ("curriculum_games", "curriculum_draw_games"),
+        ):
+            p = values.get(parent)
+            c_val = values.get(child)
+            if p is None or c_val is None:
+                continue
+            if c_val > p:
+                out.append(f"{child}={c_val} exceeds {parent}={p}")
+
+    declared_positions = values.get("positions")
+    if declared_positions is not None and declared_positions != int(positions):
+    # The server counted the rows itself. A mismatch means the counter and the
+    # arrays disagree -- exactly the flipped-digit case, and the one predicate
+    # here with a genuinely trusted right-hand side.
+        out.append(
+            f"positions={declared_positions} disagrees with the "
+            f"{int(positions)} rows actually present",
+        )
+    return out
+
+
 def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
     validate_array_declarations(arrs)
 

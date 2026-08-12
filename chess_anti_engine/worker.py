@@ -2960,6 +2960,29 @@ class WorkerSession:
                     body = r.json()
                 except Exception:
                     body = {}
+  # ⚑ TERMINAL vs TRANSIENT, and this loop had only one of them. Gated on
+  # `terminal`, NOT on `rejected`: `_compat_rejection` also answers
+  # `rejected: True` and that case is transient -- the worker self-updates and
+  # the same file uploads fine -- so quarantining on `rejected` would discard
+  # arena results merely because a worker was out of date. An existing test
+  # (`test_arena_upload_keeps_rejected_200_response`, reason "protocol
+  # mismatch") encodes exactly that, and it caught this. Files are
+  # drained in sorted (timestamp) order and a non-accepted result was ALWAYS
+  # kept and then `break`ed on -- so a result the server will never accept sits
+  # at the head of the queue and blocks every later one, permanently. The shard
+  # loop has had a terminal channel for this since it was written; this one did
+  # not, which only stayed invisible because no permanent rejection existed on
+  # the arena route until the body-size cap added one.
+                if isinstance(body, dict) and bool(body.get("terminal", False)):
+                    self._arena_rejected_count += 1
+                    self.log.warning(
+                        "arena result %s was REJECTED by the server (%s); moving to %s "
+                        "(total rejected this session: %d). It will not be retried",
+                        jp.name, body.get("reason"), self.arena_rejected_dir,
+                        self._arena_rejected_count,
+                    )
+                    jp.replace(self.arena_rejected_dir / jp.name)
+                    continue
                 self.log.warning(
                     "server did not accept pending arena result %s; keeping for retry: %s",
                     jp, body,
