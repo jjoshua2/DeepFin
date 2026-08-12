@@ -59,6 +59,8 @@ class _FakeRequests:
         # would make the fake refuse every later opportunity, which is a defect
         # in the double rather than in the worker.
         self.winners: dict[str, str] = {}
+        self._seq: dict[str, int] = {}
+        self._n = 0
         self._fail_first = fail_first
 
     def post(self, _url: str, *, json: dict, **_kwargs) -> _FakeResponse:
@@ -69,7 +71,13 @@ class _FakeRequests:
         if self._fail_first and len(self.posts) == 1:
             # The grant IS committed server-side; only the response is lost.
             raise ConnectionError("connection reset after the server committed")
-        return _FakeResponse({"granted": granted, "reason_code": "granted"})
+        seq = self._seq.setdefault(rev, 0) or 0
+        if granted and not seq:
+            self._n += 1
+            seq = self._n
+            self._seq[rev] = seq
+        return _FakeResponse({"granted": granted, "grant_seq": seq if granted else 0,
+                              "reason_code": "granted"})
 
 
 def _session(tmp_path: Path, requests):
@@ -79,7 +87,8 @@ def _session(tmp_path: Path, requests):
     session.server = "http://testserver"
     session._dole_claim_key = None
     session._dole_claim_id = ""
-    session._applied_dole_key = None
+    session._applied_dole_seq = 0
+    session._legacy_dole_seq = 0
     return session
 
 
@@ -99,9 +108,12 @@ def test_two_successful_polls_apply_the_seeds_exactly_once(tmp_path: Path) -> No
     assert session._live_dole_queue == [], (
         "the same grant was applied twice; the seed batch replays every poll"
     )
-    assert len(fake.posts) == 1, (
-        f"the worker re-POSTed an already-applied claim: {fake.posts}"
-    )
+    # ⚑ It DOES re-POST, deliberately, and that is not the bug. Only the server
+    # knows whether a rearm re-opened the gate, so the worker has to keep
+    # asking; what must not repeat is the APPLICATION. An earlier design
+    # suppressed the POST itself and thereby broke same-iteration rearm.
+    assert len(fake.posts) == 2, f"the worker stopped asking: {fake.posts}"
+    assert fake.posts[0]["claim_id"] == fake.posts[1]["claim_id"]
 
 
 def test_an_undrained_queue_is_not_reset_to_the_head_of_the_batch(tmp_path: Path) -> None:
@@ -137,7 +149,7 @@ def test_a_dropped_response_retries_and_still_applies_exactly_once(tmp_path: Pat
 
     session._maybe_ingest_dole_flag(_manifest())  # response lost
     assert session._live_dole_queue == [], "installed despite never seeing a grant"
-    assert session._applied_dole_key is None, (
+    assert session._applied_dole_seq == 0, (
         "marked applied on a claim whose outcome was never observed -- the "
         "grant would be spent and the seeds never played"
     )
@@ -164,7 +176,7 @@ def test_a_failed_fen_load_does_not_mark_the_grant_applied(tmp_path: Path) -> No
     session.opening_fen_list_path = str(tmp_path / "does-not-exist.txt")
 
     session._maybe_ingest_dole_flag(_manifest())
-    assert session._applied_dole_key is None
+    assert session._applied_dole_seq == 0
     assert session._live_dole_queue == []
 
 

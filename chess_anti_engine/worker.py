@@ -1094,7 +1094,9 @@ class WorkerSession:
         self._dole_claim_key: tuple[int, str] | None = None
         self._dole_claim_id: str = ""
         # Set only once the grant is actually installed. See _maybe_ingest_dole_flag.
-        self._applied_dole_key: tuple[int, str] | None = None
+        # Highest grant sequence actually installed. See _maybe_ingest_dole_flag.
+        self._applied_dole_seq: int = 0
+        self._legacy_dole_seq: int = 0
         self._live_dole_queue: list[str] | None = None
         self._pending_sf_refute: list[str] = []
         self._live_sf_refute_queue: list[str] | None = None
@@ -1965,8 +1967,13 @@ class WorkerSession:
             return True
         return bool(manifest.get("dole_fen_seeds"))
 
-    def _claim_seed_dole(self, manifest: dict) -> bool:
-        """Whether THIS worker won this iteration's seed batch.
+    def _claim_seed_dole(self, manifest: dict) -> int:
+        """The grant sequence this worker holds, or 0 if it did not win.
+
+        ⚑ A SEQUENCE, NOT A BOOL. The server replays an already-won claim with
+        the SAME number, so `granted=true` alone cannot distinguish "the dose I
+        already applied" from "a new dose". `(iteration, revision)` cannot
+        either -- an identical same-iteration rearm republish reproduces both.
 
         ⚑ WHY THE WORKER NOW ASKS INSTEAD OF BEING TOLD. The grant used to be a
         field the unauthenticated manifest GET set, so anyone who could reach
@@ -1989,7 +1996,13 @@ class WorkerSession:
         """
         endpoint = manifest.get("seed_dole_claim_endpoint")
         if not isinstance(endpoint, str) or not endpoint.strip():
-            return bool(manifest.get("dole_fen_seeds"))
+            # Legacy server: it grants on the GET, once. Synthesise an
+            # increasing sequence so the applied-once comparison behaves
+            # identically to the old "apply whenever the flag is true".
+            if not bool(manifest.get("dole_fen_seeds")):
+                return 0
+            self._legacy_dole_seq += 1
+            return self._legacy_dole_seq
 
         key = self._dole_key(manifest)
         revision = key[1]
@@ -2008,17 +2021,20 @@ class WorkerSession:
                 # Not fatal and not retried here: the next poll re-asks with the
                 # same claim_id, so a transient failure costs latency, not the dole.
                 self.log.warning("dole: claim rejected with HTTP %d", r.status_code)
-                return False
+                return 0
             body = r.json()
         except Exception as exc:
             self.log.warning("dole: claim failed: %s", exc)
-            return False
-        granted = bool(body.get("granted"))
-        if not granted:
+            return 0
+        if not bool(body.get("granted")):
             # `already_claimed` is the normal steady state -- one worker wins per
             # iteration and the rest log nothing louder than debug.
             self.log.debug("dole: not granted (%s)", body.get("reason_code"))
-        return granted
+            return 0
+        # A server that grants without a sequence is pre-grant_seq; treat the
+        # grant as sequence 1 more than whatever we last applied so it is acted
+        # on exactly once rather than silently dropped.
+        return int(body.get("grant_seq", 0) or 0) or (self._applied_dole_seq + 1)
 
     def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
@@ -2063,10 +2079,15 @@ class WorkerSession:
         # ⚑ Every server-side test still passes in that broken state, because
         # the server's one-winner invariant is genuinely intact. Only a
         # worker-level test can see it.
-        key = self._dole_key(manifest)
-        if self._applied_dole_key == key:
-            return
-        if not self._claim_seed_dole(manifest):
+        # ⚑ WE STILL POST EVERY POLL. An earlier version short-circuited here
+        # on `(iteration, manifest_revision)` and never asked. That silently
+        # broke the legitimate same-iteration REARM: MEASURED, an identical
+        # republish produces a byte-identical manifest and therefore the same
+        # revision, so the worker would suppress the rearmed dose it exists to
+        # play. Only the server knows a rearm re-opened the gate, so the
+        # question has to be asked and answered by `grant_seq`.
+        grant_seq = self._claim_seed_dole(manifest)
+        if grant_seq <= self._applied_dole_seq:
             return
         reco = manifest.get("recommended_worker") or {}
         n = int(reco.get("opening_fen_dole_per_iter", 0) or 0)
@@ -2133,7 +2154,7 @@ class WorkerSession:
         # the server's replay hands the grant back. Marking it at claim time
         # instead would turn a local load failure into a silently skipped dose
         # -- the grant spent, the seeds never played.
-        self._applied_dole_key = key
+        self._applied_dole_seq = grant_seq
         self.log.info(
             "dole: received %d seed(s) x%d -> %s; sf_refute=%d (frac=%.2f plies=%d iter=%d)",
             len(seeds), n, dest, len(sf_queue), sf_frac, sf_plies, train_iter,

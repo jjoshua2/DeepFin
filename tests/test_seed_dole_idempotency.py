@@ -121,3 +121,54 @@ def test_a_missing_sidecar_costs_idempotency_not_correctness(tmp_path) -> None:
 
     g2 = _SeedDoleGate(state_path=path)
     assert asyncio.run(g2.claim("t", 10, claim_id="A", manifest_revision=REV)) is False
+
+
+def test_a_crash_between_the_two_files_cannot_double_grant(tmp_path) -> None:
+    """⚑⚑ THE CRASH WINDOW, AND IT BIT THE FIRST FIX.
+
+    `_persist` writes the winner sidecar before the gate, so the recoverable
+    outcome sits in the window. But recovery is not automatic: on restart the
+    gate said 9 while a durable winner for iteration 10 existed, so A's replay
+    was granted AND B then passed `10 > 9` and was granted too -- MEASURED.
+    Reversing the write order had converted a lost dose into a DOUBLE grant,
+    which is worse.
+
+    A durable winner record means that iteration WAS handed out, so the loader
+    reconciles it into the gate.
+    """
+    path = tmp_path / "seed_dole_gate.json"
+    path.write_text(json.dumps({"t": 9}), encoding="utf-8")
+    path.with_suffix(path.suffix + ".winners.json").write_text(
+        json.dumps({"t": {"iteration": 10, "claim_id": "A", "revision": REV, "grant_seq": 4}}),
+        encoding="utf-8",
+    )
+
+    g = _SeedDoleGate(state_path=path)
+    assert asyncio.run(g.claim("t", 10, claim_id="A", manifest_revision=REV)) is True
+    assert asyncio.run(g.claim("t", 10, claim_id="B", manifest_revision=REV)) is False, (
+        "a crash between the winner and gate writes let a second worker claim the same dose"
+    )
+
+
+def test_a_replay_returns_the_same_grant_sequence(tmp_path) -> None:
+    """The sequence is the worker's "is this a new dose" answer, so a replay
+    must not look like a new one."""
+    g = _SeedDoleGate(state_path=tmp_path / "seed_dole_gate.json")
+    first = asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV))
+    assert first > 0
+    assert asyncio.run(g.claim_seq("t", 10, claim_id="A", manifest_revision=REV)) == first
+
+
+def test_a_rearm_issues_a_new_grant_sequence(tmp_path) -> None:
+    """⚑ And the rearm must retire the old winner, or its replay would
+    short-circuit and hand back the OLD sequence -- so the worker would skip
+    the rearmed dose entirely."""
+    g = _SeedDoleGate(state_path=tmp_path / "seed_dole_gate.json")
+    first = asyncio.run(g.claim_seq("t", 20, claim_id="A", manifest_revision=REV))
+    rearmed = asyncio.run(
+        g.claim_seq("t", 20, claim_id="A", manifest_revision=REV, allow_rearm=True),
+    )
+    assert rearmed > first, (
+        "a rearmed dose replayed the previous grant sequence, so the worker would "
+        "treat the legitimately re-opened batch as one it had already applied"
+    )

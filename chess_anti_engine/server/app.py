@@ -459,6 +459,7 @@ class _SeedDoleGate:
         # older directory simply starts with no winners (every claim is then a
         # first claim, which is exactly today's behaviour).
         self._winners: dict[str, dict[str, Any]] = {}
+        self._grant_seq: dict[str, int] = {}
         if state_path is not None and state_path.exists():
             try:
                 loaded = json.loads(state_path.read_text(encoding="utf-8"))
@@ -474,6 +475,32 @@ class _SeedDoleGate:
                 }
             except Exception:
                 self._winners = {}
+        # The sequence rides the winner record, so it survives a restart with
+        # it. A worker holding seq N must not be handed N again for a new dose.
+        for _k, _w in self._winners.items():
+            try:
+                self._grant_seq[_k] = max(int(self._grant_seq.get(_k, 0)), int(_w.get("grant_seq", 0) or 0))
+            except Exception:
+                continue
+
+        # ⚑⚑ RECONCILE THE WINNER RECORD INTO THE GATE. Without this, reversing
+        # the write order (winner first, then gate) trades a lost dose for a
+        # DOUBLE GRANT, which is worse. MEASURED: persist gate=9 and
+        # winner=(A, iter10), then crash. On restart `_last_iter` is 9 while a
+        # winner for 10 exists, so A's retry matches the winner and is granted,
+        # and B's claim for 10 then passes `10 > 9` and is ALSO granted -- two
+        # workers playing the same seed batch.
+        #
+        # A durable winner record means that iteration was handed out, so the
+        # gate must be at least that far along. This is what makes the crash
+        # window merely a re-race rather than either failure.
+        for trial_key, winner in self._winners.items():
+            try:
+                won = int(winner.get("iteration", -1))
+            except Exception:
+                continue
+            if won > int(self._last_iter.get(trial_key, -1)):
+                self._last_iter[trial_key] = won
 
     def _winners_path(self) -> Path | None:
         if self._state_path is None:
@@ -505,11 +532,14 @@ class _SeedDoleGate:
                 wtmp.write_text(json.dumps(self._winners), encoding="utf-8")
                 wtmp.replace(wp)
             except Exception:
-                # Best-effort, and safe in this direction: an absent winner
-                # record makes a retried claim look new, which the monotonic
-                # gate then refuses. That costs idempotency, not correctness --
-                # and unlike the reverse order, it cannot spend the gate.
-                pass
+                # ⚑ RETURN, do not fall through to the gate write. Persisting
+                # the gate after the winner write FAILED recreates exactly the
+                # "gate spent, winner unknowable" state the ordering exists to
+                # avoid -- the retry would be refused and the dose lost. Leaving
+                # BOTH unwritten keeps the in-memory grant serving this process
+                # and lets a restart re-race, which is recoverable.
+                _log.warning("seed dole: winner record not persisted; gate not committed")
+                return
         try:
             tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
             tmp.write_text(json.dumps(self._last_iter), encoding="utf-8")
@@ -584,7 +614,30 @@ class _SeedDoleGate:
         claim_id: str | None = None,
         manifest_revision: str | None = None,
     ) -> bool:
-        """Claim the dole for ``(trial_key, training_iteration)``.
+        """Boolean form of :meth:`claim_seq`, for callers that only need won/lost."""
+        return bool(await self.claim_seq(
+            trial_key, training_iteration, publish_dir=publish_dir,
+            allow_rearm=allow_rearm, claim_id=claim_id,
+            manifest_revision=manifest_revision,
+        ))
+
+    async def claim_seq(
+        self,
+        trial_key: str,
+        training_iteration: int,
+        *,
+        publish_dir: Path | None = None,
+        allow_rearm: bool = False,
+        claim_id: str | None = None,
+        manifest_revision: str | None = None,
+    ) -> int:
+        """Claim the dole; return a monotone grant sequence, or 0 if not granted.
+
+        ⚑ The SEQUENCE, not a bool, is the worker-facing answer. A replay of an
+        already-won claim returns the SAME number, so the worker can tell "this
+        is the dose I already applied" from "this is a new dose" -- which a
+        bool, or a (iteration, revision) pair, cannot express. See the rearm
+        note below.
 
         When a matching rearm file is present in ``publish_dir`` (or
         ``allow_rearm=True`` for tests) AND this exact iteration is already
@@ -641,6 +694,16 @@ class _SeedDoleGate:
             # worker (different claim_id) must still lose, and the same worker
             # replaying against a DIFFERENT manifest revision is not the same
             # request and must not inherit the win.
+            # ⚑⚑ A REARM RETIRES THE OLD WINNER. A same-iteration republish
+            # deliberately re-opens the gate for one more dose. If the previous
+            # winner's record survived that, its replay would match here and
+            # short-circuit -- handing back the OLD grant_seq, so the worker
+            # would see "same dose I already applied" and skip the legitimately
+            # rearmed batch. The rearm is a new opportunity; the old win must
+            # stop being replayable at that point.
+            if rearm:
+                self._winners.pop(trial_key, None)
+
             if claim_id is not None:
                 w = self._winners.get(trial_key)
                 if (
@@ -649,7 +712,7 @@ class _SeedDoleGate:
                     and str(w.get("claim_id") or "") == str(claim_id)
                     and str(w.get("revision") or "") == str(manifest_revision or "")
                 ):
-                    return True
+                    return int(w.get("grant_seq", 0) or 0)
 
             last = int(self._last_iter.get(trial_key, -1))
             if rearm and last == int(training_iteration):
@@ -657,15 +720,27 @@ class _SeedDoleGate:
                 self._last_iter[trial_key] = last
             if int(training_iteration) > last:
                 self._last_iter[trial_key] = int(training_iteration)
+                # ⚑ MONOTONE PER TRIAL, AND IT IS WHAT THE WORKER KEYS ON.
+                # `(iteration, manifest_revision)` is NOT a sufficient identity
+                # for one dose: MEASURED, an identical same-iteration republish
+                # produces a BYTE-IDENTICAL manifest and therefore the same
+                # revision, so a worker keying on that pair would suppress the
+                # rearmed dose it is supposed to play. The sequence increments
+                # only on a genuine grant, so a replay returns the same number
+                # and a rearm returns a new one -- which is exactly the
+                # distinction "have I already applied this" requires.
+                seq = int(self._grant_seq.get(trial_key, 0)) + 1
+                self._grant_seq[trial_key] = seq
                 if claim_id is not None:
                     self._winners[trial_key] = {
                         "iteration": int(training_iteration),
                         "claim_id": str(claim_id),
                         "revision": str(manifest_revision or ""),
+                        "grant_seq": seq,
                     }
                 await run_in_threadpool(self._persist)
-                return True
-            return False
+                return seq
+            return 0
 
 
 def consume_seed_dole_rearm(publish_dir: Path, training_iteration: int) -> bool:
@@ -2977,13 +3052,14 @@ def create_app(
         # Rearm file (if any) is consumed inside claim under the gate lock so
         # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
         # polls return above and never reach claim — they cannot burn rearm.
-        granted = await seed_dole_gate.claim(
+        grant_seq = await seed_dole_gate.claim_seq(
             trial_key,
             iteration,
             publish_dir=_publish_root(trial_id),
             claim_id=str(payload.get("claim_id") or "") or None,
             manifest_revision=revision,
         )
+        granted = bool(grant_seq)
         # THE observation that proves the dole took effect. Everything upstream
         # of this line is a reason to decline, and each of those returns a
         # reason_code silently; without this, "seeding is working" and "seeding
@@ -3004,6 +3080,11 @@ def create_app(
             )
         return {
             "granted": granted,
+            # ⚑ The worker keys "have I applied this dose" on grant_seq, NOT on
+            # (iteration, revision): an identical same-iteration republish
+            # yields the same revision, so that pair cannot distinguish a
+            # rearmed dose from the one already played.
+            "grant_seq": grant_seq,
             "reason_code": "granted" if granted else "already_claimed",
             "seeds": seeds if granted else 0,
             "training_iteration": iteration,

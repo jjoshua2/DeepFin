@@ -271,3 +271,60 @@ def test_every_dole_field_the_worker_reads_is_bound_by_the_revision(tmp_path: Pa
             reco[key] = current
         mf_path.write_text(json.dumps(mf), encoding="utf-8")
         assert revision() == base, f"restoring {key} did not restore the revision"
+
+
+def test_an_identical_same_iteration_republish_still_delivers_a_second_dose(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE REAL REARM PATH, NOT A SYNTHETIC REVISION CHANGE.
+
+    The server deliberately supports republishing the SAME iteration after a
+    claim and re-opening the gate for one more dose. An earlier version of the
+    worker keyed "already applied" on `(training_iteration, manifest_revision)`
+    and short-circuited before even asking.
+
+    MEASURED, which is why this test uses the real publisher rather than
+    invented `rev-a`/`rev-b`: an identical republish produces a BYTE-IDENTICAL
+    manifest, so the revision is UNCHANGED. That pair therefore cannot
+    distinguish a rearmed dose from the one already played, and the worker
+    would silently skip every rearm -- with all the server-side rearm tests
+    still green, because the server's behaviour was never the problem.
+
+    The distinguishing value is the server's monotone `grant_seq`.
+    """
+    app = _setup(tmp_path, iteration=20)
+    fen_path = tmp_path / "blindspot.txt"
+
+    async def poll_and_claim() -> dict:
+        async with await _client(app) as client:
+            headers = _manifest_poll_headers(worker_id="w")
+            manifest = (await client.get(MANIFEST, headers=headers)).json()
+            r = await client.post(
+                CLAIM,
+                json={"claim_id": "worker-A", "manifest_revision": manifest["manifest_revision"]},
+                auth=("u", "p"), headers=headers,
+            )
+            r.raise_for_status()
+            return {"revision": manifest["manifest_revision"], **r.json()}
+
+    first = asyncio.run(poll_and_claim())
+    assert first["granted"] is True
+    assert first["grant_seq"] > 0
+
+    # The winner re-asking without a republish must get the SAME sequence back.
+    replay = asyncio.run(poll_and_claim())
+    assert replay["grant_seq"] == first["grant_seq"], "a replay looked like a new dose"
+
+    # Now the real rearm: republish the SAME iteration with the SAME config.
+    _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
+    rearmed = asyncio.run(poll_and_claim())
+
+    assert rearmed["revision"] == first["revision"], (
+        "the premise of this test no longer holds -- an identical republish now "
+        "changes the revision, so re-check whether grant_seq is still needed"
+    )
+    assert rearmed["granted"] is True
+    assert rearmed["grant_seq"] > first["grant_seq"], (
+        "an identical same-iteration republish did not issue a new grant sequence, so "
+        "the worker cannot tell the rearmed dose from the one it already played"
+    )
