@@ -2505,16 +2505,49 @@ def create_app(
         """
         if creds is None:
             return None
+        return _verify_existing_account(request, creds)
+
+    def _verify_existing_account(
+        request: Request, creds: HTTPBasicCredentials,
+    ) -> str | None:
+        """THE one non-registering credential check. Returns None on any failure.
+
+        ⚑ Factored out so the non-registering property cannot be reimplemented
+        -- differently, and wrongly -- by the next caller that needs it. The
+        seed-dole claim endpoint needs exactly this primitive, and the bug this
+        function exists to prevent is subtle enough (`_auth_user` registers
+        DURING the call, so no after-the-fact undo is possible) that a second
+        hand-rolled version is a live risk rather than a hypothetical one.
+
+        Callers differ only in what they do with None: telemetry serves the
+        redacted view, a required-auth route answers 401.
+        """
         if auth_cache.users().get(str(creds.username)) is None:
       # Unknown account: refuse WITHOUT registering, and without charging the
-      # throttle. No oracle is created -- the response body is byte-identical
-      # to the anonymous one either way, so an unknown name is indistinguishable
-      # from a wrong password from outside.
+      # throttle. No oracle is created -- an unknown name is indistinguishable
+      # from a wrong password to the caller, since both yield the same answer.
             return None
         try:
             return _auth_user(request, creds)
         except HTTPException:
             return None
+
+    def _auth_existing_user(
+        request: Request, creds: HTTPBasicCredentials = Depends(basic),
+    ) -> str:
+        """Required auth that will NEVER self-register. 401 on any failure.
+
+        The counterpart to `_auth_user_optional` for routes where anonymous
+        access is not allowed at all. Use this, not `_auth_user`, for any route
+        added from here on that does not specifically intend to enrol new
+        volunteers -- `_auth_user`'s TOFU branch turns an unknown credential
+        into a NEW ACCOUNT, which is a state change most routes have no reason
+        to perform. A telemetry GET doing exactly that is what prompted this.
+        """
+        username = _verify_existing_account(request, creds)
+        if username is None:
+            raise HTTPException(status_code=401, detail="unknown user or bad password")
+        return username
 
     def _record_bad_shard_report(
         trial_id: str | None,

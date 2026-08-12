@@ -207,3 +207,33 @@ def test_positive_control_self_registration_really_is_enabled(tmp_path) -> None:
         f"self-registration did not fire on a route where it should: {created}. "
         "The regression test above is therefore not measuring anything."
     )
+
+
+def test_required_auth_primitive_also_never_registers() -> None:
+    """`_auth_existing_user` is what PR5's seed-claim endpoint will use.
+
+    ⚑ It exists so the non-registering property is not reimplemented -- and
+    reimplemented WRONGLY -- by the next route that needs it. Both it and
+    `_auth_user_optional` route through one `_verify_existing_account`, so the
+    telemetry bug cannot reappear one endpoint over.
+    """
+    import inspect
+
+    from chess_anti_engine.server import app as app_mod
+
+    src = inspect.getsource(app_mod)
+    for name in ("_verify_existing_account", "_auth_existing_user"):
+        assert f"def {name}(" in src, f"{name} is missing"
+
+    # Both public entry points must delegate, not re-derive.
+    opt = src[src.index("def _auth_user_optional("):src.index("def _verify_existing_account(")]
+    req = src[src.index("def _auth_existing_user("):]
+    req = req[:req.index("\n    def ")] if "\n    def " in req else req
+    for label, body in (("_auth_user_optional", opt), ("_auth_existing_user", req)):
+        assert "_verify_existing_account(" in body, (
+            f"{label} does not delegate to the shared primitive; the "
+            "non-registering property is being re-derived"
+        )
+        assert "_auth_user(" not in body, (
+            f"{label} calls _auth_user directly, which self-registers"
+        )
