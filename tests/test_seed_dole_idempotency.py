@@ -192,13 +192,20 @@ def test_a_grant_is_not_acknowledged_when_the_winner_cannot_be_persisted(tmp_pat
         return False
 
     g._persist_winner = _fail  # type: ignore[method-assign]
+    from chess_anti_engine.server.app import SEED_DOLE_PERSIST_FAILED
+
     token, new = asyncio.run(g.claim_result("t", 10, claim_id="A", manifest_revision=REV))
-    assert (token, new) == ("", False), "an undurable grant was acknowledged to the worker"
+    assert new is False, "an undurable grant was acknowledged to the worker"
+    # ⚑ A DISTINCT sentinel, not a bare "": the route turns this into a 503 so a
+    # broken server root cannot masquerade as the ordinary "another worker won".
+    assert token == SEED_DOLE_PERSIST_FAILED, token
     assert not path.exists(), "the gate was advanced for a grant that was never acknowledged"
 
     # ⚑ And the failed attempt must leave nothing behind that a replay could
     # shortcut on -- otherwise the retry inherits a win that was never durable.
-    assert asyncio.run(g.claim_token("t", 10, claim_id="A", manifest_revision=REV)) == ""
+    assert asyncio.run(
+        g.claim_token("t", 10, claim_id="A", manifest_revision=REV),
+    ) == SEED_DOLE_PERSIST_FAILED
 
     # Once persistence works again, exactly one winner emerges.
     del g._persist_winner  # type: ignore[attr-defined]
@@ -298,3 +305,32 @@ def test_the_winner_is_durable_before_the_gate_is(tmp_path) -> None:
     )
     assert winners.exists()
     assert path.exists()
+
+
+def test_an_id_less_claim_still_writes_a_winner_record(tmp_path) -> None:
+    """⚑ The gate must have NO second code path. It used to skip the winner
+    write entirely when `claim_id is None`, burning the iteration with nothing
+    to replay -- and every pre-existing gate test ran down exactly that branch,
+    so the one-winner invariant was only ever asserted on a path production
+    never takes. The gate now synthesises an id instead of branching."""
+    path = tmp_path / "seed_dole_gate.json"
+    g = _SeedDoleGate(state_path=path)
+    assert asyncio.run(g.claim_token("t", 10, claim_id=None, manifest_revision=REV))
+    winners = json.loads(path.with_suffix(path.suffix + ".winners.json").read_text())
+    assert winners["t"]["grant_token"], "no winner record was written for an id-less claim"
+    assert winners["t"]["claim_id"].startswith("anon-")
+
+
+def test_a_corrupt_winner_iteration_does_not_500_every_claim(tmp_path) -> None:
+    """The replay check's `int()` was unguarded while the loader that wrote the
+    value accepts anything. A non-parseable `iteration` would raise inside the
+    handler and 500 EVERY claim for that trial forever, with the worker seeing
+    only 'rejected with HTTP 500'."""
+    path = tmp_path / "seed_dole_gate.json"
+    path.write_text(json.dumps({"t": 9}), encoding="utf-8")
+    path.with_suffix(path.suffix + ".winners.json").write_text(
+        json.dumps({"t": {"iteration": "not-a-number", "claim_id": "A", "grant_token": "x"}}),
+        encoding="utf-8",
+    )
+    g = _SeedDoleGate(state_path=path)
+    assert asyncio.run(g.claim_token("t", 10, claim_id="A", manifest_revision=REV))

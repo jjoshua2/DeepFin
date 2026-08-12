@@ -403,6 +403,23 @@ class _LeaseAssignLock:
             self.path.unlink(missing_ok=True)
 
 
+# ⚑ A sentinel, not "": a persistence failure must not be reported to the worker
+# as the ordinary "another worker won". Those are byte-identical outcomes on the
+# wire otherwise, and the ordinary one is logged at DEBUG -- so a read-only or
+# full server root would stop seeding FLEET-WIDE while every worker logged
+# nothing louder than "not granted". That is the failure-looks-like-absence
+# shape this whole change exists to remove.
+SEED_DOLE_PERSIST_FAILED = "\x00persist-failed"
+
+
+def _as_int(value: Any, default: int) -> int:
+    """`int(value)` that cannot raise. For reading back self-written state."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class _SeedDoleGate:
     """Per-iteration blind-spot FEN-seed doling gate.
 
@@ -667,11 +684,10 @@ class _SeedDoleGate:
         `seed dole GRANTED` line fires on every ~30s poll of the winning
         worker, since the winner deliberately keeps asking.
 
-        ⚑ The SEQUENCE, not a bool, is the worker-facing answer. A replay of an
-        already-won claim returns the SAME number, so the worker can tell "this
+        ⚑ The TOKEN, not a bool, is the worker-facing answer. A replay of an
+        already-won claim returns the SAME token, so the worker can tell "this
         is the dose I already applied" from "this is a new dose" -- which a
-        bool, or a (iteration, revision) pair, cannot express. See the rearm
-        note below.
+        bool, or an (iteration, revision) pair, cannot express.
 
         When a matching rearm file is present in ``publish_dir`` (or
         ``allow_rearm=True`` for tests) AND this exact iteration is already
@@ -702,11 +718,25 @@ class _SeedDoleGate:
         # module-level import would silently take that property away.
         from starlette.concurrency import run_in_threadpool
 
+        # ⚑⚑ NEVER LET `claim_id is None` REACH THE DECISION LOGIC. It used to
+        # skip the replay check AND the winner write while still minting a
+        # token, advancing `_last_iter` and persisting the gate -- so a claim
+        # with no id BURNED the iteration and left nothing to replay. MEASURED:
+        # any account holder POSTing `{"manifest_revision": R}` with no
+        # claim_id spent the dose and the real worker was then refused. That is
+        # the one-shot DoS this whole change removes, reopened behind a
+        # credential.
+        #
+        # Synthesising one here means every grant takes the SAME path -- stage,
+        # persist, commit -- so there is no second code path for a caller to
+        # land on and none for the tests to accidentally certify instead.
+        claim_id = str(claim_id or "") or f"anon-{secrets.token_hex(8)}"
+
         async with self._loop_lock():
             rearm = bool(allow_rearm)
             if publish_dir is not None:
-            # File wins over the kwarg when both are set; under the lock so
-            # rename + claim decision is one critical section.
+                # File wins over the kwarg when both are set; under the lock so
+                # rename + claim decision is one critical section.
                 rearm = await run_in_threadpool(
                     functools.partial(
                         self._consume_rearm_unlocked,
@@ -738,50 +768,54 @@ class _SeedDoleGate:
             if rearm:
                 self._winners.pop(trial_key, None)
 
-            if claim_id is not None:
-                w = self._winners.get(trial_key)
-                if (
-                    isinstance(w, dict)
-                    and int(w.get("iteration", -1)) == int(training_iteration)
-                    and str(w.get("claim_id") or "") == str(claim_id)
-                    and str(w.get("revision") or "") == str(manifest_revision or "")
-                ):
-                    return str(w.get("grant_token") or ""), False
+            w = self._winners.get(trial_key)
+            if (
+                isinstance(w, dict)
+                # ⚑ As lenient as the loader that wrote this. A sidecar whose
+                # `iteration` is not int-parseable would otherwise raise
+                # inside the handler and 500 EVERY claim for that trial,
+                # forever, with the worker seeing only "rejected with HTTP
+                # 500". The startup reconciliation already guards the
+                # identical `int()`; this one did not.
+                and _as_int(w.get("iteration"), -1) == int(training_iteration)
+                and str(w.get("claim_id") or "") == str(claim_id)
+                and str(w.get("revision") or "") == str(manifest_revision or "")
+            ):
+                return str(w.get("grant_token") or ""), False
 
             last = int(self._last_iter.get(trial_key, -1))
             if rearm and last == int(training_iteration):
                 last = int(training_iteration) - 1
                 self._last_iter[trial_key] = last
             if int(training_iteration) > last:
-                # ⚑ MONOTONE PER TRIAL, AND IT IS WHAT THE WORKER KEYS ON.
-                # `(iteration, manifest_revision)` is NOT a sufficient identity
-                # for one dose: MEASURED, an identical same-iteration republish
-                # produces a BYTE-IDENTICAL manifest and therefore the same
-                # revision, so a worker keying on that pair would suppress the
-                # rearmed dose it is supposed to play. The sequence increments
-                # only on a genuine grant, so a replay returns the same number
-                # and a rearm returns a new one -- which is exactly the
-                # distinction "have I already applied this" requires.
+                # ⚑ A FRESH OPAQUE TOKEN PER GENUINE GRANT, AND IT IS WHAT THE
+                # WORKER KEYS ON. `(iteration, manifest_revision)` is NOT a
+                # sufficient identity for one dose: MEASURED, an identical
+                # same-iteration republish produces a BYTE-IDENTICAL manifest
+                # and therefore the same revision, so a worker keying on that
+                # pair would suppress the rearmed dose it is supposed to play.
+                # A replay returns the stored token and a rearm mints a new one,
+                # which is exactly the distinction "have I already applied this"
+                # requires -- by EQUALITY, never by ordering.
                 token = secrets.token_hex(16)
-                if claim_id is not None:
-                    # ⚑ Stage, persist, and only THEN commit in memory. If the
-                    # sidecar write fails we must not acknowledge -- and we must
-                    # not leave a non-durable winner behind that a later replay
-                    # could shortcut on. Restoring the previous record is what
-                    # guarantees that.
-                    previous = self._winners.get(trial_key)
-                    self._winners[trial_key] = {
-                        "iteration": int(training_iteration),
-                        "claim_id": str(claim_id),
-                        "revision": str(manifest_revision or ""),
-                        "grant_token": token,
-                    }
-                    if not await run_in_threadpool(self._persist_winner):
-                        if previous is None:
-                            self._winners.pop(trial_key, None)
-                        else:
-                            self._winners[trial_key] = previous
-                        return "", False
+                # ⚑ Stage, persist, and only THEN commit in memory. If the
+                # sidecar write fails we must not acknowledge -- and we must
+                # not leave a non-durable winner behind that a later replay
+                # could shortcut on. Restoring the previous record is what
+                # guarantees that.
+                previous = self._winners.get(trial_key)
+                self._winners[trial_key] = {
+                    "iteration": int(training_iteration),
+                    "claim_id": str(claim_id),
+                    "revision": str(manifest_revision or ""),
+                    "grant_token": token,
+                }
+                if not await run_in_threadpool(self._persist_winner):
+                    if previous is None:
+                        self._winners.pop(trial_key, None)
+                    else:
+                        self._winners[trial_key] = previous
+                    return SEED_DOLE_PERSIST_FAILED, False
                 self._last_iter[trial_key] = int(training_iteration)
                 await run_in_threadpool(self._persist_gate)
                 return token, True
@@ -3097,6 +3131,22 @@ def create_app(
         if live_decline is not None:
             return {"granted": False, "reason_code": live_decline, "manifest_revision": revision}
 
+        # ⚑⚑ A CLAIM WITHOUT AN ID IS REFUSED BEFORE IT CAN TOUCH THE GATE.
+        # Two reasons, and the first is a security hole: with no id there is
+        # nothing to replay, so a dropped response loses the dose outright.
+        # Second, `str(...) or None` used to hand the gate a None that skipped
+        # the winner write while still burning the iteration -- MEASURED, an
+        # account holder POSTing `{"manifest_revision": R}` denied the real
+        # worker its dose. The gate now synthesises an id rather than branching,
+        # so this check is defence in depth rather than the only guard.
+        claim_id = str(payload.get("claim_id") or "").strip()
+        if not claim_id:
+            return {
+                "granted": False,
+                "reason_code": "missing_claim_id",
+                "manifest_revision": revision,
+            }
+
         trial_key = str(_normalize_trial_id(trial_id) or "")
         # Rearm file (if any) is consumed inside claim under the gate lock so
         # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
@@ -3105,9 +3155,17 @@ def create_app(
             trial_key,
             iteration,
             publish_dir=_publish_root(trial_id),
-            claim_id=str(payload.get("claim_id") or "") or None,
+            claim_id=claim_id,
             manifest_revision=revision,
         )
+        if grant_token == SEED_DOLE_PERSIST_FAILED:
+            # 503, not a 200 "already_claimed": the dole is not spent, the
+            # server is. A worker must retry rather than conclude it lost.
+            raise HTTPException(
+                status_code=503,
+                detail="seed dole state could not be persisted; retry",
+                headers={"Retry-After": "5"},
+            )
         granted = bool(grant_token)
         # THE observation that proves the dole took effect. Everything upstream
         # of this line is a reason to decline, and each of those returns a

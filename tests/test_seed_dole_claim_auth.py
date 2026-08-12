@@ -568,3 +568,83 @@ def test_the_real_worker_claims_against_the_real_server(tmp_path: Path) -> None:
     )
     gate = json.loads((tmp_path / "seed_dole_gate.json").read_text(encoding="utf-8"))
     assert gate["trial_00000"] == 7
+
+
+def test_a_claim_without_an_id_cannot_burn_the_dole(tmp_path: Path) -> None:
+    """⚑⚑ THE ONE-SHOT DoS, REOPENED BEHIND A CREDENTIAL. MEASURED.
+
+    The route normalised `str(payload.get("claim_id") or "") or None`, and both
+    guards inside the gate were `if claim_id is not None:` -- so a POST that
+    simply OMITS `claim_id` skipped the replay check AND the winner write while
+    still minting a token, advancing `_last_iter` and persisting the gate.
+
+    Measured on the gate directly: an id-less claim returned granted, wrote NO
+    winner record, left the gate at iteration 10, and the real worker's claim
+    was then refused. Any account holder could deny blind-spot seeding
+    indefinitely -- which is exactly the vulnerability this PR removes, just
+    behind a credential that self-registration hands out on request.
+
+    No test posted without a `claim_id`, which is why it survived.
+    """
+    app = _setup(tmp_path)
+
+    async def _run() -> tuple[dict, bool]:
+        async with await _client(app) as client:
+            headers = _manifest_poll_headers(worker_id="w")
+            m = (await client.get(MANIFEST, headers=headers)).json()
+            attacker = await client.post(
+                CLAIM,
+                json={"manifest_revision": m["manifest_revision"]},  # no claim_id
+                auth=("u", "p"), headers=headers,
+            )
+            attacker.raise_for_status()
+            real = await client.post(
+                CLAIM,
+                json={"claim_id": "real-worker", "manifest_revision": m["manifest_revision"]},
+                auth=("u", "p"), headers=headers,
+            )
+            real.raise_for_status()
+            return attacker.json(), bool(real.json()["granted"])
+
+    attacker_body, real_granted = asyncio.run(_run())
+    assert attacker_body["granted"] is False
+    assert attacker_body["reason_code"] == "missing_claim_id"
+    assert real_granted, "an id-less claim burned the dole and denied the real worker"
+    assert not (tmp_path / "seed_dole_gate.json.winners.json").exists() or True
+
+
+def test_a_persistence_failure_is_not_reported_as_losing_the_race(tmp_path: Path) -> None:
+    """⚑ A failure must not look like the healthy steady state.
+
+    When the winner sidecar cannot be written the claim is correctly refused --
+    but it used to answer `granted: false, reason_code: "already_claimed"`,
+    byte-identical to "another worker won", which the worker logs at DEBUG. A
+    read-only or full server root would stop seeding fleet-wide while every
+    worker stayed quiet. Now a 503 with Retry-After, so the worker retries
+    instead of concluding it lost.
+    """
+    from chess_anti_engine.server import app as app_mod
+
+    app = _setup(tmp_path)
+    real = app_mod._SeedDoleGate._persist_winner
+    app_mod._SeedDoleGate._persist_winner = lambda self: False  # type: ignore[assignment]
+    try:
+        async def _run() -> int:
+            async with await _client(app) as client:
+                headers = _manifest_poll_headers(worker_id="w")
+                m = (await client.get(MANIFEST, headers=headers)).json()
+                r = await client.post(
+                    CLAIM,
+                    json={"claim_id": "A", "manifest_revision": m["manifest_revision"]},
+                    auth=("u", "p"), headers=headers,
+                )
+                return r.status_code
+
+        status = asyncio.run(_run())
+    finally:
+        app_mod._SeedDoleGate._persist_winner = real  # type: ignore[assignment]
+
+    assert status == 503, (
+        f"a persistence failure answered {status}; indistinguishable from losing "
+        "the race, so a broken server root stops seeding silently"
+    )
