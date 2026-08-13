@@ -3979,25 +3979,41 @@ def create_app(
         retention.
 
         ⚑⚑ THIS SINK IS DELIBERATELY UNBOUNDED, unlike ``invalid`` and
-        ``client_reports``. Two reasons, and the second is the one that decides
-        it:
+        ``client_reports``. Argument (2) is the one that decides it, and it
+        decides it ALONE — (1) is a mitigation, not a guarantee:
 
-        1. It is not reachable by the trial-id rotation those budgets exist to
-           stop. Nothing a request can name lands here: entries arrive only
-           from shards this server itself accepted, validated and promoted into
-           ``_pending``, and only when they later fail to load at startup. The
-           trial ids come off disk, not off the wire.
-        2. It IS the data-preservation channel. Every quarantine decision on
-           the recovery path is justified by "the bytes survive for an operator
-           to recover" — that is the whole reason recovery quarantines instead
-           of rejecting the way the upload route does. A retention sweep here
-           would delete exactly those bytes, oldest-first and silently,
-           dissolving the argument that makes quarantining safe.
+        1. It is HARDER to reach than the budgeted sinks, and NOT proven
+           unreachable. Do not read it as unreachable. Entries arrive only from
+           shards this server accepted and promoted into ``_pending`` that then
+           fail to load at startup, so an uploader would have to get a shard
+           PAST upload validation and have it fail LATER. The obvious vector
+           for that is measured and closed: a shard with well-formed
+           ``.zattrs`` but corrupt compressed array data is refused at upload
+           (``RuntimeError: error during blosc decompression`` → ``invalid``,
+           never reaching ``_pending``), because ``_finish_upload`` does a
+           non-lazy ``load_shard_arrays`` AND ``arrays_to_samples``, the same
+           two calls recovery makes. That is one construction disproved, not a
+           proof over all of them — and note the attacker still chooses the
+           trial ids one step earlier, so if any vector does exist the growth
+           it produces is per-invented-trial and unbounded. Treat this as
+           residual risk that is accepted below, not as a closed hole.
+        2. It IS the data-preservation channel, and this is decisive on its
+           own. Every quarantine decision on the recovery path is justified by
+           "the bytes survive for an operator to recover" — that is the whole
+           reason recovery quarantines instead of rejecting the way the upload
+           route does, and it is what makes reusing the outage-class
+           ``shard_meta_violations`` here safe at all. A retention sweep would
+           delete exactly those bytes, oldest-first and silently, dissolving
+           the argument. Bounding this sink would therefore have to come with
+           rejecting instead of quarantining, which is the worse trade.
 
-        The growth is bounded in practice by how many accepted shards later
-        fail to load: the incident this path was written for (2026-07-24) was
-        7 shards. If that ever stops being true the answer is an alert, not an
-        eviction sweep.
+        ⇒ ACCEPTED RESIDUAL RISK, recorded so it reads as a decision rather
+        than an oversight: unbounded growth here is possible if some
+        pass-upload-fail-later vector exists. The growth observed in practice
+        is small — the incident this path was written for (2026-07-24) was 7
+        shards. The answer if that stops being true is an OPERATOR ALERT on the
+        directory's size, not an eviction sweep, because the sweep is precisely
+        what the quarantine-not-reject contract cannot survive.
         """
         qdir = _quarantine_root(trial_key) / "unloadable"
         try:

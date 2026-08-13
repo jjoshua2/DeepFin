@@ -898,6 +898,72 @@ def test_recovery_quarantines_a_pending_shard_with_corrupt_counters(tmp_path) ->
     )
 
 
+def test_corrupt_array_data_is_refused_at_upload_not_deferred_to_recovery(
+    tmp_path,
+) -> None:
+    """⚑ CLAIM-PINNING, not a regression test — and it pins a SECURITY claim.
+
+    `_quarantine_unloadable_pending` argues that sink is harder to reach than
+    the budgeted ones, and cites this measurement. The vector it has to
+    survive: a shard whose `.zattrs` is well-formed (so the metadata invariants
+    pass) but whose COMPRESSED ARRAY DATA is corrupt — accepted at upload,
+    promoted to `_pending`, failing only at the startup load, which is the one
+    thing that writes to `quarantine/unloadable`. An uploader rotating trial
+    ids could then seed that sink under arbitrarily many invented trials.
+
+    Measured here: it is refused at upload with a blosc decompression error and
+    lands in `quarantine/invalid` (which IS budgeted), because `_finish_upload`
+    does a NON-LAZY `load_shard_arrays` and `arrays_to_samples` — the same two
+    calls recovery makes. If anyone makes that load lazy, this test fails and
+    the docstring's cited measurement is caught going stale instead of quietly
+    becoming false.
+
+    ⚑ This disproves ONE construction. It is not a proof that the sink is
+    unreachable, and the docstring does not claim it is.
+    """
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    zp = tmp_path / "shard.zarr"
+    save_local_shard_arrays(
+        zp,
+        arrs=samples_to_arrays([_sample(i) for i in range(4)]),
+        meta=ShardMeta(
+            username="u", games=1, positions=4, model_sha256="eeee5555", model_step=0,
+        ),
+    )
+    # Metadata untouched; only the compressed chunks of `x` are destroyed.
+    chunks = [p for p in (zp / "x").iterdir() if not p.name.startswith(".")]
+    assert chunks, "no chunk files to corrupt — zarr layout changed"
+    for c in chunks:
+        c.write_bytes(b"\x00" * max(16, c.stat().st_size))
+    _, buf = pack_shard_for_upload(zp)
+
+    client = _build_client(server_root, upload_compact_shard_size=100_000)
+    r = client.post(
+        "/v1/trials/attacker_1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", buf.getvalue(), "application/x-tar")},
+        headers=_default_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json().get("rejected") is True, r.json()
+
+    trial_root = server_root / "trials" / "attacker_1"
+    assert not list((trial_root / "inbox" / "_pending").glob(f"*{LOCAL_SHARD_SUFFIX}")), (
+        "a shard with unreadable array data was promoted to _pending; it would "
+        "reach quarantine/unloadable at the next restart, under a trial id the "
+        "uploader chose"
+    )
+    # It went to the sink that IS budgeted.
+    assert list((trial_root / "quarantine" / "invalid").glob("*"))
+
+    # And a restart finds nothing to quarantine.
+    _build_app(server_root, upload_compact_shard_size=100_000)
+    assert not (trial_root / "quarantine" / "unloadable").exists()
+
+
 def test_recovery_still_re_seeds_a_consistent_pending_shard(tmp_path) -> None:
     """⚑⚑ FALSE-POSITIVE CONTROL, and the load-bearing half of this pair.
 
