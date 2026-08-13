@@ -42,7 +42,7 @@ the INPUT differs, which is what ``input_format`` selects:
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -62,6 +62,11 @@ from chess_anti_engine.encoding.lc0 import (
 )
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, policy_batch_to_full_if_needed
 from chess_anti_engine.moves.leela_index import leela_gather_indices
+
+# What ORT accepts in `InferenceSession(providers=...)`: a bare provider name,
+# or a (name, options) pair. The pair form is the only one that can carry
+# `device_id` and `gpu_mem_limit`.
+OnnxProvider = str | tuple[str, Mapping[str, object]]
 
 INPUT_FORMAT_LC0_PLANES = "lc0_planes"
 INPUT_FORMAT_CERES_TPG = "ceres_tpg"
@@ -142,7 +147,13 @@ class OnnxChessNet(torch.nn.Module):
         not an equivalent WDL output.
     providers:
         ORT execution providers, in priority order. Default tries CUDA then
-        falls back to CPU.
+        falls back to CPU. Each entry is a bare provider NAME or an
+        ``(name, options)`` pair — the form ORT needs for ``device_id`` and
+        ``gpu_mem_limit``, which are the ONLY way to bound a CUDA session.
+        ⚑ ``torch.cuda.set_per_process_memory_fraction`` does NOT reach here:
+        it bounds the torch caching allocator, and ORT allocates through its
+        own CUDA arena. A ruler that caps torch and hands this bare names has
+        an uncapped ~700M session on the trainer's GPU.
     plane_count:
         How many of our 146 planes the ONNX model expects. LC0/Ceres = 112.
         Ignored when ``input_format`` is ``ceres_tpg``.
@@ -181,7 +192,10 @@ class OnnxChessNet(torch.nn.Module):
         input_name: str,
         policy_output_name: str,
         wdl_output_name: str,
-        providers: Sequence[str] = ("CUDAExecutionProvider", "CPUExecutionProvider"),
+        providers: Sequence[OnnxProvider] = (
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider",
+        ),
         plane_count: int = LC0_FULL.num_planes,
         input_format: str = INPUT_FORMAT_LC0_PLANES,
         graph_optimization_level: str | None = None,
@@ -216,8 +230,13 @@ class OnnxChessNet(torch.nn.Module):
             if intra_op_num_threads is not None:
                 session_options.intra_op_num_threads = int(intra_op_num_threads)
         self._path = str(Path(path).expanduser().resolve())
+        # Normalise Mapping options to plain dicts: ORT's pybind layer indexes
+        # and copies them as dicts, and a non-dict Mapping is not accepted.
+        ort_providers: list[str | tuple[str, dict[str, object]]] = [
+            p if isinstance(p, str) else (p[0], dict(p[1])) for p in providers
+        ]
         self._session = ort.InferenceSession(
-            self._path, session_options, providers=list(providers),
+            self._path, session_options, providers=ort_providers,
         )
         self._input_name = input_name
         self._policy_out = policy_output_name
@@ -260,6 +279,19 @@ class OnnxChessNet(torch.nn.Module):
     def device(self) -> torch.device:
         # ORT picks its own device; report CPU so torch consumers don't try to .to() us.
         return torch.device("cpu")
+
+    def session_providers(self) -> list[str]:
+        """The providers that ACTUALLY initialised, read off the live session.
+
+        ⚑ Not ``onnxruntime.get_available_providers()``. That is the list the
+        wheel was COMPILED with, and it stays populated when the provider's
+        shared library cannot be loaded at all (a GPU wheel with no matching
+        cuDNN reports ``CUDAExecutionProvider`` and then runs on CPU). ORT
+        drops an unusable provider with a warning rather than failing, so this
+        is the only reading that can distinguish "capped CUDA session" from
+        "silent CPU fallback".
+        """
+        return [str(p) for p in self._session.get_providers()]
 
     def _canonical_probe_input(self) -> np.ndarray:
         """A single start-position input in this net's format, for the WDL probe."""

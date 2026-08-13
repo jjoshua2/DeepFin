@@ -160,6 +160,21 @@ Mechanics:
   compare foreign and own nets under the DEFAULT `fen_only` with a pinned
   `--batch-size`, and remember `--device cpu` is the only setting that
   structurally cannot allocate on the training GPU.
+- **`--gpu-mem-fraction` on `--onnx` caps onnxruntime, not torch.** Both
+  rulers apply the fraction to two SEPARATE allocators, because a foreign net
+  is not a torch module: `torch.cuda.set_per_process_memory_fraction` bounds
+  the torch caching allocator, and ORT's CUDA arena is bounded only by
+  `gpu_mem_limit` in the CUDA provider options (the shape
+  `scripts/foreign_net_audit.py` has always used). The log says which is
+  which — `TORCH GPU allocator capped ...` at parse time, and
+  `onnxruntime session on [...]; CUDA arena capped at N bytes` once the
+  session exists — and a fraction on `--device cpu` prints `IGNORED` rather
+  than being dropped in silence. ⚑ A run on `--device cuda...` whose ORT
+  session comes up without `CUDAExecutionProvider` now ABORTS: ORT drops an
+  unusable provider with a warning and runs on CPU, and
+  `onnxruntime.get_available_providers()` cannot see that happen (it is the
+  wheel's COMPILE-TIME list — on this box it reports CUDA while every session
+  it builds is CPU-only). The verdict is read off `session.get_providers()`.
 - Two standing numbers to watch on each report: (search-policy regret) vs
   (SF-soft-target regret) per phase — when search wins everywhere, the
   50k-node MultiPV-40 labeling is no longer worth its CPU bill — and

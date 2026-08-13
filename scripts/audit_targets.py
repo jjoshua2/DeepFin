@@ -160,6 +160,7 @@ from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from scripts.net_source import (
     NetSource,
     add_net_source_args,
+    apply_gpu_mem_cap,
     net_source_from_args,
     reject_stored_encoding_for_onnx,
 )
@@ -639,6 +640,7 @@ def _net_candidates(
     vloss_weight: int = 0,
     vloss_mode: int = 0,
     stored_x: np.ndarray | None = None,
+    gpu_mem_fraction: float | None = None,
 ) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
@@ -669,7 +671,11 @@ def _net_candidates(
     # Every encoding below is read OFF the loaded model, never assumed: an
     # LC0/Ceres net declares lc0_root/v1/az_4672 and the searches and the raw
     # forward then all encode boards the way that net needs.
-    model = net.load(device=device)
+    # gpu_mem_fraction is carried this far because on the --onnx path the cap
+    # is an ORT SESSION-CONSTRUCTION argument (gpu_mem_limit): there is no
+    # later point at which it can be applied, and torch's own cap does not
+    # bound the ONNX session.
+    model = net.load(device=device, gpu_mem_fraction=gpu_mem_fraction, tag="audit")
     hist = str(getattr(model, "input_history_encoding", "legacy"))
     extra = str(getattr(model, "input_extra_features", "v1"))
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
@@ -1314,10 +1320,14 @@ def main() -> None:
                          "topk would score a search selfplay never runs. At 256 "
                          "sims, ~30 legal moves means topk=32 ≈ all-legal.")
     ap.add_argument("--gpu-mem-fraction", type=float, default=None,
-                    help="cap this process to a fraction of GPU memory "
-                         "(set_per_process_memory_fraction) so a high-sim audit run "
-                         "CONCURRENT with a live trainer fails-fast on its own OOM instead "
-                         "of faulting the shared GPU/broker. e.g. 0.4 on a 32GB card.")
+                    help="cap this process to a fraction of GPU memory so a high-sim "
+                         "audit run CONCURRENT with a live trainer fails-fast on its own "
+                         "OOM instead of faulting the shared GPU/broker. e.g. 0.4 on a "
+                         "32GB card. Applied to BOTH allocators a run can use: the torch "
+                         "caching allocator (set_per_process_memory_fraction) and, on "
+                         "--onnx, onnxruntime's CUDA arena (gpu_mem_limit, computed "
+                         "against the card's total memory). The two are separate -- "
+                         "torch's cap does not bound an ORT session.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--stockfish", type=str, default=None,
                     help="needed only when the shallow-SF cache is incomplete")
@@ -1438,11 +1448,15 @@ def main() -> None:
     if args.sf_soft_nodes is None:
         args.sf_soft_nodes = {"low": 500_000, "high": 2_000_000}[args.sf_effort]
 
-    if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
-        import torch
-        torch.cuda.set_per_process_memory_fraction(
-            float(args.gpu_mem_fraction), torch.device(args.device).index or 0)
-        print(f"[audit] GPU memory capped at fraction {args.gpu_mem_fraction}")
+    # Caps the TORCH allocator and says only that. The --onnx session gets its
+    # own cap at load time via ORT's gpu_mem_limit; torch's fraction cannot
+    # reach it, and printing a bare "GPU memory capped" here claimed it could.
+    apply_gpu_mem_cap(
+        net=net,
+        device=str(args.device),
+        gpu_mem_fraction=args.gpu_mem_fraction,
+        tag="audit",
+    )
 
     flat = flatten_run_config_defaults(load_yaml_file(args.config))
     sf_params = _sf_soft_params_from_flat(flat)
@@ -1517,6 +1531,7 @@ def main() -> None:
         vloss_weight=int(args.vloss_weight),
         vloss_mode=int(args.vloss_mode),
         stored_x=stored_x,
+        gpu_mem_fraction=args.gpu_mem_fraction,
     )
     search_probs = search_by_profile["search"]
   # The production WDL blend's search component comes from the RL search, so

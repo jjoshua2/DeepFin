@@ -7,6 +7,13 @@ is accepted and then silently ignored. So the tests assert, in order:
 * the ONNX graph's tensor names are read (and ambiguity refused) rather than
   guessed;
 * the ``--onnx`` path never falls back to a checkpoint;
+* ``--gpu-mem-fraction`` REACHES onnxruntime — asserted on the ``providers=``
+  argument ``InferenceSession`` was actually called with, not on the tuple our
+  own helper built one line earlier — and the log line names the allocator it
+  bounded rather than claiming "GPU memory capped";
+* the CUDA guard reads ``session.get_providers()`` (what initialised) and not
+  ``onnxruntime.get_available_providers()`` (what the wheel was compiled with,
+  which on this box lists CUDA on a runtime whose every session is CPU);
 * the policy the ruler ends up reading came through the BOARD-AWARE Leela
   remap, proven per legal move against the independent reference in
   ``moves/leela_index.py`` — a static table gives a different, non-crashing
@@ -41,11 +48,14 @@ from scripts.net_source import (
     CUDA_PROVIDER,
     NetSource,
     OnnxNetSpec,
+    apply_gpu_mem_cap,
+    gpu_mem_limit_bytes,
     net_source_from_args,
     onnx_providers_for_device,
     reject_stored_encoding_for_onnx,
     resolve_onnx_spec,
     validate_onnx_device,
+    verify_onnx_session_device,
 )
 
 LC0_PLANES = 112
@@ -214,7 +224,225 @@ def test_cpu_device_never_offers_ort_the_cuda_provider() -> None:
     """`--device cpu` must be unable to allocate on a training GPU, not merely
     prefer not to."""
     assert onnx_providers_for_device("cpu") == (CPU_PROVIDER,)
-    assert onnx_providers_for_device("cuda:1") == (CUDA_PROVIDER, CPU_PROVIDER)
+
+
+# --------------------------------------------------------------------------
+# --gpu-mem-fraction must REACH onnxruntime, not just be set somewhere
+# --------------------------------------------------------------------------
+#
+# The defect: the cap was `torch.cuda.set_per_process_memory_fraction`, which
+# bounds the torch caching allocator. On `--onnx` the net is not a torch module
+# — it allocates through ORT's own CUDA arena, which only `gpu_mem_limit` in
+# the CUDA provider OPTIONS bounds. The rulers passed bare provider NAMES and
+# printed "GPU memory capped", so a ~700M session went onto the trainer's card
+# uncapped while the log said otherwise.
+#
+# So the assertions below are made at the ORT BOUNDARY: the `providers=`
+# argument `onnxruntime.InferenceSession` was actually called with. Asserting
+# on the tuple our own helper returned one line earlier would prove nothing
+# about whether it survives the trip through `NetSource.load` / `OnnxChessNet`.
+
+
+class _ProvidersReported:
+    """A real ORT session that REPORTS a chosen provider list.
+
+    The delegate below always runs on CPU (these tests must never allocate on
+    the live trainer's GPU), so `get_providers()` is overridden to stand in for
+    a box whose CUDA EP loads. Only the RECORDED constructor argument is the
+    thing under test; this wrapper exists so the rest of `OnnxChessNet.__init__`
+    — dtype probe, WDL probe, a real `run()` — executes for real.
+    """
+
+    def __init__(self, real: object, reported: list[str]) -> None:
+        self._real = real
+        self._reported = reported
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._real, name)
+
+    def get_providers(self) -> list[str]:
+        return list(self._reported)
+
+
+def _capture_ort_providers(
+    monkeypatch: pytest.MonkeyPatch, *, reported: list[str],
+) -> list[object]:
+    """Record every `providers=` handed to `onnxruntime.InferenceSession`."""
+    import onnxruntime as ort
+
+    real_cls = ort.InferenceSession
+    seen: list[object] = []
+
+    def _factory(
+        path: str | Path, sess_options: object = None, providers: object = None,
+    ) -> object:
+        seen.append(providers)
+        return _ProvidersReported(
+            real_cls(path, sess_options, providers=[CPU_PROVIDER]), reported,
+        )
+
+    monkeypatch.setattr(ort, "InferenceSession", _factory)
+    return seen
+
+
+def _fake_card(monkeypatch: pytest.MonkeyPatch, total_bytes: int) -> None:
+    """Report a card of a known size WITHOUT touching a GPU."""
+
+    class _Props:
+        total_memory = total_bytes
+
+    monkeypatch.setattr(
+        torch.cuda, "get_device_properties", lambda _idx: _Props(),
+    )
+
+
+GIB = 1024 ** 3
+
+
+def test_the_gpu_mem_cap_reaches_the_ort_session_constructor(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE regression test: `--gpu-mem-fraction` must arrive at ORT.
+
+    Read at the boundary — the `providers=` argument `InferenceSession` was
+    called with. A bare `"CUDAExecutionProvider"` string there is the bug: ORT
+    gets no arena limit and the session is unbounded next to the trainer.
+    """
+    spec = resolve_onnx_spec(echo_onnx)  # resolved BEFORE the recorder is armed
+    seen = _capture_ort_providers(monkeypatch, reported=[CUDA_PROVIDER, CPU_PROVIDER])
+    _fake_card(monkeypatch, 32 * GIB)
+
+    NetSource(onnx=spec).load(device="cuda", gpu_mem_fraction=0.4)
+
+    assert len(seen) == 1, "the scoring session must be built exactly once"
+    assert seen[0] == [
+        (CUDA_PROVIDER, {"device_id": 0, "gpu_mem_limit": int(0.4 * 32 * GIB)}),
+        CPU_PROVIDER,
+    ]
+
+
+def test_an_indexed_cuda_device_reaches_ort_as_device_id(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--device cuda:1` must land on card 1, in ORT's own options.
+
+    Previously refused outright, because provider NAMES carry no `device_id`
+    and ORT would have used card 0 — here, the live trainer's. The options form
+    closes that: the index is passed, so it can be honoured.
+    """
+    spec = resolve_onnx_spec(echo_onnx)
+    seen = _capture_ort_providers(monkeypatch, reported=[CUDA_PROVIDER, CPU_PROVIDER])
+    _fake_card(monkeypatch, 16 * GIB)
+
+    NetSource(onnx=spec).load(device="cuda:1", gpu_mem_fraction=0.25)
+
+    assert seen[0] == [
+        (CUDA_PROVIDER, {"device_id": 1, "gpu_mem_limit": 4 * GIB}),
+        CPU_PROVIDER,
+    ]
+
+
+def test_no_fraction_means_no_invented_gpu_mem_limit(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No `--gpu-mem-fraction` must produce NO limit key, not a default one.
+
+    A fabricated cap would be the mirror of the bug: a number in the options
+    that no one asked for and that nothing in the log names.
+    """
+    spec = resolve_onnx_spec(echo_onnx)
+    seen = _capture_ort_providers(monkeypatch, reported=[CUDA_PROVIDER, CPU_PROVIDER])
+
+    NetSource(onnx=spec).load(device="cuda")
+
+    assert seen[0] == [(CUDA_PROVIDER, {"device_id": 0}), CPU_PROVIDER]
+
+
+def test_the_cpu_path_hands_ort_cpu_only_even_with_a_fraction(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--device cpu` stays structurally unable to reach the trainer's GPU."""
+    spec = resolve_onnx_spec(echo_onnx)
+    seen = _capture_ort_providers(monkeypatch, reported=[CPU_PROVIDER])
+
+    NetSource(onnx=spec).load(device="cpu", gpu_mem_fraction=0.4)
+
+    assert seen[0] == [CPU_PROVIDER]
+
+
+def test_a_cpu_session_is_not_described_as_an_uncapped_cuda_arena(
+    echo_onnx: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A CPU session has no CUDA arena, so neither "capped" nor "uncapped" is
+    a true description of it. Saying "UNCAPPED" there would be the same
+    over-claim in the opposite direction."""
+    NetSource(onnx=resolve_onnx_spec(echo_onnx)).load(device="cpu", tag="audit")
+    out = capsys.readouterr().out
+    assert "no GPU memory allocated" in out
+    assert "arena" not in out
+
+
+def test_the_fraction_to_bytes_conversion_rounds_down_and_is_bounded() -> None:
+    """The arithmetic ORT's absolute budget needs, checkable without a card."""
+    assert gpu_mem_limit_bytes(0.4, 32 * GIB) == int(0.4 * 32 * GIB)
+    assert gpu_mem_limit_bytes(1.0, 100) == 100
+    # Rounded DOWN: a cap larger than the share asked for is not a cap.
+    assert gpu_mem_limit_bytes(0.3, 10) == 3
+    # ...but never zero, which ORT would read as "no arena at all".
+    assert gpu_mem_limit_bytes(1e-12, 10) == 1
+    for bad in (0.0, -0.5, 1.5):
+        with pytest.raises(SystemExit, match="gpu-mem-fraction"):
+            gpu_mem_limit_bytes(bad, 32 * GIB)
+
+
+def test_a_fraction_on_cpu_is_reported_ignored_not_silently_dropped(
+    capsys: pytest.CaptureFixture[str], echo_onnx: Path,
+) -> None:
+    """An accepted-and-dropped flag is the same defect one size down."""
+    net = NetSource(onnx=resolve_onnx_spec(echo_onnx))
+    apply_gpu_mem_cap(net=net, device="cpu", gpu_mem_fraction=0.4, tag="audit")
+    out = capsys.readouterr().out
+    assert "IGNORED" in out
+    assert "capped" not in out.lower()
+
+
+def test_the_torch_cap_never_claims_to_have_capped_the_onnx_session(
+    capsys: pytest.CaptureFixture[str], echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The log line must name the allocator it bounded.
+
+    The original read `GPU memory capped at fraction 0.4` after a torch-only
+    call — true of the torch allocator, false of the ONNX session the `--onnx`
+    run actually evaluates in.
+    """
+    calls: list[tuple[float, int]] = []
+    monkeypatch.setattr(
+        torch.cuda,
+        "set_per_process_memory_fraction",
+        lambda frac, device: calls.append((frac, device)),
+    )
+    net = NetSource(onnx=resolve_onnx_spec(echo_onnx))
+    apply_gpu_mem_cap(net=net, device="cuda:1", gpu_mem_fraction=0.4, tag="audit")
+
+    out = capsys.readouterr().out
+    assert calls == [(0.4, 1)]
+    assert "TORCH GPU allocator capped" in out
+    assert "ONNX session's CUDA arena is capped separately" in out
+
+
+def test_the_ort_cap_is_reported_only_after_the_session_exists(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`verify_onnx_session_device` prints the ORT cap it can SEE was requested,
+    alongside the providers the session actually came up on."""
+    spec = resolve_onnx_spec(echo_onnx)
+    _capture_ort_providers(monkeypatch, reported=[CUDA_PROVIDER, CPU_PROVIDER])
+    _fake_card(monkeypatch, 32 * GIB)
+    NetSource(onnx=spec).load(device="cuda", gpu_mem_fraction=0.5, tag="audit")
+    out = capsys.readouterr().out
+    assert "onnxruntime session on ['CUDAExecutionProvider'" in out
+    assert f"CUDA arena capped at {16 * GIB} bytes" in out
 
 
 # --------------------------------------------------------------------------
@@ -228,22 +456,41 @@ def _fake_providers(monkeypatch: pytest.MonkeyPatch, providers: list[str]) -> No
     monkeypatch.setattr(ort, "get_available_providers", lambda: providers)
 
 
-def test_an_indexed_cuda_device_is_refused_rather_than_relocated(
-    monkeypatch: pytest.MonkeyPatch,
+def test_the_cuda_guard_reads_the_session_not_the_compile_time_list(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--device cuda:1` would put the net on device 0 and say nothing.
+    """The parse-time guard CANNOT catch a CUDA session that fell back to CPU.
 
-    `OnnxChessNet` takes provider NAMES, so ORT gets no `device_id` — while
-    torch and `--gpu-mem-fraction` target the index that was asked for. On this
-    box device 0 is the live trainer's.
+    `onnxruntime.get_available_providers()` is the list the wheel was COMPILED
+    with. It stays populated when the provider's shared library cannot load —
+    measured on this box with the GPU wheel: `get_available_providers()` returns
+    `[Tensorrt, CUDA, CPU]` (so `validate_onnx_device('cuda')` passes) while
+    every session it builds comes back `['CPUExecutionProvider']`, because
+    `libonnxruntime_providers_cuda.so` needs a cuDNN that is not installed. ORT
+    warns and drops; it does not fail. So the ONLY reading that can tell the two
+    apart is the session's own.
+
+    Below: a REAL session, really on CPU (no GPU is touched), asked about a
+    `--device cuda` run. The compile-time list is faked to contain CUDA, which
+    is exactly the state that makes the old guard a gate that cannot fail.
     """
+    from chess_anti_engine.onnx.load import OnnxChessNet
+
     _fake_providers(monkeypatch, [CUDA_PROVIDER, CPU_PROVIDER])
-    with pytest.raises(SystemExit, match="onnxruntime would use CUDA device 0"):
-        validate_onnx_device("cuda:1")
-    # Unambiguous spellings are fine, and CPU is never touched by this check.
-    validate_onnx_device("cuda")
-    validate_onnx_device("cuda:0")
-    validate_onnx_device("cpu")
+    validate_onnx_device("cuda")  # the parse-time screen is happy — and wrong
+
+    model = OnnxChessNet(
+        echo_onnx,
+        input_name="planes",
+        policy_output_name="policy",
+        wdl_output_name="wdl",
+        providers=[CPU_PROVIDER],
+    )
+    assert model.session_providers() == [CPU_PROVIDER]
+    with pytest.raises(SystemExit, match="DROPPED"):
+        verify_onnx_session_device(model, "cuda")
+    # ...and a CPU run of the same session is fine: nothing was claimed.
+    verify_onnx_session_device(model, "cpu")
 
 
 def test_a_cuda_request_without_a_cuda_provider_is_refused(

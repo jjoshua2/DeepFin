@@ -78,6 +78,7 @@ from chess_anti_engine.inference import LocalModelEvaluator
 from scripts.net_source import (
     NetSource,
     add_net_source_args,
+    apply_gpu_mem_cap,
     net_source_from_args,
     reject_stored_encoding_for_onnx,
 )
@@ -104,6 +105,7 @@ def value_1ply_regret(
     *, net: NetSource, positions, device: str, batch_size: int, pos_chunk: int,
     input_encoding: str = INPUT_ENCODING_DEFAULT,
     matched_rows: MatchedAuditRows | None = None,
+    gpu_mem_fraction: float | None = None,
 ) -> tuple[float, dict[int, float], np.ndarray]:
     """Return (overall mean regret cp, {phase: mean cp}, per-position regrets).
 
@@ -123,11 +125,17 @@ def value_1ply_regret(
     to the evaluator is exactly ``encode_cboard`` of the pushed board.
     ``stored`` splices the parent's real production history onto each child
     (audit-v2) and requires ``matched_rows`` covering every scored position.
+
+    ``gpu_mem_fraction`` is plumbed all the way to ``net.load`` because on the
+    ``--onnx`` path the cap is a SESSION-CONSTRUCTION argument (ORT's
+    ``gpu_mem_limit``); there is no later point at which it can be applied.
     """
     encoding = normalize_input_encoding(input_encoding)
     if encoding == "stored" and matched_rows is None:
         raise ValueError("input_encoding='stored' requires matched_rows")
-    model = net.load(device=device)
+    model = net.load(
+        device=device, gpu_mem_fraction=gpu_mem_fraction, tag="value-regret",
+    )
     enc_kwargs = model_encoding_kwargs(model)
     if matched_rows is not None and encoding == "stored":
         matched_rows.require_model_compatible(enc_kwargs)
@@ -245,7 +253,12 @@ def main() -> None:
     ap.add_argument("--pos-chunk", type=int, default=128,
                     help="positions buffered per forward pass group (bounds RAM)")
     ap.add_argument("--gpu-mem-fraction", type=float, default=None,
-                    help="cap this process's CUDA memory fraction (coexist with training)")
+                    help="cap this process's CUDA memory fraction (coexist with "
+                         "training). Applied to BOTH allocators a run can use: the "
+                         "torch caching allocator (set_per_process_memory_fraction) "
+                         "and, on --onnx, onnxruntime's CUDA arena (gpu_mem_limit, "
+                         "computed against the card's total memory). The two are "
+                         "separate: torch's cap does not bound an ORT session.")
     ap.add_argument("--dump-per-position", default=None, metavar="PATH",
                     help="write per-position JSONL (fen, phase, top1 regret cp) for "
                          "paired checkpoint comparison via scripts/paired_compare.py")
@@ -274,14 +287,15 @@ def main() -> None:
     # matched-rows index is even opened.
     reject_stored_encoding_for_onnx(net, args.input_encoding)
 
-    if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
-        # Cap the SELECTED device (e.g. cuda:1), not just the current default one.
-        # torch rejects an index-less device, so resolve bare "cuda" -> current index.
-        dev_idx = (int(args.device.split(":", 1)[1]) if ":" in args.device
-                   else torch.cuda.current_device())
-        torch.cuda.set_per_process_memory_fraction(float(args.gpu_mem_fraction), device=dev_idx)
-        print(f"[value-regret] GPU memory capped at fraction {args.gpu_mem_fraction} "
-              f"on cuda:{dev_idx}")
+    # Caps the TORCH allocator and says so. The --onnx session is capped at
+    # load time, through ORT's own gpu_mem_limit -- torch's fraction cannot
+    # reach it, which is the bug this split exists to stop reprinting.
+    apply_gpu_mem_cap(
+        net=net,
+        device=str(args.device),
+        gpu_mem_fraction=args.gpu_mem_fraction,
+        tag="value-regret",
+    )
 
     encoding = normalize_input_encoding(args.input_encoding)
     # Every metric line below carries this tag. The two knobs in it each move
@@ -322,6 +336,7 @@ def main() -> None:
         net=net, positions=positions, device=args.device,
         batch_size=args.batch_size, pos_chunk=args.pos_chunk,
         input_encoding=encoding, matched_rows=matched,
+        gpu_mem_fraction=args.gpu_mem_fraction,
     )
     if args.dump_per_position:
         import json
