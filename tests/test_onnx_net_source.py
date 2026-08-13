@@ -185,6 +185,29 @@ def test_an_unknown_explicit_output_name_raises(echo_onnx: Path) -> None:
         resolve_onnx_spec(echo_onnx, policy_output="/output/policy")
 
 
+def test_explicit_names_are_validated_too_not_taken_on_trust(echo_onnx: Path) -> None:
+    """Naming all three must not buy a pass on opening the graph.
+
+    A short-circuit there would accept a typo'd override at parse time and let
+    it surface from ORT only after the audit set had loaded and SF had spent an
+    hour labelling — the exact cost this resolution is placed early to avoid.
+    """
+    with pytest.raises(SystemExit, match="--onnx-input-name 'plane' is not in"):
+        resolve_onnx_spec(
+            echo_onnx, input_name="plane", policy_output="policy", wdl_output="wdl",
+        )
+    with pytest.raises(SystemExit, match="is not an output of this graph"):
+        resolve_onnx_spec(
+            echo_onnx, input_name="planes", policy_output="policy", wdl_output="wdl2",
+        )
+    spec = resolve_onnx_spec(
+        echo_onnx, input_name="planes", policy_output="policy", wdl_output="wdl",
+    )
+    assert (spec.input_name, spec.policy_output, spec.wdl_output) == (
+        "planes", "policy", "wdl",
+    )
+
+
 def test_cpu_device_never_offers_ort_the_cuda_provider() -> None:
     """`--device cpu` must be unable to allocate on a training GPU, not merely
     prefer not to."""

@@ -114,18 +114,15 @@ def resolve_onnx_spec(
 
     Costs one throwaway ``InferenceSession`` on the CPU provider, which for a
     BT4-sized graph is a few seconds and ~1G of RSS, both released before the
-    scoring session is built. Passing all three names skips it entirely.
+    scoring session is built. The graph is opened even when all three names are
+    given explicitly, deliberately: a typo'd override would otherwise be
+    accepted here and only surface from ORT after the audit set had loaded and
+    Stockfish had spent an hour labelling — which is the cost this function
+    exists to avoid.
     """
     p = Path(path).expanduser()
     if not p.is_file():
         raise SystemExit(f"--onnx: no such file: {p}")
-    if input_name and policy_output and wdl_output:
-        return OnnxNetSpec(
-            path=p.resolve(),
-            input_name=input_name,
-            policy_output=policy_output,
-            wdl_output=wdl_output,
-        )
     # Local import: onnxruntime is heavy and only the --onnx path needs it.
     import onnxruntime as ort
 
