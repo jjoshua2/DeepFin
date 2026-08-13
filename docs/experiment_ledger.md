@@ -46029,3 +46029,144 @@ table was transposed.** Two independent routes (the re-run, and the entry's own 
 contradiction) agree on which half was wrong. ⇒ the contradiction was a FREE detector that sat
 unread for a day. When a ledger entry states a direction in prose and a magnitude in a table,
 **check they agree before quoting either** — it costs one glance and it caught this.
+
+---
+
+## 2026-08-13 — THE ARGMAX GAP DIAGNOSED: mates + decisive positions, and "our mass is competitive" is DEAD
+
+Josh: *"why don't you dig more into how our mass is very similar but our argmax is different? is
+that easy to fix in search or needs a training change?"* Answer below. **Three of my own claims die
+here; the corrections are the entry.**
+
+### ⚑⚑ CORRECTION 1 — THE PLACEMENT COMPARISON WAS NOT LIKE-FOR-LIKE. Our net was scored with 7 of
+its 8 HISTORY FRAMES ZEROED while all three foreign nets got repeat-fill.
+`scripts/foreign_net_audit.py` calls `fill_lc0_history_repeat` on the ONNX branch (`:189`) and passes
+`fill_in_history=True` to Ceres (`:195`) — its own comment says this is "so the two nets are being
+asked the same question". **The `--checkpoint` branch (`_score_checkpoint`, `:232-280`) never calls
+it.** Our encoder emits **134.7 of 175 planes all-zero** on audit FENs. Not a dead knob: the fill
+moves our raw argmax on **19.8%** of positions (max logit delta 7.17).
+
+| our net, SAME weights | top-1 cp | E cp |
+|---|---|---|
+| zero-history (the banked 47.34) | 47.34 | 53.25 |
+| **repeat-filled (what BT4/Ceres get)** | **43.01** | **50.18** |
+| paired delta | **−4.33 [−6.66, −2.08]** | **−3.07 [−4.32, −1.83]** |
+
+Pipeline validated **bit-exact against the banked `gateD_ours`** in zero mode first, so the delta is
+attributable to the fill alone. ⇒ **corrected gap: ours − BT4 top-1 +22.93 [+19.34, +26.50], 2.14×
+not 2.36×.** The fill explains 16% of the gap. Every number below uses the like-for-like fill.
+
+### ⚑⚑ CORRECTION 2 — "OUR MASS IS COMPETITIVE" IS DEAD. IT WAS A RULER ARTIFACT, NOT A COINCIDENCE.
+`move_regrets` floors every move deep-SF's MultiPV did not list at the regret of the **worst listed**
+move — a deliberate optimistic lower bound. **9.4 of 28.0 legal moves are listed; 66.4% get the
+floor.** That floor IS the E[regret] comparison:
+
+| net | mass on UNLISTED moves | % of E[regret] from the tail outside top-5 |
+|---|---|---|
+| ours | 0.084 | **7.0%** |
+| BT4 | 0.116 | **43.5%** |
+| C1-512-15 | — | 44.7% |
+
+For our SHARP net E[regret] ≈ the argmax's regret; for the DIFFUSE nets it is dominated by mass
+scored at a floor that under-penalises exactly their diffuseness. Restrict to MultiPV-listed moves
+and renormalise — every regret then exactly known, no floor anywhere:
+
+| net | E as-measured | **E \| listed** |
+|---|---|---|
+| ours | 50.18 | **42.61** |
+| BT4 | 50.92 | **37.63** |
+
+**ours − BT4 on `E|listed` = +4.98 [+2.69, +7.29] — RESOLVED AGAINST US**, where as-measured E reads
+−0.74 [−3.19, +1.76]. ⇒ **the E[regret] parity the previous entry's headline rested on does not
+exist.** ⚑ **ALL FUTURE PLACEMENT CLAIMS QUOTE `E|listed`, NEVER `E`.** This is
+[[same_name_different_population]] inside a single metric: `E[regret]` means a different thing for a
+sharp net than for a diffuse one, because the censoring interacts with the shape.
+
+### ⚑ CORRECTION 3 — `ckpt218` IS NOT AN OLD CHECKPOINT.
+Bit-identical (step 79861) to `checkpoint_000218`, the LAST checkpoint of production trial `5ce02`
+(2026-08-12 07:40), and **Tier-13 arm C was warm-started from that exact file**. It is the direct
+parent of the running net, ~34 h old. The "~990 global" caveat I attached conflated the PER-TRIAL
+counter with the LINEAGE counter. The placement is current, not stale.
+
+### THE SHARPNESS HYPOTHESIS: CONFIRMED
+| net | mean H (nats) | H/ln(n_legal) | p(top-1) | top-5 mass |
+|---|---|---|---|---|
+| **ours** | **0.914** | **0.299** | **0.680** | **0.963** |
+| BT4 | 1.644 | 0.534 | 0.496 | 0.842 |
+
+Entropy ours−BT4 = **−0.73 nats [−0.75, −0.71]**; we are ~1.8× sharper. And "confident on a mediocre
+move" in its sharpest form — **when we are WRONG we are 1.6× more confident and put 2.7× LESS
+probability on the right move, at the SAME median rank (3)**: p(top-1) when wrong 0.611 vs BT4 0.372;
+median p(SF's best) when wrong **0.047 vs 0.129**.
+
+### BUT "THE INFORMATION IS NOT THERE" IS REFUTED — DECISIVELY
+Uncensored rank of deep-SF's best (topk=220 captured every legal move on 100% of rows):
+
+| net | r=1 | r=2 | r=3 | r=4-10 | r>10 |
+|---|---|---|---|---|---|
+| ours | 42.9% | 18.9% | 10.6% | 22.7% | **4.9%** |
+| BT4 | 56.8% | 18.9% | 9.6% | 13.1% | **1.5%** |
+
+Oracle best-of-k (ceiling, NOT achievable — same ruler as the selector, circular by construction):
+ours k=3 **13.18** vs **BT4's raw argmax 20.08**. And the decisive number, Monte-Carlo over the exact
+production root rule (`mcts/gumbel.py:924-953`, `gumbel_topk 16`, `sims 100`, `policy_temp 1.5`):
+**P(deep-SF's best is among our 16 root candidates) = 0.979, vs BT4 0.974.** ⇒ **support is NOT the
+differentiator; our search already holds the right move 98% of the time.**
+⚑ **Temperature cannot help, anywhere: it is a monotone transform, so top-1 regret is invariant to it
+by construction.**
+
+### WHERE THE GAP ACTUALLY LIVES — both concentrations are TRAINING-shaped
+**(i) MATES — 8.1% of positions carrying 9.20 of the 22.93 cp gap (40%).** Our top-1 there is
+**163.1 vs BT4's 49.5 (3.3×)**; elsewhere 32.4 vs 17.5 (1.85×). **94.9% of our 39 positions at the
+1000 cp cap contain a mate.** ⚑ **There is a named, already-diagnosed mechanism and it is ARMED IN
+THE LIVE CONFIG**: `sf_policy_score_mode: cp` (`configs/pbt2_small.yaml:294`) with
+`mate_to_effective_cp` folding mates to ±1500-2480 — INSIDE the reachable cp band — so a mate-in-3
+gets **0.000000** of the cp-mode policy-target mass while cp≈19996 decliners split it (ledger N1,
+2026-08-05). **No search re-ranking fixes a target that teaches the opposite.**
+
+**(ii) DECISIVE POSITIONS.** By criticality (best-vs-2nd cp gap):
+
+| bucket | n | ours top-1 | BT4 top-1 | ours rank-1% | BT4 rank-1% |
+|---|---|---|---|---|---|
+| quiet(<20) | 2135 | 23.2 | 13.0 | 31.9% | 41.7% |
+| decisive(≥100) | 645 | **103.7** | **32.5** | 69.1% | 89.0% |
+
+We are *better* than BT4 on E in quiet positions and **3.2× worse on top-1 where one move is clearly
+best**. Even our oracle best-of-3 in the decisive bucket (37.9) is 5.8× BT4's (6.5) — **the one
+bucket where the information genuinely is NOT in our top-3.**
+
+### VERDICT: BOTH, WITH TRAINING LEADING
+It is a **selection failure inside the search, not a support failure in the policy — but the selector
+is the VALUE head**, which is separately known not to fit its own label (gap +41.6 [35.4, 47.8]).
+Root rule `argmax(g + log p_T + σ(q̂))`, σ scale `0.1·(50+12) = 6.2`. When our argmax is wrong the
+tempered log-prior gap against SF's best is `ln(0.611/0.047)/1.5 = 1.71` ⇒ search needs
+**Δq̂ > 0.276**; BT4's own prior would need only **0.115**. ⇒ **our sharper, worse-placed prior is
+~2.4× harder for a search to overturn**, and the thing that must overturn it is Q at 6-12 visits.
+⚠ **This paragraph is ARITHMETIC ON THE DOCUMENTED ROOT RULE, not an executed search.**
+
+- **Training (primary):** the N1 mate-fold target defect is a concrete already-specified fix worth
+  ~40% of the gap; the value head is the arbiter of any re-ranking and is the known weak link.
+  Neither is reachable by a selection rule.
+- **Search (secondary, bounded, and DANGEROUS to our instruments):** raising `gumbel_policy_temp` or
+  `gumbel_c_scale` gives Q more authority against a sharp prior — but CLAUDE.md's standing rule bans
+  tuning `c_scale` toward the play optimum (~0.2), it VOIDS the regret series (frozen 2026-08-09
+  20:58), and `policy_temp ≠ 1.0` already disables the compact-legal bf16 leaf transport. Three sims
+  doublings already read +5.8 Elo.
+
+### THE EXPERIMENT THAT CONVERTS §4's ARITHMETIC INTO A MEASUREMENT (owed, not run)
+Run our ACTUAL MCTS at 100 sims on 200-300 audit positions (CPU-feasible, ~30-60 min) and score the
+**search's chosen move** with the same ruler against the raw argmax on the same positions.
+**Search top-1 collapses 43 → ~25** ⇒ the value head is already re-ranking and the residual is
+policy/target. **Stays near 43** ⇒ the value head cannot rank the 16 candidates it is handed, and the
+search-side levers are PROVABLY CAPPED.
+
+### Not verified
+No arena, no Elo — regret cp is not Elo and #170 does not exist. **Real history never tested**
+(audit set structurally cannot carry it): repeat-fill is the FAIR convention, not the TRUE one, and
+is out-of-distribution for our net too, which sees zero-fill only at ply 0 — the owed H8/H2/HR
+ablation on REPLAY rows is the real answer and until it runs the residual handicap's direction is
+unknown. Audit coverage bounds castling/EP/history claims but NOT the mate finding (8.1%, n=326).
+Oracle best-of-k is circular by construction. ONNX-fp32-CPU vs torch-fp32-CPU numeric path not
+controlled. Ceres full dumps still running; both C1 nets track BT4 on every statistic.
+⚑ `full_ours` reproduces banked `gateD_ours` **bit-for-bit on all 4000 rows** — the open
+`gateD_C1-512-15` non-determinism does NOT touch our net's runs.
