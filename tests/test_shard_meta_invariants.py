@@ -12,6 +12,8 @@ pin predicates that were considered and deliberately NOT written:
 """
 from __future__ import annotations
 
+import logging
+
 from chess_anti_engine.replay.shard import shard_meta_violations
 
 
@@ -2085,3 +2087,100 @@ def test_the_walk_never_sizes_a_partly_written_arena_result(tmp_path) -> None:
         f"a final {len(body)} bytes -- these are the bytes the retention "
         "ceiling is computed from"
     )
+
+
+# ---------------------------------------------------------------------------
+# #419 review follow-ups (F-A / F-B / F-C).
+# ---------------------------------------------------------------------------
+
+
+class _LogSpy(logging.Handler):
+    """Captures (levelname, message) off a REAL logger.
+
+    ⚑ A real `logging.Logger` with a handler attached, not a stub with a
+    `.warning` attribute: the production code calls `log.warning(fmt, *args)`
+    and a stub that stores the arguments would pass even if the format string
+    and the arguments disagreed. This renders the record, so the message has to
+    actually come out.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[tuple[str, str]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append((record.levelname, record.getMessage()))
+
+
+def _spy_logger(name: str) -> tuple[logging.Logger, _LogSpy]:
+    log = logging.getLogger(name)
+    log.setLevel(logging.INFO)
+    log.handlers = []
+    spy = _LogSpy()
+    log.addHandler(spy)
+    return log, spy
+
+
+def _unlinkable_sidecar(bucket, entry_name: str, *, mtime: float):
+    """A `.reason.txt` whose `unlink()` fails, without needing privileges.
+
+    A DIRECTORY: `Path.unlink()` on one raises `IsADirectoryError` (EISDIR),
+    which is an `OSError` and lands on exactly the branch a real EACCES/EIO
+    would. The mechanism is synthetic; the branch is the production one.
+    """
+    import os
+
+    sd = bucket / f"{entry_name}.reason.txt"
+    sd.mkdir()
+    (sd / "inner").write_bytes(b"y" * 50)
+    os.utime(sd, (mtime, mtime))
+    return sd
+
+
+def test_a_stuck_sidecar_does_not_credit_the_entry_count(tmp_path) -> None:
+    """⚑ REGRESSION AGAINST THIS PR'S OWN F1 COMMIT (#419 F-A, from review).
+
+    When the shard unlinks but its `.reason.txt` does not, the BYTES were
+    handled correctly -- `gone_bytes` excludes the sidecar -- while
+    `live_count[victim] -= 1` and `gone_entries += 1` still ran. So the sweep
+    ended over the ENTRY ceiling: post-F4 the orphaned sidecar is an entry in
+    its own right, so one entry left and one entry arrived, and the count did
+    not go down.
+
+    ⚑ THIS TEST PASSES ON `origin/main` AND FAILS ON THIS PR'S F1 COMMIT. It is
+    not a defect of the base -- `main`'s outer `except OSError: continue`
+    happened to skip the whole entry, so it was accidentally safe here. This
+    pins a regression the fix introduced, which is why the direction is
+    reported the other way round from every other test in this file.
+
+    Measured before the fix: report (1, 100), next walk counts 3 entries
+    against `max_entries=2`, and NO warning -- silent.
+    """
+    import os
+
+    from chess_anti_engine.server.app import _retention_entries, prune_retained_dirs
+
+    u = tmp_path / "invalid" / "alice"
+    u.mkdir(parents=True)
+    for i, mt in ((0, 1000.0), (1, 2000.0), (2, 3000.0)):
+        p = u / f"e{i}.tar"
+        p.write_bytes(b"x" * 100)
+        os.utime(p, (mt, mt))
+    _unlinkable_sidecar(u, "e0.tar", mtime=1000.0)
+
+    assert len(_retention_entries(u)) == 3
+    log, spy = _spy_logger("test_retention_stuck_sidecar")
+
+    prune_retained_dirs([u], max_bytes=0, max_entries=2, log=log)
+
+    after = len(_retention_entries(u))
+    assert after <= 2, (
+        f"the sweep left {after} entries against max_entries=2 -- it credited "
+        "itself an entry whose .reason.txt is still on disk, and post-F4 that "
+        "orphan is an entry"
+    )
+    assert [m for lvl, m in spy.records if lvl == "WARNING"], (
+        "the sweep ended over the entry ceiling and said nothing"
+    )
+
+

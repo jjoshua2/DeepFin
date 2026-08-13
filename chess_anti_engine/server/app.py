@@ -1857,7 +1857,7 @@ def _evict_fairly(
     gone_entries = 0
     freed_entries = 0
     freed_bytes = 0
-    stuck_entries = 0
+    stuck_victims = 0
 
   # Per-bucket queues, each already oldest-first because `entries` is sorted.
   # `live_*` track what the sweep believes is still on disk, so the victim
@@ -1905,7 +1905,7 @@ def _evict_fairly(
       # on it; when every entry has been tried, `available` empties and the
       # sweep ends. The alternative -- crediting the bytes, which is what this
       # did -- ends the sweep OVER the ceiling while believing it is under.
-            stuck_entries += 1
+            stuck_victims += 1
             continue
       # `size` ALREADY includes the sidecar, so it must not be added again --
       # that would over-subtract and stop evicting while still over budget.
@@ -1924,8 +1924,24 @@ def _evict_fairly(
         gone_bytes = size - (0 if sidecar_gone else entry.sidecar_size)
         total_bytes -= gone_bytes
         live_bytes[victim] -= gone_bytes
-        live_count[victim] -= 1
-        gone_entries += 1
+        if sidecar_gone:
+            live_count[victim] -= 1
+            gone_entries += 1
+        else:
+      # ⚑ THE COUNT DID NOT GO DOWN, SO DO NOT CREDIT IT (#419 F-A, review).
+      # The shard left, but its `.reason.txt` did not -- and #419 F4 makes an
+      # orphaned sidecar an ENTRY in its own right, so the next walk counts it.
+      # One entry out, one entry in: net zero. Crediting it here is the same
+      # mistake as crediting undeleted bytes, one field over, and it ends the
+      # sweep over the ENTRY ceiling while believing it is under. `main` was
+      # accidentally safe here (its outer `except OSError: continue` skipped
+      # the whole entry); this branch is the one that newly produces it, so it
+      # is a regression this PR would have introduced.
+      #
+      # Counted as stuck for the same reason: an over-ceiling sink that says
+      # nothing is exactly what the WARNING below exists to prevent, and this
+      # is the one path that newly creates one.
+            stuck_victims += 1
       # Two independent deletes, credited independently. `size - sidecar_size`
       # is the entry's own bytes; the sidecar's are added only if the unlink
       # above found it. `freed_entries` still counts ENTRIES, so a lone sidecar
@@ -1940,14 +1956,19 @@ def _evict_fairly(
             "retention: evicted %d entr%s (%d bytes) from %s",
             freed_entries, "y" if freed_entries == 1 else "ies", freed_bytes, label,
         )
-    if stuck_entries and log is not None:
-      # Not silent: an undeletable entry means the sink can sit permanently
-      # over its ceiling no matter how often the sweep runs, and the only way
-      # anyone finds that out is a log line saying so.
+    if stuck_victims and log is not None:
+      # Not silent: a victim the sweep could not fully remove means the sink
+      # can sit permanently over its ceiling no matter how often the sweep
+      # runs, and the only way anyone finds that out is a log line saying so.
+      #
+      # ⚑ "not fully removed" covers BOTH shapes, which is why the counter is
+      # not called `stuck_entries`: the entry itself may have survived, or the
+      # entry went and its `.reason.txt` stayed. Either way something is still
+      # on disk and still counted.
         log.warning(
-            "retention: %d entr%s could not be removed from %s; their bytes "
-            "still count against the budget",
-            stuck_entries, "y" if stuck_entries == 1 else "ies", label,
+            "retention: %d victim%s could not be fully removed from %s; what "
+            "is left still counts against the budget",
+            stuck_victims, "" if stuck_victims == 1 else "s", label,
         )
     return (freed_entries, freed_bytes)
 
