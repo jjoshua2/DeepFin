@@ -45237,3 +45237,64 @@ which is the same place Josh says the problem gets hard.
 **⇒ D0 REVISED: (1) add `--onnx` to the two rulers; (2) score the full Ceres ladder + our net on
 the frozen audit set; (3) fit regret→Elo on their 8 published points (closes #170); (4) run
 arenas ONLY at whatever rung the ruler says is within reach.**
+
+---
+
+## 2026-08-13 — FIRST-CLASS FOREIGN-NET SUPPORT (Josh): two layers, and the second one tests OUR SEARCH
+
+Josh: *"i want to support ceres nets anyway like we do lc0 so we can do matches between them
+eventually, and it will help test our search to see if its as good as ceres and lc0s."*
+
+Scoped into two layers because they have completely different dependency profiles.
+
+### Layer 1 — foreign nets as first-class citizens. NO external dependency. Delivers the whole D0/#170 program.
+
+`OnnxChessNet` already presents our model contract. What is missing is that the three tools
+that take `--checkpoint`/`--candidate` cannot accept it:
+- `scripts/arena_standard.py` — `--candidate`/`--reference` are checkpoint paths (it DOES
+  already have `--sims-candidate`/`--sims-reference`, so asymmetric budgets are free).
+- `scripts/value_regret.py`, `scripts/audit_targets.py` — zero ONNX support (grepped).
+
+Route those through `OnnxChessNet` and we immediately get, with no new dependency:
+- our net vs any Ceres net in OUR search at matched sims;
+- **Ceres net vs Ceres net** — re-measuring THEIR published ladder under OUR conditions, which
+  validates whether their Elo spacing transfers and restates the ladder in our own units;
+- every net scored on the frozen audit set ⇒ placement at any gap size, plus the regret→Elo
+  calibration that closes #170.
+
+### Layer 2 — THE SEARCH TEST. Needs lc0 installed; this is the experiment we have never been able to run.
+
+**Put the SAME net behind our search and behind lc0's search and play them against each
+other.** Weights identical on both sides ⇒ the ONLY difference is the search. We have never had
+this: our search has only ever been evaluated with our own net, where search and net are
+confounded [[wdl_regret_measures_agent_not_net]] one level over.
+
+**⇒ IT RESOLVES A CONTRADICTION ALREADY IN OUR LEDGER.** Two measured facts that cannot both
+mean "search doesn't matter":
+- 3 sim doublings = **+5.8 Elo** (`flat_sims_ladder_means_search_may_be_inert`) — search looks
+  inert;
+- `gumbel_c_scale` 0.025 → 0.1 = **+239.5 Elo with the SAME weights both sides** — search is
+  enormously consequential.
+The reconciliation on the table is that our search was badly mis-tuned AND still does not SCALE
+with sims. Same net under lc0's search settles it: **if our sims curve is flat while lc0's
+rises on the identical net, "search is inert" is a property of OUR SEARCH, not of chess.**
+
+**⚑⚑ THE TRAP THAT WOULD MAKE THIS MEANINGLESS AND LOOK CLEAN: "NODES" IS NOT THE SAME UNIT.**
+lc0 counts NN evaluations (with cache hits muddying it); our Gumbel does sequential halving on
+its own eval budget. Setting both to "800 nodes" may hand one side 2× the compute. **Equalize
+on MEASURED FORWARD PASSES PER MOVE, instrumented on both sides — never on the node counters.**
+Canonical [[same_name_different_population]]; the result would otherwise be a confident number
+about nothing.
+
+**⚑ Gumbel vs PUCT is an ALGORITHM difference, not a tuning difference.** Gumbel is designed to
+be strong at LOW sim counts, PUCT typically wins high. So the answer is N-dependent ⇒ **sweep N
+and compare CURVES**; a single N would be cherry-picking whichever end favours us.
+
+**PREREQUISITE, MEASURED:** `/home/josh/local_engines/` holds cheese, cutechess, rofchade —
+**no lc0 and no Ceres binary.** cutechess (the UCI match runner we need) IS present. So layer 2
+needs an lc0 install/build first; layer 1 does not and should not wait for it.
+
+**SEQUENCING NOTE (operational):** layer 1 is a PR with a lint/test gate, and the whole-repo
+gate is CPU-heavy. Per the rule adopted this session after the PID airbag incident
+(`12383b045`), heavy CPU work must not run while an arm trains — Tier-13 arm B is at iter 90/100.
+Draft now, gate it AFTER the arm-B→C transition.
