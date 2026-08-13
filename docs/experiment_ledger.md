@@ -44904,3 +44904,35 @@ Consequences, stated now so the verdict cannot be written post-hoc:
   a second seed doubles pairs (±11 Elo, ~15 Elo detectable) at +5h GPU each; that is the
   ONLY lever pre-registered (the prereg's second-seed rule), and it must be decided by the
   pinned trajectory rule, never after seeing the point estimate.
+
+### ⚑⚑ THE ARENA IS ANCHOR-DEPENDENT BY UP TO 82 ELO (2026-08-13, from the banked 08-10 ladder)
+
+Recomputed from `runs/arena_results.jsonl`, all 200-pair sims-32 `--search-shape training`
+rows run the SAME DAY with the SAME settings, so nothing below is a settings confound.
+Anchored-vs-boot512: iter 514 **+115.2**, 672 +87.8, 735 +86.9, 768 +67.7, 862 **+11.3**.
+Differencing those says 862 is ~104 Elo WEAKER than 514. The DIRECT paired arena between the
+same two checkpoints says **−21.7 [−49.7, +5.9] — a null**. Full check:
+
+| contrast | direct | implied by differencing boot512 anchors | gap |
+|---|---|---|---|
+| 862 vs 514 | −21.7 | −103.9 | **82.2** |
+| 514 vs 672 | −18.3 | +27.4 | **45.7** |
+| 862 vs 735 | −51.6 | −75.6 | 24.0 |
+| 768 vs 735 | −23.5 | −19.2 | 4.3 |
+
+**ADJACENT checkpoints agree within ~4 Elo; DISTANT ones disagree by 46-82.** This CONFIRMS
+the standing "differencing artifact" rule with a magnitude attached, and it is the reason
+the 514→862 series must NOT be read as a 104-Elo decline: the trustworthy instrument is the
+direct paired arena, and it reads NULL. Mechanism (hypothesis, not established): Elo is
+pool-relative and near-identical nets draw far more, compressing the scale — so a shared
+weak anchor inflates differences between nets that are actually close.
+
+**Two consequences, both pre-readout:**
+1. **Tier-13's three-contrast design gives a FREE instrument check**: (B−A) + (C−B) must
+   equal (C−A) within the CIs. Record the residual as a first-class output. If it exceeds
+   ~20 Elo, the arena is non-additive on THESE arms and no pairwise verdict should be
+   promoted to a ranking — report each contrast alone.
+2. **Never quote an anchored Elo difference as a verdict** when a direct paired arena
+   between the two checkpoints is affordable. Kills the temptation to grade Tier-13 arms by
+   each running against a shared frozen reference (cheaper, 3 arenas either way, but
+   demonstrably worth up to 82 Elo of artifact).
