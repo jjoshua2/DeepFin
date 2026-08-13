@@ -1,6 +1,7 @@
 """Tests for AsyncTestEval lifecycle and snapshot isolation."""
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -8,6 +9,43 @@ import pytest
 import torch
 
 from chess_anti_engine.train.async_eval import AsyncTestEval
+
+
+def _start_bounded(aer: AsyncTestEval, *, bound_s: float = 30.0, **kwargs) -> float:
+    """Run ``AsyncTestEval.start()`` on a helper thread; FAIL if it doesn't return.
+
+    ⚑ Every ``start()`` in this file goes through here, and that is not
+    ceremony. The compile barrier's wait is UNBOUNDED by design (a finite
+    budget disengages it exactly on the cold boots it exists for — review
+    finding B1, PR #405), so a regression that leaves the wait unsatisfied does
+    not fail a test that calls ``start()`` on the main thread: it hangs the
+    whole session until CI's job timeout, with no attribution. Measured on this
+    file before this helper: the mutant that folds ``_init_failed`` into the
+    barrier's identity check, and the one that drops the failure path's
+    ``_source_iter`` write, were both real detections rendered undiagnosable —
+    each burned 240s and exited 124 instead of failing (review finding P2,
+    PR #405). There is no ``pytest-timeout`` in this repo's test deps, and a
+    wall-clock bound here needs none.
+
+    Returns elapsed seconds, so a caller can additionally bound the latency.
+    """
+    done = threading.Event()
+
+    def _run() -> None:
+        aer.start(**kwargs)
+        done.set()
+
+    t = threading.Thread(target=_run, name="test-start-bounded", daemon=True)
+    t0 = time.monotonic()
+    t.start()
+    t.join(timeout=bound_s)
+    elapsed = time.monotonic() - t0
+    assert done.is_set(), (
+        f"start(source_iter={kwargs.get('source_iter')}) did not return within "
+        f"{bound_s:.1f}s -- the compile barrier's wait is unbounded, so this is "
+        "a hang, not slowness"
+    )
+    return elapsed
 
 
 class _StubChessNet(torch.nn.Module):
@@ -54,7 +92,7 @@ def test_collect_returns_started_eval(cfg_and_builder):
     trainer, captured = _make_trainer_stub(model, eval_payload="EVAL_RESULT_OK")
 
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="STUB_BUF",
         batch_size=4, steps=2, device="cpu", source_iter=7,
     )
@@ -102,17 +140,17 @@ def test_start_during_inflight_orphans_prior(cfg_and_builder, caplog):
     trainer._compute_metrics = _first_fast_then_slow
 
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
     assert aer.collect(timeout=5.0) == ("FIRST", 1)
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=2,
     )
     with caplog.at_level("WARNING"):
-        aer.start(
+        _start_bounded(aer,
             trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
             batch_size=4, steps=2, device="cpu", source_iter=3,
         )
@@ -168,7 +206,7 @@ def test_first_start_is_a_compile_barrier(cfg_and_builder):
     obs = threading.Thread(target=_observer)
     obs.start()
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
@@ -223,13 +261,13 @@ def test_barrier_rearms_when_batch_shapes_change(cfg_and_builder):
 
     aer = AsyncTestEval()
     # Eval 1: first ever -> barrier (shapes (1, 4) now registered).
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
     assert aer.collect(timeout=5.0) == ("FAST1", 1)
     # Eval 2: same shapes -> asynchronous (returns while nothing blocks it).
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=2,
     )
@@ -240,7 +278,7 @@ def test_barrier_rearms_when_batch_shapes_change(cfg_and_builder):
         gate.set()
     rel = threading.Thread(target=_release_later)
     rel.start()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=8, steps=2, device="cpu", source_iter=3,
     )
@@ -278,14 +316,14 @@ def test_second_start_stays_asynchronous(cfg_and_builder):
     trainer._compute_metrics = _first_fast_then_gated
 
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
     assert aer.collect(timeout=5.0) == ("FIRST", 1)
 
     t0 = time.monotonic()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=2,
     )
@@ -320,7 +358,7 @@ def test_snapshot_isolated_from_trainer_model(cfg_and_builder):
     trainer._compute_metrics = _compute_metrics_capturing
 
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=42,
     )
@@ -346,7 +384,7 @@ def test_collect_handles_exception_in_thread(cfg_and_builder):
     trainer._compute_metrics = _boom
 
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=99,
     )
@@ -396,7 +434,7 @@ def test_load_state_dict_works_through_compile_wrapper(cfg_and_builder, monkeypa
     trainer._compute_metrics = _capture
 
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=5, compile_mode="reduce-overhead",
     )
@@ -427,14 +465,14 @@ def test_second_iter_reuses_snap_with_new_weights(cfg_and_builder):
 
     aer = AsyncTestEval()
     model.linear.weight.data.fill_(1.0)
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=10,
     )
     m1, s1 = aer.collect(timeout=5.0)
 
     model.linear.weight.data.fill_(2.0)
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=11,
     )
@@ -498,13 +536,13 @@ def test_a_stale_evals_completion_does_not_release_a_rearmed_barrier(cfg_and_bui
 
     aer = AsyncTestEval()
     # Eval 1: registers shapes (1, 4) under the first barrier.
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
     assert aer.collect(timeout=5.0) == ("FIRST", 1)
     # Eval 2: same shapes -> asynchronous; leave it IN FLIGHT (gated on g2).
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=2,
     )
@@ -520,7 +558,7 @@ def test_a_stale_evals_completion_does_not_release_a_rearmed_barrier(cfg_and_bui
     rel = threading.Thread(target=_releaser)
     rel.start()
     # Eval 3: NEW shapes (1, 8) -> re-armed barrier, while eval 2 is in flight.
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=8, steps=2, device="cpu", source_iter=3,
     )
@@ -590,13 +628,13 @@ def test_a_stale_evals_FAILURE_does_not_release_a_rearmed_barrier(cfg_and_builde
 
     aer = AsyncTestEval()
     # Eval 1: registers shapes (1, 4) under the first barrier.
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
     assert aer.collect(timeout=5.0) == ("FIRST", 1)
     # Eval 2: same shapes -> asynchronous; leave it IN FLIGHT (gated on g2).
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=2,
     )
@@ -604,7 +642,7 @@ def test_a_stale_evals_FAILURE_does_not_release_a_rearmed_barrier(cfg_and_builde
     rel = threading.Thread(target=_releaser)
     rel.start()
     # Eval 3: NEW shapes (1, 8) -> re-armed barrier, while eval 2 is in flight.
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=8, steps=2, device="cpu", source_iter=3,
     )
@@ -655,7 +693,7 @@ def test_barrier_rearms_when_the_holdout_row_count_changes(cfg_and_builder):
     trainer._compute_metrics = _eval
 
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
@@ -668,7 +706,7 @@ def test_barrier_rearms_when_the_holdout_row_count_changes(cfg_and_builder):
     rel = threading.Thread(target=_release_later)
     rel.start()
     # SAME batch_size, DIFFERENT holdout row count (len 1 -> len 3).
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="BBB",
         batch_size=4, steps=2, device="cpu", source_iter=2,
     )
@@ -705,7 +743,7 @@ def test_a_dead_worker_thread_fails_evals_instead_of_hanging(monkeypatch):
     # First start: init fails on the worker thread; the failure paths set
     # _exc + _result_event, so the barrier releases with the error rather
     # than hanging, and collect reports the failure as (None, -1).
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
@@ -749,13 +787,144 @@ def test_shutdown_joins_thread(cfg_and_builder):
     model = _StubChessNet(dim=4)
     trainer, _ = _make_trainer_stub(model, eval_payload="OK")
     aer = AsyncTestEval()
-    aer.start(
+    _start_bounded(aer,
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=1,
     )
     aer.collect(timeout=5.0)
     aer.shutdown(timeout=5.0)
     assert aer._thread is None
+
+
+def test_start_after_shutdown_is_refused_and_never_respawns_a_worker(monkeypatch, caplog):
+    """``shutdown()`` is TERMINAL: a later ``start()`` refuses, loudly.
+
+    Review finding P1/P1b (PR #405). A respawn after shutdown was not a
+    working path — it was two different silent breakages, one per piece of
+    per-worker state that survived ``shutdown()``:
+
+    * ``_compiled_shape_keys`` survived, so the fresh worker inherited keys
+      for compiles it had never run: ``needs_barrier`` was False and its
+      genuinely-fresh ``torch.compile`` ran with NO barrier at all. Measured
+      at the previous head: ``start()`` returned in 0.00s with ``build_model``
+      called TWICE. That is precisely the FX-trace race this module exists to
+      close, reached through a field the fix did not cover.
+    * ``shutdown()``'s ``None`` sentinel stayed in the maxsize=1 queue (see
+      the sibling test below).
+
+    Both are closed at the root rather than field-by-field: one worker per
+    object, so per-worker state cannot be inherited by anybody. The assertions
+    are therefore "no second worker exists", not "the second worker was reset
+    correctly".
+    """
+    builds = {"n": 0}
+
+    def _counting_build(_cfg):
+        builds["n"] += 1
+        return _StubChessNet(dim=4)
+
+    monkeypatch.setattr("chess_anti_engine.train.async_eval.build_model", _counting_build)
+    calls = {"n": 0}
+
+    def _eval(**_kw):
+        calls["n"] += 1
+        return "OK"
+
+    trainer = MagicMock()
+    trainer.model = _StubChessNet(dim=4)
+    trainer._compute_metrics = _eval
+
+    aer = AsyncTestEval()
+    _start_bounded(aer,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == ("OK", 1)
+    assert (builds["n"], calls["n"]) == (1, 1)
+    aer.shutdown(timeout=5.0)
+    assert aer._compiled_shape_keys == {(1, 4)}, (
+        "precondition: the dead worker's compiled-shape keys are still on the "
+        "object -- the state a respawn would silently inherit"
+    )
+
+    with caplog.at_level("ERROR"):
+        elapsed = _start_bounded(aer, bound_s=5.0,
+            trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+            batch_size=4, steps=2, device="cpu", source_iter=2,
+        )
+    assert elapsed < 2.0, f"the refused start() took {elapsed:.2f}s"
+    assert aer._thread is None, "shutdown() must be terminal -- no second worker"
+    assert builds["n"] == 1, (
+        "a second worker was spawned after shutdown(): it built a fresh "
+        "snapshot and compiled it while start() returned, inheriting "
+        "_compiled_shape_keys so no barrier ever engaged (review finding P1b)"
+    )
+    assert calls["n"] == 1, "a refused start() must not run an eval"
+    # Refused, not silently dropped: an error in the log, and collect() reports
+    # the failure the same way it reports an eval that raised.
+    assert any(
+        "after shutdown()" in r.getMessage() for r in caplog.records
+    ), "the refusal must be audible -- a silently ignored start() is worse"
+    assert aer.collect(timeout=5.0) == (None, -1)
+    aer.shutdown(timeout=5.0)  # idempotent
+
+
+def test_start_after_shutting_down_a_dead_worker_is_refused_instead_of_hanging(monkeypatch):
+    """The OTHER respawn case: worker died at init, then shutdown, then start.
+
+    Review finding P1 (PR #405), measured at the previous head: ``start()``
+    had not returned after 10s, the queue held 1 item and no thread was alive
+    — a PERMANENT hang, because ``shutdown()`` leaves a ``None`` sentinel in
+    the maxsize=1 queue that a dead worker never dequeued, the respawned
+    worker takes that sentinel and exits before running anything, and the
+    barrier's wait is unbounded.
+
+    This is the case the deleted ``_init_failed = False`` reset was written
+    for, and it is reachable ONLY through ``shutdown()``: that is the only
+    writer of ``_thread = None``, so a worker that dies at init is otherwise
+    never replaced (``start()`` refuses on the dead thread instead). Refusing
+    after shutdown therefore covers both respawn cases, which is why the reset
+    could go rather than being made correct.
+    """
+    boom = {"on": True}
+    builds = {"n": 0}
+
+    def _maybe_boom(_cfg):
+        builds["n"] += 1
+        if boom["on"]:
+            raise RuntimeError("synthetic init failure")
+        return _StubChessNet(dim=4)
+
+    monkeypatch.setattr("chess_anti_engine.train.async_eval.build_model", _maybe_boom)
+    trainer = MagicMock()
+    trainer.model = _StubChessNet(dim=4)
+    trainer._compute_metrics = MagicMock(return_value="OK")
+
+    aer = AsyncTestEval()
+    _start_bounded(aer, bound_s=10.0,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == (None, -1)
+    assert aer._init_failed is True
+
+    aer.shutdown(timeout=5.0)
+    assert aer._work_q.qsize() == 1, (
+        "precondition: shutdown()'s sentinel is still queued because the dead "
+        "worker never dequeued it -- what a respawned worker would consume "
+        "instead of its own work"
+    )
+
+    boom["on"] = False  # a fresh worker WOULD now succeed; it must not exist
+    elapsed = _start_bounded(aer, bound_s=5.0,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    assert elapsed < 2.0, f"the refused start() took {elapsed:.2f}s"
+    assert aer._thread is None, "shutdown() must be terminal -- no second worker"
+    assert builds["n"] == 1, "a second worker was spawned onto a poisoned queue"
+    trainer._compute_metrics.assert_not_called()
+    assert aer.collect(timeout=5.0) == (None, -1)
 
 
 if __name__ == "__main__":

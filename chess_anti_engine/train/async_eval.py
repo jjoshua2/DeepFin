@@ -88,9 +88,28 @@ class AsyncTestEval:
     """
 
     def __init__(self) -> None:
+  # ⚑ EXACTLY ONE WORKER THREAD PER OBJECT, for the object's whole life.
+  # ``shutdown()`` is TERMINAL (it sets ``_shutdown``, and ``start()`` refuses
+  # afterwards) precisely so that this holds, which is what lets the fields
+  # below be sorted into three categories with no state to reset between
+  # workers:
+  #   per-object   ``_lock``, ``_result_event``, ``_work_q``, ``_shutdown``
+  #   per-WORKER   ``_thread``, ``_init_args``, ``_init_failed``,
+  #                ``_compiled_shape_keys`` -- each describes the worker's own
+  #                thread, init and dynamo cache, so under "one worker" they
+  #                are also per-object and are never reset
+  #   per-EVAL     ``_inflight_iter``, ``_result``, ``_exc``, ``_source_iter``
+  #                -- reset by every ``start()``
+  # The category matters because mixing them is silent: a second worker
+  # inheriting per-worker state from a dead first one skips the compile
+  # barrier this class exists for (review finding P1/P1b, PR #405 -- measured:
+  # ``build_model`` called twice with ``start()`` returning in 0.00s). Adding
+  # a field means placing it in one of these three categories; a per-worker
+  # field is only safe while the invariant above holds.
         self._lock = threading.Lock()
         self._result_event = threading.Event()
         self._work_q: queue.Queue[_Work | None] = queue.Queue(maxsize=1)
+        self._shutdown: bool = False
         self._thread: threading.Thread | None = None
         self._init_args: dict[str, Any] | None = None
         self._inflight_iter: int = -1
@@ -142,6 +161,12 @@ class AsyncTestEval:
         trace is fatal to the trial (see the compile-barrier comment below).
         In steady state — same shapes every iteration — only the first call
         blocks and every later call returns immediately as before.
+
+        A call that arrives after ``shutdown()``, or once the worker has died
+        at init, is REFUSED: it logs an error and returns without queueing, and
+        ``collect()`` reports ``(None, -1)``. It does not raise (see
+        ``_refuse_locked``) and it does not spawn a replacement worker (see
+        ``shutdown``).
         """
   # torch.compile prefixes parameter keys with `_orig_mod.`; strip so
   # the snapshot (uncompiled before apply_compile wraps it) loads them.
@@ -157,37 +182,51 @@ class AsyncTestEval:
 
         shape_key = (len(holdout_buf), int(batch_size))
         with self._lock:
-  # A dead worker thread (init failure) never drains the maxsize=1
-  # queue, so the put below would block FOREVER once the queue holds
-  # the never-dequeued prior item — and with the unbounded barrier the
-  # wait after it would too. Fail the eval loudly instead (review
-  # follow-up, PR #405): collect() sees the exc and returns (None, -1).
-            if self._thread is not None and not self._thread.is_alive():
-                log.error(
-                    "AsyncTestEval worker thread is dead (init failure?); "
-                    "dropping the iter %d eval instead of queueing into a "
-                    "queue nothing drains", int(source_iter),
+  # Two unrecoverable states, one contract: there is no usable worker and
+  # none will be created, so the eval is REFUSED rather than queued.
+  #
+  # (1) ``shutdown()`` ran. This object is single-use — see the invariant
+  # in __init__ — and a respawn would be a fresh worker inheriting the
+  # dead one's per-worker state: it would skip the compile barrier
+  # (``_compiled_shape_keys``) and dequeue shutdown()'s own leftover
+  # ``None`` sentinel from the maxsize=1 queue and exit before running
+  # anything, leaving the unbounded barrier waiting FOREVER (both
+  # measured, review finding P1/P1b, PR #405).
+  #
+  # (2) The worker died during init. It never drains the maxsize=1 queue,
+  # so the put below would block forever once the queue holds the
+  # never-dequeued prior item — and with the unbounded barrier the wait
+  # after it would too (review follow-up, PR #405).
+            if self._shutdown:
+                self._refuse_locked(
+                    source_iter=int(source_iter),
+                    why="after shutdown(); an AsyncTestEval is single-use and "
+                        "shutdown is terminal, so a new instance is required",
                 )
-                if self._exc is None:
-                    self._exc = RuntimeError("AsyncTestEval worker thread is dead")
-                self._result_event.set()
+                return
+            if self._thread is not None and not self._thread.is_alive():
+                self._refuse_locked(
+                    source_iter=int(source_iter),
+                    why="with a dead worker thread (init failure?), whose "
+                        "maxsize=1 queue nothing drains",
+                )
                 return
             needs_barrier = shape_key not in self._compiled_shape_keys
             if self._thread is None:
   # Lazy init on first call so we can capture device/compile_mode/
   # model_cfg from the trainer's runtime config without forcing the
-  # caller to pass them at construction time.
+  # caller to pass them at construction time. Runs at most ONCE per
+  # object: the only writer of ``_thread = None`` is shutdown(), and a
+  # start() after shutdown() is refused above. That is what makes the
+  # per-worker fields (``_init_failed``, ``_compiled_shape_keys``,
+  # ``_init_args``) safe without a reset here — an earlier revision reset
+  # ``_init_failed`` and not ``_compiled_shape_keys``, which is the
+  # asymmetry that produced an un-barriered compile on the respawn path.
                 self._init_args = {
                     "model_cfg": model_cfg,
                     "device": device,
                     "compile_mode": compile_mode,
                 }
-  # ``_init_failed`` describes the CURRENT worker. A fresh thread is
-  # only reachable after shutdown() set _thread back to None, but
-  # carrying a dead predecessor's flag across that would release this
-  # start()'s barrier immediately — the new thread's compile would
-  # then race main-thread work, which is the whole point of the flag.
-                self._init_failed = False
                 self._thread = threading.Thread(
                     target=self._loop, name="AsyncTestEval", daemon=True,
                 )
@@ -284,8 +323,8 @@ class AsyncTestEval:
   # forever, and the wait is now UNBOUNDED (review finding B1), so
   # that is a HANG, not a late failure. It is the one exception that
   # must release every waiter, precisely because nobody is left to
-  # signal. ``start()`` clears it when it spawns a fresh worker, so
-  # it always describes the CURRENT thread.
+  # signal. It needs no reset: there is exactly one worker per object
+  # (see __init__), so it can only ever describe that worker.
                     self._result_event.clear()
             log.info(
                 "AsyncTestEval compile barrier released after %.1fs "
@@ -294,6 +333,23 @@ class AsyncTestEval:
                 time.monotonic() - t0, shape_key,
                 "succeeded" if barrier_ok else "FAILED (will re-barrier)",
             )
+
+    def _refuse_locked(self, *, source_iter: int, why: str) -> None:
+        """Fail this eval instead of queueing it. The caller must hold ``_lock``.
+
+        Same contract as an eval that raised: a ``log.error``, an ``_exc`` for
+        ``collect()`` to report as ``(None, -1)``, and ``_result_event`` set so
+        nothing is left waiting on the (unbounded) barrier.
+
+        It deliberately does NOT raise. ``start()`` is called from
+        ``train_trial``'s iteration loop, which has a ``finally:`` and zero
+        ``except``, so raising here would turn a missing holdout metric — the
+        whole cost of a refused eval — into a dead trial.
+        """
+        log.error("AsyncTestEval.start called %s; dropping the iter %d eval", why, source_iter)
+        if self._exc is None:
+            self._exc = RuntimeError(f"AsyncTestEval.start called {why}")
+        self._result_event.set()
 
     def _loop(self) -> None:
         """Worker thread main loop. Builds the snapshot once; reuses it forever."""
@@ -418,14 +474,35 @@ class AsyncTestEval:
         return r, it
 
     def shutdown(self, timeout: float = 10.0) -> None:
-        """Tell the worker thread to exit and join it."""
-        if self._thread is None:
+        """Tell the worker thread to exit and join it. TERMINAL and idempotent.
+
+        After this the object is spent: ``start()`` refuses every later eval
+        (loudly, via ``_refuse_locked``) instead of spawning a second worker.
+        That is a deliberate choice over making respawn work, because the
+        respawn path was reachable ONLY through here — ``shutdown()`` is the
+        only writer of ``_thread = None``, so even a worker that dies at init
+        cannot be replaced without it — and production never takes it:
+        ``AsyncTestEval`` is built once per trial by
+        ``_lazy_construct_iter_helpers`` and shut down once by
+        ``_cleanup_trial_resources``, which then discards it. Supporting a
+        second worker would mean resetting every per-worker field correctly
+        (see __init__) on a path no caller uses, and getting that partially
+        right is what produced the un-barriered compile in review finding
+        P1b, PR #405.
+        """
+        with self._lock:
+            self._shutdown = True
+            thread = self._thread
+        if thread is None:
             return
   # Drain any queued work so the sentinel put doesn't block on a
   # full queue (maxsize=1). Worker may still be mid-eval on a
   # previously dequeued item; that's fine — it'll see None next.
+  # A worker that is ALREADY dead never dequeues this sentinel, so it
+  # outlives the join; harmless now that nothing else is ever put.
         with contextlib.suppress(queue.Empty):
             self._work_q.get_nowait()
         self._work_q.put(None)
-        self._thread.join(timeout=timeout)
-        self._thread = None
+        thread.join(timeout=timeout)
+        with self._lock:
+            self._thread = None
