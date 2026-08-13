@@ -19,6 +19,7 @@ These tests pin the new on-disk durability contract:
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import numpy as np
@@ -812,3 +813,115 @@ def test_quarantined_shard_records_why(tmp_path) -> None:
     reasons = list(_quarantine_unloadable_dir(server_root).glob("*.reason.txt"))
     assert len(reasons) == 1
     assert reasons[0].read_text().strip(), "reason sidecar must not be empty"
+
+
+# ---------------------------------------------------------------------------
+# #406: `shard_meta_violations` ran on the live upload path only, so recovery
+# re-admitted stored metadata without it.
+# ---------------------------------------------------------------------------
+
+
+def _upload_one_pending_shard(server_root: Path, tmp_path: Path) -> Path:
+    """Drive a real upload through the real route and return its pending zarr.
+
+    ⚑ The pending shard is BUILT BY PRODUCTION, not hand-written. A test that
+    assembled the on-disk state itself would still pass against a build whose
+    upload path never produced that shape.
+    """
+    client = _build_client(server_root, upload_compact_shard_size=2000)
+    tar_bytes = _build_zarr_tar(
+        tmp_path, samples=[_sample(i) for i in range(2)], model_sha256="dddd4444",
+    )
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", tar_bytes, "application/x-tar")},
+        headers=_default_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json().get("stored") is True, r.json()
+    pending = list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    assert len(pending) == 1, pending
+    return pending[0]
+
+
+def _corrupt_counters(zarr_root: Path, **counters: int) -> None:
+    """Flip counter digits in a stored shard's `.zattrs`, in place.
+
+    This is the threat model exactly: `.zattrs` is plain uncompressed JSON with
+    no checksum, so a bit flip (or an edit) after the upload-time check leaves
+    valid JSON carrying wrong numbers. The arrays are Blosc/zstd and would fail
+    to decompress loudly; the counter channel has no such protection.
+    """
+    attrs_path = zarr_root / ".zattrs"
+    raw = json.loads(attrs_path.read_text(encoding="utf-8"))
+    raw.update(counters)
+    attrs_path.write_text(json.dumps(raw, indent=4, sort_keys=True), encoding="utf-8")
+
+
+def test_recovery_quarantines_a_pending_shard_with_corrupt_counters(tmp_path) -> None:
+    """⚑⚑ REGRESSION (#406, P2). `shard_meta_violations` guarded the live
+    upload path only. A pending shard sits on disk across a crash and a
+    restart, and `_scan_pending_dir` handed its stored metadata straight to
+    `acc.add_upload` — so post-validation corruption of the least-protected
+    channel was admitted on exactly the path the check exists to close.
+    `wins`/`draws`/`losses` become the PID's curriculum winrate.
+
+    Sanction is QUARANTINE, not rejection: the bytes stay on disk under
+    `quarantine/unloadable` with the failing predicate in a sidecar, so a false
+    positive costs one shard and is recoverable by hand. That is strictly
+    weaker than the upload route's terminal `rejected`, which makes the worker
+    drop the shard forever.
+    """
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    pending_shard = _upload_one_pending_shard(server_root, tmp_path / "u1")
+    name = pending_shard.name
+    # Accepted at upload with games=1; now the stored counters say 5 decisive
+    # results out of 1 game.
+    _corrupt_counters(pending_shard, games=1, wins=5, draws=0, losses=0)
+
+    # Restart: `create_app` runs `_recover_pending_uploads`.
+    _build_app(server_root, upload_compact_shard_size=2000)
+
+    assert not list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}")), (
+        "a shard whose counters contradict themselves was re-seeded into the "
+        "accumulator by startup recovery"
+    )
+    qdir = _quarantine_unloadable_dir(server_root)
+    assert [p.name for p in qdir.glob(f"*{LOCAL_SHARD_SUFFIX}")] == [name]
+    reason = (qdir / f"{name}.reason.txt").read_text(encoding="utf-8")
+    assert "wins+draws+losses" in reason, (
+        f"sidecar must name the failing predicate, got: {reason!r}"
+    )
+
+
+def test_recovery_still_re_seeds_a_consistent_pending_shard(tmp_path) -> None:
+    """⚑⚑ FALSE-POSITIVE CONTROL, and the load-bearing half of this pair.
+
+    `shard_meta_violations` is an outage-class function: an earlier revision
+    summed children that do not partition their parent (a single adjudicated
+    draw increments `selfplay_games`, `selfplay_adjudicated_games` AND
+    `selfplay_draw_games`) and would have rejected ordinary shards — ingest to
+    zero. Wiring it onto a NEW path is exactly where that class of mistake
+    lands, and on the recovery path a false positive is silent data loss rather
+    than a loud rejection. So: an untouched shard from the real upload route
+    must survive the restart untouched.
+    """
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    pending_shard = _upload_one_pending_shard(server_root, tmp_path / "u1")
+
+    _build_app(server_root, upload_compact_shard_size=2000)
+
+    surviving = list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    assert [p.name for p in surviving] == [pending_shard.name], (
+        "recovery quarantined a shard the upload route itself produced"
+    )
+    assert not _quarantine_unloadable_dir(server_root).exists(), (
+        "a consistent shard reached quarantine/unloadable"
+    )
