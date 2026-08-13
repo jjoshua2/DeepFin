@@ -46270,3 +46270,91 @@ turns on it.
 ⚑ Worth recording as method, not just result: **the analysis author retracted its own strongest
 sentence when the second comparator arrived**, rather than letting the one-comparator version stand.
 That is the behaviour that would have caught the label-swap and the stale-ruler row a day earlier.
+
+---
+
+## 2026-08-13 — ORDO BUILT AND VALIDATED; the pairing objection was HALF RIGHT and the wrong half mattered
+
+Josh asked for Ordo so all round-robin games can be pooled with auto white-advantage and auto
+draw-rate, without needing each pair complete. Built, verified, wrapped. **PR #422.**
+
+### The claim I asserted without checking, adjudicated FROM SOURCE
+- **"Ordo treats games as independent and cannot exploit paired openings" — CONFIRMED.** Its entire
+  per-game state is `{whiteplayer, blackplayer, score}` (`mytypes.h:90`). ⚑ And **`-s` is NOT a
+  bootstrap**: `sim.c: simulate_scores` regenerates every game PARAMETRICALLY from the fitted model
+  on the same schedule. No opening, round or pair identity exists anywhere in the likelihood or the
+  resampler. **BayesElo is worse** — `CCondensedResults.h` collapses games to per-opponent
+  colour-split counts; individual games are gone entirely.
+- **"Pooling DISCARDS the variance reduction" — OVERSTATED.** The reasoning I offered as a
+  correction was right: pairing does not change the point estimate, only how precisely it is
+  estimated. Measured, 200 reps × 400 games: Ordo's point estimate is **unbiased** (17.47 vs
+  pentanomial 17.26, true 20) and its interval is **CONSERVATIVE, never anti-conservative** —
+  half-width/ideal 1.07 / 1.06 / 1.07 across three books, coverage 0.97.
+
+### ⚑ THE NEAR-MISS, and it is the most instructive part
+The author's first run showed Ordo's SE at **2.1× the pentanomial's** and was on the way to being
+published as a finding. **It was 1.96, not an effect**: Ordo's `ERROR` column is
+`sdev × confidence2x(0.95)` (`report.c:214`) — **already a 95% margin, not a 1σ SE**. Caught by
+scaling `-F` (15.2 / 29.7 / 39.1 at 68.27 / 95 / 99). A units error inside a borrowed instrument,
+found only because someone varied the confidence level instead of trusting the column name.
+
+### HOW MUCH THE PAIRING IS WORTH — it depends on the BOOK, strongly
+95% width ratio (independent / paired) as per-opening colour bias grows:
+**1.00 (0 Elo) → 1.07 (120) → 1.17 (200) → 1.53 (450).**
+**Production plays a UHO book**, i.e. the high-bias end — which is exactly why the wrapper
+block-bootstraps over pairs rather than trusting Ordo's own interval. Ordo has **no block/unit
+option**, so the wrapper is the only route.
+
+### POOLING'S UPSIDE, MEASURED — and it lands on the analytic prediction
+In a 3-arm round robin, Ordo's A−C (informed by A−B and B−C) had true SD **10.57** vs **13.27** for
+pentanomial on A−C games alone ⇒ **same precision for ~37% fewer games**. ⚑ Ratio **0.797** against
+the **0.816 = √(2/3)** predicted analytically from the 3-node design before any data existed — an
+independent confirmation of the joint-fit gain. ⚑ But if A−C is the ONLY question, spending the whole
+budget directly on A vs C still wins; pooling pays only when all three contrasts are wanted.
+
+### IS OUR PENTANOMIAL "MORE ADVANCED"? NO.
+Paired-opening pentanomial scoring is the standard fishtest/SPRT technique, correctly implemented —
+a known method, not an invention. Ordo/BayesElo solve a DIFFERENT problem (rating N players from
+unbalanced historical games). Complements, not competitors. **One honest departure:**
+`summarize_pentanomial` computes a **Wald interval on the mean pair score and maps the endpoints
+through the Elo transform** — it is NOT an SPRT/GSPRT and does no sequential testing. Fine, but it
+means the CI is **fixed-sample and assumes the sample size was fixed in advance**, which is exactly
+why incremental reads are not free.
+
+### ORDO: version, flags, and two hazards
+Built from source, **v1.2.6, commit `17eec774`**, at `/home/josh/local_engines/ordo/ordo` (outside
+the repo). **Verified by RECOVERY, not presence**: 4 players at known ratings recovered to
+2501.6 / 2452.1 / 2349.7 against true 2500 / 2450 / 2350.
+Flags: `-W` auto white advantage · `-D` auto draw rate · `-s N` simulations · `-A` anchor ·
+`-F` confidence · `-t` min games · `-n` cpus.
+- **⚑ `-M` IS REQUIRED whenever `-D` is combined with `-s`.** Without it Ordo can fail to converge on
+  an unlucky SIMULATED replication and spin forever at 100% CPU: **1/30 datasets hung at `-s 1000`**;
+  0/30 with `-M`; 0/30 with fixed `-d`. The sim RNG is fixed-seeded (`main.c:981`), so **a hang is
+  DETERMINISTIC per dataset — rerunning will not clear it.** (The author's first mechanism
+  hypothesis, a NaN fallthrough in `adjust_drawrate`, was disproved by instrumenting.)
+- **⚑ Use `-z 200.2409`, not the default 202** — Ordo's default Elo scale is **0.88% larger** than
+  our 400-scale.
+
+### DOES ORDO AGREE WITH OUR NUMBERS? YES
+Synthetic, same games: mean(Ordo − pentanomial) **+0.26 to +0.45 Elo**, max 1.7.
+**Real banked rows: +49.00 vs banked +48.96 · +21.60 vs +21.57 · −3.50 vs −3.47.**
+⚑ **Caveat that defines the next step: NO PER-GAME DATA EXISTS ANYWHERE IN THE REPO** — every banked
+arena JSONL row is an aggregate pentanomial summary, so those games were RECONSTRUCTED and the DD/WL
+bin is ambiguous. Point estimates are solid; reconstructed CIs are not. Closing that gap is what
+`--pgn-out` is for.
+
+### VERIFICATION AND THE HONEST GAP
+20 new tests pass, 61 existing arena tests still pass, whole-repo no-arg `lint.sh` OK / 0 errors.
+Default-off proven **by execution** (identical pair scores with and without the sink).
+**12/12 mutations caught** by a named test. The **missingness guard** was verified to BOTH fire
+(ρ=−0.92, p=0.000, exit 2) and stay quiet on random ordering — i.e. it can fail and it can pass.
+**NOT verified: no GPU, so nothing ran end-to-end against a real match.** The writer was driven from
+synthetic/mocked game streams; the `matched_time` sink is wired but executed by no test. **The first
+real `--pgn-out` run must be eyeballed before its PGN is trusted.** Bootstrap coverage 36/40 = 0.90 ±
+0.05 — reassuring, but n=40 cannot distinguish 0.95 from 0.90.
+
+### PROTOCOL, PRE-COMMITTED
+The block bootstrap gives correct intervals **conditional on the counts in hand**; it does NOT
+license reading a verdict when the numbers look good. Pre-commit the per-matchup pair count and the
+read point. Mid-run, look ONLY at operational signals — counts advancing, an arm crashed, the
+missingness flag — **never at the sign or size of the effect.**
