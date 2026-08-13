@@ -41,7 +41,11 @@ from chess_anti_engine.replay.shard import (
 # is module level so the authorization rule can be tested as a pure function.
 # `server.lease` imports nothing from here, so this is not circular.
 from chess_anti_engine.server.lease import normalize_trial_id
-from chess_anti_engine.utils.atomic import atomic_write_text
+from chess_anti_engine.utils.atomic import (
+    atomic_write_bytes,
+    atomic_write_text,
+    is_atomic_tmp_name,
+)
 from chess_anti_engine.utils.versioning import version_lt
 from chess_anti_engine.version import UPLOAD_CONTENT_SHA256_HEADER
 import contextlib
@@ -1291,12 +1295,23 @@ def write_arena_result(out: Path, body: bytes) -> None:
     suspension point, not a theoretical one: the route `await`s in between, so
     another request's sweep gets to run. One re-`mkdir` and retry turns it into
     a no-op instead of a 500 on an upload that did nothing wrong.
+
+    ⚑ ATOMIC, LIKE ITS SIBLINGS (#419 F5). This wrote straight to the final
+    `<sha>.json`, so the retention walk -- which runs on every arena upload and
+    every quarantine write -- sized a file whose bytes were still arriving.
+    Measured: 515 of 519 walk observations during one write returned a short
+    size, including 0. Those are the bytes the ceiling is computed from, and
+    the direction is UNDER-eviction. `atomic_write_bytes` writes a tmp and
+    renames, so a walk sees either the whole file or no file.
+
+    The retry stays: `atomic_write` mkdirs the parent itself, but the sweep can
+    still remove it between that mkdir and the tmp write.
     """
     try:
-        out.write_bytes(body)
+        atomic_write_bytes(out, body)
     except FileNotFoundError:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(body)
+        atomic_write_bytes(out, body)
 
 
 def shard_run_id_matches_upload_trial(upload_trial_id: str | None, shard_run_id: object) -> bool:
@@ -1591,6 +1606,27 @@ def _retention_entries(
     out: list[_RetainedEntry] = []
     for p in root.iterdir():
         if files_only and p.is_dir():
+            continue
+        if is_atomic_tmp_name(p.name):
+      # ⚑ ANOTHER WRITER'S FILE, MID-WRITE (#419 F5). `atomic_write` fills
+      # `<name>.tmp.<pid>.<uuid>` and then `os.replace`s it, and the walk
+      # counted it as a retained entry: sized while its bytes were still
+      # arriving, and evictable -- and evicting it makes the writer's
+      # `os.replace` raise FileNotFoundError. The client_reports sink writes
+      # exactly this way.
+      #
+      # ⚑ NOT `is_tmp_shard_name`, which tests `tmp_`/`._tmp_` PREFIXES and
+      # does not match these suffix-style names at all -- reaching for the
+      # sibling helper here is a false fix that leaves the count wrong while
+      # looking right.
+      #
+      # ⚑ NOT A HOLE AN UPLOADER CAN AIM AT: every entry name in these sinks
+      # is server-generated (`<sha256>.json`, `tmp_<pid>_<hex>.tar`,
+      # `<unix>_<hex>.json`), so nothing caller-controlled can be spelled to
+      # match and buy permanently unswept storage. What it does leave is a tmp
+      # leaked by a HARD-KILLED writer (`atomic_write`'s `finally` sweeps every
+      # other failure), which is then unswept -- one file per killed process,
+      # and the alternative is deleting live writes.
             continue
         if p.name.endswith(".reason.txt"):
       # Sidecars are accounted WITH their shard, not as entries in their own

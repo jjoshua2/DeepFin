@@ -1926,3 +1926,162 @@ def test_an_orphaned_reason_sidecar_is_counted_and_swept(tmp_path) -> None:
     )
     assert (freed_entries, freed_bytes) == (2, 5115), (freed_entries, freed_bytes)
     assert list(q.iterdir()) == [], sorted(p.name for p in q.iterdir())
+
+
+# ---------------------------------------------------------------------------
+# #419 F5: the walk sized files that were still being written, and counted
+# another writer's atomic_write temp as a retained entry.
+# ---------------------------------------------------------------------------
+
+
+def _real_atomic_tmp(directory, final_name: str) -> str:
+    """Create a REAL `atomic_write` temp in `directory` and leave it there.
+
+    ⚑ GENERATED, NOT SPELLED OUT. The whole F5 trap is that the tmp name is
+    easy to get wrong from memory -- `is_tmp_shard_name` matches `tmp_`/
+    `._tmp_` PREFIXES and would not match this suffix-style name at all -- so
+    the fixture makes `atomic_write` produce the name and captures it, rather
+    than asserting against a hand-written string.
+    """
+    from chess_anti_engine.utils.atomic import atomic_write
+
+    captured: list[str] = []
+
+    def _writer(tmp) -> None:
+        captured.append(tmp.name)
+        tmp.write_bytes(b"y" * 4096)
+
+    atomic_write(directory / final_name, _writer, durable=False)
+    name = captured[0]
+    # Keep only the tmp: the directory is now in the state a walk finds it in
+    # while ANOTHER writer is mid-`atomic_write`.
+    (directory / final_name).unlink()
+    (directory / name).write_bytes(b"y" * 4096)
+    return name
+
+
+def test_a_real_atomic_write_temp_is_not_matched_by_is_tmp_shard_name() -> None:
+    """⚑ The false fix, pinned. `is_tmp_shard_name` is the sibling helper any
+    reader reaches for, and it matches NEITHER shape `_tmp_path_for` produces.
+    If someone swaps `is_atomic_tmp_name` for it, this fails."""
+    from chess_anti_engine.replay.shard import is_tmp_shard_name
+    from chess_anti_engine.utils.atomic import is_atomic_tmp_name
+
+    for name in (
+        "deadbeef.json.tmp.4242.2553220387414c0fbddd018ba12597d9",
+        "x.tmp.4242.5d5cba078f894887b8961da0ef459772.npz",
+        # A shorter token, because the matcher deliberately does not pin
+        # `uuid4().hex`'s width -- see `_ATOMIC_TMP_RE`.
+        "9999_deadbeef.json.tmp.4242.abcdef0123456789",
+    ):
+        assert is_atomic_tmp_name(name), name
+        assert not is_tmp_shard_name(name), name
+    # And it does not swallow the real entry names these sinks hold.
+    for name in ("deadbeef.json", "good.tar", "good.tar.reason.txt",
+                 "tmp_4242_abcdef0123456789.tar", "1770000000_abcd1234.json"):
+        assert not is_atomic_tmp_name(name), name
+
+
+def test_the_walk_skips_a_real_atomic_write_temp(tmp_path) -> None:
+    """⚑ REGRESSION (#419 F5, second half). The walk had no temp filter, so an
+    `atomic_write` tmp -- the shape the `client_reports` sink writes -- was
+    counted as a retained entry, sized while its bytes were still arriving, and
+    eligible for eviction. Evicting it makes the writer's `os.replace` raise
+    FileNotFoundError.
+
+    Measured on `main`: the walk saw 6 entries where 5 exist, and a sweep at
+    `max_entries=5` deleted... the oldest real entry, having counted the tmp.
+    """
+    from chess_anti_engine.server.app import _retention_entries, prune_retained_dirs
+
+    q = tmp_path / "client_reports"
+    q.mkdir()
+    for i in range(5):
+        _mk(q, f"e{i}.json", size=100, mtime=2000.0 + i, sidecar=False)
+    tmp_name = _real_atomic_tmp(q, "9999_deadbeef.json")
+
+    names = sorted(e.path.name for e in _retention_entries(q))
+
+    assert tmp_name not in names, (
+        f"the walk counted another writer's in-flight temp {tmp_name!r} as a "
+        "retained entry"
+    )
+    assert names == ["e0.json", "e1.json", "e2.json", "e3.json", "e4.json"], names
+
+    # And the sweep cannot delete it out from under the writer's os.replace.
+    prune_retained_dirs([q], max_bytes=1, max_entries=0, log=None)
+    assert (q / tmp_name).is_file(), (
+        "the sweep deleted an in-flight atomic_write temp; the writer's "
+        "os.replace would raise FileNotFoundError"
+    )
+
+
+def test_the_walk_never_sizes_a_partly_written_arena_result(tmp_path) -> None:
+    """⚑ REGRESSION (#419 F5). `write_arena_result` wrote straight to the final
+    `<sha>.json`, so the retention walk -- which runs on every arena upload --
+    sized a file whose bytes were still arriving. Those are the bytes the
+    ceiling is computed from; the direction is under-eviction.
+
+    Measured on `main` with this fixture: short sizes observed mid-write,
+    including 0. On this branch the walk sees the file either absent or whole,
+    because the write lands by rename.
+
+    ⚑ CONCURRENCY TEST, SO IT CARRIES ITS SERIAL CONTROL: the same write with
+    no observer running must produce exactly the same final bytes, or a
+    "no partial sizes" pass could just mean the write never happened. And the
+    observer is bounded by wall clock -- the repo has no `pytest-timeout`, and
+    a hang here would be a hung suite rather than a failed test.
+    """
+    import threading
+    import time
+
+    from chess_anti_engine.server.app import _retention_entries, write_arena_result
+
+    body = b"z" * (24 * 1024 * 1024)
+
+    # --- SERIAL CONTROL: no observer, nothing concurrent.
+    serial = tmp_path / "serial"
+    serial.mkdir()
+    write_arena_result(serial / "deadbeef.json", body)
+    assert (serial / "deadbeef.json").read_bytes() == body
+    assert sorted(p.name for p in serial.iterdir()) == ["deadbeef.json"], (
+        "the atomic write left its temp behind"
+    )
+
+    # --- CONCURRENT: walk while the write is in flight.
+    live = tmp_path / "live"
+    live.mkdir()
+    out = live / "deadbeef.json"
+    sizes: list[int] = []
+    done = threading.Event()
+
+    def _write() -> None:
+        try:
+            write_arena_result(out, body)
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_write, daemon=True)
+    deadline = time.monotonic() + 60.0
+    t.start()
+    observations = 0
+    while not done.is_set() and time.monotonic() < deadline:
+        observations += 1
+        sizes.extend(e.size for e in _retention_entries(live))
+    t.join(max(0.0, deadline - time.monotonic()))
+    assert not t.is_alive(), "the arena write did not finish within 60s"
+
+    assert out.read_bytes() == body, "the concurrent write did not land intact"
+  # ⚑ POWER CHECK, and it counts WALKS rather than sizes: once the write is
+  # atomic the walk correctly sees no entry at all for most of the window, so
+  # "few sizes" is the fix working and "few walks" is the test being blind.
+    assert observations >= 20, (
+        f"only {observations} walks completed during the write -- too few for "
+        "this test to have had any power to see a partial size"
+    )
+    partial = sorted({s for s in sizes if s != len(body)})
+    assert partial == [], (
+        f"the walk sized a partly-written arena result: {partial[:6]} against "
+        f"a final {len(body)} bytes -- these are the bytes the retention "
+        "ceiling is computed from"
+    )
