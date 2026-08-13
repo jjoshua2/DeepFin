@@ -45723,3 +45723,32 @@ on the table that they exploit. Both outcomes are decision-relevant; there is no
 Sequencing: after Tier-13's arenas. A v2 audit set FREEZES on generation, so it is a new version
 and invalidates every existing audit number — including the 47.34 — and that invalidation should
 be deliberate, not mid-experiment [[a_ruler_change_must_invalidate_its_records]].
+
+### AMENDMENT (Josh, same day): the ladder is 8 / 2 / repeat — zero-fill demoted to a wiring control
+Josh: *"i think we know zero filled will be terrible, but repeat, 2 and 8 seems useful to know."*
+Correct, and it makes the design sharper: zero-fill answers a question nobody is asking, while
+the interesting axis is **how much real history is enough**. Revised arms, per net:
+
+| arm | frames 0..7 | what it emulates |
+|---|---|---|
+| **H8** | all 8 real | ground truth — the net's best case |
+| **H2** | frames 0-1 real, 2-7 filled from **frame 0** | a game only 2 plies old |
+| **HR** | frame 0 real, 1-7 filled from frame 0 | our current audit-set/FEN regime |
+
+⚑ **H2 fills from frame 0, not frame 1.** lc0's rule is `history[idx<0?0:idx]` — it falls back to
+the LIVE frame, not the oldest surviving one. Filling from frame 1 would emulate nothing real;
+filling from frame 0 exactly emulates a genuine 2-ply-old game, a distribution every net has
+actually trained on. Getting this backwards would make H2 measure an out-of-distribution input
+rather than a short game.
+
+**The read:** H8→H2 is the value of history BEYOND 2 plies; H2→HR is the value of the first 2.
+Josh's 2-ply hypothesis says the first gap is small and the second is not. Per net, so the
+comparison across nets is of the SHAPE of each curve, not of absolute cp.
+
+**⚑ ZERO-FILL IS KEPT, AS ONE ROW, AND NOT AS A HYPOTHESIS TEST.** It is the **wiring control**:
+if zero-fill does NOT read far worse than HR, the ablation knob is not reaching the net and every
+other row in the table is a null produced by a dead switch — this codebase's signature defect in
+its exact canonical form [[a_gate_that_cannot_fail]], and the same failure that made my own
+encoder gates non-diagnostic twice in one day. Cost is one extra scoring pass per net. It is
+cheap precisely BECAUSE we already know the answer: a control whose expected value is known is
+the only kind that can detect a dead instrument.
