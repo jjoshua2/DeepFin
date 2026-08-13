@@ -45183,3 +45183,57 @@ continuous RL — the 3d5df283a claim, now against an external comparable rather
 **⇒ REVISED ORDER: D0 -> D2 -> D1 (only if still needed) -> D3.** D0 gates the rest: free,
 fastest, and a bad D0 changes what D1/D2 are even for.
 Prereg: `scratchpad/pretrain/diagnostic_prereg_20260813.md`. Task #199.
+
+---
+
+## 2026-08-13 — D0 REVISED: the ARENA IS THE WRONG INSTRUMENT for the gap Josh is targeting
+
+Josh, same session: *"im confident we are going to be like 1000 elo below the ceres nets"* …
+*"but if we can get to within 200 elo i'd be happy"* … *"its really only the last 100 elo that
+should be hard."*
+
+That sets the design constraint, and it invalidates the D0 arena I ledgered in 3430b3a2b as
+the PRIMARY instrument.
+
+**⚑ A PAIRED ARENA IS BLIND OVER MOST OF THE RANGE WE INTEND TO TRAVERSE.** At −1000 we score
+~0; at −600 we still score ~0. A zero score yields a one-sided BOUND, not a measurement, so the
+instrument cannot distinguish −1000 from −600 and therefore **cannot track progress across the
+1000→200 journey at all**. It regains resolution only in the last few hundred Elo — exactly the
+stretch Josh calls hard, and the stretch we arrive at LAST. ⇒ arena is the DESTINATION
+instrument, not the journey instrument. Same failure shape as
+[[compute_instrument_resolution_before_the_threshold]], one order of magnitude up.
+
+**WHAT WORKS ACROSS THE WHOLE RANGE: score each net INDEPENDENTLY on a common position set.**
+Deep-SF regret on the frozen audit set gives every net its own number, so the gap is a
+DIFFERENCE OF NUMBERS rather than a game outcome. Continuous, cannot saturate, minutes not
+hours, and it already is our designated VALUE yardstick.
+
+**⇒ AND IT HANDS US TASK #170's MISSING CALIBRATION.** #170 (build a regret→Elo calibration)
+has been open and blocked because we had no Elo ground truth to calibrate against. **CeresNets
+publishes relative Elo across 256 points of span on 8 nets.** Scoring that whole ladder on our
+audit ruler yields regret-vs-Elo directly, from 8 external points, converting our cheap
+~20-minute ruler into an Elo-denominated instrument. That is a bigger prize than the placement
+question that motivated D0.
+
+**THE PLUMBING GAP, stated honestly.** `scripts/value_regret.py` and `scripts/audit_targets.py`
+have **zero ONNX support** — grepped, no hits. The adapter itself exists and is move-by-move
+PROVEN: `chess_anti_engine/onnx/load.py::OnnxChessNet` presents our model contract, and
+`scripts/lc0_adapter_probe.py` gates index correspondence (board-aware `leela_index`), v6
+round-trip to bit-identical 112 planes, and net sanity. So this is an `--onnx` flag on the two
+rulers, not new science. That is the one thing that must be BUILT before D0 runs.
+
+**⚑ IF JOSH'S 1000-ELO PRIOR IS CONFIRMED, IT RETIRES THE ARCHITECTURE HYPOTHESIS.** Same
+lc0-descended family, near-identical size (our 512×16 vs C1-512-15), and the ENTIRE size range
+Ceres publishes is worth +151. A ~1000 Elo gap at fixed size cannot be topology — it is data
+and training. So the prior, if it holds, argues AGAINST the architecture lever that opened this
+thread, not for it. Architecture becomes a rounding error against the gap.
+
+**Caveat with a useful symmetry.** The audit ruler grades AGREEMENT WITH DEEP SF, and we are
+deliberately training an anti-SF net [[audit_first_cannot_judge_a_non_sf_teacher]]. At a
+1000 Elo gap that is not the explanation and the ruler is sound. Near the last 200 it starts to
+matter — so the ruler is right for the JOURNEY and must be re-validated at the DESTINATION,
+which is the same place Josh says the problem gets hard.
+
+**⇒ D0 REVISED: (1) add `--onnx` to the two rulers; (2) score the full Ceres ladder + our net on
+the frozen audit set; (3) fit regret→Elo on their 8 published points (closes #170); (4) run
+arenas ONLY at whatever rung the ruler says is within reach.**
