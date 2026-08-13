@@ -1574,6 +1574,60 @@ def _retention_entries(
     return out
 
 
+class _EntryRemoval(NamedTuple):
+    """The outcome of one attempted eviction. TWO questions, not one.
+
+    `gone` is "the entry is no longer on disk, whoever removed it" and is what
+    the BUDGET arithmetic may act on. `by_us` is "THIS sweep removed it" and is
+    what may be REPORTED. They differ in both directions, and conflating them
+    is what #407 fixed one way and this fixes the other:
+
+    - peer removed it: `gone` and not `by_us` -- the bytes really are off the
+      disk, so subtracting them tracks reality (see `_evict_fairly`), but
+      claiming the eviction would double-count it against the peer's report.
+    - WE FAILED to remove it: neither. The old code kept `removed` (this
+      class's `by_us`) for telemetry and ran the arithmetic unconditionally, so
+      a sweep that had just concluded it could not delete an entry credited
+      itself the entry's bytes and stopped OVER the ceiling.
+    """
+
+    gone: bool
+    by_us: bool
+
+
+def _remove_retained_entry(path: Path) -> _EntryRemoval:
+    """Delete one retained entry, reporting whether it is gone and who did it.
+
+    Claims nothing it cannot show: a partially-removed tree or a failed
+    `unlink` re-checks the path, and an error from the check itself is reported
+    as "still there", because a sweep that does not know must not credit
+    itself the bytes.
+    """
+    try:
+        if path.is_dir():
+            try:
+                shutil.rmtree(path)
+            except FileNotFoundError:
+                return _EntryRemoval(gone=True, by_us=False)
+            except OSError:
+      # Partial tree removal. Keep the old best-effort cleanup, but do not
+      # claim -- or bank -- an eviction we cannot show we completed.
+                shutil.rmtree(path, ignore_errors=True)
+                return _EntryRemoval(gone=not path.exists(), by_us=False)
+            return _EntryRemoval(gone=True, by_us=True)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return _EntryRemoval(gone=True, by_us=False)
+        except OSError:
+            return _EntryRemoval(gone=not path.exists(), by_us=False)
+        return _EntryRemoval(gone=True, by_us=True)
+    except OSError:
+      # `is_dir()`/`exists()` themselves failed, so we know nothing about the
+      # entry's state. Report the conservative one.
+        return _EntryRemoval(gone=False, by_us=False)
+
+
 def _evict_fairly(
     entries: list[_RetainedEntry],
     *,
@@ -1653,6 +1707,19 @@ def _evict_fairly(
     had already taken keep deleting past the budget, destroying diagnostics to
     fix a log line.
 
+    ⚑⚑ AND THAT DEFENCE COVERS EXACTLY ONE OF THE TWO WAYS `by_us` CAN BE
+    FALSE (#419 F1). It is sound for the concurrent-peer race above and was
+    applied to the branch it is NOT sound for: a delete this sweep ATTEMPTED
+    AND FAILED. There the entry is still on disk, and the old code ran
+    `total_bytes -= size` / `live_bytes[victim] -= size` / `gone_entries += 1`
+    unconditionally, using `removed` for telemetry only -- so the sweep
+    credited itself bytes it had just failed to remove and stopped believing
+    itself under a ceiling it was over. Measured on `main`: an undeletable
+    oldest victim, ceiling 200 bytes, reported `(2, 360)`, 350 bytes left on
+    disk. The distinction the arithmetic needs is `_EntryRemoval.gone`
+    ("absent, whoever removed it") rather than `by_us`; a failed delete is
+    neither, and now stops the crediting instead of only the reporting.
+
     ⚑ AND THE SIDECAR WAS THE HALF THAT STAYED INEXACT (#407 review). The fix
     above tracked the ENTRY's deletion and left the sidecar on
     `unlink(missing_ok=True)` -- untracked -- while still crediting the whole
@@ -1668,6 +1735,7 @@ def _evict_fairly(
     gone_entries = 0
     freed_entries = 0
     freed_bytes = 0
+    stuck_entries = 0
 
   # Per-bucket queues, each already oldest-first because `entries` is sorted.
   # `live_*` track what the sweep believes is still on disk, so the victim
@@ -1699,44 +1767,48 @@ def _evict_fairly(
         entry = queues[victim][taken[victim]]
         taken[victim] += 1
         path, size = entry.path, entry.size
-        try:
+      # ⚑ THE ENTRY FIRST, THE SIDECAR ONLY ONCE THE ENTRY IS GONE. The old
+      # order unlinked the `.reason.txt` and only then discovered it could not
+      # remove the shard -- leaving a RETAINED quarantine entry whose
+      # explanation had been destroyed, which is the entire value of retaining
+      # it. Measured on `main`: entry `a_bad_shard` kept, its `.reason.txt`
+      # gone. Doing the sidecar second also means an entry a concurrent sweep
+      # already took still gets its orphaned sidecar cleaned up.
+        outcome = _remove_retained_entry(path)
+        if not outcome.gone:
+      # ⚑ WHAT THE SWEEP DOES WITH A VICTIM IT CANNOT DELETE: it moves on to
+      # the next one, and the failed entry keeps counting against the budget
+      # because it is STILL ON DISK. `taken[victim]` has already advanced, so
+      # this entry is never re-selected in this pass and the loop cannot spin
+      # on it; when every entry has been tried, `available` empties and the
+      # sweep ends. The alternative -- crediting the bytes, which is what this
+      # did -- ends the sweep OVER the ceiling while believing it is under.
+            stuck_entries += 1
+            continue
       # `size` ALREADY includes the sidecar, so it must not be added again --
       # that would over-subtract and stop evicting while still over budget.
       # `freed_sidecar` is the other question: did THIS sweep remove it.
-            freed_sidecar = 0
-            try:
-                path.with_suffix(path.suffix + ".reason.txt").unlink()
-                freed_sidecar = entry.sidecar_size
-            except FileNotFoundError:
-                pass
-            if path.is_dir():
-                try:
-                    shutil.rmtree(path)
-                    removed = True
-                except FileNotFoundError:
-                    removed = False
-                except OSError:
-          # Partial tree removal. Keep the old best-effort cleanup, but do
-          # not claim an eviction we cannot show we completed.
-                    shutil.rmtree(path, ignore_errors=True)
-                    removed = False
-            else:
-                try:
-                    path.unlink()
-                    removed = True
-                except FileNotFoundError:
-                    removed = False
+        freed_sidecar = 0
+        sidecar_gone = True
+        try:
+            path.with_suffix(path.suffix + ".reason.txt").unlink()
+            freed_sidecar = entry.sidecar_size
+        except FileNotFoundError:
+            pass
         except OSError:
-            continue
-        total_bytes -= size
-        live_bytes[victim] -= size
+      # The entry left but its sidecar did not, so its bytes stay counted for
+      # the same reason a stuck entry's do: they are on disk.
+            sidecar_gone = False
+        gone_bytes = size - (0 if sidecar_gone else entry.sidecar_size)
+        total_bytes -= gone_bytes
+        live_bytes[victim] -= gone_bytes
         live_count[victim] -= 1
         gone_entries += 1
       # Two independent deletes, credited independently. `size - sidecar_size`
       # is the entry's own bytes; the sidecar's are added only if the unlink
       # above found it. `freed_entries` still counts ENTRIES, so a lone sidecar
       # removal contributes bytes without inventing an eviction.
-        if removed:
+        if outcome.by_us:
             freed_bytes += size - entry.sidecar_size
             freed_entries += 1
         freed_bytes += freed_sidecar
@@ -1745,6 +1817,15 @@ def _evict_fairly(
         log.info(
             "retention: evicted %d entr%s (%d bytes) from %s",
             freed_entries, "y" if freed_entries == 1 else "ies", freed_bytes, label,
+        )
+    if stuck_entries and log is not None:
+      # Not silent: an undeletable entry means the sink can sit permanently
+      # over its ceiling no matter how often the sweep runs, and the only way
+      # anyone finds that out is a log line saying so.
+        log.warning(
+            "retention: %d entr%s could not be removed from %s; their bytes "
+            "still count against the budget",
+            stuck_entries, "y" if stuck_entries == 1 else "ies", label,
         )
     return (freed_entries, freed_bytes)
 

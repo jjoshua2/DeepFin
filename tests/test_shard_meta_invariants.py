@@ -1472,3 +1472,230 @@ def test_the_empty_dir_sweep_keeps_directories_that_still_hold_results(
     assert not empty.parent.exists(), "the emptied per-trial arena_inbox stayed"
     assert (full / "r.json").is_file(), "a directory holding a result was removed"
     assert keep.is_dir(), "the request's own target directory was removed"
+
+
+# ---------------------------------------------------------------------------
+# #419 F1: the budget subtracted bytes that were still on disk, and the
+# sidecar was unlinked before the entry delete was known to have succeeded.
+# ---------------------------------------------------------------------------
+
+
+def _undeletable_dir_entry(bucket, name: str, *, inner_size: int, mtime: float):
+    """A retained entry `_evict_fairly` will fail to remove.
+
+    A directory entry whose own mode denies write, so `shutil.rmtree` cannot
+    unlink the child and takes the partial-removal branch. Returns the entry
+    path; the caller must restore the mode (see `_restore_mode`).
+
+    ⚑ The payload sits DIRECTLY in `d`, not in a subdirectory: unlinking it
+    then needs write on `d` itself, which is what is denied. With a `d/inner/`
+    level, `rmtree` removes the leaf bytes before failing on the directory, and
+    the fixture measures a partially-drained entry instead of an undeletable
+    one.
+    """
+    import os
+
+    d = bucket / name
+    d.mkdir(parents=True)
+    (d / "blob").write_bytes(b"x" * inner_size)
+    s = bucket / f"{name}.reason.txt"
+    s.write_text("ValueError: bad", encoding="utf-8")
+    os.utime(s, (mtime, mtime))
+    os.utime(d, (mtime, mtime))
+    os.chmod(d, 0o500)
+    return d
+
+
+def _restore_mode(d) -> None:
+    import contextlib
+    import os
+
+    with contextlib.suppress(OSError):
+        os.chmod(d, 0o700)
+
+
+def _bytes_on_disk(root) -> int:
+    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+
+def _sweep_bounded(fn, *, seconds: float = 30.0) -> tuple[int, int]:
+    """Run `fn()` on a daemon thread and FAIL rather than hang.
+
+    The fix for F1 stops crediting bytes for an entry it could not delete, and
+    the obvious wrong shape of that fix -- re-selecting the same victim -- is
+    an infinite loop, not a wrong number. A bare call would hang the suite;
+    the repo has no `pytest-timeout`.
+    """
+    import threading
+
+    value: list[tuple[int, int]] = []
+    error: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            value.append(fn())
+        except BaseException as exc:
+            error.append(exc)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(seconds)
+    assert not t.is_alive(), (
+        f"the sweep did not finish within {seconds}s -- it is spinning on a "
+        "victim it cannot delete"
+    )
+    if error:
+        raise error[0]
+    return value[0]
+
+
+def test_a_sweep_drains_to_budget_when_every_victim_is_deletable(tmp_path) -> None:
+    """⚑ SERIAL CONTROL for the two F1 tests below.
+
+    Same shape, same ceiling, same entry sizes -- only the oldest entry's mode
+    differs. Without this, "the sweep stopped over budget" cannot be told from
+    "this setup was never going to reach budget".
+    """
+    from chess_anti_engine.server.app import prune_retained_dirs
+
+    u = tmp_path / "invalid" / "alice"
+    u.mkdir(parents=True)
+    d = _undeletable_dir_entry(u, "a_bad_shard", inner_size=200, mtime=1000.0)
+    _restore_mode(d)  # the control: it IS deletable
+    for i in range(3):
+        _mk(u, f"z{i}.tar", size=100, mtime=2000.0 + i)
+
+    freed_entries, freed_bytes = prune_retained_dirs(
+        [u], max_bytes=200, max_entries=0, log=None,
+    )
+
+    # 215 (the dir entry + its 15-byte sidecar) + 3 x 115. Evicting the three
+    # oldest leaves 115, which is under the ceiling.
+    assert (freed_entries, freed_bytes) == (3, 445), (freed_entries, freed_bytes)
+    assert _bytes_on_disk(u) == 115, "the control did not drain to budget"
+    assert sorted(p.name for p in u.iterdir()) == ["z2.tar", "z2.tar.reason.txt"]
+
+
+def test_a_sweep_does_not_credit_itself_bytes_it_failed_to_delete(tmp_path) -> None:
+    """⚑ REGRESSION (#419 F1). `_evict_fairly` ran `total_bytes -= size`,
+    `live_bytes[victim] -= size` and `gone_entries += 1` UNCONDITIONALLY and
+    used `removed` only for telemetry -- so on the failed-delete branch, one
+    line after concluding it could not remove the entry, it credited itself the
+    entry's bytes and stopped while still over the ceiling.
+
+    Measured on `main` with this exact fixture: reported `(2, 230)`, and `z2`
+    left on disk -- the sweep stopped 315 bytes over a 200-byte ceiling with a
+    removable entry still sitting there. The control above shows the same
+    fixture stops exactly AT the ceiling when the oldest victim can actually be
+    deleted.
+
+    The entry that cannot be deleted is 215 bytes, so 215 is the floor; the
+    assertion is that everything ELSE went, not that the ceiling was met.
+    """
+    import os
+
+    import pytest
+
+    from chess_anti_engine.server.app import prune_retained_dirs
+
+    if os.geteuid() == 0:
+        pytest.skip("running as root: a 0o500 directory is still writable")
+
+    u = tmp_path / "invalid" / "alice"
+    u.mkdir(parents=True)
+    d = _undeletable_dir_entry(u, "a_bad_shard", inner_size=200, mtime=1000.0)
+    try:
+        for i in range(3):
+            _mk(u, f"z{i}.tar", size=100, mtime=2000.0 + i)
+
+        freed_entries, freed_bytes = _sweep_bounded(
+            lambda: prune_retained_dirs(
+                [u], max_bytes=200, max_entries=0, log=None,
+            ),
+        )
+
+        assert d.exists(), "the fixture's undeletable entry was deleted"
+        left = sorted(p.name for p in u.iterdir())
+        assert left == ["a_bad_shard", "a_bad_shard.reason.txt"], (
+            f"sweep stopped at {left} with a 200-byte ceiling -- it credited "
+            "itself the 215 bytes of the entry it FAILED to delete and "
+            "believed it was under budget"
+        )
+        assert _bytes_on_disk(u) == 215, _bytes_on_disk(u)
+        assert (freed_entries, freed_bytes) == (3, 345), (freed_entries, freed_bytes)
+    finally:
+        _restore_mode(d)
+
+
+def test_a_kept_entry_keeps_its_reason_sidecar_when_its_delete_fails(
+    tmp_path,
+) -> None:
+    """⚑ REGRESSION (#419 F1, second half). The sidecar was unlinked BEFORE the
+    entry delete was known to succeed, so a quarantine entry the sweep could
+    not remove survived with its explanation destroyed -- which is the entire
+    point of retaining it.
+
+    Measured on `main`: `a_bad_shard` kept, `a_bad_shard.reason.txt` gone.
+    """
+    import os
+
+    import pytest
+
+    from chess_anti_engine.server.app import prune_retained_dirs
+
+    if os.geteuid() == 0:
+        pytest.skip("running as root: a 0o500 directory is still writable")
+
+    u = tmp_path / "invalid" / "alice"
+    u.mkdir(parents=True)
+    d = _undeletable_dir_entry(u, "a_bad_shard", inner_size=200, mtime=1000.0)
+    try:
+        for i in range(3):
+            _mk(u, f"z{i}.tar", size=100, mtime=2000.0 + i)
+
+        _sweep_bounded(
+            lambda: prune_retained_dirs(
+                [u], max_bytes=200, max_entries=0, log=None,
+            ),
+        )
+
+        assert d.exists(), "the fixture's undeletable entry was deleted"
+        assert (u / "a_bad_shard.reason.txt").is_file(), (
+            "the retained entry's .reason.txt was destroyed while the entry it "
+            "explains was kept"
+        )
+    finally:
+        _restore_mode(d)
+
+
+def test_a_sweep_still_cleans_the_sidecar_of_an_entry_a_peer_removed(
+    tmp_path,
+) -> None:
+    """⚑ CONTROL, NOT A REGRESSION -- it passes on `main` too. It pins the
+    other direction of the reorder, so "do the entry first" cannot be read as
+    "skip the sidecar whenever the entry was already gone".
+
+    A peer takes the entry between the walk and the sweep; its `.reason.txt` is
+    still this sweep's to clean up, or the reorder would MANUFACTURE the
+    orphaned sidecars of #419 F4.
+    """
+    from chess_anti_engine.server.app import _evict_fairly, _retention_entries
+
+    q = tmp_path / "invalid"
+    q.mkdir()
+    for i in range(3):
+        _mk(q, f"s{i}.tar", size=1000, mtime=1_000_000 + i, sidecar=True)
+
+    entries = _retention_entries(q)
+    (q / "s0.tar").unlink()  # the peer, between the walk and the sweep
+
+    freed_entries, freed_bytes = _evict_fairly(
+        entries, max_bytes=0, max_entries=2, log=None, label="test",
+    )
+
+    assert not (q / "s0.tar.reason.txt").exists(), (
+        "the sidecar of an entry a peer removed was left orphaned"
+    )
+    # This sweep removed s0's sidecar (15 bytes) but not s0 itself.
+    assert freed_entries == 0, freed_entries
+    assert freed_bytes == 15, freed_bytes
