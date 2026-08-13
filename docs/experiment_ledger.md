@@ -45298,3 +45298,53 @@ needs an lc0 install/build first; layer 1 does not and should not wait for it.
 gate is CPU-heavy. Per the rule adopted this session after the PID airbag incident
 (`12383b045`), heavy CPU work must not run while an arm trains — Tier-13 arm B is at iter 90/100.
 Draft now, gate it AFTER the arm-B→C transition.
+
+---
+
+## 2026-08-13 — CORRECTION (Josh): the search test measures PLAY, not LEARNING. Target quality is the axis.
+
+Josh: *"ceres is all supervised learning and lc0 uses Puct, only we use gumbel, and search
+quality is not too important, what is important is quality training targets. but search is
+extremely important for uci match play quality in combination with a good weights."*
+
+**I over-billed layer 2 in a1212961a as "the sharpest experiment in this thread." It is not.**
+Same-net-different-search measures the search's PLAY strength. Search enters the LEARNING loop
+only as a target generator (the improved policy, plus 31% of the value blend), so its play
+strength is a product question — real, but not on the critical path for why the loop is not
+learning.
+
+**⚑ AND OUR OWN LEDGER ALREADY SAID THIS.** `gumbel_c_scale`'s PLAY optimum is ~0.2; the
+TARGET-quality `better_in` peak is 0.1; production runs 0.1 deliberately, and CLAUDE.md already
+warns not to tune search toward the play optimum for arena numbers. Play-optimal ≠
+target-optimal is a MEASURED result here, and I reasoned past it.
+
+⇒ **the "+5.8 vs +239.5 contradiction" I raised dissolves and was misdirected**: the sims ladder
+(+5.8 Elo) and the c_scale step (+239.5 Elo) are BOTH play-regime arena measurements. Resolving
+one against the other says nothing about target quality. Not a contradiction worth an experiment.
+
+**THE POINT THAT SURVIVES AND GETS STRONGER: Ceres is PURELY SUPERVISED — no search in its
+training loop at all — and sits ~1000 Elo above us at our own size** (C1-512-15 vs our 512×16).
+A training loop with zero self-generated search targets beats ours by ~1000 Elo. That is direct
+evidence the LEARNING SIGNAL is the whole story, which is exactly Josh's claim.
+
+**⇒ THE DECISIVE CHEAP MEASUREMENT, and it needs no training and no games:** score TARGETS, not
+players, on the frozen audit set —
+1. our stored `policy_target` (Gumbel-improved, what we actually train on),
+2. our net's RAW policy,
+3. C1-512-15's RAW policy, 4. BT4's RAW policy.
+**If a supervised net's RAW policy beats our SEARCHED target, our search is not earning its
+place as a teacher** and the answer is to distill, not to search. This is the internal
+TEACHER-vs-STUDENT comparison (task #120) re-run with an EXTERNAL teacher, and it is the
+measurement Josh's framing actually calls for.
+
+**STRUCTURAL SUSPECT, now measured off the live yaml.** Our targets come from
+`mcts_simulations: 100`, `gumbel_topk: 16` — a Gumbel search whose target has support on **at
+most 16 moves**. lc0/Ceres training data is PUCT at ~800 visits with far wider support. We are
+the only ones using Gumbel, and **Gumbel was designed for SIM-EFFICIENCY, not target fidelity.**
+Candidate root cause for "the policy stopped generalising", and testable OFFLINE with zero
+training: generate both target types on identical positions and compare support, entropy, and
+deep-SF regret of the argmax. Related: the measured "policy gain was CONFIDENCE INFLATION —
+search SHAPE beats sim count", and the support-ceiling finding.
+
+**Layer 2 is not cancelled, it is RE-FILED** as UCI match-play/product work, off the learning
+critical path.
