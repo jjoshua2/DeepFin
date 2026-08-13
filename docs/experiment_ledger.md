@@ -45461,3 +45461,82 @@ research artifacts rather than successive strength improvements. ⇒ separate th
 signal.** Since C2/C3 carry no published Elo at all, the correct move once the encoder passes
 its C1 gate is to **rank them ourselves on our own ruler** — an ordering that does not exist
 publicly and that we would need anyway before adopting any of them as a teacher.
+
+---
+
+## 2026-08-13 — CERES ENCODER BUILT (PR #414). ⚑⚑ MY GATE-D PREMISE WAS FALSE — the negative control disproved it.
+
+Authoring agent delivered `chess_anti_engine/encoding/ceres_tpg.py` (board -> `squares` [64,137]),
+an `input_format` switch on `OnnxChessNet`, and `scripts/bt4_audit.py` -> `foreign_net_audit.py`
+scoring LC0-plane ONNX, Ceres-TPG ONNX and our checkpoints on one ruler. PR #414 open, NOT
+reviewed by its author; independent reviewer spawned.
+
+### ⚑⚑ THE METHOD FINDING — I WAS WRONG, AND IT MATTERS BEYOND THIS TASK
+I designed the gate (ad66e10fa) as: *"a correct encoder reproduces the published +51; a WRONG
+encoder makes both nets garbage and therefore ~EQUAL — so the published ladder validates its own
+plumbing."* **The author ran the negative control and my premise is FALSE.** A rank/file block
+swap did NOT make the two nets read equal — it made both far worse AND pushed them ~20 cp APART.
+⇒ **ordering alone would have PASSED on a broken encoder.** My gate was not diagnostic, and I
+had presented it confidently twice.
+
+Generalised rule this earns: **"a broken X produces indistinguishable outputs" is itself a
+hypothesis and must be TESTED, not assumed.** I asserted a failure mode's signature without
+running it — the same error class as [[a_gate_that_cannot_fail]] and
+[[new_tests_here_are_vacuous_until_mutated]], one level up: not a test that cannot fail, but a
+GATE WHOSE PASS CONDITION I NEVER VALIDATED.
+
+**What replaced it (author's substitute, and the reviewer is tasked with stress-testing it):**
+the ABSOLUTE LEVEL. Top-1 deep-SF regret, frozen audit set:
+| net | top-1 regret (cp, lower better) |
+|---|---|
+| C1-384-12 | **22.56** |
+| C1-512-15 | **22.89** |
+| BT4 (via the KNOWN-GOOD lc0-plane path) | **23.79** |
+| deliberately broken encoder | **36.5 / 57.3** |
+| **our `ckpt218`** | **47.34** |
+Argument: our numbers land beside the known-good BT4 figure and far from the broken ones.
+⚑ Reviewer is specifically tasked to run a SUBTLE corruption (not a gross block swap) — a gross
+corruption failing does NOT establish a subtle one would.
+
+Direction, stated honestly by the author: E[regret] **−1.64 cp [−2.27, −1.03] RESOLVED**
+favouring C1-512-15, 512-15 lower in all 10 buckets, 79.6% move agreement; but **top-1 is
+−0.34 [−1.72, +1.02], CI SPANS ZERO — NOT resolved.**
+
+### FIRST EXTERNAL PLACEMENT OF OUR NET — and it is stark
+**`ckpt218` 47.34 cp vs Ceres 22.56/22.89 and BT4 23.79 — roughly 2x the deep-SF regret.**
+Directionally consistent with Josh's ~1000-Elo prior. ⚑ THREE CAVEATS, all real: (1) `ckpt218`
+is an OLD checkpoint, not our current lineage (~990 global) — re-run on current before quoting;
+(2) the ruler grades AGREEMENT WITH DEEP SF and we deliberately train an anti-SF net
+[[audit_first_cannot_judge_a_non_sf_teacher]] — though a 2x gap is unlikely to be fully
+explained by that; (3) regret cp is NOT Elo, and #170's calibration does not exist yet.
+
+### OTHER FINDINGS, each independently verified by the author (reviewer re-checking)
+- **Ceres's 1858 IS Leela's, VERBATIM — 0 of 1858 entries differ** (extracted from
+  `EncodedMove.NEURAL_NET_MOVE_STR[]` vs our `LC0_1858_UCI_TO_IDX`). Our board-aware
+  `leela_index` remap serves it unchanged. This was the highest-risk unknown and it resolved well.
+- **`value`, not `value2`** (`ONNXNetExecutor`: `INDEX_WDL = FindIndex(3)`; `value2` blended
+  separately at `FractionValueHead2 = 0.4`). And **Ceres's `value` is LOGITS**, unlike BT4's
+  probabilities — detected per batch. A logits/probabilities mixup is pure silent wrongness.
+- **The ONNX graph slices `squares` at exactly 119 and 121** — the boundaries the author derived
+  independently from the `Pack=1` struct. Strong corroboration of the field layout.
+- **⚑ THE C1 EXPORTS HARD-ZERO `QPositiveBlunders`/`QNegativeBlunders`.** `squares[...,119:121]`
+  feeds only `Shape` -> `ConstantOfShape(0.0)`; sweeping them 0.00->1.00 moves policy and value
+  by exactly 0.0000. **The TPG feature most relevant to an anti-engine — opponent blunder
+  modelling as a NETWORK INPUT — is not reachable through these artifacts.** Directly relevant
+  to Josh's "should we switch to their encoder": the most interesting thing in it is dead here.
+- BT4 path proven **bit-identical** vs `main`'s loader (`torch.equal` True, max diff 0.0) on the
+  real 741 MB net — proven, not assumed, as briefed.
+- **My Gate B was also non-diagnostic**: BT4 itself only reaches 82.8% *unmasked-argmax*
+  legality (neither family constrains illegal logits). The diagnostic form gives
+  **86,547/86,547 = 100.0000%** over 2,997 positions incl. 85 castles, 456 promotions, 9 e.p.
+- 18 mutations, 18 caught — with **M5 slipping the first pass** (every fill test used a single
+  real position where "repeat newest" and "repeat oldest" coincide), then fixed. Exactly the
+  [[new_tests_here_are_vacuous_until_mutated]] failure, caught by doing the mutation.
+- ORT 1.23's ALL-level `SimplifiedLayerNormFusion` **throws** on these graphs (session never
+  opens) — needed a graph-optimisation cap. C1 exports are **fp16**.
+
+### DECLARED GAPS (honest, in the PR body)
+Search-path wiring NOT done — a Ceres net can be SCORED but cannot yet PLAY. I8 byte path
+documented not built (my instruction). Full suite NOT run: **12 test files contain
+`kill`/`SIGTERM`/`pgrep` against name patterns** — the refusal is correct and required.
+`scripts/audit_targets.py:1604` still says `bt4_audit`; routed to the other agent's lane.
