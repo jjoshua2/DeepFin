@@ -1776,6 +1776,33 @@ def _evict_fairly(
     user with 200 bad shards is the case retention exists to SERVE, and a
     per-user cap would evict their evidence while 90% of the sink sat empty.
 
+    ⚑⚑ THE VICTIM CHOICE IS FAIR SERIALLY AND CAN INVERT UNDER CONCURRENCY --
+    KNOWN, MEASURED, AND DELIBERATELY NOT FIXED (#419 F3). `live_bytes` is
+    derived from this sweep's own snapshot, so a bucket that floods after the
+    walk is invisible to the choice. Measured: victim 6 entries, hog 1, ceiling
+    500B; the hog uploads 10 mid-flight and this sweep still evicts from
+    `victim`, ending at 1500B with the hog holding 11. Serial control, same
+    fixture with the flood landing before the walk: the hog pays, 500B, exactly
+    at the ceiling. So the policy above is a SERIAL policy, and this paragraph
+    is the honest scope of it.
+
+    Not fixed because the fix is not "re-read the bucket sizes": a flood adds
+    entries this sweep never enumerated, so seeing it needs a fresh WALK, and
+    an eviction loop that re-walks is O(entries) stats per eviction on the
+    upload path -- over a directory set the same caller-invented trial-id
+    rotation extends at will, which turns the ceiling's enforcement into an
+    amplification the attacker steers. Against that: the excess is transient by
+    exactly one request. Every write triggers a sweep, INCLUDING the flooder's
+    own writes, so the next sweep sees the flood, finds the hog the largest,
+    and takes from it. The end state converges to the same max-min split; what
+    inverts is which single eviction this one sweep makes.
+
+    ⚑ The same snapshot argument applies to `total_bytes`, so the CEILING is
+    already only enforced per-sweep under concurrency -- the fairness inversion
+    is strictly the smaller half of that, and both are bounded the same way.
+    Fixing fairness alone while the ceiling stays snapshot-based would buy
+    nothing and cost the walk.
+
     ⚑ A SINGLE-BUCKET SWEEP IS UNCHANGED. With one bucket this is exactly
     oldest-first, which is what every direct `prune_retained_dirs([dir])` caller
     gets and what the pre-existing tests assert.
