@@ -2,8 +2,17 @@
 """Score a foreign net (or our own checkpoint) on the frozen deep-SF audit set.
 
 Renamed from ``bt4_audit.py`` on 2026-08-13 when it grew a second input format
-and a checkpoint mode; the BT4 defaults, the cache schema and the report layout
-are unchanged, so the old invocation still produces the old numbers.
+and a checkpoint mode. The cache schema and the report layout are unchanged and
+``--cache-out`` still defaults to the BT4 cache that ``audit_compare_buckets.py``
+reads; only ``--out`` moved off the old ``runs/bt4_audit.md`` name, so pass it
+explicitly to keep writing there.
+
+⚑ This script gathers the 1858 policy DIRECTLY (``_leela_idxs``), it does NOT go
+through :class:`chess_anti_engine.onnx.load.OnnxChessNet`. That is deliberate —
+it keeps the BT4 numbers on the code path that produced the banked cache — but it
+means a number from here vouches for the ENCODER and the 1858 table, not for the
+wrapper. ``tests/test_onnx_chessnet_remap.py`` covers the wrapper, and
+``test_wrapper_matches_the_direct_1858_gather`` pins the two together.
 
 Three net kinds share ONE ruler — expected / top-1 deep-SF regret from
 ``chess_anti_engine.eval.audit`` — so their scores are directly comparable:
@@ -39,7 +48,7 @@ own eight history slots.
 Usage:
   PYTHONPATH=. python3 scripts/foreign_net_audit.py \
     --onnx data/lc0/onnx/BT4-it332-vanilla-winner.onnx \
-    --cache-out data/lc0/bt4_audit_cache.jsonl
+    --cache-out data/lc0/bt4_audit_cache.jsonl --out runs/bt4_audit.md
 
   PYTHONPATH=. python3 scripts/foreign_net_audit.py \
     --onnx data/ceres/C1-512-15/C1-512-15.onnx --input-format ceres_tpg \
@@ -75,7 +84,7 @@ from chess_anti_engine.eval.audit import (
     parse_audit_record,
 )
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, POLICY_SIZE, move_to_index
-from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
+from chess_anti_engine.moves.leela_index import leela_index_for_move
 from chess_anti_engine.onnx.load import (
     INPUT_FORMAT_CERES_TPG,
     INPUT_FORMAT_LC0_PLANES,
@@ -83,23 +92,30 @@ from chess_anti_engine.onnx.load import (
 )
 
 
-def _mirror_uci(uci: str) -> str:
-    """Vertically flip a UCI move (rank 1<->8). LC0 policy is White-POV, so a
-    black-to-move position must mirror its moves before the 1858 lookup."""
-    def flip(sq: str) -> str:
-        return sq[0] + str(9 - int(sq[1]))
-    return flip(uci[:2]) + flip(uci[2:4]) + uci[4:]
-
-
 def _leela_idxs(board: chess.Board, ucis: list[str]) -> np.ndarray:
     """Map each legal UCI to its canonical LC0 1858 policy slot (-1 if absent).
-    Mirrors moves for black-to-move boards (audit boards are white-canonical)."""
-    flip = not board.turn  # board.turn True == white
-    out = np.empty(len(ucis), dtype=np.int64)
-    for i, u in enumerate(ucis):
-        key = _mirror_uci(u) if flip else u
-        out[i] = LC0_1858_UCI_TO_IDX.get(key, -1)
-    return out
+
+    Delegates to :func:`~chess_anti_engine.moves.leela_index.leela_index_for_move`,
+    which orients the move for a black-to-move board AND applies Leela's own
+    spelling for the two families a UCI-string lookup gets wrong.
+
+    ⚑ It used to do the lookup itself: mirror the UCI string, then index
+    ``LC0_1858_UCI_TO_IDX`` with it. That is correct for ordinary moves and for
+    promotions, and WRONG for castling — Leela spells O-O king-takes-rook
+    (``e1h1``) while python-chess emits the king's two-square move (``e1g1``),
+    and Leela's table also CONTAINS an ordinary ``e1g1`` slide entry, so the
+    lookup returned a plausible logit for an unrelated move instead of failing.
+    Measured on ``audit_set_v1``: 296 castling moves across 256 of the 4000
+    positions (6.4%), every one of them mis-mapped, and in 41 of those the
+    deep-SF best move IS the castle. This is the same defect
+    ``moves/leela_index.py`` was written to kill, surviving in this script
+    because the script never went through it. Any cache produced before
+    2026-08-13 — including ``data/lc0/bt4_audit_cache.jsonl`` — carries it.
+    """
+    return np.array(
+        [leela_index_for_move(board, chess.Move.from_uci(u)) for u in ucis],
+        dtype=np.int64,
+    )
 
 
 def _session(
@@ -281,7 +297,7 @@ def main() -> None:
                          "is not faulted; 0 forces CPU")
     ap.add_argument("--topk", type=int, default=5, help="policy moves cached per position")
     ap.add_argument("--cache-out", type=Path, default=Path("data/lc0/bt4_audit_cache.jsonl"))
-    ap.add_argument("--out", type=Path, default=Path("runs/bt4_audit.md"))
+    ap.add_argument("--out", type=Path, default=Path("runs/foreign_net_audit.md"))
     ap.add_argument("--max-positions", type=int, default=0)
     ap.add_argument("--input-format", choices=ONNX_INPUT_FORMATS,
                     default=INPUT_FORMAT_LC0_PLANES,
