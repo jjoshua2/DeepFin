@@ -44697,3 +44697,45 @@ entry under-claims), and the Tier-13 donor identity/revert point. Corrections ad
   column is `selfplay_games` (403→455), NOT `matching_games` (507→471) — a `matching_games`
   recompute is not a refutation; `ck_2026-07-29_iter218.pt` coexists with the Tier-13 donor
   dir ⇒ full paths only in arena commands (the prereg already complies).
+
+### Tier-14 REFRAMED per Josh (2026-08-12): keep the 0.31 search share — fix the DRAW channel
+
+Josh's read on the S1 verdict (b3fc558fc): a 31% search / 69% SF blend is fine — pure-selfplay
+setups run 50/50+ and the strong SF anchor holds the target — but "the draw just being raw,
+not updated by search, sounds very bad." Adopted; the earlier "reduce the self-referential
+share" framing is RETIRED. Code-verified decomposition of the target's D channel:
+
+- SF component (0.69): D from the fixed cp-logistic curve (`stockfish/wdl.py:85-86`,
+  slope/draw_width_cp=120, production `sf_wdl_use_cp_logistic: true`) — external, phase-blind.
+- search component (0.31): W−L axis = searched `best_q` (the genuinely search-updated part,
+  KEEP); D axis = `wdl_net[1]` RAW (`_mcts_tree.c:4917`) — zero search or SF content.
+- ⚑ COUPLING (`_mcts_tree.c:4918-4920`): `q_clamped = clamp(best_q, ±(1−d_raw))` — the net's
+  own draw belief CLIPS the search signal on the W−L axis. Over-predicted draws mute the
+  target's search correction in exactly the fortress/draw positions the anti-engine thesis
+  cares about. This makes raw-D worse than a dead channel.
+
+Candidate arms (prereg owed before launch; sequenced after Tier-13/12):
+- **(a) parametric D from searched Q** — build the whole search_wdl by mapping `best_q`
+  through a fixed q→WDL draw model (same construction style as the SF component). Removes
+  ALL self-reference; the component's entire content becomes the searched Q; cheapest live
+  change (one C function).
+- **(b) tree-backed-up D** — visit-weighted mean of evaluated nodes' net D, lc0-style. A
+  genuinely search-updated D (deeper evals), but net-sourced still; more C work + memory.
+- **(c) SF-D splice at rebuild** — trainer-side: rebuild search_wdl with D := the SF label's
+  D, re-derive W/L from the recovered q. Offline-screenable on the retarget rig (Tier-10/11/12
+  rig) with NO selfplay change — but bounded: stored `w−l` is the ALREADY-CLAMPED q, so rows
+  where the old clamp bound cannot be fully repaired offline.
+- **CPU-only pre-measurement (no prereg needed, do first):** fraction of live rows where the
+  clamp is ACTIVE (`|w_search − l_search| == 1 − d_raw` within fp tolerance), split by d_raw
+  quartile. If the clamp rarely binds, the coupling is cosmetic and the arms rank (a) vs (b)
+  on the D channel alone; if it binds often in high-D positions, (a) is strongly favored and
+  the offline screen (c) understates the live gain.
+
+Falsifier (unchanged in spirit from b3fc558fc, restated for the new target): the head-vs-SF
+gap and the draw-position value error (`value_head_overoptimistic_on_loss_positions` scorer)
+must improve when D stops being self-referential; if they don't, the raw-D mechanism was not
+the binding defect. Evidence-strength note, also per Josh's "not sure about the other
+findings": the draw construction + clamp are CODE FACTS (re-verified in source this session);
+the +0.0500 search-vs-SF optimism is MEASURED (23,333 rows); the claim "part of the 41.6cp
+gap is target error" is INTERPRETATION — plausible mechanism, magnitude not established, and
+the arms above are what would establish it.
