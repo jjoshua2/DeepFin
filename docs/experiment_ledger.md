@@ -44739,3 +44739,17 @@ findings": the draw construction + clamp are CODE FACTS (re-verified in source t
 the +0.0500 search-vs-SF optimism is MEASURED (23,333 rows); the claim "part of the 41.6cp
 gap is target error" is INTERPRETATION — plausible mechanism, magnitude not established, and
 the arms above are what would establish it.
+
+**Tier-14 step-1 MEASURED same session (CPU-only, arm A's newest 12 shards, 22,725 valid
+rows; script `scratchpad/tier14_clamp_rate.py`, dump `tier14_clamp_rate_20260812.txt`):
+the clamp binds in DECISIVE positions, not fortress ones — the entry above had the
+direction of the coupling concern WRONG.** Clamp-active (min(w,l)=0 ⇔ |q|=1−d_raw) by
+d_raw quartile: Q1 (d<0.109) **12.27%**, Q2 3.10%, Q3 0.41%, Q4 (d>0.319) **0.10%**;
+overall 3.97%, near-bound (within 5% of rem) 24.0%. Mechanism: in high-draw positions the
+searched q is small (Q4 mean |q| 0.118) so the bound is slack; in near-won positions the
+net's residual draw mass CAPS the target's win probability (d_raw 0.11 ⇒ w_search ≤ 0.945
+however winning the search says it is). So the coupling is a confidence-ceiling on
+decisive rows, not a fortress-muting effect — and arm (a) (parametric D from searched Q)
+fixes both defects at once, since D→small automatically as |q|→1. Arm ranking updated:
+(a) favored; (b) tree-backed-up D addresses only the D channel, not the cap; (c)'s offline
+bound (baked-in clamp) affects ~4% of rows + the 24% near-bound tail.
