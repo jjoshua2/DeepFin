@@ -44969,3 +44969,33 @@ relevant, because a ruler that cannot order our own lineage cannot screen our ow
 Runner `scratchpad/ruler_vs_elo/run_missing_reads.sh` (REFUSES to run while training is up —
 verified) pins the banked ladder's ruler settings so the new dumps compare with the old;
 readout `correlate.py` refuses to compute below n=4 (verified at n=3).
+
+### ⚑ METHOD NOTE: the audit-first rule cannot judge a NON-SF teacher (2026-08-13; draft: scratchpad/external_teacher/prereg_draft.md)
+
+Found while designing an external-teacher experiment. `docs/eval_protocol.md`'s audit-first
+rule — score every training-target candidate on the frozen deep-SF audit set BEFORE any
+training compute, kill what loses — is correct for candidates meant to APPROXIMATE SF, and
+**structurally incapable of crediting a teacher for being DECORRELATED from SF**, because
+the ruler is SF. `value_regret`/`audit_targets` reward an evaluator for AGREEING with deep
+SF; our SF label scores 16.1 cp there because it IS SF at lower nodes; any different engine
+scores worse essentially by construction. Applying the rule as written to BT4 would return
+"killed" as a fact about the RULER, not the teacher — the `wdl_regret` trap one level up
+(a measure of agreement is not a measure of strength).
+
+**The rule is honoured but RE-POINTED for non-SF teachers**, and this is the general form for
+any future one: screen for DECORRELATION WITH USABLE DIRECTION, not for agreement — (1)
+top-move disagreement rate vs SF (≈0 ⇒ no information, dead for free); (2) deep-SF regret of
+the teacher's move ON the disagreements (cheap ⇒ plausible second opinion, expensive ⇒ just
+wrong); (3) **the gate: on positions where OUR net's top move has deep-SF regret > 50 cp, how
+often does the teacher pick the SF-preferred move.** Only (3) measures "can this teacher fix
+what we get wrong". PRE-COMMITTED: < 25% ⇒ no distillation runs, ≥ 25% ⇒ proceed. All three
+are frozen-audit-set reads, one pause window, no training compute.
+
+Also recorded, superseding the prior strategic note
+([[value_ceiling_bt4_distill_direction]], 2026-07-20, which proposed VALUE distillation):
+**target POLICY, not value.** The value head's own designated ruler says it improved 17.8%
+while play went flat, and its target defect is separately identified and fixed (Tier-14).
+The head that measurably stopped generalising (~iter 249, held-out −2.5% while in-window fit
+improved 4×) is POLICY. Deciding yardstick would be held-out policy CE on the exposure-clean
+split — the exact measurement absorption could not move. NOT LAUNCHED; needs Josh's go, and
+sits behind Tier-13/14 in the one-change-per-window queue.
