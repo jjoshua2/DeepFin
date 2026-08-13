@@ -1570,6 +1570,21 @@ def _retention_entries(
     `files_only` skips subdirectories -- see `prune_retained_dirs`'s
     `legacy_roots`, where a subdirectory is another user's whole bucket rather
     than an entry.
+
+    ⚑ AN ORPHANED SIDECAR IS AN ENTRY (#419 F4). A `.reason.txt` is normally
+    accounted WITH its shard and skipped here, which leaves a hole: once the
+    shard is gone, the sidecar is counted by nothing and deleted by nothing --
+    invisible to the ceiling and unreachable by every sweep, forever.
+    Demonstrated: a 5000-byte orphan survives a sweep to `max_bytes=1,
+    max_entries=1` that empties the sink around it and reports `(1, 140)`.
+
+    The interleaving that creates one is real and is on the production
+    quarantine path: the writer `replace`s the shard into place, a peer sweep
+    evicts it, and only then does the writer write the sidecar. Unreachable at
+    today's ceilings (it needs the NEWEST entry evicted: impossible under the
+    entry ceiling, and under the byte ceiling it needs one entry bigger than
+    `max_bytes`, i.e. 4 GiB against a <=256 MB cap) -- so this is a hole armed
+    by any ceiling reduction, not a live leak. It is four lines to close.
     """
     if not root.is_dir():
         return []
@@ -1581,7 +1596,16 @@ def _retention_entries(
       # Sidecars are accounted WITH their shard, not as entries in their own
       # right -- counting them separately would halve the effective entry
       # budget and could evict a sidecar while keeping the shard it explains.
-            continue
+      # Unless the shard is GONE: then there is nothing to account it with, and
+      # it falls through to be accounted as an entry in its own right.
+      #
+      # ⚑ The writer always lands the shard BEFORE its sidecar (`tmp.replace`
+      # then `write_text`, both quarantine paths), so an existing sidecar with
+      # no shard means the shard has been removed -- never that it is about to
+      # arrive. This cannot pick off the sidecar of a write in flight.
+            owner = p.name[: -len(".reason.txt")]
+            if owner and (root / owner).exists():
+                continue
         try:
             st = p.stat()
             size = st.st_size

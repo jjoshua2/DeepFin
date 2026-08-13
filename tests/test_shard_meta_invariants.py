@@ -1856,3 +1856,73 @@ def test_the_server_root_arena_inbox_survives_emptying_every_user_dir(
             "user directory went -- the parent guard compared a symlinked "
             "path against a resolved one and lost"
         )
+
+
+# ---------------------------------------------------------------------------
+# #419 F4: an orphaned `.reason.txt` was counted by nothing and deleted by
+# nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_a_sidecar_with_its_shard_present_is_not_an_entry_of_its_own(
+    tmp_path,
+) -> None:
+    """⚑ NEGATIVE CONTROL for the orphan test below, and for the obvious wrong
+    fix to it.
+
+    Counting every `.reason.txt` as an entry would close the orphan hole and
+    halve the effective entry budget while doing it, and could evict a sidecar
+    while keeping the shard it explains. A paired sidecar must still be
+    accounted WITH its shard: one entry, both sizes.
+    """
+    from chess_anti_engine.server.app import _retention_entries
+
+    q = tmp_path / "invalid"
+    q.mkdir()
+    _mk(q, "good.tar", size=100, mtime=1000.0, sidecar=True)
+
+    entries = _retention_entries(q)
+
+    assert len(entries) == 1, [e.path.name for e in entries]
+    assert entries[0].path.name == "good.tar"
+    assert entries[0].size == 115, entries[0]
+    assert entries[0].sidecar_size == 15, entries[0]
+
+
+def test_an_orphaned_reason_sidecar_is_counted_and_swept(tmp_path) -> None:
+    """⚑ REGRESSION (#419 F4). `_retention_entries` skipped every
+    `*.reason.txt` and counted sidecar bytes only VIA an existing entry, so a
+    sidecar whose entry is gone was counted by nothing and deleted by nothing:
+    invisible to the ceiling and unreachable by every sweep, forever.
+
+    The interleaving that creates one is on the production quarantine path --
+    writer `replace`s the shard, a peer sweep evicts it, writer then writes the
+    sidecar.
+
+    Measured on `main`: the sweep below reports `(1, 140)` and leaves the
+    5000-byte orphan on disk after emptying the sink around it.
+    """
+    import os
+
+    from chess_anti_engine.server.app import _retention_entries, prune_retained_dirs
+
+    q = tmp_path / "invalid"
+    q.mkdir()
+    _mk(q, "good.tar", size=100, mtime=2000.0, sidecar=True)
+    orphan = q / "gone.tar.reason.txt"
+    orphan.write_bytes(b"x" * 5000)
+    os.utime(orphan, (1000.0, 1000.0))
+
+    accounted = {e.path.name: e.size for e in _retention_entries(q)}
+    assert accounted == {"gone.tar.reason.txt": 5000, "good.tar": 115}, accounted
+
+    freed_entries, freed_bytes = prune_retained_dirs(
+        [q], max_bytes=1, max_entries=0, log=None,
+    )
+
+    assert not orphan.exists(), (
+        "the orphaned .reason.txt survived a sweep that emptied the sink "
+        "around it -- nothing counts it and nothing can delete it"
+    )
+    assert (freed_entries, freed_bytes) == (2, 5115), (freed_entries, freed_bytes)
+    assert list(q.iterdir()) == [], sorted(p.name for p in q.iterdir())
