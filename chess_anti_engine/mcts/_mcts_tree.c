@@ -205,6 +205,21 @@ static int extract_cboards(PyObject *list, int32_t n,
 #define VLOSS_MODE_LEGACY        0
 #define VLOSS_MODE_VIRTUAL_MEAN  1
 
+/* How batch_process_ply builds the DRAW axis of the stored `search_wdl`
+ * training target. Mirrored on the Python side by
+ * stockfish/wdl.py::SEARCH_WDL_DRAW_* and selfplay/config.py's
+ * `search_wdl_draw_mode`; the int encoding has one home, in
+ * network_turn.py::_SWDL_DRAW_MODE_TO_C.
+ *
+ *   NET_RAW      (production) D = the net's RAW root draw output, and the
+ *                searched q is clamped to +-(1 - D). Self-referential on the D
+ *                axis, and the clamp caps target confidence on decisive rows.
+ *   PARAMETRIC_Q (Tier-14 arm (a)) the WHOLE triple from the searched q via the
+ *                cp-logistic family's own implied draw curve. No net-WDL input.
+ */
+#define SWDL_DRAW_NET_RAW        0
+#define SWDL_DRAW_PARAMETRIC_Q   1
+
 typedef struct {
     /* Per-node arrays */
     int32_t *N;                /* visit count */
@@ -4641,7 +4656,8 @@ static PyTypeObject MCTSTreeType = {
  *                   mcts_probs,
  *                   df_enabled, df_q_weight, df_pol_scale, df_min, df_slope,
  *                   [input_history_lc0_root, n_extra, with_relations,
- *                    df_norm_scale, df_norm_slope, df_norm_clip])
+ *                    df_norm_scale, df_norm_slope, df_norm_clip,
+ *                    swdl_draw_mode, swdl_cp_slope, swdl_cp_draw_width])
  *   -> (sample_x, sample_probs, sample_wdl_net, sample_wdl_search,
  *       sample_priority, sample_priority_policy_kl, sample_priority_q_delta,
  *       sample_keep_prob, sample_legal_mask,
@@ -4664,14 +4680,51 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
      * AFTER the existing optional ints so every existing caller keeps working
      * unchanged and takes the original arithmetic. */
     double df_norm_scale = 0.0, df_norm_slope = 0.0, df_norm_clip = 0.0;
+    /* search_wdl draw channel. 0 = SWDL_DRAW_NET_RAW, the production
+     * construction; anything else is opt-in and must be passed explicitly, so
+     * every existing caller keeps the original arithmetic bit-for-bit. */
+    int swdl_draw_mode = SWDL_DRAW_NET_RAW;
+    double swdl_cp_slope = 0.0, swdl_cp_draw_width = 0.0;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOidddd|iiiddd",
+    if (!PyArg_ParseTuple(args, "OOOOOOidddd|iiidddidd",
                           &cboards_list, &pol_obj, &wdl_obj, &actions_obj,
                           &values_obj, &mcts_probs_obj,
                           &df_enabled, &df_q_weight, &df_pol_scale, &df_min, &df_slope,
                           &input_history_lc0_root, &n_extra, &with_relations,
-                          &df_norm_scale, &df_norm_slope, &df_norm_clip))
+                          &df_norm_scale, &df_norm_slope, &df_norm_clip,
+                          &swdl_draw_mode, &swdl_cp_slope, &swdl_cp_draw_width))
         return NULL;
+    if (swdl_draw_mode != SWDL_DRAW_NET_RAW &&
+        swdl_draw_mode != SWDL_DRAW_PARAMETRIC_Q) {
+        PyErr_Format(PyExc_ValueError,
+                     "swdl_draw_mode must be %d (net_raw) or %d (parametric_q), got %d",
+                     SWDL_DRAW_NET_RAW, SWDL_DRAW_PARAMETRIC_Q, swdl_draw_mode);
+        return NULL;
+    }
+    /* Refuse rather than fall back: a parametric mode armed with an unusable
+     * curve would silently write net_raw targets while the config claims the
+     * arm is live -- the "accepted then ignored" defect this repo is built
+     * against. width 0 is legal for cp_to_wdl but sends coth/csch to infinity. */
+    double swdl_coth = 0.0, swdl_csch = 0.0;
+    if (swdl_draw_mode == SWDL_DRAW_PARAMETRIC_Q) {
+        if (!(swdl_cp_slope > 0.0) || !(swdl_cp_draw_width > 0.0)) {
+            PyErr_Format(PyExc_ValueError,
+                         "swdl_draw_mode=parametric_q requires cp_slope>0 and "
+                         "cp_draw_width>0, got %g and %g",
+                         swdl_cp_slope, swdl_cp_draw_width);
+            return NULL;
+        }
+        double sw = swdl_cp_slope * swdl_cp_draw_width;
+        double sh = sinh(sw);
+        if (!(sh > 0.0) || !isfinite(sh)) {
+            PyErr_Format(PyExc_ValueError,
+                         "swdl_draw_mode=parametric_q: slope*draw_width_cp=%g is "
+                         "outside the representable range of sinh", sw);
+            return NULL;
+        }
+        swdl_coth = cosh(sw) / sh;
+        swdl_csch = 1.0 / sh;
+    }
     if (df_norm_scale > 0.0 && !(df_norm_slope > 0.0)) {
         /* Arming the branch with a zero slope would clamp every keep_prob to
          * df_min and discard ~97.5% of plies. Refuse loudly rather than let a
@@ -4917,14 +4970,57 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         wdl_net_out[i * 3 + 1] = wdl_net[1];
         wdl_net_out[i * 3 + 2] = wdl_net[2];
 
-        /* Search WDL estimate from MCTS value */
-        float d_raw = wdl_net[1];
-        float rem = fmaxf(0.0f, 1.0f - d_raw);
-        float q_clamped = fmaxf(-rem, fminf(rem, best_q));
-        float w_search = 0.5f * (rem + q_clamped);
-        wdl_search_out[i * 3 + 0] = w_search;
-        wdl_search_out[i * 3 + 1] = d_raw;
-        wdl_search_out[i * 3 + 2] = rem - w_search;
+        /* Search WDL estimate from MCTS value.
+         *
+         * SWDL_DRAW_NET_RAW is the default and keeps the original arithmetic
+         * bit-for-bit, including for callers that pass no mode at all (same
+         * contract as df_norm_scale == 0 above). */
+        if (swdl_draw_mode == SWDL_DRAW_PARAMETRIC_Q) {
+            /* D from the searched q alone, via the cp-logistic family's own
+             * implied draw curve: D = coth(w) - sqrt(csch(w)^2 + q^2), with
+             * w = slope * draw_width_cp. Twin of
+             * stockfish/wdl.py::parametric_draw_from_q -- read the derivation
+             * and the exactness proof there, not here. The clamps are guards on
+             * fp dust (both bounds hold in exact arithmetic on |q| <= 1); the
+             * `rem - w_search` tail matches the branch above so the triple sums
+             * to 1 the same way. */
+            double q_par = (double)best_q;
+            if (q_par > 1.0) q_par = 1.0;
+            if (q_par < -1.0) q_par = -1.0;
+            double d_par = swdl_coth - sqrt(swdl_csch * swdl_csch + q_par * q_par);
+            double d_hi = 1.0 - fabs(q_par);
+            if (d_par < 0.0) d_par = 0.0;
+            if (d_par > d_hi) d_par = d_hi;
+            float d_out = (float)d_par;
+            float rem_par = 1.0f - d_out;
+            float w_par = 0.5f * (rem_par + (float)q_par);
+            /* ⚑ CLAMP IN THE PRECISION THE VALUE IS STORED IN. The bound above
+             * holds `d_par <= 1 - |q|` in DOUBLE; rounding `d_par` to float32
+             * can raise it past that bound, leaving `rem_par < |q|` and a
+             * NEGATIVE `w_par` in a soft-CE target. Measured on the built
+             * extension before this clamp: 35 of 8000 interior q values at
+             * w = 10 (slope 0.02 x width 500) stored W = -7.45e-09, while the
+             * float64 Python twin stayed non-negative on the same inputs --- a
+             * C/Python divergence too small for the parity test's atol to see.
+             * The margin shrinks monotonically in w and reaches 0 at w ~ 5;
+             * production w = 0.72 never reached it, but "non-negative by
+             * construction" has to be true of the code that ships, not only of
+             * the algebra. `l = rem_par - w_par` stays >= 0 and the sum is
+             * unchanged, so this cannot perturb the production curve. */
+            if (w_par < 0.0f) w_par = 0.0f;
+            if (w_par > rem_par) w_par = rem_par;
+            wdl_search_out[i * 3 + 0] = w_par;
+            wdl_search_out[i * 3 + 1] = d_out;
+            wdl_search_out[i * 3 + 2] = rem_par - w_par;
+        } else {
+            float d_raw = wdl_net[1];
+            float rem = fmaxf(0.0f, 1.0f - d_raw);
+            float q_clamped = fmaxf(-rem, fminf(rem, best_q));
+            float w_search = 0.5f * (rem + q_clamped);
+            wdl_search_out[i * 3 + 0] = w_search;
+            wdl_search_out[i * 3 + 1] = d_raw;
+            wdl_search_out[i * 3 + 2] = rem - w_search;
+        }
         if (!isfinite(wdl_search_out[i*3]) || !isfinite(wdl_search_out[i*3+1]) || !isfinite(wdl_search_out[i*3+2])) {
             wdl_search_out[i * 3 + 0] = 0.0f;
             wdl_search_out[i * 3 + 1] = 1.0f;
@@ -5657,9 +5753,14 @@ static PyMethodDef module_methods[] = {
      "batch_process_ply(cboards, pol, wdl, actions, values, probs, "
      "df_enabled, df_q_w, df_pol_s, df_min, df_slope, "
      "[input_history_lc0_root, n_extra, with_relations, "
-     "df_norm_scale, df_norm_slope, df_norm_clip]) -> tuple of arrays. "
+     "df_norm_scale, df_norm_slope, df_norm_clip, "
+     "swdl_draw_mode, swdl_cp_slope, swdl_cp_draw_width]) -> tuple of arrays. "
      "df_norm_scale > 0 divides difficulty by it before the keep clamp and "
-     "uses df_norm_slope in place of df_slope; 0 = original arithmetic."},
+     "uses df_norm_slope in place of df_slope; 0 = original arithmetic. "
+     "swdl_draw_mode selects the stored search_wdl draw channel: "
+     "SWDL_DRAW_NET_RAW (0, default, bit-identical) or SWDL_DRAW_PARAMETRIC_Q "
+     "(1), which builds the whole triple from the searched q through the "
+     "cp-logistic curve given by swdl_cp_slope/swdl_cp_draw_width."},
     {"batch_compute_relations", py_batch_compute_relations, METH_VARARGS,
      "batch_compute_relations(cboards, out[N,5,64,64] u8) -> None. "
      "Dynamic board-relation matrices; GIL released."},
@@ -5723,8 +5824,21 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * ep-aware transposition key + donor child-set verification (audit W1) and
      * the tt_stats() counters. 3 is a CORRECTNESS bump, not a signature one:
      * the guard exists so a process that starts on a stale .so dies with the
-     * rebuild command instead of silently running the corrupting search. */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 3) < 0) {
+     * rebuild command instead of silently running the corrupting search.
+     * 4 = batch_process_ply's swdl_draw_mode/cp-curve args. Signature bump:
+     * selfplay passes them on EVERY ply, so a stale .so raises "takes at most
+     * 17 arguments" on the first ply of the first game; the marker turns that
+     * into the rebuild command at import instead. */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 4) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    /* The search_wdl draw-mode encoding, exported so the Python side reads the
+     * ints off the extension rather than keeping a second copy that can drift
+     * (network_turn.py::_SWDL_DRAW_MODE_TO_C). */
+    if (PyModule_AddIntConstant(m, "SWDL_DRAW_NET_RAW", SWDL_DRAW_NET_RAW) < 0 ||
+        PyModule_AddIntConstant(m, "SWDL_DRAW_PARAMETRIC_Q", SWDL_DRAW_PARAMETRIC_Q) < 0) {
         Py_DECREF(m);
         return NULL;
     }

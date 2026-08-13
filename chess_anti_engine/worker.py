@@ -3863,6 +3863,10 @@ class WorkerSession:
         "selfplay_temperature_decay_start_move", "selfplay_temperature_decay_moves",
         "selfplay_temperature_endgame",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+  # Baked into the frozen GameConfig at session start and read on every net
+  # ply, so a mid-run edit would keep writing the old target construction until
+  # some unrelated key forced a restart.
+        "search_wdl_draw_mode",
         "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
         "record_dense_sf_policy", "record_sf_p0_policy", "record_sf_p0_regret",
         "record_fast_ply_value", "blindspot_harvest_out_path",
@@ -3926,6 +3930,13 @@ class WorkerSession:
         "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
         "sf_policy_score_mode", "sf_policy_cp_temp",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+  # RECORD-SHAPING, like the diff_focus_norm group below: `search_wdl` is
+  # stamped onto the record at NET-TURN time and finalize cannot re-derive it
+  # (the searched q is not stored separately). A resumed game whose early plies
+  # carry a net_raw draw channel and whose later plies carry a parametric one
+  # would put two target constructions into one shard with no column
+  # distinguishing them.
+        "search_wdl_draw_mode",
         "sf_refute_record_opp_rows", "sf_refute_opp_policy_net_blend",
   # RECORD-SHAPING, not plumbing: `priority` and `keep_prob` are stored columns,
   # and the norm group decides the UNITS they are stored in (raw difficulty vs
@@ -4339,6 +4350,14 @@ class WorkerSession:
                     reco.get(
                         "sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width,
                     )
+                ),
+  # Also reco.get, not _resolve_reco: like soft_policy_temp this decides what a
+  # STORED ROW MEANS, and a per-worker override would put two search_wdl
+  # constructions into one replay window with no column to tell them apart.
+  # GameConfig.__post_init__ validates the value, so a typo kills the session
+  # here rather than silently reverting to net_raw.
+                search_wdl_draw_mode=str(
+                    reco.get("search_wdl_draw_mode", GameConfig.search_wdl_draw_mode)
                 ),
   # No CLI counterpart on purpose (hence reco.get, not _resolve_reco): this
   # is a TRAINING TARGET exponent, and a per-worker override would silently
@@ -4840,7 +4859,7 @@ class WorkerSession:
         _start_regret, _start_nodes = self._active_difficulty()
         self.log.info(
             "session-start reco applied: regret=%s sf_nodes=%s label_floor=%d"
-            " score_mode=%s cp_temp=%.2f",
+            " score_mode=%s cp_temp=%.2f swdl_draw=%s",
             f"{_start_regret:.4f}" if _start_regret is not None else "unknown",
             _start_nodes if _start_nodes is not None else "unknown",
   # The same _resolve_reco expression the GameConfig build uses, so this line
@@ -4860,6 +4879,13 @@ class WorkerSession:
             self._resolve_reco(
                 reco, "sf_policy_cp_temp", _SF_TARGET_DEFAULTS.sf_policy_cp_temp,
             ),
+  # Same rule again for the search_wdl draw channel. Its deploy is verified by
+  # swdl_draw=parametric_q here PLUS the stored-row property in the shards:
+  # under parametric_q, search_wdl[:,1] is an exact function of
+  # search_wdl[:,0]-search_wdl[:,2] and is UNCORRELATED with net_wdl[:,1] given
+  # that q, where today the two are equal to the bit. Same expression as the
+  # GameConfig build above, so the log and the targets cannot disagree.
+            str(reco.get("search_wdl_draw_mode", GameConfig.search_wdl_draw_mode)),
         )
         model_sha = self.model_sha
 

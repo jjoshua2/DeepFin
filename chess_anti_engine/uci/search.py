@@ -298,8 +298,9 @@ class SearchWorker:
         if _abi < _REQUIRED_MCTS_ABI:
             raise RuntimeError(
                 f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
-                "(missing node_capacity, the start_gumbel_sims root-scale args and/or "
-                "the audit-W1 transposition-key fix); rebuild the C extension: "
+                "(missing node_capacity, the start_gumbel_sims root-scale args, "
+                "the audit-W1 transposition-key fix and/or batch_process_ply's "
+                "search_wdl draw-mode args); rebuild the C extension: "
                 "python3 scripts/build_production_extensions.py"
             )
         self._evaluator = evaluator
