@@ -36,7 +36,6 @@ import httpx
 
 from chess_anti_engine.server.app import (
     _MAX_SEED_DOLE_CLAIM_ID_CHARS,
-    _MAX_SEED_DOLE_WINNERS_BYTES,
     _SeedDoleGate,
     create_app,
 )
@@ -356,27 +355,104 @@ def test_a_normal_winner_sidecar_is_still_loaded(tmp_path: Path) -> None:
     assert gate._last_iter["trial_00000"] == 7
 
 
-def test_an_oversized_winner_sidecar_is_refused_at_boot(tmp_path: Path) -> None:
-    """⚑ This guards the PAST, not the future.
+def _setup_with_prefix_gate(
+    tmp_path: Path, *, winner_claim_id: str, last_iter: int, iteration: int = 7,
+):
+    """A server root as a PRE-FIX server left it: winner durable, gate BEHIND.
 
-    With `claim_id` bounded at the route no sidecar this code writes can get
-    here. But a sidecar written by a PRE-FIX server survives the upgrade, and
-    `create_app` re-parses it on EVERY boot forever; only a read-side check can
-    retire it. Dropping the record costs at most one dose -- `_last_iter` comes
-    from the separate gate file and still refuses a second grant for an
-    iteration already handed out, so this is not a double-grant risk.
+    ⚑ This is the state the previous version of this suite could not reach.
+    `_persist_winner` runs first and its failure is fatal to the grant, but
+    `_persist_gate` is deliberately best-effort (`except: pass`), so a crash or
+    a failed write between them leaves exactly this: a winner recorded for
+    iteration N while the gate file still reads N-1.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=iteration, dole=1, fen_path=fen_path)
+    _seed_dole_user(tmp_path)
+    (tmp_path / "seed_dole_gate.json").write_text(
+        json.dumps({"trial_00000": last_iter}), encoding="utf-8",
+    )
+    _winners_path(tmp_path).write_text(
+        json.dumps({
+            "trial_00000": {
+                "iteration": iteration,
+                "claim_id": winner_claim_id,
+                "revision": "a-stale-revision-from-the-pre-fix-server",
+                "grant_token": "grant-token-issued-to-worker-A",
+            },
+        }),
+        encoding="utf-8",
+    )
+    return create_app(server_root=tmp_path, users_db="users.json")
+
+
+def test_a_winner_ahead_of_the_gate_is_reconciled_at_boot(tmp_path: Path) -> None:
+    """⚑⚑ THE INVARIANT A SIZE-ON-READ GUARD WOULD HAVE BROKEN.
+
+    When the gate file is BEHIND the sidecar, the reconciliation loop is the
+    SOLE protection against a double grant -- `_last_iter` alone cannot supply
+    it, because `_last_iter` is precisely the value that is stale. Any code
+    that empties `self._winners` before that loop runs deletes the protection.
+
+    An earlier revision of this branch added a boot-time sidecar SIZE check
+    that did exactly that, and the test that covered it hardcoded a gate equal
+    to the winner's iteration -- so the dangerous state was unreachable from
+    the suite and the mutation score still read clean. The guard is gone; this
+    test is what makes its absence checkable.
     """
     state = _write_gate(tmp_path, {
         "trial_00000": {
             "iteration": 7,
-            "claim_id": "x" * (_MAX_SEED_DOLE_WINNERS_BYTES + 4096),
+            "claim_id": uuid.uuid4().hex,
             "revision": "abc123",
             "grant_token": "tok",
         },
-    })
-    assert _winners_path(tmp_path).stat().st_size > _MAX_SEED_DOLE_WINNERS_BYTES
-
+    }, last_iter=6)  # ⚑ BEHIND the winner, not equal to it.
     gate = _SeedDoleGate(state_path=state)
-    assert gate._winners == {}, "an oversized winner sidecar was parsed at boot"
-    # The double-grant guard is untouched: the durable gate still holds.
-    assert gate._last_iter["trial_00000"] == 7
+    assert gate._last_iter["trial_00000"] == 7, (
+        "a durable winner for iteration 7 did not advance a gate stuck at 6 -- "
+        "the next claim for 7 will be granted a SECOND time"
+    )
+
+
+def test_an_oversized_prefix_sidecar_still_blocks_a_second_grant(tmp_path: Path) -> None:
+    """⚑⚑ THE END-TO-END HARM, on the genuine upgrade path.
+
+    A pre-fix server wrote an 8 MB sidecar (unbounded `claim_id`) and lost its
+    gate write. This code boots on that root. Worker B -- a DIFFERENT worker,
+    distinct `claim_id` -- claims the same iteration and must be told
+    `already_claimed`. Granting it hands two workers the same one-shot dose,
+    the exact failure #404's two-file design exists to prevent.
+
+    ⚑ The oversized sidecar must be RECONCILED, not skipped. Refusing to parse
+    it here to save one boot's work is what re-opens the double grant, and the
+    benefit was measured to be a single boot anyway: the next grant rewrites
+    the file at ~156 bytes, so it self-heals rather than persisting forever.
+    """
+    app = _setup_with_prefix_gate(
+        tmp_path,
+        # 8 MiB, the size class a pre-fix server actually produced.
+        winner_claim_id="A" * (8 * 1024 * 1024),
+        last_iter=6,
+    )
+    assert _winners_path(tmp_path).stat().st_size > 8 * 1024 * 1024
+
+    async def _run() -> dict:
+        async with await _client(app) as client:
+            rev = await _revision(client)
+            r = await client.post(
+                CLAIM,
+                json={"claim_id": uuid.uuid4().hex, "manifest_revision": rev},
+                auth=("u", "p"),
+                headers=_manifest_poll_headers(worker_id="B"),
+            )
+            r.raise_for_status()
+            return r.json()
+
+    body = asyncio.run(_run())
+    assert body["granted"] is False, (
+        f"worker B won a SECOND grant for an iteration already doled out: {body}"
+    )
+    assert body["reason_code"] == "already_claimed"

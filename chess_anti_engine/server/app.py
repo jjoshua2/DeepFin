@@ -485,43 +485,37 @@ class _SeedDoleGate:
                 self._last_iter = {}
         wp = self._winners_path()
         if wp is not None and wp.exists():
-            # ⚑ SIZE BEFORE PARSE, AND IT IS ABOUT THE PAST, NOT THE FUTURE.
-            # With `claim_id` bounded at the route this file is small by
-            # construction: one entry per PUBLISHED trial (an unpublished
-            # trial_id 404s in `_get_manifest_impl` before it can ever reach
-            # the gate, so the entry COUNT is not caller-controlled either),
-            # each a few hundred bytes. A sidecar written by a PRE-FIX server
-            # is not bounded -- `claim_id` was persisted verbatim, and an 8 MB
-            # winners file survives the upgrade and is re-parsed on EVERY boot,
-            # forever. The route guard cannot retroactively shrink it; only a
-            # read-side check can.
+            # ⚑⚑ NO SIZE-ON-READ GUARD HERE, AND THAT IS A DECISION, NOT AN
+            # OMISSION -- DO NOT ADD ONE. An earlier revision of this branch
+            # refused to parse an oversized sidecar to save a boot's work. It
+            # DOUBLE-GRANTS, measured: emptying `self._winners` skips the
+            # reconciliation loop below, and when the gate file is BEHIND the
+            # sidecar that loop is the ONLY protection there is -- `_last_iter`
+            # cannot supply it, because `_last_iter` is exactly the stale
+            # value. On the real upgrade path (pre-fix server writes an 8 MB
+            # sidecar, loses its gate write through `_persist_gate`'s tolerated
+            # `except`) worker B won a second grant for iteration 7.
             #
-            # Refusing lands in the loader's existing "start with no winners"
-            # state, whose cost is bounded and known: at most ONE dose (a
-            # winner mid-replay stops matching). It is NOT a double-grant risk
-            # -- `_last_iter` comes from the separate `seed_dole_gate.json`,
-            # which still refuses a second grant for an iteration already
-            # handed out. That asymmetry is what makes dropping the record the
-            # safe failure here, exactly as the `except` below already assumes.
+            # ⚑ "Reconcile first, then discard" is NOT the fix either: knowing
+            # which iteration the sidecar records means PARSING it, which is
+            # the entire cost such a guard exists to avoid. It buys nothing.
+            #
+            # The cost of parsing is one boot anyway -- the next grant rewrites
+            # this file at ~156 bytes, so an oversized sidecar self-heals
+            # rather than persisting forever. And no NEW oversized sidecar can
+            # be created: `claim_id` is bounded at the route. Paying one large
+            # parse once is strictly cheaper than re-opening the double grant
+            # this file's whole two-file design exists to prevent.
+            #
+            # `test_an_oversized_prefix_sidecar_still_blocks_a_second_grant`
+            # fails if this is ever "optimised" again.
             try:
-                sidecar_bytes = wp.stat().st_size
-            except OSError:
-                sidecar_bytes = 0
-            if sidecar_bytes > _MAX_SEED_DOLE_WINNERS_BYTES:
-                _log.warning(
-                    "seed dole: winner sidecar %s is %d bytes, over the %d cap; "
-                    "starting with NO winner records (gate file still bounds re-grants)",
-                    wp, sidecar_bytes, _MAX_SEED_DOLE_WINNERS_BYTES,
-                )
+                loaded_w = json.loads(wp.read_text(encoding="utf-8"))
+                self._winners = {
+                    str(k): dict(v) for k, v in dict(loaded_w).items() if isinstance(v, dict)
+                }
+            except Exception:
                 self._winners = {}
-            else:
-                try:
-                    loaded_w = json.loads(wp.read_text(encoding="utf-8"))
-                    self._winners = {
-                        str(k): dict(v) for k, v in dict(loaded_w).items() if isinstance(v, dict)
-                    }
-                except Exception:
-                    self._winners = {}
         # ⚑⚑ RECONCILE THE WINNER RECORD INTO THE GATE. Without this, reversing
         # the write order (winner first, then gate) trades a lost dose for a
         # DOUBLE GRANT, which is worse. MEASURED: persist gate=9 and
@@ -1047,10 +1041,6 @@ _MAX_BAD_SHARD_REPORT_FIELD_CHARS = 512
 # prefixes host/trial/iteration, and far below anything that makes the winner
 # sidecar expensive to re-read.
 _MAX_SEED_DOLE_CLAIM_ID_CHARS = 256
-# Refuse to parse a winner sidecar larger than this at boot. See
-# `_SeedDoleGate.__init__` -- this is about sidecars a PRE-FIX server already
-# wrote, not about ones this code can produce.
-_MAX_SEED_DOLE_WINNERS_BYTES = 1024 * 1024
 
 
 def _stamp_shard_username(zarr_root: Path, username: str) -> None:
