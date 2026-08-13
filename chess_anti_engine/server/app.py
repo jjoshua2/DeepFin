@@ -909,13 +909,16 @@ def prune_retained_dirs(
     """
     entries: list[_RetainedEntry] = []
     for root in roots:
-        entries.extend(_retention_entries(root))
+  # The bucket is the OWNING USER. `roots` are per-user directories
+  # (`<sink>/<username>`), and the same user's directory under twenty invented
+  # trial ids is ONE bucket, because `root.name` is the username in all of them.
+        entries.extend(_retention_entries(root, bucket=root.name))
     for root in legacy_roots:
-        entries.extend(_retention_entries(root, files_only=True))
+        entries.extend(_retention_entries(root, files_only=True, bucket=""))
     label = str(roots[0]) if roots else (
         str(legacy_roots[0]) if legacy_roots else "<none>"
     )
-    return _evict_oldest_first(
+    return _evict_fairly(
         entries, max_bytes=max_bytes, max_entries=max_entries, log=log,
         label=label,
     )
@@ -929,17 +932,23 @@ class _RetainedEntry(NamedTuple):
     of it that lives in the `.reason.txt`, split out for one reason only: the
     two files are deleted by two different statements that can succeed
     independently, so crediting `freed_bytes` exactly needs to know which half
-    this sweep actually removed. See `_evict_oldest_first`.
+    this sweep actually removed. See `_evict_fairly`.
+
+    `bucket` is the FAIRNESS unit -- the owning username, not the directory.
+    One user has one bucket no matter how many trial ids they write under,
+    which is the whole point: trial ids are caller-invented and usernames are
+    not. `""` is the unattributed bucket (pre-bucketing `legacy_roots` entries).
     """
 
     mtime: float
     path: Path
     size: int
     sidecar_size: int
+    bucket: str
 
 
 def _retention_entries(
-    root: Path, *, files_only: bool = False,
+    root: Path, *, files_only: bool = False, bucket: str = "",
 ) -> list[_RetainedEntry]:
     """One `_RetainedEntry` per retained entry, sidecar size included in `size`.
 
@@ -976,14 +985,16 @@ def _retention_entries(
                     sidecar_size = sidecar.stat().st_size
             size += sidecar_size
             out.append(
-                _RetainedEntry(st.st_mtime, p, int(size), int(sidecar_size)),
+                _RetainedEntry(
+                    st.st_mtime, p, int(size), int(sidecar_size), bucket,
+                ),
             )
         except OSError:
             continue
     return out
 
 
-def _evict_oldest_first(
+def _evict_fairly(
     entries: list[_RetainedEntry],
     *,
     max_bytes: int,
@@ -991,7 +1002,54 @@ def _evict_oldest_first(
     log: logging.Logger | None,
     label: str,
 ) -> tuple[int, int]:
-    """Evict oldest-first until both budgets are satisfied.
+    """Evict from the LARGEST bucket first, oldest-first within it.
+
+    ⚑⚑ ONE GLOBAL CEILING PER SINK, WITH A FAIRNESS UNIT UNDER IT -- and it
+    took three iterations to get both at once, so the failure of each is worth
+    stating:
+
+    - #406 enforced ONE budget across every trial. Bounded, and it made the
+      sweep a diagnostic-destruction primitive: mtime-ordered and global, so any
+      worker's flood evicted every other worker's evidence oldest-first.
+    - #407's first attempt made the budget PER USER. Fair, and unbounded --
+      `worker_self_register` is a shipped yaml key (`config_yaml.py:318`, via
+      `harness.py:495`), so with it on the bucket count is CALLER-controlled.
+      Measured: three accounts minted from one caller retained 9 entries
+      against a 3-entry budget. Registration is throttled at 5 accounts per IP
+      per hour with no global account cap, so at the 4 GiB default that is
+      ~40 GiB in the first hour from one IP, ~960 GiB/day, against the 8 GiB
+      the global bound had. Nothing was live -- the flag defaults off and
+      production's `pbt2_small.yaml` does not set it -- but the DOCSTRING
+      claimed a bound that a config key silently falsified, which is this
+      repo's signature defect wearing a different hat.
+
+    ⇒ the ceiling and the fairness are SEPARATE MECHANISMS and have to be.
+    `max_bytes`/`max_entries` are the global ceiling for the whole sink, across
+    every user and trial, and are the ONLY thing that bounds disk. Fairness is
+    not a second quota -- it is the CHOICE OF VICTIM once that ceiling binds.
+
+    ⚑ THE POLICY, STATED BECAUSE "WHICH BUCKET LOSES" IS EXACTLY WHERE A
+    FAIRNESS FIX SILENTLY BECOMES A FAIRNESS BUG: evict the OLDEST entry of the
+    LARGEST-CONTRIBUTING bucket, measured in whichever dimension is currently
+    over -- bytes when the byte ceiling binds, entry count when the count
+    ceiling binds. Repeat until neither is over.
+
+    Why largest-first: it puts the entire marginal cost of a flood on the
+    flooder. A user holding one entry is never evicted while another holds
+    twelve, and under sustained contention every bucket converges to
+    `ceiling / N` -- max-min fairness, with no configured per-user number to
+    tune or to get wrong. Minting accounts no longer buys ceiling, because the
+    ceiling is global; it only splits the loser's share more ways.
+
+    ⚑ THERE IS DELIBERATELY NO SECOND, PER-USER QUOTA. A configured per-user
+    cap under the global one would do nothing the victim policy does not
+    already do, and would waste the sink whenever it is uncontended: a lone
+    user with 200 bad shards is the case retention exists to SERVE, and a
+    per-user cap would evict their evidence while 90% of the sink sat empty.
+
+    ⚑ A SINGLE-BUCKET SWEEP IS UNCHANGED. With one bucket this is exactly
+    oldest-first, which is what every direct `prune_retained_dirs([dir])` caller
+    gets and what the pre-existing tests assert.
 
     ⚑ TWO COUNTERS, AND THEY ARE NOT THE SAME QUESTION. `gone` is "this entry
     is no longer on disk, whoever removed it" and drives the budget arithmetic;
@@ -1031,12 +1089,36 @@ def _evict_oldest_first(
     freed_entries = 0
     freed_bytes = 0
 
-    for entry in entries:
-        path, size = entry.path, entry.size
+  # Per-bucket queues, each already oldest-first because `entries` is sorted.
+  # `live_*` track what the sweep believes is still on disk, so the victim
+  # choice reflects the evictions already made in this pass rather than the
+  # snapshot it started from -- otherwise one bucket would be drained far past
+  # the point where it stopped being the largest.
+    queues: dict[str, list[_RetainedEntry]] = {}
+    for e in entries:
+        queues.setdefault(e.bucket, []).append(e)
+    live_bytes = {k: sum(e.size for e in v) for k, v in queues.items()}
+    live_count = {k: len(v) for k, v in queues.items()}
+    taken = dict.fromkeys(queues, 0)
+
+    while True:
         over_bytes = max_bytes > 0 and total_bytes > max_bytes
         over_count = max_entries > 0 and (len(entries) - gone_entries) > max_entries
         if not (over_bytes or over_count):
             break
+        available = [k for k, q in queues.items() if taken[k] < len(q)]
+        if not available:
+            break
+  # Largest contributor in the dimension that is actually binding. The tuple
+  # tail makes the choice total and deterministic, so two racing sweeps pick
+  # the same victim instead of each taking a different bucket's oldest.
+        if over_bytes:
+            victim = max(available, key=lambda k: (live_bytes[k], live_count[k], k))
+        else:
+            victim = max(available, key=lambda k: (live_count[k], live_bytes[k], k))
+        entry = queues[victim][taken[victim]]
+        taken[victim] += 1
+        path, size = entry.path, entry.size
         try:
       # `size` ALREADY includes the sidecar, so it must not be added again --
       # that would over-subtract and stop evicting while still over budget.
@@ -1067,6 +1149,8 @@ def _evict_oldest_first(
         except OSError:
             continue
         total_bytes -= size
+        live_bytes[victim] -= size
+        live_count[victim] -= 1
         gone_entries += 1
       # Two independent deletes, credited independently. `size - sidecar_size`
       # is the entry's own bytes; the sidecar's are added only if the unlink
@@ -1665,8 +1749,8 @@ def create_app(
     quarantine_max_bytes: int = 4 * 1024 * 1024 * 1024,
     quarantine_max_entries: int = 200,
     arena_max_body_bytes: int = 1024 * 1024,
-    arena_user_max_bytes: int = 256 * 1024 * 1024,
-    arena_user_max_entries: int = 5000,
+    arena_max_bytes: int = 256 * 1024 * 1024,
+    arena_max_entries: int = 5000,
     users_db: str = "users.json",
     opening_book_path: str | None = None,
     opening_book_path_2: str | None = None,
@@ -1904,11 +1988,11 @@ def create_app(
     def _quarantine_dirs_all_trials(subdir: str) -> list[Path]:
         """Every `quarantine/<subdir>` this server writes, across all trials.
 
-        ⚑ NOT THE SWEEP SET ANY MORE -- callers want `_quarantine_user_dirs`,
+        ⚑ NOT THE SWEEP SET ANY MORE -- callers want `_quarantine_all_user_dirs`,
         which splits this into the calling user's per-user buckets (the budget)
         and these flat sinks (drained as `legacy_roots`). Sweeping this list
         directly is what made one worker able to evict every other worker's
-        diagnostics; see `_quarantine_user_dirs` for the measurement.
+        diagnostics; see `_quarantine_all_user_dirs` for the measurement.
 
         ⚑ THE SAME DEFECT AS THE ARENA PATH, IN THE SIBLING SINK. The arena
         route was fixed to share ONE budget across trials during the #402
@@ -1958,10 +2042,8 @@ def create_app(
         d = resolve_user_dir(base, username)
         return base if d is None else d
 
-    def _quarantine_user_dirs(
-        subdir: str, username: str,
-    ) -> tuple[list[Path], list[Path]]:
-        """(this user's buckets, the flat sinks) for `subdir`, across all trials.
+    def _quarantine_all_user_dirs(subdir: str) -> tuple[list[Path], list[Path]]:
+        """(every user's bucket, the flat sinks) for `subdir`, across all trials.
 
         ⚑⚑ THE FAIRNESS KEY IS THE USER, AND IT CANNOT BE THE TRIAL. #406 made
         this sink server-wide to close the id-rotation bypass, and thereby
@@ -1979,56 +2061,83 @@ def create_app(
         entry under each of many ids, where every contributor ties at one and
         the tie-break is the oldest entry, i.e. the victim.
 
-        The username is the only key here that an attacker cannot mint: it is
-        an authenticated, administrator-created account, so the number of
-        buckets is a bounded constant exactly as the number of sink kinds is.
-        That is the same standard the sink-kind split is justified by, and the
-        same shape the ARENA budget has had since #402 -- the two sinks now
-        agree instead of disagreeing silently.
+        ⚑⚑ AND THE BUCKET COUNT IS NOT ADMINISTRATOR-BOUNDED, WHICH IS WHY
+        THIS RETURNS EVERY USER'S BUCKET RATHER THAN THE CALLER'S. The first
+        version of this fix swept only the calling user's directories and gave
+        each user a full budget, on the stated premise that usernames are
+        administrator-created. `worker_self_register` falsifies that premise --
+        it is a yaml run-config key (`config_yaml.py:318`) plumbed through
+        `harness.py:495`, and TOFU registration is what the #400-#403 series
+        exists to enable. Measured with it on: three accounts minted from one
+        caller retained 9 entries against a 3-entry budget.
 
-        ⚑ THE CEILING THIS BUYS, STATED PLAINLY: `users x sink-kinds x budget`
-        rather than `sink-kinds x budget`. It is a real widening against this
-        PR's global bound, and it is bounded by an administrator-controlled
-        count rather than by an attacker-controlled one, which is the property
-        the budget is actually for. Against `main` -- per-trial, i.e.
-        unbounded -- it is still strictly a bound.
+        So the ceiling is GLOBAL for the sink -- every bucket, every trial, one
+        `max_bytes`/`max_entries` -- and fairness is the choice of victim under
+        it, not a second quota. See `_evict_fairly`, which evicts the oldest
+        entry of the LARGEST bucket, so minting accounts buys no ceiling at all
+        and a flood costs the flooder.
 
-        ⚑ WITHIN one user, eviction stays oldest-first across that user's own
+        ⚑ WITHIN one user, eviction is oldest-first across that user's own
         trials. A single account's diagnostics compete with each other; that is
         one principal spending one quota, not one worker destroying another's.
         `test_one_users_own_flood_still_evicts_its_own_older_evidence` pins it
-        so the limit of this fix is recorded rather than assumed.
+        so the limit is recorded rather than assumed.
+
+        ⚑ Enumerated by `iterdir`, never by joining a caller-supplied name, so
+        this cannot be steered by a hostile username; `resolve_user_dir` guards
+        the WRITE path instead (`_quarantine_user_dir`).
         """
         sinks = _quarantine_dirs_all_trials(subdir)
-        buckets = [d for s in sinks if (d := resolve_user_dir(s, username)) is not None]
+        buckets = [
+            d for s in sinks if s.is_dir() for d in sorted(s.iterdir()) if d.is_dir()
+        ]
         return buckets, sinks
 
-    def _arena_user_dirs_all_trials(username: str) -> list[Path]:
-        """Every arena directory this user can write to, across all trials.
+    def _arena_all_user_dirs() -> list[Path]:
+        """EVERY user's arena directory, across the root inbox and all trials.
 
-        The retention budget is theirs, not any single trial's -- see
-        `prune_retained_dirs` for why a per-trial budget is not a budget.
+        ⚑⚑ PRE-EXISTING BUG, CLOSED HERE, NOT PRECEDENT. This took a `username`
+        and returned only that user's directories from #402 until #407: the
+        budget was `arena_user_max_*` PER USER, so the ceiling was
+        `users x 256 MiB`. That multiplier is caller-controlled the moment
+        `worker_self_register` is on -- a shipped yaml key
+        (`config_yaml.py:318` via `harness.py:495`) that the #400-#403
+        volunteer series exists to enable. Measured on the previous commit with
+        it on: three minted accounts retained 6 arena results against a 2-entry
+        budget. The quarantine sinks were given the identical shape earlier in
+        #407 and are fixed the same way; reporting it as a bug this PR is
+        closing rather than as a precedent that made the design safe.
+
+        So the ceiling is now GLOBAL for the sink (`arena_max_*`, renamed from
+        `arena_user_max_*` because it is no longer per user) and fairness is
+        the victim choice under it -- see `_evict_fairly`.
 
         ⚑ BLOCKING, AND IT MUST NOT RUN ON THE EVENT LOOP. Every entry costs a
-        `trials/` directory read plus a `resolve()` (two `realpath` syscalls),
-        the trial set is attacker-extendable by the same id rotation the budget
-        exists to stop, and eviction removes JSON files rather than the
-        directories holding them -- so the set this walks grows and never
-        shrank. Callers hop through `run_in_threadpool` around BOTH this and
-        the sweep it feeds; see the arena route.
+        `trials/` directory read, the trial set is attacker-extendable by the
+        same id rotation the budget exists to stop, and eviction removes JSON
+        files rather than the directories holding them -- so the set this walks
+        grows and never shrank. Callers hop through `run_in_threadpool` around
+        BOTH this and the sweep it feeds; see the arena route.
+
+        ⚑ `iterdir`, not `resolve_user_dir`: this enumerates directories that
+        already exist rather than joining a caller-supplied name, so there is
+        nothing to traverse with. That also keeps the route's own
+        `resolve_user_dir` call the ONLY one on the loop thread, which
+        `test_the_cross_trial_arena_walk_does_not_run_on_the_event_loop`
+        asserts exactly.
         """
-        dirs: list[Path] = []
-        d = resolve_user_dir(arena_inbox, username)
-        if d is not None:
-            dirs.append(d)
+        inbox_roots: list[Path] = [arena_inbox]
         trials_dir = root / "trials"
         if trials_dir.is_dir():
-            for trial_dir in sorted(trials_dir.iterdir()):
-                if not trial_dir.is_dir():
-                    continue
-                d = resolve_user_dir(trial_dir / "arena_inbox", username)
-                if d is not None:
-                    dirs.append(d)
+            inbox_roots.extend(
+                trial_dir / "arena_inbox"
+                for trial_dir in sorted(trials_dir.iterdir())
+                if trial_dir.is_dir()
+            )
+        dirs: list[Path] = []
+        for inbox_root in inbox_roots:
+            if inbox_root.is_dir():
+                dirs.extend(d for d in sorted(inbox_root.iterdir()) if d.is_dir())
         return dirs
 
     def _arena_inbox_root(trial_id: str | None) -> Path:
@@ -2944,8 +3053,8 @@ def create_app(
   # invented id. This route is a plain `def`, so FastAPI already runs it off
   # the loop thread and the cross-trial scan needs no extra hop.
         with contextlib.suppress(Exception):
-            report_buckets, report_sinks = _quarantine_user_dirs(
-                "client_reports", username,
+            report_buckets, report_sinks = _quarantine_all_user_dirs(
+                "client_reports",
             )
             prune_retained_dirs(
                 report_buckets,
@@ -3535,8 +3644,8 @@ def create_app(
           # inside `_finish_upload`, i.e. already on `run_in_threadpool`, so the
           # cross-trial scan is not on the loop thread.
                 with contextlib.suppress(Exception):
-                    invalid_buckets, invalid_sinks = _quarantine_user_dirs(
-                        "invalid", username,
+                    invalid_buckets, invalid_sinks = _quarantine_all_user_dirs(
+                        "invalid",
                     )
                     prune_retained_dirs(
                         invalid_buckets,
@@ -3992,9 +4101,15 @@ def create_app(
             # size guard above, so it stalls every other route for its
             # duration.
             await run_in_threadpool(write_arena_result, out, body)
-      # Per-user bound, sized in entries as well as bytes because the sink's
-      # growth mode is MANY SMALL unique bodies -- a byte budget alone lets an
-      # account burn inodes indefinitely.
+      # GLOBAL bound for the sink, sized in entries as well as bytes because the
+      # sink's growth mode is MANY SMALL unique bodies -- a byte budget alone
+      # lets an account burn inodes indefinitely.
+      #
+      # ⚑ GLOBAL, NOT PER USER, SINCE #407. `arena_user_max_*` gave every
+      # account a full allowance, and `worker_self_register` makes the account
+      # count caller-controlled -- 3 minted accounts retained 6 results against
+      # a 2-entry budget. Fairness is now the VICTIM CHOICE under one ceiling
+      # (`_evict_fairly`, largest bucket first), not a per-account quota.
       #
       # ⚑ ACROSS EVERY TRIAL, not just this one. `_normalize_trial_id` only
       # SYNTAX-checks the id and `_check_worker_compat` admits a trial with no
@@ -4004,18 +4119,18 @@ def create_app(
       # path, wearing the quota as a hat. Found by review.
       #
       # ⚑ THE ENUMERATION IS INSIDE THE HOP, NOT OUTSIDE IT. It used to sit on
-      # the loop thread: `_arena_user_dirs_all_trials` reads `trials/` and
-      # `resolve()`s one path per trial, over a directory set that the same id
+      # the loop thread: `_arena_all_user_dirs` reads `trials/` and
+      # one directory per trial, over a directory set that the same id
       # rotation extends at will and that eviction never shrank (it deleted the
       # JSON, not the directory). Threadpooling only the sweep left the walk --
       # the part whose cost grows with the attack -- exactly where it stalls
       # every other route. Found by review (#406).
             def _sweep_arena_dirs() -> None:
-                dirs = _arena_user_dirs_all_trials(username)
+                dirs = _arena_all_user_dirs()
                 prune_retained_dirs(
                     dirs,
-                    max_bytes=int(arena_user_max_bytes),
-                    max_entries=int(arena_user_max_entries),
+                    max_bytes=int(arena_max_bytes),
+                    max_entries=int(arena_max_entries),
                     log=log,
                 )
                 drop_empty_arena_dirs(
