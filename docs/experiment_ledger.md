@@ -45405,3 +45405,45 @@ With a wrong encoder both are garbage and read ~equal. So **the encoder is not t
 two downloaded nets reproduce their own published Elo difference** — which is precisely why
 Josh's "start with the 384 and the 512x15" is the right pair to have fetched: two rungs is the
 minimum that can self-validate, and one rung could not.
+
+---
+
+## 2026-08-13 — NEWER CERES NETS EXIST (C2/C3) BUT ⚑ ONLY C1 HAS PUBLISHED ELO — the validation pair must NOT move
+
+Josh flagged newer releases. Full enumeration with dates and parameter counts (17 releases):
+
+| generation | released | nets |
+|---|---|---|
+| C1 (float) | Oct 2024 – Jan 2025 | 256-10 (15M), 384-12 (**31M**), 512-15 (**70M**), 512-25 (126M), 768-15 (126M), 640-25 (185M), 640-34 (250M), 512-35 (180M) |
+| C1 I8 | Jul 2025 – Feb 2026 | 640-34-I8, 768-26-I8 (238M), ULTRA-I8 (**767M**) |
+| **C2** | **Feb 2026** | **384-12-I8 (41M)** |
+| **C3** | **Apr–May 2026** | 768-30-pre3/pre4/pre8-I8 (300M), 512-34-pre8-I8 (170M) |
+| tune | Jun 2026 | 640-34-LEPNED-I8 |
+
+**⚑⚑ FINDING 1: THE PUBLISHED ELO TABLE COVERS THE C1 GENERATION ONLY.** C2, C3, ULTRA and
+LEPNED have no published Elo anywhere. Our encoder acceptance test (ad66e10fa Gate D — "the
+published ladder validates its own plumbing", C1-512-15 must beat C1-384-12 by ~+51) therefore
+**exists ONLY for C1**. Switching the validation pair to a newer/stronger net would DISCARD THE
+ONLY GROUND TRUTH THAT CAN PROVE THE ENCODER IS CORRECT and leave us trusting an unverifiable
+encoder — which is precisely the failure this gate was designed to catch. ⇒ **the acceptance
+pair does not move.** Newer nets are added AFTER the encoder is proven, never as its test.
+(Correction to ad66e10fa: C1-384-12 is **31M** per its release body, not the ~32M I interpolated.)
+
+**⚑ FINDING 2: EVERY C2 AND C3 NET IS I8-ONLY — no float version exists.** So reaching the
+newer generations REQUIRES a byte-input path, a second encoder variant.
+
+**I8 is an INPUT-DTYPE variant, not a better net — and that is evidenced, not assumed:** the
+release note says "accepts I8 (byte) inputs for improved inference speed", and the README gives
+**C1-640-34 = 160 and C1-640-34-I8 = 160**, **C1-256-10 = −96 and C1-256-10-i8 = −96** —
+identical Elo across the float/byte pair at two different sizes.
+
+**⇒ INSTRUCTION SENT TO THE AUTHORING AGENT:** build and validate the FLOAT TPG path on the C1
+pair as briefed; while reading `TPGSquareRecord.cs`/`TPGRecordEncoding.cs` also establish and
+document what the I8 variant expects, and leave a dtype/quantization seam so the byte path is a
+small later delta — but do NOT build, wire or validate it in this PR.
+
+**Why the newer nets matter once the encoder is trustworthy:** C2-384-12 is **41M params from
+Feb 2026** while C1-512-15 is **70M from Oct 2024**. If the newer, SMALLER net is competitive,
+that is direct evidence that **training method and data beat parameter count** — the central
+open question in this whole thread, and a cleaner test of it than anything we can run internally.
+That measurement is worthless until the encoder is proven on the only pair that can prove it.
