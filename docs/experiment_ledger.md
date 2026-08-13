@@ -45348,3 +45348,60 @@ search SHAPE beats sim count", and the support-ceiling finding.
 
 **Layer 2 is not cancelled, it is RE-FILED** as UCI match-play/product work, off the learning
 critical path.
+
+---
+
+## 2026-08-13 — CERES NETS DOWNLOADED AND VERIFIED. ⚑ THEY ARE **NOT** DROP-IN LIKE BT4 — different input format.
+
+Josh: *"download some ceres nets and make sure they work ok like we did with bt4. maybe start
+with the 384 and the 512x15 net?"* Done for the download half; the "work ok" half is BLOCKED on
+one piece of real work, identified below.
+
+**Fetched** (releases, not repo files — the repo root holds only README+LICENSE):
+`data/ceres/C1-384-12.zip` 57,767,857 B sha256 d182b426d25ad59cc3a93d421c4d6c9deb61e86078e887f6a82fa34db5516e50
+`data/ceres/C1-512-15.zip` 124,102,560 B sha256 7eb26f237ab04e28158894cc180e1a2403b17883ee70368557822c24f432ffc9
+Both byte-exact against the release manifest. Extracted to `data/ceres/<tag>/<tag>.onnx`
+(113.0 MB / 138.2 MB). Uncommitted runtime artifacts, per the layout rule.
+
+**⚑ PARAMETER COUNTS FROM THE RELEASE NOTES SETTLE THE SIZE MATCH.** C1-256-10 = 15M,
+**C1-512-15 = 70M vs our 63.08M (1.11x)** — the closest analogue that exists. C1-512-25 = 126M,
+C1-768-15 = 126M, C1-640-25 = 185M, C1-640-34 = 250M. ⇒ on this family **+151 Elo costs ~3.6x
+params (70M → 250M)**, i.e. very roughly **+100 Elo per ~4x parameters**. That is the concrete
+price of the architecture lever, and it is why it cannot be bought without the data to feed it.
+
+**Also present and NOT in the README's C1 table:** 17 releases including C2-384-12-I8 (41M) and
+C3-512-34-pre8-I8 (170M) / C3-768-30-pre8-I8 (300M). Newer generations exist if we want them.
+
+### ⚑⚑ THE BLOCKER, and it is exactly the kind of thing that must be caught BEFORE a number is quoted
+
+| | BT4 (works today) | Ceres C1 |
+|---|---|---|
+| input | `/input/planes` **[B, 112, 8, 8]** | `squares` **[B, 64, 137]** |
+| policy | `/output/policy` [B, 1858] | `policy` [B, 1858] |
+| value | `/output/wdl` [B, 3] | `value` [B, 3] (+ `value2`) |
+| aux | `mlh` | `mlh`, `unc`, `q_deviation_lower/upper`, `uncertainty_policy`, `action`, `prior_state`, `action_uncertainty` |
+
+ir_version 8, opset 17, producer `pytorch 2.4.0`, node names `transformer_layer.N.attention*` —
+same vintage and family as BT4. **But the input is a 64-square × 137-feature record, not
+lc0's 112 planes of 8x8** (7,168 values vs 8,768 — a different FEATURE SET, not a reshape).
+`OnnxChessNet.forward` slices `x[:, :112]` and feeds (B,112,8,8), so it **cannot drive these
+nets at all.** No metadata_props, no doc_string — the format is undocumented in the file.
+
+**NOT a dead end: the encoding is open source.** `dje-dev/Ceres` carries
+`src/Ceres.Chess/NNEvaluators/Ceres/TPG/TPGSquareRecord.cs` plus `TPGRecordEncoding.cs`,
+`TPGRecordConverter.cs`, `TPGRecordValidation.cs` — the 64x137 input is Ceres's TPG square
+record and is fully specified there. Work = write a `board -> (64,137)` encoder mirroring
+`TPGSquareRecord`, then an input-format switch on the adapter. Also still to verify: whether
+their `policy` 1858 is lc0's ordering (our board-aware `leela_index` map) or Ceres's own.
+
+**⚑ A WRONG ENCODER WOULD NOT CRASH.** It would yield plausible-looking policies and a net that
+merely seems weak — and we would conclude "we are only 400 Elo behind" or "Ceres is overrated"
+from an experiment that never ran. Canonical signature defect, same shape as the 46/1858 policy
+index that under-weighted castling 49-120x.
+
+**⇒ THE VERIFICATION GATE IS FREE AND BUILT IN: the published ladder tests its own plumbing.**
+With a correct encoder, C1-512-15 must beat C1-384-12 by roughly their published gap (+51 Elo).
+With a wrong encoder both are garbage and read ~equal. So **the encoder is not trusted until the
+two downloaded nets reproduce their own published Elo difference** — which is precisely why
+Josh's "start with the 384 and the 512x15" is the right pair to have fetched: two rungs is the
+minimum that can self-validate, and one rung could not.
