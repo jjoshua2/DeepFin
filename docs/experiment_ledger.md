@@ -45055,3 +45055,65 @@ current lineage stays alive as the control); lc0's 112-plane encoding is not our
 policy index agreeing on 46 of 1858 slots); weeks-scale, competes for the single GPU.
 
 Full analysis: `scratchpad/pretrain/strategy_20260813.md`.
+
+---
+
+## 2026-08-13 — BT4 REFRAMED FROM DIRECTION TO DIAGNOSTIC (Josh's call). PREREG DRAFT, NOT LAUNCHED.
+
+Josh: *"ok to try distilling BT4 to see what kind of thing we can expect, but i don't want to
+be merely an lc0 clone since the goal was to RL into exploiting Stockfish and be something
+different, but it seems like it might help us diagnose if we have problems with our data or
+labels or architecture."*
+
+**This supersedes the framing in the 3d5df283a entry.** That entry asked a DIRECTION question
+("should we pretrain on external data"), which Josh is declining. The right question is
+DIAGNOSTIC: the loop is not gaining Elo — is the defect in DATA, LABELS, or ARCHITECTURE? We
+have never separated those three because every instrument we own sits downstream of all three
+at once. BT4 separates them because it is a **fixed external function with no self-reference**
+(no PID, no curriculum, no replay composition, no dependence on our net), which makes it usable
+as a CONTROL TARGET — a different use from making it our teacher.
+
+**⇒ Every arm outputs a NUMBER; no arm ships weights.** Distilled checkpoints are diagnostic
+byproducts. Nothing here replaces the anti-engine objective or touches production selfplay.
+
+**D2 — LABEL QUALITY (run first: sharpest, cheapest, existing rig).** `retarget_retrain.py`
+already holds architecture/positions/donor/steps/seed/draw-sequence constant across variants
+and is hardened (shard-list guard, draw de-pairing guard, dead-override guard). Two variants,
+same pool: `prod` (0.69·sf_wdl + 0.31·search_wdl value, our search policy) vs `bt4` (BT4 policy
++ value on the SAME positions). One new buffer view `_BT4TargetBuffer`, modelled on the
+existing `_SoftPolicyAsMainBuffer` (`retarget_retrain.py:350`), per-variant `rig_bt4_targets=1`.
+⚑ It MUST inherit that class's fail-loud guard: a row with no BT4 label RAISES, never falls
+through to the stored target — a silent fallback makes arm (b) a copy of arm (a) and the
+experiment reports a confident null. Signature defect, canonical form.
+  PRE-COMMITTED: `bt4` > `prod` beyond instrument resolution ⇒ LABEL PIPELINE is a real
+  limiter (most actionable outcome; upstream of the anti-engine goal, not in tension with it).
+  Null ⇒ labels are NOT the limiter, which combined with absorption (11.6× in-window fit, zero
+  held-out gain) points at loop DYNAMICS / self-reference.
+
+**D1 — ARCHITECTURE CEILING. ⚑ REQUIRES A NEGATIVE CONTROL.** Fit our 63.08M to BT4's function;
+track held-out fidelity (top-1 agreement, policy KL, value MAE). A fidelity number ALONE is
+uninterpretable — no scale makes "0.72 top-1" good or bad. Control: same distill into a
+deliberately smaller net (~256-dim). 63M >> small ⇒ capacity is being used. **63M ≈ small ⇒
+DATA-limited inside the distill, D1 VOID** — and without the control that outcome is
+indistinguishable from "architecture is fine", the opposite conclusion.
+
+**D3 — POSITION DISTRIBUTION (last).** Hold target source (BT4) + architecture constant, vary
+positions: our replay vs external (PGN / lc0 public). Separation ⇒ our selfplay diet is narrow.
+
+**⚑⚑ SHARED PREREQUISITE AND THE SILENT FAILURE MODE.** All arms need precomputed BT4 labels in
+a row-keyed sidecar (inline inference rejected: slow, and it de-pairs the arms, defeating the
+rig's guards). BT4's policy is lc0's 1858 index; ours is ours; **they agree on 46 of 1858
+slots**. Board-aware map is `moves/leela_index.py` (0 mismatches / 55,586 moves). A wrong map
+does NOT crash — it trains every BT4 arm on a permuted policy, D2 reports a confident null, and
+we conclude "labels are fine" from an experiment that never ran. GATE before any arm: re-verify
+0 mismatches on a fresh sample AND assert BT4's remapped top-1 is legal in 100% of sampled
+positions.
+
+**Limits stated before launch.** Cannot say whether a BT4-distilled net is a good anti-engine
+net — not asked. A D2 null is "labels are not the limiter", NOT "labels are good": the arms
+share our position distribution, so a defect living in the positions CANCELS in the contrast —
+which is why D3 must not be dropped if D2 reads null. All arms inherit arena resolution
+(800 pairs = ±15.5 Elo, 80% power at ~22 Elo).
+
+Order **D2 → D1(+control) → D3**, one readout window each. Draft:
+`scratchpad/pretrain/diagnostic_prereg_20260813.md`. Task #199.
