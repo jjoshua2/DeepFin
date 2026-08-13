@@ -97,6 +97,12 @@ class AsyncTestEval:
         self._result: Any = None
         self._exc: BaseException | None = None
         self._source_iter: int = -1
+  # The worker thread died during init and will never dequeue work, so no
+  # eval can ever identify itself by source_iter. The barrier below releases
+  # on this INSTEAD of on "any exception": a per-eval exception belongs to
+  # exactly one eval and is matched by source_iter like a success, whereas
+  # this one means nobody is left to signal (review finding P2-1, PR #405).
+        self._init_failed: bool = False
   # Batch-shape keys whose compiles this thread has already completed under
   # the barrier (see start()). A NEW key means the next eval will trigger a
   # dynamo (re)compile on the eval thread, so that start() must be a barrier
@@ -176,6 +182,12 @@ class AsyncTestEval:
                     "device": device,
                     "compile_mode": compile_mode,
                 }
+  # ``_init_failed`` describes the CURRENT worker. A fresh thread is
+  # only reachable after shutdown() set _thread back to None, but
+  # carrying a dead predecessor's flag across that would release this
+  # start()'s barrier immediately — the new thread's compile would
+  # then race main-thread work, which is the whole point of the flag.
+                self._init_failed = False
                 self._thread = threading.Thread(
                     target=self._loop, name="AsyncTestEval", daemon=True,
                 )
@@ -245,7 +257,7 @@ class AsyncTestEval:
                     )
                     continue
                 with self._lock:
-                    if self._exc is not None or self._source_iter == int(source_iter):
+                    if self._init_failed or self._source_iter == int(source_iter):
                         barrier_ok = self._exc is None
                         if barrier_ok:
                             self._compiled_shape_keys.add(shape_key)
@@ -256,7 +268,24 @@ class AsyncTestEval:
   # the NEW key compiled without its compile ever having happened
   # (review finding S3, PR #405). Consume the wakeup and keep
   # waiting for OUR eval — identified by source_iter, which _loop
-  # writes under this same lock.
+  # writes under this same lock on BOTH its success and its failure
+  # path. Testing ``self._exc is not None`` here instead would apply
+  # the ownership test to only half the outcomes: a stale eval that
+  # RAISES releases this barrier, reopening the same hole S3 closed
+  # for the success path (review finding P2-1, PR #405 — reproduced:
+  # a stale eval raising at t=0.4s returned start() at 0.40s with the
+  # new-shape compile still to come).
+  #
+  # ⚑ DO NOT fold ``_init_failed`` into the identity check above —
+  # it is NOT a redundant special case, it is the termination
+  # condition. A worker that dies during init returns before its
+  # dequeue loop, so it never writes a source_iter for ANY eval;
+  # gating its release on identity would leave this wait unsatisfied
+  # forever, and the wait is now UNBOUNDED (review finding B1), so
+  # that is a HANG, not a late failure. It is the one exception that
+  # must release every waiter, precisely because nobody is left to
+  # signal. ``start()`` clears it when it spawns a fresh worker, so
+  # it always describes the CURRENT thread.
                     self._result_event.clear()
             log.info(
                 "AsyncTestEval compile barrier released after %.1fs "
@@ -275,6 +304,7 @@ class AsyncTestEval:
   # nit, PR #405 — same contract as the two failure paths below).
             with self._lock:
                 self._exc = RuntimeError("AsyncTestEval init args were never set")
+                self._init_failed = True
             self._result_event.set()
             return
         try:
@@ -298,6 +328,7 @@ class AsyncTestEval:
             log.exception("AsyncTestEval init failed")
             with self._lock:
                 self._exc = exc
+                self._init_failed = True
             self._result_event.set()
             return
 
@@ -331,6 +362,13 @@ class AsyncTestEval:
                 log.exception("async test eval failed")
                 with self._lock:
                     self._exc = exc
+  # Record WHOSE eval failed, exactly as the success path does. The
+  # compile barrier identifies its own eval by source_iter, so a
+  # failure with no source_iter would be indistinguishable from any
+  # other eval's failure and would release a barrier belonging to a
+  # different shape key (review finding P2-1, PR #405). collect() is
+  # unaffected: it returns (None, -1) whenever _exc is set.
+                    self._source_iter = work.source_iter
             self._result_event.set()
 
     def has_inflight(self) -> bool:

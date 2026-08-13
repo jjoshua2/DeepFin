@@ -461,6 +461,7 @@ def test_a_stale_evals_completion_does_not_release_a_rearmed_barrier(cfg_and_bui
     """
     import threading
     model = _StubChessNet(dim=4)
+    entered2 = threading.Event()  # the STALE eval has been DEQUEUED and is running
     g2 = threading.Event()   # gates the STALE eval (iter 2, old shapes)
     g3 = threading.Event()   # gates OUR eval (iter 3, new shapes)
     done3 = threading.Event()
@@ -471,6 +472,7 @@ def test_a_stale_evals_completion_does_not_release_a_rearmed_barrier(cfg_and_bui
         if calls["n"] == 1:
             return "FIRST"
         if calls["n"] == 2:
+            entered2.set()
             g2.wait(timeout=10.0)
             return "STALE"
         g3.wait(timeout=10.0)
@@ -506,6 +508,15 @@ def test_a_stale_evals_completion_does_not_release_a_rearmed_barrier(cfg_and_bui
         trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
         batch_size=4, steps=2, device="cpu", source_iter=2,
     )
+    # ⚑ Wait for the worker to actually DEQUEUE eval 2 before starting eval 3.
+    # Without this the test is flaky (measured 3/25 whole-file runs): start()'s
+    # drain does `_work_q.get_nowait()`, so whenever the worker had not yet
+    # taken work2 it is removed and eval 2 NEVER RUNS. Eval 3 then becomes the
+    # SECOND _compute_metrics call, takes the g2 branch, and is released at
+    # t=0.3s -- the barrier returning early for a legitimate reason, which the
+    # assertions below misread as "the stale eval released it". A sleep would
+    # only make that window smaller; this makes the precondition true.
+    assert entered2.wait(timeout=10.0), "the stale eval was never dequeued"
     rel = threading.Thread(target=_releaser)
     rel.start()
     # Eval 3: NEW shapes (1, 8) -> re-armed barrier, while eval 2 is in flight.
@@ -524,6 +535,154 @@ def test_a_stale_evals_completion_does_not_release_a_rearmed_barrier(cfg_and_bui
         "start() returned before its own eval completed"
     )
     assert aer.collect(timeout=5.0) == ("OURS", 3)
+
+
+def test_a_stale_evals_FAILURE_does_not_release_a_rearmed_barrier(cfg_and_builder):
+    """The ownership test must cover the FAILURE path, not just the success one.
+
+    Review finding P2-1 (PR #405). The release condition was
+    ``self._exc is not None or self._source_iter == int(source_iter)``: the
+    second half asks "was this MY eval?", the first half does not — so ANY
+    eval's exception released a re-armed barrier, reopening for failures
+    exactly the hole S3 closed for successes. Reproduced against that
+    revision: a stale eval raising at t=0.4s returned ``start()`` at 0.40s,
+    leaving the NEW-shape compile to run concurrently with main-thread work.
+
+    Reachability is S3's, which this PR already chose to fix: a shape change
+    plus an in-flight stale eval that raises. ``trainable.py``'s drift-reset
+    path predicts that exact pair ("Expect either a ValueError from the eval
+    thread"); it is disarmed today only by ``reset_holdout_on_drift: false``.
+    """
+    import threading
+    model = _StubChessNet(dim=4)
+    entered2 = threading.Event()  # the STALE eval has been DEQUEUED and is running
+    g2 = threading.Event()   # gates the STALE eval's RAISE (iter 2, old shapes)
+    g3 = threading.Event()   # gates OUR eval (iter 3, new shapes)
+    done3 = threading.Event()
+    calls = {"n": 0}
+
+    def _eval(**_kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "FIRST"
+        if calls["n"] == 2:
+            entered2.set()
+            g2.wait(timeout=10.0)
+            raise ValueError("stale eval raised (holdout cleared under it)")
+        g3.wait(timeout=10.0)
+        done3.set()
+        return "OURS"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _eval
+
+    start_returned = threading.Event()
+    stale_released_barrier: dict[str, bool | None] = {"value": None}
+
+    def _releaser():
+        # Make the STALE eval RAISE first; the barrier must NOT release on it.
+        time.sleep(0.3)
+        g2.set()
+        time.sleep(0.7)
+        stale_released_barrier["value"] = start_returned.is_set()
+        g3.set()
+
+    aer = AsyncTestEval()
+    # Eval 1: registers shapes (1, 4) under the first barrier.
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == ("FIRST", 1)
+    # Eval 2: same shapes -> asynchronous; leave it IN FLIGHT (gated on g2).
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    assert entered2.wait(timeout=10.0), "the stale eval was never dequeued"
+    rel = threading.Thread(target=_releaser)
+    rel.start()
+    # Eval 3: NEW shapes (1, 8) -> re-armed barrier, while eval 2 is in flight.
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=8, steps=2, device="cpu", source_iter=3,
+    )
+    done3_at_return = done3.is_set()
+    start_returned.set()
+    rel.join(timeout=10.0)
+    assert stale_released_barrier["value"] is False, (
+        "the STALE eval's EXCEPTION released the re-armed barrier -- the "
+        "new-shape compile is now racing main-thread work"
+    )
+    assert done3_at_return, "start() returned before its own eval completed"
+    # The stale exception is still charged to whatever collect() reads next --
+    # pre-existing behaviour of the abandoned-prior-result path (start()'s
+    # drain comment), unchanged here and deliberately out of this fix's scope.
+    # The barrier's correctness does not depend on it: a lingering _exc only
+    # withholds the shape key, so the next start() with these shapes takes the
+    # barrier again. That is the fail-safe direction.
+    assert aer.collect(timeout=5.0) == (None, -1)
+    aer.shutdown(timeout=5.0)
+
+
+def test_barrier_rearms_when_the_holdout_row_count_changes(cfg_and_builder):
+    """Pins the OTHER half of the shape key: ``len(holdout_buf)``.
+
+    Review finding P2-3 (PR #405): mutating the key to ``(0, int(batch_size))``
+    survived 6/6 whole-file runs, because every existing test varies only
+    batch_size. Yet the row-count half is the one gated by a config key -- a
+    holdout drift reset refreezes at a DIFFERENT row count with batch_size
+    unchanged, which changes the full pass's ragged tail and forces an
+    eval-thread dynamo recompile exactly as a batch_size change does.
+    """
+    import threading
+    model = _StubChessNet(dim=4)
+    gate = threading.Event()
+    eval_done = threading.Event()
+    calls = {"n": 0}
+
+    def _eval(**_kw):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return "FAST"
+        gate.wait(timeout=10.0)
+        eval_done.set()
+        return "REARMED"
+
+    trainer = MagicMock()
+    trainer.model = model
+    trainer._compute_metrics = _eval
+
+    aer = AsyncTestEval()
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == ("FAST", 1)
+
+    def _release_later():
+        time.sleep(0.5)
+        gate.set()
+
+    rel = threading.Thread(target=_release_later)
+    rel.start()
+    # SAME batch_size, DIFFERENT holdout row count (len 1 -> len 3).
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="BBB",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    # Sampled at the moment start() returns, before any join: an un-barriered
+    # return takes microseconds and is cleanly distinguishable from the
+    # 0.5s-gated eval.
+    done_at_return = eval_done.is_set()
+    rel.join(timeout=10.0)
+    assert done_at_return, (
+        "start() with a NEW holdout row count returned before its eval ran -- "
+        "the barrier did not re-arm on a row-count change"
+    )
+    assert aer.collect(timeout=5.0) == ("REARMED", 2)
+    aer.shutdown(timeout=5.0)
 
 
 def test_a_dead_worker_thread_fails_evals_instead_of_hanging(monkeypatch):
@@ -571,7 +730,19 @@ def test_a_dead_worker_thread_fails_evals_instead_of_hanging(monkeypatch):
         "start() on a dead worker thread blocked (the maxsize=1 queue put) "
         "instead of failing the eval loudly"
     )
+    # ⚑ Bound the wall clock, don't just read the value. (None, -1) is ALSO
+    # what a timed-out collect() returns, so the value alone cannot see the
+    # guard's `_result_event.set()` disappear -- that mutant survived 6/6
+    # whole-file runs and was visible only as 10.2s vs 5.7s of elapsed time
+    # (review finding P3-4, PR #405). The assertion is that collect() returned
+    # because the guard SIGNALLED, not because it gave up.
+    t0 = time.monotonic()
     assert aer.collect(timeout=5.0) == (None, -1)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0, (
+        f"collect() took {elapsed:.2f}s -- it timed out rather than being "
+        "released by the dead-worker guard's _result_event.set()"
+    )
 
 
 def test_shutdown_joins_thread(cfg_and_builder):
