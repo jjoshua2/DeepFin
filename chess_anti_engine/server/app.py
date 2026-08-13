@@ -485,6 +485,30 @@ class _SeedDoleGate:
                 self._last_iter = {}
         wp = self._winners_path()
         if wp is not None and wp.exists():
+            # ⚑⚑ NO SIZE-ON-READ GUARD HERE, AND THAT IS A DECISION, NOT AN
+            # OMISSION -- DO NOT ADD ONE. An earlier revision of this branch
+            # refused to parse an oversized sidecar to save a boot's work. It
+            # DOUBLE-GRANTS, measured: emptying `self._winners` skips the
+            # reconciliation loop below, and when the gate file is BEHIND the
+            # sidecar that loop is the ONLY protection there is -- `_last_iter`
+            # cannot supply it, because `_last_iter` is exactly the stale
+            # value. On the real upgrade path (pre-fix server writes an 8 MB
+            # sidecar, loses its gate write through `_persist_gate`'s tolerated
+            # `except`) worker B won a second grant for iteration 7.
+            #
+            # ⚑ "Reconcile first, then discard" is NOT the fix either: knowing
+            # which iteration the sidecar records means PARSING it, which is
+            # the entire cost such a guard exists to avoid. It buys nothing.
+            #
+            # The cost of parsing is one boot anyway -- the next grant rewrites
+            # this file at ~156 bytes, so an oversized sidecar self-heals
+            # rather than persisting forever. And no NEW oversized sidecar can
+            # be created: `claim_id` is bounded at the route. Paying one large
+            # parse once is strictly cheaper than re-opening the double grant
+            # this file's whole two-file design exists to prevent.
+            #
+            # `test_an_oversized_prefix_sidecar_still_blocks_a_second_grant`
+            # fails if this is ever "optimised" again.
             try:
                 loaded_w = json.loads(wp.read_text(encoding="utf-8"))
                 self._winners = {
@@ -1002,6 +1026,21 @@ _COMPACTION_IDENTITY_FIELDS: tuple[str, ...] = (
 _MAX_OUTCOME_STAT_KEYS = 128
 _QUEUED_GAMES_CACHE_TTL_S = 2.0
 _MAX_BAD_SHARD_REPORT_FIELD_CHARS = 512
+
+# ⚑⚑ THE SEED-DOLE CLAIM BODY, AND THE BOUND NEXT TO IT IS NOT A TRUNCATION
+# BOUND. `claim_id` is an IDENTITY TOKEN COMPARED BY EQUALITY (see
+# `_SeedDoleGate.claim_result`), so an over-long one is REFUSED, never cut down
+# to length -- truncating would collapse two distinct ids onto one value and
+# hand a fresh claim the PREVIOUS winner's grant token. `_bounded_report_field`
+# above is the opposite case (diagnostic free text, nothing compares it) and
+# the two must not be unified. The full argument lives at the guard in
+# `_serve_seed_dole_claim`.
+#
+# 256 chars against the 32 the worker actually sends (`uuid.uuid4().hex`,
+# worker.py `_claim_seed_dole`) -- 8x headroom, enough for a future scheme that
+# prefixes host/trial/iteration, and far below anything that makes the winner
+# sidecar expensive to re-read.
+_MAX_SEED_DOLE_CLAIM_ID_CHARS = 256
 
 
 def _stamp_shard_username(zarr_root: Path, username: str) -> None:
@@ -1985,6 +2024,11 @@ def create_app(
     quarantine_max_bytes: int = 4 * 1024 * 1024 * 1024,
     quarantine_max_entries: int = 200,
     arena_max_body_bytes: int = 1024 * 1024,
+    # The seed-dole claim body. A real claim is ~100 bytes
+    # (`{"claim_id": <32 hex>, "manifest_revision": <digest>}`), so 64 KiB is
+    # ~600x headroom while still refusing the 8 MB body this route used to
+    # accept. <= 0 disables the cap, matching `arena_max_body_bytes`.
+    seed_dole_max_body_bytes: int = 64 * 1024,
     arena_max_bytes: int = 256 * 1024 * 1024,
     arena_max_entries: int = 5000,
     users_db: str = "users.json",
@@ -3539,6 +3583,61 @@ def create_app(
             )
         return JSONResponse(content=manifest)
 
+    async def _read_capped_claim_body(request: Request) -> dict[str, Any]:
+        """Read the claim body, refusing anything over ``seed_dole_max_body_bytes``.
+
+        ⚑⚑ STREAMED, NOT `payload: dict = Body(...)`, AND THAT IS THE POINT.
+        `upload_arena_result`'s cap is explicit that it runs AFTER FastAPI has
+        already parsed the whole body, so it bounds what reaches DISK and not
+        what reaches MEMORY -- its own comment names "a streaming `Request`
+        handler" as what capping the parse would take. This route needs the
+        stronger property: it is authenticated but polled by every worker on
+        every session boundary, and the finding here is precisely that an 8 MB
+        body was parsed in full on every claim. Counting chunks off
+        `request.stream()` means an oversized claim is never materialised.
+
+        ⚑ Taking `Request` rather than a body parameter also moves the read to
+        AFTER `Depends(_auth_existing_user)`: FastAPI resolves dependencies
+        before invoking the handler, so an unauthenticated caller's bytes are
+        now never buffered at all. With `Body(...)` they were parsed first and
+        rejected second.
+
+        ⚑ The cap is enforced on the bytes ACTUALLY READ, never on
+        `Content-Length` -- a header is a claim by the client, and a chunked
+        request need not send one at all.
+        """
+        max_bytes = int(seed_dole_max_body_bytes)
+        chunks: list[bytes] = []
+        seen = 0
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            seen += len(chunk)
+            if 0 < max_bytes < seen:
+                # 413, matching `upload_shard`, the other route in this file
+                # that bounds bytes. See the guard on `claim_id` for why this
+                # route can use status codes where `upload_arena_result` could
+                # not.
+                log.warning(
+                    "seed dole: refusing a claim body over %d bytes from a worker poll",
+                    max_bytes,
+                )
+                raise HTTPException(status_code=413, detail="claim body too large")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        if not raw.strip():
+            # `Body(default_factory=dict)` answered `{}` for an empty body and
+            # the decline path below handles it; preserve that rather than
+            # turning a bodyless POST into a new error.
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            raise HTTPException(status_code=400, detail="claim body must be JSON") from None
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=400, detail="claim body must be a JSON object")
+        return parsed
+
     async def _serve_seed_dole_claim(
         trial_id: str | None,
         *,
@@ -3599,6 +3698,46 @@ def create_app(
                 "reason_code": "missing_claim_id",
                 "manifest_revision": revision,
             }
+        # ⚑⚑ REJECTED, NEVER TRUNCATED -- AND DO NOT "UNIFY" THIS WITH
+        # `_bounded_report_field`. That helper is right for `report_bad_shard`
+        # because its fields are DIAGNOSTIC FREE TEXT: nothing compares them,
+        # so cutting one to 512 chars loses detail and nothing else.
+        #
+        # `claim_id` is an IDENTITY TOKEN COMPARED BY EQUALITY. `claim_result`
+        # replays a grant when the stored `claim_id` matches the incoming one,
+        # which is the whole recovery path for a dropped response. Truncating
+        # would map every claim sharing a prefix onto ONE id, so worker B's
+        # genuinely new claim would match worker A's stored winner, return A's
+        # grant_token, and answer `granted` WITHOUT issuing a dose -- B then
+        # plays a batch it was never given while the one-shot per-iteration
+        # dose is burned. That is a silent seeding loss, i.e. strictly worse
+        # than the unbounded write this guard exists to stop.
+        #
+        # 400, not a 200 decline: the other `granted: False` codes describe a
+        # legitimate request that LOST, and a worker may usefully retry them.
+        # An over-long id is a malformed request, permanently. The worker is
+        # safe either way -- `_claim_seed_dole` treats any non-200 as
+        # non-fatal, logs, and re-asks next poll with the same id -- and unlike
+        # `upload_arena_result` there is no head-of-line queue here for a
+        # permanent rejection to wedge, which is the sole reason that route
+        # answers on a 200 instead of a status code.
+        if len(claim_id) > _MAX_SEED_DOLE_CLAIM_ID_CHARS:
+            log.warning(
+                "seed dole: refusing claim from %s with a %d-char claim_id (cap %d)",
+                username, len(claim_id), _MAX_SEED_DOLE_CLAIM_ID_CHARS,
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "granted": False,
+                    "reason_code": "claim_id_too_long",
+                    "manifest_revision": revision,
+                    "reason": (
+                        f"claim_id is {len(claim_id)} chars, over the "
+                        f"{_MAX_SEED_DOLE_CLAIM_ID_CHARS} char limit"
+                    ),
+                },
+            )
 
         trial_key = str(_normalize_trial_id(trial_id) or "")
         # Rearm file (if any) is consumed inside claim under the gate lock so
@@ -3708,7 +3847,7 @@ def create_app(
     # mechanism. See the ledger entry.
     @app.post("/v1/seed_dole_claim")
     async def post_seed_dole_claim(
-        payload: dict[str, Any] = Body(default_factory=dict),
+        request: Request,
         username: str = Depends(_auth_existing_user),
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
@@ -3716,7 +3855,7 @@ def create_app(
         return await _serve_seed_dole_claim(
             None,
             username=username,
-            payload=payload,
+            payload=await _read_capped_claim_body(request),
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
         )
@@ -3724,7 +3863,7 @@ def create_app(
     @app.post("/v1/trials/{trial_id}/seed_dole_claim")
     async def post_trial_seed_dole_claim(
         trial_id: str,
-        payload: dict[str, Any] = Body(default_factory=dict),
+        request: Request,
         username: str = Depends(_auth_existing_user),
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
@@ -3732,7 +3871,7 @@ def create_app(
         return await _serve_seed_dole_claim(
             trial_id,
             username=username,
-            payload=payload,
+            payload=await _read_capped_claim_body(request),
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
         )
