@@ -14,7 +14,7 @@ import secrets
 import socket
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -63,6 +63,26 @@ def _compacted_token_suffix(flush_token: str) -> str:
     samples (duplicates in replay).
     """
     return f"_{flush_token}{LOCAL_SHARD_SUFFIX}"
+
+
+def _iter_compacted_token_matches(compacted_dir: Path, flush_token: str) -> Iterator[Path]:
+    """Every entry in ``compacted_dir`` whose name carries ``flush_token``.
+
+    Both the committed shard and the abandoned ``._tmp_*`` of a crashed write
+    match, because the temp name is a prefixed copy of the final one --
+    separating the two is the CALLER's job and the whole point of routing both
+    through one iterator: a witness that forgets the distinction deletes the
+    inputs it was checking on behalf of. Callers must filter with
+    :func:`is_tmp_shard_name`.
+    """
+    try:
+        entries = list(compacted_dir.iterdir())
+    except OSError:
+        return
+    suffix = _compacted_token_suffix(flush_token)
+    for entry in entries:
+        if entry.name.endswith(suffix):
+            yield entry
 
 
 # One-shot rearm request written by the trainable only when opening a selfplay
@@ -4888,10 +4908,39 @@ def create_app(
             if not token_dir.is_dir():
                 continue
             token = token_dir.name
-            committed = compacted_dir.is_dir() and any(
-                p.name.endswith(_compacted_token_suffix(token))
-                for p in compacted_dir.iterdir()
+            # ⚑ THE COMMIT WITNESS MUST EXCLUDE THE ATOMIC-WRITE TEMP.
+            # ``save_local_shard_arrays`` writes to
+            # ``._tmp_<pid>_<hex>_<final name>`` and commits with a rename, so
+            # the temp name is a PREFIXED COPY of the final name and therefore
+            # ALSO ends with ``_<token>.zarr``. Without this filter a crash
+            # between ``zarr.open_group(tmp, "w")`` and ``tmp.rename(final)``
+            # leaves a partial temp that the next boot reads as proof of
+            # commit -- and ``delete_shard_path(token_dir)`` below then erases
+            # the only durable copy of the inputs. Measured: 0 of 2 positions
+            # survived, against 2 for both a clean flush and a crash before
+            # the merge write.
+            abandoned_tmps = [
+                p for p in _iter_compacted_token_matches(compacted_dir, token)
+                if is_tmp_shard_name(p.name)
+            ]
+            committed = any(
+                not is_tmp_shard_name(p.name)
+                for p in _iter_compacted_token_matches(compacted_dir, token)
             )
+            # Either way this token's flush is over: a committed one renamed
+            # its temp away, and an uncommitted one is about to be re-seeded
+            # from ``_pending`` under a NEW token, so nothing will ever finish
+            # this write. Drop the partial rather than leave a zarr in
+            # ``_compacted/`` that loads with ``KeyError`` and that no other
+            # code path ever cleans up. Best effort: a failure here is litter,
+            # not data loss, and must not abort the recovery of the inputs.
+            for tmp_entry in abandoned_tmps:
+                try:
+                    delete_shard_path(tmp_entry)
+                except Exception:
+                    log.exception(
+                        "failed to remove abandoned compaction temp %s", tmp_entry,
+                    )
             if committed:
                 # Compacted shard exists for this token → samples already
                 # durable. Backfill upload-sha dedupe keys before cleanup so
@@ -4916,6 +4965,12 @@ def create_app(
             restore_failed = False
             for entry in sorted(token_dir.iterdir()):
                 if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
+                    continue
+                # A ``._tmp_*`` staged in here is a partial write, not a shard.
+                # ``_scan_pending_dir`` filters it, so restoring it would park
+                # unreadable litter in ``_pending`` that nothing ever removes;
+                # leaving it in the token dir lets the delete below reclaim it.
+                if is_tmp_shard_name(entry.name):
                     continue
                 try:
                     entry.replace(pending_dir / entry.name)
