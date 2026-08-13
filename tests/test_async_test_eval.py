@@ -927,5 +927,128 @@ def test_start_after_shutting_down_a_dead_worker_is_refused_instead_of_hanging(m
     assert aer.collect(timeout=5.0) == (None, -1)
 
 
+def test_a_doomed_worker_still_reporting_alive_does_not_block_start(monkeypatch):
+    """The refusal guard must not depend on ``is_alive()`` alone.
+
+    ``_loop``'s init-failure path sets ``_init_failed`` and ``_result_event``
+    and only THEN returns, so there is a window in which the worker is doomed,
+    its never-dequeued work item still fills the maxsize=1 queue, and
+    ``is_alive()`` is still True. A guard testing only ``is_alive()`` lets a
+    ``start()`` through in that window and it blocks FOREVER on the ``put()``
+    (demonstrated by the reviewer of PR #405: ``start#2 inside the window:
+    returned=False t=5.00s``). Testing ``_init_failed`` first closes it: the
+    flag is written under ``start()``'s own lock before the thread exits, and
+    is never cleared.
+
+    ⚑ The window is real but transient, so the test forces it rather than
+    racing it: ``is_alive`` is pinned True on the REAL, already-dead worker
+    thread. Nothing else is stubbed — the queue is genuinely full of the
+    genuinely-undequeued first work item, which is what a ``put()`` would
+    block on.
+    """
+    def _boom(_cfg):
+        raise RuntimeError("synthetic init failure")
+
+    monkeypatch.setattr("chess_anti_engine.train.async_eval.build_model", _boom)
+    trainer = MagicMock()
+    trainer.model = _StubChessNet(dim=4)
+    trainer._compute_metrics = MagicMock()
+
+    aer = AsyncTestEval()
+    _start_bounded(aer, bound_s=10.0,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == (None, -1)
+    assert aer._init_failed is True
+    assert aer._work_q.qsize() == 1, (
+        "precondition: the dead worker's work item is still queued, so a put() "
+        "in the window would block forever"
+    )
+
+    assert aer._thread is not None
+    monkeypatch.setattr(aer._thread, "is_alive", lambda: True)  # force the window
+    elapsed = _start_bounded(aer, bound_s=5.0,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    assert elapsed < 2.0, f"the refused start() took {elapsed:.2f}s"
+    trainer._compute_metrics.assert_not_called()
+    assert aer._work_q.qsize() == 1, "the refused eval must not have been queued"
+
+
+def test_a_refused_eval_does_not_leave_a_prior_result_readable(monkeypatch):
+    """A refusal must poison ``collect()``, not let a stale result through.
+
+    Review finding n4 (PR #405): deleting ``_refuse_locked``'s ``_exc``
+    assignment left the whole file green, because every existing refusal test
+    reaches ``collect()`` after ``_thread`` is None, where it short-circuits to
+    ``(None, -1)`` whatever ``_exc`` holds. So the docstring's claim -- an
+    ``_exc`` for ``collect()`` to report -- was unpinned, which is this repo's
+    signature defect shape.
+
+    It is not inert. ``collect()`` returns from BEFORE its lock block on
+    timeout, so a timed-out collect leaves ``_inflight_iter`` set and the
+    eval's result parked; a refusal landing after that must not let the next
+    ``collect()`` hand back the older iteration's metrics as though they were
+    this iteration's.
+    """
+    monkeypatch.setattr(
+        "chess_anti_engine.train.async_eval.build_model", lambda _cfg: _StubChessNet(dim=4),
+    )
+    gate = threading.Event()
+    calls = {"n": 0}
+
+    def _eval(**_kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "FIRST"
+        gate.wait(timeout=10.0)
+        return "SLOW_ITER2"
+
+    trainer = MagicMock()
+    trainer.model = _StubChessNet(dim=4)
+    trainer._compute_metrics = _eval
+
+    aer = AsyncTestEval()
+    _start_bounded(aer,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=1,
+    )
+    assert aer.collect(timeout=5.0) == ("FIRST", 1)
+
+    # Iter 2 runs long and its collect() TIMES OUT -- so _inflight_iter and the
+    # result event survive, and the eval then completes and parks its metrics.
+    _start_bounded(aer,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=2,
+    )
+    assert aer.collect(timeout=0.2) == (None, -1), "precondition: the collect times out"
+    gate.set()
+    assert aer._result_event.wait(timeout=5.0)
+    assert aer._result == "SLOW_ITER2", "precondition: iter 2's result is parked"
+
+    # Iter 3 is refused. ⚑ The dead-thread branch, not the shutdown branch: it
+    # leaves _thread set, which is the only way collect() reads _exc at all.
+    # (A worker cannot really die here -- _loop catches per-work exceptions --
+    # so the liveness answer is forced on the real thread; the refusal path
+    # under test is untouched.)
+    assert aer._thread is not None
+    monkeypatch.setattr(aer._thread, "is_alive", lambda: False)
+    _start_bounded(aer, bound_s=5.0,
+        trainer=trainer, model_cfg=MagicMock(), holdout_buf="B",
+        batch_size=4, steps=2, device="cpu", source_iter=3,
+    )
+    assert isinstance(aer._exc, RuntimeError), (
+        "the refusal recorded no _exc, so collect() reports whatever the "
+        "previous eval parked"
+    )
+    assert aer.collect(timeout=5.0) == (None, -1), (
+        "iter 2's metrics stayed readable after iter 3's eval was REFUSED -- a "
+        "refused iteration must report an absent result, not a duplicate of an "
+        "older one"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

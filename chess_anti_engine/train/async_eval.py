@@ -121,6 +121,9 @@ class AsyncTestEval:
   # on this INSTEAD of on "any exception": a per-eval exception belongs to
   # exactly one eval and is matched by source_iter like a success, whereas
   # this one means nobody is left to signal (review finding P2-1, PR #405).
+  # It has a second job in start()'s refusal guard, where it is what makes
+  # the guard immune to the window in which a doomed worker still reports
+  # ``is_alive() is True``.
         self._init_failed: bool = False
   # Batch-shape keys whose compiles this thread has already completed under
   # the barrier (see start()). A NEW key means the next eval will trigger a
@@ -197,6 +200,15 @@ class AsyncTestEval:
   # so the put below would block forever once the queue holds the
   # never-dequeued prior item — and with the unbounded barrier the wait
   # after it would too (review follow-up, PR #405).
+  #
+  # ⚑ ``_init_failed`` is tested FIRST and is not redundant with
+  # ``is_alive()``: ``_loop`` sets the flag and ``_result_event`` and only
+  # THEN returns, so between the two the worker is dead in every sense
+  # that matters and still reports ``is_alive() is True``. A start()
+  # landing in that window passed an ``is_alive()``-only guard and blocked
+  # forever on the put (demonstrated by the reviewer, PR #405). The flag
+  # is written under this same lock and never cleared — one worker per
+  # object — so it closes the window at zero cost.
             if self._shutdown:
                 self._refuse_locked(
                     source_iter=int(source_iter),
@@ -204,7 +216,7 @@ class AsyncTestEval:
                         "shutdown is terminal, so a new instance is required",
                 )
                 return
-            if self._thread is not None and not self._thread.is_alive():
+            if self._init_failed or (self._thread is not None and not self._thread.is_alive()):
                 self._refuse_locked(
                     source_iter=int(source_iter),
                     why="with a dead worker thread (init failure?), whose "
@@ -337,9 +349,23 @@ class AsyncTestEval:
     def _refuse_locked(self, *, source_iter: int, why: str) -> None:
         """Fail this eval instead of queueing it. The caller must hold ``_lock``.
 
-        Same contract as an eval that raised: a ``log.error``, an ``_exc`` for
-        ``collect()`` to report as ``(None, -1)``, and ``_result_event`` set so
-        nothing is left waiting on the (unbounded) barrier.
+        Same contract as an eval that raised: a ``log.error``, an ``_exc`` so
+        ``collect()`` reports ``(None, -1)`` instead of a previous eval's parked
+        result, and ``_result_event`` set so ``COLLECT()`` is not left waiting
+        for its full timeout.
+
+        ⚑ The ``set()`` does NOT release a barrier waiter, and an earlier
+        revision of this docstring claimed it did. Measured: with a thread
+        blocked in a re-armed barrier, a refusal's ``set()`` is rejected by that
+        barrier's identity check (``_source_iter`` never becomes the waiter's)
+        and the wakeup is consumed by ``_result_event.clear()`` — the waiter is
+        released only by its OWN eval. What makes that safe is not this method:
+        it is the single-caller invariant, i.e. ``start()``, ``collect()`` and
+        ``shutdown()`` all run on the one trainer thread, so a refusal cannot
+        be concurrent with a barrier wait and no foreign waiter can exist.
+        Anyone who breaks that invariant — calling ``start()`` from a second
+        thread — has to give the barrier a way to hear a refusal; the wrong
+        reason recorded here would have told them they already had one.
 
         It deliberately does NOT raise. ``start()`` is called from
         ``train_trial``'s iteration loop, which has a ``finally:`` and zero
