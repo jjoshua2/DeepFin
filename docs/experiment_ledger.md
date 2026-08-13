@@ -45611,3 +45611,70 @@ clean. Regret **0.02980 -> 0.02980 -> 0.029422**, flat then DOWN = the PID raisi
 The airbag signature is a regret SPIKE with games/iter collapsing; neither is present.
 ⚑ My first read compared arm C's iters 2-3 against A/B means over iters 2-6 and reported "919s vs
 544s" — an invalid range mismatch, corrected here. Monitoring continues.
+
+---
+
+## 2026-08-13 — PR #414 REVIEW: APPROVE-WITH-CHANGES. ⚑⚑ TWO CORRECTIONS, ONE OF WHICH I RELAYED AS FACT.
+
+Independent reviewer (not the author). Review:
+`https://github.com/jjoshua2/DeepFin/pull/414#issuecomment-5285321696`
+
+### ⚑⚑ CORRECTION 1 — `Q*Blunders` ARE REACHABLE. I reported the opposite to Josh.
+The author found `squares[...,119:121]` feeding `Shape -> ConstantOfShape(0.0)` in the trunk and
+concluded the C1 exports discard `QPositiveBlunders`/`QNegativeBlunders`; **I relayed that to Josh
+as "the TPG feature most relevant to an anti-engine is dead in these artifacts", and used it to
+argue switching to Ceres's encoding buys nothing on that axis. THAT IS WRONG.**
+`squares` has a **SECOND consumer**: `Gather(axis=1, idx=0) -> Slice[119:121] -> /value2_head/...
+-> value2`, identical in both nets. Measured on C1-512-15: sweeping the fields moves `policy` and
+`value` by **0.0000** — and moves **`value2` from 1.20 to 15.59, monotone**. `value2` is the head
+Ceres blends at `FractionValueHead2 = 0.4`. ⇒ **opponent-blunder modelling as a NETWORK INPUT is
+available today**, not unreachable.
+**Mechanism of the error, and it is our signature defect exactly:** the author's sweep watched
+`policy` and `value` only, so the instrument **structurally could not observe the output the graph
+wires the field to**. A null from an instrument that cannot see the effect is not a null
+[[reachability_cannot_be_grepped_by_source_name]]. I propagated it without asking what the
+instrument could see.
+
+### ⚑⚑ CORRECTION 2 — THE ABSOLUTE-LEVEL ARGUMENT ALSO FAILS. Both my gate AND its replacement were non-diagnostic.
+My ordering gate (ad66e10fa) was disproven by a GROSS corruption (bccc95f82). The author replaced
+it with absolute level. The reviewer ran **five SUBTLE corruptions**, 600 audit positions, paired
+bootstrap:
+| corruption | effect on top-1 |
+|---|---|
+| **S3: `Move50Count` / 100 instead of / 50 (ONE CHARACTER — the PR's own mutation M4)** | **34.25 vs 34.25 cp, CI [+0.00, +0.01]** |
+| S1: castling K<->Q swapped | **exactly 0.00** |
+| S2: oldest history slot lost | **exactly 0.00** |
+| knight<->bishop codes | +61 |
+| rank one-hot reversed | +36 |
+| (author's) rank<->file swap | +31 |
+| history colours | +8 |
+| repetition flag | +3 |
+**A genuinely wrong encoder landed at PRECISELY the correct level.** ⇒ absolute level is not
+correctness evidence either.
+
+**⚑⚑ AND THE ROOT CAUSE IS A PROPERTY OF OUR RULER, NOT OF THIS PR:**
+`audit_set_v1.jsonl` has **0 / 4000 positions with move history**, and **0 / 600 with castling
+rights** in the control subset (556/4000 overall). **Gate D varies over only 4 of the record's 13
+field groups.** So history- and castling-dependent encoding errors are STRUCTURALLY INVISIBLE to
+our frozen audit set. This sharpens the known [[frozen_rulers_score_fen_only_inputs]] limitation
+into a measured count, and it bounds what ANY audit-set result can certify — including our own
+net's 47.34 cp and every `value_regret`/`audit_targets` verdict that depends on history.
+
+**What actually carries correctness here:** the struct offsets (pinned twice, independently — the
+author's `Pack=1` arithmetic AND the reviewer's), the 1858 table, and the 100% exact-slot gather.
+Not the ladder, not the level.
+
+### INDEPENDENTLY REPRODUCED BY THE REVIEWER (all CONFIRMED)
+1858 table 0 mismatches (re-extracted from `EncodedMove.cs`) · `value` is the first 3-wide output ·
+Ceres logits vs BT4 probabilities (400/400 rows) · 119/121 slices vs their own struct arithmetic ·
+**BT4 byte-identical vs `main`** on the real 741 MB net · legality **89,802/89,802** on their own
+3000-position sample (1505 black-to-move) · graph-opt cap correctly scoped · 7/7 spot-checked
+mutations, incl. a generalisation probe confirming the **M5 fix is not a one-case patch**.
+
+### P2s ROUTED TO THE AUTHOR
+§4D mixes n=4000 vs n=1000 (like-for-like **30.58 -> 36.50**, not 22.6 -> 36.5) · the
+logits/probabilities detector is a PER-BATCH INFERENCE and must become a DECLARATION before search
+wiring (at batch 1 it is a coin flip on a silent-wrongness axis) · `--out` still defaults to
+`runs/bt4_audit.md` · `input_history_encoding` still declared `lc0_root` under `ceres_tpg` ·
+**`foreign_net_audit.py` does NOT use `OnnxChessNet`**, so the ladder never exercised the wrapper
+being shipped — materially changes what those numbers vouch for.
