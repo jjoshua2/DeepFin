@@ -44881,3 +44881,26 @@ anchors bitwise-equal to arm A row 1 (regret 0.02980343420776443, global_iter 89
 opt_lr_final bitwise); manifest carries mode `linear` to workers; watchdog verified
 detect-only via /proc. Per the 12383b045 rule, NO heavy-CPU agent work runs during arm B.
 Next: milestones 25/50/75, transition to arm C at 100 (~18:00), then the frozen arenas.
+
+### ⚑ Tier-13 arena POWER, computed BEFORE the readout (2026-08-13, from 71 banked pentanomial rows)
+
+Rule applied: compute instrument resolution before reading the threshold. Every banked
+sims-32 paired arena at 200 pairs has half-width ±28-37 Elo; scaling by sqrt(n),
+**the planned 1600-game (800-pair) Tier-13 arenas give a median half-width of ±15.5 Elo
+[min 13.4, max 38.2] ⇒ 80% power to detect a TRUE difference of ~22 Elo.**
+
+Consequences, stated now so the verdict cannot be written post-hoc:
+- The pre-committed KILL line (`elo < −15`) sits INSIDE the noise band: a true-zero arm
+  fires it ~5% of the time per contrast, and 3 contrasts run. Kill is a screen, not a
+  finding — an arm killed at −15 with a CI straddling 0 is "not shown to help", NOT
+  "shown to hurt". Do not write it as a defect of the adapter.
+- The trajectory line (CI lower > 0 AND elo < +40) is the only shape this instrument can
+  resolve honestly, and only for a true effect ≳22 Elo.
+- **A NULL IS THE MODAL OUTCOME AND IS INFORMATIVE ONLY AS A CEILING**: 100 iterations from
+  a shared donor with a t=0 function-preserving adapter is a small intervention. The correct
+  reading of "all three CIs straddle 0" is "policy_embedding_mode buys < ~22 Elo in 100
+  iters", NOT "the adapter does nothing".
+- Cheapest power upgrades if a contrast lands in [0, +22] and we want resolution:
+  a second seed doubles pairs (±11 Elo, ~15 Elo detectable) at +5h GPU each; that is the
+  ONLY lever pre-registered (the prereg's second-seed rule), and it must be decided by the
+  pinned trajectory rule, never after seeing the point estimate.
