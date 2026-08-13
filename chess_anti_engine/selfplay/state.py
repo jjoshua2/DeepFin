@@ -614,7 +614,7 @@ def _probe_c_extensions() -> _CExtensionCaps:
     )
 
 
-def _build_diff_focus_normalizer(
+def build_diff_focus_normalizer(
     diff_focus: DiffFocusConfig,
 ) -> DiffFocusNormalizer | None:
     """The normalizer for ``diff_focus``, or None when the group is off.
@@ -628,6 +628,10 @@ def _build_diff_focus_normalizer(
     rather than the yaml key. A value that is accepted at configuration time and
     detonates later is this codebase's `a dead knob can arm a crash`. Refuse at
     construction instead, naming the key the operator actually typed.
+
+    Public so the worker can build the ONE instance it shares across selfplay
+    threads (``diff_focus_norm_shared``) through the same validation rather than
+    around it.
     """
     if not bool(diff_focus.norm_enabled):
         return None
@@ -679,11 +683,13 @@ class SelfplayState:
     search: SearchConfig
     opening: OpeningConfig
     diff_focus: DiffFocusConfig
-  # Per-worker running robust scale for `difficulty`. None when
-  # diff_focus.norm_enabled is off, so the feature's presence is a real
-  # object-vs-None read rather than a flag consulted in three places. Lives on
-  # the state because ONE instance must span every ply batch of a session: the
-  # quantile window is the point, and a per-call estimator would never arm.
+  # Running robust scale for `difficulty`. None when diff_focus.norm_enabled is
+  # off, so the feature's presence is a real object-vs-None read rather than a
+  # flag consulted in three places. Lives on the state because ONE instance must
+  # span every ply batch of a session: the quantile window is the point, and a
+  # per-call estimator would never arm.
+  # ⚑ NOT per worker unless `norm_shared` is on: one state per `play_batch`
+  # call, and the worker runs one `play_batch` per selfplay THREAD (32 live).
     diff_focus_norm: DiffFocusNormalizer | None
     game: GameConfig
     batch_size: int
@@ -798,15 +804,36 @@ class SelfplayState:
         game: GameConfig,
         fen_dole_queue: list[str] | None = None,
         fen_sf_refute_queue: list[str] | None = None,
+        diff_focus_norm: DiffFocusNormalizer | None = None,
     ) -> SelfplayState:
         """Build a ``SelfplayState`` from ``play_batch``'s arguments.
 
         Performs the same setup work (opening boards, CBoards, parallel
         arrays, cache construction, capability probing) that previously
         lived inline at the top of ``play_batch``.
+
+        ``diff_focus_norm`` is an ALREADY-BUILT estimator to adopt instead of
+        building one (``diff_focus_norm_shared``: the worker hands the same
+        object to every selfplay thread so the warm-up is paid once per worker
+        rather than once per thread). ``None`` -- the default and what every
+        caller did before -- builds a private one, unchanged.
         """
         # Local import to avoid import cycle; _lc0_ext is the C CBoard module.
         from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
+
+        # A supplied estimator with the group OFF would be a normalizer that
+        # exists and is never read -- the signature defect. Refuse it here, at
+        # the one place that decides whether the feature exists at all.
+        if diff_focus_norm is not None and not bool(diff_focus.norm_enabled):
+            raise ValueError(
+                "a diff_focus_norm estimator was supplied but "
+                "diff_focus_norm_enabled is False; the estimator would be fed "
+                "and never read",
+            )
+        norm = (
+            diff_focus_norm if diff_focus_norm is not None
+            else build_diff_focus_normalizer(diff_focus)
+        )
 
         if evaluator is None:
             if model is None:
@@ -879,7 +906,7 @@ class SelfplayState:
             search=search,
             opening=opening,
             diff_focus=diff_focus,
-            diff_focus_norm=_build_diff_focus_normalizer(diff_focus),
+            diff_focus_norm=norm,
             game=game,
             batch_size=batch_size,
             continuous=continuous,

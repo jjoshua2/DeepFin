@@ -157,6 +157,21 @@ class DiffFocusConfig:
   # on the extreme tail; does not affect `keep_prob`, which already saturates
   # at 1.0 far below this (at 1/norm_slope = 0.62 of the reference quantile).
     norm_clip: float = 8.0
+  # Share ONE estimator across every selfplay thread of a worker process
+  # instead of building one per `play_batch` call. Default OFF = today's
+  # per-thread behaviour, bit-identical.
+  #
+  # ⚑ `norm_warmup` is per INSTANCE, and production runs
+  # `--threaded-selfplay --selfplay-threads 32` on 4 workers => 128 instances,
+  # so the realized warm-up is 128 x 1024 = 131,072 policy-bearing plies per
+  # restart (~8.7% of the 1.5M replay window), and each instance also sees only
+  # 1/32 of its worker's ply rate so it takes 32x the wall clock. Measured on
+  # the live replay window 2026-08-12: ~160k of 1,498,168 rows (10.7%) written
+  # unarmed across the two restart transients it held, priorities to 17.59
+  # against a `norm_clip` of 8.0, each transient not clear until ~37 minutes in.
+  # Sharing divides both costs by `selfplay_threads` and changes no arithmetic on
+  # the armed path. See selfplay/diff_focus_norm.py.
+    norm_shared: bool = False
 
 
 @dataclass(frozen=True)

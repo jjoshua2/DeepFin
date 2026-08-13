@@ -80,7 +80,9 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
+from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.manager import BatchStats
+from chess_anti_engine.selfplay.state import build_diff_focus_normalizer
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
@@ -3669,6 +3671,9 @@ class WorkerSession:
         "diff_focus_norm_quantile",
         "diff_focus_norm_slope",
         "diff_focus_norm_clip",
+  # And this one decides how MANY estimators exist, which is fixed the moment
+  # the session's threads are launched.
+        "diff_focus_norm_shared",
   # sf_move_nodes gates the curriculum SF query path: lowering it to 0 mid-flight
   # would make pending move-futures (submitted at the old positive budget) get
   # reused as full-strength label futures, writing low-node SF targets to replay.
@@ -3771,6 +3776,14 @@ class WorkerSession:
   # Engine/session plumbing — no bearing on a stored ply.
         "sf_hash_mb", "games_per_batch", "slot_oversubscribe",
         "selfplay_resume_inflight_games",
+  # Deliberately NOT with the other diff_focus_norm_* keys above, which are
+  # resume-INCOMPATIBLE because they change the UNITS of the stored `priority`.
+  # This one does not: both settings run the identical unarmed→armed branches
+  # and the identical arithmetic on each. It changes only how many estimators
+  # exist, hence how fast one arms. A game that straddles the arm point already
+  # mixes raw and normalized rows under either setting, so gating resume on this
+  # key would guard something the codebase already accepts.
+        "diff_focus_norm_shared",
   # NOT plumbing — stockfish_turn branches on it (>0 buys separate node-capped
   # label queries; 0 reuses the full-strength opponent-move future), so a flip
   # across a resume mixes label node budgets within one game. Exempt anyway,
@@ -4099,6 +4112,7 @@ class WorkerSession:
                 ),
                 norm_slope=self._resolve_reco(reco, "diff_focus_norm_slope", 1.62),
                 norm_clip=self._resolve_reco(reco, "diff_focus_norm_clip", 8.0),
+                norm_shared=bool(reco.get("diff_focus_norm_shared", False)),
             ),
             "game": GameConfig(
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),
@@ -4258,6 +4272,7 @@ class WorkerSession:
         self, *, games_per_batch: int, sf, eval_, cfgs: dict,
         fen_dole_queue: list[str] | None = None,
         fen_sf_refute_queue: list[str] | None = None,
+        diff_focus_norm: DiffFocusNormalizer | None = None,
     ) -> BatchStats:
         """Multi-threaded selfplay: N threads share one GPU evaluator.
 
@@ -4277,6 +4292,12 @@ class WorkerSession:
         thread-safe: resolve_slot_opening pops exception-safely and list.pop(0) is
         atomic under the GIL, so concurrent threads get distinct seeds and an empty
         queue simply falls back to normal openings.
+
+        ``diff_focus_norm`` is likewise shared across all N threads when
+        ``diff_focus_norm_shared`` is on: this is the ONE call site where the
+        per-thread multiplication of ``diff_focus_norm_warmup`` happens, because
+        it is the site that turns one session into N ``play_batch`` calls. None
+        (the default) leaves each thread building its own, unchanged.
         """
         n_threads = min(int(self.args.selfplay_threads), games_per_batch)
         base_games, remainder = divmod(games_per_batch, n_threads)
@@ -4316,6 +4337,7 @@ class WorkerSession:
                 pause_fn=self._pause_fn,
                 fen_dole_queue=fen_dole_queue,  # shared across threads (drained once total)
                 fen_sf_refute_queue=fen_sf_refute_queue,
+                diff_focus_norm=diff_focus_norm,  # shared across threads, or None
                 **cfgs,
             )
 
@@ -4326,6 +4348,50 @@ class WorkerSession:
         finally:
             self._clear_live_states()
         return self._aggregate_thread_stats(all_stats)
+
+    def _build_shared_diff_focus_norm(
+        self, cfgs: dict, games_per_batch: int,
+    ) -> DiffFocusNormalizer | None:
+        """The ONE difficulty-scale estimator this session shares, or None.
+
+        None means "every SelfplayState builds its own", which is what this
+        worker did before ``diff_focus_norm_shared`` existed and what it still
+        does with the knob off — so the default path is unchanged, not merely
+        equivalent.
+
+        The knob is worth its own line because the cost it removes is invisible
+        from the yaml: ``diff_focus_norm_warmup`` is per ESTIMATOR, and this
+        worker runs one ``play_batch`` per ``--selfplay-threads`` (32 live), so
+        the realized warm-up is 32x the configured number of plies per worker and
+        takes 32x the wall clock, every restart. The log line names the realized
+        count so the multiplication is readable in worker.log rather than
+        inferable from two files.
+        """
+        # Subscript and attribute access, not `.get`/`getattr` with defaults: a
+        # renamed key or field must fail loudly here rather than resolve to
+        # "sharing off", which is indistinguishable from the knob working.
+        df: DiffFocusConfig = cfgs["diff_focus"]
+        if not bool(df.norm_shared):
+            return None
+        norm = build_diff_focus_normalizer(df)
+        if norm is None:
+            # norm_shared with the group off: nothing to share, and
+            # SelfplayState.create would refuse a supplied estimator anyway.
+            self.log.warning(
+                "diff_focus_norm_shared is set but diff_focus_norm_enabled is "
+                "False; no estimator is built and the knob does nothing",
+            )
+            return None
+        n_states = (
+            max(1, min(int(self.args.selfplay_threads), int(games_per_batch)))
+            if self.args.threaded_selfplay else 1
+        )
+        self.log.info(
+            "diff_focus norm estimator SHARED across %d selfplay state(s): "
+            "warmup=%d plies total for this worker (unshared would be %d)",
+            n_states, int(df.norm_warmup), n_states * int(df.norm_warmup),
+        )
+        return norm
 
     def _dispatch_selfplay_one_shard(
         self, *, games_per_batch: int, cfgs: dict, need_local_model: bool,
@@ -4342,6 +4408,7 @@ class WorkerSession:
         and atomic under the GIL — see resolve_slot_opening)."""
         assert self.sf is not None  # caller (_run_selfplay) calls _sync_stockfish first
         _eval = self.inference_client or self._direct_evaluator
+        shared_norm = self._build_shared_diff_focus_norm(cfgs, int(games_per_batch))
         try:
             if self.args.threaded_selfplay:
                 return self._run_selfplay_threaded(
@@ -4349,6 +4416,7 @@ class WorkerSession:
                     sf=self.sf, eval_=_eval, cfgs=cfgs,
                     fen_dole_queue=fen_dole_queue,
                     fen_sf_refute_queue=fen_sf_refute_queue,
+                    diff_focus_norm=shared_norm,
                 )
   # Continuous selfplay: 256 slots always full, games recycled on completion.
   # Runs until _stop_selfplay is set (task change, pause, or shutdown).
@@ -4371,6 +4439,9 @@ class WorkerSession:
                     pause_fn=self._pause_fn,
                     fen_dole_queue=fen_dole_queue,
                     fen_sf_refute_queue=fen_sf_refute_queue,
+  # A no-op on this branch (one state per session already), passed so the
+  # knob cannot mean two different things depending on --threaded-selfplay.
+                    diff_focus_norm=shared_norm,
                     **cfgs,
                 )
             finally:

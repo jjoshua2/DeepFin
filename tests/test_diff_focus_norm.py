@@ -9,6 +9,8 @@ than through a Python re-derivation of it.
 from __future__ import annotations
 
 import re
+import sys
+import threading
 import types
 from pathlib import Path
 from typing import Any, cast
@@ -52,10 +54,11 @@ requires_c = pytest.mark.skipif(not HAS_C, reason="C extension not available")
 NORM_KEYS = (
     "diff_focus_norm_enabled", "diff_focus_norm_window", "diff_focus_norm_warmup",
     "diff_focus_norm_quantile", "diff_focus_norm_slope", "diff_focus_norm_clip",
+    "diff_focus_norm_shared",
 )
 # Deliberately none of them a default, so a publisher line that hard-codes the
 # default instead of reading the config still fails.
-NORM_VALUES: tuple[Any, ...] = (True, 4096, 512, 0.4, 2.5, 6.0)
+NORM_VALUES: tuple[Any, ...] = (True, 4096, 512, 0.4, 2.5, 6.0, True)
 
 
 def _reco() -> dict[str, object]:
@@ -398,6 +401,7 @@ def test_every_norm_key_is_declared_and_published_to_the_worker() -> None:
     assert reco["diff_focus_norm_quantile"] == pytest.approx(0.4)
     assert reco["diff_focus_norm_slope"] == pytest.approx(2.5)
     assert reco["diff_focus_norm_clip"] == pytest.approx(6.0)
+    assert reco["diff_focus_norm_shared"] is True
 
 
 def test_the_worker_turns_the_reco_into_a_diff_focus_config() -> None:
@@ -421,6 +425,7 @@ def test_the_worker_turns_the_reco_into_a_diff_focus_config() -> None:
     assert df.norm_quantile == pytest.approx(0.4)
     assert df.norm_slope == pytest.approx(2.5)
     assert df.norm_clip == pytest.approx(6.0)
+    assert df.norm_shared is True
     # The five ORIGINAL keys stay at their dataclass defaults -- this PR does
     # not newly arm them, and a future change that does needs its own entry.
     assert (df.enabled, df.q_weight, df.pol_scale, df.slope, df.min_keep) == (
@@ -454,12 +459,17 @@ def test_worker_reads_each_norm_key_by_name() -> None:
 _APPEND_BATCH = 6
 
 
-def _session_state(diff_focus: DiffFocusConfig) -> SelfplayState:
+def _session_state(
+    diff_focus: DiffFocusConfig,
+    *,
+    diff_focus_norm: DiffFocusNormalizer | None = None,
+) -> SelfplayState:
     """A real ``SelfplayState``, built the way ``play_batch`` builds one."""
     evaluator = Mock(spec=["evaluate_encoded"])
     stockfish = Mock(spec=["search", "nodes"])
     stockfish.nodes = 0
     return SelfplayState.create(
+        diff_focus_norm=diff_focus_norm,
         model=None,
         device="cpu",
         rng=np.random.default_rng(0),
@@ -600,3 +610,250 @@ def test_production_yaml_declares_the_group_default_off() -> None:
     assert sp["diff_focus_norm_enabled"] is False, (
         "this must ship OFF: enabling it changes which plies are recorded"
     )
+    assert sp["diff_focus_norm_shared"] is False, (
+        "this must ship OFF too: it moves the post-restart transient's rows off "
+        "the raw-unit branch, which is a data-affecting change"
+    )
+
+
+# ── W4: the warm-up transient, and the per-THREAD estimator behind it ────────
+#
+# ⚑ The cost this section is about is invisible in the yaml. `norm_warmup` is
+# per ESTIMATOR and one estimator is built per `SelfplayState`, i.e. per
+# `play_batch` call — and the worker runs one `play_batch` per
+# `--selfplay-threads` (32 live, 4 workers => 128 estimators => 131,072 plies of
+# warm-up per restart). Measured 2026-08-12 on the live replay window: ~160k of
+# 1,498,168 rows written on the UNARMED branch across the two restart transients
+# it held — raw units with `diff_focus_slope` against an 11.7x-moved KL scale and
+# an unclipped priority (max 17.59 against `norm_clip` 8.0), each transient not
+# clear until ~37 minutes in. progress.csv shows the same events independently:
+# `diff_focus_priority_max` above the clip for iters 1-8 after one restart, 1-23
+# after the previous one, and again mid-run at iter ~140.
+# `diff_focus_norm_shared` divides both costs by the thread count.
+
+
+def test_play_batch_adopts_a_supplied_estimator_instead_of_building_one() -> None:
+    """`play_batch(diff_focus_norm=...)` must reach the state's estimator slot.
+
+    A parameter accepted and then dropped on the floor is this codebase's
+    signature defect; the observation that rules it out is object IDENTITY on
+    the state the session actually uses.
+    """
+    df = DiffFocusConfig(norm_enabled=True, norm_window=64, norm_warmup=8)
+    shared = DiffFocusNormalizer(window=64, warmup=8, quantile=0.5)
+    assert _session_state(df, diff_focus_norm=shared).diff_focus_norm is shared
+
+    # ...and the default still builds a private one, so the off path is
+    # unchanged rather than merely equivalent.
+    a = _session_state(df).diff_focus_norm
+    b = _session_state(df).diff_focus_norm
+    assert a is not None
+    assert b is not None
+    assert a is not b
+
+
+def test_play_batch_forwards_the_estimator_to_the_state_it_builds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ The test above calls ``SelfplayState.create`` directly, so it cannot see
+    ``play_batch`` accepting the parameter and handing ``None`` down — which is
+    precisely this codebase's signature defect and which a mutation proved that
+    test survives. Observe the argument at the seam instead, and stop the session
+    there rather than booting a whole selfplay batch for one kwarg.
+    """
+    import chess_anti_engine.selfplay.manager as manager_mod
+
+    class _Stop(Exception):
+        pass
+
+    seen: list[object] = []
+    real_create = SelfplayState.create
+
+    def _spy(**kwargs: Any) -> SelfplayState:
+        seen.append(kwargs.get("diff_focus_norm"))
+        raise _Stop
+
+    monkeypatch.setattr(manager_mod.SelfplayState, "create", staticmethod(_spy))
+    assert real_create is not None  # the real one is restored by monkeypatch
+
+    df = DiffFocusConfig(norm_enabled=True, norm_window=64, norm_warmup=8)
+    shared = DiffFocusNormalizer(window=64, warmup=8, quantile=0.5)
+    common: dict[str, Any] = {
+        "device": "cpu", "rng": np.random.default_rng(0),
+        "stockfish": Mock(spec=["search", "nodes"]),
+        "evaluator": Mock(spec=["evaluate_encoded"]),
+        "games": 2, "target_games": 2, "diff_focus": df,
+    }
+    with pytest.raises(_Stop):
+        manager_mod.play_batch(None, diff_focus_norm=shared, **common)
+    with pytest.raises(_Stop):
+        manager_mod.play_batch(None, **common)
+    assert seen == [shared, None]
+
+
+def test_a_supplied_estimator_with_the_group_off_is_refused() -> None:
+    """An estimator that is fed and never read is worse than none: it looks
+    armed in a debugger while the C path takes the unnormalized branch."""
+    est = DiffFocusNormalizer(window=8, warmup=2, quantile=0.5)
+    with pytest.raises(ValueError, match="diff_focus_norm_enabled"):
+        _session_state(DiffFocusConfig(norm_enabled=False), diff_focus_norm=est)
+
+
+@requires_c
+def test_a_shared_estimator_arms_once_for_all_its_states() -> None:
+    """THE point of the knob, read off the stored records.
+
+    Two states sharing one estimator: the second state's rows are NORMALIZED
+    even though that state has appended nothing of its own, because the first
+    state's plies already armed the shared window. With private estimators the
+    second state is still in warm-up and stores RAW priorities.
+    """
+    df = DiffFocusConfig(
+        norm_enabled=True, norm_window=64, norm_warmup=_APPEND_BATCH,
+        norm_slope=1.62, norm_clip=8.0,
+    )
+    shared = DiffFocusNormalizer(window=64, warmup=_APPEND_BATCH, quantile=0.5)
+    first = _session_state(df, diff_focus_norm=shared)
+    raw_prio, raw_keep = _append_one_ply(first, df)          # arms the window
+    assert shared.armed
+    second = _session_state(df, diff_focus_norm=shared)
+    shared_prio, shared_keep = _append_one_ply(second, df)
+
+    priv_prio, priv_keep = _append_one_ply(_session_state(df), df)
+
+    # The private estimator's first ply is still warming up => raw, unchanged.
+    np.testing.assert_array_equal(priv_prio, raw_prio)
+    np.testing.assert_array_equal(priv_keep, raw_keep)
+    # The shared one is armed => normalized, and demonstrably different.
+    assert not np.allclose(shared_prio, priv_prio)
+    np.testing.assert_allclose(
+        shared_prio, np.minimum(raw_prio / shared.scale, 8.0), rtol=1e-5,
+    )
+    np.testing.assert_allclose(
+        shared_keep,
+        np.clip(raw_prio / shared.scale * 1.62, 0.025, 1.0), rtol=1e-5,
+    )
+
+
+def test_concurrent_observe_does_not_lose_ring_writes() -> None:
+    """`norm_shared` means 32 selfplay threads call `observe` on one instance.
+
+    Without the lock two calls read the same `_pos`, write the SAME slots and
+    both advance `_count`, so the ring keeps its 0.0 fill in the tail while the
+    estimator believes it is full — a depressed reference quantile, i.e.
+    INFLATED priorities, which is the failure this module exists to prevent.
+    Parameters are not arbitrary. Exactly ``window`` rows are observed in total,
+    so a lost ring write leaves a slot at its 0.0 fill with nothing to overwrite
+    it; the chunk is small and the threads many so the read-modify-write on
+    ``_count`` is contended. Measured on the unlocked ring at these settings:
+    ``count`` lands at 10,784-12,816 of 16,384 on 5 of 5 runs (so the estimator
+    never even arms), against 16,384 every time with the lock.
+    """
+    window, n_threads, chunk_rows = 16384, 16, 8
+    est = DiffFocusNormalizer(window=window, warmup=window, quantile=0.5)
+    chunk = np.full(chunk_rows, 3.0, dtype=np.float64)
+    per_thread = window // (n_threads * chunk_rows)
+
+    def _hammer() -> None:
+        for _ in range(per_thread):
+            est.observe(chunk)
+
+    # The unlocked race is a genuine interleaving, not a certainty: force the
+    # interpreter to preempt inside the ring update rather than hoping it does.
+    # Restored in `finally` so nothing else in the session runs at 1us.
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=_hammer) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    assert est.count == window
+    # Every observed value is 3.0, so any slot the ring failed to write is a 0.0
+    # and drags the median below 3.0.
+    assert est.scale == pytest.approx(3.0)
+
+
+def test_the_worker_shares_one_estimator_across_every_selfplay_thread() -> None:
+    """The last link, on the worker's own code path.
+
+    `_build_shared_diff_focus_norm` is what turns `diff_focus_norm_shared` into
+    an object; if it returns None with the knob on, the knob is accepted and
+    silently ignored — and every other test in this file still passes, because
+    they all stop at `DiffFocusConfig`.
+    """
+    stub = types.SimpleNamespace(
+        args=types.SimpleNamespace(threaded_selfplay=True, selfplay_threads=32),
+        log=Mock(),
+    )
+    build = cast(Any, WorkerSession)._build_shared_diff_focus_norm
+
+    on = DiffFocusConfig(norm_enabled=True, norm_shared=True, norm_warmup=1024)
+    assert isinstance(build(stub, {"diff_focus": on}, 384), DiffFocusNormalizer)
+
+    # OFF (the shipped default) must yield None, i.e. every state builds its own.
+    for df in (
+        DiffFocusConfig(),
+        DiffFocusConfig(norm_enabled=True, norm_shared=False),
+        # shared without the group enabled: nothing to share, and a warning
+        # rather than a silently dead knob.
+        DiffFocusConfig(norm_enabled=False, norm_shared=True),
+    ):
+        assert build(stub, {"diff_focus": df}, 384) is None
+    assert stub.log.warning.called
+
+    # The validation the shared build must NOT route around.
+    with pytest.raises(ValueError, match="diff_focus_norm_slope"):
+        build(
+            stub,
+            {"diff_focus": DiffFocusConfig(
+                norm_enabled=True, norm_shared=True, norm_slope=0.0)},
+            384,
+        )
+
+
+def test_the_threaded_dispatch_hands_every_thread_the_same_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_run_selfplay_threaded` is the site that multiplies the warm-up by the
+    thread count, so it is the site that has to be observed. Captures the
+    `diff_focus_norm` each thread's `play_batch` receives."""
+    import chess_anti_engine.worker as worker_mod
+
+    seen: list[object] = []
+    seen_lock = threading.Lock()
+
+    def _fake_play_batch(_model: Any, **kwargs: Any) -> tuple[list[Any], Any]:
+        with seen_lock:
+            seen.append(kwargs.get("diff_focus_norm"))
+        return [], "stats"
+
+    monkeypatch.setattr(worker_mod, "play_batch", _fake_play_batch)
+    stub = types.SimpleNamespace(
+        args=types.SimpleNamespace(selfplay_threads=4),
+        rng=np.random.default_rng(0),
+        log=Mock(),
+        device="cpu",
+        model=None,
+        _upload_buf_lock=None,
+        _on_completed_game=None, _record_selfplay_phase_timing=None,
+        _check_model_update=None, _register_live_state=None,
+        _resume_inflight_enabled=False, _suspend_inflight_games=None,
+        _stop_fn=None, _pause_fn=None,
+        _clear_live_states=lambda: None,
+        _aggregate_thread_stats=lambda stats: stats,
+    )
+    run = cast(Any, WorkerSession)._run_selfplay_threaded
+    shared = DiffFocusNormalizer(window=64, warmup=8, quantile=0.5)
+
+    run(stub, games_per_batch=8, sf=None, eval_=None, cfgs={},
+        diff_focus_norm=shared)
+    assert len(seen) == 4
+    assert all(s is shared for s in seen), "a thread got its own estimator"
+    seen.clear()
+    run(stub, games_per_batch=8, sf=None, eval_=None, cfgs={})
+    assert seen == [None] * 4, "the default path must not share"

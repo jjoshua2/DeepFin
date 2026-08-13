@@ -571,12 +571,25 @@ selfplay:
   # fixed thresholds on a quantity whose scale belongs to the SEARCH config. The
   # 2026-08-09 bundle moved KL ~11.7x and saturated the clamp (keep_rate 0.803
   # -> 0.956) with no key changed and no value out of range. When enabled,
-  # `difficulty` is divided by a running per-worker reference quantile first and
+  # `difficulty` is divided by a running reference quantile first and
   # diff_focus_norm_slope REPLACES diff_focus_slope (different units).
   # DEFAULT OFF and bit-identical. Do not enable without the ledger entry's
   # readout: it changes which plies are recorded and how they are sampled.
   diff_focus_norm_enabled: false
   diff_focus_norm_window: 8192
+  # ⚑ PER ESTIMATOR, and one estimator is built per SelfplayState -- i.e. per
+  # selfplay THREAD, not per worker. At --selfplay-threads 32 on 4 workers that
+  # is 128 x 1024 = 131,072 policy-bearing plies of warm-up per restart (~8.7%
+  # of a 1.5M-row window), and each estimator sees 1/32 of its worker's ply rate
+  # so it also takes 32x the wall clock. Warm-up rows are recorded on the
+  # UNNORMALIZED branch: diff_focus_slope 3.0 against the moved KL scale, and an
+  # unclipped `priority`. Measured 2026-08-12 on the live replay window: ~160k of
+  # 1,498,168 rows written unarmed across the two restart transients it held,
+  # priorities to 17.59 against a clip of 8.0, each not clear until ~37 min in.
+  # progress.csv shows the same: diff_focus_priority_max above the clip for
+  # iters 1-8 after one restart and 1-23 after the previous one.
+  # diff_focus_norm_shared below removes the 32x; do not "fix" this by shrinking
+  # the warm-up, which only buys a noisier reference quantile.
   diff_focus_norm_warmup: 1024
   diff_focus_norm_quantile: 0.5
   # 1.62 reproduces the mean realized keep_rate of the whole healthy era
@@ -585,6 +598,14 @@ selfplay:
   # artifact of this same unnormalized scale.
   diff_focus_norm_slope: 1.62
   diff_focus_norm_clip: 8.0
+  # One estimator per WORKER, shared by all its selfplay threads, instead of one
+  # per thread. Changes no arithmetic on the armed path -- only how many
+  # estimators exist and therefore how fast one arms. DEFAULT OFF = today's
+  # per-thread behaviour, bit-identical. Restart-only (the thread count is fixed
+  # when the session's threads launch). Enabling it is a data-affecting change:
+  # it moves the post-restart transient's rows from raw units onto the normalized
+  # branch, so it needs its own ledger entry and readout.
+  diff_focus_norm_shared: false
 
   categorical_bins: 32
   hlgauss_sigma: 0.04

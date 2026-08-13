@@ -355,6 +355,7 @@ _DIFF_FOCUS_KEYS = (
 _DIFF_FOCUS_NORM_KEYS = (
     "diff_focus_norm_enabled", "diff_focus_norm_window", "diff_focus_norm_warmup",
     "diff_focus_norm_quantile", "diff_focus_norm_slope", "diff_focus_norm_clip",
+    "diff_focus_norm_shared",
 )
 
 
