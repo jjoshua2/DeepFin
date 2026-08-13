@@ -45447,3 +45447,17 @@ Feb 2026** while C1-512-15 is **70M from Oct 2024**. If the newer, SMALLER net i
 that is direct evidence that **training method and data beat parameter count** — the central
 open question in this whole thread, and a cleaner test of it than anything we can run internally.
 That measurement is worthless until the encoder is proven on the only pair that can prove it.
+
+**AMENDMENT (same day) — ⚑ "LATER RELEASE" IS NOT "STRONGER" IN THIS REPO; "LATER GENERATION"
+PROBABLY IS.** Decision-relevant for eventual teacher selection, so recording the evidence.
+The publisher's OWN release note for **C1-512-35 (Jan 2025, 180M)** says: *"Slightly inferior to
+C1-640-34 but considerably faster and probably slightly better at short time controls
+(< 3 minutes per game)"* — a LATER release explicitly WEAKER than an earlier one, shipped for a
+speed tradeoff. Same pattern elsewhere: the `-I8` releases are explicitly inference-speed
+variants at IDENTICAL Elo, `C1-640-34-LEPNED-I8` is a *tune* of an existing net, and
+`C3-768-30-pre3/pre4/pre8` are three releases of ONE net at different PRETRAINING stages, i.e.
+research artifacts rather than successive strength improvements. ⇒ separate the two axes:
+**generation (C1→C2→C3) is plausibly real progress; release DATE alone is not a strength
+signal.** Since C2/C3 carry no published Elo at all, the correct move once the encoder passes
+its C1 gate is to **rank them ourselves on our own ruler** — an ordering that does not exist
+publicly and that we would need anyway before adopting any of them as a teacher.
