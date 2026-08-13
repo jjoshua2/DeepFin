@@ -208,6 +208,134 @@ def test_upload_route_still_accepts_a_clean_production_shard(tmp_path) -> None:
     assert r.json().get("positions") == 3
 
 
+# --- The guard must FAIL CLOSED, not default ------------------------------
+
+def test_guard_rejects_field_slot_holding_a_subgroup(tmp_path) -> None:
+    """⚑ A ``_SHARD_FIELDS`` slot holding a zarr sub-group instead of an array
+    must be REJECTED BY THE GUARD, not defaulted through it.
+
+    The natural spelling ``np.dtype(getattr(arr, "dtype", None))`` maps a
+    MISSING dtype to ``float64`` -- kind ``f``, which the allowlist PERMITS --
+    so the guard would accept precisely the member it could not classify. That
+    is a security gate whose default is ACCEPT. This asserts the guard itself
+    refuses, rather than leaning on the downstream ``validate_arrays``, which
+    lives in a different function a later reordering could move or skip.
+    """
+    from chess_anti_engine.replay.shard import load_shard_arrays
+
+    zp = _build_valid_zarr(tmp_path / "subgroup")
+    g = zarr.open_group(str(zp), mode="a")
+    del g["wdl_target"]
+    g.create_group("wdl_target")  # a Group where an Array must be
+
+    with pytest.raises(ValueError, match="not a zarr array"):
+        load_shard_arrays(zp, lazy=True)
+    # ...and on the eager path, which is what the upload/recovery sinks call.
+    with pytest.raises(ValueError, match="not a zarr array"):
+        load_shard_arrays(zp)
+
+
+@pytest.mark.parametrize("bad_dtype", ["<U8", "<c8", "<M8[s]"])
+def test_guard_rejects_non_numeric_dtype_carrying_no_codec(tmp_path, bad_dtype) -> None:
+    """The dtype allowlist must earn its place independently of the filters check.
+
+    ⚑ zarr refuses to OPEN an object dtype that carries no object codec
+    (``MetadataError``), and an object codec always lands in ``filters`` -- so
+    every object-dtype shard is already killed by the filters rule, and a
+    mutation that admits kind ``O`` is an *equivalent mutant*. The dtype rule is
+    not thereby redundant: these dtypes -- unicode, complex, datetime -- are
+    accepted by zarr with NO filters and a normal blosc compressor, so the dtype
+    check is the only rule standing between them and a materialization that
+    downstream code never expects to type-check.
+    """
+    from numcodecs import Blosc
+
+    from chess_anti_engine.replay.shard import load_shard_arrays
+
+    zp = _build_valid_zarr(tmp_path / f"dt{abs(hash(bad_dtype))}")
+    g = zarr.open_group(str(zp), mode="a")
+    shape = tuple(int(d) for d in g["wdl_target"].shape)
+    del g["wdl_target"]
+    g.create_dataset(
+        "wdl_target", shape=shape, chunks=shape, dtype=bad_dtype,
+        filters=None, compressor=Blosc(cname="zstd", clevel=2),
+    )
+    # Precondition: this is the isolated channel -- no filters, allowlisted compressor.
+    assert g["wdl_target"].filters in (None, [], ())
+    assert getattr(g["wdl_target"].compressor, "codec_id", None) == "blosc"
+
+    with pytest.raises(ValueError, match="non-numeric dtype"):
+        load_shard_arrays(zp, lazy=True)
+
+
+def test_guard_rejects_array_with_unreadable_dtype(tmp_path) -> None:
+    """Fail-closed contract on a REAL ``zarr.core.Array`` whose dtype is absent.
+
+    Pins the branch the fail-open spelling would have swallowed:
+    ``np.dtype(None)`` is ``float64`` (kind ``f``), which the allowlist PERMITS.
+    ``isinstance`` gates most of this, so without this test the branch is
+    unkillable code -- and unkillable code is how a guard rots.
+    """
+    from chess_anti_engine.replay.shard import _reject_unsafe_shard_codecs
+
+    zp = _build_valid_zarr(tmp_path / "nodtype")
+    arr = zarr.open_group(str(zp), mode="r")["wdl_target"]
+    assert isinstance(arr, zarr.Array)
+    # A real Array that cannot report its dtype. `object.__setattr__` rather
+    # than a plain assignment so this does not depend on zarr's slot layout.
+    object.__setattr__(arr, "_dtype", None)
+
+    with pytest.raises(ValueError, match="declares no dtype"):
+        _reject_unsafe_shard_codecs({"wdl_target": arr})
+
+
+def test_guard_rejects_non_array_member_directly() -> None:
+    """The guard's own contract, independent of any store: a member it cannot
+    positively identify as a zarr array is refused."""
+    from chess_anti_engine.replay.shard import _reject_unsafe_shard_codecs
+
+    class _NotAnArray:
+        """Duck-types the attributes the guard reads, and is still not an array."""
+
+        dtype = np.dtype("i1")
+        filters = None
+        compressor = None
+
+    with pytest.raises(ValueError, match="not a zarr array"):
+        _reject_unsafe_shard_codecs({"wdl_target": _NotAnArray()})
+
+
+def test_guard_inspects_exactly_what_the_loader_materializes(tmp_path) -> None:
+    """The guard receives the SAME proxy objects the lazy loader returns.
+
+    Two independent walks over ``_SHARD_FIELDS`` -- one to guard, one to load --
+    is how a guard and its loader drift apart later. Pinning identity keeps
+    "the guard inspected what was decoded" true by construction.
+    """
+    from chess_anti_engine.replay import shard as shard_mod
+
+    zp = _build_valid_zarr(tmp_path / "identity")
+    seen: dict[str, object] = {}
+    original = shard_mod._reject_unsafe_shard_codecs
+
+    def _capture(proxies):
+        seen.update(proxies)
+        return original(proxies)
+
+    shard_mod._reject_unsafe_shard_codecs = _capture  # type: ignore[assignment]
+    try:
+        arrs, _meta = shard_mod.load_shard_arrays(zp, lazy=True)
+    finally:
+        shard_mod._reject_unsafe_shard_codecs = original  # type: ignore[assignment]
+
+    assert seen, "guard was not called on the lazy path"
+    for name, proxy in seen.items():
+        assert arrs[name] is proxy, (
+            f"field {name!r} was guarded as one object and returned as another -- "
+            f"the guard and the loader walked the group separately"
+        )
+
+
 # --- The sibling sink: boot-time _scan_pending_dir recovery ----------------
 
 def test_pending_recovery_scan_does_not_execute_uploader_codec(tmp_path) -> None:

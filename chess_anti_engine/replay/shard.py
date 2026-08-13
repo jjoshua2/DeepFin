@@ -1232,21 +1232,49 @@ _SAFE_SHARD_COMPRESSOR_IDS: frozenset[str] = frozenset(
 )
 
 
-def _reject_unsafe_shard_codecs(group: Any) -> None:
+def _reject_unsafe_shard_codecs(proxies: dict[str, Any]) -> None:
     """Reject uploaded zarr arrays whose dtype/codec could run a deserializer.
 
+    ⚑ FAILS CLOSED. Every member must be POSITIVELY identified as an
+    allowlisted numeric ``zarr.Array``; anything this function cannot classify
+    -- a sub-group in a field slot, a member with no readable ``dtype``, an
+    unreadable ``.zarray`` -- is REJECTED, not defaulted. The obvious spelling
+    ``np.dtype(getattr(arr, "dtype", None))`` is a trap: it maps a MISSING
+    dtype to ``float64``, whose kind ``f`` this allowlist permits, so the
+    guard would accept exactly the members it failed to understand. A security
+    gate whose default is ACCEPT is the "gate that cannot fail" shape. The
+    downstream ``validate_arrays`` is NOT the backstop here -- it lives in a
+    different function that a later reordering could move or skip.
+
+    ⚑ Takes the SAME proxy objects the loader goes on to materialize, not the
+    group to re-walk. Two independent walks over ``_SHARD_FIELDS`` is precisely
+    how a guard and its loader drift apart later; passing the built dict makes
+    "the guard inspected what was decoded" true by construction, and halves the
+    lazy-path cost.
+
     Reads ``.zarray`` metadata only (``dtype``/``filters``/``compressor``) --
-    verified not to decode any chunk -- so it is safe to run on lazy, untrusted
-    proxies BEFORE materialization. Only the arrays the loader will actually
-    materialize are inspected (``_SHARD_FIELDS`` present in the group); an
-    ``_``-prefixed or unknown member is never read as a dataset, so it never
-    decodes and cannot execute.
+    no chunk is decoded -- so it is safe on lazy, untrusted proxies BEFORE
+    materialization.
     """
-    for name in _SHARD_FIELDS:
-        if name not in group:
-            continue
-        arr = group[name]
-        dtype = np.dtype(getattr(arr, "dtype", None))
+    for name, arr in proxies.items():
+        if not isinstance(arr, zarr.Array):
+            raise ValueError(
+                f"shard member {name!r} is a {type(arr).__name__}, not a zarr array; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            )
+        raw_dtype = getattr(arr, "dtype", None)
+        if raw_dtype is None:
+            raise ValueError(
+                f"shard array {name!r} declares no dtype; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            )
+        try:
+            dtype = np.dtype(raw_dtype)
+        except TypeError as exc:
+            raise ValueError(
+                f"shard array {name!r} declares an unreadable dtype {raw_dtype!r}; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            ) from exc
         if dtype.kind not in _SAFE_SHARD_DTYPE_KINDS:
             raise ValueError(
                 f"shard array {name!r} declares non-numeric dtype {dtype!s}; "
@@ -1815,18 +1843,25 @@ def load_shard_arrays(
     # Untrusted-deserialization guard (issue #411): reject object dtypes and
     # non-allowlisted codecs BEFORE any chunk is decoded. This runs on BOTH the
     # lazy and eager path so every materialization sink -- the upload handler's
-    # eager ``load_shard_arrays`` and the boot-time ``_scan_pending_dir``
-    # recovery load, which does NOT do a lazy pre-pass -- is covered at the one
-    # chokepoint they share, symmetric with the ``.npz`` ``allow_pickle=False``
-    # above. Reads ``.zarray`` metadata only; no chunk is materialized here.
-    _reject_unsafe_shard_codecs(g)
+    # eager ``load_shard_arrays``, the boot-time ``_scan_pending_dir`` recovery
+    # load (which does NOT do a lazy pre-pass), and the inbox walk behind
+    # ``_queued_games_by_model`` -- is covered at the one chokepoint they share,
+    # symmetric with the ``.npz`` ``allow_pickle=False`` above.
+    #
+    # ⚑ The proxy dict is built ONCE and both guarded and returned/materialized,
+    # so the guard provably inspects the very objects that get decoded. Building
+    # it twice would re-walk all ~89 `_SHARD_FIELDS` (measured +140% on the lazy
+    # path, which is the hot one: replay_exchange, trainable_init startup, the
+    # worker, and the inbox loop) and would let the two walks drift apart.
+    proxies: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
+    _reject_unsafe_shard_codecs(proxies)
     if lazy:
-        arrs: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
+        arrs: dict[str, Any] = proxies
         _attach_identity_meta_arrays(arrs, meta)
         _attach_policy_metadata(arrs, meta)
         validate_array_declarations(arrs)
         return arrs, meta
-    arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
+    arrs = {name: np.asarray(value) for name, value in proxies.items()}
     _attach_identity_meta_arrays(arrs, meta)
     _attach_policy_metadata(arrs, meta)
     validate_arrays(arrs)
