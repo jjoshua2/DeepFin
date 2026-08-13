@@ -46358,3 +46358,62 @@ The block bootstrap gives correct intervals **conditional on the counts in hand*
 license reading a verdict when the numbers look good. Pre-commit the per-matchup pair count and the
 read point. Mid-run, look ONLY at operational signals — counts advancing, an arm crashed, the
 missingness flag — **never at the sign or size of the effect.**
+
+---
+
+## 2026-08-13 — ⚑⚑ AN AGENT IRREVERSIBLY DELETED A BANKED FILE, AND ITS "REVERSIBLE" CLAIM WAS FALSE
+
+**My brief authorised this and should not have.** I wrote *"Make the call, do it, and justify it"* on
+delete-vs-replace for `data/lc0/bt4_audit_cache.jsonl`. That handed an agent latitude to perform an
+**irreversible deletion of a banked measurement artifact in the LIVE TREE** without Josh confirming.
+The reasoning it gave for deleting was sound; the authorisation was mine to withhold and I did not.
+
+**⚑ THE AGENT'S SAFETY CLAIM WAS FALSE, AND I CAUGHT IT ONLY BY CHECKING.** It reported *"A
+byte-identical copy survives at `/home/josh/projects/chess-rv414b/data/lc0/bt4_audit_cache.jsonl`
+(md5 78af91ea…), which made the delete reversible."* That path is a **SYMLINK BACK TO THE FILE IT
+DELETED** — `readlink -f` resolves to `/home/josh/projects/chess/data/lc0/bt4_audit_cache.jsonl`,
+and `test -e` fails. The md5 it quoted was necessarily read BEFORE the delete, THROUGH the symlink.
+⇒ **the original is gone, permanently.** Generalises: **a copy that resolves to the same inode is not
+a backup, and a checksum taken before a delete proves nothing about after it.** Verify a backup by
+reading the BACKUP after the destructive step, never by trusting a path.
+
+**Damage, assessed rather than assumed: SMALL, and only because a file the agent could not find
+still existed.** It searched `/home/josh` to depth 6 and concluded `scratchpad/gates/fix_bt4_4000.jsonl`
+"does not exist anywhere", then used that to argue "replace" was unavailable. **It does exist** —
+under `/tmp/claude-1000/<project>/<OTHER SESSION ID>/scratchpad/gates/`, outside the search root.
+Recovered and preserved by the main session to
+`/home/josh/projects/chess/scratchpad/gates/fix_bt4_4000.jsonl`
+(4000 rows, md5 `aa82d8b96ae105464f494bd690f15a11`, byte-identical to source), together with
+`fix_bt4_400.jsonl` and `fix_bt4_castling256.jsonl`. The dangling symlink was removed.
+⇒ **the CORRECTED cache survives; only the CONTAMINATED original is gone**, and that one was
+already unusable (stale pre-`#360` ruler + castling-mapped `best_move`). Regenerating it would cost
+~944 s CPU. **⚑ A "does not exist" from a bounded search is a statement about the SEARCH ROOT.**
+
+### Two operational findings from the same run, both durable
+- **⚑ A TOOL TIMEOUT CAN CORRUPT A MUTATION HARNESS INTO REPORTING FALSE SURVIVORS.** A 3× determinism
+  loop hit the 10-minute Bash timeout, killing the harness before its `finally` restore and leaving
+  mutant M11 **applied** to `audit_compare_buckets.py`. The NEXT harness run then took its backup
+  **from the mutated file**, so M1 read "SURVIVED" against a baseline that was already failing.
+  ⇒ **run mutation harnesses in the BACKGROUND, and re-verify every clean anchor before trusting a
+  survivor.** A survivor is the finding a mutation run exists to produce, which is exactly why a
+  corrupted baseline is the dangerous failure. (Related to [[mutation_harness_git_checkout_trap]].)
+- **⚑ THE SESSION SCRATCHPAD IS NOT ISOLATED BETWEEN AGENTS.** Another agent replaced
+  `.../scratchpad/mutate.py` mid-session with its own harness, which this agent then ran by mistake.
+  Concurrent agents share the directory. **Name scratch files uniquely per agent.**
+
+### The PR itself (PR #423, open, NOT merged, review owed — author ≠ reviewer)
+Guard: caches carry a provenance stamp and the reader **REFUSES** a missing or mismatched one
+(absence is a failure, not a pass). Confirmed file:lines on `main` — ⚑ note `foreign_net_audit.py:299`
+is still `scripts/bt4_audit.py` on the LIVE branch, because **#414 is on `main` but NOT on
+`ops/live-20260725`**. Repo-wide grep: only two real consumers; `onnx/load.py:318`,
+`eval/audit.py:329`, `audit_targets.py:1604` mention it in **comments only**. 25 new tests pass,
+254 across 8 affected files, no-arg lint 0/0/0 (which required building the C extensions in the
+worktree — a fresh worktree yields 140 spurious `reportMissingModuleSource`, and the live tree's
+`.so` files are NOT reusable because `_mcts_tree.c` differs between the live branch and `main`).
+**Mutations 10/11 caught; M6 reported as an EQUIVALENT mutant rather than quietly dropped**,
+bracketed by M5/M7 which prove the two version legs cover different ground.
+**Not verified: no real cache was regenerated** (needs an ONNX forward pass; the live arm owns the
+GPU). **No ledger entry from the PR** — `main`'s `experiment_ledger.md` diverges ~6,000 lines from the
+live branch's and lacks every 2026-08-13 entry, so appending from a `main` PR would conflict; the
+reasoning lives in the `audit_cache.py` docstring and the PR body, and **this entry discharges the
+ledger debt on the live branch**.
