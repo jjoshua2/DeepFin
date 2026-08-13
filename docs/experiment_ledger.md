@@ -45971,3 +45971,43 @@ stale ruler (dominant) and the castling map in its `best_move` field.
 A corrected 4000-row cache exists at `scratchpad/gates/fix_bt4_4000.jsonl` (outside the repo).
 **Not copied over the banked file** — per [[a_ruler_change_must_invalidate_its_records]] that file
 arguably wants DELETING rather than replacing, and that is Josh's call.
+
+### PR #414 RE-REVIEW (independent, NOT the author): APPROVE — all six inherited findings genuinely closed
+Verified by execution, not by reading commits. Castling bug confirmed exactly: **296 moves across
+256/4000 positions (6.40%)**, the ONLY moves the two maps disagree on; `e1g1` → 102 not 103,
+`e1c1` → 99 not 97. Correction direction **DOWN** (nets score better), independently reproduced:
+C1-384-12 E 35.80→32.64 (**−3.16 [−5.40, −1.57]**), BT4 E 31.84→28.75 (**−3.10 [−5.52, −1.42]**),
+full-4000 shift −0.20 cp. ⚑ **Mechanical signature: argmax flips TO the castle 56/54 times and
+NEVER away** — exactly what a mis-mapped slot must produce, and a check the author did not run.
+BT4 bit-identity re-run independently (real 741MB net, `torch.equal` True on `policy_own` AND `wdl`).
+Lint 0/0 with extensions present. 168 tests reproduced. **6 mutations of the reviewer's own design,
+6 caught.** Ladder row reproduced end-to-end through the PR's own script.
+
+**⚑ The reviewer OPENED a hole in the author's replacement correctness argument and then closed it
+themselves — the useful kind of review.** §4F leg 1 ("a field-order error anywhere in the first 121
+bytes moves my boundary") is **FALSE for equal-width adjacent field swaps**: simulating a wrong
+transcription of the two Q-blunder offsets — swapping the code AND the test that pins it — leaves
+all 74 tests green and the encoder output **byte-identical at the production default**, so gate D is
+blind too. Resolved by reading the actual Ceres sources (`QPositiveBlunders` IS declared first),
+plus a behavioural gate §4F lacks for the other equal-width pair: `CanOO`/`CanOOO` policy mass tracks
+the declared right in the correct direction (+0.518 / −0.668) ⇒ not transposed. **This is the third
+time in two days that a gate here was blind to the subtle version of the defect it was built for.**
+
+**Q*Blunders sign anomaly is UPSTREAM, not ours.** Both "it's our bug" explanations killed by
+execution: not an offset swap (checked against `TPGSquareRecord.cs`), not a `value2` POV artifact
+(corr with `value` = **+0.9992**, both heads W/D/L STM-relative and mirror-equivariant). Ceres binds
+`QPositiveBlunders → blunderUp`. Calibrate empirically.
+
+**Findings: 1×P2, 4×P3.** P2 — `bt4_audit_cache.jsonl` is contaminated in
+`best_move`/`topk`/`exp_regret`/`top1_regret` but **CLEAN in `wdl`**, and `audit_compare_buckets.py`
+still defaults to it and reads exactly the contaminated fields; **a docstring is not a guard — it
+wants a `map_version` stamp the reader REFUSES without.** P3s: "63 new tests" is **53**; the
+255-clamp comment misstates Ceres (`ByteScaled`'s setter has no clamp); three stale `bt4_audit`
+references incl. `onnx/load.py:318`.
+
+**⚑ CORRECTION to this ledger and to what was reported to Josh: "41 positions where deep-SF's best
+move is the castle" does NOT reproduce — it is 39 (unique-best) or 44 (tie-inclusive), three
+definitions agreeing.** The 41 was quoted twice before anyone recomputed it.
+
+GPU reachability: **zero** from train/selfplay/mcts/tune/server; `OnnxChessNet` has no non-test
+consumer. Live tree verified still on `ops/live-20260725`. Not merged.
