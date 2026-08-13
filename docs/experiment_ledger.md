@@ -46524,3 +46524,47 @@ looser than the author's 1.6 Elo, attributed to misspecification in the REVIEWER
 defect. Not verified: nothing end-to-end against a real match; `matched_time`'s sink is executed by no
 test. **The PR's own "Not verified" section was found accurate and appropriately scoped — it did not
 overclaim anywhere the reviewer checked.**
+
+### PR #415 F1/F2 CLOSED (`4dd4486ea`) — and the author correctly REJECTED my suggested fix
+**F1 — all three deletions now caught**, each confirmed by re-running the deletion:
+`value_regret.main → value_1ply_regret`, `audit_targets.main → _net_candidates`, and
+`_net_candidates → net.load`. Two are behavioural (real `main()` from `sys.argv` with `load` spied;
+sentinel-stopped `_net_candidates`).
+**⚑ The third is pinned on the AST OF THE CALL, not on an `inspect.getsource` substring — because a
+substring is satisfied by the `add_argument` DECLARATION alone and would pass on a `main` that
+forwards nothing.** I suggested the substring pattern; it would have been a vacuous test, and the
+author caught it. [[new_tests_here_are_vacuous_until_mutated]] applies to the fix for a coverage gap
+just as much as to the original.
+
+**F2 — the gate now runs before the Stockfish pass**, by building a **real 65-byte throwaway ORT
+session on the requested device: 41.1 ms**, paid only on `--device cuda…`. The post-session check is
+kept, correctly: *a probe predicts the scoring session, it is not the scoring session.* Ordering
+proved by execution with `_shallow_sf_records` booby-trapped, so REACHING it fails the test rather
+than raising the `SystemExit`.
+**⚑ Deliberately NOT done, and the reasoning is right:** hoisting the real `net.load` into `main`
+would also fire the guard early but would hold a **~700 MB CUDA session for the whole Stockfish hour
+next to the trainer** — trading this bug for a worse one. Recorded because "the obvious fix is worse"
+is exactly the decision that gets silently reversed later.
+
+Three smaller items closed (`cuda:N` guard coverage; one `validate_gpu_mem_fraction` shared by both
+entry points, with the card-query booby-trapped to prove it is checked first; `cuda:x` now a one-line
+`SystemExit`). **21 mutations total, all caught** — 9 new, each with a verified-green baseline, plus
+the previous 12 re-run after the refactor. BT4 bit-identity re-confirmed, 6 boards, both provider
+forms. 47 passed in `test_onnx_net_source.py` (was 37); 510 across 18 files; no-arg lint OK.
+
+**My ORT-mechanism overreach is now retracted from every docstring, comment, test and
+`docs/eval_protocol.md`** — only the observation is stated: *the compiled list can name a provider
+that does not start; every ORT session seen on this box has come back CPU-only.* That the two
+readings disagree IS the argument; the mechanism never was.
+
+**⚑ NEW failure mode, flagged by the author rather than discovered later:** if a future
+`onnx`/`onnxruntime` pair invalidates the pinned opset / `ir_version`, the device probe **raises on
+every CUDA run rather than degrading silently**. Sentinel: `test_the_device_probe_model_actually_opens`;
+mutation S9 confirms it fires. Fail-loud is the right choice here, but it is a new way for the rulers
+to stop working after an unrelated dependency bump.
+Still unverified, unchanged: **no CUDA execution at all** — the probe is shown to refuse a CPU-only
+session, not to pass on a working GPU.
+
+⚑ **SECOND INDEPENDENT REPORT that the agent scratchpad is NOT session-isolated** despite the system
+prompt saying so — another session overwrote two of this agent's helper scripts mid-run. Two
+different agents hit this today. Name scratch files uniquely per agent.
