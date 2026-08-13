@@ -45540,3 +45540,74 @@ Search-path wiring NOT done — a Ceres net can be SCORED but cannot yet PLAY. I
 documented not built (my instruction). Full suite NOT run: **12 test files contain
 `kill`/`SIGTERM`/`pgrep` against name patterns** — the refusal is correct and required.
 `scripts/audit_targets.py:1604` still says `bt4_audit`; routed to the other agent's lane.
+
+---
+
+## 2026-08-13 — lc0 INSTALLED AND PLAYING + `--onnx` ON BOTH FROZEN RULERS (PR #415, open, reviewer spawned)
+
+Second authoring agent, separate lane from #414. Independent Claude reviewer spawned; Codex also
+reviewed (5 findings, author reports all closed — reviewer instructed to verify via the INLINE
+comments endpoint, since `gh pr view --json comments,reviews` does not return them).
+
+### lc0 — built, not just downloaded
+**No Linux binaries exist in ANY lc0 release** (windows/android/macos only) ⇒ built from source:
+**v0.32.1**, meson/ninja, `-Dblas=true`, every GPU backend explicitly OFF, at `nice -n 19 -j 4`.
+Installed `/home/josh/local_engines/lc0/` matching the `cheese`/`rofchade` layout. Two build
+facts worth keeping: **`-static-libstdc++ -static-libgcc` is REQUIRED** here (local g++ 15.3 vs
+older system libstdc++ ⇒ `GLIBCXX_3.4.32 not found`), and **protobuf is NOT needed** (v0.32
+compiles its `.proto` with a bundled pure-python compiler).
+**Verified PLAYING, not compiling:** `describenet` reads BT4; UCI handshake + `go nodes 2`
+returns legal bestmoves on 3 positions (**finds Qxf7#**); and **2 full games vs rofChade** via
+`scripts/match_vs_uci.py`, lc0 as White and as Black, 40 plies each, coherent Catalan and Giuoco
+Piano with castling both sides. CUDA backend deliberately not built (recipe in its README).
+
+### ⚑⚑ CUTECHESS IS BROKEN ON THIS BOX — PRE-EXISTING, AND WE DID NOT KNOW
+The AppImage needs **GLIBC 2.38; the system has 2.35**, so BOTH `cutechess` and `cutechess-cli`
+fail to start. Unrelated to this PR. I had assumed in a1212961a that "cutechess (the UCI match
+runner we need) IS present" — **presence was not capability**, the exact error this codebase
+punishes. `scripts/match_vs_uci.py` is the working runner; any future UCI-match plan must use it.
+
+### `--onnx` on `value_regret.py` and `audit_targets.py`
+New `scripts/net_source.py`. **`NetSource` carries EXACTLY ONE of checkpoint/onnx and RAISES
+otherwise — no default, no fallback**, which is the anti-signature-defect requirement. Graph
+tensor names resolved and PRINTED at parse time; ambiguity raises. Net label lands on both
+report headers and in every dump row. `--device cpu` gives ORT only `CPUExecutionProvider`.
+
+**⚑ THE STRONGEST EVIDENCE — two independent implementations, same 300 rows:** known-good
+`bt4_audit.py` reads **86.0 / 30.8 cp**; new `audit_targets.py --onnx` reads **86.0 / 30.8 cp**.
+Identical.
+**And a genuine cross-validation against lc0 ITSELF:** our adapter reproduces **lc0's own priors**
+off the `.pb.gz` to **max |Δ| 0.0003, corr 1.0000** over 40 legal moves at `PolicyTemperature
+1.0`, **including BOTH castling moves** — the historically broken case (an earlier static table
+under-weighted castling 49-120x). This simultaneously validates the board-aware `leela_index`
+remap against the reference implementation AND establishes `.pb.gz` and `.onnx` are the same weights.
+
+**⚑ NUMBERS ARE ONE STRATUM, NOT A FULL-SET READING:** BT4 **51.2 cp**, Tier-13 arm B
+`checkpoint_000099` **73.4 cp** on the value-head 1-ply regret ruler — an `endgame`/`selfplay`
+prefix (251 rows), a PAIRED demonstration only. **Correction to my own routing message:** I told
+the agent BT4 = 23.79 cp and to chase any discrepancy. 23.79 is FULL-SET; the known-good script
+itself reads 30.8 on this endgame prefix, so the difference is the **STRATUM, not the plumbing**.
+The agent diagnosed that instead of chasing my number — correct, and a reminder that a figure
+quoted without its population is [[same_name_different_population]] waiting to happen.
+
+16 mutations, all kill their tests — **M5 initially SURVIVED** (its assertion was satisfied by an
+earlier progress line rather than the report header) and was strengthened. Second agent today to
+hit exactly the vacuous-test trap and catch it only by running the mutation.
+
+**ROUTED BACK, NOT FIXED:** a Codex P1 on `device_id` is REFUSED because the real fix needs
+`OnnxChessNet(providers=...)` to accept provider-options tuples — inside PR #414's file. Deferred
+to a follow-up once both land; recorded so it is not lost.
+**Loose end closed:** `audit_targets.py:1617` was a **COMMENT**, not a code path (`criticality_gap`
+is imported by value) ⇒ nothing was broken or dead; updated. Two further occurrences deliberately
+left: `chess_anti_engine/eval/audit.py:329` (#414's lane) and `docs/rl_loop_audit.md:827`
+(a dated record — renaming inside history is worse).
+`./scripts/lint.sh` no-args in the worktree: **OK, basedpyright 0/0/0**. 411 targeted tests exit 0.
+Full suite NOT run (GPU-gated + name-pattern-kill files); the 13 files run were scanned first.
+
+### ARM C HEALTH — elevated startup, NOT the airbag
+Like-for-like over the 3 iterations arm C has: C vs B = **+18.1% / +28.8% / +2.3%** — converging,
+and arm B was itself slower than A on the same three (2186/858/716 vs 1948/714/608) while running
+clean. Regret **0.02980 -> 0.02980 -> 0.029422**, flat then DOWN = the PID raising difficulty.
+The airbag signature is a regret SPIKE with games/iter collapsing; neither is present.
+⚑ My first read compared arm C's iters 2-3 against A/B means over iters 2-6 and reported "919s vs
+544s" — an invalid range mismatch, corrected here. Monitoring continues.
