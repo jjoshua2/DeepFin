@@ -80,7 +80,9 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
+from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.manager import BatchStats
+from chess_anti_engine.selfplay.state import build_diff_focus_normalizer
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
@@ -3839,6 +3841,9 @@ class WorkerSession:
         "diff_focus_norm_quantile",
         "diff_focus_norm_slope",
         "diff_focus_norm_clip",
+  # And this one decides how MANY estimators exist, which is fixed the moment
+  # the session's threads are launched.
+        "diff_focus_norm_shared",
   # sf_move_nodes gates the curriculum SF query path: lowering it to 0 mid-flight
   # would make pending move-futures (submitted at the old positive budget) get
   # reused as full-strength label futures, writing low-node SF targets to replay.
@@ -3858,6 +3863,10 @@ class WorkerSession:
         "selfplay_temperature_decay_start_move", "selfplay_temperature_decay_moves",
         "selfplay_temperature_endgame",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+  # Baked into the frozen GameConfig at session start and read on every net
+  # ply, so a mid-run edit would keep writing the old target construction until
+  # some unrelated key forced a restart.
+        "search_wdl_draw_mode",
         "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
         "record_dense_sf_policy", "record_sf_p0_policy", "record_sf_p0_regret",
         "record_fast_ply_value", "blindspot_harvest_out_path",
@@ -3921,6 +3930,13 @@ class WorkerSession:
         "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
         "sf_policy_score_mode", "sf_policy_cp_temp",
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+  # RECORD-SHAPING, like the diff_focus_norm group below: `search_wdl` is
+  # stamped onto the record at NET-TURN time and finalize cannot re-derive it
+  # (the searched q is not stored separately). A resumed game whose early plies
+  # carry a net_raw draw channel and whose later plies carry a parametric one
+  # would put two target constructions into one shard with no column
+  # distinguishing them.
+        "search_wdl_draw_mode",
         "sf_refute_record_opp_rows", "sf_refute_opp_policy_net_blend",
   # RECORD-SHAPING, not plumbing: `priority` and `keep_prob` are stored columns,
   # and the norm group decides the UNITS they are stored in (raw difficulty vs
@@ -3941,6 +3957,14 @@ class WorkerSession:
   # Engine/session plumbing — no bearing on a stored ply.
         "sf_hash_mb", "games_per_batch", "slot_oversubscribe",
         "selfplay_resume_inflight_games",
+  # Deliberately NOT with the other diff_focus_norm_* keys above, which are
+  # resume-INCOMPATIBLE because they change the UNITS of the stored `priority`.
+  # This one does not: both settings run the identical unarmed→armed branches
+  # and the identical arithmetic on each. It changes only how many estimators
+  # exist, hence how fast one arms. A game that straddles the arm point already
+  # mixes raw and normalized rows under either setting, so gating resume on this
+  # key would guard something the codebase already accepts.
+        "diff_focus_norm_shared",
   # NOT plumbing — stockfish_turn branches on it (>0 buys separate node-capped
   # label queries; 0 reuses the full-strength opponent-move future), so a flip
   # across a resume mixes label node budgets within one game. Exempt anyway,
@@ -4269,6 +4293,7 @@ class WorkerSession:
                 ),
                 norm_slope=self._resolve_reco(reco, "diff_focus_norm_slope", 1.62),
                 norm_clip=self._resolve_reco(reco, "diff_focus_norm_clip", 8.0),
+                norm_shared=bool(reco.get("diff_focus_norm_shared", False)),
             ),
             "game": GameConfig(
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),
@@ -4325,6 +4350,14 @@ class WorkerSession:
                     reco.get(
                         "sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width,
                     )
+                ),
+  # Also reco.get, not _resolve_reco: like soft_policy_temp this decides what a
+  # STORED ROW MEANS, and a per-worker override would put two search_wdl
+  # constructions into one replay window with no column to tell them apart.
+  # GameConfig.__post_init__ validates the value, so a typo kills the session
+  # here rather than silently reverting to net_raw.
+                search_wdl_draw_mode=str(
+                    reco.get("search_wdl_draw_mode", GameConfig.search_wdl_draw_mode)
                 ),
   # No CLI counterpart on purpose (hence reco.get, not _resolve_reco): this
   # is a TRAINING TARGET exponent, and a per-worker override would silently
@@ -4428,6 +4461,7 @@ class WorkerSession:
         self, *, games_per_batch: int, sf, eval_, cfgs: dict,
         fen_dole_queue: list[str] | None = None,
         fen_sf_refute_queue: list[str] | None = None,
+        diff_focus_norm: DiffFocusNormalizer | None = None,
     ) -> BatchStats:
         """Multi-threaded selfplay: N threads share one GPU evaluator.
 
@@ -4447,8 +4481,14 @@ class WorkerSession:
         thread-safe: resolve_slot_opening pops exception-safely and list.pop(0) is
         atomic under the GIL, so concurrent threads get distinct seeds and an empty
         queue simply falls back to normal openings.
+
+        ``diff_focus_norm`` is likewise shared across all N threads when
+        ``diff_focus_norm_shared`` is on: this is the ONE call site where the
+        per-thread multiplication of ``diff_focus_norm_warmup`` happens, because
+        it is the site that turns one session into N ``play_batch`` calls. None
+        (the default) leaves each thread building its own, unchanged.
         """
-        n_threads = min(int(self.args.selfplay_threads), games_per_batch)
+        n_threads = self._selfplay_state_count(games_per_batch)
         base_games, remainder = divmod(games_per_batch, n_threads)
         thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
         lock = threading.Lock()
@@ -4486,6 +4526,7 @@ class WorkerSession:
                 pause_fn=self._pause_fn,
                 fen_dole_queue=fen_dole_queue,  # shared across threads (drained once total)
                 fen_sf_refute_queue=fen_sf_refute_queue,
+                diff_focus_norm=diff_focus_norm,  # shared across threads, or None
                 **cfgs,
             )
 
@@ -4496,6 +4537,65 @@ class WorkerSession:
         finally:
             self._clear_live_states()
         return self._aggregate_thread_stats(all_stats)
+
+    def _selfplay_state_count(self, games_per_batch: int) -> int:
+        """How many ``SelfplayState``s this session will build.
+
+        One per ``play_batch`` call: the threaded path makes one per thread, the
+        single path makes one. Shared by ``_run_selfplay_threaded`` (which uses it
+        to split the game budget) and ``_build_shared_diff_focus_norm`` (which
+        reports it, and it is the multiplier on ``diff_focus_norm_warmup``). One
+        expression, because an operator reads this number out of ``worker.log``
+        and a second copy of it is a number that can quietly stop matching.
+
+        The ``max(1, ...)`` is new here: the threaded path previously divided by
+        this value directly, so a non-positive ``games_per_batch`` raised
+        ``ZeroDivisionError``. Production runs 384.
+        """
+        if not self.args.threaded_selfplay:
+            return 1
+        return max(1, min(int(self.args.selfplay_threads), int(games_per_batch)))
+
+    def _build_shared_diff_focus_norm(
+        self, cfgs: dict, games_per_batch: int,
+    ) -> DiffFocusNormalizer | None:
+        """The ONE difficulty-scale estimator this session shares, or None.
+
+        None means "every SelfplayState builds its own", which is what this
+        worker did before ``diff_focus_norm_shared`` existed and what it still
+        does with the knob off — so the default path is unchanged, not merely
+        equivalent.
+
+        The knob is worth its own line because the cost it removes is invisible
+        from the yaml: ``diff_focus_norm_warmup`` is per ESTIMATOR, and this
+        worker runs one ``play_batch`` per ``--selfplay-threads`` (32 live), so
+        the realized warm-up is 32x the configured number of plies per worker and
+        takes 32x the wall clock, every restart. The log line names the realized
+        count so the multiplication is readable in worker.log rather than
+        inferable from two files.
+        """
+        # Subscript and attribute access, not `.get`/`getattr` with defaults: a
+        # renamed key or field must fail loudly here rather than resolve to
+        # "sharing off", which is indistinguishable from the knob working.
+        df: DiffFocusConfig = cfgs["diff_focus"]
+        if not bool(df.norm_shared):
+            return None
+        norm = build_diff_focus_normalizer(df)
+        if norm is None:
+            # norm_shared with the group off: nothing to share, and
+            # SelfplayState.create would refuse a supplied estimator anyway.
+            self.log.warning(
+                "diff_focus_norm_shared is set but diff_focus_norm_enabled is "
+                "False; no estimator is built and the knob does nothing",
+            )
+            return None
+        n_states = self._selfplay_state_count(games_per_batch)
+        self.log.info(
+            "diff_focus norm estimator SHARED across %d selfplay state(s): "
+            "warmup=%d plies total for this worker (unshared would be %d)",
+            n_states, int(df.norm_warmup), n_states * int(df.norm_warmup),
+        )
+        return norm
 
     def _dispatch_selfplay_one_shard(
         self, *, games_per_batch: int, cfgs: dict, need_local_model: bool,
@@ -4512,6 +4612,7 @@ class WorkerSession:
         and atomic under the GIL — see resolve_slot_opening)."""
         assert self.sf is not None  # caller (_run_selfplay) calls _sync_stockfish first
         _eval = self.inference_client or self._direct_evaluator
+        shared_norm = self._build_shared_diff_focus_norm(cfgs, int(games_per_batch))
         try:
             if self.args.threaded_selfplay:
                 return self._run_selfplay_threaded(
@@ -4519,6 +4620,7 @@ class WorkerSession:
                     sf=self.sf, eval_=_eval, cfgs=cfgs,
                     fen_dole_queue=fen_dole_queue,
                     fen_sf_refute_queue=fen_sf_refute_queue,
+                    diff_focus_norm=shared_norm,
                 )
   # Continuous selfplay: 256 slots always full, games recycled on completion.
   # Runs until _stop_selfplay is set (task change, pause, or shutdown).
@@ -4541,6 +4643,9 @@ class WorkerSession:
                     pause_fn=self._pause_fn,
                     fen_dole_queue=fen_dole_queue,
                     fen_sf_refute_queue=fen_sf_refute_queue,
+  # A no-op on this branch (one state per session already), passed so the
+  # knob cannot mean two different things depending on --threaded-selfplay.
+                    diff_focus_norm=shared_norm,
                     **cfgs,
                 )
             finally:
@@ -4754,7 +4859,7 @@ class WorkerSession:
         _start_regret, _start_nodes = self._active_difficulty()
         self.log.info(
             "session-start reco applied: regret=%s sf_nodes=%s label_floor=%d"
-            " score_mode=%s cp_temp=%.2f",
+            " score_mode=%s cp_temp=%.2f swdl_draw=%s",
             f"{_start_regret:.4f}" if _start_regret is not None else "unknown",
             _start_nodes if _start_nodes is not None else "unknown",
   # The same _resolve_reco expression the GameConfig build uses, so this line
@@ -4774,6 +4879,13 @@ class WorkerSession:
             self._resolve_reco(
                 reco, "sf_policy_cp_temp", _SF_TARGET_DEFAULTS.sf_policy_cp_temp,
             ),
+  # Same rule again for the search_wdl draw channel. Its deploy is verified by
+  # swdl_draw=parametric_q here PLUS the stored-row property in the shards:
+  # under parametric_q, search_wdl[:,1] is an exact function of
+  # search_wdl[:,0]-search_wdl[:,2] and is UNCORRELATED with net_wdl[:,1] given
+  # that q, where today the two are equal to the bit. Same expression as the
+  # GameConfig build above, so the log and the targets cannot disagree.
+            str(reco.get("search_wdl_draw_mode", GameConfig.search_wdl_draw_mode)),
         )
         model_sha = self.model_sha
 

@@ -10,6 +10,12 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 # C ABI capability marker (see PyInit__mcts_tree); bumped on detect-worthy ABI changes.
 ABI_VERSION: int
 
+# `batch_process_ply`'s swdl_draw_mode encoding (SWDL_DRAW_* in _mcts_tree.c).
+# Exported by the extension so the Python side never keeps a second copy of the
+# int mapping — see selfplay/network_turn.py::_SWDL_DRAW_MODE_TO_C.
+SWDL_DRAW_NET_RAW: int
+SWDL_DRAW_PARAMETRIC_Q: int
+
 def set_history_rep_fix(enabled: bool, /) -> None: ...
 def tt_stats(reset: bool = False) -> dict[str, int]: ...
 
@@ -143,6 +149,12 @@ def batch_process_ply(
     input_history_lc0_root: int = ...,
     n_extra: int = ...,
     with_relations: int = ...,
+    df_norm_scale: float = ...,
+    df_norm_slope: float = ...,
+    df_norm_clip: float = ...,
+    swdl_draw_mode: int = ...,
+    swdl_cp_slope: float = ...,
+    swdl_cp_draw_width: float = ...,
 ) -> tuple[NDArray[Any], ...]: ...
 
 def batch_compute_relations(
