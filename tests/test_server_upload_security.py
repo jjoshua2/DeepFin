@@ -286,7 +286,13 @@ def test_bad_shard_report_is_persisted(tmp_path) -> None:
 
     assert r.status_code == 200, r.text
     assert r.json().get("stored") is True
-    reports = list((server_root / "trials" / "trial_a" / "quarantine" / "client_reports").glob("*.json"))
+    # ⚑ `/u/`: #407 keys the quarantine budget on the authenticated user, so
+    # each sink holds a per-user bucket. Without it the budget has no fairness
+    # key and one worker's flood evicts every other worker's diagnostics.
+    reports = list(
+        (server_root / "trials" / "trial_a" / "quarantine" / "client_reports" / "u")
+        .glob("*.json")
+    )
     assert len(reports) == 1
     text = reports[0].read_text(encoding="utf-8")
     assert "bad.zarr" in text
@@ -311,7 +317,13 @@ def test_bad_shard_report_persists_only_bounded_payload_fields(tmp_path) -> None
     )
 
     assert r.status_code == 200, r.text
-    reports = list((server_root / "trials" / "trial_a" / "quarantine" / "client_reports").glob("*.json"))
+    # ⚑ `/u/`: #407 keys the quarantine budget on the authenticated user, so
+    # each sink holds a per-user bucket. Without it the budget has no fairness
+    # key and one worker's flood evicts every other worker's diagnostics.
+    reports = list(
+        (server_root / "trials" / "trial_a" / "quarantine" / "client_reports" / "u")
+        .glob("*.json")
+    )
     assert len(reports) == 1
     report = json.loads(reports[0].read_text(encoding="utf-8"))
     assert set(report["payload"]) == {"shard_name", "reason"}
@@ -425,23 +437,23 @@ def test_manifest_artifact_filename_serves_publish_child(tmp_path) -> None:
 
 
 def test_arena_username_cannot_escape_arena_inbox(tmp_path) -> None:
-    from chess_anti_engine.server.app import resolve_arena_user_dir
+    from chess_anti_engine.server.app import resolve_user_dir
 
     arena = tmp_path / "server" / "arena_inbox"
     arena.mkdir(parents=True)
 
-    assert resolve_arena_user_dir(arena, "../outside") is None
-    assert resolve_arena_user_dir(arena, str(tmp_path / "outside")) is None
-    assert resolve_arena_user_dir(arena, r"..\outside") is None
+    assert resolve_user_dir(arena, "../outside") is None
+    assert resolve_user_dir(arena, str(tmp_path / "outside")) is None
+    assert resolve_user_dir(arena, r"..\outside") is None
 
 
 def test_arena_username_uses_single_child_dir(tmp_path) -> None:
-    from chess_anti_engine.server.app import resolve_arena_user_dir
+    from chess_anti_engine.server.app import resolve_user_dir
 
     arena = tmp_path / "server" / "arena_inbox"
     arena.mkdir(parents=True)
 
-    assert resolve_arena_user_dir(arena, "worker_1") == arena / "worker_1"
+    assert resolve_user_dir(arena, "worker_1") == arena / "worker_1"
 
 
 def test_shard_run_id_must_match_upload_trial() -> None:

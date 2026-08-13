@@ -331,12 +331,34 @@ Storage budgets (all `create_app` parameters, all defaulted):
 |---|---|---|
 | `quarantine_max_bytes` / `quarantine_max_entries` | 4 GiB / 200 | retained invalid uploads |
 | `arena_max_body_bytes` | 1 MiB | one arena result body |
-| `arena_user_max_bytes` / `arena_user_max_entries` | 256 MiB / 5000 | per-user arena inbox |
+| `arena_max_bytes` / `arena_max_entries` | 256 MiB / 5000 | whole arena sink |
 
-Eviction is oldest-first: a quarantined shard diagnoses a defect happening *now*,
-so the newest entries are the ones worth keeping. Entry counts are bounded as well
-as bytes because the growth mode is many small unique files — a byte budget alone
-lets an account burn inodes.
+Each budget is **ONE GLOBAL CEILING for the whole sink**, across every user and
+trial — that is the only thing bounding disk. Renamed from `arena_user_max_*` in
+#407 precisely because it is no longer per user: a per-user budget's ceiling is
+`users × budget`, and `worker_self_register` makes the user count caller-controlled,
+so the "per-user arena inbox" this table used to describe had no bound at all.
+
+Eviction is **largest-bucket-first, oldest-first within it** — the oldest entry of
+whichever user currently holds the most, measured in whichever dimension is over
+(bytes when the byte ceiling binds, entries when the count one does). Oldest-first
+globally, which this said until #407, made the sweep a diagnostic-destruction
+primitive: any one worker's flood evicted every other worker's evidence. Fairness
+here is the choice of victim under the ceiling, **not** a second quota — with a
+single bucket the behaviour is still exactly oldest-first.
+
+Newest-worth-keeping is still the rationale within a bucket: a quarantined shard
+diagnoses a defect happening *now*. Entry counts are bounded as well as bytes
+because the growth mode is many small unique files — a byte budget alone lets an
+account burn inodes.
+
+⚑ **Known residual, live only if `worker_self_register` is on** (it is off by
+default and absent from production's yaml): because the ceiling is a fixed entry
+count, an attacker minting more buckets than that count forces someone to hold
+zero, and largest-first zeroes the legitimate heavy user first. Measured at 5
+accounts — the per-IP hourly registration limit — a victim goes to **0 retained**.
+The fix belongs at the identity layer, and a global account cap only closes it if
+`account_cap < entry_ceiling`.
 
 ### Requiring a lease for uploads
 

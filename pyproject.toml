@@ -1,6 +1,16 @@
 [project]
 name = "chess-anti-engine"
-version = "0.0.2"  # 0.0.2: blind-spot FEN seeding. The min_worker_version gate that keeps
+version = "0.0.3"  # 0.0.3: the seed-dole claim moved to an authenticated POST. This bump IS
+                   # the rollout mechanism and is not cosmetic: PROTOCOL_VERSION could not
+                   # be used, because `_check_worker_compat` requires EXACT protocol
+                   # equality and so breaks both deploy orders. `min_worker_version` is a
+                   # `>=` comparison, so it can exclude stale workers without breaking the
+                   # transition — but ONLY IF the versions actually differ. Left at 0.0.2,
+                   # a stale worker and a new-code worker are indistinguishable, the stale
+                   # one is admitted, and it reads `dole_fen_seeds: false` forever and is
+                   # SILENTLY NEVER SEEDED. Same two activation steps as 0.0.2 below.
+                   #
+                   # 0.0.2: blind-spot FEN seeding. The min_worker_version gate that keeps
                    # pre-change (0.0.1) workers from mixing non-seeded shards into an
                    # activated seeding run only fires AFTER `pip install -e .` regenerates
                    # this into the INSTALLED metadata (version.py reads importlib.metadata,
