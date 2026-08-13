@@ -14,9 +14,10 @@ import secrets
 import socket
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
@@ -844,18 +845,94 @@ def resolve_publish_artifact_path(publish_root: Path, filename: str) -> Path | N
     return path
 
 
-def resolve_arena_user_dir(arena_root: Path, username: str) -> Path | None:
-    """Return a single-directory arena user path, or None on unsafe names."""
+def resolve_user_dir(parent: Path, username: str) -> Path | None:
+    """Return a single-component per-user directory under `parent`, or None.
+
+    ⚑ NAMED `resolve_arena_user_dir` UNTIL #407. It never had anything to do
+    with arenas -- it is the generic "make this username into exactly one safe
+    path component" check -- and it is now the fairness key for the quarantine
+    sinks as well as the arena inbox. A security helper whose name says "arena"
+    while two sinks depend on it is the drift this repo keeps paying for.
+
+    Note the `.`/`..` clause here is the same predicate `_normalize_trial_id`
+    was missing entirely, which is how a `.` trial id defeated all three
+    budgets: the check existed, on the sibling identifier, and was never
+    applied to trial ids.
+    """
     name = str(username or "").strip()
     if not name or name in {".", ".."} or "/" in name or "\\" in name:
         return None
-    root = Path(arena_root).resolve()
+    root = Path(parent).resolve()
     path = (root / name).resolve()
     try:
         path.relative_to(root)
     except ValueError:
         return None
     return path
+
+
+def drop_empty_arena_dirs(
+    dirs: list[Path], *, keep: Path | None, default_arena_root: Path,
+) -> list[Path]:
+    """Remove arena user directories the retention sweep has emptied.
+
+    Returns the directories actually removed, so a caller (and a test) can read
+    what happened rather than infer it.
+
+    ⚑ WHY: eviction deleted the JSON files and left
+    `trials/<id>/arena_inbox/<user>/` behind, so every later cross-trial walk
+    paid for every trial id anyone had ever invented, forever. Removing the
+    emptied directories stops that residue accumulating.
+
+    ⚑ THE HALF-FIX THIS IS, STATED HONESTLY. It does NOT bound the walk:
+    `trials/<id>` itself survives, because the shard-upload and quarantine
+    paths `mkdir(parents=True)` under it and this route does not own their
+    lifecycle -- so the walk stays O(invented ids). Moving that walk off the
+    event loop is the load-bearing half of the finding; this is the cheaper
+    constant, and claiming otherwise would be the overclaim.
+
+    ⚑ NEVER the server-root `arena_inbox`: `create_app` mkdirs it at boot as
+    part of the server layout, there is exactly one of it (so it is not the
+    growth), and removing it would leave the tree unlike a fresh boot's for no
+    gain. `resolve_user_dir` returns RESOLVED paths, so `keep` and
+    `default_arena_root` must be resolved too or a symlinked server root makes
+    every comparison false and the guard silently stops guarding.
+
+    ⚑ `keep` is the directory the calling request just wrote into. Skipping it
+    removes the common self-inflicted case; it is NOT the race fix. A request
+    for trial A can be suspended between its `mkdir` and its `write_bytes`
+    while a request for trial B sweeps A's now-empty directory away -- see
+    `write_arena_result`, which closes exactly that window.
+    """
+    removed: list[Path] = []
+    for d in dirs:
+        if keep is not None and d == keep:
+            continue
+        try:
+            d.rmdir()  # Raises rather than deleting when not empty.
+        except OSError:
+            continue
+        removed.append(d)
+        if d.parent != default_arena_root:
+            with contextlib.suppress(OSError):
+                d.parent.rmdir()
+    return removed
+
+
+def write_arena_result(out: Path, body: bytes) -> None:
+    """Persist an arena result, surviving a concurrent empty-directory sweep.
+
+    `drop_empty_arena_dirs` can remove this user's directory in the window
+    between the route's `mkdir` and this write. That window is a real
+    suspension point, not a theoretical one: the route `await`s in between, so
+    another request's sweep gets to run. One re-`mkdir` and retry turns it into
+    a no-op instead of a 500 on an upload that did nothing wrong.
+    """
+    try:
+        out.write_bytes(body)
+    except FileNotFoundError:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(body)
 
 
 def shard_run_id_matches_upload_trial(upload_trial_id: str | None, shard_run_id: object) -> bool:
@@ -1004,8 +1081,51 @@ def prune_retained_dirs(
     max_bytes: int,
     max_entries: int,
     log: logging.Logger | None = None,
+    legacy_roots: Sequence[Path] = (),
 ) -> tuple[int, int]:
-    """`prune_retained_dir` over SEVERAL directories sharing ONE budget.
+    """Evict oldest-first across SEVERAL directories sharing ONE budget.
+
+    Returns (entries, bytes) that THIS call removed.
+
+    ⚑ `legacy_roots` ARE THE PRE-BUCKETING QUARANTINE LEVEL, AND THEY
+    CONTRIBUTE FILES ONLY. #407 moved the quarantine sinks from
+    `quarantine/<subdir>/<entry>` to `quarantine/<subdir>/<user>/<entry>` so
+    the budget has a fairness key. Entries written before that move sit at the
+    old flat level, and if nothing swept it they would be a permanently
+    unswept residue -- the bound quietly not applying to exactly the entries
+    that predate the bound. Sweeping them here drains them.
+
+    They are files-only because at that level, after the move, the ONLY
+    directories are the per-user buckets: counting a bucket as an entry would
+    let a sweep `rmtree` an entire user's retained diagnostics as a single
+    eviction. Quarantine and arena entries are files by construction (`.tar`,
+    `.json`); the one sink that stores directories, `quarantine/unloadable`,
+    is deliberately never swept.
+
+    ⚑ THE SINK HAD NO CEILING. Every malformed upload is retained under
+    ``quarantine/`` with a reason sidecar, and each may be as large as the
+    per-request upload limit. Individual size was capped; cumulative size was
+    not, by any account, trial, or server-wide budget -- so an authenticated
+    client could fill the disk with repeated invalid uploads, and disk
+    exhaustion stops the training server. Retention is also the thing that
+    makes the directory useful, so the fix is a bound, not deletion.
+
+    Oldest-first by mtime: a quarantined shard is for diagnosing a defect that
+    is happening NOW, so the newest entries are the ones worth keeping. Both
+    limits are enforced; either can bind, and the entry count matters because
+    the growth mode is many small unique files.
+
+    ⚑ Failure is per-entry and non-fatal. This runs on the upload path, and a
+    sweep that raised would turn "we could not tidy up" into "the upload
+    failed" -- strictly worse than the unbounded growth it is fixing.
+
+    ⚑ WHY THERE IS NO SINGLE-DIRECTORY VERSION. There was one
+    (`prune_retained_dir`), and its existence is why the trial-rotation bypass
+    below was fixed on the arena path in #402 and left open in both quarantine
+    paths until #406: the per-directory call is the obvious thing to reach for
+    and is wrong at every one of these call sites. Taking a LIST removes the
+    shape that carried the defect. Pass `[root]` for the genuinely
+    single-directory case.
 
     ⚑ WHY THIS EXISTS. Rooting a quota under a caller-selected path is not a
     quota. The trial-scoped arena route writes to
@@ -1023,21 +1143,61 @@ def prune_retained_dirs(
 
     Found by review. The first version budgeted per directory.
     """
-    entries: list[tuple[float, Path, int]] = []
+    entries: list[_RetainedEntry] = []
     for root in roots:
-        entries.extend(_retention_entries(root))
-    return _evict_oldest_first(
+  # The bucket is the OWNING USER. `roots` are per-user directories
+  # (`<sink>/<username>`), and the same user's directory under twenty invented
+  # trial ids is ONE bucket, because `root.name` is the username in all of them.
+        entries.extend(_retention_entries(root, bucket=root.name))
+    for root in legacy_roots:
+        entries.extend(_retention_entries(root, files_only=True, bucket=""))
+    label = str(roots[0]) if roots else (
+        str(legacy_roots[0]) if legacy_roots else "<none>"
+    )
+    return _evict_fairly(
         entries, max_bytes=max_bytes, max_entries=max_entries, log=log,
-        label=str(roots[0]) if roots else "<none>",
+        label=label,
     )
 
 
-def _retention_entries(root: Path) -> list[tuple[float, Path, int]]:
-    """(mtime, path, size) for each retained entry, sidecar size included."""
+class _RetainedEntry(NamedTuple):
+    """One retained entry, with the sidecar's share of `size` kept separate.
+
+    `size` is entry + sidecar and is the BUDGET's unit -- it must stay whole,
+    because that is what the ceiling is measured in. `sidecar_size` is the part
+    of it that lives in the `.reason.txt`, split out for one reason only: the
+    two files are deleted by two different statements that can succeed
+    independently, so crediting `freed_bytes` exactly needs to know which half
+    this sweep actually removed. See `_evict_fairly`.
+
+    `bucket` is the FAIRNESS unit -- the owning username, not the directory.
+    One user has one bucket no matter how many trial ids they write under,
+    which is the whole point: trial ids are caller-invented and usernames are
+    not. `""` is the unattributed bucket (pre-bucketing `legacy_roots` entries).
+    """
+
+    mtime: float
+    path: Path
+    size: int
+    sidecar_size: int
+    bucket: str
+
+
+def _retention_entries(
+    root: Path, *, files_only: bool = False, bucket: str = "",
+) -> list[_RetainedEntry]:
+    """One `_RetainedEntry` per retained entry, sidecar size included in `size`.
+
+    `files_only` skips subdirectories -- see `prune_retained_dirs`'s
+    `legacy_roots`, where a subdirectory is another user's whole bucket rather
+    than an entry.
+    """
     if not root.is_dir():
         return []
-    out: list[tuple[float, Path, int]] = []
+    out: list[_RetainedEntry] = []
     for p in root.iterdir():
+        if files_only and p.is_dir():
+            continue
         if p.name.endswith(".reason.txt"):
       # Sidecars are accounted WITH their shard, not as entries in their own
       # right -- counting them separately would halve the effective entry
@@ -1055,47 +1215,187 @@ def _retention_entries(root: Path) -> list[tuple[float, Path, int]]:
       # exception message, attacker-influenced and unbounded, so the ceiling
       # could be walked straight past. Found by review.
             sidecar = p.with_suffix(p.suffix + ".reason.txt")
+            sidecar_size = 0
             with contextlib.suppress(OSError):
                 if sidecar.is_file():
-                    size += sidecar.stat().st_size
-            out.append((st.st_mtime, p, int(size)))
+                    sidecar_size = sidecar.stat().st_size
+            size += sidecar_size
+            out.append(
+                _RetainedEntry(
+                    st.st_mtime, p, int(size), int(sidecar_size), bucket,
+                ),
+            )
         except OSError:
             continue
     return out
 
 
-def _evict_oldest_first(
-    entries: list[tuple[float, Path, int]],
+def _evict_fairly(
+    entries: list[_RetainedEntry],
     *,
     max_bytes: int,
     max_entries: int,
     log: logging.Logger | None,
     label: str,
 ) -> tuple[int, int]:
-    """Evict oldest-first until both budgets are satisfied."""
-    entries.sort(key=lambda t: t[0])
-    total_bytes = sum(e[2] for e in entries)
+    """Evict from the LARGEST bucket first, oldest-first within it.
+
+    ⚑⚑ ONE GLOBAL CEILING PER SINK, WITH A FAIRNESS UNIT UNDER IT -- and it
+    took three iterations to get both at once, so the failure of each is worth
+    stating:
+
+    - #406 enforced ONE budget across every trial. Bounded, and it made the
+      sweep a diagnostic-destruction primitive: mtime-ordered and global, so any
+      worker's flood evicted every other worker's evidence oldest-first.
+    - #407's first attempt made the budget PER USER. Fair, and unbounded --
+      `worker_self_register` is a shipped yaml key (`config_yaml.py:318`, via
+      `harness.py:495`), so with it on the bucket count is CALLER-controlled.
+      Measured: three accounts minted from one caller retained 9 entries
+      against a 3-entry budget. Registration is throttled at 5 accounts per IP
+      per hour with no global account cap, so at the 4 GiB default that is
+      ~40 GiB in the first hour from one IP, ~960 GiB/day, against the 8 GiB
+      the global bound had. Nothing was live -- the flag defaults off and
+      production's `pbt2_small.yaml` does not set it -- but the DOCSTRING
+      claimed a bound that a config key silently falsified, which is this
+      repo's signature defect wearing a different hat.
+
+    ⇒ the ceiling and the fairness are SEPARATE MECHANISMS and have to be.
+    `max_bytes`/`max_entries` are the global ceiling for the whole sink, across
+    every user and trial, and are the ONLY thing that bounds disk. Fairness is
+    not a second quota -- it is the CHOICE OF VICTIM once that ceiling binds.
+
+    ⚑ THE POLICY, STATED BECAUSE "WHICH BUCKET LOSES" IS EXACTLY WHERE A
+    FAIRNESS FIX SILENTLY BECOMES A FAIRNESS BUG: evict the OLDEST entry of the
+    LARGEST-CONTRIBUTING bucket, measured in whichever dimension is currently
+    over -- bytes when the byte ceiling binds, entry count when the count
+    ceiling binds. Repeat until neither is over.
+
+    Why largest-first: it puts the entire marginal cost of a flood on the
+    flooder. A user holding one entry is never evicted while another holds
+    twelve, and under sustained contention every bucket converges to
+    `ceiling / N` -- max-min fairness, with no configured per-user number to
+    tune or to get wrong. Minting accounts no longer buys ceiling, because the
+    ceiling is global; it only splits the loser's share more ways.
+
+    ⚑ THERE IS DELIBERATELY NO SECOND, PER-USER QUOTA. A configured per-user
+    cap under the global one would do nothing the victim policy does not
+    already do, and would waste the sink whenever it is uncontended: a lone
+    user with 200 bad shards is the case retention exists to SERVE, and a
+    per-user cap would evict their evidence while 90% of the sink sat empty.
+
+    ⚑ A SINGLE-BUCKET SWEEP IS UNCHANGED. With one bucket this is exactly
+    oldest-first, which is what every direct `prune_retained_dirs([dir])` caller
+    gets and what the pre-existing tests assert.
+
+    ⚑ TWO COUNTERS, AND THEY ARE NOT THE SAME QUESTION. `gone` is "this entry
+    is no longer on disk, whoever removed it" and drives the budget arithmetic;
+    `freed` is "THIS sweep removed it" and is what gets reported. Concurrent
+    sweeps (two uploads racing, each sweeping the same shared roots) select the
+    same victims, because both sort the same directory oldest-first -- and the
+    old `unlink(missing_ok=True)` made a file the OTHER sweep had already
+    deleted indistinguishable from one this sweep deleted, so both counted it
+    and the reported eviction totals summed to more than the bytes that left
+    the disk.
+
+    ⚑ MEASURED SCOPE OF THAT DEFECT, because the obvious reading overstates it:
+    the END STATE was already correct. Each sweep's `total_bytes` starts from
+    its own snapshot, which INCLUDED the doubly-counted entry, and the entry
+    really is absent, so subtracting it tracks reality and the directory still
+    lands at budget. What was wrong is the number in the log line and the
+    return value -- this codebase's signature defect, a metric that does not
+    mean what its name says -- so the fix here is telemetry-exact and changes
+    no eviction decision. That is why `over_count` below keeps using `gone`:
+    switching it to `freed` would make a sweep whose victims a concurrent sweep
+    had already taken keep deleting past the budget, destroying diagnostics to
+    fix a log line.
+
+    ⚑ AND THE SIDECAR WAS THE HALF THAT STAYED INEXACT (#407 review). The fix
+    above tracked the ENTRY's deletion and left the sidecar on
+    `unlink(missing_ok=True)` -- untracked -- while still crediting the whole
+    `size`, which INCLUDES the sidecar's bytes, to `freed_bytes`. So under the
+    very two-sweep race this was written for, a sweep whose peer had already
+    taken the `.reason.txt` still reported those bytes as its own. `size` is
+    the budget's unit and stays whole; the two halves are now credited
+    separately, each only when THIS sweep's own delete succeeded. It remains
+    telemetry-only and changes no eviction decision.
+    """
+    entries.sort(key=lambda e: e.mtime)
+    total_bytes = sum(e.size for e in entries)
+    gone_entries = 0
     freed_entries = 0
     freed_bytes = 0
 
-    for _mtime, path, size in entries:
+  # Per-bucket queues, each already oldest-first because `entries` is sorted.
+  # `live_*` track what the sweep believes is still on disk, so the victim
+  # choice reflects the evictions already made in this pass rather than the
+  # snapshot it started from -- otherwise one bucket would be drained far past
+  # the point where it stopped being the largest.
+    queues: dict[str, list[_RetainedEntry]] = {}
+    for e in entries:
+        queues.setdefault(e.bucket, []).append(e)
+    live_bytes = {k: sum(e.size for e in v) for k, v in queues.items()}
+    live_count = {k: len(v) for k, v in queues.items()}
+    taken = dict.fromkeys(queues, 0)
+
+    while True:
         over_bytes = max_bytes > 0 and total_bytes > max_bytes
-        over_count = max_entries > 0 and (len(entries) - freed_entries) > max_entries
+        over_count = max_entries > 0 and (len(entries) - gone_entries) > max_entries
         if not (over_bytes or over_count):
             break
+        available = [k for k, q in queues.items() if taken[k] < len(q)]
+        if not available:
+            break
+  # Largest contributor in the dimension that is actually binding. The tuple
+  # tail makes the choice total and deterministic, so two racing sweeps pick
+  # the same victim instead of each taking a different bucket's oldest.
+        if over_bytes:
+            victim = max(available, key=lambda k: (live_bytes[k], live_count[k], k))
+        else:
+            victim = max(available, key=lambda k: (live_count[k], live_bytes[k], k))
+        entry = queues[victim][taken[victim]]
+        taken[victim] += 1
+        path, size = entry.path, entry.size
         try:
       # `size` ALREADY includes the sidecar, so it must not be added again --
       # that would over-subtract and stop evicting while still over budget.
-            path.with_suffix(path.suffix + ".reason.txt").unlink(missing_ok=True)
+      # `freed_sidecar` is the other question: did THIS sweep remove it.
+            freed_sidecar = 0
+            try:
+                path.with_suffix(path.suffix + ".reason.txt").unlink()
+                freed_sidecar = entry.sidecar_size
+            except FileNotFoundError:
+                pass
             if path.is_dir():
-                shutil.rmtree(path, ignore_errors=True)
+                try:
+                    shutil.rmtree(path)
+                    removed = True
+                except FileNotFoundError:
+                    removed = False
+                except OSError:
+          # Partial tree removal. Keep the old best-effort cleanup, but do
+          # not claim an eviction we cannot show we completed.
+                    shutil.rmtree(path, ignore_errors=True)
+                    removed = False
             else:
-                path.unlink(missing_ok=True)
+                try:
+                    path.unlink()
+                    removed = True
+                except FileNotFoundError:
+                    removed = False
         except OSError:
             continue
         total_bytes -= size
-        freed_bytes += size
-        freed_entries += 1
+        live_bytes[victim] -= size
+        live_count[victim] -= 1
+        gone_entries += 1
+      # Two independent deletes, credited independently. `size - sidecar_size`
+      # is the entry's own bytes; the sidecar's are added only if the unlink
+      # above found it. `freed_entries` still counts ENTRIES, so a lone sidecar
+      # removal contributes bytes without inventing an eviction.
+        if removed:
+            freed_bytes += size - entry.sidecar_size
+            freed_entries += 1
+        freed_bytes += freed_sidecar
 
     if freed_entries and log is not None:
         log.info(
@@ -1146,38 +1446,6 @@ def redact_host_telemetry(stats: Any, *, authenticated: bool) -> Any:
         else:
             out[key] = entry
     return out
-
-
-def prune_retained_dir(
-    root: Path,
-    *,
-    max_bytes: int,
-    max_entries: int,
-    log: logging.Logger | None = None,
-) -> tuple[int, int]:
-    """Evict oldest-first from a retention directory. Returns (entries, bytes) freed.
-
-    ⚑ THE SINK HAD NO CEILING. Every malformed upload is retained under
-    ``quarantine/`` with a reason sidecar, and each may be as large as the
-    per-request upload limit. Individual size was capped; cumulative size was
-    not, by any account, trial, or server-wide budget -- so an authenticated
-    client could fill the disk with repeated invalid uploads, and disk
-    exhaustion stops the training server. Retention is also the thing that
-    makes the directory useful, so the fix is a bound, not deletion.
-
-    Oldest-first by mtime: a quarantined shard is for diagnosing a defect that
-    is happening NOW, so the newest entries are the ones worth keeping. Both
-    limits are enforced; either can bind, and the entry count matters because
-    the growth mode is many small unique files.
-
-    ⚑ Failure is per-entry and non-fatal. This runs on the upload path, and a
-    sweep that raised would turn "we could not tidy up" into "the upload
-    failed" -- strictly worse than the unbounded growth it is fixing.
-    """
-    return _evict_oldest_first(
-        _retention_entries(root),
-        max_bytes=max_bytes, max_entries=max_entries, log=log, label=str(root),
-    )
 
 
 def lease_authorizes_upload(
@@ -1717,8 +1985,8 @@ def create_app(
     quarantine_max_bytes: int = 4 * 1024 * 1024 * 1024,
     quarantine_max_entries: int = 200,
     arena_max_body_bytes: int = 1024 * 1024,
-    arena_user_max_bytes: int = 256 * 1024 * 1024,
-    arena_user_max_entries: int = 5000,
+    arena_max_bytes: int = 256 * 1024 * 1024,
+    arena_max_entries: int = 5000,
     users_db: str = "users.json",
     opening_book_path: str | None = None,
     opening_book_path_2: str | None = None,
@@ -1892,10 +2160,48 @@ def create_app(
     _trial_id_re = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
     def _normalize_trial_id(trial_id: str | None) -> str | None:
+        """Syntax-check a caller-supplied trial id, or raise 400.
+
+        ⚑⚑ THE REGEX IS A SYNTAX ALLOWLIST AND WAS MISTAKEN FOR A PATH CHECK.
+        `^[A-Za-z0-9._-]$` matches `.` and `..`, `normalize_trial_id` only
+        strips whitespace, and every path this feeds is built by JOINING the
+        result onto a root -- so `trials/./quarantine/invalid` COLLAPSES to
+        `quarantine/invalid` under the server root. The write landed in a
+        directory none of the cross-trial enumerators list (they walk
+        `trials/<child>/quarantine/<subdir>`), so the sweep never saw it and
+        the budget was simply not enforced. Measured on this branch with a
+        3-entry budget: 12 uploads under `%2E` retained 12. The same id defeats
+        the ARENA budget on `main` today -- 15 retained against 4 -- which is
+        why `test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids`
+        could not detect the strongest form of the bypass it is named for.
+
+        ⚑⚑ BOTH CLAUSES OF `lease_path`'s GUARD, AND THE SECOND IS NOT
+        REDUNDANT -- MEASURED. The obvious reading is that `Path(tid).name !=
+        tid` subsumes `tid in {".", ".."}` because it asks the question that
+        actually matters ("does this survive being used as ONE path
+        component"). It does not: pathlib collapses `.` but NOT `..`, so
+        `Path("..").parts == ("..",)` and `Path("..").name == ".."` -- the
+        identity holds and the check passes it straight through. Verified by
+        writing exactly that predicate first and watching `%2E%2E` still land
+        a report in `trials/../quarantine/client_reports`, i.e. the server-root
+        sink, from a route scoped to a trial. `..` is the milder half (it
+        resolves ONTO a swept directory, so the budget does hold) but it is
+        still a caller writing outside the trial it named, and it costs one
+        `or` to refuse.
+
+        So all three clauses earn their place: the regex bounds charset and
+        length, `Path(tid).name != tid` bounds path semantics generally (and
+        stays correct if the character class is ever widened to admit a
+        separator), and the explicit set closes the one case pathlib's own
+        normalisation hides from the second.
+
+        ⚑ A dot INSIDE an id stays legal -- `trial.1` is an ordinary Ray trial
+        name and none of these clauses touch it.
+        """
         tid = normalize_trial_id(trial_id)
         if tid is None:
             return None
-        if not _trial_id_re.fullmatch(tid):
+        if not _trial_id_re.fullmatch(tid) or Path(tid).name != tid or tid in {".", ".."}:
             raise HTTPException(status_code=400, detail="invalid trial_id")
         return tid
 
@@ -1915,24 +2221,159 @@ def create_app(
         tid = _normalize_trial_id(trial_id)
         return quarantine if tid is None else (_trial_root(tid) / quarantine_dir)
 
-    def _arena_user_dirs_all_trials(username: str) -> list[Path]:
-        """Every arena directory this user can write to, across all trials.
+    def _quarantine_dirs_all_trials(subdir: str) -> list[Path]:
+        """Every `quarantine/<subdir>` this server writes, across all trials.
 
-        The retention budget is theirs, not any single trial's -- see
+        ⚑ NOT THE SWEEP SET ANY MORE -- callers want `_quarantine_all_user_dirs`,
+        which splits this into the calling user's per-user buckets (the budget)
+        and these flat sinks (drained as `legacy_roots`). Sweeping this list
+        directly is what made one worker able to evict every other worker's
+        diagnostics; see `_quarantine_all_user_dirs` for the measurement.
+
+        ⚑ THE SAME DEFECT AS THE ARENA PATH, IN THE SIBLING SINK. The arena
+        route was fixed to share ONE budget across trials during the #402
+        review; the two quarantine sinks kept calling the per-directory
+        `prune_retained_dir` against `_quarantine_root(trial_id)/<subdir>`, so
+        an authenticated caller who rotates well-formed trial ids was handed a
+        fresh full allowance for each invented id -- the unbounded path the
+        budget exists to close, still open, wearing a quota as a hat. See
         `prune_retained_dirs` for why a per-trial budget is not a budget.
+        (Rotation is cheap: `_normalize_trial_id` only syntax-checks the id,
+        and with the default `require_worker_lease=False` `_check_worker_compat`
+        admits a trial whose manifest is not published yet.)
+
+        ⚑ ONE BUDGET PER SINK KIND, NOT ONE BUDGET FOR ALL OF QUARANTINE, and
+        that is deliberate. `client_reports` is a tiny authenticated JSON POST
+        and `invalid` holds whole rejected uploads, up to `max_upload_mb` each.
+        Pooling them would make the CHEAPEST sink able to evict the most
+        EXPENSIVE diagnostics -- spam a few hundred reports and every retained
+        bad shard is gone, oldest-first -- which converts a disk bound into a
+        diagnostic-destruction primitive. Keeping them separate multiplies the
+        ceiling by the number of sink kinds (a constant: 2), and a bounded
+        constant is the property the budget is actually for.
+
+        `quarantine/unloadable` is deliberately NOT swept -- see
+        `_quarantine_unloadable_pending`.
         """
-        dirs: list[Path] = []
-        d = resolve_arena_user_dir(arena_inbox, username)
-        if d is not None:
-            dirs.append(d)
+        dirs: list[Path] = [quarantine / subdir]
         trials_dir = root / "trials"
         if trials_dir.is_dir():
-            for trial_dir in sorted(trials_dir.iterdir()):
-                if not trial_dir.is_dir():
-                    continue
-                d = resolve_arena_user_dir(trial_dir / "arena_inbox", username)
-                if d is not None:
-                    dirs.append(d)
+            dirs.extend(
+                trial_dir / quarantine_dir / subdir
+                for trial_dir in sorted(trials_dir.iterdir())
+                if trial_dir.is_dir()
+            )
+        return dirs
+
+    def _quarantine_user_dir(quarantine_root: Path, subdir: str, username: str) -> Path:
+        """The per-user bucket a quarantine entry is written into.
+
+        Falls back to the flat sink when the username cannot be one safe path
+        component. That is an administrator-created name, so it should not
+        happen; if it does, the entry is still retained and still swept (as a
+        `legacy_roots` entry), because losing the diagnostic is worse than
+        filing it imprecisely.
+        """
+        base = quarantine_root / subdir
+        d = resolve_user_dir(base, username)
+        return base if d is None else d
+
+    def _quarantine_all_user_dirs(subdir: str) -> tuple[list[Path], list[Path]]:
+        """(every user's bucket, the flat sinks) for `subdir`, across all trials.
+
+        ⚑⚑ THE FAIRNESS KEY IS THE USER, AND IT CANNOT BE THE TRIAL. #406 made
+        this sink server-wide to close the id-rotation bypass, and thereby
+        built the exact "diagnostic-destruction primitive" this PR spends three
+        paragraphs arguing against for the pooled-sinks case -- the argument
+        was simply never carried across trials and users. Measured on the
+        branch before this commit: one bad shard under `trials/victim`, then 12
+        junk uploads under `trials/attacker_i` at budget 3, and the victim's
+        evidence went to `[]` where `main` preserved it.
+
+        Bucketing by TRIAL is what `main` did and is not available: trial ids
+        are caller-invented, so a per-trial floor hands back a fresh allowance
+        per invented id -- the bypass, wearing fairness as a hat this time.
+        Nor does per-trial fair EVICTION help, because the cheap attack is one
+        entry under each of many ids, where every contributor ties at one and
+        the tie-break is the oldest entry, i.e. the victim.
+
+        ⚑⚑ AND THE BUCKET COUNT IS NOT ADMINISTRATOR-BOUNDED, WHICH IS WHY
+        THIS RETURNS EVERY USER'S BUCKET RATHER THAN THE CALLER'S. The first
+        version of this fix swept only the calling user's directories and gave
+        each user a full budget, on the stated premise that usernames are
+        administrator-created. `worker_self_register` falsifies that premise --
+        it is a yaml run-config key (`config_yaml.py:318`) plumbed through
+        `harness.py:495`, and TOFU registration is what the #400-#403 series
+        exists to enable. Measured with it on: three accounts minted from one
+        caller retained 9 entries against a 3-entry budget.
+
+        So the ceiling is GLOBAL for the sink -- every bucket, every trial, one
+        `max_bytes`/`max_entries` -- and fairness is the choice of victim under
+        it, not a second quota. See `_evict_fairly`, which evicts the oldest
+        entry of the LARGEST bucket, so minting accounts buys no ceiling at all
+        and a flood costs the flooder.
+
+        ⚑ WITHIN one user, eviction is oldest-first across that user's own
+        trials. A single account's diagnostics compete with each other; that is
+        one principal spending one quota, not one worker destroying another's.
+        `test_one_users_own_flood_still_evicts_its_own_older_evidence` pins it
+        so the limit is recorded rather than assumed.
+
+        ⚑ Enumerated by `iterdir`, never by joining a caller-supplied name, so
+        this cannot be steered by a hostile username; `resolve_user_dir` guards
+        the WRITE path instead (`_quarantine_user_dir`).
+        """
+        sinks = _quarantine_dirs_all_trials(subdir)
+        buckets = [
+            d for s in sinks if s.is_dir() for d in sorted(s.iterdir()) if d.is_dir()
+        ]
+        return buckets, sinks
+
+    def _arena_all_user_dirs() -> list[Path]:
+        """EVERY user's arena directory, across the root inbox and all trials.
+
+        ⚑⚑ PRE-EXISTING BUG, CLOSED HERE, NOT PRECEDENT. This took a `username`
+        and returned only that user's directories from #402 until #407: the
+        budget was `arena_user_max_*` PER USER, so the ceiling was
+        `users x 256 MiB`. That multiplier is caller-controlled the moment
+        `worker_self_register` is on -- a shipped yaml key
+        (`config_yaml.py:318` via `harness.py:495`) that the #400-#403
+        volunteer series exists to enable. Measured on the previous commit with
+        it on: three minted accounts retained 6 arena results against a 2-entry
+        budget. The quarantine sinks were given the identical shape earlier in
+        #407 and are fixed the same way; reporting it as a bug this PR is
+        closing rather than as a precedent that made the design safe.
+
+        So the ceiling is now GLOBAL for the sink (`arena_max_*`, renamed from
+        `arena_user_max_*` because it is no longer per user) and fairness is
+        the victim choice under it -- see `_evict_fairly`.
+
+        ⚑ BLOCKING, AND IT MUST NOT RUN ON THE EVENT LOOP. Every entry costs a
+        `trials/` directory read, the trial set is attacker-extendable by the
+        same id rotation the budget exists to stop, and eviction removes JSON
+        files rather than the directories holding them -- so the set this walks
+        grows and never shrank. Callers hop through `run_in_threadpool` around
+        BOTH this and the sweep it feeds; see the arena route.
+
+        ⚑ `iterdir`, not `resolve_user_dir`: this enumerates directories that
+        already exist rather than joining a caller-supplied name, so there is
+        nothing to traverse with. That also keeps the route's own
+        `resolve_user_dir` call the ONLY one on the loop thread, which
+        `test_the_cross_trial_arena_walk_does_not_run_on_the_event_loop`
+        asserts exactly.
+        """
+        inbox_roots: list[Path] = [arena_inbox]
+        trials_dir = root / "trials"
+        if trials_dir.is_dir():
+            inbox_roots.extend(
+                trial_dir / "arena_inbox"
+                for trial_dir in sorted(trials_dir.iterdir())
+                if trial_dir.is_dir()
+            )
+        dirs: list[Path] = []
+        for inbox_root in inbox_roots:
+            if inbox_root.is_dir():
+                dirs.extend(d for d in sorted(inbox_root.iterdir()) if d.is_dir())
         return dirs
 
     def _arena_inbox_root(trial_id: str | None) -> Path:
@@ -2847,7 +3288,9 @@ def create_app(
                 reason=reason, code=code, worker_version=x_cae_worker_version,
                 worker_protocol=x_cae_protocol_version,
             )
-        qdir = _quarantine_root(trial_id) / "client_reports"
+        qdir = _quarantine_user_dir(
+            _quarantine_root(trial_id), "client_reports", username,
+        )
         qdir.mkdir(parents=True, exist_ok=True)
         now_unix = time.time()
         payload_summary = {
@@ -2871,12 +3314,22 @@ def create_app(
   # The cheapest sink to spam -- a small authenticated JSON POST, no tar and no
   # size cap -- so bounding `quarantine/invalid` and not this one would close
   # the headline sink and leave the easy one open.
+  #
+  # ⚑ ACROSS EVERY TRIAL (`_quarantine_dirs_all_trials`), not just this one:
+  # `qdir` is derived from a CALLER-SELECTED trial id, so the per-directory
+  # sweep this used to call gave a rotating client a fresh allowance per
+  # invented id. This route is a plain `def`, so FastAPI already runs it off
+  # the loop thread and the cross-trial scan needs no extra hop.
         with contextlib.suppress(Exception):
-            prune_retained_dir(
-                qdir,
+            report_buckets, report_sinks = _quarantine_all_user_dirs(
+                "client_reports",
+            )
+            prune_retained_dirs(
+                report_buckets,
                 max_bytes=int(quarantine_max_bytes),
                 max_entries=int(quarantine_max_entries),
                 log=log,
+                legacy_roots=report_sinks,
             )
         log.warning(
             "worker reported bad shard trial=%s user=%s machine=%s shard=%s reason=%s",
@@ -3679,7 +4132,7 @@ def create_app(
                 shard_arrs, meta = load_shard_arrays(zarr_root)
             except Exception as e:
       # Quarantine so we can inspect bad uploads without causing worker retry storms.
-                qdir = quarantine_root / "invalid"
+                qdir = _quarantine_user_dir(quarantine_root, "invalid", username)
                 qdir.mkdir(parents=True, exist_ok=True)
                 qpath = qdir / tmp.name
                 try:
@@ -3700,12 +4153,23 @@ def create_app(
           # would run that block's `tmp.unlink` recovery and be logged as a
           # failure to quarantine, which is a different and much more alarming
           # thing than "we could not tidy up".
+          #
+          # ⚑ ACROSS EVERY TRIAL, not just `qdir`. `quarantine_root` comes from
+          # the caller's trial id, so the old per-directory sweep handed a
+          # client rotating well-formed ids a fresh full allowance per invented
+          # trial -- the exact bypass already fixed on the arena path. This runs
+          # inside `_finish_upload`, i.e. already on `run_in_threadpool`, so the
+          # cross-trial scan is not on the loop thread.
                 with contextlib.suppress(Exception):
-                    prune_retained_dir(
-                        qdir,
+                    invalid_buckets, invalid_sinks = _quarantine_all_user_dirs(
+                        "invalid",
+                    )
+                    prune_retained_dirs(
+                        invalid_buckets,
                         max_bytes=int(quarantine_max_bytes),
                         max_entries=int(quarantine_max_entries),
                         log=log,
+                        legacy_roots=invalid_sinks,
                     )
                 if tmp_zarr is not None:
                     delete_shard_path(tmp_zarr)
@@ -4083,7 +4547,7 @@ def create_app(
 
   # Store under arena_inbox/<username>/
         arena_root = _arena_inbox_root(trial_id)
-        user_dir = resolve_arena_user_dir(arena_root, username)
+        user_dir = resolve_user_dir(arena_root, username)
         if user_dir is None:
             raise HTTPException(status_code=400, detail="invalid username")
         user_dir.mkdir(parents=True, exist_ok=True)
@@ -4153,10 +4617,16 @@ def create_app(
             # `async def` and the write is unbounded by anything except the
             # size guard above, so it stalls every other route for its
             # duration.
-            await run_in_threadpool(out.write_bytes, body)
-      # Per-user bound, sized in entries as well as bytes because the sink's
-      # growth mode is MANY SMALL unique bodies -- a byte budget alone lets an
-      # account burn inodes indefinitely.
+            await run_in_threadpool(write_arena_result, out, body)
+      # GLOBAL bound for the sink, sized in entries as well as bytes because the
+      # sink's growth mode is MANY SMALL unique bodies -- a byte budget alone
+      # lets an account burn inodes indefinitely.
+      #
+      # ⚑ GLOBAL, NOT PER USER, SINCE #407. `arena_user_max_*` gave every
+      # account a full allowance, and `worker_self_register` makes the account
+      # count caller-controlled -- 3 minted accounts retained 6 results against
+      # a 2-entry budget. Fairness is now the VICTIM CHOICE under one ceiling
+      # (`_evict_fairly`, largest bucket first), not a per-account quota.
       #
       # ⚑ ACROSS EVERY TRIAL, not just this one. `_normalize_trial_id` only
       # SYNTAX-checks the id and `_check_worker_compat` admits a trial with no
@@ -4164,16 +4634,28 @@ def create_app(
       # per-trial budget hands an authenticated client a fresh full allowance
       # for every well-formed id it invents -- which is the same unbounded
       # path, wearing the quota as a hat. Found by review.
-            user_dirs = _arena_user_dirs_all_trials(username)
-            with contextlib.suppress(OSError):
-                await run_in_threadpool(
-                    lambda: prune_retained_dirs(
-                        user_dirs,
-                        max_bytes=int(arena_user_max_bytes),
-                        max_entries=int(arena_user_max_entries),
-                        log=log,
-                    ),
+      #
+      # ⚑ THE ENUMERATION IS INSIDE THE HOP, NOT OUTSIDE IT. It used to sit on
+      # the loop thread: `_arena_all_user_dirs` reads `trials/` and
+      # one directory per trial, over a directory set that the same id
+      # rotation extends at will and that eviction never shrank (it deleted the
+      # JSON, not the directory). Threadpooling only the sweep left the walk --
+      # the part whose cost grows with the attack -- exactly where it stalls
+      # every other route. Found by review (#406).
+            def _sweep_arena_dirs() -> None:
+                dirs = _arena_all_user_dirs()
+                prune_retained_dirs(
+                    dirs,
+                    max_bytes=int(arena_max_bytes),
+                    max_entries=int(arena_max_entries),
+                    log=log,
                 )
+                drop_empty_arena_dirs(
+                    dirs, keep=user_dir, default_arena_root=arena_inbox.resolve(),
+                )
+
+            with contextlib.suppress(OSError):
+                await run_in_threadpool(_sweep_arena_dirs)
 
         return {
             "stored": True,
@@ -4325,6 +4807,63 @@ def create_app(
         same ``.reason.txt`` sidecar as the upload-time quarantine path — these
         shards surface days later, so the reason must not depend on log
         retention.
+
+        ⚑⚑ THIS SINK IS DELIBERATELY UNBOUNDED, unlike ``invalid`` and
+        ``client_reports``. Argument (2) is the one that decides it, and it
+        decides it ALONE — (1) is a mitigation, not a guarantee:
+
+        1. It is HARDER to reach than the budgeted sinks, and NOT proven
+           unreachable. Do not read it as unreachable. Entries arrive only from
+           shards this server accepted and promoted into ``_pending`` that then
+           fail to load at startup, so an uploader would have to get a shard
+           PAST upload validation and have it fail LATER. The obvious vector
+           for that is measured and closed: a shard with well-formed
+           ``.zattrs`` but corrupt compressed array data is refused at upload
+           (``RuntimeError: error during blosc decompression`` → ``invalid``,
+           never reaching ``_pending``), because ``_finish_upload`` does a
+           non-lazy ``load_shard_arrays`` BEFORE it promotes.
+
+           ⚑ ONLY THAT ONE CALL GATES, AND THIS DOCSTRING USED TO CLAIM TWO.
+           It cited "``load_shard_arrays`` AND ``arrays_to_samples``, the same
+           two calls recovery makes". The order on the upload path is
+           ``load_shard_arrays`` (:3457, :3463) → PROMOTE (:3610) →
+           ``arrays_to_samples`` (:3672). The second call runs AFTER the
+           promote, so it cannot gate anything: a shard that loads but fails
+           ``arrays_to_samples`` 500s the upload and is left sitting in
+           ``_pending`` under an attacker-chosen trial id, which is exactly the
+           state boot-time ``_scan_pending_dir`` turns into an ``unloadable``
+           entry. The mitigation is HALF what was written, and keeping that
+           sentence honest is this docstring's entire job.
+
+           ⚑ NOT OVERSTATED IN THE OTHER DIRECTION EITHER: no input that
+           passes ``load_shard_arrays`` and then fails ``arrays_to_samples``
+           was found — this is a narrowed claim, not a new vector. And
+           ``_scan_pending_dir`` runs at BOOT ONLY, so even a working vector
+           yields entries per server restart rather than per upload, which is a
+           real and previously unstated rate limit.
+
+           That is one construction disproved, not a proof over all of them —
+           and note the attacker still chooses the trial ids one step earlier,
+           so if any vector does exist the growth it produces is
+           per-invented-trial and unbounded. Treat this as residual risk that
+           is accepted below, not as a closed hole.
+        2. It IS the data-preservation channel, and this is decisive on its
+           own. Every quarantine decision on the recovery path is justified by
+           "the bytes survive for an operator to recover" — that is the whole
+           reason recovery quarantines instead of rejecting the way the upload
+           route does, and it is what makes reusing the outage-class
+           ``shard_meta_violations`` here safe at all. A retention sweep would
+           delete exactly those bytes, oldest-first and silently, dissolving
+           the argument. Bounding this sink would therefore have to come with
+           rejecting instead of quarantining, which is the worse trade.
+
+        ⇒ ACCEPTED RESIDUAL RISK, recorded so it reads as a decision rather
+        than an oversight: unbounded growth here is possible if some
+        pass-upload-fail-later vector exists. The growth observed in practice
+        is small — the incident this path was written for (2026-07-24) was 7
+        shards. The answer if that stops being true is an OPERATOR ALERT on the
+        directory's size, not an eviction sweep, because the sweep is precisely
+        what the quarantine-not-reject contract cannot survive.
         """
         qdir = _quarantine_root(trial_key) / "unloadable"
         try:
@@ -4411,6 +4950,44 @@ def create_app(
                             entry, identity_reason)
                 _quarantine_unloadable_pending(
                     entry=entry, trial_key=trial_key, exc=ValueError(identity_reason),
+                )
+                continue
+      # ⚑ THE INVARIANT CHECK RAN ON THE UPLOAD PATH ONLY, so recovery was the
+      # hole in it. `.zattrs` is plain uncompressed JSON with no checksum
+      # (the arrays are Blosc/zstd and fail loudly; the counter channel does
+      # not), and a pending shard sits on disk across a crash and a restart --
+      # so the window between "validated at upload" and "read back here" is
+      # exactly where an unchecked flipped digit lands. `wins`/`draws`/`losses`
+      # become the PID's curriculum winrate. Found by review (#406).
+      #
+      # ⚑⚑ QUARANTINE, NOT REJECT, AND THE SANCTION IS THE WHOLE ARGUMENT.
+      # `shard_meta_violations` is an outage-class function: an earlier version
+      # summed children that do not partition their parent (an adjudicated draw
+      # increments `selfplay_games`, `selfplay_adjudicated_games` AND
+      # `selfplay_draw_games`) and would have terminally rejected ordinary
+      # shards, i.e. ingest to zero. That history is the reason to be careful
+      # about reusing it on a new path, and it is also why the recovery path is
+      # the SAFE one to reuse it on: here the penalty is a move into
+      # `quarantine/unloadable`, which keeps the bytes, versus the upload
+      # route's terminal `rejected` which makes the worker drop the shard
+      # forever. A false positive here costs one shard's samples and leaves a
+      # named, restorable file with the failing predicate in its sidecar --
+      # strictly weaker than the sanction the same predicates already carry in
+      # production.
+      #
+      # `positions` is the SERVER's own row count, same instrument as the
+      # upload path (`shard_arrs["x"].shape[0]`), not the uploader's counter.
+            meta_violations = shard_meta_violations(
+                meta_dict, positions=int(arrs["x"].shape[0]),
+            )
+            if meta_violations:
+                log.warning(
+                    "pending shard %s has inconsistent counter metadata; "
+                    "quarantining: %s", entry, "; ".join(meta_violations),
+                )
+                _quarantine_unloadable_pending(
+                    entry=entry, trial_key=trial_key,
+                    exc=ValueError("; ".join(meta_violations)),
                 )
                 continue
             model_sha = str(meta_dict.get("model_sha256") or "")

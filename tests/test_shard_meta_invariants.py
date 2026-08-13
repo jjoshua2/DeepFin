@@ -262,7 +262,7 @@ def _mk(root, name: str, *, size: int, mtime: float, sidecar: bool = True):
 def test_prune_evicts_oldest_first_under_a_byte_budget(tmp_path) -> None:
     """A quarantined shard diagnoses a defect happening NOW, so the newest
     entries are the ones worth keeping."""
-    from chess_anti_engine.server.app import prune_retained_dir
+    from chess_anti_engine.server.app import prune_retained_dirs
 
     q = tmp_path / "invalid"
     q.mkdir()
@@ -270,7 +270,7 @@ def test_prune_evicts_oldest_first_under_a_byte_budget(tmp_path) -> None:
     _mk(q, "mid.tar", size=1000, mtime=2_000_000)
     _mk(q, "new.tar", size=1000, mtime=3_000_000)
 
-    freed_entries, freed_bytes = prune_retained_dir(q, max_bytes=2500, max_entries=0)
+    freed_entries, freed_bytes = prune_retained_dirs([q], max_bytes=2500, max_entries=0)
     assert freed_entries == 1
     assert freed_bytes >= 1000
     names = {p.name for p in q.iterdir()}
@@ -285,14 +285,14 @@ def test_prune_evicts_oldest_first_under_a_byte_budget(tmp_path) -> None:
 def test_prune_enforces_the_entry_count_independently(tmp_path) -> None:
     """Either limit can bind: a flood of tiny invalid uploads burns inodes
     while declaring almost no bytes."""
-    from chess_anti_engine.server.app import prune_retained_dir
+    from chess_anti_engine.server.app import prune_retained_dirs
 
     q = tmp_path / "invalid"
     q.mkdir()
     for i in range(10):
         _mk(q, f"s{i}.tar", size=1, mtime=1_000_000 + i)
 
-    prune_retained_dir(q, max_bytes=0, max_entries=4)
+    prune_retained_dirs([q], max_bytes=0, max_entries=4)
     remaining = sorted(p.name for p in q.iterdir() if not p.name.endswith(".reason.txt"))
     assert len(remaining) == 4, remaining
     assert remaining == ["s6.tar", "s7.tar", "s8.tar", "s9.tar"]
@@ -302,22 +302,22 @@ def test_prune_keeps_everything_when_under_budget(tmp_path) -> None:
     """⚑ NEGATIVE CONTROL. A sweep that deleted unconditionally would pass both
     tests above while destroying the diagnostic value the directory exists for.
     """
-    from chess_anti_engine.server.app import prune_retained_dir
+    from chess_anti_engine.server.app import prune_retained_dirs
 
     q = tmp_path / "invalid"
     q.mkdir()
     for i in range(3):
         _mk(q, f"s{i}.tar", size=10, mtime=1_000_000 + i)
 
-    freed, _ = prune_retained_dir(q, max_bytes=10_000, max_entries=100)
+    freed, _ = prune_retained_dirs([q], max_bytes=10_000, max_entries=100)
     assert freed == 0
     assert len([p for p in q.iterdir() if not p.name.endswith(".reason.txt")]) == 3
 
 
 def test_prune_on_a_missing_dir_is_a_no_op(tmp_path) -> None:
-    from chess_anti_engine.server.app import prune_retained_dir
+    from chess_anti_engine.server.app import prune_retained_dirs
 
-    assert prune_retained_dir(tmp_path / "nope", max_bytes=1, max_entries=1) == (0, 0)
+    assert prune_retained_dirs([tmp_path / "nope"], max_bytes=1, max_entries=1) == (0, 0)
 
 
 def _arena_payload(**over):
@@ -378,7 +378,7 @@ def test_arena_inbox_is_bounded_per_user(tmp_path) -> None:
     server_root = tmp_path / "server"
     server_root.mkdir()
     _seed_user(server_root)
-    client = _build_client(server_root, arena_user_max_entries=5, arena_user_max_bytes=0)
+    client = _build_client(server_root, arena_max_entries=5, arena_max_bytes=0)
 
     for i in range(12):
         r = client.post(
@@ -399,7 +399,7 @@ def test_sidecar_bytes_count_toward_the_budget(tmp_path) -> None:
     it over. The reason text is an exception message -- attacker-influenced and
     unbounded -- so the ceiling could be walked straight past.
     """
-    from chess_anti_engine.server.app import prune_retained_dir
+    from chess_anti_engine.server.app import prune_retained_dirs
 
     q = tmp_path / "invalid"
     q.mkdir()
@@ -412,7 +412,7 @@ def test_sidecar_bytes_count_toward_the_budget(tmp_path) -> None:
         os.utime(p, (1_000_000 + i, 1_000_000 + i))
 
     # Shards alone are 300 bytes -- under budget. With sidecars it is 15300.
-    prune_retained_dir(q, max_bytes=6000, max_entries=0)
+    prune_retained_dirs([q], max_bytes=6000, max_entries=0)
 
     actual = sum(f.stat().st_size for f in q.rglob("*") if f.is_file())
     assert actual <= 6000, (
@@ -435,7 +435,7 @@ def test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids(tmp_path) -> N
     server_root = tmp_path / "server"
     server_root.mkdir()
     _seed_user(server_root)
-    client = _build_client(server_root, arena_user_max_entries=4, arena_user_max_bytes=0)
+    client = _build_client(server_root, arena_max_entries=4, arena_max_bytes=0)
 
     # Same account, a different invented trial id every time.
     for i in range(15):
@@ -455,7 +455,7 @@ def test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids(tmp_path) -> N
 
 def test_quarantine_sweep_is_wired_to_the_upload_route(tmp_path) -> None:
     """⚑⚑ REGRESSION (review finding, P2). Replacing the whole
-    `prune_retained_dir(qdir, ...)` call in the upload route with `pass` left
+    `prune_retained_dirs(...)` call in the upload route with `pass` left
     every one of the original tests GREEN: they all called the helper directly,
     and only the ARENA path had a route-level test.
 
@@ -576,3 +576,899 @@ def test_a_rejected_arena_result_does_not_block_the_queue(tmp_path) -> None:
     assert not (pending / "1000_bad.json").exists()
     assert (rejected / "1000_bad.json").exists()
     assert not (pending / "2000_good.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# #406: the quarantine sinks kept the per-directory sweep that the arena path
+# had already been fixed off, so trial-id rotation still bought a fresh budget.
+# ---------------------------------------------------------------------------
+
+
+def _retained_quarantine(server_root, subdir: str) -> list:
+    """Every retained entry of one quarantine sink, across ALL trials.
+
+    Deliberately a whole-tree walk rather than a lookup under the trial the
+    request named: the defect is that entries pile up under trials the caller
+    invented, so a test that only looked where it wrote could not see it.
+
+    ⚑ RECURSES BELOW THE SINK AND COUNTS FILES ONLY. #407 put a per-user
+    bucket between the sink and the entries. The previous `quarantine/<subdir>/*`
+    glob would now match those BUCKET DIRECTORIES, so an entry-count assertion
+    would read "1 entry" for a user holding a thousand and a byte-sum guarded by
+    `is_file()` would read ZERO -- a gate that cannot fail, in the tests written
+    to prove the budget holds.
+    """
+    return [
+        p
+        for sink in server_root.rglob(f"quarantine/{subdir}")
+        for p in sink.rglob("*")
+        if p.is_file() and not p.name.endswith(".reason.txt")
+    ]
+
+
+def test_quarantine_invalid_retention_survives_trial_id_rotation(tmp_path) -> None:
+    """⚑⚑ REGRESSION (#406, P1). The same defect as
+    `test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids`, in the
+    sibling sink that fix did not reach.
+
+    `quarantine_root` comes from `_quarantine_root(trial_id)` and the sweep was
+    the per-directory `prune_retained_dir`. `_normalize_trial_id` only
+    syntax-checks the id, and with the default `require_worker_lease=False`
+    `_check_worker_compat` admits a trial whose manifest is not published, so
+    every invented id was handed a fresh full allowance.
+
+    ⚑ Asserts on ENTRIES ON DISK, not on a response body: every one of these
+    uploads is answered `rejected: True` whether the budget holds or not, so
+    the response cannot tell the fix from the bug.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    # 12 rejected uploads, each under a trial id the client invents.
+    for i in range(12):
+        r = client.post(
+            f"/v1/trials/rotate_{i}/upload_shard",
+            auth=("u", "p"),
+            files={"file": (f"s{i}.zarr.tar", b"not a tar at all %d" % i,
+                            "application/x-tar")},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("rejected") is True, r.json()
+
+    kept = _retained_quarantine(server_root, "invalid")
+    assert len(kept) <= 3, (
+        f"{len(kept)} quarantined shards retained against a 3-entry budget -- "
+        "rotating trial ids bought a fresh allowance each time"
+    )
+
+
+def test_quarantine_invalid_holds_a_byte_budget_across_trials(tmp_path) -> None:
+    """The byte half of the same budget, read as bytes actually on disk.
+
+    An entry-count assertion alone would pass a sweep that kept three
+    arbitrarily large uploads, and disk exhaustion is the failure this bound
+    exists to stop -- so the bytes are the thing to measure.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    # 4 KiB across every trial; entry count unbounded so only bytes can bind.
+    client = _build_client(
+        server_root, quarantine_max_entries=0, quarantine_max_bytes=4096,
+    )
+
+    for i in range(12):
+        r = client.post(
+            f"/v1/trials/rot_{i}/upload_shard",
+            auth=("u", "p"),
+            files={"file": (f"s{i}.zarr.tar", b"x" * 1024 + b"%d" % i,
+                            "application/x-tar")},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("rejected") is True, r.json()
+
+    # ⚑ Recurses past the per-user bucket #407 introduced. The old
+    # `quarantine/invalid/*` + `is_file()` pair sums to ZERO under that layout,
+    # so this assertion would have passed no matter how many bytes were on disk.
+    # Sidecars are counted here because the budget counts them.
+    on_disk = sum(
+        f.stat().st_size
+        for sink in server_root.rglob("quarantine/invalid")
+        for f in sink.rglob("*")
+        if f.is_file()
+    )
+    assert on_disk <= 4096, (
+        f"quarantine holds {on_disk} bytes against a 4096 byte budget -- "
+        "the budget is being applied per invented trial"
+    )
+
+
+def test_client_report_sink_retention_survives_trial_id_rotation(tmp_path) -> None:
+    """The cheapest sink to spam, and the second per-trial call site.
+
+    A small authenticated JSON POST with no tar and no size cap. Bounding
+    `quarantine/invalid` across trials and leaving this one per-trial would
+    close the expensive bypass and leave the cheap one open.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    for i in range(12):
+        r = client.post(
+            f"/v1/trials/report_{i}/report_bad_shard",
+            auth=("u", "p"),
+            json={"shard_name": f"s{i}.zarr", "reason": "unreadable"},
+        )
+        assert r.status_code == 200, r.text
+
+    kept = _retained_quarantine(server_root, "client_reports")
+    assert len(kept) <= 3, (
+        f"{len(kept)} client reports retained against a 3-entry budget -- "
+        "rotating trial ids bought a fresh allowance each time"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #407 review, P1: `.` is a well-formed trial id that pathlib COLLAPSES, so the
+# write landed outside every swept set and no budget was enforced at all.
+# ---------------------------------------------------------------------------
+
+
+DOT_TRIAL = "%2E"  # `.`, percent-encoded so the client sends it verbatim.
+
+
+def test_a_dot_trial_id_is_refused_rather_than_collapsed(tmp_path) -> None:
+    """⚑⚑ REGRESSION (#407 review, P1). The ROOT of the three bypasses below.
+
+    `_trial_id_re` is a charset allowlist and `.` satisfies it, so the id was
+    accepted and then JOINED onto a root -- and `trials/./quarantine/invalid`
+    collapses to `quarantine/invalid`. The entries landed in a directory no
+    cross-trial enumerator lists, so every budget below was silently unenforced.
+
+    Asserts the id is refused at the DOOR, which is what makes one fix cover
+    all three sinks. `..` is the control: it was already harmless (it resolves
+    onto a swept sink) and must be refused by the same predicate anyway.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root)
+
+    for encoded in (DOT_TRIAL, "%2E%2E"):
+        r = client.post(
+            f"/v1/trials/{encoded}/report_bad_shard",
+            auth=("u", "p"),
+            json={"shard_name": "s.zarr", "reason": "unreadable"},
+        )
+        assert r.status_code == 400, (
+            f"trial_id {encoded!r} was accepted with {r.status_code}: {r.text}"
+        )
+
+    # ⚑ NEGATIVE CONTROL: a `.` INSIDE an otherwise ordinary id is legitimate
+    # (`trial.1` is a real Ray trial name shape) and must still be accepted.
+    # A predicate that rejected every dot would break real workers.
+    r = client.post(
+        "/v1/trials/trial.1/report_bad_shard",
+        auth=("u", "p"),
+        json={"shard_name": "s.zarr", "reason": "unreadable"},
+    )
+    assert r.status_code == 200, f"a dotted-but-safe trial id was refused: {r.text}"
+
+
+def test_quarantine_invalid_budget_cannot_be_bypassed_by_a_dot_trial_id(
+    tmp_path,
+) -> None:
+    """Budget 1 of 3. Measured before the fix: 12 retained against a 3 budget.
+
+    ⚑ Asserts on entries ON DISK across the WHOLE tree, not under the trial the
+    request named: the defect is precisely that the write went somewhere the
+    caller did not name and the sweep did not look.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    for i in range(12):
+        client.post(
+            f"/v1/trials/{DOT_TRIAL}/upload_shard",
+            auth=("u", "p"),
+            files={"file": (f"s{i}.zarr.tar", b"not a tar at all %d" % i,
+                            "application/x-tar")},
+        )
+
+    kept = _retained_quarantine(server_root, "invalid")
+    assert len(kept) <= 3, (
+        f"{len(kept)} quarantined shards retained against a 3-entry budget -- "
+        "a `.` trial id writes outside every swept directory"
+    )
+
+
+def test_client_report_budget_cannot_be_bypassed_by_a_dot_trial_id(tmp_path) -> None:
+    """Budget 2 of 3. Measured before the fix: 12 retained against a 3 budget."""
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    for i in range(12):
+        client.post(
+            f"/v1/trials/{DOT_TRIAL}/report_bad_shard",
+            auth=("u", "p"),
+            json={"shard_name": f"s{i}.zarr", "reason": "unreadable"},
+        )
+
+    kept = _retained_quarantine(server_root, "client_reports")
+    assert len(kept) <= 3, (
+        f"{len(kept)} client reports retained against a 3-entry budget -- "
+        "a `.` trial id writes outside every swept directory"
+    )
+
+
+def test_arena_budget_cannot_be_bypassed_by_a_dot_trial_id(tmp_path) -> None:
+    """Budget 3 of 3, and this one is LIVE ON `main`, independent of #407.
+
+    Measured on `main`: 15 arena results retained against a 4-entry per-user
+    budget. `test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids`
+    (#402) rotates ids of the form `rotate_i` and therefore cannot see the
+    strongest form of the bypass it is named for.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, arena_max_entries=4, arena_max_bytes=0)
+
+    for i in range(15):
+        client.post(
+            f"/v1/trials/{DOT_TRIAL}/upload_arena_result",
+            auth=("u", "p"),
+            json=_arena_payload(generated_at_unix=1_700_000_000 + i),
+        )
+
+    kept = list(server_root.rglob("arena_inbox/*/*.json"))
+    assert len(kept) <= 4, (
+        f"{len(kept)} arena results retained against a 4-entry per-user budget -- "
+        "a `.` trial id writes outside every swept directory"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #407 review, P1-2: the server-wide budget let any worker evict every other
+# worker's retained diagnostics. The fairness key is the USER.
+# ---------------------------------------------------------------------------
+
+
+def _seed_two_users(server_root) -> None:
+    from chess_anti_engine.server.auth import UserRecord, hash_password, save_users
+
+    users = {}
+    for name in ("victim", "attacker"):
+        salt, hsh, iters = hash_password("p")
+        users[name] = UserRecord(
+            username=name, salt_b64=salt, hash_b64=hsh, iterations=iters,
+        )
+    save_users(server_root / "users.json", users)
+
+
+def _bad_upload(client, *, user: str, trial: str, name: str, body: bytes):
+    return client.post(
+        f"/v1/trials/{trial}/upload_shard",
+        auth=(user, "p"),
+        files={"file": (name, body, "application/x-tar")},
+    )
+
+
+def test_one_worker_cannot_evict_another_workers_quarantined_evidence(
+    tmp_path,
+) -> None:
+    """⚑⚑ REGRESSION (#407 review, P1-2). THE GUARANTEE.
+
+    #406 made `quarantine/invalid` server-wide to close the id-rotation
+    bypass, and thereby built the exact "diagnostic-destruction primitive"
+    this PR's own body spends three paragraphs arguing against for the
+    pooled-sinks case: the sweep is global and mtime-ordered, so ~200 junk
+    uploads evict everyone else's retained diagnostics oldest-first.
+
+    Measured before this fix, budget 3: victim's evidence -> `[]`, where
+    `main` (per-trial budget) preserved it.
+
+    The username is the only fairness key available: trial ids are
+    caller-invented, so keying on them hands back the bypass.
+    """
+    from .test_server_upload_security import _build_client
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_two_users(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    r = _bad_upload(
+        client, user="victim", trial="t_real", name="victim.zarr.tar",
+        body=b"not a tar -- the evidence",
+    )
+    assert r.json().get("rejected") is True, r.json()
+    # ⚑ The server renames an upload to its own `tmp_<pid>_<hex>` name, so the
+    # evidence is identified by the PATH it landed on, not by what it was
+    # called on the wire.
+    evidence = _retained_quarantine(server_root, "invalid")
+    assert len(evidence) == 1, evidence
+    victim_entry = evidence[0]
+
+    # The attacker floods, rotating trial ids as well, from its own account.
+    for i in range(12):
+        _bad_upload(
+            client, user="attacker", trial=f"attacker_{i}",
+            name=f"j{i}.zarr.tar", body=b"junk %d" % i,
+        )
+
+    assert victim_entry.exists(), (
+        "the attacker's flood destroyed the victim's retained evidence at "
+        f"{victim_entry} -- the budget is a diagnostic-destruction primitive "
+        "across users"
+    )
+    # ⚑ AND THE BOUND STILL HOLDS. A fix that simply stopped evicting would
+    # also keep the victim's entry, and would reopen finding [4]. The
+    # attacker's own bucket must still be at budget.
+    kept = _retained_quarantine(server_root, "invalid")
+    attacker_kept = [p for p in kept if p != victim_entry]
+    assert len(attacker_kept) <= 3, (
+        f"{len(attacker_kept)} attacker entries retained against a 3-entry "
+        "per-user budget -- per-user fairness was bought by dropping the bound"
+    )
+    # The buckets really are keyed by user, not by trial.
+    assert victim_entry.parent.name == "victim", victim_entry
+    assert {p.parent.name for p in attacker_kept} == {"attacker"}, attacker_kept
+
+
+def test_one_users_own_flood_still_evicts_its_own_older_evidence(tmp_path) -> None:
+    """⚑ THE LIMIT OF THE P1-2 FIX, PINNED RATHER THAN ASSUMED.
+
+    The review's repro is single-user, cross-TRIAL. This fix does not restore
+    `main`'s behaviour there, and that is deliberate: within one authenticated
+    account the entries compete for that account's quota, oldest-first. Trial
+    id cannot be the fairness key -- it is caller-invented, so a per-trial
+    floor hands back the rotation bypass, and per-trial fair EVICTION does not
+    help either, because one entry under each of many invented ids makes every
+    contributor tie at one and the tie-break is the oldest entry, the victim.
+
+    So: one worker cannot destroy ANOTHER worker's diagnostics (the test
+    above), and one worker can still age out its OWN. This test exists so that
+    limit is a recorded decision rather than an accident nobody measured.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    r = _bad_upload(
+        client, user="u", trial="t_real", name="old.zarr.tar", body=b"not a tar old",
+    )
+    assert r.json().get("rejected") is True, r.json()
+    first = _retained_quarantine(server_root, "invalid")
+    assert len(first) == 1, first
+    oldest = first[0]
+
+    for i in range(12):
+        _bad_upload(
+            client, user="u", trial=f"rot_{i}", name=f"j{i}.zarr.tar",
+            body=b"junk %d" % i,
+        )
+
+    kept = _retained_quarantine(server_root, "invalid")
+    assert len(kept) <= 3, (
+        f"{len(kept)} retained against a 3-entry per-user budget -- the "
+        "per-user bucketing lost the bound it was built on top of"
+    )
+    assert not oldest.exists(), (
+        f"the oldest entry ({oldest}) survived a 12-upload flood from the SAME "
+        "account -- if this now passes, the budget grew a per-trial floor, "
+        "which is exactly the rotation bypass #406 closed"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #407 re-review, P2: `worker_self_register` makes the bucket count
+# CALLER-controlled, so a per-user budget is not a bound. Ceiling is global;
+# fairness is the victim choice under it.
+# ---------------------------------------------------------------------------
+
+
+def test_minted_accounts_cannot_raise_the_quarantine_ceiling(tmp_path) -> None:
+    """⚑⚑ REGRESSION (#407 re-review, P2). The per-user budget's stated premise
+    was "usernames are administrator-created, so the bucket count is bounded".
+
+    `worker_self_register` is a shipped yaml run-config key
+    (`config_yaml.py:318`, plumbed via `harness.py:495`) and the #400-#403
+    volunteer-hardening series exists to enable it. With it on, the caller
+    mints buckets, so a per-user allowance multiplies the ceiling by a number
+    the ATTACKER picks.
+
+    Measured before this fix: 3 minted accounts retained **9** entries against
+    a 3-entry budget. At the 4 GiB default that is ~40 GiB in the first hour
+    from one IP (registration throttles at 5/IP/hour with no global account
+    cap), against the 8 GiB the global bound had.
+
+    Nothing was live -- the flag defaults off and production's
+    `pbt2_small.yaml` does not set it -- but a docstring claiming a bound that
+    a config key silently falsifies is this repo's signature defect.
+    """
+    from .test_server_upload_security import _build_client
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    client = _build_client(
+        server_root, quarantine_max_entries=3, quarantine_max_bytes=0,
+        worker_self_register=True,
+    )
+
+    for account in ("attacker_a", "attacker_b", "attacker_c"):
+        for i in range(4):
+            client.post(
+                "/v1/upload_shard",
+                auth=(account, "pw12345678"),
+                files={"file": (f"s{i}.zarr.tar", b"not a tar %d" % i,
+                                "application/x-tar")},
+            )
+
+    kept = _retained_quarantine(server_root, "invalid")
+    buckets = sorted({p.parent.name for p in kept})
+    assert len(kept) <= 3, (
+        f"{len(kept)} entries retained across buckets {buckets} against a "
+        "3-entry GLOBAL budget -- self-registration mints buckets, so a "
+        "per-user allowance is a caller-controlled ceiling"
+    )
+
+
+def test_minted_accounts_cannot_raise_the_arena_ceiling(tmp_path) -> None:
+    """The identical exposure in the arena sink -- PRE-EXISTING since #402.
+
+    `_arena_user_dirs_all_trials` keyed the budget on username from #402, so
+    `arena_user_max_*` was `users x 256 MiB` with a caller-controlled
+    multiplier the moment self-registration is on. Measured before this fix:
+    3 minted accounts retained **6** results against a 2-entry budget.
+
+    This is a bug being closed, not precedent that made the quarantine design
+    safe -- the quarantine sinks were given this shape earlier in #407 by
+    copying it.
+    """
+    from .test_server_upload_security import _build_client
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    client = _build_client(
+        server_root, arena_max_entries=2, arena_max_bytes=0,
+        worker_self_register=True,
+    )
+
+    for account in ("a_one", "a_two", "a_three"):
+        for i in range(4):
+            client.post(
+                "/v1/upload_arena_result",
+                auth=(account, "pw12345678"),
+                json=_arena_payload(generated_at_unix=1_700_000_000 + i),
+            )
+
+    kept = list(server_root.rglob("arena_inbox/*/*.json"))
+    buckets = sorted({p.parent.name for p in kept})
+    assert len(kept) <= 2, (
+        f"{len(kept)} arena results retained across buckets {buckets} against "
+        "a 2-entry GLOBAL budget -- minted accounts bought ceiling"
+    )
+
+
+def test_the_ceiling_evicts_the_largest_bucket_not_the_oldest_entry(
+    tmp_path,
+) -> None:
+    """⚑⚑ THE FAIRNESS POLICY ITSELF. "Which bucket loses" is exactly where a
+    fairness fix silently becomes a fairness bug, so it gets a direct test
+    rather than being inferred from the end-to-end ones.
+
+    Policy: evict the OLDEST entry of the LARGEST-CONTRIBUTING bucket. Here the
+    victim's single entry is the OLDEST thing in the sink, so a plain
+    oldest-first sweep -- the #406 behaviour -- destroys it first. Largest-first
+    puts the whole cost of the flood on the flooder.
+    """
+    from chess_anti_engine.server.app import prune_retained_dirs
+
+    sink = tmp_path / "invalid"
+    victim_dir = sink / "victim"
+    hog_dir = sink / "hog"
+    victim_dir.mkdir(parents=True)
+    hog_dir.mkdir(parents=True)
+
+    victim = _mk(victim_dir, "v0.tar", size=100, mtime=1_000_000, sidecar=False)
+    hogs = [
+        _mk(hog_dir, f"h{i}.tar", size=100, mtime=1_000_010 + i, sidecar=False)
+        for i in range(6)
+    ]
+
+    prune_retained_dirs([victim_dir, hog_dir], max_bytes=0, max_entries=3)
+
+    assert victim.exists(), (
+        "the victim's single entry was evicted -- it is the OLDEST in the sink, "
+        "so this is a global oldest-first sweep, not largest-bucket-first"
+    )
+    assert sum(1 for p in hogs if p.exists()) == 2, (
+        f"hog kept {[p.name for p in hogs if p.exists()]}; the flood should "
+        "absorb every eviction down to the 3-entry ceiling"
+    )
+
+
+def test_the_byte_ceiling_evicts_the_bucket_holding_the_bytes(tmp_path) -> None:
+    """⚑ THE DIMENSION MATTERS: largest is measured in whichever ceiling BINDS.
+
+    Here bytes bind and entries do not. The bucket with the most ENTRIES holds
+    almost no bytes; the bucket with the most BYTES holds two entries. Choosing
+    the victim by entry count would evict the small-bytes bucket and never get
+    under the byte ceiling without destroying far more diagnostics than needed.
+    """
+    from chess_anti_engine.server.app import prune_retained_dirs
+
+    sink = tmp_path / "invalid"
+    many_small = sink / "many_small"
+    few_big = sink / "few_big"
+    many_small.mkdir(parents=True)
+    few_big.mkdir(parents=True)
+
+    smalls = [
+        _mk(many_small, f"s{i}.tar", size=10, mtime=1_000_000 + i, sidecar=False)
+        for i in range(5)
+    ]
+    bigs = [
+        _mk(few_big, f"b{i}.tar", size=500, mtime=1_000_100 + i, sidecar=False)
+        for i in range(2)
+    ]
+
+    # 1050 bytes total against a 600-byte ceiling; entry count unbounded.
+    prune_retained_dirs([many_small, few_big], max_bytes=600, max_entries=0)
+
+    assert all(p.exists() for p in smalls), (
+        "the 5-entry / 50-byte bucket was evicted under a BYTE ceiling -- the "
+        "victim is being chosen by entry count while bytes are what binds"
+    )
+    assert sum(1 for p in bigs if p.exists()) == 1, (
+        f"few_big kept {[p.name for p in bigs if p.exists()]}; one 500-byte "
+        "eviction is what brings 1050 under 600"
+    )
+
+
+def test_the_two_quarantine_sinks_do_not_share_one_budget(tmp_path) -> None:
+    """⚑ NEGATIVE CONTROL on the SHAPE of the fix, not just its presence.
+
+    Pooling both sinks into a single budget would also close the rotation
+    bypass -- and would hand the CHEAPEST sink the power to evict the most
+    EXPENSIVE diagnostics, because the sweep is global and mtime-ordered: a
+    burst of tiny `report_bad_shard` posts would delete every retained bad
+    shard. This pins that the shard sink survives a report flood.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("keepme.zarr.tar", b"not a tar", "application/x-tar")},
+    )
+    assert r.json().get("rejected") is True, r.json()
+
+    for i in range(12):
+        client.post(
+            "/v1/report_bad_shard",
+            auth=("u", "p"),
+            json={"shard_name": f"s{i}.zarr", "reason": "unreadable"},
+        )
+
+    assert _retained_quarantine(server_root, "invalid"), (
+        "a flood of cheap client reports evicted the retained bad shard -- "
+        "the two sinks are sharing one budget"
+    )
+
+
+def test_pre_bucketing_quarantine_entries_are_drained_by_the_sweep(
+    tmp_path,
+) -> None:
+    """⚑ REGRESSION (#407 re-review, P3). `legacy_roots` had ZERO coverage --
+    mutating it to never be walked left the whole suite green.
+
+    #407 moved quarantine entries from `quarantine/<subdir>/<entry>` to
+    `quarantine/<subdir>/<user>/<entry>`. Entries written by the OLD code sit
+    at the flat level, and if the sweep does not reach them they are a
+    permanently unswept residue: the disk bound quietly not applying to exactly
+    the entries that predate the bound. That is the "accepted and then silently
+    ignored" shape, so it needs a test rather than a hand-verification.
+
+    Simulates a real upgrade: 10 pre-bucketing flat entries already on disk,
+    then one new upload arrives and triggers the sweep.
+    """
+    import os
+
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    sink = server_root / "quarantine" / "invalid"
+    sink.mkdir(parents=True, exist_ok=True)
+    legacy = []
+    for i in range(10):
+        p = sink / f"old{i}.zarr.tar"
+        p.write_bytes(b"x" * 100)
+        os.utime(p, (1_000_000 + i, 1_000_000 + i))
+        legacy.append(p)
+
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("new.zarr.tar", b"not a tar", "application/x-tar")},
+    )
+    assert r.json().get("rejected") is True, r.json()
+
+    kept = _retained_quarantine(server_root, "invalid")
+    assert len(kept) <= 3, (
+        f"{len(kept)} entries retained against a 3-entry budget -- "
+        f"{sum(1 for p in legacy if p.exists())} pre-bucketing flat entries "
+        "were never swept, so the bound does not apply to them"
+    )
+    # ⚑ And the drain is FAIR too: the unattributed bucket holds 10 of the 11,
+    # so it absorbs the evictions and the new upload survives.
+    assert any(p.parent.name == "u" for p in kept), (
+        "the new upload was evicted while 10 legacy entries competed -- the "
+        "legacy pool is not being treated as its own bucket"
+    )
+
+
+def test_a_sweep_does_not_claim_sidecar_bytes_another_sweep_removed(
+    tmp_path,
+) -> None:
+    """⚑ REGRESSION (#407 review, P2). The HALF of the exactness fix that #406
+    left inexact.
+
+    #406 tracked the ENTRY's deletion but left the sidecar on
+    `unlink(missing_ok=True)` -- untracked -- while crediting the whole `size`
+    to `freed_bytes`, and `size` INCLUDES the sidecar's bytes. So under the
+    very two-sweep race the fix was written for, a sweep whose peer had already
+    taken the `.reason.txt` still reported those bytes as its own, and
+    `freed_bytes` still did not mean "bytes this sweep removed".
+
+    Driven through the real pair, with the concurrent deletion landing between
+    the snapshot and the sweep exactly where a racing sweep's would -- and it
+    removes ONLY the sidecar, which is the case the entry-level fix cannot see.
+    """
+    from chess_anti_engine.server.app import _evict_fairly, _retention_entries
+
+    q = tmp_path / "invalid"
+    q.mkdir()
+    for i in range(3):
+        _mk(q, f"s{i}.tar", size=1000, mtime=1_000_000 + i, sidecar=True)
+    sidecar_bytes = (q / "s0.tar.reason.txt").stat().st_size
+    assert sidecar_bytes > 0
+
+    entries = _retention_entries(q)
+    assert len(entries) == 3
+
+    # A concurrent sweep took the oldest victim's SIDECAR only.
+    (q / "s0.tar.reason.txt").unlink()
+
+    freed_entries, freed_bytes = _evict_fairly(
+        entries, max_bytes=0, max_entries=2, log=None, label="test",
+    )
+
+    assert freed_entries == 1, freed_entries
+    assert freed_bytes == 1000, (
+        f"reported {freed_bytes} bytes freed; this sweep removed the 1000-byte "
+        f"entry but NOT its {sidecar_bytes}-byte sidecar, which another sweep "
+        "had already taken"
+    )
+
+
+def test_a_sweep_reports_only_the_evictions_it_performed(tmp_path) -> None:
+    """⚑ REGRESSION (#406, P2). `unlink(missing_ok=True)` made a file another
+    concurrent sweep had already deleted indistinguishable from one this sweep
+    deleted, so both counted it and the reported totals summed to more than the
+    bytes that left the disk.
+
+    Driven through the real production pair: `_retention_entries` builds the
+    snapshot, a deletion lands between the two calls exactly where a racing
+    sweep's would, and `_evict_fairly` then runs on that snapshot. No
+    test double, and nothing pre-seeded -- the state asserted on is the state
+    the production functions produce.
+    """
+    from chess_anti_engine.server.app import _evict_fairly, _retention_entries
+
+    q = tmp_path / "invalid"
+    q.mkdir()
+    for i in range(4):
+        _mk(q, f"s{i}.tar", size=1000, mtime=1_000_000 + i, sidecar=False)
+
+    entries = _retention_entries(q)
+    assert len(entries) == 4
+
+    # A concurrent sweep gets to the oldest victim first.
+    (q / "s0.tar").unlink()
+
+    freed_entries, freed_bytes = _evict_fairly(
+        entries, max_bytes=0, max_entries=2, log=None, label="test",
+    )
+
+    assert freed_entries == 1, (
+        f"reported {freed_entries} evictions when only s1 was actually removed "
+        "by this sweep -- a file the other sweep deleted is being counted"
+    )
+    assert freed_bytes == 1000, f"reported {freed_bytes} bytes freed, removed 1000"
+    # ⚑ The other half, and the reason `over_count` still counts absences
+    # rather than this sweep's own deletions: not crediting the phantom must
+    # not make the sweep keep deleting. The budget is 2 and 2 must survive.
+    remaining = sorted(p.name for p in q.iterdir())
+    assert remaining == ["s2.tar", "s3.tar"], (
+        f"sweep over-evicted to {remaining} -- it deleted past the budget "
+        "because a concurrently-removed entry stopped counting toward it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #406: the cross-trial arena walk ran on the event loop, over a directory set
+# that eviction never shrank.
+# ---------------------------------------------------------------------------
+
+
+def test_the_cross_trial_arena_walk_does_not_run_on_the_event_loop(
+    tmp_path, monkeypatch,
+) -> None:
+    """⚑⚑ REGRESSION (#406, P1). Only the SWEEP was hopped to a threadpool;
+    `_arena_user_dirs_all_trials` -- the part whose cost grows with the attack
+    -- was evaluated on the loop thread to build the argument for it.
+
+    The instrument is `asyncio.get_running_loop()` at the moment of the call:
+    it SUCCEEDS on the event loop thread and raises `RuntimeError` inside
+    `run_in_threadpool`. That is production's own definition of "on the loop",
+    not a proxy for it.
+
+    Exactly ONE on-loop `resolve_user_dir` is legitimate -- the route
+    resolving the directory it is about to write to. Every additional one is a
+    per-trial `realpath` pair charged to the loop thread.
+    """
+    import asyncio
+
+    from chess_anti_engine.server import app as app_mod
+
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    # Five trials already on disk, so the walk has something to cost.
+    for i in range(5):
+        (server_root / "trials" / f"t{i}" / "arena_inbox" / "u").mkdir(parents=True)
+
+    real_resolve = app_mod.resolve_user_dir
+    on_loop: list[str] = []
+
+    def _spy(arena_root, username):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass  # Off the loop: a threadpool worker, which is the point.
+        else:
+            on_loop.append(str(arena_root))
+        return real_resolve(arena_root, username)
+
+    monkeypatch.setattr(app_mod, "resolve_user_dir", _spy)
+
+    client = _build_client(server_root)
+    r = client.post("/v1/upload_arena_result", auth=("u", "p"), json=_arena_payload())
+    assert r.status_code == 200, r.text
+
+    assert len(on_loop) == 1, (
+        f"{len(on_loop)} arena directory resolutions ran on the event loop "
+        f"({on_loop}); only the route's own target directory may. The "
+        "cross-trial walk is back on the loop thread."
+    )
+
+
+def test_eviction_removes_the_arena_directories_it_empties(tmp_path) -> None:
+    """⚑ REGRESSION (#406, P1). Eviction deleted the JSON and left
+    `trials/<id>/arena_inbox/<user>/` in place, so a rotation burst left a
+    permanent residue that every later cross-trial walk had to stat.
+
+    Asserts on the DIRECTORIES on disk after the sweep, not on a response.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, arena_max_entries=1, arena_max_bytes=0)
+
+    for i in range(5):
+        r = client.post(
+            f"/v1/trials/rot_{i}/upload_arena_result",
+            auth=("u", "p"),
+            json=_arena_payload(generated_at_unix=1_700_000_000 + i),
+        )
+        assert r.status_code == 200, r.text
+
+    surviving = sorted(p.parent.name for p in server_root.glob("trials/*/arena_inbox"))
+    assert surviving == ["rot_4"], (
+        f"emptied arena directories left behind for {surviving} -- the scanned "
+        "set grows with every invented trial id and never shrinks"
+    )
+    # ⚑ NEGATIVE CONTROL. The server-root `arena_inbox` is created at boot as
+    # part of the layout; sweeping it away would leave the tree unlike a fresh
+    # boot's, and it is a single directory, so it is not the growth.
+    assert (server_root / "arena_inbox").is_dir(), (
+        "the boot-time arena_inbox was removed by the empty-directory sweep"
+    )
+    # And the results themselves still obey the budget.
+    assert len(list(server_root.rglob("arena_inbox/*/*.json"))) == 1
+
+
+def test_an_arena_write_survives_a_concurrent_empty_dir_sweep(tmp_path) -> None:
+    """The race `drop_empty_arena_dirs` opens, closed at the writer.
+
+    A request for trial A can be suspended between its `mkdir` and its
+    `write_bytes` while a request for trial B sweeps A's now-empty directory
+    away; without the retry that is a 500 on an upload that did nothing wrong.
+    Driven by deleting the directory for real, which is what the racing sweep
+    does.
+    """
+    from chess_anti_engine.server.app import write_arena_result
+
+    out = tmp_path / "arena_inbox" / "u" / "deadbeef.json"
+    out.parent.mkdir(parents=True)
+    out.parent.rmdir()  # The concurrent sweep, mid-request.
+
+    write_arena_result(out, b'{"games": 1}')
+
+    assert out.read_bytes() == b'{"games": 1}'
+
+
+def test_the_empty_dir_sweep_keeps_directories_that_still_hold_results(
+    tmp_path,
+) -> None:
+    """⚑ NEGATIVE CONTROL. A sweep that removed unconditionally would pass the
+    residue test above while destroying live arena results."""
+    from chess_anti_engine.server.app import drop_empty_arena_dirs
+
+    root = tmp_path / "arena_inbox"
+    empty = root / "trials" / "t0" / "arena_inbox" / "u"
+    full = root / "trials" / "t1" / "arena_inbox" / "u"
+    keep = root / "trials" / "t2" / "arena_inbox" / "u"
+    for d in (empty, full, keep):
+        d.mkdir(parents=True)
+    (full / "r.json").write_text("{}", encoding="utf-8")
+
+    removed = drop_empty_arena_dirs(
+        [empty, full, keep], keep=keep, default_arena_root=root,
+    )
+
+    assert removed == [empty]
+    assert not empty.exists()
+    assert not empty.parent.exists(), "the emptied per-trial arena_inbox stayed"
+    assert (full / "r.json").is_file(), "a directory holding a result was removed"
+    assert keep.is_dir(), "the request's own target directory was removed"
