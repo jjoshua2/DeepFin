@@ -45485,6 +45485,15 @@ running it — the same error class as [[a_gate_that_cannot_fail]] and
 [[new_tests_here_are_vacuous_until_mutated]], one level up: not a test that cannot fail, but a
 GATE WHOSE PASS CONDITION I NEVER VALIDATED.
 
+**⚑⚑ EVERY NUMBER IN THE TABLE BELOW IS WRONG — SUPERSEDED BY THE 2026-08-13 ENTRY
+"THE EXTERNAL PLACEMENT, CORRECTED" (`8a3c79fb4`). DO NOT QUOTE THIS TABLE.** Three independent
+errors: the BT4 row was scored on the PRE-`#360` ruler (23.79 → **20.08**), the two Ceres rows are
+LABEL-SWAPPED (correct: C1-384-12 **22.77**, C1-512-15 **21.80**), and the castling map was wrong
+(−0.12 cp, the smallest of the three). The broken-encoder row is **n=1000**, a harder stratum, and
+is NOT comparable to the n=4000 rows beside it. Our `ckpt218` 47.34 is the only value that survives.
+⚑ And the headline conclusion inverts: on **E[regret]** we are level with BT4 and BETTER than
+C1-512-15 — the "2×" is a TOP-1-ONLY phenomenon. Kept below only as the record of what was believed.
+
 **What replaced it (author's substitute, and the reviewer is tasked with stress-testing it):**
 the ABSOLUTE LEVEL. Top-1 deep-SF regret, frozen audit set:
 | net | top-1 regret (cp, lower better) |
@@ -46011,3 +46020,12 @@ definitions agreeing.** The 41 was quoted twice before anyone recomputed it.
 
 GPU reachability: **zero** from train/selfplay/mcts/tune/server; `OnnxChessNet` has no non-test
 consumer. Live tree verified still on `ops/live-20260725`. Not merged.
+
+### Footnote: the label-swap diagnosis is CONFIRMED by the entry's own prose
+The original entry's prose read *"E[regret] −1.64 cp RESOLVED favouring C1-512-15, 512-15 lower in
+all 10 buckets"* while its table showed 512-15 HIGHER. Under the corrected values —
+C1-512-15 **21.80** vs C1-384-12 **22.77**, and E 56.39 vs 58.40 — **the prose was right and the
+table was transposed.** Two independent routes (the re-run, and the entry's own internal
+contradiction) agree on which half was wrong. ⇒ the contradiction was a FREE detector that sat
+unread for a day. When a ledger entry states a direction in prose and a magnitude in a table,
+**check they agree before quoting either** — it costs one glance and it caught this.
