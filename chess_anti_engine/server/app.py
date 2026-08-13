@@ -1200,6 +1200,23 @@ def resolve_user_dir(parent: Path, username: str) -> Path | None:
     return path
 
 
+def _same_dir(a: Path, b: Path) -> bool:
+    """Whether two paths name the same directory, symlinks and all.
+
+    `samefile` compares `st_ino`/`st_dev`, which is what "the same directory"
+    MEANS -- it does not care how either path spelled its way there. The
+    resolved-string compare is the fallback for a path that does not exist (or
+    cannot be stat'ed), where there is no inode to compare and the name is all
+    there is; it is still resolution-symmetric, which plain `==` was not.
+    """
+    with contextlib.suppress(OSError):
+        return a.samefile(b)
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
+
+
 def drop_empty_arena_dirs(
     dirs: list[Path], *, keep: Path | None, default_arena_root: Path,
 ) -> list[Path]:
@@ -1227,6 +1244,21 @@ def drop_empty_arena_dirs(
     `default_arena_root` must be resolved too or a symlinked server root makes
     every comparison false and the guard silently stops guarding.
 
+    ⚑⚑ AND THAT SENTENCE WAS THE BUG, NOT THE FIX (#419 F2). Naming the
+    requirement in a docstring left it to be met by every caller, and the one
+    caller met HALF of it: the arena route passed `default_arena_root=
+    arena_inbox.resolve()` and `keep=resolve_user_dir(...)` -- both resolved --
+    against `dirs` from `_arena_all_user_dirs()`, which are built from
+    `create_app`'s UNRESOLVED `root = Path(server_root)`. So under a symlinked
+    server root every comparison here is false, and BOTH guards invert at once:
+    measured on `main`, `removed` came back holding the calling request's own
+    directory AND the server-root `arena_inbox` was rmdir'd.
+
+    So this function now resolves its own operands rather than trusting the
+    caller to. Resolution is a property of the COMPARISON, not of the argument,
+    and a guard whose correctness depends on what the caller remembered is the
+    guard this repo keeps re-breaking. Deletion still uses the paths as given.
+
     ⚑ `keep` is the directory the calling request just wrote into. Skipping it
     removes the common self-inflicted case; it is NOT the race fix. A request
     for trial A can be suspended between its `mkdir` and its `write_bytes`
@@ -1235,14 +1267,17 @@ def drop_empty_arena_dirs(
     """
     removed: list[Path] = []
     for d in dirs:
-        if keep is not None and d == keep:
+        if keep is not None and _same_dir(d, keep):
             continue
         try:
             d.rmdir()  # Raises rather than deleting when not empty.
         except OSError:
             continue
         removed.append(d)
-        if d.parent != default_arena_root:
+      # ⚑ `d` is gone by now, so `samefile` on its PARENT is what decides this,
+      # and the parent still exists. Resolved-string equality is the fallback
+      # for the same reason as above.
+        if not _same_dir(d.parent, default_arena_root):
             with contextlib.suppress(OSError):
                 d.parent.rmdir()
     return removed
@@ -5175,8 +5210,13 @@ def create_app(
                     max_entries=int(arena_max_entries),
                     log=log,
                 )
+      # ⚑ Passed AS BUILT, unresolved. `drop_empty_arena_dirs` resolves its
+      # own comparison operands (#419 F2); the `.resolve()` that used to be
+      # here resolved one side of a comparison whose other side --
+      # `_arena_all_user_dirs()`, off `create_app`'s unresolved `root` --
+      # could not be resolved from the call site at all.
                 drop_empty_arena_dirs(
-                    dirs, keep=user_dir, default_arena_root=arena_inbox.resolve(),
+                    dirs, keep=user_dir, default_arena_root=arena_inbox,
                 )
 
             with contextlib.suppress(OSError):

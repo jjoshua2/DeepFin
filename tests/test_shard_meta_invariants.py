@@ -1699,3 +1699,160 @@ def test_a_sweep_still_cleans_the_sidecar_of_an_entry_a_peer_removed(
     # This sweep removed s0's sidecar (15 bytes) but not s0 itself.
     assert freed_entries == 0, freed_entries
     assert freed_bytes == 15, freed_bytes
+
+
+# ---------------------------------------------------------------------------
+# #419 F2: the empty-dir guard compared one resolved operand against one
+# unresolved one, so a symlinked server root inverted it.
+# ---------------------------------------------------------------------------
+
+
+def _arena_tree(root):
+    """The production shape: `<root>/arena_inbox/{alice,bob}`, both empty.
+
+    Mirrors `create_app`'s layout so the test is about the guard rather than
+    about a directory tree invented for it.
+    """
+    inbox = root / "arena_inbox"
+    for u in ("alice", "bob"):
+        (inbox / u).mkdir(parents=True)
+    return inbox
+
+
+def test_the_empty_dir_guard_holds_through_an_unsymlinked_root(tmp_path) -> None:
+    """⚑ SERIAL CONTROL for the symlink test below (passes on `main` too).
+
+    Same call, same wiring, one difference: the server root is reached by its
+    real path. Without this, "the guard let the caller's own directory be
+    deleted" cannot be told from "this fixture never protected it".
+    """
+    from chess_anti_engine.server.app import drop_empty_arena_dirs, resolve_user_dir
+
+    real = tmp_path / "server"
+    real.mkdir()
+    inbox = _arena_tree(real)
+
+    # Production wiring: `dirs` off create_app's root, `keep` from
+    # `resolve_user_dir` (which resolves).
+    dirs = sorted(d for d in inbox.iterdir() if d.is_dir())
+    keep = resolve_user_dir(inbox, "bob")
+
+    removed = drop_empty_arena_dirs(dirs, keep=keep, default_arena_root=inbox)
+
+    assert removed == [inbox / "alice"], removed
+    assert (inbox / "bob").is_dir(), "the calling request's own directory was removed"
+    assert inbox.is_dir(), "the server-root arena_inbox was removed"
+
+
+def test_the_empty_dir_guard_holds_through_a_symlinked_server_root(
+    tmp_path,
+) -> None:
+    """⚑ REGRESSION (#419 F2). `create_app` builds `root = Path(server_root)`
+    UNRESOLVED, so `_arena_all_user_dirs()` yields unresolved paths, while
+    `resolve_user_dir` returns resolved ones -- and the call site resolved only
+    `default_arena_root`. One resolved operand, one unresolved: under a
+    symlinked server root every comparison in the guard is false and the guard
+    silently stops guarding, which is what its own docstring warned about.
+
+    Measured on `main` with this fixture: `removed` came back
+    `[alice, bob]` -- including the calling request's own `bob` -- and the
+    server-root `arena_inbox` itself was rmdir'd, which the docstring says must
+    never happen. Not reachable on today's config (no symlink under
+    `runs/pbt2_small/server`), but production moved its data root between
+    drives in July and a symlinked root is how that gets done.
+    """
+    from chess_anti_engine.server.app import drop_empty_arena_dirs, resolve_user_dir
+
+    # ⚑ BOTH SPELLINGS of `default_arena_root`, because the two guards in this
+    # function fail for the same reason at different call-site spellings.
+    # `main`'s call site passed `arena_inbox.resolve()` -- resolved, against
+    # unresolved `dirs` -- which is the spelling that rmdir'd the server-root
+    # `arena_inbox`; this branch's passes it unresolved. Neither may invert the
+    # guard, so the function is exercised with each.
+    for case, resolve_root in (("resolved_root", True), ("unresolved_root", False)):
+        home = tmp_path / case
+        home.mkdir()
+        real = home / "real_server"
+        real.mkdir()
+        inbox = _arena_tree(real)
+        link = home / "server"
+        link.symlink_to(real, target_is_directory=True)
+
+        # `dirs` reach the sweep through the SYMLINK, exactly as they do when
+        # `server_root` is the link; `keep` is resolved, exactly as
+        # `resolve_user_dir` returns it.
+        link_inbox = link / "arena_inbox"
+        dirs = sorted(d for d in link_inbox.iterdir() if d.is_dir())
+        keep = resolve_user_dir(link_inbox, "bob")
+        assert keep == real / "arena_inbox" / "bob", keep
+
+        removed = drop_empty_arena_dirs(
+            dirs,
+            keep=keep,
+            default_arena_root=inbox if resolve_root else link_inbox,
+        )
+
+        assert (real / "arena_inbox" / "bob").is_dir(), (
+            f"[{case}] the calling request's own directory was removed -- the "
+            "`keep` guard compared a symlinked path against a resolved one "
+            "and lost"
+        )
+        assert removed == [link_inbox / "alice"], (case, removed)
+        assert (real / "arena_inbox").is_dir(), (
+            f"[{case}] the server-root arena_inbox was removed, which this "
+            "function's docstring says must never happen"
+        )
+
+
+def test_the_server_root_arena_inbox_survives_emptying_every_user_dir(
+    tmp_path,
+) -> None:
+    """⚑ REGRESSION (#419 F2, the second guard). The `keep` guard is not the
+    only comparison that inverts: `d.parent != default_arena_root` decides
+    whether the emptied PARENT is removed too, and it is the one thing standing
+    between this sweep and the server-root `arena_inbox` that `create_app`
+    mkdirs at boot.
+
+    It only becomes observable once the inbox is genuinely empty, which is why
+    the symlink test above cannot see it: there, `keep` keeps one user
+    directory alive and the `rmdir` fails on a non-empty directory for the
+    wrong reason. Here every user directory in the ROOT inbox is emptied while
+    the calling request's `keep` lives under a per-trial inbox -- the ordinary
+    cross-trial shape of this sweep -- so the guard is the only protection
+    left.
+
+    Measured on `main` with `default_arena_root=arena_inbox.resolve()` (its
+    call-site spelling) and `dirs` reached through a symlinked root: the
+    server-root `arena_inbox` was removed.
+    """
+    from chess_anti_engine.server.app import drop_empty_arena_dirs, resolve_user_dir
+
+    for case, resolve_root in (("resolved_root", True), ("unresolved_root", False)):
+        home = tmp_path / case
+        home.mkdir()
+        real = home / "real_server"
+        real.mkdir()
+        inbox = _arena_tree(real)
+        trial_inbox = real / "trials" / "t0" / "arena_inbox" / "bob"
+        trial_inbox.mkdir(parents=True)
+        link = home / "server"
+        link.symlink_to(real, target_is_directory=True)
+
+        link_inbox = link / "arena_inbox"
+        dirs = sorted(d for d in link_inbox.iterdir() if d.is_dir())
+        # The calling request wrote under a TRIAL inbox, so nothing in the root
+        # inbox is protected by `keep`.
+        keep = resolve_user_dir(link / "trials" / "t0" / "arena_inbox", "bob")
+
+        removed = drop_empty_arena_dirs(
+            dirs,
+            keep=keep,
+            default_arena_root=inbox if resolve_root else link_inbox,
+        )
+
+        assert sorted(r.name for r in removed) == ["alice", "bob"], (case, removed)
+        assert (real / "arena_inbox").is_dir(), (
+            f"[{case}] the server-root arena_inbox was removed once its last "
+            "user directory went -- the parent guard compared a symlinked "
+            "path against a resolved one and lost"
+        )
