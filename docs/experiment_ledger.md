@@ -44517,3 +44517,51 @@ issue #189 is wall-clock-only under matched_sims (a sims budget cannot be eaten 
 seed 42 gives all three contrasts the same 800-opening pairing; the paired pentanomial CI is
 computed from what was SCORED with truncation flagged; and the target-only knobs the training
 shape omits are provably outside played-move selection (`mcts/gumbel.py:1131-1153`).
+
+### Target-construction audit VERDICTS (2026-08-12, report: scratchpad/audit/target_construction_20260812.md)
+
+CPU-only adversarial audit of the search→target→loss path, run while arm A trains. Data:
+PRE (5ce02, 256/32) vs POST (b384d arm A, 100/16), ~21-23k policy rows each. BLOCKING: none
+— Tier-13's arms are not corrupted, and the one deploy-adjacent effect is common-mode.
+
+**S1 — THE TRAINED VALUE TARGET IS 31% SELF-REFERENTIAL, and the +41.6cp "head can't fit
+its label" verdict divided by the WRONG denominator.** The trained value loss is soft CE vs
+`0.69·sf_wdl + 0.31·search_wdl` (`train/losses.py:982,1053-1076`, fracs pinned), and
+`search_wdl` is a function of the net itself — its draw component is LITERALLY the net's
+raw root draw output, never updated by search (`mcts/_mcts_tree.c:4917`). Measured on
+23,333 live rows: `E[search_sig − sf_sig] = +0.0500` (systematic STM-optimism, ≈+17cp at
+the logistic's steep region, ≈+5cp inherited by the blend), corr 0.963. ⇒ The
+`value_head_cannot_fit_the_label_it_has` gap (57.7 vs 16.1) was measured against the SF
+component ALONE; part of the 41.6cp is TARGET error, not fit deficit, and the fixed point
+`head − SF = 0.31·(search(head) − SF)` RATCHETS with the net's own bias. Since 08-12 the
+survivor Q averages ~27 visits (was ~56), so the self-component got noisier at unchanged
+weight. **Queued as the named target-side experiment (call it Tier-14 when prereg'd):
+reduce/replace the self-referential search_wdl share — NOT the SF component, which is
+load-bearing (winrate 0.64→0.40 when zeroed).** Falsifier for the prereg: if the head-vs-SF
+gap does not shrink when the self-share drops, S1's mechanism is wrong. NOT launched;
+sequenced after Tier-13/12 per the one-change-per-window rule.
+
+**W2 — the 08-12 sims-100/topk-16 deploy shrank the per-row training signal −14%**
+(KL(prior‖target) median 0.1705→0.1472; H(target) 0.787→0.744) — the deploy was gated on
+THROUGHPUT only; nobody priced the signal side. σ_target = 5.5 held invariant (the cap-5
+design survives 100 sims); tail-mass loss from topk 16 is negligible (0.25%→0.15%).
+Confounded by donor lineage; the stored-KL series is the watch item. Common-mode for all
+three arms, so Tier-13 contrasts are unaffected; the throughput-vs-signal TRADE is now an
+open question for the loop's learning rate (1.51x rows/s vs 0.86x signal/row ⇒ net
+~1.3x signal/s IF KL is the right unit — that arithmetic is a hypothesis, not a result).
+
+**W3** mirror augmentation trains ~5.5% of rows on castling-impossible mirror positions
+(11.0% of rows carry rights; `mirror_prob` hardcoded 0.5, `trainer.py:1750`) — constant,
+ceiling contributor at most. **W4** diff-focus normalizer restart transient: one warmup
+(1024 rows) of mis-curated priorities per restart (iter-1 priority range measured
+−1.278..15.05 vs design [0,8]); steady state healthy. **W5** `sf_policy_score_mode: cp`
+currently trains NOTHING (all consumer weights 0.0) and its stored-target entropy is off
+its own calibration (0.917 vs 1.18 nats) — recalibrate before re-arming those weights.
+
+**CLEAN (14 items, closes audit surface)**: untempered-prior algebra exact on both paths;
+no post-construction mass-dropping; has_policy 100%; value POV correct and the mate-0
+hazard unreachable; one-hot fallback 0.07-0.13% (kills the fallback-sharpness hypothesis;
+rl_loop_audit E15's 92.8% → 99.9%); mate-band fix live; label nodes decoupled from PID
+(median 150,072 both windows); blend matches docs/model_heads.md; policy_sf POV correct;
+mask defaults fail closed; priorities never touch the loss; soft_policy_temp published;
+desync 0.0 live; TB/refute paths off.
