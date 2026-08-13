@@ -45752,3 +45752,92 @@ its exact canonical form [[a_gate_that_cannot_fail]], and the same failure that 
 encoder gates non-diagnostic twice in one day. Cost is one extra scoring pass per net. It is
 cheap precisely BECAUSE we already know the answer: a control whose expected value is known is
 the only kind that can detect a dead instrument.
+
+---
+
+## 2026-08-13 — REPETITION AUDIT: the 8-ply bug WAS real, IS fixed, and is NOT present today (EXECUTED)
+
+Josh: *"i think we had a bug once where we didn't detect legal repetitions properly because we only
+looked for 8 moves and not the whole game … but i thought we fixed this bug — do we still have this
+problem?"* **Answer: yes it was real, yes it was fixed, and no it is not present.** Verified by
+running production's real C search, not by reading code.
+
+**The bug, named.** `166c09adc` (2026-05-29, "Fix CBoard LC0 repetition history"). The repetition-plane
+builder declared `uint64_t seen[CBOARD_HISTORY_MAX + 1]` — **8 entries, the encoding window and
+nothing else** — so a position repeating something older than the 8-frame window was not marked.
+Fix seeds the set from `hash_stack` entries PRECEDING the window. Two follow-ups: `a0f8e1619`
+(repetitions older than an irreversible-move boundary) and `41180ad9b` (reply-claimable threefold at
+the root). ⚑ The bug was in the ENCODING PLANES; search terminal detection was never window-limited.
+
+**The structural fact that organises the whole audit — there are exactly TWO `CBoard` constructors
+and they differ precisely on history:** `from_board` (`_lc0_ext.c:396`) walks `board._stack` back to
+the irreversible boundary filling a 128-entry `hash_stack`; `from_raw` (`:500`) sets
+`hash_stack_len = 0` — **no history at all**. So every axis reduces to *which constructor feeds this
+consumer, and does the stack survive to the point of use*. Production selfplay uses `from_board`
+(`selfplay/state.py:850,:1126`, with an explicit comment saying why) and advances ONE `CBoard` per
+slot in place, so `hash_stack` accumulates the entire game.
+
+### THE DEMONSTRATION (this is the part that makes it a verdict, not a reading)
+Root `7r/3k4/8/8/8/8/3K4/R7 w - - 4 3`, reached via `Kd1 Kd8 Kd2 Kd7`. In the tree, `Ke1` then `Ke8`
+returns to the **pre-root** position — a repetition 4 plies before the root, hit at **tree depth 2**,
+so it cannot be an artifact of root-level draw pruning. Real `run_gumbel_root_many_c`, 600 sims,
+`lc0_root_legacy_meta` + `v2_threats` + `history_rep_fix`, **constant stub evaluator** so the encoding
+channel is dead and terminal detection is the only thing that can differ:
+
+| | root `hash_stack_len` | grandchild (== pre-root pos) | root value | Ke1 child Q | move chosen |
+|---|---|---|---|---|---|
+| FULL history (production) | 4 | **SOLVED_DRAW**, q=0.0000 | +0.0243 | +0.0243 | not Ke1 |
+| BARE root (FEN only) | 0 | UNKNOWN, q=+0.1563 | +0.1750 | +0.1750 | **Ke1** |
+
+**Negative control run:** same script with the pre-line changed so `Ke1 Ke8` repeats nothing — FULL
+and BARE come out **bit-identical** (+0.1864 both, 146 visits, same choice). ⇒ the difference above is
+attributable to repetition detection specifically and not to the mere presence of a hash stack. This
+is the observation that WOULD have caught the bug had it survived.
+
+Window-depth check at the `CBoard` level: a repeat at **12 plies — outside the 8-frame window** — is
+`is_game_over` True and flagged by `root_terminal_actions`, matching python-chess.
+
+### ⚑ THE CODE IS BROADER THAN ITS OWN COMMENT — DO NOT "FIX" IT TO MATCH
+`_mcts_tree.c:843` says *"any prior occurrence inside the search tree"*. False, and it understates:
+the leaf replay starts from `cb = g->root_cboards[bi]`, a **struct copy including the 128-entry
+`hash_stack`**, so `cboard_is_repetition` scans the whole game. A future reader trusting the comment
+would "correct" working code into Josh's original bug.
+
+### Other axes
+- **Selfplay label**: threefold → `cb.result() == "1/2-1/2"` → `wdl_target = 1`. Measured. Resume path
+  preserves it (`resume.py:856`).
+- **Encoding**: measured on a position at its 3rd occurrence with a 12-ply cycle — rep flags set on
+  plane 12 and on hist slots 0-5, **0 on hist6, which is correct because that slot IS a first
+  occurrence**. rule50 plane 109 = 0.12. Same position from a stack-less FEN: all eight rep planes 0,
+  35 planes differ.
+- **50-move**: fires at `halfmove_clock >= 100`; at 99 `root_terminal_actions` flags **15/15** legal
+  moves as draws.
+- **C vs Python path — the inverse of this codebase's usual failure: the C path is production AND the
+  C path is the CORRECT one.** The Python fallback (`mcts/gumbel.py:769,:805`) uses
+  `board.is_game_over()` with python-chess DEFAULTS: measured **False** on an 8-ply threefold and
+  **False** at clock 100. ⇒ if `_mcts_tree` ever fails to import, selfplay **silently degrades to a
+  repetition-blind search rather than crashing**. Not a live defect (`mcts: gumbel` + extension
+  present, `.so` files verified newer than every `.c`/`.h`), but it is a silent-degradation seam.
+
+### Known limits, stated rather than papered over
+- **FEN-seeded openings start with an empty `_stack`** (`opening.py:286`), so repetitions before the
+  seed FEN are invisible even when the FEN's own `halfmove_clock` says reversible plies preceded it.
+  A property of FENs, not a defect — but a seeded game's repetition accounting is SHORTER than its
+  50-move counter implies.
+- `puct_c.py:181,:248` fall back to the zero-history `from_raw`. Read as unreachable, **not proven by
+  execution**. PUCT is off the production selfplay path, but `selfplay/match.py:185` selects it when
+  `mcts_type != "gumbel"` ⇒ **a PUCT-configured ARENA is where this could bite.**
+- Root draw pruning is one-sided BY DESIGN (`gumbel_c.py:766`, only when `root_qs[i] > 0.0`) and does
+  NOT blind a losing root — the tree still finds draws via `cboard_search_terminal`, which is exactly
+  what the demo measured.
+- Not verified: real weights (stub evaluator throughout — that is what makes the attribution clean),
+  GPU, arena, ONNX/AOT path.
+
+### ⚑ CONSEQUENCE FOR THE HISTORY-RELIANCE LADDER (H8/H2/HR), CAUGHT HERE
+**Our repetition flags are computed from `hash_stack`, NOT from the history frames.** So an ablation
+that only rewrites frames 1-7 leaves the rep planes fully intact — our net would keep whole-game
+repetition knowledge in an arm that is supposed to have 2 plies of history, while lc0/Ceres (whose rep
+information lives IN the per-frame planes) genuinely lose it. That asymmetry would make the
+cross-net curve shapes non-comparable and would bias the answer toward "we rely on history less than
+they do". **The ladder must specify that H2/HR ablate the rep planes to match the frames.** Ledger
+this before running it; it is exactly the confound the experiment exists to avoid.
