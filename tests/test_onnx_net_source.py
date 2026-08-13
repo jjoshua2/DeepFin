@@ -43,7 +43,9 @@ from scripts.net_source import (
     OnnxNetSpec,
     net_source_from_args,
     onnx_providers_for_device,
+    reject_stored_encoding_for_onnx,
     resolve_onnx_spec,
+    validate_onnx_device,
 )
 
 LC0_PLANES = 112
@@ -213,6 +215,114 @@ def test_cpu_device_never_offers_ort_the_cuda_provider() -> None:
     prefer not to."""
     assert onnx_providers_for_device("cpu") == (CPU_PROVIDER,)
     assert onnx_providers_for_device("cuda:1") == (CUDA_PROVIDER, CPU_PROVIDER)
+
+
+# --------------------------------------------------------------------------
+# a CUDA request must mean the device it says
+# --------------------------------------------------------------------------
+
+
+def _fake_providers(monkeypatch: pytest.MonkeyPatch, providers: list[str]) -> None:
+    import onnxruntime as ort
+
+    monkeypatch.setattr(ort, "get_available_providers", lambda: providers)
+
+
+def test_an_indexed_cuda_device_is_refused_rather_than_relocated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--device cuda:1` would put the net on device 0 and say nothing.
+
+    `OnnxChessNet` takes provider NAMES, so ORT gets no `device_id` — while
+    torch and `--gpu-mem-fraction` target the index that was asked for. On this
+    box device 0 is the live trainer's.
+    """
+    _fake_providers(monkeypatch, [CUDA_PROVIDER, CPU_PROVIDER])
+    with pytest.raises(SystemExit, match="onnxruntime would use CUDA device 0"):
+        validate_onnx_device("cuda:1")
+    # Unambiguous spellings are fine, and CPU is never touched by this check.
+    validate_onnx_device("cuda")
+    validate_onnx_device("cuda:0")
+    validate_onnx_device("cpu")
+
+
+def test_a_cuda_request_without_a_cuda_provider_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ORT DROPS an unavailable provider and runs the next one silently.
+
+    A `--device cuda` run of a BT4-sized net then becomes an hours-long CPU run
+    that still calls itself CUDA.
+    """
+    _fake_providers(monkeypatch, [CPU_PROVIDER])
+    with pytest.raises(SystemExit, match="no CUDAExecutionProvider"):
+        validate_onnx_device("cuda")
+    # ...and CPU is unaffected: a CPU-only onnxruntime runs CPU rulers fine.
+    validate_onnx_device("cpu")
+
+
+def test_the_device_is_validated_from_the_parsed_args_not_at_load_time(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The check has to fire at parse time, or it fires after the SF pass."""
+    _fake_providers(monkeypatch, [CPU_PROVIDER])
+    args = _args(onnx=echo_onnx, device="cuda")
+    with pytest.raises(SystemExit, match="no CUDAExecutionProvider"):
+        net_source_from_args(args)
+
+
+# --------------------------------------------------------------------------
+# flag combinations that cannot mean anything
+# --------------------------------------------------------------------------
+
+
+def test_stored_encoding_with_onnx_is_refused(echo_onnx: Path) -> None:
+    """Stored rows are 175-plane production input; a foreign net reads 112.
+
+    Detected downstream anyway — but in `audit_targets` only after
+    `_shallow_sf_records`, i.e. potentially an hour of Stockfish spent on a
+    combination that was invalid when the flags were parsed.
+    """
+    onnx_net = NetSource(onnx=resolve_onnx_spec(echo_onnx))
+    with pytest.raises(SystemExit, match="stored is not compatible with --onnx"):
+        reject_stored_encoding_for_onnx(onnx_net, "stored")
+    # The other three combinations are all legitimate and must pass through.
+    reject_stored_encoding_for_onnx(onnx_net, "fen_only")
+    reject_stored_encoding_for_onnx(NetSource(checkpoint="c"), "stored")
+    reject_stored_encoding_for_onnx(NetSource(checkpoint="c"), "fen_only")
+
+
+def test_both_rulers_reject_stored_plus_onnx_before_the_expensive_work() -> None:
+    import inspect
+
+    from scripts import audit_targets, value_regret
+
+    expensive = {
+        value_regret: "load_audit_set(",
+        audit_targets: "_shallow_sf_records(",
+    }
+    guard = "reject_stored_encoding_for_onnx(net, args.input_encoding)"
+    for module, costly_call in expensive.items():
+        src = inspect.getsource(module.main)
+        assert guard in src, f"{module.__name__}.main does not run the guard at all"
+        assert src.index(guard) < src.index(costly_call)
+
+
+def test_the_audit_dump_rows_carry_the_net_too() -> None:
+    """`audit_targets --dump-per-position` must stamp the net like value_regret.
+
+    Wiring pin rather than an end-to-end run: driving that dump needs a config,
+    an audit set and a Stockfish labelling pass. A dump outlives its report and
+    gets joined to other dumps, so an unstamped row is a number whose weights
+    cannot be recovered.
+    """
+    import inspect
+
+    from scripts import audit_targets
+
+    src = inspect.getsource(audit_targets.main)
+    dump_at = src.index("per_pos_dump.append({")
+    assert '"net": net.label,' in src[dump_at:dump_at + 600]
 
 
 # --------------------------------------------------------------------------

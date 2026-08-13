@@ -56,10 +56,59 @@ def onnx_providers_for_device(device: str) -> tuple[str, ...]:
     CPU must be structurally unable to allocate on the GPU that a live training
     run is using, and the way to guarantee that is to never offer ORT the CUDA
     provider in the first place.
+
+    A CUDA device must have passed :func:`validate_onnx_device` first; this
+    function only maps it.
     """
     if str(device).startswith("cuda"):
         return (CUDA_PROVIDER, CPU_PROVIDER)
     return (CPU_PROVIDER,)
+
+
+def validate_onnx_device(device: str) -> None:
+    """Refuse the two ways ``--onnx --device cuda...`` silently means something else.
+
+    Both are the same defect in different clothing — the run claims a device it
+    is not on — and both are cheap to catch before anything is loaded:
+
+    1. **An INDEXED device.** ``OnnxChessNet`` takes provider NAMES only, so ORT
+       gets no ``device_id`` and uses CUDA device 0, while torch and
+       ``--gpu-mem-fraction`` target the index that was asked for. On a
+       multi-GPU box that quietly puts a 700M foreign net on whichever GPU is
+       device 0 — here, the one the live trainer owns. Until the adapter takes a
+       provider-options mapping (its signature is ``Sequence[str]``, and it is
+       not this PR's file), an explicit non-zero index is REFUSED rather than
+       silently relocated.
+    2. **A CUDA provider that is not installed.** ORT does not fail when a
+       requested provider is unavailable — it drops it and runs the next one in
+       the list, so a `--device cuda` run of a BT4-sized net silently becomes an
+       hours-long CPU run that still reports itself as CUDA. The availability
+       list is what decides that fallback, so checking it up front is equivalent
+       to checking the session afterwards, and it costs nothing.
+    """
+    dev = str(device)
+    if not dev.startswith("cuda"):
+        return
+    if ":" in dev:
+        index = dev.split(":", 1)[1]
+        if index not in ("", "0"):
+            raise SystemExit(
+                f"--onnx --device {dev}: onnxruntime would use CUDA device 0 here, "
+                "not the index you asked for (the ONNX adapter takes provider names "
+                "only, with no device_id), so the net would land on a GPU the rest "
+                "of this command is not using. Pass --device cuda (device 0), "
+                "--device cpu, or select the GPU with CUDA_VISIBLE_DEVICES."
+            )
+    import onnxruntime as ort
+
+    available = list(ort.get_available_providers())
+    if CUDA_PROVIDER not in available:
+        raise SystemExit(
+            f"--onnx --device {dev}: this onnxruntime has no {CUDA_PROVIDER} "
+            f"(providers: {available}). ORT would silently fall back to CPU and the "
+            "run would report itself as a CUDA run while taking hours. Install the "
+            "GPU runtime or pass --device cpu deliberately."
+        )
 
 
 @dataclass(frozen=True)
@@ -213,6 +262,27 @@ class NetSource:
         return model
 
 
+def reject_stored_encoding_for_onnx(net: NetSource, input_encoding: str) -> None:
+    """``--input-encoding stored`` cannot describe a foreign net. Say so at once.
+
+    Stored rows are production's 175-plane ``v2_threats``/``stored`` bytes; every
+    ONNX source built here declares ``lc0_root``/``v1``. The mismatch IS caught
+    downstream (``MatchedAuditRows.require_model_compatible``), but only once the
+    model loads — which in ``audit_targets`` is after ``_shallow_sf_records``, i.e.
+    potentially an hour of Stockfish spent on a combination that was knowably
+    invalid the moment the flags were parsed.
+    """
+    from chess_anti_engine.eval.audit_history import normalize_input_encoding
+
+    if net.is_onnx and normalize_input_encoding(input_encoding) == "stored":
+        raise SystemExit(
+            "--input-encoding stored is not compatible with --onnx: stored rows are "
+            "production's 175-plane input, and a foreign LC0/Ceres net reads the "
+            "112-plane lc0_root layout. Score foreign nets under the default "
+            "fen_only (and compare them only against fen_only numbers)."
+        )
+
+
 def add_net_source_args(ap: argparse.ArgumentParser, *, checkpoint_help: str = "") -> None:
     """Add ``--checkpoint`` / ``--onnx`` (+ tensor-name overrides) to a ruler.
 
@@ -286,6 +356,9 @@ def net_source_from_args(args: argparse.Namespace) -> NetSource:
             "pass exactly one of --checkpoint or --onnx; both were given, and "
             "the ruler must not guess which net the number belongs to"
         )
+    # Device first: it is the cheapest check and the one whose failure mode is
+    # "the number is real but came from somewhere else".
+    validate_onnx_device(str(getattr(args, "device", "cpu")))
     spec = resolve_onnx_spec(
         onnx_path,
         input_name=onnx_name_flags["--onnx-input-name"],

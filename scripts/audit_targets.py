@@ -157,7 +157,12 @@ from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
-from scripts.net_source import NetSource, add_net_source_args, net_source_from_args
+from scripts.net_source import (
+    NetSource,
+    add_net_source_args,
+    net_source_from_args,
+    reject_stored_encoding_for_onnx,
+)
 
 _CANDIDATE_NAMES = {
     "raw": "a) net raw policy",
@@ -1390,6 +1395,7 @@ def main() -> None:
   # tensor names, resolved and printed HERE -- before the audit set loads and
   # long before SF spends an hour labelling.
     net = net_source_from_args(args)
+    reject_stored_encoding_for_onnx(net, args.input_encoding)
   # Parsed at PARSE time so a malformed threshold list fails before the model
   # is loaded. () when the flag is absent, which is what keeps every code path
   # below identical to the default run.
@@ -1619,6 +1625,11 @@ def main() -> None:
             gap = criticality_gap(pos.move_cp)
             per_pos_dump.append({
                 "key": pos.key, "phase": pos.phase, "source": pos.source,
+                # Which NET produced the row. The report header alone is not
+                # enough: dumps outlive reports and get joined to each other,
+                # and a checkpoint row and a foreign-ONNX row are otherwise
+                # indistinguishable.
+                "net": net.label,
                 # A dump is a report: carry the ruler it was made with, or a
                 # downstream join can silently mix two encodings.
                 "input_encoding": {

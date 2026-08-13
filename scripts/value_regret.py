@@ -75,7 +75,12 @@ from chess_anti_engine.eval.value_optimism import (
     sf_eval_bucket,
 )
 from chess_anti_engine.inference import LocalModelEvaluator
-from scripts.net_source import NetSource, add_net_source_args, net_source_from_args
+from scripts.net_source import (
+    NetSource,
+    add_net_source_args,
+    net_source_from_args,
+    reject_stored_encoding_for_onnx,
+)
 
 
 def _softmax_rows(a: np.ndarray) -> np.ndarray:
@@ -265,6 +270,9 @@ def main() -> None:
     # graph with no 1858 policy head must fail here, not after the scoring
     # loop has produced a plausible-looking number for the wrong weights.
     net = net_source_from_args(args)
+    # ...and the flag combination that cannot mean anything, before the
+    # matched-rows index is even opened.
+    reject_stored_encoding_for_onnx(net, args.input_encoding)
 
     if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
         # Cap the SELECTED device (e.g. cuda:1), not just the current default one.
