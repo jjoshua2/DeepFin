@@ -12,7 +12,7 @@ Answers two questions:
 
 Inputs (all keyed by position `key`):
   --net    data/audit_analysis/per_position_277.jsonl  (audit_targets --dump-per-position)
-  --bt4    data/lc0/bt4_audit_cache.jsonl              (bt4_audit.py)
+  --bt4    data/lc0/bt4_audit_cache.jsonl              (foreign_net_audit.py)
   --audit  data/audit_set_v1.jsonl                     (for the deep-SF bestmove)
 """
 from __future__ import annotations
@@ -150,7 +150,8 @@ def main() -> None:
         tgts_all.append(np.asarray(deep_wdl[key], dtype=np.float64))
     if not preds_all:
         print("(no positions carry both a BT4 'wdl' and a deep-SF WDL — "
-              "skipping BT4 calibration; pass a --bt4 cache produced by bt4_audit.py)")
+              "skipping BT4 calibration; pass a --bt4 cache produced by "
+              "foreign_net_audit.py)")
         return
     preds_all_a = np.stack(preds_all)
     tgts_all_a = np.stack(tgts_all)

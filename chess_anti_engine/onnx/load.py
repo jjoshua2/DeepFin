@@ -26,6 +26,19 @@ bigger error of the two: measured on BT4, the O-O prior read through the old
 static table came out 49x-120x too small, dropping castling from the top move
 to nowhere. The previous ``build_lc0_policy_remap`` helper implemented that
 static table and has been removed rather than left as a footgun.
+
+Ceres's own 1858 table is Leela's, verbatim: ``EncodedMove.NEURAL_NET_MOVE_STR``
+(``src/Ceres.Chess/LC0/Positions/Basic/EncodedMove.cs``) agrees with our
+``LC0_1858_UCI_TO_IDX`` on all 1858 slots, so the same remap serves both. Only
+the INPUT differs, which is what ``input_format`` selects:
+
+``lc0_planes``
+    (B, planes, 8, 8); the first ``plane_count`` planes are fed to the net.
+``ceres_tpg``
+    (B, 64, 137) ``TPGSquareRecord`` values from
+    :mod:`chess_anti_engine.encoding.ceres_tpg`. Ceres C1 nets take this and
+    ONLY this — the 137 per-square features are a different feature set from
+    LC0's 112 planes, not a reshape of them.
 """
 from __future__ import annotations
 
@@ -35,6 +48,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding.ceres_tpg import (
+    CERES_TPG_NUM_FEATURES,
+    CERES_TPG_NUM_SQUARES,
+    ceres_tpg_gather_context,
+)
 from chess_anti_engine.encoding.lc0 import (
     LC0_FULL,
     fill_lc0_history_repeat,
@@ -42,6 +60,28 @@ from chess_anti_engine.encoding.lc0 import (
 )
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, policy_batch_to_full_if_needed
 from chess_anti_engine.moves.leela_index import leela_gather_indices
+
+INPUT_FORMAT_LC0_PLANES = "lc0_planes"
+INPUT_FORMAT_CERES_TPG = "ceres_tpg"
+ONNX_INPUT_FORMATS = (INPUT_FORMAT_LC0_PLANES, INPUT_FORMAT_CERES_TPG)
+
+_ORT_GRAPH_OPTIMIZATION_LEVELS: dict[str, str] = {
+    "disabled": "ORT_DISABLE_ALL",
+    "basic": "ORT_ENABLE_BASIC",
+    "extended": "ORT_ENABLE_EXTENDED",
+    "all": "ORT_ENABLE_ALL",
+}
+
+_DEFAULT_GRAPH_OPTIMIZATION: dict[str, str | None] = {
+    INPUT_FORMAT_LC0_PLANES: None,  # ORT's own default — BT4 session unchanged
+    INPUT_FORMAT_CERES_TPG: "extended",
+}
+
+_ORT_INPUT_DTYPES: dict[str, type[np.floating]] = {
+    "tensor(float)": np.float32,
+    "tensor(float16)": np.float16,
+    "tensor(double)": np.float64,
+}
 
 
 class OnnxChessNet(torch.nn.Module):
@@ -57,14 +97,38 @@ class OnnxChessNet(torch.nn.Module):
     policy_output_name:
         Name of the policy logits output. Shape ``(B, 1858)`` expected.
     wdl_output_name:
-        Name of the WDL output. Shape ``(B, 3)`` expected. LC0/Ceres value
-        heads emit softmaxed PROBABILITIES here; ``forward`` returns them as
-        log-probs so the search value path's softmax recovers the distribution.
+        Name of the WDL output. Shape ``(B, 3)`` expected, ordered W/D/L from
+        the SIDE TO MOVE's point of view. ``forward`` returns something the
+        search's softmax can consume either way: an LC0 head that emits
+        softmaxed PROBABILITIES is converted to log-probs, and a head that
+        emits LOGITS is passed through. Which one a net is cannot be assumed —
+        BT4 emits probabilities, while Ceres's ``value`` is logits
+        (``NNEvaluatorONNX`` is built with ``valueHeadLogistic: true``, and the
+        raw rows carry negatives and do not sum to 1) — so it is detected per
+        batch rather than declared. For Ceres pass ``value``, the PRIMARY head
+        (``ONNXNetExecutor``'s ``INDEX_WDL``, which feeds ``W1/L1``); ``value2``
+        is a secondary head Ceres blends in at ``FractionValueHead2`` 0.4 with
+        its own temperature, not an equivalent WDL output.
     providers:
         ORT execution providers, in priority order. Default tries CUDA then
         falls back to CPU.
     plane_count:
         How many of our 146 planes the ONNX model expects. LC0/Ceres = 112.
+        Ignored when ``input_format`` is ``ceres_tpg``.
+    input_format:
+        ``lc0_planes`` (default, the BT4 path) or ``ceres_tpg``. Selects both
+        what ``forward`` accepts and where the policy remap reads its board
+        context from.
+    graph_optimization_level:
+        ORT level name (``basic`` / ``extended`` / ``all`` / ``disabled``).
+        ``None`` uses the per-format default: ORT's own for ``lc0_planes``
+        (so the BT4 session is byte-for-byte what it always was) and
+        ``extended`` for ``ceres_tpg``, because ORT 1.23's ALL-level
+        ``SimplifiedLayerNormFusion`` throws on these fp16 Ceres graphs
+        (``Attempting to get index by a name which does not exist:
+        InsertedPrecisionFreeCast_...``) and the session never opens.
+    intra_op_num_threads:
+        Optional cap on ORT's intra-op pool. ``None`` leaves ORT's default.
     """
 
     def __init__(
@@ -76,17 +140,47 @@ class OnnxChessNet(torch.nn.Module):
         wdl_output_name: str,
         providers: Sequence[str] = ("CUDAExecutionProvider", "CPUExecutionProvider"),
         plane_count: int = LC0_FULL.num_planes,
+        input_format: str = INPUT_FORMAT_LC0_PLANES,
+        graph_optimization_level: str | None = None,
+        intra_op_num_threads: int | None = None,
     ) -> None:
         super().__init__()
         # Local import — onnxruntime is heavy and only needed when this class is used.
         import onnxruntime as ort
 
+        if input_format not in ONNX_INPUT_FORMATS:
+            raise ValueError(
+                f"input_format must be one of {ONNX_INPUT_FORMATS}; got {input_format!r}",
+            )
+        level = graph_optimization_level or _DEFAULT_GRAPH_OPTIMIZATION[input_format]
+        if level is not None and level not in _ORT_GRAPH_OPTIMIZATION_LEVELS:
+            raise ValueError(
+                f"graph_optimization_level must be one of "
+                f"{tuple(_ORT_GRAPH_OPTIMIZATION_LEVELS)}; got {level!r}",
+            )
+        session_options = None
+        if level is not None or intra_op_num_threads is not None:
+            session_options = ort.SessionOptions()
+            if level is not None:
+                session_options.graph_optimization_level = getattr(
+                    ort.GraphOptimizationLevel, _ORT_GRAPH_OPTIMIZATION_LEVELS[level],
+                )
+            if intra_op_num_threads is not None:
+                session_options.intra_op_num_threads = int(intra_op_num_threads)
         self._path = str(Path(path).expanduser().resolve())
-        self._session = ort.InferenceSession(self._path, providers=list(providers))
+        self._session = ort.InferenceSession(
+            self._path, session_options, providers=list(providers),
+        )
         self._input_name = input_name
         self._policy_out = policy_output_name
         self._wdl_out = wdl_output_name
         self._plane_count = plane_count
+        self.input_format = input_format
+        # Feed the dtype the graph declares. BT4 declares tensor(float) so this
+        # stays a no-op there; the Ceres C1 exports declare tensor(float16) and
+        # ORT rejects a float32 feed outright.
+        declared = {i.name: i.type for i in self._session.get_inputs()}
+        self._input_dtype = _ORT_INPUT_DTYPES.get(declared.get(input_name, ""), np.float32)
 
         # Declare the LC0-canonical input contract so the UCI/match/evaluator
         # helpers (which read these off the model, defaulting to legacy/v1/
@@ -103,7 +197,8 @@ class OnnxChessNet(torch.nn.Module):
         # ORT picks its own device; report CPU so torch consumers don't try to .to() us.
         return torch.device("cpu")
 
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+    def _prepare_lc0_planes(self, x: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+        """(net input, gather map) for the 112-plane LC0/BT4 contract."""
         if x.dim() != 4 or x.shape[-2:] != (8, 8):
             raise ValueError(f"expected (B, planes, 8, 8); got {tuple(x.shape)}")
         if x.shape[1] >= self._plane_count:
@@ -122,22 +217,44 @@ class OnnxChessNet(torch.nn.Module):
         # bt4_audit.py does; real-history inputs have non-empty frames and are
         # left untouched.
         np_in = fill_lc0_history_repeat(np_in)
+        gather = leela_gather_indices(*lc0_gather_context_from_planes(
+            np_in, input_history_encoding=self.input_history_encoding,
+        ))
+        return np_in, gather
+
+    def _prepare_ceres_tpg(self, x: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+        """(net input, gather map) for the Ceres (B, 64, 137) square-record contract.
+
+        No history fill happens here: the TPG record already carries all 8
+        history slots, and short histories were resolved by the encoder's
+        ``fill_in_history`` (Ceres's own converter does the same).
+        """
+        if x.dim() != 3 or tuple(x.shape[1:]) != (CERES_TPG_NUM_SQUARES, CERES_TPG_NUM_FEATURES):
+            raise ValueError(
+                f"expected (B, {CERES_TPG_NUM_SQUARES}, {CERES_TPG_NUM_FEATURES}) Ceres "
+                f"square records; got {tuple(x.shape)}",
+            )
+        np_in = x.detach().to(dtype=torch.float32, device="cpu").numpy().copy()
+        return np_in, leela_gather_indices(*ceres_tpg_gather_context(np_in))
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        if self.input_format == INPUT_FORMAT_CERES_TPG:
+            np_in, gather = self._prepare_ceres_tpg(x)
+        else:
+            np_in, gather = self._prepare_lc0_planes(x)
         out_pol_1858, out_wdl = self._session.run(
             [self._policy_out, self._wdl_out],
-            {self._input_name: np_in},
+            {self._input_name: np_in.astype(self._input_dtype, copy=False)},
         )
         # Reorder Leela's 1858 into OUR compact 1858, then widen to 4672. The
         # reorder is per-position because the shared back-rank and castling
         # slots depend on the board — which is read from `np_in`, the very
-        # planes the net just saw, so the two can never drift apart.
+        # input the net just saw, so the two can never drift apart.
         pol_leela = np.asarray(out_pol_1858, dtype=np.float32)
         if pol_leela.shape[-1] != COMPACT_POLICY_SIZE:
             raise ValueError(
                 f"expected policy shape (B, {COMPACT_POLICY_SIZE}), got {tuple(pol_leela.shape)}"
             )
-        gather = leela_gather_indices(*lc0_gather_context_from_planes(
-            np_in, input_history_encoding=self.input_history_encoding,
-        ))
         pol_compact = np.take_along_axis(pol_leela, gather, axis=1)
         # Slots with no geometric move become -1e9 so the legal mask filters them.
         pol_4672 = torch.from_numpy(
