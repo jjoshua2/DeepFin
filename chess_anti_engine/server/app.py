@@ -17,7 +17,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
@@ -907,7 +907,7 @@ def prune_retained_dirs(
 
     Found by review. The first version budgeted per directory.
     """
-    entries: list[tuple[float, Path, int]] = []
+    entries: list[_RetainedEntry] = []
     for root in roots:
         entries.extend(_retention_entries(root))
     for root in legacy_roots:
@@ -921,10 +921,27 @@ def prune_retained_dirs(
     )
 
 
+class _RetainedEntry(NamedTuple):
+    """One retained entry, with the sidecar's share of `size` kept separate.
+
+    `size` is entry + sidecar and is the BUDGET's unit -- it must stay whole,
+    because that is what the ceiling is measured in. `sidecar_size` is the part
+    of it that lives in the `.reason.txt`, split out for one reason only: the
+    two files are deleted by two different statements that can succeed
+    independently, so crediting `freed_bytes` exactly needs to know which half
+    this sweep actually removed. See `_evict_oldest_first`.
+    """
+
+    mtime: float
+    path: Path
+    size: int
+    sidecar_size: int
+
+
 def _retention_entries(
     root: Path, *, files_only: bool = False,
-) -> list[tuple[float, Path, int]]:
-    """(mtime, path, size) for each retained entry, sidecar size included.
+) -> list[_RetainedEntry]:
+    """One `_RetainedEntry` per retained entry, sidecar size included in `size`.
 
     `files_only` skips subdirectories -- see `prune_retained_dirs`'s
     `legacy_roots`, where a subdirectory is another user's whole bucket rather
@@ -932,7 +949,7 @@ def _retention_entries(
     """
     if not root.is_dir():
         return []
-    out: list[tuple[float, Path, int]] = []
+    out: list[_RetainedEntry] = []
     for p in root.iterdir():
         if files_only and p.is_dir():
             continue
@@ -953,17 +970,21 @@ def _retention_entries(
       # exception message, attacker-influenced and unbounded, so the ceiling
       # could be walked straight past. Found by review.
             sidecar = p.with_suffix(p.suffix + ".reason.txt")
+            sidecar_size = 0
             with contextlib.suppress(OSError):
                 if sidecar.is_file():
-                    size += sidecar.stat().st_size
-            out.append((st.st_mtime, p, int(size)))
+                    sidecar_size = sidecar.stat().st_size
+            size += sidecar_size
+            out.append(
+                _RetainedEntry(st.st_mtime, p, int(size), int(sidecar_size)),
+            )
         except OSError:
             continue
     return out
 
 
 def _evict_oldest_first(
-    entries: list[tuple[float, Path, int]],
+    entries: list[_RetainedEntry],
     *,
     max_bytes: int,
     max_entries: int,
@@ -993,14 +1014,25 @@ def _evict_oldest_first(
     switching it to `freed` would make a sweep whose victims a concurrent sweep
     had already taken keep deleting past the budget, destroying diagnostics to
     fix a log line.
+
+    ⚑ AND THE SIDECAR WAS THE HALF THAT STAYED INEXACT (#407 review). The fix
+    above tracked the ENTRY's deletion and left the sidecar on
+    `unlink(missing_ok=True)` -- untracked -- while still crediting the whole
+    `size`, which INCLUDES the sidecar's bytes, to `freed_bytes`. So under the
+    very two-sweep race this was written for, a sweep whose peer had already
+    taken the `.reason.txt` still reported those bytes as its own. `size` is
+    the budget's unit and stays whole; the two halves are now credited
+    separately, each only when THIS sweep's own delete succeeded. It remains
+    telemetry-only and changes no eviction decision.
     """
-    entries.sort(key=lambda t: t[0])
-    total_bytes = sum(e[2] for e in entries)
+    entries.sort(key=lambda e: e.mtime)
+    total_bytes = sum(e.size for e in entries)
     gone_entries = 0
     freed_entries = 0
     freed_bytes = 0
 
-    for _mtime, path, size in entries:
+    for entry in entries:
+        path, size = entry.path, entry.size
         over_bytes = max_bytes > 0 and total_bytes > max_bytes
         over_count = max_entries > 0 and (len(entries) - gone_entries) > max_entries
         if not (over_bytes or over_count):
@@ -1008,7 +1040,13 @@ def _evict_oldest_first(
         try:
       # `size` ALREADY includes the sidecar, so it must not be added again --
       # that would over-subtract and stop evicting while still over budget.
-            path.with_suffix(path.suffix + ".reason.txt").unlink(missing_ok=True)
+      # `freed_sidecar` is the other question: did THIS sweep remove it.
+            freed_sidecar = 0
+            try:
+                path.with_suffix(path.suffix + ".reason.txt").unlink()
+                freed_sidecar = entry.sidecar_size
+            except FileNotFoundError:
+                pass
             if path.is_dir():
                 try:
                     shutil.rmtree(path)
@@ -1030,9 +1068,14 @@ def _evict_oldest_first(
             continue
         total_bytes -= size
         gone_entries += 1
+      # Two independent deletes, credited independently. `size - sidecar_size`
+      # is the entry's own bytes; the sidecar's are added only if the unlink
+      # above found it. `freed_entries` still counts ENTRIES, so a lone sidecar
+      # removal contributes bytes without inventing an eviction.
         if removed:
-            freed_bytes += size
+            freed_bytes += size - entry.sidecar_size
             freed_entries += 1
+        freed_bytes += freed_sidecar
 
     if freed_entries and log is not None:
         log.info(
@@ -4146,12 +4189,32 @@ def create_app(
            ``.zattrs`` but corrupt compressed array data is refused at upload
            (``RuntimeError: error during blosc decompression`` → ``invalid``,
            never reaching ``_pending``), because ``_finish_upload`` does a
-           non-lazy ``load_shard_arrays`` AND ``arrays_to_samples``, the same
-           two calls recovery makes. That is one construction disproved, not a
-           proof over all of them — and note the attacker still chooses the
-           trial ids one step earlier, so if any vector does exist the growth
-           it produces is per-invented-trial and unbounded. Treat this as
-           residual risk that is accepted below, not as a closed hole.
+           non-lazy ``load_shard_arrays`` BEFORE it promotes.
+
+           ⚑ ONLY THAT ONE CALL GATES, AND THIS DOCSTRING USED TO CLAIM TWO.
+           It cited "``load_shard_arrays`` AND ``arrays_to_samples``, the same
+           two calls recovery makes". The order on the upload path is
+           ``load_shard_arrays`` (:3457, :3463) → PROMOTE (:3610) →
+           ``arrays_to_samples`` (:3672). The second call runs AFTER the
+           promote, so it cannot gate anything: a shard that loads but fails
+           ``arrays_to_samples`` 500s the upload and is left sitting in
+           ``_pending`` under an attacker-chosen trial id, which is exactly the
+           state boot-time ``_scan_pending_dir`` turns into an ``unloadable``
+           entry. The mitigation is HALF what was written, and keeping that
+           sentence honest is this docstring's entire job.
+
+           ⚑ NOT OVERSTATED IN THE OTHER DIRECTION EITHER: no input that
+           passes ``load_shard_arrays`` and then fails ``arrays_to_samples``
+           was found — this is a narrowed claim, not a new vector. And
+           ``_scan_pending_dir`` runs at BOOT ONLY, so even a working vector
+           yields entries per server restart rather than per upload, which is a
+           real and previously unstated rate limit.
+
+           That is one construction disproved, not a proof over all of them —
+           and note the attacker still chooses the trial ids one step earlier,
+           so if any vector does exist the growth it produces is
+           per-invented-trial and unbounded. Treat this as residual risk that
+           is accepted below, not as a closed hole.
         2. It IS the data-preservation channel, and this is decisive on its
            own. Every quarantine decision on the recovery path is justified by
            "the bytes survive for an operator to recover" — that is the whole

@@ -1022,6 +1022,50 @@ def test_the_two_quarantine_sinks_do_not_share_one_budget(tmp_path) -> None:
     )
 
 
+def test_a_sweep_does_not_claim_sidecar_bytes_another_sweep_removed(
+    tmp_path,
+) -> None:
+    """⚑ REGRESSION (#407 review, P2). The HALF of the exactness fix that #406
+    left inexact.
+
+    #406 tracked the ENTRY's deletion but left the sidecar on
+    `unlink(missing_ok=True)` -- untracked -- while crediting the whole `size`
+    to `freed_bytes`, and `size` INCLUDES the sidecar's bytes. So under the
+    very two-sweep race the fix was written for, a sweep whose peer had already
+    taken the `.reason.txt` still reported those bytes as its own, and
+    `freed_bytes` still did not mean "bytes this sweep removed".
+
+    Driven through the real pair, with the concurrent deletion landing between
+    the snapshot and the sweep exactly where a racing sweep's would -- and it
+    removes ONLY the sidecar, which is the case the entry-level fix cannot see.
+    """
+    from chess_anti_engine.server.app import _evict_oldest_first, _retention_entries
+
+    q = tmp_path / "invalid"
+    q.mkdir()
+    for i in range(3):
+        _mk(q, f"s{i}.tar", size=1000, mtime=1_000_000 + i, sidecar=True)
+    sidecar_bytes = (q / "s0.tar.reason.txt").stat().st_size
+    assert sidecar_bytes > 0
+
+    entries = _retention_entries(q)
+    assert len(entries) == 3
+
+    # A concurrent sweep took the oldest victim's SIDECAR only.
+    (q / "s0.tar.reason.txt").unlink()
+
+    freed_entries, freed_bytes = _evict_oldest_first(
+        entries, max_bytes=0, max_entries=2, log=None, label="test",
+    )
+
+    assert freed_entries == 1, freed_entries
+    assert freed_bytes == 1000, (
+        f"reported {freed_bytes} bytes freed; this sweep removed the 1000-byte "
+        f"entry but NOT its {sidecar_bytes}-byte sidecar, which another sweep "
+        "had already taken"
+    )
+
+
 def test_a_sweep_reports_only_the_evictions_it_performed(tmp_path) -> None:
     """⚑ REGRESSION (#406, P2). `unlink(missing_ok=True)` made a file another
     concurrent sweep had already deleted indistinguishable from one this sweep

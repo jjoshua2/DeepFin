@@ -913,10 +913,21 @@ def test_corrupt_array_data_is_refused_at_upload_not_deferred_to_recovery(
 
     Measured here: it is refused at upload with a blosc decompression error and
     lands in `quarantine/invalid` (which IS budgeted), because `_finish_upload`
-    does a NON-LAZY `load_shard_arrays` and `arrays_to_samples` — the same two
-    calls recovery makes. If anyone makes that load lazy, this test fails and
-    the docstring's cited measurement is caught going stale instead of quietly
-    becoming false.
+    does a NON-LAZY `load_shard_arrays` BEFORE it promotes. If anyone makes that
+    load lazy, this test fails and the docstring's cited measurement is caught
+    going stale instead of quietly becoming false.
+
+    ⚑ THIS TEST USED TO CITE TWO GATING CALLS AND THERE IS ONLY ONE (#407
+    review). `arrays_to_samples` runs AFTER the promote (`load_shard_arrays`
+    :3457/:3463 → promote :3610 → `arrays_to_samples` :3672), so it gates
+    nothing: a shard that loads and then fails `arrays_to_samples` 500s the
+    upload and is LEFT IN `_pending` under an attacker-chosen trial id. What
+    this test actually pins is the first call, which is the one that runs early
+    enough to matter.
+
+    ⚑ No input with that shape was found, so this is a narrowed claim rather
+    than a new vector, and `_scan_pending_dir` is BOOT-ONLY — a real rate limit
+    on the sink that the original argument never mentioned.
 
     ⚑ This disproves ONE construction. It is not a proof that the sink is
     unreachable, and the docstring does not claim it is.
