@@ -46473,3 +46473,54 @@ coverage absent: the session guard's `startswith("cuda")` (nothing proves `cuda:
 uncaught `ValueError` traceback instead of `SystemExit`.
 
 ⇒ **NOT MERGED.** F1 is the exact defect class the PR was written to fix, and it is cheap.
+
+### PR #422 REVIEW (independent, NOT the author): GOOD — critical property verified, 4×P2 to close
+**The property that mattered most is TRUE, and was checked the right way.** The reviewer instrumented
+`run_ordo` and read back what `write_pgn` actually wrote on an UNBALANCED design, 200 reps: A-B
+constant at exactly 40 games, B-C constant at exactly 6, A-C varying only because it contained
+singleton half-pairs. **It resamples WITHIN matchup and preserves per-matchup block count; no
+cross-matchup pooling.** Also verified: **`-M` on every one of 11 captured argv** (`run_ordo` is the
+sole command builder ⇒ structurally unbypassable — documented AND mitigated); **`-z 200.2409`** exact
+to 7 s.f. and demonstrably load-bearing (same data, `-z 202` → 71.4 vs 70.8, the claimed 0.88%);
+guard fires (ρ=−0.866, p=0.000, exit 2) and stays quiet on random ordering, and runs unconditionally;
+default-off byte-identity across both play paths × 3 `max_plies` with the sink non-vacuously called.
+
+**⚑ F1 (P2) — SAME SHAPE AS #415's F1, ONE PR LATER: `ordo_pooled_fit.py` HAS ZERO TESTS.** 448 lines,
+nothing imports it. The reviewer's mutations to **the `-z` constant, the stratification, and `-M` ALL
+SURVIVE the full suite.** "12/12 mutations caught" is true and scoped **entirely to the PGN writer** —
+so **the three properties the PR itself calls load-bearing are exactly the three nothing can catch
+regressing.** Two PRs in a row where the mutation evidence covered the easy half.
+
+**⚑ F2 (P2) — THE TOOL NEVER REPORTS A CI ON THE CONTRAST IT EXISTS TO MEASURE.** It prints per-player
+CIs against the pool average (A ±27.6, B ±25.5) while the correct **A−B halfwidth is 40.2**. The
+bootstrap replications are ALREADY PAIRED, so the quantity is computed and then **discarded** — the
+house signature defect in its purest form, inside the very tool built to avoid it. Two-line fix.
+
+**⚑ F3 (P2) — THE MISSINGNESS GUARD'S FALSE-POSITIVE RATE IS 10% / 28%, NOT 5%.** Measured on 400
+true-null datasets: two α=0.05 tests OR'd per matchup, then OR'd ACROSS matchups, with no multiplicity
+correction. In the intended 3-arm case **more than 1 clean fit in 4 exits 2 and says "do not read a
+verdict"** — which trains the operator to ignore it, and an ignored guard is no guard.
+Textbook [[an_exit_code_is_an_or_over_axes]].
+
+**F4 (P2) — chunked `matched_sims` writes a decisive last-ply game as a DRAW** while scoring it as the
+true win/loss. Proven: an identical 4-ply game reads `0-1` at `max_plies=20` and `1/2-1/2` at
+`max_plies=4`. Rolling is correct; blast radius is `--no-rolling` at ply exactly `max_plies-1`. **But
+it makes the PGN and the pentanomial disagree — the exact cross-check the Ordo-vs-ours agreement
+rests on.**
+
+**⚑ AND THE AGREEMENT CLAIM IS WEAKER THAN I REPORTED IT.** The reviewer measured that **Ordo's
+2-player rating is a function of TOTAL SCORE ALONE** (70.40-70.80 across draw fractions 0.10-0.75), so
+the reconstructed DD/WL ambiguity cannot move the point estimate. The PR's caveat is honest and
+over-cautious — but that also makes "+49.00 vs +48.96" **near-tautological AS AN AGREEMENT TEST**. It
+is really a **check on the `-z` constant** (a wrong `-z` would show ≈0.43 Elo), which is genuinely
+useful and should be described as that. **I relayed it to Josh as "Ordo agrees with our numbers",
+which overstates what that comparison can establish.** The PR body discloses the reconstruction
+properly; the docs do not and should.
+
+Accepted on trust: the 1/30 hang rate (reproducing a deliberate Ordo hang burns CPU on a box under
+production training, and the mitigation is unconditional anyway) and the coverage/width/SD tables
+(generator-dependent). The reviewer's own known-rating recovery read 2500.0 / 2447.7 / 2339.7 —
+looser than the author's 1.6 Elo, attributed to misspecification in the REVIEWER's generator, not a
+defect. Not verified: nothing end-to-end against a real match; `matched_time`'s sink is executed by no
+test. **The PR's own "Not verified" section was found accurate and appropriately scoped — it did not
+overclaim anywhere the reviewer checked.**
