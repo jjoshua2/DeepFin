@@ -46650,3 +46650,52 @@ its terminator, and each kept re-reporting the pre-fix "6 errors" long after the
 stale-result generator — the third instance today of *a mechanism that is populated, internally
 consistent, and reporting on a state that no longer exists* (with the ORT availability list and
 `reviewDecision`).
+
+### V1/V2 CLOSED (`9e09ab4b4`) — and holding for them CORRECTED the FPR attribution
+**⚑ The reviewer's explanation of the FPR discrepancy was HALF RIGHT, and asking was worth it.**
+Same harness, 400 datasets at each grid, changing only `n_perm`:
+
+| `n_perm` | Holm-corrected | uncorrected |
+|---|---|---|
+| **1000** | **0.052 ± 0.011** | 0.273 ± 0.022 |
+| 300 | **0.033 ± 0.009** | 0.245 ± 0.022 |
+| 300, n=150 (the reviewer's shortcut) | 0.013 ± 0.009 | 0.180 |
+
+**The grid moves it 0.052 → 0.033, not 0.052 → 0.013.** The remainder is sampling noise at n=150 —
+with true 0.033, P(≤2 hits in 150) ≈ 13%. ⇒ the reviewer's DIRECTION was right and its ATTRIBUTION
+overstated: it assigned the whole gap to the grid when the grid accounts for about half.
+
+**Mechanism derived BEFORE measuring, which is what makes it a test and not a story:** Holm's
+strictest threshold is α/m = 0.00833 and attainable p-values are k/(n_perm+1), so the largest usable
+k is **8 of 1001** (region 0.0080) but only **2 of 301** (0.0066) — a 17% smaller region.
+Independent-tests theory predicted 0.047 → 0.039; measurement gave 0.052 → 0.033, lower because the
+two tests per matchup are positively correlated. Direction and magnitude both hold.
+⚑ **The shipped default `n_perm=2000` gives the SAME rejection region as 1000** (16/2001 = 8/1001 =
+0.0080), so **0.052 is the rate the tool actually ships with.** The number is grid-dependent and is
+now stated WITH its grid in the docstring, `docs/eval_protocol.md`, and the printed output — which
+also reports the grid the current run used. A coarse grid only LOWERS the rate, so it costs power,
+not safety.
+
+**V1** — `_half_pairs()` gives every singleton a fixed colour, making block count exactly recoverable
+from the resampled PGN (`whites[armA] == blocks drawn`); the test asserts that AND requires the game
+count to vary, so the block assertion cannot pass for the wrong reason. **V2** — a spy on
+`holm_reject` asserts one call with all 6 p-values across 3 matchups.
+**Both gaps proven REAL, not hypothetical: with each mutation applied, the suite MINUS the new test
+passes and the new test ALONE fails.** Batteries now 12/12 and 13/13.
+
+**Syzygy tag — change DECLINED, with reasoning, and the reasoning is right.** Adjudication sets
+`adjudicated[i]` and calls `_emit(i, "syzygy")` in the same block (`arena_standard.py:757-759`), so an
+adjudicated game is always already emitted and the sweep-up's `emitted[i]` guard skips it ⇒
+`adjudicated[i]` is **always None** there and `"rules"` is accurate by construction. Adding
+`"syzygy" if adjudicated[i] else "rules"` would be **a branch that cannot be reached or tested** —
+the exact failure mode this repo warns about. Invariant recorded as a comment instead.
+
+### ⚑⚑ THE GENERALISATION, worth more than any of the fixes
+The author's own summary of four rounds: *"my tests asserted a property that a weaker implementation
+also satisfies — matchup PRESENCE not COMPOSITION, PARITY not COLOUR BALANCE, PAIR SUMS not GAME
+RESULTS, COMPLETE PAIRS where HALF-PAIRS were the discriminating case. The fix each time was a
+fixture or assertion that SEPARATES the two, not more tests."**
+⇒ This is the mechanism behind [[new_tests_here_are_vacuous_until_mutated]]: a vacuous test is not
+usually a missing test, it is an assertion satisfied by BOTH the correct and the weaker
+implementation, most often because the FIXTURE cannot distinguish them. **Write the weaker
+implementation first and ask what fixture separates it.**
