@@ -1206,6 +1206,70 @@ def _declared_nbytes(value: Any) -> int:
     return int(nbytes)
 
 
+# --- Untrusted-deserialization guard for uploaded shards (issue #411) --------
+#
+# An uploaded ``.zarr`` array is decoded through the codec its own ``.zarray``
+# declares. A numcodecs *object codec* (Pickle/JSON/MsgPack/VLen*) attached as a
+# filter or compressor runs an attacker-chosen deserializer -- ``pickle`` calls
+# ``__reduce__`` -- the moment a chunk is materialized on the training host.
+# ``allow_pickle=False`` closes the twin ``.npz`` sink in ``load_shard_arrays``;
+# this closes the ``.zarr`` sibling. It is an ALLOWLIST, not a denylist: every
+# permitted dtype/compressor is a fixed numeric/byte-transform that provably
+# cannot deserialize an object, so the next hostile codec is rejected by
+# default rather than needing to be enumerated.
+#
+# Calibrated against what production actually writes (``save_local_shard_arrays``
+# is the ONLY zarr writer; it emits ``Blosc(cname="zstd")`` with no filters) and
+# empirically confirmed against 14 real shards under ``runs/`` on 2026-08-13:
+# every array used dtype in {u1,i1,i2,i4,i8,f2,f4}, compressor ``blosc``, and
+# NO filters. The dtype allowlist is by *kind* (bool/int/uint/float) so a future
+# numeric width needs no change here; the compressor allowlist admits the family
+# of pure byte-transform (de)compressors so a compressor swap does not take the
+# fleet to zero, while still rejecting every object codec.
+_SAFE_SHARD_DTYPE_KINDS: frozenset[str] = frozenset({"b", "i", "u", "f"})
+_SAFE_SHARD_COMPRESSOR_IDS: frozenset[str] = frozenset(
+    {"blosc", "zstd", "lz4", "gzip", "zlib", "bz2", "lzma"}
+)
+
+
+def _reject_unsafe_shard_codecs(group: Any) -> None:
+    """Reject uploaded zarr arrays whose dtype/codec could run a deserializer.
+
+    Reads ``.zarray`` metadata only (``dtype``/``filters``/``compressor``) --
+    verified not to decode any chunk -- so it is safe to run on lazy, untrusted
+    proxies BEFORE materialization. Only the arrays the loader will actually
+    materialize are inspected (``_SHARD_FIELDS`` present in the group); an
+    ``_``-prefixed or unknown member is never read as a dataset, so it never
+    decodes and cannot execute.
+    """
+    for name in _SHARD_FIELDS:
+        if name not in group:
+            continue
+        arr = group[name]
+        dtype = np.dtype(getattr(arr, "dtype", None))
+        if dtype.kind not in _SAFE_SHARD_DTYPE_KINDS:
+            raise ValueError(
+                f"shard array {name!r} declares non-numeric dtype {dtype!s}; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            )
+        filters = getattr(arr, "filters", None)
+        if filters:
+            filter_ids = [getattr(f, "codec_id", type(f).__name__) for f in filters]
+            raise ValueError(
+                f"shard array {name!r} declares filters {filter_ids}; only "
+                f"filter-free numeric arrays are accepted (untrusted-deserialization guard)",
+            )
+        compressor = getattr(arr, "compressor", None)
+        if compressor is not None:
+            codec_id = getattr(compressor, "codec_id", type(compressor).__name__)
+            if codec_id not in _SAFE_SHARD_COMPRESSOR_IDS:
+                raise ValueError(
+                    f"shard array {name!r} uses disallowed compressor {codec_id!r}; "
+                    f"only byte-transform compressors are accepted "
+                    f"(untrusted-deserialization guard)",
+                )
+
+
 def validate_array_declarations(
     arrs: dict[str, Any],
     *,
@@ -1748,6 +1812,14 @@ def load_shard_arrays(
         return arrs, meta
     g = zarr.open_group(str(p), mode="r")
     meta = dict(g.attrs.asdict())
+    # Untrusted-deserialization guard (issue #411): reject object dtypes and
+    # non-allowlisted codecs BEFORE any chunk is decoded. This runs on BOTH the
+    # lazy and eager path so every materialization sink -- the upload handler's
+    # eager ``load_shard_arrays`` and the boot-time ``_scan_pending_dir``
+    # recovery load, which does NOT do a lazy pre-pass -- is covered at the one
+    # chokepoint they share, symmetric with the ``.npz`` ``allow_pickle=False``
+    # above. Reads ``.zarray`` metadata only; no chunk is materialized here.
+    _reject_unsafe_shard_codecs(g)
     if lazy:
         arrs: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
         _attach_identity_meta_arrays(arrs, meta)
