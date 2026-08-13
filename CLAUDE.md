@@ -221,7 +221,9 @@ Consequential and not apparent from the code:
   winrate is produced by the net PLUS its search. So a search-config change injects a STEP
   into the regret series that is arithmetically indistinguishable from the net improving.
   - **MEASURED, not argued.** At iter 736 `gumbel_c_scale` went 0.025 → 0.1 (`7f4304db9`,
-    2026-08-09 20:58) — worth **+245 Elo with the SAME weights on both sides**. Regret fell
+    2026-08-09 20:58) — worth **+239.5 Elo [+205.9, +277.5] with the SAME weights on both
+    sides** (banked 400-game final; the +245.1 quoted before 2026-08-12 was a 380-game
+    rolling read — the exact failure the rolling-arena rule bans). Regret fell
     **0.0538 → 0.0334 (−38%) in ~25 iterations**. Over that SAME window the paired arena
     with the same search both sides and only the WEIGHTS differing read **−51.6 Elo**. ⇒
     **regret reported strong progress while the net measurably degraded.** The ruler gives a

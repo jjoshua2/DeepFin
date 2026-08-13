@@ -44565,3 +44565,135 @@ rl_loop_audit E15's 92.8% → 99.9%); mate-band fix live; label nodes decoupled 
 (median 150,072 both windows); blend matches docs/model_heads.md; policy_sf POV correct;
 mask defaults fail closed; priorities never touch the loss; soft_policy_temp published;
 desync 0.0 live; TB/refute paths off.
+
+### Tier-13 arm B/C launch-path audit VERDICTS (2026-08-12, report: scratchpad/tier13/audit_armB_launch_path.md)
+
+Independent audit of the exact salvage-restart command arms B/C will run, verified against
+arm A's realized rows/logs where arm-shared and statically for the B/C-only splice.
+**BLOCKING: none — the chain is sound end-to-end.** Verified: the model is built from the
+CONFIG before any donor byte is read (fresh trial ⇒ `peek_checkpoint_arch(None)`; the donor's
+`trainer.pt['arch']` is never read on this path); missing adapter keys stay at fresh init
+(tolerant load, catastrophic guard at 496/498 nowhere near firing); the optimizer-moment
+splice arithmetic checks out against the donor's MEASURED layout (481 params, groups
+[48,0,143,290] → 483, [48,0,144,291]; key order donor↔current-code proven identical
+496/496); BOTH modes are exactly function-preserving at t=0 (`linear` W=I,b=0; `residual_mish`
+W=0,b=0, mish(0)=0); the AOT-bypass guard passes (both AOT dirs empty in the arm yamls);
+workers take the mode from the manifest (verified live on arm A: `'off'`).
+
+Operational corrections adopted for tonight's B and C transitions:
+- **S1 FIXED IN CODE**: the splice's only success line was `logging.info` and the Ray actor
+  drops INFO (measured: zero package INFO records in arm A's 2,494-line log while the same
+  event's TB scalar was written) — a successful splice printed NOTHING while only the reinit
+  WARNING was loud. Promoted to a `[resume]` print (`train/trainer.py`, this session; log-only,
+  not training-affecting; takes effect at arm B's launch since arm A's process already loaded
+  the module). Decisive check regardless of logs: first checkpoint's opt-state step-counter
+  histogram must show TWO values — 481 params at ≈79861+N and exactly 2 at ≈N. All-483-at-N =
+  REINIT = the arm is non-comparable; stop and investigate.
+- **S2**: `WATCHDOG_AUTO_RECOVER=0` on the launch command is INERT against an already-running
+  watchdog (`start_observers` skips spawning; the loop read its env once). Verified live
+  watchdog PID 3251857 env = 0 (safe today). At EACH arm launch: verify via
+  `/proc/<watchdog-pid>/environ`, never trust the prefix.
+- **S3**: `/tmp/chess_training.log` is truncated by every `start` — bank it to
+  scratchpad/tier13/ BEFORE each salvage-restart, or the transition destroys the previous
+  arm's launch evidence.
+- **Fingerprint correction (supersedes any "≈0.0251" in session notes; the ledger never
+  banked it)**: the donor-restore PID fingerprint is row-1
+  `opponent_wdl_regret_limit == 0.02980343420776443` BITWISE (measured on both arm-A trials;
+  0.0251 was arm A's drifted current value, not the restore point). `sf_nodes == 75000` is a
+  DEGENERATE observable (config equals donor) — use the regret value plus
+  `pid_regret_history_len == 20`.
+- **Confound recorded (N1)**: all three arms run `distributed_async_test_eval: false`
+  (arm A's first trial d76cc died at iteration 2 on the FX-trace race; the relaunch b384d is
+  the lineage). The arms differ from production in this key — common-mode across arms.
+- **N5**: `global_iter` continues the donor lineage (891, 892, …) in EVERY arm — cross-arm
+  joins key on work_dir/trial-id, never on global_iter.
+- The full 16-point launch-verification checklist (log lines with exact expected content,
+  params.json/manifest/checkpoint arch, splice fingerprint, PID/provenance row-1 values,
+  bitwise scheduler anchors) is §6 of the report — applied VERBATIM at the B and C launches.
+
+### AMENDMENT to PREREG Tier-12 (amends 9722e0fc0; recorded BEFORE any Tier-12 GPU, per the 726c069a1 pattern; report: scratchpad/tier12_launch_readiness_20260812.md)
+
+Launch-readiness audit found the prereg NOT executable as registered — two blockers, both
+caught with zero GPU spent. The model-side plumbing (every construction seam,
+yaml→TrialConfig→ModelConfig→build→checkpoint→loader→manifest→broker identity) audited SOUND
+and fail-loud; the defects are in the prereg's procedure.
+
+- **B1 — the deciding yardstick command does not run.** `--paired-against` is not a flag of
+  `scripts/value_regret.py`, and `data/tier11/t6_base800` does not exist. CORRECTED FROZEN
+  FORM (per arm): `scripts/value_regret.py --checkpoint <arm.pt> --audit-set
+  data/audit_set_v1.jsonl --max-positions 2000 --min-pieces 8 --batch-size 128
+  --input-encoding fen_only --gpu-mem-fraction 0.35 --dump-per-position
+  scratchpad/tier12/vr_<arm>_dump.jsonl`, then `scripts/paired_compare.py
+  scratchpad/tier12/vr_<arm>_dump.jsonl scratchpad/tier11_20260812/vr_t6_base800_dump.jsonl
+  --label-a <arm> --label-b t6_base800`. The scorer flags are pinned because the ruler is
+  batch/encoding-dependent and `require_same_ruler` refuses a mismatch; the banked baseline
+  dump (1723 rows, `enc=fen_only b=128`) is the comparison object.
+- **B2 — there was NO runnable procedure to BUILD the coupled arms, and the obvious one is a
+  silent no-op.** `retarget_retrain.py` builds the model from the donor checkpoint's EMBEDDED
+  `arch`; a `categorical_head_coupled=true` variant override passes the reachability guard
+  (it IS a TrialConfig field), is recorded in the report as applied — and changes nothing.
+  Both "coupled" arms would train the CONTROL topology. The signature defect, one level above
+  the probe built to catch its last instance. CORRECTED BUILD: (0) CPU-only donor copy with
+  the arch rewritten (`ck['arch']['categorical_head_coupled'] = True` →
+  scratchpad/tier12/boot512_coupledarch.pt); (1) the rig with `--allow-partial-load`
+  (REQUIRED: arch-from-checkpoint runs require_complete=True and would abort on the 2 fresh
+  coupled keys) and the t10 arms' override strings VERBATIM plus `w_categorical` 0.3/0.1.
+  Pass NEITHER rebuild flag — the rig default (rebuild-ON) is what the banked arms ran.
+  MANDATORY observations: (a) tolerant-load lines read unexpected == exactly the 6
+  `value_categorical.*` keys and missing == exactly `value_categorical_coupled.{weight,bias}`
+  — anything else is a launch failure; (b) each output `t12_*.pt` arch reads coupled: true
+  with coupled keys present and standalone keys absent.
+- **B3 — donor pinned to boot512** (`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt`,
+  via the B2 arch-rewrite copy) — the donor of EVERY banked comparison row
+  (t6_base800/t10_catfix/t10_catfix_low). The prereg's "warm-starts from iter138" refers to
+  the separately-gated LIVE-ENABLE entry only; warm-starting the offline arms from iter138
+  would donor-confound all five rows.
+- **Operational verdict sentence (S2)**: WORKED iff `paired_compare` overall mean delta
+  ≤ −5.0 cp AND the 95% CI upper bound < 0, with the t12 arm as dump_a and t6_base800 as
+  dump_b, on at least one of the two arms; FAILED/CLOSED iff neither arm's CI upper bound
+  < 0. Judged same session, dumps banked.
+- **Corrections**: PR #397 is MERGED (`7fa7eddf2`) and on the live branch (prereg said
+  unmerged). Recipe-drift diff `ed9de8ee9..HEAD` run and CLEAN (no trainer/replay-consumed
+  key moved) — re-run it as a launch-day step after any live-yaml edit.
+- **Tier-13 interaction, pre-staged**: with the donor pinned to boot512 the offline readout
+  is Tier-13-INDEPENDENT (every input predates PRs #397/#398 and is frozen). Only the
+  live-enable entry inherits Tier-13's outcome (adapter+coupled has zero joint test
+  coverage; the FAILED head-deletion path cannot be spliced ⇒ full optimizer reset, own
+  migration entry; the AOT swap drops the coupled constants silently — harmless for a
+  training-only head but must be STATED at enable time).
+- **STATUS: NOT LAUNCHED.** GO/NO-GO checklist is in the report; needs Josh's go plus a GPU
+  pause window (retrains + value_regret are pause-window work; live training stopped).
+
+### Ledger evidence sweep VERDICTS (2026-08-12, report: scratchpad/audit/ledger_evidence_sweep_20260812.md)
+
+Independent recompute of the week's priority claims from banked per-row artifacts (pairs as
+the sampling unit). **Five of seven claim groups verify EXACTLY down to the per-row level**:
+the plateau arenas 1a/1d, the full value_regret ladder (−17.82%), the CE inversion, the
+absorption ladder + held-out split + noise floors, the head-vs-label +41.57 gap, the
+sims-100 mechanism gate (which in fact passed by SIX consecutive iters, not four — the
+entry under-claims), and the Tier-13 donor identity/revert point. Corrections adopted:
+
+- **MARKED CORRECTION — the `c_scale` decomposition arm B was quoted from a ROLLING report.**
+  The ledgered/CLAUDE.md/memory figure **+245.1 [+209.9, +285.3]** is verbatim the 380-game
+  rolling read; the banked 400-game final in `runs/arena_results.jsonl`
+  (`searchshape_B_cscale`, penta {102,45,44,8,1}) recomputes to **+239.5 [+205.9, +277.5]**.
+  Arm A's CI likewise: final **+270.9 [+236.2, +310.7]** (point was already right). This is
+  the exact failure the same week's rolling-arena rule bans, committed by the rule's author.
+  All call sites corrected this session (CLAUDE.md, MEMORY.md, 3 memory files). Nothing
+  decision-relevant flips: additivity actually improves (239.5 + 32.2 = 271.7 vs 270.9).
+- **task #192's arena (iter218 vs iter138 = −3.5 [−33.9, +26.9]) is EVIDENCE-FREE** — zero
+  rows in `runs/arena_results.jsonl`, no dump anywhere on disk; the +112.3 retraction rides
+  the same missing artifact. The prose pentanomial {32,31,67,41,29} is self-consistent, so
+  the number is probably real, but nothing witnesses it. Both checkpoints are banked and
+  verified ⇒ re-run is ~35-40 min and may ride the Tier-13 arena pause window as an OPTIONAL
+  add-on (after the three pre-committed contrasts; skipped without ceremony if the window is
+  tight). Until then the entry stands annotated, not retracted.
+- **Cheese@2400 +137 move log unlocated** — the prereg required `--move-log-out`; no move
+  log found. The entry already brands the number non-bankable (optional-stopping + nps
+  confound); now also provenance-unclear. Superseded if the node-limited ladder runs.
+- **Method annotations** (no headline depends on either): iter514−iter138 middlegame
+  +8.32 and MPV6→1 middlegame +2.83 both straddle zero under a plain paired CI — quote as
+  ns; held-out policy delta standardises to **−2.47%** (artifact value); the sims-100 games
+  column is `selfplay_games` (403→455), NOT `matching_games` (507→471) — a `matching_games`
+  recompute is not a refutation; `ck_2026-07-29_iter218.pt` coexists with the Tier-13 donor
+  dir ⇒ full paths only in arena commands (the prereg already complies).
