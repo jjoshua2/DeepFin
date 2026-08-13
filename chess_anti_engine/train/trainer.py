@@ -3977,10 +3977,15 @@ class Trainer:
             if n_ckpt_params < n_model_params:
                 remapped = self._remap_optimizer_state_for_new_params(opt_state)
                 if remapped is not None:
-                    logging.getLogger(__name__).info(
-                        "Spliced %d fresh parameter slot(s) into the donor "
-                        "optimizer state (zero-init warm start)",
-                        n_model_params - n_ckpt_params,
+                    # print, not logging.info: the Ray actor has no handler, so
+                    # INFO is dropped and a successful splice would be silent
+                    # while only the reinit WARNING below is loud (audit
+                    # 2026-08-12). Same channel as the tolerant-load report.
+                    print(
+                        "[resume] Spliced "
+                        f"{n_model_params - n_ckpt_params} fresh parameter "
+                        "slot(s) into the donor optimizer state "
+                        "(zero-init warm start)"
                     )
                     opt_state = remapped
             self.opt.load_state_dict(opt_state)
