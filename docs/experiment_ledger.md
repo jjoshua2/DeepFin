@@ -46170,3 +46170,65 @@ Oracle best-of-k is circular by construction. ONNX-fp32-CPU vs torch-fp32-CPU nu
 controlled. Ceres full dumps still running; both C1 nets track BT4 on every statistic.
 ⚑ `full_ours` reproduces banked `gateD_ours` **bit-for-bit on all 4000 rows** — the open
 `gateD_C1-512-15` non-determinism does NOT touch our net's runs.
+
+---
+
+## 2026-08-13 — ⚑⚑ ONNX RUNTIME CANNOT USE THIS BOX'S GPU AT ALL, AND IT ADVERTISES THAT IT CAN
+
+Found while fixing PR #415's P1; **independently re-verified by the main session**, not taken on
+report:
+
+```
+ort 1.23.2
+ort.get_available_providers() -> ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+ldd .../onnxruntime/capi/libonnxruntime_providers_cuda.so -> libcudnn.so.9 => not found
+ldconfig -p | grep -c libcudnn -> 0
+```
+
+⇒ **`libonnxruntime_providers_cuda.so` cannot load, ORT warns-and-drops, and every session it builds
+comes back `['CPUExecutionProvider']` — while `get_available_providers()` keeps listing CUDA**, because
+that call reports the COMPILE-TIME list, not what initialised. A textbook
+[[reachability_cannot_be_grepped_by_source_name]] / [[a_gate_that_cannot_fail]]: the capability check
+is populated, truthful about what the wheel was BUILT with, and not the field the question was about.
+
+**Consequences, several of which rewrite assumptions elsewhere in this ledger:**
+- **Every foreign-net measurement we have — BT4 and both Ceres nets — RAN ON CPU.** Correct, just far
+  slower than assumed. (It also retires the argmax report's open caveat about an uncontrolled
+  ONNX-GPU vs torch-CPU numeric path: both sides were CPU.)
+- **`--device cuda` on any ONNX path is a SILENT NO-OP.** Nothing errors; you get a CPU session.
+- It explains why running ONNX audits concurrently with training never OOMed the trainer — the risk
+  we were managing was not the risk that existed.
+- ⚑ **The #415 P1 was therefore LESS dangerous today and MORE dangerous tomorrow.** `pip install
+  nvidia-cudnn-cu12`, a CUDA image update, or any routine environment change silently ARMS it: the
+  ORT session starts landing on GPU 0 next to the trainer, uncapped, still logging "capped". The fix
+  is required precisely because the current safety is accidental.
+
+**Rule:** never read ORT capability from `get_available_providers()`. The only truthful source is
+`session.get_providers()` **on a constructed session** — what actually initialised. #415 now gates on
+that (`verify_onnx_session_device`) and keeps the availability list only as a cheap necessary screen,
+relabelled.
+
+### PR #415 P1/P2 REMEDIATION (author = a fix agent, NOT the original reviewer; re-review OWED)
+Merged `origin/main` first (`004f3f255`, clean) — which pulled #408/#409/#414 and, note, **#414
+RENAMED `scripts/bt4_audit.py` → `scripts/foreign_net_audit.py`**. Fix `c4f2cb2d3`:
+- Providers now emit `[(CUDAExecutionProvider, {"device_id": idx, "gpu_mem_limit": bytes}),
+  CPUExecutionProvider]`. **The deferred Codex `device_id` P1 closes with the same edit** —
+  `--device cuda:1` is no longer refused.
+- Logging no longer over-claims: torch-allocator cap announced at parse time; the ORT arena cap only
+  AFTER the session exists; `no GPU memory allocated` for a CPU session; and an explicit
+  `--gpu-mem-fraction IGNORED: --device cpu` instead of silence.
+- **12 mutations, each with a verified-green baseline first, all 12 caught** — including M1 "bare
+  provider names" (the original bug) and M4 "guard reads the compile-time list". The assertion is
+  made at the ORT BOUNDARY (a recorder replacing `InferenceSession`), not on the argument the code
+  constructed one line earlier.
+- BT4 bit-identity re-verified under BOTH the bare-name and options-pair forms (6 boards,
+  `torch.equal` on `policy_own` and `wdl`). 500 passed / 0 failed across 18 affected files; no-arg
+  `lint.sh` clean.
+
+**Honest caveat carried:** no CUDA executed, so `gpu_mem_limit`/`device_id` are proven to REACH
+`InferenceSession` in the documented form, not observed to be honoured — and on this box they
+CANNOT be, per the finding above.
+
+⚑ **OPS NOTE for every worktree:** after merging main, the prebuilt `_mcts_tree` extension is stale
+against #409 (`ImportError: SWDL_DRAW_NET_RAW`). Rebuild with
+`python3 scripts/build_production_extensions.py`.
