@@ -46232,3 +46232,41 @@ CANNOT be, per the finding above.
 ⚑ **OPS NOTE for every worktree:** after merging main, the prebuilt `_mcts_tree` extension is stale
 against #409 (`ImportError: SWDL_DRAW_NET_RAW`). Rebuild with
 `python3 scripts/build_production_extensions.py`.
+
+### ADDENDUM (same day, C1-512-15 folded in): §2 WAS OVERSTATED — the corrected form is comparator-dependent
+The author of the argmax analysis corrected its own §2 after the second comparator completed.
+Removing the ruler's optimistic floor moves the contrast against us by ~5.7-6.9 cp against **every**
+comparator — that artifact is real — but the CONCLUSION it supports is not the same against both:
+
+| contrast | E as-measured | **E \| listed** |
+|---|---|---|
+| ours − BT4 | −0.74 [−3.19, +1.76] | **+4.98 [+2.69, +7.29]** — resolved AGAINST us |
+| ours − C1-512-15 | −6.21 [−8.57, −3.75] | **+0.64 [−1.59, +2.89]** — **CI SPANS ZERO** |
+
+⇒ **Precise statement: "our mass is placed competitively" is dead AS AN EVIDENCED WIN** — the
+−3.14/−6.21 favouring us over C1-512-15 was the floor talking and vanishes once it is removed. What
+replaces it is **NOT** "our mass is worse than everyone's": it is **worse than BT4's and
+INDISTINGUISHABLE from C1-512-15's**. The earlier entry stated this too strongly; this is the form to
+quote.
+
+**Everything else strengthens, now against TWO independent foreign nets.** C1-512-15 sits with BT4 on
+every axis and is FURTHER from us than BT4 is: entropy ours − C1-512-15 = **−0.83 [−0.85, −0.81]**;
+p(top-1) 0.680 vs 0.466; p(SF's best) when wrong 0.047 vs 0.123. Search reachability **0.970** —
+so **all three nets put deep-SF's best in the 16-candidate root set ~97-98% of the time**, and the
+"support is not the differentiator" finding no longer rests on a single comparator. Top-1
+ours − C1-512-15 = **+21.21 [+17.81, +24.78]**.
+
+Concentrations confirmed against both: **mates** ours **163.1** vs 49.5 / **55.1** (1000-cp-cap rate
+0.78% vs 0.25% / 0.30%); **decisive(≥100)** ours **103.7** vs 32.5 / **39.5**, SF-best-at-rank-1 69.1%
+vs 89.0% / 85.9%, and our oracle best-of-3 there **37.9** against **6.5 / 5.6** — both comparators
+agree that is the one bucket where the answer genuinely is not in our top-3. In QUIET positions our
+E (26.9) still beats both (30.3 / 32.3).
+
+Residual: **C1-384-12 is unmeasured at full depth** (its banked top-5 tracks C1-512-15 throughout, but
+that is not a claim). Minor instrument note: the oracle table's k=1 reads C1-512-15 at 21.78 vs the
+ruler's authoritative `top1_regret` 21.80 — argmax tie-breaking (`np.argmax` vs `argsort`); nothing
+turns on it.
+
+⚑ Worth recording as method, not just result: **the analysis author retracted its own strongest
+sentence when the second comparator arrived**, rather than letting the one-comparator version stand.
+That is the behaviour that would have caught the label-swap and the stale-ruler row a day earlier.
