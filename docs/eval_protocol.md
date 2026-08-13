@@ -170,11 +170,17 @@ Mechanics:
   `onnxruntime session on [...]; CUDA arena capped at N bytes` once the
   session exists — and a fraction on `--device cpu` prints `IGNORED` rather
   than being dropped in silence. ⚑ A run on `--device cuda...` whose ORT
-  session comes up without `CUDAExecutionProvider` now ABORTS: ORT drops an
-  unusable provider with a warning and runs on CPU, and
-  `onnxruntime.get_available_providers()` cannot see that happen (it is the
-  wheel's COMPILE-TIME list — on this box it reports CUDA while every session
-  it builds is CPU-only). The verdict is read off `session.get_providers()`.
+  session comes up without `CUDAExecutionProvider` ABORTS: ORT drops an
+  unusable provider with a warning and runs on CPU, so the number would be a
+  CUDA-labelled CPU number. **`onnxruntime.get_available_providers()` cannot
+  see that happen** — it is the wheel's COMPILE-TIME list, and it can name a
+  provider that does not start (observed here: it reports CUDA while every ORT
+  session seen on this box has come back CPU-only; note there are TWO ORT
+  installs, a CPU-only wheel in the project `.venv` and a GPU wheel under
+  `/usr/bin/python3`, so which one a bare `python3` gets depends on venv
+  activation). The verdict is read off `session.get_providers()`, twice: a
+  65-byte throwaway probe session at PARSE TIME — before the audit set and
+  before Stockfish labels anything — and again on the real scoring session.
 - Two standing numbers to watch on each report: (search-policy regret) vs
   (SF-soft-target regret) per phase — when search wins everywhere, the
   50k-node MultiPV-40 labeling is no longer worth its CPU bill — and

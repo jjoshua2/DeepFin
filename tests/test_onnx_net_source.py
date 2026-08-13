@@ -11,9 +11,14 @@ is accepted and then silently ignored. So the tests assert, in order:
   argument ``InferenceSession`` was actually called with, not on the tuple our
   own helper built one line earlier — and the log line names the allocator it
   bounded rather than claiming "GPU memory capped";
+* ``--gpu-mem-fraction`` also SURVIVES THE TRIP from ``argv``: the three
+  forwarding seams (``main`` → scorer → ``NetSource.load``) are asserted
+  separately, because every other test here calls ``load`` directly and each of
+  those three one-line deletions restored the bug with the suite still green;
 * the CUDA guard reads ``session.get_providers()`` (what initialised) and not
   ``onnxruntime.get_available_providers()`` (what the wheel was compiled with,
-  which on this box lists CUDA on a runtime whose every session is CPU);
+  which can name a provider that does not start), and it fires at PARSE TIME,
+  before the Stockfish labelling pass rather than after it;
 * the policy the ruler ends up reading came through the BOARD-AWARE Leela
   remap, proven per legal move against the independent reference in
   ``moves/leela_index.py`` — a static table gives a different, non-crashing
@@ -30,6 +35,7 @@ is directly observable in the returned logits.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 from pathlib import Path
 
@@ -49,9 +55,13 @@ from scripts.net_source import (
     NetSource,
     OnnxNetSpec,
     apply_gpu_mem_cap,
+    cuda_device_index,
     gpu_mem_limit_bytes,
     net_source_from_args,
+    onnx_cuda_mem_limit,
     onnx_providers_for_device,
+    probe_model_bytes,
+    probe_onnx_device_providers,
     reject_stored_encoding_for_onnx,
     resolve_onnx_spec,
     validate_onnx_device,
@@ -459,25 +469,31 @@ def _fake_providers(monkeypatch: pytest.MonkeyPatch, providers: list[str]) -> No
 def test_the_cuda_guard_reads_the_session_not_the_compile_time_list(
     echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The parse-time guard CANNOT catch a CUDA session that fell back to CPU.
+    """The COMPILE-TIME provider list cannot catch a CPU fallback. The session can.
 
     `onnxruntime.get_available_providers()` is the list the wheel was COMPILED
-    with. It stays populated when the provider's shared library cannot load —
-    measured on this box with the GPU wheel: `get_available_providers()` returns
-    `[Tensorrt, CUDA, CPU]` (so `validate_onnx_device('cuda')` passes) while
-    every session it builds comes back `['CPUExecutionProvider']`, because
-    `libonnxruntime_providers_cuda.so` needs a cuDNN that is not installed. ORT
-    warns and drops; it does not fail. So the ONLY reading that can tell the two
-    apart is the session's own.
+    with, and it can name a provider that does not start: ORT drops an unusable
+    provider with a warning and runs the next one, and the compiled list does
+    not move when it does. Observed on this box — with the GPU wheel under
+    `/usr/bin/python3`, `get_available_providers()` reports
+    `[Tensorrt, CUDA, CPU]`, while EVERY ort session seen here (that wheel and
+    the venv's CPU-only one alike) has come back `['CPUExecutionProvider']`.
+    ⚑ The MECHANISM behind that is not established and is deliberately not
+    asserted: this box has two ORT installs, and the observations were not all
+    made under the same one or with a GPU visible. The claim being made is only
+    the one that was measured — the two readings disagree — which is exactly
+    enough to disqualify the compiled list as a gate.
 
     Below: a REAL session, really on CPU (no GPU is touched), asked about a
-    `--device cuda` run. The compile-time list is faked to contain CUDA, which
-    is exactly the state that makes the old guard a gate that cannot fail.
+    `--device cuda` run, with the compiled list faked to contain CUDA.
     """
+    import onnxruntime as ort
+
     from chess_anti_engine.onnx.load import OnnxChessNet
 
     _fake_providers(monkeypatch, [CUDA_PROVIDER, CPU_PROVIDER])
-    validate_onnx_device("cuda")  # the parse-time screen is happy — and wrong
+    # The reading the ORIGINAL guard made, and it is satisfied here.
+    assert CUDA_PROVIDER in ort.get_available_providers()
 
     model = OnnxChessNet(
         echo_onnx,
@@ -486,6 +502,7 @@ def test_the_cuda_guard_reads_the_session_not_the_compile_time_list(
         wdl_output_name="wdl",
         providers=[CPU_PROVIDER],
     )
+    # ...and the reading that decides what actually runs disagrees with it.
     assert model.session_providers() == [CPU_PROVIDER]
     with pytest.raises(SystemExit, match="DROPPED"):
         verify_onnx_session_device(model, "cuda")
@@ -826,3 +843,270 @@ def test_the_onnx_spec_label_names_every_tensor_it_resolved() -> None:
         path=Path("/tmp/x.onnx"), input_name="i", policy_output="p", wdl_output="w",
     )
     assert spec.label == "onnx:/tmp/x.onnx [in=i policy=p wdl=w]"
+
+
+# --------------------------------------------------------------------------
+# the CLI -> ORT SEAM: --gpu-mem-fraction must travel from argv to the session
+# --------------------------------------------------------------------------
+#
+# ⚑ The tests above all call `NetSource.load(gpu_mem_fraction=...)` DIRECTLY.
+# That covers everything below `load` and nothing above it, so each of these
+# three one-line deletions restored the original P1 bug with the whole suite
+# still green:
+#
+#   value_regret.main   -> value_1ply_regret(gpu_mem_fraction=...)
+#   audit_targets.main  -> _net_candidates(gpu_mem_fraction=...)
+#   _net_candidates     -> net.load(gpu_mem_fraction=...)
+#
+# An untested seam in exactly this shape is how the bug being fixed survived in
+# the first place: every piece correct, the wire between them unasserted.
+
+
+def test_value_regret_carries_the_fraction_from_argv_to_net_load(
+    echo_onnx: Path, mini_audit_set: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """argv -> main -> value_1ply_regret -> NetSource.load, driven end to end.
+
+    `--device cpu` deliberately: the kwarg must be FORWARDED regardless of
+    whether this particular device would then use it. Reading the assertion off
+    a CUDA run would need a GPU, and the seam under test is the same one.
+    """
+    from scripts import value_regret
+
+    seen: list[dict[str, object]] = []
+    real_load = NetSource.load
+
+    def _spy(self: NetSource, **kw: object) -> object:
+        seen.append(dict(kw))
+        return real_load(self, **kw)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(NetSource, "load", _spy)
+    monkeypatch.setattr("sys.argv", [
+        "value_regret.py",
+        "--onnx", str(echo_onnx),
+        "--audit-set", str(mini_audit_set),
+        "--device", "cpu",
+        "--batch-size", "8",
+        "--min-pieces", "0",
+        "--gpu-mem-fraction", "0.4",
+    ])
+    value_regret.main()
+
+    assert len(seen) == 1, "the ruler must load its net exactly once"
+    assert seen[0]["gpu_mem_fraction"] == 0.4
+
+
+def test_audit_targets_net_candidates_hands_the_fraction_to_net_load(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_net_candidates` -> `net.load`, the innermost of the three seams.
+
+    Stopped at the load with a sentinel: everything after it is a full search
+    over the audit boards, and none of it bears on whether the cap was passed.
+    """
+    from scripts import audit_targets
+
+    class _Stop(Exception):
+        pass
+
+    seen: list[dict[str, object]] = []
+
+    def _spy(_self: NetSource, **kw: object) -> object:
+        seen.append(dict(kw))
+        raise _Stop
+
+    monkeypatch.setattr(NetSource, "load", _spy)
+    with pytest.raises(_Stop):
+        audit_targets._net_candidates(
+            [chess.Board()],
+            net=NetSource(onnx=resolve_onnx_spec(echo_onnx)),
+            device="cpu",
+            batch_size=1,
+            seed=0,
+            profiles={},
+            requested_gumbel_overrides=(),
+            gpu_mem_fraction=0.4,
+        )
+    assert seen == [{"device": "cpu", "gpu_mem_fraction": 0.4, "tag": "audit"}]
+
+
+def _forwarded_kwarg(main_fn: object, callee: str, kwarg: str) -> ast.expr | None:
+    """The expression a call inside ``main`` passes for ``kwarg``, or None.
+
+    AST rather than a substring: `"gpu_mem_fraction" in src` is satisfied by the
+    argparse declaration alone, so it would pass on a `main` that never
+    forwards the value anywhere.
+    """
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(main_fn)))  # pyright: ignore[reportArgumentType]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name != callee:
+            continue
+        for kw in node.keywords:
+            if kw.arg == kwarg:
+                return kw.value
+    return None
+
+
+def test_audit_targets_main_forwards_the_fraction_to_net_candidates() -> None:
+    """`main` -> `_net_candidates`, the seam no behavioural test can reach.
+
+    Driving `audit_targets.main()` that far needs a config, an audit set and a
+    Stockfish labelling pass, so this one is pinned structurally — but on the
+    ARGUMENT, not on the text: the assertion is that the call forwards
+    `args.gpu_mem_fraction` itself, which a deletion or a hardcoded `None`
+    both break.
+    """
+    from scripts import audit_targets
+
+    value = _forwarded_kwarg(audit_targets.main, "_net_candidates", "gpu_mem_fraction")
+    assert value is not None, "audit_targets.main drops --gpu-mem-fraction"
+    assert isinstance(value, ast.Attribute)
+    assert value.attr == "gpu_mem_fraction"
+    assert isinstance(value.value, ast.Name)
+    assert value.value.id == "args"
+
+
+def test_both_rulers_forward_the_fraction_out_of_main() -> None:
+    """The same pin on both rulers, so neither seam can rot alone."""
+    from scripts import audit_targets, value_regret
+
+    for main_fn, callee in (
+        (value_regret.main, "value_1ply_regret"),
+        (audit_targets.main, "_net_candidates"),
+    ):
+        value = _forwarded_kwarg(main_fn, callee, "gpu_mem_fraction")
+        assert value is not None, f"{callee} is called without --gpu-mem-fraction"
+
+
+# --------------------------------------------------------------------------
+# the device gate must fire BEFORE the expensive work, not after it
+# --------------------------------------------------------------------------
+
+
+def test_the_device_probe_model_actually_opens() -> None:
+    """The parse-time gate is only real if its probe graph is loadable.
+
+    Pinned opset + ir_version can be invalidated by a future onnx/onnxruntime
+    pair; if that happens this fails loudly instead of the gate degrading into
+    an exception on every CUDA run.
+    """
+    import onnxruntime as ort
+
+    blob = probe_model_bytes()
+    assert len(blob) < 4096, "the probe graph must stay trivially small"
+    session = ort.InferenceSession(blob, providers=[CPU_PROVIDER])
+    assert session.get_providers() == [CPU_PROVIDER]
+    assert probe_onnx_device_providers("cpu") == [CPU_PROVIDER]
+
+
+def test_the_parse_time_gate_probes_a_real_session_not_the_compiled_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The compiled list says CUDA; the session says CPU. The gate must fail.
+
+    This is the state that made the previous parse-time check unfalsifiable:
+    `get_available_providers()` naming a provider that does not come up. Here
+    the compiled list is faked to contain CUDA while a REAL probe session is
+    built and reports CPU-only.
+    """
+    _fake_providers(monkeypatch, [CUDA_PROVIDER, CPU_PROVIDER])
+    _capture_ort_providers(monkeypatch, reported=[CPU_PROVIDER])
+    with pytest.raises(SystemExit, match="does NOT initialise here"):
+        validate_onnx_device("cuda")
+    # CPU is never probed at all: no session, no cost, nothing to fail.
+    validate_onnx_device("cpu")
+
+
+def test_the_device_gate_fires_before_the_stockfish_pass(
+    echo_onnx: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ORDERING, proved by execution rather than by reading offsets.
+
+    The guard previously ran inside `_net_candidates`, which `audit_targets`
+    calls AFTER `_shallow_sf_records` — so a `--device cuda` run whose session
+    fell back to CPU spent the whole Stockfish labelling pass and only then
+    aborted, which is precisely the cost the guard exists to avoid.
+
+    `_shallow_sf_records` is booby-trapped here: if the run reaches it, the
+    AssertionError propagates and this test fails rather than the SystemExit
+    being raised.
+    """
+    from scripts import audit_targets
+
+    def _sf_boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("the Stockfish labelling pass ran before the device gate")
+
+    monkeypatch.setattr(audit_targets, "_shallow_sf_records", _sf_boom)
+    _fake_providers(monkeypatch, [CUDA_PROVIDER, CPU_PROVIDER])
+    _capture_ort_providers(monkeypatch, reported=[CPU_PROVIDER])
+    monkeypatch.setattr("sys.argv", [
+        "audit_targets.py", "--onnx", str(echo_onnx), "--device", "cuda",
+    ])
+    with pytest.raises(SystemExit, match="does NOT initialise here"):
+        audit_targets.main()
+
+
+def test_an_indexed_cuda_session_is_guarded_too(
+    echo_onnx: Path,
+) -> None:
+    """`cuda:1` must be verified like `cuda`, or the guard has a hole at the
+    exact spelling that now reaches a second card."""
+    from chess_anti_engine.onnx.load import OnnxChessNet
+
+    model = OnnxChessNet(
+        echo_onnx,
+        input_name="planes",
+        policy_output_name="policy",
+        wdl_output_name="wdl",
+        providers=[CPU_PROVIDER],
+    )
+    for spelling in ("cuda", "cuda:0", "cuda:1", "cuda:7"):
+        with pytest.raises(SystemExit, match="DROPPED"):
+            verify_onnx_session_device(model, spelling)
+
+
+def test_a_malformed_cuda_index_exits_cleanly_instead_of_raising_valueerror() -> None:
+    """Every other bad-CLI-input path here is a one-line SystemExit."""
+    with pytest.raises(SystemExit, match="CUDA index must be an integer"):
+        cuda_device_index("cuda:x")
+    with pytest.raises(SystemExit, match="CUDA index must be an integer"):
+        validate_onnx_device("cuda:oops")
+    assert cuda_device_index("cuda") == 0
+    assert cuda_device_index("cuda:3") == 3
+
+
+def test_an_out_of_range_fraction_is_refused_before_the_card_is_touched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typo'd fraction must name the fraction, not fail inside torch.
+
+    `onnx_cuda_mem_limit` used to reach `get_device_properties` first, so
+    `--gpu-mem-fraction 40` (meaning 0.4) surfaced as a CUDA error about the
+    device; `apply_gpu_mem_cap` never checked at all.
+    """
+    def _no_card(_idx: int) -> object:
+        raise AssertionError("the card was queried before the fraction was checked")
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties", _no_card)
+    monkeypatch.setattr(
+        torch.cuda, "set_per_process_memory_fraction",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("torch was capped with an out-of-range fraction"),
+        ),
+    )
+    net = NetSource(checkpoint="c")
+    for bad in (0.0, -0.5, 40.0):
+        with pytest.raises(SystemExit, match="gpu-mem-fraction"):
+            onnx_cuda_mem_limit("cuda", bad)
+        with pytest.raises(SystemExit, match="gpu-mem-fraction"):
+            apply_gpu_mem_cap(net=net, device="cuda", gpu_mem_fraction=bad, tag="t")
+        # ...and on CPU too: a typo is a typo whether or not it would be used.
+        with pytest.raises(SystemExit, match="gpu-mem-fraction"):
+            apply_gpu_mem_cap(net=net, device="cpu", gpu_mem_fraction=bad, tag="t")

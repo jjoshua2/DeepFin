@@ -284,11 +284,10 @@ class OnnxChessNet(torch.nn.Module):
         """The providers that ACTUALLY initialised, read off the live session.
 
         ⚑ Not ``onnxruntime.get_available_providers()``. That is the list the
-        wheel was COMPILED with, and it stays populated when the provider's
-        shared library cannot be loaded at all (a GPU wheel with no matching
-        cuDNN reports ``CUDAExecutionProvider`` and then runs on CPU). ORT
-        drops an unusable provider with a warning rather than failing, so this
-        is the only reading that can distinguish "capped CUDA session" from
+        wheel was COMPILED with, and it can name a provider that does not
+        start: ORT drops an unusable provider with a warning rather than
+        failing, and the compiled list does not move when it does. So this is
+        the only reading that can distinguish "capped CUDA session" from
         "silent CPU fallback".
         """
         return [str(p) for p in self._session.get_providers()]

@@ -23,11 +23,14 @@ ONNX graph whose policy head is not the one that was read. So:
 * the same rule is applied to the DEVICE, to the GPU MEMORY CAP and to the
   input encoding, because each has a silent-wrongness mode of its own:
 
-  - :func:`validate_onnx_device` is a cheap parse-time screen and NOTHING MORE
-    — it reads ORT's compile-time provider list, which stays populated when the
-    provider's library cannot load. :func:`verify_onnx_session_device` is the
-    real gate: it reads ``session.get_providers()`` after the session exists,
-    so a ``--device cuda`` run that ORT quietly moved to CPU raises instead of
+  - :func:`validate_onnx_device` gates the DEVICE at parse time, before the
+    audit set is loaded and before Stockfish labels anything. ⚑ Its first check
+    — ORT's compile-time provider list — is NECESSARY and nothing more: it can
+    name a provider that does not start, so on its own it is a gate that cannot
+    fail. What makes it a real gate is :func:`probe_onnx_device_providers`, a
+    65-byte throwaway session on the requested device. The same reading is
+    repeated on the scoring session by :func:`verify_onnx_session_device`, so a
+    ``--device cuda`` run that ORT quietly moved to CPU raises rather than
     reporting a CUDA number.
   - :func:`onnx_providers_for_device` hands ORT ``(name, options)`` pairs, never
     bare names. Bare names were how ``--gpu-mem-fraction`` came to be printed as
@@ -62,10 +65,6 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 if TYPE_CHECKING:
     import torch
 
-    # Type-only: importing chess_anti_engine.onnx.load at module scope would
-    # pull numpy+torch into every ruler's argument parsing.
-    from chess_anti_engine.onnx.load import OnnxProvider
-
 CPU_PROVIDER = "CPUExecutionProvider"
 CUDA_PROVIDER = "CUDAExecutionProvider"
 
@@ -78,12 +77,43 @@ def cuda_device_index(device: str) -> int:
 
     One parser for torch's cap, ORT's ``device_id`` and the log line, so the
     three cannot drift onto different GPUs while all three claim the same one.
+
+    A malformed index is a ``SystemExit`` like every other bad-CLI-input path
+    here, not a bare ``ValueError`` traceback: ``--device cuda:x`` is a typo,
+    and a typo should print one line rather than a stack.
     """
     dev = str(device)
     if not dev.startswith("cuda"):
         raise ValueError(f"not a CUDA device: {dev!r}")
     _, _, index = dev.partition(":")
-    return int(index) if index else 0
+    if not index:
+        return 0
+    try:
+        return int(index)
+    except ValueError:
+        raise SystemExit(
+            f"--device {dev}: the CUDA index must be an integer (e.g. cuda, "
+            f"cuda:0, cuda:1); got {index!r}",
+        ) from None
+
+
+def validate_gpu_mem_fraction(gpu_mem_fraction: float) -> float:
+    """The single range check for ``--gpu-mem-fraction``. Raises ``SystemExit``.
+
+    It lives on its own because there are three entry points — the torch cap,
+    the ORT byte conversion, and the conversion's card lookup — and only one of
+    them used to check. An out-of-range fraction then reached
+    ``torch.cuda.get_device_properties`` or
+    ``set_per_process_memory_fraction`` first and surfaced as a torch error
+    about something else, or (for a fraction the card lookup survived) as a cap
+    computed from a nonsense number.
+    """
+    value = float(gpu_mem_fraction)
+    if not 0.0 < value <= 1.0:
+        raise SystemExit(
+            f"--gpu-mem-fraction must be in (0, 1]; got {gpu_mem_fraction}",
+        )
+    return value
 
 
 def gpu_mem_limit_bytes(gpu_mem_fraction: float, total_bytes: int) -> int:
@@ -94,11 +124,7 @@ def gpu_mem_limit_bytes(gpu_mem_fraction: float, total_bytes: int) -> int:
     so it is checkable without a GPU. Rounded DOWN and floored at 1 byte: a
     rounded-up limit is a cap that is larger than the share it was asked for.
     """
-    if not 0.0 < float(gpu_mem_fraction) <= 1.0:
-        raise SystemExit(
-            f"--gpu-mem-fraction must be in (0, 1]; got {gpu_mem_fraction}",
-        )
-    return max(1, int(float(gpu_mem_fraction) * int(total_bytes)))
+    return max(1, int(validate_gpu_mem_fraction(gpu_mem_fraction) * int(total_bytes)))
 
 
 def onnx_cuda_mem_limit(
@@ -115,18 +141,21 @@ def onnx_cuda_mem_limit(
     """
     if gpu_mem_fraction is None or not str(device).startswith("cuda"):
         return None
+    # Range-check BEFORE the card is touched, so a typo'd fraction prints the
+    # one line about the fraction rather than a torch error about the device.
+    fraction = validate_gpu_mem_fraction(gpu_mem_fraction)
     if total_bytes is None:
         import torch
 
         total_bytes = int(
             torch.cuda.get_device_properties(cuda_device_index(device)).total_memory,
         )
-    return gpu_mem_limit_bytes(float(gpu_mem_fraction), total_bytes)
+    return gpu_mem_limit_bytes(fraction, total_bytes)
 
 
 def onnx_providers_for_device(
     device: str, *, gpu_mem_bytes: int | None = None,
-) -> tuple[OnnxProvider, ...]:
+) -> tuple[str | tuple[str, dict[str, object]], ...]:
     """ORT providers implied by the ruler's ``--device`` and memory cap.
 
     ``--device cpu`` yields CPU ONLY — not "CPU preferred". A ruler asked for
@@ -156,34 +185,87 @@ def onnx_providers_for_device(
     return ((CUDA_PROVIDER, options), CPU_PROVIDER)
 
 
+def probe_model_bytes() -> bytes:
+    """A 65-byte one-node ONNX graph, built in memory, for probing ORT startup.
+
+    Opset AND ir_version are pinned deliberately, and pinning them is the
+    version-PROOF choice rather than a version hack: left to its defaults,
+    ``make_model`` stamps whatever ir_version the installed ``onnx`` package
+    considers current, which a slightly older ``onnxruntime`` then refuses to
+    open (measured here: onnx 1.20.1 emits ir_version 13, onnxruntime 1.23.2
+    rejects it). A fixed, old, universally-supported level cannot drift with
+    either package. ``test_the_device_probe_model_actually_opens`` fails loudly
+    if some future stack disagrees, so this cannot degrade in silence.
+    """
+    from onnx import TensorProto, helper
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    graph = helper.make_graph(
+        [helper.make_node("Identity", ["x"], ["y"])], "device_probe", [x], [y],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.ir_version = 9
+    return model.SerializeToString()
+
+
+def probe_onnx_device_providers(device: str) -> list[str]:
+    """Providers a REAL session comes up with, measured on a throwaway graph.
+
+    This is what makes the parse-time gate non-vacuous. There is no ORT API
+    that answers "would the CUDA provider initialise here" without building a
+    session, so the check builds the smallest possible one: 65 bytes, ~30ms,
+    no model file, discarded immediately.
+
+    ``get_providers()`` reports the providers that REGISTERED, which is a
+    property of the runtime and the device rather than of the graph — so this
+    tiny session answers the same question the 700MB one will, an hour of
+    Stockfish earlier. The memory cap is deliberately NOT applied here: the
+    probe's own arena is a few bytes, and reading the card's size to compute a
+    limit would add a torch CUDA call to a function whose whole point is to be
+    cheap and early.
+    """
+    import onnxruntime as ort
+
+    session = ort.InferenceSession(
+        probe_model_bytes(),
+        providers=list(onnx_providers_for_device(device)),
+    )
+    try:
+        return [str(p) for p in session.get_providers()]
+    finally:
+        del session
+
+
 def validate_onnx_device(device: str) -> None:
-    """Cheap PARSE-TIME screen on ``--onnx --device cuda...``. NOT the real gate.
+    """PARSE-TIME gate on ``--onnx --device cuda...``, before any expensive work.
 
-    ⚑ Read the limit of this check before trusting it. It asks
-    ``onnxruntime.get_available_providers()``, which is the list the ORT wheel
-    was **compiled** with — not the list that will initialise. A GPU wheel
-    whose ``libonnxruntime_providers_cuda.so`` cannot load (wrong/absent cuDNN
-    is the common case) still reports ``CUDAExecutionProvider`` here, and ORT
-    then drops it at session build with a warning and runs on CPU. Measured on
-    this box: ``get_available_providers()`` returns
-    ``[Tensorrt, CUDA, CPU]`` while every session comes back
-    ``['CPUExecutionProvider']``. So on the box this guard was written for it
-    passes unconditionally, which is worth exactly nothing on its own.
+    Two checks, cheapest first, because they fail for different reasons:
 
-    It is kept because it is a NECESSARY condition that costs no session build:
-    a runtime with no CUDA in the compiled list definitely cannot run CUDA, and
-    catching that at parse time saves an hour of Stockfish labelling. The
-    SUFFICIENT check is :func:`verify_onnx_session_device`, which reads the
-    providers off the session that was actually created — the earlier version
-    of this docstring claimed the two were "equivalent", and they are not.
+    1. ``onnxruntime.get_available_providers()`` — the list the ORT wheel was
+       **compiled** with. ⚑ This is a NECESSARY condition and nothing more. It
+       is not a reading of what will initialise, and it must never be treated
+       as one: observed on this box, ``get_available_providers()`` reports
+       ``[Tensorrt, CUDA, CPU]`` while every ORT session seen here has come
+       back ``['CPUExecutionProvider']``. Judged on that check alone the gate
+       passes unconditionally, which is worth nothing.
+    2. :func:`probe_onnx_device_providers` — a real 65-byte session on the
+       requested device. THIS is the check that can fail, and it costs ~30ms.
 
-    An indexed device (``cuda:1``) is no longer refused: providers now carry
-    ``device_id`` (see :func:`onnx_providers_for_device`), so ORT lands on the
-    index that was asked for instead of silently on card 0.
+    Both run before the audit set is loaded and before Stockfish labels
+    anything, which is the point: the cost this gate exists to avoid is an
+    hour of labelling followed by an abort. The same reading is repeated on
+    the real session by :func:`verify_onnx_session_device` — a probe is a
+    strong predictor of the scoring session, not the scoring session itself.
+
+    An indexed device (``cuda:1``) is not refused: providers carry ``device_id``
+    (see :func:`onnx_providers_for_device`), so ORT lands on the index that was
+    asked for instead of silently on card 0.
     """
     dev = str(device)
     if not dev.startswith("cuda"):
         return
+    cuda_device_index(dev)  # reject `cuda:x` here, not from inside ORT
     import onnxruntime as ort
 
     available = list(ort.get_available_providers())
@@ -193,6 +275,15 @@ def validate_onnx_device(device: str) -> None:
             f"(providers: {available}). ORT would silently fall back to CPU and the "
             "run would report itself as a CUDA run while taking hours. Install the "
             "GPU runtime or pass --device cpu deliberately."
+        )
+    active = probe_onnx_device_providers(dev)
+    if CUDA_PROVIDER not in active:
+        raise SystemExit(
+            f"--onnx --device {dev}: {CUDA_PROVIDER} is in this onnxruntime's "
+            f"compiled provider list but does NOT initialise here — a probe session "
+            f"came up on {active}. ORT drops a provider it cannot start, with a "
+            "warning, and runs the next one; the run would report a CUDA number "
+            "produced on CPU. Fix the GPU runtime or pass --device cpu."
         )
 
 
@@ -223,8 +314,9 @@ def verify_onnx_session_device(
             f"--onnx --device {device}: the onnxruntime session came up on {active} "
             f"— {CUDA_PROVIDER} was requested and DROPPED (ORT warns and falls back "
             "rather than failing). The run would report a CUDA number produced on "
-            "CPU. Fix the GPU runtime (a GPU wheel whose CUDA library cannot load "
-            "still lists CUDA in get_available_providers()) or pass --device cpu."
+            "CPU. Fix the GPU runtime or pass --device cpu. ⚑ Do not diagnose this "
+            "from get_available_providers(): that is the wheel's COMPILE-TIME list "
+            "and it can name a provider that does not start."
         )
     if CUDA_PROVIDER not in active:
         # No CUDA arena exists, so neither "capped" nor "uncapped" describes it.
@@ -259,6 +351,10 @@ def apply_gpu_mem_cap(
     """
     if gpu_mem_fraction is None:
         return
+    # Range-check even on the CPU path: a typo'd fraction is a typo whether or
+    # not this particular run would have used it, and reporting it IGNORED
+    # would tell the user the wrong thing about why.
+    fraction = validate_gpu_mem_fraction(gpu_mem_fraction)
     if not str(device).startswith("cuda"):
         print(
             f"[{tag}] --gpu-mem-fraction {gpu_mem_fraction} IGNORED: --device "
@@ -268,7 +364,7 @@ def apply_gpu_mem_cap(
     import torch
 
     idx = cuda_device_index(device)
-    torch.cuda.set_per_process_memory_fraction(float(gpu_mem_fraction), device=idx)
+    torch.cuda.set_per_process_memory_fraction(fraction, device=idx)
     where = (
         "the ONNX session's CUDA arena is capped separately, at load time"
         if net.is_onnx
