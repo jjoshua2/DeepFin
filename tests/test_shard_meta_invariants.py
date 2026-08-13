@@ -590,11 +590,19 @@ def _retained_quarantine(server_root, subdir: str) -> list:
     Deliberately a whole-tree walk rather than a lookup under the trial the
     request named: the defect is that entries pile up under trials the caller
     invented, so a test that only looked where it wrote could not see it.
+
+    ⚑ RECURSES BELOW THE SINK AND COUNTS FILES ONLY. #407 put a per-user
+    bucket between the sink and the entries. The previous `quarantine/<subdir>/*`
+    glob would now match those BUCKET DIRECTORIES, so an entry-count assertion
+    would read "1 entry" for a user holding a thousand and a byte-sum guarded by
+    `is_file()` would read ZERO -- a gate that cannot fail, in the tests written
+    to prove the budget holds.
     """
     return [
         p
-        for p in server_root.rglob(f"quarantine/{subdir}/*")
-        if not p.name.endswith(".reason.txt")
+        for sink in server_root.rglob(f"quarantine/{subdir}")
+        for p in sink.rglob("*")
+        if p.is_file() and not p.name.endswith(".reason.txt")
     ]
 
 
@@ -665,9 +673,14 @@ def test_quarantine_invalid_holds_a_byte_budget_across_trials(tmp_path) -> None:
         assert r.status_code == 200, r.text
         assert r.json().get("rejected") is True, r.json()
 
+    # ⚑ Recurses past the per-user bucket #407 introduced. The old
+    # `quarantine/invalid/*` + `is_file()` pair sums to ZERO under that layout,
+    # so this assertion would have passed no matter how many bytes were on disk.
+    # Sidecars are counted here because the budget counts them.
     on_disk = sum(
         f.stat().st_size
-        for f in server_root.rglob("quarantine/invalid/*")
+        for sink in server_root.rglob("quarantine/invalid")
+        for f in sink.rglob("*")
         if f.is_file()
     )
     assert on_disk <= 4096, (
@@ -837,6 +850,142 @@ def test_arena_budget_cannot_be_bypassed_by_a_dot_trial_id(tmp_path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# #407 review, P1-2: the server-wide budget let any worker evict every other
+# worker's retained diagnostics. The fairness key is the USER.
+# ---------------------------------------------------------------------------
+
+
+def _seed_two_users(server_root) -> None:
+    from chess_anti_engine.server.auth import UserRecord, hash_password, save_users
+
+    users = {}
+    for name in ("victim", "attacker"):
+        salt, hsh, iters = hash_password("p")
+        users[name] = UserRecord(
+            username=name, salt_b64=salt, hash_b64=hsh, iterations=iters,
+        )
+    save_users(server_root / "users.json", users)
+
+
+def _bad_upload(client, *, user: str, trial: str, name: str, body: bytes):
+    return client.post(
+        f"/v1/trials/{trial}/upload_shard",
+        auth=(user, "p"),
+        files={"file": (name, body, "application/x-tar")},
+    )
+
+
+def test_one_worker_cannot_evict_another_workers_quarantined_evidence(
+    tmp_path,
+) -> None:
+    """⚑⚑ REGRESSION (#407 review, P1-2). THE GUARANTEE.
+
+    #406 made `quarantine/invalid` server-wide to close the id-rotation
+    bypass, and thereby built the exact "diagnostic-destruction primitive"
+    this PR's own body spends three paragraphs arguing against for the
+    pooled-sinks case: the sweep is global and mtime-ordered, so ~200 junk
+    uploads evict everyone else's retained diagnostics oldest-first.
+
+    Measured before this fix, budget 3: victim's evidence -> `[]`, where
+    `main` (per-trial budget) preserved it.
+
+    The username is the only fairness key available: trial ids are
+    caller-invented, so keying on them hands back the bypass.
+    """
+    from .test_server_upload_security import _build_client
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_two_users(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    r = _bad_upload(
+        client, user="victim", trial="t_real", name="victim.zarr.tar",
+        body=b"not a tar -- the evidence",
+    )
+    assert r.json().get("rejected") is True, r.json()
+    # ⚑ The server renames an upload to its own `tmp_<pid>_<hex>` name, so the
+    # evidence is identified by the PATH it landed on, not by what it was
+    # called on the wire.
+    evidence = _retained_quarantine(server_root, "invalid")
+    assert len(evidence) == 1, evidence
+    victim_entry = evidence[0]
+
+    # The attacker floods, rotating trial ids as well, from its own account.
+    for i in range(12):
+        _bad_upload(
+            client, user="attacker", trial=f"attacker_{i}",
+            name=f"j{i}.zarr.tar", body=b"junk %d" % i,
+        )
+
+    assert victim_entry.exists(), (
+        "the attacker's flood destroyed the victim's retained evidence at "
+        f"{victim_entry} -- the budget is a diagnostic-destruction primitive "
+        "across users"
+    )
+    # ⚑ AND THE BOUND STILL HOLDS. A fix that simply stopped evicting would
+    # also keep the victim's entry, and would reopen finding [4]. The
+    # attacker's own bucket must still be at budget.
+    kept = _retained_quarantine(server_root, "invalid")
+    attacker_kept = [p for p in kept if p != victim_entry]
+    assert len(attacker_kept) <= 3, (
+        f"{len(attacker_kept)} attacker entries retained against a 3-entry "
+        "per-user budget -- per-user fairness was bought by dropping the bound"
+    )
+    # The buckets really are keyed by user, not by trial.
+    assert victim_entry.parent.name == "victim", victim_entry
+    assert {p.parent.name for p in attacker_kept} == {"attacker"}, attacker_kept
+
+
+def test_one_users_own_flood_still_evicts_its_own_older_evidence(tmp_path) -> None:
+    """⚑ THE LIMIT OF THE P1-2 FIX, PINNED RATHER THAN ASSUMED.
+
+    The review's repro is single-user, cross-TRIAL. This fix does not restore
+    `main`'s behaviour there, and that is deliberate: within one authenticated
+    account the entries compete for that account's quota, oldest-first. Trial
+    id cannot be the fairness key -- it is caller-invented, so a per-trial
+    floor hands back the rotation bypass, and per-trial fair EVICTION does not
+    help either, because one entry under each of many invented ids makes every
+    contributor tie at one and the tie-break is the oldest entry, the victim.
+
+    So: one worker cannot destroy ANOTHER worker's diagnostics (the test
+    above), and one worker can still age out its OWN. This test exists so that
+    limit is a recorded decision rather than an accident nobody measured.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    r = _bad_upload(
+        client, user="u", trial="t_real", name="old.zarr.tar", body=b"not a tar old",
+    )
+    assert r.json().get("rejected") is True, r.json()
+    first = _retained_quarantine(server_root, "invalid")
+    assert len(first) == 1, first
+    oldest = first[0]
+
+    for i in range(12):
+        _bad_upload(
+            client, user="u", trial=f"rot_{i}", name=f"j{i}.zarr.tar",
+            body=b"junk %d" % i,
+        )
+
+    kept = _retained_quarantine(server_root, "invalid")
+    assert len(kept) <= 3, (
+        f"{len(kept)} retained against a 3-entry per-user budget -- the "
+        "per-user bucketing lost the bound it was built on top of"
+    )
+    assert not oldest.exists(), (
+        f"the oldest entry ({oldest}) survived a 12-upload flood from the SAME "
+        "account -- if this now passes, the budget grew a per-trial floor, "
+        "which is exactly the rotation bypass #406 closed"
+    )
+
+
 def test_the_two_quarantine_sinks_do_not_share_one_budget(tmp_path) -> None:
     """⚑ NEGATIVE CONTROL on the SHAPE of the fix, not just its presence.
 
@@ -935,7 +1084,7 @@ def test_the_cross_trial_arena_walk_does_not_run_on_the_event_loop(
     `run_in_threadpool`. That is production's own definition of "on the loop",
     not a proxy for it.
 
-    Exactly ONE on-loop `resolve_arena_user_dir` is legitimate -- the route
+    Exactly ONE on-loop `resolve_user_dir` is legitimate -- the route
     resolving the directory it is about to write to. Every additional one is a
     per-trial `realpath` pair charged to the loop thread.
     """
@@ -952,7 +1101,7 @@ def test_the_cross_trial_arena_walk_does_not_run_on_the_event_loop(
     for i in range(5):
         (server_root / "trials" / f"t{i}" / "arena_inbox" / "u").mkdir(parents=True)
 
-    real_resolve = app_mod.resolve_arena_user_dir
+    real_resolve = app_mod.resolve_user_dir
     on_loop: list[str] = []
 
     def _spy(arena_root, username):
@@ -964,7 +1113,7 @@ def test_the_cross_trial_arena_walk_does_not_run_on_the_event_loop(
             on_loop.append(str(arena_root))
         return real_resolve(arena_root, username)
 
-    monkeypatch.setattr(app_mod, "resolve_arena_user_dir", _spy)
+    monkeypatch.setattr(app_mod, "resolve_user_dir", _spy)
 
     client = _build_client(server_root)
     r = client.post("/v1/upload_arena_result", auth=("u", "p"), json=_arena_payload())
