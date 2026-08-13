@@ -484,16 +484,41 @@ plus: no anonymous manifest GET mutates `seed_dole_gate.json`; a revision mismat
 or pause leaves it untouched; a retry of the WINNING `claim_id` still returns
 granted.
 
-**Layer 2 — END TO END (the training-quality gate).** Use the observable that
-already exists: `finalize.py` writes `selfplay_fenlist*` / `curriculum_fenlist*`
-keys into `outcome_stats`, and `outcome_stats` is a `ShardMeta` field
-(`shard.py:729`), so it is carried in the shard and reaches the server. Count
-fenlist-sourced games in shards ingested over the same 10 iterations — that proves
-the seeds were played AND uploaded, which is the thing the grant log cannot show.
+**Layer 2 — END TO END (the training-quality gate).**
 
-⚑ `outcome_stats` keys are NESTED, not flat. A naive flat lookup reads zero and
-would report "seeding is dead" on a perfectly healthy run — the same
-false-instrument failure this section exists to prevent, one level down.
+⚑⚑ **THE FIRST VERSION OF THIS LAYER WAS ALSO BROKEN, AND IN A WAY THAT READ
+ZERO ON A HEALTHY RUN.** It said: *"`finalize.py` writes `selfplay_fenlist*` /
+`curriculum_fenlist*` keys into `outcome_stats`, and `outcome_stats` is a
+`ShardMeta` field (`shard.py:729`), so it is carried in the shard"* — and
+warned that the keys are NESTED so a flat lookup reads zero.
+
+**MEASURED 2026-08-12 against the real replay bank, and both halves of that are
+wrong.** `runs/pbt2_small/replay_shards/shard_*.zarr/.zattrs` has **no
+`outcome_stats` key at all**, and every counter it does carry is `None`:
+
+```
+adjudicated_games=None  curriculum_games=None  selfplay_games=None  positions=669 ...
+```
+
+`shard.py:729` is the dataclass FIELD DECLARATION and nothing in `shard.py`
+ever writes it to `.zattrs`. The stats travel a different route entirely: the
+worker sends them in the UPLOAD metadata, the server merges them
+(`app.py:1130`, `_merge_outcome_stats`) into a per-trial accumulator, and they
+surface as a pipe-joined string in the trial report
+(`tune/trainable_report.py:1341`). **Counting fenlist games "in shards
+ingested" reads zero whatever seeding does.**
+
+⇒ **THE WORKING COMMAND — read the trial report, not the shards:**
+
+```bash
+grep -o "fenlist[a-z_]*=[0-9]*" \
+  runs/pbt2_small/tune/train_trial_<id>/result.json | sort -u | head
+# VERIFIED to return real counts, e.g. fenlist_draws=11
+```
+
+Take the fenlist counters at the window's start and end iterations and compare
+the delta against the pre-change rate. That proves the seeds were played AND
+uploaded, which is the thing the grant log cannot show.
 
 ### PRE-COMMITTED DECISION RULE
 
