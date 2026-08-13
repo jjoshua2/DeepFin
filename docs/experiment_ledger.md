@@ -44838,3 +44838,25 @@ steps). Goes in the Tier-13 Confounds line; #170's r̄ window (81-100) needs the
 settled — check at the iter-75 bank. RULE ADOPTED: no heavy-CPU agent work (mutation
 harnesses, extension rebuilds, full suites) concurrent with a Tier-13 arm — pause-and-run
 applies to CPU-starving work, not only GPU. Details: scratchpad/tier13/arm_A_notes.md.
+
+### Review cycle CLOSED for PRs #405 / #408 / #409 (2026-08-13 ~02:00) — all APPROVE, all awaiting Josh's merge
+
+#408 (diff_focus shared normalizer + bench KL unification): APPROVE after one blocking round
+(the dispatch-seam test — the author's own deploy-proof log line fired on a dead knob under
+two reviewer mutants); 13/13 mutants; comment-only C edit proven via byte-identical
+preprocessor output; CI green; merge-checked against the advanced base. #409 (Tier-14 arm
+(a) parametric draw): APPROVE after one round of five seams; 24/24 author + 7/7 round-2
+reviewer mutants; C/Python now agree BITWISE at the wide-draw fixture (reviewer's own 96k-pt
+probe: 0 negatives, byte-identical, ≤1 ulp residual from the PRE-EXISTING float32 q cast,
+stated). ⚑ DECISION-RELEVANT: the S5 exchange — reviewer suggested a PROTOCOL_VERSION bump
+for deploy skew, I instructed it, the author BUILT it, and the author's merge-check caught
+that `main` (12934ec1f, three commits after the PR based) argues explicitly against it:
+`_check_worker_compat` requires EXACT protocol equality (426 on mismatch), so the bump
+zeroes selfplay in BOTH orderings of a rolling deploy. Reverted; the pinned cutover is
+`min_worker_version` ARMED BY a PACKAGE_VERSION bump in the same deploy + the stored-row
+check (the only instrument a mixed window cannot slip past) — now a deploy gate in the
+Tier-14 prereg with its own mutation-verified test. The general lesson is the known one,
+re-proven with a fleet-stopping payload: CI NEVER RE-RUNS WHEN THE BASE ADVANCES; only the
+local merge-check saw it. Also filed: task #197 (DiskBackedReplayBuffer daemon prefetch
+thread survives its test and polluted an unrelated test's stdout at failed=5191 — the #409
+author correctly refused to paper over it).
