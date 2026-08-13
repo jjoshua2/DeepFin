@@ -44753,3 +44753,23 @@ decisive rows, not a fortress-muting effect — and arm (a) (parametric D from s
 fixes both defects at once, since D→small automatically as |q|→1. Arm ranking updated:
 (a) favored; (b) tree-backed-up D addresses only the D channel, not the cap; (c)'s offline
 bound (baked-in clamp) affects ~4% of rows + the 24% near-bound tail.
+
+**Tier-12 turnkey staged (2026-08-12 late, report: scratchpad/tier12/turnkey_report.md) + one
+CORRECTION to the amendment above.** GO/NO-GO item 4 is DONE: `boot512_coupledarch.pt` built
+and verified (arch differs from donor in exactly the one key; state_dict bitwise identical,
+496/496); the t10 override strings re-parsed with the rig's own `_parse_variant` match the
+amendment's pinned strings on all 11 keys both arms; `scratchpad/tier12/launch.sh` encodes the
+full gated sequence (refuses to run against live training; every flag checked against the real
+argparse; realized-topology gate exits nonzero on a standalone-topology output) and a CPU dry
+run of the rig's build+load on the real donor already produced the exact expected tolerant-load
+line and proved `--allow-partial-load` is genuinely required. CORRECTION: the amendment's
+"recipe-drift diff run and CLEAN" was WRONG by the absent-key blindness this ledger already
+documents — `92673abff` ADDED two trainer-consumed keys since `ed9de8ee9`
+(`train.sf_search_dampen_sf_low/_high`, absent → 0.0). Impact on the banked comparison group is
+NIL and proven, not assumed: every consumer defaults to 0.0 and at 0.0 `keep = 1.0`
+(`train/losses.py:1017-1019`), bit-identical to what the banked arms ran — no re-run owed. The
+launch gate ACKs these keys BY VALUE (0.0), so any future non-zero setting blocks the launch
+instead of riding along. (Also noted: ARCH_SCHEMA_VERSION is 19 post-#398, not the v18 the
+readiness report's seam table said — donor stays v17 and decodes; outputs save v19; confirmed
+empirically.) Remaining for Tier-12: Josh's go + a GPU pause window, then
+`bash scratchpad/tier12/launch.sh`.
