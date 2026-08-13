@@ -46568,3 +46568,43 @@ session, not to pass on a working GPU.
 ⚑ **SECOND INDEPENDENT REPORT that the agent scratchpad is NOT session-isolated** despite the system
 prompt saying so — another session overwrote two of this agent's helper scripts mid-run. Two
 different agents hit this today. Name scratch files uniquely per agent.
+
+### ⚑⚑ CORRECTION — THE MATE-FOLD MECHANISM IS ALREADY FIXED. I RELAYED A STALE LEDGER CLAIM AS LIVE.
+I told Josh the mate concentration had "a named, already-diagnosed mechanism ARMED IN THE LIVE
+CONFIG" worth ~40% of the argmax gap, quoting *"`mate_to_effective_cp` folding mates to ±1500-2480,
+inside the reachable cp band"*. **That describes the DEFECT as written in N1, not the current code.**
+`a84aaf846` (**2026-08-05**, PR #360 — the SAME commit whose ruler change invalidated the BT4 cache
+earlier today) fixed it:
+
+```
+SF_CP_CLAMP_CP  =  32000.0
+_MATE_BASE_CP   = 100000.0      # was 1500
+_MATE_DEPTH_STEP_CP = 100.0     # band = 50 000 .. 100 000, entirely ABOVE the cp clamp
+```
+`wdl.py:12-17` states the invariant in its own words — *"The historical base of 1500 did exactly
+that on 1.34% of live scored rows (a mate-in-3 scoring 2440 against cp-19998 decliners), which is
+what split this mapping in two"* — and **`tests/test_mate_score_single_home.py` pins the inequality**
+`_MATE_BASE_CP − _MATE_MAX_PLIES × _MATE_DEPTH_STEP_CP > SF_CP_CLAMP_CP`. Task #155 was already
+closed. ⇒ **mates DO dominate cp in the live cp-mode target today. There is no armed defect and no
+free 40%.**
+
+**How it happened, exactly:** the analysis agent cited the N1 ledger entry, which documents the
+defect; I repeated it to Josh without opening `wdl.py`. Textbook violation of the standing rule that
+**a ledger or memory claim naming a file, function or constant must be re-verified against current
+code before it is recommended or quoted.** The measured symptom came from a fresh run; the mechanism
+came from a document, and only one of those was checked.
+
+**WHAT SURVIVES — the symptom, which is measured and still unexplained:**
+mates are 8.1% of the audit set and carry **9.20 of the 22.93 cp top-1 gap**; ours **163.1** vs BT4
+**49.5** and C1-512-15 **55.1**; **94.9% of our 39 positions pinned at the 1000 cp cap contain a
+mate.** That stands. Only the causal story is withdrawn.
+
+**⚑ AND A COMPETING EXPLANATION I SHOULD HAVE OFFERED FIRST, WHICH IS PARTLY MECHANICAL:**
+`eval/audit.py:249` `AUDIT_REGRET_CAP_CP = 1000.0`. Missing a forced mate produces an enormous
+regret that saturates at the cap, so **mate positions are where per-position regret is LARGEST BY
+CONSTRUCTION** — some of the 3.3× is the ruler's dynamic range, not the net's. The honest open
+question is what fraction. **Do not re-open a mate experiment until that is decomposed**, e.g. by
+re-reading the mate bucket with the cap raised or removed and seeing how much of the 163.1 vs 49.5
+survives. [[compute_instrument_resolution_before_the_threshold]].
+
+⇒ **Task #205 is REFRAMED, not actionable as written.** There is no config change to make.
