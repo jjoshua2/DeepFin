@@ -44936,3 +44936,36 @@ weak anchor inflates differences between nets that are actually close.
    between the two checkpoints is affordable. Kills the temptation to grade Tier-13 arms by
    each running against a shared frozen reference (cheaper, 3 arenas either way, but
    demonstrably worth up to 82 Elo of artifact).
+
+### PREREG task #198 — can a 20-minute ruler screen what a 5-hour arena decides? (2026-08-13, NOT yet run)
+
+Registered BEFORE the three missing reads exist. Motivation: with the arena resolving only
+~22 Elo (207564be5) at 5 GPU-hours per verdict, our iteration rate is instrument-bound. If
+`value_regret` ORDERS our own lineage, it can screen candidates before we spend an arena.
+
+**Population, and what was excluded and why.** Six checkpoints hold a DIRECT paired arena vs
+boot512 under identical conditions (200 pairs, sims 32, `--search-shape training`): **477,
+514, 672, 735, 768, 862**. The two reference paths named in those rows
+(`arena_20260803/ckpt/boot512.pt`, `scaleup/gateread/boot_snap_recheck_0711_0404.pt`) are
+BYTE-IDENTICAL (md5 08d2e9a3be0cb9b31dc2ef4b02297a46) — checked, not assumed, so the anchor
+is not a confound. EXCLUDED: **iter400** (its arena ran `--search-shape play`, a different
+regime) and **iter346** (row predates `search_candidate`; shape unverifiable). ⚑ This
+corrects the "n=8" in my own task text — the comparable set is 6, of which 3 already have a
+banked ruler read (514/672/735), so the pause-window cost is 3 reads ≈ 12-15 min.
+
+**Statistic + verdict rule, fixed now:** Spearman rho (ordering, not linearity, at n=6)
+between `value_regret` OVERALL and arena Elo. **rho ≤ −0.80 ⇒ USABLE SCREEN** (decides what
+to arena, NEVER what wins); −0.80 < rho ≤ −0.40 ⇒ WEAK, no procedural change; **rho > −0.40
+⇒ THE VALUE RULER DOES NOT TRACK PLAY STRENGTH over this lineage**, which is the more
+consequential branch: every "value improved" verdict becomes a deep-SF-agreement statement
+and must stop being read as progress toward Elo.
+
+**Power, computed before the fact:** n=6 needs |rho| ≥ 0.83 for p<0.05 two-sided, so this
+design can only CERTIFY a strong relationship; a null reads "not demonstrated at n=6", not
+"no relationship". **Confound, stated:** the ruler grades against deep SF while we train an
+ANTI-engine, so a weak correlation has an innocent explanation — it is still decision-
+relevant, because a ruler that cannot order our own lineage cannot screen our own work.
+
+Runner `scratchpad/ruler_vs_elo/run_missing_reads.sh` (REFUSES to run while training is up —
+verified) pins the banked ladder's ruler settings so the new dumps compare with the old;
+readout `correlate.py` refuses to compute below n=4 (verified at n=3).
