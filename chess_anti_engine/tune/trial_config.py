@@ -326,6 +326,10 @@ class TrialConfig:
     diff_focus_norm_quantile: float = 0.5
     diff_focus_norm_slope: float = 1.62
     diff_focus_norm_clip: float = 8.0
+  # One estimator per worker instead of one per selfplay THREAD (W4). Default
+  # OFF and bit-identical; see selfplay/diff_focus_norm.py for the measured
+  # 131,072-ply-per-restart warm-up this removes.
+    diff_focus_norm_shared: bool = False
 
   # --- Stockfish ---
     stockfish_path: str = ""
@@ -792,6 +796,7 @@ class TrialConfig:
             diff_focus_norm_quantile=float(config.get("diff_focus_norm_quantile", 0.5)),
             diff_focus_norm_slope=float(config.get("diff_focus_norm_slope", 1.62)),
             diff_focus_norm_clip=float(config.get("diff_focus_norm_clip", 8.0)),
+            diff_focus_norm_shared=bool(config.get("diff_focus_norm_shared", False)),
 
   # --- Stockfish ---
             stockfish_path=str(config.get("stockfish_path", "")),

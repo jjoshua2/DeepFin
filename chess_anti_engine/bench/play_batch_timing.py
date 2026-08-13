@@ -22,6 +22,7 @@ from chess_anti_engine.moves import (
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.game import _result_to_wdl
 from chess_anti_engine.selfplay.manager import BatchStats
+from chess_anti_engine.selfplay.network_turn import _policy_kl
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.train.targets import hlgauss_target
@@ -171,7 +172,22 @@ def _do_network_turn(
 
 def _surprise_priority(pol_logits: np.ndarray, probs: np.ndarray, board: chess.Board) -> float:
     """KL(masked-renormalized raw policy || MCTS-improved policy). Used as a
-    sampling priority; higher KL means the search disagreed more with the prior."""
+    sampling priority; higher KL means the search disagreed more with the prior.
+
+    ⚑ Delegates to ``network_turn._policy_kl`` (task #173). This function used to
+    carry a THIRD implementation of the same statistic — floor BOTH sides at
+    1e-12 and sum over all 4672 entries — which is the pre-fix formula production
+    and its Python fallback converged away from. It is not a rounding
+    difference: the extra mass is dominated by ``-log(1e-12) = 27.63`` over moves
+    the search never visited, so the number's magnitude is a free parameter of
+    its own implementation. Measured on the 12 newest live shards (2026-08-12,
+    sims 100 / topk 16), **11,710 of 22,265 policy rows — 52.6% — have at least
+    one legal move at zero visit mass**, which is exactly the condition under
+    which the two conventions differ; the banked 2,400-row measurement put the
+    mean gap at +0.0595 nats and the worst row at 23.29. A benchmark that ranks
+    positions by a different statistic than production is measuring a different
+    curriculum.
+    """
     mask = legal_move_mask(board)
     lg = pol_logits.astype(np.float64, copy=True)
     lg[~mask] = -1e9
@@ -180,10 +196,7 @@ def _surprise_priority(pol_logits: np.ndarray, probs: np.ndarray, board: chess.B
     rp[~mask] = 0.0
     s = float(rp.sum())
     raw = (rp / s).astype(np.float32) if s > 0 else (mask.astype(np.float32) / float(mask.sum()))
-
-    imp = np.maximum(probs.astype(np.float32, copy=False), 1e-12)
-    raw_c = np.maximum(raw, 1e-12)
-    return float(np.sum(raw_c * (np.log(raw_c) - np.log(imp))))
+    return _policy_kl(raw, probs, mask)
 
 
 def _do_sf_turn(

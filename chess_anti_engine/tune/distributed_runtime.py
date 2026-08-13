@@ -314,6 +314,7 @@ def build_recommended_worker(
         "diff_focus_norm_quantile": float(config.get("diff_focus_norm_quantile", 0.5)),
         "diff_focus_norm_slope": float(config.get("diff_focus_norm_slope", 1.62)),
         "diff_focus_norm_clip": float(config.get("diff_focus_norm_clip", 8.0)),
+        "diff_focus_norm_shared": bool(config.get("diff_focus_norm_shared", False)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
         "gumbel_policy_temp": float(config.get("gumbel_policy_temp", 1.0)),
         "gumbel_target_batch": int(config.get("gumbel_target_batch", 0)),
