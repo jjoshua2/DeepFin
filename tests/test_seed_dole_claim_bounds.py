@@ -399,8 +399,18 @@ def test_a_winner_ahead_of_the_gate_is_reconciled_at_boot(tmp_path: Path) -> Non
     An earlier revision of this branch added a boot-time sidecar SIZE check
     that did exactly that, and the test that covered it hardcoded a gate equal
     to the winner's iteration -- so the dangerous state was unreachable from
-    the suite and the mutation score still read clean. The guard is gone; this
-    test is what makes its absence checkable.
+    the suite and the mutation score still read clean. The guard is gone.
+
+    ⚑ WHAT THIS TEST DOES AND DOES NOT CATCH. It pins the reconciliation
+    invariant itself: it FAILS for any code that empties `self._winners`
+    unconditionally before the loop. It does NOT catch a SIZE-CONDITIONAL
+    guard, because `_write_gate` writes a normal-sized sidecar, so a
+    size-triggered branch never fires here -- this test PASSES on the broken
+    commit. Only `test_an_oversized_prefix_sidecar_still_blocks_a_second_grant`
+    has teeth against that shape, because only it builds a genuinely oversized
+    sidecar. The two are a PAIR and neither substitutes for the other; the
+    failure being guarded against is precisely a condition that a
+    conveniently-sized fixture cannot reach.
     """
     state = _write_gate(tmp_path, {
         "trial_00000": {
