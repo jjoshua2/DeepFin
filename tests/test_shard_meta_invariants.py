@@ -705,6 +705,138 @@ def test_client_report_sink_retention_survives_trial_id_rotation(tmp_path) -> No
     )
 
 
+# ---------------------------------------------------------------------------
+# #407 review, P1: `.` is a well-formed trial id that pathlib COLLAPSES, so the
+# write landed outside every swept set and no budget was enforced at all.
+# ---------------------------------------------------------------------------
+
+
+DOT_TRIAL = "%2E"  # `.`, percent-encoded so the client sends it verbatim.
+
+
+def test_a_dot_trial_id_is_refused_rather_than_collapsed(tmp_path) -> None:
+    """⚑⚑ REGRESSION (#407 review, P1). The ROOT of the three bypasses below.
+
+    `_trial_id_re` is a charset allowlist and `.` satisfies it, so the id was
+    accepted and then JOINED onto a root -- and `trials/./quarantine/invalid`
+    collapses to `quarantine/invalid`. The entries landed in a directory no
+    cross-trial enumerator lists, so every budget below was silently unenforced.
+
+    Asserts the id is refused at the DOOR, which is what makes one fix cover
+    all three sinks. `..` is the control: it was already harmless (it resolves
+    onto a swept sink) and must be refused by the same predicate anyway.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root)
+
+    for encoded in (DOT_TRIAL, "%2E%2E"):
+        r = client.post(
+            f"/v1/trials/{encoded}/report_bad_shard",
+            auth=("u", "p"),
+            json={"shard_name": "s.zarr", "reason": "unreadable"},
+        )
+        assert r.status_code == 400, (
+            f"trial_id {encoded!r} was accepted with {r.status_code}: {r.text}"
+        )
+
+    # ⚑ NEGATIVE CONTROL: a `.` INSIDE an otherwise ordinary id is legitimate
+    # (`trial.1` is a real Ray trial name shape) and must still be accepted.
+    # A predicate that rejected every dot would break real workers.
+    r = client.post(
+        "/v1/trials/trial.1/report_bad_shard",
+        auth=("u", "p"),
+        json={"shard_name": "s.zarr", "reason": "unreadable"},
+    )
+    assert r.status_code == 200, f"a dotted-but-safe trial id was refused: {r.text}"
+
+
+def test_quarantine_invalid_budget_cannot_be_bypassed_by_a_dot_trial_id(
+    tmp_path,
+) -> None:
+    """Budget 1 of 3. Measured before the fix: 12 retained against a 3 budget.
+
+    ⚑ Asserts on entries ON DISK across the WHOLE tree, not under the trial the
+    request named: the defect is precisely that the write went somewhere the
+    caller did not name and the sweep did not look.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    for i in range(12):
+        client.post(
+            f"/v1/trials/{DOT_TRIAL}/upload_shard",
+            auth=("u", "p"),
+            files={"file": (f"s{i}.zarr.tar", b"not a tar at all %d" % i,
+                            "application/x-tar")},
+        )
+
+    kept = _retained_quarantine(server_root, "invalid")
+    assert len(kept) <= 3, (
+        f"{len(kept)} quarantined shards retained against a 3-entry budget -- "
+        "a `.` trial id writes outside every swept directory"
+    )
+
+
+def test_client_report_budget_cannot_be_bypassed_by_a_dot_trial_id(tmp_path) -> None:
+    """Budget 2 of 3. Measured before the fix: 12 retained against a 3 budget."""
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, quarantine_max_entries=3, quarantine_max_bytes=0)
+
+    for i in range(12):
+        client.post(
+            f"/v1/trials/{DOT_TRIAL}/report_bad_shard",
+            auth=("u", "p"),
+            json={"shard_name": f"s{i}.zarr", "reason": "unreadable"},
+        )
+
+    kept = _retained_quarantine(server_root, "client_reports")
+    assert len(kept) <= 3, (
+        f"{len(kept)} client reports retained against a 3-entry budget -- "
+        "a `.` trial id writes outside every swept directory"
+    )
+
+
+def test_arena_budget_cannot_be_bypassed_by_a_dot_trial_id(tmp_path) -> None:
+    """Budget 3 of 3, and this one is LIVE ON `main`, independent of #407.
+
+    Measured on `main`: 15 arena results retained against a 4-entry per-user
+    budget. `test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids`
+    (#402) rotates ids of the form `rotate_i` and therefore cannot see the
+    strongest form of the bypass it is named for.
+    """
+    from .test_server_upload_security import _build_client, _seed_user
+
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    client = _build_client(server_root, arena_user_max_entries=4, arena_user_max_bytes=0)
+
+    for i in range(15):
+        client.post(
+            f"/v1/trials/{DOT_TRIAL}/upload_arena_result",
+            auth=("u", "p"),
+            json=_arena_payload(generated_at_unix=1_700_000_000 + i),
+        )
+
+    kept = list(server_root.rglob("arena_inbox/*/*.json"))
+    assert len(kept) <= 4, (
+        f"{len(kept)} arena results retained against a 4-entry per-user budget -- "
+        "a `.` trial id writes outside every swept directory"
+    )
+
+
 def test_the_two_quarantine_sinks_do_not_share_one_budget(tmp_path) -> None:
     """⚑ NEGATIVE CONTROL on the SHAPE of the fix, not just its presence.
 

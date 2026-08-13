@@ -1754,10 +1754,48 @@ def create_app(
     _trial_id_re = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
     def _normalize_trial_id(trial_id: str | None) -> str | None:
+        """Syntax-check a caller-supplied trial id, or raise 400.
+
+        ⚑⚑ THE REGEX IS A SYNTAX ALLOWLIST AND WAS MISTAKEN FOR A PATH CHECK.
+        `^[A-Za-z0-9._-]$` matches `.` and `..`, `normalize_trial_id` only
+        strips whitespace, and every path this feeds is built by JOINING the
+        result onto a root -- so `trials/./quarantine/invalid` COLLAPSES to
+        `quarantine/invalid` under the server root. The write landed in a
+        directory none of the cross-trial enumerators list (they walk
+        `trials/<child>/quarantine/<subdir>`), so the sweep never saw it and
+        the budget was simply not enforced. Measured on this branch with a
+        3-entry budget: 12 uploads under `%2E` retained 12. The same id defeats
+        the ARENA budget on `main` today -- 15 retained against 4 -- which is
+        why `test_arena_retention_cannot_be_bypassed_by_rotating_trial_ids`
+        could not detect the strongest form of the bypass it is named for.
+
+        ⚑⚑ BOTH CLAUSES OF `lease_path`'s GUARD, AND THE SECOND IS NOT
+        REDUNDANT -- MEASURED. The obvious reading is that `Path(tid).name !=
+        tid` subsumes `tid in {".", ".."}` because it asks the question that
+        actually matters ("does this survive being used as ONE path
+        component"). It does not: pathlib collapses `.` but NOT `..`, so
+        `Path("..").parts == ("..",)` and `Path("..").name == ".."` -- the
+        identity holds and the check passes it straight through. Verified by
+        writing exactly that predicate first and watching `%2E%2E` still land
+        a report in `trials/../quarantine/client_reports`, i.e. the server-root
+        sink, from a route scoped to a trial. `..` is the milder half (it
+        resolves ONTO a swept directory, so the budget does hold) but it is
+        still a caller writing outside the trial it named, and it costs one
+        `or` to refuse.
+
+        So all three clauses earn their place: the regex bounds charset and
+        length, `Path(tid).name != tid` bounds path semantics generally (and
+        stays correct if the character class is ever widened to admit a
+        separator), and the explicit set closes the one case pathlib's own
+        normalisation hides from the second.
+
+        ⚑ A dot INSIDE an id stays legal -- `trial.1` is an ordinary Ray trial
+        name and none of these clauses touch it.
+        """
         tid = normalize_trial_id(trial_id)
         if tid is None:
             return None
-        if not _trial_id_re.fullmatch(tid):
+        if not _trial_id_re.fullmatch(tid) or Path(tid).name != tid or tid in {".", ".."}:
             raise HTTPException(status_code=400, detail="invalid trial_id")
         return tid
 
