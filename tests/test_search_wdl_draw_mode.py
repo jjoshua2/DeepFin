@@ -662,20 +662,40 @@ def test_a_stale_so_is_refused_by_the_abi_gate() -> None:
         gumbel_c._mcts_tree_ext = original
 
 
-def test_a_pre_arm_worker_cannot_poll_this_server() -> None:
-    """REVIEW FINDING S5, and the decision it records: PROTOCOL_VERSION bumped.
+def test_the_stale_worker_gate_is_min_worker_version_not_the_protocol() -> None:
+    """REVIEW FINDING S5, and the decision it records: **do NOT bump
+    ``PROTOCOL_VERSION``** — the deploy step is a PACKAGE version bump.
 
-    A pre-#409 worker drops the unknown reco key, is not restart-keyed by it,
-    and keeps uploading ``net_raw`` rows into the SAME replay window with no
-    column distinguishing them — the confound is unrecoverable after the fact.
-    ``min_worker_version`` cannot catch it (``PACKAGE_VERSION`` is unchanged by
-    an in-tree pull), so the protocol field is the only instrument that can.
-    ``>= 3`` rather than ``== 3`` so a later, unrelated bump does not fail this,
-    while a revert of THIS one does.
+    The hazard is real: a pre-#409 worker drops the unknown reco key, is not
+    restart-keyed by it, and keeps uploading ``net_raw`` rows into the SAME
+    replay window as ``parametric_q`` rows with no column distinguishing them.
+    The first fix attempted here was ``PROTOCOL_VERSION`` 2 -> 3. It was WRONG,
+    and only the merge check against a moved ``main`` caught it:
+    ``_check_worker_compat`` requires EXACT protocol equality, so a bump 426s
+    the fleet in BOTH directions of a rolling deploy — ``main`` documents
+    exactly this in ``version.py`` and names ``min_worker_version`` as the
+    cutover mechanism instead, because it is a ``>=`` comparison.
+
+    So the guard has to be the one that CAN fire without taking selfplay to
+    zero. Pin that it is wired: the manifest a worker polls carries
+    ``min_worker_version``, and it carries ``PACKAGE_VERSION`` — otherwise the
+    "bump the package version in the same deploy" step is decorative and the
+    prereg's deploy gating rests on nothing.
     """
-    from chess_anti_engine.version import PROTOCOL_VERSION
+    import inspect
 
-    assert PROTOCOL_VERSION >= 3
+    from chess_anti_engine.tune import distributed_runtime
+
+    # The manifest is assembled inline inside `_publish_distributed_trial_state`,
+    # which needs a live Trainer — so pin the source, the same way the
+    # session-start log line above is pinned.
+    src = inspect.getsource(distributed_runtime._publish_distributed_trial_state)
+    assert '"min_worker_version": str(PACKAGE_VERSION)' in src, (
+        "the published manifest no longer carries min_worker_version derived "
+        "from PACKAGE_VERSION — the only stale-worker gate that can fire "
+        "without 426-ing the whole fleet, and the one this arm's deploy "
+        "gating depends on"
+    )
 
 
 def test_the_mode_int_encoding_has_one_home() -> None:

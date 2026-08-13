@@ -122,11 +122,15 @@ the self-reference and removing the net's position-specific draw knowledge
 (fortresses, opposite-coloured bishops) are the same act. That is the trade the
 arm is testing, not a side effect.
 
-Restart-keyed and resume-fingerprinted (it decides what a stored row MEANS), and
-`PROTOCOL_VERSION` is bumped so a worker that predates the key cannot poll and
-silently mix `net_raw` rows into the same replay window. Pinned by
-`tests/test_search_wdl_draw_mode.py`, including bit-identity of the `net_raw`
-path and C/Python agreement in both modes.
+Restart-keyed and resume-fingerprinted (it decides what a stored row MEANS).
+⚑ Those protect one worker's own session; they do NOT protect against a worker
+on OLDER CODE, which drops the key and keeps writing `net_raw` rows into the
+same replay window with nothing distinguishing them. `PROTOCOL_VERSION` is not
+the fix — `_check_worker_compat` is an exact-equality gate, so bumping it 426s
+the fleet in both directions of a rolling deploy (see `version.py`). The gate is
+`min_worker_version`, which requires bumping `PACKAGE_VERSION` in the same
+deploy. Pinned by `tests/test_search_wdl_draw_mode.py`, including bit-identity
+of the `net_raw` path and C/Python agreement in both modes.
 
 **Terminal-proximal outcome share (`wdl_terminal_outcome_plies`, default 0 =
 OFF).** The global `game_frac` stays 0 and deep-game outcome labels stay out of

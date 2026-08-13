@@ -100,14 +100,27 @@ scorer, and `E[search_sig - sf_sig]` on fresh shards (the ratchet the audit's S1
 - **C EXTENSION REBUILD REQUIRED** on every machine that runs selfplay:
   `python3 scripts/build_production_extensions.py`. The PR bumps `ABI_VERSION` to 4, so a
   stale `.so` refuses to start with the rebuild command instead of failing mid-game.
-- **PROTOCOL_VERSION IS BUMPED TO 3 — a pre-#409 worker is now 426'd and cannot poll.** This
-  is a deliberate deployment-skew guard, not incidental: an old worker drops the unknown reco
-  key, is not restart-keyed by it, and would keep uploading `net_raw` rows into the SAME
-  replay window as the new workers' `parametric_q` rows with **no column distinguishing
-  them** — an unrecoverable confound in the exact window this experiment reads. Consequence
-  to plan for: **every worker must be on merged code before the trainer restarts**, or
-  selfplay simply stops (loudly) instead of silently mixing. `min_worker_version` could not
-  have caught this — it is `PACKAGE_VERSION`, which an in-tree `git pull` leaves identical.
+- **⚑ DEPLOYMENT SKEW IS A MANUAL GATE HERE — there is no in-band guard, and the obvious one
+  is a trap.** A worker on pre-#409 code drops the unknown reco key, is not restart-keyed by
+  it, and keeps uploading `net_raw` rows into the SAME replay window as `parametric_q` rows
+  with **no column distinguishing them** — unrecoverable, in exactly the window this
+  experiment reads.
+  - **Do NOT reach for `PROTOCOL_VERSION`.** It was bumped 2 → 3 in this PR and then
+    REVERTED: `_check_worker_compat` requires EXACT protocol equality (`got_p != req_p` →
+    426), so a bump takes the fleet to zero in BOTH directions of a rolling deploy. `main`
+    documents this in `chess_anti_engine/version.py` and names `min_worker_version` (a `>=`
+    comparison over `PACKAGE_VERSION`) as the cutover mechanism instead. Only the local merge
+    check against a moved `main` caught this; CI would not have.
+  - **The gate that works: bump `PACKAGE_VERSION` in the same deploy.** It is published on
+    every manifest as `min_worker_version`, compared with `version_lt`, so it excludes stale
+    workers without breaking the transition. ⚑ It only fires if the package version is
+    ACTUALLY bumped — an in-tree `git pull` leaves it identical, so this is a required deploy
+    step, not a nicety, and it means re-running the install on every worker machine.
+  - **Manual confirmation regardless**, because our workers are same-machine and restart with
+    the trainer: before setting the key, confirm every selfplay process is on merged code
+    with an ABI-4 `.so`; after the first restart, confirm the stored-row property below on
+    fresh shards. That check reads the DATA, so it cannot be faked by a config echo — it is
+    the only instrument that would notice a mixed window.
 - **MERGE BEFORE ADDING THE KEY TO THE LIVE YAML.** Category (a): a yaml key absent from the
   target branch's schema is fatal AT LAUNCH (`run.py` calls `flatten_run_config_defaults`
   outside any try). Order: merge → restart onto the merged code → then add
