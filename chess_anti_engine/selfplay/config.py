@@ -132,11 +132,16 @@ class DiffFocusConfig:
   # mechanism and the measured population definition.
   #
   # When `norm_enabled`, `difficulty` is divided by a running reference
-  # quantile of this worker's own recent policy-bearing plies before the
+  # quantile of ONE SelfplayState's own recent policy-bearing plies before the
   # clamp, and `norm_slope` REPLACES `slope` (they are in different units --
   # reusing one number for both would be a silent recalibration).
+  # ⚑ "this worker's" is what this comment said until 2026-08-12 and it is
+  # wrong: one estimator per SelfplayState == per `play_batch` call == per
+  # selfplay THREAD (32 live per worker). `norm_shared` below is what makes it
+  # per worker. Sizing anything off "per worker" understates it by 32x.
     norm_enabled: bool = False
-  # Ring size, in policy-bearing plies, of the per-worker quantile window.
+  # Ring size, in policy-bearing plies, of ONE estimator's quantile window (see
+  # the note on norm_enabled: that is per selfplay THREAD unless `norm_shared`).
   # 8192 puts the median's relative sd at 1.81% on real post-bundle data.
     norm_window: int = 8192
   # Plies required before the estimator arms. Below it the ORIGINAL

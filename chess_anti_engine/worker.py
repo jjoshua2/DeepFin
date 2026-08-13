@@ -4299,7 +4299,7 @@ class WorkerSession:
         it is the site that turns one session into N ``play_batch`` calls. None
         (the default) leaves each thread building its own, unchanged.
         """
-        n_threads = min(int(self.args.selfplay_threads), games_per_batch)
+        n_threads = self._selfplay_state_count(games_per_batch)
         base_games, remainder = divmod(games_per_batch, n_threads)
         thread_games = [base_games + (1 if i < remainder else 0) for i in range(n_threads)]
         lock = threading.Lock()
@@ -4349,6 +4349,24 @@ class WorkerSession:
             self._clear_live_states()
         return self._aggregate_thread_stats(all_stats)
 
+    def _selfplay_state_count(self, games_per_batch: int) -> int:
+        """How many ``SelfplayState``s this session will build.
+
+        One per ``play_batch`` call: the threaded path makes one per thread, the
+        single path makes one. Shared by ``_run_selfplay_threaded`` (which uses it
+        to split the game budget) and ``_build_shared_diff_focus_norm`` (which
+        reports it, and it is the multiplier on ``diff_focus_norm_warmup``). One
+        expression, because an operator reads this number out of ``worker.log``
+        and a second copy of it is a number that can quietly stop matching.
+
+        The ``max(1, ...)`` is new here: the threaded path previously divided by
+        this value directly, so a non-positive ``games_per_batch`` raised
+        ``ZeroDivisionError``. Production runs 384.
+        """
+        if not self.args.threaded_selfplay:
+            return 1
+        return max(1, min(int(self.args.selfplay_threads), int(games_per_batch)))
+
     def _build_shared_diff_focus_norm(
         self, cfgs: dict, games_per_batch: int,
     ) -> DiffFocusNormalizer | None:
@@ -4382,10 +4400,7 @@ class WorkerSession:
                 "False; no estimator is built and the knob does nothing",
             )
             return None
-        n_states = (
-            max(1, min(int(self.args.selfplay_threads), int(games_per_batch)))
-            if self.args.threaded_selfplay else 1
-        )
+        n_states = self._selfplay_state_count(games_per_batch)
         self.log.info(
             "diff_focus norm estimator SHARED across %d selfplay state(s): "
             "warmup=%d plies total for this worker (unshared would be %d)",

@@ -4871,10 +4871,14 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
         /* Difficulty / keep_prob.
          *
          * df_norm_scale > 0 selects the SCALE-FREE branch: `difficulty` is
-         * divided by a running reference quantile of this worker's own recent
-         * policy-bearing plies (computed in Python, see
+         * divided by a running reference quantile of the CALLING SelfplayState's
+         * own recent policy-bearing plies (computed in Python, see
          * selfplay/diff_focus_norm.py) so the fixed clamp below is expressed in
-         * units of "typical difficulty right now" rather than in nats. The
+         * units of "typical difficulty right now" rather than in nats.
+         * ⚑ This sentence said "this worker's own" until 2026-08-12 and that is
+         * wrong: one estimator per SelfplayState == per selfplay THREAD, 32 per
+         * worker, unless diff_focus_norm_shared is on. Comment only -- no code
+         * on this path changes, so no rebuild is required. The
          * unnormalized branch's thresholds silently decalibrate whenever an
          * unrelated search change moves the scale of `kl` -- measured 11.7x on
          * 2026-08-09. df_norm_scale == 0 (the default) keeps the original

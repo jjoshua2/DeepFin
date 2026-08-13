@@ -601,18 +601,40 @@ def test_an_unarmed_session_records_exactly_the_pre_fix_numbers() -> None:
     assert not state.diff_focus_norm.armed
 
 
-def test_production_yaml_declares_the_group_default_off() -> None:
+def test_the_committed_reference_yaml_declares_every_norm_key_and_ships_shared_off(
+) -> None:
+    """⚑ THIS READS THE COMMITTED REFERENCE CONFIG, NOT THE DEPLOYED ONE.
+
+    It was called ``..._declares_the_group_default_off`` and its message said
+    "this must ship OFF", which reads as an assurance about what production is
+    running. It structurally cannot give that: the live run reads the working
+    copy on the ops branch, where ``diff_focus_norm_enabled`` is **true** — the
+    norm group has been ARMED in production since the 2026-08-11 restart, which
+    is why the warm-up transient below is measurable at all. Two files, one name;
+    `same name != same measurement`.
+
+    What this file CAN pin, and what is asserted here:
+
+    * every norm key is present, so a rename cannot make the other guards
+      vacuous;
+    * ``diff_focus_norm_shared`` — the key this PR adds — is off in the
+      committed config, because enabling it moves the post-restart transient's
+      rows off the raw-unit branch and that is a data-affecting change needing
+      its own ledger entry.
+
+    ``diff_focus_norm_enabled`` is deliberately NOT asserted: it is already
+    deployed true, so pinning the reference copy to false here would be a test
+    asserting something the project has decided against.
+    """
     import yaml
     raw = yaml.safe_load(Path("configs/pbt2_small.yaml").read_text(encoding="utf-8"))
     sp = raw["selfplay"]
     for key in NORM_KEYS:
-        assert key in sp, f"{key} missing from the production yaml"
-    assert sp["diff_focus_norm_enabled"] is False, (
-        "this must ship OFF: enabling it changes which plies are recorded"
-    )
-    assert sp["diff_focus_norm_shared"] is False, (
-        "this must ship OFF too: it moves the post-restart transient's rows off "
-        "the raw-unit branch, which is a data-affecting change"
+        assert key in sp, f"{key} missing from the reference production yaml"
+    assert sp.get("diff_focus_norm_shared", False) is False, (
+        "diff_focus_norm_shared must be absent or false in the committed config: "
+        "it moves the post-restart transient's rows off the raw-unit branch, "
+        "which is a data-affecting change and needs its own ledger entry"
     )
 
 
@@ -790,6 +812,9 @@ def test_the_worker_shares_one_estimator_across_every_selfplay_thread() -> None:
         args=types.SimpleNamespace(threaded_selfplay=True, selfplay_threads=32),
         log=Mock(),
     )
+    stub._selfplay_state_count = types.MethodType(
+        cast(Any, WorkerSession)._selfplay_state_count, stub,
+    )
     build = cast(Any, WorkerSession)._build_shared_diff_focus_norm
 
     on = DiffFocusConfig(norm_enabled=True, norm_shared=True, norm_warmup=1024)
@@ -834,7 +859,7 @@ def test_the_threaded_dispatch_hands_every_thread_the_same_object(
 
     monkeypatch.setattr(worker_mod, "play_batch", _fake_play_batch)
     stub = types.SimpleNamespace(
-        args=types.SimpleNamespace(selfplay_threads=4),
+        args=types.SimpleNamespace(selfplay_threads=4, threaded_selfplay=True),
         rng=np.random.default_rng(0),
         log=Mock(),
         device="cpu",
@@ -847,6 +872,9 @@ def test_the_threaded_dispatch_hands_every_thread_the_same_object(
         _clear_live_states=lambda: None,
         _aggregate_thread_stats=lambda stats: stats,
     )
+    stub._selfplay_state_count = types.MethodType(
+        cast(Any, WorkerSession)._selfplay_state_count, stub,
+    )
     run = cast(Any, WorkerSession)._run_selfplay_threaded
     shared = DiffFocusNormalizer(window=64, warmup=8, quantile=0.5)
 
@@ -857,3 +885,45 @@ def test_the_threaded_dispatch_hands_every_thread_the_same_object(
     seen.clear()
     run(stub, games_per_batch=8, sf=None, eval_=None, cfgs={})
     assert seen == [None] * 4, "the default path must not share"
+
+
+def test_the_dispatch_binds_the_shared_estimator_to_the_threaded_run() -> None:
+    """The seam between ``_build_shared_diff_focus_norm`` and the threaded run.
+
+    ⚑ Every other link had a test; this one — the line that binds the builder's
+    OUTPUT to the consumer's INPUT — did not, and an independent review proved it
+    with two mutants that passed the whole suite: dropping the binding
+    (`shared_norm = None` after still calling the builder) and passing
+    `diff_focus_norm=None` to `_run_selfplay_threaded`. Both leave the
+    "estimator SHARED across N selfplay state(s)" log line intact, because the
+    builder still runs — so the operator's deploy proof would report success on a
+    dead knob. That is a presence check standing in for a value read, which is
+    the failure mode this whole PR is about.
+
+    ``kw["diff_focus_norm"]`` is a subscript on purpose: a mutant that drops the
+    keyword entirely must raise ``KeyError``, not resolve to a silent ``None``.
+    """
+    seen: list[object] = []
+    stub = types.SimpleNamespace(
+        args=types.SimpleNamespace(threaded_selfplay=True, selfplay_threads=32),
+        log=Mock(), sf=Mock(spec=["search", "nodes"]),
+        inference_client=object(), _direct_evaluator=None,
+        _run_selfplay_threaded=lambda **kw: seen.append(kw["diff_focus_norm"]),
+    )
+    stub._selfplay_state_count = types.MethodType(
+        cast(Any, WorkerSession)._selfplay_state_count, stub,
+    )
+    build = cast(Any, WorkerSession)._build_shared_diff_focus_norm
+    stub._build_shared_diff_focus_norm = lambda cfgs, gpb: build(stub, cfgs, gpb)
+    dispatch = cast(Any, WorkerSession)._dispatch_selfplay_one_shard
+
+    on = {"diff_focus": DiffFocusConfig(norm_enabled=True, norm_shared=True)}
+    dispatch(stub, games_per_batch=8, cfgs=on, need_local_model=False)
+    assert isinstance(seen[-1], DiffFocusNormalizer), (
+        "the estimator never reached the threads"
+    )
+
+    seen.clear()
+    dispatch(stub, games_per_batch=8,
+             cfgs={"diff_focus": DiffFocusConfig()}, need_local_model=False)
+    assert seen == [None], "the default path must not share"

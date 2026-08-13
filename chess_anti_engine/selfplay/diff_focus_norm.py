@@ -116,7 +116,11 @@ __all__ = ["DiffFocusNormalizer"]
 
 
 class DiffFocusNormalizer:
-    """Running robust scale for ``difficulty``, over one worker's recent plies.
+    """Running robust scale for ``difficulty``, over ONE INSTANCE's recent plies.
+
+    Not "one worker's" — that is what this line said until 2026-08-12, and the
+    module docstring above explains why it costs 32x. One instance is built per
+    ``SelfplayState``, i.e. per selfplay thread, unless ``norm_shared`` is on.
 
     ``observe`` takes the RAW (unnormalized) difficulties of the policy-bearing
     plies in one ply batch; ``scale`` returns the reference quantile of the
@@ -172,10 +176,13 @@ class DiffFocusNormalizer:
     def scale(self) -> float:
         """Reference quantile of the retained window, or 0.0 while unarmed.
 
-        Read without the lock: it is a single float attribute, so a reader gets
-        either the previous or the next armed value and never a torn one. Taking
-        the lock here would serialise every ply batch of every selfplay thread
-        against the one writer for no added guarantee.
+        Read without the lock: it is a single float attribute, and under
+        CPython's GIL an attribute load is one bytecode, so a reader gets either
+        the previous or the next armed value and never a torn one. (That is a
+        CPython guarantee, not a language one — on a free-threaded build this
+        read would need the lock, or the attribute would need to be an atomic
+        box.) Taking the lock here would serialise every ply batch of every
+        selfplay thread against the one writer for no added guarantee today.
         """
         return float(self._scale)
 
