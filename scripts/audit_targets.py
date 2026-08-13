@@ -157,6 +157,7 @@ from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+from scripts.net_source import NetSource, add_net_source_args, net_source_from_args
 
 _CANDIDATE_NAMES = {
     "raw": "a) net raw policy",
@@ -617,7 +618,7 @@ def _search_wdl_like_selfplay(q: float, net_wdl: np.ndarray) -> np.ndarray:
 def _net_candidates(
     boards: list[chess.Board],
     *,
-    checkpoint: str,
+    net: NetSource,
     device: str,
     batch_size: int,
     seed: int,
@@ -657,10 +658,13 @@ def _net_candidates(
         warn_volatility_python_path,
     )
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
-    from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
-    model = load_model_from_checkpoint(checkpoint, device=device)
-    model.eval()
+    # `net` carries exactly one of a checkpoint or a foreign ONNX spec and
+    # raises if that is not true, so this cannot silently score a default net.
+    # Every encoding below is read OFF the loaded model, never assumed: an
+    # LC0/Ceres net declares lc0_root/v1/az_4672 and the searches and the raw
+    # forward then all encode boards the way that net needs.
+    model = net.load(device=device)
     hist = str(getattr(model, "input_history_encoding", "legacy"))
     extra = str(getattr(model, "input_extra_features", "v1"))
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
@@ -1247,7 +1251,11 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--audit-set", type=Path, default=Path("data/audit_set_v1.jsonl"))
-    ap.add_argument("--checkpoint", type=str, required=True)
+    add_net_source_args(
+        ap,
+        checkpoint_help="one of ours: trainer.pt or checkpoint dir. Mutually "
+        "exclusive with --onnx; exactly one is required.",
+    )
     ap.add_argument("--config", type=Path, default=Path("configs/pbt2_small.yaml"),
                     help="production config for target-construction params")
     ap.add_argument("--device", default="cuda")
@@ -1377,6 +1385,11 @@ def main() -> None:
                          "already emitted.")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
+  # Same fail-fast reasoning as the flags below, and the most expensive one to
+  # get wrong: exactly one of --checkpoint/--onnx, and for --onnx the graph's
+  # tensor names, resolved and printed HERE -- before the audit set loads and
+  # long before SF spends an hour labelling.
+    net = net_source_from_args(args)
   # Parsed at PARSE time so a malformed threshold list fails before the model
   # is loaded. () when the flag is absent, which is what keeps every code path
   # below identical to the default run.
@@ -1489,7 +1502,7 @@ def main() -> None:
     sz_path = str(flat.get("syzygy_path") or "") if flat.get("syzygy_in_search") else ""
 
     raw_probs, search_by_profile, root_q_by_profile, root_wdl = _net_candidates(
-        boards, checkpoint=args.checkpoint, device=args.device,
+        boards, net=net, device=args.device,
         batch_size=int(args.batch_size), seed=int(args.seed),
         profiles=profiles, requested_gumbel_overrides=gumbel_overrides,
         policy_temp=float(args.policy_temp),
@@ -1735,7 +1748,7 @@ def main() -> None:
         f"always fen_only; row (c) has no net input. ⚑ A RULER CHANGE INVALIDATES "
         f"ITS RECORDS — do not put row (a) from a `stored` run in a table with "
         f"row (a) from a `fen_only` run.\n"
-        f"- checkpoint: {args.checkpoint}\n"
+        f"- net: {net.label}\n"
         f"- search: PLAY {args.sims} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
         f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n\n"
