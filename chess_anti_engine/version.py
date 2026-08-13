@@ -10,6 +10,29 @@ from importlib import metadata
 #    per-iteration dole claim it would silently drop the seed batch; the exact
 #    protocol match (_check_worker_compat) now 426s such workers so they update
 #    or stop before they can poll.
+# ⚑⚑ NOT BUMPED TO 3 FOR THE SEED-DOLE CLAIM CHANGE, AND THE REASON IS THAT
+#    THERE IS NO SAFE ORDER IN WHICH TO DEPLOY THE BUMP.
+#
+#    `_check_worker_compat` requires EXACT equality (`got_p != req_p` ->
+#    426), not a minimum. So the bump breaks BOTH directions of a rolling
+#    deploy: a v3 worker against the not-yet-updated v2 server is refused at
+#    the manifest poll, which means it never reaches the legacy
+#    `dole_fen_seeds` fallback that was supposed to make worker-first safe;
+#    and v2 workers against a v3 server are refused too. "Workers first" and
+#    "server first" both take the fleet to zero for the length of the window.
+#
+#    The cutover mechanism is `min_worker_version` instead, which is already
+#    published on every manifest (`distributed_runtime.py`) and IS a `>=`
+#    comparison (`version_lt`), so it can exclude stale workers without
+#    breaking the transition.
+#
+#    ⚑ THE RESIDUAL RISK, STATED RATHER THAN PAPERED OVER: a worker running
+#    OLD code against a NEW server reads `dole_fen_seeds: false` forever and
+#    is silently never seeded. `min_worker_version` only catches that if the
+#    PACKAGE VERSION IS ACTUALLY BUMPED in the same deploy -- it is compared
+#    against `PACKAGE_VERSION`, so shipping this change without a version bump
+#    leaves the gate unable to fire. Bumping the package version is therefore a
+#    REQUIRED deploy step for this change, not a nicety.
 PROTOCOL_VERSION = 2
 
 PACKAGE_NAME = "chess-anti-engine"

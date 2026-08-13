@@ -263,6 +263,307 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-12) — authenticated seed claim, side-effect-free manifest (finding [6], DoS half)
+
+**Status: NOT WRITTEN YET. This entry gates the work, not the merge.** Training is
+stopped by operator decision; this entry does not ask for a restart. It exists because
+the change is training-affecting and CLAUDE.md forbids launching without a
+pre-committed yardstick — and because the finding's own suggested remediation is an
+outage, which is worth writing down before someone implements it from the finding text.
+
+### The defect (measured 2026-08-12, not inferred)
+
+`/v1/manifest` and `/v1/trials/{trial_id}/manifest` (`server/app.py:2435`, `:2446`)
+carry **no `_auth_user` dependency** and their handler calls
+`_resolve_dole_fen_seeds` → `seed_dole_gate.claim(...)` (`server/app.py:2539`). The
+claim is one-shot per (trial, iteration).
+
+⇒ **Any unauthenticated caller who can reach the port can win the per-iteration seed
+grant and repeatedly deny it to the legitimate worker.** Blind-spot seeding then stops.
+
+Armed in production, not dormant: `configs/pbt2_small.yaml:237` sets
+`opening_fen_dole_per_iter: 1`.
+
+The failure is SILENT. The only positive signal is one log line per iteration per
+trial (`seed dole GRANTED: trial=… iteration=… seeds=…`, `app.py:2553`), so a stolen
+grant looks like absence, not error.
+
+### ⚑⚑ THE FINDING'S OWN REMEDIATION IS AN INGEST-TO-ZERO OUTAGE
+
+The finding says *"Require worker authentication and an active lease for seed claims"*.
+**Do not do that.** `worker.py:3108` polls the manifest with **no `auth=` argument at
+all** — the manifest is the one hot-path route our workers call unauthenticated.
+Requiring auth on it refuses **every worker poll**, which is the same shape as
+`require_worker_lease` (821,818 uploads, zero leases ever issued) and the same outcome.
+
+This is the second time this class has appeared in this review round, so state it
+generally: **a finding that says "require authentication on route X" is not actionable
+until you have checked what our own client sends to X.**
+
+### THE FIX (the finding's OTHER clause)
+
+1. Make the public manifest **side-effect-free** — it stops calling `claim`.
+2. Move the claim to an **authenticated** endpoint the worker calls explicitly:
+   `POST /v1/seed_dole_claim` and `/v1/trials/{trial_id}/seed_dole_claim`, using the
+   Basic credentials the worker already holds for uploads.
+3. A **package version** bump (0.0.2 -> 0.0.3) so a pre-change worker is refused
+   rather than silently never seeded. ⚑ NOT a `PROTOCOL_VERSION` bump — see ROLLOUT.
+
+⚑ NOT keyed on the lease id. The worker sends `lease_id` in
+`_manifest_poll_headers`, but in-tree workers have an EMPTY one (driver passes
+`--trial-id` → `fixed_trial_id` → lease negotiation skipped), so a lease-keyed claim
+would first require making driver-launched workers negotiate leases — changing fleet
+boot semantics to fix a seed-dole bug. See AUTH PRIMITIVE below.
+
+### HYPOTHESIS
+
+Seeding behaviour is **unchanged**; only the unauthenticated claim path is removed.
+This is a regression-guard change, not a training experiment: the intended training
+effect is EXACTLY ZERO.
+
+### WHAT IT DOES NOT CLAIM
+
+It does not claim to improve seeding, and it does not defend against an
+*authenticated* volunteer racing the grant — a credentialed worker can still win it,
+which is by design since a credentialed worker is who the grant is for.
+
+### ⚑ BINDING THE CLAIM: `training_iteration` IS NOT SUFFICIENT (measured)
+
+Today `_resolve_dole_fen_seeds` reads `training_iteration` from the very manifest
+it is serving, so claim-and-manifest are **atomic by construction**. Splitting into
+GET + POST does not merely expose a race, it CREATES one — so the binding is not
+hardening, it is restoring an invariant the refactor breaks. Do not let it be
+"simplified" away later.
+
+The old invariant is "the claim corresponds to THIS manifest snapshot", and that is
+strictly stronger than "this iteration". MEASURED: `pause_selfplay` is computed at
+serve time from `_queued_games_by_model(...)` (`app.py:1930-1973`), a LIVE
+queue-depth reading behind a 2 s cache — not a published field. It flips many times
+within one `training_iteration`.
+
+⇒ Split the binding by how each field behaves, because a single mechanism is wrong
+for both:
+
+- **Fields the worker ACTS on** go into an opaque `manifest_revision` token: the
+  server returns it on GET, the worker echoes it on POST, and a mismatch is a
+  no-op. Hashing the WHOLE manifest instead would churn the token on every
+  queue-depth change and produce constant spurious mismatches.
+
+  ⚑ Derive the digest MECHANICALLY from every non-live input the old
+  `_resolve_dole_fen_seeds` used to decide eligibility — do not maintain a
+  hand-written list of field names. A hand-written list silently stops covering a
+  field the moment someone adds one to the eligibility check, which is how the
+  binding would quietly become partial. (Today that set is `opening_fen_list`
+  identity, `opening_fen_dole_per_iter`, `task.type`, `training_iteration` —
+  recorded as the CURRENT value of the derivation, not as its definition.)
+
+  ⚑ The POST must load ONE manifest snapshot and derive the revision, every
+  eligibility decision, and the claim from THAT SAME OBJECT — which is exactly
+  what the current code does, and the property being preserved. Re-reading the
+  manifest between the revision check and `claim()` reintroduces the race the
+  token exists to close.
+- **The pause condition** is inherently live, so re-evaluate it at POST time rather
+  than binding it. It fails safe in both directions: a worker about to be paused
+  simply does not get the grant.
+
+⚑ A mismatch (or a pause) must **NO-OP WITHOUT BURNING THE CLAIM**, leaving the gate
+unclaimed for a later correct poll — the same shape as the existing paused/arena
+declines. A mismatch that consumed the grant would turn a benign race into exactly
+the silent seeding loss this entry exists to prevent.
+
+### AUTH PRIMITIVE
+
+⚑⚑ **SCOPE, STATED SO IT CANNOT BE OVERSOLD: this closes UNAUTHENTICATED dole
+consumption in the current closed-fleet deployment. Existing-account
+authentication is NOT authorization against a malicious REGISTERED volunteer.**
+Once `worker_self_register` is on, an attacker registers legitimately through the
+normal worker route and is an "existing account" on their next request — they can
+then consume the dole and simply not play it. Before public self-registration is
+enabled, seed claims need lease/assignment binding or another per-worker
+authorization mechanism. `(b+)` is the right fix for TODAY's threat model and is
+NOT the final volunteer-security architecture.
+
+Use `_auth_existing_user` (added in PR #403), **not** `_auth_user`. The latter
+self-registers an unknown username when `worker_self_register` is on — measured on
+the telemetry route, where a plain GET created an account. Both it and
+`_auth_user_optional` route through one `_verify_existing_account` so this cannot be
+re-derived wrongly here.
+
+NOT lease-bound. Fixed-trial workers intentionally skip `_negotiate_lease()`, so
+requiring a lease would change fleet boot semantics to buy little: the fleet shares
+one closed-LAN credential, and a lease does not turn a shared credential into
+per-worker identity. Anyone holding it already has the other authenticated worker
+operations. Lease binding belongs to a future volunteer-fleet identity project.
+
+### ROLLOUT — ⚑⚑ THE OBVIOUS MECHANISM IS THE WRONG ONE
+
+**Do NOT bump `PROTOCOL_VERSION`.** It was bumped 2 -> 3 in an earlier revision of
+this work and REVERTED, because there is no order in which that deploys:
+`_check_worker_compat` requires **exact** protocol equality (`got_p != req_p` ->
+426), not a minimum. So a new worker meets the not-yet-updated server and is
+refused **at the manifest poll** — it never reaches the legacy `dole_fen_seeds`
+fallback that was supposed to make worker-first safe. Server-first refuses every
+old worker symmetrically. Both orders take the fleet to zero for the length of
+the window.
+
+The cutover is **`min_worker_version`**, already published on every manifest and
+already a `>=` comparison (`version_lt`), so it excludes stale workers without
+breaking the transition.
+
+1. Bump the package version to **0.0.3** and ship the new worker. It still speaks
+   protocol 2, and it honours the legacy `dole_fen_seeds` field when the server
+   does not advertise `seed_dole_claim_endpoint` — so it runs correctly against
+   the OLD server.
+2. Verify fleet adoption (every worker reporting 0.0.3).
+3. Deploy the new server. It advertises the claim endpoint and makes the manifest
+   GET side-effect-free; `min_worker_version` now refuses anything older.
+
+⚑⚑ **THE VERSION BUMP IS NOT COSMETIC AND IT IS NOT AUTOMATIC.** `version.py`
+reads `importlib.metadata`, **not `pyproject.toml`**, so editing that file does
+nothing until `pip install -e .` regenerates the installed metadata AND the
+worker wheel is rebuilt. A bare `train.sh restart` does neither. If the versions
+end up identical, a stale worker and a new-code worker are indistinguishable to
+`min_worker_version`, the stale one is admitted, and it reads
+`dole_fen_seeds: false` forever — **silently never seeded**, which is the exact
+failure this ordering exists to prevent. (Same trap as the 0.0.2 cutover; see
+`pyproject.toml`.)
+
+### ⚑ IDEMPOTENT CLAIM (required; the protocol adds this failure, so it must fix it)
+
+`worker → POST claim` → server persists the grant → **connection dies before the
+response arrives**. The server logged GRANTED; the worker never learned it won. A
+naive gate answers "already claimed" on retry and the single seed opportunity is
+gone for that iteration.
+
+The old GET+claim path had the same response-loss hole, but PR5 adds a round trip
+built specifically around the state transition, so this is the moment to fix it
+rather than inherit it.
+
+The worker sends an opaque `claim_id` (UUID); the durable gate persists
+`iteration + manifest_revision + winning claim_id`:
+
+| case | result |
+|---|---|
+| first eligible claim id | `granted=true`, winner persisted |
+| SAME claim id retries | `granted=true` again (idempotent) |
+| different claim id | `granted=false` |
+| revision mismatch / paused | no state mutation at all |
+| next iteration | new winner |
+
+### THE DECIDING YARDSTICK — TWO LAYERS (exact commands)
+
+⚑⚑ **A `seed dole GRANTED` count is NOT proof that seeding happened.** The line is
+written server-side immediately after `claim()`, so it proves THE GATE ADVANCED —
+not that the worker received the response, expanded the FENs, played them and
+uploaded them. The failure being fixed is precisely *"the server thinks the grant
+happened and blind-spot seeding silently does not"*, so a grant-count-only
+yardstick can read 10/10 in exactly the broken state. A guard must share the
+criterion's instrument.
+
+**Layer 1 — PROTOCOL (server-side):**
+
+```bash
+grep -o "seed dole GRANTED: trial=[^ ]* iteration=[0-9]*" <server-root>/server.log \
+  | sort -u | wc -l        # expect 10 distinct over 10 iterations
+```
+
+⚑⚑ **THIS COMMAND READ 0 ON A HEALTHY PRODUCTION RUN AND THE RULE BELOW WOULD
+HAVE SAID KILL AND REVERT.** MEASURED 2026-08-12 on the live server root: 167MB
+of `server.log`, **zero** matches, while `seed_dole_gate.json` showed the gate
+past iteration 2000 — the grants were happening the whole time. Cause:
+`run_server.py` runs `uvicorn.run(..., log_level="info")`, and uvicorn's
+`LOGGING_CONFIG` leaves `chess_anti_engine.server` at effective **WARNING with
+no handlers**, so every INFO record from the package is discarded at the logger.
+The line is now `_log.warning`, and `test_the_grant_line_survives_uvicorn_logging_config`
+compares the level the code logs at against the level uvicorn lets through.
+
+⇒ **Before running this yardstick, confirm the instrument fires at all**: grep a
+recent `server.log` for any `seed dole GRANTED` line. Zero matches means the
+logging path is broken, NOT that seeding is.
+plus: no anonymous manifest GET mutates `seed_dole_gate.json`; a revision mismatch
+or pause leaves it untouched; a retry of the WINNING `claim_id` still returns
+granted.
+
+**Layer 2 — END TO END (the training-quality gate).**
+
+⚑⚑ **THE FIRST VERSION OF THIS LAYER WAS ALSO BROKEN, AND IN A WAY THAT READ
+ZERO ON A HEALTHY RUN.** It said: *"`finalize.py` writes `selfplay_fenlist*` /
+`curriculum_fenlist*` keys into `outcome_stats`, and `outcome_stats` is a
+`ShardMeta` field (`shard.py:729`), so it is carried in the shard"* — and
+warned that the keys are NESTED so a flat lookup reads zero.
+
+**MEASURED 2026-08-12 against the real replay bank, and both halves of that are
+wrong.** `runs/pbt2_small/replay_shards/shard_*.zarr/.zattrs` has **no
+`outcome_stats` key at all**, and every counter it does carry is `None`:
+
+```
+adjudicated_games=None  curriculum_games=None  selfplay_games=None  positions=669 ...
+```
+
+`shard.py:729` is the dataclass FIELD DECLARATION and nothing in `shard.py`
+ever writes it to `.zattrs`. The stats travel a different route entirely: the
+worker sends them in the UPLOAD metadata, the server merges them
+(`app.py:1130`, `_merge_outcome_stats`) into a per-trial accumulator, and they
+surface as a pipe-joined string in the trial report
+(`tune/trainable_report.py:1341`). **Counting fenlist games "in shards
+ingested" reads zero whatever seeding does.**
+
+⇒ **THE WORKING COMMAND — read the trial report, not the shards:**
+
+```bash
+grep -o "fenlist[a-z_]*=[0-9]*" \
+  runs/pbt2_small/tune/train_trial_<id>/result.json | sort -u | head
+# VERIFIED to return real counts, e.g. fenlist_draws=11
+```
+
+Take the fenlist counters at the window's start and end iterations and compare
+the delta against the pre-change rate. That proves the seeds were played AND
+uploaded, which is the thing the grant log cannot show.
+
+### PRE-COMMITTED DECISION RULE
+
+- **PASS**: layer 1 shows **10 distinct (trial, iteration) grants over 10
+  consecutive iterations**, AND layer 2 shows fenlist-sourced games arriving in
+  ingested shards over the same window at the pre-change rate. BOTH layers, or it
+  is not a pass — layer 1 alone is satisfied by the exact bug being fixed.
+- **KILL AND REVERT**: fewer than 10/10, i.e. any iteration where the dole did not
+  fire. That is the ingest-to-zero-adjacent failure this entry exists to catch, and
+  it is not to be "watched for another few iterations".
+- ⚑ **10/10 is the FULL bar, not a good score.** The pre-change system also scores
+  10/10 when nothing is stealing the grant. This yardstick proves the fix did not
+  BREAK seeding; it cannot prove the fix was needed. The need is established by the
+  route reading above, not by this measurement.
+
+### NEGATIVE CONTROL (required; a pass without it is void)
+
+⚑ Assert on the DURABLE GATE FILE (`seed_dole_gate.json`), not on the response body.
+A response of `dole_fen_seeds: false` is perfectly consistent with the gate having
+been advanced, so a test that reads the response would pass while the bug persists.
+The required test: arbitrarily many anonymous manifest GETs must leave the persisted
+gate state unchanged.
+
+Before the restart, on a scratch server, confirm the yardstick can FAIL: run an
+unauthenticated `curl` loop against `/v1/manifest` on the OLD code and show the grant
+count drops below one per iteration. A yardstick that reads 10/10 on both the broken
+and the fixed system is measuring nothing.
+
+### CONFOUNDS / OPS
+
+- Requires a full `run.py` restart (route + protocol change), so it cannot share a
+  readout window with any other restart-gated change.
+- The 0.0.3 `min_worker_version` cutover means stale workers are refused once the
+  new server is up — the fleet must be updated FIRST, and a straggler is a seeding
+  gap, not an error. ⚑ Requires `pip install -e .` + a worker wheel rebuild, or the
+  gate cannot fire at all.
+- Blind-spot seeding affects training QUALITY, so if the wiring yardstick passes but
+  seed-derived outcome keys (`curriculum_fenlist_*`) change materially, that is a
+  separate readout and needs its own entry.
+
+### REVERT POINT
+
+Owed before launch:
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/pre_dole_auth_20260812`
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-10) — SCALE-FREE diff-focus difficulty (`diff_focus_norm_*`), PR for task #171 + #173
 
 **Status: plumbing only, DEFAULT OFF, bit-identical. NOTHING IS LIVE.** Training is

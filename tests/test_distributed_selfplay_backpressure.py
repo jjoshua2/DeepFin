@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 
 import httpx
@@ -769,6 +770,58 @@ def _poll_app_n(app, path: str, *, headers: dict[str, str], n: int) -> list[dict
     return asyncio.run(_run())
 
 
+def _seed_dole_user(server_root: Path, username: str = "u", password: str = "p") -> None:
+    """The claim endpoint requires an EXISTING account, so tests need one."""
+    from chess_anti_engine.server.auth import UserRecord, hash_password, save_users
+
+    salt, hsh, iters = hash_password(password)
+    save_users(
+        server_root / "users.json",
+        {username: UserRecord(username=username, salt_b64=salt, hash_b64=hsh, iterations=iters)},
+    )
+
+
+def _poll_and_claim_n(
+    app, path: str, *, headers: dict[str, str], n: int, auth: tuple[str, str] = ("u", "p"),
+) -> list[bool]:
+    """Run the two-step dole protocol n times; return who WON each round.
+
+    ⚑⚑ WHY THESE TESTS COULD NOT KEEP READING `dole_fen_seeds`. Making the
+    manifest GET side-effect-free IS the fix, so that field is now a constant
+    False. A test that still asserted on it would be asserting on a constant --
+    it would pass for a server that doles correctly, a server that doles to
+    everyone, and a server that never doles at all. The observable had to move
+    with the behaviour or the suite would have gone quietly inert, which is this
+    repo's signature defect one level up in the test tier.
+    """
+    async def _run() -> list[bool]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            out: list[bool] = []
+            for _ in range(n):
+                manifest = (await client.get(path, headers=headers)).json()
+                endpoint = manifest.get("seed_dole_claim_endpoint")
+                if not endpoint:
+                    # Server declined on a static ground (dole off, arena task,
+                    # no FEN list) and advertises nothing to claim against.
+                    out.append(False)
+                    continue
+                claimed = await client.post(
+                    endpoint,
+                    json={
+                        "claim_id": uuid.uuid4().hex,
+                        "manifest_revision": manifest.get("manifest_revision"),
+                    },
+                    auth=auth,
+                    headers=headers,
+                )
+                claimed.raise_for_status()
+                out.append(bool(claimed.json()["granted"]))
+            return out
+
+    return asyncio.run(_run())
+
+
 def _publish_dole_trial(tmp_path: Path, *, training_iteration: int, dole: int, fen_path: Path) -> None:
     _publish_distributed_trial_state(
         trainer=_FakeTrainer(),
@@ -791,20 +844,29 @@ def test_manifest_doles_fen_seeds_once_per_iteration(tmp_path: Path) -> None:
     fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
     _publish_dole_trial(tmp_path, training_iteration=7, dole=1, fen_path=fen_path)
 
-    app = create_app(server_root=tmp_path)
+    _seed_dole_user(tmp_path)
+    app = create_app(server_root=tmp_path, users_db="users.json")
     headers = _manifest_poll_headers(worker_id="test-worker")
     polls = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
 
     # Plumbing sanity: dole knob rides recommended_worker; the FEN list is an asset.
     assert polls[0]["recommended_worker"]["opening_fen_dole_per_iter"] == 1
     assert isinstance(polls[0].get("opening_fen_list"), dict)
-    # Exactly one poll this iteration wins the dole.
-    assert [p["dole_fen_seeds"] for p in polls] == [True, False, False]
+    # ⚑ THE GET IS SIDE-EFFECT-FREE. Any number of anonymous polls must leave the
+    # dole entirely unspent -- that is the vulnerability being fixed.
+    assert all(p["dole_fen_seeds"] is False for p in polls)
+    assert polls[0]["seed_dole_claim_endpoint"] == "/v1/trials/trial_00000/seed_dole_claim"
 
-    # Next iteration re-opens the gate for exactly one poll (same app instance).
+    # Exactly one CLAIM this iteration wins the dole.
+    assert _poll_and_claim_n(
+        app, "/v1/trials/trial_00000/manifest", headers=headers, n=3,
+    ) == [True, False, False]
+
+    # Next iteration re-opens the gate for exactly one claim (same app instance).
     _publish_dole_trial(tmp_path, training_iteration=8, dole=1, fen_path=fen_path)
-    polls2 = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=2)
-    assert [p["dole_fen_seeds"] for p in polls2] == [True, False]
+    assert _poll_and_claim_n(
+        app, "/v1/trials/trial_00000/manifest", headers=headers, n=2,
+    ) == [True, False]
 
 
 def test_manifest_no_dole_when_disabled(tmp_path: Path) -> None:
@@ -866,18 +928,26 @@ def test_manifest_no_dole_while_paused(tmp_path: Path) -> None:
             pause_reason="training" if paused else "",
         )
 
-    app = create_app(server_root=tmp_path)
+    _seed_dole_user(tmp_path)
+    app = create_app(server_root=tmp_path, users_db="users.json")
     headers = _manifest_poll_headers(worker_id="test-worker")
 
     _publish(paused=True)
-    paused = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
-    assert paused[0]["recommended_worker"]["pause_selfplay"] is True
-    assert all(p["dole_fen_seeds"] is False for p in paused)  # no claim burned
+    manifests = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
+    assert manifests[0]["recommended_worker"]["pause_selfplay"] is True
+    # ⚑ Pause is re-evaluated at CLAIM time, not bound into manifest_revision:
+    # it is computed live from queue depth and flips within one iteration. An
+    # authenticated claim while paused must decline WITHOUT burning the gate.
+    assert all(
+        g is False
+        for g in _poll_and_claim_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
+    )
 
-    # Same iteration, now unpaused: the still-unclaimed gate doles to exactly one poll.
+    # Same iteration, now unpaused: the still-unclaimed gate doles to exactly one claim.
     _publish(paused=False)
-    unpaused = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=2)
-    assert [p["dole_fen_seeds"] for p in unpaused] == [True, False]
+    assert _poll_and_claim_n(
+        app, "/v1/trials/trial_00000/manifest", headers=headers, n=2,
+    ) == [True, False]
 
 
 def test_manifest_no_dole_for_non_selfplay_task(tmp_path: Path) -> None:
@@ -982,16 +1052,19 @@ def test_manifest_rearms_dole_after_same_iter_republish(tmp_path: Path) -> None:
     fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
 
-    app = create_app(server_root=tmp_path)
+    _seed_dole_user(tmp_path)
+    app = create_app(server_root=tmp_path, users_db="users.json")
     headers = _manifest_poll_headers(worker_id="test-worker")
-    first = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=2)
-    assert [p["dole_fen_seeds"] for p in first] == [True, False]
+    assert _poll_and_claim_n(
+        app, "/v1/trials/trial_00000/manifest", headers=headers, n=2,
+    ) == [True, False]
 
     # Same iteration republished after claim → gate last==20 → rearm armed;
-    # exactly one new poll must win.
+    # exactly one new claim must win.
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
-    second = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
-    assert [p["dole_fen_seeds"] for p in second] == [True, False, False]
+    assert _poll_and_claim_n(
+        app, "/v1/trials/trial_00000/manifest", headers=headers, n=3,
+    ) == [True, False, False]
 
 
 def test_manifest_no_rearm_on_fresh_iter_republish(tmp_path: Path) -> None:
