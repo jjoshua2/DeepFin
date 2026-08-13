@@ -1614,7 +1614,8 @@ def main() -> None:
             # Criticality = deep-SF gap between the best and 2nd-best listed line
             # (cp). Small gap = quiet position where SF's "best" is near-arbitrary
             # among near-equal moves; large gap = decision-critical. Shared with
-            # bt4_audit / audit_compare_buckets so the joined comparison agrees.
+            # foreign_net_audit (was bt4_audit, renamed in #414) /
+            # audit_compare_buckets so the joined comparison agrees.
             gap = criticality_gap(pos.move_cp)
             per_pos_dump.append({
                 "key": pos.key, "phase": pos.phase, "source": pos.source,
