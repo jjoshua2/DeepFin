@@ -131,11 +131,16 @@ def parametric_draw_from_q(q: float, *, slope: float, draw_width_cp: float) -> f
         (0.34521 at production slope 0.006 / width 120).
       * ``D(+-1) = 0`` exactly, since ``csch^2 + 1 = coth^2``.
       * strictly decreasing in ``|q|`` (derivative ``-|q|/sqrt(csch^2+q^2)``).
-      * ``0.5*(1 - D +- q) >= 0`` on ``q in [-1, 1]``, so the triple is a valid
-        simplex point by construction rather than by a clamp -- which is the
-        second defect this mode removes: the production form clamps the searched
-        q to ``+-(1 - d_raw)``, capping the target's confidence on decisive rows
-        (measured 12.3% of the lowest-d_raw quartile).
+      * ``0.5*(1 - D +- q) >= 0`` on ``q in [-1, 1]`` IN EXACT ARITHMETIC, so
+        the triple is a valid simplex point by construction rather than by a
+        clamp -- which is the second defect this mode removes: the production
+        form clamps the searched q to ``+-(1 - d_raw)``, capping the target's
+        confidence on decisive rows (measured 12.3% of the lowest-d_raw
+        quartile). ⚑ "By construction" is a statement about the ALGEBRA, not
+        about the float32 the caller stores: rounding D up to float32 can make
+        ``1 - D < |q|`` and drive W negative at wide draw zones (measured at
+        w = 10). ``q_to_wdl_parametric`` and its C twin therefore clamp W in
+        float32; that is a rounding guard, not a re-clamp of q.
 
     ``slope`` and ``draw_width_cp`` MUST be the same knobs the SF component
     uses (``sf_wdl_cp_slope`` / ``sf_wdl_cp_draw_width``); passing anything else
@@ -172,15 +177,27 @@ def q_to_wdl_parametric(q: float, *, slope: float, draw_width_cp: float) -> np.n
     ``L = 0.5*(1 - D - q)``. Sums to 1 identically and is non-negative on
     ``q in [-1, 1]``; see ``parametric_draw_from_q`` for the derivation and for
     why the q clamp there is a range guard, not the production d_raw clamp.
+
+    ⚑ The triple is rebuilt in **float32, one operation at a time**, because
+    that is exactly what the C twin does with the same rounded ``D`` --- so the
+    two paths agree BITWISE rather than to a tolerance, and
+    ``tests/test_search_wdl_draw_mode.py`` asserts that. Computing the tail in
+    float64 and casting at the end would differ from C by an ulp and, worse,
+    would hide the failure this shape exists to prevent: rounding ``D`` UP to
+    float32 can leave ``1 - D < |q|``, so the float32 ``W`` goes negative even
+    though the float64 one does not. Clamp where the value is stored.
     """
     qc = max(-1.0, min(1.0, float(q)))
-    d = parametric_draw_from_q(qc, slope=slope, draw_width_cp=draw_width_cp)
-    rem = 1.0 - d
+    d = np.float32(parametric_draw_from_q(qc, slope=slope, draw_width_cp=draw_width_cp))
     # `rem - w` rather than `0.5*(rem - q)` so the triple sums to `d + rem`
     # exactly, matching the C twin and the shape of the net_raw branch it
-    # replaces. Multiplying by 0.5 is exact in binary floating point, so
-    # `w <= rem` and therefore `l >= 0` follow from `rem >= |q|`.
-    w = 0.5 * (rem + qc)
+    # replaces.
+    rem = np.float32(1.0) - d
+    w = np.float32(0.5) * (rem + np.float32(qc))
+    if w < np.float32(0.0):
+        w = np.float32(0.0)
+    if w > rem:
+        w = rem
     return np.array([w, d, rem - w], dtype=np.float32)
 
 

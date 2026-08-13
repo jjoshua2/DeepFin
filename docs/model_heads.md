@@ -108,10 +108,25 @@ its D axis, in the default mode, is not:
   everywhere on `q ∈ [−1, 1]`, so the triple is a simplex point by construction
   and no confidence cap exists. Definition and derivation live in
   `stockfish/wdl.py::parametric_draw_from_q`; the C twin mirrors it.
+  ⚑ "By construction" is a claim about the ALGEBRA. The triple is STORED in
+  float32, and rounding `D` up across that cast can leave `1 − D < |q|` and
+  drive `W` negative — measured at `w = 10`, margin 0 at `w ≈ 5`, production
+  `w = 0.72`. Both twins therefore clamp `W` to `[0, 1 − D]` **in float32**,
+  which also makes them agree BITWISE rather than to a tolerance.
 
-Restart-keyed and resume-fingerprinted (it decides what a stored row MEANS).
-Pinned by `tests/test_search_wdl_draw_mode.py`, including bit-identity of the
-`net_raw` path and C/Python agreement in both modes.
+⚑ **What `parametric_q` gives up.** `cp_to_wdl`'s own draw mass is that same
+function of its own q, so under this mode BOTH the SF component and the search
+component carry `D = D(q_component)` on one shared curve: the trained target's
+draw axis then holds no information independent of the two W−L signals. Removing
+the self-reference and removing the net's position-specific draw knowledge
+(fortresses, opposite-coloured bishops) are the same act. That is the trade the
+arm is testing, not a side effect.
+
+Restart-keyed and resume-fingerprinted (it decides what a stored row MEANS), and
+`PROTOCOL_VERSION` is bumped so a worker that predates the key cannot poll and
+silently mix `net_raw` rows into the same replay window. Pinned by
+`tests/test_search_wdl_draw_mode.py`, including bit-identity of the `net_raw`
+path and C/Python agreement in both modes.
 
 **Terminal-proximal outcome share (`wdl_terminal_outcome_plies`, default 0 =
 OFF).** The global `game_frac` stays 0 and deep-game outcome labels stay out of

@@ -4990,6 +4990,21 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
             float d_out = (float)d_par;
             float rem_par = 1.0f - d_out;
             float w_par = 0.5f * (rem_par + (float)q_par);
+            /* ⚑ CLAMP IN THE PRECISION THE VALUE IS STORED IN. The bound above
+             * holds `d_par <= 1 - |q|` in DOUBLE; rounding `d_par` to float32
+             * can raise it past that bound, leaving `rem_par < |q|` and a
+             * NEGATIVE `w_par` in a soft-CE target. Measured on the built
+             * extension before this clamp: 35 of 8000 interior q values at
+             * w = 10 (slope 0.02 x width 500) stored W = -7.45e-09, while the
+             * float64 Python twin stayed non-negative on the same inputs --- a
+             * C/Python divergence too small for the parity test's atol to see.
+             * The margin shrinks monotonically in w and reaches 0 at w ~ 5;
+             * production w = 0.72 never reached it, but "non-negative by
+             * construction" has to be true of the code that ships, not only of
+             * the algebra. `l = rem_par - w_par` stays >= 0 and the sum is
+             * unchanged, so this cannot perturb the production curve. */
+            if (w_par < 0.0f) w_par = 0.0f;
+            if (w_par > rem_par) w_par = rem_par;
             wdl_search_out[i * 3 + 0] = w_par;
             wdl_search_out[i * 3 + 1] = d_out;
             wdl_search_out[i * 3 + 2] = rem_par - w_par;

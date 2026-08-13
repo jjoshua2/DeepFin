@@ -30,6 +30,24 @@ not touch (q is preserved exactly, and on clamped rows it is preserved BETTER). 
 "part of the 41.6cp head-vs-label gap is target error" stays INTERPRETATION; this experiment
 is what would establish it.
 
+**⚑ THE COST BEING TRADED, NAMED UP FRONT — this is the falsifier if the arm reads negative.**
+`cp_to_wdl`'s draw mass is that SAME function of its own q (agreement measured at 3.3e-8), so
+after this change BOTH components of the blended value target carry `D = D(q_component)` under
+ONE shared curve. The draw axis of the trained target then holds **no information independent
+of the two W-L signals** — every position with the same q gets the same draw mass. That is
+precisely the self-reference this arm removes, and it is also the removal of the net's
+POSITION-SPECIFIC draw knowledge: fortresses, opposite-coloured bishops, and the closed
+positions this project exists to exploit are exactly where a hand-drawn `D(q)` is wrong and
+`d_raw` might not be. If the primary reads negative, this is the first hypothesis, not a
+surprise — and it is what arm (b) (tree-backed-up D) would address instead.
+
+**⚑ THE ARM IS TWO MECHANISMS, AND THEY HAVE VERY DIFFERENT REACH.** A null does not kill both
+at once. From `scratchpad/tier14_clamp_rate_20260812.txt`: the confidence CLAMP binds on
+**3.97%** of rows and, where it binds, truncates an already near-decisive q by a few
+hundredths (ceiling mean 0.929 / median 0.962). The D-AXIS replacement touches **100%** of
+rows. So a readout is overwhelmingly attributable to the D axis; the clamp removal is a rider
+too small for this instrument to resolve and must not be reported as tested by it.
+
 ## THE ONE DECIDING YARDSTICK (exact command)
 
 Value head, deep-SF 1-ply regret. ⚑ Brier/ECE are BANNED — they are fooled by calibration,
@@ -82,6 +100,14 @@ scorer, and `E[search_sig - sf_sig]` on fresh shards (the ratchet the audit's S1
 - **C EXTENSION REBUILD REQUIRED** on every machine that runs selfplay:
   `python3 scripts/build_production_extensions.py`. The PR bumps `ABI_VERSION` to 4, so a
   stale `.so` refuses to start with the rebuild command instead of failing mid-game.
+- **PROTOCOL_VERSION IS BUMPED TO 3 — a pre-#409 worker is now 426'd and cannot poll.** This
+  is a deliberate deployment-skew guard, not incidental: an old worker drops the unknown reco
+  key, is not restart-keyed by it, and would keep uploading `net_raw` rows into the SAME
+  replay window as the new workers' `parametric_q` rows with **no column distinguishing
+  them** — an unrecoverable confound in the exact window this experiment reads. Consequence
+  to plan for: **every worker must be on merged code before the trainer restarts**, or
+  selfplay simply stops (loudly) instead of silently mixing. `min_worker_version` could not
+  have caught this — it is `PACKAGE_VERSION`, which an in-tree `git pull` leaves identical.
 - **MERGE BEFORE ADDING THE KEY TO THE LIVE YAML.** Category (a): a yaml key absent from the
   target branch's schema is fatal AT LAUNCH (`run.py` calls `flatten_run_config_defaults`
   outside any try). Order: merge → restart onto the merged code → then add
@@ -100,15 +126,29 @@ scorer, and `E[search_sig - sf_sig]` on fresh shards (the ratchet the audit's S1
 - **The C rebuild** ships alongside the flag. The default-off path is pinned bit-identical by
   test, so the rebuild is not a confound for the `net_raw` control — but that control must be
   run on the SAME build, not read off a banked pre-rebuild number.
-- **Downstream consumers of `search_wdl_est` that are LIVE in production.** Exactly one:
-  `selfplay/blindspot_harvest.py:304` (production sets `blindspot_harvest_out_path`), and it
-  consumes only `W - L`, which this arm preserves exactly — except on the ~4% of rows where
-  `net_raw`'s clamp truncated it, where the harvester's `nq` becomes MORE accurate. The other
-  three consumers are off at production settings: `selfplay/finalize.py:636` (needs
-  `volatility_source: search`, production `raw`), `selfplay/finalize.py:938` (needs
-  `categorical_search_blend_frac > 0`, production 0.0), `selfplay/stockfish_turn.py:1124`
-  (needs `sf_label_escalate_q_gap > 0`, production 0.0). Re-check all three before launch; if
-  any has been turned on since, it becomes a second changed quantity in the same window.
+- **Downstream consumers of `search_wdl_est`. SIX read sites, not four** — the first draft of
+  this list was short by two, both found by review. RE-CHECK EVERY ROW BELOW BEFORE LAUNCH; a
+  gate that has been turned on since makes its site a second changed quantity in the window.
+
+  | site | live in production? | what it reads |
+  |---|---|---|
+  | `selfplay/blindspot_harvest.py:304` | YES (`blindspot_harvest_out_path` set) | `_q()` = `W - L` only |
+  | `selfplay/blindspot_harvest.py:369` | YES (same path, feeds `value_blind_candidates`) | `_q()` = `W - L` only |
+  | `selfplay/finalize.py:985` | YES — **always computed** | `W - L` only, into `sf_search_gap` |
+  | `selfplay/finalize.py:636` | no — needs `volatility_source: search`, production `raw` | full triple |
+  | `selfplay/finalize.py:938` | no — needs `categorical_search_blend_frac > 0`, production 0.0 | full triple |
+  | `selfplay/stockfish_turn.py:1124` | no — needs `sf_label_escalate_q_gap > 0`, production 0.0 | full triple |
+
+  Every LIVE consumer reads only `W - L`, which this arm preserves exactly — except on the
+  ~4% of rows where `net_raw`'s clamp truncated it, where they become MORE accurate.
+  ⚑ `finalize.py:985` is the one to watch anyway: its `sf_search_gap` is written to every
+  shard as the `priority_sf_search_gap` COLUMN regardless of any flag. Its own consumer
+  (`replay/disk_buffer.py::_gap_boost_and_mask`) is gated off — `replay_sf_gap_priority_weight`
+  is 0/absent (experiment #104 killed) and `replay_fast_low_surprise_priority` is unset — so
+  the column is inert today, but re-confirm both before launch, because turning either on
+  would make the priority distribution a second changed quantity.
+  (`selfplay/finalize.py:1117` and `selfplay/resume.py` also touch the field; the first IS the
+  stored target and the second is serialization, so neither is a consumer.)
 - **⚑ VOIDS NOTHING on the `wdl_regret` series.** That series is a net signal only while the
   SEARCH config is frozen. This flag touches none of `gumbel_c_scale`, `gumbel_policy_temp`,
   `mcts_simulations`, `gumbel_topk` or the root transform, and does not touch move selection

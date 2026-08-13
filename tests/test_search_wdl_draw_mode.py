@@ -542,6 +542,77 @@ def test_the_c_path_emits_no_negative_mass_at_the_endpoints() -> None:
 
 
 @requires_c
+@pytest.mark.parametrize(
+    ("slope", "width"), [(0.02, 500.0), (0.01, 300.0), (PROD_SLOPE, PROD_WIDTH)],
+)
+def test_the_c_path_stays_non_negative_at_interior_q_in_a_wide_draw_zone(
+    slope: float, width: float,
+) -> None:
+    """REVIEW FINDING S1: the endpoint test above could not see this.
+
+    ``D <= 1 - |q|`` is proved in EXACT arithmetic and enforced in DOUBLE, but
+    the triple is rebuilt in float32; rounding ``D`` up across that cast leaves
+    ``1 - D < |q|`` and stores a negative W. It fires at INTERIOR q with a wide
+    draw zone, where the endpoint fixture never looks: measured on the built
+    extension before the fix, 35 of these 8000 rows at ``w = 10`` stored
+    ``W = -7.45e-09`` while the Python twin stayed non-negative. The margin
+    shrinks monotonically in ``w`` and hits 0 at ``w ~ 5``, so the wide curve
+    here is the reachable-but-non-production case, and the production curve
+    (``w = 0.72``) rides along to prove the fix costs it nothing.
+
+    Bitwise, not ``atol``: an ``atol=1e-6`` comparison cannot distinguish
+    ``-7.45e-09`` from ``+0.0``, which is exactly why the existing parity test
+    was blind to a genuine C/Python divergence. Both sides now do the same
+    float32 operations in the same order, so anything less than byte equality
+    is a real disagreement.
+    """
+    n = 8000
+    # float32-exact so `(double)best_q` in C and `float(v)` here are the same
+    # number; otherwise the two would differ legitimately in the last ulp and
+    # the byte comparison below would be measuring the fixture, not the code.
+    values = np.linspace(-0.9999, 0.9999, n, dtype=np.float64).astype(
+        np.float32,
+    ).astype(np.float64)
+    wdl = np.tile(np.array([0.3, 0.5, 0.2], dtype=np.float32), (n, 1))
+    out = _c_batch(
+        wdl_logits=wdl, values=values,
+        extra=(0, _N_EXTRA_V1, 0, 0.0, 0.0, 0.0,
+               SWDL_DRAW_PARAMETRIC_Q, slope, width),
+    )
+    assert float(out.min()) >= 0.0, (slope, width, out[out.min(axis=1) < 0.0][:5])
+    expected = np.stack([
+        q_to_wdl_parametric(float(v), slope=slope, draw_width_cp=width)
+        for v in values
+    ])
+    assert out.tobytes() == expected.tobytes(), (
+        "the C and Python twins disagree bitwise on the parametric triple"
+    )
+
+
+def test_the_python_twin_survives_out_of_contract_q() -> None:
+    """N3: the ``[-1, 1]`` clamp on ``q`` had no test.
+
+    ⚑ Honest scope. Once W is clamped to ``[0, rem]`` (S1), the q clamp became
+    REDUNDANT for every finite out-of-range q — mutating it away and feeding
+    1.5 or inf produces byte-identical output, so a test written that way would
+    be vacuous. What the clamp still buys is the invariant itself under a
+    non-finite q: without it, ``NaN`` propagates into W and L and the function
+    returns a non-simplex triple. Pin the invariant, not the clamp.
+    """
+    for q in (1.5, -1.5, 1e9, float("inf"), float("-inf"), float("nan")):
+        t = q_to_wdl_parametric(q, slope=PROD_SLOPE, draw_width_cp=PROD_WIDTH)
+        assert float(t.min()) >= 0.0, (q, t)
+        assert float(t.sum()) == pytest.approx(1.0, abs=1e-6), (q, t)
+    # and the in-contract endpoints are what the saturating values collapse to
+    for over, edge in ((1.5, 1.0), (-1.5, -1.0)):
+        assert q_to_wdl_parametric(
+            over, slope=PROD_SLOPE, draw_width_cp=PROD_WIDTH,
+        ).tobytes() == q_to_wdl_parametric(
+            edge, slope=PROD_SLOPE, draw_width_cp=PROD_WIDTH,
+        ).tobytes()
+
+
+@requires_c
 def test_the_c_call_refuses_a_bad_mode_or_an_unusable_curve() -> None:
     values = np.zeros(2)
     wdl = np.zeros((2, 3), dtype=np.float32)
@@ -553,6 +624,58 @@ def test_the_c_call_refuses_a_bad_mode_or_an_unusable_curve() -> None:
             _c_batch(wdl_logits=wdl, values=values,
                      extra=(0, _N_EXTRA_V1, 0, 0.0, 0.0, 0.0,
                             SWDL_DRAW_PARAMETRIC_Q, slope, width))
+
+
+@requires_c
+def test_a_stale_so_is_refused_by_the_abi_gate() -> None:
+    """REVIEW FINDING S3: nothing pinned the ABI bump.
+
+    ``tests/test_mcts_c_tree.py`` asserts ``ABI_VERSION >= _REQUIRED_MCTS_ABI``,
+    which ``4 >= 3`` satisfies — so reverting the constant to 3 survived the
+    whole suite while silently removing this PR's stale-``.so`` protection. Pin
+    the gate by its BEHAVIOUR: an extension at the pre-PR ABI must be refused,
+    with the rebuild command in the message. ``_REQUIRED_MCTS_ABI`` is imported
+    inside the function so the module object patched below is the one the guard
+    reads.
+    """
+    from types import SimpleNamespace
+
+    import torch
+
+    from chess_anti_engine.mcts import gumbel_c
+    from chess_anti_engine.mcts._mcts_tree import ABI_VERSION
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    assert ABI_VERSION == gumbel_c._REQUIRED_MCTS_ABI, (
+        "the built extension and the required marker have drifted apart"
+    )
+    stale = SimpleNamespace(ABI_VERSION=ABI_VERSION - 1)
+    original = gumbel_c._mcts_tree_ext
+    gumbel_c._mcts_tree_ext = cast(Any, stale)
+    try:
+        with pytest.raises(RuntimeError, match="build_production_extensions"):
+            gumbel_c.run_gumbel_root_many_c(
+                cast(torch.nn.Module | None, None), [],
+                device="cpu", rng=np.random.default_rng(0), cfg=GumbelConfig(),
+            )
+    finally:
+        gumbel_c._mcts_tree_ext = original
+
+
+def test_a_pre_arm_worker_cannot_poll_this_server() -> None:
+    """REVIEW FINDING S5, and the decision it records: PROTOCOL_VERSION bumped.
+
+    A pre-#409 worker drops the unknown reco key, is not restart-keyed by it,
+    and keeps uploading ``net_raw`` rows into the SAME replay window with no
+    column distinguishing them — the confound is unrecoverable after the fact.
+    ``min_worker_version`` cannot catch it (``PACKAGE_VERSION`` is unchanged by
+    an in-tree pull), so the protocol field is the only instrument that can.
+    ``>= 3`` rather than ``== 3`` so a later, unrelated bump does not fail this,
+    while a revert of THIS one does.
+    """
+    from chess_anti_engine.version import PROTOCOL_VERSION
+
+    assert PROTOCOL_VERSION >= 3
 
 
 def test_the_mode_int_encoding_has_one_home() -> None:
@@ -613,6 +736,18 @@ def test_trial_config_carries_the_key() -> None:
     assert TrialConfig.from_dict({}).search_wdl_draw_mode == SEARCH_WDL_DRAW_NET_RAW
 
 
+def test_trial_config_rejects_a_typo_on_the_driver() -> None:
+    """REVIEW FINDING S4. ``GameConfig.__post_init__`` validates this too, but
+    the driver only builds a ``GameConfig`` when ``eval_games > 0`` and
+    production runs 0 — so without a check here a typo is published to the reco
+    and kills selfplay in EVERY worker while the driver looks healthy. This is
+    the CLAUDE.md category-(b) conversion: fail the trial once, on the driver,
+    naming the value."""
+    for bad in ("parametric", "net-raw", "", "NET_RAW"):
+        with pytest.raises(ValueError, match="search_wdl_draw_mode"):
+            TrialConfig.from_dict({"search_wdl_draw_mode": bad})
+
+
 def _reco(config: dict[str, Any]) -> dict[str, Any]:
     return dict(build_recommended_worker(
         config=config, model_cfg=ModelConfig(), sf_nodes=5000, mcts_simulations=32,
@@ -657,6 +792,17 @@ def test_the_mode_is_published_and_reaches_game_config() -> None:
     assert game.search_wdl_draw_mode != GameConfig().search_wdl_draw_mode
     assert game.sf_wdl_cp_slope == PROD_SLOPE
     assert game.sf_wdl_cp_draw_width == PROD_WIDTH
+
+
+def test_the_published_default_is_off() -> None:
+    """REVIEW FINDING S2: the publisher is the ONLY hop that writes a default
+    for this key, and nothing pinned it. ``test_the_production_config_does_not_
+    ship_the_arm`` reads the YAML; the reco is what actually reaches a worker,
+    so a flipped default there would hand ``parametric_q`` to the whole fleet
+    from a yaml that never mentions the key."""
+    assert _reco({})["search_wdl_draw_mode"] == SEARCH_WDL_DRAW_NET_RAW
+    cfgs, _sf = WorkerSession._build_selfplay_configs(_bare_session(), _reco({}))
+    assert cast(GameConfig, cfgs["game"]).search_wdl_draw_mode == SEARCH_WDL_DRAW_NET_RAW
 
 
 def test_an_old_manifest_falls_back_to_the_dataclass_default() -> None:

@@ -10,7 +10,20 @@ from importlib import metadata
 #    per-iteration dole claim it would silently drop the seed batch; the exact
 #    protocol match (_check_worker_compat) now 426s such workers so they update
 #    or stop before they can poll.
-PROTOCOL_VERSION = 2
+# 3: `search_wdl_draw_mode` reco key — it selects how the stored `search_wdl`
+#    TARGET COLUMN is constructed. A pre-#409 worker drops the unknown key, is
+#    not restart-keyed by it (its own _RECO_RESTART_KEYS predates it), and keeps
+#    uploading `net_raw` rows into the same replay window as the new workers'
+#    `parametric_q` rows — with NO column distinguishing the two, so the mixture
+#    is unrecoverable after the fact and the readout is silently confounded.
+#    ⚑ min_worker_version cannot catch this: it is PACKAGE_VERSION, which an
+#    in-tree `git pull` leaves identical. Same shape as the bump to 2 above, and
+#    the same fix — _check_worker_compat 426s the stale worker so it updates or
+#    stops before it can poll. Bumped even though production workers are
+#    same-machine and restart with the trainer: that is a property of today's
+#    deployment, not of the protocol, and it is the remote-worker case this
+#    field exists for.
+PROTOCOL_VERSION = 3
 
 PACKAGE_NAME = "chess-anti-engine"
 
