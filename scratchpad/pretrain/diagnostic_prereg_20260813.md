@@ -25,7 +25,80 @@ RULER and as a CONTROL TARGET, which is a completely different use from making i
 diagnostic byproducts and can be deleted after readout. Nothing here proposes replacing the
 anti-engine objective, and nothing here goes near production selfplay.
 
-## The three diagnostics, and what each one isolates
+## D0 — LOCATE OURSELVES ON AN EXTERNAL LADDER. **Zero training compute. Run this FIRST.**
+
+Josh, 2026-08-13, pointing at `https://github.com/dje-dev/CeresNets`: *"it even posts the
+approximate elo difference of each one. some are bigger than ours and some are smaller and
+there is a 512x15 that is quite close to ours … about 200 elo range. from about 150 elo larger
+than our size to 100 elo below for smaller."*
+
+Confirmed against the repo. Ten ONNX nets, GPL-3.0, with a published relative-Elo column:
+
+| net | arch | their Elo | vs 512x15 |
+|---|---|---|---|
+| C1-256-10 | 256x10 | −96 | −105 |
+| C1-384-12 | 384x12 | −42 | −51 |
+| **C1-512-15** | **512x15** | **9** | **0 ← nearest to ours (we are 512×16)** |
+| C1-768-15 | 768x15 | 54 | +45 |
+| C1-512-25 | 512x25 | 74 | +65 |
+| C1-640-25 | 640x25 | 124 | +115 |
+| C1-640-34 | 640x34 | 160 | +151 |
+| C1-768-26 | 768x26 | 150 | +141 |
+
+**256 Elo of span, +151 above our size and −105 below.** Josh's read is exact.
+
+**⇒ THIS IS THE NEGATIVE CONTROL D1 NEEDED, SUPPLIED EXTERNALLY AND FOR FREE.** D1 was going
+to spend GPU hours distilling into a small net purely to give a fidelity number a scale.
+CeresNets supplies a whole *strength-vs-size curve* from one consistently-trained family, and
+C1-512-15 is a near-exact size analogue of our 512×16 net. No training required — arena only.
+
+**We already own the adapter.** `chess_anti_engine/onnx/load.py::OnnxChessNet` opens with
+*"Load a foreign ONNX chess net (CeresNets / LC0) for use in our search"* — it slices the
+112 LC0 planes, declares its own input contract (`input_history_encoding="lc0_root"`), does the
+board-aware policy remap via `moves/leela_index.py`, and returns our `policy_own`/`wdl` dict.
+Our on-disk BT4 files already carry Ceres export naming (vanilla/optimistic/soft/opponent ×
+winner/q/st). This is configuration, not construction.
+
+**THE READ, pre-committed:**
+- **We beat or match C1-512-15** ⇒ our training is not broken *at our size*; the lever is
+  scale, and Josh's ~100 Elo architecture claim is live and quantified (+151 available on this
+  family by going to 640×34).
+- **We lose badly to C1-512-15** ⇒ **we sit far below the curve at our own size**, and scaling
+  parameters is the WRONG move — a bigger net trained by our loop lands further below a higher
+  curve point. Fix training first. This outcome would also retire the architecture question
+  without spending a single GPU-hour on it.
+
+**Second-order payoff: a non-self, non-Stockfish Elo anchor ladder.** Every anchor we own is
+one of our own checkpoints, which is why [[arena_elo_is_anchor_dependent]] bit us (differencing
+off by up to 82 Elo) and why the Cheese handicap ladder proved unreliable. Three or four rungs
+of an external family give absolute placement AND free transitivity checks.
+
+**The data number that lands separately.** Ceres reports training positions per net ranging
+**3.8B to 34.6B**. At our measured 4.1M unique positions/day that is **2.5 to 23 YEARS** of
+continuous RL. This is the starvation claim from the 3d5df283a entry, now confirmed against an
+external comparable instead of my own estimate.
+
+**Confounds and traps, stated before running:**
+- ⚑ **The published Elo column confounds SIZE with DATA** — later nets are both bigger and
+  trained on more positions (Sep 24 → Apr 25). "+151 from 512×15 → 640×34" is an UPPER BOUND
+  on the pure architecture effect, not an architecture measurement. Fine for locating
+  ourselves; NOT quotable as "architecture is worth 151 Elo".
+- ⚑ **Their Elo is their measurement under their conditions.** Treat the ORDERING as reliable
+  and re-measure the SPACING ourselves — which running multiple rungs gives us for free.
+- ⚑ **Our search is tuned for our net** (`c_scale` 0.1 calibrated on us). Both sides running
+  our MCTS is the right net-vs-net contrast, but it is NOT neutral —
+  [[same_setting_both_sides_is_not_neutrality]]: a shared knob still moves B−A when one net
+  gains more from it. Bias favours us by an unknown amount. Mitigate by running ≥2 search
+  configs and requiring the ordering to be stable.
+- ⚑ **NODE limits, never time.** A 63M net and a 640×34 net have very different inference cost;
+  a time ruler converts that into phantom Elo.
+- GPL-3.0 matters only if we ever distribute a derived net. A measurement distributes nothing —
+  another reason the diagnostic framing is the right one.
+
+**⇒ REVISED ORDER: D0 → D2 → D1(only if still needed) → D3.** D0 gates the rest: it is free,
+it is the fastest, and a bad D0 result changes what D1/D2 are even for.
+
+## The three training-side diagnostics, and what each one isolates
 
 ### D2 — LABEL QUALITY. **Run this first: sharpest, cheapest, existing rig.**
 

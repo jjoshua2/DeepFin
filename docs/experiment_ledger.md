@@ -45117,3 +45117,69 @@ which is why D3 must not be dropped if D2 reads null. All arms inherit arena res
 
 Order **D2 → D1(+control) → D3**, one readout window each. Draft:
 `scratchpad/pretrain/diagnostic_prereg_20260813.md`. Task #199.
+
+---
+
+## 2026-08-13 — D0: CeresNets gives us an EXTERNAL size-vs-strength ladder. Zero training compute. RUN FIRST.
+
+Josh pointed at `https://github.com/dje-dev/CeresNets`. Verified against the repo: ten ONNX
+nets, GPL-3.0, with a published relative-Elo column and per-net training-position counts.
+
+| net | arch | their Elo | vs 512x15 |
+|---|---|---|---|
+| C1-256-10 | 256x10 | -96 | -105 |
+| C1-384-12 | 384x12 | -42 | -51 |
+| **C1-512-15** | **512x15** | **9** | **0 <- nearest to ours (we are 512x16)** |
+| C1-768-15 | 768x15 | 54 | +45 |
+| C1-512-25 | 512x25 | 74 | +65 |
+| C1-640-25 | 640x25 | 124 | +115 |
+| C1-640-34 | 640x34 | 160 | +151 |
+| C1-768-26 | 768x26 | 150 | +141 |
+
+**256 Elo of span, +151 above our size and -105 below.** Josh's estimate ("about 200 Elo range,
+150 above to 100 below") is exact.
+
+**⇒ THIS REPLACES THE NEGATIVE CONTROL D1 WAS GOING TO BUY WITH GPU TIME.** D1 planned to
+distill into a deliberately small net purely to give a fidelity number a scale. CeresNets
+supplies a whole strength-vs-size curve from one consistently-trained family, and C1-512-15 is
+a near-exact size analogue of our 512x16. **Arena only, no training.**
+
+**We already own the adapter.** `chess_anti_engine/onnx/load.py::OnnxChessNet` opens with
+"Load a foreign ONNX chess net (CeresNets / LC0) for use in our search": slices the 112 LC0
+planes, declares `input_history_encoding="lc0_root"`, does the BOARD-AWARE policy remap via
+`moves/leela_index.py`, returns our `policy_own`/`wdl` contract. Our on-disk BT4 files already
+carry Ceres export naming. Configuration, not construction.
+
+**PRE-COMMITTED READ:**
+- **beat or match C1-512-15** => training is not broken AT OUR SIZE; the lever is scale and the
+  ~100 Elo architecture claim is live (+151 available on this family at 640x34).
+- **lose badly to C1-512-15** => **we sit far below the curve at our own size**, and scaling
+  parameters is the WRONG move — a bigger net trained by our loop lands further below a higher
+  curve point. Fix training first. Retires the architecture question for zero GPU-hours.
+
+**Second-order payoff we badly need: a non-self, non-Stockfish anchor ladder.** Every anchor we
+own is one of our own checkpoints — the reason anchored-Elo differencing came out off by up to
+82 Elo, and the Cheese handicap ladder proved unreliable. 3-4 external rungs give absolute
+placement plus free transitivity checks.
+
+**Independent confirmation of the starvation number.** Ceres reports **3.8B-34.6B training
+positions** per net. At our measured 4.1M unique positions/day that is **2.5 to 23 YEARS** of
+continuous RL — the 3d5df283a claim, now against an external comparable rather than my estimate.
+
+**CONFOUNDS, stated before running:**
+- ⚑ the Elo column CONFOUNDS SIZE WITH DATA (later nets are bigger AND trained on more
+  positions, Sep 24 -> Apr 25). "+151 from 512x15 -> 640x34" is an UPPER BOUND on the pure
+  architecture effect. Fine for locating ourselves; NOT quotable as "architecture is worth 151".
+- ⚑ their Elo is their measurement under their conditions: trust the ORDERING, re-measure the
+  SPACING ourselves (free once we run multiple rungs).
+- ⚑ our search is tuned for our net (`c_scale` 0.1 calibrated on us). Both sides on our MCTS is
+  the right net-vs-net contrast but is NOT neutral — a shared knob still moves B-A when one net
+  gains more from it. Bias favours US by an unknown amount. Mitigate: >=2 search configs,
+  require stable ordering.
+- ⚑ NODE limits, never time — a 63M and a 640x34 net differ hugely in inference cost and a time
+  ruler converts that into phantom Elo.
+- GPL-3.0 binds only on distributing a derived net. A measurement distributes nothing.
+
+**⇒ REVISED ORDER: D0 -> D2 -> D1 (only if still needed) -> D3.** D0 gates the rest: free,
+fastest, and a bad D0 changes what D1/D2 are even for.
+Prereg: `scratchpad/pretrain/diagnostic_prereg_20260813.md`. Task #199.
