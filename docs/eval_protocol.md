@@ -216,9 +216,21 @@ tests per matchup and ORs across matchups, so uncorrected it is a family of
 2×M tests at α=0.05. Measured on 400 true-null 3-arm datasets (outcomes drawn
 independently of completion order): **0.273 ± 0.022 uncorrected** — better than
 one clean fit in four told "do not read a verdict", which trains the operator
-to ignore it. With the Holm step-down correction now applied: **0.052 ± 0.011**
-against a nominal 0.05. Reproduce with `scratchpad/fpr_measure.py`, which calls
+to ignore it. With the Holm step-down correction, applied ONCE over the whole
+family rather than per matchup: **0.052 ± 0.011** against a nominal 0.05.
+Reproduce with `scratchpad/fpr_measure.py <n_datasets> <n_perm>`, which calls
 the shipped `completion_bias_report` rather than a copy of it.
+
+⚑ **That rate is GRID-DEPENDENT — quote it with its `n_perm`.** The same
+harness measures **0.033 ± 0.009 at n_perm=300**. Holm's strictest threshold is
+α/m = 0.05/6 = 0.00833, while attainable permutation p-values are k/(n_perm+1):
+at n_perm=1000 the largest usable k is 8 (region 0.0080), at n_perm=300 it is 2
+(region 0.0066). The shipped default n_perm=2000 gives 0.0080, indistinguishable
+from 1000, so **0.052 is the rate the tool actually ships with**. A coarse grid
+can only lower the rate, never inflate it — it costs power, not safety. Two
+independent measurements of this number disagreed until the grid was pinned
+down, which is exactly why it is stated with its grid rather than as a bare
+number.
 
 ## Tracking table: holdout delta vs arena Elo
 

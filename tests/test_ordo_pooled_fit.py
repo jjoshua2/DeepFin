@@ -129,6 +129,27 @@ def _pairs(a: str, b: str, n: int, start: int = 0) -> list[Pair]:
     return out
 
 
+def _half_pairs(
+    a: str, b: str, n_complete: int, n_singleton: int, start: int = 0,
+) -> list[Pair]:
+    """Complete pairs PLUS singleton half-pairs, the partial-run regime.
+
+    Every singleton is deliberately given ``a`` as WHITE. That makes the block
+    count exactly recoverable from the resampled PGN: a complete pair
+    contributes one a-white game and one b-white game, a singleton contributes
+    one a-white game, so ``whites[a] == blocks drawn``. Without that convention
+    the two are not separable from a colour-blind game count.
+    """
+    out = _pairs(a, b, n_complete, start)
+    base = start + 2 * n_complete
+    for i in range(n_singleton):
+        out.append(Pair(matchup=matchup_key(a, b), games=[
+            Game(white=a, black=b, result="1-0", pair_id=str(n_complete + i),
+                 plies=80, duration_s=1.0, order=base + i),
+        ]))
+    return out
+
+
 def _bootstrap_with_recorder(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
     by_matchup: dict[tuple[str, str], list[Pair]], *, reps: int, unit: str,
@@ -226,6 +247,48 @@ def test_pair_unit_draws_whole_pairs_not_halves(
         assert whites["armB"] == 6
 
 
+def test_bootstrap_preserves_BLOCK_count_not_game_count_with_half_pairs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The partial-run regime this whole tool exists to serve.
+
+    With only complete pairs, "resample N blocks" and "resample to N*2 games"
+    are indistinguishable -- every block is exactly 2 games. Half-pairs
+    separate them, and the block count is the correct invariant: a bootstrap
+    that topped up to a fixed GAME count would silently over-weight complete
+    pairs and under-weight the partial ones.
+
+    ``whites[armA] == blocks drawn`` by the fixture's colour convention, so
+    this asserts the block count EXACTLY rather than inferring it.
+    """
+    key = matchup_key("armA", "armC")
+    n_complete, n_singleton = 6, 4
+    by = {key: _half_pairs("armA", "armC", n_complete, n_singleton)}
+    blocks = n_complete + n_singleton
+
+    seen = _bootstrap_with_recorder(monkeypatch, tmp_path, by, reps=30,
+                                    unit="pair")
+    assert len(seen) == 30
+    totals: set[int] = set()
+    for rep in seen:
+        whites = rep[key]
+        assert whites["armA"] == blocks, (
+            f"block count not preserved: drew {whites['armA']} blocks, "
+            f"expected {blocks}"
+        )
+        total = sum(whites.values())
+        # blocks <= games <= 2*blocks, and games == blocks + #complete drawn
+        assert blocks <= total <= 2 * blocks
+        totals.add(total)
+    # The GAME count must vary -- if it were constant, the implementation is
+    # preserving games rather than blocks and the assertion above is passing
+    # for the wrong reason.
+    assert len(totals) > 1, (
+        f"game count was constant at {totals}; with half-pairs a block "
+        f"bootstrap must produce a varying game count"
+    )
+
+
 # --------------------------------------------------------------------------
 # Contrast CIs (the number a reader acts on).
 # --------------------------------------------------------------------------
@@ -290,6 +353,51 @@ def test_holm_step_down_stops_at_first_failure() -> None:
 
 def test_holm_handles_empty() -> None:
     assert holm_reject([], alpha=0.05) == []
+
+
+def test_holm_family_is_global_not_per_matchup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Holm must be applied ONCE over every test in the run.
+
+    Scoping it per matchup passes every other test in this file, because
+    ``test_holm_*`` exercise the function in isolation and the firing test uses
+    a single matchup -- where per-matchup and global scoping coincide. It is
+    not cosmetic: per-matchup scoping measurably raises the false-positive rate
+    (0.073 vs 0.013 in the reviewer's run), because each matchup gets its own
+    fresh alpha budget.
+    """
+    import random as _random
+
+    import scripts.ordo_pooled_fit as fit_mod
+
+    calls: list[list[float]] = []
+    real = fit_mod.holm_reject
+
+    def spy(pvalues: list[float], alpha: float = 0.05) -> list[bool]:
+        calls.append(list(pvalues))
+        return real(pvalues, alpha=alpha)
+
+    monkeypatch.setattr(fit_mod, "holm_reject", spy)
+
+    rng = _random.Random(17)
+    by: dict[tuple[str, str], list[Pair]] = {}
+    for a, b in (("armA", "armB"), ("armB", "armC"), ("armA", "armC")):
+        blocks = _pairs(a, b, 12)
+        for blk in blocks:
+            for g in blk.games:
+                g.result = rng.choice(["1-0", "1/2-1/2", "0-1"])
+        by[matchup_key(a, b)] = blocks
+
+    fit_mod.completion_bias_report(by, rng=rng, n_perm=200)
+
+    assert len(calls) == 1, (
+        f"Holm must be applied once over the whole family; it was called "
+        f"{len(calls)} times (per-matchup scoping)"
+    )
+    assert len(calls[0]) == 6, (
+        f"family must be 2 tests x 3 matchups = 6; got {len(calls[0])}"
+    )
 
 
 def test_guard_stays_quiet_on_order_independent_outcomes(

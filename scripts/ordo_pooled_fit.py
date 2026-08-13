@@ -282,17 +282,30 @@ def completion_bias_report(
     MISSING are different.
 
     MEASURED false-positive rate on true-null data (pair outcomes drawn
-    independently of completion order), 400 datasets of a 3-arm round robin,
-    n_perm=1000: **0.052 +- 0.011, against a nominal 0.05**. The SAME harness
-    measures the uncorrected rate at **0.273 +- 0.022** — i.e. better than one
-    clean fit in four was previously being told "do not read a verdict".
-    Reproduce with ``scratchpad/fpr_measure.py`` (it calls THIS function, not a
-    reimplementation of it).
+    independently of completion order), 400 datasets of a 3-arm round robin:
 
-    Permutation resolution is adequate for the correction: with n_perm=2000 the
-    smallest attainable p-value is 1/2001 = 0.0005, comfortably below Holm's
-    strictest threshold of alpha/(2*M) = 0.0083 at M=3, so a real effect can
-    still be detected.
+        n_perm=1000  ->  0.052 +- 0.011   (nominal 0.05)
+        n_perm= 300  ->  0.033 +- 0.009
+        uncorrected  ->  0.273 +- 0.022 / 0.245 +- 0.022 at the same two grids
+
+    ⚑ **The rate is GRID-DEPENDENT, so quote it with its n_perm.** Holm's
+    strictest threshold is alpha/m = 0.05/6 = 0.008333, while the attainable
+    permutation p-values are k/(n_perm+1). At n_perm=1000 the largest usable k
+    is 8, giving a per-test rejection region of 0.0080; at n_perm=300 it is 2,
+    giving 0.0066 — a 17% smaller region, and the measured family rate falls
+    with it. The DEFAULT n_perm=2000 gives 0.0080, indistinguishable from 1000,
+    so 0.052 is the rate this function actually ships with.
+
+    The direction is safe: a coarse grid can only LOWER the false-positive
+    rate, never inflate it. What it costs is power, which is why n_perm is not
+    tuned down.
+
+    Resolution is adequate for the correction at the default: the smallest
+    attainable p-value is 1/2001 = 0.0005, well below the 0.0083 threshold, so
+    a real effect can still be detected.
+
+    Reproduce with ``scratchpad/fpr_measure.py <n_datasets> <n_perm>`` (it calls
+    THIS function, not a reimplementation of it).
     """
     print("\n=== informative-missingness diagnostic ===")
     print("  (completion order vs pair decisiveness; a partial matchup's "
@@ -353,9 +366,10 @@ def completion_bias_report(
               f"rho(order,score)={rho_s:+.3f} p={p_s:.3f}"
               f"{'  <-- FLAG' if bad else ''}{ply_note}")
     if pvalues:
-        print(f"  ({len(pvalues)} tests, Holm-corrected at family-wise "
-              f"alpha={alpha}; measured false-positive rate 0.052+-0.011 on "
-              f"true-null 3-arm data, vs 0.273+-0.022 uncorrected)")
+        print(f"  ({len(pvalues)} tests, Holm-corrected ONCE over the whole "
+              f"family at alpha={alpha}; measured false-positive rate "
+              f"0.052+-0.011 on true-null 3-arm data at n_perm>=1000 "
+              f"(this run: {n_perm}), vs 0.273+-0.022 uncorrected)")
     if flagged:
         print("  ⚑ FLAGGED: completion order predicts outcome. The point "
               "estimate may be biased by WHICH pairs finished, and no bootstrap "

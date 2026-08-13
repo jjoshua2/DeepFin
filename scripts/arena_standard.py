@@ -812,6 +812,16 @@ def play_paired_games_matched_sims(
     #    blanket-overriding it to a draw made the PGN disagree with the
     #    pentanomial, which is the exact cross-check the agreement claim rests
     #    on. Rolling never had this because it reaps before refilling.
+    #
+    # `adjudicated[i]` is ALWAYS None here, so "rules" is accurate and there is
+    # deliberately no "syzygy" branch: adjudication sets `adjudicated[i]` and
+    # calls `_emit(i, "syzygy")` in the same block above, so such a game is
+    # already emitted and `_emit`'s `emitted[i]` guard makes this a no-op for
+    # it. A `"syzygy" if adjudicated[i] else "rules"` here would be a branch
+    # that cannot be reached or tested. A position that only becomes TB-covered
+    # on the FINAL ply is never probed (the loop exits first) and lands in the
+    # "*" case, scored 0.5 by `_game_score` and written as a draw — the two
+    # still agree, which is the property that matters.
     for i in range(g):
         res = adjudicated[i] or boards[i].result(claim_draw=True)
         if res == "*":
