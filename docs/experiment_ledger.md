@@ -44999,3 +44999,59 @@ The head that measurably stopped generalising (~iter 249, held-out −2.5% while
 improved 4×) is POLICY. Deciding yardstick would be held-out policy CE on the exposure-clean
 split — the exact measurement absorption could not move. NOT LAUNCHED; needs Josh's go, and
 sits behind Tier-13/14 in the one-change-per-window queue.
+
+---
+
+## 2026-08-13 — SCOPE LIMIT on "scale rows not params" and "smaller net absorbs more": both were measured UNDER DATA STARVATION
+
+Not an experiment. A correction to how two standing findings are being read, prompted by
+Josh: *"architecture changes can easily change things by 100 Elo, especially with a bit of
+post training after the initial pre-training supervised on the fixed dataset."*
+
+**The measurement that reframes it.** From arm A's banked `progress.csv` (100 iters, realized):
+60,672 training samples/iter (118 steps x 512) at ~300 s/iter = **17.5M samples/day**; at
+`train_views_actual` 4.30 that is **~4.1M UNIQUE positions/day, ~170k/hour**. Every one of
+those must be produced by MCTS *and* labeled by Stockfish at 150-200k nodes, which is why the
+rate is what it is.
+
+BT4 (191M, on disk, loads via `Lc0OnnxEvaluator`) as an inference-only labeler at 800-3000
+pos/s yields **2.9-10.8M labeled positions per GPU-hour** — **17-64x more unique supervised
+positions per GPU-hour than the RL loop produces**, from a teacher stronger than our net.
+50M labels = 5-17 GPU-hours. lc0's public T80/T81 data is cheaper still (positions AND
+targets already, zero labeling cost).
+
+**⚑ The correction.** `scale_rows_not_parameters` and "the smaller net absorbs more"
+(capacity experiment) are both correct AT ~170k unique positions/hour, and both are exactly
+what a 63.08M net fed 4.1M unique positions/day should show: parameters are not the binding
+constraint, DATA is. They are currently written and cited as unconditional. They are not.
+Remove the data constraint and the sign is expected to flip — **nothing we have measured
+speaks to the regime Josh is proposing.** Cite them with the regime attached from now on.
+This is the standing trap in its usual shape: a result read outside the regime that produced
+it (cf. `check_the_resource_is_binding`, `same_name_different_population`).
+
+**Where I push back, partially.** Our net is 512x16x16 / 63.08M with per-layer smolgen and
+non-uniform `ffn_mult` 1.5->1.9; BT4 is ~768x15 / ~191M with smolgen. **Same lc0-descended
+attention family** — the gap is mostly SIZE, not a missing mechanism. So "architecture" is
+not an independent lever here: it is worth ~100 Elo *given* a corpus that can feed it, and
+alone at 4.1M unique positions/day a 3x bigger net should underfit exactly as our own
+capacity experiment predicts. Josh stated it as a conjunction (pretrain THEN post-train), and
+the conjunction is the part that carries the claim.
+
+**Proposed cheapest decisive step, NOT LAUNCHED (needs Josh's go + a GPU window, and sits
+behind Tier-13/14):** distill BT4 into our EXISTING 63.08M architecture on ~5-10M BT4-labeled
+positions (~2-4 GPU-hours), then a paired arena vs the current net under the frozen Tier-13
+arena command. This separates the two claims before spending weeks on a bigger net:
+- beats current net by >>22 Elo (the instrument's 80%-power point) => bottleneck is
+  DATA/TEACHER, pretrain plan validated;
+- does not => bottleneck is architecture or the anti-engine objective itself, and the
+  bigger-net step needs a different justification.
+Screen gate is the RE-POINTED one (2026-08-13, 67a0670cf), not the audit-first rule as
+written — an SF-graded ruler cannot credit a decorrelated teacher.
+
+Risks stated before launch: a BT4-distilled net plays like lc0, not like an SF-exploiter
+(post-training is the answer; budget to re-acquire anti-engine behaviour is UNKNOWN, so the
+current lineage stays alive as the control); lc0's 112-plane encoding is not our 175-plane
+`v2_threats` and re-encoding from FEN is exactly where a silent defect hides (cf. the 1858
+policy index agreeing on 46 of 1858 slots); weeks-scale, competes for the single GPU.
+
+Full analysis: `scratchpad/pretrain/strategy_20260813.md`.
