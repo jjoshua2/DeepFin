@@ -45841,3 +45841,37 @@ information lives IN the per-frame planes) genuinely lose it. That asymmetry wou
 cross-net curve shapes non-comparable and would bias the answer toward "we rely on history less than
 they do". **The ladder must specify that H2/HR ablate the rep planes to match the frames.** Ledger
 this before running it; it is exactly the confound the experiment exists to avoid.
+
+---
+
+## 2026-08-13 — ⚑⚑ CASTLING MIS-MAPPED IN EVERY FOREIGN-NET AUDIT MADE BEFORE TODAY
+
+Found by the PR #414 author while writing a wrapper↔script cross-check that FAILED on first run —
+**the wrapper was right and the long-trusted script was wrong.** `_leela_idxs`, inherited verbatim
+from `scripts/bt4_audit.py`, mirrored the UCI string and looked it up directly. Correct for slides
+and promotions; **wrong for castling, because Leela spells castling king-takes-rook.** `e1g1`
+resolved to slot **102** (an ordinary king slide) instead of **103**.
+
+**Blast radius, counted not estimated: 296 castling moves across 256/4000 audit positions (6.4%),
+all mis-mapped — and 41 of them are positions where deep-SF's best move IS the castle.** Fixed via
+`leela_index_for_move`; all §4D numbers re-run under the fixed map.
+
+**⚑ `data/lc0/bt4_audit_cache.jsonl` (dated 2026-06-26) and every foreign-net audit cache built
+before today carry this defect.** ⇒ **the ledger's FIRST EXTERNAL PLACEMENT table
+(:45490-45506) is STALE** — 22.56 / 22.89 / 23.79 / 47.34 and the "roughly 2x the deep-SF
+regret" headline were all read off the buggy map. Corrected values requested; **do not re-quote
+that table until they land.**
+
+**Expected direction, stated BEFORE the numbers arrive so it can be falsified rather than
+confirmed:** our `ckpt218` goes through OUR policy encoding and never touches `_leela_idxs`, so it
+is UNAFFECTED; the foreign nets were penalised on 6.4% of positions, so fixing it should LOWER
+their regret and **WIDEN** the gap. If so, the placement I reported to Josh UNDERSTATED it.
+
+**The methodological point, which is the durable part:** this was caught by a **cross-check between
+two independent implementations**, not by review and not by a test. Both the wrapper and the script
+passed their own suites; the disagreement is what exposed the defect, and the older, more-trusted
+side lost. Note also that this is the SAME shape as
+[[lc0_bt4_adapter_and_castling_remap_defect]] and as the audit set's own castling blindness
+(556/4000 rows have castling rights, and a K↔Q swap corruption read exactly 0.00) — **castling is
+now three-for-three as the axis this project's instruments cannot see.** Treat any new
+foreign-net or encoder instrument as guilty on castling until a cross-implementation check clears it.
