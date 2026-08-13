@@ -46417,3 +46417,59 @@ GPU). **No ledger entry from the PR** — `main`'s `experiment_ledger.md` diverg
 live branch's and lacks every 2026-08-13 entry, so appending from a `main` PR would conflict; the
 reasoning lives in the `audit_cache.py` docstring and the PR body, and **this entry discharges the
 ledger debt on the live branch**.
+
+### ⚑ CORRECTION to the ORT entry above — I OVERREACHED, and the reviewer caught two things I missed
+**"ONNX Runtime cannot use this box's GPU at all" was stated more strongly than I verified.** What I
+actually ran was `ldd` on the provider `.so` plus `get_available_providers()` — **I inferred the
+session-level fallback, I did not observe it.** Two corrections, both from the #415 re-reviewer:
+
+1. **THERE ARE TWO ORT INSTALLS ON THIS BOX AND THEY DIFFER.** Verified by the main session:
+   - **project `.venv`** (`/home/josh/projects/chess/.venv`): ORT 1.23.2, providers
+     `['AzureExecutionProvider', 'CPUExecutionProvider']` — a **CPU-ONLY wheel**;
+     `libonnxruntime_providers_cuda.so` **does not exist**.
+   - **`/usr/bin/python3`**: the **GPU wheel**, advertising `[Tensorrt, CUDA, CPU]`, whose CUDA
+     provider cannot resolve `libcudnn.so.9`.
+
+   Scripts invoke bare `python3`, so **which mechanism applies depends on whether a shell has the
+   venv activated.** Both end at CPU, so the operational conclusion survives — but the two paths fail
+   for **different reasons**, and a diagnosis run under one interpreter does not describe the other.
+   [[same_name_different_population]] applied to an interpreter.
+2. **"Cannot load at all" may be optimistic.** In the reviewer's probe the CUDA EP loaded far enough
+   to parse `device_id` and call `cudaGetDeviceCount` — so the library is not simply refusing to
+   load, and cuDNN may be resolved lazily. ⚑ Their probe also ran with `CUDA_VISIBLE_DEVICES=""`, so
+   what they observed was **device-absence fallback, not missing-cuDNN fallback**. **Neither of us
+   has actually observed the missing-cuDNN path.** It is not established which fallback fires in a
+   real GPU-visible run.
+
+⇒ **What is established: every ORT session observed on this box so far has come back CPU-only.**
+**What is NOT established: the mechanism, and whether it holds under both interpreters with the GPU
+visible.** The safety conclusion (an ORT session will not currently land on the trainer's GPU) is
+unchanged; the confident causal story is withdrawn.
+
+### PR #415 RE-REVIEW: APPROVE-WITH-CHANGES — all 7 fix claims TRUE, one real gap
+**Every claim in the fix commit's report held under independent execution.** The boundary assertion
+is genuine — proved by the reviewer's OWN mutation, dropping the options dict *inside*
+`OnnxChessNet.__init__` one layer BELOW `net_source.py`, which fails 3 tests (a test asserting on
+`onnx_providers_for_device`'s return value could not catch that). The guard **fails closed**, verified
+on the real CLI for `--device cuda` and `--device cuda:1`: exit 1, explicit "requested and DROPPED",
+no number produced. BT4 bit-identity reproduced independently on the real net with the reviewer's own
+boards and both provider forms. 500 passed / lint clean / merge genuine / no dangling `bt4_audit`
+code refs. Fraction→bytes correct at every edge including **NaN**.
+
+**⚑ F1 (P2), and it is the house defect ONE LEVEL UP: the CLI→ORT plumbing this commit exists to
+create has ZERO test coverage.** Three independent one-line deletions each **restore the original P1
+bug while all 500 tests pass** — `value_regret.main` dropping the kwarg from `value_1ply_regret(...)`,
+`audit_targets.main` dropping it from `_net_candidates(...)`, and `_net_candidates` dropping it from
+`net.load(...)`. Every test drives `NetSource.load(gpu_mem_fraction=...)` DIRECTLY; **nothing asserts
+the value travels from `args`.** The commit's 12 mutations all live inside `net_source.py`/`load.py`
+and none crosses `main()`. Wiring is correct today; the seam is untested. ~20 lines closes it with the
+`inspect.getsource(module.main)` pattern the PR already uses.
+
+**F2 (P2)** — the new real gate fires **AFTER** `_shallow_sf_records` in `audit_targets` (offsets
+15918 vs 17153), so a `--device cuda` audit spends the Stockfish hour and *then* aborts — the exact
+cost the earlier commits existed to avoid. **F3/F4 (P3)** — two more surviving mutants, code correct,
+coverage absent: the session guard's `startswith("cuda")` (nothing proves `cuda:N` is guarded) and
+`onnx_cuda_mem_limit` bypassing range validation. **F5/F6 (P4)** — `--device cuda:x` raises an
+uncaught `ValueError` traceback instead of `SystemExit`.
+
+⇒ **NOT MERGED.** F1 is the exact defect class the PR was written to fix, and it is cheap.
