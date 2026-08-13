@@ -17,8 +17,16 @@ ONNX graph whose policy head is not the one that was read. So:
 * the ONNX graph's input/policy/WDL tensor names are RESOLVED AND PRINTED at
   argument-parse time, before the audit set or Stockfish costs anything. An
   ambiguous graph (two 1858-wide outputs) raises rather than picking one.
-* every caller prints :attr:`NetSource.label` on its report line, so the number
-  and the net that produced it cannot be separated afterwards.
+* every caller prints :attr:`NetSource.label` on its report line AND stamps it
+  into every per-position dump row, so the number and the net that produced it
+  cannot be separated afterwards.
+* the same rule is applied to the DEVICE and to the input encoding, because
+  both have a silent-wrongness mode of their own:
+  :func:`validate_onnx_device` refuses an indexed CUDA device (ORT would use
+  device 0 regardless) and a CUDA request on a runtime with no CUDA provider
+  (ORT would silently run on CPU and the report would still say CUDA), and
+  :func:`reject_stored_encoding_for_onnx` refuses ``--input-encoding stored``
+  for a foreign net at parse time rather than after the model loads.
 
 The foreign net itself is loaded through
 :class:`chess_anti_engine.onnx.load.OnnxChessNet`, which is the ONLY correct
