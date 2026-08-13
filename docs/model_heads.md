@@ -83,6 +83,36 @@ net's real conversion ability improves. Don't chase value-head sharpness
 against a deep-SF ruler; that comparison is a category error. `value_sf_eval`
 is a weak auxiliary channel, not a substitute.
 
+**How the search component is CONSTRUCTED (`search_wdl_draw_mode`, default
+`net_raw` = the production construction).** The blend's third component is a
+`(W, D, L)` triple built per ply in `mcts/_mcts_tree.c`'s `batch_process_ply`
+(and its twin in `selfplay/network_turn.py`'s Python fallback), from the
+survivor child's searched `best_q`. Its W−L axis is genuinely search-updated;
+its D axis, in the default mode, is not:
+
+- **`net_raw`** — `D = wdl_net[1]`, the net's RAW root draw output, never
+  touched by search, and the same number then CLAMPS the searched q to
+  `±(1 − D)`. So `search_wdl_frac` of the trained target's draw mass is the net
+  grading itself, and the target's win probability is capped on decisive rows
+  (measured 2026-08-12: the clamp binds on 12.27 % of the lowest-`d_raw`
+  quartile, 3.97 % overall). This is the historical construction and stays the
+  default.
+- **`parametric_q`** — the WHOLE triple from the searched q, with no net-WDL
+  input at all: `D(q) = coth(w) − sqrt(csch(w)² + q²)` where
+  `w = sf_wdl_cp_slope × sf_wdl_cp_draw_width`. That is the cp-logistic
+  family's own implied draw curve — the SAME family and the SAME two knobs the
+  SF component uses — so the two halves of the blend cannot drift apart, and
+  the curve parameters must never be hard-coded at either site.
+  `D(0) = tanh(w/2)` matches the SF label's draw mass at cp = 0 (0.34521 at
+  production 0.006/120), `D(±1) = 0` exactly, and `0.5·(1 − D ± q) ≥ 0` holds
+  everywhere on `q ∈ [−1, 1]`, so the triple is a simplex point by construction
+  and no confidence cap exists. Definition and derivation live in
+  `stockfish/wdl.py::parametric_draw_from_q`; the C twin mirrors it.
+
+Restart-keyed and resume-fingerprinted (it decides what a stored row MEANS).
+Pinned by `tests/test_search_wdl_draw_mode.py`, including bit-identity of the
+`net_raw` path and C/Python agreement in both modes.
+
 **Terminal-proximal outcome share (`wdl_terminal_outcome_plies`, default 0 =
 OFF).** The global `game_frac` stays 0 and deep-game outcome labels stay out of
 the target — they previously carried a value collapse. But the outcome's noise

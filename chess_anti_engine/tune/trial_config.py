@@ -10,6 +10,7 @@ from chess_anti_engine.mcts.gumbel import (
     POLICY_TEMP_MIN,
     SELFPLAY_GUMBEL_C_SCALE,
 )
+from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_NET_RAW
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
@@ -287,6 +288,11 @@ class TrialConfig:
     sf_wdl_use_cp_logistic: bool = False
     sf_wdl_cp_slope: float = 0.010
     sf_wdl_cp_draw_width: float = 60.0
+  # Draw channel of the stored `search_wdl` target. See
+  # selfplay/config.py::GameConfig.search_wdl_draw_mode; validated there (both
+  # GameConfig build sites run __post_init__), not here — same shape as
+  # sf_policy_score_mode.
+    search_wdl_draw_mode: str = SEARCH_WDL_DRAW_NET_RAW
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
@@ -753,6 +759,9 @@ class TrialConfig:
                 config.get(
                     "sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width
                 )
+            ),
+            search_wdl_draw_mode=str(
+                config.get("search_wdl_draw_mode", SEARCH_WDL_DRAW_NET_RAW)
             ),
             soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
             timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),

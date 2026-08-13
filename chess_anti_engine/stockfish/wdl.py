@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -87,6 +89,99 @@ def cp_to_wdl(
     p_draw = max(0.0, 1.0 - p_win - p_loss)
     total = p_win + p_loss + p_draw
     return np.array([p_win, p_draw, p_loss], dtype=np.float32) / float(total)
+
+
+# The two modes `selfplay.search_wdl_draw_mode` selects between. Strings, not a
+# bool, because a third D source is already sketched in the ledger (tree-backed-up
+# D) and `search_wdl_draw_parametric: false` would have to be renamed to add it.
+SEARCH_WDL_DRAW_NET_RAW = "net_raw"
+SEARCH_WDL_DRAW_PARAMETRIC_Q = "parametric_q"
+SEARCH_WDL_DRAW_MODES = (SEARCH_WDL_DRAW_NET_RAW, SEARCH_WDL_DRAW_PARAMETRIC_Q)
+
+
+def parametric_draw_from_q(q: float, *, slope: float, draw_width_cp: float) -> float:
+    """Draw mass implied by ``cp_to_wdl`` for a position whose W-L score is ``q``.
+
+    THE definition of the ``parametric_q`` search-WDL draw channel; its C twin
+    lives in ``mcts/_mcts_tree.c`` (``py_batch_process_ply``) and
+    ``tests/test_search_wdl_draw_mode.py`` pins the two to agreement on a grid.
+
+    Derivation (exact, not a fit). With ``a = sigmoid(slope*(cp - width))``,
+    ``b = sigmoid(-slope*(cp + width))``, ``cp_to_wdl`` returns ``(a, 1-a-b, b)``
+    -- the draw mass is never clamped and the triple always sums to 1, because
+    ``a + b`` rises monotonically from ``2*sigmoid(-w) < 1`` at ``cp = 0`` to 1
+    as ``|cp| -> inf`` (its derivative is ``s'(u-w) - s'(u+w) > 0`` for u > 0).
+    So with ``x = exp(slope*cp)``, ``W = exp(w)`` and ``w = slope*draw_width_cp``:
+
+        q = W(x^2 - 1) / [W x^2 + (1+W^2) x + W]
+        D = (W^2 - 1) x / [W x^2 + (1+W^2) x + W]
+
+    Dividing through by ``x`` and eliminating ``x + 1/x`` via
+    ``(x + 1/x)^2 - (x - 1/x)^2 = 4`` gives a relation with no ``x`` in it,
+
+        D^2 - 2*coth(w)*D + (1 - q^2) = 0   =>   D = coth(w) - sqrt(csch(w)^2 + q^2)
+
+    (the other root exceeds 1). ``cp`` has vanished: D is a function of the
+    searched q ALONE, which is the whole point -- the production construction
+    reads the net's own raw root draw output instead
+    (``_mcts_tree.c``, ``float d_raw = wdl_net[1]``).
+
+    Properties, all exact rather than approximate:
+      * ``D(0) = tanh(w/2)`` -- the cp-logistic's own draw mass at cp = 0
+        (0.34521 at production slope 0.006 / width 120).
+      * ``D(+-1) = 0`` exactly, since ``csch^2 + 1 = coth^2``.
+      * strictly decreasing in ``|q|`` (derivative ``-|q|/sqrt(csch^2+q^2)``).
+      * ``0.5*(1 - D +- q) >= 0`` on ``q in [-1, 1]``, so the triple is a valid
+        simplex point by construction rather than by a clamp -- which is the
+        second defect this mode removes: the production form clamps the searched
+        q to ``+-(1 - d_raw)``, capping the target's confidence on decisive rows
+        (measured 12.3% of the lowest-d_raw quartile).
+
+    ``slope`` and ``draw_width_cp`` MUST be the same knobs the SF component
+    uses (``sf_wdl_cp_slope`` / ``sf_wdl_cp_draw_width``); passing anything else
+    silently desynchronises the two halves of the blended value target.
+    """
+    if slope <= 0.0 or draw_width_cp <= 0.0:
+        # width 0 is legal for `cp_to_wdl` (a zero-width draw zone) but sends
+        # coth/csch to infinity here. Refuse rather than special-case a
+        # degenerate curve nobody asked for.
+        raise ValueError(
+            "parametric_draw_from_q requires slope>0 and draw_width_cp>0, got "
+            f"{slope=} {draw_width_cp=}",
+        )
+    w = float(slope) * float(draw_width_cp)
+    sh = math.sinh(w)
+    coth = math.cosh(w) / sh
+    csch = 1.0 / sh
+    qc = max(-1.0, min(1.0, float(q)))
+    d = coth - math.sqrt(csch * csch + qc * qc)
+    # Range guard on floating-point dust ONLY: in exact arithmetic
+    # 0 <= D <= 1 - |q| holds everywhere on [-1, 1] (both bounds proved above),
+    # and at |q| = 1 the two coincide at 0 -- where double rounding lands
+    # -2.2e-16. ⚑ This is NOT the production `d_raw` clamp reintroduced: that
+    # one bounds the searched q by a bound the NET chose (and binds on 12.3% of
+    # the lowest-d_raw quartile); this one bounds D by a function of the SAME q,
+    # so it cannot bind on any input the algebra admits.
+    return min(max(0.0, d), 1.0 - abs(qc))
+
+
+def q_to_wdl_parametric(q: float, *, slope: float, draw_width_cp: float) -> np.ndarray:
+    """``(W, D, L)`` built from the searched q alone -- no net-WDL input at all.
+
+    ``D = parametric_draw_from_q(q)``, ``W = 0.5*(1 - D + q)``,
+    ``L = 0.5*(1 - D - q)``. Sums to 1 identically and is non-negative on
+    ``q in [-1, 1]``; see ``parametric_draw_from_q`` for the derivation and for
+    why the q clamp there is a range guard, not the production d_raw clamp.
+    """
+    qc = max(-1.0, min(1.0, float(q)))
+    d = parametric_draw_from_q(qc, slope=slope, draw_width_cp=draw_width_cp)
+    rem = 1.0 - d
+    # `rem - w` rather than `0.5*(rem - q)` so the triple sums to `d + rem`
+    # exactly, matching the C twin and the shape of the net_raw branch it
+    # replaces. Multiplying by 0.5 is exact in binary floating point, so
+    # `w <= rem` and therefore `l >= 0` follow from `rem >= |q|`.
+    w = 0.5 * (rem + qc)
+    return np.array([w, d, rem - w], dtype=np.float32)
 
 
 def mate_to_effective_cp_array(mate_in: np.ndarray) -> np.ndarray:

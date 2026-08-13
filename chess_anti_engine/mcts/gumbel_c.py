@@ -189,7 +189,11 @@ def reset_duplicate_stats() -> None:
 # un-rebuilt .so still keys the transposition table on the ep-blind repetition
 # hash and copies donor child action lists unverified, which injects illegal
 # moves into the tree. That failure is SILENT, so it gets the loud guard.
-_REQUIRED_MCTS_ABI = 3
+# Raised to 4 for batch_process_ply's search_wdl draw-mode args: selfplay passes
+# them on EVERY ply, so a stale .so dies on the first ply of the first game with
+# a TypeError about argument counts. Loud, but not actionable — the marker makes
+# it say "rebuild" instead, at import, before any game starts.
+_REQUIRED_MCTS_ABI = 4
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
@@ -456,8 +460,9 @@ def run_gumbel_root_many_c(
     if _abi < _REQUIRED_MCTS_ABI:
         raise RuntimeError(
             f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
-            "(missing the start_gumbel_sims root-scale args and/or the audit-W1 "
-            "transposition-key fix); rebuild the C extension: "
+            "(missing the start_gumbel_sims root-scale args, the audit-W1 "
+            "transposition-key fix and/or batch_process_ply's search_wdl "
+            "draw-mode args); rebuild the C extension: "
             "python3 scripts/build_production_extensions.py"
         )
   # Operator surface for the audit-W1/W2 guards. Here rather than in a caller

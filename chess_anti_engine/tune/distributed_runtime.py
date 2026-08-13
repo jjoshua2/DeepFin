@@ -22,6 +22,7 @@ from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
+from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_NET_RAW
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.replay.shard import (
     IN_FLIGHT_DIR_NAME,
@@ -444,6 +445,13 @@ def build_recommended_worker(
         ),
         "sf_wdl_cp_draw_width": float(
             config.get("sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width)
+        ),
+  # The stored search_wdl target's draw channel. Default MUST stay at
+  # GameConfig.search_wdl_draw_mode: the two curve knobs above are the SAME
+  # ones this mode reads, so publishing one without the other is how the two
+  # halves of the blended value target would silently desynchronise.
+        "search_wdl_draw_mode": str(
+            config.get("search_wdl_draw_mode", SEARCH_WDL_DRAW_NET_RAW)
         ),
         "opponent_wdl_regret_limit": float(wdl_regret) if float(wdl_regret) >= 0.0 else None,
         "temperature": float(config.get("temperature", 1.0)),

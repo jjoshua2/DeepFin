@@ -181,6 +181,7 @@ _SELFPLAY_KEYS = (
     "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
     "sf_policy_score_mode", "sf_policy_cp_temp",
     "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+    "search_wdl_draw_mode",
     "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",
     "syzygy_adjudicate_fraction", "syzygy_in_search",
     "timeout_adjudication_threshold",

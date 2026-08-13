@@ -269,6 +269,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             sf_wdl_use_cp_logistic=tc.sf_wdl_use_cp_logistic,
             sf_wdl_cp_slope=tc.sf_wdl_cp_slope,
             sf_wdl_cp_draw_width=tc.sf_wdl_cp_draw_width,
+            search_wdl_draw_mode=tc.search_wdl_draw_mode,
             soft_policy_temp=tc.soft_policy_temp,
             timeout_adjudication_threshold=tc.timeout_adjudication_threshold,
             volatility_source=tc.volatility_source,
