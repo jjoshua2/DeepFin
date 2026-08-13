@@ -44860,3 +44860,24 @@ re-proven with a fleet-stopping payload: CI NEVER RE-RUNS WHEN THE BASE ADVANCES
 local merge-check saw it. Also filed: task #197 (DiskBackedReplayBuffer daemon prefetch
 thread survives its test and polluted an unrelated test's stdout at failed=5191 — the #409
 author correctly refused to paper over it).
+
+### Tier-13 A→B transition EXECUTED and VERIFIED (2026-08-13 04:40-05:20)
+
+Arm A COMPLETE at 100 iterations (policy_loss 0.9752→0.9031; the iters 43-60 airbag
+confound stands as recorded at 12383b045; final regret 0.0292/winrate 0.536). Banked:
+milestones 25/50/75/100 = checkpoint_0000{24,49,74,99} + params.json + final progress.csv
+under scratchpad/tier13/banked/arm_A_iter*/ (global_iters 915/940/965/990 — donor lineage
+890+N exact at all four); launch log preserved before the truncating start. Selfplay
+drained cleanly (3,043 in-flight suspended).
+
+Arm B (policy_embedding_mode: linear) LIVE: trial b2169, launched 04:40:53 by the frozen
+command. Launch verification: **28 PASS / 0 FAIL / 0 WAIT** by the mechanised checklist
+(scratchpad/tier13/verify_arm_launch.py, validated on arm A with a working negative
+control). Highlights: tolerant load missing == exactly the 2 `_orig_mod.policy_embedding.*`
+keys, nothing else; the f44a4fa10 splice print FIRED (first live use); the DECISIVE
+fingerprint — ckpt-0 opt step histogram {58: 2, 79919: 433}, groups [48,0,144,291], 483
+entries — proves the donor moments SPLICED, not reinitialized; all seven row-1 PID/scheduler
+anchors bitwise-equal to arm A row 1 (regret 0.02980343420776443, global_iter 891, peak_lr/
+opt_lr_final bitwise); manifest carries mode `linear` to workers; watchdog verified
+detect-only via /proc. Per the 12383b045 rule, NO heavy-CPU agent work runs during arm B.
+Next: milestones 25/50/75, transition to arm C at 100 (~18:00), then the frozen arenas.
