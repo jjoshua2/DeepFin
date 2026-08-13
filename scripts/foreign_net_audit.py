@@ -7,6 +7,10 @@ and a checkpoint mode. The cache schema and the report layout are unchanged and
 reads; only ``--out`` moved off the old ``runs/bt4_audit.md`` name, so pass it
 explicitly to keep writing there.
 
+Caches are written through :mod:`chess_anti_engine.eval.audit_cache`, so they
+carry a policy-map + audit-ruler provenance stamp and an EXISTING ``--cache-out``
+is refused before any forward pass unless ``--force-cache-out`` is given.
+
 ⚑ This script gathers the 1858 policy DIRECTLY (``_leela_idxs``), it does NOT go
 through :class:`chess_anti_engine.onnx.load.OnnxChessNet`. That is deliberate —
 it keeps the BT4 numbers on the code path that produced the banked cache — but it
@@ -62,7 +66,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +85,11 @@ from chess_anti_engine.eval.audit import (
     legal_full_indices,
     move_regrets,
     parse_audit_record,
+)
+from chess_anti_engine.eval.audit_cache import (
+    ensure_cache_writable,
+    stamp_summary,
+    write_audit_cache,
 )
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, POLICY_SIZE, move_to_index
 from chess_anti_engine.moves.leela_index import leela_index_for_move
@@ -297,6 +305,11 @@ def main() -> None:
                          "is not faulted; 0 forces CPU")
     ap.add_argument("--topk", type=int, default=5, help="policy moves cached per position")
     ap.add_argument("--cache-out", type=Path, default=Path("data/lc0/bt4_audit_cache.jsonl"))
+    ap.add_argument("--force-cache-out", action="store_true",
+                    help="allow --cache-out to overwrite an EXISTING cache. "
+                         "Without it an existing file is refused before any "
+                         "forward pass: every banked cache is a measurement "
+                         "something else joins against.")
     ap.add_argument("--out", type=Path, default=Path("runs/foreign_net_audit.md"))
     ap.add_argument("--max-positions", type=int, default=0)
     ap.add_argument("--input-format", choices=ONNX_INPUT_FORMATS,
@@ -319,6 +332,10 @@ def main() -> None:
                          "net: raw policy forward, no search, same ruler")
     ap.add_argument("--device", default="cpu", help="torch device for --checkpoint")
     args = ap.parse_args()
+
+    # BEFORE the audit set is parsed, before the ONNX session exists, and long
+    # before the forward pass: an unwanted clobber must cost zero compute.
+    ensure_cache_writable(args.cache_out, force=args.force_cache_out)
 
     positions = [parse_audit_record(ln) for ln in
                  args.audit_set.read_text().splitlines() if ln.strip()]
@@ -386,11 +403,13 @@ def main() -> None:
             "topk": [[legal_ucis[int(o)], round(float(p[int(o)]), 4)] for o in order],
         })
 
-    args.cache_out.parent.mkdir(parents=True, exist_ok=True)
-    with args.cache_out.open("w") as fh:
-        for r in cache_rows:
-            fh.write(json.dumps(r) + "\n")
-    print(f"[audit] cache → {args.cache_out} ({len(cache_rows)} rows)")
+    stamp = write_audit_cache(
+        args.cache_out, cache_rows, force=args.force_cache_out,
+        extra={"net": net_label, "audit_set": str(args.audit_set),
+               "rows": len(cache_rows), "topk": int(args.topk)},
+    )
+    print(f"[audit] cache → {args.cache_out} ({len(cache_rows)} rows) "
+          f"[{stamp_summary(stamp)}]")
 
     groups = (["overall", *PHASE_NAMES, *SOURCE_NAMES, *bucket_names])
     encoding_note = (
@@ -404,6 +423,7 @@ def main() -> None:
     lines = [f"# Frozen-audit-set policy regret @ {net_label}", "",
              f"- audit set: {args.audit_set} ({len(cache_rows)} scored)",
              f"- {encoding_note}",
+             f"- provenance: {stamp_summary(stamp)}",
              "", "| group | E[regret] cp | top-1 cp | n |", "|---|---|---|---|"]
     for g in groups:
         if g not in cnts:

@@ -14,6 +14,13 @@ Inputs (all keyed by position `key`):
   --net    data/audit_analysis/per_position_277.jsonl  (audit_targets --dump-per-position)
   --bt4    data/lc0/bt4_audit_cache.jsonl              (foreign_net_audit.py)
   --audit  data/audit_set_v1.jsonl                     (for the deep-SF bestmove)
+
+⚑ ``--bt4`` must be a PROVENANCE-STAMPED cache. Its `exp_regret` / `top1_regret` /
+`best_move` columns are only meaningful under the policy map and audit ruler that
+produced them, and the file records neither in its numbers — so this script
+validates the stamp before it opens any other input and REFUSES an unstamped or
+stale cache. It is not a warning: the pre-2026-08-13 banked cache made every BT4
+row this script ever printed wrong, and it looked completely normal.
 """
 from __future__ import annotations
 
@@ -30,6 +37,11 @@ from chess_anti_engine.eval.audit import (
     parse_audit_record,
     wdl_brier,
     wdl_ece,
+)
+from chess_anti_engine.eval.audit_cache import (
+    read_audit_cache_by_key,
+    read_audit_cache_stamp,
+    stamp_summary,
 )
 
 BUCKETS = list(CRITICALITY_BUCKET_NAMES)
@@ -56,8 +68,15 @@ def main() -> None:
     ap.add_argument("--audit", type=Path, default=Path("data/audit_set_v1.jsonl"))
     args = ap.parse_args()
 
+    # FIRST, before any input is opened: every BT4 column this script prints
+    # (`bt4_exp`, `bt4_top1`, `net_eq_bt4`, `bt4_eq_deep`) is a function of the
+    # policy map and the audit ruler the cache was written under, and neither is
+    # recoverable from the numbers. An unstamped or stale cache stops us here,
+    # at zero cost, instead of producing a plausible wrong table.
+    stamp = read_audit_cache_stamp(args.bt4)
+
     net = _load(args.net)
-    bt4 = _load(args.bt4)
+    bt4 = read_audit_cache_by_key(args.bt4)
     deep_best: dict[str, str | None] = {}
     deep_wdl: dict[str, tuple[float, float, float]] = {}
     for ln in args.audit.read_text().splitlines():
@@ -68,7 +87,8 @@ def main() -> None:
             deep_wdl[pos.key] = pos.deep_wdl
 
     keys = [k for k in net if k in bt4]
-    print(f"joined {len(keys)} positions (net∩bt4)\n")
+    print(f"joined {len(keys)} positions (net∩bt4)")
+    print(f"bt4 cache: {args.bt4} [{stamp_summary(stamp, ('net', 'policy_map_version', 'audit_ruler_version'))}]\n")
 
     # Per bucket: accumulate regret + agreement counters.
     acc: dict[str, dict[str, float]] = {}
