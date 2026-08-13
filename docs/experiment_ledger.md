@@ -45678,3 +45678,48 @@ wiring (at batch 1 it is a coin flip on a silent-wrongness axis) · `--out` stil
 `runs/bt4_audit.md` · `input_history_encoding` still declared `lc0_root` under `ceres_tpg` ·
 **`foreign_net_audit.py` does NOT use `OnnxChessNet`**, so the ladder never exercised the wrapper
 being shipped — materially changes what those numbers vouch for.
+
+---
+
+## 2026-08-13 — AUDIT SET v1 VERIFIED FIRST-HAND + the fix is a schema change, not retrograde analysis
+
+**Re-verified directly against `data/audit_set_v1.jsonl`** (not taken from the PR #414 reviewer):
+4000 rows; schema `['bestmove','depth','fen','key','multipv','nodes','phase','source','wdl']` —
+**no history field exists, so the format structurally CANNOT carry history.** Counts confirmed:
+**0/4000 history**, **556/4000 castling (13.9%)**. The reviewer's "0/600 castling" was the
+control-subset DRAW, not the set. Phase 1332/1335/1333 and source 2001/1999 are balanced.
+**⚑ NEW, not in the review: en-passant is set in only 5/4000 rows** — a third special-rule axis
+with effectively no coverage.
+
+**ROOT CAUSE (cheap):** `scripts/build_audit_set.py` sources from real replay rows whose planes
+carry all 8 history frames, decodes a board at :117, then stores only `"fen": board.fen()` at
+:125. **The history was present; the FEN reduction discards it.** ⇒ a v2 builder KEEPS what the
+source already holds. **No retrograde analysis, and the history is GENUINE** — a fabricated
+history would be worse than none, creating history-dependent signal corresponding to no real game.
+
+**Josh's separate point, correctly:** repeat-fill (`fill_lc0_history_repeat`, which replicates
+lc0's `encoder.cc: history[idx<0?0:idx]` and is already ours) fixes **STRENGTH, not DIAGNOSIS** —
+repeat-filled history is CONSTANT across the set, so an encoder bug in the history planes stays
+invisible. Two different problems; repeat-fill closes only the first.
+
+### ⚑ NEW EXPERIMENT DESIGNED (Josh): DO WE RELY ON HISTORY MORE OR LESS THAN THEY DO?
+Josh: *"we might find we cant use history as well as the other nets or maybe we rely on it a lot
+more."* Testable NOW, CPU-only, no training, and it must run on **replay rows (which carry real
+8-frame history), NOT on the audit set** — the audit set has no history to ablate, so it can only
+compare repeat-fill vs zero-fill, never against ground truth.
+
+Score each of {our net, BT4, C1-384-12, C1-512-15} three ways on the SAME replay rows:
+(a) real 8-frame history · (b) repeat-filled · (c) zero-filled. The **per-net delta (a)→(b) is
+that net's history reliance.**
+
+**⇒ THE PAYOFF IS A CONFOUND CHECK ON A NUMBER ALREADY QUOTED.** If our net relies on history
+MORE than theirs, then scoring everyone on a history-free set handicaps US specifically, and the
+**47.34 cp vs their ~22.6 placement is OVERSTATED**. If it relies LESS, we are leaving information
+on the table that they exploit. Both outcomes are decision-relevant; there is no null.
+
+⚑ Semantics differ and that is itself a reason reliance could differ: production is 175-plane
+`v2_threats` keeping **7 plies**, while lc0/Ceres count repetition over the WHOLE GAME.
+
+Sequencing: after Tier-13's arenas. A v2 audit set FREEZES on generation, so it is a new version
+and invalidates every existing audit number — including the 47.34 — and that invalidation should
+be deliberate, not mid-experiment [[a_ruler_change_must_invalidate_its_records]].
