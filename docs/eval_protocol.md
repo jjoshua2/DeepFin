@@ -123,12 +123,26 @@ commit `17eec774`); it is NOT in this repo.
 
 What was measured, on synthetic paired-opening data at known ratings:
 
-- **Ordo's point estimate matches ours.** On the same two-player games, Ordo's
-  rating difference and `arena_standard`'s pentanomial Elo agree to a mean of
-  +0.4 Elo (max 1.7 over 30 reps at 400 games). Reconstructing three BANKED
-  arena rows from their pentanomial counts reproduces the banked Elo to 0.04
-  Elo (+49.00 vs +48.96, +21.60 vs +21.57, −3.50 vs −3.47). Both estimators are
-  unbiased, so a MATERIAL gap between them is a bug, not a modelling choice.
+- **Ordo's point estimate matches ours.** On independently simulated
+  two-player games, Ordo's rating difference and `arena_standard`'s pentanomial
+  Elo agree to a mean of +0.4 Elo (max 1.7 over 30 reps at 400 games). Both
+  estimators are unbiased, so a MATERIAL gap between them is a bug, not a
+  modelling choice. This is the real agreement test — the games are fresh
+  draws, not derived from either estimator's output.
+- **⚑ The BANKED-row comparison is a check on `-z`, NOT an agreement test.**
+  Reconstructing three banked arena rows from their pentanomial counts
+  reproduces the banked Elo to 0.04 Elo (+49.00 vs +48.96, +21.60 vs +21.57,
+  −3.50 vs −3.47) — but that is close to tautological and must not be quoted as
+  independent corroboration. **Measured:** for two players with balanced
+  colours, Ordo's rating is a function of TOTAL SCORE alone — holding the score
+  at 0.57 and sweeping the draw fraction from 0.10 to 0.75 returns **exactly
+  49.00 every time**. Pentanomial Elo is likewise a function of total score, and
+  a pentanomial reconstruction preserves total score exactly, so the two must
+  agree whenever the SCALE is right. What the check therefore falsifies is the
+  scale constant, and it does that with ~10× margin: the same data reads
+  **+49.00 at `-z 200.2409` and +49.40 at Ordo's default `-z 202`**, against a
+  banked +48.96. It also means the DD/WL reconstruction ambiguity cannot move
+  the point estimate — the earlier caveat about it was over-cautious.
 - **Ordo cannot exploit our mirrored pairs.** Its entire per-game state is
   `{whiteplayer, blackplayer, score}` (`mytypes.h:90`), and `-s` is a
   PARAMETRIC Monte Carlo that regenerates every game independently from the
@@ -139,6 +153,17 @@ What was measured, on synthetic paired-opening data at known ratings:
   one.** 95% CI width, independent-games vs paired, as per-opening colour bias
   grows: 1.00 (0 Elo), 1.02 (60), 1.07 (120), 1.17 (200), 1.31 (300), 1.53
   (450). Production plays a UHO book, so this is not negligible.
+- **⚑ Read the PAIRWISE CONTRAST row, not the two per-player rows.** "Is A
+  better than B" is a contrast, and its interval is NOT recoverable from two
+  per-player intervals — the players' errors are correlated because they are
+  fitted jointly from overlapping games, and the sign of that correlation
+  depends on the anchoring. Measured on the same 1000-game 3-arm file:
+  under `--anchor armC` the per-player halfwidths are 25.5 / 0 / 23.6, under
+  pool-average anchoring they are 14.7 / 15.2 / 12.3 — **while the A−B contrast
+  is 20.3 and 20.4 respectively.** The contrast is invariant to the anchoring;
+  the per-player numbers are an artifact of a reporting choice, and under
+  pool-average anchoring they understate the contrast by ~2×. `ordo_pooled_fit`
+  prints the contrasts because that is the number a reader acts on.
 - **The fix is a pair-level block bootstrap**, which `ordo_pooled_fit.py` does:
   Ordo's joint fit for the point estimates, then resampling whole PAIRS,
   stratified by matchup and preserving each matchup's own pair count.
@@ -185,6 +210,15 @@ ALWAYS runs a completion-order-vs-outcome check and flags it (exit code 2);
 `--pgn-out` records `Plies` and `GameDurationSec` per game so the check has
 something to test. A promotion gate's apparent −26 Elo per publish was once
 exactly this artifact, worth ~+50 Elo in the other direction.
+
+**The guard's false-positive rate is corrected and MEASURED.** It runs two
+tests per matchup and ORs across matchups, so uncorrected it is a family of
+2×M tests at α=0.05. Measured on 400 true-null 3-arm datasets (outcomes drawn
+independently of completion order): **0.273 ± 0.022 uncorrected** — better than
+one clean fit in four told "do not read a verdict", which trains the operator
+to ignore it. With the Holm step-down correction now applied: **0.052 ± 0.011**
+against a nominal 0.05. Reproduce with `scratchpad/fpr_measure.py`, which calls
+the shipped `completion_bias_report` rather than a copy of it.
 
 ## Tracking table: holdout delta vs arena Elo
 

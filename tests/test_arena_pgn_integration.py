@@ -197,6 +197,43 @@ def test_book_opening_records_book_position_and_excludes_book_moves(
 
 
 @pytest.mark.usefixtures("scripted_moves")
+@pytest.mark.parametrize("rolling", [True, False])
+def test_game_decided_on_the_final_ply_is_written_decisive(rolling: bool) -> None:
+    # Fool's mate is exactly 4 plies. At max_plies=20 the loop re-tests and sees
+    # the mate; at max_plies=4 it never re-tests, so the game reached the
+    # sweep-up path. It must STILL be written 0-1, because that is how the
+    # pentanomial scored it. The chunked path used to blanket-override the
+    # sweep-up to a draw, making the PGN and the pentanomial disagree.
+    got: list[Emitted] = []
+    scores = _play(rolling, [chess.Board()], sink=_collect_sink(got), max_plies=4)
+    assert {g.result for g in got} == {"0-1"}
+    assert {g.termination for g in got} == {"rules"}
+    # Candidate is white in half 0 (loses) and black in half 1 (wins) -> 1.0.
+    assert scores == [1.0]
+
+
+@pytest.mark.usefixtures("scripted_moves")
+def test_final_ply_pgn_decisiveness_matches_the_board() -> None:
+    # ⚑ A PAIR-SUM comparison CANNOT test this, and an earlier version of this
+    # test was vacuous for exactly that reason: a mirrored {win, loss} and a
+    # {draw, draw} both sum to a pair score of 1.0. That is the same DD_WL
+    # degeneracy that makes the banked pentanomial reconstruction ambiguous —
+    # the pair score is not a function of the individual results.
+    #
+    # So assert at the GAME level: the count of decisive games in the PGN must
+    # equal the count the boards actually reached.
+    for max_plies in (4, 20):
+        got: list[Emitted] = []
+        _play(False, [chess.Board()], sink=_collect_sink(got),
+              max_plies=max_plies)
+        decisive = sum(1 for g in got if g.result != "1/2-1/2")
+        assert decisive == 2, (
+            f"both fool's-mate games are decisive; PGN reported {decisive} "
+            f"at {max_plies=}"
+        )
+
+
+@pytest.mark.usefixtures("scripted_moves")
 def test_chunked_pair_id_offset_keeps_pairs_globally_unique() -> None:
     # run_arena calls the chunked path once per chunk with a LOCAL opening list;
     # without the offset every chunk would restart PairId at 0 and the pooled

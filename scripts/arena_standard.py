@@ -798,12 +798,26 @@ def play_paired_games_matched_sims(
         ]
 
     game_scores = [_game_score(i) for i in range(g)]
-    # Games still running at max_plies are SCORED 0.5 above, so they must be
-    # WRITTEN as draws. Emitting "*" instead would be silently lossy: Ordo maps
-    # "*" to DISCARD (pgnget.c) and drops the game, so the pooled fit would run
-    # on a different population than the pentanomial summary it is compared to.
+    # Sweep up whatever the ply loop did not already emit. Two DIFFERENT cases
+    # live here and conflating them corrupts the file:
+    #
+    #  * genuinely unfinished ("*"): SCORED 0.5 above, so it must be WRITTEN as
+    #    a draw. Emitting "*" would be silently lossy — Ordo maps it to DISCARD
+    #    (pgnget.c) and drops the game, so the pooled fit would run on a
+    #    different population than the pentanomial summary it is compared to.
+    #  * DECISIVE on the very last ply: the loop tests for game-over at the TOP
+    #    of each iteration, so a game that ends on the move played at ply
+    #    max_plies-1 is never re-tested and reaches here undelivered. It has a
+    #    real result and `_game_score` already counted it as a win/loss —
+    #    blanket-overriding it to a draw made the PGN disagree with the
+    #    pentanomial, which is the exact cross-check the agreement claim rests
+    #    on. Rolling never had this because it reaps before refilling.
     for i in range(g):
-        _emit(i, "max_plies", result_override="1/2-1/2")
+        res = adjudicated[i] or boards[i].result(claim_draw=True)
+        if res == "*":
+            _emit(i, "max_plies", result_override="1/2-1/2")
+        else:
+            _emit(i, "rules")
     return game_scores_to_pair_scores(game_scores)
 
 

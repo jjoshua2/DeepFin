@@ -242,26 +242,71 @@ def spearman(xs: list[float], ys: list[float]) -> float:
     return 0.0 if dx == 0 or dy == 0 or n < 3 else num / (dx * dy)
 
 
+def holm_reject(pvalues: list[float], alpha: float = 0.05) -> list[bool]:
+    """Holm-Bonferroni step-down. Returns a reject mask aligned with input.
+
+    Needed because this diagnostic runs TWO tests per matchup and ORs them
+    across every matchup. Uncorrected that is a family of 2*M tests at
+    alpha=0.05 each: for the intended 3-arm round robin, M=3 gives a family-wise
+    false-positive rate of 1-(0.95)**6 = 26.5%, i.e. more than one CLEAN fit in
+    four would be told "do not read a verdict". A guard that cries wolf a
+    quarter of the time trains the operator to ignore it, and an ignored guard
+    is not a guard.
+
+    Holm rather than plain Bonferroni because it is uniformly more powerful at
+    the same family-wise rate, and power matters here: the guard is protecting
+    against a real bias we would very much like to detect.
+    """
+    m = len(pvalues)
+    if m == 0:
+        return []
+    order = sorted(range(m), key=lambda i: pvalues[i])
+    reject = [False] * m
+    for rank, idx in enumerate(order):
+        if pvalues[idx] <= alpha / (m - rank):
+            reject[idx] = True
+        else:
+            break  # step-down: once one fails, all larger p-values stand
+    return reject
+
+
 def completion_bias_report(
     by_matchup: dict[tuple[str, str], list[Pair]], *, rng: random.Random,
-    n_perm: int = 2000,
+    n_perm: int = 2000, alpha: float = 0.05,
 ) -> bool:
     """Does completion ORDER correlate with pair OUTCOME within a matchup?
 
-    Returns True if any matchup trips the flag. This is the check that a
-    bootstrap CANNOT substitute for: resampling the pairs you have cannot tell
-    you that the pairs you are MISSING are different.
+    Returns True if any matchup trips the flag AFTER a Holm correction over the
+    whole family of tests. This is the check that a bootstrap CANNOT substitute
+    for: resampling the pairs you have cannot tell you that the pairs you are
+    MISSING are different.
+
+    MEASURED false-positive rate on true-null data (pair outcomes drawn
+    independently of completion order), 400 datasets of a 3-arm round robin,
+    n_perm=1000: **0.052 +- 0.011, against a nominal 0.05**. The SAME harness
+    measures the uncorrected rate at **0.273 +- 0.022** — i.e. better than one
+    clean fit in four was previously being told "do not read a verdict".
+    Reproduce with ``scratchpad/fpr_measure.py`` (it calls THIS function, not a
+    reimplementation of it).
+
+    Permutation resolution is adequate for the correction: with n_perm=2000 the
+    smallest attainable p-value is 1/2001 = 0.0005, comfortably below Holm's
+    strictest threshold of alpha/(2*M) = 0.0083 at M=3, so a real effect can
+    still be detected.
     """
     print("\n=== informative-missingness diagnostic ===")
     print("  (completion order vs pair decisiveness; a partial matchup's "
           "completed pairs are its FAST pairs)")
-    flagged = False
     counts = {m: len(ps) for m, ps in by_matchup.items()}
     if len(set(counts.values())) > 1:
         print(f"  UNEQUAL pair counts across matchups: "
               f"{ {'-'.join(m): n for m, n in counts.items()} }")
         print("  -> the fit is only unbiased if completion is INDEPENDENT of "
               "outcome. Checking that now.")
+    # Collect the WHOLE family first, correct once, then report. Deciding per
+    # matchup as we go is what made this a 2*M-test OR at alpha each.
+    rows: list[tuple[tuple[str, str], int, float, float, float, float, str]] = []
+    pvalues: list[float] = []
     for matchup, pairs in sorted(by_matchup.items()):
         complete = [p for p in pairs if p.complete]
         if len(complete) < 8:
@@ -296,12 +341,21 @@ def completion_bias_report(
             ply_note = (f"  plies first/last half: "
                         f"{statistics.fmean(plies[:half]):.0f}/"
                         f"{statistics.fmean(plies[half:]):.0f}")
-        bad = p_d < 0.05 or p_s < 0.05
-        flagged |= bad
-        print(f"  {'-'.join(matchup):40s} n={len(complete):4d} "
+        rows.append((matchup, len(complete), rho_d, p_d, rho_s, p_s, ply_note))
+        pvalues += [p_d, p_s]
+
+    reject = holm_reject(pvalues, alpha=alpha)
+    flagged = any(reject)
+    for i, (matchup, n, rho_d, p_d, rho_s, p_s, ply_note) in enumerate(rows):
+        bad = reject[2 * i] or reject[2 * i + 1]
+        print(f"  {'-'.join(matchup):40s} n={n:4d} "
               f"rho(order,decisive)={rho_d:+.3f} p={p_d:.3f}  "
               f"rho(order,score)={rho_s:+.3f} p={p_s:.3f}"
               f"{'  <-- FLAG' if bad else ''}{ply_note}")
+    if pvalues:
+        print(f"  ({len(pvalues)} tests, Holm-corrected at family-wise "
+              f"alpha={alpha}; measured false-positive rate 0.052+-0.011 on "
+              f"true-null 3-arm data, vs 0.273+-0.022 uncorrected)")
     if flagged:
         print("  ⚑ FLAGGED: completion order predicts outcome. The point "
               "estimate may be biased by WHICH pairs finished, and no bootstrap "
@@ -317,17 +371,24 @@ def block_bootstrap(
     ordo: Path, by_matchup: dict[tuple[str, str], list[Pair]], *,
     reps: int, anchor: str | None, rng: random.Random, tmp: Path,
     unit: str = "pair",
-) -> dict[str, list[float]]:
+) -> list[dict[str, float]]:
     """Resample WITHIN each matchup to that matchup's own count.
 
     ``unit='pair'`` resamples whole pairs (correct: keeps the mirrored games
     together). ``unit='game'`` resamples individual games and exists only to
     SHOW the difference the pairing makes.
+
+    Returns ONE DICT PER REPLICATION, not per-player lists: the players'
+    ratings within a replication have to stay together for a contrast CI to be
+    computable at all.
     """
-    samples: dict[str, list[float]] = defaultdict(list)
+    replications: list[dict[str, float]] = []
     for _ in range(reps):
         drawn: list[Game] = []
         for pairs in by_matchup.values():
+            # Draw to THIS matchup's own count, from THIS matchup's blocks only.
+            # Pooling the draw across matchups would resample the DESIGN (the
+            # relative game counts between matchups), not the data.
             if unit == "pair":
                 for _ in range(len(pairs)):
                     drawn.extend(rng.choice(pairs).games)
@@ -338,9 +399,32 @@ def block_bootstrap(
         est = run_ordo(ordo, tmp / "boot.pgn", tmp / "boot.txt", anchor=anchor)
         if est is None:
             continue
-        for name, (rating, _) in est.items():
-            samples[name].append(rating)
-    return samples
+        # One dict per replication, kept WHOLE. Flattening to per-player lists
+        # here is what threw away the pairing between players within a
+        # replication -- and that pairing is the entire reason a contrast CI is
+        # computable at all.
+        replications.append({name: rating for name, (rating, _) in est.items()})
+    return replications
+
+
+def player_samples(replications: list[dict[str, float]], name: str) -> list[float]:
+    return [r[name] for r in replications if name in r]
+
+
+def contrast_samples(
+    replications: list[dict[str, float]], a: str, b: str,
+) -> list[float]:
+    """Bootstrap distribution of the A-B rating DIFFERENCE.
+
+    Differencing WITHIN a replication is the point. Two per-player intervals
+    against the pool average do not give the interval on their difference:
+    the players' errors are strongly correlated (they are fitted jointly from
+    overlapping games), so subtracting the endpoints is wrong in both
+    directions and there is no scalar correction. The paired difference is the
+    only quantity that answers "is A better than B", which is what every reader
+    of this tool is actually asking.
+    """
+    return [r[a] - r[b] for r in replications if a in r and b in r]
 
 
 def pct(vals: list[float], q: float) -> float:
@@ -409,7 +493,7 @@ def main() -> int:
           f"by matchup, each to its own count) ===")
     boot = block_bootstrap(args.ordo, by_matchup, reps=args.bootstrap,
                            anchor=args.anchor, rng=rng, tmp=tmp, unit="pair")
-    game_boot: dict[str, list[float]] = {}
+    game_boot: list[dict[str, float]] = []
     if args.also_game_bootstrap:
         game_boot = block_bootstrap(args.ordo, by_matchup, reps=args.bootstrap,
                                     anchor=args.anchor, rng=rng, tmp=tmp,
@@ -421,13 +505,13 @@ def main() -> int:
     hdr += f" {'ordo -s hw':>11s}"
     print(hdr)
     for name in sorted(point, key=lambda n: -point[n][0]):
-        vals = boot.get(name, [])
+        vals = player_samples(boot, name)
         lo, hi = pct(vals, 0.025), pct(vals, 0.975)
         hw = (hi - lo) / 2
         line = (f"  {name:40s} {point[name][0]:+8.1f} "
                 f"[{lo:+8.1f},{hi:+8.1f}] {hw:7.1f}")
         if game_boot:
-            gv = game_boot.get(name, [])
+            gv = player_samples(game_boot, name)
             ghw = (pct(gv, 0.975) - pct(gv, 0.025)) / 2
             ratio = ghw / hw if hw > 0 else float("nan")
             line += f" {ghw:13.1f} {ratio:6.3f}"
@@ -436,6 +520,25 @@ def main() -> int:
     if game_boot:
         print("  ratio = naive-per-game width / pair-block width. >1 means the "
               "mirrored pairing is doing real work on THIS book.")
+
+    # THE number a reader acts on. Per-player rows above are against the pool
+    # average / anchor; "is A better than B" is a CONTRAST, and its interval is
+    # not recoverable from two per-player intervals.
+    print("\n=== pairwise contrasts (paired within bootstrap replication) ===")
+    print(f"  {'contrast':44s} {'delta':>8s} {'95% CI':>22s} {'hw':>7s} "
+          f"{'P(A>B)':>7s}")
+    names = sorted(point, key=lambda n: -point[n][0])
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            vals = contrast_samples(boot, a, b)
+            if not vals:
+                continue
+            lo, hi = pct(vals, 0.025), pct(vals, 0.975)
+            delta = point[a][0] - point[b][0]
+            p_sup = sum(1 for v in vals if v > 0) / len(vals)
+            sig = "" if lo <= 0.0 <= hi else "  <-- excludes 0"
+            print(f"  {a + ' - ' + b:44s} {delta:+8.1f} "
+                  f"[{lo:+8.1f},{hi:+8.1f}] {(hi - lo) / 2:7.1f} {p_sup:7.3f}{sig}")
 
     print("\n⚑ These intervals are correct CONDITIONAL on the pair counts in "
           "hand. Refitting as games arrive is legitimate VISIBILITY; reading a "
