@@ -14,7 +14,7 @@ import secrets
 import socket
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -63,6 +63,26 @@ def _compacted_token_suffix(flush_token: str) -> str:
     samples (duplicates in replay).
     """
     return f"_{flush_token}{LOCAL_SHARD_SUFFIX}"
+
+
+def _iter_compacted_token_matches(compacted_dir: Path, flush_token: str) -> Iterator[Path]:
+    """Every entry in ``compacted_dir`` whose name carries ``flush_token``.
+
+    Both the committed shard and the abandoned ``._tmp_*`` of a crashed write
+    match, because the temp name is a prefixed copy of the final one --
+    separating the two is the CALLER's job and the whole point of routing both
+    through one iterator: a witness that forgets the distinction deletes the
+    inputs it was checking on behalf of. Callers must filter with
+    :func:`is_tmp_shard_name`.
+    """
+    try:
+        entries = list(compacted_dir.iterdir())
+    except OSError:
+        return
+    suffix = _compacted_token_suffix(flush_token)
+    for entry in entries:
+        if entry.name.endswith(suffix):
+            yield entry
 
 
 # One-shot rearm request written by the trainable only when opening a selfplay
@@ -183,6 +203,43 @@ def _consume_rearm_file(
 
 _LOCK_HOST = socket.gethostname()
 
+# A real lease-assign lock is ~120 bytes of JSON. The cap only bounds a corrupt
+# or hostile file; a truncated read decodes as invalid JSON and is judged on
+# age, which is the same path an unreadable holder already takes.
+_LOCK_READ_MAX_BYTES = 1 << 20
+
+# Name infix for a steal's claim file: the `O_EXCL` marker a stealer creates to
+# win the exclusive right to remove one specific stale lock. Distinctive so the
+# sweep for claims abandoned by a crashed stealer cannot match anything else
+# sharing the lock's directory.
+_LOCK_CLAIM_INFIX = ".stale-"
+
+
+class _LockSnapshot(NamedTuple):
+    """One lock file's content and identity, read through the same descriptor.
+
+    Carrying them together is the point: a staleness verdict is about a
+    specific file, and the steal that acts on that verdict has to be able to
+    prove it is still acting on THAT file and not on whatever the name now
+    resolves to. ``identity``/``st`` are None only when the file could not be
+    opened at all.
+
+    ⚑ ``identity`` IS NOT ``(st_dev, st_ino)`` ALONE, AND THAT IS MEASURED, NOT
+    theoretical. ext4 and tmpfs hand the just-freed inode number straight back
+    to the next create in the same directory, so a successor's brand-new lock
+    routinely lands on the SAME (dev, ino) as the stale lock it replaced. An
+    inode-only identity check therefore reports "unchanged" for exactly the
+    substitution it exists to catch: with (dev, ino) only, the multi-waiter
+    race still peaked at 5 threads in the critical section. The owner token is
+    the discriminator that actually holds -- it is fresh random per acquisition
+    -- with mtime/size behind it for legacy tokenless lock files, whose bytes
+    predate the token field entirely. A rename preserves every component.
+    """
+
+    holder: dict[str, Any]
+    identity: tuple[Any, ...] | None
+    st: os.stat_result | None
+
 
 class _LeaseAssignBusy(RuntimeError):
     """The lease-assign lock is held by a live holder and did not free up.
@@ -264,26 +321,80 @@ class _LeaseAssignLock:
         # one process must not be able to release each other.
         self._token = secrets.token_hex(8)
 
-    def _read_holder(self) -> dict[str, Any]:
-        """The lock file's contents, or {} if it has none we can use.
+    def _snapshot(self, path: Path | None = None) -> _LockSnapshot:
+        """Read the lock's CONTENT and IDENTITY through ONE file description.
+
+        ⚑ THE TWO MUST COME FROM THE SAME OPEN FILE, or the steal below has
+        nothing to be conditional on. Judging staleness from one `read_text`
+        and then acting on whatever the NAME resolves to later is the TOCTOU
+        this class was measured failing (issue #417): with a crashed holder,
+        16 threads all read the same stale file, all concluded "steal", each
+        unlinked whatever happened to be present -- including a SUCCESSOR's
+        brand-new lock -- and all 16 then won their own `O_EXCL` create. Peak
+        8 threads inside the critical section, 640/640 waiters admitted, zero
+        busy refusals, and two workers assigned to one trial while another was
+        starved to zero.
+
+        `(st_dev, st_ino)` from `fstat` on the fd we actually read names the
+        exact file whose bytes justified the steal, and `st` carries the mtime
+        so the age fallback in `_lock_age` cannot silently re-stat a DIFFERENT
+        file than the one it is dating.
 
         A legacy pre-fix lock file held `f"{pid}\n"`, which is valid JSON and
         decodes to an int, so it lands in the `{}` branch below and is judged
         on file age. There is deliberately no `JSONDecodeError` special case
         for it: an earlier revision of this method had one and it was DEAD --
         the decode it claimed to rescue never fails.
-        """
-        try:
-            raw = self.path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return {}
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        return data if isinstance(data, dict) else {}
 
-    def _lock_age(self, holder: dict[str, Any], now: float) -> tuple[float, str] | None:
+        The read is bounded. A real lock is ~120 bytes; anything past the cap
+        is corruption, and truncating it yields invalid JSON, which routes to
+        the same age-based judgement an unreadable holder already gets.
+        """
+        target = self.path if path is None else path
+        try:
+            fd = os.open(str(target), os.O_RDONLY)
+        except OSError:
+            return _LockSnapshot({}, None, None)
+        try:
+            st = os.fstat(fd)
+            chunks: list[bytes] = []
+            remaining = _LOCK_READ_MAX_BYTES
+            while remaining > 0:
+                chunk = os.read(fd, min(remaining, 65536))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        except OSError:
+            return _LockSnapshot({}, None, None)
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        try:
+            decoded = json.loads(b"".join(chunks).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            decoded = None
+        holder: dict[str, Any] = decoded if isinstance(decoded, dict) else {}
+        token = holder.get("token")
+        identity = (
+            st.st_dev,
+            st.st_ino,
+            st.st_mtime_ns,
+            st.st_size,
+            token if isinstance(token, str) else None,
+        )
+        return _LockSnapshot(holder, identity, st)
+
+    def _read_holder(self) -> dict[str, Any]:
+        """The lock file's contents, or {} if it has none we can use."""
+        return self._snapshot().holder
+
+    def _lock_age(
+        self,
+        holder: dict[str, Any],
+        now: float,
+        st: os.stat_result | None = None,
+    ) -> tuple[float, str] | None:
         """Seconds since the lock was taken, and where the clock came from.
 
         ⚑ THE AGE TEST IS THE ONLY BACKSTOP THE STALENESS CHECK HAS, so it must
@@ -322,15 +433,30 @@ class _LeaseAssignLock:
                 stamp = math.nan
             if math.isfinite(stamp) and stamp <= now:
                 return now - stamp, "created_at_unix"
+        # ``st`` is the fstat of the file we actually read, when the caller has
+        # one. Falling back to a fresh stat-by-name is only for callers that
+        # judge a holder dict on its own (the direct unit test); on the steal
+        # path it would re-introduce the split between "the file I judged" and
+        # "the file at this name now".
+        if st is not None:
+            return max(0.0, now - st.st_mtime), "file mtime"
         try:
             return max(0.0, now - self.path.stat().st_mtime), "file mtime"
         except OSError:
             return None
 
-    def _staleness_reason(self, now: float) -> str | None:
-        """Why the existing lock may be taken, or None if it may not be."""
-        holder = self._read_holder()
-        aged = self._lock_age(holder, now)
+    def _staleness_reason(
+        self, now: float, snapshot: _LockSnapshot | None = None,
+    ) -> str | None:
+        """Why the existing lock may be taken, or None if it may not be.
+
+        ``snapshot`` is the content+identity pair the caller intends to act on.
+        Passing it is what makes the verdict attributable to a specific file
+        rather than to a name.
+        """
+        snap = self._snapshot() if snapshot is None else snapshot
+        holder = snap.holder
+        aged = self._lock_age(holder, now, snap.st)
         age_txt = "unknown" if aged is None else f"{aged[0]:.1f}s"
         pid = holder.get("pid")
         if isinstance(pid, int) and pid > 0 and holder.get("host") in (None, _LOCK_HOST):
@@ -350,6 +476,162 @@ class _LeaseAssignLock:
             )
         return None
 
+    def _sweep_abandoned_claims(self, now: float) -> None:
+        """Drop `.stale-*` claim files left by a process that died mid-steal.
+
+        ⚑ THIS SWEEP IS LOAD-BEARING, NOT TIDINESS. The claim name is derived
+        from the judged file, so a claim abandoned by a crashed stealer would
+        otherwise block EVERY future steal of that lock: each waiter computes
+        the same name, hits EEXIST forever, and the lease route stays 503 until
+        someone clears it by hand -- a permanent outage triggered by exactly
+        the crash this class exists to recover from. Age-gating on
+        `stale_after_s` bounds that to one staleness window.
+
+        ⚑ AGE IS A GUESS, NOT A LIVENESS TEST, AND THIS SWEEP CAN DELETE A
+        LIVE STEALER'S CLAIM. A claim is normally created and consumed within
+        three syscalls, so in practice only a crashed stealer's claim ages
+        out -- but "in practice" is not "cannot", and a stealer descheduled
+        past `stale_after_s` between those statements is swept exactly like a
+        dead one. A second stealer then wins the same claim name and both run
+        `_steal`'s final window; see the residual note there, which an
+        independent reviewer reproduced 3/3 (with a DEAD holder, via this
+        path, at `stale_after_s = 0.3`).
+
+        Do NOT "fix" that by gating the sweep on stealer-pid liveness: a
+        recycled pid would then keep the claim forever and wedge every future
+        steal of this lock permanently, which is strictly worse than a window
+        that self-heals in `stale_after_s`.
+
+        Best effort throughout: failing to remove litter must never fail an
+        acquisition.
+        """
+        with contextlib.suppress(OSError):
+            for claim in self.path.parent.glob(f"{self.path.name}{_LOCK_CLAIM_INFIX}*"):
+                with contextlib.suppress(OSError):
+                    if now - claim.stat().st_mtime > self.stale_after_s:
+                        claim.unlink(missing_ok=True)
+
+    def _claim_path(self, identity: tuple[Any, ...]) -> Path:
+        """Claim name for the steal of ONE specific judged file.
+
+        Derived from the identity, so every waiter that judged the same file
+        computes the same name and exactly one of them can create it -- and a
+        waiter that judged a DIFFERENT file (a successor) computes a different
+        name and cannot collide with an in-progress steal. Hashed rather than
+        interpolated because the identity contains a token read out of a file
+        an operator may have hand-edited, and a lock's own contents must never
+        be able to steer a path.
+        """
+        digest = hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()[:16]
+        return self.path.with_name(f"{self.path.name}{_LOCK_CLAIM_INFIX}{digest}")
+
+    def _steal(self, identity: tuple[Any, ...], reason: str) -> bool:
+        """Remove the stale lock, but ONLY the exact file that was judged.
+
+        True means we removed that file; False means re-judge and try again.
+
+        ⚑ THE STEAL MUST BE EXCLUSIVE, NOT MERELY GUARDED. `unlink` +
+        `O_EXCL` create is two steps, and #417 is what that costs: every one
+        of 16 waiters judged the same stale file, every unlink succeeded, so
+        every `O_EXCL` create succeeded too -- 640/640 admitted, peak 8 inside
+        the critical section, two workers onto one trial and a third trial
+        starved to zero.
+
+        The claim is one `O_EXCL` create of a name DERIVED FROM THE JUDGED
+        FILE, which is what makes the steal conditional on identity:
+
+        * Every waiter that judged this same file computes the same claim
+          name, so exactly one of them can create it. The losers touch
+          nothing -- that is the property the old unconditional unlink could
+          not have, no matter how carefully it was guarded.
+        * A waiter that judged a DIFFERENT file (a successor's fresh lock)
+          computes a DIFFERENT name, so it can never collide with, or be
+          blocked by, an unrelated steal.
+        * Holding the claim, we re-read the lock and require it to still be
+          the judged file before unlinking it. A waiter whose judgement went
+          stale in the meantime finds a mismatch and removes nothing.
+
+        ⚑ Identity is NOT `(st_dev, st_ino)`, and that is measured: ext4 and
+        tmpfs recycle the freed inode number straight into the successor's
+        lock, so an inode-only check reports "unchanged" for exactly the
+        substitution it exists to catch -- with it, the race still peaked at
+        5 concurrent holders. The owner token is the discriminator.
+
+        Filesystem assumptions, deliberately the weakest available because
+        this ships to volunteer machines as well as the WSL2/ext4 host: only
+        `O_CREAT|O_EXCL` atomicity, which is the same primitive the lock
+        itself is built on. An earlier draft claimed with `link(2)` and fell
+        back to a rename where hardlinks are missing; the fallback measured
+        WEAKER than the claim it stood in for (its ABA repair leaves the name
+        briefly free, and the multi-waiter test caught it admitting more than
+        one holder), so both the hardlink dependency and the second code path
+        are gone rather than shipped untrustworthy.
+
+        ⚑ RESIDUAL, AND IT IS **NOT** GATED ON THE HOLDER BEING ALIVE. An
+        earlier revision of this docstring claimed a dead holder could not
+        reach it. That was wrong, and wrong in the reassuring direction: an
+        independent reviewer reproduced it 3/3 WITH A DEAD HOLDER. The route
+        in is `_sweep_abandoned_claims`, which cannot tell a stealer that
+        CRASHED from one that is merely SLOW -- so it can delete a live
+        stealer's claim, after which a second stealer wins the same claim name
+        and both run the window between the identity re-check and the
+        `unlink`. That is the same live-vs-crashed guessing this class was
+        fixed to stop doing, reintroduced one level down on the claim file.
+
+        The real precondition is a SCHEDULING one: a stealer must be
+        descheduled for longer than `stale_after_s` BETWEEN TWO ADJACENT
+        STATEMENTS (its claim create and its re-check/unlink). At the
+        production default (`stale_after_s = 10 * timeout_s = 100s`) that is a
+        >100s stall between adjacent statements; the reviewer only reached it
+        with an injected park and `stale_after_s = 0.3`. So the bound to quote
+        is `stale_after_s`, never "the holder is dead".
+
+        Kept deliberately, because both alternatives are worse and neither is
+        a smaller window -- they are different failure modes:
+        * Gating the sweep on stealer-pid liveness turns a RECYCLED pid into a
+          permanent wedge: the claim is never swept, every future steal of
+          that lock hits EEXIST forever, and the lease route stays 503 until
+          someone clears it by hand.
+        * Dropping the sweep makes a stealer that really did crash the same
+          permanent wedge, unconditionally.
+        A bounded window that self-heals in `stale_after_s` beats an unbounded
+        outage, so this is a chosen trade, not an oversight.
+        """
+        claim_path = self._claim_path(identity)
+        try:
+            claim = os.open(str(claim_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False  # another waiter already owns the steal of this file
+        except OSError:
+            return False
+        try:
+            # Contents are for a human reading a leftover claim; nothing reads
+            # them back, so a failed write must not fail the steal.
+            os.write(claim, json.dumps({
+                "stealer_pid": os.getpid(),
+                "stealer_token": self._token,
+                "claimed_at_unix": time.time(),
+            }).encode("utf-8"))
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(claim)
+        try:
+            if self._snapshot().identity != identity:
+                # No longer the file we judged: a successor is already
+                # published, and it is not ours to remove.
+                return False
+            try:
+                os.unlink(str(self.path))
+            except OSError:
+                return False
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(str(claim_path))
+        _log.warning("stealing stale lease-assign lock %s: %s", self.path, reason)
+        return True
+
     def __enter__(self) -> _LeaseAssignLock:
         deadline = time.time() + self.timeout_s
         while True:
@@ -366,13 +648,36 @@ class _LeaseAssignLock:
                 return self
             except FileExistsError as exists_exc:
                 now = time.time()
-                reason = self._staleness_reason(now)
+                snapshot = self._snapshot()
+                reason = self._staleness_reason(now, snapshot)
                 if reason is not None:
-                    _log.warning(
-                        "stealing stale lease-assign lock %s: %s", self.path, reason,
-                    )
-                    with contextlib.suppress(OSError):
-                        self.path.unlink(missing_ok=True)
+                    if snapshot.identity is None:
+                        # It vanished between the failed create and the read.
+                        # Retry the create; the brief sleep keeps a flapping
+                        # file from turning this into a hot loop.
+                        time.sleep(0.001)
+                        continue
+                    self._sweep_abandoned_claims(now)
+                    if self._steal(snapshot.identity, reason):
+                        continue
+                    # Lost the claim, or the file is no longer the one we
+                    # judged. DO NOT fall through to the create: re-read and
+                    # re-judge, because the winner's fresh lock is not stale.
+                    #
+                    # ⚑ AND THE DEADLINE APPLIES HERE. `main` could `continue`
+                    # unconditionally because its steal could not fail; a claim
+                    # that CAN fail turns the same `continue` into an infinite
+                    # loop -- a caller spinning forever on a lock that a crashed
+                    # stealer's claim file is holding closed, with no 503 and no
+                    # threadpool token ever returned. Caught by the fresh-claim
+                    # test, which hung instead of failing until this landed.
+                    if time.time() >= deadline:
+                        raise _LeaseAssignBusy(
+                            f"lease assignment is busy: {self.path} is stale "
+                            f"({reason}) but the steal could not be claimed "
+                            f"within {self.timeout_s:.1f}s"
+                        ) from exists_exc
+                    time.sleep(0.005)
                     continue
                 if now >= deadline:
                     raise _LeaseAssignBusy(
@@ -4888,10 +5193,39 @@ def create_app(
             if not token_dir.is_dir():
                 continue
             token = token_dir.name
-            committed = compacted_dir.is_dir() and any(
-                p.name.endswith(_compacted_token_suffix(token))
-                for p in compacted_dir.iterdir()
+            # ⚑ THE COMMIT WITNESS MUST EXCLUDE THE ATOMIC-WRITE TEMP.
+            # ``save_local_shard_arrays`` writes to
+            # ``._tmp_<pid>_<hex>_<final name>`` and commits with a rename, so
+            # the temp name is a PREFIXED COPY of the final name and therefore
+            # ALSO ends with ``_<token>.zarr``. Without this filter a crash
+            # between ``zarr.open_group(tmp, "w")`` and ``tmp.rename(final)``
+            # leaves a partial temp that the next boot reads as proof of
+            # commit -- and ``delete_shard_path(token_dir)`` below then erases
+            # the only durable copy of the inputs. Measured: 0 of 2 positions
+            # survived, against 2 for both a clean flush and a crash before
+            # the merge write.
+            abandoned_tmps = [
+                p for p in _iter_compacted_token_matches(compacted_dir, token)
+                if is_tmp_shard_name(p.name)
+            ]
+            committed = any(
+                not is_tmp_shard_name(p.name)
+                for p in _iter_compacted_token_matches(compacted_dir, token)
             )
+            # Either way this token's flush is over: a committed one renamed
+            # its temp away, and an uncommitted one is about to be re-seeded
+            # from ``_pending`` under a NEW token, so nothing will ever finish
+            # this write. Drop the partial rather than leave a zarr in
+            # ``_compacted/`` that loads with ``KeyError`` and that no other
+            # code path ever cleans up. Best effort: a failure here is litter,
+            # not data loss, and must not abort the recovery of the inputs.
+            for tmp_entry in abandoned_tmps:
+                try:
+                    delete_shard_path(tmp_entry)
+                except Exception:
+                    log.exception(
+                        "failed to remove abandoned compaction temp %s", tmp_entry,
+                    )
             if committed:
                 # Compacted shard exists for this token → samples already
                 # durable. Backfill upload-sha dedupe keys before cleanup so
@@ -4916,6 +5250,12 @@ def create_app(
             restore_failed = False
             for entry in sorted(token_dir.iterdir()):
                 if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
+                    continue
+                # A ``._tmp_*`` staged in here is a partial write, not a shard.
+                # ``_scan_pending_dir`` filters it, so restoring it would park
+                # unreadable litter in ``_pending`` that nothing ever removes;
+                # leaving it in the token dir lets the delete below reclaim it.
+                if is_tmp_shard_name(entry.name):
                     continue
                 try:
                     entry.replace(pending_dir / entry.name)
