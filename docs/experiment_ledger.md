@@ -46608,3 +46608,45 @@ re-reading the mate bucket with the cap raised or removed and seeing how much of
 survives. [[compute_instrument_resolution_before_the_threshold]].
 
 ⇒ **Task #205 is REFRAMED, not actionable as written.** There is no config change to make.
+
+### PR #422 RE-REVIEW: CLEAN — all four closed; 2 residual coverage gaps, and I am holding for them
+The direct check passed: the reviewer re-ran **its own three surviving mutations** against
+`01cfb7ade` and all three now die, each to a specifically-named test. It then wrote **five fresh
+mutations at the seams and three died** — so the de-vacuuming demonstrably worked rather than merely
+being claimed.
+
+**F2 verified with a clean demonstration:** per-player halfwidths swing **33.0 → 58.6 → 0.0** across
+three anchorings while `armA−armB` reads **+108.9 [+52.3, +157.8]** with halfwidth 52.7 / 52.7 / 52.8,
+and **transitivity is exact** (108.9 + 149.6 = 258.5). It uses `contrast_samples` on whole
+replications — the paired path, not reconstructed marginals. **F3's harness proven to call the SHIPPED
+code by execution:** gutting `holm_reject` moved the harness's corrected number 0.013 → 0.213, which a
+copy could not do. **F4** fixed, chunked and rolling identical at every `max_plies`.
+
+**⚑ TWO SURVIVORS, both coverage over CORRECT code, both on properties the PR calls load-bearing.**
+The reviewer said it would not hold the merge; **I am holding, and the reason is the day's pattern:
+untested load-bearing properties have cost four rounds across two PRs today, and this is two tests.**
+- **V1 — no stratification test uses HALF-PAIRS**, so "block count preserved" and "game count
+  preserved" are indistinguishable: `_pairs()` builds only complete pairs and a game-count-preserving
+  mutant passes all 45 tests. Shipped code verified correct (A-C varies 12-18 games/rep with 2
+  singletons). ⚑ **Half-pairs are the MOTIVATING regime for the partial-run case the tool exists to
+  serve** — the one fixture the suite most wants and the only one it lacks.
+- **V2 — nothing pins the Holm FAMILY SCOPE.** The unit tests exercise it in isolation and the guard
+  test uses ONE matchup, where per-matchup and global scoping coincide. Per-matchup scoping passes the
+  whole suite and **measurably matters: 0.073 ± 0.021 vs shipped 0.013 ± 0.009.**
+
+**⚑ AND ONE NUMBER NEITHER OF US HAS NOW REPRODUCED.** The reviewer measured the corrected FPR at
+**0.013 ± 0.009** where the author reported **0.052 ± 0.011**; it shortcut to n=150 / n_perm=300 and
+attributes the gap to the coarser permutation grid raising the minimum attainable p — its uncorrected
+number moved the same way (0.180 vs 0.273), so direction and separation reproduce. It explicitly did
+NOT re-derive 0.052. **The shipped docstring therefore states a number that is currently unverified
+and grid-dependent.** Author asked to confirm the explanation fully accounts for it and to state the
+grid alongside the number. If it does not, that outranks both tests.
+
+Gate re-confirmed independently on `01cfb7ade`: ruff passed, basedpyright 0/0/0, `LINT_EXIT=0`,
+HEAD == origin, clean tree, 138 arena+ordo tests. **My earlier "type errors" were stale diagnostics —
+three separate background pollers had latched onto a SUPERSEDED lint output file that never reached
+its terminator, and each kept re-reporting the pre-fix "6 errors" long after the fix landed.**
+⚑ A poller watching a file that can never reach its exit condition is not a wait, it is a
+stale-result generator — the third instance today of *a mechanism that is populated, internally
+consistent, and reporting on a state that no longer exists* (with the ORT availability list and
+`reviewDecision`).
