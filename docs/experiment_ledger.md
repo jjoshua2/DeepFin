@@ -44773,3 +44773,33 @@ instead of riding along. (Also noted: ARCH_SCHEMA_VERSION is 19 post-#398, not t
 readiness report's seam table said — donor stays v17 and decodes; outputs save v19; confirmed
 empirically.) Remaining for Tier-12: Josh's go + a GPU pause window, then
 `bash scratchpad/tier12/launch.sh`.
+
+### diff_focus repair VERDICTS (2026-08-12 late; PR #408 OPEN, memo scratchpad/difffocus/decision_20260812.md)
+
+- **W4 root cause CORRECTED — the transient is 128× the configured size, not a one-window
+  blip.** `DiffFocusNormalizer` is built per `play_batch` call = per SELFPLAY THREAD (32/worker
+  × 4 workers = 128 estimators), so `diff_focus_norm_warmup: 1024` realizes as **131,072
+  unarmed plies per restart** (~8.7% of the window; ≈160k rows / 10.7% resident across the two
+  transients). Measured two ways: live rows (transient over-clip 1.43% vs 0.075% steady, max
+  priority 17.59 vs design 8.0; over-clip rows carry 5.2× their share of draw mass) and
+  progress.csv (`diff_focus_priority_max` above clip iters 1-8 / 1-23 after the two restarts).
+  FIX: `diff_focus_norm_shared` (default OFF, restart-only, arithmetic unchanged — one shared
+  estimator per worker, 4,096 plies/restart). Deploy is data-affecting ⇒ own ledger entry when
+  flipped; pre-committed in-effect observation: `diff_focus_priority_max == norm_clip` from
+  ITERATION 1 and keep_rate ≈0.82 at iter 1 (vs ≈0.90 today).
+- **#173 CLOSED (production side): the C/Python pair ALREADY AGREES** (since PR #392) —
+  verified by EXECUTION on 24 real positions, all four priority outputs ≤1.2e-6 apart in all
+  three norm states. The floored-KL copy survived only in `bench/play_batch_timing.py`; its
+  divergence condition (≥1 legal move at zero visit mass) hits **52.6% of live policy rows**
+  under sims-100/topk-16 — bench now delegates to the production `_policy_kl` (PR #408).
+- **#171 CLOSED — the fix is already live and WORKING; change nothing.** Live steady state:
+  keep_rate 0.810-0.827 (design 0.8156, was 0.9556), priority_std 1.72-1.78 (was 7.389),
+  grad_hard_clip_rate 0.0000 (was 0.8236), priority_max exactly 8.000 = the armed fingerprint.
+  The prereg's skipped band re-derivation did not bite (predicted breach did not realize:
+  priority_mean 1.53-1.64 vs bound 1.90). WATCH ITEM: if `priority_mean` climbs past 1.90 as
+  the window turns over, the band re-derivation becomes due. Rejected: pol_scale 0.45
+  (double-correct), band-widening (a gate that cannot fail), ECDF rank transform, revert.
+- Hygiene: 11/11 mutants killed (2 survived the first pass and drove stronger tests); repo
+  lint 0/0/0; CI green; author test-merged against the advanced `main` (#404 overlaps
+  worker.py — clean merge, 148 tests pass on merged tree). Author self-review is STATED in
+  the PR; independent review agent spawned per REVIEWER ≠ AUTHOR.
