@@ -44803,3 +44803,28 @@ empirically.) Remaining for Tier-12: Josh's go + a GPU pause window, then
   lint 0/0/0; CI green; author test-merged against the advanced `main` (#404 overlaps
   worker.py — clean merge, 148 tests pass on merged tree). Author self-review is STATED in
   the PR; independent review agent spawned per REVIEWER ≠ AUTHOR.
+
+### Tier-14 arm (a) BUILT — PR #409 OPEN (2026-08-12 late; NOT launched, NOT deployed)
+
+`search_wdl_draw_mode: net_raw | parametric_q` (default net_raw, bit-identical — pinned by
+byte-compare tests). Parametric mode builds the ENTIRE search_wdl from the searched q via the
+EXACT closed form of the cp-logistic family: **D(q) = coth(w) − sqrt(csch²(w) + q²)**,
+w = slope·draw_width (max deviation from `cp_to_wdl` 3.7e-8 = float32 quantization; D(0) =
+tanh(w/2) = the cp-logistic draw mass at cp 0; D(±1) = 0; parameters read from config, never
+hardcoded). Removes BOTH S1 defects at once: no self-reference in the D axis, and no
+`±(1−d_raw)` clamp on the searched q. Plumbing verified through the real chain (yaml schema →
+TrialConfig → reco publisher → worker `_RECO_RESTART_KEYS` → GameConfig → the C
+`PyArg_ParseTuple` signature on every ply, both modes) — the soft_policy_temp/E13 defect
+class explicitly tested; parity test drives the real C entry point. ABI 3→4 with
+`_REQUIRED_MCTS_ABI = 4`, so a stale `.so` refuses to load rather than silently running
+net_raw. 23/23 mutants killed (2 survived early rounds and drove stronger tests: C ignoring
+the passed curve knobs; C dropping the endpoint range guard). CI green; uci_smoke's 8
+timeouts reproduce identically on base = delta 0 (environmental). Flag PROVEN unable to touch
+move selection (GameConfig not SearchConfig; chosen action is an input; 4 write sites all in
+the one block). Downstream `search_wdl_est` consumers checked: only `blindspot_harvest.py`
+is live and reads W−L, which parametric mode preserves exactly. ⚑ Sizing note: `main`'s
+committed yaml says `search_wdl_frac: 0.20`; the LIVE share is 0.31 — size the arm off the
+live file. Prereg DRAFT (exact value_regret yardstick vs frozen anchor, kill/success
+thresholds, confounds): `scratchpad/tier14/prereg_draft.md` — becomes the ledger entry at
+launch. DEPLOY GATING: not during Tier-13; restart + extension rebuild on every worker;
+data-affecting ⇒ own readout window. Independent review agent spawned (REVIEWER ≠ AUTHOR).
