@@ -45875,3 +45875,99 @@ side lost. Note also that this is the SAME shape as
 (556/4000 rows have castling rights, and a K↔Q swap corruption read exactly 0.00) — **castling is
 now three-for-three as the axis this project's instruments cannot see.** Treat any new
 foreign-net or encoder instrument as guilty on castling until a cross-implementation check clears it.
+
+---
+
+## 2026-08-13 — ⚑⚑ THE EXTERNAL PLACEMENT, CORRECTED — AND THE "2×" EXISTS ON ONE INSTRUMENT ONLY
+
+Supersedes the table at :45490-45506 **in full**. Every row re-derived; three independent errors,
+and **castling was the smallest of them**. All rows n=4000, identical positions, identical ruler.
+
+| row | ledger value | **CORRECTED top-1 cp** | E[regret] cp | what was wrong |
+|---|---|---|---|---|
+| C1-384-12 | 22.56 | **22.77** | 58.40 | ⚑ ledger printed **the OTHER net's** value; + castling |
+| C1-512-15 | 22.89 | **21.80** | 56.39 | ⚑ ledger printed **the OTHER net's** value; + castling |
+| BT4 | 23.79 | **20.08** | 50.92 | ⚑ **WRONG RULER** (not castling) — re-run from scratch |
+| **our `ckpt218`** | 47.34 | **47.34** | **53.25** | unchanged, and *proven* unchanged |
+| broken encoder | 36.5 / 57.3 | 36.50 (512) / 57.31 (384) | — | correct but **n=1000, NOT like-for-like** |
+
+**⚑⚑ THE HEADLINE FINDING, AND IT IS NOT THE ONE I REPORTED: "roughly 2× the deep-SF regret" is a
+TOP-1-ONLY PHENOMENON.** On top-1 it survives correction and grows (47.34 / 20.08 = **2.36×**, up
+from 1.99×). On **E[regret], measured on the SAME runs over the SAME positions, it does not exist**:
+
+```
+ours − BT4         top-1 +27.26 [+23.44, +31.17]   E  +2.33 [−0.20, +4.98]   <- CI SPANS ZERO
+ours − C1-512-15   top-1 +25.54 [+21.76, +29.38]   E  −3.14 [−5.64, −0.57]   <- WE ARE BETTER
+C1-512-15 − BT4    top-1  +1.72 [+0.32,  +3.19]    E  +5.47 [+4.81, +6.17]
+C1-512-15 − C1-384 top-1  −0.97 [−2.31,  +0.39]    E  −2.01 [−2.64, −1.42]
+```
+
+⇒ **Our net's policy MASS is placed competitively with Ceres and BT4; its ARGMAX is not.** Two
+statistics of the same distribution on the same rows disagree in direction, and the ledger headline
+quoted only the one that flatters the pessimistic story. No interpretation offered here — but
+[[an_exit_code_is_an_or_over_axes]] applies: quoting one statistic of a distribution as "the"
+placement is how this happened. **Any future placement claim states BOTH.**
+
+### Error A — the two Ceres rows were LABEL-SWAPPED
+Pre-fix runs measure C1-384-12 = 22.8932 and C1-512-15 = 22.5572; the ledger printed 22.56 against
+384-12 and 22.89 against 512-15. Values right to 4 s.f., labels transposed — which made the SMALLER
+net look better and **reversed the ladder**. ⚑ The entry contradicted ITSELF in plain sight: its own
+prose said "−0.34 favouring C1-512-15, 512-15 lower in all 10 buckets" while its table showed
+512-15 higher by 0.33. Same pair, same magnitude, opposite sign, one screen apart, unnoticed.
+
+### Error B — the BT4 row was scored on a DIFFERENT RULER (the dominant error, −3.71 cp)
+`data/lc0/bt4_audit_cache.jsonl` is dated **Jun 26**. `chess_anti_engine/eval/audit.py` changed
+**2026-08-05** in `a84aaf846` (#360, "one mate→cp mapping"), unifying mate→cp and adding
+`AUDIT_REGRET_CAP_CP = 1000.0`; its own comment (:240-249) says mean per-position regret spread moved
+**146.8 → 2063.4 cp (14.1×)**. Measured on the same 400 keys: mean `gap_cp` **70.36** cached vs
+**2006.85** current. **The net and the encoder were never at fault** — recomputing the CACHE's OWN
+argmax moves against today's `move_regrets` reproduces the fresh fixed-map run **bit-for-bit**
+(28.3850 = 28.3850 on the first 400). Only the SCORING was stale. Textbook
+[[a_ruler_change_must_invalidate_its_records]], and [[same_name_different_population]] one level up.
+
+### Error C — castling: confirmed in SIGN, refuted in SIZE (~0.5%)
+Isolated exactly (one forward pass, two gathers on identical logits — nothing but the map varies):
+C1-384-12 top-1 **−1.957** cp and C1-512-15 **−1.805** cp on the 256 castling positions ⇒
+**−0.125 / −0.116 at n=4000**. Negative throughout: the bug INFLATED foreign-net regret. The
+"mis-mapped slot absorbed probability helpfully" alternative was checked explicitly and **does not
+occur**. Concentration as predicted: on the 41 positions where DEEP-SF's best move is the castle
+(a subset defined by the audit set, not by any run's output), C1-384-12 moves **−16.56
+[−26.63, −9.17]** — real and large there, diluted to −0.125 over 6.4% of the set.
+
+### `ckpt218` unaffected — and PROVEN, not argued
+Structural reason: `scripts/foreign_net_audit.py:361-363` takes the checkpoint branch and maps
+through `move_to_index` in **our own 4672 ids**; `_leela_idxs` is only reached at :366 in the `else`
+branch. Not left as reasoning — `ckpt218` was re-run on **the 256 castling positions specifically**,
+the only places the bug can bite: **identical 256/256** on `topk`, `top1_regret`, `exp_regret`.
+
+### ⚑ n=1000 IS A DIFFERENT STRATUM — the control row is NOT comparable to the placement rows
+At n=1000 the correct partners are C1-384-12 **30.78**, C1-512-15 **30.58**, BT4 **31.12**, ours
+**66.67**. So the broken-encoder contrast is 57.31 / 36.50 against ~30.6-31.1, **not against ~22**.
+Note ours reads 47.34 at n=4000 and **66.67** at n=1000 — the prefix is a harder stratum, exactly the
+trap that made an earlier agent's "BT4 = 23.79 vs 30.8" look like a discrepancy.
+
+### ⚑ OPEN, UNEXPLAINED: `gateD_C1-512-15` IS A NON-REPRODUCIBLE RUN
+Differencing the two full runs attributes −0.755 to the castling fix, but **53 of 4000 positions that
+changed have NO legal castling move**, where the two mappers are provably identical (verified: 0
+differing slots across all 3744 non-castling positions; the only differences anywhere are the 296
+castling moves in 256 positions). Two fresh identical-parameter re-runs reproduce `fix_C1-512-15`
+**bit-for-bit on all 53** and disagree with `gateD_C1-512-15` on all 53. ⇒ **`gateD_C1-512-15` cannot
+be reproduced and the cause is unknown.** `fix_C1-512-15` is the trustworthy one; the isolated
+one-pass number (−0.116) is unaffected. C1-384-12 had ZERO non-castling differences and its isolated
+number matches its run-difference to 4 dp — which is what exposed the 512 pair as anomalous.
+**This is a live non-determinism in a measurement path we rely on. Do not close it by assuming.**
+
+### THE CACHE, AND ITS CONSUMERS
+**`data/lc0/bt4_audit_cache.jsonl` is contaminated on TWO independent axes and must not be read:**
+stale ruler (dominant) and the castling map in its `best_move` field.
+- `scripts/audit_compare_buckets.py:55` — `--bt4` **DEFAULTS to that exact path**, and reads
+  `exp_regret`/`top1_regret` (:85-86) plus `best_move` for the `net_eq_bt4` and `bt4_eq_deep`
+  agreement rows (:88, :99). **All three fields are affected ⇒ every "BT4 raw" row and both BT4
+  agreement rows it has EVER printed are wrong.**
+- `scripts/foreign_net_audit.py:299` — `--cache-out` **DEFAULTS to the same path**, so a fresh run
+  for ANY net silently overwrites the banked file. Repair route and footgun in one.
+- `scripts/audit_targets.py:1604`, `chess_anti_engine/eval/audit.py:329` — comments only, no read.
+
+A corrected 4000-row cache exists at `scratchpad/gates/fix_bt4_4000.jsonl` (outside the repo).
+**Not copied over the banked file** — per [[a_ruler_change_must_invalidate_its_records]] that file
+arguably wants DELETING rather than replacing, and that is Josh's call.
