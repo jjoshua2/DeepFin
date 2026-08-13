@@ -44828,3 +44828,13 @@ live file. Prereg DRAFT (exact value_regret yardstick vs frozen anchor, kill/suc
 thresholds, confounds): `scratchpad/tier14/prereg_draft.md` — becomes the ledger entry at
 launch. DEPLOY GATING: not during Tier-13; restart + extension rebuild on every worker;
 data-affecting ⇒ own readout window. Independent review agent spawned (REVIEWER ≠ AUTHOR).
+
+**Tier-13 arm A confound, recorded same-session (2026-08-13 00:55): agent CPU load fired the
+PID airbag mid-arm.** The PR #409 mutation harness's all-core extension rebuilds (nice 0)
+starved SF workers (nice 19) over ~23:20-00:30: games/iter 496→245, completed winrate
+0.513→0.483, airbag regret 0.025→0.079 @ iter 49, recovering by iter 60 (0.540/0.061/354);
+`sf_nodes` pinned 75000 throughout. Iters 43-60 also carry less ingest (fewer views-targeted
+steps). Goes in the Tier-13 Confounds line; #170's r̄ window (81-100) needs the transient
+settled — check at the iter-75 bank. RULE ADOPTED: no heavy-CPU agent work (mutation
+harnesses, extension rebuilds, full suites) concurrent with a Tier-13 arm — pause-and-run
+applies to CPU-starving work, not only GPU. Details: scratchpad/tier13/arm_A_notes.md.
