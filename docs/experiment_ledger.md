@@ -265,7 +265,11 @@ always re-dump and pair.
 
 ## READOUT (2026-08-14) — the MultiPV-6 censored tail is worth **207 cp**, not the 565 cp we assign (α = 0.17)
 
-**This is the ground-truth answer the CAST pricing was withdrawn for.** No CAST, no played-move
+**⚑ TERMINOLOGY: this is WITHHELD WIDE-SF TRUTH, not ground truth.** Ranks 7–40 are genuinely
+withheld observations, but they are the output of the historical MultiPV-40 search — not deep-SF
+truth and not mathematics. Combined with the MPV40≠MPV6 caveat below, keep the wording precise.
+
+**This is the answer the CAST pricing was withdrawn for.** No CAST, no played-move
 proxy, no calibration inversion: take the wide-MultiPV era's own labels, hide everything below
 rank 6, and score the candidate tail representations against the values that were hidden.
 Instrument: `scratchpad/tail_screen.py` (to be productionised as
@@ -312,12 +316,53 @@ position is the PREVIOUS ply's block — after which coverage reads 0.983 and un
 1.1e-4. The pre-fix numbers (TRUE 295 cp, α = 0.37) are VOID. Report an impossible-valued
 diagnostic next to every headline; this one caught a wrong result before it was banked.
 
+### ⚑⚑ RE-RUN UNDER THE NET'S OWN PRIOR — the training-relevant weighting. VERDICT: REAL DEFECT.
+
+`w_sf_own_regret` is **`sum(softmax(legal-masked policy_own) * r)`** (`train/losses.py:888-890`)
+— the net's OWN prior, **not** the stored `policy_target`. The first pass above weighted by
+`policy_target`, which is the search-target answer, not the one the auxiliary experiences.
+Re-run with `data/tail_screen_20260814/checkpoint_000218` (`5ce02`, Aug 12), n = 5,193:
+
+| representation | value | bias |
+|---|---|---|
+| TRUE (withheld wide-SF) | **206.4 cp** | — |
+| `r_6` censor (α = 0) | 129.9 cp | −76.5 cp |
+| current midpoint (α = 1) | 564.9 cp | **+358.5 cp** |
+
+**α = 0.1759 under the prior against 0.1741 under the MCTS target** — the answer is essentially
+INSENSITIVE to which distribution weights it. That is a robustness result worth having: the
+2.74× is not an artifact of the weighting choice.
+
+**GRADIENT FIDELITY.** Matching a scalar mean does not mean inducing the right gradient. For
+`L = p·r` the logit gradient is `dL/dz = p ⊙ (r − E_p[r])`, so with wide labels a
+full-information reference is computable and each censor can be scored against it:
+
+| variant | cos sim | rel L2 (pooled) | rel L2 (median) | tail pressure | vs TRUE |
+|---|---|---|---|---|---|
+| TRUE | 1.0000 | 0 | 0 | 0.010638 | 1.00× |
+| `r_6` censor | 0.8681 | 0.5288 | 0.1988 | 0.005270 | 0.50× |
+| **midpoint (live rule)** | **0.8552** | **1.2681** | **1.5390** | 0.041118 | **3.87×** |
+| fitted α | **0.9023** | **0.4940** | 0.2697 | 0.011575 | 1.09× |
+
+⇒ **The live midpoint's error is LARGER THAN THE GRADIENT ITSELF (pooled rel L2 = 1.27)** and it
+applies **3.87× the true pressure** pushing mass off the censored tail. `r_6` errs the other way
+at 0.50×. Fitted α lands at 1.09× with less than half the midpoint's L2.
+
+⚑ **But no single common tail value reproduces the within-tail gradient**: cosine similarity is
+only 0.855–0.902 for ALL three, because one number cannot separate rank 7 (186 cp) from rank 40
+(635 cp). Fitting α buys the aggregate pressure, not the per-action direction. If the tail's
+internal ORDERING turns out to matter, the answer is a rank-decaying tail or a residual tilt,
+not a better constant.
+
+⚑ **The pooled statistic is the reportable one.** The per-row mean relative L2 read **4557** for
+the midpoint: rows where `‖g_true‖ ≈ 0` divide by near-zero and one dominated the average.
+Pooled `sqrt(Σ‖Δ‖² / Σ‖g_true‖²)` and the median are both reported.
+
 **What this does NOT establish.**
-1. The weighting is the **historical** net's MCTS target (Aug 4–5 shards), not today's prior.
-   Reweighting under the current prior is the pending step; the net is pinned at
-   `data/tail_screen_20260814/checkpoint_000218` (from `5ce02`, Aug 12 07:40 — copied OUT of
-   the tune dir because Ray prunes). ⚑ `runs/pbt2_small/best_model.pt` is from **2026-04-14**
-   and must not be used as "current" [[best_model_ruler_mixing]].
+1. The pinned net is **Aug 12**, two days stale, because the live trial had no checkpoint and
+   `runs/pbt2_small/best_model.pt` is from
+   **2026-04-14** and must not be used as "current" [[best_model_ruler_mixing]]. The checkpoint
+   was copied OUT of the tune dir because Ray prunes.
 2. **MultiPV 40 truncated to 6 is not a real MultiPV 6 search.** Width changes root-search
    allocation, so this answers "given a top-6 cutoff, how should the unknown be represented"
    and NOT "what does today's MPV6 fail to surface". The calibration panel for that is a few
