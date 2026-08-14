@@ -212,3 +212,70 @@ def test_prod_arm_defaults_are_the_realized_live_settings() -> None:
     # colon-separated pair -- is what the PLAYING engines get, not the labeller.
     assert ":" not in panel.PROD_SYZYGY
     assert ":" in panel.DEEP_SYZYGY
+
+
+def _fake_shard_arrays(n_rows: int) -> dict[str, Any]:
+    """A shard of `n_rows` DISTINCT positions with plenty of legal moves.
+
+    Built by walking a real game so `decode_board_from_planes` round-trips and
+    `position_key` sees genuinely different positions — a fixture of repeats
+    would let a broken deduper look like a working quota.
+    """
+    from chess_anti_engine.encoding.encode import encode_position
+
+    boards: list[chess.Board] = []
+    b = chess.Board()
+    moves = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "d2d3", "f8c5",
+             "c2c3", "d7d6", "b2b4", "c5b6", "a2a4", "a7a6", "b1d2", "e8g8"]
+    for uci in moves:
+        boards.append(b.copy(stack=False))
+        b.push(chess.Move.from_uci(uci))
+    boards = (boards * 10)[:n_rows]
+    xs = np.stack([
+        encode_position(bd, input_history_encoding="lc0_root_legacy_meta",
+                        input_extra_features="v1")
+        for bd in boards
+    ])
+    return {
+        "x": xs,
+        "legal_mask": np.ones((n_rows, 1858), dtype=bool),
+        "_input_history_encoding": np.array(["lc0_root_legacy_meta"]),
+        "_policy_encoding": np.array([ENC]),
+    }
+
+
+def test_sampling_spreads_across_shards_instead_of_draining_the_first(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    """⚑ Mutation: filling from the front must not satisfy this.
+
+    A shard is one worker's upload batch — a few dozen games over a few minutes.
+    Draining shard 0 would turn N "independent" positions into a handful of
+    correlated games and hand the row bootstrap an interval it never earned.
+    Setting the per-shard quota to `want` (i.e. no quota) makes this read 1.
+    """
+    arrs = _fake_shard_arrays(40)
+    monkeypatch.setattr(panel, "load_shard_arrays", lambda _p: (arrs, {}))
+    shards = [tmp_path / f"shard_{i:03d}.zarr" for i in range(4)]
+    scan: dict[str, Any] = {"rows_scanned": 0, "skipped_narrow": 0,
+                            "skipped_shards": [], "skipped_shards_omitted": 0}
+    out = panel.sample_positions(shards, scan, 8, 0)
+    assert len(out) == 8
+    assert scan["sampled_shards"] == 4, "each shard must contribute its quota"
+    assert len({o["shard"] for o in out}) == 4
+
+
+def test_sampling_backfills_when_a_shard_is_short(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    """A quota is a target, not a cap on the total: short shards must be covered."""
+    arrs = _fake_shard_arrays(40)
+    monkeypatch.setattr(panel, "load_shard_arrays", lambda _p: (arrs, {}))
+    shards = [tmp_path / f"shard_{i:03d}.zarr" for i in range(2)]
+    scan: dict[str, Any] = {"rows_scanned": 0, "skipped_narrow": 0,
+                            "skipped_shards": [], "skipped_shards_omitted": 0}
+    # 16 distinct positions exist in total; asking for 30 must return all of them
+    # rather than stopping at the first shard's quota of 15.
+    out = panel.sample_positions(shards, scan, 30, 0)
+    assert len(out) == 16
+    assert scan["sampled_shards"] == 2

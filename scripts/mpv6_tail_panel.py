@@ -114,9 +114,16 @@ def sample_positions(
     rng = np.random.default_rng(seed)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    # ⚑ PER-SHARD QUOTA, NOT FILL-FROM-THE-FRONT. A shard is one worker's upload
+    # batch — a few dozen games over a few minutes — so draining the first shard
+    # would make 500 "independent" positions a handful of correlated games, and
+    # the row bootstrap would report an interval far tighter than the population
+    # earns. Quota per shard, then backfill from whatever had spare rows.
+    quota = max(1, -(-want // max(len(shards), 1)))
     for shard in shards:
         if len(out) >= want:
             break
+        target = min(want, len(out) + quota)
         try:
             arrs, _ = load_shard_arrays(shard)
         except (OSError, ValueError, KeyError) as exc:
@@ -128,7 +135,7 @@ def sample_positions(
         pol_enc = str(np.asarray(arrs["_policy_encoding"]).reshape(-1)[0])
         scan["rows_scanned"] += int(x.shape[0])
         for i in rng.permutation(int(x.shape[0])):
-            if len(out) >= want:
+            if len(out) >= target:
                 break
             board = decode_board_from_planes(x[int(i)], input_history_encoding=hist)
             if board is None or board.is_game_over():
@@ -147,7 +154,9 @@ def sample_positions(
                 "legal_mask": legal_mask[int(i)], "policy_encoding": pol_enc,
                 "n_legal": n_legal, "phase": phase_bucket(round(float(x[int(i)][:12].sum()))),
                 "in_tb": pieces <= TB_PIECE_LIMIT, "pieces": pieces,
+                "shard": shard.name,
             })
+    scan["sampled_shards"] = len({o["shard"] for o in out})
     return out
 
 
@@ -408,8 +417,12 @@ def main() -> int:
         "git_sha": git_sha(),
     }
     positions = sample_positions(shards, scan, args.positions, args.seed)
-    print(f"sampled {len(positions)} positions from {len(shards)} shards"
+    print(f"sampled {len(positions)} positions from {scan.get('sampled_shards', 0)}"
+          f" of {len(shards)} shards"
           f"   ({scan['skipped_narrow']} skipped as <= {PROD_MULTIPV} legal)")
+    if scan.get("sampled_shards", 0) < min(len(shards), 2):
+        print("  ⚑ every position came from ONE shard — a few dozen correlated games."
+              " The bootstrap CI below is NOT earned; widen --max-shards.")
     print(f"PROD    arm: MultiPV {PROD_MULTIPV:>2}, {args.prod_nodes:>8} nodes, "
           f"Hash {PROD_HASH_MB}MB, syzygy {PROD_SYZYGY}")
     print(f"MATCHED arm: MultiPV {MAX_MULTIPV:>2}, {args.prod_nodes:>8} nodes, "
