@@ -41,6 +41,9 @@ def test_every_model_config_field_is_identity_or_explicitly_excluded() -> None:
     [
         # the field this PR adds
         ("categorical_head_coupled", True),
+        # narrows policy_soft/policy_sf q/k — a broker that treated two aux
+        # widths as "the same config" would load one into the other
+        ("aux_policy_head_dim", 128),
         # the five the hand-written tuple had silently dropped, all shape-changing
         ("input_extra_features", "v1"),
         ("history_rep_fix", True),
