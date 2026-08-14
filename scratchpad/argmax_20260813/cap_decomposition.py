@@ -5,27 +5,31 @@ CPU-only re-analysis of already-banked dumps. No GPU, no net forward pass.
 The claim under test (ledger `175598a36`): "mates are 8.1% of positions and carry
 40% of the 22.93 cp top-1 gap between ours and BT4". `AUDIT_REGRET_CAP_CP = 1000`
 clamps every per-move regret, and `mate_to_effective_cp` puts mates near +/-1e5,
-so inside a mate position essentially every non-best move saturates the cap. If
-that is so, the mate bucket is a BINARY mate-finding indicator scaled by the cap,
-its cp magnitude is an arbitrary function of the cap constant, and "40% of the
-gap" is a statement about the constant rather than about either net.
+so the HYPOTHESIS was that inside a mate position essentially every non-best move
+saturates the cap, making the bucket a binary mate-finding indicator scaled by an
+arbitrary constant.
+
+RESULT (ledger `a50fb0c5b`) — the hypothesis is HALF wrong and the finding is
+elsewhere. Section (1) refutes bimodality: 45.9% of listed moves in mate positions
+land in [100, 900), and the bucket mean 163.06 is nowhere near 1000 x 0.4753.
+Section (3) confirms the share IS cap-driven (27.8% at cap 250 -> 97.2% uncapped),
+so quote the cap-free MISS RATE from (4), never the cp. Section (5) is the real
+result: 60% of the gap lives in the 3676 NON-mate positions, where the cap can
+bind on 0.8% and the capped and uncapped gaps agree to the cent.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, "/home/josh/projects/chess")
+from chess_anti_engine.eval.audit import load_audit_set
 
-from chess_anti_engine.eval.audit import load_audit_set  # noqa: E402
-
-ROOT = Path("/home/josh/projects/chess")
-DUMPS = ROOT / "scratchpad/argmax_20260813"
-AUDIT = ROOT / "data/audit_set_v1.jsonl"
+# Run from the repo root with PYTHONPATH=.
+DUMPS = Path("scratchpad/argmax_20260813")
+AUDIT = Path("data/audit_set_v1.jsonl")
 
 
 def load_dump(name: str) -> dict[str, dict]:
