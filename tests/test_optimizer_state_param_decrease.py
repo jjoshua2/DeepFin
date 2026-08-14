@@ -30,6 +30,7 @@ the matrix group entirely.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 from pathlib import Path
 import pytest
@@ -116,6 +117,38 @@ def _read_state(trainer: Trainer) -> dict[tuple[str, str], float]:
                 if torch.is_tensor(value) and value.is_floating_point():
                     seen[by_id[id(param)], key] = float(value.flatten()[0])
     return seen
+
+
+def _read_state_exact(trainer: Trainer) -> dict[tuple[str, str], object]:
+    """Every optimizer-state value in full, plus the group hyperparameters.
+
+    ⚑ `_read_state` above is a cheap FINGERPRINT: one element of each floating
+    tensor. That is enough to tell two arms apart, and nowhere near enough to
+    support the phrase "byte identical" -- it never reads `step` (a python int
+    here), never reads element 1 onward, and never reads the group
+    hyperparameters at all. A test whose NAME claims byte identity has to
+    actually compare the bytes, so this hashes each tensor whole and keeps
+    non-tensor state verbatim.
+    """
+    by_id = {id(p): n for n, p in trainer.model.named_parameters()}
+    out: dict[tuple[str, str], object] = {}
+    for g_index, group in enumerate(trainer.opt.param_groups):
+        for key, value in sorted(group.items()):
+            if key != "params":
+                out[f"group{g_index}", key] = value
+        for param in group["params"]:
+            state = trainer.opt.state.get(param)
+            if not state:
+                continue
+            for key, value in state.items():
+                slot = (by_id[id(param)], key)
+                if torch.is_tensor(value):
+                    out[slot] = hashlib.sha256(
+                        value.detach().cpu().contiguous().numpy().tobytes()
+                    ).hexdigest()
+                else:
+                    out[slot] = value
+    return out
 
 
 def _two_real_steps(trainer: Trainer) -> None:
@@ -439,7 +472,7 @@ def test_the_correspondence_is_IDENTITY_not_POSITION(
         payload["opt"], donor_names, model_state,
     )
     assert result is not None, "the swap is a legal relayout; declining hides it"
-    remapped, _ = result
+    remapped, _report, _kept, _changed = result
     donor_state = payload["opt"]["state"]
     assert remapped["state"][j] is donor_state[i], (
         f"slot {i} carries the name now at live index {j}, so its moments must "
@@ -476,4 +509,207 @@ def test_an_ordinary_resume_is_left_byte_identical(
     ) is None
 
     twin.load(ckpt)
-    assert _read_state(twin) == _read_state(trainer)
+  # SHA-256 of every state tensor whole, `step` verbatim, and all four groups'
+  # hyperparameters -- not the one-element-per-tensor fingerprint `_read_state`
+  # takes, which this assertion USED to make while its name claimed otherwise.
+    assert _read_state_exact(twin) == _read_state_exact(trainer)
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_a_manifest_name_absent_from_the_donor_payload_declines(
+    optimizer: str, scope: str, tmp_path: Path,
+) -> None:
+    """⚑⚑ A recovered name that is not a donor model key must DECLINE, not skip.
+
+    Found by independent review 2026-08-14, after the fix this file exists for
+    had already shipped. ``opt_param_names`` and ``ckpt["model"]`` are written by
+    the same ``save``, so the manifest's names ARE that payload's keys. If a
+    lookup misses, the mapping is wrong — not "this one slot is unverifiable".
+
+    The original code did ``continue`` on a miss. A STALE manifest (a module
+    renamed between save and load) misses on EVERY slot, so the shape guard
+    inspected nothing, ``state_remap`` came out empty, and an EMPTY optimizer
+    state installed *successfully*: ``0 kept, N dropped, N fresh``, no WARNING,
+    and ``optimizer_state_loaded`` still True — so the scheduler and zclip were
+    restored on top of a cold optimizer. That is the exact wipe this module
+    repairs, moved into the quiet channel one level down.
+
+    Two arms, because they fail differently: a WHOLE stale manifest (the loud
+    case, which produced an empty state) and a SINGLE renamed parameter (the
+    quiet case, which silently dropped one parameter's moments while reporting a
+    healthy-looking count).
+    """
+    donor_cfg = _cfg()
+    trainer = _trainer(donor_cfg, tmp_path / "t", optimizer, scope)
+    _bank_fingerprints(trainer)
+    ckpt = tmp_path / "t.pt"
+    trainer.save(ckpt)
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    assert isinstance(payload.get("opt_param_names"), list), "manifest must exist"
+
+    # The arm: a real layout change, so the name path is genuinely engaged.
+    arm_cfg = _cfg(coupled=True, policy_embedding_mode="linear")
+    arm = _trainer(arm_cfg, tmp_path / "arm", optimizer, scope)
+
+    # CONTROL — with the manifest intact this same load is ACCEPTED. Without
+    # this the test could pass by declining for any unrelated reason.
+    names = arm._donor_optimizer_param_names(payload)
+    assert names is not None
+    accepted = arm._remap_optimizer_state_by_param_name(
+        payload["opt"], names, payload["model"],
+    )
+    assert accepted is not None, "control: an intact manifest must be accepted"
+    assert accepted[2] > 0, "control: the accepted mapping must keep real state"
+
+    # ARM 1 — the whole manifest is stale (every name renamed).
+    stale = dict(payload)
+    stale["opt_param_names"] = [f"renamed.{n}" for n in payload["opt_param_names"]]
+    stale_names = arm._donor_optimizer_param_names(stale)
+    assert stale_names is not None, "a stale manifest is still well-FORMED"
+    assert arm._remap_optimizer_state_by_param_name(
+        stale["opt"], stale_names, stale["model"],
+    ) is None
+
+    # ARM 2 — exactly one parameter renamed. The quiet case: pre-fix this
+    # returned a plausible mapping that silently dropped that parameter's state.
+    one = dict(payload)
+    renamed = list(payload["opt_param_names"])
+    victim = next(
+        i for i, n in enumerate(renamed)
+        if n in payload["model"] and torch.is_tensor(payload["model"][n])
+    )
+    renamed[victim] = f"renamed.{renamed[victim]}"
+    one["opt_param_names"] = renamed
+    one_names = arm._donor_optimizer_param_names(one)
+    assert one_names is not None
+    assert arm._remap_optimizer_state_by_param_name(
+        one["opt"], one_names, one["model"],
+    ) is None
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_duplicate_donor_slot_ids_decline(
+    optimizer: str, scope: str, tmp_path: Path,
+) -> None:
+    """Two slots sharing an id would collapse under ``dict(zip(...))``.
+
+    ``strict=True`` cannot catch it — the sequences are the same LENGTH — so one
+    id would silently take whichever name came last, and every state entry keyed
+    under the other would be dropped or mis-placed.
+    """
+    trainer = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    _bank_fingerprints(trainer)
+    ckpt = tmp_path / "t.pt"
+    trainer.save(ckpt)
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+
+    arm = _trainer(
+        _cfg(coupled=True, policy_embedding_mode="linear"),
+        tmp_path / "arm", optimizer, scope,
+    )
+    names = arm._donor_optimizer_param_names(payload)
+    assert names is not None
+    assert arm._remap_optimizer_state_by_param_name(
+        payload["opt"], names, payload["model"],
+    ) is not None, "control: the un-corrupted donor is accepted"
+
+    opt_state = dict(payload["opt"])
+    groups = [dict(g) for g in opt_state["param_groups"]]
+    flat = [pid for g in groups for pid in g["params"]]
+    assert len(flat) >= 2
+    # Point the second slot at the first slot's id, keeping every LENGTH intact.
+    seen = 0
+    for group in groups:
+        params = list(group["params"])
+        for i in range(len(params)):
+            seen += 1
+            if seen == 2:
+                params[i] = flat[0]
+        group["params"] = params
+    opt_state["param_groups"] = groups
+    assert arm._remap_optimizer_state_by_param_name(
+        opt_state, names, payload["model"],
+    ) is None
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_an_ndim_mismatch_declines(
+    optimizer: str, scope: str, tmp_path: Path,
+) -> None:
+    """A moment whose ndim disagrees with its parameter is the STRONGEST signal.
+
+    The original guard compared shapes only when ``value.dim() ==
+    donor_tensor.dim()``, so it waved through precisely the case that proves the
+    mapping wrong. Only 0-dim tensors (step counters, which carry no shape
+    relationship to the parameter) are legitimately exempt.
+    """
+    trainer = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    _bank_fingerprints(trainer)
+    ckpt = tmp_path / "t.pt"
+    trainer.save(ckpt)
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+
+    arm = _trainer(
+        _cfg(coupled=True, policy_embedding_mode="linear"),
+        tmp_path / "arm", optimizer, scope,
+    )
+    names = arm._donor_optimizer_param_names(payload)
+    assert names is not None
+    assert arm._remap_optimizer_state_by_param_name(
+        payload["opt"], names, payload["model"],
+    ) is not None, "control: the un-corrupted donor is accepted"
+
+    opt_state = dict(payload["opt"])
+    state = {k: dict(v) for k, v in opt_state["state"].items()}
+    slot_of_name = {n: i for i, n in enumerate(names)}
+    victim = next(
+        n for n in names
+        if slot_of_name[n] in state
+        and torch.is_tensor(payload["model"].get(n))
+        and payload["model"][n].dim() >= 2
+    )
+    entry = state[slot_of_name[victim]]
+    key = next(k for k, v in entry.items() if torch.is_tensor(v) and v.dim() >= 2)
+    # Same NUMEL, different ndim — invisible to a shape check gated on equal dim.
+    entry[key] = entry[key].flatten()
+    opt_state["state"] = state
+    assert arm._remap_optimizer_state_by_param_name(
+        opt_state, names, payload["model"],
+    ) is None
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_a_parameter_that_moves_between_groups_does_not_crash(
+    optimizer: str, scope: str, tmp_path: Path,
+) -> None:
+    """New reachable state: the name path can move a survivor between groups.
+
+    The positional splice structurally could not — it preserved group order. The
+    name path can, so a parameter may arrive in the Aurora matrix group carrying
+    only ``exp_avg``/``exp_avg_sq``, or in an AdamW aux group carrying only
+    ``momentum_buffer``.
+
+    This is benign ONLY because ``AuroraWithAuxAdam`` and ``MuonWithAuxAdam``
+    both probe per-KEY with ``.get()`` rather than gating on ``len(state) == 0``.
+    That assumption is load-bearing and was untested; torch's own AdamW would
+    ``KeyError``. Pinning it here so a future optimizer edit that switches to a
+    ``len(state)`` probe fails loudly instead of at the first ``opt.step()`` of a
+    live warm start.
+    """
+    trainer = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    _bank_fingerprints(trainer)
+    ckpt = tmp_path / "t.pt"
+    trainer.save(ckpt)
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+
+    arm_cfg = _cfg(coupled=True, policy_embedding_mode="linear")
+    arm = _trainer(arm_cfg, tmp_path / "arm", optimizer, scope)
+    arm.load(ckpt)
+    # Two real steps: initialisation of any missing moment happens on step 1, and
+    # step 2 exercises the state it just built.
+    _two_real_steps(arm)
+    for group in arm.opt.param_groups:
+        for param in group["params"]:
+            for value in arm.opt.state.get(param, {}).values():
+                if torch.is_tensor(value):
+                    assert torch.isfinite(value).all()

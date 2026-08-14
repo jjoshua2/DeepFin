@@ -3890,6 +3890,15 @@ class Trainer:
   # a shifted one. Recording the names makes the correspondence a stored fact
   # rather than an inference; `_donor_optimizer_param_names` reconstructs it from
   # `model` for checkpoints written before this key existed.
+  # Record the name->slot assignment rather than leaving the loader to infer it.
+  # ⚑ For `_ChainedOptimizer` this is written and can never be READ back: it
+  # exposes `param_groups`, so the names here are correct, but its `state_dict()`
+  # omits `param_groups`, so `_donor_optimizer_param_names` declines at its first
+  # check. KEPT DELIBERATELY (2026-08-14) rather than suppressed -- the entry is
+  # accurate, costs a list of strings, and the thing that makes it unusable is
+  # that optimizer's state_dict shape, not this manifest. Suppressing it would
+  # trade a true-but-unused record for a special case, and would silently start
+  # lying the moment `_ChainedOptimizer.state_dict` learns to emit groups.
         opt_param_names = self._optimizer_param_names()
         if opt_param_names is not None:
             state["opt_param_names"] = opt_param_names
@@ -3918,6 +3927,19 @@ class Trainer:
     # splice stays for donors whose slot names cannot be recovered -- no
     # `opt_param_names` manifest, no `model` payload, or a param-group layout
     # `_DecayGroupLayout` does not describe.
+    #
+    # ⚑ DECIDED, not overlooked (2026-08-14): this list is therefore UNREACHABLE
+    # whenever names are recoverable, which on production is always. The name
+    # path warm-starts ANY added parameter, not just these four. That is a real
+    # behaviour change and it is the one we want -- measured base vs branch on a
+    # non-allowlisted addition (`enable_policy_sf_head` off->on, 79 -> 86 slots):
+    # the old code reinitialised the WHOLE optimizer at WARNING, losing all 79
+    # donor moments to warm-start 7 new ones; the new code keeps the 79 and
+    # leaves the 7 state-less. Keeping the list is not dead weight -- it still
+    # governs the positional splice, which is the only path left for a donor
+    # whose names cannot be recovered -- but it is no longer the gate on which
+    # additions are permitted, and nothing should be added to it expecting it to
+    # act as one.
     _FRESH_PARAM_NAME_SUFFIXES = (
         "dynamic_relation_weight",
         "policy_relation_weight",
@@ -3976,13 +3998,29 @@ class Trainer:
         * ``decay_bucket_index`` then replays the very rule that BUILT the
           groups, using ``self._decay_group_layout`` recorded at construction.
 
-        Every step above is an assumption about the donor, so the result is
-        CHECKED before it is trusted: the replayed per-group counts must equal
-        the donor's own. A mismatch -- a frozen parameter, a persistent buffer, a
-        different ``matrix_optimizer_scope``, a layout this cannot describe --
-        returns None, and the caller keeps its previous behaviour. A wrong
-        mapping is worse than no mapping, so it must not be reachable by
-        guessing.
+        Every step above is an assumption about the donor, so the RECONSTRUCTED
+        result is CHECKED before it is trusted: the replayed per-group counts
+        must equal the donor's own. A mismatch -- a frozen parameter, a
+        persistent buffer, a layout this cannot describe -- returns None, and the
+        caller keeps its previous behaviour. A wrong mapping is worse than no
+        mapping, so it must not be reachable by guessing.
+
+        ⚑ Two limits of that check, both MEASURED (independent review
+        2026-08-14), because an earlier version of this docstring overstated it:
+
+        * **The manifest path never reaches the count check at all** -- it
+          returns as soon as ``opt_param_names`` is present and the right length.
+          That is correct (a recorded mapping is not an inference) but it means
+          the guarantees below are about the RECONSTRUCTION only. A donor saved
+          under ``matrix_optimizer_scope: mlp_out`` re-keys successfully onto an
+          arm running ``block_all``; verified by execution.
+        * A count check is not an identity check. It rejects a different
+          ``matrix_optimizer_scope`` on THIS model only because the per-group
+          counts happen to differ for all six supported scopes -- enumerated, and
+          the only equal-count pairs are also equal-MEMBERSHIP pairs, so the
+          rejection is incidental to the model, not structural. The load-bearing
+          guard against a wrong mapping is the shape/name check in
+          ``_remap_optimizer_state_by_param_name``, not this count.
         """
         opt_state = ckpt.get("opt")
         if not isinstance(opt_state, Mapping):
@@ -4041,7 +4079,7 @@ class Trainer:
         ckpt_opt: Mapping[str, Any],
         donor_names: Sequence[str],
         donor_model_state: Mapping[str, Any] | None,
-    ) -> tuple[dict, str] | None:
+    ) -> tuple[dict, str, int, int] | None:
         """Re-key a donor optimizer state dict onto THIS model's parameters, by name.
 
         Handles added, removed and simultaneously added-and-removed parameters
@@ -4053,13 +4091,21 @@ class Trainer:
         reinitialised, every donor moment lost) or -- at equal count -- silently
         hand one parameter's moments to another.
 
-        Returns ``(state_dict, human-readable report)``, or None when it declines:
+        Returns ``(state_dict, report, kept, changed)`` where ``changed`` is
+        dropped + fresh, so the caller can WARN on a mass turnover instead of
+        printing a line that differs from a healthy one only in its digits.
+        Returns None when it declines:
 
-        * the group count changed, or a name occurs twice on either side (the
-          correspondence would be ambiguous);
+        * the group count changed, a name occurs twice on either side, or a
+          donor slot id occurs twice (the correspondence would be ambiguous);
+        * a recovered name is not a key of the donor's own model payload --
+          the names are supposed to BE those keys, so a miss is proof the
+          mapping is wrong, NOT a slot to skip. Skipping was how a stale
+          manifest installed an EMPTY optimizer state successfully;
         * a donor moment's shape disagrees with the donor tensor the name maps
           to, which means the recovered mapping is WRONG -- the one outcome that
-          must never be acted on;
+          must never be acted on. Only 0-dim tensors (step counters) are exempt;
+          an ndim disagreement is evidence, not an exemption;
         * the mapping is the identity, i.e. an ordinary resume. Declining there
           keeps the common path byte-identical to before this method existed.
 
@@ -4084,6 +4130,11 @@ class Trainer:
             donor_slot_ids.extend(group.get("params", ()))
         if len(donor_slot_ids) != len(donor_names):
             return None
+  # Duplicate slot ids would collapse under `dict(zip(...))`, silently mapping
+  # one id to whichever name came last. `strict=True` cannot see it -- the two
+  # sequences are the same LENGTH -- so check distinctness explicitly.
+        if len(set(donor_slot_ids)) != len(donor_slot_ids):
+            return None
         if list(live_names) == list(donor_names):
             return None
         name_of_slot = dict(zip(donor_slot_ids, donor_names, strict=True))
@@ -4096,13 +4147,32 @@ class Trainer:
   # plausible-looking, non-empty, wrong optimizer state.
         if donor_model_state:
             for slot_id, entry in donor_state.items():
-                donor_tensor = donor_model_state.get(name_of_slot.get(slot_id, ""))
+                name = name_of_slot.get(slot_id)
+  # ⚑⚑ A recovered name that is NOT a key of the donor's own model payload is
+  # PROOF the mapping is wrong -- the names are supposed to BE those keys.
+  # Skipping the slot instead (the original `continue`) turned a whole-mapping
+  # failure into a silent one: a stale `opt_param_names` manifest, e.g. after a
+  # module rename, misses on EVERY slot, `state_remap` comes out empty, and an
+  # EMPTY optimizer state installs successfully -- "0 kept, N dropped, N fresh"
+  # with no warning, while `optimizer_state_loaded` stays True so the scheduler
+  # and zclip are restored on top of a wiped optimizer. That is precisely the
+  # wipe this method exists to prevent, relocated from a WARNING into the quiet
+  # channel. Found by independent review 2026-08-14; reachable from the first
+  # checkpoint that carries the manifest.
+                if name is None or name not in donor_model_state:
+                    return None
+                donor_tensor = donor_model_state[name]
                 if not torch.is_tensor(donor_tensor) or not isinstance(entry, Mapping):
                     continue
                 for value in entry.values():
+  # 0-dim tensors are step counters, which carry no shape relationship to the
+  # parameter. EVERY other tensor in an entry is per-element, so compare shapes
+  # outright: an ndim DISAGREEMENT is the strongest evidence the mapping is
+  # wrong, and the previous `value.dim() == donor_tensor.dim()` guard waved
+  # exactly that case through.
                     if (
                         torch.is_tensor(value)
-                        and value.dim() == donor_tensor.dim()
+                        and value.dim() != 0
                         and tuple(value.shape) != tuple(donor_tensor.shape)
                     ):
                         return None
@@ -4129,12 +4199,11 @@ class Trainer:
             "param_groups": out_groups,
         }
         donor_set, live_set = set(donor_names), set(live_names)
-        report = (
-            f"{len(donor_set & live_set)} kept, "
-            f"{len(donor_set - live_set)} dropped, "
-            f"{len(live_set - donor_set)} fresh"
-        )
-        return remapped, report
+        kept = len(donor_set & live_set)
+        dropped = len(donor_set - live_set)
+        fresh = len(live_set - donor_set)
+        report = f"{kept} kept, {dropped} dropped, {fresh} fresh"
+        return remapped, report, kept, dropped + fresh
 
     def _remap_optimizer_state_for_new_params(self, ckpt_opt: dict) -> dict | None:
         """Remap a donor optimizer state dict around newly added parameters.
@@ -4286,12 +4355,35 @@ class Trainer:
                     opt_state, donor_names, ckpt.get("model"),
                 )
             if by_name is not None:
-                opt_state, remap_report = by_name
+                opt_state, remap_report, kept, changed = by_name
   # print, not logging.info: see the splice message below.
                 print(
                     "[resume] Re-keyed the donor optimizer state onto this "
                     f"model's parameters by name ({remap_report})"
                 )
+  # ⚑ A healthy warm start moves a handful of parameters: arm B was
+  # "475 kept, 6 dropped, 4 fresh". A mass turnover is the signature of a
+  # mapping that is wrong in a way the shape guard could not see, and on the
+  # `print` channel alone it reads exactly like the healthy line -- same words,
+  # different digits, and nobody diffs digits in a log. Anything past a tenth of
+  # the live slots is louder than INFO so it survives the Ray actor's handler-
+  # less logger, which drops INFO outright
+  # (see `server_info_logs_are_discarded_by_uvicorn` for the same failure mode).
+                if changed > max(1, n_model_params // 10):
+                    logging.getLogger(__name__).warning(
+                        "[resume] name-based optimizer remap changed %d of %d "
+                        "parameters (%s). A warm start normally touches a few; "
+                        "this many means the recovered name mapping may be "
+                        "wrong. Verify the donor's parameter names before "
+                        "trusting the restored moments.",
+                        changed, n_model_params, remap_report,
+                    )
+                elif kept == 0:
+                    logging.getLogger(__name__).warning(
+                        "[resume] name-based optimizer remap kept ZERO donor "
+                        "moments (%s) -- the optimizer is cold-starting.",
+                        remap_report,
+                    )
             elif n_ckpt_params < n_model_params:
                 remapped = self._remap_optimizer_state_for_new_params(opt_state)
                 if remapped is not None:
