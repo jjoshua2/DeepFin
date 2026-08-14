@@ -36788,6 +36788,15 @@ KL(lc0‖BT4 prior) 0.03-0.13.
   support-replenishment screen on the bank. Caveats per agent: shape-vs-lc0 is a
   diagnostic not a strength claim; lc0 targets carry Dirichlet tail inflation.
 
+> **⚑ POINTER APPENDED 2026-08-14 — CORROBORATED, and now priced against BT4 directly.** The 08-14
+> branching entry (end of this file) measures the same narrowness against BT4 on all 4000 audit rows
+> and puts a number on it: **median N95 ours 3 vs BT4 11** (paired −8.0 [−8.0, −7.0]), median
+> perplexity 2.06 vs 5.26. It also supplies what this entry could not: the narrowness is **not free** —
+> top-1 0.4273 vs 0.5683, top-1 regret 47.40 vs 20.07 cp, and sharp-and-wrong 32.25% vs 1.98%.
+> ⚑ Read alongside that entry's retirement of "support is FINE, 97.9% top-16": a prior can
+> simultaneously CONTAIN the good move (support) and RANK it badly (placement), and those are the two
+> different things this entry and the 08-07 goldcheck were each measuring one of.
+
 Housekeeping: review items 1-3 CLOSED on the branch (400d39c4d) — load.py now
 WIRED to leela_index (static remap deleted), castling reader takes explicit
 layout + reviewer's test, matched60 committed, goalpost change recorded. Legacy-
@@ -37251,6 +37260,17 @@ Sanity controls: exact row-identity reproduction of the 2,975-row goldcheck samp
 Confound note: two mid-run ONNX-arena OOMs (rows 888/1008) fixed by batch bucketing;
 JSONL verified gap-free, no per-position effect.
 
+> **⚑ SCOPE POINTER APPENDED 2026-08-14 — this verdict STANDS; do not let it grow.** It was judged by
+> pre-committed thresholds on a well-posed question ("is the best move of an independent judge inside
+> our top-32?") and the answer is a genuine, resolved 0.03%. But the metric belongs to the same
+> saturated top-k reachability family as the 97.9% figure the 2026-08-13 argmax entry leaned on, and
+> the 2026-08-14 branching entry (end of this file) retires that inference: at k=16 ours reads 0.9830
+> vs BT4's 0.9980 — a **1.50 pp** spread with **1.7 pp** of headroom — while the same nets differ by
+> **14.10 pp** at k=1. So "the support ceiling is CLOSED" means our top-32 CONTAINS the good move; it
+> does **not** mean the policy is healthy, and it never measured RANK within that support. The health
+> statistics are `top-1`, `median N95` (ours **3** vs BT4 **11**), and `P(rank ≤ own N95)` (ours
+> **72.85%** vs BT4 **99.45%**). Any future top-k reachability read carries the same warning.
+
 ## 2026-08-07 — PREREG: terminal-proximal outcome share in the wdl blend (RESTART-GATED, not live)
 
 **Hypothesis.** Within ~7 plies of the game's end the recorded outcome is the cleanest
@@ -37615,6 +37635,21 @@ corrects them.
 | | iter331 | 0.6685 | **0.4934 (+1.3pp)** | +0.1751 |
 | n_legal > 32 (n=342) | boot512 | 0.5707 | 0.4883 | +0.0824 |
 | | iter331 | 0.6280 | **0.4678 (-2.1pp)** | +0.1602 |
+
+> **⚑⚑ POINTER APPENDED 2026-08-14 — THE POPULATION THIS "audit set" NAMES IS NOT `data/audit_set_v1.jsonl`,
+> AND THE TAIL IS ~2.5× LARGER THAN STATED.** Re-measured on the frozen set itself (all 4000 rows of
+> `data/audit_set_v1.jsonl`, via `scratchpad/branching_AGENT_D/rows.jsonl`, `n_legal` agreeing with
+> python-chess on 4000/4000): **mean 28.04 legal, median 30, max 66**, and **n_legal ≤ 32 in 57.45%,
+> > 32 in 42.55%** — against this entry's *"mean 21.2 legal, median 20, max 60 … n_legal ≤ 32 in 82.9%,
+> > 32 in 17.1%"*. The two are incompatible, and this entry's own buckets sum to **n=2000**, not 4000,
+> so whatever it measured was NOT the full v1 set. **Unresolved which population it was** (the numbers
+> fit a selfplay/replay-bank sample better than the audit set) — recorded rather than reconciled, per
+> [[same_name_different_population]]. **Consequence, and it runs AGAINST this entry's reassurance:** the
+> "some legal moves get zero visits" tail is **42.6% of positions, not 17.1%**, so the underpowered
+> confidence-up/skill-down observation below sits on a much larger slice than advertised — and
+> production has since moved `gumbel_topk` **32 → 16**, shrinking the covered fraction further. Anyone
+> re-running the owed bucket-split with paired CIs must re-derive the split on the population they
+> actually score. See also the 2026-08-14 branching entry (end of this file) for the width numbers.
 
 Where search covers every legal move, accuracy ROSE with the confidence. Where it cannot,
 accuracy FELL 2.1pp while confidence rose 5.7pp — confidence up, skill down. Gap growth is
@@ -46416,6 +46451,24 @@ differentiator; our search already holds the right move 98% of the time.**
 ⚑ **Temperature cannot help, anywhere: it is a monotone transform, so top-1 regret is invariant to it
 by construction.**
 
+> **⚑⚑ CORRECTION APPENDED 2026-08-14 — THE 0.979 IS TRUE; THE INFERENCE DRAWN FROM IT IS RETIRED.**
+> See *2026-08-14 — EFFECTIVE BRANCHING FACTOR, ours vs BT4: SHARP AND WRONG* at the end of this file.
+> The number reproduces (deterministic top-16 recall **0.9830**, and **0.9788** restricted to the 3207
+> rows with >16 legal moves, where the metric can actually fail — the uniform control falls
+> 0.6362 → 0.5463 under that restriction, so it is a real test). **What does not survive is
+> "⇒ support is NOT the differentiator":** at k=16 the metric is SATURATED for both nets — ours 0.9830
+> vs BT4 0.9980, a **1.50 pp** spread with only **1.7 pp** of headroom below the 1.0 ceiling — while the
+> SAME two nets differ by **14.10 pp** at k=1. One ninth the dynamic range. The k=16 gap is
+> statistically resolved; it is simply too small a range to carry a health verdict, so top-16
+> reachability must not be cited as evidence our policy is fine. ⚑ The direction even REVERSES between
+> the two instruments (this entry's Gumbel-SAMPLED 16 has us ahead 0.979 vs 0.974; a deterministic rank
+> cut has us behind 0.9830 vs 0.9980) — sampling penalises a diffuse prior, a rank cut does not.
+> Different questions wearing the same "16" [[same_name_different_population]]. Cite `top-1`,
+> `median N95` (ours **3** vs BT4 **11**), or `P(rank ≤ own N95)` (ours **72.85%** vs BT4 **99.45%**,
+> against a uniform control that scores 97.48%) instead. **Everything else in this section stands** —
+> the uncensored-rank table, the mate and decisive-bucket concentrations, and the sharpness result are
+> all independently reproduced by the 08-14 run on a different instrument.
+
 ### WHERE THE GAP ACTUALLY LIVES — both concentrations are TRAINING-shaped
 **(i) MATES — 8.1% of positions carrying 9.20 of the 22.93 cp gap (40%).** Our top-1 there is
 **163.1 vs BT4's 49.5 (3.3×)**; elsewhere 32.4 vs 17.5 (1.85×). **94.9% of our 39 positions at the
@@ -48124,3 +48177,176 @@ last 20 iters and a level at iter 100 are different quantities, and both differe
 where they point opposite ways, **the paired arena is primary** and the regret dynamics are the
 hypothesis. Quoting the dynamics as the Tier-13 result would be exactly the substitution the
 standing rule forbids.
+
+---
+
+## 2026-08-14 — EFFECTIVE BRANCHING FACTOR, ours vs BT4: **SHARP AND WRONG**. And it RETIRES the inference behind "support is FINE, 97.9% top-16".
+
+Full report and every artifact: `scratchpad/branching_AGENT_D/` (`report.md`, `rows.jsonl`
+4000 rows, `analysis.txt`, `analysis_temp.txt`, `branching.py`, `analyze.py`, `run.log`).
+Every headline number below was **recomputed from `rows.jsonl` by a second agent with an
+independent script and a different bootstrap seed** before being written here; the report
+records the one place the recomputation disagreed with the circulated summary (caveat 4).
+
+### Hypothesis
+Our policy's narrowness is an ASSET: a sharper prior is a smaller effective branching
+factor, so at a fixed node budget our search reaches deeper than a diffuse net's. If true,
+the width gap vs BT4 should not come with a placement penalty — sharpness and correctness
+should be separable.
+
+### Instrument, and its resolution — stated BEFORE the verdict
+Raw policy priors of both nets over the **identical legal move list** on all **4000** rows
+of the frozen audit set (`data/audit_set_v1.jsonl`), softmaxed over legal moves only.
+Width = **N95** (smallest k whose top-k mass >= 0.95) and perplexity exp(H); placement =
+top-k recall of deep-SF's best and `top1_regret` in cp. Paired bootstrap, 10,000
+resamples, same positions both arms.
+
+- **`ours` = `scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099/trainer.pt`, step
+  91999, weights md5 `4cfe18420774f039795d8457261c61cb`** — Tier-13 arm A @ iter 100, NOT
+  `ckpt218`. ⚑ The checkpoint was NOT recorded by the run; it was recovered by re-scoring
+  128 positions against every candidate (arm A reproduces `rows.jsonl` **bit-exactly at
+  batch 128**; `ck_2026-08-12_5ce02_iter218` disagrees on 72 of 128 argmaxes)
+  [[params_json_is_the_launch_config]] applied to a scratch script.
+- `bt4` = `data/lc0/onnx/BT4-it332-vanilla-winner.onnx` md5 `a4fbd2bfda0375d931f04ea6dcb57920`,
+  `lc0_root` planes, history-fill **repeat**, gathered in canonical Leela 1858 space.
+- **NEGATIVE CONTROL, and it PASSES EXACTLY** [[shuffle_the_labels_negative_control]]:
+  uniform-over-the-same-legal-list gives mean N95 **27.1148 element-wise identical** to
+  ceil(0.95*n_legal), and perplexity equal to `n_legal` to **1.28e-13**. The width metric
+  computes what its name says.
+- **Resolution:** paired CI half-width is **~1.7 pp** on top-1 recall, **~0.4 pp** on
+  top-16 recall, **~0.2** on mean N95, **~3.8 cp** on mean `top1_regret`
+  [[compute_instrument_resolution_before_the_threshold]].
+- Adapter sanity all-zero: 0 legal moves without a Leela-1858 slot, 0 hitting our -1e9 pad,
+  0 positions where SF's best is missing from our legal list; `n_legal` = python-chess's
+  count on 4000/4000. On the 40 positions where SF's best IS a castle, top-1 is ours 0.700
+  vs BT4 0.725 — the castling remap is not driving anything
+  [[lc0_bt4_adapter_and_castling_remap_defect]].
+
+### VERDICT: **the hypothesis is REFUTED. We are SHARP AND WRONG.**
+
+| statistic | ours | BT4 | paired diff [95% CI] |
+|---|---|---|---|
+| **median N95** | **3** | **11** | **-8.0 [-8.0, -7.0]** |
+| mean N95 | 3.2760 | 11.3407 | -8.0648 [-8.2647, -7.8665] |
+| median perplexity | 2.0637 | 5.2643 | -3.2006 [-3.3374, -3.0838] |
+| **top-1 recall** | **0.4273** | **0.5683** | **-0.1410 [-0.1578, -0.1240]** |
+| **mean top-1 regret** | **47.40 cp** | **20.07 cp** | **+27.33 [+23.59, +31.23]** |
+| mean p(own top move) | **0.7209** | 0.4956 | +0.2253 [+0.2176, +0.2332] |
+| **mean p(SF's BEST move)** | 0.3905 | 0.3995 | **-0.0090 [-0.0191, +0.0008] — NULL** |
+
+Uniform control for scale: top-1 0.0703, top-1 regret 175.80 cp.
+
+**The narrowness is real and it is paid for.** We put 45% more mass on our own top move and
+*the same* mass on the right move — the extra confidence is spent on the move we picked,
+not the move that was correct. The decomposition (sharp = N95<=3, right = argmax is SF's
+best) prices it: **sharp-and-WRONG is 32.25% of positions for us vs 1.98% for BT4 — 16.3x**.
+And our wrong states are worse-shaped: SF's best at median rank 3 / p90 **9** with mean
+p 0.0846, **outside our own 95% beam 57.8%** of the time, against BT4's median rank 2 /
+p90 3 / mean p 0.2677 / outside-beam 10.1%. BT4 wrong is a near-miss; we miss.
+**P(SF's best inside the net's own 95% beam): ours 72.85% (84.90% at `gumbel_policy_temp`
+1.5), BT4 99.45%** — and the uniform control scores **97.48%** on that same statistic.
+
+**Implied depth (EXTRAPOLATION, see caveat 1):** d = log(1e6)/log(b) at b = median N95 gives
+ours **12.58** vs BT4 **5.76**, ratio **2.183 [2.096, 2.183]**. At the temperature production
+search actually consumes (`gumbel_policy_temp: 1.5`), our median N95 rises 3 -> 4, d falls to
+9.97, and the ratio against BT4's production prior is **1.730 [1.661, 1.730]**.
+
+We narrow fastest exactly where being wrong is most expensive: decisive bucket (gap >= 100 cp,
+n=645) median N95 **2** and top-1 0.670 vs BT4's 0.890 — consistent with the 08-13 argmax-gap
+entry's decisive-bucket finding, on an independent instrument.
+
+⚑ **Do NOT read the near-parity expected regret** (52.53 vs 50.93): `move_regrets` floors
+unlisted moves at the worst-listed regret, which under-penalises diffuseness. That is the
+already-established `E` vs `E|listed` ruler artifact — this run reproduces it, it does not
+re-open it. Quote `top1_regret` or `E|listed`, never `E`
+[[external_placement_top1_only_gap]].
+
+### ⚑⚑ WHAT THIS RETIRES — the INFERENCE, not the number
+
+Retires: **"support is FINE — deep-SF's best is in our top 16 in 97.9% of positions,
+therefore our policy is not the problem"** (the 2026-08-13 entry *THE ARGMAX GAP DIAGNOSED*,
+section "BUT 'THE INFORMATION IS NOT THERE' IS REFUTED — DECISIVELY").
+
+**The 97.9% is TRUE and correctly computed, and this run reproduces its deterministic
+analogue.** Our top-16 recall is **0.9830**; restricted to the 3207 rows with **more than 16
+legal moves** — the only rows where the metric CAN fail — it is **0.9788**. The restriction
+has teeth: the uniform control falls **0.6362 -> 0.5463** under it. The number survives.
+
+**What does not survive is reading it as evidence of policy health, because at k=16 the
+metric is SATURATED FOR BOTH NETS:**
+
+| k | ours | BT4 | spread | headroom below the 1.0 ceiling (ours) |
+|---|---|---|---|---|
+| **1** | 0.4273 | 0.5683 | **14.10 pp** | 57.3 pp |
+| 3 | 0.7127 | 0.8535 | 14.08 pp | 28.7 pp |
+| 5 | 0.8337 | 0.9323 | 9.86 pp | 16.6 pp |
+| 10 | 0.9423 | 0.9848 | 4.25 pp | 5.8 pp |
+| **16** | 0.9830 | 0.9980 | **1.50 pp** | **1.7 pp** |
+
+The k=16 difference IS statistically resolved (paired -0.0150 [-0.0190, -0.0110]) — the
+problem is **dynamic range, not significance**. Top-16 recall separates two nets that differ
+by 14.1 pp at k=1 by **1.50 pp**, one ninth the effect, with only **1.7 pp of room left
+between our value and the hard ceiling of 1.0**. A metric with 1.7 pp of headroom cannot
+distinguish a healthy policy from a sick one, so **it must not be cited as evidence that
+ours is healthy**. "SF's best is inside our top 16" and "our policy is fine" are different
+propositions and only the first was ever measured
+[[proxy_must_be_monotone_in_the_intervention]].
+
+⚑ **The direction even REVERSES between the two instruments, and that is an instrument
+difference rather than an error in either.** The banked figure has us marginally ahead
+(0.979 vs BT4's 0.974); deterministic top-16 has us behind (0.9830 vs 0.9980). The banked
+figure is a Monte-Carlo over the production root rule — Gumbel top-k *sampling* of 16
+candidates from the tempered prior — and stochastic sampling penalises a diffuse prior,
+which a deterministic rank cut does not. Two different questions ("does the sampler draw
+it" vs "is it in the top 16") that a shared 16 makes look like one
+[[same_name_different_population]]. Neither ordering can support "support is not the
+differentiator", because at 1.5 pp and 0.5 pp of separation **neither has the resolution to
+support anything**.
+
+**Replacements, to be cited instead:** `top-1 recall`, `median N95`, and
+`P(rank(SF best) <= own N95)` — 14.1 pp, 8.0, and 26.6 pp of separation respectively.
+This does NOT retract the 2026-08-06/08-07 support-ceiling verdicts, which asked a different
+question against pre-committed thresholds (see the pointers appended to those entries), but
+the same saturation warning applies to any future top-k reachability read.
+
+### Caveats — load-bearing, recorded rather than buried
+
+1. **`d = log N / log b` assumes uniform branching at EVERY ply, and b was measured at the
+   ROOT ONLY.** The depth table is an **extrapolation, not a measurement** — no non-root
+   node is touched anywhere in this run. If the assumption fails, the depth section reduces
+   to "our root prior is ~3.5x narrower".
+2. **`gumbel_topk: 16` caps the root candidate set independently of the prior.** Effectively
+   non-binding for us — **P(N95 <= 16) = 0.9975** (0.9862 at T=1.5) — but it would bind BT4
+   **17.8%** of the time (P(N95 <= 16) = 0.8223; 71.6% at T=1.5). So "BT4 searches 11 wide"
+   over-credits BT4 relative to what our root rule would actually admit: this is a
+   comparison of PRIORS, not of realised root sets [[check_the_resource_is_binding]].
+3. **Depth into a subtree that EXCLUDES the best move is not worth the same as depth into
+   one that contains it.** A 2.18x depth ratio bought with a beam that drops SF's best 27%
+   of the time is not 2.18x more search value. No Elo, no arena, no play here; regret cp is
+   not Elo [[losses_are_decoupled_from_strength]].
+4. **BT4 history-fill was `repeat`, and both known side effects DISADVANTAGE BT4** — so
+   neither can manufacture this result's direction; if anything BT4's true margin is larger.
+   (a) plain `lc0_root` carries no EP plane, affecting the **5 of 4000 rows (0.125%)** with
+   an EP square set; (b) eight identical history positions read as a 2-fold repetition to a
+   net that uses history. ⚑ **A summary of this work circulated the EP figure as "~1%"; the
+   measured value is 0.125%**, an order of magnitude smaller, and it moves in the safe
+   direction. Repeat-fill is the FAIR convention, not the TRUE one, and the audit set
+   structurally cannot carry real history [[audit_set_has_no_history_or_castling]].
+5. **10.0% of rows (400/4000) have tied best moves.** Tie-tolerant recomputation (argmax
+   counts as correct if its cp equals the best listed cp): ours **0.4592**, BT4 **0.6065**,
+   paired **-0.1473 [-0.1640, -0.1300]** — **conclusion unchanged, gap slightly wider**.
+   ⚑ The obvious shortcut `top1_regret <= 0` is WRONG and reads 0.4622/0.6090: on the 91
+   positions where every listed move has the same cp the unlisted-move floor is itself 0, so
+   unlisted moves score zero regret and count as correct. Use `move_cp` directly.
+6. **Batch size 128 is load-bearing for bit-exact reproduction** — at batch 64 the same
+   checkpoint reproduces `p_top1` only to ~3.5e-2 and flips 2 of 64 argmaxes. Ordinary GPU
+   batch-shape nondeterminism, but it means a re-run at a different batch shape is EXPECTED
+   to differ slightly.
+
+### Not verified
+No arena, no Elo, no play strength. This is the **raw prior only** — not the search's chosen
+move (that is #206's instrument, which read AMBIGUOUS). No non-root node, no real history, no
+ONNX-fp32 vs torch-fp32 numeric-path check. And the ruler is the deep-SF audit set, which
+rewards agreement with SF by construction [[audit_first_cannot_judge_a_non_sf_teacher]] — a
+width/placement gap against BT4 on this ruler is not automatically a gap against a
+non-SF-conjugate objective, which is the whole point of an anti-engine.
