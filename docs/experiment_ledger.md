@@ -348,6 +348,30 @@ full-information reference is computable and each censor can be scored against i
 applies **3.87× the true pressure** pushing mass off the censored tail. `r_6` errs the other way
 at 0.50×. Fitted α lands at 1.09× with less than half the midpoint's L2.
 
+**⚑ TWO DIFFERENT α's, AND THEY NEARLY COINCIDE.** `α = 0.1759` above was fitted to match the
+policy-weighted E[regret]. That is not the same objective as matching the GRADIENT, so the
+gradient-optimal α was fitted separately — and it is closed form, because `g(α)` is LINEAR in α:
+with `u = 1_hidden · (1−r_6)/2`, `r(α) = r_0 + αu` (r_0 = tail filled at `r_6`), hence
+`g(α) = g_0 + α·d` with `d = p ⊙ (u − p·u)`, and the pooled least-squares optimum is
+`α_grad = Σ⟨d, g_true − g_0⟩ / Σ⟨d, d⟩`. No search.
+
+| α | value | cos sim | rel L2 (pooled) | tail pressure vs TRUE |
+|---|---|---|---|---|
+| `α_value` (matches E[regret]) | 0.1759 | 0.9023 | 0.4940 | 1.09× |
+| `α_grad` (least-squares on the gradient) | **0.1408** | 0.9054 | 0.4919 | **0.97×** |
+
+Unclipped, so the `[0,2]` bound never bound. **Optimising directly for the gradient buys almost
+nothing** — cosine 0.9023 → 0.9054, pooled L2 0.4940 → 0.4919. ⇒ **one scalar α in ~0.14–0.18
+serves both objectives**, and the distinction is not worth carrying in the design. (`α_grad` is
+the smaller of the two because the least-squares weighting emphasises rows with more hidden
+mass.) Both are ~6× below the live midpoint's α = 1.
+
+⚑ **AND THE CEILING IS IRREDUCIBLE, WHICH IS THE ACTIONABLE PART.** Even at the
+gradient-OPTIMAL α, cosine tops out at **0.905**. The residual ~0.095 is not a mis-fitted α —
+it is what a CONSTANT tail costs, because one number cannot separate rank 7 (186 cp) from rank
+40 (635 cp). ⇒ **Do not tune α further.** The next model is a rank- or prior-aware tail (or a
+residual tilt), not a better constant.
+
 ⚑ **But no single common tail value reproduces the within-tail gradient**: cosine similarity is
 only 0.855–0.902 for ALL three, because one number cannot separate rank 7 (186 cp) from rank 40
 (635 cp). Fitting α buys the aggregate pressure, not the per-action direction. If the tail's
