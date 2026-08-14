@@ -96,7 +96,11 @@ import chess
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.eval.audit import decode_board_from_planes
 from chess_anti_engine.moves.encode import move_to_index_for_encoding
-from chess_anti_engine.replay.shard import SF_CP_SENTINEL, load_shard_arrays
+from chess_anti_engine.replay.shard import (
+    SF_CP_SENTINEL,
+    load_shard_arrays,
+    sf_eval_pv_orphan_flags,
+)
 from scripts.diagnostic_replay_utils import (
     float_field,
     latest_replay_dir,
@@ -257,6 +261,36 @@ def advantage(q_child: float, q_parent: float) -> float:
     return q_child + q_parent
 
 
+def new_scan(replay_dir: Path | str, shards: list[Path]) -> dict[str, Any]:
+    """The scan counters, in ONE place.
+
+    Built as a shared constructor because the test fixture used to hand-roll its
+    own copy: a counter added here then raised KeyError there, which reads as a
+    probe failure rather than as fixture drift.
+    """
+    return {
+        "replay_dir": str(replay_dir),
+        "shards": len(shards),
+        "rows_scanned": 0,
+        "rows_sf_wdl": 0,
+        "rows_sf_p0_regret": 0,
+        "cast_pairs": 0,
+        "cast_pairs_with_p0": 0,
+        "action_recovered": 0,
+        "action_unrecovered": 0,
+        "action_illegal": 0,
+        "no_successor": 0,
+        "desync_checked": 0,
+        "desync_orphaned": 0,
+        "desync_rows_rejected": 0,
+        # ⚑ select_shards resolves a MOVING trailing window; without the exact
+        # names a banked number cannot be traced to the rows that produced it.
+        "shard_names": [p.name for p in shards],
+        "skipped_shards": [],
+        "skipped_shards_omitted": 0,
+    }
+
+
 def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) -> Rows:
     """Join adjacent labelled plies and accumulate every per-row quantity."""
     rows = Rows()
@@ -282,6 +316,17 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
         planes = np.asarray(arrs["x"])
         hist_enc = str(np.asarray(arrs["_input_history_encoding"]).item())
         pol_enc = str(np.asarray(arrs["_policy_encoding"]).item())
+        # ⚑ DESYNC. A_CAST is built from sf_wdl, so a row whose stored eval
+        # outlived the PV it came from contributes an advantage between two
+        # DIFFERENT positions. sf_eval_pv_orphan_flags is the repository's own
+        # value-half fingerprint; the policy-half detector
+        # (losses.sf_multipv_presence_counts) fires on rows with NO MultiPV
+        # block, a population this probe already excludes by construction, so
+        # the two must not be summed onto a shared denominator.
+        orphan_f, checked_f = sf_eval_pv_orphan_flags(arrs)
+        orphaned = np.asarray(orphan_f).astype(bool)
+        scan["desync_checked"] += int(np.asarray(checked_f).sum())
+        scan["desync_orphaned"] += int(orphaned.sum())
         kl = float_field(arrs, "priority_policy_kl", n)
         qd = float_field(arrs, "priority_q_delta", n)
 
@@ -292,6 +337,9 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
         for i in range(n):
             parent = index.get((int(gid[i]), int(ply[i]) - 1))
             if parent is None or not (has_wdl[i] and has_wdl[parent]):
+                continue
+            if orphaned[i] or orphaned[parent]:
+                scan["desync_rows_rejected"] += 1
                 continue
             # Every adjacency below is EXACT: ply_index - 1 in the same game.
             # A gap is never treated as consecutive.
@@ -470,7 +518,10 @@ def price_the_tail(
         lo_cp = hi_cp = float("nan")
     result["n_bootstrap"] = len(draws)
     assigned = float(arr["regret_played"][out].mean()) * SF_OWN_REGRET_CAP_CP
+    unstable = bool(np.isfinite(lo_cp) and np.isfinite(hi_cp)
+                    and not (lo_cp <= implied <= hi_cp))
     result.update({
+        "inversion_unstable": unstable,
         "outside_frac": n_out / max(int(sel.sum()), 1),
         "mean_adv_outside": mean,
         "ci95_half": half,
@@ -519,6 +570,21 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
     if n == 0:
         print("\nno joined rows -- nothing further to report")
         return out
+
+    checked = int(scan["desync_checked"])
+    orph = int(scan["desync_orphaned"])
+    print("\n1b. SF DESYNC REJECTION (value half)")
+    print(f"   rows checked {checked}   orphaned {orph}"
+          f"   rate {orph / max(checked, 1):.6f}"
+          f"   -> CAST pairs rejected {scan['desync_rows_rejected']}")
+    print("   `sf_eval_pv_orphan_flags`: the stored eval disagreeing with its own rank-1")
+    print("   PV means Stockfish answered a DIFFERENT position, so the advantage would")
+    print("   span two unrelated roots. Healthy is exactly 0.000000. ⚑ Do NOT add this to")
+    print("   the policy-half rate (losses.sf_multipv_presence_counts): that one fires on")
+    print("   rows with NO MultiPV block, which this probe already excludes -- disjoint")
+    print("   populations, different denominators.")
+    out["desync"] = {"checked": checked, "orphaned": orph,
+                     "pairs_rejected": int(scan["desync_rows_rejected"])}
 
     print("\n2. THE A_CAST SIGNAL AND ITS NOISE FLOOR")
     p_pos = float(np.mean(adv > 1e-9))
@@ -614,14 +680,32 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
           f"  (unrecovered {scan['action_unrecovered']}, illegal {scan['action_illegal']},"
           f" no successor row {scan['no_successor']})")
     if pia.size:
-        print(f"   P(played == argmax(policy_target)) = {100 * pia.mean():.2f}%")
-        print("   ⚑ audit C9 measured 0.9122 at plies 15+ on 2026-07-26, BEFORE the sims")
-        print("     256->100 / topk 32->16 deploy. A drop here is that deploy, not a bug:")
-        print("     fewer sims and a narrower candidate set move the sequential-halving")
-        print("     survivor further from the final visit-count argmax.")
-        print("   ⚑ POPULATION: this is measured on rows whose successor ply survived into")
-        print("     the SAME shard, the same adjacency selection that gates CAST. Compare")
-        print("     the ply/pmax lines in section 7 before calling it the global rate.")
+        plyv = arr["ply"]
+        print(f"   P(played == argmax(policy_target)) = {100 * pia.mean():.2f}%  (aggregate)")
+        print("   ⚑⚑ THE AGGREGATE IS NOT COMPARABLE TO C9. C9 binned by move number and")
+        print("      reported 0.7455 at plies 1-11 and 0.9122 at 15+, so an aggregate here")
+        print("      can differ from either without any search change. Read the BINS:")
+        bins: list[dict[str, float]] = []
+        for lo, hi, c9 in ((0, 12, 0.7455), (12, 13, 0.7705), (13, 14, 0.8281),
+                           (14, 15, 0.9298), (15, 31, 0.9122), (31, 61, 0.9122),
+                           (61, float("inf"), 0.9122)):
+            m = (plyv >= lo) & (plyv < hi)
+            if int(m.sum()) < MIN_BUCKET:
+                continue
+            lab = f"{lo}-{hi - 1:.0f}" if np.isfinite(hi) else f"{lo}+"
+            ref = f"  C9 {c9:.4f}" if hi <= 31 else "  (C9 lumped these into 15+: 0.9122)"
+            print(f"      plies {lab:>7s}  n={int(m.sum()):5d}  {pia[m].mean():.4f}{ref}")
+            bins.append({"lo": lo, "hi": float(hi), "n": float(m.sum()),
+                         "rate": float(pia[m].mean())})
+        out["played_is_argmax_by_ply"] = bins
+        print("   ⚑ ply_index ORIGIN is not established to match C9's move number"
+              " (CLAUDE.md notes")
+        print("     it differs between the C and Python play paths), so treat this as a")
+        print("     CURRENT reading, not a matched before/after. Attributing a change to")
+        print("     the sims 256->100 / topk 32->16 deploy needs the same bins on")
+        print("     pre-deploy shards, which this run does not read.")
+        print("   ⚑ POPULATION: measured on rows whose successor ply survived into the")
+        print("     SAME shard -- the adjacency selection that also gates CAST.")
     out["played_move"] = {
         "recovered": scan["action_recovered"],
         "unrecovered": scan["action_unrecovered"],
@@ -645,7 +729,12 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
               f"  ⇒ true {res['implied_cp']:5.0f} cp"
               f" [{res['implied_cp_lo']:.0f}-{res['implied_cp_hi']:.0f}]"
               f"  vs {res['assigned_cp']:5.0f} cp assigned"
-              f"  = {res['overstatement']:5.1f}x")
+              f"  = {res['overstatement']:5.1f}x"
+              f"{'   ⚑ UNSTABLE' if res.get('inversion_unstable') else ''}")
+    if any(r.get("inversion_unstable") for r in strata):
+        print("   ⚑⚑ UNSTABLE means the point estimate falls OUTSIDE its own bootstrap")
+        print("      interval: the full-sample calibration and the resampled ones disagree")
+        print("      about where this advantage inverts. Do not quote such a row.")
     out["tail_pricing"] = strata
 
     print("\n6. PRE-QUERY DIAGNOSTICS vs A_CAST")
@@ -707,24 +796,7 @@ def main() -> int:
     if not shards:
         raise SystemExit(f"no shards under {replay_dir}")
     rng = np.random.default_rng(args.seed)
-    scan: dict[str, Any] = {
-        "replay_dir": str(replay_dir),
-        "shards": len(shards),
-        "rows_scanned": 0,
-        "rows_sf_wdl": 0,
-        "rows_sf_p0_regret": 0,
-        "cast_pairs": 0,
-        "cast_pairs_with_p0": 0,
-        "action_recovered": 0,
-        "action_unrecovered": 0,
-        "action_illegal": 0,
-        "no_successor": 0,
-        # ⚑ select_shards resolves a MOVING trailing window; without the exact
-        # names a banked number cannot be traced to the rows that produced it.
-        "shard_names": [p.name for p in shards],
-        "skipped_shards": [],
-        "skipped_shards_omitted": 0,
-    }
+    scan = new_scan(replay_dir, shards)
     rows = collect(shards, scan, rng)
     out = report(rows.arrays(), scan, rng)
     if args.json_out is not None:

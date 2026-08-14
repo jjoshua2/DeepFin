@@ -116,12 +116,7 @@ def _shard(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
 def _collect(rows: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> Any:
     shard = _shard(rows)
     monkeypatch.setattr(cast_probe, "load_shard_arrays", lambda _: shard)
-    scan: dict[str, Any] = {
-        "rows_scanned": 0, "rows_sf_wdl": 0, "rows_sf_p0_regret": 0,
-        "cast_pairs": 0, "cast_pairs_with_p0": 0, "action_recovered": 0,
-        "action_unrecovered": 0, "action_illegal": 0, "no_successor": 0,
-        "skipped_shards": [], "skipped_shards_omitted": 0,
-    }
+    scan = cast_probe.new_scan("fake-dir", [Path("fake.zarr")])
     out = cast_probe.collect([Path("fake.zarr")], scan, np.random.default_rng(0))
     return out, scan
 
