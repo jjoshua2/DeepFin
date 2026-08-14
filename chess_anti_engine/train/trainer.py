@@ -103,6 +103,38 @@ from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 
 
+class UntrustedOptimizerStateError(ValueError):
+    """The donor optimizer state could not be re-keyed by NAME, and its INDEX
+    order must not be trusted either.
+
+    ⚑ This type exists because "cannot remap" splits into two cases that need
+    OPPOSITE handling, and conflating them silently corrupts a warm start:
+
+    * **Not applicable** — an ordinary resume where the live and donor names are
+      identical, or a checkpoint whose manifest is unreadable. Nothing needs
+      re-keying; the positional ``load_state_dict`` below is exactly right, and
+      declining silently is correct. Those paths still ``return None``.
+    * **Untrusted** — a donor name that resolves to nothing, a moment tensor
+      whose shape disagrees with the parameter it claims to belong to, or
+      duplicate slot ids. Here the name mapping is KNOWN to be unreliable, and
+      optimizer state is keyed by an integer index into the flattened
+      ``param_groups`` order, so falling back to a positional load hands every
+      parameter some OTHER parameter's moments.
+
+    Measured by independent review 2026-08-14, on both live optimizer layouts:
+    with the counts equal, that fallback installed state that is non-empty,
+    correctly shaped, steppable, **wrong, and silent** — no warning, and
+    ``optimizer_state_loaded`` left True so the scheduler and zclip were
+    restored on top of it. ``reset_mismatched_optimizer_state`` cannot catch it,
+    because the shapes match by construction.
+
+    So an untrusted mapping REFUSES the positional load and cold-starts instead.
+    That costs the donor moments and biases the first iterations, which is a real
+    price — but absent moments are loud and bounded, while wrong moments are
+    undetectable by every instrument downstream.
+    """
+
+
 class _TrainBatchIterator:
     """Keep replay prefetch alive across optimizer steps and CUDA retries."""
 
@@ -4134,7 +4166,14 @@ class Trainer:
   # one id to whichever name came last. `strict=True` cannot see it -- the two
   # sequences are the same LENGTH -- so check distinctness explicitly.
         if len(set(donor_slot_ids)) != len(donor_slot_ids):
-            return None
+            raise UntrustedOptimizerStateError(
+                f"donor param_groups repeat a slot id ({len(donor_slot_ids)} slots, "
+                f"{len(set(donor_slot_ids))} distinct); the slot -> name mapping is "
+                "not one-to-one"
+            )
+  # NOT a distrust decline: the live and donor names agree, so this is an
+  # ordinary resume with nothing to re-key, and the positional load the caller
+  # falls back to is the CORRECT behaviour rather than a hazard.
         if list(live_names) == list(donor_names):
             return None
         name_of_slot = dict(zip(donor_slot_ids, donor_names, strict=True))
@@ -4160,7 +4199,11 @@ class Trainer:
   # channel. Found by independent review 2026-08-14; reachable from the first
   # checkpoint that carries the manifest.
                 if name is None or name not in donor_model_state:
-                    return None
+                    raise UntrustedOptimizerStateError(
+                        f"donor optimizer slot {slot_id!r} resolves to "
+                        f"{name!r}, which is not a tensor in the donor model "
+                        "payload; the recovered name mapping is unreliable"
+                    )
                 donor_tensor = donor_model_state[name]
                 if not torch.is_tensor(donor_tensor) or not isinstance(entry, Mapping):
                     continue
@@ -4175,7 +4218,13 @@ class Trainer:
                         and value.dim() != 0
                         and tuple(value.shape) != tuple(donor_tensor.shape)
                     ):
-                        return None
+                        raise UntrustedOptimizerStateError(
+                            f"donor optimizer slot {slot_id!r} claims to be "
+                            f"{name!r}, but carries a moment tensor of shape "
+                            f"{tuple(value.shape)} against that parameter's "
+                            f"{tuple(donor_tensor.shape)}; the slot walk is "
+                            "off and the mapping cannot be trusted"
+                        )
 
         new_index_of_name = {name: index for index, name in enumerate(live_names)}
         state_remap = {
@@ -4372,18 +4421,22 @@ class Trainer:
                 if changed > max(1, n_model_params // 10):
                     logging.getLogger(__name__).warning(
                         "[resume] name-based optimizer remap changed %d of %d "
-                        "parameters (%s). A warm start normally touches a few; "
-                        "this many means the recovered name mapping may be "
-                        "wrong. Verify the donor's parameter names before "
-                        "trusting the restored moments.",
-                        changed, n_model_params, remap_report,
+                        "parameters and kept only %d donor moment set(s) (%s). "
+                        "A warm start normally touches a few; this many means "
+                        "the recovered name mapping may be wrong. Verify the "
+                        "donor's parameter names before trusting the restored "
+                        "moments.",
+                        changed, n_model_params, kept, remap_report,
                     )
-                elif kept == 0:
-                    logging.getLogger(__name__).warning(
-                        "[resume] name-based optimizer remap kept ZERO donor "
-                        "moments (%s) -- the optimizer is cold-starting.",
-                        remap_report,
-                    )
+  # ⚑ There is deliberately NO `elif kept == 0:` companion here, and it is not
+  # an oversight -- it was written, and it was UNREACHABLE. `kept == 0` forces
+  # `dropped == len(donor)` and `fresh == len(live)`, hence
+  # `changed >= n_model_params`, which always exceeds `n_model_params // 10`, so
+  # the branch above already fired. Brute-forced over
+  # n_model in [1,599] x n_donor in [0,599]: exactly ONE reachable case,
+  # (n_model=1, n_donor=0). Production carries 481 slots. Found by independent
+  # review 2026-08-14 -- a guard that cannot fire, added in a change about
+  # guards that cannot fire.
             elif n_ckpt_params < n_model_params:
                 remapped = self._remap_optimizer_state_for_new_params(opt_state)
                 if remapped is not None:
@@ -4424,6 +4477,24 @@ class Trainer:
                     "shape changed in this warm start; they restart at zero "
                     "moments / step 0: %s", len(reset), "; ".join(reset),
                 )
+        except UntrustedOptimizerStateError as exc:
+  # ⚑ REFUSE the positional fallback rather than take it. Reaching the generic
+  # handler below would be enough to cold-start, but this branch exists so the
+  # message says WHY, and so that deleting it is a visible change rather than a
+  # silent reversion to `self.opt.load_state_dict(opt_state)` by index.
+            optimizer_state_loaded = False
+            logging.getLogger(__name__).warning(
+                "REFUSING to load the donor optimizer state by position: %s. "
+                "The optimizer cold-starts at zero moments. This is deliberate: "
+                "optimizer state is keyed by index into the flattened "
+                "param_groups order, so a positional load under an untrusted "
+                "name mapping gives each parameter ANOTHER parameter's moments "
+                "-- non-empty, correctly shaped, and undetectable downstream.",
+                exc,
+            )
+            self.opt.load_state_dict(fresh_opt_state)
+            self._scheduler.load_state_dict(fresh_scheduler_state)
+            self.reset_optimizer_reference_weights()
         except (ValueError, KeyError, RuntimeError) as exc:
             optimizer_state_loaded = False
             logging.getLogger(__name__).warning(

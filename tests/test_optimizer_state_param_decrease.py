@@ -37,7 +37,7 @@ import pytest
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.train.trainer import Trainer
+from chess_anti_engine.train.trainer import Trainer, UntrustedOptimizerStateError
 
 # (optimizer, matrix_optimizer_scope). The second is PRODUCTION's layout.
 _LAYOUTS = [("adamw", "default"), ("aurora", "mlp_out")]
@@ -425,9 +425,10 @@ def test_the_remap_DECLINES_rather_than_guess_when_its_check_fails(
     names = trainer._donor_optimizer_param_names(payload)
     assert names is not None
     rotated = [*names[1:], names[0]]
-    assert trainer._remap_optimizer_state_by_param_name(
-        payload["opt"], rotated, payload["model"],
-    ) is None
+    with pytest.raises(UntrustedOptimizerStateError):
+        trainer._remap_optimizer_state_by_param_name(
+            payload["opt"], rotated, payload["model"],
+        )
 
 
 @pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
@@ -566,9 +567,10 @@ def test_a_manifest_name_absent_from_the_donor_payload_declines(
     stale["opt_param_names"] = [f"renamed.{n}" for n in payload["opt_param_names"]]
     stale_names = arm._donor_optimizer_param_names(stale)
     assert stale_names is not None, "a stale manifest is still well-FORMED"
-    assert arm._remap_optimizer_state_by_param_name(
-        stale["opt"], stale_names, stale["model"],
-    ) is None
+    with pytest.raises(UntrustedOptimizerStateError):
+        arm._remap_optimizer_state_by_param_name(
+            stale["opt"], stale_names, stale["model"],
+        )
 
     # ARM 2 — exactly one parameter renamed. The quiet case: pre-fix this
     # returned a plausible mapping that silently dropped that parameter's state.
@@ -582,9 +584,10 @@ def test_a_manifest_name_absent_from_the_donor_payload_declines(
     one["opt_param_names"] = renamed
     one_names = arm._donor_optimizer_param_names(one)
     assert one_names is not None
-    assert arm._remap_optimizer_state_by_param_name(
-        one["opt"], one_names, one["model"],
-    ) is None
+    with pytest.raises(UntrustedOptimizerStateError):
+        arm._remap_optimizer_state_by_param_name(
+            one["opt"], one_names, one["model"],
+        )
 
 
 @pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
@@ -666,9 +669,10 @@ def test_duplicate_donor_slot_ids_decline(
         assert sid in surviving, "fixture would trip the NAME guard, not the id guard"
         assert surviving[sid] in shape_of_name, "fixture would trip the name guard"
 
-    assert arm._remap_optimizer_state_by_param_name(
-        opt_state, names, payload["model"],
-    ) is None
+    with pytest.raises(UntrustedOptimizerStateError):
+        arm._remap_optimizer_state_by_param_name(
+            opt_state, names, payload["model"],
+        )
 
 
 @pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
@@ -712,9 +716,10 @@ def test_an_ndim_mismatch_declines(
     # Same NUMEL, different ndim — invisible to a shape check gated on equal dim.
     entry[key] = entry[key].flatten()
     opt_state["state"] = state
-    assert arm._remap_optimizer_state_by_param_name(
-        opt_state, names, payload["model"],
-    ) is None
+    with pytest.raises(UntrustedOptimizerStateError):
+        arm._remap_optimizer_state_by_param_name(
+            opt_state, names, payload["model"],
+        )
 
 
 @pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
@@ -796,3 +801,58 @@ def test_a_parameter_that_moves_between_groups_does_not_crash(
             for value in arm.opt.state.get(param, {}).values():
                 if torch.is_tensor(value):
                     assert torch.isfinite(value).all()
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_load_REFUSES_the_positional_fallback_when_the_name_map_is_untrusted(
+    optimizer: str, scope: str, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑⚑ THE DECLINE MUST NOT LAND IN A POSITIONAL LOAD.
+
+    Every other test here calls `_remap_optimizer_state_by_param_name` DIRECTLY,
+    so none of them can see what `load` does with a `None`. Independent review
+    2026-08-14 executed that path and found the answer: `load` skipped both
+    warnings and fell through to `self.opt.load_state_dict(opt_state)`, which is
+    keyed by INDEX. With the donor and live counts equal -- the normal case --
+    every parameter received some OTHER parameter's moments: non-empty,
+    correctly shaped, steppable, wrong, and completely unlogged, with
+    `optimizer_state_loaded` left True so the scheduler and zclip were restored
+    on top. `reset_mismatched_optimizer_state` cannot catch it because the
+    shapes match by construction.
+
+    So the guard against re-keying by position had, as its failure mode,
+    re-keying by position.
+
+    The fixture stales exactly ONE manifest name. That is enough to make the map
+    untrusted while leaving the counts equal, which is precisely the shape that
+    used to fall through silently.
+    """
+    trainer = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    banked = _bank_fingerprints(trainer)
+    ckpt = tmp_path / "t.pt"
+    trainer.save(ckpt)
+
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    names = list(payload["opt_param_names"])
+    assert len(names) >= 2, "fixture needs a real manifest"
+    names[0] = f"{names[0]}.renamed_by_a_refactor"
+    payload["opt_param_names"] = names
+    torch.save(payload, str(ckpt))
+
+    twin = _trainer(_cfg(), tmp_path / "twin", optimizer, scope)
+    with caplog.at_level(logging.WARNING):
+        twin.load(ckpt)
+
+    assert any("REFUSING" in r.getMessage() for r in caplog.records), (
+        "an untrusted name map was absorbed silently; the operator has no signal "
+        f"that the optimizer state was not restored. records={[r.getMessage() for r in caplog.records]}"
+    )
+  # ⚑ The VALUE read, not the log read. `_bank_fingerprints` stamps a distinct
+  # float into every donor moment, so ANY overlap here means donor moments were
+  # installed -- which, given the map was rejected, could only have happened by
+  # position.
+    survived = set(_read_state(twin).values())
+    assert not (survived & set(banked.values())), (
+        "donor moments reached the live optimizer even though the name mapping "
+        "was rejected -- they can only have been placed POSITIONALLY"
+    )
