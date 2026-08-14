@@ -6,7 +6,7 @@ import logging
 import math
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -581,6 +581,56 @@ class _ChainedOptimizer(torch.optim.Optimizer):
         ]
 
 
+@dataclass(frozen=True)
+class _DecayGroupLayout:
+    """How the four decay buckets were laid out across the optimizer's groups.
+
+    Recorded at construction, next to the code that builds the groups, so
+    ``Trainer._donor_optimizer_param_names`` can replay the assignment over a
+    checkpoint instead of guessing it. ``bucket_to_group[i]`` is the index of
+    the ``optimizer.param_groups`` entry that received decay bucket ``i``, or
+    ``-1`` when that bucket has no group (the plain two-group AdamW layout has
+    no hidden buckets, and ``hidden_filter`` is then None so they stay empty).
+
+    Absent (None on the Trainer) for the layouts this cannot describe — the
+    ``global_board_*`` branch groups, SOAP's chained/flattened forms — in which
+    case the name-based optimizer remap declines and the caller keeps its
+    existing behaviour.
+    """
+
+    hidden_filter: Callable[[str, Any], bool] | None
+    bucket_to_group: tuple[int, int, int, int]
+
+
+def decay_bucket_index(
+    name: str,
+    param: Any,
+    hidden_filter: Callable[[str, Any], bool] | None,
+) -> int:
+    """Which of (hidden_decay, hidden_no_decay, aux_decay, aux_no_decay) *param* lands in.
+
+    The SINGLE definition of the bucketing rule. ``_split_decay_groups`` applies
+    it to a live model; ``Trainer._donor_optimizer_param_names`` replays it over
+    a CHECKPOINT's tensors to recover which optimizer slot each donor parameter
+    occupied. Two copies of this rule would let the replay drift away from the
+    construction it is supposed to mirror, and the failure that produces —
+    donor moments re-associated with the wrong parameter — is silent.
+
+    Only ``name``, ``param.ndim`` and the filter are consulted, which is exactly
+    what makes the replay possible: every input is recoverable from a saved
+    ``state_dict`` entry.
+    """
+    is_no_decay = param.ndim <= 1 or name.endswith(".bias")
+    is_hidden = bool(hidden_filter(name, param)) if hidden_filter else False
+    if is_hidden and not is_no_decay:
+        return 0
+    if is_hidden:
+        return 1
+    if is_no_decay:
+        return 3
+    return 2
+
+
 def _split_decay_groups(
     model: torch.nn.Module,
     *,
@@ -593,23 +643,12 @@ def _split_decay_groups(
     from the rest (aux_*); without it, hidden_* are empty and all params go
     into aux_*.
     """
-    hidden_decay: list = []
-    hidden_no_decay: list = []
-    aux_decay: list = []
-    aux_no_decay: list = []
+    buckets: tuple[list, list, list, list] = ([], [], [], [])
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        is_no_decay = param.ndim <= 1 or name.endswith(".bias")
-        is_hidden = bool(hidden_filter(name, param)) if hidden_filter else False
-        if is_hidden and not is_no_decay:
-            hidden_decay.append(param)
-        elif is_hidden:
-            hidden_no_decay.append(param)
-        elif is_no_decay:
-            aux_no_decay.append(param)
-        else:
-            aux_decay.append(param)
+        buckets[decay_bucket_index(name, param, hidden_filter)].append(param)
+    hidden_decay, hidden_no_decay, aux_decay, aux_no_decay = buckets
     return hidden_decay, hidden_no_decay, aux_decay, aux_no_decay
 
 
@@ -1843,6 +1882,9 @@ class Trainer:
                     )
             return marked
 
+  # Set by whichever branch below builds the groups; stays None for the
+  # layouts `_DecayGroupLayout` cannot describe. See `_donor_optimizer_param_names`.
+        self._decay_group_layout: _DecayGroupLayout | None = None
         if optimizer in ("muon", "aurora"):
             if optimizer == "muon":
                 hidden_filter = _matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=True)
@@ -1861,6 +1903,15 @@ class Trainer:
                 (hd, hnd, ad, and_),
                 self.model,
                 lambda name, _param: name.startswith("global_board_adapter."),
+            )
+  # Groups 0-3 are [hd, hnd, ad, and_] on both the muon and the aurora
+  # branch below. Any `global_board_*` branch group re-homes parameters
+  # OUT of those four by name, which `decay_bucket_index` alone cannot
+  # reproduce, so the layout is withheld and the name-based remap declines.
+            self._decay_group_layout = (
+                None
+                if (global_board_preprocess_params or global_board_adapter_params)
+                else _DecayGroupLayout(hidden_filter=hidden_filter, bucket_to_group=(0, 1, 2, 3))
             )
   # Muon/Aurora trunk gets a larger LR than the AdamW fallback for heads/norms.
   # Keep one Tune-search LR and derive trunk LR so search stays simple.
@@ -1926,12 +1977,13 @@ class Trainer:
         else:
   # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
             if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
+                soda_hidden_filter = _matrix_optimizer_filter(
+                    matrix_optimizer_scope,
+                    include_embed_default=False,
+                )
                 hd, hnd, ad, and_ = _split_decay_groups(
                     self.model,
-                    hidden_filter=_matrix_optimizer_filter(
-                        matrix_optimizer_scope,
-                        include_embed_default=False,
-                    ),
+                    hidden_filter=soda_hidden_filter,
                 )
                 param_groups = [
                     {"params": hd, "weight_decay": 0.0},
@@ -1939,6 +1991,9 @@ class Trainer:
                     {"params": ad, "weight_decay": 0.0},
                     {"params": and_, "weight_decay": 0.0},
                 ]
+                self._decay_group_layout = _DecayGroupLayout(
+                    hidden_filter=soda_hidden_filter, bucket_to_group=(0, 1, 2, 3),
+                )
                 use_soda_weight_decay = _mark_soda(param_groups)
             else:
                 _, _, decay_params, no_decay_params = _split_decay_groups(self.model)
@@ -1946,6 +2001,11 @@ class Trainer:
                     {"params": decay_params, "weight_decay": 1e-4},
                     {"params": no_decay_params, "weight_decay": 0.0},
                 ]
+  # No hidden_filter above, so buckets 0/1 are provably empty and only
+  # aux_decay/aux_no_decay (2/3) map onto the two groups.
+                self._decay_group_layout = _DecayGroupLayout(
+                    hidden_filter=None, bucket_to_group=(-1, -1, 0, 1),
+                )
                 use_soda_weight_decay = _mark_soda(param_groups)
 
         if optimizer == "nadamw":
@@ -1999,6 +2059,8 @@ class Trainer:
                         exc, len(param_groups),
                     )
                     self.opt = SOAP(self.model.parameters(), lr=lr)
+  # One flat group in model order, not the four this layout describes.
+                    self._decay_group_layout = None
             else:
                 hd, hnd, ad, and_ = _split_decay_groups(
                     self.model,
@@ -2024,6 +2086,9 @@ class Trainer:
                     soap_soda = _mark_soda(soap_groups)
                     adam_soda = _mark_soda(adam_groups, hidden_group_indices=())
                     use_soda_weight_decay = soap_soda or adam_soda
+  # `_ChainedOptimizer.state_dict` nests one state dict per sub-optimizer
+  # instead of the flat {state, param_groups} the remap operates on.
+                self._decay_group_layout = None
                 self.opt = _ChainedOptimizer(
                     [
                         SOAP(soap_groups, lr=lr, weight_decay=0.0),
@@ -3818,6 +3883,16 @@ class Trainer:
   # regime and then re-converges the EMA from wherever warmup put it.
             "zclip": self.zclip_state_dict(),
         }
+  # ⚑ The NAMES behind `opt`'s integer indices. `Optimizer.state_dict()` keys
+  # its `state` by position in the flattened `param_groups` order and records
+  # nothing about WHICH parameter each slot belongs to, so a resume into a model
+  # with a different parameter set has no way to tell a surviving parameter from
+  # a shifted one. Recording the names makes the correspondence a stored fact
+  # rather than an inference; `_donor_optimizer_param_names` reconstructs it from
+  # `model` for checkpoints written before this key existed.
+        opt_param_names = self._optimizer_param_names()
+        if opt_param_names is not None:
+            state["opt_param_names"] = opt_param_names
         if self._model_config is not None:
             state["arch"] = {
                 "_schema_version": ARCH_SCHEMA_VERSION,
@@ -3834,14 +3909,232 @@ class Trainer:
     # policy adapter falls into the reinit path, which resets every moment AND the
     # scheduler AND skips `load_zclip_state` -- forcing the control arm to absorb an
     # identical boot shock just to stay comparable. Spliced, the embedding-ON arm
-    # keeps its donor moments. (Removing `policy_sf` deletes params and cannot be
-    # spliced -- that direction still resets.)
+    # keeps its donor moments.
+    #
+    # This list is now the FALLBACK, not the primary path: `load` tries
+    # `_remap_optimizer_state_by_param_name` first, which needs no allowlist and
+    # also covers REMOVED parameters (dropping `policy_sf` or the standalone
+    # `value_categorical` head) and add+remove in the same load. The positional
+    # splice stays for donors whose slot names cannot be recovered -- no
+    # `opt_param_names` manifest, no `model` payload, or a param-group layout
+    # `_DecayGroupLayout` does not describe.
     _FRESH_PARAM_NAME_SUFFIXES = (
         "dynamic_relation_weight",
         "policy_relation_weight",
         "policy_embedding.weight",
         "policy_embedding.bias",
     )
+
+    @staticmethod
+    def _wrap_agnostic_name(name: str) -> str:
+        """The parameter's name with ``torch.compile``'s wrapper segment removed.
+
+        Same normalisation ``strip_compile_prefix`` applies to state_dict KEYS,
+        applied to a single name: checkpoints are written wrap-agnostic while a
+        compiled trainer's ``named_parameters()`` reports ``_orig_mod.``-prefixed
+        names for the very same parameter objects the optimizer holds.
+        """
+        return name.replace("_orig_mod.", "", 1)
+
+    def _optimizer_param_names(self) -> list[str] | None:
+        """Wrap-agnostic parameter names in the optimizer's flattened order.
+
+        Index ``i`` of the result names the parameter that
+        ``self.opt.state_dict()["state"]`` keys under ``i``. None when a
+        parameter in the optimizer is not one of the model's (nothing to name it
+        with), which makes every name-based path decline rather than guess.
+        """
+        names = {
+            id(param): self._wrap_agnostic_name(name)
+            for name, param in self.model.named_parameters()
+        }
+        flat: list[str] = []
+        for group in getattr(self.opt, "param_groups", []):
+            for param in group["params"]:
+                name = names.get(id(param))
+                if name is None:
+                    return None
+                flat.append(name)
+        return flat
+
+    def _donor_optimizer_param_names(self, ckpt: Mapping[str, Any]) -> list[str] | None:
+        """Recover the donor's per-optimizer-slot parameter names, or None.
+
+        Prefers the ``opt_param_names`` manifest ``save`` now writes. For older
+        checkpoints it RECONSTRUCTS the mapping from ``ckpt["model"]``:
+
+        * ``state_dict()`` emits parameters in ``named_parameters()`` order
+          (both walk modules in registration order), so the checkpoint's key
+          order IS the donor's model order -- measured on the production config:
+          496 keys, 481 trainable parameters, 34 (all non-persistent) buffers,
+          the parameter subsequence equal to ``named_parameters()`` exactly.
+        * Tied weights appear once per NAME in ``state_dict`` but once per
+          TENSOR in ``named_parameters()`` (production ties one
+          ``layer_smolgens.*.gen_weight.weight`` storage across 16 keys, which
+          is why the parameter count is 63.08M and not 78.81M). Storage
+          identity, not the name, decides which of them the optimizer holds.
+        * ``decay_bucket_index`` then replays the very rule that BUILT the
+          groups, using ``self._decay_group_layout`` recorded at construction.
+
+        Every step above is an assumption about the donor, so the result is
+        CHECKED before it is trusted: the replayed per-group counts must equal
+        the donor's own. A mismatch -- a frozen parameter, a persistent buffer, a
+        different ``matrix_optimizer_scope``, a layout this cannot describe --
+        returns None, and the caller keeps its previous behaviour. A wrong
+        mapping is worse than no mapping, so it must not be reachable by
+        guessing.
+        """
+        opt_state = ckpt.get("opt")
+        if not isinstance(opt_state, Mapping):
+            return None
+        donor_groups = opt_state.get("param_groups")
+        if not isinstance(donor_groups, list) or not donor_groups:
+            return None
+        donor_sizes = [len(group.get("params", ())) for group in donor_groups]
+        recorded = ckpt.get("opt_param_names")
+        if (
+            isinstance(recorded, list)
+            and len(recorded) == sum(donor_sizes)
+            and all(isinstance(name, str) for name in recorded)
+        ):
+            return [self._wrap_agnostic_name(name) for name in recorded]
+
+        layout = self._decay_group_layout
+        model_state = ckpt.get("model")
+        if layout is None or not isinstance(model_state, Mapping) or not model_state:
+            return None
+        if len(donor_sizes) != len(self.opt.param_groups):
+            return None
+        buffer_names = {
+            self._wrap_agnostic_name(name) for name, _ in self.model.named_buffers()
+        }
+        seen_storage: set[tuple[Any, ...]] = set()
+        by_group: list[list[str]] = [[] for _ in donor_sizes]
+        for raw_name, tensor in model_state.items():
+            name = self._wrap_agnostic_name(str(raw_name))
+            if not torch.is_tensor(tensor) or name in buffer_names:
+                continue
+            if tensor.numel():
+  # Empty tensors can share a null data_ptr without being tied, so
+  # they skip the dedup rather than collapse onto each other.
+                identity = (
+                    tensor.untyped_storage().data_ptr(),
+                    tensor.storage_offset(),
+                    tuple(tensor.shape),
+                    tuple(tensor.stride()),
+                )
+                if identity in seen_storage:
+                    continue
+                seen_storage.add(identity)
+            group_index = layout.bucket_to_group[
+                decay_bucket_index(name, tensor, layout.hidden_filter)
+            ]
+            if not 0 <= group_index < len(by_group):
+                return None
+            by_group[group_index].append(name)
+        if [len(names) for names in by_group] != donor_sizes:
+            return None
+        return [name for group_names in by_group for name in group_names]
+
+    def _remap_optimizer_state_by_param_name(
+        self,
+        ckpt_opt: Mapping[str, Any],
+        donor_names: Sequence[str],
+        donor_model_state: Mapping[str, Any] | None,
+    ) -> tuple[dict, str] | None:
+        """Re-key a donor optimizer state dict onto THIS model's parameters, by name.
+
+        Handles added, removed and simultaneously added-and-removed parameters
+        in one load, which is the case ``_remap_optimizer_state_for_new_params``
+        cannot express: it splices fresh slots in by POSITION, so it is defined
+        only when the donor is shorter, and ``Trainer.load`` only ever called it
+        then. A parameter REMOVED from the middle shifts every later index, so
+        the untouched path would either raise (different count -> whole optimizer
+        reinitialised, every donor moment lost) or -- at equal count -- silently
+        hand one parameter's moments to another.
+
+        Returns ``(state_dict, human-readable report)``, or None when it declines:
+
+        * the group count changed, or a name occurs twice on either side (the
+          correspondence would be ambiguous);
+        * a donor moment's shape disagrees with the donor tensor the name maps
+          to, which means the recovered mapping is WRONG -- the one outcome that
+          must never be acted on;
+        * the mapping is the identity, i.e. an ordinary resume. Declining there
+          keeps the common path byte-identical to before this method existed.
+
+        Removed parameters' state is dropped whole; added parameters get no
+        entry at all, so the optimizer initialises them on their first step.
+        Partial entries are never produced: ``AuroraWithAuxAdam`` decides whether
+        to initialise by probing ONE key per group (``momentum_buffer`` for the
+        Aurora matrix group, ``exp_avg`` for the AdamW aux groups), so a
+        half-populated entry is worse than an absent one.
+        """
+        groups_ckpt = ckpt_opt.get("param_groups", [])
+        groups_new = self.opt.param_groups
+        if not isinstance(groups_ckpt, list) or len(groups_ckpt) != len(groups_new):
+            return None
+        live_names = self._optimizer_param_names()
+        if live_names is None or len(live_names) != sum(len(g["params"]) for g in groups_new):
+            return None
+        if len(set(live_names)) != len(live_names) or len(set(donor_names)) != len(donor_names):
+            return None
+        donor_slot_ids: list[Any] = []
+        for group in groups_ckpt:
+            donor_slot_ids.extend(group.get("params", ()))
+        if len(donor_slot_ids) != len(donor_names):
+            return None
+        if list(live_names) == list(donor_names):
+            return None
+        name_of_slot = dict(zip(donor_slot_ids, donor_names, strict=True))
+        donor_state = ckpt_opt.get("state", {})
+        if not isinstance(donor_state, Mapping):
+            return None
+  # ⚑ The mapping is an inference until this passes. Every moment tensor a
+  # donor slot carries must fit the DONOR tensor its recovered name points
+  # at; an off-by-N slot walk fails here instead of installing a
+  # plausible-looking, non-empty, wrong optimizer state.
+        if donor_model_state:
+            for slot_id, entry in donor_state.items():
+                donor_tensor = donor_model_state.get(name_of_slot.get(slot_id, ""))
+                if not torch.is_tensor(donor_tensor) or not isinstance(entry, Mapping):
+                    continue
+                for value in entry.values():
+                    if (
+                        torch.is_tensor(value)
+                        and value.dim() == donor_tensor.dim()
+                        and tuple(value.shape) != tuple(donor_tensor.shape)
+                    ):
+                        return None
+
+        new_index_of_name = {name: index for index, name in enumerate(live_names)}
+        state_remap = {
+            slot_id: new_index_of_name[name]
+            for slot_id, name in name_of_slot.items()
+            if name in new_index_of_name
+        }
+        out_groups: list[dict] = []
+        next_index = 0
+        for g_new, g_ckpt in zip(groups_new, groups_ckpt, strict=True):
+            out_group = {k: v for k, v in g_ckpt.items() if k != "params"}
+            out_group["params"] = list(range(next_index, next_index + len(g_new["params"])))
+            next_index += len(g_new["params"])
+            out_groups.append(out_group)
+        remapped = {
+            "state": {
+                state_remap[slot_id]: entry
+                for slot_id, entry in donor_state.items()
+                if slot_id in state_remap
+            },
+            "param_groups": out_groups,
+        }
+        donor_set, live_set = set(donor_names), set(live_names)
+        report = (
+            f"{len(donor_set & live_set)} kept, "
+            f"{len(donor_set - live_set)} dropped, "
+            f"{len(live_set - donor_set)} fresh"
+        )
+        return remapped, report
 
     def _remap_optimizer_state_for_new_params(self, ckpt_opt: dict) -> dict | None:
         """Remap a donor optimizer state dict around newly added parameters.
@@ -3975,7 +4268,31 @@ class Trainer:
             opt_state = ckpt["opt"]
             n_ckpt_params = sum(len(g.get("params", ())) for g in opt_state.get("param_groups", []))
             n_model_params = sum(len(g["params"]) for g in self.opt.param_groups)
-            if n_ckpt_params < n_model_params:
+  # ⚑ NAME-based first, and NOT gated on the direction of the count change.
+  # `n_ckpt_params < n_model_params` only ever admitted parameter ADDITIONS;
+  # a warm start that also REMOVES parameters (arm B: policy_embedding +2,
+  # value_categorical -6, value_categorical_coupled +2, 481 -> 479) made the
+  # test false, so the splice never ran, `load_state_dict` raised on the group
+  # size, and the handler below threw away EVERY donor moment at WARNING level
+  # inside a Ray actor. A removal also shifts every later index, so an
+  # equal-count relayout (+2/-2) would have been accepted and silently
+  # mis-associated -- which is why this runs on every resume, not just on a
+  # count mismatch. It declines on an ordinary resume, leaving that path
+  # untouched.
+            by_name = None
+            donor_names = self._donor_optimizer_param_names(ckpt)
+            if donor_names is not None:
+                by_name = self._remap_optimizer_state_by_param_name(
+                    opt_state, donor_names, ckpt.get("model"),
+                )
+            if by_name is not None:
+                opt_state, remap_report = by_name
+  # print, not logging.info: see the splice message below.
+                print(
+                    "[resume] Re-keyed the donor optimizer state onto this "
+                    f"model's parameters by name ({remap_report})"
+                )
+            elif n_ckpt_params < n_model_params:
                 remapped = self._remap_optimizer_state_for_new_params(opt_state)
                 if remapped is not None:
                     logging.getLogger(__name__).info(
