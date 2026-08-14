@@ -263,6 +263,112 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## READOUT (2026-08-14) — the MultiPV-6 censored tail is worth **207 cp**, not the 565 cp we assign (α = 0.17)
+
+**This is the ground-truth answer the CAST pricing was withdrawn for.** No CAST, no played-move
+proxy, no calibration inversion: take the wide-MultiPV era's own labels, hide everything below
+rank 6, and score the candidate tail representations against the values that were hidden.
+Instrument: `scratchpad/tail_screen.py` (to be productionised as
+`scripts/tail_censor_screen.py`). Population: `d2003` / `cdb96` / `0f888`, last 10 shards each,
+**n = 8,246 rows** carrying an exact P0-adjacent wide label.
+
+**Policy-weighted hidden-tail regret** — the quantity the loss actually integrates,
+`sum_{a in tail} p(a)·r(a)`:
+
+| representation | value | bias vs truth |
+|---|---|---|
+| **TRUE (revealed ranks 7–40)** | **206.6 cp** | — |
+| `r_6` censor (α = 0, the audit ruler's rule) | 131.0 cp | **−75.7 cp** |
+| **current midpoint (α = 1, `finalize`'s rule)** | **565.5 cp** | **+358.8 cp** |
+| maximal (α = 2) | 1000 cp | — |
+
+⇒ **FITTED α = 0.174** (per-position median 0.145, IQR [0.046, 0.365]; 339 degenerate
+`1−r_6 < 0.05` rows suppressed). **The current midpoint overstates the censored tail by
+2.74×**, and both conventions are biased in OPPOSITE directions with the midpoint ~4.7× the
+larger error. The pre-registered `[0, 2]` range mattered: α landed at 0.17, but the fit had to
+be free to exceed 1 for that to carry information.
+
+**The rank curve is why a flat imputation cannot work** — regret rises smoothly with rank while
+policy mass collapses:
+
+| rank | mean regret | mean policy mass |
+|---|---|---|
+| 7 | 186 cp | **0.0277** |
+| 10 | 237 cp | 0.0146 |
+| 15 | 311 cp | 0.0057 |
+| 31 | 524 cp | 0.0008 |
+| 40 | 635 cp | **0.00006** |
+
+The assigned 565 cp is roughly correct for rank ~34 — a rank that essentially never carries
+probability. ⚑ **The rank>40 coverage limit is empirically nil:** policy mass on legal moves the
+wide label never scored is **1.1e-4**, because MultiPV 40 covered **98.3% of legal moves**
+(median 100%). This screen therefore sees essentially the whole tail, not a near slice.
+
+**⚑ METHOD FAILURE CAUGHT BY ITS OWN DIAGNOSTIC — the first run of this screen was WRONG.**
+It weighted row *t*'s policy by row *t*'s OWN `sf_multipv_raw`, which describes the position
+AFTER row *t*'s move. Symptoms: a coverage fraction of **1.04** (structurally impossible) and
+**90.6%** of policy mass on "unscored" moves. Corrected by the P0 shift — SF's read of THIS
+position is the PREVIOUS ply's block — after which coverage reads 0.983 and unscored mass
+1.1e-4. The pre-fix numbers (TRUE 295 cp, α = 0.37) are VOID. Report an impossible-valued
+diagnostic next to every headline; this one caught a wrong result before it was banked.
+
+**What this does NOT establish.**
+1. The weighting is the **historical** net's MCTS target (Aug 4–5 shards), not today's prior.
+   Reweighting under the current prior is the pending step; the net is pinned at
+   `data/tail_screen_20260814/checkpoint_000218` (from `5ce02`, Aug 12 07:40 — copied OUT of
+   the tune dir because Ray prunes). ⚑ `runs/pbt2_small/best_model.pt` is from **2026-04-14**
+   and must not be used as "current" [[best_model_ruler_mixing]].
+2. **MultiPV 40 truncated to 6 is not a real MultiPV 6 search.** Width changes root-search
+   allocation, so this answers "given a top-6 cutoff, how should the unknown be represented"
+   and NOT "what does today's MPV6 fail to surface". The calibration panel for that is a few
+   hundred current positions run at production-shaped ~200k MPV6 against a wide search.
+3. Positions are the wide-label era's distribution.
+
+### PRE-REGISTERED FOLLOW-UP — targeted prior-vs-search adjudication (`ΔQ`), NOT a dense SF target
+
+The rank curve above is the empirical case for it: **relevant tail mass is concentrated in the
+first few omitted moves** (rank 7 carries 2.8%, rank 40 carries 0.006%), so paying SF to
+characterise dozens of moves is waste. Ask SF only about the moves the student actually cares
+about.
+
+At a root where the raw prior and the search disagree, with `a_prior = argmax(raw prior)` and
+`a_search` = the actual Gumbel choice, measure
+
+```
+ΔQ = Q_SF(a_search) − Q_SF(a_prior)
+```
+
+`ΔQ > 0` search improved the prior ⇒ raise imitation weight; `ΔQ < 0` search damaged a better
+prior ⇒ lower it. **Separate the two questions and buy only the one you need:**
+**(A) did search improve the net?** needs only the two candidates. **(B) is either move
+actually good?** additionally needs SF's global best. **A is the cheaper and the more novel
+one, and SF's global best is not required for it.**
+
+⚑ **MEASURE BOTH CANDIDATES IN ONE RESTRICTED ROOT SEARCH** (MultiPV 2 over exactly those two
+moves), never as two separate full-budget `searchmoves` searches: giving each candidate an
+entire budget in isolation makes part of the difference a budget artifact rather than a move
+difference.
+
+⚑ **PREREQUISITE, MEASURED: `searchmoves` IS NOT WIRED.** `stockfish/uci.py:585` sends a bare
+`go nodes {n}`; there is no root-move restriction anywhere in `chess_anti_engine/stockfish/`.
+This needs a new, tested surface on `StockfishUCI.search` before any of the above can run.
+Budget it as real work, not a flag.
+
+**Confounds to pre-register now, before the data exists.**
+- **Sharpness, not search error.** Rows where prior and search disagree are systematically
+  sharper. `ΔQ` is signed, which helps, but the gate must still be shown to add predictive
+  power for `ΔR_search` OVER volatility, `|q|`, phase, KL and q-delta — nested models
+  M0/M1/M2, scored on held-out **GAMES**, never rows (adjacent plies are near-duplicates).
+- **Argmax is not the target.** `ΔQ` compares two single moves while the imitation loss trains
+  a whole distribution. The leap is small here — realized `max(policy_target)` has median
+  ~0.99 — but it is a leap, and the fraction of the target's expected regret carried by its
+  argmax should be reported alongside.
+- **Same-root comparison is the design's real advantage** over literal CAST: no parent/child
+  adjacency, no action recovery, no fabricated tail, and cp instead of a saturating WDL.
+- Benchmark at **equal SF nodes** against current MPV6 and against the tail treatment above.
+  Pairs naturally with H3: pay for the comparison only where pre-query diagnostics say it is
+  informative.
+
 ## READOUT (2026-08-14) — CAST is a coverage NULL; the MultiPV-6 tail is proven INVENTED, its magnitude is NOT (issue #425)
 
 **⚑⚑ RETRACTION, same session, before merge.** An earlier revision of this entry priced
