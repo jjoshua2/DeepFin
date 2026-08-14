@@ -47764,3 +47764,36 @@ present. 2.98 MB. Contrast 2 (C vs B) started immediately.
 **No overall Tier-13 verdict yet** — the Ordo pooled fit and the (B−A)+(C−B) vs (C−A) transitivity
 check both need all three contrasts, and reading a partial round-robin is the same optional-stopping
 error one level up.
+
+## Tier-13 CONTRAST 2 of 3 — C (residual_mish) vs B (linear): **NULL**
+
+| | Elo | 95% CI | half-width | score | pentanomial |
+|---|---|---|---|---|---|
+| B vs A | +12.17 | [−2.14, +26.52] | 14.33 | 0.5175 | 116 · 155 · 289 · 149 · 91 |
+| **C vs B** | **−7.38** | **[−21.64, +6.85]** | 14.25 | 0.4894 | 92 · 157 · 285 · 157 · 109 |
+
+**PINNED VERDICT: NULL** — CI spans zero. Not a kill (`−7.38 > −15`), not a trajectory.
+1600 games / 800 pairs / `truncated: false`; `config_hash b588d276f062` **identical to contrast 1**,
+so pin 3's instrument-identity requirement holds across both.
+
+### ⚑ TRANSITIVITY PREDICTION, STATED BEFORE THE THIRD CONTRAST IS MEASURED
+(B−A) + (C−B) = **+12.17 − 7.38 = +4.79 Elo**. The free instrument check from `44931` requires C−A to
+reconcile with that. Writing it down now is the entire point: a transitivity check read AFTER seeing
+C−A is not a check, it is a rationalisation. Bands, pre-committed:
+
+- **|C−A − 4.79| within ~±20** (roughly the √2 × 14.3 spread of an independent contrast): consistent,
+  three-contrast design validated, and the pooled Ordo fit may be used for the indirect comparisons.
+- **|C−A − 4.79| beyond that**: the design is INTERNALLY INCONSISTENT and no Tier-13 verdict may be
+  quoted until the discrepancy is explained — it would mean one of the three contrasts is measuring
+  something the other two are not, which is exactly what a round robin exists to expose.
+
+⚑ **This prediction must NOT be used to interpret C−A's own verdict.** C−A gets the same pinned
+kill/trajectory/win rule as the others, applied to its own CI. The transitivity band tests the
+INSTRUMENT; the pinned rule tests the ARM. Conflating them would let a prediction become evidence for
+itself [[never_condition_a_control_on_its_own_outcome]].
+
+**Where this is heading, stated plainly:** two nulls in a row means the honest reading of Tier-13 is
+shaping up as "**neither policy-embedding variant is distinguishable from off at this resolution**",
+not "C is worse than B" or "B beats A". At ±14.3 Elo half-width the design can only resolve effects
+above roughly ±22 Elo at 80% power, and neither contrast is close. That is a real answer about the
+intervention, not a failure of the experiment — and it is the answer the pre-committed rules give.
