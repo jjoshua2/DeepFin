@@ -263,7 +263,21 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
-## READOUT (2026-08-14) — CAST is redundant here, but pricing it exposed a ~5× fabricated regret tail in `sf_p0_regret` (issue #425)
+## READOUT (2026-08-14) — CAST is a coverage NULL; the MultiPV-6 tail is proven INVENTED, its magnitude is NOT (issue #425)
+
+**⚑⚑ RETRACTION, same session, before merge.** An earlier revision of this entry priced
+the imputed tail at a **~5x overstatement [4.1–5.5]**. **That number is WITHDRAWN.** Codex
+review on PR #428 (P1) established that the probe's calibration population is contaminated:
+in production Gumbel at final temperature 0 the played action is the **sequential-halving
+survivor**, explicitly NOT `argmax(policy_target)` (`network_turn.py:188`), and audit C9
+(`rl_loop_audit.md:418`) measured those agreeing only **0.7455** on moves 1–11 and **0.9122**
+at moves 15+. So `A_CAST` graded the real move while `regret_played`/`in_multipv` graded a
+different one, and the `pmax` stratification does not observe that equality — it cannot
+expose or correct it. Two further defects compound it: `monotone_prefix` did not stop at the
+first saturation fold (it skipped the folded bucket and resumed, splicing both branches), and
+the quoted CI varied only the outside-set mean while treating every calibration knot as exact.
+**What is established is INVENTED PRECISION, not overstatement.** The direction is unknown
+until the withheld-ground-truth screen runs; the hidden tail could genuinely deserve 570 cp.
 
 **Verdict: CAST-style solver credit = NULL on COVERAGE (its headline claim) and MIXED on
 label economics. The by-product — the MultiPV-6 imputed tail — is REAL and is the
@@ -310,10 +324,21 @@ marginal. At the live MultiPV 6:
   regret IS known: a played move outside the MultiPV set is truly worth **~121 cp
   [104–139]** on the cleanest stratum (`pmax ≥ 0.8`), against **568 cp** assigned —
   **4.7× [4.1–5.5]**. Across strata 4.7×–16.4×; quote the conservative end.
-- Control: a WITHIN-POSITION permutation of the regret vector collapses the tail share
-  0.745 → 0.155, which is exactly the imputed probability MASS. That separates the two
-  ways a tail can dominate — it is not carrying the mass, it is carrying a fabricated
-  value.
+- Control: a WITHIN-POSITION permutation collapses the tail share to **0.169** (the
+  regret-weighted permutation expectation, `sum(mass_imp_i * mean_r_i) / sum(mean_r_i)`)
+  against an observed **0.757**. ⚑ The probe originally compared against the UNWEIGHTED
+  mean imputed mass (0.162) — Codex P2, correct; recomputed properly the control still
+  PASSES and the gap is far too large to be a mass effect. This control uses NO played-move
+  proxy, so it survives the retraction: **the objective is dominated by the VALUES assigned
+  to censored moves, not by how much probability sits on them.**
+
+**⚑ AND THE TWO SITES IMPUTE IN OPPOSITE DIRECTIONS.** `finalize._build_sf_p0_regret_vector`
+gives unlisted moves `(worst + 1) / 2` — PESSIMISTIC, over-penalising a broad policy. But
+`eval/audit.py::move_regrets:252-271` gives them `worst` as an explicit optimistic FLOOR —
+under-penalising a broad policy. So the training target and the E[regret] RULER disagree by
+construction on ~68% of moves, and the audit's expected-regret number is not on the same
+scale as the training-time one. The issue's proposed "censored r6" arm is therefore not
+hypothetical — it is already running in production, as the ruler.
 
 **Why this matters even though `w_sf_own_regret` is 0.0 today.** The vector is still
 RECORDED (`record_sf_p0_regret: true`), so the defect is banked into every shard and is

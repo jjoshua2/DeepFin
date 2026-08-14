@@ -487,9 +487,14 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
               f"  = {res['overstatement']:5.1f}x")
     out["tail_pricing"] = strata
 
-    print("\n6. H3 -- do the PRE-QUERY search diagnostics predict what CAST finds?")
-    print("   (features already on _NetRecord before the child label is submitted;")
-    print("    an allocator can only spend nodes on what these can see)")
+    print("\n6. PRE-QUERY DIAGNOSTICS vs A_CAST")
+    print("   ⚑⚑ THIS IS NOT A TEST OF ISSUE #425's H3, and must not be read as one.")
+    print("   H3 asks whether parent-search features predict |q_deep - q_cheap| -- whether")
+    print("   MORE SF COMPUTE MOVES THE LABEL. A_CAST is how much the played move DAMAGED")
+    print("   THE POSITION. Different random variables: a crushing blunder can be obvious")
+    print("   to 50k and 3M alike, while a quiet move lands where 150k and 1M disagree. A")
+    print("   low correlation here is NOT evidence against an adaptive-label allocator;")
+    print("   that needs paired cheap/deep labels, which this probe does not have.")
     feat: dict[str, float] = {}
     for name in ("priority_policy_kl", "priority_q_delta"):
         v = arr[name]
