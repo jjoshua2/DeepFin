@@ -263,6 +263,92 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## READOUT (2026-08-14) — CAST is redundant here, but pricing it exposed a ~5× fabricated regret tail in `sf_p0_regret` (issue #425)
+
+**Verdict: CAST-style solver credit = NULL on COVERAGE (its headline claim) and MIXED on
+label economics. The by-product — the MultiPV-6 imputed tail — is REAL and is the
+finding.** Instrument: `scripts/cast_probe.py`, read-only, 24 live shards (47,356 rows)
+off `train_trial_1d175`. Banked JSON + exact command in the PR.
+
+⚑ The economics half survives but does NOT mean what the issue assumes. SF really is the
+dominant CPU consumer (18.3 of 32 cores), so a cheaper label really would free real
+capacity — but **`sf_wdl` is already on 99.8% of rows, so that capacity cannot buy
+coverage.** It buys *throughput* (more games per iteration), which is a different and much
+smaller claim than "supervise 3–5× as many states". Any Phase-1 allocator work must be
+justified on label QUALITY at fixed volume, or on games/s, and never on supervision
+density.
+
+`A_CAST(t) = q_t + q_(t-1)` where `q = W − L` off the record-POV `sf_wdl`. The terms ADD
+because each label is already in its own record's mover POV, so `V_T(s_t) = −q_(t−1)`.
+
+**The three claims that motivated it, measured:**
+
+| claim | measured | verdict |
+|---|---|---|
+| "SF CPU is the bottleneck, cheap scalar labels buy more supervision" | **stockfish = 18.3 of 32 cores (57%)** by direct per-PID accounting over 240s; whole machine 29.3/32 (92%) over a clean 480s window | **TRUE, and it UPDATES [[loop_is_gpu_bound_cpu_two_thirds_idle]]** — that note's "SF 11.1 of 32 cores, CPU 2/3 idle" was measured at sims 256 and is now stale |
+| "scalar labels reach states MultiPV cannot" | CAST pairs **18.4%** of rows vs `sf_p0_regret` **21.0%** | **FALSE** — both are gated by "is the previous ply also a stored row", not MultiPV width |
+| "CAST grades the move the learner actually made" | the played move is **not in the shard** (`sf_move_index`/`sf_played_move_index` are STOCKFISH's moves) | **BLOCKED** — needs a shard-format change; every probe number here uses an `argmax(policy_target)` proxy |
+
+**Signal quality.** `A_CAST` is real but noisy: corr with the exactly-known covered-move
+regret **+0.168** (+0.442 on unsaturated roots), collapsing to **0.007** under an
+across-row shuffle (control PASSES). But `P(A > 0) = 0.219` where a consistent teacher
+owes zero, mean |A| is **0.034 on the impossible-sign half vs 0.079 on the rest**, and on
+saturated roots (25.8% of rows, `|q_parent| > 0.8`) the signal drops to −0.014 against a
+0.065 sd — near pure noise. Parent/child search drift is NOT the problem: on the tightest
+proxy stratum it bounds to **−0.0029 ± 0.0022**, and it shrinks monotonically as the proxy
+sharpens, which identifies it as proxy error rather than drift.
+
+**⚑⚑ THE ACTUAL FINDING — `finalize._build_sf_p0_regret_vector`'s imputed tail.** Every
+legal move SF did not surface gets `(worst_surfaced + 1) / 2`. At MultiPV 40 that was
+marginal. At the live MultiPV 6:
+
+- **68.3% of legal moves** carry a fabricated regret (27.5 legal, 5.8 covered).
+- The fabricated value is **586 cp** against a worst move SF *actually surfaced* of
+  **191 cp mean / 92 cp median**.
+- It supplies **74.5% of `E_pi[regret]`**, and dominates (>50%) on **49.6% of rows**.
+- Priced against CAST by inverting a calibration curve built from covered moves whose
+  regret IS known: a played move outside the MultiPV set is truly worth **~121 cp
+  [104–139]** on the cleanest stratum (`pmax ≥ 0.8`), against **568 cp** assigned —
+  **4.7× [4.1–5.5]**. Across strata 4.7×–16.4×; quote the conservative end.
+- Control: a WITHIN-POSITION permutation of the regret vector collapses the tail share
+  0.745 → 0.155, which is exactly the imputed probability MASS. That separates the two
+  ways a tail can dominate — it is not carrying the mass, it is carrying a fabricated
+  value.
+
+**Why this matters even though `w_sf_own_regret` is 0.0 today.** The vector is still
+RECORDED (`record_sf_p0_regret: true`), so the defect is banked into every shard and is
+latent, not absent. Re-enabling the weight unchanged would train `policy_own` to push mass
+off ~68% of legal moves toward SF's top 6 on the strength of a ~5× overstatement — a
+sharpening pressure, on a net already measured **3.7× narrower than BT4 and 14.1pp less
+accurate**. This also **re-opens the old `w_sf_own_regret` 0.7 verdict**: that experiment
+ran at MultiPV 40 where the tail was marginal, so its result does not transfer to 6.
+
+**Pre-committed next step (NOT a live change).** Screen the tail treatments offline
+before any weight moves: (1) current midpoint = control, (2) censored `r_6` bound,
+(3) covered-only, (4) residual tilt `p_base · exp(−β r)` with one shared censored tail
+value. Kill rule: nothing goes live unless it beats the midpoint control on broad
+`value_regret` + raw-policy top-1 at matched budget, per rule 6 above. **Do not read a
+CAST loss as the deliverable** — its unique contribution is the ~12% of P0 rows where the
+played move fell outside the MultiPV set, i.e. ~2.5% of all rows.
+
+**⚑ METHOD NOTE, recorded because it nearly produced the opposite verdict.** A first
+**5-second** `/proc/stat` sample read 45.4% busy and would have shipped "the CPU is idle,
+the cheap-label rationale is dead". The loop alternates a selfplay-heavy and a
+training-heavy phase; **anything shorter than a full iteration is a phase reading, not a
+utilisation reading.** The clean 480s window reads 29.3/32. Two further traps in the same
+measurement: agent-side work (lint, pytest, the probe itself) and OTHER sessions' pytest
+runs land on the same 32 cores — a concurrent suite from another worktree was measured at
+~3.2 cores — so machine-wide utilisation is an upper bound on the run's own. Per-PID
+attribution is the instrument that survives all three, and it is what the 18.3-core
+stockfish figure comes from. [[check_the_resource_is_binding]]
+
+**Confounds.** No training change was made; the run was live and untouched throughout.
+The played-move proxy is the one real limitation and is why every played-move number is
+reported stratified rather than as a single figure. The probe reads the trailing shard
+window, which MOVES while the run writes: re-running shifts the strata by a few tenths
+(the `pmax >= 0.8` overstatement read 4.7x, 5.6x and 4.9x on three runs an hour apart).
+Quote **~5x**, not a decimal.
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-12) — authenticated seed claim, side-effect-free manifest (finding [6], DoS half)
 
 **Status: NOT WRITTEN YET. This entry gates the work, not the merge.** Training is
