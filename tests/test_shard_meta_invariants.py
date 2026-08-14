@@ -2223,3 +2223,93 @@ def test_same_dir_sees_one_directory_reached_by_two_names(tmp_path) -> None:
     other = tmp_path / "other"
     other.write_bytes(b"x")
     assert not _same_dir(real, other)
+
+
+def test_the_sweep_warns_about_a_victim_it_could_not_remove(tmp_path) -> None:
+    """⚑ PIN (#419 F-C, from review). Every other test in this file passes
+    `log=None`, so deleting the entire `if stuck_victims and log is not None:`
+    block passed the whole suite -- the visibility mechanism F1 argues for in
+    three places was the one part of it nothing tested. That is this repo's
+    signature shape: a value accepted and then silently ignored.
+    """
+    import os
+
+    import pytest
+
+    from chess_anti_engine.server.app import prune_retained_dirs
+
+    if os.geteuid() == 0:
+        pytest.skip("running as root: a 0o500 directory is still writable")
+
+    u = tmp_path / "invalid" / "alice"
+    u.mkdir(parents=True)
+    d = _undeletable_dir_entry(u, "a_bad_shard", inner_size=200, mtime=1000.0)
+    try:
+        for i in range(3):
+            _mk(u, f"z{i}.tar", size=100, mtime=2000.0 + i)
+        log, spy = _spy_logger("test_retention_stuck_warns")
+
+        _sweep_bounded(
+            lambda: prune_retained_dirs(
+                [u], max_bytes=200, max_entries=0, log=log,
+            ),
+        )
+
+        warnings = [m for lvl, m in spy.records if lvl == "WARNING"]
+        assert len(warnings) == 1, spy.records
+        assert "1 victim" in warnings[0], warnings[0]
+        assert "could not be fully removed" in warnings[0], warnings[0]
+        # The INFO line still reports what DID go, so the two are not confused.
+        assert [m for lvl, m in spy.records if lvl == "INFO"], spy.records
+    finally:
+        _restore_mode(d)
+
+
+def test_a_file_entry_that_cannot_be_unlinked_is_not_credited(tmp_path) -> None:
+    """⚑ PIN (#419 F-C, from review). F1's fix generalises to BOTH branches of
+    `_remove_retained_entry`, but every test covered only the `rmtree` one --
+    because on `main` the FILE branch was accidentally safe: `EACCES` fell
+    through to the outer `except OSError: continue`, so F1 was only ever
+    REACHABLE through `rmtree`. The fix is therefore load-bearing on a path no
+    test held, and flipping that branch's `OSError` return to `gone=True`
+    survived the whole file.
+
+    Production two-bucket shape, no mocking: `alice/` at `0o500` so its FILE
+    entries cannot be unlinked, `bob/` writable, byte ceiling 150.
+    """
+    import os
+
+    import pytest
+
+    from chess_anti_engine.server.app import prune_retained_dirs
+
+    if os.geteuid() == 0:
+        pytest.skip("running as root: a 0o500 directory is still writable")
+
+    root = tmp_path / "invalid"
+    alice, bob = root / "alice", root / "bob"
+    alice.mkdir(parents=True)
+    bob.mkdir(parents=True)
+    for i in range(2):
+        _mk(alice, f"a{i}.tar", size=200, mtime=1000.0 + i, sidecar=False)
+    _mk(bob, "b0.tar", size=100, mtime=3000.0, sidecar=False)
+    os.chmod(alice, 0o500)
+    try:
+        freed = _sweep_bounded(
+            lambda: prune_retained_dirs(
+                [alice, bob], max_bytes=150, max_entries=0, log=None,
+            ),
+        )
+
+        assert sorted(p.name for p in alice.iterdir()) == ["a0.tar", "a1.tar"], (
+            "the fixture's unlinkable files were removed"
+        )
+        assert not (bob / "b0.tar").exists(), (
+            "the sweep stopped after alice's two failed unlinks -- it credited "
+            "itself 400 bytes that are still on disk and believed it was under "
+            "the 150-byte ceiling"
+        )
+        assert freed == (1, 100), freed
+        assert _bytes_on_disk(root) == 400, _bytes_on_disk(root)
+    finally:
+        os.chmod(alice, 0o700)
