@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -76,6 +77,37 @@ def _tmp_path_for(path: Path, *, preserve_suffix: bool = False) -> Path:
         return path.with_name(f"{path.stem}.tmp.{os.getpid()}.{uuid.uuid4().hex}{path.suffix}")
   # e.g. foo.json -> foo.json.tmp.<pid>.<uuid>  (does not match "*.json" glob)
     return path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+
+
+# ⚑ THE TWO SHAPES `_tmp_path_for` PRODUCES. Kept beside the producer so the
+# pattern and the name cannot drift apart -- a matcher living in the consumer is
+# the shape that goes stale silently.
+#
+# ⚑ `{8,}` IS A FLOOR, NOT THE MEASUREMENT. `uuid4().hex` is always 32, so an
+# exact `{32}` would match today and silently stop matching the day the producer
+# switches to, say, `secrets.token_hex(8)` -- and "stops matching" here means the
+# walk quietly resumes sizing and deleting live writes, which is exactly the
+# defect this closes, returning invisibly. The floor keeps the structure
+# (`.tmp.<pid>.<hex>`) load-bearing while tolerating the token's width. The real
+# anti-drift guard is `test_the_walk_skips_a_real_atomic_write_temp`, which
+# GENERATES the name through `atomic_write` instead of spelling it out.
+_ATOMIC_TMP_RE = re.compile(r"\.tmp\.\d+\.[0-9a-f]{8,}(\.[^.]*)?$")
+
+
+def is_atomic_tmp_name(name: str) -> bool:
+    """Whether ``name`` is an in-flight tmp produced by :func:`atomic_write`.
+
+    For a directory walk that must not treat another writer's half-finished
+    file as a real entry -- sizing it (the bytes are still arriving) or, worse,
+    deleting it out from under the ``os.replace``.
+
+    ⚑ NOT ``replay.shard.is_tmp_shard_name``, which is the obvious helper to
+    reach for and does not match these at all: it tests the PREFIXES ``tmp_``
+    and ``._tmp_``, while these names are suffix-style. Verified by generating
+    the names rather than by reading the code -- see
+    ``test_the_walk_skips_a_real_atomic_write_temp``.
+    """
+    return _ATOMIC_TMP_RE.search(name) is not None
 
 
 def _cleanup_tmp(tmp: Path, *, sweep: bool) -> None:

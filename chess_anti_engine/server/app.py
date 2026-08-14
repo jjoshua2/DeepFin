@@ -41,7 +41,11 @@ from chess_anti_engine.replay.shard import (
 # is module level so the authorization rule can be tested as a pure function.
 # `server.lease` imports nothing from here, so this is not circular.
 from chess_anti_engine.server.lease import normalize_trial_id
-from chess_anti_engine.utils.atomic import atomic_write_text
+from chess_anti_engine.utils.atomic import (
+    atomic_write_bytes,
+    atomic_write_text,
+    is_atomic_tmp_name,
+)
 from chess_anti_engine.utils.versioning import version_lt
 from chess_anti_engine.version import UPLOAD_CONTENT_SHA256_HEADER
 import contextlib
@@ -1200,6 +1204,45 @@ def resolve_user_dir(parent: Path, username: str) -> Path | None:
     return path
 
 
+def _same_dir(a: Path, b: Path) -> bool:
+    """Whether two paths name the same directory, symlinks and all.
+
+    `samefile` compares `st_ino`/`st_dev`, which is what "the same directory"
+    MEANS -- it does not care how either path spelled its way there. The
+    resolved-string compare is the fallback for a path that does not exist (or
+    cannot be stat'ed), where there is no inode to compare and the name is all
+    there is; it is still resolution-symmetric, which plain `==` was not.
+
+    ⚑⚑ THE FALLBACK IS STRICTLY WEAKER THAN `samefile` -- DO NOT "SIMPLIFY"
+    THIS TO THE RESOLVED COMPARE. An earlier version of this PR's own mutation
+    report called dropping `samefile` an EQUIVALENT mutant. It is not, and the
+    distinguishing case is the deployment shape that motivates the guard:
+    under a BIND MOUNT, two paths reach one directory with no symlink to
+    resolve, so `samefile` is True while the resolved compare is False
+    (measured under `unshare --map-root-user --mount` during review). Dropping
+    it re-opens #419 F2 in full -- the calling request's own directory deleted
+    and the server-root `arena_inbox` rmdir'd -- and production moved its data
+    root between drives in July, where `mount --bind` is as ordinary as a
+    symlink. `test_same_dir_sees_one_directory_reached_by_two_names` pins it
+    with a hard link, which is the same "one inode, two names" shape without
+    needing privileges to build.
+
+    ⚑ The `a == b` fast path is not just an optimisation of that: identical
+    spellings are the overwhelmingly common case on the production call site
+    (both operands are built from `create_app`'s one `root`), and it answers
+    them with no syscall at all. It cannot change an answer -- one spelling is
+    one path.
+    """
+    if a == b:
+        return True
+    with contextlib.suppress(OSError):
+        return a.samefile(b)
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
+
+
 def drop_empty_arena_dirs(
     dirs: list[Path], *, keep: Path | None, default_arena_root: Path,
 ) -> list[Path]:
@@ -1227,6 +1270,21 @@ def drop_empty_arena_dirs(
     `default_arena_root` must be resolved too or a symlinked server root makes
     every comparison false and the guard silently stops guarding.
 
+    ⚑⚑ AND THAT SENTENCE WAS THE BUG, NOT THE FIX (#419 F2). Naming the
+    requirement in a docstring left it to be met by every caller, and the one
+    caller met HALF of it: the arena route passed `default_arena_root=
+    arena_inbox.resolve()` and `keep=resolve_user_dir(...)` -- both resolved --
+    against `dirs` from `_arena_all_user_dirs()`, which are built from
+    `create_app`'s UNRESOLVED `root = Path(server_root)`. So under a symlinked
+    server root every comparison here is false, and BOTH guards invert at once:
+    measured on `main`, `removed` came back holding the calling request's own
+    directory AND the server-root `arena_inbox` was rmdir'd.
+
+    So this function now resolves its own operands rather than trusting the
+    caller to. Resolution is a property of the COMPARISON, not of the argument,
+    and a guard whose correctness depends on what the caller remembered is the
+    guard this repo keeps re-breaking. Deletion still uses the paths as given.
+
     ⚑ `keep` is the directory the calling request just wrote into. Skipping it
     removes the common self-inflicted case; it is NOT the race fix. A request
     for trial A can be suspended between its `mkdir` and its `write_bytes`
@@ -1235,14 +1293,17 @@ def drop_empty_arena_dirs(
     """
     removed: list[Path] = []
     for d in dirs:
-        if keep is not None and d == keep:
+        if keep is not None and _same_dir(d, keep):
             continue
         try:
             d.rmdir()  # Raises rather than deleting when not empty.
         except OSError:
             continue
         removed.append(d)
-        if d.parent != default_arena_root:
+      # ⚑ `d` is gone by now, so `samefile` on its PARENT is what decides this,
+      # and the parent still exists. Resolved-string equality is the fallback
+      # for the same reason as above.
+        if not _same_dir(d.parent, default_arena_root):
             with contextlib.suppress(OSError):
                 d.parent.rmdir()
     return removed
@@ -1256,12 +1317,23 @@ def write_arena_result(out: Path, body: bytes) -> None:
     suspension point, not a theoretical one: the route `await`s in between, so
     another request's sweep gets to run. One re-`mkdir` and retry turns it into
     a no-op instead of a 500 on an upload that did nothing wrong.
+
+    ⚑ ATOMIC, LIKE ITS SIBLINGS (#419 F5). This wrote straight to the final
+    `<sha>.json`, so the retention walk -- which runs on every arena upload and
+    every quarantine write -- sized a file whose bytes were still arriving.
+    Measured: 515 of 519 walk observations during one write returned a short
+    size, including 0. Those are the bytes the ceiling is computed from, and
+    the direction is UNDER-eviction. `atomic_write_bytes` writes a tmp and
+    renames, so a walk sees either the whole file or no file.
+
+    The retry stays: `atomic_write` mkdirs the parent itself, but the sweep can
+    still remove it between that mkdir and the tmp write.
     """
     try:
-        out.write_bytes(body)
+        atomic_write_bytes(out, body)
     except FileNotFoundError:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(body)
+        atomic_write_bytes(out, body)
 
 
 def shard_run_id_matches_upload_trial(upload_trial_id: str | None, shard_run_id: object) -> bool:
@@ -1535,6 +1607,21 @@ def _retention_entries(
     `files_only` skips subdirectories -- see `prune_retained_dirs`'s
     `legacy_roots`, where a subdirectory is another user's whole bucket rather
     than an entry.
+
+    ⚑ AN ORPHANED SIDECAR IS AN ENTRY (#419 F4). A `.reason.txt` is normally
+    accounted WITH its shard and skipped here, which leaves a hole: once the
+    shard is gone, the sidecar is counted by nothing and deleted by nothing --
+    invisible to the ceiling and unreachable by every sweep, forever.
+    Demonstrated: a 5000-byte orphan survives a sweep to `max_bytes=1,
+    max_entries=1` that empties the sink around it and reports `(1, 140)`.
+
+    The interleaving that creates one is real and is on the production
+    quarantine path: the writer `replace`s the shard into place, a peer sweep
+    evicts it, and only then does the writer write the sidecar. Unreachable at
+    today's ceilings (it needs the NEWEST entry evicted: impossible under the
+    entry ceiling, and under the byte ceiling it needs one entry bigger than
+    `max_bytes`, i.e. 4 GiB against a <=256 MB cap) -- so this is a hole armed
+    by any ceiling reduction, not a live leak. It is four lines to close.
     """
     if not root.is_dir():
         return []
@@ -1542,11 +1629,52 @@ def _retention_entries(
     for p in root.iterdir():
         if files_only and p.is_dir():
             continue
+        if is_atomic_tmp_name(p.name):
+      # ⚑ ANOTHER WRITER'S FILE, MID-WRITE (#419 F5). `atomic_write` fills
+      # `<name>.tmp.<pid>.<uuid>` and then `os.replace`s it, and the walk
+      # counted it as a retained entry: sized while its bytes were still
+      # arriving, and evictable -- and evicting it makes the writer's
+      # `os.replace` raise FileNotFoundError. The client_reports sink writes
+      # exactly this way.
+      #
+      # ⚑⚑ NOT `is_tmp_shard_name`, AND THE TWO MATCHERS DISAGREE ON PURPOSE.
+      # This file now holds two temp predicates, which is the exact shape the
+      # next reader will try to unify -- so: they are scoped to disjoint
+      # directory families with disjoint producers, and swapping this one for
+      # the sibling breaks the sweep in BOTH directions.
+      #   - It does not match what we want skipped: `is_tmp_shard_name` tests
+      #     the `tmp_`/`._tmp_` PREFIXES, and these names are suffix-style.
+      #   - It DOES match what must not be skipped: a quarantined shard is
+      #     named `tmp_<pid>_<hex>.tar` (it keeps the upload staging name, see
+      #     `qpath = qdir / tmp.name`), so `is_tmp_shard_name` returns True for
+      #     it -- and for its `.reason.txt`. Using it here would make the walk
+      #     skip, and the sweep therefore NEVER EVICT, every quarantined shard:
+      #     the ceiling silently stops applying to the sink it was written for.
+      #     `test_quarantine_invalid_retention_survives_trial_id_rotation`
+      #     kills that swap.
+      #
+      # ⚑ NOT A HOLE AN UPLOADER CAN AIM AT: every entry name in these sinks
+      # is server-generated (`<sha256>.json`, `tmp_<pid>_<hex>.tar`,
+      # `<unix>_<hex>.json`), so nothing caller-controlled can be spelled to
+      # match and buy permanently unswept storage. What it does leave is a tmp
+      # leaked by a HARD-KILLED writer (`atomic_write`'s `finally` sweeps every
+      # other failure), which is then unswept -- one file per killed process,
+      # and the alternative is deleting live writes.
+            continue
         if p.name.endswith(".reason.txt"):
       # Sidecars are accounted WITH their shard, not as entries in their own
       # right -- counting them separately would halve the effective entry
       # budget and could evict a sidecar while keeping the shard it explains.
-            continue
+      # Unless the shard is GONE: then there is nothing to account it with, and
+      # it falls through to be accounted as an entry in its own right.
+      #
+      # ⚑ The writer always lands the shard BEFORE its sidecar (`tmp.replace`
+      # then `write_text`, both quarantine paths), so an existing sidecar with
+      # no shard means the shard has been removed -- never that it is about to
+      # arrive. This cannot pick off the sidecar of a write in flight.
+            owner = p.name[: -len(".reason.txt")]
+            if owner and (root / owner).exists():
+                continue
         try:
             st = p.stat()
             size = st.st_size
@@ -1572,6 +1700,60 @@ def _retention_entries(
         except OSError:
             continue
     return out
+
+
+class _EntryRemoval(NamedTuple):
+    """The outcome of one attempted eviction. TWO questions, not one.
+
+    `gone` is "the entry is no longer on disk, whoever removed it" and is what
+    the BUDGET arithmetic may act on. `by_us` is "THIS sweep removed it" and is
+    what may be REPORTED. They differ in both directions, and conflating them
+    is what #407 fixed one way and this fixes the other:
+
+    - peer removed it: `gone` and not `by_us` -- the bytes really are off the
+      disk, so subtracting them tracks reality (see `_evict_fairly`), but
+      claiming the eviction would double-count it against the peer's report.
+    - WE FAILED to remove it: neither. The old code kept `removed` (this
+      class's `by_us`) for telemetry and ran the arithmetic unconditionally, so
+      a sweep that had just concluded it could not delete an entry credited
+      itself the entry's bytes and stopped OVER the ceiling.
+    """
+
+    gone: bool
+    by_us: bool
+
+
+def _remove_retained_entry(path: Path) -> _EntryRemoval:
+    """Delete one retained entry, reporting whether it is gone and who did it.
+
+    Claims nothing it cannot show: a partially-removed tree or a failed
+    `unlink` re-checks the path, and an error from the check itself is reported
+    as "still there", because a sweep that does not know must not credit
+    itself the bytes.
+    """
+    try:
+        if path.is_dir():
+            try:
+                shutil.rmtree(path)
+            except FileNotFoundError:
+                return _EntryRemoval(gone=True, by_us=False)
+            except OSError:
+      # Partial tree removal. Keep the old best-effort cleanup, but do not
+      # claim -- or bank -- an eviction we cannot show we completed.
+                shutil.rmtree(path, ignore_errors=True)
+                return _EntryRemoval(gone=not path.exists(), by_us=False)
+            return _EntryRemoval(gone=True, by_us=True)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return _EntryRemoval(gone=True, by_us=False)
+        except OSError:
+            return _EntryRemoval(gone=not path.exists(), by_us=False)
+        return _EntryRemoval(gone=True, by_us=True)
+    except OSError:
+      # `is_dir()`/`exists()` themselves failed, so we know nothing about the
+      # entry's state. Report the conservative one.
+        return _EntryRemoval(gone=False, by_us=False)
 
 
 def _evict_fairly(
@@ -1627,6 +1809,40 @@ def _evict_fairly(
     user with 200 bad shards is the case retention exists to SERVE, and a
     per-user cap would evict their evidence while 90% of the sink sat empty.
 
+    ⚑⚑ THE VICTIM CHOICE IS FAIR SERIALLY AND CAN INVERT UNDER CONCURRENCY --
+    KNOWN, MEASURED, AND DELIBERATELY NOT FIXED (#419 F3). `live_bytes` is
+    derived from this sweep's own snapshot, so a bucket that floods after the
+    walk is invisible to the choice. Measured: victim 6 entries, hog 1, ceiling
+    500B; the hog uploads 10 mid-flight and this sweep still evicts from
+    `victim`, ending at 1500B with the hog holding 11. Serial control, same
+    fixture with the flood landing before the walk: the hog pays, 500B, exactly
+    at the ceiling. So the policy above is a SERIAL policy, and this paragraph
+    is the honest scope of it.
+
+    Not fixed because the fix is not "re-read the bucket sizes": a flood adds
+    entries this sweep never enumerated, so seeing it needs a fresh WALK. The
+    cheap version of that is not per-eviction re-walking (nobody would write
+    that) -- it is ONE extra walk after the eviction pass, repeated while still
+    over budget, i.e. ~2x the walk in the common case and unbounded under
+    sustained upload. Rejected at 2x, not at the strawman: the walk is
+    cross-trial over a directory set the same caller-invented trial-id rotation
+    extends at will, so doubling it on the upload path hands the attacker the
+    amplification, and it is the very walk the arena route already threadpools
+    for being the expensive part. Against that cost: the overshoot is bounded
+    and self-clearing. Every write triggers a sweep, INCLUDING the flooder's
+    own writes, so the next sweep sees the flood, finds the hog the largest,
+    and takes from it. For a single flood that is one request; under sustained
+    concurrency the bound is the writes landing per walk-and-evict window, not
+    one request -- still bounded, and still by a mechanism the flooder pays
+    for. The end state converges to the same max-min split; what inverts is
+    which single eviction one sweep makes.
+
+    ⚑ The same snapshot argument applies to `total_bytes`, so the CEILING is
+    already only enforced per-sweep under concurrency -- the fairness inversion
+    is strictly the smaller half of that, and both are bounded the same way.
+    Fixing fairness alone while the ceiling stays snapshot-based would buy
+    nothing and cost the walk.
+
     ⚑ A SINGLE-BUCKET SWEEP IS UNCHANGED. With one bucket this is exactly
     oldest-first, which is what every direct `prune_retained_dirs([dir])` caller
     gets and what the pre-existing tests assert.
@@ -1653,6 +1869,19 @@ def _evict_fairly(
     had already taken keep deleting past the budget, destroying diagnostics to
     fix a log line.
 
+    ⚑⚑ AND THAT DEFENCE COVERS EXACTLY ONE OF THE TWO WAYS `by_us` CAN BE
+    FALSE (#419 F1). It is sound for the concurrent-peer race above and was
+    applied to the branch it is NOT sound for: a delete this sweep ATTEMPTED
+    AND FAILED. There the entry is still on disk, and the old code ran
+    `total_bytes -= size` / `live_bytes[victim] -= size` / `gone_entries += 1`
+    unconditionally, using `removed` for telemetry only -- so the sweep
+    credited itself bytes it had just failed to remove and stopped believing
+    itself under a ceiling it was over. Measured on `main`: an undeletable
+    oldest victim, ceiling 200 bytes, reported `(2, 360)`, 350 bytes left on
+    disk. The distinction the arithmetic needs is `_EntryRemoval.gone`
+    ("absent, whoever removed it") rather than `by_us`; a failed delete is
+    neither, and now stops the crediting instead of only the reporting.
+
     ⚑ AND THE SIDECAR WAS THE HALF THAT STAYED INEXACT (#407 review). The fix
     above tracked the ENTRY's deletion and left the sidecar on
     `unlink(missing_ok=True)` -- untracked -- while still crediting the whole
@@ -1668,6 +1897,7 @@ def _evict_fairly(
     gone_entries = 0
     freed_entries = 0
     freed_bytes = 0
+    stuck_victims = 0
 
   # Per-bucket queues, each already oldest-first because `entries` is sorted.
   # `live_*` track what the sweep believes is still on disk, so the victim
@@ -1699,44 +1929,64 @@ def _evict_fairly(
         entry = queues[victim][taken[victim]]
         taken[victim] += 1
         path, size = entry.path, entry.size
-        try:
+      # ⚑ THE ENTRY FIRST, THE SIDECAR ONLY ONCE THE ENTRY IS GONE. The old
+      # order unlinked the `.reason.txt` and only then discovered it could not
+      # remove the shard -- leaving a RETAINED quarantine entry whose
+      # explanation had been destroyed, which is the entire value of retaining
+      # it. Measured on `main`: entry `a_bad_shard` kept, its `.reason.txt`
+      # gone. Doing the sidecar second also means an entry a concurrent sweep
+      # already took still gets its orphaned sidecar cleaned up.
+        outcome = _remove_retained_entry(path)
+        if not outcome.gone:
+      # ⚑ WHAT THE SWEEP DOES WITH A VICTIM IT CANNOT DELETE: it moves on to
+      # the next one, and the failed entry keeps counting against the budget
+      # because it is STILL ON DISK. `taken[victim]` has already advanced, so
+      # this entry is never re-selected in this pass and the loop cannot spin
+      # on it; when every entry has been tried, `available` empties and the
+      # sweep ends. The alternative -- crediting the bytes, which is what this
+      # did -- ends the sweep OVER the ceiling while believing it is under.
+            stuck_victims += 1
+            continue
       # `size` ALREADY includes the sidecar, so it must not be added again --
       # that would over-subtract and stop evicting while still over budget.
       # `freed_sidecar` is the other question: did THIS sweep remove it.
-            freed_sidecar = 0
-            try:
-                path.with_suffix(path.suffix + ".reason.txt").unlink()
-                freed_sidecar = entry.sidecar_size
-            except FileNotFoundError:
-                pass
-            if path.is_dir():
-                try:
-                    shutil.rmtree(path)
-                    removed = True
-                except FileNotFoundError:
-                    removed = False
-                except OSError:
-          # Partial tree removal. Keep the old best-effort cleanup, but do
-          # not claim an eviction we cannot show we completed.
-                    shutil.rmtree(path, ignore_errors=True)
-                    removed = False
-            else:
-                try:
-                    path.unlink()
-                    removed = True
-                except FileNotFoundError:
-                    removed = False
+        freed_sidecar = 0
+        sidecar_gone = True
+        try:
+            path.with_suffix(path.suffix + ".reason.txt").unlink()
+            freed_sidecar = entry.sidecar_size
+        except FileNotFoundError:
+            pass
         except OSError:
-            continue
-        total_bytes -= size
-        live_bytes[victim] -= size
-        live_count[victim] -= 1
-        gone_entries += 1
+      # The entry left but its sidecar did not, so its bytes stay counted for
+      # the same reason a stuck entry's do: they are on disk.
+            sidecar_gone = False
+        gone_bytes = size - (0 if sidecar_gone else entry.sidecar_size)
+        total_bytes -= gone_bytes
+        live_bytes[victim] -= gone_bytes
+        if sidecar_gone:
+            live_count[victim] -= 1
+            gone_entries += 1
+        else:
+      # ⚑ THE COUNT DID NOT GO DOWN, SO DO NOT CREDIT IT (#419 F-A, review).
+      # The shard left, but its `.reason.txt` did not -- and #419 F4 makes an
+      # orphaned sidecar an ENTRY in its own right, so the next walk counts it.
+      # One entry out, one entry in: net zero. Crediting it here is the same
+      # mistake as crediting undeleted bytes, one field over, and it ends the
+      # sweep over the ENTRY ceiling while believing it is under. `main` was
+      # accidentally safe here (its outer `except OSError: continue` skipped
+      # the whole entry); this branch is the one that newly produces it, so it
+      # is a regression this PR would have introduced.
+      #
+      # Counted as stuck for the same reason: an over-ceiling sink that says
+      # nothing is exactly what the WARNING below exists to prevent, and this
+      # is the one path that newly creates one.
+            stuck_victims += 1
       # Two independent deletes, credited independently. `size - sidecar_size`
       # is the entry's own bytes; the sidecar's are added only if the unlink
       # above found it. `freed_entries` still counts ENTRIES, so a lone sidecar
       # removal contributes bytes without inventing an eviction.
-        if removed:
+        if outcome.by_us:
             freed_bytes += size - entry.sidecar_size
             freed_entries += 1
         freed_bytes += freed_sidecar
@@ -1745,6 +1995,20 @@ def _evict_fairly(
         log.info(
             "retention: evicted %d entr%s (%d bytes) from %s",
             freed_entries, "y" if freed_entries == 1 else "ies", freed_bytes, label,
+        )
+    if stuck_victims and log is not None:
+      # Not silent: a victim the sweep could not fully remove means the sink
+      # can sit permanently over its ceiling no matter how often the sweep
+      # runs, and the only way anyone finds that out is a log line saying so.
+      #
+      # ⚑ "not fully removed" covers BOTH shapes, which is why the counter is
+      # not called `stuck_entries`: the entry itself may have survived, or the
+      # entry went and its `.reason.txt` stayed. Either way something is still
+      # on disk and still counted.
+        log.warning(
+            "retention: %d victim%s could not be fully removed from %s; what "
+            "is left still counts against the budget",
+            stuck_victims, "" if stuck_victims == 1 else "s", label,
         )
     return (freed_entries, freed_bytes)
 
@@ -5094,8 +5358,13 @@ def create_app(
                     max_entries=int(arena_max_entries),
                     log=log,
                 )
+      # ⚑ Passed AS BUILT, unresolved. `drop_empty_arena_dirs` resolves its
+      # own comparison operands (#419 F2); the `.resolve()` that used to be
+      # here resolved one side of a comparison whose other side --
+      # `_arena_all_user_dirs()`, off `create_app`'s unresolved `root` --
+      # could not be resolved from the call site at all.
                 drop_empty_arena_dirs(
-                    dirs, keep=user_dir, default_arena_root=arena_inbox.resolve(),
+                    dirs, keep=user_dir, default_arena_root=arena_inbox,
                 )
 
             with contextlib.suppress(OSError):
