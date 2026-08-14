@@ -43,7 +43,9 @@ def test_the_configured_cap_is_the_realized_cap(thread_cap: int | None) -> None:
         ("auto", None),
         ("off", None),
         ("0", None),
-        ("", None),
+        # ⚑ NOT uncapped: YAML `CAE_TEST_THREADS:` with no value (or `~`/`null`)
+        # arrives as "". Nobody types that meaning "take every core".
+        ("", 2),
         # ⚑ YAML 1.1 turns a bare `off` into the boolean False, which reaches the
         # process as "false". CI sets this variable from yaml, so rejecting these
         # would cap CI silently.
@@ -148,27 +150,66 @@ def test_the_regime_line_names_the_escape_hatch() -> None:
         assert "auto" in line
 
 
-def test_the_regime_line_actually_reaches_the_terminal_under_dash_q() -> None:
-    """⚑ THE OBSERVABLE, not the return value.
+@pytest.mark.parametrize(
+    ("env_value", "must_contain"),
+    [
+        (None,   "capped at 2 (realized 2)"),
+        ("atuo", "is not a number"),
+        ("auto", "UNCAPPED"),
+    ],
+    ids=["default", "unparseable", "lifted"],
+)
+def test_the_regime_line_reaches_the_terminal_with_its_payload(
+    env_value: str | None, must_contain: str,
+) -> None:
+    """⚑ THE OBSERVABLE AND ITS CONTENT — neither alone is enough.
 
-    Asserting that `thread_cap_regime_line()` returns the right string proves
-    nothing about whether a human ever sees it, and three plausible emit sites
-    silently printed NOTHING here: `pytest_report_header` is skipped at `-q`'s
-    verbosity of -1, and `pluginmanager.get_plugin("terminalreporter")` is None
-    inside a conftest `pytest_configure`. `-q` is in this repo's `addopts`, so
-    `-q` is the DEFAULT invocation — the case that must not be the broken one.
+    Asserting what `thread_cap_regime_line()` RETURNS proves nothing about whether
+    a human sees it: three plausible emit sites printed nothing here (`-q` is in
+    this repo's `addopts` and suppresses `pytest_report_header`; and
+    `pluginmanager.get_plugin("terminalreporter")` is None inside a conftest's
+    `pytest_configure`, a branch that cannot fire).
 
-    So: run pytest as a subprocess, in the documented default mode, and grep its
-    stdout. A cheap `-k` keeps it to a fraction of a second.
+    But asserting only that the PREFIX `"torch threads:"` appeared is not enough
+    either, and that gap was real: an emit site hardcoded to print
+    `"torch threads: UNCAPPED (32) ..."` during a CAPPED run passed the whole
+    suite — green while the terminal actively lied about the regime, which is the
+    exact failure this line exists to prevent, inverted. Deleting the
+    unparseable-value annotation also survived, leaving F3's fix with no observable
+    test at all.
+
+    So each regime asserts a payload only a truthful line can carry, through a
+    real subprocess pytest run. `-q` is passed EXPLICITLY rather than inherited
+    from `addopts`, so this keeps testing the `-q` case if `addopts` ever changes.
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ)
+    if env_value is None:
+        env.pop("CAE_TEST_THREADS", None)
+    else:
+        env["CAE_TEST_THREADS"] = env_value
+    # The child re-reads conftest from scratch; the parent's exported OMP_* would
+    # otherwise pre-empt the regime under test.
+    for var in (
+        "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+    ):
+        env.pop(var, None)
     out = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/test_pytest_thread_cap.py",
-         "-k", "resolve_thread_cap", "-p", "no:cacheprovider"],
-        capture_output=True, text=True, cwd=repo_root, timeout=600, check=False,
+         "-k", "resolve_thread_cap", "-q", "-p", "no:cacheprovider"],
+        capture_output=True, text=True, cwd=repo_root, env=env, timeout=600, check=False,
     )
-    assert "torch threads:" in out.stdout, (
-        "the thread-cap regime line never reached the terminal on the DEFAULT "
-        f"invocation; a reader has no way to tell a capped run from a slow one.\n"
+    # ⚑ pytest_terminal_summary fires even when zero tests are collected, so a
+    # child that died during collection would still print the line and pass a
+    # content check. Pin that it actually ran something.
+    assert out.returncode == 0, (
+        f"the child pytest run did not succeed (rc={out.returncode}); the regime "
+        f"line below proves nothing about a working run.\n"
         f"--- stdout ---\n{out.stdout}\n--- stderr ---\n{out.stderr}"
+    )
+    assert must_contain in out.stdout, (
+        f"regime line missing its payload {must_contain!r} on the "
+        f"CAE_TEST_THREADS={env_value!r} run — the terminal is either silent about "
+        f"the regime or misreporting it.\n--- stdout ---\n{out.stdout}"
     )

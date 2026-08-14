@@ -38,7 +38,13 @@ _DEFAULT_THREADS = 2
 # BOOLEAN False, which reaches the process as the string "false". Documenting
 # `off` while rejecting "false" would cap CI silently. The same trap is recorded
 # in this repo's memory as `yaml_off_parses_as_boolean_false`.
-_UNCAPPED = frozenset({"auto", "off", "none", "no", "n", "false", "0", ""})
+#
+# ⚑ The EMPTY string is deliberately NOT here. It is the one spelling nobody types
+# on purpose: YAML `CAE_TEST_THREADS:` with no value, or `~`/`null`, arrives as ""
+# — and an author who writes that means "leave it at the default", not "give this
+# run every core on the box". Unset (`None`) and set-but-empty are distinguished
+# below, so "" takes the announced fail-closed path like any other garbage.
+_UNCAPPED = frozenset({"auto", "off", "none", "no", "n", "false", "0"})
 
 
 def classify_thread_cap(raw: str | None) -> tuple[int | None, bool]:
@@ -126,13 +132,14 @@ def thread_cap_regime_line() -> str:
     return line
 
 
-def pytest_report_header() -> str:
-    """The regime line for normal/verbose runs."""
-    return thread_cap_regime_line()
-
-
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    """And again at the end, which is the only place ``-q`` cannot suppress it.
+    """Emit the regime line — one site, at the end, at every verbosity.
+
+    ⚑ There is deliberately NO ``pytest_report_header`` companion. It was here and
+    was removed: ``terminal_summary`` already fires at every verbosity, so the
+    header only duplicated the line under ``-v`` while being dead under ``-q`` —
+    and a mutation that made it return ``""`` was not detectable by any test,
+    which is the signature of code carrying no weight.
 
     ⚑ MEASURED, not assumed. Two earlier emit sites each looked right and printed
     NOTHING: ``pytest_report_header`` alone is skipped entirely at ``-q``'s
