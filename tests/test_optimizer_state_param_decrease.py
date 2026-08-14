@@ -724,7 +724,7 @@ def test_an_ndim_mismatch_declines(
 
 @pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
 def test_a_parameter_that_moves_between_groups_does_not_crash(
-    optimizer: str, scope: str, tmp_path: Path,
+    optimizer: str, scope: str, tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """New reachable state: the name path can move a survivor between groups.
 
@@ -792,7 +792,29 @@ def test_a_parameter_that_moves_between_groups_does_not_crash(
             "under test is not reachable here, so passing would prove nothing"
         )
 
-    arm.load(ckpt)
+    # ⚑ ASSERT THE NAME PATH ACTUALLY RAN, not merely that loading survived.
+    # `load` treats a `None` remap as "not applicable" and falls through to the
+    # INDEX-keyed `load_state_dict`, which -- with equal counts -- produces state
+    # that is non-empty, correctly shaped, steppable and finite. So every
+    # assertion below this line is satisfied by the positional path too, and a
+    # mutant that returns `None` from the remap passed this test unchanged. The
+    # direct call pins the mechanism; the caplog check pins that `load` used it
+    # rather than silently reinitialising.
+    accepted = arm._remap_optimizer_state_by_param_name(
+        payload["opt"], donor_names, payload["model"],
+    )
+    assert accepted is not None, (
+        "the name path must ACCEPT this donor -- if it declines, the load below "
+        "falls through to the positional splice and tests nothing about "
+        "cross-group movement"
+    )
+    assert accepted[2] > 0, "the accepted mapping must carry real donor state"
+
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+    assert not any("reinitialising optimizer" in r.message for r in caplog.records), (
+        "the donor state must survive the group move, not be thrown away"
+    )
     # Two real steps: initialisation of any missing moment happens on step 1, and
     # step 2 exercises the state it just built.
     _two_real_steps(arm)
