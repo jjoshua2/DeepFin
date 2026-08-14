@@ -47,11 +47,18 @@ flag is a thing to remember, and the failure mode is that nobody does.
 - **Lift it with `CAE_TEST_THREADS=auto`** (or `off`/`none`/`0`), or set an explicit number
   (`CAE_TEST_THREADS=8`). Do this when **training is stopped** — a full-suite run is much
   faster uncapped and there is nothing to protect.
-- Every run prints which regime it is in as a pytest header line, so a capped session is
-  never mistaken for a slow one. **Read that line before concluding the suite got slower.**
+- Every run prints which regime it is in as its first line, so a capped session is never
+  mistaken for a slow one. **Read that line before concluding the suite got slower.** ⚑ It
+  is written through the terminal reporter, NOT `pytest_report_header`, because this repo's
+  `addopts = "-q"` suppresses the header — the first cut documented an escape hatch in a
+  line the documented invocation never printed.
 - CI passes `auto` (`.github/workflows/ci.yml`): a runner never shares a box with training,
-  and that job has a 30-minute timeout to protect.
-- An unparseable value falls back to the CAP, never to uncapped — the safe direction.
+  and that job has a 30-minute timeout to protect. ⚑ In YAML write it **quoted** (`"auto"`):
+  a bare `off` parses as the boolean `False` and arrives as `"false"`. That spelling is
+  accepted for exactly this reason, but quoting removes the question.
+- An unparseable value falls back to the CAP, never to uncapped — the safe direction, since
+  failing open steals cores from someone else's live run while failing closed only slows
+  your own tests. It is **announced** in the regime line rather than absorbed silently.
 - The cap is NOT auto-detected from whether training is running. A detector that guesses
   wrong in the permissive direction starves training exactly when it matters, and a check
   that silently fails to fire is this repo's signature defect. Deterministic default plus a
