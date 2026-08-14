@@ -4126,10 +4126,29 @@ class Trainer:
         Returns ``(state_dict, report, kept, changed)`` where ``changed`` is
         dropped + fresh, so the caller can WARN on a mass turnover instead of
         printing a line that differs from a healthy one only in its digits.
-        Returns None when it declines:
+        ⚑⚑ THE TWO DECLINE KINDS ARE NOT INTERCHANGEABLE, AND CONFUSING THEM IS
+        EXACTLY HOW THE POSITIONAL-FALLBACK DEFECT COMES BACK. ``None`` means
+        "not applicable, the caller's positional load is CORRECT here"; the
+        exception means "the mapping is WRONG, and loading by position would
+        install some other parameter's moments". Anything moved from the second
+        list to the first re-opens that defect silently -- the load would
+        succeed, be correctly shaped, step, and be wrong.
 
-        * the group count changed, a name occurs twice on either side, or a
-          donor slot id occurs twice (the correspondence would be ambiguous);
+        **Returns None** -- no re-keying is called for, positional is safe:
+
+        * the group count differs, or the live name list is unavailable or
+          disagrees in length with the live parameter count;
+        * a name occurs twice on either side, or the donor's slot-id count
+          disagrees with its name count (nothing to key on);
+        * the donor's ``state`` is not a mapping;
+        * the mapping is the identity, i.e. an ordinary resume. Declining there
+          keeps the common path byte-identical to before this method existed.
+
+        **Raises** :class:`UntrustedOptimizerStateError` -- the recovered
+        mapping is untrustworthy, so the INDEX order must not be trusted either:
+
+        * a donor slot id occurs twice, so the slot -> name correspondence is
+          not one-to-one and would collapse under ``dict(zip(...))``;
         * a recovered name is not a key of the donor's own model payload --
           the names are supposed to BE those keys, so a miss is proof the
           mapping is wrong, NOT a slot to skip. Skipping was how a stale
@@ -4137,9 +4156,7 @@ class Trainer:
         * a donor moment's shape disagrees with the donor tensor the name maps
           to, which means the recovered mapping is WRONG -- the one outcome that
           must never be acted on. Only 0-dim tensors (step counters) are exempt;
-          an ndim disagreement is evidence, not an exemption;
-        * the mapping is the identity, i.e. an ordinary resume. Declining there
-          keeps the common path byte-identical to before this method existed.
+          an ndim disagreement is evidence, not an exemption.
 
         Removed parameters' state is dropped whole; added parameters get no
         entry at all, so the optimizer initialises them on their first step.
@@ -4418,23 +4435,37 @@ class Trainer:
   # the live slots is louder than INFO so it survives the Ray actor's handler-
   # less logger, which drops INFO outright
   # (see `server_info_logs_are_discarded_by_uvicorn` for the same failure mode).
+  # ⚑ "changed" is `dropped + fresh`, and those count DIFFERENT SIDES: dropped is
+  # donor-side (names the live model no longer has), fresh is live-side (names the
+  # donor never had). Their sum is therefore NOT a subset of the live parameters
+  # and can legitimately EXCEED `n_model_params` -- a donor and a live model that
+  # share no names at all give `changed == len(donor) + len(live)`. The old
+  # wording, "changed %d of %d parameters" against the live-only denominator,
+  # could print "changed 958 of 479", which reads as a corrupted counter and
+  # invites the reader to distrust the instrument instead of the load. Report it
+  # as a turnover COUNT against the live size, never as a fraction of it.
                 if changed > max(1, n_model_params // 10):
                     logging.getLogger(__name__).warning(
-                        "[resume] name-based optimizer remap changed %d of %d "
-                        "parameters and kept only %d donor moment set(s) (%s). "
-                        "A warm start normally touches a few; this many means "
-                        "the recovered name mapping may be wrong. Verify the "
-                        "donor's parameter names before trusting the restored "
+                        "[resume] name-based optimizer remap turned over %d slot(s) "
+                        "(%s) against %d live parameters, keeping only %d donor "
+                        "moment set(s). A warm start normally touches a few; this "
+                        "many means the recovered name mapping may be wrong. Verify "
+                        "the donor's parameter names before trusting the restored "
                         "moments.",
-                        changed, n_model_params, kept, remap_report,
+                        changed, remap_report, n_model_params, kept,
                     )
   # ⚑ There is deliberately NO `elif kept == 0:` companion here, and it is not
   # an oversight -- it was written, and it was UNREACHABLE. `kept == 0` forces
   # `dropped == len(donor)` and `fresh == len(live)`, hence
   # `changed >= n_model_params`, which always exceeds `n_model_params // 10`, so
   # the branch above already fired. Brute-forced over
-  # n_model in [1,599] x n_donor in [0,599]: exactly ONE reachable case,
-  # (n_model=1, n_donor=0). Production carries 481 slots. Found by independent
+  # n_model in [0,599] x n_donor in [0,599]: THREE reachable cases --
+  # (0,0), (0,1) and (1,0). An earlier revision of this comment claimed exactly
+  # one, (1,0); that scan started at n_model=1 and so could not see the two
+  # n_model=0 cases. All three need a model with at most one optimizer slot, and
+  # production carries 481. Corrected by independent review 2026-08-14, which
+  # re-ran the enumeration over the full domain instead of trusting the note.
+  # Found by independent
   # review 2026-08-14 -- a guard that cannot fire, added in a change about
   # guards that cannot fire.
             elif n_ckpt_params < n_model_params:

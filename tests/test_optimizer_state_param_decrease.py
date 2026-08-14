@@ -878,3 +878,68 @@ def test_load_REFUSES_the_positional_fallback_when_the_name_map_is_untrusted(
         "donor moments reached the live optimizer even though the name mapping "
         "was rejected -- they can only have been placed POSITIONALLY"
     )
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_the_mass_turnover_WARNING_actually_reaches_a_log_record(
+    optimizer: str, scope: str, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ THE ONE CHANGE IN THIS AREA THAT NOTHING COULD DETECT.
+
+    Independent review 2026-08-14 mutated the turnover guard to ``if False:`` and
+    the whole file still passed, exit 0: every test asserted on the STATE after
+    the load, and none on the warning that is the only signal a reader gets when
+    the remap turns over most of the model. A warning nothing tests is a warning
+    that can be deleted, reworded into meaninglessness, or silently made
+    unreachable -- which is this repo's signature defect wearing a log handler.
+
+    The threshold is a tenth of the LIVE slot count, so production (479 slots,
+    "475 kept, 6 dropped, 4 fresh") sits far below it and stays quiet. These test
+    models are small enough that the same +2/-6/+2 arm clears a tenth, which is
+    what makes the branch reachable from a unit test at all.
+
+    Asserts the payload, not just that something logged: a count, the breakdown,
+    and the live denominator all have to appear, so a message reworded into
+    "remap done" fails here.
+    """
+    donor = _trainer(_cfg(), tmp_path / "donor", optimizer, scope)
+    ckpt = tmp_path / "donor.pt"
+    donor.save(ckpt)
+
+    arm_cfg = _cfg(coupled=True, policy_embedding_mode="linear")
+    arm = _trainer(arm_cfg, tmp_path / "arm", optimizer, scope)
+
+    n_live = sum(len(g["params"]) for g in arm.opt.param_groups)
+    donor_names = arm._donor_optimizer_param_names(
+        torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    )
+    assert donor_names is not None
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    remapped = arm._remap_optimizer_state_by_param_name(
+        payload["opt"], donor_names, payload["model"],
+    )
+    assert remapped is not None, "the name path must engage for this arm"
+    changed = remapped[3]
+    if changed <= max(1, n_live // 10):
+        pytest.skip(
+            f"this arm turns over {changed} of {n_live} live slots, under the "
+            "one-tenth bar -- the warning is not reachable here, and asserting "
+            "on it would pass vacuously"
+        )
+
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+
+    hits = [r.message for r in caplog.records if "turned over" in r.message]
+    assert hits, (
+        f"turnover was {changed} of {n_live} live slots, past the "
+        f"{max(1, n_live // 10)} bar, and NO warning record was emitted"
+    )
+    message = hits[0]
+    assert str(changed) in message, "the turnover COUNT must be in the message"
+    assert str(n_live) in message, "the live denominator must be in the message"
+    assert "kept" in message, "the kept/dropped/fresh breakdown must be in the message"
+    # ⚑ The count and the denominator are counted on DIFFERENT sides (dropped is
+    # donor-side, fresh is live-side), so `changed` may exceed `n_live`. The
+    # message must therefore never render it as a fraction of the live count.
+    assert f"of {n_live} parameters" not in message
