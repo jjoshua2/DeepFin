@@ -181,9 +181,14 @@ scorer, and `E[search_sig - sf_sig]` on fresh shards (the ratchet the audit's S1
   is the number a later reader will quote, and it understates the change by more than an order
   of magnitude. The categorical read is the milder of the two: it is scale-invariant, so if the
   stored triple is renormalised to sum 1 it collapses to `W - L` and is genuinely inert.
-  **Pre-launch check, one line, and it decides which of the two rows above is live:** assert on
-  real stored rows whether `search_wdl` sums to 1. If it does, `targets.py` is inert and only
-  the `losses.py` row bites; if it does not, both do.
+  **Pre-launch check — RUN 2026-08-14, RESOLVED.** On real stored rows
+  (`data/salvage/pre_policy_adapter_20260812/seeds/slot_000/holdout.npz`, n=2000) `search_wdl`
+  sums to **1.0 within 3.7e-4** on every row — that residual is exactly fp16 quantization
+  (`replay/shard.py:179` stores the field as `_F16`), not a normalization defect.
+  ⇒ **`targets.py` is INERT** (its `(W-L)/(W+D+L)` collapses to `W-L`, which the arm preserves)
+  **and only the `losses.py` row bites** — but it bites at the full 0.31 weight on the FULL
+  `[W, D, L]` distribution, which is precisely the component this arm moves.
+  ⇒ **ONE live training consumer, correctly sized: 31% of the WDL head's target, every row.**
   This is the [[check_the_resource_is_binding]] question asked of a target instead of a
   resource: not "is the field read" (a presence check) but "what does the reader do with it,
   and at what weight".
