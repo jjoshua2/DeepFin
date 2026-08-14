@@ -48061,3 +48061,66 @@ The (b) PLAY profile runs **`c_scale 0.025`** — the PRE-2026-08-09 value. Prod
 **0.1** and that move was worth **+239.5 Elo** with the same weights both sides. If the PLAY/UCI
 defaults never followed production, external and Cheese matches are being played with the weaker
 search. **Not investigated here** (out of scope, and (b) is not the decider); logged as a task.
+
+---
+
+## #170 — NOT DELIVERABLE from the Tier-13 arms. The degeneracy gate fired, and what it caught is a FINDING.
+
+Attempted 2026-08-14 against the three banked Tier-13 arena rows, which the queue named as its
+input. **The calibration cannot be built from them.** Recording the attempt because the reason is
+substantive, not a shortage of compute.
+
+### Why it looked promising, and why that was premature
+Δregret is well resolved on all three pairs (CIs exclude zero) and the SIGN agrees with ΔElo 3/3:
+
+| pair | Δregret (last-20 mean) | ΔElo | implied Elo per 0.001 |
+|---|---|---|---|
+| B−A | −0.005682 ±0.001222 | +12.17 | 2.14 |
+| C−B | +0.002314 ±0.000285 | −7.38 | 3.19 |
+| C−A | −0.003368 ±0.001190 | +3.47 | 1.03 |
+
+⚑ Only **TWO** of these are independent — C−A is (B−A)+(C−B) up to noise. So 3/3 sign agreement is
+P=1/4 under a coin-flip null, not P=1/8. Suggestive, never significant.
+
+### ⚑⚑ THE DEGENERACY GATE FIRES — and I ran it AFTER computing a slope, which is the wrong order
+Distinct regret values in the last 20 iterations: **A 20/20 · B 9/20 · C 2/20.** Arm C is pinned at
+`0.03078` for **19 consecutive iterations**.
+
+**It is NOT a clamp rail** — `sf_pid_wdl_regret_min: 0.0075` / `max: 0.7`, and C sits at 0.0308,
+nowhere near either. It is the condition [[wdl_regret_measures_agent_not_net]] names exactly:
+
+| arm | PID winrate (target 0.500) | regret over last 20 | reading |
+|---|---|---|---|
+| A (off) | **0.5481** — persistent +0.048 offset | ramps **0.03910 → 0.02919** | the IMPROVING-net signature |
+| B (linear) | 0.4935 | oscillates ~0.0284, no trend | roughly flat |
+| C (residual_mish) | **0.5005** — at setpoint | **flat 0.03078** | **the net is FLAT** |
+
+"A winrate sitting exactly at 0.500 with flat regret means the net is FLAT." Arm C is that, to three
+decimals. So its Δregret is not a free measurement of difficulty and cannot serve as a calibration
+point — which invalidates **both** pairs that contain it (C−B and C−A).
+
+**⚑ RETRACTION, same session.** Before running the gate I fitted B−A + C−B and reported
+**+2.29 [−0.05, +4.77]**. That fit is INVALID — one of its two points is the flat-net artifact. The
+gate was in #170's own spec (`20ea3c0bf`) and I ran it second. Order matters: a degeneracy gate run
+after the estimate is a check on a number you are already attached to.
+
+### What the one surviving pair gives
+B−A alone: **+2.14 Elo per 0.001 regret, 95% CI [−0.38, +4.87]** — spans zero, **not resolved**.
+And n=1 pair cannot estimate a slope at all without assuming the intercept.
+⇒ **#170 STAYS OPEN.** The banked PROVISIONAL ~5.4 Elo/0.001 is *outside* this interval, but a
+single unresolved ratio does not falsify it either; the honest statement is that this data is
+consistent with anything from ~0 to ~5.
+
+### What WOULD deliver #170
+Pairs whose PID is **actively controlling in the readout window** — i.e. ≥15/20 distinct regret
+values AND a non-zero winrate offset — with a paired arena on the same endpoints. The Tier-13 design
+cannot supply them: two of its three arms stalled. This is a **pre-flight admission criterion for
+the calibration, not a post-hoc exclusion**: state it before collecting, and drop any arm failing it.
+
+### ⚑ The dynamics and the arenas DISAGREE in direction, and the arena wins
+Regret dynamics say A is still improving while C has stalled; the paired arena says C−A = **+3.47
+[−10.78, +17.74]**, null and if anything favouring C. Not a contradiction — a rate signal over the
+last 20 iters and a level at iter 100 are different quantities, and both differences are small. But
+where they point opposite ways, **the paired arena is primary** and the regret dynamics are the
+hypothesis. Quoting the dynamics as the Tier-13 result would be exactly the substitution the
+standing rule forbids.
