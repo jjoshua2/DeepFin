@@ -46872,3 +46872,89 @@ mediocre move" signature, now confirmed on a second comparator and on the cap-fr
 lowering it would shrink the reported gap without changing a single move. Nothing here moves #206
 (run the real MCTS and score the SEARCH's move), which remains the decider for whether the fix is
 search-side or training-side.
+
+---
+
+## Tier-13 PRE-ARENA AMENDMENT #2 (2026-08-13 22:20) — the frozen commands CANNOT produce PGNs on the live branch, plus the dual-instrument readout pinned before any data
+
+Written **before any arena runs** and before arm C resumes, so no post-hoc freedom is created.
+Supersedes nothing in `726c069a1`: pins 1-6 there stand unchanged. This adds a sequencing
+constraint, a deploy dependency, and the second instrument's rules.
+
+### A. Arm C resumes to 100 on the CURRENT live branch — do NOT merge first
+Arm C stopped at **79/100** for the user's GPU pause (`51b33b3b0`). It resumes on the code the live
+branch has **now**. ⚑ `origin/main` is **14 commits / 68 files / ~18.2k insertions ahead** of
+`ops/live-20260725`, and that set includes **#408** (`ee6c5549c`, diff-focus warm-up is per selfplay
+THREAD, not per worker), which is **training-affecting**. Merging before arm C finishes would run its
+last 21 iterations on different code from arms A and B and void the three-way comparison outright.
+**Exclusion, pre-committed:** iteration **80** is dropped from every per-iteration cross-arm
+comparison — the teardown discarded four workers' in-flight games, so iter 80 carries a drain
+transient (same handling as the `44832` CPU-load transient). It does NOT affect the arenas, which
+read banked iter-100 weights.
+
+### B. ⚑⚑ `--pgn-out` DOES NOT EXIST ON THE LIVE BRANCH — the Ordo half of the readout is unrunnable as frozen
+PR **#422** (`e8aec9d84`) is merged to `main` and is **not on `ops/live-20260725`**; neither
+`scripts/ordo_pooled_fit.py` nor `chess_anti_engine/eval/arena_pgn.py` exists in the live tree. This
+is [[live_branch_lacks_merged_code]] landing on the critical path: the frozen commands would run,
+produce correct pentanomial rows, and silently yield **zero PGNs**, and the failure would only be
+visible when Ordo was handed nothing.
+
+**Running from a worktree instead is REJECTED, on two independent mechanisms:**
+1. `arena_standard.py:50` sets `PRODUCTION_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"`, where
+   `REPO_ROOT` is derived from the **script's own location**, and there is **no `--config` flag**. A
+   worktree run reads the WORKTREE's yaml — so `--search-shape training` would resolve against the
+   wrong file, and `config_hash` (`:1030`, `sha256(PRODUCTION_CONFIG)[:12]`) would record it.
+2. The compiled `_mcts_tree` extension lives in the **live tree's** package directory. A worktree has
+   no built `.so`.
+
+**⇒ THE ORDER IS: finish arm C → stop → merge `origin/main` into `ops/live-20260725` → REBUILD →
+arenas.** Merging is safe for arena PLAY, by mechanism rather than by symmetry: the only play-path
+deltas are `_mcts_tree.c` (+136/−18) and `gumbel_c.py`, both from **#409**, and the added arithmetic
+is `search_wdl` draw-mode gated on `swdl_draw_mode`, whose default `SWDL_DRAW_NET_RAW` the source
+documents as keeping the original arithmetic **bit-for-bit, including for callers that pass no mode at
+all**. `search_wdl` is a training TARGET, not played-move selection, so it cannot reach an arena game.
+
+**⚑ THE REBUILD IS MANDATORY AND IS A HARD BLOCKER, NOT HYGIENE.** #409 raises
+`_REQUIRED_MCTS_ABI` **3 → 4** (`gumbel_c.py:189`). After the merge the live tree's `.so` is still
+ABI 3, and `run_gumbel_root_many_c` raises `RuntimeError` on the version check — **every arena and
+every training start dies at import** until
+`python3 scripts/build_production_extensions.py` runs. (The reverse ordering is harmless: the guard is
+`_abi < _REQUIRED`, so a newer `.so` under older Python passes.) Before that restart, also diff the
+live yaml's KEYS against `main`'s schema per the CLAUDE.md category-(a) rule.
+
+### C. DUAL READOUT — pinned now, before any games exist
+- **PRIMARY: the paired pentanomial, per contrast, exactly as frozen in `726c069a1`.** Every verdict
+  — trajectory, full win, kill — is decided by the pentanomial JSONL row and **nothing else**.
+- **SECONDARY: an Ordo pooled fit** over the three PGNs plus the pair-level block bootstrap
+  (`scripts/ordo_pooled_fit.py`, #422). Add `--pgn-out scratchpad/tier13/pgn/<label>.pgn` to each of
+  the three frozen commands; everything else in them is unchanged.
+- **Ordo invocation pinned:** `-p`/`-P` the three PGNs, `-W` (auto white advantage), `-D` (auto draw
+  rate), `-s 1000`, **`-M`**, `-A arm_A_iter100 -a 0` (arm A is the control, so it is the anchor), and
+  **`-z 200.2409`, NOT the default 202** — the default is 0.88% larger and would inflate every Elo.
+  ⚑ `-M` is REQUIRED whenever `-D` and `-s` are combined: ~1/30 datasets otherwise hang at 100% CPU,
+  and the RNG is fixed-seed, so the hang is deterministic per dataset and **re-running will not clear
+  it**.
+- **⚑ DISAGREEMENT RULE, pre-committed: Ordo NEVER overturns the pentanomial.** If the two disagree
+  in SIGN on any contrast, the pentanomial verdict stands and the disagreement is recorded as an
+  INSTRUMENT finding that must be resolved before Tier-13's result is quoted anywhere else. Rationale:
+  the pentanomial exploits the pairing and Ordo treats games as independent, so **Ordo's interval is
+  CONSERVATIVE by construction** — a sign flip therefore means one of the two is wrong, not that the
+  wider one is the safer read. Choosing the more favourable of two instruments after seeing both is
+  the failure [[never_condition_a_control_on_its_own_outcome]] exists for.
+- **Agreement criterion, stated before the data:** for each of the three contrasts, the pentanomial
+  point estimate must lie **inside Ordo's 95% interval**. Three-for-three ⇒ the pooled fit is
+  validated and may be used for the indirect comparisons. Any miss ⇒ report it and use the
+  pentanomial alone.
+- **Free transitivity check retained** (`44931`): (B−A) + (C−B) must reconcile with (C−A) on BOTH
+  instruments. [[arena_elo_is_anchor_dependent]].
+
+### D. Game count is UNCHANGED at 1600 per contrast — do not spend the joint fit's variance
+The ~1100-games figure derived when 300/pair was proposed is a FLOOR, and 1600 already clears it.
+⚑ The joint fit's ~0.816× SE applies to the **pooled** estimate only; the PRIMARY pentanomial is
+computed per contrast and gets **none** of that benefit. Reducing games because a secondary
+instrument is more efficient would silently weaken the instrument every verdict actually rests on.
+
+### E. Unchanged from `726c069a1`
+Pins 1-6 verbatim. #189 (no arena warmup) remains wall-clock-only under `matched_sims` — a sims
+budget cannot be eaten by latency. Seed 42 still gives all three contrasts the same 800-opening
+pairing.
