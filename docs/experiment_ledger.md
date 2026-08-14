@@ -47021,3 +47021,36 @@ re-run that the pinned rule already calls for should launch arm C **without** an
 so the seed-2 arm carries one warm-up like A and B. Recorded here rather than decided later, because
 after the readout this choice would be conditioned on its own outcome
 [[never_condition_a_control_on_its_own_outcome]].
+
+### Amendment #2 addendum 2 — the yaml merge resolution is PREPARED and VERIFIED, not yet applied
+
+Banked at `scratchpad/tier13/merge_prep/` (`pbt2_small.RESOLVED.yaml`, sha256
+`b588d276f0626dc70b462aa5d54b7081868ad6907bae4d2b560e6ef491211acc`, plus a README stating the
+resolution rules). Valid ONLY for `live c082808fb` × `main 2c700dd70`; re-do it if either side moves.
+
+Resolution, per hunk — and it is a HYBRID in both:
+- **`diff_focus_norm_enabled`**: kept **live's `true`** and its #171/#173 rationale, then appended
+  main's comment about which keys the distributed worker actually reads. The two comments are not in
+  conflict once you notice they describe **different key groups** (live's covers the five keys below
+  it; main's covers the five above and the six below), so both are kept.
+- **`diff_focus_norm_shared`**: took **main's** new key + comment (#408), and kept **live's**
+  "PIN (both)" comment, which documents `categorical_bins`/`hlgauss_sigma` and which main never had.
+
+**Verification, against MAIN's schema, in the worktree:** `flatten_run_config_defaults` → **318 keys,
+OK**; `TrialConfig.from_dict` → **OK**. Flattened diff of the RESOLVED file against the LIVE file:
+
+| | |
+|---|---|
+| added | **1** — `diff_focus_norm_shared = False` |
+| removed | **0** |
+| **changed** | **0** |
+
+⚑ **`changed = 0` is the acceptance criterion, and it is the whole point.** The hazard this
+resolution exists for is a silently reverted deployed value, and a reverted value would appear here as
+a `changed` entry. Any non-zero `changed`, or any `removed`, means the resolution is wrong — re-check
+before writing it live. Stating the criterion here, before the merge is applied, is what stops it from
+being read off the result afterwards.
+
+**Still gated on arm C reaching iteration 100** — nothing has been written to the live tree, no merge
+commit exists, and the mandatory `python3 scripts/build_production_extensions.py` (ABI 3 → 4) has not
+run. The live `configs/pbt2_small.yaml` is verified clean against HEAD.
