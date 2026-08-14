@@ -1212,7 +1212,29 @@ def _same_dir(a: Path, b: Path) -> bool:
     resolved-string compare is the fallback for a path that does not exist (or
     cannot be stat'ed), where there is no inode to compare and the name is all
     there is; it is still resolution-symmetric, which plain `==` was not.
+
+    ⚑⚑ THE FALLBACK IS STRICTLY WEAKER THAN `samefile` -- DO NOT "SIMPLIFY"
+    THIS TO THE RESOLVED COMPARE. An earlier version of this PR's own mutation
+    report called dropping `samefile` an EQUIVALENT mutant. It is not, and the
+    distinguishing case is the deployment shape that motivates the guard:
+    under a BIND MOUNT, two paths reach one directory with no symlink to
+    resolve, so `samefile` is True while the resolved compare is False
+    (measured under `unshare --map-root-user --mount` during review). Dropping
+    it re-opens #419 F2 in full -- the calling request's own directory deleted
+    and the server-root `arena_inbox` rmdir'd -- and production moved its data
+    root between drives in July, where `mount --bind` is as ordinary as a
+    symlink. `test_same_dir_sees_one_directory_reached_by_two_names` pins it
+    with a hard link, which is the same "one inode, two names" shape without
+    needing privileges to build.
+
+    ⚑ The `a == b` fast path is not just an optimisation of that: identical
+    spellings are the overwhelmingly common case on the production call site
+    (both operands are built from `create_app`'s one `root`), and it answers
+    them with no syscall at all. It cannot change an answer -- one spelling is
+    one path.
     """
+    if a == b:
+        return True
     with contextlib.suppress(OSError):
         return a.samefile(b)
     try:

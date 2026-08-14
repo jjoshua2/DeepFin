@@ -13,6 +13,7 @@ pin predicates that were considered and deliberately NOT written:
 from __future__ import annotations
 
 import logging
+import os
 
 from chess_anti_engine.replay.shard import shard_meta_violations
 
@@ -2184,3 +2185,41 @@ def test_a_stuck_sidecar_does_not_credit_the_entry_count(tmp_path) -> None:
     )
 
 
+def test_same_dir_sees_one_directory_reached_by_two_names(tmp_path) -> None:
+    """⚑ PIN (#419 F-B, from review). `_same_dir` consults `st_ino`/`st_dev`
+    BEFORE falling back to comparing resolved names, and the two disagree on a
+    real deployment shape: under a bind mount, two paths reach one directory
+    with no symlink to resolve, so `samefile` is True while the resolved
+    compare is False.
+
+    That makes "drop `samefile`, keep the resolved compare" a COVERAGE GAP, not
+    an equivalent mutant -- dropping it re-opens F2 in full under a
+    bind-mounted server root, which is exactly how a data-root move between
+    drives gets done.
+
+    ⚑ A bind mount needs privileges, so the fixture uses a HARD LINK: the same
+    "one inode, two names, no symlink to resolve" shape, buildable as an
+    ordinary user. The `samefile` result is what the guard consumes, and it is
+    the half a resolved-name compare cannot reproduce.
+    """
+    from chess_anti_engine.server.app import _same_dir
+
+    real = tmp_path / "real"
+    real.write_bytes(b"x")
+    alias = tmp_path / "alias"
+    os.link(real, alias)
+
+    # The premise, asserted rather than assumed: one inode, two names, and the
+    # resolved-name compare cannot see it.
+    assert real.samefile(alias), "fixture failed: the hard link is not the same inode"
+    assert real.resolve() != alias.resolve(), "fixture failed: the names resolve equal"
+
+    assert _same_dir(real, alias), (
+        "_same_dir missed one directory reached by two names -- it is comparing "
+        "resolved NAMES, which a bind mount defeats"
+    )
+
+    # Negative control: two genuinely different objects must stay different.
+    other = tmp_path / "other"
+    other.write_bytes(b"x")
+    assert not _same_dir(real, other)
