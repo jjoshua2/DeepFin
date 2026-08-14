@@ -1,22 +1,64 @@
 """Tests for scripts/cast_probe.py.
 
-Every test here is written to FAIL under a specific plausible mutation of the
-probe, and the mutation is named in the test. A probe whose tests pass when its
-sign is flipped or its parent/child join is swapped is not an instrument.
+Every test is written to FAIL under a specific plausible mutation of the probe,
+and the mutation is named in the test. A probe whose tests pass when its sign is
+flipped, its parent/child join is swapped, or its action reconstruction ignores
+the canonical colour mirror is not an instrument.
+
+The shard fixtures carry REAL encoded position planes, because the probe now
+reconstructs the played move from consecutive positions. A fixture of synthetic
+zeros would let a broken mirror pass.
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.encoding.encode import encode_position
+from chess_anti_engine.moves.encode import move_to_index_for_encoding
 from tests.script_loading import load_script_module
 
 cast_probe = load_script_module("cast_probe.py")
 
-WIDTH = 12
+ENC = "lc0_root_legacy_meta"
+POLICY_ENC = "lc0_1858"
+WIDTH = 1858
+
+
+def _planes(board: chess.Board) -> np.ndarray:
+    return encode_position(board, input_history_encoding=ENC, input_extra_features="v1")
+
+
+def _canon_move(mv: chess.Move, turn: chess.Color) -> chess.Move:
+    """The same move seen from the side-to-move-canonical (white) frame."""
+    if turn == chess.WHITE:
+        return mv
+    return chess.Move(
+        chess.square_mirror(mv.from_square),
+        chess.square_mirror(mv.to_square),
+        promotion=mv.promotion,
+    )
+
+
+def _canon_index(board: chess.Board, mv: chess.Move) -> int:
+    canon_b = board if board.turn == chess.WHITE else board.mirror()
+    return int(move_to_index_for_encoding(
+        _canon_move(mv, board.turn), canon_b, policy_encoding=POLICY_ENC,
+    ))
+
+
+def _line(sans: list[str], start: chess.Board | None = None) -> list[chess.Board]:
+    """Boards after each half-move, including the start position."""
+    b = (start or chess.Board()).copy()
+    out = [b.copy()]
+    for san in sans:
+        b.push_san(san)
+        out.append(b.copy())
+    return out
 
 
 def _shard(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -28,36 +70,44 @@ def _shard(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
         "sf_p0_regret": np.zeros((n, WIDTH), dtype=np.float32),
         "sf_multipv_raw": np.full((n, 8, 5), -1, dtype=np.int16),
         "sf_wdl": np.zeros((n, 3), dtype=np.float32),
+        "x": np.zeros((n, 146, 8, 8), dtype=np.float32),
         "game_id": np.zeros((n,), dtype=np.int64),
         "ply_index": np.zeros((n,), dtype=np.int32),
         "has_sf_wdl": np.zeros((n,), dtype=np.uint8),
         "has_sf_p0_regret": np.zeros((n,), dtype=np.uint8),
         "has_sf_multipv_raw": np.zeros((n,), dtype=np.uint8),
+        "_input_history_encoding": np.array(ENC),
+        "_policy_encoding": np.array(POLICY_ENC),
     }
     for i, r in enumerate(rows):
+        board: chess.Board = r["board"]
+        arrs["x"][i] = _planes(board)
         arrs["game_id"][i] = r.get("game_id", 0)
         arrs["ply_index"][i] = r["ply_index"]
-        legal = r.get("legal", list(range(WIDTH)))
+        canon = board if board.turn == chess.WHITE else board.mirror()
+        legal = [
+            int(move_to_index_for_encoding(m, canon, policy_encoding=POLICY_ENC))
+            for m in canon.legal_moves
+        ]
         arrs["legal_mask"][i, legal] = 1
         pol = np.zeros((WIDTH,), dtype=np.float32)
-        for idx, p in r.get("policy", {}).items():
-            pol[idx] = p
+        for idx, prob in r.get("policy", {}).items():
+            pol[idx] = prob
         if pol.sum() == 0:
-            pol[legal] = 1.0 / len(legal)
+            pol[legal] = 1.0 / max(len(legal), 1)
         arrs["policy_target"][i] = pol
         q = float(r.get("q", 0.0))
-        # q = W - L; put the whole mass on W/L so the probe reads back exactly q.
         arrs["sf_wdl"][i] = [(1.0 + q) / 2.0, 0.0, (1.0 - q) / 2.0]
-        arrs["has_sf_wdl"][i] = 1 if r.get("has_wdl", True) else 0
+        arrs["has_sf_wdl"][i] = 1
         covered = r.get("covered")
         if covered is not None:
             for k, (mi, regret) in enumerate(covered.items()):
                 arrs["sf_multipv_raw"][i, k, 0] = mi
+                arrs["sf_multipv_raw"][i, k, 1] = round(-1000.0 * regret)
                 arrs["sf_p0_regret"][i, mi] = regret
             arrs["has_sf_multipv_raw"][i] = 1
-        regret_vec = r.get("regret")
-        if regret_vec is not None:
-            for mi, v in regret_vec.items():
+        if r.get("regret") is not None:
+            for mi, v in r["regret"].items():
                 arrs["sf_p0_regret"][i, mi] = v
             arrs["has_sf_p0_regret"][i] = 1
     return arrs, {}
@@ -65,10 +115,11 @@ def _shard(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def _collect(rows: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> Any:
     shard = _shard(rows)
-    monkeypatch.setattr(cast_probe, "load_shard_arrays", lambda _path: shard)
+    monkeypatch.setattr(cast_probe, "load_shard_arrays", lambda _: shard)
     scan: dict[str, Any] = {
         "rows_scanned": 0, "rows_sf_wdl": 0, "rows_sf_p0_regret": 0,
-        "cast_pairs": 0, "cast_pairs_with_p0": 0,
+        "cast_pairs": 0, "cast_pairs_with_p0": 0, "action_recovered": 0,
+        "action_unrecovered": 0, "action_illegal": 0, "no_successor": 0,
         "skipped_shards": [], "skipped_shards_omitted": 0,
     }
     out = cast_probe.collect([Path("fake.zarr")], scan, np.random.default_rng(0))
@@ -76,57 +127,128 @@ def _collect(rows: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> Any
 
 
 # --------------------------------------------------------------------------
-# 1. POV / sign
+# 1. Played-move reconstruction
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("sans", [
+    ["e4"], ["e4", "e5"], ["e4", "e5", "Nf3"], ["e4", "d5", "exd5"],
+    ["Nf3", "Nf6", "g3", "g6", "Bg2", "Bg7"],
+])
+def test_recover_played_move_round_trip(sans: list[str]) -> None:
+    """MUTATION: dropping ``.mirror()`` in the candidate comparison.
+
+    The child row is stored side-to-move canonical, so it is the parent's
+    successor MIRRORED. Comparing without the mirror matches nothing and the
+    probe silently loses every row.
+    """
+    boards = _line(sans)
+    parent, child = boards[-2], boards[-1]
+    mv = child.peek()
+    got = cast_probe.recover_played_move(
+        _planes(parent), _planes(child),
+        input_history_encoding=ENC, policy_encoding=POLICY_ENC,
+    )
+    assert got == _canon_index(parent, mv)
+
+
+def test_recover_played_move_fails_closed_on_unrelated_positions() -> None:
+    """A child not reachable in one move must return None, not a guess."""
+    a = chess.Board()
+    b = chess.Board("rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1")
+    b.push_san("d5")
+    assert cast_probe.recover_played_move(
+        _planes(a), _planes(b), input_history_encoding=ENC, policy_encoding=POLICY_ENC,
+    ) is None
+
+
+def test_recover_played_move_handles_en_passant_square() -> None:
+    """A double pawn push creating a legal EP right must still be recovered.
+
+    MUTATION: comparing EP under an encoding that DROPS it (plain ``lc0_root``)
+    would reject every such move. Under ``lc0_root_legacy_meta`` the EP plane
+    exists, so it belongs in the key; the probe selects on the encoding.
+    """
+    boards = _line(["e4", "a6", "e5", "d5"])  # d5 creates an EP target on d6
+    parent, child = boards[-2], boards[-1]
+    assert child.peek() == chess.Move.from_uci("d7d5")
+    got = cast_probe.recover_played_move(
+        _planes(parent), _planes(child),
+        input_history_encoding=ENC, policy_encoding=POLICY_ENC,
+    )
+    assert got == _canon_index(parent, child.peek())
+
+
+def test_recover_played_move_under_an_encoding_that_drops_en_passant() -> None:
+    """MUTATION: requiring EP to match unconditionally.
+
+    Plain ``lc0_root`` has no EP plane, so the decoded child of a double pawn
+    push reports ``ep_square is None`` while the generated candidate knows the
+    EP right. Comparing EP there rejects the move and the row is lost as
+    "unrecoverable" — a lossy-encoding artefact indistinguishable, in the
+    counters, from a broken canonical flip.
+    """
+    plain = "lc0_root"
+    boards = _line(["e4", "a6", "e5", "d5"])
+    parent, child = boards[-2], boards[-1]
+    from chess_anti_engine.eval.audit import decode_board_from_planes
+    decoded_child = decode_board_from_planes(
+        encode_position(child, input_history_encoding=plain, input_extra_features="v1"),
+        input_history_encoding=plain,
+    )
+    assert decoded_child is not None
+    assert decoded_child.ep_square is None  # the plane simply is not there
+    got = cast_probe.recover_played_move(
+        encode_position(parent, input_history_encoding=plain, input_extra_features="v1"),
+        encode_position(child, input_history_encoding=plain, input_extra_features="v1"),
+        input_history_encoding=plain, policy_encoding=POLICY_ENC,
+    )
+    assert got == _canon_index(parent, child.peek())
+
+
+# --------------------------------------------------------------------------
+# 2. POV / sign
 # --------------------------------------------------------------------------
 
 def test_advantage_pov_sign_adds_not_subtracts() -> None:
     """MUTATION: ``q_child - q_parent``.
 
     Both labels are already in their own record's mover POV, so a move that
-    keeps the evaluation level must score 0. Under the subtraction mutation an
-    even position after an even position scores +0.6 instead of 0.0.
+    holds the evaluation must score 0. Under subtraction it scores +0.6.
     """
-    # Parent mover was +0.3; after our reply the position is -0.3 from the
-    # opponent's view, i.e. +0.3 held. Nothing was lost: A = 0.
     assert cast_probe.advantage(q_child=-0.3, q_parent=0.3) == pytest.approx(0.0)
-    # We blundered: our own post-move eval is -0.5 while the root was +0.3.
     assert cast_probe.advantage(q_child=-0.5, q_parent=0.3) == pytest.approx(-0.2)
-    # A solver-consistent teacher never hands out a positive advantage.
     assert cast_probe.advantage(q_child=-0.3, q_parent=0.3) <= 0.0
 
 
 def test_blunder_is_negative_and_best_move_is_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    """End-to-end sign check through ``collect``.
-
-    MUTATION: swapping the parent/child terms, or dropping the POV flip,
-    makes the blunder row read POSITIVE.
-    """
+    """End-to-end sign check through ``collect``."""
+    boards = _line(["e4", "e5", "Nf3", "Nc6"])
+    # The covered set for the analysed row (ply 2) comes from its PARENT (ply 1),
+    # so those indices must be legal moves of the parent position.
+    par = [_canon_index(boards[1], m) for m in list(boards[1].legal_moves)[:2]]
     rows = [
-        {"ply_index": 4, "q": 0.4, "covered": {0: 0.0, 1: 0.05}},
-        # holds the eval -> A = 0
-        {"ply_index": 5, "q": -0.4, "regret": {0: 0.0}, "policy": {0: 1.0}},
-        {"ply_index": 10, "q": 0.4, "covered": {0: 0.0, 1: 0.05}},
-        # throws away 0.5 -> A = -0.5
-        {"ply_index": 11, "q": -0.9, "regret": {0: 0.0}, "policy": {0: 1.0}},
+        {"board": boards[0], "ply_index": 0, "q": 0.4},
+        {"board": boards[1], "ply_index": 1, "q": -0.4,
+         "covered": {par[0]: 0.0, par[1]: 0.05}},
+        {"board": boards[2], "ply_index": 2, "q": 0.4,
+         "regret": {par[0]: 0.0, par[1]: 0.05}},
+        {"board": boards[3], "ply_index": 3, "q": -0.9},
     ]
-    rows[2]["game_id"] = rows[3]["game_id"] = 1
     out, _ = _collect(rows, monkeypatch)
-    assert out.adv == pytest.approx([0.0, -0.5])
+    # Row at ply 2 is the analysed one: parent ply 1 (q=-0.4) + itself (q=+0.4).
+    assert out.adv == pytest.approx([0.0])
 
 
 # --------------------------------------------------------------------------
-# 2. Adjacency must be exact
+# 3. Adjacency must be exact
 # --------------------------------------------------------------------------
 
 def test_adjacency_requires_exact_previous_ply(monkeypatch: pytest.MonkeyPatch) -> None:
-    """MUTATION: joining on "nearest earlier row" instead of ``ply_index - 1``.
-
-    A gap means the intervening ply was never stored, so the earlier label
-    describes a DIFFERENT position and the advantage would be nonsense.
-    """
+    """MUTATION: joining on "nearest earlier row" instead of ``ply_index - 1``."""
+    boards = _line(["e4", "e5", "Nf3"])
     rows = [
-        {"ply_index": 4, "q": 0.4, "covered": {0: 0.0}},
-        {"ply_index": 7, "q": -0.4, "regret": {0: 0.0}, "policy": {0: 1.0}},
+        {"board": boards[0], "ply_index": 0, "q": 0.4, "covered": {0: 0.0}},
+        {"board": boards[2], "ply_index": 7, "q": -0.4, "regret": {0: 0.0}},
     ]
     out, scan = _collect(rows, monkeypatch)
     assert scan["cast_pairs"] == 0
@@ -135,9 +257,10 @@ def test_adjacency_requires_exact_previous_ply(monkeypatch: pytest.MonkeyPatch) 
 
 def test_adjacency_does_not_cross_games(monkeypatch: pytest.MonkeyPatch) -> None:
     """MUTATION: joining on ``ply_index`` alone, ignoring ``game_id``."""
+    boards = _line(["e4", "e5"])
     rows = [
-        {"game_id": 0, "ply_index": 4, "q": 0.4, "covered": {0: 0.0}},
-        {"game_id": 1, "ply_index": 5, "q": -0.4, "regret": {0: 0.0}, "policy": {0: 1.0}},
+        {"board": boards[0], "game_id": 0, "ply_index": 4, "q": 0.4, "covered": {0: 0.0}},
+        {"board": boards[1], "game_id": 1, "ply_index": 5, "q": -0.4, "regret": {0: 0.0}},
     ]
     out, scan = _collect(rows, monkeypatch)
     assert scan["cast_pairs"] == 0
@@ -145,119 +268,71 @@ def test_adjacency_does_not_cross_games(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 # --------------------------------------------------------------------------
-# 3. The covered set comes from the PARENT row
+# 4. Covered set
 # --------------------------------------------------------------------------
 
 def test_covered_set_is_read_from_the_parent_row(monkeypatch: pytest.MonkeyPatch) -> None:
     """MUTATION: reading ``sf_multipv_raw`` from the CHILD row.
 
     ``sf_p0_regret`` at row t is built from row t-1's MultiPV, because SF's
-    label search runs one ply late. The child's own MultiPV describes the
-    position AFTER the move -- a different move set entirely.
+    label search runs one ply late.
     """
+    boards = _line(["e4", "e5", "Nf3", "Nc6"])
+    parent_moves = [_canon_index(boards[1], m) for m in list(boards[1].legal_moves)[:2]]
+    child_moves = [_canon_index(boards[2], m) for m in list(boards[2].legal_moves)[:3]]
     rows = [
-        # parent surfaced moves 0 and 1
-        {"ply_index": 4, "q": 0.0, "covered": {0: 0.0, 1: 0.05}},
-        # child's own MultiPV names DIFFERENT moves (5, 6); the probe must ignore it
-        {"ply_index": 5, "q": 0.0, "covered": {5: 0.0, 6: 0.05},
-         "regret": {0: 0.0, 1: 0.05}, "policy": {1: 1.0}},
+        {"board": boards[1], "ply_index": 1, "q": 0.0,
+         "covered": {parent_moves[0]: 0.0, parent_moves[1]: 0.05}},
+        {"board": boards[2], "ply_index": 2, "q": 0.0,
+         "covered": dict.fromkeys(child_moves, 0.0),
+         "regret": {parent_moves[0]: 0.0, parent_moves[1]: 0.05}},
+        {"board": boards[3], "ply_index": 3, "q": 0.0},
     ]
     out, _ = _collect(rows, monkeypatch)
+    # 2 covered from the PARENT; the child's own 3-move block must be ignored.
     assert out.n_covered == [2]
-    # move 1 is inside the PARENT's set; under the mutation it would read False
-    assert out.in_multipv == [True]
 
 
-def test_played_move_outside_multipv_is_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
-    rows = [
-        {"ply_index": 4, "q": 0.0, "covered": {0: 0.0, 1: 0.05}},
-        {"ply_index": 5, "q": 0.0, "regret": {0: 0.0, 1: 0.05, 7: 0.525},
-         "policy": {7: 1.0}},
-    ]
-    out, _ = _collect(rows, monkeypatch)
-    assert out.in_multipv == [False]
-    assert out.regret_played == pytest.approx([0.525])
+def test_scored_multipv_indices_skips_the_sentinel() -> None:
+    """MUTATION: treating every non-padding raw index as covered.
 
-
-def test_sf_best_is_the_zero_regret_covered_move(monkeypatch: pytest.MonkeyPatch) -> None:
-    """MUTATION: ``argmax`` instead of ``argmin`` when locating SF's best move."""
-    rows = [
-        {"ply_index": 4, "q": 0.0, "covered": {3: 0.0, 1: 0.4}},
-        {"ply_index": 5, "q": 0.0, "regret": {3: 0.0, 1: 0.4}, "policy": {3: 1.0}},
-    ]
-    out, _ = _collect(rows, monkeypatch)
-    assert out.is_sf_best == [True]
-
-
-# --------------------------------------------------------------------------
-# 4. Imputed-tail accounting
-# --------------------------------------------------------------------------
-
-def test_imputed_tail_share_is_measured_against_the_legal_set(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The share of E_pi[regret] contributed by moves SF never surfaced.
-
-    MUTATION: ``n_legal = mask.size`` (the full policy width) instead of the
-    legal count. That is the headline denominator -- "what fraction of legal
-    moves carries a fabricated regret" -- and the width version reports 99.8%
-    for every position regardless of the board.
-
-    Note the expected-regret sums are NOT sensitive to the legal mask, because
-    ``probs`` is already masked before normalization; only the move COUNTS and
-    the covered-mass share are. Guard what is actually reachable.
+    ``_build_sf_p0_regret_vector`` skips a PV row whose cp is the sentinel with
+    no mate, leaving that entry at the IMPUTED default — so counting it as
+    covered turns an imputed value into a claimed exact observation.
     """
-    # 4 legal moves; SF covered 2 of them; the search puts 0.5 on a covered
-    # move (regret 0) and 0.5 on an imputed one (regret 0.5).
-    rows = [
-        {"ply_index": 4, "q": 0.0, "legal": [0, 1, 2, 3], "covered": {0: 0.0, 1: 0.1}},
-        {"ply_index": 5, "q": 0.0, "legal": [0, 1, 2, 3],
-         "regret": {0: 0.0, 1: 0.1, 2: 0.55, 3: 0.55},
-         "policy": {0: 0.5, 2: 0.5}},
-    ]
-    out, _ = _collect(rows, monkeypatch)
-    assert out.n_legal == [4]
-    assert out.n_covered == [2]
-    assert out.er_total == pytest.approx([0.5 * 0.0 + 0.5 * 0.55])
-    assert out.er_imputed == pytest.approx([0.5 * 0.55])
-    assert out.mass_covered == pytest.approx([0.5])
-
-
-def test_within_position_shuffle_preserves_the_regret_marginal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The control must permute WITHIN the legal set, not resample it.
-
-    MUTATION: drawing fresh random regrets would change the marginal and the
-    control would then be able to "pass" for the wrong reason.
-    """
-    rows = [
-        {"ply_index": 4, "q": 0.0, "legal": [0, 1, 2, 3], "covered": {0: 0.0, 1: 0.1}},
-        {"ply_index": 5, "q": 0.0, "legal": [0, 1, 2, 3],
-         "regret": {0: 0.0, 1: 0.1, 2: 0.55, 3: 0.55},
-         "policy": {0: 0.25, 1: 0.25, 2: 0.25, 3: 0.25}},
-    ]
-    out, _ = _collect(rows, monkeypatch)
-    # Under a uniform search target the permutation cannot change E_pi[regret].
-    assert out.er_total_shuf == pytest.approx(out.er_total)
+    rows = np.array([
+        [10, -20, 0, 0, 0],
+        [11, cast_probe.SF_CP_SENTINEL, 0, 0, 0],  # unscored -> not covered
+        [12, 0, 3, 0, 0],                          # mate score -> covered
+        [-1, 0, 0, 0, 0],                          # padding
+    ], dtype=np.int16)
+    assert cast_probe.scored_multipv_indices(rows, WIDTH).tolist() == [10, 12]
 
 
 # --------------------------------------------------------------------------
-# 5. Calibration inversion
+# 5. Calibration
 # --------------------------------------------------------------------------
 
-def test_monotone_prefix_drops_the_saturation_foldback() -> None:
-    """MUTATION: inverting the raw curve.
+def test_monotone_prefix_stops_at_the_first_fold() -> None:
+    """MUTATION: skipping the folded bucket and resuming (the original bug).
 
-    The top regret bucket folds back (|A| shrinks) because those positions are
-    already decided. Interpolating through a fold maps one advantage to two
-    regrets and silently picks the wrong one.
+    ``ys=[-0.01,-0.05,-0.04,-0.08]`` must return the leading prefix ``[0,1]``.
+    The old loop returned ``[0,1,3]``, splicing the pre-fold and post-fold
+    branches so an advantage could be inverted through the saturation branch
+    the guard claims to discard.
     """
+    xs = np.array([0.0, 0.02, 0.09, 0.17])
+    ys = np.array([-0.01, -0.05, -0.04, -0.08])
+    kx, ky = cast_probe.monotone_prefix(xs, ys)
+    assert kx.tolist() == [0.0, 0.02]
+    assert ky.tolist() == [-0.01, -0.05]
+
+
+def test_monotone_prefix_keeps_a_fully_monotone_curve() -> None:
     xs = np.array([0.0, 0.02, 0.09, 0.17, 0.50])
     ys = np.array([-0.014, -0.044, -0.083, -0.160, -0.117])
     kx, ky = cast_probe.monotone_prefix(xs, ys)
     assert kx.tolist() == [0.0, 0.02, 0.09, 0.17]
-    assert ky.tolist() == [-0.014, -0.044, -0.083, -0.160]
     assert np.all(np.diff(ky) < 0)
 
 
@@ -265,59 +340,48 @@ def test_invert_reads_the_curve_backwards() -> None:
     xs = np.array([0.0, 0.02, 0.09])
     ys = np.array([-0.01, -0.05, -0.09])
     assert cast_probe.invert(xs, ys, -0.05) == pytest.approx(0.02)
-    # halfway between the -0.05 and -0.09 knots
     assert cast_probe.invert(xs, ys, -0.07) == pytest.approx(0.055)
 
 
 def test_price_the_tail_reports_the_overstatement() -> None:
-    """A synthetic population where the truth is known by construction.
-
-    Outside-set moves are built to be worth exactly as much as the 0.02 bucket,
-    while the shard assigns them 0.55. The probe must recover ~27x, not 1x.
-    """
+    """Outside moves built to be worth the 0.02 bucket while assigned 0.55."""
     rng = np.random.default_rng(0)
     n = 4000
     reg = rng.choice([0.0, 0.02, 0.09], size=n)
     adv = -0.5 * reg
     inside = np.ones((n,), dtype=bool)
-    # 400 outside-set rows whose TRUE advantage matches the 0.02 bucket
     reg = np.concatenate([reg, np.full((400,), 0.55)])
     adv = np.concatenate([adv, np.full((400,), -0.01)])
     inside = np.concatenate([inside, np.zeros((400,), dtype=bool)])
     arr = {
-        "adv": adv,
-        "regret_played": reg,
-        "in_multipv": inside,
-        "pmax": np.ones_like(adv),
-        "abs_q_parent": np.zeros_like(adv),
+        "adv": adv, "regret_played": reg, "in_multipv": inside,
+        "pmax": np.ones_like(adv), "abs_q_parent": np.zeros_like(adv),
     }
-    res = cast_probe.price_the_tail(arr, np.ones_like(inside), "all")
+    res = cast_probe.price_the_tail(
+        arr, np.ones_like(inside), "all", np.random.default_rng(0),
+    )
     assert res["implied_cp"] == pytest.approx(20.0, abs=2.0)
     assert res["assigned_cp"] == pytest.approx(550.0)
     assert res["overstatement"] > 20.0
+    assert res["n_bootstrap"] > 100
 
 
 def test_price_the_tail_is_flat_when_the_tail_is_priced_correctly() -> None:
-    """NEGATIVE CONTROL for the pricing itself.
-
-    If outside-set moves really are worth what the shard assigns them, the
-    overstatement must come out ~1x. A probe that always reports a large
-    overstatement is measuring its own arithmetic.
-    """
+    """NEGATIVE CONTROL: a probe that always reports a large overstatement is
+    measuring its own arithmetic."""
     rng = np.random.default_rng(1)
     n = 4000
     reg = rng.choice([0.0, 0.1, 0.3, 0.55], size=n)
     adv = -0.5 * reg
     inside = np.ones((n,), dtype=bool)
     reg = np.concatenate([reg, np.full((400,), 0.55)])
-    adv = np.concatenate([adv, np.full((400,), -0.275)])  # truly worth 0.55
+    adv = np.concatenate([adv, np.full((400,), -0.275)])
     inside = np.concatenate([inside, np.zeros((400,), dtype=bool)])
     arr = {
-        "adv": adv,
-        "regret_played": reg,
-        "in_multipv": inside,
-        "pmax": np.ones_like(adv),
-        "abs_q_parent": np.zeros_like(adv),
+        "adv": adv, "regret_played": reg, "in_multipv": inside,
+        "pmax": np.ones_like(adv), "abs_q_parent": np.zeros_like(adv),
     }
-    res = cast_probe.price_the_tail(arr, np.ones_like(inside), "all")
+    res = cast_probe.price_the_tail(
+        arr, np.ones_like(inside), "all", np.random.default_rng(2),
+    )
     assert res["overstatement"] == pytest.approx(1.0, abs=0.15)

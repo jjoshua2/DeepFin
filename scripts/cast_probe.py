@@ -91,7 +91,12 @@ from typing import Any
 
 import numpy as np
 
-from chess_anti_engine.replay.shard import load_shard_arrays
+import chess
+
+from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
+from chess_anti_engine.eval.audit import decode_board_from_planes
+from chess_anti_engine.moves.encode import move_to_index_for_encoding
+from chess_anti_engine.replay.shard import SF_CP_SENTINEL, load_shard_arrays
 from scripts.diagnostic_replay_utils import (
     float_field,
     latest_replay_dir,
@@ -111,6 +116,11 @@ PMAX_STRATA: tuple[float, ...] = (0.0, 0.5, 0.8, 0.9)
 CALIB_EDGES: tuple[float, ...] = (0.0, 0.002, 0.01, 0.03, 0.06, 0.12, 0.25, 1.01)
 
 MIN_BUCKET = 25
+
+# Bootstrap draws for the tail-pricing interval. The calibration curve is
+# REBUILT on every draw, so the interval covers bucket sampling noise and the
+# monotone-segment selection, not merely the outside-set mean.
+N_BOOT = 400
 
 
 class Rows:
@@ -136,6 +146,9 @@ class Rows:
         # submitted, so they are the features an allocator could actually use.
         self.priority_policy_kl: list[float] = []
         self.priority_q_delta: list[float] = []
+        self.played_is_argmax: list[bool] = []
+        self.ply: list[int] = []
+        self.mean_regret_row: list[float] = []
 
     def arrays(self) -> dict[str, np.ndarray]:
         return {
@@ -156,7 +169,81 @@ class Rows:
             "worst_covered": np.asarray(self.worst_covered, dtype=np.float64),
             "priority_policy_kl": np.asarray(self.priority_policy_kl, dtype=np.float64),
             "priority_q_delta": np.asarray(self.priority_q_delta, dtype=np.float64),
+            "played_is_argmax": np.asarray(self.played_is_argmax, dtype=bool),
+            "ply": np.asarray(self.ply, dtype=np.float64),
+            "mean_regret_row": np.asarray(self.mean_regret_row, dtype=np.float64),
         }
+
+
+def recover_played_move(
+    x_parent: np.ndarray,
+    x_child: np.ndarray,
+    *,
+    input_history_encoding: str,
+    policy_encoding: str,
+) -> int | None:
+    """The action actually played between two consecutive stored plies.
+
+    ⚑ This exists because ``argmax(policy_target)`` is NOT the played move. In
+    production Gumbel at final temperature 0 the action is the sequential-halving
+    survivor (``network_turn.py::_resample_actions_with_temperature``), and audit
+    C9 measured the two agreeing on only ~75-91% of plies depending on the noise
+    schedule. Grading ``A_CAST`` against a move the net did not play contaminates
+    both the calibration and the outside-MultiPV population.
+
+    Both rows are decoded to side-to-move-canonical boards, so the child is the
+    parent's successor MIRRORED. Every legal move is pushed and compared on
+    (piece placement, castling rights, en-passant).
+
+    ⚑ EN-PASSANT IS ENCODING-DEPENDENT, so the key is too. ``lc0_root_legacy_meta``
+    and the legacy encodings store an EP plane; **plain ``lc0_root`` has none and
+    drops EP entirely** (`eval/audit.py`). Comparing EP under plain ``lc0_root``
+    would fail every double pawn push that creates a legal EP square — the
+    generated candidate knows the EP right, the decoded child structurally
+    cannot. So EP joins the key only when the encoding carries it, and is dropped
+    when it does not. Returns None when the match is not UNIQUE — fail closed.
+    """
+    ep_known = normalize_lc0_history_encoding(input_history_encoding) != "lc0_root"
+    b0 = decode_board_from_planes(x_parent, input_history_encoding=input_history_encoding)
+    b1 = decode_board_from_planes(x_child, input_history_encoding=input_history_encoding)
+    if b0 is None or b1 is None:
+        return None
+    def key(bd: chess.Board) -> tuple[str, str, int]:
+        return (bd.board_fen(), bd.castling_xfen(), int(bd.ep_square or -1) if ep_known else -1)
+
+    target = key(b1)
+    found: chess.Move | None = None
+    for mv in b0.legal_moves:
+        nxt = b0.copy(stack=False)
+        nxt.push(mv)
+        if key(nxt.mirror()) == target:
+            if found is not None:
+                return None  # ambiguous
+            found = mv
+    if found is None:
+        return None
+    try:
+        return int(move_to_index_for_encoding(found, b0, policy_encoding=policy_encoding))
+    except (ValueError, KeyError):
+        return None
+
+
+def scored_multipv_indices(rows: np.ndarray, width: int) -> np.ndarray:
+    """Move indices SF actually SCORED, matching finalize's own predicate.
+
+    ``_build_sf_p0_regret_vector`` skips a PV row whose cp is the sentinel with
+    no mate, leaving that move's dense entry at the IMPUTED default. Treating
+    such a row as covered would count an imputed entry as an exact observation.
+    """
+    out: list[int] = []
+    for r in rows.tolist():
+        move_idx = int(r[0])
+        if move_idx < 0 or move_idx >= width:
+            continue
+        if int(r[2]) == 0 and int(r[1]) == SF_CP_SENTINEL:
+            continue
+        out.append(move_idx)
+    return np.asarray(out, dtype=np.int64)
 
 
 def advantage(q_child: float, q_parent: float) -> float:
@@ -192,6 +279,9 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
         reg = np.asarray(arrs["sf_p0_regret"]).astype(np.float64)
         legal = np.asarray(arrs["legal_mask"]).astype(bool)
         pol = np.asarray(arrs["policy_target"]).astype(np.float64)
+        planes = np.asarray(arrs["x"])
+        hist_enc = str(np.asarray(arrs["_input_history_encoding"]).item())
+        pol_enc = str(np.asarray(arrs["_policy_encoding"]).item())
         kl = float_field(arrs, "priority_policy_kl", n)
         qd = float_field(arrs, "priority_q_delta", n)
 
@@ -209,13 +299,11 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
             a = advantage(float(q[i]), float(q[parent]))
             if not has_p0r[i] or not has_raw[parent]:
                 continue
-            covered_idx = raw[parent][:, 0].astype(np.int64)
-            covered_idx = covered_idx[covered_idx >= 0]
-            if covered_idx.size == 0:
-                continue
             mask = legal[i]
             width = int(mask.size)
-            covered_idx = covered_idx[covered_idx < width]
+            covered_idx = scored_multipv_indices(raw[parent], width)
+            if covered_idx.size == 0:
+                continue
             covered = np.zeros((width,), dtype=bool)
             covered[covered_idx] = True
             covered &= mask
@@ -226,7 +314,26 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
             if total <= 0.0:
                 continue
             probs = probs / total
-            played = int(np.argmax(probs))
+            # ⚑ The PLAYED move, reconstructed -- not argmax(policy_target).
+            child = index.get((int(gid[i]), int(ply[i]) + 1))
+            if child is None:
+                scan["no_successor"] += 1
+                continue
+            played_idx = recover_played_move(
+                planes[i], planes[child],
+                input_history_encoding=hist_enc, policy_encoding=pol_enc,
+            )
+            if played_idx is None:
+                scan["action_unrecovered"] += 1
+                continue
+            played = int(played_idx)
+            if not mask[played]:
+                scan["action_illegal"] += 1
+                continue
+            scan["action_recovered"] += 1
+            argmax_idx = int(np.argmax(probs))
+            rows.played_is_argmax.append(played == argmax_idx)
+            rows.ply.append(int(ply[i]))
             reg_legal = reg[i][mask]
             cov_legal = covered[mask]
             p_legal = probs[mask]
@@ -237,7 +344,7 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
             rows.regret_played.append(float(reg[i][played]))
             rows.in_multipv.append(bool(covered[played]))
             rows.is_sf_best.append(played == sf_best)
-            rows.pmax.append(float(probs[played]))
+            rows.pmax.append(float(probs[argmax_idx]))
             rows.abs_q_parent.append(abs(float(q[parent])))
             rows.n_legal.append(int(mask.sum()))
             rows.n_covered.append(int(cov_legal.sum()))
@@ -247,6 +354,7 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
             if (~cov_legal).any():
                 rows.imputed_value.append(float(np.median(reg_legal[~cov_legal])))
             rows.worst_covered.append(float(reg_legal[cov_legal].max()))
+            rows.mean_regret_row.append(float(reg_legal.mean()))
             rows.priority_policy_kl.append(float(kl[i]))
             rows.priority_q_delta.append(float(qd[i]))
             # within-position control: permute the regrets across this
@@ -269,12 +377,12 @@ def monotone_prefix(xs: np.ndarray, ys: np.ndarray) -> tuple[np.ndarray, np.ndar
     meaningless, so only the monotone part is used and the discarded buckets
     are reported.
     """
-    keep = [0]
+    stop = int(ys.size)
     for k in range(1, int(ys.size)):
-        if ys[k] < ys[keep[-1]]:
-            keep.append(k)
-    sel = np.asarray(keep, dtype=np.int64)
-    return xs[sel], ys[sel]
+        if ys[k] >= ys[k - 1]:
+            stop = k
+            break
+    return xs[:stop], ys[:stop]
 
 
 def calibration(
@@ -309,7 +417,9 @@ def invert(xs: np.ndarray, ys: np.ndarray, y: float) -> float:
     return float(np.interp(y, ys[order], xs[order]))
 
 
-def price_the_tail(arr: dict[str, np.ndarray], sel: np.ndarray, label: str) -> dict[str, Any]:
+def price_the_tail(
+    arr: dict[str, np.ndarray], sel: np.ndarray, label: str, rng: np.random.Generator,
+) -> dict[str, Any]:
     """What is a played move OUTSIDE SF's MultiPV set actually worth?
 
     Calibrates within ``sel`` -- never across strata -- because the played-move
@@ -333,8 +443,32 @@ def price_the_tail(arr: dict[str, np.ndarray], sel: np.ndarray, label: str) -> d
     mean = float(adv_out.mean())
     half = 1.96 * float(adv_out.std(ddof=1)) / float(np.sqrt(n_out))
     implied = invert(xs_m, ys_m, mean) * SF_OWN_REGRET_CAP_CP
-    lo_cp = invert(xs_m, ys_m, mean + half) * SF_OWN_REGRET_CAP_CP
-    hi_cp = invert(xs_m, ys_m, mean - half) * SF_OWN_REGRET_CAP_CP
+    # ⚑ Bootstrap: resample rows and REBUILD the calibration on every draw, so
+    # the interval carries bucket sampling noise and monotone-segment selection
+    # -- not merely the outside-set mean against knots treated as exact.
+    idx_all = np.flatnonzero(sel)
+    draws: list[float] = []
+    for _ in range(N_BOOT):
+        pick = rng.integers(0, idx_all.size, idx_all.size)
+        sub = np.zeros_like(sel)
+        chosen = idx_all[pick]
+        sub[chosen] = True
+        bx, by, _t = calibration(arr, sub)
+        if bx.size < 2:
+            continue
+        bxm, bym = monotone_prefix(bx, by)
+        if bxm.size < 2:
+            continue
+        b_out = sub & ~arr["in_multipv"]
+        if int(b_out.sum()) < MIN_BUCKET:
+            continue
+        draws.append(invert(bxm, bym, float(arr["adv"][b_out].mean())) * SF_OWN_REGRET_CAP_CP)
+    if len(draws) >= N_BOOT // 4:
+        lo_cp = float(np.percentile(draws, 2.5))
+        hi_cp = float(np.percentile(draws, 97.5))
+    else:
+        lo_cp = hi_cp = float("nan")
+    result["n_bootstrap"] = len(draws)
     assigned = float(arr["regret_played"][out].mean()) * SF_OWN_REGRET_CAP_CP
     result.update({
         "outside_frac": n_out / max(int(sel.sum()), 1),
@@ -449,13 +583,19 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
           f" is imputed ⇒ SHARE {share:.4f}")
     print(f"   rows where the imputed tail supplies >50% of E_pi[regret]:"
           f" {100 * float(np.mean(er_i > 0.5 * er_t)):.1f}%")
-    imputed_mass = float(1.0 - arr["mass_covered"].mean())
-    print(f"   [within-position shuffle control] share {share_shuf:.4f}"
-          f"  vs imputed probability MASS {imputed_mass:.4f}")
-    print("     ⇒ the control MUST collapse to roughly the imputed mass share. It")
+    # ⚑ The permutation expectation is REGRET-WEIGHTED across rows, not the
+    # unweighted mean imputed mass: coverage, the default, and a row's mean
+    # regret are correlated, so the two do not coincide.
+    mean_r = arr["mean_regret_row"]
+    mass_imp = 1.0 - arr["mass_covered"]
+    expect = float((mass_imp * mean_r).sum() / mean_r.sum()) if mean_r.sum() > 0 else float("nan")
+    print(f"   [within-position shuffle control] observed {share:.4f}"
+          f"   permutation expectation {expect:.4f}"
+          f"   (realized shuffle {share_shuf:.4f})")
+    print("     ⇒ the control MUST collapse to the permutation expectation. That")
     print("       separates the two ways a tail can dominate: carrying most of the")
-    print("       probability (it does not -- see the mass line) versus carrying a")
-    print("       fabricated VALUE. It collapsed, so the domination is the value.")
+    print("       probability, or carrying a fabricated VALUE. A collapse means value.")
+    out["imputed_share_permutation_expectation"] = expect
     out["imputed_tail"] = {
         "imputed_frac_of_legal": imputed_frac,
         "imputed_cp": float(SF_OWN_REGRET_CAP_CP * arr["imputed_value"].mean()),
@@ -468,13 +608,34 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
         "rows_tail_dominated": float(np.mean(er_i > 0.5 * er_t)),
     }
 
+    print("\n4b. THE PLAYED MOVE (reconstructed, not proxied)")
+    pia = arr["played_is_argmax"]
+    print(f"   actions recovered {scan['action_recovered']}"
+          f"  (unrecovered {scan['action_unrecovered']}, illegal {scan['action_illegal']},"
+          f" no successor row {scan['no_successor']})")
+    if pia.size:
+        print(f"   P(played == argmax(policy_target)) = {100 * pia.mean():.2f}%")
+        print("   ⚑ audit C9 measured 0.9122 at plies 15+ on 2026-07-26, BEFORE the sims")
+        print("     256->100 / topk 32->16 deploy. A drop here is that deploy, not a bug:")
+        print("     fewer sims and a narrower candidate set move the sequential-halving")
+        print("     survivor further from the final visit-count argmax.")
+        print("   ⚑ POPULATION: this is measured on rows whose successor ply survived into")
+        print("     the SAME shard, the same adjacency selection that gates CAST. Compare")
+        print("     the ply/pmax lines in section 7 before calling it the global rate.")
+    out["played_move"] = {
+        "recovered": scan["action_recovered"],
+        "unrecovered": scan["action_unrecovered"],
+        "p_played_is_argmax": float(pia.mean()) if pia.size else float("nan"),
+    }
+
     print("\n5. PRICING THE IMPUTED TAIL WITH CAST")
-    print("   ⚑ stratified by max(policy_target): the played move is NOT stored, and the")
-    print("     argmax proxy is only trustworthy where the search target is peaked.")
+    print("   The played move is now RECONSTRUCTED, so the pmax rows below are a")
+    print("   peakedness breakdown, NOT a proxy-trust ladder. Read the pmax>=0.0 row")
+    print("   as the headline; the others test stability across target sharpness.")
     strata: list[dict[str, Any]] = []
     for lo in PMAX_STRATA:
         sel = arr["pmax"] >= lo
-        res = price_the_tail(arr, sel, f"pmax>={lo}")
+        res = price_the_tail(arr, sel, f"pmax>={lo}", rng)
         strata.append(res)
         if "implied_cp" not in res:
             print(f"   pmax>={lo:<4}  skipped ({res.get('skipped')})")
@@ -554,6 +715,13 @@ def main() -> int:
         "rows_sf_p0_regret": 0,
         "cast_pairs": 0,
         "cast_pairs_with_p0": 0,
+        "action_recovered": 0,
+        "action_unrecovered": 0,
+        "action_illegal": 0,
+        "no_successor": 0,
+        # ⚑ select_shards resolves a MOVING trailing window; without the exact
+        # names a banked number cannot be traced to the rows that produced it.
+        "shard_names": [p.name for p in shards],
         "skipped_shards": [],
         "skipped_shards_omitted": 0,
     }

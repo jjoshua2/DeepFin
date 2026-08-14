@@ -363,8 +363,25 @@ ranks as ground truth: (1) current midpoint = control, (2) censored `r_6` bound,
 value. Report POLICY-WEIGHTED tail regret `E_pos[ sum_{a not in top6} p(a) r_wide(a) ]`
 under the CURRENT prior re-run on those positions — not the historical net's — plus
 `P_current(rank > 40)` as the coverage limit. The two existing conventions bracket the
-answer, so fit the interpolation `r_tail(α) = r_6 + α·(r_midpoint − r_6)` and report where
-α actually lands rather than staging a two-way bake-off. Kill rule: nothing goes live unless it beats the midpoint control on broad
+answer, so fit the interpolation and report where α actually lands rather than staging a
+two-way bake-off:
+
+```
+r_tail(α) = r_6 + α·(r_midpoint − r_6) = r_6 + (α/2)·(1 − r_6)
+```
+
+⚑⚑ **PRE-REGISTERED RANGE: 0 ≤ α ≤ 2, NOT [0,1].** Regret is normalized to best=0 and
+>=1000cp=1.0, and `r_midpoint = (r_6 + 1)/2`, so α=0 is the audit ruler's optimistic `r_6`,
+**α=1 is the current midpoint, and α=2 is a maximally bad tail at regret 1.0.** Capping α
+at 1 would bake "the midpoint is too pessimistic" into the very experiment designed to test
+whether it is — the hypothesis this entry just RETRACTED. The truth may land at α>1.
+- On the wide-MultiPV screen (ranks 7+ ordered below rank 6 by the SAME search), α ≥ 0 is
+  justified and [0,2] is the range.
+- On the later real-MPV6-vs-independent-deep-truth panel, do NOT force α ≥ 0: finite-search
+  error means an omitted move can genuinely be BETTER than the surfaced sixth.
+- ⚑ Fit the policy-weighted regret GLOBALLY. Do not average per-position α: the implied
+  denominator `(1 − r_6)/2` goes to zero as `r_6 → 1`, so positions where the two endpoints
+  nearly coincide must be flagged or suppressed rather than allowed to dominate a mean. Kill rule: nothing goes live unless it beats the midpoint control on broad
 `value_regret` + raw-policy top-1 at matched budget, per rule 6 above. **Do not read a
 CAST loss as the deliverable** — its unique contribution is the ~12% of P0 rows where the
 played move fell outside the MultiPV set, i.e. ~2.5% of all rows.
