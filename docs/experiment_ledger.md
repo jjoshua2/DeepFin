@@ -47797,3 +47797,92 @@ shaping up as "**neither policy-embedding variant is distinguishable from off at
 not "C is worse than B" or "B beats A". At ±14.3 Elo half-width the design can only resolve effects
 above roughly ±22 Elo at 80% power, and neither contrast is close. That is a real answer about the
 intervention, not a failure of the experiment — and it is the answer the pre-committed rules give.
+
+---
+
+## Tier-13 contrast 3/3 + OVERALL VERDICT — `policy_embedding_mode` is a NULL on all three arms
+
+`tier13_CvsA_iter100`, read 2026-08-14 05:54. Round robin COMPLETE.
+
+| contrast | Elo | 95% CI | half | score | pentanomial (cand POV) | pinned verdict |
+|---|---|---|---|---|---|---|
+| B (linear) vs A (off) | +12.17 | [−2.14, +26.52] | 14.33 | 0.5175 | 116 · 155 · 289 · 149 · 91 | **NULL** |
+| C (residual_mish) vs B | −7.38 | [−21.64, +6.85] | 14.25 | 0.4894 | 92 · 157 · 285 · 157 · 109 | **NULL** |
+| **C (residual_mish) vs A** | **+3.47** | **[−10.78, +17.74]** | 14.26 | 0.5050 | 106 · 157 · 277 · 167 · 93 | **NULL** |
+
+All three: 1600 games / 800 pairs / `truncated: false`. **`config_hash b588d276f062` identical on all
+three rows**, and the driver's `sha256sum configs/pbt2_small.yaml` at the END of the sequence equals
+the value at the START (`b588d276…11acc`) — pin 3's instrument-identity requirement holds across the
+whole round robin, not just pairwise.
+
+### Pinned rule applied to each contrast on its OWN CI
+Trajectory ⇔ `ci_lo > 0 AND elo < +40`; win ⇔ `ci_lo > 0 AND elo >= +40`; kill ⇔ `elo < −15`.
+No contrast has `ci_lo > 0`; none has `elo < −15`. ⇒ **three NULLs.** No second-seed re-run is
+triggered — that was gated on landing in the TRAJECTORY band, and nothing did.
+
+### Transitivity check — PREDICTED at `025d95cc0`, BEFORE this contrast ran
+Predicted (B−A)+(C−B) = **+4.79**. Measured C−A = **+3.47**. Discrepancy **1.32 Elo** against a
+pre-committed ±20 band. ⇒ **CONSISTENT.** The three-contrast design is internally coherent and the
+pooled fit is licensed. Per the pinned separation, this says nothing about C−A's own verdict, which is
+decided above on its own CI [[never_condition_a_control_on_its_own_outcome]].
+
+### SECONDARY: Ordo pooled fit (4800 games, 3 players, anchor `arm_A_iter100 = 0`)
+`-W -D -s 1000 -M -A arm_A_iter100 -a 0 -z 200.2409`, intervals replaced by the wrapper's
+pair-level block bootstrap (1000 reps, stratified by matchup, each to its own count).
+
+- 2400 complete pairs, **0 half pairs, 0 games without a PairId** — 800/800 in every matchup.
+- Informative-missingness diagnostic **CLEAN**: no order↔decisiveness or order↔score association
+  survives Holm correction over the whole 6-test family (min p = 0.076 uncorrected).
+- Ratings: `arm_B +11.9 [+0.4, +23.2]` · `arm_C +4.0 [−7.7, +16.4]` · `arm_A 0` (anchor).
+- Contrasts, paired within replication: B−C `+7.9 [−3.7, +20.6]` · B−A `+11.9 [+0.4, +23.2]` ·
+  C−A `+4.0 [−7.7, +16.4]`.
+
+**Agreement criterion, stated before the data (pentanomial point estimate inside Ordo's 95%): MET on
+all 3/3.** Signs agree on all three as well.
+
+### ⚑ THE ONE DISAGREEMENT, NAMED RATHER THAN BURIED
+Ordo's B−A interval **excludes zero** (lower bound **+0.4**); the primary pentanomial's does not
+(−2.14). That is a disagreement about SIGNIFICANCE, not magnitude (+11.9 vs +12.17 — the point
+estimates are 0.3 Elo apart). **It does not move the verdict**, for three independent reasons:
+1. The pinned rule is explicit that **Ordo never overturns the pentanomial**, written down precisely
+   so that a post-hoc instrument choice cannot become a result.
+2. The pooled fit buys its extra power by **borrowing across matchups under a transitivity
+   assumption** the paired pentanomial does not need. Its narrower interval is that assumption's
+   price, not free information.
+3. A `+0.4` lower bound on **one of three** contrasts is the marginal result multiplicity
+   manufactures. Correct for the family and it is not there.
+⇒ B vs A remains **NULL**. Recording the disagreement is the point; a reader who later finds it
+independently must not find it unremarked.
+
+### OVERALL TIER-13 VERDICT: **NULL — `policy_embedding_mode` is not distinguishable from `off`**
+Neither `linear` nor `residual_mish` separates from the control at this resolution, and they do not
+separate from each other. Realized instrument power: SE ≈ **7.3 Elo**, so the design detects
+**≥ ~20.5 Elo at 80%** — every point estimate is below that. So the honest statement is bounded, not
+absolute: **any effect of this intervention is smaller than ~20 Elo**, which is not "no effect" but is
+firmly "not the loop's problem." No arm is promoted; production keeps `policy_embedding_mode: off`.
+
+This was called ahead of the data at `025d95cc0` ("two nulls in a row means the honest reading is
+shaping up as neither variant is distinguishable from off") and the third contrast did not change it.
+
+**Cost:** 3 × 100 training iters from the `pre_policy_adapter_20260812` donor + 4800 arena games
+(~4.5 h). **Value:** a closed question and a validated three-contrast instrument, reusable as-is.
+
+### Confounds carried into this verdict (unchanged, per the prereg)
+- Arm C iters **80-86 excluded** from per-iteration comparisons (drain transient + a SECOND per-thread
+  diff-focus warm-up, ~131k plies, that A and B each paid only once). ⚑ Deliberately NOT narrowed when
+  timing recovered at iter 81 — the window was pre-committed on the recording MECHANISM.
+- **Not fully excludable**: those rows reach arm C's iter-100 weights, which is what these arenas read.
+  Direction is against C, so C's null is if anything conservative — but C−A `+3.47` is on the positive
+  side of zero, so this confound cannot be what produced the null.
+
+### Instrument findings banked from this run (both already cost-justified)
+1. **The PGN engine-name collision.** Every arm's checkpoint is `checkpoint_000099/trainer.pt`, so the
+   default identity (last two path components) collides. The writer REFUSED rather than defaulting;
+   had it defaulted, Ordo would have pooled two arms into one player invisibly. Cost of the refusal:
+   59 s. Cost of the alternative: 4800 unusable games. `--pgn-candidate-name`/`--pgn-reference-name`
+   are load-bearing, not cosmetic.
+2. **Concurrent CPU work is safe against `matched_sims` arenas and NOT against training.** Each side
+   gets N sims regardless of speed and there is no time-based decision anywhere in the arena, so
+   contention costs wall clock only. Training has no such protection (SF labelling at nice 19 on the
+   critical path). The #423 gates ran concurrently with these arenas on that basis and the three rows
+   above are unaffected.
