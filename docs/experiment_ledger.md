@@ -47978,3 +47978,86 @@ Regret cp is **not Elo** ([[losses_are_decoupled_from_strength]]); a CAPPED verd
 levers on the AUDIT ruler, which rewards agreement with SF, and does not license any claim about play
 strength. And the audit set has **no history and no castling rights**
 [[audit_set_has_no_history_or_castling]], so this measures the search on FEN-only inputs.
+
+---
+
+## #206 READOUT — **AMBIGUOUS by the pinned rule**, and the search-BUDGET lever reads flat
+
+Run 2026-08-14 06:05-06:09 per the prereg `9d2ba8483`. Dump banked at
+`scratchpad/decider206/BANKED_per_position_20260814.jsonl` (4000 rows).
+
+### POSITIVE CONTROL: **PASS** — the gate that licenses reading anything below
+Candidate (a) mean top1 = **46.91** vs the banked fen_only **47.34**; |delta| **0.428**, band ±1.0.
+A banked number reproduced through a DIFFERENT script, so checkpoint identity, encoding, position
+order and ruler join are all confirmed end-to-end.
+
+### The four candidates, paired, one run, n=4000, `fen_only`
+| candidate | mean top1 | 95% CI | `top1_agree` |
+|---|---|---|---|
+| (a) raw argmax | 46.91 | [43.17, 50.79] | 0.4557 |
+| **(d) TRAIN, sims 100** | **36.44** | [33.17, 39.77] | 0.5038 |
+| (b) PLAY, sims 256 | 31.83 | [28.94, 34.89] | 0.5260 |
+| (e) fast, sims 32 | 37.63 | [34.30, 41.08] | 0.4948 |
+
+**PRIMARY (d)−(a): −10.47 cp [−13.40, −7.68]**, 10k paired bootstrap seed 42. Move differs from the
+argmax on **1066/4000 = 26.7%**; `top1_agree` **+4.80pp [+3.65, +5.92]**.
+
+### VERDICT: **AMBIGUOUS** (pinned band: RE-RANKS ≤30 · AMBIGUOUS (30,40) · CAPPED ≥40)
+36.44 lands inside. **Not resolved by picking a side**, per the prereg. ⚑ And the verdict is NOT an
+artifact of the fill-condition mismatch (the 43→25 band came from repeat-fill numbers; this run is
+fen_only): on the RATIO reading the pinned band rescales to re-ranks ≤27.3 / capped ≥43.6 and the
+realized ratio is 0.777 — **AMBIGUOUS on both readings**.
+
+### What IS decided, and it kills the strong form of one hypothesis
+**"The value head cannot rank the 16 candidates it is handed" is REFUTED.** The search re-ranks
+significantly: −10.47 cp with a CI excluding zero, on a quarter of all positions, with `top1_agree`
+up 4.8 points. What it does NOT do is collapse to ~25-27: it recovers **22.3%** of the argmax regret
+where the hypothesis predicted ~42%, and 36.44 remains far above BT4's banked 20.08.
+
+### ⚑ THE CLEAN CONTRAST — search BUDGET is flat, and this is the decision-relevant number
+(e) and (d) are identical on every axis but sims (topk 16, c_scale 0.1, root linear, same profile):
+
+- **32 → 100 sims (3.1×): −1.19 cp, 95% CI [−3.04, +0.59], NOT SIGNIFICANT.**
+
+⇒ **tripling the sim budget buys nothing measurable on this ruler.** The first bit of search buys
+essentially all of what search buys; the budget lever is flat. This independently CORROBORATES the
+banked "three sims doublings = +5.8 Elo" [[flat_sims_ladder_means_search_may_be_inert]] on a
+completely different instrument.
+
+⚑ **(b) vs (d) is NOT a sims result and must not be quoted as one.** −4.61 cp [−7.23, −2.03] looks
+like "more search helps", but (b) differs from (d) on **FOUR** axes at once — sims 100→256, topk
+16→32, c_scale 0.1→0.025, root linear→log. Unattributable by construction.
+⚑ **Status: the (e)-vs-(d) ladder is a POST-HOC contrast**, clean by construction but not
+pre-registered. Weight it as corroboration of an independent banked finding, not as a pinned result.
+
+### ⚑⚑ MY OWN PINNED FOLLOW-UP IS DEAD — `--input-encoding stored` CANNOT break this tie
+The prereg (`9d2ba8483`) named the `stored` re-run as the tiebreak. **It cannot be**, for two
+independent reasons, both found by reading the tool rather than trusting the note:
+1. **`--input-encoding` changes the ruler for ROW (a) ONLY** — the script's own help says so. The
+   search candidates always encode `fen_only`. A `stored` run moves the argmax baseline and leaves
+   (d) exactly where it is, so it is structurally incapable of resolving an ambiguity about (d)'s
+   LEVEL.
+2. The matched-rows index (`data/audit_set_v1.jsonl.matched_rows.npz`) **is not built**.
+
+⇒ The ambiguity stands unresolved, and the honest position is that **the pinned band was set too
+narrow for what this instrument can distinguish**, not that the measurement failed. A genuine
+tiebreak needs the searches themselves run on production-history inputs, which `audit_targets`
+does not currently support — that is a tooling gap, and it is the follow-up worth building if the
+search-vs-training split ever needs deciding beyond what the flat sims ladder already says.
+
+### Practical read, stated without overreaching
+The search re-ranks but cannot close the gap, and **spending more search does not help**. So the
+search-side levers are not literally "provably capped" (the strong CAPPED claim fails), but the
+BUDGET lever is measurably flat and the remaining deficit at 36.44 vs BT4's 20.08 is not reachable
+by turning sims up. That points the work at training/target, which is where the N1 mate-fold defect
+and the value-head fit gap already sit — the same destination the CAPPED branch would have chosen,
+reached without claiming a verdict the data does not support.
+
+⚑ Regret cp is **not Elo**. This bounds a search lever on a ruler that rewards agreement with SF, and
+licenses no claim about play strength. Audit set has no history and no castling rights.
+
+### Incidental, and worth its own check
+The (b) PLAY profile runs **`c_scale 0.025`** — the PRE-2026-08-09 value. Production moved to
+**0.1** and that move was worth **+239.5 Elo** with the same weights both sides. If the PLAY/UCI
+defaults never followed production, external and Cheese matches are being played with the weaker
+search. **Not investigated here** (out of scope, and (b) is not the decider); logged as a task.
