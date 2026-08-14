@@ -405,6 +405,54 @@ Pooled `sqrt(Σ‖Δ‖² / Σ‖g_true‖²)` and the median are both reported.
    hundred current positions run at production-shaped ~200k MPV6 against a wide search.
 3. Positions are the wide-label era's distribution.
 
+### PRE-REGISTERED, READ NOT YET TAKEN (2026-08-14 18:37) — the real MultiPV-6 calibration panel
+
+⚑ **Registered BEFORE the run finished, because the whole point is not to choose the reading
+after seeing it.** `scripts/mpv6_tail_panel.py`, 500 positions from the LIVE (MultiPV-6) era.
+
+**Why the screen above cannot answer this.** A node budget is spent ACROSS PVs, so MultiPV 6
+at 150k nodes and MultiPV 40 at 150k nodes do not give rank 6 the same search. The screen's
+`r_6` is a rank-6 regret from a **40-wide** search; production's comes from a **6-wide** one.
+α = 0.1759 is a fact about the wide-label era, and whether it transfers is exactly what is
+unmeasured.
+
+**Three arms, on the same positions** (all production values MEASURED, not read off the
+config's face): PROD = MultiPV 6 / **150,000 nodes** (the realized median of
+`sf_label_meta[:,0]`, pinned at `sf_label_nodes_floor` — the 200k **cap** is not what runs) /
+Hash 17MB / `stockfish_syzygy_path`, which is the **3-4-5 directory ALONE**. MATCHED =
+identical except full width. DEEP = full width, 4M nodes, Hash 512MB, the full syzygy pair.
+DEEP's budget is measured too: at MultiPV 64 it needs ~4M nodes to out-depth PROD (median 16
+vs 12); at 200k it reads depth **10**, i.e. SHALLOWER than what it grades.
+
+**PRIMARY:** arm (A) = MATCHED-substituted `α_value` with a 1000-draw row bootstrap. Surfaced
+moves keep PROD's own regrets, so only the CENSORING varies.
+
+**FALSIFIER, stated first:** PROD vs MATCHED cross-arm regret ratio must lie in
+**[0.90, 1.111]**. These differ only in width at an identical budget; outside that band,
+widening the search changed the surfaced scores too and the primary is VOID, not merely noisy.
+(Smoke read 1.009.)
+
+**PRE-COMMITTED READING RULE** — on the primary's 95% CI:
+
+| the CI... | verdict |
+|---|---|
+| excludes 1.0 from below | the live midpoint IS too harsh on production labels, by the measured factor |
+| covers 1.0 | ⚑ **the live midpoint is NOT shown to be wrong**, and α = 0.1759 does NOT transfer — it was an artifact of MPV-40 truncation |
+| covers 0.1759 | the historical screen transfers to production |
+| excludes BOTH 0.1759 and 1.0 | a THIRD number; neither the historical result nor the live rule stands, and the tail needs re-deriving from this panel alone |
+
+⚑ **"Covers 1.0" is a real possible outcome and is a NEGATIVE result for the whole tail
+thesis.** It is written here so it cannot later be reported as "inconclusive". The smoke run
+(n=6, useless for inference but not for direction) read α ≈ 0.92 — i.e. it pointed AT 1.0, not
+at 0.176. If the full run holds that, the finding is that the MultiPV-40 truncation screen
+answered a question production does not ask.
+
+**Reported alongside, not instead:** the same fit on the tablebase-free subset (PROD/MATCHED
+carry the 3-4-5 set, DEEP carries the pair, so TB positions are where the arms differ by
+construction), and arms (B)/(B') from the DEEP ruler, which re-score the SURFACED moves too and
+therefore indict the whole label rather than its tail — a separate question, not a better
+answer to this one.
+
 ### PRE-REGISTERED FOLLOW-UP — targeted prior-vs-search adjudication (`ΔQ`), NOT a dense SF target
 
 The rank curve above is the empirical case for it: **relevant tail mass is concentrated in the
