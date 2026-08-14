@@ -21,6 +21,7 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
+from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.finalize import finalize_game
 from chess_anti_engine.selfplay.network_turn import run_network_turn
 from chess_anti_engine.selfplay.opening import OpeningConfig
@@ -248,6 +249,7 @@ def play_batch(
     game: GameConfig = GameConfig(),
     fen_dole_queue: list[str] | None = None,
     fen_sf_refute_queue: list[str] | None = None,
+    diff_focus_norm: DiffFocusNormalizer | None = None,
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -297,6 +299,13 @@ def play_batch(
     mode. Finite calls still play exactly their requested target. The default
     1.0 preserves current scheduling; values above one provide independent
     network work while curriculum slots wait on asynchronous Stockfish moves.
+
+    ``diff_focus_norm`` (opt-in, ``diff_focus_norm_shared``) is an already-built
+    difficulty-scale estimator to ADOPT rather than build. The worker uses it to
+    hand one instance to all ``--selfplay-threads`` calls, so the quantile
+    warm-up is paid once per worker instead of once per thread (128 instances
+    live => 131,072 plies of warm-up per restart). ``None`` builds a private
+    estimator exactly as before.
     """
     requested_batch = int(games)
     continuous = stop_fn is not None and int(target_games) <= 0
@@ -336,6 +345,7 @@ def play_batch(
         game=game,
         fen_dole_queue=fen_dole_queue,
         fen_sf_refute_queue=fen_sf_refute_queue,
+        diff_focus_norm=diff_focus_norm,
     )
 
     # Hand the live state to the caller so it can apply live-safe reco changes

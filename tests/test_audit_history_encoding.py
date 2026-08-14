@@ -250,7 +250,9 @@ def _run_value_regret(
     """Drive scripts/value_regret.value_1ply_regret with a stubbed model."""
     import scripts.value_regret as vr
 
+    import chess_anti_engine.uci.model_loader as model_loader
     from chess_anti_engine.eval.audit import AuditPosition
+    from scripts.net_source import NetSource
 
     class _Model:
         input_history_encoding = STORED_HISTORY_ENCODING
@@ -261,7 +263,8 @@ def _run_value_regret(
             return None
 
     evaluator = _RecordingEvaluator()
-    monkeypatch.setattr(vr, "load_model_from_checkpoint", lambda *a, **k: _Model())
+    monkeypatch.setattr(model_loader, "load_model_from_checkpoint",
+                        lambda *a, **k: _Model())
     monkeypatch.setattr(vr, "LocalModelEvaluator", lambda *a, **k: evaluator)
 
     board = chess.Board(FENS[1])
@@ -271,7 +274,7 @@ def _run_value_regret(
         best_cp=0.0, deep_wdl=(0.3, 0.4, 0.3), sf_nodes=1, sf_depth=1,
     )
     vr.value_1ply_regret(
-        checkpoint="unused", positions=[pos], device="cpu",
+        net=NetSource(checkpoint="unused"), positions=[pos], device="cpu",
         batch_size=64, pos_chunk=8,
         input_encoding=input_encoding, matched_rows=matched_rows,
     )
@@ -352,6 +355,7 @@ def test_value_regret_stored_requires_the_index() -> None:
     import scripts.value_regret as vr
 
     from chess_anti_engine.eval.audit import AuditPosition
+    from scripts.net_source import NetSource
 
     pos = AuditPosition(
         key="k", fen=chess.STARTING_FEN, phase=2, source=0,
@@ -360,7 +364,7 @@ def test_value_regret_stored_requires_the_index() -> None:
     )
     with pytest.raises(ValueError, match="matched_rows"):
         vr.value_1ply_regret(
-            checkpoint="unused", positions=[pos], device="cpu",
+            net=NetSource(checkpoint="unused"), positions=[pos], device="cpu",
             batch_size=8, pos_chunk=8, input_encoding="stored",
         )
 
@@ -379,6 +383,7 @@ def _run_net_candidates(
     import chess_anti_engine.inference as inference
     import chess_anti_engine.mcts.gumbel_c as gumbel_c
     import chess_anti_engine.uci.model_loader as model_loader
+    from scripts.net_source import NetSource
 
     class _Model:
         input_history_encoding = STORED_HISTORY_ENCODING
@@ -404,7 +409,8 @@ def _run_net_candidates(
 
     profile = at.build_search_profiles({}, play_sims=1, play_topk=2)["search"]
     at._net_candidates(
-        [chess.Board(f) for f in FENS], checkpoint="unused", device="cpu",
+        [chess.Board(f) for f in FENS], net=NetSource(checkpoint="unused"),
+        device="cpu",
         batch_size=4, seed=0, profiles={"search": profile}, stored_x=stored_x,
         requested_gumbel_overrides=(),
     )

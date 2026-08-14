@@ -297,6 +297,69 @@ multiply every limit by the worker count.
 `reason_code` after the human reason (`... (reason_code=worker_too_old)`), so a rejection
 can be classified without parsing prose that is free to change.
 
+### Ingest invariants and storage budgets
+
+The server checks a shard's counter metadata for internal consistency before
+accepting it, and **rejects terminally** on a violation (`rejected: true`, not a
+retryable non-200) — an arithmetic inconsistency is a permanent property of
+those bytes, so a retry would resend the same bad shard forever.
+
+⚑ **This is corruption detection, not authentication.** A worker that wants to
+forge these numbers can forge a self-consistent set, and there is no trusted
+server-side source to check them against — the server never sees a game. What it
+buys is that the *least*-protected channel stops being *silently* wrong: the
+arrays are Blosc/zstd compressed so a corrupt block fails loudly, while `.zattrs`
+is plain JSON where a flipped digit stays valid JSON with a wrong number — and
+`wins`/`draws`/`losses` become the PID's curriculum winrate.
+
+⚑ **Two predicates are deliberately NOT enforced**, and both look obvious:
+
+- `wins + draws + losses == games` — **wrong**. `selfplay/finalize.py` counts
+  W/D/L only for curriculum games (`not is_sp`) that are not blind-spot seeds
+  (`not source.startswith("fenlist")`, since seeds force the net onto the losing
+  seat and would drag the PID). Any shard with selfplay or seeded games has a
+  strict inequality. This equality would reject nearly every real shard.
+- `games <= positions` — **wrong**. diff-focus filtering can drop every position
+  of a game.
+
+Both are pinned as false-positive controls in `tests/test_shard_meta_invariants.py`
+so they do not get "fixed" back in.
+
+Storage budgets (all `create_app` parameters, all defaulted):
+
+| knob | default | bounds |
+|---|---|---|
+| `quarantine_max_bytes` / `quarantine_max_entries` | 4 GiB / 200 | retained invalid uploads |
+| `arena_max_body_bytes` | 1 MiB | one arena result body |
+| `arena_max_bytes` / `arena_max_entries` | 256 MiB / 5000 | whole arena sink |
+
+Each budget is **ONE GLOBAL CEILING for the whole sink**, across every user and
+trial — that is the only thing bounding disk. Renamed from `arena_user_max_*` in
+#407 precisely because it is no longer per user: a per-user budget's ceiling is
+`users × budget`, and `worker_self_register` makes the user count caller-controlled,
+so the "per-user arena inbox" this table used to describe had no bound at all.
+
+Eviction is **largest-bucket-first, oldest-first within it** — the oldest entry of
+whichever user currently holds the most, measured in whichever dimension is over
+(bytes when the byte ceiling binds, entries when the count one does). Oldest-first
+globally, which this said until #407, made the sweep a diagnostic-destruction
+primitive: any one worker's flood evicted every other worker's evidence. Fairness
+here is the choice of victim under the ceiling, **not** a second quota — with a
+single bucket the behaviour is still exactly oldest-first.
+
+Newest-worth-keeping is still the rationale within a bucket: a quarantined shard
+diagnoses a defect happening *now*. Entry counts are bounded as well as bytes
+because the growth mode is many small unique files — a byte budget alone lets an
+account burn inodes.
+
+⚑ **Known residual, live only if `worker_self_register` is on** (it is off by
+default and absent from production's yaml): because the ceiling is a fixed entry
+count, an attacker minting more buckets than that count forces someone to hold
+zero, and largest-first zeroes the legitimate heavy user first. Measured at 5
+accounts — the per-IP hourly registration limit — a victim goes to **0 retained**.
+The fix belongs at the identity layer, and a global account cap only closes it if
+`account_cap < entry_ceiling`.
+
 ### Requiring a lease for uploads
 
 ```yaml

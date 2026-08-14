@@ -7,6 +7,11 @@ from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.moves import MODEL_POLICY_ENCODING
+from chess_anti_engine.stockfish.wdl import (
+    SEARCH_WDL_DRAW_MODES,
+    SEARCH_WDL_DRAW_NET_RAW,
+    SEARCH_WDL_DRAW_PARAMETRIC_Q,
+)
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 _LOG = logging.getLogger(__name__)
@@ -132,11 +137,16 @@ class DiffFocusConfig:
   # mechanism and the measured population definition.
   #
   # When `norm_enabled`, `difficulty` is divided by a running reference
-  # quantile of this worker's own recent policy-bearing plies before the
+  # quantile of ONE SelfplayState's own recent policy-bearing plies before the
   # clamp, and `norm_slope` REPLACES `slope` (they are in different units --
   # reusing one number for both would be a silent recalibration).
+  # ⚑ "this worker's" is what this comment said until 2026-08-12 and it is
+  # wrong: one estimator per SelfplayState == per `play_batch` call == per
+  # selfplay THREAD (32 live per worker). `norm_shared` below is what makes it
+  # per worker. Sizing anything off "per worker" understates it by 32x.
     norm_enabled: bool = False
-  # Ring size, in policy-bearing plies, of the per-worker quantile window.
+  # Ring size, in policy-bearing plies, of ONE estimator's quantile window (see
+  # the note on norm_enabled: that is per selfplay THREAD unless `norm_shared`).
   # 8192 puts the median's relative sd at 1.81% on real post-bundle data.
     norm_window: int = 8192
   # Plies required before the estimator arms. Below it the ORIGINAL
@@ -157,6 +167,21 @@ class DiffFocusConfig:
   # on the extreme tail; does not affect `keep_prob`, which already saturates
   # at 1.0 far below this (at 1/norm_slope = 0.62 of the reference quantile).
     norm_clip: float = 8.0
+  # Share ONE estimator across every selfplay thread of a worker process
+  # instead of building one per `play_batch` call. Default OFF = today's
+  # per-thread behaviour, bit-identical.
+  #
+  # ⚑ `norm_warmup` is per INSTANCE, and production runs
+  # `--threaded-selfplay --selfplay-threads 32` on 4 workers => 128 instances,
+  # so the realized warm-up is 128 x 1024 = 131,072 policy-bearing plies per
+  # restart (~8.7% of the 1.5M replay window), and each instance also sees only
+  # 1/32 of its worker's ply rate so it takes 32x the wall clock. Measured on
+  # the live replay window 2026-08-12: ~160k of 1,498,168 rows (10.7%) written
+  # unarmed across the two restart transients it held, priorities to 17.59
+  # against a `norm_clip` of 8.0, each transient not clear until ~37 minutes in.
+  # Sharing divides both costs by `selfplay_threads` and changes no arithmetic on
+  # the armed path. See selfplay/diff_focus_norm.py.
+    norm_shared: bool = False
 
 
 @dataclass(frozen=True)
@@ -248,6 +273,22 @@ class GameConfig:
   # sf_policy_temp is win-fraction units and is not used in cp mode.
     sf_policy_score_mode: str = "wdl"
     sf_policy_cp_temp: float = 16.2
+  # How the stored `search_wdl` training target's DRAW axis is built
+  # (selfplay/network_turn.py, and its C twin in mcts/_mcts_tree.c). Research
+  # bet, default "net_raw" = the production construction, bit-identical.
+  #
+  # "net_raw": D is the net's RAW root draw output, untouched by search, and it
+  #   also CLAMPS the searched q to +-(1 - D). search_wdl is 0.31 of the trained
+  #   value target (train/losses.py), so ~31% of its draw mass is the net
+  #   grading itself, and the clamp caps the target's confidence on decisive
+  #   rows (measured: binds on 12.27% of the lowest-d_raw quartile).
+  # "parametric_q": the WHOLE triple comes from the searched q, through the
+  #   cp-logistic family's own implied draw curve — the same family, and the
+  #   same two knobs, the SF component of the blend uses. Zero net-WDL input,
+  #   so the component's entire content is the search; and D -> 0 as |q| -> 1
+  #   by construction, so no confidence cap exists to reintroduce.
+  #   stockfish/wdl.py::parametric_draw_from_q is the definition.
+    search_wdl_draw_mode: str = SEARCH_WDL_DRAW_NET_RAW
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
@@ -361,6 +402,37 @@ class GameConfig:
             raise ValueError(
                 f"sf_policy_cp_temp must be > 0 (centipawns), got "
                 f"{self.sf_policy_cp_temp!r}"
+            )
+        # Same reason as sf_policy_score_mode: every consumer compares against a
+        # literal, so a typo'd mode would silently keep producing the OLD target
+        # while the config claims the arm is live.
+        if self.search_wdl_draw_mode not in SEARCH_WDL_DRAW_MODES:
+            raise ValueError(
+                f"search_wdl_draw_mode must be one of "
+                f"{list(SEARCH_WDL_DRAW_MODES)}, got {self.search_wdl_draw_mode!r}"
+            )
+        # The parametric curve is only defined for a positive-width draw zone.
+        # Refused here rather than in the C call so a bad pairing dies at config
+        # build, before a single ply is recorded.
+        if self.search_wdl_draw_mode == SEARCH_WDL_DRAW_PARAMETRIC_Q and not (
+            float(self.sf_wdl_cp_slope) > 0.0 and float(self.sf_wdl_cp_draw_width) > 0.0
+        ):
+            raise ValueError(
+                "search_wdl_draw_mode='parametric_q' needs sf_wdl_cp_slope > 0 and "
+                f"sf_wdl_cp_draw_width > 0 (the SAME curve the SF component of the "
+                f"value blend uses), got slope={self.sf_wdl_cp_slope!r} "
+                f"width={self.sf_wdl_cp_draw_width!r}"
+            )
+        if (
+            self.search_wdl_draw_mode == SEARCH_WDL_DRAW_PARAMETRIC_Q
+            and not self.sf_wdl_use_cp_logistic
+        ):
+            _LOG.warning(
+                "search_wdl_draw_mode='parametric_q' with sf_wdl_use_cp_logistic="
+                "false: the search component's draw curve is the cp-logistic one "
+                "while the SF component is SF's NATIVE WDL, so the two halves of "
+                "the blended value target are no longer the same family. Intended "
+                "pairing is cp-logistic on both.",
             )
 
 

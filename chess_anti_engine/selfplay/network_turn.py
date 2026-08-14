@@ -21,7 +21,11 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
-from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
+from chess_anti_engine.mcts._mcts_tree import (
+    SWDL_DRAW_NET_RAW,
+    SWDL_DRAW_PARAMETRIC_Q,
+    batch_compute_relations,
+)
 from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.cboard_encode import encode_cboard, encode_cboard_batch
@@ -71,10 +75,43 @@ from chess_anti_engine.selfplay.state import (
 )
 from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
 from chess_anti_engine.selfplay.temperature import temperature_for_ply
+from chess_anti_engine.stockfish.wdl import (
+    SEARCH_WDL_DRAW_MODES,
+    SEARCH_WDL_DRAW_NET_RAW,
+    SEARCH_WDL_DRAW_PARAMETRIC_Q,
+    q_to_wdl_parametric,
+)
 
 
 # torch.compile shape-stability buckets.
 _ROOT_BUCKETS: tuple[int, ...] = (32, 64, 128, 256, 512)
+
+# The ONE place the config string is turned into the C extension's int. Both
+# ply paths route through it, so the Python fallback and the C fast path cannot
+# end up disagreeing about which mode a config selects.
+_SWDL_DRAW_MODE_TO_C: dict[str, int] = {
+    SEARCH_WDL_DRAW_NET_RAW: SWDL_DRAW_NET_RAW,
+    SEARCH_WDL_DRAW_PARAMETRIC_Q: SWDL_DRAW_PARAMETRIC_Q,
+}
+
+
+def _search_wdl_draw_mode(game: GameConfig) -> str:
+    """The configured search_wdl draw mode, validated.
+
+    ``getattr`` because a resumed session can carry a ``GameConfig`` pickled
+    before the field existed; the fallback is the production construction, so
+    an old record keeps its old semantics. An unrecognised string is a hard
+    error rather than a silent fallback -- ``GameConfig.__post_init__`` already
+    refuses one, and this is the second gate for the paths that build a config
+    some other way (tests, tools).
+    """
+    mode = str(getattr(game, "search_wdl_draw_mode", SEARCH_WDL_DRAW_NET_RAW))
+    if mode not in SEARCH_WDL_DRAW_MODES:
+        raise ValueError(
+            f"search_wdl_draw_mode must be one of {list(SEARCH_WDL_DRAW_MODES)}, "
+            f"got {mode!r}",
+        )
+    return mode
 
 
 def _batch_encoder_pair(state: SelfplayState):
@@ -571,6 +608,13 @@ def _append_records_via_c(
         float(df_norm_scale),
         float(diff_focus.norm_slope),
         float(diff_focus.norm_clip),
+  # Passed on EVERY ply, in both modes, rather than only when the parametric
+  # arm is armed: a stale .so then fails on the first ply of the first game
+  # instead of only once someone flips the flag. The mode int and the two curve
+  # knobs travel together because C has no other way to reach the config.
+        _SWDL_DRAW_MODE_TO_C[_search_wdl_draw_mode(state.game)],
+        float(state.game.sf_wdl_cp_slope),
+        float(state.game.sf_wdl_cp_draw_width),
     )
     c_rel = c_result[12] if _want_rel else None
     (c_x, c_probs, c_wdl_net, c_wdl_search, c_priority,
@@ -685,6 +729,9 @@ def _append_records_via_python(
     )
     df_norm_slope = float(diff_focus.norm_slope)
     df_norm_clip = float(diff_focus.norm_clip)
+    swdl_draw_mode = _search_wdl_draw_mode(state.game)
+    swdl_cp_slope = float(state.game.sf_wdl_cp_slope)
+    swdl_cp_draw_width = float(state.game.sf_wdl_cp_draw_width)
     raw_difficulties: list[float] = []
     pol_logits_full = _expand_policy_logits_for_ply(pol_logits)
 
@@ -774,13 +821,24 @@ def _append_records_via_python(
         state.cboards[idx].push_index(int(a))
         state.move_idx_history[idx].append(int(a))
 
-        d_raw = float(wdl_est[j][1])
-        rem = max(0.0, 1.0 - d_raw)
-        q = float(max(-rem, min(rem, best_q)))
-        w_search = 0.5 * (rem + q)
-        swdl_buf[0] = w_search
-        swdl_buf[1] = d_raw
-        swdl_buf[2] = rem - w_search
+        # ⚑ MUST MATCH ``_mcts_tree.c``'s ``py_batch_process_ply`` EXACTLY, on
+        # both branches — this is the stored training target, and a fallback
+        # that quietly builds a DIFFERENT one is the defect, not the safety net
+        # (same rule as ``_policy_kl`` above).
+        # ``tests/test_search_wdl_draw_mode.py::test_c_and_python_ply_paths_agree``
+        # fails if they diverge.
+        if swdl_draw_mode == SEARCH_WDL_DRAW_PARAMETRIC_Q:
+            swdl_buf[:] = q_to_wdl_parametric(
+                best_q, slope=swdl_cp_slope, draw_width_cp=swdl_cp_draw_width,
+            )
+        else:
+            d_raw = float(wdl_est[j][1])
+            rem = max(0.0, 1.0 - d_raw)
+            q = float(max(-rem, min(rem, best_q)))
+            w_search = 0.5 * (rem + q)
+            swdl_buf[0] = w_search
+            swdl_buf[1] = d_raw
+            swdl_buf[2] = rem - w_search
         search_wdl_est = swdl_buf.copy()
         if not np.all(np.isfinite(search_wdl_est)):
             search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)

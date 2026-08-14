@@ -291,22 +291,24 @@ def test_manifest_grant_logs_iteration_and_seed_count(
     from chess_anti_engine.worker import _manifest_poll_headers
     from tests.test_distributed_selfplay_backpressure import (
         _DOLE_SEED_FEN,
-        _poll_app_n,
+        _poll_and_claim_n,
         _publish_dole_trial,
+        _seed_dole_user,
     )
 
     fen_path = tmp_path / "blindspot.txt"
     fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
     _publish_dole_trial(tmp_path, training_iteration=11, dole=3, fen_path=fen_path)
-    app = create_app(server_root=tmp_path)
+    _seed_dole_user(tmp_path)
+    app = create_app(server_root=tmp_path, users_db="users.json")
 
     with caplog.at_level(logging.INFO, logger=_LOGGER):
-        polls = _poll_app_n(
+        granted_flags = _poll_and_claim_n(
             app, "/v1/trials/trial_00000/manifest",
             headers=_manifest_poll_headers(worker_id="w"), n=3,
         )
 
-    assert [p["dole_fen_seeds"] for p in polls] == [True, False, False]
+    assert granted_flags == [True, False, False]
     granted = [m for m in _messages(caplog, logging.INFO) if "dole GRANTED" in m]
     # Exactly one line per iteration per trial -- not one per poll.
     assert len(granted) == 1, granted

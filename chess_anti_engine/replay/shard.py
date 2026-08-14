@@ -1206,6 +1206,98 @@ def _declared_nbytes(value: Any) -> int:
     return int(nbytes)
 
 
+# --- Untrusted-deserialization guard for uploaded shards (issue #411) --------
+#
+# An uploaded ``.zarr`` array is decoded through the codec its own ``.zarray``
+# declares. A numcodecs *object codec* (Pickle/JSON/MsgPack/VLen*) attached as a
+# filter or compressor runs an attacker-chosen deserializer -- ``pickle`` calls
+# ``__reduce__`` -- the moment a chunk is materialized on the training host.
+# ``allow_pickle=False`` closes the twin ``.npz`` sink in ``load_shard_arrays``;
+# this closes the ``.zarr`` sibling. It is an ALLOWLIST, not a denylist: every
+# permitted dtype/compressor is a fixed numeric/byte-transform that provably
+# cannot deserialize an object, so the next hostile codec is rejected by
+# default rather than needing to be enumerated.
+#
+# Calibrated against what production actually writes (``save_local_shard_arrays``
+# is the ONLY zarr writer; it emits ``Blosc(cname="zstd")`` with no filters) and
+# empirically confirmed against 14 real shards under ``runs/`` on 2026-08-13:
+# every array used dtype in {u1,i1,i2,i4,i8,f2,f4}, compressor ``blosc``, and
+# NO filters. The dtype allowlist is by *kind* (bool/int/uint/float) so a future
+# numeric width needs no change here; the compressor allowlist admits the family
+# of pure byte-transform (de)compressors so a compressor swap does not take the
+# fleet to zero, while still rejecting every object codec.
+_SAFE_SHARD_DTYPE_KINDS: frozenset[str] = frozenset({"b", "i", "u", "f"})
+_SAFE_SHARD_COMPRESSOR_IDS: frozenset[str] = frozenset(
+    {"blosc", "zstd", "lz4", "gzip", "zlib", "bz2", "lzma"}
+)
+
+
+def _reject_unsafe_shard_codecs(proxies: dict[str, Any]) -> None:
+    """Reject uploaded zarr arrays whose dtype/codec could run a deserializer.
+
+    ⚑ FAILS CLOSED. Every member must be POSITIVELY identified as an
+    allowlisted numeric ``zarr.Array``; anything this function cannot classify
+    -- a sub-group in a field slot, a member with no readable ``dtype``, an
+    unreadable ``.zarray`` -- is REJECTED, not defaulted. The obvious spelling
+    ``np.dtype(getattr(arr, "dtype", None))`` is a trap: it maps a MISSING
+    dtype to ``float64``, whose kind ``f`` this allowlist permits, so the
+    guard would accept exactly the members it failed to understand. A security
+    gate whose default is ACCEPT is the "gate that cannot fail" shape. The
+    downstream ``validate_arrays`` is NOT the backstop here -- it lives in a
+    different function that a later reordering could move or skip.
+
+    ⚑ Takes the SAME proxy objects the loader goes on to materialize, not the
+    group to re-walk. Two independent walks over ``_SHARD_FIELDS`` is precisely
+    how a guard and its loader drift apart later; passing the built dict makes
+    "the guard inspected what was decoded" true by construction, and halves the
+    lazy-path cost.
+
+    Reads ``.zarray`` metadata only (``dtype``/``filters``/``compressor``) --
+    no chunk is decoded -- so it is safe on lazy, untrusted proxies BEFORE
+    materialization.
+    """
+    for name, arr in proxies.items():
+        if not isinstance(arr, zarr.Array):
+            raise ValueError(
+                f"shard member {name!r} is a {type(arr).__name__}, not a zarr array; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            )
+        raw_dtype = getattr(arr, "dtype", None)
+        if raw_dtype is None:
+            raise ValueError(
+                f"shard array {name!r} declares no dtype; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            )
+        try:
+            dtype = np.dtype(raw_dtype)
+        except TypeError as exc:
+            raise ValueError(
+                f"shard array {name!r} declares an unreadable dtype {raw_dtype!r}; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            ) from exc
+        if dtype.kind not in _SAFE_SHARD_DTYPE_KINDS:
+            raise ValueError(
+                f"shard array {name!r} declares non-numeric dtype {dtype!s}; "
+                f"refusing to decode (untrusted-deserialization guard)",
+            )
+        filters = getattr(arr, "filters", None)
+        if filters:
+            filter_ids = [getattr(f, "codec_id", type(f).__name__) for f in filters]
+            raise ValueError(
+                f"shard array {name!r} declares filters {filter_ids}; only "
+                f"filter-free numeric arrays are accepted (untrusted-deserialization guard)",
+            )
+        compressor = getattr(arr, "compressor", None)
+        if compressor is not None:
+            codec_id = getattr(compressor, "codec_id", type(compressor).__name__)
+            if codec_id not in _SAFE_SHARD_COMPRESSOR_IDS:
+                raise ValueError(
+                    f"shard array {name!r} uses disallowed compressor {codec_id!r}; "
+                    f"only byte-transform compressors are accepted "
+                    f"(untrusted-deserialization guard)",
+                )
+
+
 def validate_array_declarations(
     arrs: dict[str, Any],
     *,
@@ -1276,6 +1368,141 @@ def validate_array_declarations(
                 raise ValueError(
                     f"{spec.arr} shape mismatch: expected {expected_shape}, got {value_shape}",
                 )
+
+
+def shard_meta_violations(meta: dict[str, Any], *, positions: int) -> list[str]:
+    """Internal-consistency check on a shard's counter metadata.
+
+    ⚑ WHY THIS EXISTS AT ALL. The arrays get incidental but strong protection:
+    they are Blosc/zstd compressed, so a corrupt block fails to decompress,
+    loudly. ``.zattrs`` is plain uncompressed JSON, where a flipped digit stays
+    valid JSON with a wrong number. The least-protected channel feeds the most
+    consequential consumer -- ``wins``/``draws``/``losses`` become the PID's
+    curriculum winrate, which sets training difficulty.
+
+    ⚑ WHAT THIS IS NOT. It is not authentication. A worker that wants to forge
+    these numbers can forge a self-consistent set; nothing here stops that, and
+    there is no trusted server-side source to check them against (the server
+    never sees a game). It raises the cost of *silent* wrongness -- corruption,
+    and forgery that does not bother to stay consistent -- and that is all it
+    claims.
+
+    Every predicate below is `<=` or `>= 0`, and each is satisfied by
+    CONSTRUCTION rather than by observation of live data, so none can reject a
+    legitimate shard:
+
+    * ``w + d + l <= games``. NOT ``==``. `selfplay/finalize.py` increments
+      ``w``/``d``/``l`` only when ``not is_sp`` (curriculum games, not
+      selfplay) AND ``not source.startswith("fenlist")`` -- blind-spot seeds
+      force the net onto the historically-losing seat, so they are systematic
+      losses and are deliberately kept out of the PID's sample. Any shard
+      containing selfplay or seeded games has a STRICT inequality here, which
+      is why the obvious equality would reject nearly every real shard.
+    * ``selfplay_games + curriculum_games <= games`` -- same reasoning, kept
+      as `<=` rather than `==` so a future third game source cannot turn this
+      into an ingest outage.
+    * per-source subsets (adjudicated, draws, checkmate/stalemate) ``<=``
+      their parent count.
+    * every counter ``>= 0``. A negative games count is meaningless and would
+      corrupt the accumulator totals it is summed into.
+
+    ⚑ ``positions`` is the SERVER's own count (``shard_arrs["x"].shape[0]``),
+    not the uploader's. Deliberately NOT compared against ``games``: diff-focus
+    filtering can drop every position of a game, so ``games > positions`` is
+    legitimate. That predicate looks obvious and is wrong -- it is named here
+    so it does not get "fixed" back in.
+
+    Returns a list of human-readable violations; empty means consistent.
+    """
+    def _int(key: str) -> int | None:
+        if key not in meta:
+            return None
+        try:
+            return int(meta[key])
+        except (TypeError, ValueError):
+            return None
+
+    out: list[str] = []
+    counters = (
+        "games", "wins", "draws", "losses", "positions", "total_game_plies",
+        "adjudicated_games", "tb_adjudicated_games", "total_draw_games",
+        "selfplay_games", "selfplay_adjudicated_games", "selfplay_draw_games",
+        "curriculum_games", "curriculum_adjudicated_games", "curriculum_draw_games",
+        "checkmate_games", "stalemate_games", "plies_win", "plies_draw", "plies_loss",
+    )
+    values: dict[str, int] = {}
+    for key in counters:
+        v = _int(key)
+        if v is None:
+            continue
+        values[key] = v
+        if v < 0:
+            out.append(f"{key}={v} is negative")
+
+    games = values.get("games")
+    if games is not None and games >= 0:
+        wdl = [values.get(k) for k in ("wins", "draws", "losses")]
+        if all(v is not None for v in wdl):
+            total = sum(int(v) for v in wdl if v is not None)
+            if total > games:
+                out.append(
+                    f"wins+draws+losses={total} exceeds games={games}",
+                )
+    # ⚑⚑ SUMMED ONLY WHERE THE CHILDREN PARTITION THE PARENT, AND ONLY ONE
+    # GROUP DOES. `finalize.py` is `if is_sp: selfplay_games += 1 else:
+    # curriculum_games += 1` -- a strict partition, so the sum is sound.
+    #
+    # NOTHING ELSE IS. The adjudication and draw counters OVERLAP: `if
+    # was_adjudicated:` and `if result == "1/2-1/2":` are INDEPENDENT blocks
+    # (`finalize.py:510-558`), so a single adjudicated draw increments
+    # `selfplay_games`, `selfplay_adjudicated_games` AND `selfplay_draw_games`.
+    # Summing the children then reads 1+1=2 > 1 and TERMINALLY REJECTS a
+    # completely ordinary shard -- adjudicated draws are common, so this would
+    # have been mass rejection of real selfplay, i.e. ingest to zero.
+    #
+    # I shipped exactly that and an independent review caught it. The lesson is
+    # not "check the counters" but: a sum-of-children bound silently assumes a
+    # partition, and every group here EXCEPT one is a set of overlapping tags
+    # on the same game. Per-child `<=` assumes nothing.
+        for parent, children in (
+            ("games", ("selfplay_games", "curriculum_games")),
+        ):
+            p = values.get(parent)
+            present = [values[c] for c in children if c in values]
+            if p is None or len(present) != len(children):
+                continue
+            total = sum(present)
+            if total > p:
+                out.append(f"{'+'.join(children)}={total} exceeds {parent}={p}")
+
+        for parent, child in (
+            ("games", "adjudicated_games"),
+            ("games", "tb_adjudicated_games"),
+            ("games", "total_draw_games"),
+            ("games", "checkmate_games"),
+            ("games", "stalemate_games"),
+            ("selfplay_games", "selfplay_adjudicated_games"),
+            ("selfplay_games", "selfplay_draw_games"),
+            ("curriculum_games", "curriculum_adjudicated_games"),
+            ("curriculum_games", "curriculum_draw_games"),
+        ):
+            p = values.get(parent)
+            c_val = values.get(child)
+            if p is None or c_val is None:
+                continue
+            if c_val > p:
+                out.append(f"{child}={c_val} exceeds {parent}={p}")
+
+    declared_positions = values.get("positions")
+    if declared_positions is not None and declared_positions != int(positions):
+    # The server counted the rows itself. A mismatch means the counter and the
+    # arrays disagree -- exactly the flipped-digit case, and the one predicate
+    # here with a genuinely trusted right-hand side.
+        out.append(
+            f"positions={declared_positions} disagrees with the "
+            f"{int(positions)} rows actually present",
+        )
+    return out
 
 
 def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
@@ -1613,13 +1840,28 @@ def load_shard_arrays(
         return arrs, meta
     g = zarr.open_group(str(p), mode="r")
     meta = dict(g.attrs.asdict())
+    # Untrusted-deserialization guard (issue #411): reject object dtypes and
+    # non-allowlisted codecs BEFORE any chunk is decoded. This runs on BOTH the
+    # lazy and eager path so every materialization sink -- the upload handler's
+    # eager ``load_shard_arrays``, the boot-time ``_scan_pending_dir`` recovery
+    # load (which does NOT do a lazy pre-pass), and the inbox walk behind
+    # ``_queued_games_by_model`` -- is covered at the one chokepoint they share,
+    # symmetric with the ``.npz`` ``allow_pickle=False`` above.
+    #
+    # ⚑ The proxy dict is built ONCE and both guarded and returned/materialized,
+    # so the guard provably inspects the very objects that get decoded. Building
+    # it twice would re-walk all ~89 `_SHARD_FIELDS` (measured +140% on the lazy
+    # path, which is the hot one: replay_exchange, trainable_init startup, the
+    # worker, and the inbox loop) and would let the two walks drift apart.
+    proxies: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
+    _reject_unsafe_shard_codecs(proxies)
     if lazy:
-        arrs: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
+        arrs: dict[str, Any] = proxies
         _attach_identity_meta_arrays(arrs, meta)
         _attach_policy_metadata(arrs, meta)
         validate_array_declarations(arrs)
         return arrs, meta
-    arrs = {name: np.asarray(g[name]) for name in _SHARD_FIELDS if name in g}
+    arrs = {name: np.asarray(value) for name, value in proxies.items()}
     _attach_identity_meta_arrays(arrs, meta)
     _attach_policy_metadata(arrs, meta)
     validate_arrays(arrs)

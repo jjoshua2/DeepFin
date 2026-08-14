@@ -75,7 +75,13 @@ from chess_anti_engine.eval.value_optimism import (
     sf_eval_bucket,
 )
 from chess_anti_engine.inference import LocalModelEvaluator
-from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from scripts.net_source import (
+    NetSource,
+    add_net_source_args,
+    apply_gpu_mem_cap,
+    net_source_from_args,
+    reject_stored_encoding_for_onnx,
+)
 
 
 def _softmax_rows(a: np.ndarray) -> np.ndarray:
@@ -96,9 +102,10 @@ def _piece_count(fen: str) -> int:
 
 
 def value_1ply_regret(
-    *, checkpoint: str, positions, device: str, batch_size: int, pos_chunk: int,
+    *, net: NetSource, positions, device: str, batch_size: int, pos_chunk: int,
     input_encoding: str = INPUT_ENCODING_DEFAULT,
     matched_rows: MatchedAuditRows | None = None,
+    gpu_mem_fraction: float | None = None,
 ) -> tuple[float, dict[int, float], np.ndarray]:
     """Return (overall mean regret cp, {phase: mean cp}, per-position regrets).
 
@@ -106,17 +113,29 @@ def value_1ply_regret(
     terminal roots), aligned with ``positions`` — dump it for paired
     checkpoint comparisons (scripts/paired_compare.py).
 
+    ``net`` is one of ours (``--checkpoint``) or a foreign ONNX net
+    (``--onnx``); it carries exactly one and raises otherwise, so this ruler
+    cannot silently score a different net from the one requested. The child
+    planes are built from whatever encoding the loaded model DECLARES
+    (``model_encoding_kwargs``), which for an LC0/Ceres net is the lc0_root
+    history layout its adapter needs — not our production layout.
+
     ``input_encoding`` selects what the value head is fed. ``fen_only`` is the
     historical path and is byte-for-byte unchanged: the child encoding handed
     to the evaluator is exactly ``encode_cboard`` of the pushed board.
     ``stored`` splices the parent's real production history onto each child
     (audit-v2) and requires ``matched_rows`` covering every scored position.
+
+    ``gpu_mem_fraction`` is plumbed all the way to ``net.load`` because on the
+    ``--onnx`` path the cap is a SESSION-CONSTRUCTION argument (ORT's
+    ``gpu_mem_limit``); there is no later point at which it can be applied.
     """
     encoding = normalize_input_encoding(input_encoding)
     if encoding == "stored" and matched_rows is None:
         raise ValueError("input_encoding='stored' requires matched_rows")
-    model = load_model_from_checkpoint(checkpoint, device=device)
-    model.eval()
+    model = net.load(
+        device=device, gpu_mem_fraction=gpu_mem_fraction, tag="value-regret",
+    )
     enc_kwargs = model_encoding_kwargs(model)
     if matched_rows is not None and encoding == "stored":
         matched_rows.require_model_compatible(enc_kwargs)
@@ -198,7 +217,11 @@ def value_1ply_regret(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--checkpoint", required=True, help="trainer.pt or checkpoint dir")
+    add_net_source_args(
+        ap,
+        checkpoint_help="one of ours: trainer.pt or checkpoint dir. Mutually "
+        "exclusive with --onnx; exactly one is required.",
+    )
     ap.add_argument("--audit-set", default="data/audit_set_v1.jsonl")
     ap.add_argument("--max-positions", type=int, default=0,
                     help="0 (default) = score ALL rows. The audit set is written in "
@@ -230,7 +253,12 @@ def main() -> None:
     ap.add_argument("--pos-chunk", type=int, default=128,
                     help="positions buffered per forward pass group (bounds RAM)")
     ap.add_argument("--gpu-mem-fraction", type=float, default=None,
-                    help="cap this process's CUDA memory fraction (coexist with training)")
+                    help="cap this process's CUDA memory fraction (coexist with "
+                         "training). Applied to BOTH allocators a run can use: the "
+                         "torch caching allocator (set_per_process_memory_fraction) "
+                         "and, on --onnx, onnxruntime's CUDA arena (gpu_mem_limit, "
+                         "computed against the card's total memory). The two are "
+                         "separate: torch's cap does not bound an ORT session.")
     ap.add_argument("--dump-per-position", default=None, metavar="PATH",
                     help="write per-position JSONL (fen, phase, top1 regret cp) for "
                          "paired checkpoint comparison via scripts/paired_compare.py")
@@ -251,15 +279,23 @@ def main() -> None:
                          "behavior), required to reproduce historical full-set numbers "
                          "(e.g. the 70-76cp band / BT4=43cp ref were full-set).")
     args = ap.parse_args()
+    # Resolve the net BEFORE any audit-set or GPU work: a typo'd path or a
+    # graph with no 1858 policy head must fail here, not after the scoring
+    # loop has produced a plausible-looking number for the wrong weights.
+    net = net_source_from_args(args)
+    # ...and the flag combination that cannot mean anything, before the
+    # matched-rows index is even opened.
+    reject_stored_encoding_for_onnx(net, args.input_encoding)
 
-    if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
-        # Cap the SELECTED device (e.g. cuda:1), not just the current default one.
-        # torch rejects an index-less device, so resolve bare "cuda" -> current index.
-        dev_idx = (int(args.device.split(":", 1)[1]) if ":" in args.device
-                   else torch.cuda.current_device())
-        torch.cuda.set_per_process_memory_fraction(float(args.gpu_mem_fraction), device=dev_idx)
-        print(f"[value-regret] GPU memory capped at fraction {args.gpu_mem_fraction} "
-              f"on cuda:{dev_idx}")
+    # Caps the TORCH allocator and says so. The --onnx session is capped at
+    # load time, through ORT's own gpu_mem_limit -- torch's fraction cannot
+    # reach it, which is the bug this split exists to stop reprinting.
+    apply_gpu_mem_cap(
+        net=net,
+        device=str(args.device),
+        gpu_mem_fraction=args.gpu_mem_fraction,
+        tag="value-regret",
+    )
 
     encoding = normalize_input_encoding(args.input_encoding)
     # Every metric line below carries this tag. The two knobs in it each move
@@ -297,9 +333,10 @@ def main() -> None:
             )
     print(f"[value-regret] {tag} {len(positions)} positions from {args.audit_set}")
     overall, per_phase, per_position = value_1ply_regret(
-        checkpoint=args.checkpoint, positions=positions, device=args.device,
+        net=net, positions=positions, device=args.device,
         batch_size=args.batch_size, pos_chunk=args.pos_chunk,
         input_encoding=encoding, matched_rows=matched,
+        gpu_mem_fraction=args.gpu_mem_fraction,
     )
     if args.dump_per_position:
         import json
@@ -312,11 +349,15 @@ def main() -> None:
                     # with, or a downstream paired compare can silently join
                     # two different rulers.
                     "input_encoding": encoding, "batch_size": int(args.batch_size),
+                    # Which NET produced the row, not just which ruler read it:
+                    # a paired compare that joins two dumps must be able to see
+                    # that one of them is a foreign ONNX net.
+                    "net": net.label,
                 }) + "\n")
         print(f"[value-regret] {tag} per-position dump -> {args.dump_per_position}")
 
     ruler = "TB-excluded" if args.min_pieces > 0 else "FULL-SET (incl. TB)"
-    print(f"\n=== value-head 1-ply deep-SF regret @ {args.checkpoint} "
+    print(f"\n=== value-head 1-ply deep-SF regret @ {net.label} "
           f"| input-encoding={encoding} | batch-size={args.batch_size} ===")
     print(f"  {tag} ruler: {ruler}"
           + (f" (>={args.min_pieces}-man)" if args.min_pieces > 0 else "")

@@ -10,6 +10,7 @@ from chess_anti_engine.mcts.gumbel import (
     POLICY_TEMP_MIN,
     SELFPLAY_GUMBEL_C_SCALE,
 )
+from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_MODES, SEARCH_WDL_DRAW_NET_RAW
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
@@ -106,6 +107,29 @@ def _validate_sf_refute_net_blend(value: Any) -> float:
             "(_sf_refute_net_visit_provider). Keep it at 0.0 until that lands.",
         )
     return blend
+
+
+def _validate_search_wdl_draw_mode(value: Any) -> str:
+    """Reject an unknown ``search_wdl_draw_mode`` on the DRIVER, at config read.
+
+    ``GameConfig.__post_init__`` validates this too, but on the production
+    distributed path that is not a driver-side check: the driver only builds a
+    ``GameConfig`` inside ``trainable_config_ops._play_batch_kwargs``, which
+    ``trainable_phases`` reaches only when ``eval_games > 0`` --- and production
+    runs ``eval_games: 0``. So without this, a typo (``parametric`` for
+    ``parametric_q``) is accepted here, published in the reco, and raises in
+    EVERY worker's ``_build_selfplay_configs``: selfplay stops fleet-wide while
+    the driver keeps iterating and looks healthy. Validating at load turns that
+    into CLAUDE.md category (b) --- the trial dies once, loudly, on the driver,
+    with the bad value named.
+    """
+    mode = str(value)
+    if mode not in SEARCH_WDL_DRAW_MODES:
+        raise ValueError(
+            "search_wdl_draw_mode must be one of "
+            f"{list(SEARCH_WDL_DRAW_MODES)}, got {value!r}",
+        )
+    return mode
 
 
 @dataclass
@@ -287,6 +311,10 @@ class TrialConfig:
     sf_wdl_use_cp_logistic: bool = False
     sf_wdl_cp_slope: float = 0.010
     sf_wdl_cp_draw_width: float = 60.0
+    # Draw channel of the stored `search_wdl` target. See
+    # selfplay/config.py::GameConfig.search_wdl_draw_mode for the mechanism;
+    # membership is validated HERE as well, by _validate_search_wdl_draw_mode.
+    search_wdl_draw_mode: str = SEARCH_WDL_DRAW_NET_RAW
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
@@ -326,6 +354,10 @@ class TrialConfig:
     diff_focus_norm_quantile: float = 0.5
     diff_focus_norm_slope: float = 1.62
     diff_focus_norm_clip: float = 8.0
+  # One estimator per worker instead of one per selfplay THREAD (W4). Default
+  # OFF and bit-identical; see selfplay/diff_focus_norm.py for the measured
+  # 131,072-ply-per-restart warm-up this removes.
+    diff_focus_norm_shared: bool = False
 
   # --- Stockfish ---
     stockfish_path: str = ""
@@ -754,6 +786,9 @@ class TrialConfig:
                     "sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width
                 )
             ),
+            search_wdl_draw_mode=_validate_search_wdl_draw_mode(
+                config.get("search_wdl_draw_mode", SEARCH_WDL_DRAW_NET_RAW)
+            ),
             soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
             timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
             volatility_source=str(config.get("volatility_source", "raw")),
@@ -792,6 +827,7 @@ class TrialConfig:
             diff_focus_norm_quantile=float(config.get("diff_focus_norm_quantile", 0.5)),
             diff_focus_norm_slope=float(config.get("diff_focus_norm_slope", 1.62)),
             diff_focus_norm_clip=float(config.get("diff_focus_norm_clip", 8.0)),
+            diff_focus_norm_shared=bool(config.get("diff_focus_norm_shared", False)),
 
   # --- Stockfish ---
             stockfish_path=str(config.get("stockfish_path", "")),
