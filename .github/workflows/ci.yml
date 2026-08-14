@@ -29,7 +29,14 @@ jobs:
         run: pip install -e ".[dev]"
       # GPU-only tests skip on the CPU runner; `slow` stress tests are excluded
       # from the default run per pyproject's marker.
+      #
+      # ⚑ CAE_TEST_THREADS=auto lifts `tests/conftest.py`'s 2-thread cap. That cap
+      # exists to stop a local test run stealing cores from LIVE TRAINING, which
+      # is a condition no CI runner is ever in — and this job has a 30-minute
+      # timeout, so capping torch here would buy nothing and spend headroom.
       - name: Run tests
+        env:
+          CAE_TEST_THREADS: auto
         run: python -m pytest -m "not slow"
 
   lint:
