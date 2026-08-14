@@ -4213,8 +4213,18 @@ class Trainer:
   # with no warning, while `optimizer_state_loaded` stays True so the scheduler
   # and zclip are restored on top of a wiped optimizer. That is precisely the
   # wipe this method exists to prevent, relocated from a WARNING into the quiet
-  # channel. Found by independent review 2026-08-14; reachable from the first
-  # checkpoint that carries the manifest.
+  # channel. Found by independent review 2026-08-14.
+  #
+  # ⚑ An earlier revision of this comment added "reachable from the first
+  # checkpoint that carries the manifest". That was OVERSTATED and is removed:
+  # `save` writes the manifest and the model payload through the IDENTICAL
+  # `.replace("_orig_mod.", "", 1)`, so a self-consistent save cannot produce a
+  # name the payload lacks. The reachable trigger is a checkpoint whose manifest
+  # and payload were written by DIFFERENT code -- a rename between save and
+  # load, or a payload rewritten in place by a tool that leaves
+  # `opt_param_names` untouched (`scripts/reinit_value_heads.py` does exactly
+  # that). Stating the wider claim would invite someone to "simplify" the guard
+  # away on finding that ordinary checkpoints never trip it.
                 if name is None or name not in donor_model_state:
                     raise UntrustedOptimizerStateError(
                         f"donor optimizer slot {slot_id!r} resolves to "
