@@ -320,10 +320,9 @@ marginal. At the live MultiPV 6:
 - The fabricated value is **586 cp** against a worst move SF *actually surfaced* of
   **191 cp mean / 92 cp median**.
 - It supplies **74.5% of `E_pi[regret]`**, and dominates (>50%) on **49.6% of rows**.
-- Priced against CAST by inverting a calibration curve built from covered moves whose
-  regret IS known: a played move outside the MultiPV set is truly worth **~121 cp
-  [104–139]** on the cleanest stratum (`pmax ≥ 0.8`), against **568 cp** assigned —
-  **4.7× [4.1–5.5]**. Across strata 4.7×–16.4×; quote the conservative end.
+- The CAST-based *pricing* of that fabricated value is **WITHDRAWN** (see the retraction
+  above). No number is currently claimed for what the censored moves are truly worth, in
+  either direction.
 - Control: a WITHIN-POSITION permutation collapses the tail share to **0.169** (the
   regret-weighted permutation expectation, `sum(mass_imp_i * mean_r_i) / sum(mean_r_i)`)
   against an observed **0.757**. ⚑ The probe originally compared against the UNWEIGHTED
@@ -337,21 +336,35 @@ gives unlisted moves `(worst + 1) / 2` — PESSIMISTIC, over-penalising a broad 
 `eval/audit.py::move_regrets:252-271` gives them `worst` as an explicit optimistic FLOOR —
 under-penalising a broad policy. So the training target and the E[regret] RULER disagree by
 construction on ~68% of moves, and the audit's expected-regret number is not on the same
-scale as the training-time one. The issue's proposed "censored r6" arm is therefore not
-hypothetical — it is already running in production, as the ruler.
+scale as the training-time one. ⚑ Say this precisely: the issue's "censored r6" arm is
+already **IMPLEMENTED, and used by the evaluation ruler**. It has **never been trained on**.
+Do not let this be read as "we already tested r6 censoring as a training objective" — we
+have only ever used it to SCORE.
+
+⇒ **Consequence for the tail screen:** the audit E[regret] ruler cannot be treated as
+unbiased ground truth for a tail-treatment bake-off. It assigns every rank >10 the
+optimistic `r_10` floor, so it has a structural preference for BROAD targets whenever their
+extra mass lands on moves the audit never valued. That is an argument for the wide-MultiPV
+screen carrying the magnitude question.
 
 **Why this matters even though `w_sf_own_regret` is 0.0 today.** The vector is still
 RECORDED (`record_sf_p0_regret: true`), so the defect is banked into every shard and is
 latent, not absent. Re-enabling the weight unchanged would train `policy_own` to push mass
-off ~68% of legal moves toward SF's top 6 on the strength of a ~5× overstatement — a
-sharpening pressure, on a net already measured **3.7× narrower than BT4 and 14.1pp less
-accurate**. This also **re-opens the old `w_sf_own_regret` 0.7 verdict**: that experiment
+off ~68% of legal moves toward SF's top 6 on the strength of values that were never
+measured — a sharpening pressure, on a net already measured **3.7× narrower than BT4 and
+14.1pp less accurate**. This also **re-opens the old `w_sf_own_regret` 0.7 verdict**: that experiment
 ran at MultiPV 40 where the tail was marginal, so its result does not transfer to 6.
 
 **Pre-committed next step (NOT a live change).** Screen the tail treatments offline
-before any weight moves: (1) current midpoint = control, (2) censored `r_6` bound,
+before any weight moves, on HISTORICAL WIDE labels (`train_trial_d2003` 569 shards at
+median 37 PVs, `cdb96` 353 at 35, `0f888` 812 at 28) truncated to top-6, with the hidden
+ranks as ground truth: (1) current midpoint = control, (2) censored `r_6` bound,
 (3) covered-only, (4) residual tilt `p_base · exp(−β r)` with one shared censored tail
-value. Kill rule: nothing goes live unless it beats the midpoint control on broad
+value. Report POLICY-WEIGHTED tail regret `E_pos[ sum_{a not in top6} p(a) r_wide(a) ]`
+under the CURRENT prior re-run on those positions — not the historical net's — plus
+`P_current(rank > 40)` as the coverage limit. The two existing conventions bracket the
+answer, so fit the interpolation `r_tail(α) = r_6 + α·(r_midpoint − r_6)` and report where
+α actually lands rather than staging a two-way bake-off. Kill rule: nothing goes live unless it beats the midpoint control on broad
 `value_regret` + raw-policy top-1 at matched budget, per rule 6 above. **Do not read a
 CAST loss as the deliverable** — its unique contribution is the ~12% of P0 rows where the
 played move fell outside the MultiPV set, i.e. ~2.5% of all rows.
@@ -369,10 +382,10 @@ stockfish figure comes from. [[check_the_resource_is_binding]]
 
 **Confounds.** No training change was made; the run was live and untouched throughout.
 The played-move proxy is the one real limitation and is why every played-move number is
-reported stratified rather than as a single figure. The probe reads the trailing shard
-window, which MOVES while the run writes: re-running shifts the strata by a few tenths
-(the `pmax >= 0.8` overstatement read 4.7x, 5.6x and 4.9x on three runs an hour apart).
-Quote **~5x**, not a decimal.
+reported stratified rather than as a single figure — and, per the retraction, why the
+pricing built on it is withdrawn. The probe also reads the trailing shard window, which
+MOVES while the run writes, so any re-run lands on a different population; the shard set
+must be pinned in the output before a number off it is quoted.
 
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-12) — authenticated seed claim, side-effect-free manifest (finding [6], DoS half)
 
