@@ -43,8 +43,26 @@ from .transformer import ChessNet, TransformerConfig
 # v20: aux_policy_head_dim. Defaulting it rebuilds policy_soft / policy_sf at
 # full trunk width, so their q/k tensors no longer match the checkpoint's --
 # load_state_dict_tolerant DROPS the mismatched blocks with only a print() and
-# the heads come up RANDOMLY INITIALISED. Nothing crashes and no metric
-# necessarily moves, because both are auxiliary heads.
+# the heads come up RANDOMLY INITIALISED. Who that actually hurts, measured:
+#   * TRAINING (the real one). `ChessNet.forward` reads `policy_soft` and
+#     `policy_sf`, so a defaulted rebuild silently restarts the SF-teacher heads
+#     from random while `w_soft`/`w_sf_move` keep training them, and the
+#     donor's moments for those tensors are dropped (see
+#     `reset_mismatched_optimizer_state`). Nothing crashes; no metric need move.
+#   * SERVING. NOT affected. Nothing downstream of a search evaluator READS
+#     `policy_soft` / `policy_sf`: every consumer takes `policy_own` (or
+#     `policy`) and `wdl` and nothing else. Selfplay and the brokers additionally
+#     never COMPUTE them -- worker.py:1700, inference.py:1987 and :3677 set
+#     `_inference_only = True`, and that branch of `ChessNet.forward`, like
+#     `forward_legal_policy` / `forward_legal_policy_rows`, emits only
+#     `policy_own` + `wdl`. (`uci/model_loader.py` does NOT set the flag, so a
+#     full forward there evaluates the re-initialised aux heads and discards
+#     them: wasted compute, not wrong play.)
+# ⚑ SEQUENCING: this bump makes every checkpoint written after it UNREADABLE by
+# v19 code (the loader rejects a higher version), and `Trainer.save` embeds
+# `dataclasses.asdict(ModelConfig)`, which emits the key even when it is None.
+# An arena / audit / UCI run driven from a pre-merge worktree will hard-fail on
+# a fresh checkpoint -- loudly, which is the point, but plan the merge for it.
 ARCH_SCHEMA_VERSION = 20
 
 
@@ -236,12 +254,19 @@ _RESUME_CONFIG_OWNED_ENCODING_KEYS = (
     # or removing state_dict keys: `policy_soft.q/k` and `policy_sf.q/k` keep
     # their names and change size, so `load_state_dict_tolerant` drops them and
     # they come up RANDOMLY INITIALISED (not zero-init, and therefore NOT
-    # function-preserving), with their optimizer moments reinitialised too. That
-    # is the intended cost of the migration — both are auxiliary heads that
-    # `policy_own` does not read — but it means such a resume is a partial head
-    # retrain, not a free warm start. Do not change this key expecting
-    # continuity. The rest of ModelConfig stays checkpoint-owned precisely
-    # because the same drop would hit shapes `policy_own` DOES read.
+    # function-preserving). That is the intended cost of the migration — both
+    # are auxiliary SF-teacher heads that `policy_own` does not read — but it
+    # means such a resume is a partial head retrain, not a free warm start. Do
+    # not change this key expecting continuity. The rest of ModelConfig stays
+    # checkpoint-owned precisely because the same drop would hit shapes
+    # `policy_own` DOES read.
+    #
+    # ⚑ The optimizer moments are NOT reinitialised by that drop. Torch restores
+    # them by param INDEX with no shape check, and `Trainer.load` only reaches
+    # its reinit fallback on a param COUNT change — which a pure width change is
+    # not. `Trainer.load` therefore calls `reset_mismatched_optimizer_state`
+    # explicitly; without it the migration loads clean and dies at the first
+    # `opt.step()`.
     "aux_policy_head_dim",
 )
 
@@ -440,11 +465,24 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "categorical_head_coupled": bool(cfg.categorical_head_coupled),
         "policy_embedding_mode": str(cfg.policy_embedding_mode),
         "enable_policy_sf_head": bool(cfg.enable_policy_sf_head),
-        # ⚑ THE SILENT ONE. Omitted here, the trainer builds 128-wide aux heads
-        # while every worker rebuilds them at trunk width from the manifest;
+        # ⚑ Omitted here, the trainer builds 128-wide aux heads while every
+        # worker rebuilds them at trunk width from the manifest, and
         # load_state_dict_tolerant drops the mismatched tensors with only a
-        # print() and selfplay serves a RANDOM-INITIALISED policy_soft. Nothing
-        # crashes, and because both are auxiliary heads no metric need move.
+        # print(). Two consequences, and NEITHER is "selfplay serves a random
+        # policy_soft" -- it cannot. No search evaluator READS policy_soft /
+        # policy_sf (they take policy_own/policy + wdl and nothing else), and
+        # selfplay does not even COMPUTE them: worker.py:1700, inference.py:1987
+        # and :3677 set `_inference_only = True`, whose forward branch -- like
+        # forward_legal_policy / forward_legal_policy_rows -- emits only
+        # policy_own + wdl. What DOES break:
+        #   * the served state_dict stops being the published one -- the worker
+        #     silently carries randomly-initialised aux weights it paid memory
+        #     for and never evaluates, and the drop is a bare print(); and
+        #   * `model_config_identity_key` (inference.py) is computed off the
+        #     ModelConfig rebuilt FROM this manifest, so two genuinely different
+        #     architectures hash equal and the shared broker's "different model
+        #     config, skipping" guard CANNOT FAIL on this field -- the exact
+        #     gate-that-cannot-fire shape it was rewritten to close.
         "aux_policy_head_dim": normalize_aux_policy_head_dim(cfg.aux_policy_head_dim),
         "phase_piece_thresholds": list(normalize_phase_piece_thresholds(cfg.phase_piece_thresholds)),
     }
@@ -755,6 +793,66 @@ def migrate_optimizer_input_plane_state(optimizer: torch.optim.Optimizer) -> int
                     state[key] = padded
                     migrated += 1
     return migrated
+
+
+def reset_mismatched_optimizer_state(
+    optimizer: torch.optim.Optimizer,
+    *,
+    param_names: dict[int, str] | None = None,
+) -> list[str]:
+    """Drop per-parameter optimizer state that no longer fits its parameter.
+
+    ⚑ THE GENERAL CASE of the bug ``migrate_optimizer_input_plane_state``
+    handles ONE instance of. ``Optimizer.load_state_dict`` restores moment
+    tensors by parameter INDEX with no shape validation, and ``Trainer.load``
+    only reaches its reinitialise-everything fallback when the param COUNT
+    differs. So any warm start that changes a tensor's SHAPE while keeping the
+    count — a config-owned encoding key such as ``aux_policy_head_dim``, which
+    re-widens ``policy_soft``/``policy_sf`` ``q``/``k`` — loads "successfully",
+    leaves a donor-shaped moment under a differently-shaped parameter, and
+    crashes at the FIRST ``opt.step()``, outside every ``except`` that could
+    have recovered.
+
+    A state tensor is treated as stale when it has the same rank as its
+    parameter but a different shape; that is the shape a moment/momentum buffer
+    has, and it deliberately does NOT match rank-0 step counters or the
+    factored row/column statistics of an Adafactor-style optimizer (different
+    rank), nor SOAP's preconditioner LISTS (not tensors at all).
+
+    The WHOLE per-parameter state entry is cleared, not just the offending
+    tensor: optimizers decide whether to initialise by ``len(state) == 0``
+    (torch's AdamW) or by probing one key (``AuroraWithAuxAdam``: the Aurora
+    matrix group keeps ``momentum_buffer`` only, the AdamW aux groups keep
+    ``exp_avg``/``exp_avg_sq``/``step``), so a partial clear either leaves a
+    stale sibling in place or raises a ``KeyError``. Clearing restarts that
+    parameter at zero moments and step 0 — the correct continuation for weights
+    the tolerant loader has just re-initialised anyway.
+
+    Returns one human-readable description per reset parameter, so the caller
+    can LOG what it dropped. Silence is how this class of bug survives.
+    """
+    names = param_names or {}
+    dropped: list[str] = []
+    for group in optimizer.param_groups:
+        for param in group["params"]:
+            state = optimizer.state.get(param)
+            if not state:
+                continue
+            stale = [
+                f"{key}{tuple(value.shape)}"
+                for key, value in state.items()
+                if torch.is_tensor(value)
+                and value.dim() == param.dim()
+                and tuple(value.shape) != tuple(param.shape)
+            ]
+            if not stale:
+                continue
+            name = names.get(id(param), "<unnamed>")
+            dropped.append(
+                f"{name} {tuple(param.shape)} <- stale {', '.join(sorted(stale))}"
+            )
+            state.clear()
+    return dropped
 
 
 def _filter_shape_mismatches(ckpt_state: dict, model_state: dict) -> tuple[dict, list[str]]:

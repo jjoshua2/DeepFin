@@ -1105,7 +1105,10 @@ class ChessNet(nn.Module):
         aux_policy_dim = _resolve_aux_policy_head_dim(
             cfg.aux_policy_head_dim, output_embed_dim
         )
-        self.aux_policy_head_dim = cfg.aux_policy_head_dim
+  # The width actually BUILT, not the raw config value: `cfg.aux_policy_head_dim`
+  # may be `"128"` / `128.0` / `None` and this attribute is read as the built
+  # width (siblings do the same -- `enable_policy_sf_head`, `policy_embedding_mode`).
+        self.aux_policy_head_dim = aux_policy_dim
         self.policy_own = AttentionPolicyHead(output_embed_dim)
         self.policy_soft = AttentionPolicyHead(output_embed_dim, aux_policy_dim)
         # policy_sf is trained only through `w_sf_move`, which has been 0.0 in

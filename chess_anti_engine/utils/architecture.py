@@ -107,12 +107,19 @@ def normalize_aux_policy_head_dim(value: Any = None) -> int | None:
     hardcoded default would build zero-width or wrongly-sized ``q``/``k``
     projections that ``load_state_dict_tolerant`` then DROPS with only a
     ``print()`` — the silent-wrongness shape this repo keeps getting bitten by.
+
+    ⚑ ``off`` / ``false`` mean ``None`` too, matching the sibling normalizers
+    above. A bare yaml ``off`` parses as the BOOLEAN ``False``, so without this
+    the natural operator edit to END the experiment
+    (``aux_policy_head_dim: off``) would be rejected by ``_coerce_positive_int``
+    — a category-(b) live-yaml failure that KILLS the trial mid-iteration
+    instead of reverting the heads to trunk width.
     """
-    if value is None:
+    if value is None or value is False:
         return None
     if isinstance(value, str):
         raw = value.strip()
-        if raw.lower() in ("", "none", "null"):
+        if raw.lower() in ("", "none", "null", "off", "false"):
             return None
         value = raw
     try:

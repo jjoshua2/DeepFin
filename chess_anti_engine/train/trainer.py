@@ -3961,6 +3961,7 @@ class Trainer:
         from chess_anti_engine.model import (
             load_state_dict_tolerant,
             migrate_optimizer_input_plane_state,
+            reset_mismatched_optimizer_state,
         )
 
         # Trainer checkpoints include optimizer/scheduler/RNG pickles, so resume needs the
@@ -3992,6 +3993,22 @@ class Trainer:
                 logging.getLogger(__name__).info(
                     "Zero-padded %d optimizer state tensor(s) for the "
                     "v1 -> v2_threats input-plane migration", migrated,
+                )
+  # ⚑ THE GENERAL CASE, and it must run AFTER the v1-plane pad above (which
+  # REPAIRS a mismatch this sweep would otherwise discard). The param-count
+  # check on the way in cannot see a warm start that changes a SHAPE without
+  # changing the count -- e.g. aux_policy_head_dim re-widening
+  # policy_soft/policy_sf q/k -- so load_state_dict "succeeds" and the first
+  # opt.step() crashes OUTSIDE this try. Drop what no longer fits, loudly.
+            reset = reset_mismatched_optimizer_state(
+                self.opt,
+                param_names={id(p): n for n, p in self.model.named_parameters()},
+            )
+            if reset:
+                logging.getLogger(__name__).warning(
+                    "Dropped donor optimizer state for %d parameter(s) whose "
+                    "shape changed in this warm start; they restart at zero "
+                    "moments / step 0: %s", len(reset), "; ".join(reset),
                 )
         except (ValueError, KeyError, RuntimeError) as exc:
             optimizer_state_loaded = False
