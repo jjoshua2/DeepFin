@@ -1637,10 +1637,21 @@ def _retention_entries(
       # `os.replace` raise FileNotFoundError. The client_reports sink writes
       # exactly this way.
       #
-      # ⚑ NOT `is_tmp_shard_name`, which tests `tmp_`/`._tmp_` PREFIXES and
-      # does not match these suffix-style names at all -- reaching for the
-      # sibling helper here is a false fix that leaves the count wrong while
-      # looking right.
+      # ⚑⚑ NOT `is_tmp_shard_name`, AND THE TWO MATCHERS DISAGREE ON PURPOSE.
+      # This file now holds two temp predicates, which is the exact shape the
+      # next reader will try to unify -- so: they are scoped to disjoint
+      # directory families with disjoint producers, and swapping this one for
+      # the sibling breaks the sweep in BOTH directions.
+      #   - It does not match what we want skipped: `is_tmp_shard_name` tests
+      #     the `tmp_`/`._tmp_` PREFIXES, and these names are suffix-style.
+      #   - It DOES match what must not be skipped: a quarantined shard is
+      #     named `tmp_<pid>_<hex>.tar` (it keeps the upload staging name, see
+      #     `qpath = qdir / tmp.name`), so `is_tmp_shard_name` returns True for
+      #     it -- and for its `.reason.txt`. Using it here would make the walk
+      #     skip, and the sweep therefore NEVER EVICT, every quarantined shard:
+      #     the ceiling silently stops applying to the sink it was written for.
+      #     `test_quarantine_invalid_retention_survives_trial_id_rotation`
+      #     kills that swap.
       #
       # ⚑ NOT A HOLE AN UPLOADER CAN AIM AT: every entry name in these sinks
       # is server-generated (`<sha256>.json`, `tmp_<pid>_<hex>.tar`,
@@ -1809,15 +1820,22 @@ def _evict_fairly(
     is the honest scope of it.
 
     Not fixed because the fix is not "re-read the bucket sizes": a flood adds
-    entries this sweep never enumerated, so seeing it needs a fresh WALK, and
-    an eviction loop that re-walks is O(entries) stats per eviction on the
-    upload path -- over a directory set the same caller-invented trial-id
-    rotation extends at will, which turns the ceiling's enforcement into an
-    amplification the attacker steers. Against that: the excess is transient by
-    exactly one request. Every write triggers a sweep, INCLUDING the flooder's
+    entries this sweep never enumerated, so seeing it needs a fresh WALK. The
+    cheap version of that is not per-eviction re-walking (nobody would write
+    that) -- it is ONE extra walk after the eviction pass, repeated while still
+    over budget, i.e. ~2x the walk in the common case and unbounded under
+    sustained upload. Rejected at 2x, not at the strawman: the walk is
+    cross-trial over a directory set the same caller-invented trial-id rotation
+    extends at will, so doubling it on the upload path hands the attacker the
+    amplification, and it is the very walk the arena route already threadpools
+    for being the expensive part. Against that cost: the overshoot is bounded
+    and self-clearing. Every write triggers a sweep, INCLUDING the flooder's
     own writes, so the next sweep sees the flood, finds the hog the largest,
-    and takes from it. The end state converges to the same max-min split; what
-    inverts is which single eviction this one sweep makes.
+    and takes from it. For a single flood that is one request; under sustained
+    concurrency the bound is the writes landing per walk-and-evict window, not
+    one request -- still bounded, and still by a mechanism the flooder pays
+    for. The end state converges to the same max-min split; what inverts is
+    which single eviction one sweep makes.
 
     ⚑ The same snapshot argument applies to `total_bytes`, so the CEILING is
     already only enforced per-sweep under concurrency -- the fairness inversion
