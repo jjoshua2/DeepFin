@@ -28,7 +28,7 @@ ONNX graph whose policy head is not the one that was read. So:
     — ORT's compile-time provider list — is NECESSARY and nothing more: it can
     name a provider that does not start, so on its own it is a gate that cannot
     fail. What makes it a real gate is :func:`probe_onnx_device_providers`, a
-    65-byte throwaway session on the requested device. The same reading is
+    76-byte throwaway session on the requested device. The same reading is
     repeated on the scoring session by :func:`verify_onnx_session_device`, so a
     ``--device cuda`` run that ORT quietly moved to CPU raises rather than
     reporting a CUDA number.
@@ -185,28 +185,22 @@ def onnx_providers_for_device(
     return ((CUDA_PROVIDER, options), CPU_PROVIDER)
 
 
-def probe_model_bytes() -> bytes:
-    """A 65-byte one-node ONNX graph, built in memory, for probing ORT startup.
-
-    Opset AND ir_version are pinned deliberately, and pinning them is the
-    version-PROOF choice rather than a version hack: left to its defaults,
-    ``make_model`` stamps whatever ir_version the installed ``onnx`` package
-    considers current, which a slightly older ``onnxruntime`` then refuses to
-    open (measured here: onnx 1.20.1 emits ir_version 13, onnxruntime 1.23.2
-    rejects it). A fixed, old, universally-supported level cannot drift with
-    either package. ``test_the_device_probe_model_actually_opens`` fails loudly
-    if some future stack disagrees, so this cannot degrade in silence.
-    """
-    from onnx import TensorProto, helper
-
-    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
-    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
-    graph = helper.make_graph(
-        [helper.make_node("Identity", ["x"], ["y"])], "device_probe", [x], [y],
-    )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
-    model.ir_version = 9
-    return model.SerializeToString()
+# A 76-byte one-node ONNX graph (Identity, opset 17, ir_version 9), FROZEN as
+# bytes rather than rebuilt at runtime. Building it would put an ``onnx`` import
+# and that package's ir_version default on the path of every ``--onnx --device
+# cuda`` run, and the default is exactly what breaks: onnx 1.20.1 stamps
+# ir_version 13, which onnxruntime 1.23.2 refuses to open. A frozen literal
+# cannot drift with either package.
+#
+# ⚑ It is not an opaque blob: ``test_the_device_probe_graph_matches_its_generator``
+# rebuilds it with ``onnx.helper`` and compares byte for byte, so the literal is
+# pinned to a readable generator, and ``test_the_device_probe_graph_opens``
+# proves the installed onnxruntime still loads it.
+PROBE_MODEL_ONNX = bytes.fromhex(
+    "08093a42 0a100a01 78120179 22084964 656e7469 7479120c 64657669 "
+    "63655f70 726f6265 5a0f0a01 78120a0a 08080112 040a0208 01620f0a "
+    "0179120a 0a080801 12040a02 08014204 0a001011 ",
+)
 
 
 def probe_onnx_device_providers(device: str) -> list[str]:
@@ -214,8 +208,8 @@ def probe_onnx_device_providers(device: str) -> list[str]:
 
     This is what makes the parse-time gate non-vacuous. There is no ORT API
     that answers "would the CUDA provider initialise here" without building a
-    session, so the check builds the smallest possible one: 65 bytes, ~30ms,
-    no model file, discarded immediately.
+    session, so the check builds the smallest possible one: 76 bytes, no model
+    file, discarded immediately.
 
     ``get_providers()`` reports the providers that REGISTERED, which is a
     property of the runtime and the device rather than of the graph — so this
@@ -223,12 +217,14 @@ def probe_onnx_device_providers(device: str) -> list[str]:
     Stockfish earlier. The memory cap is deliberately NOT applied here: the
     probe's own arena is a few bytes, and reading the card's size to compute a
     limit would add a torch CUDA call to a function whose whole point is to be
-    cheap and early.
+    cheap and early. The providers it IS given are the REQUESTED device's, which
+    is the part that has to be asserted rather than assumed — a probe pinned to
+    CPU would pass everywhere and mean nothing.
     """
     import onnxruntime as ort
 
     session = ort.InferenceSession(
-        probe_model_bytes(),
+        PROBE_MODEL_ONNX,
         providers=list(onnx_providers_for_device(device)),
     )
     try:
@@ -249,8 +245,14 @@ def validate_onnx_device(device: str) -> None:
        ``[Tensorrt, CUDA, CPU]`` while every ORT session seen here has come
        back ``['CPUExecutionProvider']``. Judged on that check alone the gate
        passes unconditionally, which is worth nothing.
-    2. :func:`probe_onnx_device_providers` — a real 65-byte session on the
-       requested device. THIS is the check that can fail, and it costs ~30ms.
+    2. :func:`probe_onnx_device_providers` — a real 76-byte session on the
+       requested device. THIS is the check that can fail. Measured here (under
+       `nice 19` beside a live trainer, so noisy): the whole call is 150-240ms
+       on its FIRST invocation, which is one-time onnxruntime initialisation,
+       and 20-50ms thereafter. It runs once per ruler run and only when a CUDA
+       device was asked for — `--device cpu` returns above without building
+       anything (0.0003ms), and a `--checkpoint` run never reaches this
+       function at all.
 
     Both run before the audit set is loaded and before Stockfish labels
     anything, which is the point: the cost this gate exists to avoid is an

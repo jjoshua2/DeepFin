@@ -49,8 +49,10 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.encode import move_to_index
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 from chess_anti_engine.moves.leela_index import compact_index_for_move, leela_index_for_move
+import scripts.net_source as net_source_mod
 from scripts.net_source import (
     CPU_PROVIDER,
+    PROBE_MODEL_ONNX,
     CUDA_PROVIDER,
     NetSource,
     OnnxNetSpec,
@@ -60,7 +62,6 @@ from scripts.net_source import (
     net_source_from_args,
     onnx_cuda_mem_limit,
     onnx_providers_for_device,
-    probe_model_bytes,
     probe_onnx_device_providers,
     reject_stored_encoding_for_onnx,
     resolve_onnx_spec,
@@ -930,28 +931,84 @@ def test_audit_targets_net_candidates_hands_the_fraction_to_net_load(
     assert seen == [{"device": "cpu", "gpu_mem_fraction": 0.4, "tag": "audit"}]
 
 
-def _forwarded_kwarg(main_fn: object, callee: str, kwarg: str) -> ast.expr | None:
-    """The expression a call inside ``main`` passes for ``kwarg``, or None.
-
-    AST rather than a substring: `"gpu_mem_fraction" in src` is satisfied by the
-    argparse declaration alone, so it would pass on a `main` that never
-    forwards the value anywhere.
-    """
+def _main_src(main_fn: object) -> str:
+    """A ruler ``main``'s source, dedented, ready for :func:`ast.parse`."""
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(main_fn)))  # pyright: ignore[reportArgumentType]
-    for node in ast.walk(tree):
+    return textwrap.dedent(inspect.getsource(main_fn))  # pyright: ignore[reportArgumentType]
+
+
+def _forwarded_kwargs(src: str, callee: str, kwarg: str) -> list[ast.expr | None]:
+    """One entry per call to ``callee`` in ``src``: what it passes for ``kwarg``.
+
+    ⚑ EVERY call site, not the first one. `ast.walk` + `return` stops at the
+    first match, which makes this a PRESENCE check rather than a coverage one:
+    a `main` refactored to run two passes would keep the first call correct and
+    the test green while the second dropped the cap. `audit_targets.main` has
+    exactly one `_net_candidates(...)` today, which is precisely the state in
+    which that hole is invisible.
+
+    A missing keyword yields ``None`` for that call, so the caller can tell
+    "no such call anywhere" (empty list) from "a call that drops it".
+
+    Takes SOURCE rather than a function so the checker itself can be attacked
+    with synthetic `main`s — `inspect.getsource` cannot read those.
+    """
+    out: list[ast.expr | None] = []
+    for node in ast.walk(ast.parse(src)):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
         if name != callee:
             continue
-        for kw in node.keywords:
-            if kw.arg == kwarg:
-                return kw.value
-    return None
+        out.append(next((kw.value for kw in node.keywords if kw.arg == kwarg), None))
+    return out
+
+
+def _rebinds(src: str, obj: str, attr: str) -> bool:
+    """Does ``src`` assign to ``obj.attr``? (e.g. ``args.gpu_mem_fraction = ...``)
+
+    Checked because forwarding the right EXPRESSION is not the same as
+    forwarding the right VALUE: `audit_targets.main` already rewrites
+    `args.sf_soft_nodes` in place, so a later `args.gpu_mem_fraction = None`
+    would leave every assertion below true and the cap gone.
+    """
+    for node in ast.walk(ast.parse(src)):
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets = [node.target]
+        for t in targets:
+            if (
+                isinstance(t, ast.Attribute)
+                and t.attr == attr
+                and isinstance(t.value, ast.Name)
+                and t.value.id == obj
+            ):
+                return True
+    return False
+
+
+def _assert_every_call_forwards(src: str, callee: str, kwarg: str) -> None:
+    """``callee`` is called at least once, and EVERY call forwards
+    ``args.<kwarg>`` itself — not a literal, not a local, not nothing."""
+    values = _forwarded_kwargs(src, callee, kwarg)
+    assert values, f"{callee}(...) is never called"
+    for i, value in enumerate(values):
+        where = f"{callee}(...) call #{i + 1} of {len(values)}"
+        assert value is not None, f"{where} drops --{kwarg.replace('_', '-')}"
+        # A hardcoded `None` (or any literal) is an Attribute-less node, so this
+        # is what makes the check about the VALUE rather than the keyword.
+        assert isinstance(value, ast.Attribute), f"{where} passes a literal/expr"
+        assert value.attr == kwarg, f"{where} forwards args.{value.attr}"
+        assert isinstance(value.value, ast.Name), where
+        assert value.value.id == "args", f"{where} reads {value.value.id}, not args"
+    assert not _rebinds(src, "args", kwarg), (
+        f"args.{kwarg} is reassigned, so forwarding it proves nothing"
+    )
 
 
 def test_audit_targets_main_forwards_the_fraction_to_net_candidates() -> None:
@@ -959,30 +1016,70 @@ def test_audit_targets_main_forwards_the_fraction_to_net_candidates() -> None:
 
     Driving `audit_targets.main()` that far needs a config, an audit set and a
     Stockfish labelling pass, so this one is pinned structurally — but on the
-    ARGUMENT, not on the text: the assertion is that the call forwards
-    `args.gpu_mem_fraction` itself, which a deletion or a hardcoded `None`
-    both break.
+    ARGUMENT, at EVERY call site, and with `args` proven not to be rewritten
+    underneath it. A deletion, a hardcoded `None`, a second call that drops it,
+    and an upstream `args.gpu_mem_fraction = None` all break it.
     """
     from scripts import audit_targets
 
-    value = _forwarded_kwarg(audit_targets.main, "_net_candidates", "gpu_mem_fraction")
-    assert value is not None, "audit_targets.main drops --gpu-mem-fraction"
-    assert isinstance(value, ast.Attribute)
-    assert value.attr == "gpu_mem_fraction"
-    assert isinstance(value.value, ast.Name)
-    assert value.value.id == "args"
+    _assert_every_call_forwards(
+        _main_src(audit_targets.main), "_net_candidates", "gpu_mem_fraction",
+    )
 
 
 def test_both_rulers_forward_the_fraction_out_of_main() -> None:
     """The same pin on both rulers, so neither seam can rot alone."""
     from scripts import audit_targets, value_regret
 
-    for main_fn, callee in (
-        (value_regret.main, "value_1ply_regret"),
-        (audit_targets.main, "_net_candidates"),
-    ):
-        value = _forwarded_kwarg(main_fn, callee, "gpu_mem_fraction")
-        assert value is not None, f"{callee} is called without --gpu-mem-fraction"
+    _assert_every_call_forwards(
+        _main_src(value_regret.main), "value_1ply_regret", "gpu_mem_fraction",
+    )
+    _assert_every_call_forwards(
+        _main_src(audit_targets.main), "_net_candidates", "gpu_mem_fraction",
+    )
+
+
+def test_the_forwarding_check_itself_rejects_the_ways_around_it() -> None:
+    """⚑ The passing direction of the gate above, on synthetic `main`s.
+
+    `_assert_every_call_forwards` is the only guard on a seam no behavioural
+    test reaches, so a hole in IT is a hole in the seam. Each case below is a
+    `main` that a first-match presence check would wave through.
+    """
+    fwd = "f(gpu_mem_fraction=args.gpu_mem_fraction)"
+    _assert_every_call_forwards(f"def main():\n    {fwd}\n", "f", "gpu_mem_fraction")
+
+    bad = {
+        "no call at all": "def main():\n    pass\n",
+        "the only call drops it": "def main():\n    f(1)\n",
+        # ⚑ The realistic one: a refactor adds a second pass. A first-match
+        # check waves this through, and `audit_targets.main` has exactly one
+        # `_net_candidates(...)` today, so the hole is invisible in-tree.
+        "a SECOND call site drops it": f"def main():\n    {fwd}\n    f(2)\n",
+        "a hardcoded None": "def main():\n    f(gpu_mem_fraction=None)\n",
+        "a local stand-in":
+            "def main():\n    v = None\n    f(gpu_mem_fraction=v)\n",
+        "the wrong attribute":
+            "def main():\n    f(gpu_mem_fraction=args.batch_size)\n",
+        "a different object":
+            "def main():\n    f(gpu_mem_fraction=other.gpu_mem_fraction)\n",
+        # ⚑ The other realistic one: `audit_targets.main` already rewrites
+        # `args.sf_soft_nodes` in place, so this shape is not hypothetical.
+        "args rewritten underneath it":
+            f"def main():\n    {fwd}\n    args.gpu_mem_fraction = None\n",
+        "a dead decoy carrying the real one, live call dropping it":
+            f"def main():\n    if False:\n        {fwd}\n    f(9)\n",
+        "a never-invoked nested helper carrying it, live call dropping it":
+            f"def main():\n    def _inner():\n        {fwd}\n    f(9)\n",
+    }
+    accepted: list[str] = []
+    for label, src in bad.items():
+        try:
+            _assert_every_call_forwards(src, "f", "gpu_mem_fraction")
+        except AssertionError:
+            continue
+        accepted.append(label)
+    assert not accepted, f"the forwarding check waved through: {accepted}"
 
 
 # --------------------------------------------------------------------------
@@ -990,20 +1087,103 @@ def test_both_rulers_forward_the_fraction_out_of_main() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_device_probe_model_actually_opens() -> None:
+def test_the_device_probe_graph_opens() -> None:
     """The parse-time gate is only real if its probe graph is loadable.
 
-    Pinned opset + ir_version can be invalidated by a future onnx/onnxruntime
-    pair; if that happens this fails loudly instead of the gate degrading into
-    an exception on every CUDA run.
+    The frozen literal can be invalidated by a future onnxruntime; if that
+    happens this fails loudly instead of the gate degrading into an exception
+    on every `--onnx --device cuda` run. ⚑ Blast radius, measured: nothing else
+    is affected — `net_source_from_args` returns on the `--checkpoint` path
+    BEFORE reaching `validate_onnx_device`, and `--device cpu` returns before
+    building any session at all.
     """
     import onnxruntime as ort
 
-    blob = probe_model_bytes()
-    assert len(blob) < 4096, "the probe graph must stay trivially small"
-    session = ort.InferenceSession(blob, providers=[CPU_PROVIDER])
+    assert len(PROBE_MODEL_ONNX) == 76
+    session = ort.InferenceSession(PROBE_MODEL_ONNX, providers=[CPU_PROVIDER])
     assert session.get_providers() == [CPU_PROVIDER]
     assert probe_onnx_device_providers("cpu") == [CPU_PROVIDER]
+
+
+def test_only_onnx_cuda_runs_can_be_hurt_by_the_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe's BLAST RADIUS, pinned rather than argued.
+
+    Freezing the graph trades drift for a new way to break: if some future
+    onnxruntime refuses the literal, the probe raises. That is acceptable only
+    because the reach is narrow, and "narrow" is a measurable claim — so it is
+    measured here, not asserted in a comment.
+
+    `--checkpoint` never reaches `validate_onnx_device` at all, and
+    `--onnx --device cpu` returns from it before building any session. So the
+    exposure is exactly `--onnx --device cuda...`, and `--device cpu` is what
+    `docs/eval_protocol.md` already recommends beside a live trainer.
+    """
+    called: list[str] = []
+    monkeypatch.setattr(net_source_mod, "validate_onnx_device", called.append)
+    seen = _capture_ort_providers(monkeypatch, reported=[CPU_PROVIDER])
+
+    net_source_from_args(_args(checkpoint="x/trainer.pt", device="cuda"))
+    assert called == [], "the --checkpoint path reaches the ONNX device gate"
+    assert seen == [], "the --checkpoint path builds an ORT session"
+
+    # ...and --device cpu returns from the real gate before probing anything.
+    monkeypatch.undo()
+    seen = _capture_ort_providers(monkeypatch, reported=[CPU_PROVIDER])
+    validate_onnx_device("cpu")
+    assert seen == []
+
+
+def test_the_device_probe_graph_matches_its_generator() -> None:
+    """The frozen literal is pinned to a readable generator, not a magic blob.
+
+    The bytes are frozen so the runtime path has no `onnx` import and cannot
+    inherit that package's ir_version default (onnx 1.20.1 stamps 13, which
+    onnxruntime 1.23.2 refuses to open). Freezing trades drift for opacity, so
+    the generator lives here and the two are compared byte for byte.
+    """
+    from onnx import TensorProto, helper
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    graph = helper.make_graph(
+        [helper.make_node("Identity", ["x"], ["y"])], "device_probe", [x], [y],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    model.ir_version = 9
+    assert model.SerializeToString() == PROBE_MODEL_ONNX
+
+
+def test_the_probe_is_built_with_the_REQUESTED_devices_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ The PASSING direction of the device gate — the half nothing else covers.
+
+    Every test around this one exercises the gate REFUSING. None of them
+    notices a probe pinned to `[CPUExecutionProvider]` regardless of `--device`:
+    on this box every session is CPU anyway, so such a probe reports CPU-only,
+    the gate raises, and all the refusal tests still pass. It would ship green
+    and then misfire on a healthy CUDA host — refusing every CUDA run there,
+    with a message about the runtime.
+
+    So the assertion is on the providers the probe HANDS ORT, read at the same
+    boundary as the memory cap: `device_id` must track `--device`.
+    """
+    _fake_providers(monkeypatch, [CUDA_PROVIDER, CPU_PROVIDER])
+    seen = _capture_ort_providers(monkeypatch, reported=[CUDA_PROVIDER, CPU_PROVIDER])
+
+    validate_onnx_device("cuda:1")
+    assert seen == [[(CUDA_PROVIDER, {"device_id": 1}), CPU_PROVIDER]]
+
+    seen.clear()
+    validate_onnx_device("cuda")
+    assert seen == [[(CUDA_PROVIDER, {"device_id": 0}), CPU_PROVIDER]]
+
+    # ...and CPU asks ORT for nothing at all, so it cannot touch a training GPU.
+    seen.clear()
+    validate_onnx_device("cpu")
+    assert seen == []
 
 
 def test_the_parse_time_gate_probes_a_real_session_not_the_compiled_list(

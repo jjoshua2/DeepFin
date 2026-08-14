@@ -179,8 +179,11 @@ Mechanics:
   installs, a CPU-only wheel in the project `.venv` and a GPU wheel under
   `/usr/bin/python3`, so which one a bare `python3` gets depends on venv
   activation). The verdict is read off `session.get_providers()`, twice: a
-  65-byte throwaway probe session at PARSE TIME — before the audit set and
+  76-byte throwaway probe session at PARSE TIME — before the audit set and
   before Stockfish labels anything — and again on the real scoring session.
+  The probe costs one onnxruntime init (150-240ms cold, 20-50ms after) and is
+  paid ONLY by `--onnx --device cuda...`; `--device cpu` and every
+  `--checkpoint` run never build it.
 - Two standing numbers to watch on each report: (search-policy regret) vs
   (SF-soft-target regret) per phase — when search wins everywhere, the
   50k-node MultiPV-40 labeling is no longer worth its CPU bill — and
