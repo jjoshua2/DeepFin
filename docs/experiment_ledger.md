@@ -47054,3 +47054,11 @@ being read off the result afterwards.
 **Still gated on arm C reaching iteration 100** — nothing has been written to the live tree, no merge
 commit exists, and the mandatory `python3 scripts/build_production_extensions.py` (ABI 3 → 4) has not
 run. The live `configs/pbt2_small.yaml` is verified clean against HEAD.
+
+**Flag-existence check on the POST-MERGE script, run now rather than at arena time.** The failure
+`726c069a1` exists to fix was a frozen command naming flags that do not exist, discovered only when it
+was run. Repeating the check against `origin/main`'s `scripts/arena_standard.py --help` (exit 0, 43
+flags parsed): `--candidate --reference --mode --sims --search-shape --games --seed
+--max-concurrent-games --label --pgn-out` — **all ten present**. This does not prove the run
+succeeds; it proves argparse will not reject it, which is the specific way the last frozen command
+died.
