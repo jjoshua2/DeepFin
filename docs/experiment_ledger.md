@@ -47676,3 +47676,55 @@ Nothing else changed: same checkpoints, `--mode matched_sims --sims 32 --search-
 ⇒ Amendment to pin 4, for any future arena: **checkpoint paths that differ only ABOVE the last two
 components are not distinguishable to the PGN writer.** Pass explicit engine names whenever the
 comparands are same-index checkpoints from different runs, which is the normal case for an A/B.
+
+## PR #423 CLOSED from our side — APPROVE, verdict posted to the PR, Josh merges
+
+Head `8d9582b28`, 4 commits, OPEN / not-draft / MERGEABLE, base `main`. Verdict recorded as a PR
+comment (`#issuecomment-5289828227`) rather than only here, because the merge decision is made from
+that page. `origin/main` re-verified unmoved at `2c700dd70`.
+
+**Gates, pytest's own summary lines and real exit codes:**
+
+| gate | commit | result |
+|---|---|---|
+| repo-wide `lint.sh` | merge result `c81a62000` | exit 0 — ruff clean, basedpyright 0/0/0 |
+| full suite | branch `8d9582b28` | exit 0 — **5384 passed**, 11 skipped, 3 xfailed (16:22) |
+| full suite | merge result `c81a62000` | exit 0 — **5510 passed**, 11 skipped, 3 xfailed (18:14) |
+
+Merge result verified as `origin/main` + `8d9582b28` **by containment AND by its tree diff equalling
+the branch's own** — containment alone does not prove the merge introduces nothing extra. GitHub CI
+independently green on the branch (`test` and `lint` both SUCCESS).
+
+**⚑ Branch suite failed on its FIRST run** — `test_pause_window.py::
+test_a_worker_with_no_log_file_says_so_LOUDLY`, "worker survived SIGTERM after 180s", under concurrent
+arena load. Attributed away from the PR three ways, not one: passes in **2.40 s** in isolation (a 75×
+margin, which is the starvation signature), the file and its two collaborators are **byte-identical to
+`origin/main`** on this branch, and the MERGE RESULT passed that same test under the same load. The
+green number above is a **full re-run**, not a re-run of the single test. Second instance of
+[[nice19_breaks_wallclock_bounded_tests]], now from arena load rather than training load, and a second
+independent demonstration of the twelve-kill-file hazard.
+
+**⚑⚑ THE FALSE-GREEN RECURRED ONE LAYER OUT, AND THAT IS THE DURABLE FINDING.** The author correctly
+added `exit $rc` inside `run_gates.sh` — that layer then reported truthfully (`full suite on branch:
+1`). It then invoked the script as `nohup ... ; echo "RUNNER_EXIT=$?"`, and the background-task
+notification reported **"exit code 0"** while the script underneath was correctly reporting FAILURE.
+⇒ **it is not one wrapper that must propagate status, it is EVERY layer between the work and the
+reporter**; fixing the innermost buys nothing if the outermost is re-broken. The only reason this did
+not become a false all-green is that the author **read the file instead of the notification**. Trace
+the path: work → script → invocation → notification; any `echo`, `tee`, `||true` or pipeline on it
+substitutes its own success. See [[background_task_notifications_report_the_wrappers_exit]].
+
+**Two claims explicitly NOT verified**, recorded so they are not later mistaken for tested: the
+`--net` guard is proven against synthetic caches and unit-level `main()` calls, never against a
+freshly regenerated `per_position_277.jsonl` (needs a GPU `audit_targets` run); and the earlier
+assertion that F5 covers `--max-positions N --force-cache-out` was **withdrawn** — the writer records
+the true truncated count, so a 10-row cache stamps validly.
+
+⚑ My own error this round, corrected by the agent: I warned that `origin/main` had moved and the merge
+worktree might be stale. **It had not.** I conflated "the live branch merged main" with "main
+advanced" — `95626ce71` is a live-branch commit contained in no remote. The agent verified rather than
+complying, which is the behaviour the brief asks for and the reason the warning cost nothing.
+
+**Housekeeping owed (a deletion, so reported not done):** the merge-check worktree
+`/home/josh/projects/chess-worktrees/audit-cache-merge` and branch `tmp/merge-check-423` become
+removable once Josh merges.
