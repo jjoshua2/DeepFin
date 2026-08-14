@@ -30,6 +30,22 @@ which COLUMNS to trust — a per-field trust judgement, which is the class of
 judgement that failed here in the first place. Regenerate instead: it is one
 command, and the net is still banked under `data/lc0/`.
 
+⚑ A CORRECTED 4000-row cache is banked at `scratchpad/gates/fix_bt4_4000.jsonl`
+(md5 `aa82d8b96ae105464f494bd690f15a11`). **It is NOT stamped and MUST NOT be
+hand-stamped**, because only half its provenance can be checked:
+
+* its **RULER provenance VERIFIES** — `gap_cp` is a pure function of the frozen
+  audit set and today's ruler, and recomputing it agrees on **4000/4000** rows;
+* its **POLICY-MAP provenance is UNVERIFIED and unverifiable from the file** —
+  `best_move`, `topk`, `exp_regret` and `top1_regret` are functions of the NET'S
+  LOGITS, so confirming which map gathered them needs a GPU forward pass. (61 of
+  its rows have a castle as `best_move`, which is consistent with the fixed map
+  but is not proof: under the buggy map a castle could still hold the max logit.)
+
+Stamping it by hand would assert exactly the half that cannot be checked, inside
+the mechanism built to stop that. Regenerate with the command in `_REGENERATE`
+when a GPU pause window is available, and let the writer stamp it.
+
 **Absence of the stamp is a FAILURE, not a pass.** An "if present, check it"
 guard would silently accept exactly the file that caused this, and would be the
 project's signature defect (a value accepted and then ignored) rebuilt inside
@@ -98,6 +114,11 @@ AUDIT_CACHE_FORMAT = 1
 #: Sentinel key that distinguishes the header record from a data row. A data
 #: row is keyed by `key`; nothing else in the schema uses this name.
 STAMP_FORMAT_KEY = "audit_cache_format"
+
+#: Row count, written by `write_audit_cache` and ENFORCED by `read_audit_cache`.
+#: The stamp otherwise binds only to line 1, so without this a stamp lifted from
+#: a good cache would certify a truncated file, or two caches concatenated.
+ROW_COUNT_KEY = "rows"
 
 _REGENERATE = (
     "regenerate it with:\n"
@@ -325,13 +346,20 @@ def write_audit_cache(
     force: bool = False,
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Write a stamped cache: header record first, then one row per line."""
+    """Write a stamped cache: header record first, then one row per line.
+
+    `rows` is recorded by the WRITER, after `**extra`, so a caller cannot
+    supply a count that disagrees with what was actually written. The reader
+    enforces it — see `read_audit_cache`.
+    """
     ensure_cache_writable(path, force=force)
+    materialised = list(rows)
     stamp = audit_cache_stamp(**dict(extra or {}))
+    stamp[ROW_COUNT_KEY] = len(materialised)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         fh.write(json.dumps(stamp, sort_keys=True) + "\n")
-        for row in rows:
+        for row in materialised:
             fh.write(json.dumps(row) + "\n")
     return stamp
 
@@ -405,8 +433,13 @@ def read_audit_cache_stamp(path: Path) -> dict[str, Any]:
 
 
 def read_audit_cache(path: Path) -> list[dict[str, Any]]:
-    """Stamp-checked cache read. The guard fires before any row is parsed."""
-    read_audit_cache_stamp(path)
+    """Stamp-checked cache read. The guard fires before any row is parsed.
+
+    Also enforces the stamp's row count. The provenance header binds to line 1
+    only, so without this a stamp lifted from a good cache would certify a
+    truncated file, and two stamped caches concatenated would read as one.
+    """
+    stamp = read_audit_cache_stamp(path)
     rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, start=1):
@@ -415,7 +448,28 @@ def read_audit_cache(path: Path) -> list[dict[str, Any]]:
             row: object = json.loads(line)
             if not isinstance(row, dict):
                 raise _reject(path, f"line {lineno} is not a JSON object")
+            if STAMP_FORMAT_KEY in row:
+                raise _reject(
+                    path,
+                    f"line {lineno} is a second provenance header — this looks "
+                    "like two caches concatenated, which the line-1 stamp cannot "
+                    "describe",
+                )
             rows.append(row)
+    declared = stamp.get(ROW_COUNT_KEY)
+    if not isinstance(declared, int):
+        raise _reject(
+            path,
+            f"stamp carries no integer '{ROW_COUNT_KEY}' count "
+            f"(found {declared!r}), so the header cannot vouch for the body",
+        )
+    if declared != len(rows):
+        raise _reject(
+            path,
+            f"stamp declares {declared} rows but the file holds {len(rows)} — "
+            "TRUNCATED, appended to, or carrying a stamp lifted from another "
+            "cache",
+        )
     return rows
 
 

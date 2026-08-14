@@ -15,12 +15,19 @@ Inputs (all keyed by position `key`):
   --bt4    data/lc0/bt4_audit_cache.jsonl              (foreign_net_audit.py)
   --audit  data/audit_set_v1.jsonl                     (for the deep-SF bestmove)
 
-⚑ ``--bt4`` must be a PROVENANCE-STAMPED cache. Its `exp_regret` / `top1_regret` /
-`best_move` columns are only meaningful under the policy map and audit ruler that
-produced them, and the file records neither in its numbers — so this script
-validates the stamp before it opens any other input and REFUSES an unstamped or
-stale cache. It is not a warning: the pre-2026-08-13 banked cache made every BT4
-row this script ever printed wrong, and it looked completely normal.
+⚑ ``--net`` AND ``--bt4`` must both be PROVENANCE-STAMPED caches, and this script
+validates both before it opens any input. Their regret / bucket / move columns are
+only meaningful under the policy map and audit ruler that produced them, and the
+files record neither in their numbers. It is not a warning: BOTH banked defaults
+were contaminated the same way and on the same day (2026-06-26) — the BT4 cache
+made every BT4 row wrong, and ``per_position_277.jsonl`` moved mean ``gap_cp``
+70.68 -> 1212.03 and the criticality bucket on 94/4000 rows, which re-labels the
+BT4 rows too. Guarding one and not the other is worse than guarding neither: the
+provenance banner would then vouch for a cross-ruler join.
+
+``--audit`` is deliberately NOT stamped. It is the frozen deep-SF label set, and
+it is re-parsed through the CURRENT ruler on every read, so it has no baked-in
+ruler that can go stale — it is an input to the ruler, not an output of it.
 """
 from __future__ import annotations
 
@@ -52,15 +59,6 @@ def bucket(gap: float) -> str:
     return CRITICALITY_BUCKET_NAMES[criticality_bucket(gap)]
 
 
-def _load(path: Path) -> dict[str, dict]:
-    out: dict[str, dict] = {}
-    for ln in path.read_text().splitlines():
-        if ln.strip():
-            d = json.loads(ln)
-            out[d["key"]] = d
-    return out
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--net", type=Path, default=Path("data/audit_analysis/per_position_277.jsonl"))
@@ -68,14 +66,22 @@ def main() -> None:
     ap.add_argument("--audit", type=Path, default=Path("data/audit_set_v1.jsonl"))
     args = ap.parse_args()
 
-    # FIRST, before any input is opened: every BT4 column this script prints
-    # (`bt4_exp`, `bt4_top1`, `net_eq_bt4`, `bt4_eq_deep`) is a function of the
-    # policy map and the audit ruler the cache was written under, and neither is
-    # recoverable from the numbers. An unstamped or stale cache stops us here,
-    # at zero cost, instead of producing a plausible wrong table.
+    # FIRST, before any input is opened. BOTH derived caches are validated, and
+    # both must be: `--bt4` supplies the BT4 regret and agreement columns, and
+    # `--net` supplies six of the eight regret rows AND the criticality bucket
+    # every row is filed under — including BT4's. Guarding only one of them is
+    # worse than guarding neither, because the banner printed below would then
+    # vouch for a cross-ruler join. (`--audit` is NOT stamped: it is the frozen
+    # deep-SF label set, re-parsed through the CURRENT ruler on every read, so
+    # it carries no baked-in ruler to go stale. It is an input to the ruler,
+    # not an output of it.)
+    #
+    # Both stamps are checked against the CURRENT versions, so agreeing with
+    # today implies agreeing with each other — no third cross-check needed.
+    net_stamp = read_audit_cache_stamp(args.net)
     stamp = read_audit_cache_stamp(args.bt4)
 
-    net = _load(args.net)
+    net = read_audit_cache_by_key(args.net)
     bt4 = read_audit_cache_by_key(args.bt4)
     deep_best: dict[str, str | None] = {}
     deep_wdl: dict[str, tuple[float, float, float]] = {}
@@ -88,7 +94,9 @@ def main() -> None:
 
     keys = [k for k in net if k in bt4]
     print(f"joined {len(keys)} positions (net∩bt4)")
-    print(f"bt4 cache: {args.bt4} [{stamp_summary(stamp, ('net', 'policy_map_version', 'audit_ruler_version'))}]\n")
+    print(f"net cache: {args.net} [{stamp_summary(net_stamp, ('producer', 'rows'))}]")
+    print(f"bt4 cache: {args.bt4} [{stamp_summary(stamp, ('net', 'rows'))}]")
+    print(f"provenance (both): {stamp_summary(stamp)}\n")
 
     # Per bucket: accumulate regret + agreement counters.
     acc: dict[str, dict[str, float]] = {}
