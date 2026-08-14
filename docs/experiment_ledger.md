@@ -46958,3 +46958,66 @@ instrument is more efficient would silently weaken the instrument every verdict 
 Pins 1-6 verbatim. #189 (no arena warmup) remains wall-clock-only under `matched_sims` — a sims
 budget cannot be eaten by latency. Seed 42 still gives all three contrasts the same 800-opening
 pairing.
+
+### Amendment #2 addendum — three merge prerequisites MEASURED, one new confound found
+
+All CPU-only, run while the GPU is released, in an isolated worktree
+(`/home/josh/projects/chess-wt/mainschema`). The live tree was never checked out.
+
+**(i) The category-(a) boot hazard is CLEARED.** Dry-run of a COPY of the live yaml against
+`origin/main`'s schema, exactly as CLAUDE.md prescribes:
+`flatten_run_config_defaults` → **317 keys, OK**; `TrialConfig.from_dict` → **OK**
+(`lr=3e-05`, `gumbel_c_scale=0.1`, `gumbel_policy_temp=1.5`, `mcts_simulations=100`,
+`gumbel_topk=16`). ⇒ restarting onto merged code will not fail to boot on an unknown key.
+
+**(ii) ⚑⚑ THE MERGE IS NOT CLEAN, AND THE ONE CONFLICTED FILE IS `configs/pbt2_small.yaml`.**
+A `--no-commit --no-ff` test merge in the worktree returns exit 1 with exactly one conflict, in the
+live config. Two hunks, and **neither "ours" nor "theirs" is a correct resolution**:
+
+| hunk | live (`ops/live-20260725`) | `origin/main` | correct resolution |
+|---|---|---|---|
+| `diff_focus_norm_enabled` | **`true`** — DEPLOYED, tasks #171/#173 | `false` (PR default-off) | **KEEP LIVE'S `true`** |
+| `diff_focus_norm_shared` | absent | **`false`** (new key, #408) | **TAKE MAIN'S key + comments** |
+
+⇒ **the resolution is a HYBRID and must be done by hand.** Taking `main` wholesale would silently
+revert a deployed, measured experiment with no key edited and no error raised — the
+[[live_yaml_branch_checkout_trap]] wearing a merge-conflict costume. Taking `ours` wholesale would
+drop a new key that the merged code defines, which is the safe direction but leaves the file lying
+about the realized value. Resolve, then re-run the (i) dry-run on the RESULT before writing it live.
+
+**(iii) Search-shape parity between the arm yamls and the live yaml is VERIFIED, so pin 3 holds.**
+The arms do **not** train under `configs/pbt2_small.yaml` — each runs its own
+`scratchpad/tier13/arm_{A_off,B_linear,C_residual_mish}.yaml`, while the arenas read
+`PRODUCTION_CONFIG` (the live file). Those could have drifted apart and nothing would have said so.
+Measured: all four files carry **`mcts_simulations: 100`, `gumbel_topk: 16`, `gumbel_c_scale: 0.1`,
+`gumbel_policy_temp: 1.5`** identically. The arm yamls differ from live **only** in `work_dir`, the
+salvage donor, `policy_embedding_mode`, `distributed_inference_aot_dir: ''` (AOT off in all arms) and
+`distributed_async_test_eval: false`. ⇒ the arena's training shape is the shape the arms trained
+under. ⚑ Corollary: the yaml merge conflict above **cannot** reach the arms; it reaches only the
+arenas, via `PRODUCTION_CONFIG`.
+
+**(iv) ⚑ NEW CONFOUND, created by the pause — arm C gets a SECOND diff-focus warm-up that A and B
+never had.** `diff_focus_norm_warmup: 1024` is **per ESTIMATOR, and one estimator is built per
+selfplay THREAD** (`diff_focus_norm_shared` is false everywhere, so this is today's behaviour on both
+branches — the merge does not change it). At `distributed_worker_selfplay_threads: 32` across 4
+workers that is 128 × 1024 = **131,072 policy-bearing plies of warm-up per restart (~8.7% of the 1.5M
+window)**, each estimator seeing 1/32 of its worker's ply rate so it also takes **32× the wall clock**
+— measured at **~37 min**, i.e. roughly **6-7 iterations** at arm C's 351 s/iter. Warm-up rows are
+recorded on the **UNNORMALIZED** branch, with `diff_focus_slope 3.0` against the moved KL scale and an
+unclipped `priority` (measured on the live window: ~160k of 1,498,168 rows unarmed, priorities to
+**17.59 against a clip of 8.0**).
+
+Arms A and B each paid this **once**, at launch. Arm C's resume from iter 79 makes it pay **twice**.
+⇒ **Confounds line for Tier-13, pre-committed now:** iterations **80-86 of arm C** are excluded from
+every per-iteration cross-arm comparison (widened from the iter-80-only exclusion in section A, which
+covered the drain transient alone). ⚑ It is **not** fully excludable: those rows enter arm C's replay
+window and therefore its iter-100 weights, which is what the arenas read.
+
+**Decision, and the reasoning:** ACCEPT the confound; do not restart arm C from iteration 1. The
+effect is ~8.7% of one window's rows, in kind identical to what A and B each absorbed at their own
+launch, and re-running costs ~10 GPU-hours to remove it. What it does buy is a caveat: if the C−A and
+C−B contrasts land in the trajectory band (`elo_ci95[0] > 0` and `elo < +40`), the second-seed
+re-run that the pinned rule already calls for should launch arm C **without** an intervening pause,
+so the seed-2 arm carries one warm-up like A and B. Recorded here rather than decided later, because
+after the readout this choice would be conditioned on its own outcome
+[[never_condition_a_control_on_its_own_outcome]].
