@@ -46699,3 +46699,67 @@ fixture or assertion that SEPARATES the two, not more tests."**
 usually a missing test, it is an assertion satisfied by BOTH the correct and the weaker
 implementation, most often because the FIXTURE cannot distinguish them. **Write the weaker
 implementation first and ask what fixture separates it.**
+
+---
+
+## 2026-08-13 — PR #423 REVIEW: the guard WORKS, and it is on the wrong door
+
+**Reviewed the MERGE RESULT** (`2c700dd70` + head = `918e52b99`), not the PR head. **Direct answer:
+the guard cannot be satisfied by a file it should reject** other than by deliberate hand-stamping —
+stampless, versionless-header, mismatched-version, wrong-format, empty and missing files are all
+refused at all three read entry points, with no override parameter.
+
+**⚑ Ordering PROVEN BY OBSERVATION, not by an exception-type argument.** The reviewer replaced the
+author's reasoning with `sys.addaudithook` on `open`, with the real 2.6 MB `--net` and 4.2 MB
+`--audit` files present: both scripts refuse having opened **nothing but the cache's first line**, and
+the banked file is byte-identical afterwards. Stamp derivation costs 7 ms cold. 25 / 254 tests and
+no-arg lint 0/0/0 all reproduce exactly. **12 reviewer mutations, 8 caught** — including N3 (*a
+DIFFERENT stamp accepted, not merely a missing one*) and N4 (ruler half never compared).
+
+### ⚑⚑ F1 — THE REPORT'S OTHER DEFAULT INPUT IS CONTAMINATED ON THE SAME AXIS AND IS UNGUARDED
+`audit_compare_buckets.py --net` defaults to `data/audit_analysis/per_position_277.jsonl`, dated
+**2026-06-26 — the same day as the file this PR deleted** — and it goes through the **unguarded**
+`_load()`. Recomputed against the audit set: `gap_cp` differs on **150/4000** rows, `best_cp` on
+212/4000, the criticality **bucket moves on 94/4000**, and mean `gap_cp` goes **70.68 → 1212.03** —
+the same blow-up and the same cause as the PR's own 70.36 → 2006.85. **It supplies 6 of the 8 regret
+rows AND the bucket assignment for every row, including BT4's.** ⇒ a regenerated, correctly-stamped
+BT4 cache joined against it produces a **cross-ruler table printed under a validated-provenance
+banner** — strictly worse than no guard, because the banner now vouches for it.
+
+### F2 — the STRUCTURAL (AST) leg has ZERO test coverage and carries ~98% of the encoding provenance
+N1/N9/N9b/N10/N10b all leave 25/25 green: the author's mutation table exercises the behavioural,
+table and constants legs and **never the AST leg**. The behavioural probe touches only **73 of 4672
+slots (1.6%)** and `move_to_index` has no table leg, so the rest rests on the AST digest alone.
+Reviewer wrote 3 tests, confirmed they pass on the PR and kill all five mutants, left at
+`/home/josh/projects/chess-rv423/tests/test_rev423_proposed_gaps.py`.
+
+### F3 — M6 IS NOT AN EQUIVALENT MUTANT, and the equivalence claim is where the gap hid
+The author's reasoning holds for the cap and edges (probe max uncapped regret is 199,200 cp, so any
+realistic cap is behaviourally visible). It **fails for `CRITICALITY_BUCKET_NAMES`**, because
+`criticality_bucket` returns an **int index** — the behavioural leg is structurally blind to the
+names. Measured by digest: shipped `d41fab7c → beadf530` (CHANGES), M6 `d41fab7c → d41fab7c` (NO
+CHANGE). ⚑ **An "equivalent mutant" declaration is exactly where a real coverage gap gets filed away**
+— it was worth asking the reviewer to adjudicate it rather than accepting it.
+
+### F4 — both file-existence claims in the delete-vs-replace section are inverted, and one is MY doing
+`scratchpad/gates/fix_bt4_4000.jsonl` **exists** (4000 rows; its `gap_cp` agrees with today's ruler
+on **4000/4000**) and the claimed byte-identical copy of the original **cannot be found**.
+⚑ Honest attribution: the "copy survives" claim was **never** true (it was a symlink to the file
+being deleted — see `41443fbf8`), while "the replacement does not exist" **was** true when written
+and became false **six minutes later because the main session recovered it** from another session's
+`/tmp` scratchpad. The delete reasoning is sound for the deleted file; **it does not transfer to
+`fix_bt4_4000.jsonl`, whose ruler provenance verifies but whose policy-map provenance cannot without
+re-running the net** — which is precisely why it must not be hand-stamped.
+
+### F5 (low) — the stamp binds to LINE 1, not to the rows
+A stamp claiming `rows: 4000` over a 2-row file is accepted, as are rows concatenated from two
+caches. The writer already records `rows`; the reader never checks it. Two-line tightening.
+
+**Accepted on trust (unverifiable — the file is deleted):** BT4 23.79 vs 20.08, `gap_cp` 70.36 vs
+2006.85, the 296-move castling count. ⚑ **The SHAPE is independently corroborated**: the reviewer's
+recomputation of the sibling June-26 dump reproduces the same magnitude of ruler shift.
+**Not verified:** end-to-end regeneration (needs a GPU forward pass), and whether
+`fix_bt4_4000.jsonl`'s `best_move`/`topk` came from the FIXED mapper.
+
+⇒ **NOT MERGED.** F1 is the decisive one: a guard that certifies one input of a two-input join,
+while the other is contaminated the same way, converts a silent error into an endorsed one.
