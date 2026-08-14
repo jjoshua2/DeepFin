@@ -162,6 +162,32 @@ scorer, and `E[search_sig - sf_sig]` on fresh shards (the ratchet the audit's S1
   would make the priority distribution a second changed quantity.
   (`selfplay/finalize.py:1117` and `selfplay/resume.py` also touch the field; the first IS the
   stored target and the second is serialization, so neither is a consumer.)
+- **⚑⚑ BLAST RADIUS IS 31% OF THE WDL TARGET ON *EVERY* ROW — NOT 4% OF ROWS.**
+  The table above is correct and its "~4%" is correct *for the three SELFPLAY-side consumers*,
+  which read the raw difference `W - L`. It is the wrong number to carry into the readout,
+  because the row above it dismisses `selfplay/finalize.py:1117` as "IS the stored target ...
+  not a consumer". True as far as it goes — 1117 is the WRITE site — but the value it writes
+  is read on the TRAINING side, and that read is not `W - L`:
+
+  | reader | reads | production weight |
+  |---|---|---|
+  | `train/losses.py:948,984` | **the FULL `[W, D, L]` distribution** (`search_wdl_probs`), blended as `target = game_frac*game_oh + sf_frac*sf_probs + search_frac*search_probs` | **`search_wdl_frac: 0.31`** |
+  | `train/targets.py:74,90` | `_wdl_expected_score` = `(W - L)/(W + D + L)` | same 0.31, categorical head |
+
+  ⇒ **this arm is named `search_wdl_DRAW_mode` and the WDL head trains on the DRAW component
+  directly.** Changing D at fixed `W - L` leaves all three selfplay consumers bit-identical and
+  still moves 31% of the WDL head's target distribution on 100% of rows. That is almost
+  certainly the arm's PURPOSE, not a defect — but the prereg must say so, because "~4% of rows"
+  is the number a later reader will quote, and it understates the change by more than an order
+  of magnitude. The categorical read is the milder of the two: it is scale-invariant, so if the
+  stored triple is renormalised to sum 1 it collapses to `W - L` and is genuinely inert.
+  **Pre-launch check, one line, and it decides which of the two rows above is live:** assert on
+  real stored rows whether `search_wdl` sums to 1. If it does, `targets.py` is inert and only
+  the `losses.py` row bites; if it does not, both do.
+  This is the [[check_the_resource_is_binding]] question asked of a target instead of a
+  resource: not "is the field read" (a presence check) but "what does the reader do with it,
+  and at what weight".
+
 - **⚑ VOIDS NOTHING on the `wdl_regret` series.** That series is a net signal only while the
   SEARCH config is frozen. This flag touches none of `gumbel_c_scale`, `gumbel_policy_temp`,
   `mcts_simulations`, `gumbel_topk` or the root transform, and does not touch move selection
