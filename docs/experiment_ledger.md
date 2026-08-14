@@ -47886,3 +47886,95 @@ shaping up as neither variant is distinguishable from off") and the third contra
    contention costs wall clock only. Training has no such protection (SF labelling at nice 19 on the
    critical path). The #423 gates ran concurrently with these arenas on that basis and the three rows
    above are unaffected.
+
+---
+
+## #206 PREREG — the owed decider: does our ACTUAL SEARCH re-rank, or is it capped?
+
+Written 2026-08-14 **before the run**, per protocol rule 1. Authorized by Josh's "after the arena
+readout run the #206 decider" (`a2e23a84c`).
+
+### Hypothesis
+The argmax deficit (`ours` top-1 **43.01** cp repeat-fill / **47.34** fen_only, vs BT4 20.08) is a
+SELECTION failure whose selector is the value head. If the value head can re-rank the 16 root
+candidates it is handed, the SEARCH's chosen move is much better than the raw prior argmax. If it
+cannot, every search-side lever is capped and the fix is training-side.
+
+### The instrument — an EXISTING one, not a new one
+`scripts/audit_targets.py` already scores candidate **(a) raw policy forward** and candidate
+**(d) production training search** on the SAME positions, under the SAME input encoding, in ONE run,
+emitting per-position `top1` via `--dump-per-position`. So the contrast is **paired by construction**
+and needs no new rig. Candidate (b) (PLAY search) comes along free as a secondary.
+
+**Net, pinned by CONTENT not by name:**
+`data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218/trainer.pt`, **step 79861**, weights md5
+**`9fd7b59e7a138fe6666cbc804e70be26`**. Verified bit-identical to the live tune dir's
+`checkpoint_000218` — and ⚑ **`data/ratchet/snapshots/ck_2026-07-29_iter218.pt` is a DIFFERENT NET**
+(step 71042, md5 `bb20d58f…`). The `iter218` name collides across trials; the banked 08-12 snapshot is
+used because Ray prunes the live tune dir [[same_name_different_population]].
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218/trainer.pt \
+      --config configs/pbt2_small.yaml --input-encoding fen_only \
+      --device cuda --rl-sims 100 --max-positions 0 --seed 42 \
+      --dump-per-position scratchpad/decider206/per_position.jsonl \
+      --out-dir scratchpad/decider206
+
+All eleven flags verified present on the live-branch script before being written here
+[[a_required_grep_must_be_run_before_it_is_written]].
+
+### ⚑ DEVIATION FROM THE PRE-COMMITTED SCOPE, AND WHY — n is 4000, not "200-300"
+`a2e23a84c` scoped this at **200-300 positions**. **That n cannot decide this n's own threshold.**
+Per-position `top1_regret` has SD **113.1** (measured on the banked 4000-row dump; the banked
+ours−BT4 paired contrast implies a paired SD of **115.5**):
+
+| n | 95% half-width @ paired SD 115 |
+|---|---|
+| 200 | **±15.9 cp** |
+| 300 | **±13.0 cp** |
+| 1000 | ±7.1 cp |
+| **4000** | **±3.6 cp** |
+
+The rule must separate **43 from 25 — an 18 cp effect**. At n=300 the CI half-width is 13 cp, so a
+true collapse and a true null produce OVERLAPPING intervals and the decider decides nothing. This is
+[[compute_instrument_resolution_before_the_threshold]] firing on a threshold I wrote myself. Full set
+(4000) costs ~30-40 min of otherwise-idle GPU. **The threshold is unchanged; only n moves, and it
+moves in the direction that makes the pre-committed rule decidable.**
+
+### ⚑ WHICH BASELINE — the history condition, pinned BEFORE the run
+43.01 is the **repeat-fill** number; 47.34 is **fen_only** (`chess.Board(fen)`, empty move stack).
+`audit_targets --input-encoding fen_only` is the fen_only family, so **(a) must reproduce ≈47.34, not
+43.01**. Choosing fen_only because it is the family both banked numbers can be checked against and it
+is the script's default; the run is paired, so the arm-vs-arm delta is immune to the choice either way.
+
+**POSITIVE CONTROL, and it is a STOP condition:** candidate (a)'s mean `top1` must land within
+**±1.0 cp of 47.34**. That is a reproduction of a banked number through a different script, so it
+tests the whole pipeline — checkpoint identity, encoding, position order, ruler join. **If it misses,
+the run is discarded and no verdict is read**, because a search number computed off a pipeline that
+cannot reproduce its own argmax baseline is [[a_gate_that_cannot_fail]] in reverse: a number that
+looks fine and means nothing.
+
+### PRE-COMMITTED VERDICT RULE (thresholds unchanged from `a2e23a84c`)
+Primary statistic: **paired mean of (d)−(a) per-position `top1`, 95% CI by paired bootstrap
+(10,000 resamples, seed 42)**, n=4000, plus the paired **`top1_agree`** rate for a cap-free second
+view [[bank_the_dump_not_just_the_number]].
+
+- **RE-RANKS** ⇔ (d) mean top1 **≤ 30 cp** AND the paired delta CI excludes 0 on the improving side.
+  ⇒ the value head IS re-ranking; the residual deficit is policy/target, and the N1 mate-fold target
+  defect plus the value-head fit gap are the live work.
+- **CAPPED** ⇔ (d) mean top1 **≥ 40 cp**, i.e. the paired improvement is < ~7.3 cp.
+  ⇒ the value head cannot rank the 16 candidates it is handed. **Every search-side lever is PROVABLY
+  CAPPED** and `gumbel_c_scale` / `gumbel_policy_temp` tuning is closed as a strength route.
+- **AMBIGUOUS** ⇔ (d) lands in **(30, 40)**. Reported as ambiguous and NOT resolved by picking a side;
+  the follow-up is the `--input-encoding stored` re-run, which is the production-faithful encoding.
+
+Search shape is production, read off the live yaml, NOT assumed: `mcts_simulations: 100`,
+`gumbel_topk: 16`, `gumbel_c_scale: 0.1`, `gumbel_policy_temp: 1.5`. ⚑ `add_noise=False` on every
+profile is `audit_targets`' own standing deviation from live selfplay (a non-deterministic ruler is
+worse than a slightly idealised one) — it is a property of the instrument, not of this run.
+
+### What this CANNOT conclude
+Regret cp is **not Elo** ([[losses_are_decoupled_from_strength]]); a CAPPED verdict bounds the search
+levers on the AUDIT ruler, which rewards agreement with SF, and does not license any claim about play
+strength. And the audit set has **no history and no castling rights**
+[[audit_set_has_no_history_or_castling]], so this measures the search on FEN-only inputs.
