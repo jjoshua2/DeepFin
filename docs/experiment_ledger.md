@@ -47728,3 +47728,39 @@ complying, which is the behaviour the brief asks for and the reason the warning 
 **Housekeeping owed (a deletion, so reported not done):** the merge-check worktree
 `/home/josh/projects/chess-worktrees/audit-cache-merge` and branch `tmp/merge-check-423` become
 removable once Josh merges.
+
+## Tier-13 CONTRAST 1 of 3 — B (linear) vs A (off): **NULL**
+
+Final JSONL row, banked to `scratchpad/tier13/banked/arena_rows.jsonl`. Not a rolling read: the log
+printed a running Elo of +2.7 [-23.0, +28.5] at 255 pairs and it was deliberately left unread
+[[rolling_arena_optional_stopping_faked_112_elo]].
+
+| | |
+|---|---|
+| **Elo** | **+12.17, 95% CI [−2.14, +26.52]** |
+| score | 0.5175 |
+| pentanomial | WW 116 · WD_DW 155 · DD_WL 289 · LD_DL 149 · LL 91 |
+| games / pairs / truncated | **1600 / 800 / False** |
+| config_hash | `b588d276f062` |
+
+**PINNED VERDICT: NULL — the CI spans zero.** Not a kill (`elo < −15` is false), not a trajectory
+(`elo_ci95[0] > 0` is false), not a win. `policy_embedding_mode: linear` is **not distinguishable from
+off** at 1600 games. Recorded by the rule frozen in `726c069a1`, not by reading the point estimate.
+
+**Pin 4 satisfied in full:** 1600 games, 800 pairs, `truncated: false`, and the two DISTINCT full
+checkpoint paths present in the row. **Pin 3:** `config_hash b588d276f062` matches the merged live
+yaml's sha256 prefix recorded before launch.
+
+⚑ **The power prediction held.** `44885` computed a median half-width of **±15.5 Elo** for an
+800-pair arena from 71 banked rows; realized here is **±14.33**. So the instrument is behaving as
+characterised, and this null is a real null at this resolution rather than a wide-CI artifact — an
+effect of the observed +12.17 size would need roughly **2.7×** the games to resolve, which is the
+honest cost of chasing it.
+
+**PGN verified sound for the pooled fit:** distinct player names (`arm_A_iter100` / `arm_B_iter100` —
+the collision the writer refused earlier), `PairId` / `ConfigHash` / `GitSha` / `ArenaMode` tags all
+present. 2.98 MB. Contrast 2 (C vs B) started immediately.
+
+**No overall Tier-13 verdict yet** — the Ordo pooled fit and the (B−A)+(C−B) vs (C−A) transitivity
+check both need all three contrasts, and reading a partial round-robin is the same optional-stopping
+error one level up.
