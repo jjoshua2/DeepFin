@@ -108,6 +108,130 @@ the encoding stored in the checkpoint itself.
   rates; if a candidate's effect is smaller than that, more games — not a
   tighter prior — is the only honest fix.
 
+## Pooled multi-player ratings (Ordo) — when 3+ arms play a round robin
+
+A paired arena answers ONE A/B. For three arms (Tier-13 A/B/C) it answers three
+of them separately and cannot use the indirect comparisons. Ordo fits all
+players jointly from pooled PGN, models white advantage and draw rate, and
+tolerates unequal pair counts per matchup.
+
+**Produce the PGN**: `scripts/arena_standard.py --pgn-out <file>` (default OFF;
+the run is unchanged when it is unset). **Fit it**:
+`PYTHONPATH=. python3 scripts/ordo_pooled_fit.py <pgn>... --anchor <name>`.
+Ordo lives at `~/local_engines/ordo/ordo` (built from source, v1.2.6,
+commit `17eec774`); it is NOT in this repo.
+
+What was measured, on synthetic paired-opening data at known ratings:
+
+- **Ordo's point estimate matches ours.** On independently simulated
+  two-player games, Ordo's rating difference and `arena_standard`'s pentanomial
+  Elo agree to a mean of +0.4 Elo (max 1.7 over 30 reps at 400 games). Both
+  estimators are unbiased, so a MATERIAL gap between them is a bug, not a
+  modelling choice. This is the real agreement test — the games are fresh
+  draws, not derived from either estimator's output.
+- **⚑ The BANKED-row comparison is a check on `-z`, NOT an agreement test.**
+  Reconstructing three banked arena rows from their pentanomial counts
+  reproduces the banked Elo to 0.04 Elo (+49.00 vs +48.96, +21.60 vs +21.57,
+  −3.50 vs −3.47) — but that is close to tautological and must not be quoted as
+  independent corroboration. **Measured:** for two players with balanced
+  colours, Ordo's rating is a function of TOTAL SCORE alone — holding the score
+  at 0.57 and sweeping the draw fraction from 0.10 to 0.75 returns **exactly
+  49.00 every time**. Pentanomial Elo is likewise a function of total score, and
+  a pentanomial reconstruction preserves total score exactly, so the two must
+  agree whenever the SCALE is right. What the check therefore falsifies is the
+  scale constant, and it does that with ~10× margin: the same data reads
+  **+49.00 at `-z 200.2409` and +49.40 at Ordo's default `-z 202`**, against a
+  banked +48.96. It also means the DD/WL reconstruction ambiguity cannot move
+  the point estimate — the earlier caveat about it was over-cautious.
+- **Ordo cannot exploit our mirrored pairs.** Its entire per-game state is
+  `{whiteplayer, blackplayer, score}` (`mytypes.h:90`), and `-s` is a
+  PARAMETRIC Monte Carlo that regenerates every game independently from the
+  fitted model (`sim.c: simulate_scores`) — not a bootstrap. BayesElo is worse
+  still: it condenses games to per-opponent colour-split counts
+  (`CCondensedResults.h`). Neither can see an opening.
+- **The cost of that is small for a balanced book and large for an unbalanced
+  one.** 95% CI width, independent-games vs paired, as per-opening colour bias
+  grows: 1.00 (0 Elo), 1.02 (60), 1.07 (120), 1.17 (200), 1.31 (300), 1.53
+  (450). Production plays a UHO book, so this is not negligible.
+- **⚑ Read the PAIRWISE CONTRAST row, not the two per-player rows.** "Is A
+  better than B" is a contrast, and its interval is NOT recoverable from two
+  per-player intervals — the players' errors are correlated because they are
+  fitted jointly from overlapping games, and the sign of that correlation
+  depends on the anchoring. Measured on the same 1000-game 3-arm file:
+  under `--anchor armC` the per-player halfwidths are 25.5 / 0 / 23.6, under
+  pool-average anchoring they are 14.7 / 15.2 / 12.3 — **while the A−B contrast
+  is 20.3 and 20.4 respectively.** The contrast is invariant to the anchoring;
+  the per-player numbers are an artifact of a reporting choice, and under
+  pool-average anchoring they understate the contrast by ~2×. `ordo_pooled_fit`
+  prints the contrasts because that is the number a reader acts on.
+- **The fix is a pair-level block bootstrap**, which `ordo_pooled_fit.py` does:
+  Ordo's joint fit for the point estimates, then resampling whole PAIRS,
+  stratified by matchup and preserving each matchup's own pair count.
+  Resampling pairs pooled across matchups would perturb the design, not the
+  data. Coverage of the true value measured at 36/40 = 0.90 ± 0.05 (nominal
+  0.95, n=40 — reassuring, not conclusive).
+- **Pooling BUYS precision when you need all three answers.** In a 3-arm round
+  robin, Ordo's A−C estimate (using the A−B and B−C games too) had true SD
+  10.57 vs 13.27 for pentanomial on the A−C games alone — same precision for
+  ~37% fewer games. ⚑ But if A−C is the ONLY question, spending the whole
+  budget on A vs C directly still beats pooling.
+
+**⚑ Ordo flags that are not optional.**
+
+- `-M` (force maximum likelihood) is **required** whenever `-D` (auto draw
+  rate) is combined with `-s`. Without it Ordo can fail to converge on an
+  unlucky SIMULATED replication and spin forever: measured **1/30 datasets hung
+  at `-s 1000`**, 0/30 with `-M`, 0/30 with a fixed `-d`. The sim RNG is
+  fixed-seeded (`main.c:981`), so a hang is deterministic per dataset — rerunning
+  will not clear it.
+- `-z 200.2409`, not the default 202. Ordo's default puts it on
+  invbeta = 202 / −ln(1/0.76−1) = 175.2447 while our Elo is
+  −400·log10(1/p−1), i.e. 400/ln(10) = 173.7178 — Ordo's number is **0.88%
+  larger** for the same score unless rescaled.
+- Ordo's `ERROR` column is `sdev × confidence2x(0.95)` ≈ **1.96 σ**
+  (`report.c:214`), i.e. already a 95% margin. Comparing it to a 1-σ standard
+  error overstates its width by ~2× — verified by scaling `-F`.
+
+**⚑⚑ Incremental fitting is VISIBILITY, not a verdict.** "Use all the games
+without each pair being finished" is operationally right and the bootstrap
+gives correct intervals *conditional on the pair counts in hand* — but reading
+the verdict at whichever refit looks good is optional stopping, which has
+already produced a +112 Elo read on a null and inflated a banked +239.5 to
++245.1 here. So: **pre-commit the total pair count per matchup and the read
+point before launching**; look at partial fits freely for *operational* checks
+(is an arm crashing, are counts advancing, has the missingness flag tripped)
+and never for the sign or size of the effect.
+
+**⚑ A bootstrap cannot fix informative missingness.** If pairs complete faster
+in one matchup for a reason correlated with the arms, the pairs you HAVE are
+that matchup's FAST pairs — systematically more decisive — and resampling them
+returns a tight interval around a biased number. `ordo_pooled_fit.py` therefore
+ALWAYS runs a completion-order-vs-outcome check and flags it (exit code 2);
+`--pgn-out` records `Plies` and `GameDurationSec` per game so the check has
+something to test. A promotion gate's apparent −26 Elo per publish was once
+exactly this artifact, worth ~+50 Elo in the other direction.
+
+**The guard's false-positive rate is corrected and MEASURED.** It runs two
+tests per matchup and ORs across matchups, so uncorrected it is a family of
+2×M tests at α=0.05. Measured on 400 true-null 3-arm datasets (outcomes drawn
+independently of completion order): **0.273 ± 0.022 uncorrected** — better than
+one clean fit in four told "do not read a verdict", which trains the operator
+to ignore it. With the Holm step-down correction, applied ONCE over the whole
+family rather than per matchup: **0.052 ± 0.011** against a nominal 0.05.
+Reproduce with `scratchpad/fpr_measure.py <n_datasets> <n_perm>`, which calls
+the shipped `completion_bias_report` rather than a copy of it.
+
+⚑ **That rate is GRID-DEPENDENT — quote it with its `n_perm`.** The same
+harness measures **0.033 ± 0.009 at n_perm=300**. Holm's strictest threshold is
+α/m = 0.05/6 = 0.00833, while attainable permutation p-values are k/(n_perm+1):
+at n_perm=1000 the largest usable k is 8 (region 0.0080), at n_perm=300 it is 2
+(region 0.0066). The shipped default n_perm=2000 gives 0.0080, indistinguishable
+from 1000, so **0.052 is the rate the tool actually ships with**. A coarse grid
+can only lower the rate, never inflate it — it costs power, not safety. Two
+independent measurements of this number disagreed until the grid was pinned
+down, which is exactly why it is stated with its grid rather than as a bare
+number.
+
 ## Tracking table: holdout delta vs arena Elo
 
 | date | candidate | reference | Δ test_policy_loss | Δ test_wdl_loss | Elo (matched_sims) | Elo (matched_time) | notes |

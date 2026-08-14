@@ -40,11 +40,23 @@ import shlex
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import chess
 import numpy as np
+
+from chess_anti_engine.eval.arena_pgn import (
+    ArenaGame,
+    ArenaPgnWriter,
+    engine_name_from_checkpoint,
+)
+
+# Called once per FINISHED game when --pgn-out is on, else None. Keyword-only so
+# the three play loops (rolling / chunked / matched_time) cannot silently pass
+# these positionally in different orders.
+PgnSink = Callable[..., None]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PRODUCTION_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
@@ -664,6 +676,8 @@ def play_paired_games_matched_sims(
     volatility_candidate: dict[str, float] | None = None,
     syzygy_tablebase: object | None = None,
     tb_max_pieces: int = 6,
+    pgn_sink: PgnSink | None = None,
+    pair_id_offset: int = 0,
 ) -> list[float]:
     """Play each opening twice (colors swapped) and return per-pair scores.
 
@@ -693,22 +707,48 @@ def play_paired_games_matched_sims(
 
     boards: list[chess.Board] = []
     a_plays_white: list[bool] = []
+    start_fens: list[str] = []
+    start_offsets: list[int] = []
     for opening in openings:
-        boards.append(opening.copy())
-        a_plays_white.append(True)
-        boards.append(opening.copy())
-        a_plays_white.append(False)
+        for a_white in (True, False):
+            boards.append(opening.copy())
+            a_plays_white.append(a_white)
+            # Captured BEFORE play so the PGN can replay from the book position
+            # rather than from the standard start: move_stack carries the book's
+            # own moves too, and slicing at this offset is what separates them.
+            start_fens.append(opening.fen())
+            start_offsets.append(len(opening.move_stack))
 
     g = len(boards)
     done = [False] * g
     adjudicated: list[str | None] = [None] * g  # Syzygy-adjudicated result per game
+    emitted = [False] * g
     t0 = time.time()
+
+    def _emit(i: int, termination: str, result_override: str | None = None) -> None:
+        if pgn_sink is None or emitted[i]:
+            return
+        emitted[i] = True
+        res = result_override or adjudicated[i] or boards[i].result(claim_draw=True)
+        mv = tuple(boards[i].move_stack[start_offsets[i]:])
+        pgn_sink(
+            pair_id=pair_id_offset + i // 2,
+            half=i % 2,
+            a_is_white=bool(a_plays_white[i]),
+            start_fen=start_fens[i],
+            moves=mv,
+            result=res,
+            termination=termination,
+            plies=len(mv),
+            duration_s=time.time() - t0,
+        )
     for ply in range(int(max_plies)):
         for i in range(g):
             if done[i]:
                 continue
             if boards[i].is_game_over(claim_draw=True):
                 done[i] = True
+                _emit(i, "rules")
             elif syzygy_tablebase is not None:
                 # Adjudicate the instant a game reaches a covered (<=N-man) position
                 # — kills long endgame tails. Reuses match_vs_uci's WDL probe.
@@ -716,6 +756,7 @@ def play_paired_games_matched_sims(
                 if _tb is not None:
                     adjudicated[i] = _tb
                     done[i] = True
+                    _emit(i, "syzygy")
         active = [i for i in range(g) if not done[i]]
         if not active:
             break
@@ -757,6 +798,36 @@ def play_paired_games_matched_sims(
         ]
 
     game_scores = [_game_score(i) for i in range(g)]
+    # Sweep up whatever the ply loop did not already emit. Two DIFFERENT cases
+    # live here and conflating them corrupts the file:
+    #
+    #  * genuinely unfinished ("*"): SCORED 0.5 above, so it must be WRITTEN as
+    #    a draw. Emitting "*" would be silently lossy — Ordo maps it to DISCARD
+    #    (pgnget.c) and drops the game, so the pooled fit would run on a
+    #    different population than the pentanomial summary it is compared to.
+    #  * DECISIVE on the very last ply: the loop tests for game-over at the TOP
+    #    of each iteration, so a game that ends on the move played at ply
+    #    max_plies-1 is never re-tested and reaches here undelivered. It has a
+    #    real result and `_game_score` already counted it as a win/loss —
+    #    blanket-overriding it to a draw made the PGN disagree with the
+    #    pentanomial, which is the exact cross-check the agreement claim rests
+    #    on. Rolling never had this because it reaps before refilling.
+    #
+    # `adjudicated[i]` is ALWAYS None here, so "rules" is accurate and there is
+    # deliberately no "syzygy" branch: adjudication sets `adjudicated[i]` and
+    # calls `_emit(i, "syzygy")` in the same block above, so such a game is
+    # already emitted and `_emit`'s `emitted[i]` guard makes this a no-op for
+    # it. A `"syzygy" if adjudicated[i] else "rules"` here would be a branch
+    # that cannot be reached or tested. A position that only becomes TB-covered
+    # on the FINAL ply is never probed (the loop exits first) and lands in the
+    # "*" case, scored 0.5 by `_game_score` and written as a draw — the two
+    # still agree, which is the property that matters.
+    for i in range(g):
+        res = adjudicated[i] or boards[i].result(claim_draw=True)
+        if res == "*":
+            _emit(i, "max_plies", result_override="1/2-1/2")
+        else:
+            _emit(i, "rules")
     return game_scores_to_pair_scores(game_scores)
 
 
@@ -780,6 +851,7 @@ def play_paired_games_matched_sims_rolling(
     pool_size: int = 256,
     report_every: int = 64,
     deadline: float | None = None,
+    pgn_sink: PgnSink | None = None,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
     a fresh game the instant one finishes (like production selfplay), instead of
@@ -820,6 +892,9 @@ def play_paired_games_matched_sims_rolling(
     gids: list[int] = []
     awhite: list[bool] = []
     gplies: list[int] = []
+    gfens: list[str] = []
+    goffs: list[int] = []
+    gt0: list[float] = []
 
     def _refill() -> None:
         while len(boards) < pool_size and queue:
@@ -828,14 +903,35 @@ def play_paired_games_matched_sims_rolling(
             gids.append(gid)
             awhite.append(aw)
             gplies.append(0)
+            # Book position + how many of move_stack belongs to the book, so the
+            # PGN starts where PLAY started rather than replaying the opening.
+            gfens.append(opening.fen())
+            goffs.append(len(opening.move_stack))
+            gt0.append(time.time())
 
-    def _record(j: int, res: str) -> None:
+    def _record(j: int, res: str, termination: str) -> None:
         if res == "*":
             game_scores[gids[j]] = 0.5
         else:
             game_scores[gids[j]] = {1: 1.0, 0: 0.5, -1: 0.0}[
                 result_from_a_pov(res, a_is_white=bool(awhite[j]))
             ]
+        if pgn_sink is not None:
+            # "*" is SCORED 0.5, so it is WRITTEN as a draw: Ordo drops "*"
+            # (pgnget.c DISCARD), which would make the pooled fit and the
+            # pentanomial summary disagree about which games exist.
+            mv = tuple(boards[j].move_stack[goffs[j]:])
+            pgn_sink(
+                pair_id=gids[j] // 2,
+                half=gids[j] % 2,
+                a_is_white=bool(awhite[j]),
+                start_fen=gfens[j],
+                moves=mv,
+                result="1/2-1/2" if res == "*" else res,
+                termination=termination,
+                plies=len(mv),
+                duration_s=time.time() - gt0[j],
+            )
 
     t0 = time.time()
     done = 0
@@ -851,24 +947,35 @@ def play_paired_games_matched_sims_rolling(
         kg: list[int] = []
         ka: list[bool] = []
         kp: list[int] = []
+        kf: list[str] = []
+        ko: list[int] = []
+        kt: list[float] = []
         for j in range(len(boards)):
             b = boards[j]
             res: str | None = None
+            termination = "rules"
             if b.is_game_over(claim_draw=True):
                 res = b.result(claim_draw=True)
             elif syzygy_tablebase is not None:
                 res = _tb_adjudicate_result(b, syzygy_tablebase, max_pieces=tb_max_pieces)
+                if res is not None:
+                    termination = "syzygy"
             if res is None and gplies[j] >= int(max_plies):
                 res = "*"  # not naturally decided and not TB-covered: adjudicate draw
+                termination = "max_plies"
             if res is not None:
-                _record(j, res)
+                _record(j, res, termination)
                 done += 1
             else:
                 kb.append(b)
                 kg.append(gids[j])
                 ka.append(awhite[j])
                 kp.append(gplies[j])
+                kf.append(gfens[j])
+                ko.append(goffs[j])
+                kt.append(gt0[j])
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
+        gfens[:], goffs[:], gt0[:] = kf, ko, kt
         # Deadline check goes AFTER the reap, not before it. Checking first
         # discarded every game that had finished on the ply we just played —
         # up to pool_size of them, and measurably: the 2026-07-31 proof run
@@ -940,6 +1047,7 @@ def play_paired_games_matched_time(
     max_plies: int,
     uci_args: str,
     deadline: float | None = None,
+    pgn_sink: PgnSink | None = None,
 ) -> list[float]:
     """Pair-by-pair UCI match using the production engine inference path.
 
@@ -985,6 +1093,7 @@ def play_paired_games_matched_time(
             scores: list[float] = []
             for a_is_white in (True, False):
                 eng_w, eng_b_side = (eng_a, eng_b) if a_is_white else (eng_b, eng_a)
+                _g_t0 = time.time()
                 record = play_one_game(
                     eng_w, eng_b_side,
                     limit_w=limit, limit_b=limit,
@@ -994,6 +1103,18 @@ def play_paired_games_matched_time(
                     game=(pair_idx, a_is_white),
                 )
                 scores.append(_score_for_a(record.result, a_is_white=a_is_white))
+                if pgn_sink is not None:
+                    pgn_sink(
+                        pair_id=pair_idx,
+                        half=0 if a_is_white else 1,
+                        a_is_white=a_is_white,
+                        start_fen=record.start_board.fen(),
+                        moves=tuple(record.moves),
+                        result=record.result,
+                        termination=record.termination,
+                        plies=record.plies,
+                        duration_s=time.time() - _g_t0,
+                    )
             pair_scores.append(scores[0] + scores[1])
             print(
                 f"[arena] pair {pair_idx + 1}/{len(openings)}: "
@@ -1176,6 +1297,9 @@ def run_arena(
     rolling: bool = True,
     search_candidate: SideSearch | None = None,
     search_reference: SideSearch | None = None,
+    pgn_out: Path | None = None,
+    pgn_candidate_name: str | None = None,
+    pgn_reference_name: str | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -1225,6 +1349,73 @@ def run_arena(
         openings = load_paired_openings(
             openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
         )
+
+    pgn_writer: ArenaPgnWriter | None = None
+    pgn_sink: PgnSink | None = None
+    if pgn_out is not None:
+        cand_name = pgn_candidate_name or engine_name_from_checkpoint(
+            candidate, fallback="candidate")
+        ref_name = pgn_reference_name or engine_name_from_checkpoint(
+            reference, fallback="reference")
+        if cand_name == ref_name:
+            # Two players that share a name become ONE player in a pooled fit,
+            # and the resulting rating is a silent average of both. Refuse
+            # rather than emit a PGN that fits cleanly and means nothing.
+            raise SystemExit(
+                f"--pgn-out: candidate and reference both resolve to the engine "
+                f"name {cand_name!r}. Pass --pgn-candidate-name / "
+                f"--pgn-reference-name to distinguish them."
+            )
+        no_shape = "n/a (matched_time: UCI subprocess play shape)"
+        cand_search = no_shape if search_candidate is None else search_candidate.describe()
+        ref_search = no_shape if search_reference is None else search_reference.describe()
+        base_tags = {
+            "ConfigHash": production_config_hash(),
+            "GitSha": git_sha(),
+            "ArenaMode": mode,
+        }
+        if label:
+            base_tags["ArenaLabel"] = label
+        pgn_writer = ArenaPgnWriter(pgn_out, event=label or "arena", base_tags=base_tags)
+        print(f"[arena] PGN output -> {pgn_out} "
+              f"(White/Black = {cand_name} / {ref_name})", flush=True)
+
+        def _emit_pgn(
+            *,
+            pair_id: int,
+            half: int,
+            a_is_white: bool,
+            start_fen: str,
+            moves: tuple[chess.Move, ...],
+            result: str,
+            termination: str,
+            plies: int,
+            duration_s: float,
+        ) -> None:
+            assert pgn_writer is not None
+            pgn_writer.write_game(ArenaGame(
+                white=cand_name if a_is_white else ref_name,
+                black=ref_name if a_is_white else cand_name,
+                result=result,
+                moves=moves,
+                start_fen=start_fen,
+                pair_id=pair_id,
+                pair_half=half,
+                extra={
+                    "WhiteSearch": cand_search if a_is_white else ref_search,
+                    "BlackSearch": ref_search if a_is_white else cand_search,
+                    "Termination": termination,
+                    # For the informative-missingness check: if pairs complete
+                    # at different rates across matchups, the pairs a partial
+                    # run HAS from a slow matchup are its FAST ones, which are
+                    # systematically more decisive. No bootstrap fixes that, so
+                    # the evidence to detect it has to be IN the file.
+                    "Plies": str(int(plies)),
+                    "GameDurationSec": f"{float(duration_s):.2f}",
+                },
+            ))
+
+        pgn_sink = _emit_pgn
 
     t0 = time.time()
     if mode == "matched_sims":
@@ -1309,6 +1500,7 @@ def run_arena(
                 search_candidate=search_candidate, search_reference=search_reference,
                 report_every=int(report_every),
                 deadline=deadline,
+                pgn_sink=pgn_sink,
             )
         else:
             # Chunked: plays each chunk of `max_concurrent_games` to completion
@@ -1345,6 +1537,8 @@ def run_arena(
                     syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
                     search_candidate=search_candidate,
                     search_reference=search_reference,
+                    pgn_sink=pgn_sink,
+                    pair_id_offset=ci,
                 ))
                 print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
                 print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
@@ -1355,11 +1549,18 @@ def run_arena(
         pair_scores = play_paired_games_matched_time(
             candidate, reference, openings,
             device=device, ms_per_move=ms_per_move, max_plies=max_plies,
-            uci_args=uci_args, deadline=deadline,
+            uci_args=uci_args, deadline=deadline, pgn_sink=pgn_sink,
         )
     else:
         raise SystemExit(f"unknown mode {mode!r}")
     duration_s = time.time() - t0
+    if pgn_writer is not None:
+        # Every game was already flushed as it finished, so a crash before this
+        # point still leaves a complete, parseable PGN of the games that ended —
+        # closing here just releases the handle on the normal path.
+        n_written = pgn_writer.games_written
+        pgn_writer.close()
+        print(f"[arena] wrote {n_written} games to {pgn_out}", flush=True)
 
     # Against the openings ACTUALLY loaded, not the requested `n_pairs`:
     # load_fen_openings uses every row of a short FEN file rather than padding
@@ -1480,6 +1681,22 @@ def main() -> None:
     )
     p.add_argument("--candidate", required=True, help="candidate checkpoint (trainer.pt or dir)")
     p.add_argument("--reference", required=True, help="reference checkpoint (trainer.pt or dir)")
+    p.add_argument("--pgn-out", type=Path, default=None,
+                   help="ALSO append every finished game to this PGN, for a "
+                        "pooled multi-player rating fit (Ordo/BayesElo). Default "
+                        "OFF; when unset nothing about the run changes. Games are "
+                        "flushed as they finish, so a killed run still leaves a "
+                        "valid PGN. Tags carry the engine names, ConfigHash, "
+                        "GitSha and BOTH sides' realized search shape, plus "
+                        "PairId/PairHalf so a pair-level block bootstrap can "
+                        "recover the pairing Ordo itself ignores.")
+    p.add_argument("--pgn-candidate-name", default=None,
+                   help="stable engine identity for the candidate in --pgn-out "
+                        "(default: last two checkpoint path components, "
+                        "sanitized). Set it explicitly when pooling across runs "
+                        "— two arms that share a name become ONE player.")
+    p.add_argument("--pgn-reference-name", default=None,
+                   help="stable engine identity for the reference in --pgn-out")
     p.add_argument("--mode", choices=["matched_sims", "matched_time"],
                    default="matched_sims")
     p.add_argument("--sims", type=int, default=64,
@@ -1713,6 +1930,9 @@ def main() -> None:
         device=args.device,
         seed=args.seed,
         out_path=args.out,
+        pgn_out=args.pgn_out,
+        pgn_candidate_name=args.pgn_candidate_name,
+        pgn_reference_name=args.pgn_reference_name,
         uci_args=args.uci_args,
         label=args.label,
         volatility_candidate=_volatility_kwargs_from_args(args),

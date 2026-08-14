@@ -14,7 +14,7 @@ import secrets
 import socket
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -41,7 +41,11 @@ from chess_anti_engine.replay.shard import (
 # is module level so the authorization rule can be tested as a pure function.
 # `server.lease` imports nothing from here, so this is not circular.
 from chess_anti_engine.server.lease import normalize_trial_id
-from chess_anti_engine.utils.atomic import atomic_write_text
+from chess_anti_engine.utils.atomic import (
+    atomic_write_bytes,
+    atomic_write_text,
+    is_atomic_tmp_name,
+)
 from chess_anti_engine.utils.versioning import version_lt
 from chess_anti_engine.version import UPLOAD_CONTENT_SHA256_HEADER
 import contextlib
@@ -63,6 +67,26 @@ def _compacted_token_suffix(flush_token: str) -> str:
     samples (duplicates in replay).
     """
     return f"_{flush_token}{LOCAL_SHARD_SUFFIX}"
+
+
+def _iter_compacted_token_matches(compacted_dir: Path, flush_token: str) -> Iterator[Path]:
+    """Every entry in ``compacted_dir`` whose name carries ``flush_token``.
+
+    Both the committed shard and the abandoned ``._tmp_*`` of a crashed write
+    match, because the temp name is a prefixed copy of the final one --
+    separating the two is the CALLER's job and the whole point of routing both
+    through one iterator: a witness that forgets the distinction deletes the
+    inputs it was checking on behalf of. Callers must filter with
+    :func:`is_tmp_shard_name`.
+    """
+    try:
+        entries = list(compacted_dir.iterdir())
+    except OSError:
+        return
+    suffix = _compacted_token_suffix(flush_token)
+    for entry in entries:
+        if entry.name.endswith(suffix):
+            yield entry
 
 
 # One-shot rearm request written by the trainable only when opening a selfplay
@@ -183,6 +207,43 @@ def _consume_rearm_file(
 
 _LOCK_HOST = socket.gethostname()
 
+# A real lease-assign lock is ~120 bytes of JSON. The cap only bounds a corrupt
+# or hostile file; a truncated read decodes as invalid JSON and is judged on
+# age, which is the same path an unreadable holder already takes.
+_LOCK_READ_MAX_BYTES = 1 << 20
+
+# Name infix for a steal's claim file: the `O_EXCL` marker a stealer creates to
+# win the exclusive right to remove one specific stale lock. Distinctive so the
+# sweep for claims abandoned by a crashed stealer cannot match anything else
+# sharing the lock's directory.
+_LOCK_CLAIM_INFIX = ".stale-"
+
+
+class _LockSnapshot(NamedTuple):
+    """One lock file's content and identity, read through the same descriptor.
+
+    Carrying them together is the point: a staleness verdict is about a
+    specific file, and the steal that acts on that verdict has to be able to
+    prove it is still acting on THAT file and not on whatever the name now
+    resolves to. ``identity``/``st`` are None only when the file could not be
+    opened at all.
+
+    ⚑ ``identity`` IS NOT ``(st_dev, st_ino)`` ALONE, AND THAT IS MEASURED, NOT
+    theoretical. ext4 and tmpfs hand the just-freed inode number straight back
+    to the next create in the same directory, so a successor's brand-new lock
+    routinely lands on the SAME (dev, ino) as the stale lock it replaced. An
+    inode-only identity check therefore reports "unchanged" for exactly the
+    substitution it exists to catch: with (dev, ino) only, the multi-waiter
+    race still peaked at 5 threads in the critical section. The owner token is
+    the discriminator that actually holds -- it is fresh random per acquisition
+    -- with mtime/size behind it for legacy tokenless lock files, whose bytes
+    predate the token field entirely. A rename preserves every component.
+    """
+
+    holder: dict[str, Any]
+    identity: tuple[Any, ...] | None
+    st: os.stat_result | None
+
 
 class _LeaseAssignBusy(RuntimeError):
     """The lease-assign lock is held by a live holder and did not free up.
@@ -264,26 +325,80 @@ class _LeaseAssignLock:
         # one process must not be able to release each other.
         self._token = secrets.token_hex(8)
 
-    def _read_holder(self) -> dict[str, Any]:
-        """The lock file's contents, or {} if it has none we can use.
+    def _snapshot(self, path: Path | None = None) -> _LockSnapshot:
+        """Read the lock's CONTENT and IDENTITY through ONE file description.
+
+        ⚑ THE TWO MUST COME FROM THE SAME OPEN FILE, or the steal below has
+        nothing to be conditional on. Judging staleness from one `read_text`
+        and then acting on whatever the NAME resolves to later is the TOCTOU
+        this class was measured failing (issue #417): with a crashed holder,
+        16 threads all read the same stale file, all concluded "steal", each
+        unlinked whatever happened to be present -- including a SUCCESSOR's
+        brand-new lock -- and all 16 then won their own `O_EXCL` create. Peak
+        8 threads inside the critical section, 640/640 waiters admitted, zero
+        busy refusals, and two workers assigned to one trial while another was
+        starved to zero.
+
+        `(st_dev, st_ino)` from `fstat` on the fd we actually read names the
+        exact file whose bytes justified the steal, and `st` carries the mtime
+        so the age fallback in `_lock_age` cannot silently re-stat a DIFFERENT
+        file than the one it is dating.
 
         A legacy pre-fix lock file held `f"{pid}\n"`, which is valid JSON and
         decodes to an int, so it lands in the `{}` branch below and is judged
         on file age. There is deliberately no `JSONDecodeError` special case
         for it: an earlier revision of this method had one and it was DEAD --
         the decode it claimed to rescue never fails.
-        """
-        try:
-            raw = self.path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return {}
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        return data if isinstance(data, dict) else {}
 
-    def _lock_age(self, holder: dict[str, Any], now: float) -> tuple[float, str] | None:
+        The read is bounded. A real lock is ~120 bytes; anything past the cap
+        is corruption, and truncating it yields invalid JSON, which routes to
+        the same age-based judgement an unreadable holder already gets.
+        """
+        target = self.path if path is None else path
+        try:
+            fd = os.open(str(target), os.O_RDONLY)
+        except OSError:
+            return _LockSnapshot({}, None, None)
+        try:
+            st = os.fstat(fd)
+            chunks: list[bytes] = []
+            remaining = _LOCK_READ_MAX_BYTES
+            while remaining > 0:
+                chunk = os.read(fd, min(remaining, 65536))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        except OSError:
+            return _LockSnapshot({}, None, None)
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        try:
+            decoded = json.loads(b"".join(chunks).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            decoded = None
+        holder: dict[str, Any] = decoded if isinstance(decoded, dict) else {}
+        token = holder.get("token")
+        identity = (
+            st.st_dev,
+            st.st_ino,
+            st.st_mtime_ns,
+            st.st_size,
+            token if isinstance(token, str) else None,
+        )
+        return _LockSnapshot(holder, identity, st)
+
+    def _read_holder(self) -> dict[str, Any]:
+        """The lock file's contents, or {} if it has none we can use."""
+        return self._snapshot().holder
+
+    def _lock_age(
+        self,
+        holder: dict[str, Any],
+        now: float,
+        st: os.stat_result | None = None,
+    ) -> tuple[float, str] | None:
         """Seconds since the lock was taken, and where the clock came from.
 
         ⚑ THE AGE TEST IS THE ONLY BACKSTOP THE STALENESS CHECK HAS, so it must
@@ -322,15 +437,30 @@ class _LeaseAssignLock:
                 stamp = math.nan
             if math.isfinite(stamp) and stamp <= now:
                 return now - stamp, "created_at_unix"
+        # ``st`` is the fstat of the file we actually read, when the caller has
+        # one. Falling back to a fresh stat-by-name is only for callers that
+        # judge a holder dict on its own (the direct unit test); on the steal
+        # path it would re-introduce the split between "the file I judged" and
+        # "the file at this name now".
+        if st is not None:
+            return max(0.0, now - st.st_mtime), "file mtime"
         try:
             return max(0.0, now - self.path.stat().st_mtime), "file mtime"
         except OSError:
             return None
 
-    def _staleness_reason(self, now: float) -> str | None:
-        """Why the existing lock may be taken, or None if it may not be."""
-        holder = self._read_holder()
-        aged = self._lock_age(holder, now)
+    def _staleness_reason(
+        self, now: float, snapshot: _LockSnapshot | None = None,
+    ) -> str | None:
+        """Why the existing lock may be taken, or None if it may not be.
+
+        ``snapshot`` is the content+identity pair the caller intends to act on.
+        Passing it is what makes the verdict attributable to a specific file
+        rather than to a name.
+        """
+        snap = self._snapshot() if snapshot is None else snapshot
+        holder = snap.holder
+        aged = self._lock_age(holder, now, snap.st)
         age_txt = "unknown" if aged is None else f"{aged[0]:.1f}s"
         pid = holder.get("pid")
         if isinstance(pid, int) and pid > 0 and holder.get("host") in (None, _LOCK_HOST):
@@ -350,6 +480,162 @@ class _LeaseAssignLock:
             )
         return None
 
+    def _sweep_abandoned_claims(self, now: float) -> None:
+        """Drop `.stale-*` claim files left by a process that died mid-steal.
+
+        ⚑ THIS SWEEP IS LOAD-BEARING, NOT TIDINESS. The claim name is derived
+        from the judged file, so a claim abandoned by a crashed stealer would
+        otherwise block EVERY future steal of that lock: each waiter computes
+        the same name, hits EEXIST forever, and the lease route stays 503 until
+        someone clears it by hand -- a permanent outage triggered by exactly
+        the crash this class exists to recover from. Age-gating on
+        `stale_after_s` bounds that to one staleness window.
+
+        ⚑ AGE IS A GUESS, NOT A LIVENESS TEST, AND THIS SWEEP CAN DELETE A
+        LIVE STEALER'S CLAIM. A claim is normally created and consumed within
+        three syscalls, so in practice only a crashed stealer's claim ages
+        out -- but "in practice" is not "cannot", and a stealer descheduled
+        past `stale_after_s` between those statements is swept exactly like a
+        dead one. A second stealer then wins the same claim name and both run
+        `_steal`'s final window; see the residual note there, which an
+        independent reviewer reproduced 3/3 (with a DEAD holder, via this
+        path, at `stale_after_s = 0.3`).
+
+        Do NOT "fix" that by gating the sweep on stealer-pid liveness: a
+        recycled pid would then keep the claim forever and wedge every future
+        steal of this lock permanently, which is strictly worse than a window
+        that self-heals in `stale_after_s`.
+
+        Best effort throughout: failing to remove litter must never fail an
+        acquisition.
+        """
+        with contextlib.suppress(OSError):
+            for claim in self.path.parent.glob(f"{self.path.name}{_LOCK_CLAIM_INFIX}*"):
+                with contextlib.suppress(OSError):
+                    if now - claim.stat().st_mtime > self.stale_after_s:
+                        claim.unlink(missing_ok=True)
+
+    def _claim_path(self, identity: tuple[Any, ...]) -> Path:
+        """Claim name for the steal of ONE specific judged file.
+
+        Derived from the identity, so every waiter that judged the same file
+        computes the same name and exactly one of them can create it -- and a
+        waiter that judged a DIFFERENT file (a successor) computes a different
+        name and cannot collide with an in-progress steal. Hashed rather than
+        interpolated because the identity contains a token read out of a file
+        an operator may have hand-edited, and a lock's own contents must never
+        be able to steer a path.
+        """
+        digest = hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()[:16]
+        return self.path.with_name(f"{self.path.name}{_LOCK_CLAIM_INFIX}{digest}")
+
+    def _steal(self, identity: tuple[Any, ...], reason: str) -> bool:
+        """Remove the stale lock, but ONLY the exact file that was judged.
+
+        True means we removed that file; False means re-judge and try again.
+
+        ⚑ THE STEAL MUST BE EXCLUSIVE, NOT MERELY GUARDED. `unlink` +
+        `O_EXCL` create is two steps, and #417 is what that costs: every one
+        of 16 waiters judged the same stale file, every unlink succeeded, so
+        every `O_EXCL` create succeeded too -- 640/640 admitted, peak 8 inside
+        the critical section, two workers onto one trial and a third trial
+        starved to zero.
+
+        The claim is one `O_EXCL` create of a name DERIVED FROM THE JUDGED
+        FILE, which is what makes the steal conditional on identity:
+
+        * Every waiter that judged this same file computes the same claim
+          name, so exactly one of them can create it. The losers touch
+          nothing -- that is the property the old unconditional unlink could
+          not have, no matter how carefully it was guarded.
+        * A waiter that judged a DIFFERENT file (a successor's fresh lock)
+          computes a DIFFERENT name, so it can never collide with, or be
+          blocked by, an unrelated steal.
+        * Holding the claim, we re-read the lock and require it to still be
+          the judged file before unlinking it. A waiter whose judgement went
+          stale in the meantime finds a mismatch and removes nothing.
+
+        ⚑ Identity is NOT `(st_dev, st_ino)`, and that is measured: ext4 and
+        tmpfs recycle the freed inode number straight into the successor's
+        lock, so an inode-only check reports "unchanged" for exactly the
+        substitution it exists to catch -- with it, the race still peaked at
+        5 concurrent holders. The owner token is the discriminator.
+
+        Filesystem assumptions, deliberately the weakest available because
+        this ships to volunteer machines as well as the WSL2/ext4 host: only
+        `O_CREAT|O_EXCL` atomicity, which is the same primitive the lock
+        itself is built on. An earlier draft claimed with `link(2)` and fell
+        back to a rename where hardlinks are missing; the fallback measured
+        WEAKER than the claim it stood in for (its ABA repair leaves the name
+        briefly free, and the multi-waiter test caught it admitting more than
+        one holder), so both the hardlink dependency and the second code path
+        are gone rather than shipped untrustworthy.
+
+        ⚑ RESIDUAL, AND IT IS **NOT** GATED ON THE HOLDER BEING ALIVE. An
+        earlier revision of this docstring claimed a dead holder could not
+        reach it. That was wrong, and wrong in the reassuring direction: an
+        independent reviewer reproduced it 3/3 WITH A DEAD HOLDER. The route
+        in is `_sweep_abandoned_claims`, which cannot tell a stealer that
+        CRASHED from one that is merely SLOW -- so it can delete a live
+        stealer's claim, after which a second stealer wins the same claim name
+        and both run the window between the identity re-check and the
+        `unlink`. That is the same live-vs-crashed guessing this class was
+        fixed to stop doing, reintroduced one level down on the claim file.
+
+        The real precondition is a SCHEDULING one: a stealer must be
+        descheduled for longer than `stale_after_s` BETWEEN TWO ADJACENT
+        STATEMENTS (its claim create and its re-check/unlink). At the
+        production default (`stale_after_s = 10 * timeout_s = 100s`) that is a
+        >100s stall between adjacent statements; the reviewer only reached it
+        with an injected park and `stale_after_s = 0.3`. So the bound to quote
+        is `stale_after_s`, never "the holder is dead".
+
+        Kept deliberately, because both alternatives are worse and neither is
+        a smaller window -- they are different failure modes:
+        * Gating the sweep on stealer-pid liveness turns a RECYCLED pid into a
+          permanent wedge: the claim is never swept, every future steal of
+          that lock hits EEXIST forever, and the lease route stays 503 until
+          someone clears it by hand.
+        * Dropping the sweep makes a stealer that really did crash the same
+          permanent wedge, unconditionally.
+        A bounded window that self-heals in `stale_after_s` beats an unbounded
+        outage, so this is a chosen trade, not an oversight.
+        """
+        claim_path = self._claim_path(identity)
+        try:
+            claim = os.open(str(claim_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False  # another waiter already owns the steal of this file
+        except OSError:
+            return False
+        try:
+            # Contents are for a human reading a leftover claim; nothing reads
+            # them back, so a failed write must not fail the steal.
+            os.write(claim, json.dumps({
+                "stealer_pid": os.getpid(),
+                "stealer_token": self._token,
+                "claimed_at_unix": time.time(),
+            }).encode("utf-8"))
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(claim)
+        try:
+            if self._snapshot().identity != identity:
+                # No longer the file we judged: a successor is already
+                # published, and it is not ours to remove.
+                return False
+            try:
+                os.unlink(str(self.path))
+            except OSError:
+                return False
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(str(claim_path))
+        _log.warning("stealing stale lease-assign lock %s: %s", self.path, reason)
+        return True
+
     def __enter__(self) -> _LeaseAssignLock:
         deadline = time.time() + self.timeout_s
         while True:
@@ -366,13 +652,36 @@ class _LeaseAssignLock:
                 return self
             except FileExistsError as exists_exc:
                 now = time.time()
-                reason = self._staleness_reason(now)
+                snapshot = self._snapshot()
+                reason = self._staleness_reason(now, snapshot)
                 if reason is not None:
-                    _log.warning(
-                        "stealing stale lease-assign lock %s: %s", self.path, reason,
-                    )
-                    with contextlib.suppress(OSError):
-                        self.path.unlink(missing_ok=True)
+                    if snapshot.identity is None:
+                        # It vanished between the failed create and the read.
+                        # Retry the create; the brief sleep keeps a flapping
+                        # file from turning this into a hot loop.
+                        time.sleep(0.001)
+                        continue
+                    self._sweep_abandoned_claims(now)
+                    if self._steal(snapshot.identity, reason):
+                        continue
+                    # Lost the claim, or the file is no longer the one we
+                    # judged. DO NOT fall through to the create: re-read and
+                    # re-judge, because the winner's fresh lock is not stale.
+                    #
+                    # ⚑ AND THE DEADLINE APPLIES HERE. `main` could `continue`
+                    # unconditionally because its steal could not fail; a claim
+                    # that CAN fail turns the same `continue` into an infinite
+                    # loop -- a caller spinning forever on a lock that a crashed
+                    # stealer's claim file is holding closed, with no 503 and no
+                    # threadpool token ever returned. Caught by the fresh-claim
+                    # test, which hung instead of failing until this landed.
+                    if time.time() >= deadline:
+                        raise _LeaseAssignBusy(
+                            f"lease assignment is busy: {self.path} is stale "
+                            f"({reason}) but the steal could not be claimed "
+                            f"within {self.timeout_s:.1f}s"
+                        ) from exists_exc
+                    time.sleep(0.005)
                     continue
                 if now >= deadline:
                     raise _LeaseAssignBusy(
@@ -895,6 +1204,45 @@ def resolve_user_dir(parent: Path, username: str) -> Path | None:
     return path
 
 
+def _same_dir(a: Path, b: Path) -> bool:
+    """Whether two paths name the same directory, symlinks and all.
+
+    `samefile` compares `st_ino`/`st_dev`, which is what "the same directory"
+    MEANS -- it does not care how either path spelled its way there. The
+    resolved-string compare is the fallback for a path that does not exist (or
+    cannot be stat'ed), where there is no inode to compare and the name is all
+    there is; it is still resolution-symmetric, which plain `==` was not.
+
+    ⚑⚑ THE FALLBACK IS STRICTLY WEAKER THAN `samefile` -- DO NOT "SIMPLIFY"
+    THIS TO THE RESOLVED COMPARE. An earlier version of this PR's own mutation
+    report called dropping `samefile` an EQUIVALENT mutant. It is not, and the
+    distinguishing case is the deployment shape that motivates the guard:
+    under a BIND MOUNT, two paths reach one directory with no symlink to
+    resolve, so `samefile` is True while the resolved compare is False
+    (measured under `unshare --map-root-user --mount` during review). Dropping
+    it re-opens #419 F2 in full -- the calling request's own directory deleted
+    and the server-root `arena_inbox` rmdir'd -- and production moved its data
+    root between drives in July, where `mount --bind` is as ordinary as a
+    symlink. `test_same_dir_sees_one_directory_reached_by_two_names` pins it
+    with a hard link, which is the same "one inode, two names" shape without
+    needing privileges to build.
+
+    ⚑ The `a == b` fast path is not just an optimisation of that: identical
+    spellings are the overwhelmingly common case on the production call site
+    (both operands are built from `create_app`'s one `root`), and it answers
+    them with no syscall at all. It cannot change an answer -- one spelling is
+    one path.
+    """
+    if a == b:
+        return True
+    with contextlib.suppress(OSError):
+        return a.samefile(b)
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
+
+
 def drop_empty_arena_dirs(
     dirs: list[Path], *, keep: Path | None, default_arena_root: Path,
 ) -> list[Path]:
@@ -922,6 +1270,21 @@ def drop_empty_arena_dirs(
     `default_arena_root` must be resolved too or a symlinked server root makes
     every comparison false and the guard silently stops guarding.
 
+    ⚑⚑ AND THAT SENTENCE WAS THE BUG, NOT THE FIX (#419 F2). Naming the
+    requirement in a docstring left it to be met by every caller, and the one
+    caller met HALF of it: the arena route passed `default_arena_root=
+    arena_inbox.resolve()` and `keep=resolve_user_dir(...)` -- both resolved --
+    against `dirs` from `_arena_all_user_dirs()`, which are built from
+    `create_app`'s UNRESOLVED `root = Path(server_root)`. So under a symlinked
+    server root every comparison here is false, and BOTH guards invert at once:
+    measured on `main`, `removed` came back holding the calling request's own
+    directory AND the server-root `arena_inbox` was rmdir'd.
+
+    So this function now resolves its own operands rather than trusting the
+    caller to. Resolution is a property of the COMPARISON, not of the argument,
+    and a guard whose correctness depends on what the caller remembered is the
+    guard this repo keeps re-breaking. Deletion still uses the paths as given.
+
     ⚑ `keep` is the directory the calling request just wrote into. Skipping it
     removes the common self-inflicted case; it is NOT the race fix. A request
     for trial A can be suspended between its `mkdir` and its `write_bytes`
@@ -930,14 +1293,17 @@ def drop_empty_arena_dirs(
     """
     removed: list[Path] = []
     for d in dirs:
-        if keep is not None and d == keep:
+        if keep is not None and _same_dir(d, keep):
             continue
         try:
             d.rmdir()  # Raises rather than deleting when not empty.
         except OSError:
             continue
         removed.append(d)
-        if d.parent != default_arena_root:
+      # ⚑ `d` is gone by now, so `samefile` on its PARENT is what decides this,
+      # and the parent still exists. Resolved-string equality is the fallback
+      # for the same reason as above.
+        if not _same_dir(d.parent, default_arena_root):
             with contextlib.suppress(OSError):
                 d.parent.rmdir()
     return removed
@@ -951,12 +1317,23 @@ def write_arena_result(out: Path, body: bytes) -> None:
     suspension point, not a theoretical one: the route `await`s in between, so
     another request's sweep gets to run. One re-`mkdir` and retry turns it into
     a no-op instead of a 500 on an upload that did nothing wrong.
+
+    ⚑ ATOMIC, LIKE ITS SIBLINGS (#419 F5). This wrote straight to the final
+    `<sha>.json`, so the retention walk -- which runs on every arena upload and
+    every quarantine write -- sized a file whose bytes were still arriving.
+    Measured: 515 of 519 walk observations during one write returned a short
+    size, including 0. Those are the bytes the ceiling is computed from, and
+    the direction is UNDER-eviction. `atomic_write_bytes` writes a tmp and
+    renames, so a walk sees either the whole file or no file.
+
+    The retry stays: `atomic_write` mkdirs the parent itself, but the sweep can
+    still remove it between that mkdir and the tmp write.
     """
     try:
-        out.write_bytes(body)
+        atomic_write_bytes(out, body)
     except FileNotFoundError:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(body)
+        atomic_write_bytes(out, body)
 
 
 def shard_run_id_matches_upload_trial(upload_trial_id: str | None, shard_run_id: object) -> bool:
@@ -1230,6 +1607,21 @@ def _retention_entries(
     `files_only` skips subdirectories -- see `prune_retained_dirs`'s
     `legacy_roots`, where a subdirectory is another user's whole bucket rather
     than an entry.
+
+    ⚑ AN ORPHANED SIDECAR IS AN ENTRY (#419 F4). A `.reason.txt` is normally
+    accounted WITH its shard and skipped here, which leaves a hole: once the
+    shard is gone, the sidecar is counted by nothing and deleted by nothing --
+    invisible to the ceiling and unreachable by every sweep, forever.
+    Demonstrated: a 5000-byte orphan survives a sweep to `max_bytes=1,
+    max_entries=1` that empties the sink around it and reports `(1, 140)`.
+
+    The interleaving that creates one is real and is on the production
+    quarantine path: the writer `replace`s the shard into place, a peer sweep
+    evicts it, and only then does the writer write the sidecar. Unreachable at
+    today's ceilings (it needs the NEWEST entry evicted: impossible under the
+    entry ceiling, and under the byte ceiling it needs one entry bigger than
+    `max_bytes`, i.e. 4 GiB against a <=256 MB cap) -- so this is a hole armed
+    by any ceiling reduction, not a live leak. It is four lines to close.
     """
     if not root.is_dir():
         return []
@@ -1237,11 +1629,52 @@ def _retention_entries(
     for p in root.iterdir():
         if files_only and p.is_dir():
             continue
+        if is_atomic_tmp_name(p.name):
+      # ⚑ ANOTHER WRITER'S FILE, MID-WRITE (#419 F5). `atomic_write` fills
+      # `<name>.tmp.<pid>.<uuid>` and then `os.replace`s it, and the walk
+      # counted it as a retained entry: sized while its bytes were still
+      # arriving, and evictable -- and evicting it makes the writer's
+      # `os.replace` raise FileNotFoundError. The client_reports sink writes
+      # exactly this way.
+      #
+      # ⚑⚑ NOT `is_tmp_shard_name`, AND THE TWO MATCHERS DISAGREE ON PURPOSE.
+      # This file now holds two temp predicates, which is the exact shape the
+      # next reader will try to unify -- so: they are scoped to disjoint
+      # directory families with disjoint producers, and swapping this one for
+      # the sibling breaks the sweep in BOTH directions.
+      #   - It does not match what we want skipped: `is_tmp_shard_name` tests
+      #     the `tmp_`/`._tmp_` PREFIXES, and these names are suffix-style.
+      #   - It DOES match what must not be skipped: a quarantined shard is
+      #     named `tmp_<pid>_<hex>.tar` (it keeps the upload staging name, see
+      #     `qpath = qdir / tmp.name`), so `is_tmp_shard_name` returns True for
+      #     it -- and for its `.reason.txt`. Using it here would make the walk
+      #     skip, and the sweep therefore NEVER EVICT, every quarantined shard:
+      #     the ceiling silently stops applying to the sink it was written for.
+      #     `test_quarantine_invalid_retention_survives_trial_id_rotation`
+      #     kills that swap.
+      #
+      # ⚑ NOT A HOLE AN UPLOADER CAN AIM AT: every entry name in these sinks
+      # is server-generated (`<sha256>.json`, `tmp_<pid>_<hex>.tar`,
+      # `<unix>_<hex>.json`), so nothing caller-controlled can be spelled to
+      # match and buy permanently unswept storage. What it does leave is a tmp
+      # leaked by a HARD-KILLED writer (`atomic_write`'s `finally` sweeps every
+      # other failure), which is then unswept -- one file per killed process,
+      # and the alternative is deleting live writes.
+            continue
         if p.name.endswith(".reason.txt"):
       # Sidecars are accounted WITH their shard, not as entries in their own
       # right -- counting them separately would halve the effective entry
       # budget and could evict a sidecar while keeping the shard it explains.
-            continue
+      # Unless the shard is GONE: then there is nothing to account it with, and
+      # it falls through to be accounted as an entry in its own right.
+      #
+      # ⚑ The writer always lands the shard BEFORE its sidecar (`tmp.replace`
+      # then `write_text`, both quarantine paths), so an existing sidecar with
+      # no shard means the shard has been removed -- never that it is about to
+      # arrive. This cannot pick off the sidecar of a write in flight.
+            owner = p.name[: -len(".reason.txt")]
+            if owner and (root / owner).exists():
+                continue
         try:
             st = p.stat()
             size = st.st_size
@@ -1267,6 +1700,60 @@ def _retention_entries(
         except OSError:
             continue
     return out
+
+
+class _EntryRemoval(NamedTuple):
+    """The outcome of one attempted eviction. TWO questions, not one.
+
+    `gone` is "the entry is no longer on disk, whoever removed it" and is what
+    the BUDGET arithmetic may act on. `by_us` is "THIS sweep removed it" and is
+    what may be REPORTED. They differ in both directions, and conflating them
+    is what #407 fixed one way and this fixes the other:
+
+    - peer removed it: `gone` and not `by_us` -- the bytes really are off the
+      disk, so subtracting them tracks reality (see `_evict_fairly`), but
+      claiming the eviction would double-count it against the peer's report.
+    - WE FAILED to remove it: neither. The old code kept `removed` (this
+      class's `by_us`) for telemetry and ran the arithmetic unconditionally, so
+      a sweep that had just concluded it could not delete an entry credited
+      itself the entry's bytes and stopped OVER the ceiling.
+    """
+
+    gone: bool
+    by_us: bool
+
+
+def _remove_retained_entry(path: Path) -> _EntryRemoval:
+    """Delete one retained entry, reporting whether it is gone and who did it.
+
+    Claims nothing it cannot show: a partially-removed tree or a failed
+    `unlink` re-checks the path, and an error from the check itself is reported
+    as "still there", because a sweep that does not know must not credit
+    itself the bytes.
+    """
+    try:
+        if path.is_dir():
+            try:
+                shutil.rmtree(path)
+            except FileNotFoundError:
+                return _EntryRemoval(gone=True, by_us=False)
+            except OSError:
+      # Partial tree removal. Keep the old best-effort cleanup, but do not
+      # claim -- or bank -- an eviction we cannot show we completed.
+                shutil.rmtree(path, ignore_errors=True)
+                return _EntryRemoval(gone=not path.exists(), by_us=False)
+            return _EntryRemoval(gone=True, by_us=True)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return _EntryRemoval(gone=True, by_us=False)
+        except OSError:
+            return _EntryRemoval(gone=not path.exists(), by_us=False)
+        return _EntryRemoval(gone=True, by_us=True)
+    except OSError:
+      # `is_dir()`/`exists()` themselves failed, so we know nothing about the
+      # entry's state. Report the conservative one.
+        return _EntryRemoval(gone=False, by_us=False)
 
 
 def _evict_fairly(
@@ -1322,6 +1809,40 @@ def _evict_fairly(
     user with 200 bad shards is the case retention exists to SERVE, and a
     per-user cap would evict their evidence while 90% of the sink sat empty.
 
+    ⚑⚑ THE VICTIM CHOICE IS FAIR SERIALLY AND CAN INVERT UNDER CONCURRENCY --
+    KNOWN, MEASURED, AND DELIBERATELY NOT FIXED (#419 F3). `live_bytes` is
+    derived from this sweep's own snapshot, so a bucket that floods after the
+    walk is invisible to the choice. Measured: victim 6 entries, hog 1, ceiling
+    500B; the hog uploads 10 mid-flight and this sweep still evicts from
+    `victim`, ending at 1500B with the hog holding 11. Serial control, same
+    fixture with the flood landing before the walk: the hog pays, 500B, exactly
+    at the ceiling. So the policy above is a SERIAL policy, and this paragraph
+    is the honest scope of it.
+
+    Not fixed because the fix is not "re-read the bucket sizes": a flood adds
+    entries this sweep never enumerated, so seeing it needs a fresh WALK. The
+    cheap version of that is not per-eviction re-walking (nobody would write
+    that) -- it is ONE extra walk after the eviction pass, repeated while still
+    over budget, i.e. ~2x the walk in the common case and unbounded under
+    sustained upload. Rejected at 2x, not at the strawman: the walk is
+    cross-trial over a directory set the same caller-invented trial-id rotation
+    extends at will, so doubling it on the upload path hands the attacker the
+    amplification, and it is the very walk the arena route already threadpools
+    for being the expensive part. Against that cost: the overshoot is bounded
+    and self-clearing. Every write triggers a sweep, INCLUDING the flooder's
+    own writes, so the next sweep sees the flood, finds the hog the largest,
+    and takes from it. For a single flood that is one request; under sustained
+    concurrency the bound is the writes landing per walk-and-evict window, not
+    one request -- still bounded, and still by a mechanism the flooder pays
+    for. The end state converges to the same max-min split; what inverts is
+    which single eviction one sweep makes.
+
+    ⚑ The same snapshot argument applies to `total_bytes`, so the CEILING is
+    already only enforced per-sweep under concurrency -- the fairness inversion
+    is strictly the smaller half of that, and both are bounded the same way.
+    Fixing fairness alone while the ceiling stays snapshot-based would buy
+    nothing and cost the walk.
+
     ⚑ A SINGLE-BUCKET SWEEP IS UNCHANGED. With one bucket this is exactly
     oldest-first, which is what every direct `prune_retained_dirs([dir])` caller
     gets and what the pre-existing tests assert.
@@ -1348,6 +1869,19 @@ def _evict_fairly(
     had already taken keep deleting past the budget, destroying diagnostics to
     fix a log line.
 
+    ⚑⚑ AND THAT DEFENCE COVERS EXACTLY ONE OF THE TWO WAYS `by_us` CAN BE
+    FALSE (#419 F1). It is sound for the concurrent-peer race above and was
+    applied to the branch it is NOT sound for: a delete this sweep ATTEMPTED
+    AND FAILED. There the entry is still on disk, and the old code ran
+    `total_bytes -= size` / `live_bytes[victim] -= size` / `gone_entries += 1`
+    unconditionally, using `removed` for telemetry only -- so the sweep
+    credited itself bytes it had just failed to remove and stopped believing
+    itself under a ceiling it was over. Measured on `main`: an undeletable
+    oldest victim, ceiling 200 bytes, reported `(2, 360)`, 350 bytes left on
+    disk. The distinction the arithmetic needs is `_EntryRemoval.gone`
+    ("absent, whoever removed it") rather than `by_us`; a failed delete is
+    neither, and now stops the crediting instead of only the reporting.
+
     ⚑ AND THE SIDECAR WAS THE HALF THAT STAYED INEXACT (#407 review). The fix
     above tracked the ENTRY's deletion and left the sidecar on
     `unlink(missing_ok=True)` -- untracked -- while still crediting the whole
@@ -1363,6 +1897,7 @@ def _evict_fairly(
     gone_entries = 0
     freed_entries = 0
     freed_bytes = 0
+    stuck_victims = 0
 
   # Per-bucket queues, each already oldest-first because `entries` is sorted.
   # `live_*` track what the sweep believes is still on disk, so the victim
@@ -1394,44 +1929,64 @@ def _evict_fairly(
         entry = queues[victim][taken[victim]]
         taken[victim] += 1
         path, size = entry.path, entry.size
-        try:
+      # ⚑ THE ENTRY FIRST, THE SIDECAR ONLY ONCE THE ENTRY IS GONE. The old
+      # order unlinked the `.reason.txt` and only then discovered it could not
+      # remove the shard -- leaving a RETAINED quarantine entry whose
+      # explanation had been destroyed, which is the entire value of retaining
+      # it. Measured on `main`: entry `a_bad_shard` kept, its `.reason.txt`
+      # gone. Doing the sidecar second also means an entry a concurrent sweep
+      # already took still gets its orphaned sidecar cleaned up.
+        outcome = _remove_retained_entry(path)
+        if not outcome.gone:
+      # ⚑ WHAT THE SWEEP DOES WITH A VICTIM IT CANNOT DELETE: it moves on to
+      # the next one, and the failed entry keeps counting against the budget
+      # because it is STILL ON DISK. `taken[victim]` has already advanced, so
+      # this entry is never re-selected in this pass and the loop cannot spin
+      # on it; when every entry has been tried, `available` empties and the
+      # sweep ends. The alternative -- crediting the bytes, which is what this
+      # did -- ends the sweep OVER the ceiling while believing it is under.
+            stuck_victims += 1
+            continue
       # `size` ALREADY includes the sidecar, so it must not be added again --
       # that would over-subtract and stop evicting while still over budget.
       # `freed_sidecar` is the other question: did THIS sweep remove it.
-            freed_sidecar = 0
-            try:
-                path.with_suffix(path.suffix + ".reason.txt").unlink()
-                freed_sidecar = entry.sidecar_size
-            except FileNotFoundError:
-                pass
-            if path.is_dir():
-                try:
-                    shutil.rmtree(path)
-                    removed = True
-                except FileNotFoundError:
-                    removed = False
-                except OSError:
-          # Partial tree removal. Keep the old best-effort cleanup, but do
-          # not claim an eviction we cannot show we completed.
-                    shutil.rmtree(path, ignore_errors=True)
-                    removed = False
-            else:
-                try:
-                    path.unlink()
-                    removed = True
-                except FileNotFoundError:
-                    removed = False
+        freed_sidecar = 0
+        sidecar_gone = True
+        try:
+            path.with_suffix(path.suffix + ".reason.txt").unlink()
+            freed_sidecar = entry.sidecar_size
+        except FileNotFoundError:
+            pass
         except OSError:
-            continue
-        total_bytes -= size
-        live_bytes[victim] -= size
-        live_count[victim] -= 1
-        gone_entries += 1
+      # The entry left but its sidecar did not, so its bytes stay counted for
+      # the same reason a stuck entry's do: they are on disk.
+            sidecar_gone = False
+        gone_bytes = size - (0 if sidecar_gone else entry.sidecar_size)
+        total_bytes -= gone_bytes
+        live_bytes[victim] -= gone_bytes
+        if sidecar_gone:
+            live_count[victim] -= 1
+            gone_entries += 1
+        else:
+      # ⚑ THE COUNT DID NOT GO DOWN, SO DO NOT CREDIT IT (#419 F-A, review).
+      # The shard left, but its `.reason.txt` did not -- and #419 F4 makes an
+      # orphaned sidecar an ENTRY in its own right, so the next walk counts it.
+      # One entry out, one entry in: net zero. Crediting it here is the same
+      # mistake as crediting undeleted bytes, one field over, and it ends the
+      # sweep over the ENTRY ceiling while believing it is under. `main` was
+      # accidentally safe here (its outer `except OSError: continue` skipped
+      # the whole entry); this branch is the one that newly produces it, so it
+      # is a regression this PR would have introduced.
+      #
+      # Counted as stuck for the same reason: an over-ceiling sink that says
+      # nothing is exactly what the WARNING below exists to prevent, and this
+      # is the one path that newly creates one.
+            stuck_victims += 1
       # Two independent deletes, credited independently. `size - sidecar_size`
       # is the entry's own bytes; the sidecar's are added only if the unlink
       # above found it. `freed_entries` still counts ENTRIES, so a lone sidecar
       # removal contributes bytes without inventing an eviction.
-        if removed:
+        if outcome.by_us:
             freed_bytes += size - entry.sidecar_size
             freed_entries += 1
         freed_bytes += freed_sidecar
@@ -1440,6 +1995,20 @@ def _evict_fairly(
         log.info(
             "retention: evicted %d entr%s (%d bytes) from %s",
             freed_entries, "y" if freed_entries == 1 else "ies", freed_bytes, label,
+        )
+    if stuck_victims and log is not None:
+      # Not silent: a victim the sweep could not fully remove means the sink
+      # can sit permanently over its ceiling no matter how often the sweep
+      # runs, and the only way anyone finds that out is a log line saying so.
+      #
+      # ⚑ "not fully removed" covers BOTH shapes, which is why the counter is
+      # not called `stuck_entries`: the entry itself may have survived, or the
+      # entry went and its `.reason.txt` stayed. Either way something is still
+      # on disk and still counted.
+        log.warning(
+            "retention: %d victim%s could not be fully removed from %s; what "
+            "is left still counts against the budget",
+            stuck_victims, "" if stuck_victims == 1 else "s", label,
         )
     return (freed_entries, freed_bytes)
 
@@ -4789,8 +5358,13 @@ def create_app(
                     max_entries=int(arena_max_entries),
                     log=log,
                 )
+      # ⚑ Passed AS BUILT, unresolved. `drop_empty_arena_dirs` resolves its
+      # own comparison operands (#419 F2); the `.resolve()` that used to be
+      # here resolved one side of a comparison whose other side --
+      # `_arena_all_user_dirs()`, off `create_app`'s unresolved `root` --
+      # could not be resolved from the call site at all.
                 drop_empty_arena_dirs(
-                    dirs, keep=user_dir, default_arena_root=arena_inbox.resolve(),
+                    dirs, keep=user_dir, default_arena_root=arena_inbox,
                 )
 
             with contextlib.suppress(OSError):
@@ -4888,10 +5462,39 @@ def create_app(
             if not token_dir.is_dir():
                 continue
             token = token_dir.name
-            committed = compacted_dir.is_dir() and any(
-                p.name.endswith(_compacted_token_suffix(token))
-                for p in compacted_dir.iterdir()
+            # ⚑ THE COMMIT WITNESS MUST EXCLUDE THE ATOMIC-WRITE TEMP.
+            # ``save_local_shard_arrays`` writes to
+            # ``._tmp_<pid>_<hex>_<final name>`` and commits with a rename, so
+            # the temp name is a PREFIXED COPY of the final name and therefore
+            # ALSO ends with ``_<token>.zarr``. Without this filter a crash
+            # between ``zarr.open_group(tmp, "w")`` and ``tmp.rename(final)``
+            # leaves a partial temp that the next boot reads as proof of
+            # commit -- and ``delete_shard_path(token_dir)`` below then erases
+            # the only durable copy of the inputs. Measured: 0 of 2 positions
+            # survived, against 2 for both a clean flush and a crash before
+            # the merge write.
+            abandoned_tmps = [
+                p for p in _iter_compacted_token_matches(compacted_dir, token)
+                if is_tmp_shard_name(p.name)
+            ]
+            committed = any(
+                not is_tmp_shard_name(p.name)
+                for p in _iter_compacted_token_matches(compacted_dir, token)
             )
+            # Either way this token's flush is over: a committed one renamed
+            # its temp away, and an uncommitted one is about to be re-seeded
+            # from ``_pending`` under a NEW token, so nothing will ever finish
+            # this write. Drop the partial rather than leave a zarr in
+            # ``_compacted/`` that loads with ``KeyError`` and that no other
+            # code path ever cleans up. Best effort: a failure here is litter,
+            # not data loss, and must not abort the recovery of the inputs.
+            for tmp_entry in abandoned_tmps:
+                try:
+                    delete_shard_path(tmp_entry)
+                except Exception:
+                    log.exception(
+                        "failed to remove abandoned compaction temp %s", tmp_entry,
+                    )
             if committed:
                 # Compacted shard exists for this token → samples already
                 # durable. Backfill upload-sha dedupe keys before cleanup so
@@ -4916,6 +5519,12 @@ def create_app(
             restore_failed = False
             for entry in sorted(token_dir.iterdir()):
                 if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
+                    continue
+                # A ``._tmp_*`` staged in here is a partial write, not a shard.
+                # ``_scan_pending_dir`` filters it, so restoring it would park
+                # unreadable litter in ``_pending`` that nothing ever removes;
+                # leaving it in the token dir lets the delete below reclaim it.
+                if is_tmp_shard_name(entry.name):
                     continue
                 try:
                     entry.replace(pending_dir / entry.name)
