@@ -47288,3 +47288,31 @@ are SAMPLED, ~131k plies / ~37 min, nothing to do with wall-clock per iteration)
 pre-committed exclusion after seeing that the data inside it looks fine is exactly the post-hoc
 freedom the prereg exists to remove. [[never_condition_a_control_on_its_own_outcome]]. If anything the
 timing recovery is evidence the two mechanisms are separable, not evidence the second one ended.
+
+## AUTHORIZATIONS granted 2026-08-14, and what they unlock
+
+Recorded because they change what runs without a check-in.
+
+1. **Merge `origin/main` into `ops/live-20260725` + rebuild the C extension: PROCEED autonomously.**
+   Uses the prepared resolution (`scratchpad/tier13/merge_prep/`) with `changed = 0` re-verified on
+   the result as the pre-committed acceptance criterion. Blocking: without it the ABI 3 → 4 bump kills
+   every arena at import.
+2. **After the arena readout: run #206, then deploy Tier-14 arm (a).** #206 is the owed decider — real
+   MCTS at 100 sims on 200-300 audit positions, scoring the SEARCH's chosen move. **43 → ~25 ⇒** the
+   value head is re-ranking and the residual is policy/target; **stays ~43 ⇒** the value head cannot
+   rank the 16 candidates it is handed and the search-side levers are PROVABLY CAPPED. Pre-committed
+   now, before the number exists.
+3. **PR #423: the user merges.** The standing "agents never merge" rule STANDS here — the earlier
+   one-time override does not extend. I take it to a clean independent verdict and leave it open.
+
+⚑ **Tier-14 arm (a) cannot launch on authorization alone — it needs its PREREG first** (protocol rule
+1: hypothesis, ONE deciding yardstick as an exact command, pre-committed kill/success threshold; no
+entry, no launch). `#409` is already on `main` (`6725e6819`) and lands on the live branch with this
+merge, **default off**, so the launch is a flag flip plus a config change — squarely a
+training-affecting change. The draft at `scratchpad/tier14/prereg_draft.md` gets finalised during the
+arena block, which is CPU-only time and cannot contend with a `matched_sims` arena.
+
+**Resulting queue, in order:** arm C → 100 → bank → stop → merge → rebuild → 3 × 1600-game arena
+(4-5 h, PGN out) → Ordo pooled fit + pentanomial verdicts by the pinned rules → #206 → #170
+(consumes the arena rows) → Tier-14 arm (a) launch behind its finalised prereg. Concurrent CPU-only
+work during the arenas: #423 to a clean verdict, and the Tier-14 prereg.
