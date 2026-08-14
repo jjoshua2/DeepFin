@@ -45493,6 +45493,12 @@ carry Ceres export naming. Configuration, not construction.
   parameters is the WRONG move — a bigger net trained by our loop lands further below a higher
   curve point. Fix training first. Retires the architecture question for zero GPU-hours.
 
+> **READOUT 2026-08-14 — THE SECOND BRANCH FIRED.** We lose to C1-512-15 by 11.95 pp of top-1
+> on the frozen audit set, and to **C1-384-12 at HALF our parameters** by 11.42 pp — 3.4× the
+> entire 8×-parameter ladder's own span (+3.35 pp). Scaling parameters is the wrong move; the
+> architecture question is retired for zero GPU-hours, exactly as pre-committed. Full entry:
+> "D0 READOUT: THE GAP IS TRAINING, NOT CAPACITY", 2026-08-14.
+
 **Second-order payoff we badly need: a non-self, non-Stockfish anchor ladder.** Every anchor we
 own is one of our own checkpoints — the reason anchored-Elo differencing came out off by up to
 82 Elo, and the Cheese handicap ladder proved unreliable. 3-4 external rungs give absolute
@@ -45550,6 +45556,20 @@ publishes relative Elo across 256 points of span on 8 nets.** Scoring that whole
 audit ruler yields regret-vs-Elo directly, from 8 external points, converting our cheap
 ~20-minute ruler into an Elo-denominated instrument. That is a bigger prize than the placement
 question that motivated D0.
+
+> **⚑ CORRECTION 2026-08-14 — THE LADDER WAS SCORED AND IT DOES *NOT* CLOSE #170.** The
+> readout is the D0 entry of 2026-08-14. Four rungs ran (C1-768-26 is I8-only and unrunnable
+> here; C1-640-25 substituted), and a least-squares fit of published Elo on each audit
+> statistic is excellent WITHIN the ladder — top-1 R²=0.991 (5,716 Elo per unit, i.e. **~60 Elo
+> per pp**), top-1 regret R²=0.995 (−53.4 Elo per cp). **But extrapolated to our own net the two
+> fits disagree by a factor of two: −694 Elo vs C1-512-15 from top-1, −1,372 from top-1 regret.**
+> Our value sits **3.4× outside the calibration range on top-1 and 2.6× outside on regret**, and
+> the published Elo column confounds size with training data (later nets are bigger AND trained
+> on more positions), so neither fit is a calibration — they are two off-support extrapolations
+> that happen to bracket Josh's ~1000 prior. **#170 stays open** [[a_step_is_not_a_ramp]],
+> [[compute_instrument_resolution_before_the_threshold]]. What WOULD close it from this family
+> is an arena at a rung the ruler says is in reach — which the same D0 readout says is none of
+> them.
 
 **THE PLUMBING GAP, stated honestly.** `scripts/value_regret.py` and `scripts/audit_targets.py`
 have **zero ONNX support** — grepped, no hits. The adapter itself exists and is move-by-move
@@ -45662,6 +45682,15 @@ one against the other says nothing about target quality. Not a contradiction wor
 training loop at all — and sits ~1000 Elo above us at our own size** (C1-512-15 vs our 512×16).
 A training loop with zero self-generated search targets beats ours by ~1000 Elo. That is direct
 evidence the LEARNING SIGNAL is the whole story, which is exactly Josh's claim.
+
+> **⚑ CORRECTION 2026-08-14 — "~1000 Elo" WAS JOSH'S PRIOR STATED AS A FACT, AND IT IS STILL
+> NOT MEASURED.** No game has ever been played against a Ceres net. What IS measured (D0 readout,
+> 2026-08-14) is on the deep-SF audit ruler: C1-512-15 beats us by **+11.95 pp of top-1**
+> [+10.30, +13.60] and −25.6 cp of top-1 regret, and the two Elo extrapolations off the ladder
+> disagree 2× (−694 / −1,372; see the correction on the D0-REVISED entry). **The qualitative
+> claim of this paragraph is CONFIRMED and in fact strengthened** — the gap holds against
+> C1-384-12, at **HALF our parameters** — but the number "~1000" must be quoted as an
+> unmeasured prior bracketed by two bad extrapolations, never as a result.
 
 **⇒ THE DECISIVE CHEAP MEASUREMENT, and it needs no training and no games:** score TARGETS, not
 players, on the frozen audit set —
@@ -46561,6 +46590,34 @@ is populated, truthful about what the wheel was BUILT with, and not the field th
 `session.get_providers()` **on a constructed session** — what actually initialised. #415 now gates on
 that (`verify_onnx_session_device`) and keeps the availability list only as a cheap necessary screen,
 relabelled.
+
+> **⚑⚑ CORRECTION 2026-08-14 — THE TITLE IS NOW FALSE: ORT *CAN* USE THIS BOX'S GPU.** The
+> diagnosis was right and the conclusion was one step too strong. The blocker is exactly
+> `libcudnn.so.9` not being on the loader path — and **`import torch` puts it there**, because
+> torch ships that library. Verified first-hand by the ledger agent (2026-08-14 12:34,
+> `data/ceres/C1-384-12/C1-384-12.onnx`): with no torch import the CUDA provider fails to load
+> (`libcudnn.so.9: cannot open shared object file`); with `import torch` executed first, the
+> constructed session realises **`['CUDAExecutionProvider', 'CPUExecutionProvider']`**.
+> Independently, `scratchpad/distill_build_AGENT_J/gates_all.txt` gets CUDA in a process that
+> **never imports torch**, via an explicit cudnn preload (`torch_imported=False cudnn_objects=8`),
+> and falls back without it.
+> **Three consequences of this entry are therefore RETIRED or REVERSED:**
+> (a) "every foreign-net measurement we have RAN ON CPU" holds only for measurements made
+> BEFORE this; the 2026-08-14 Ceres/BT4 audit runs (`scratchpad/ceres_teacher_AGENT_I/run.log`)
+> show `CUDAExecutionProvider` on every constructed session, and the branching study escaped
+> only because it imported torch first;
+> (b) **⚑⚑ THE OOM SAFETY WAS ACCIDENTAL AND IS NOW GONE** — an ONNX audit run concurrently
+> with training in a torch-importing process really does take GPU memory
+> [[paired_compiled_arenas_oomed_training]], so the #415 `gpu_mem_limit` is load-bearing today,
+> not tomorrow. **OPS RULE: any ONNX work concurrent with training must now set an explicit
+> memory cap (`--gpu-mem-fraction` / `gpu_mem_limit`) or pass `--device cpu` deliberately**;
+> the ONNX path is no longer the safe exception to
+> [[no_256sim_arena_concurrent_with_training]]. (c) the "both sides were CPU" resolution of the
+> ONNX-vs-torch numeric-path caveat no longer holds for post-08-14 runs.
+> ⚑ And the silent-fallback failure mode is **not universal**: on C1-384-12 the CPU fallback
+> did not silently succeed, it raised `RUNTIME_EXCEPTION ... graph_utils.cc:29` during CPU graph
+> fusion. The **rule above survives untouched and is what caught this** — read providers off a
+> constructed session, every time. See the 2026-08-14 distillation-gate entry.
 
 ### PR #415 P1/P2 REMEDIATION (author = a fix agent, NOT the original reviewer; re-review OWED)
 Merged `origin/main` first (`004f3f255`, clean) — which pulled #408/#409/#414 and, note, **#414
@@ -48320,6 +48377,17 @@ the same saturation warning applies to any future top-k reachability read.
    **17.8%** of the time (P(N95 <= 16) = 0.8223; 71.6% at T=1.5). So "BT4 searches 11 wide"
    over-credits BT4 relative to what our root rule would actually admit: this is a
    comparison of PRIORS, not of realised root sets [[check_the_resource_is_binding]].
+   > **⚑ CORRECTION 2026-08-14 — BINDING ON WIDTH IS NOT A COST, AND THIS CAVEAT OVERSTATES
+   > ITS OWN POINT.** Both halves are now measured. (a) Truncating BT4's prior at 16 removes
+   > deep-SF's best move in **0.20%** of positions — BT4's top-16 recall is **0.9980** against
+   > its top-1 of 0.5683 — so the 17.8% "binding" rate costs BT4 essentially nothing in
+   > placement, and the over-crediting is on the WIDTH statistic only, not on the candidate
+   > quality any search would consume. (b) On our own prior, with Gumbel noise off,
+   > **P(SF best in the root candidate set) is 0.9830 at EVERY temperature, bit-for-bit** —
+   > a noise-free top-m cut is a pure ranking operation, so `gumbel_topk` truncation is free
+   > by construction. What actually degrades the root set as the prior broadens is
+   > **noise amplification against a 1/T-shrunk logit spread** ⇒ `gumbel_topk` is coupled to
+   > `gumbel_scale`, not to width. See the 2026-08-14 `gumbel_policy_temp` verdict entry.
 3. **Depth into a subtree that EXCLUDES the best move is not worth the same as depth into
    one that contains it.** A 2.18x depth ratio bought with a beam that drops SF's best 27%
    of the time is not 2.18x more search value. No Elo, no arena, no play here; regret cp is
@@ -48350,3 +48418,637 @@ ONNX-fp32 vs torch-fp32 numeric-path check. And the ruler is the deep-SF audit s
 rewards agreement with SF by construction [[audit_first_cannot_judge_a_non_sf_teacher]] — a
 width/placement gap against BT4 on this ruler is not automatically a gap against a
 non-SF-conjugate objective, which is the whole point of an anti-engine.
+
+---
+
+## 2026-08-14 — ⚑⚑ D0 READOUT: **THE GAP IS TRAINING, NOT CAPACITY.** A net with HALF our parameters beats us by 3.4× the entire Ceres ladder's span.
+
+Raw + scripts: `scratchpad/ceres_teacher_AGENT_I/` (`rows.jsonl` 17.7 MB, `analysis.txt`,
+`ceres_branching.py`, `analyze.py`, `adapter_checks.py`, `adapter_checks_C1-512-15.txt`,
+`adapter_checks_C1-640-34.txt`, `reproduce_check.py`, `run.log`). This is the **D0 readout**
+pre-registered 2026-08-13 (`3430b3a2b`, revised same day to score the ruler rather than play
+an arena), against its pre-committed rule.
+
+**Verification for this entry:** every headline number below was re-read off `analysis.txt`
+and `run.log` by the ledger agent, not transcribed from a summary. Three circulated numbers
+disagreed with the artifacts and the artifact wins in each case — see *Disagreements* at the
+bottom. Nothing here was re-run on the GPU except the ORT provider check in the last section.
+
+### Instrument, and its resolution — stated BEFORE the verdict
+All **4000** rows of the frozen audit set v1, identical positions and identical legal move
+list for every net, one pass, batch 128, priors softmaxed over legal moves only. Paired
+bootstrap, 10,000 resamples. Params counted by summing ONNX **initializer elements**, not
+taken from release names (BT4's 191,303,916 is `docs/bt4.md`'s `.pb.gz` parse).
+
+- Paired half-width on top-1 is **~1.7 pp**; every contrast quoted as RESOLVED excludes zero.
+- **NEGATIVE CONTROL PASSES EXACTLY** [[shuffle_the_labels_negative_control]]: uniform over
+  the same legal list gives mean N95 **27.1148**, element-wise identical to
+  `ceil(0.95·n_legal)`, and perplexity equal to `n_legal` to **1.279e-13**.
+- `ours` = `scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099/trainer.pt`, **step
+  91,999 (verified by loading it)**, weights md5 `4cfe18420774f039795d8457261c61cb` — the
+  same checkpoint as the 08-14 branching entry, and `ours`/`bt4` **reproduce that banked run
+  bit-exactly**, which is what licenses reading the two entries together.
+
+### VERDICT — the pre-committed "lose badly to C1-512-15" branch FIRES
+
+| net | params | top-1 | top-1 deep-SF regret |
+|---|---|---|---|
+| **ours** (Tier-13 arm A iter100) | 63.08M | **0.4273** | **47.40 cp** |
+| **C1-384-12** | **31,156,580 — HALF OURS** | **0.5415** | 22.66 |
+| C1-512-15 (our shape) | 68,878,700 | 0.5467 | 21.81 |
+| C1-640-25 | 184,699,412 | 0.5695 | 19.43 |
+| C1-640-34 | 249,482,420 | 0.5750 | 19.04 |
+| BT4 | 191,303,916 | 0.5683 | 20.07 |
+| uniform (control) | — | 0.0703 | 175.80 |
+
+Paired, ours − X on top-1: **C1-384-12 −0.1142 [−0.1310, −0.0973]** · C1-512-15 −0.1195
+[−0.1360, −0.1030] · BT4 −0.1410 [−0.1578, −0.1240]. All RESOLVED.
+
+**The whole published Ceres ladder — 8.0× params, 31.2M → 249.5M — buys +3.35 pp of top-1.
+Our deficit to its SMALLEST rung is +11.42 pp: 3.4× the entire span, at 2× the parameters.**
+C1-512-15, our own shape, sits **84.8%** of the way from us to BT4 on top-1 and **93.6%** on
+top-1 regret. ⇒ **The pre-committed read fires: we sit far below the curve AT OUR OWN SIZE,
+and scaling parameters is the WRONG move** — a bigger net trained by our loop lands further
+below a higher curve point. Architecture is retired as the explanation for this gap; it is a
+rounding error against it. This CONFIRMS, on an external family with no shared code, the
+scope-limited reading in [[scale_rows_not_parameters]] and
+[[capacity_confirmed_smaller_net_absorbs_more]].
+
+### The teacher question: **C1-640-34 vs BT4 is NOT RESOLVED, and the two stats that do resolve favour BT4**
+| statistic | C1-640-34 − BT4 | |
+|---|---|---|
+| top-1 | **+0.0067 [−0.0032, +0.0165]** | NOT RESOLVED |
+| E[regret] cp | +1.2047 [+0.6655, +1.7303] | RESOLVED, favours BT4 |
+| mean p(SF best) | −0.0073 [−0.0100, −0.0045] | RESOLVED, favours BT4 |
+
+The top-1 point estimate is **smaller than one unpaired SE (0.0079)**. Resolving it needs
+n ≈ 8,700 for the CI to exclude zero at the observed effect and ~17,800 for 80% power — and
+the audit set is FROZEN at 4000, so buying that resolution means a NEW set and therefore a
+NEW RULER [[a_ruler_change_must_invalidate_its_records]]. ⇒ **do not pick a distillation
+teacher on this contrast.** If a teacher must be chosen today, BT4 wins on the two statistics
+that resolve, and it is also the one we have a proven in-tree adapter and remap test for.
+
+### ⚑ WHAT THIS RULER IS AND IS NOT
+- **It scores AGREEMENT WITH DEEP SF, and our thesis is anti-engine.** It ranks general
+  policy quality; it is NOT the axis we are optimising
+  [[audit_first_cannot_judge_a_non_sf_teacher]]. At an 11-point gap that is not the
+  explanation; near the last stretch it becomes the explanation, which is the same boundary
+  the 08-13 D0-REVISED entry drew.
+- **Not Elo, and the two obvious conversions disagree by 2×** — see the correction appended
+  to the D0-REVISED entry. This does **not** close #170.
+- Prior only. No search, no games, no arena, no Elo.
+
+### Adapter integrity — the checks that could have silently faked this
+- **Policy heads were verified to emit LOGITS at run time** on every C1 net
+  (`run.log`: `policy head classified as LOGITS`, e.g. c1_512_15 `min −4.840 max −3.361`).
+  ⚑ This is the half-failure that matters: feeding an already-softmaxed vector through
+  another softmax preserves **every RANK statistic** (top-1/3/5, argmax agreement) while
+  flattening **every WIDTH statistic** (N95, perplexity, p(SF best)) — a clean-looking table
+  with half its columns wrong [[same_name_different_population]].
+- C1 nets take the **`ceres_tpg` (4000, 64, 137) float32** path, NOT BT4's 112-plane
+  `lc0_root` path. Same positions, two encoders — recorded as a structural difference, not a
+  defect.
+- Per-net: 0/112,172 legal moves without a canonical 1858 slot, 0 colliding, 0 hitting the
+  −1e9 pad, 0/4000 positions where SF's best is missing from the legal list. On the 40
+  positions where SF's best IS a castle: ours 0.700, C1-512-15 0.650, BT4 0.725 — **no
+  castling-remap signature on any net** [[lc0_bt4_adapter_and_castling_remap_defect]].
+- **Subtle-corruption control, not a gross one** [[audit_set_has_no_history_or_castling]]: a
+  castling-rights pair swap changed the input on 385/556 rights-carrying positions and moved
+  top-1 0.6133 → 0.5737 (−0.0396), argmax unchanged on 81.1%. The encoder is sensitive to the
+  bits it claims to read.
+- ⚑ **All 4000 positions are white-to-move (4000/4000), so the standard checks never exercise
+  a black-to-move branch.** Checked separately by colour-mirror: the TPG records are
+  **identical for board vs mirror on 512/512, max|d| 0.000e+00**, and inference is
+  correspondingly identical (KL 0.000, argmax agreement 1.0000). Read this precisely — it
+  says the encoder CANONICALISES to side-to-move, so there IS no separate black branch below
+  the encoder. It is not evidence that a black-specific bug would have been caught.
+
+### Substitution and residuals
+**C1-768-26 is I8-quantised only and unrunnable here; C1-640-25 was substituted** — so the
+ladder's published-Elo top rung is missing and the fitted rungs are 4, not 5. C1-256-10 and
+C1-768-15 not run.
+
+### Disagreements found while verifying (artifact wins)
+1. Circulated `ours − C1-512-15` CI `[−0.1362, −0.1030]`; `analysis.txt` says
+   **`[−0.1360, −0.1030]`**. Bootstrap-seed noise, no consequence.
+2. Circulated `C1-640-34 − BT4` top-1 CI `[−0.0028, +0.0170]`; artifact says
+   **`[−0.0032, +0.0165]`**. Same. The verdict (NOT RESOLVED) is unchanged either way.
+3. Circulated `E[regret] +1.20 [+0.66, +1.75]`; artifact upper bound is **+1.7303**.
+
+---
+
+## 2026-08-14 — VERDICT: **KEEP `gumbel_policy_temp: 1.5`.** And two things the record said about it are wrong.
+
+Full report: `scratchpad/priortemp_AGENT_G/report.md`; data `logit_bank.npz` +
+`logit_bank.meta.jsonl` (4000 positions), `per_position.jsonl`, `aggregates.json`,
+`sweep.py`, `tables.md`, `bank.log`, `sweep.log`. **Design study — nothing deployed, no
+config touched, no arm run.** The bank reproduces `branching_AGENT_D/rows.jsonl` exactly
+(max |dN95| = 0, max |drank| = 0 over all 4000; p(SF best) to 6.7e-16), so this ladder and
+the branching entry are the same measurement extended along T.
+
+### Semantics, read from source before anything was measured
+`apply_policy_temp` (`mcts/gumbel.py:393`) **divides LOGITS by T**. `T == 1.0` is an explicit
+no-op, and **outside [0.05, 20.0] the knob is silently IGNORED, not clamped** — so
+`policy_temp: 25` is T = 1.0, not a very broad prior. Category (c) in the CLAUDE.md sense at
+the far end of its own band [[reachability_cannot_be_grepped_by_source_name]].
+
+### The verdict, and the statistic it rests on
+The frontier that has no knee — "beam containment per ply of hypothetical depth" — is flat at
+~0.027–0.035 all the way to T = 10 and would license any T. **Priced in prior quality instead
+of hypothetical plies, the knee is sharp and sits at T ≈ 1.75:**
+
+| interval | Δbeam | Δp(SF best) | Δexp-regret | **beam per cp** |
+|---|---|---|---|---|
+| 1.0 → 1.2 | +0.0532 | −0.0120 | +2.22 | **0.0240** |
+| 1.25 → 1.5 | +0.0527 | −0.0163 | +3.29 | **0.0160** |
+| **1.5 → 1.75** | +0.0480 | −0.0169 | +3.70 | **0.0130** |
+| 1.75 → 2.0 | +0.0312 | −0.0170 | +4.07 | **0.0077** |
+| 2.0 → 2.5 | +0.0400 | −0.0334 | +9.02 | 0.0044 |
+| 2.5 → 3.0 | +0.0177 | −0.0310 | +9.67 | **0.0018** |
+
+⇒ **1.5 sits one rung below the knee.** Efficiency halves across 1.5 → 1.75 → 2.0 and falls
+another 6× by 3.0. **Broadening DILUTES rather than fixes over-confidence:** mean p(SF best)
+falls **0.3905 → 0.3592 → 0.3253** and mean expected regret rises **52.53 → 58.64 → 66.42 cp**
+across T = 1.0 / 1.5 / 2.0. SF's best is inside the beam more often while holding *less* mass.
+
+**Matching BT4's width does not make us BT4.** Median N95 = 11 needs T ≈ 2.5, where our
+containment (0.9683) still misses BT4's at T = 1.0 (0.9945) and our expected regret has gone
+52.5 → **75.4 cp** against BT4's **50.9**. **Width is not the thing BT4 has** — which is the
+same conclusion the branching entry reached from the other end.
+
+### ⚑ CORRECTION 1 — `gumbel_topk: 16` IS NOT THE CONSTRAINT ON T. `gumbel_scale` IS.
+The truncation channel is real by frequency — `frac N95 > 16` goes 0.0025 → **0.0138 (live)**
+→ 0.0475 (T=2.0) → 0.3633 (T=3.0) — and it is the channel the record has been reasoning
+about. **It costs nothing.** With Gumbel noise off, **P(SF best in the root candidate set) is
+0.9830 at EVERY T, bit-for-bit invariant**, because noise-free top-m is a pure ranking
+operation and dividing logits by a positive constant cannot reorder moves. The entire decline
+with T comes from the OTHER mechanism: `score = s·Gumbel + raw/T + const`, so raising T
+shrinks the log-prior spread by 1/T while the same noise weighs proportionally more, and the
+candidate set drifts toward a uniform random 16-subset (floor 0.6227). ⇒ **the ceiling on T
+is noise amplification, it is smooth rather than a cliff, and T is coupled to `gumbel_scale`,
+not to `gumbel_topk`. These two knobs must not be tuned independently.** At the late-game
+`gumbel_scale` 0.5 the T=2.0 cost is −0.0014 instead of −0.0043.
+
+### ⚑ CORRECTION 2 — top-k accuracy is a DEAD instrument for this knob
+Top-1/3/5 are **exactly constant at 0.4273 / 0.7127 / 0.8337 from T = 1.0 to T = 10.0**;
+paired half-width identically **0.00000**. Reporting them per-T without this note invites
+precisely the wrong conclusion ("temperature doesn't hurt accuracy, so it's free"). It is not
+free — the cost lives entirely in the width statistics
+[[proxy_must_be_monotone_in_the_intervention]]. Negative control (uniform over legal) is
+identical at all 11 rungs to **0.000e+00** under common random numbers; without CRN the same
+control drifted 0.8742 → 0.8820 on the smoke run, which would have masked a real leak.
+
+### Prior banked work this surfaced, and why an arena alone cannot decide the knob
+`scratchpad/searchshape_20260811/`, same weights both sides, matched sims 32, 400 games:
+c_scale-only **+239.5 [+205.9, +277.5]**, **T 1.0→1.5 only +32.2 [+3.3, +61.6]**, bundle
++270.9 [+236.2, +310.7] — and **239.5 + 32.2 = 271.7 vs 270.9**, near-exactly additive, a
+strong internal consistency check. **But the target-quality instrument disagrees:** at
+c_scale 0.1, `better_in` is **0.797 at T=1.0 vs 0.770 at T=1.5** (SE ~0.021, inside noise).
+⇒ **this is the `c_scale` trap restated — the play optimum sits ABOVE the target-quality
+optimum, and production sets this knob to manufacture TRAINING TARGETS, not to play.
+A paired arena ALONE is not a sufficient decider here, and proposing one alone would repeat a
+documented mistake** [[training_temp_exceeds_strength_optimal_temp]],
+[[gumbel_cscale_miscalibrated]]. Both readings predate the 08-12 sims-100/topk-16 deployment
+(they ran sims 32 and sims 256/topk 32), so neither transfers exactly.
+
+### If it is ever revisited — sizing pinned now, so it cannot be chosen after the fact
+Only **T = 1.75** is worth a game; 2.0 is already past the knee on every cost axis. Two axes
+or neither: (a) `better_in` T-ladder at the CURRENT shape,
+`scratchpad/search_vs_prior_ranking.py --sims 100 --topk 16 --c-scale 0.1 --policy-temp {1.0,1.5,1.75,2.0,2.5}`
+with `--max-positions` ≥ 1600 (SE ~0.010; at n=400 SE ~0.021 **cannot resolve** the 0.015–0.027
+gaps, so the 08-11 null is partly a resolution artifact); (b) paired arena at ~**3,300 games
+for ±10 Elo (~3.7 GPU-h)**. **1600 games (±14.3) is a guaranteed null, not a cheaper
+experiment** [[compute_instrument_resolution_before_the_threshold]]. The 1/√n scaling is
+validated, not assumed: it predicts ±28.66 for the 400-game C_temp arm, which realised
+±29.15.
+
+### Not verified / what would falsify
+Root prior only — zero search run, so what sequential halving does to the target is invisible;
+one checkpoint; the DESCENT prior is untested (T applies at every node, only the root was
+measured); FEN-only, **98 of 175 input planes are identically zero** (an earlier note said 93);
+`exp_regret` rests on a MultiPV-limited label. Falsifiers: a ≥3300-game paired arena with CI
+excluding zero for 1.75; `better_in` rising monotonically past 1.5 at n ≥ 1600; a
+`gumbel_scale` change (which largely evaporates Correction 1's cost and moves the optimum T
+up); any non-zero in the uniform control.
+
+**Timing note, recorded as sequencing and NOT as a reason to spend it:** `gumbel_policy_temp`
+voids the `wdl_regret` series, but the series is **already void** since the 08-12
+sims-100/topk-16 deployment and training is stopped, so a search change made before the
+restart costs ONE re-baseline instead of two [[wdl_regret_measures_agent_not_net]]. S0 still
+says keep 1.5.
+
+---
+
+## 2026-08-14 — DISTILLATION KILL GATE **PASSES at ~2× its bar** — and the decomposition says BT4's edge is ORDERING, not spread
+
+Pre-registered in `scratchpad/distill_AGENT_H/design.md`; target-shape analysis and build
+gates in `scratchpad/distill_build_AGENT_J/` (`target_shape_analysis.py`, `gates_all.txt`,
+`bt4_labeler.py`, `gate_cuda.py`, `gate_remap.py`, `gate_provenance.py`,
+`gate_negative_control.py`, `mutation_harness.py`, `scan_rule50.py`).
+
+### The pre-registered gate, and the readout
+**Gate:** on positions where OUR top move loses > 50 cp to deep SF, how often does BT4 pick
+SF's best? **Bar: < 0.25 ⇒ do not train.** Measured on `branching_AGENT_D/rows.jsonl`,
+**recomputed independently for this entry** with a fresh script and seed:
+
+| subset | n | share of 4000 | BT4 picks SF's best |
+|---|---|---|---|
+| **ours loses > 50 cp** | **931** | **23.3%** | **0.5263 [0.4941, 0.5585]** |
+| > 100 cp | 485 | 12.1% | 0.5814 |
+| > 200 cp | 188 | 4.7% | 0.6915 |
+| > 300 cp | 110 | 2.8% | 0.7182 |
+
+⇒ **PASS at ~2.1× the bar**, monotone in severity. BT4's global rate is 0.5683, so on our
+blunders it runs only **−0.042 below its own average** — it is not merely picking up the easy
+ones. **cp recovered on the >50 cp subset: 178.28 → 45.77 = 74.3%.**
+(Circulated CI was `[0.4952, 0.5585]`; my Wald and 10k-bootstrap both give lower bound
+**0.494**. Bootstrap noise; the verdict is unaffected.)
+
+### ⚑⚑ THE DECOMPOSITION — and it reverses the polite version of the tension
+Split `exp_regret = p(top1)·top1_regret + (1 − p(top1))·R_rest`. **One SHARED mask** —
+`n_legal > 1` and BOTH nets' `p_top1 < 0.999` — because the rows where the decomposition is
+undefined DIFFER between the nets and per-net filtering would compare two different
+populations [[same_name_different_population]]. n = **3,824/4,000**. Re-derived from
+`rows.jsonl` for this entry; matches to the last digit.
+
+| statistic | ours | BT4 | Δ |
+|---|---|---|---|
+| regret of the ARGMAX (T→0) | 47.40 cp | **20.07 cp** | **−27.33** |
+| regret in EXPECTATION (T=1) | 52.53 | 50.93 | −1.60 |
+| **regret of the NON-ARGMAX mass** | **87.95** | **109.40** | **+21.45 [+18.79, +24.27]** |
+| share of E[regret] carried by that tail | 40.7% | **85.7%** | |
+| mass in that tail (all 4000 rows) | 27.9% | 50.4% | |
+
+⇒ **BT4's edge is ENTIRELY in ORDERING. Its spread is not "no better than ours" — measured in
+sampled cp it is actively WORSE by 21.5 cp with the CI clear of zero.** The near-tie at T = 1
+(50.93 vs 52.53) is not two similar distributions; it is a much better head sitting on a much
+worse tail, and the two nearly cancel. The "BT4's distribution is only 3% better" framing is
+retired as too kind to the tail — **quote the decomposition, not the T=1 near-tie.** (And the
+T=1 numbers still carry the `E` vs `E|listed` floor artifact — the decomposition inherits it
+and is a within-ruler contrast, not an absolute [[external_placement_top1_only_gap]].)
+
+### PRE-REGISTERED TARGET SHAPE: **store the full soft target at T = 1.0**
+The load-bearing argument is **reversibility, not a belief about shape**. `p_T = p_1^(1/T)/Z`,
+so argmax, any temperature and any top-k are ALL recoverable offline from a T=1 bank with no
+relabeling and no GPU (asserted numerically at T ∈ {0.3, 0.5, 2.0} in the labeler's tests).
+**Storing argmax would be the only irreversible choice.** Store **1.0, not production's 1.5**:
+`gumbel_policy_temp` is a SEARCH knob applied at tree seeding (`mcts/gumbel.py:393`), so
+baking it into the stored target double-applies it.
+
+**⚑ PRE-COMMITTED EXPECTED FAIL MECHANISM, so a null is interpretable rather than
+re-litigated:** full-soft imports BT4's worse tail (109.4 vs 87.9 cp). The defence is that
+`exp_regret` scores a SAMPLE while our search consumes the prior as a RANKER (Gumbel top-16),
+and every ranking statistic favours BT4 — **but that is a BET and this entry says so in
+advance.** Named hedge if the bet is declined: **top-k = 16**, because it needs no free
+parameter (`gumbel_topk: 16`, so the target's support exactly matches the candidate set search
+expands) and BT4's top-16 retains SF's best **99.80%** of the time (ours: 98.30%). It is
+derivable from the same T=1 bank later, so deferring costs nothing.
+
+### Three corrections to the AGENT_H design, measured
+1. **"BT4 runs history-blind on 100% of rows" is FALSE.** Stored `x` carries real, distinct
+   8-frame history — the stack-dependent planes (12..103, 7 history frames + all 8 repetition
+   planes) differ on **1000/1000** sampled real rows — so the lc0 history fill is a near-no-op
+   on replay rows. Independently, zeroing history moves BT4's argmax on only **7.6%** of rows.
+   **We would not be distilling a history-crippled teacher.**
+2. **`halfmove_clock > 100`: ZERO occurrences.** Full-bank scan of plane 109 over
+   `pre_sims100_20260812` (821 shards, 1,498,774 rows) and `pre_policy_adapter_20260812`
+   (804 shards, 1,498,555 rows) = **2,997,329 rows, 0 saturated, max plane 0.9902 ⇒ max
+   halfmove 99**. The unrecoverable-rule50 guard is real and bites nothing: games are
+   adjudicated long before 100.
+3. **"~224 GB" was RAW, not on-disk.** Shards are zstd-compressed ~28×; a full copy is ~21 GB,
+   and the sidecar approach is ~10× cheaper again — **measured 203 bytes/row** over the 56,395
+   smoke rows (223 B/row including per-shard metadata) ⇒ **~2.0–2.2 GB per 10M rows**. Disk
+   constrains nothing either way.
+
+### ⚑⚑ THE ORT FINDING, AND IT IS NOW REPRODUCED, FIXED, AND VERIFIED FIRST-HAND
+`onnxruntime` silently drops `CUDAExecutionProvider` when `libcudnn.so.9` is not on the
+loader path, warns, and runs on **CPU ~100× slower with CORRECT labels** — it fails as a
+**schedule slip, not an error**, which is the failure mode no green test catches. The
+branching study escaped only because it imported `torch` first, and torch ships the cudnn
+that ORT needs. **⇒ ANY labeler MUST assert `"CUDAExecutionProvider" in sess.get_providers()`
+on a CONSTRUCTED session** — never `get_available_providers()`, which reports the compile-time
+list. Three-arm proof banked in `gates_all.txt`: the assert FIRES on a CPU-only session; a
+fresh process that never imports torch gets CUDA with an explicit cudnn preload
+(`torch_imported=False cudnn_objects=8`); and without the preload that same process falls
+back.
+
+**Verified first-hand for this entry** (`C1-384-12.onnx`, this box, 2026-08-14 12:34): with
+no torch import, `Failed to load library libonnxruntime_providers_cuda.so with error:
+libcudnn.so.9: cannot open shared object file`; with `import torch` first, the constructed
+session realises `['CUDAExecutionProvider', 'CPUExecutionProvider']`. ⚑ One nuance the
+circulated version missed: on THIS net the CPU fallback did not silently succeed — it then
+raised `RUNTIME_EXCEPTION ... graph_utils.cc:29` during CPU graph fusion. **So "silent
+slowdown" is the BT4 behaviour, not a universal one**; a Ceres export can hard-fail instead.
+
+**⚑⚑ OPS RULE, EFFECTIVE IMMEDIATELY — THE ACCIDENTAL OOM SAFETY IS GONE.** Until 2026-08-14
+the reason ONNX audits never OOMed the trainer was that ORT could not reach the GPU at all;
+that protection was accidental and it has now evaporated, because virtually every script in
+this repo imports torch and torch supplies the cudnn ORT was missing. ⇒ **any ONNX work run
+CONCURRENT with training must now set an explicit memory cap** — `--gpu-mem-fraction` /
+#415's `gpu_mem_limit`, which is load-bearing TODAY rather than belt-and-braces — or run
+`--device cpu` deliberately. This lands directly on the standing "never run a 256+ sim arena
+concurrent with training" rule [[no_256sim_arena_concurrent_with_training]],
+[[paired_compiled_arenas_oomed_training]]: the ONNX path is no longer the safe exception it
+was assumed to be, and an uncapped labeler beside a live trainer is now a real OOM.
+**Prefer the pause window regardless** [[batch_gpu_work_into_pause_windows]],
+[[pause_and_run_beats_concurrent_gpu_work]].
+
+### Throughput and the supply constraint
+Measured on a quiet box, GPU saturated: BT4 labeling **3,218 pos/s at bs=1024 = 11.59 M
+pos/GPU-hour** (3,099.6 at bs=512; util median 98, power to 535 W), CPU stages 12,201 rows/s,
+**GPU-bound 3,218 vs 2,547 pos/s sequential**. Our own net's fwd+bwd is 3,159 rows/s, so
+**labeling N positions costs about the same GPU-time as one epoch of training on them**, and
+it is **~65× cheaper per unique position than the RL loop's ~170k/h**
+[[supervised_pretrain_inverts_our_scaling_findings]]. 10M positions is ~1 GPU-hour of
+labeling, well under the design's 4.4.
+
+### ⚑⚑ SUPPLY IS THE BINDING CONSTRAINT, AND IT IS A HARD LIMIT — NOT A FOOTNOTE
+[[check_the_resource_is_binding]]. **The banked data holds 2,997,329 rows in total**
+(`pre_sims100_20260812` 1,498,774 + `pre_policy_adapter_20260812` 1,498,555, full-bank scan).
+⇒ **A 10M-position distillation run is NOT AVAILABLE from banked data.** Any pilot sized above
+~3.0M unique positions is buying DUPLICATE VIEWS, not new positions, and a pilot that reports
+"10M positions" off these banks is reporting a 3.3× replay factor under another name
+[[views_per_position_wrong_denominator]]. Getting past 3.0M requires generating new selfplay
+(which needs the loop running) or importing external positions (D3's axis, not this one) —
+both of which change what the experiment is. **Size the pilot against 3.0M and say so, or
+state the view multiplier explicitly.**
+Compute is NOT the constraint at that size: 3.0M positions is ~16 GPU-minutes of labeling.
+
+And **the replay bank carries NO model provenance**
+[[prev_model_share_drifted_16_to_56]] — "N positions from the bank" is a mixture over an
+unknown checkpoint range. Harmless for a screen (BT4 relabels everything; only the POSITION
+distribution is inherited), but **any pilot must record its shard index range in its own
+entry**. Bank identity for the two scanned: `data/salvage/pre_sims100_20260812` and
+`data/salvage/pre_policy_adapter_20260812`.
+
+**Disagreement found while verifying:** the circulated figures "4,496,103 rows across two
+complete banks", "10.08 M positions/hour end-to-end" and "208.4 bytes/row" are not what the
+banked artifacts say. `gates_all.txt` records **2,997,329 rows** over the two banks, **11.59 M
+pos/GPU-h** overlapped / **9.17 M/h** sequential, and my own measurement of the smoke sidecars
+gives **203 B/row**. Directionally identical, and the supply constraint is TIGHTER than
+circulated (3.0M rows, not 4.5M). Artifacts win.
+
+### Not decided here
+No arm launched, no shard written, no config touched. The gate says a BT4 policy target is
+worth training on; it does not say what a BT4-distilled net does to the ANTI-ENGINE objective,
+which is not measured anywhere and has no re-acquisition budget [[offline_distillation_value_trap]].
+
+---
+
+## 2026-08-14 — PREREG Tier-14 / **ARM B: the BT4-faithful head bundle. NOT LAUNCHED.** (protocol rule 1)
+
+Prereg source: `scratchpad/bt4heads/prereg_armB.md`. Config: `scratchpad/bt4heads/armB_bt4heads.yaml`.
+Surgery: `scratchpad/bt4heads/surgery_v2_AGENT_K/` (`migrate_v2.py`, `head_spectra.json`,
+`gates.py`, `ckpt_narrowed_79861/`). **This entry is the launch blocker: no entry → don't launch.**
+
+### Hypothesis and the shape of the bet
+BT4's head topology differs from ours in ways reachable without a fresh net, and adopting it
+is **not worse** than the status quo. This is a FIDELITY move judged by **NON-INFERIORITY**,
+not a superiority bet. The one part with a real prior: Tier-3 measured `w_sf_eval +
+w_categorical` costing **~121 Elo** via two independent 1.12M-param value towers competing for
+trunk capacity; `categorical_head_coupled` replaces the standalone tower with a **4,128-param**
+branch off `value_wdl`'s own 128-d hidden — BT4's topology, 271× cheaper
+[[tier3_game_outcome_and_aux_heads_carry_value_damage]].
+
+**⚑ EXPECTED NULL ON STRENGTH, stated before launch.** Our measured defect is prior ACCURACY
+and TRAINING DATA, not head topology: we are 3.7× narrower than BT4 and 14.1 pp behind on
+top-1 (08-14 branching entry), and a net with HALF our parameters beats us by 3.4× the whole
+Ceres ladder's span (D0 readout above). Arm B is a cheap fidelity ratchet on a run that must
+restart anyway. **It is NOT the answer to the loop's problem, and a null here must not be
+reported as a surprise.**
+
+### Arms, and the START POINT pinned by PATH **and STEP**
+Control = **banked Tier-13 arm A**, `scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099`
+(free, same salvage base; its `params.json` reads `mcts_simulations 100`, `gumbel_topk 16`,
+`gumbel_c_scale 0.1`, `gumbel_policy_temp 1.5` — **verified**, so the frozen-search rule holds).
+
+**⚑ CORRECTION #1 — the start point, which the prereg's first draft did not pin.**
+Arm B starts from **`data/salvage/pre_policy_adapter_20260812` at step 79,861** (verified by
+loading `seeds/slot_000/trainer.pt`) — the same base every Tier-13 arm launched from — and
+runs **100 iterations**. It does NOT start from the control's weights. The first surgery
+(`surgery_MAIN/ckpt_narrowed_aux128/`) was applied to arm A's iter-100 END state, **step
+91,999** (also verified); launching from that would have given arm B **200 iterations against
+arm A's 100** — six changes fully confounded with double the training, the kill rule's "at
+EQUAL `training_iteration`" unreachable, and a large spurious POSITIVE that no other check in
+the design would catch. The narrowing is redone against step 79,861 (`surgery_v2_AGENT_K/`,
+`migration_report.json` `source_step: 79861`, verified). **`surgery_MAIN/ckpt_narrowed_aux128/`
+is SUPERSEDED and must not be launched from.**
+
+**⇒ GENERAL RULE, adopted: pin every arm's start by PATH *and* STEP.** A step number is the
+one identifier that makes this class of confound visible on sight.
+
+### The bundle — six changes plus one
+| # | change | vehicle |
+|---|---|---|
+| 1 | `categorical_head_coupled: true` | config (PR #397) |
+| 2 | `w_categorical: 0.0 → 1.0` | config — **category (c)** |
+| 3 | `categorical_blend_frac: 0.69` + `categorical_search_blend_frac: 0.31` | config |
+| 4 | `rebuild_categorical_target: true` | config — **category (c), STARTUP-ONLY** |
+| 5 | `policy_embedding_mode: linear` | config (PR #398) |
+| 6 | `aux_policy_head_dim: 128` | NEW key + surgically narrowed checkpoint |
+| + | `w_sf_move: 0.0 → 0.05` | config — **category (c)** |
+
+Six changes in one bundle is deliberate under a non-inferiority rule: we test what we would
+ship and we do not need to attribute. **A FAIL WILL NOT DECOMPOSE — stated in advance.**
+
+**Enabling merge: `3ff6e0ccb`** ("merge: aux_policy_head_dim + width-migration optimizer fix"),
+adding `aux_policy_head_dim` across its 9 mandatory sites plus `reset_mismatched_optimizer_state`
+which closes the resume crash the width change would otherwise arm. Reviewed by a separate
+agent (not the author), six findings applied, lint green repo-wide, suite 5531 collected /
+0 failures / +15 tests. Per [[unknown_key_safe_bad_value_lethal]] the merge MUST precede any
+restart carrying the key.
+
+**DRY-RUN, re-run independently for this entry on a COPY** (2026-08-14, merged code):
+`flatten_run_config_defaults` OK — 323 keys, **no category-(a) unknown key**;
+`TrialConfig.from_dict` OK — **no category-(b) kill**; all eight values realize in the
+flattened dict; search **bitwise frozen** (`mcts_simulations 100`, `gumbel_topk 16`,
+`gumbel_c_scale 0.1`, `gumbel_policy_temp 1.5`). ⚑ **And the category-(c) split is confirmed by
+attribute, not by grep:** `w_categorical`, `rebuild_categorical_target` and `w_sf_move` are
+present in the flattened dict and have **no `TrialConfig` attribute** — they reach their
+consumers through the raw `config` dict, so **the dry-run structurally CANNOT fail on them**
+and proves nothing about their values. The other five are read by `from_dict` and realized
+(`categorical_head_coupled True`, `categorical_blend_frac 0.69`,
+`categorical_search_blend_frac 0.31`, `policy_embedding_mode 'linear'`,
+`aux_policy_head_dim 128`).
+
+### ⚑ CORRECTION #2 — `policy_sf` is DORMANT, not dead, and it was about to be thrown away
+`migrate_narrow_heads_checkpoint.py:156` (`mode = "fresh" if head in DEAD_HEADS else "svd"`)
+put `policy_sf` in `DEAD_HEADS` and reinitialised it FRESH, reasoning from the CONFIG
+(`w_sf_move: 0.0`) rather than from the weights. Measured on the step-79,861 checkpoint,
+`policy_sf.q.weight` is nowhere near a fresh `nn.Linear`: **std 0.0578 vs 0.0255, |max| 0.326
+vs 0.044, s_max 11.73 vs 1.16, cond 70,610 vs 2,336**, and `log_temp` **−0.285812** has moved
+off init like the other three heads. It trained and then went dormant when the SF teacher
+died. Reinitialising it would have discarded a trained head at the exact moment arm B starts
+feeding it gradient — the reinit handicap this surgery exists to prevent. **Both aux heads are
+now SVD-narrowed** (`migration_report.json`: `fresh_heads: []`, both `mode: "svd"`).
+
+**⇒ GENERAL RULE, adopted: a zero loss weight tells you a head is not training NOW, never that
+it never trained. Read the WEIGHTS, not the config** [[reachability_cannot_be_grepped_by_source_name]].
+
+**⚑ Disagreement found while verifying — the "cheapest head" ORDERING survives, the NUMBERS do
+not.** The circulated energy-in-top-128 figures (policy_sf 0.9077 / policy_own 0.8314 /
+policy_soft 0.8002) appear in NO artifact. `head_spectra.json` on the step-79,861 checkpoint
+measures **policy_sf 0.99955 · policy_future 0.99929 · policy_own 0.99393 · policy_soft
+0.98629**, against a **fresh-init 512-d control of 0.77198**. So the claim "`policy_sf` is the
+CHEAPEST of the four heads to narrow" is CORRECT and the ordering is exact — but the right
+statement is that all four heads are far more concentrated than a random matrix and the SPREAD
+between them is ~1.3 points, not ~10. Quote 0.99955 / 0.99393 / 0.98629. (The fresh-init `cond`
+also differs — 2,336 measured here vs the circulated 3,036 — because it is a fresh random draw
+each run; the 30× gap against `policy_sf`'s 70,610 is what carries the argument, not the value.)
+
+### Yardstick — ONE deciding command, pre-committed
+```
+python3 scripts/arena_standard.py \
+  --candidate <armB>/checkpoint_000099/trainer.pt \
+  --reference scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099/trainer.pt \
+  --sims 32 --search-shape training --games 4800 --seed 42
+```
+Full checkpoint paths only (iter218 has a known name collision — a `slot_000` SUBSTRING match
+once faked 70 Elo). Same search both sides.
+
+**Resolution, computed BEFORE the threshold** [[compute_instrument_resolution_before_the_threshold]]:
+the three banked Tier-13 contrasts measured half-widths **14.330 / 14.245 / 14.260 Elo at 1600
+paired games**; scaling 1/√n, **4800 games gives ±8.3 Elo**. Tier-13 spent the same 4800 games
+buying three contrasts at ±14.3; one contrast at ±8.3 is the better trade when attribution is
+not needed.
+
+**DECISION RULE, pre-committed:**
+- **ADOPT** iff the 95% CI lower bound > **−10 Elo** (non-inferiority at margin −10). A true
+  effect of 0 gives [−8.3, +8.3] and passes.
+- **REJECT** iff CI lower ≤ −10.
+- **No AMBIGUOUS branch.** The margin is certifiable at this n, which is why it is −10 and not
+  the −15 that three arms at ±14.3 would have forced.
+
+Secondary, reported and NON-deciding: `scripts/value_regret.py` on both checkpoints — the
+value coupling's DESIGNATED ruler (±3.8 cp at n=1723). Run the head's designated yardstick,
+never the loss it trains on [[value_head_frozen_since_iter8]].
+
+**KILL RULE (mid-flight):** `policy_loss` (NOT `policy_ce`) > 10% worse than arm A at EQUAL
+`training_iteration`, one-sided, sustained **3 consecutive iterations** ⇒ stop and report. Same
+guard Tier-13 ran.
+
+### ⚑ LAUNCH VERIFICATION — every item is a VALUE read, not a presence check
+If any fails, the arm is measuring the control and must be stopped.
+1. **`w_categorical`** — read `1.0` off the trainable_report row (`trainable_report.py:1555`,
+   published from the LIVE trainer). Not from the yaml.
+2. **`rebuild_categorical_target`** — no metric exists, so use the derived gate: mean
+   categorical-target entropy rises 0.5812 → 0.9833 nats under the 0.69/0.31 blend and that is
+   the irreducible soft-CE floor ⇒ **`categorical_loss` must be ≥ +0.40 nats above the
+   `w_categorical = 0` baseline at iteration 1** (measured on 36,424 real rows,
+   `scratchpad/catrebuild_AGENT_E/`).
+3. **`aux_policy_head_dim`** — realized `policy_soft.q.weight` shape is **(128, 512)**. The
+   narrowed start checkpoint already reads (128,512) for BOTH `policy_soft.q.weight` and
+   `policy_sf.q.weight`, with `policy_own.q.weight` untouched at (512,512) — **verified**.
+   ⚑ This key changes SHAPES under UNCHANGED key names, so a restart onto any config lacking
+   it silently reverts to 512 and randomises both aux heads.
+4. **⚑ CORRECTION #3 (new, found while verifying this prereg): the prereg's "tolerant load
+   reports ZERO dropped keys" gate is UNSATISFIABLE for arm B and must be restated.** Turning
+   `categorical_head_coupled` on builds `value_categorical_coupled` (one `nn.Linear`, 2 keys;
+   `transformer.py:1176-1183`) and does NOT build `value_categorical`, whose **6 keys** are
+   present in the start checkpoint (`value_categorical.{token_proj,net.0,net.2}.{weight,bias}`
+   of 496 total). A healthy launch therefore MUST drop exactly those 6. As written, the gate
+   fails on a healthy launch — and the realistic operator response, waving it through, disarms
+   the very check that catches the 8-dropped-key aux-head randomisation
+   [[a_gate_that_cannot_fail]] in its mirror form.
+   **CORRECTED GATE — measured through the real `Trainer.load`, not argued:**
+   ```
+   unexpected     == the 6 value_categorical.* keys, and NOTHING outside that prefix
+   missing        == {policy_embedding.weight, policy_embedding.bias,
+                      value_categorical_coupled.weight, value_categorical_coupled.bias}
+   shape_skipped  == []            <- THE DECISIVE ONE
+   ```
+   ⚑ `missing` is **4, not 2**. `policy_embedding.{weight,bias}` are missing because
+   `policy_embedding_mode: linear` builds an `nn.Linear(embed, embed)` (`transformer.py:1159-1168`)
+   and the step-79,861 checkpoint predates the mode — **verified: it carries zero
+   `policy_embedding*` keys**. Those two are benign by construction: linear mode initialises
+   `eye_(weight)` + `zeros_(bias)`, an exact identity, so they are a no-op at iteration 1 rather
+   than a randomised head. The two coupled keys are the intended 4,128 fresh params.
+   ⚑ **`shape_skipped == []` is the assertion that actually protects the arm**, because a
+   silently-reverted 512-wide build is the ONLY failure that lands in that bucket.
+   ⚑ **The pass signal is an ABSENCE, so the instrument must be proven to fire**
+   [[new_tests_here_are_vacuous_until_mutated]]: loading the SAME checkpoint into a 512-wide
+   build reproduces exactly the 8 aux-head keys (`policy_soft.{q,k}.{weight,bias}`,
+   `policy_sf.{q,k}.{weight,bias}`) in `shape_skipped` on demand — run that mutation first, then
+   the real load.
+   ⚑ And no log line can tell you the weights LANDED, only that nothing complained: assert
+   `cos(ckpt_tensor, loaded_tensor)` ≈ 1.0 on both narrowed heads (measured 0.99999999999998).
+5. **Manifest parity** — `aux_policy_head_dim` present in the PUBLISHED manifest's
+   `model_config` for the NEW trial id, not merely in `params.json`. If the trainer builds 128
+   and workers build 512, selfplay serves a randomly-initialised `policy_soft` with no crash
+   and no metric movement [[model_config_reaches_production_via_trialconfig]],
+   [[params_json_is_the_launch_config]].
+6. **`categorical_head_coupled`** — `value_categorical_coupled` present and `value_categorical`
+   absent in the arm's OWN checkpoint state_dict after iteration 1.
+7. **Search frozen** — row-1 `mcts_simulations` / `gumbel_topk` / `gumbel_c_scale` /
+   `gumbel_policy_temp` bitwise equal to arm A's `params.json` (100 / 16 / 0.1 / 1.5).
+
+### Confounds — recorded in advance
+- Six simultaneous changes; a FAIL does not decompose. [[most_experiments_here_are_unfalsifiable]]
+- `policy_soft` and `policy_sf` optimizer moments are zeroed and `step` reset to 0 by the
+  surgery, so both take fresh-Adam-sized updates for their first few iterations — a transient
+  layered on the SVD preservation, bounded by `zclip_max_norm`. Resetting `step` is correct:
+  keeping it at 79,861 with zeroed moments gives ~3× oversized first updates via bias
+  correction.
+- Narrowing 512→128 is NOT free. Measured on production-distribution rows
+  (`ckpt_narrowed_79861/migration_report.json`), per head: `policy_soft` keeps **98.63% of the
+  bilinear energy**, an **11.7% Frobenius error** (norm error is the sqrt of the energy
+  deficit), realizing **2.84% relative RMS logit error, mean KL 2.1e-4 nats, and
+  `perrow64_argmax_flip_frac` 2.17%**; `policy_sf` keeps **99.96%** / 2.11% Frobenius /
+  **9.48%** relative RMS logit error / KL 3.3e-4 / flips **4.58%**.
+  ⚑ Note the relative logit error is NOT monotone in energy kept — it is normalised by each
+  head's own logit scale (`logit_rms_scale` 3.40 vs 1.42), so `policy_sf` scores worse on it
+  while keeping more energy. Concretely: `policy_sf`'s ABSOLUTE error is only **1.4×**
+  `policy_soft`'s (0.1349 vs 0.0966 RMS) and its RELATIVE error is **3.3×** (0.0948 vs 0.0284),
+  entirely because of the denominator. Quote both or neither.
+  ⚑ Disagreement: the prereg circulated "2.42% relative RMS logit error and 0.5% of legal-move
+  argmax decisions". Those are surgery_MAIN's step-91,999 numbers on a different token set AND
+  a different denominator; the step-79,861 artifact that will actually launch says 2.84% and
+  2.17% per-row. Artifact wins.
+  `policy_soft` never reaches search — only `policy_own` and `wdl` are returned by the three
+  search-facing forwards — so this is a TRAINING-SIGNAL perturbation, not a play one.
+- `w_sf_move: 0.05` reactivates `policy_sf`; its trunk gradient is new. Small, but new. Its
+  stored weights are STALE (matched to an older trunk), not absent — see Correction #2.
+  ⚑ The yaml header still carries the pre-correction phrase "waking a head dead since the run
+  began"; that phrasing is WRONG and the corrected form is this entry's.
+- `rebuild_categorical_target` is applied unconditionally in `_prepare_host_arrays`, including
+  the async holdout eval path ⇒ **`test_categorical_loss` is NOT comparable across arms with
+  different `blend_frac`.**
+- `policy_sf` trains on the OPPONENT's reply distribution, not a move-teacher
+  [[sf_policy_target_is_opponent_reply]] — a 0.05 weight is deliberately small.
+
+### Revert point — **ALREADY EXISTS. NOTHING TO TAKE.**
+**⚑ CORRECTION, same session:** an earlier draft of this entry recorded the revert point as
+OWED and pinned a `salvage-export` to `data/salvage/pre_armB_20260814`. **Both were wrong, and
+the reason is worth more than the correction.**
+
+- `salvage-export` does NOT require a live process — it reads `$WORK_DIR/tune` off disk
+  (`scripts/train.sh:30` sets `WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"`). "The run is
+  down" was never the blocker.
+- **The export would be a bit-for-bit DUPLICATE.** Newest checkpoint under
+  `runs/pbt2_small/tune` is
+  `train_trial_5ce02_00000_0_lr=0.0000_2026-08-11_04-19-24/checkpoint_000218`, and
+  `--metric training_iteration --top-n 1` selects exactly that row. **Verified by md5 for this
+  entry: its `trainer.pt` and the banked
+  `data/salvage/pre_policy_adapter_20260812/seeds/slot_000/trainer.pt` are both
+  `54cb4ae65844589124cafcce2224d2b3`.** The bank already IS the current production state.
+- Newer trainer state exists on disk (`runs/tier13_arm_*/tune/.../checkpoint_000099`,
+  2026-08-14 00:24) but it is arm state, not production state, and is already banked under
+  `scratchpad/tier13/banked/`. The quoted command cannot see it anyway — wrong `WORK_DIR`.
+
+⇒ **REVERT POINT = the existing immutable `data/salvage/pre_policy_adapter_20260812`
+(step 79,861)**, eligible for a Revert-points table row as-is. Protocol rule 2 is SATISFIED,
+not deferred.
+⚑ **`data/salvage/pre_armB_20260814` must NOT be created.** That name was briefly used for two
+different artifacts — a rollback snapshot and the narrowed LAUNCH BASE — and one name for two
+roles is how a "backup" turns out to be the thing it was supposed to protect against
+[[agent_destructive_latitude_and_false_backups]]. The launch base is
+`data/salvage/armB_launch_base_20260814/` (distinct name, distinct role), built from
+`surgery_v2_AGENT_K/ckpt_narrowed_79861/`.
+⚑ **A general lesson, since "the bank is stale" was the assumption in both drafts:** before
+pinning a fresh export as a launch precondition, **md5 the newest on-disk checkpoint against
+the newest bank**. A duplicate export costs 2.3 GB and manufactures a second name for one
+state [[bank_the_dump_not_just_the_number]].
+⚑ Do NOT rewrite `data/salvage/pre_policy_adapter_20260812/seeds/slot_000/replay_shards` — all
+three Tier-13 arm dirs symlink into it, and arm B's new salvage dir must symlink too
+[[agent_destructive_latitude_and_false_backups]]. A yaml revert is NOT a rollback: the replay
+window holds ~a day of data made under the old settings.
