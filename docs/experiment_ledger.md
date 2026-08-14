@@ -47062,3 +47062,80 @@ flags parsed): `--candidate --reference --mode --sims --search-shape --games --s
 --max-concurrent-games --label --pgn-out` — **all ten present**. This does not prove the run
 succeeds; it proves argparse will not reject it, which is the specific way the last frozen command
 died.
+
+---
+
+## PR #423 round-2 INDEPENDENT re-review: REQUEST CHANGES — the provenance stamp breaks the ledger's own paired-CI tool
+
+Reviewer was NOT the author. Findings verified by execution; the blocker re-verified by me at both
+code sites before it was sent back.
+
+### BLOCKER — a cross-FILE contract that no test joins
+- `scripts/audit_targets.py:1683` stamps `extra={... "input_encoding": encoding}` — a **scalar**.
+- `scripts/audit_targets.py:1611` writes `input_encoding` on every **data row** as a **dict**, one
+  entry per candidate.
+- `scripts/paired_compare.py:166` `RULER_FIELDS = ("input_encoding", "batch_size")`; `:128-136`
+  scans **every line** (the stamp header is just another line) and accumulates distinct values;
+  `:238-244` raises `SystemExit` when a side carries more than one.
+
+⇒ every stamped `audit_targets --dump-per-position` dump is now **unreadable** by `paired_compare`,
+and the operator-facing diagnosis is **actively wrong** — it accuses the dump of mixing two rulers
+when the "second ruler" is the header this PR added. Reproduced on the PR head AND on the merge
+result, with a control on identical rows passing pre-PR. ⚑ `paired_compare.py:132-136`'s own comment
+already anticipated a dict-valued `input_encoding` from `audit_targets`, which is how close this came
+to being caught by reading.
+
+**Reachability is not hypothetical:** `docs/experiment_ledger.md:109-111` makes paired CIs MANDATORY
+for A/B verdicts and names this exact join; `:2066` calls one of them "THE ONE DECIDING YARDSTICK".
+
+**Fix taken: the general one.** Renaming the stamp key is confirmed sufficient and was REJECTED —
+it leaves the class open for the next colliding field. Instead `paired_compare.load_dump` skips lines
+carrying `STAMP_FORMAT_KEY`, which is immune to future stamp keys and also closes the residual: the
+header is otherwise counted as an **unusable data row** (measured `indexed=50 unusable=1` on a 50-row
+dump), breaking the `rows = unusable + indexed` arithmetic `paired_compare.py:24-27` tells operators
+to check before trusting a verdict.
+
+### ⚑⚑ THE GENERALISABLE LESSON — CI WAS FULLY GREEN ON THE MERGE RESULT AND CONTAINED THE BLOCKER
+The reviewer built the merge itself (base had advanced **4 commits**, and CI does not re-run on base
+advance): merge clean, `74 passed`, bare repo-wide `./scripts/lint.sh` exit 0, basedpyright 0/0/0.
+**All green, blocker present.** The regression lives entirely in a **file PAIR that no test joins** —
+one script's output format against another script's reader. ⇒ **when a change alters a FILE FORMAT,
+enumerate every CONSUMER of that format and test the pair; a producer-side test suite structurally
+cannot see this.** The author's own suite was green at 5374 passed.
+
+### Prior findings — F2/F3/F4/F5 CLOSED by execution; F1's reader half CLOSED, producer half NOT
+The reader half was proven the right way — `sys.addaudithook` on `open`, pointed at the REAL
+contaminated files: the guard raises before either `--bt4` or the 4.2 MB `--audit` set is opened, at
+the cost of one `readline`. That is an observation, not an exception-type assertion.
+
+**The producer half is a PRESENCE CHECK.** `tests/test_audit_cache_stamp.py:609` asserts
+`"write_audit_cache" in at.__dict__ or hasattr(...)` and then calls `write_audit_cache` DIRECTLY,
+never through `audit_targets`. Measured: a mutant where `audit_targets` keeps the import but writes
+**unstamped** SURVIVES 37/37. [[reachability_cannot_be_grepped_by_source_name]] — closing it with an
+AST reachability assertion.
+
+**N1, and it is the PR undermining itself:** `audit_set` is stamped at `foreign_net_audit.py:408` and
+`audit_targets.py:1682` and **read by nothing**. Confirmed — a full 4000-row report prints with
+`--net` stamped `audit_set_v1` against `--bt4` stamped `audit_set_v9_DIFFERENT`, no complaint, and the
+banner does not even show the field. **Recording a provenance value and never reading it is exactly
+the defect class this PR exists to kill.**
+
+### Two author claims corrected (text only; the code is right)
+1. `tests/test_audit_cache_stamp.py:567-570` and its `_stale_NET_` twin claim "a late check would
+   raise FileNotFoundError instead and this test would fail". **False** — deleting the `--net`
+   pre-flight entirely leaves 37/37 passing, because `read_audit_cache_by_key(args.net)` raises the
+   same `AuditCacheError` with the same text. This is round 1's M10 lesson one level down: **a message
+   assertion cannot separate a working guard from a deleted one when a second guard rejects the same
+   input FOR THE SAME REASON.** Q3 does cover it; the docstrings' account of which line is under test
+   is wrong.
+2. F5 does **not** cover `--max-positions N --force-cache-out` — the writer records the true truncated
+   count, so a 10-row cache stamps validly. Behaviour is fine and visible via the printed `rows=`;
+   the claim is dropped.
+
+### Method note worth keeping: THE "RED BY 8" ALLOWANCE IS BRANCH-SCOPED
+It belongs to `ops/live-20260725`, **not** to `main`. #423 is based on `main`, whose suite is fully
+green (5388 items: 5374 passed, 11 skipped, 3 xfailed, 0 failed), so on that branch a single failure
+is a real regression with no baseline to hide behind. I had implied the allowance might apply; it does
+not. ⚑ Also: the author derived those counts from pytest progress characters because `-q` suppresses
+the summary line in this repo's config — an indirect read, flagged as such rather than quoted as a
+summary that did not exist.
