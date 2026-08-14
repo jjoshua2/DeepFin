@@ -49194,3 +49194,58 @@ agents' suites); the reviewer's runs stalled at 76% / 49% with zero byte progres
 killed them rather than compete with live training — the right call. So **"5552/15 vs 5531/15,
 same 15" remains MY claim, not a verified one.** What is verified: the two touched test files pass
 in full on the branch (42 tests, no failures).
+
+### ⚑ #8 RE-VERIFIED ON THE **LIVE** ARM-B CHECKPOINT (2026-08-14, iter 2) — every one of 479 slots accounted for
+
+The independent review closed the strengthened #8 by REPRODUCING the load from the same
+donor. That proves the mechanism. It does not prove the process that is actually training
+did the same thing — different torch invocation, real Ray actor, real machine state
+([[diff_the_file_you_measured_against_production]]). Read off
+`checkpoint_000001/trainer.pt` against `armB_launch_base_20260814`:
+
+| group | slots | reasoning |
+|---|---|---|
+| donor moments CARRIED (step 79861 → 80311) | **419** | 425 donor trained slots − 6 dropped |
+| dropped (`value_categorical` standalone tower) | **6** | as predicted |
+| fresh (`policy_embedding.*`, `value_categorical_coupled.*`) | **4** | as predicted |
+| SVD-narrowed aux heads, fresh at SURGERY time | **8** | `policy_soft.{q,k}.{weight,bias}`, `policy_sf.{q,k}.{weight,bias}` |
+| Aurora matrix group (stores `momentum_buffer`, no `step`) | **48** | `matrix_optimizer_scope: mlp_out` |
+| **total** | **479** | matches the remap report exactly |
+
+⇒ **The optimizer state survived into the running trainer.** A cold start would put every
+`step` counter at exactly 450 (the steps taken since load); 419 of them read **80311**.
+
+⚑ **The 8 narrowed-head slots are NOT a wipe and must not be read as one.** A 512→128 SVD
+narrowing makes the donor's moments for those tensors dimensionally invalid, so the surgery
+wrote fresh state at step 0. They were never applicable, rather than lost. Anyone re-reading
+this series later will see 12 slots at the low counter and should not count all 12 as fresh:
+**4 are new parameters, 8 are re-shaped ones.**
+
+### ⚑⚑ MY PASS CRITERION FOR THE ABOVE WAS VACUOUS — the fourth instrument failure of the day
+
+The first version of this check printed **PASS** off `live_min > donor_min * 0.9`. Donor min
+is **0** (those 8 narrowed heads), so the test reads `450 > 0` — **true for every possible
+input, including a total wipe.** A companion line counted "live slots reading < 100 steps (a
+COLD start would be ~all of them)", which is also wrong: after 450 steps a cold optimizer
+reads **450**, not <100. Both printed reassuring output about a run they could not have
+faulted.
+
+The conclusion survived only because the raw histogram was in the same output and
+`80311 = 79861 + 450` is unambiguous. **The number that decided it was one I printed for
+context, not the one I designated as the gate.**
+
+**Four this session, all the same shape:** `grep … | tail && echo FIRED` (fires on zero
+matches, because a pipeline's status is `tail`'s) · a mutation harness reporting six mutants
+killed that a no-op `sed` never created · an F9 test that passed with its guard removed
+because a *different* guard declined first · this. Every one produced confident output.
+
+**The tell is common to all four: I wrote the check and its expected answer together, so the
+check inherited the assumption instead of testing it.** Here the buried assumption was "all
+donor slots are at 79861" — false for 8 of 433.
+
+**RULE, and it is the one that actually caught this: state the exact expected COUNT before
+running, then treat a mismatch as owing an explanation rather than as a failure.** Predicting
+"4 cold / 427 carried" and observing "12 / 419" is what forced the narrowed-head discovery.
+A threshold would have passed silently in both directions. Related:
+[[a_gate_that_cannot_fail]], [[compute_instrument_resolution_before_the_threshold]],
+[[new_tests_here_are_vacuous_until_mutated]].
