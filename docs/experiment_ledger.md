@@ -49144,3 +49144,53 @@ this arm, after the start-point confound (step 91,999 vs 79,861) and the `policy
   independent review of `c4a4e00b1`, running concurrently per the user's explicit instruction
   that the review cost no wall clock. A fatal finding stops arm B and it restarts having lost
   nothing but GPU time.
+
+### INDEPENDENT REVIEW VERDICT (2026-08-14, separate agent, reviewer ≠ author)
+
+**APPROVE-WITH-CHANGES. Nothing blocking arm B.** Full R1–R4 verified BY EXECUTION against the
+real arm-B donor at production architecture, not by reading.
+
+- **R1 closes the strengthened #8 ahead of iteration 1.** End-to-end at production scale
+  (479 slots, groups `[48, 0, 142, 289]`): `475 kept, 6 dropped, 4 fresh`, and **every one of
+  the 886 installed `(name, state-key)` moment tensors is `torch.equal` to the donor's own
+  tensor for that exact pair** — 0 mis-associated, removed head's state gone, new params
+  carrying none, `opt.step()` × 2 clean, no NaN, **0 partial entries**. Base-code control on
+  the same donor: `n_state: 0`. The donor has **no `opt_param_names`**, so the RECONSTRUCTION
+  is the hot path, and it reproduces `_optimizer_param_names()` **slot-for-slot, 481/481**, on
+  CPU and under `map_location=cuda` (tied-storage aliasing survives: 481 distinct storages
+  among 496 keys, one 16-key alias group).
+- **R3:** an ordinary resume is untouched — SHA-256 per state tensor, per-parameter-name state
+  map, all four groups' hyperparameters, and the scheduler state all identical base vs branch.
+- **R4:** `_split_decay_groups` fingerprinted as per-parameter NAME lists across 4 configs × 8
+  filters (32 combos), base and branch: **identical md5**.
+- **Mutations:** the new tests, run against unfixed base code, give **19 failed / 2 passed** —
+  the 2 being exactly the increase-path control. Six further mutants, each patch byte-verified
+  to have applied, all six killed.
+
+**⚑ R2 is the one to keep: the gates are NOT sufficient, and the reviewer said the reachability
+out loud rather than reporting the bound as a result.** Any same-shape swap INSIDE a group is
+accepted (`481 kept, 0 dropped, 0 fresh`), and a count-neutral rotation confined to group 2's
+**50-long identical-shape run** mis-associates 50 slots and passes both gates. **446 of 481
+production slots live in a shape class with ≥2 members inside their own group.** No such
+permutation was reachable from the reconstruction — but that is **a bound on the search, not a
+proof**. It would need a count-neutral parse error inside one group AND inside a same-shape run;
+all three known triggers are absent TODAY and were measured absent, not assumed: production
+registers **zero persistent buffers** (all four `register_buffer` sites `persistent=False`;
+`set(ckpt["model"]) ∩ named_buffers() == ∅`), **zero frozen parameters**, and no
+`state_dict`/`named_parameters` override or state-dict hook anywhere in `model/`.
+
+**Two corrections the reviewer made to MY brief, both mine:**
+1. I briefed that training was stopped. It was not — arm B was live throughout, and the reviewer
+   ran one 63M-param CUDA load + 2 Aurora steps against the training GPU before noticing. No OOM,
+   arm B unaffected, but it violates "no GPU-touching diagnostics while an arm trains" and the
+   cause was my briefing error, not the agent's judgement. **A review brief must state the live
+   state as a READ, not as a remembered fact.**
+2. I framed it as a pre-merge review. `c4a4e00b1` was already merged as `839f63d2b` and is what
+   arm B is running. The reviewer verified the live tree's `trainer.py` and both test files are
+   **byte-identical to `c4a4e00b1`**, which is what makes the verdict apply to the running code.
+
+**⚑ The full-suite delta is NOT independently reproduced.** The box hit load 53 (arm B plus other
+agents' suites); the reviewer's runs stalled at 76% / 49% with zero byte progress over 90 s and it
+killed them rather than compete with live training — the right call. So **"5552/15 vs 5531/15,
+same 15" remains MY claim, not a verified one.** What is verified: the two touched test files pass
+in full on the branch (42 tests, no failures).
