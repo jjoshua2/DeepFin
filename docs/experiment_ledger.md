@@ -47181,3 +47181,88 @@ both full test suites and any mutation battery until arm C stops, and to run onl
 meanwhile. `44832` is the precedent — agent CPU load already confounded arm A's iteration timing once,
 and `nice -n 19` mitigates rather than removes it. Delaying a review verdict is cheap; spending the
 comparability of a 100-iteration arm is not.
+
+## PR #423 round 3 (`65494f3c7`): blocker CONFIRMED fixed; 4 residuals; and a fix that put torch on the live box
+
+Independent reviewer (not the author), verdict **MERGE WITH CHANGES**. All of the below is from
+execution on the pushed commit, not from the author's report.
+
+**Blocker closed the right way.** `paired_compare.load_dump` skips lines carrying `STAMP_FORMAT_KEY`
+rather than renaming the colliding key, so it stays correct for any stamp field added later. Verified:
+`unusable` back to **0**, one distinct ruler value, join passes, and on a faithful 4000-row dump
+`rows = unusable + indexed → 4000 == 0 + 4000`. No producer that feeds `paired_compare` can carry the
+sentinel (`value_regret`, `blindspot_panel`, `audit_targets`, `probe_holdout_split_leak`: **0**
+occurrences each). **R1 kills via exactly one test** —
+`test_a_stamped_dump_in_the_audit_targets_ROW_SHAPE_still_joins` — which uses the real producer row
+shape on one side and the real consumer on the other, so the cross-file gap is genuinely closed.
+R2 (import kept, dump written unstamped) is now **caught** where it survived 37/37; R3/R4/R5 all die.
+R3's message proves the ordering assertion is an OBSERVATION, not another type check: it names the
+files opened before the guard refused, with the `--audit` set **present**, so absence can no longer be
+what stops the run.
+
+### ⚑⚑ FINDING A — THE FIX FOR A CONTENTION-ADJACENT BUG PUT **torch** ON THE MONITORING PATH
+`scripts/paired_compare.py:52` imports `STAMP_FORMAT_KEY` from `chess_anti_engine.eval.audit_cache`,
+which executes `chess_anti_engine/eval/__init__.py` — and that eagerly runs `from .puzzles import ...`,
+which pulls torch. Import chain verified independently.
+
+| | startup | RSS |
+|---|---|---|
+| before (round 2) | **0.21 s** | 25.5 MB |
+| after (round 3) | **4.50 s** | **662 MB** |
+| merge result | 4.90 s | 661 MB |
+
+1074 new modules **for one string constant**, on a module that was deliberately stdlib+numpy. And
+`scripts/monitor_fen.sh` invokes `paired_compare.py` on the TRAINING box (`:103`, `:110`) — so this is
+~13 s and 662 MB of transient per monitoring cycle on the machine running Tier-13. Nothing breaks and
+nothing reads wrong; the cost is invisible from the diff. ⇒ **an import is a dependency edge, and in
+this repo a dependency edge on `chess_anti_engine.eval` is a torch import.** Fix: move the sentinel to
+a leaf module, re-export from `audit_cache`, import the leaf — plus a test asserting
+`"torch" not in sys.modules` after importing `paired_compare`, so it cannot come back silently.
+Duplicating the literal was REJECTED: it invites the drift the stamp exists to prevent.
+
+### B — the new AST reachability gate is OVER-FITTED, and it misattributes
+`write_audit_cache(path=…, rows=per_pos_dump, …)` fails (the rows check reads `c.args[1]`
+positionally) and `audit_cache.write_audit_cache(...)` fails (the walk requires `ast.Name`, so an
+`ast.Attribute` callee is invisible) — and the second announces "writes the per-position dump WITHOUT
+calling write_audit_cache" **about code that does**. It fails CLOSED, so it cannot produce a wrong
+number, but **a gate that fails on a correct refactor and blames the wrong thing is how gates get
+deleted** — and `from chess_anti_engine.eval import audit_cache` is already the tests' own import
+style. A gate change gets its own before/after: B1/B2 must PASS while R2 still fails.
+
+### C — `require_same_audit_set` compares the raw path STRING
+`'data/audit_set_v1.jsonl'` vs `'/home/josh/projects/chess/data/audit_set_v1.jsonl'` is REFUSED, same
+file. Fails closed and both producers default to the same relative path. Worth naming because this
+module's own docstring is emphatic that names drift and every other provenance field is a derived
+digest — `audit_set` is now the one field compared by NAME. `resolve()` at write time, or an honest
+docstring line.
+
+### D — L14 REINTRODUCED: `read_audit_cache_by_key` silently last-wins on duplicate keys
+2 rows in → **1 key out**, and the row-count binding does not catch it because it counts **lines**, not
+distinct keys. This is documented audit invariant **L14** (`docs/rl_loop_audit.md:754`), and
+`paired_compare.load_dump` was explicitly hardened against exactly it ("no principled winner between
+two rows claiming the same position"). Latent, not live — `per_position_277.jsonl` measured 4000 rows
+/ 4000 unique keys. ⇒ **a new module in the same domain re-opened a closed invariant, because nothing
+tests the invariant at the DOMAIN level, only at the old site.** (E, nit: a row lacking `key` raises a
+bare `KeyError`, losing path and line — the class N3 just fixed.)
+
+### Gates: what is in evidence, and what is NOT
+Ran: branch and merge result (`7de2cae89`, merges clean, 20 files) — targeted 80 passed / 9.5 s each,
+`ruff check .` clean on both. GitHub CI `lint` **passed on the branch** (3m37s, whole-repo incl.
+basedpyright), corroborating the author's lint claim FOR THE BRANCH; `test` pending.
+**NOT run and NOT assumed:** full suite on the branch, full suite on the merge result, and repo-wide
+`lint.sh` on the MERGE RESULT — CI covers the branch only and never re-runs when the base advances,
+and it has advanced 4 commits. Held deliberately: arm C is training (see below).
+
+### ⚑ OPERATIONS: I stopped two concurrent full suites, and the omission was MINE
+The AUTHOR was running **two full 5388-test suites concurrently** while arm C trained. Load average
+**50.5 on 32 cores**, both pytest mains at **nice 19 — the same priority as the Stockfish processes
+that gate selfplay throughput**, i.e. direct contention on the experiment's critical path
+(precedent: `44832`). Stopped by EXPLICIT PID (1279946, 1283879; never a name pattern); confirmed gone
+along with an orphan child, trainer PID 1266577 unharmed. **I had told the REVIEWER to hold heavy CPU
+work and never told the AUTHOR** — the agent had no way to know, and said so honestly.
+⚑ The reasoning worth recording is the agent's: *"they're both well underway, so aborting would waste
+the work."* That weighs its own sunk cost against a cost it could not see. **Noticing you are doing
+something you would have asked permission for IS the moment to stop — finishing because stopping feels
+wasteful is the sunk-cost fallacy wearing a diligence costume.** Same shape as decide-and-report for
+irreversible actions: a cost borne by someone else is not yours to trade away. Brief rule updated:
+concurrency limits go to EVERY agent that can run tests, not only the one I happen to be thinking about.
