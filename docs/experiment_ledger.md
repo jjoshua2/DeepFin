@@ -47139,3 +47139,21 @@ is a real regression with no baseline to hide behind. I had implied the allowanc
 not. ⚑ Also: the author derived those counts from pytest progress characters because `-q` suppresses
 the summary line in this repo's config — an indirect read, flagged as such rather than quoted as a
 summary that did not exist.
+
+### Arm C RESUMED 2026-08-13 22:35 (user released the GPU)
+
+`WATCHDOG_AUTO_RECOVER=0 TRAIN_CONFIG=scratchpad/tier13/arm_C_residual_mish.yaml
+TRAIN_WORK_DIR=runs/tier13_arm_C setsid ./scripts/train.sh start` — `setsid` per
+[[train_start_needs_setsid]], and `start` auto-passes `--resume` when tune state exists
+([[train_start_auto_resume]]), which it did.
+
+Verified: GPU free before launch (2673 MiB / 1%, and the earlier 20 GB was the user's Windows-side
+work, not a leak of ours); auto-resume announced `Detected prior tune state — auto-resuming` and
+`(extra: --resume)`; PID 1266577; **restored from `checkpoint_000078` inside the SAME trial dir**
+`train_trial_33636_00000_0_lr=0.0000_2026-08-13_13-55-42` — so trial identity and the donor
+`global_iter = 890 + N` lineage are preserved, and the cross-arm join key (work_dir / trial-id) is
+unchanged. **No merge, no rebuild, no yaml edit was applied first** — arm C's remaining 21 iterations
+run on exactly the code arms A and B ran on, which was the point of section A.
+
+⚑ Exclusions already pre-committed and now armed: **iters 80-86** out of per-iteration cross-arm
+comparisons (drain transient + the second diff-focus warm-up).
