@@ -617,16 +617,55 @@ def test_duplicate_donor_slot_ids_decline(
     groups = [dict(g) for g in opt_state["param_groups"]]
     flat = [pid for g in groups for pid in g["params"]]
     assert len(flat) >= 2
-    # Point the second slot at the first slot's id, keeping every LENGTH intact.
-    seen = 0
+
+  # ⚑⚑ THE FIXTURE HAS TO DEFEAT EVERY OTHER GUARD, OR IT TESTS THE WRONG ONE.
+  # The first version of this test corrupted an arbitrary slot, and the mutation
+  # run caught it: removing the duplicate-id check did NOT make it fail, because
+  # orphaning a slot id also orphans a STATE key, and the name-resolution guard
+  # (`name is None -> return None`) declines first. Passing for the wrong reason
+  # is the same defect as not running.
+  #
+  # So: pick two parameters of IDENTICAL shape in the SAME group (the shape guard
+  # then cannot fire), point the second's slot at the first's id, and DELETE the
+  # now-orphaned state entry (the name guard then cannot fire). What is left is a
+  # donor whose every check passes while two slots share one id -- so one
+  # parameter's moments land on ANOTHER parameter. Only the duplicate-id check
+  # stands between that and the optimizer.
+    shape_of_name = {
+        n: tuple(payload["model"][n].shape)
+        for n in names
+        if torch.is_tensor(payload["model"].get(n))
+    }
+    pair = None
     for group in groups:
-        params = list(group["params"])
-        for i in range(len(params)):
-            seen += 1
-            if seen == 2:
-                params[i] = flat[0]
-        group["params"] = params
+        by_shape: dict[tuple[int, ...], list[int]] = {}
+        for pid in group["params"]:
+            name = names[pid] if pid < len(names) else None
+            if name is None or name not in shape_of_name:
+                continue
+            by_shape.setdefault(shape_of_name[name], []).append(pid)
+        for same in by_shape.values():
+            if len(same) >= 2:
+                pair = (same[0], same[1], group)
+                break
+        if pair:
+            break
+    if pair is None:
+        pytest.skip("no two same-shape parameters share a group in this layout")
+    keep_id, dup_id, group = pair
+
+    group["params"] = [keep_id if pid == dup_id else pid for pid in group["params"]]
     opt_state["param_groups"] = groups
+    state = {k: v for k, v in opt_state["state"].items() if k != dup_id}
+    opt_state["state"] = state
+
+  # Prove the fixture really is invisible to the other guards: every surviving
+  # state key still resolves to a name, and to a tensor of the right shape.
+    surviving = dict(zip([p for g in groups for p in g["params"]], names, strict=True))
+    for sid in state:
+        assert sid in surviving, "fixture would trip the NAME guard, not the id guard"
+        assert surviving[sid] in shape_of_name, "fixture would trip the name guard"
+
     assert arm._remap_optimizer_state_by_param_name(
         opt_state, names, payload["model"],
     ) is None
@@ -702,8 +741,52 @@ def test_a_parameter_that_moves_between_groups_does_not_crash(
     trainer.save(ckpt)
     payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
 
+  # ⚑ The arm changes `matrix_optimizer_scope`, and that is the POINT. Adding a
+  # parameter does not move any SURVIVOR between groups -- an existing
+  # parameter's bucket is decided by its own name/shape, which a new sibling does
+  # not touch -- so an add-only arm leaves this test asserting nothing (it skipped
+  # in BOTH layouts before this line existed). Widening the matrix scope
+  # re-buckets real parameters, which is exactly the reachable construction the
+  # independent review used to demonstrate cross-group movement.
+    arm_scope = "block_all" if scope == "mlp_out" else scope
     arm_cfg = _cfg(coupled=True, policy_embedding_mode="linear")
-    arm = _trainer(arm_cfg, tmp_path / "arm", optimizer, scope)
+    arm = _trainer(arm_cfg, tmp_path / "arm", optimizer, arm_scope)
+
+  # ⚑ ASSERT THE PREMISE FIRST. Loading and stepping proves nothing about
+  # cross-group movement unless a surviving parameter ACTUALLY changed group --
+  # if none does, this test passes while exercising none of the behaviour it
+  # names, which is the exact defect the F9 mutant exposed one test above.
+  # `adamw`/`default` is a single group and cannot express the property, so it
+  # SKIPS rather than banking a free pass.
+    def _group_of_name(names: list[str], sizes: list[int]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        cursor = 0
+        for index, size in enumerate(sizes):
+            for name in names[cursor:cursor + size]:
+                out[name] = index
+            cursor += size
+        return out
+
+    donor_names = arm._donor_optimizer_param_names(payload)
+    assert donor_names is not None
+    donor_sizes = [len(g["params"]) for g in payload["opt"]["param_groups"]]
+    live_names = arm._optimizer_param_names()
+    assert live_names is not None
+    live_sizes = [len(g["params"]) for g in arm.opt.param_groups]
+    if len(donor_sizes) < 2:
+        pytest.skip("single-group layout cannot express a cross-group move")
+    donor_group = _group_of_name(list(donor_names), donor_sizes)
+    live_group = _group_of_name(list(live_names), live_sizes)
+    moved = [
+        n for n in set(donor_group) & set(live_group)
+        if donor_group[n] != live_group[n]
+    ]
+    if not moved:
+        pytest.skip(
+            "no surviving parameter changes group in this arm — the property "
+            "under test is not reachable here, so passing would prove nothing"
+        )
+
     arm.load(ckpt)
     # Two real steps: initialisation of any missing moment happens on step 1, and
     # step 2 exercises the state it just built.
