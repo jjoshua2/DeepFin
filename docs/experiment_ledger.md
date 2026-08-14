@@ -369,14 +369,26 @@ mass.) Both are ~6× below the live midpoint's α = 1.
 ⚑ **AND THE CEILING IS IRREDUCIBLE, WHICH IS THE ACTIONABLE PART.** Even at the
 gradient-OPTIMAL α, cosine tops out at **0.905**. The residual ~0.095 is not a mis-fitted α —
 it is what a CONSTANT tail costs, because one number cannot separate rank 7 (186 cp) from rank
-40 (635 cp). ⇒ **Do not tune α further.** The next model is a rank- or prior-aware tail (or a
-residual tilt), not a better constant.
+40 (635 cp). ⇒ **Do not tune α further.** A better constant is not the answer.
 
-⚑ **But no single common tail value reproduces the within-tail gradient**: cosine similarity is
-only 0.855–0.902 for ALL three, because one number cannot separate rank 7 (186 cp) from rank 40
-(635 cp). Fitting α buys the aggregate pressure, not the per-action direction. If the tail's
-internal ORDERING turns out to matter, the answer is a rank-decaying tail or a residual tilt,
-not a better constant.
+⚑⚑ **BUT DO NOT READ THE RANK CURVE AS "IMPLEMENT RANK-DECAYING REGRET FOR RANKS 7+".**
+**Hidden SF rank does not exist at live MultiPV 6.** The historical MPV40 data knows an omitted
+move was rank 7 rather than rank 30; production MPV6 knows only that the move was not surfaced.
+The rank curve DIAGNOSES why a constant fails — it is not a usable target. Anyone proposing a
+rank-shaped tail must first say where the rank comes from at label time. The implementable
+candidates are:
+- a **prior-aware / residual** tail, where unseen moves keep the NETWORK's own ordering
+  (`p_teacher(a) ∝ p_base(a)·exp(−β r)` with one shared censored value, so the tail's relative
+  order is the student's and is never attributed to Stockfish);
+- an **adaptive common α** driven by observable ROOT features (`r_6`, legal count, entropy,
+  phase) — only if the real-MPV6 panel shows it beats a fixed α;
+- **buying the information**: targeted `searchmoves` / ΔQ queries on student-important moves,
+  which is the only option that actually creates the missing rank knowledge.
+
+(An earlier revision of this section closed with "the answer is a rank-decaying tail". That
+line is **retracted** by the paragraph above: it named a target that cannot be built from
+production labels. What survives it is the measurement — fitting α buys the aggregate pressure,
+not the per-action direction, with cosine capped at 0.855–0.902 for all three constants.)
 
 ⚑ **The pooled statistic is the reportable one.** The per-row mean relative L2 read **4557** for
 the midpoint: rows where `‖g_true‖ ≈ 0` divide by near-zero and one dominated the average.
@@ -476,7 +488,7 @@ because each label is already in its own record's mover POV, so `V_T(s_t) = −q
 |---|---|---|
 | "SF CPU is the bottleneck, cheap scalar labels buy more supervision" | **stockfish = 18.3 of 32 cores (57%)** by direct per-PID accounting over 240s; whole machine 29.3/32 (92%) over a clean 480s window | **TRUE, and it UPDATES [[loop_is_gpu_bound_cpu_two_thirds_idle]]** — that note's "SF 11.1 of 32 cores, CPU 2/3 idle" was measured at sims 256 and is now stale |
 | "scalar labels reach states MultiPV cannot" | CAST pairs **18.4%** of rows vs `sf_p0_regret` **21.0%** | **FALSE** — both are gated by "is the previous ply also a stored row", not MultiPV width |
-| "CAST grades the move the learner actually made" | the played move is **not in the shard** (`sf_move_index`/`sf_played_move_index` are STOCKFISH's moves) | **BLOCKED** — needs a shard-format change; every probe number here uses an `argmax(policy_target)` proxy |
+| "CAST grades the move the learner actually made" | the played move is **not in the shard** (`sf_move_index`/`sf_played_move_index` are STOCKFISH's moves) | **~~BLOCKED~~ SUPERSEDED 2026-08-14** — recoverable offline after all: `cast_probe.recover_played_move` reconstructs it from consecutive positions via `decode_board_from_planes`, **1380/1380, 0 ambiguous**. Only a TRAINING-TIME CAST loss still needs a format change. ⚑ The argmax-proxy statements in the rest of THIS subsection describe the probe as it was BEFORE that commit and are historical |
 
 **Signal quality.** `A_CAST` is real but noisy: corr with the exactly-known covered-move
 regret **+0.168** (+0.442 on unsaturated roots), collapsing to **0.007** under an
