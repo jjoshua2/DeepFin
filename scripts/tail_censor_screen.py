@@ -215,11 +215,56 @@ def attach_prior(rows: list[Row], planes: list[np.ndarray], checkpoint: str, bat
     return device
 
 
+N_BOOT = 1000
+
+
+def bootstrap_alphas(
+    per_row: np.ndarray, *, n_boot: int = N_BOOT, seed: int = 0,
+) -> dict[str, tuple[float, float]]:
+    """Percentile CIs for both alphas by resampling ROWS.
+
+    ⚑ A point estimate with no interval is what let the earlier version of this
+    work report a tail price whose bounds varied only the outside population's
+    mean. Both alphas are ratios of row-additive sums, so the resample is exact:
+    columns are (true_tail, mass*r_k, mass*(1-r_k), grad_num, grad_den).
+
+    The interval is over ROWS, which is the sampling unit. It does not cover
+    Stockfish's own noise at a fixed position — two runs of the same search on
+    the same row are not independent draws here.
+    """
+    if per_row.size == 0:
+        return {"alpha_value": (float("nan"), float("nan")),
+                "alpha_grad": (float("nan"), float("nan"))}
+    rng = np.random.default_rng(seed)
+    n = per_row.shape[0]
+    vals: list[float] = []
+    grads: list[float] = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        c = per_row[idx].sum(axis=0)
+        if c[2] > 0:
+            vals.append(2.0 * (c[0] - c[1]) / c[2])
+        if c[4] > 0:
+            grads.append(c[3] / c[4])
+
+    def pct(xs: list[float]) -> tuple[float, float]:
+        if len(xs) < n_boot // 4:
+            return (float("nan"), float("nan"))
+        return (float(np.percentile(xs, 2.5)), float(np.percentile(xs, 97.5)))
+
+    return {"alpha_value": pct(vals), "alpha_grad": pct(grads)}
+
+
 def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
     """Fit both alphas and score every censor against the reference gradient."""
     s_t = s_m = s_m_rk = s_m_1mrk = 0.0
     num_g = den_g = 0.0
     usable: list[Row] = []
+    # ⚑ BOTH alphas are ratios of SUMS OVER ROWS, so keeping each row's five
+    # contributions makes the bootstrap exact rather than approximate: resampling
+    # rows and re-summing reproduces the estimator on the resampled population
+    # without re-running it.
+    per_row: list[tuple[float, float, float, float, float]] = []
     for row in rows:
         p_full = row.prior
         if p_full is None:
@@ -243,12 +288,16 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
         r0 = np.where(known, r_true, row.r_k)
         u = np.where(known, 0.0, (1.0 - row.r_k) / 2.0)
         d = p_full * (u - float(p_full @ u))
-        num_g += float(d @ (gradient(p_full, r_true) - gradient(p_full, r0)))
-        den_g += float(d @ d)
+        row_num = float(d @ (gradient(p_full, r_true) - gradient(p_full, r0)))
+        row_den = float(d @ d)
+        num_g += row_num
+        den_g += row_den
+        per_row.append((true_tail, mass * row.r_k, mass * (1.0 - row.r_k), row_num, row_den))
 
     alpha_value = 2.0 * (s_t - s_m_rk) / s_m_1mrk
     alpha_grad = num_g / den_g
     alphas = {"alpha_value": alpha_value, "alpha_grad": float(np.clip(alpha_grad, 0.0, 2.0))}
+    ci = bootstrap_alphas(np.asarray(per_row, dtype=np.float64))
 
     cos: dict[str, list[float]] = {n: [] for n in alpha_grid}
     rel: dict[str, list[float]] = {n: [] for n in alpha_grid}
@@ -283,6 +332,8 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
     cap = SF_OWN_REGRET_CAP_CP
     return {
         "n_rows": len(usable),
+        "alpha_value_ci": ci["alpha_value"],
+        "alpha_grad_ci": ci["alpha_grad"],
         "alpha_value": alpha_value,
         "alpha_grad_raw": alpha_grad,
         "alpha_grad": alphas["alpha_grad"],
@@ -371,8 +422,13 @@ def main() -> int:
     print(f"  midpoint (live) (alpha=1)    {res['midpoint_cp']:6.1f} cp"
           f"   bias {res['midpoint_cp'] - res['true_cp']:+7.1f}"
           f"   = {res['midpoint_cp'] / res['true_cp']:.2f}x")
-    print(f"  alpha_value {res['alpha_value']:.4f}   alpha_grad {res['alpha_grad_raw']:.4f}"
+    vlo, vhi = res["alpha_value_ci"]
+    glo, ghi = res["alpha_grad_ci"]
+    print(f"  alpha_value {res['alpha_value']:.4f} [{vlo:.4f}, {vhi:.4f}]"
+          f"   alpha_grad {res['alpha_grad_raw']:.4f} [{glo:.4f}, {ghi:.4f}]"
           f"  (clipped {res['alpha_grad']:.4f})")
+    print(f"  95% CIs over {N_BOOT} row-level bootstrap draws; they do NOT cover "
+          "Stockfish's own\n  per-position noise, only the sampling of rows.")
     print("\nGRADIENT FIDELITY  dL/dz = p*(r - E_p[r])")
     print("  ⚑ pooled rel L2 is the reportable one: rows with ||g_true|| ~ 0 make the")
     print("    per-row MEAN explode (one row read 4557). Median shown alongside.")
