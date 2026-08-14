@@ -47157,3 +47157,27 @@ run on exactly the code arms A and B ran on, which was the point of section A.
 
 ⚑ Exclusions already pre-committed and now armed: **iters 80-86** out of per-iteration cross-arm
 comparisons (drain transient + the second diff-focus warm-up).
+
+**Arm C iter 80 — resume verified end-to-end, catastrophic guard PASSES.**
+
+| iter | arm A `policy_loss` | arm C `policy_loss` | C/A | C `time_this_iter_s` | C regret |
+|---|---|---|---|---|---|
+| 79 | 0.9143 | 0.9068 | 0.9918 | 351.4 | 0.03073 |
+| **80** | 0.9161 | **0.9083** | **0.9915** | **1303.5** | 0.03120 |
+
+Pre-committed gate (arm C `policy_loss` > 1.10 × arm A at EQUAL `training_iteration`, one-sided):
+**PASS** at 0.9915. Arm C has run 0.97-0.99 of arm A for the whole banked stretch, i.e. slightly
+BETTER, so nothing here is near the kill line.
+
+⚑ `time_this_iter_s` **1303.5 vs a ~350 s baseline** — 3.7×, which is restart overhead (worker boot,
+compile, buffer warm), not a regression. It is the visible face of the transient that iters 80-86 are
+already excluded for, and it is worth recording that the guard would have been read wrong if timing
+had been the metric. Regret ticked 0.03073 → 0.03120: the PID raising its airbag against the
+post-restart winrate transient, expected per [[winrate_spike_restart_sampling_bias]], and to be
+re-read once the arm is back in steady state rather than treated as a difficulty signal now.
+
+**Concurrent-CPU discipline re-applied:** the independent reviewer working PR #423 was told to HOLD
+both full test suites and any mutation battery until arm C stops, and to run only targeted test files
+meanwhile. `44832` is the precedent — agent CPU load already confounded arm A's iteration timing once,
+and `nice -n 19` mitigates rather than removes it. Delaying a review verdict is cheap; spending the
+comparability of a 100-iteration arm is not.
