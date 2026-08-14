@@ -49052,3 +49052,95 @@ state [[bank_the_dump_not_just_the_number]].
 three Tier-13 arm dirs symlink into it, and arm B's new salvage dir must symlink too
 [[agent_destructive_latitude_and_false_backups]]. A yaml revert is NOT a rollback: the replay
 window holds ~a day of data made under the old settings.
+
+---
+
+## 2026-08-14 — **`Trainer.load` silently WIPED the donor optimizer state whenever a warm start REMOVED parameters** — fixed by identity-based re-keying (`c4a4e00b1` → merged `839f63d2b`), and VERIFIED IN EFFECT at the arm-B launch
+
+Protocol rule 1: this is a training-affecting change, so it gets an entry before it counts as
+deployed. It went live at 2026-08-14 13:53 underneath the arm-B launch, so the entry is written
+the same session as the deploy and carries its readout.
+
+### The defect
+
+`AuroraWithAuxAdam` stores optimizer state keyed by **integer index into the flattened
+`param_groups` order**. `Trainer.load`'s pre-existing repair (`reset_mismatched_optimizer_state`,
+`3ff6e0ccb`) worked on the **SHAPE** axis only: it dropped entries whose tensor shapes no longer
+matched. That is sufficient when a parameter is *resized* and insufficient the moment one is
+*removed*, because removal **shifts every subsequent index by one**, and a shifted index is a
+shape-compatible lie — the moments of parameter *i+1* get silently re-associated onto parameter
+*i*. The guard cannot see it: both tensors have the right shape.
+
+The realized consequence was worse than mis-association. With a parameter-count DECREASE the
+loader fell through to the whole-state reset, so **the entire donor optimizer state was
+discarded** and 79,861 steps of Aurora momentum / AdamW second moments were replaced with a cold
+start. Nothing warned. The run would have trained, converged, produced every metric, and passed
+every "did the change take effect" gate — the codebase's signature defect, one level below the
+config layer.
+
+⚑ **A partial per-parameter entry is worse than an absent one.** Optimizers here gate
+initialisation on `len(state) == 0` or by probing a single key. A state dict that is present but
+wrong is therefore *never* repaired at step 1; it is used.
+
+### The fix, and why it is identity-based and not positional
+
+`Trainer.save` now records an **`opt_param_names` manifest** (`trainer.py:3893`) — the actual
+name→slot assignment, written rather than inferred. `_donor_optimizer_param_names`
+(`trainer.py:3960`) prefers that manifest and reconstructs it for older checkpoints;
+`_remap_optimizer_state_by_param_name` (`trainer.py:4039`) then re-keys donor state onto the live
+model **by parameter NAME**, so a removal drops exactly the removed parameter and moves nothing
+else. `decay_bucket_index` / `_DecayGroupLayout` were extracted so the reconstruction path and
+the live path share one grouping rule instead of two copies that can drift.
+
+Positional repair was considered and rejected: it is correct only while the removal happens to
+be at the tail, and it fails silently everywhere else. There is no observation that distinguishes
+a correct positional repair from an off-by-one one.
+
+### READOUT — verified in effect, arm B launch 2026-08-14 13:53
+
+Arm B removes 6 parameters (`value_categorical.*` standalone tower) and adds 4
+(`policy_embedding.{weight,bias}`, `value_categorical_coupled.{weight,bias}`) against a
+481-parameter donor. Predicted **475 kept / 6 dropped / 4 fresh**. Observed, from the Ray worker
+log:
+
+```
+[resume] Tolerant load — shape_skipped=[], missing=[4 keys], unexpected=[6 keys]
+[resume] Re-keyed the donor optimizer state onto this model's parameters by name
+         (475 kept, 6 dropped, 4 fresh)
+```
+
+- `shape_skipped == []` — decisive; no parameter was silently dropped on the shape axis.
+- `missing` == exactly `policy_embedding.{weight,bias}` + `value_categorical_coupled.{weight,bias}`.
+- `unexpected` == exactly the 6 `value_categorical.{token_proj,net.0,net.2}.{weight,bias}` keys.
+- **Zero** `reinitialising optimizer` / `Optimizer state incompatible` warnings; zero tracebacks.
+
+⇒ On the pre-fix code this same launch would have read as a full wipe, and arm B's first ~100
+iterations would have been measuring *cold-start optimizer dynamics* rather than the six-change
+head bundle. **The bundle is expected to be null; a cold optimizer would have manufactured a
+large spurious signal in either direction.** This is the third comparability defect caught on
+this arm, after the start-point confound (step 91,999 vs 79,861) and the `policy_sf` fresh-init.
+
+### ⚑ Two instrument failures of my own, recorded because both were the shape they warn about
+
+1. **A gate that always fires.** My first post-launch check was
+   `grep -n "<wipe patterns>" $LOG | tail -3 && echo "⚑⚑ WIPE FIRED — STOP" || echo "no warning"`.
+   A pipeline's exit status is the **last** command's, and `tail` exits 0 on empty input, so the
+   `&&` branch fires **whether or not grep matched**. It duly reported `WIPE FIRED` with zero
+   matching lines above it. **Never put a `grep` behind a pipe when its exit status is the
+   signal** — test it directly (`if grep -q`) or count the matches and compare.
+2. **Right instrument, wrong file.** All the load-path lines go to the trial's **Ray worker log**
+   (`/tmp/ray/session_*/logs/worker-*.out`), not to `/tmp/chess_training.log`, which carries only
+   the driver's trial-status table. Greps against the driver log returned 0 on a healthy run —
+   the same false-negative shape as
+   [[server_info_logs_are_discarded_by_uvicorn]]. **Before reading a log-grep as a verdict, show
+   the instrument fires: find one line you KNOW is there.**
+
+### Not verified here
+
+- The **strengthened #8** — every one of the 475 surviving parameters' moments tensor-equal to
+  the donor's — needs the first saved checkpoint and is owed at iteration 1. The log line reports
+  the mechanism's own count, which is the mechanism reporting on itself.
+- Byte-identity of an **ordinary** resume (no parameter change) through the new path: owed by the
+  independent review of `c4a4e00b1`, running concurrently per the user's explicit instruction
+  that the review cost no wall clock. A fatal finding stops arm B and it restarts having lost
+  nothing but GPU time.
