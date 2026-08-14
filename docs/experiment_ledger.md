@@ -47266,3 +47266,25 @@ something you would have asked permission for IS the moment to stop — finishin
 wasteful is the sunk-cost fallacy wearing a diligence costume.** Same shape as decide-and-report for
 irreversible actions: a cost borne by someone else is not yours to trade away. Brief rule updated:
 concurrency limits go to EVERY agent that can run tests, not only the one I happen to be thinking about.
+
+**Arm C iters 81-85: transient over, guard still passing — and the exclusion window is NOT narrowed.**
+
+| iter | A `policy_loss` | C `policy_loss` | C/A | C s/iter | C regret |
+|---|---|---|---|---|---|
+| 80 | 0.9161 | 0.9083 | 0.9915 | **1303.5** | 0.03120 |
+| 81 | 0.9156 | 0.9083 | 0.9920 | 326.6 | 0.03120 |
+| 82 | 0.9124 | 0.8943 | 0.9802 | 385.1 | 0.03078 |
+| 83 | 0.9200 | 0.8991 | 0.9773 | 282.7 | 0.03078 |
+| 84 | 0.9123 | 0.9011 | 0.9878 | 290.4 | 0.03078 |
+| 85 | 0.9233 | 0.9054 | 0.9806 | 270.4 | 0.03078 |
+
+Guard PASSES at 0.9806 (kill > 1.10). Iteration time recovered to the 270-385 s band at **iter 81** —
+the 1303 s was iter 80 alone — and regret fell back from the 0.03120 airbag tick to 0.03078.
+
+⚑ **The 80-86 exclusion STAYS at 80-86.** Timing recovering at 81 is a visible invitation to narrow
+the window to "80 only", and that would be wrong twice over: the window was pre-committed on a
+DIFFERENT mechanism (the per-thread diff-focus warm-up governs which plies are RECORDED and how they
+are SAMPLED, ~131k plies / ~37 min, nothing to do with wall-clock per iteration), and shrinking a
+pre-committed exclusion after seeing that the data inside it looks fine is exactly the post-hoc
+freedom the prereg exists to remove. [[never_condition_a_control_on_its_own_outcome]]. If anything the
+timing recovery is evidence the two mechanisms are separable, not evidence the second one ended.
