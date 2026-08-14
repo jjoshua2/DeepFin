@@ -46763,3 +46763,46 @@ recomputation of the sibling June-26 dump reproduces the same magnitude of ruler
 
 ⇒ **NOT MERGED.** F1 is the decisive one: a guard that certifies one input of a two-input join,
 while the other is contaminated the same way, converts a silent error into an endorsed one.
+
+---
+
+## DEVIATION (2026-08-13 21:50): Tier-13 arm C STOPPED at iter 79/100 for a user GPU pause
+
+**Not a verdict — a protocol deviation, recorded same-session per rule 3.**
+
+Josh asked for GPU release ("I want to pause gpu usage now while I use computer"). Arm C's prereg
+calls for **100** iterations per arm; it was stopped at **79**. The remaining 21 iterations are owed
+before the three-way round-robin can be judged, because the arenas compare arms at EQUAL training
+iteration and A and B both banked at 100.
+
+Teardown order actually executed (log first — it truncates on every start):
+
+| step | artifact |
+|---|---|
+| bank the log | `scratchpad/tier13/chess_training_armC_pre_pause_20260813_2150.log` |
+| bank iter-75 milestone | `scratchpad/tier13/banked/arm_C_iter75/` — `checkpoint_000074` + `params.json`, `global_iter 965 == 890+75` ✓ |
+| `./scripts/train.sh stop` | exit 0, workers drained in 46 s |
+
+Last progress row (iter 79): `policy_loss` **0.9068** (still improving — 0.9072 at iter 72),
+`opponent_wdl_regret_limit` **0.030734325748753403**, `sf_nodes` **75000** (pinned all 79 iters, so
+the difficulty read is not node-confounded), `time_this_iter_s` **351.4** (in the sane 330-600 band).
+
+**⚑ C14b did NOT capture in-flight games this teardown.** The stop emitted
+`worker(s) (331691 331693 331695 331697) recorded NOTHING this teardown; their in-flight games were
+DISCARDED. Raise CAE_STOP_GRACE_SECONDS if this recurs.` This is the exact failure task #78/#77 exist
+for, firing on a path that has previously succeeded. Consequence for Tier-13: iter-79 selfplay is
+partially lost and the resume starts from the checkpoint, not a fully-flushed buffer — so **iter 80
+carries a drain transient** and must be excluded from any per-iteration comparison across arms, the
+same way `44832`'s CPU-load transient is handled. It does NOT affect anything already banked
+(iters ≤75 milestones, or the 79-row progress.csv).
+
+**GPU release VERIFIED, and the verification is worth recording because the naive instrument lies.**
+`nvidia-smi` read **19778 MiB / 91%** immediately after a clean stop with no training processes, and
+climbed to **20510 MiB / ~70%** over the next minutes. That is **not ours**: no
+`chess_anti_engine`/`ray::`/`raylet`/`gcs_server` process existed, and a sweep of every `/proc/*/fd`
+for `dxg`/`nvidia` handles returned **zero** processes holding the GPU device. Under WSL2 `nvidia-smi`
+reports the **whole physical card including Windows-host processes** and cannot attribute them, so a
+non-zero reading after teardown is expected whenever the host is in use and is **not** evidence of a
+leak. ⇒ **the ownership test on this box is the `/proc/*/fd` sweep, never `nvidia-smi` memory.**
+Same shape as every other entry here: the field queried was populated and truthful, and it was not the
+field the question was about.
