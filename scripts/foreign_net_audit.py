@@ -405,8 +405,12 @@ def main() -> None:
 
     stamp = write_audit_cache(
         args.cache_out, cache_rows, force=args.force_cache_out,
+        # No "rows" here on purpose: `write_audit_cache` records the true
+        # count itself, and a caller-supplied one would read as though the
+        # caller were the authority on it — the exact thing the row binding
+        # exists to deny.
         extra={"net": net_label, "audit_set": str(args.audit_set),
-               "rows": len(cache_rows), "topk": int(args.topk)},
+               "topk": int(args.topk)},
     )
     print(f"[audit] cache → {args.cache_out} ({len(cache_rows)} rows) "
           f"[{stamp_summary(stamp)}]")

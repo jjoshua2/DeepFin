@@ -48,6 +48,7 @@ from chess_anti_engine.eval.audit import (
 from chess_anti_engine.eval.audit_cache import (
     read_audit_cache_by_key,
     read_audit_cache_stamp,
+    require_same_audit_set,
     stamp_summary,
 )
 
@@ -80,6 +81,9 @@ def main() -> None:
     # today implies agreeing with each other — no third cross-check needed.
     net_stamp = read_audit_cache_stamp(args.net)
     stamp = read_audit_cache_stamp(args.bt4)
+    require_same_audit_set(
+        net_stamp, stamp, label_a=str(args.net), label_b=str(args.bt4),
+    )
 
     net = read_audit_cache_by_key(args.net)
     bt4 = read_audit_cache_by_key(args.bt4)
@@ -94,8 +98,10 @@ def main() -> None:
 
     keys = [k for k in net if k in bt4]
     print(f"joined {len(keys)} positions (net∩bt4)")
-    print(f"net cache: {args.net} [{stamp_summary(net_stamp, ('producer', 'rows'))}]")
-    print(f"bt4 cache: {args.bt4} [{stamp_summary(stamp, ('net', 'rows'))}]")
+    print(f"net cache: {args.net} "
+          f"[{stamp_summary(net_stamp, ('producer', 'audit_set', 'rows'))}]")
+    print(f"bt4 cache: {args.bt4} "
+          f"[{stamp_summary(stamp, ('net', 'audit_set', 'rows'))}]")
     print(f"provenance (both): {stamp_summary(stamp)}\n")
 
     # Per bucket: accumulate regret + agreement counters.

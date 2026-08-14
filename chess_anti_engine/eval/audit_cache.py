@@ -95,6 +95,7 @@ from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 
 __all__ = [
     "AUDIT_CACHE_FORMAT",
+    "AUDIT_SET_KEY",
     "STAMP_FORMAT_KEY",
     "AuditCacheError",
     "audit_cache_stamp",
@@ -104,6 +105,7 @@ __all__ = [
     "read_audit_cache",
     "read_audit_cache_by_key",
     "read_audit_cache_stamp",
+    "require_same_audit_set",
     "stamp_summary",
     "write_audit_cache",
 ]
@@ -114,6 +116,9 @@ AUDIT_CACHE_FORMAT = 1
 #: Sentinel key that distinguishes the header record from a data row. A data
 #: row is keyed by `key`; nothing else in the schema uses this name.
 STAMP_FORMAT_KEY = "audit_cache_format"
+
+#: Scoring set both producers record and `require_same_audit_set` COMPARES.
+AUDIT_SET_KEY = "audit_set"
 
 #: Row count, written by `write_audit_cache` and ENFORCED by `read_audit_cache`.
 #: The stamp otherwise binds only to line 1, so without this a stamp lifted from
@@ -374,6 +379,12 @@ def read_audit_cache_stamp(path: Path) -> dict[str, Any]:
     Raises `AuditCacheError` on a missing file, an unstamped file, or a stamp
     that does not match the CURRENT policy map / audit ruler. Call this before
     loading anything else, so a stale cache costs no work at all.
+
+    ⚑ This validates PROVENANCE ONLY. It reads one line, so by construction it
+    cannot check that the header describes the body — the row-count binding
+    lives in `read_audit_cache`. A caller that uses this as its *only* check
+    accepts a valid stamp over a truncated or concatenated file; use it for the
+    cheap pre-flight and `read_audit_cache` to actually consume rows.
     """
     if not path.exists():
         raise _reject(path, "audit cache not found")
@@ -445,7 +456,10 @@ def read_audit_cache(path: Path) -> list[dict[str, Any]]:
         for lineno, line in enumerate(fh, start=1):
             if lineno == 1 or not line.strip():
                 continue
-            row: object = json.loads(line)
+            try:
+                row: object = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise _reject(path, f"line {lineno} is not JSON ({exc})") from exc
             if not isinstance(row, dict):
                 raise _reject(path, f"line {lineno} is not a JSON object")
             if STAMP_FORMAT_KEY in row:
@@ -479,6 +493,39 @@ def read_audit_cache_by_key(path: Path) -> dict[str, dict[str, Any]]:
     for row in read_audit_cache(path):
         out[str(row["key"])] = row
     return out
+
+
+def require_same_audit_set(
+    a: Mapping[str, Any], b: Mapping[str, Any], *, label_a: str, label_b: str,
+) -> None:
+    """Refuse to join two caches scored over DIFFERENT audit sets.
+
+    `audit_set` is recorded by both producers. Recording a provenance value and
+    then never reading it is precisely the defect class this module exists to
+    kill — a value accepted and silently ignored — so it is COMPARED, not merely
+    stored. Measured before this existed: a 4000-row report printed happily with
+    one side stamped `audit_set_v1` and the other `audit_set_v9_DIFFERENT`, and
+    the banner did not even show the field.
+
+    Absent on either side is a REFUSAL, not a pass, for the same reason the
+    version fields are: a cache old enough to lack the key is a cache whose
+    scoring set is unknown.
+    """
+    va, vb = a.get(AUDIT_SET_KEY), b.get(AUDIT_SET_KEY)
+    if va is not None and va == vb:
+        return
+    detail = (
+        f"{label_a} says {va!r}, {label_b} says {vb!r}"
+        if va != vb else
+        f"neither stamp records '{AUDIT_SET_KEY}'"
+    )
+    raise AuditCacheError(
+        f"these two caches were not scored over the same audit set — {detail}.\n"
+        "  Joining them would pair positions from different label sets and "
+        "report the difference\n"
+        "  as if it were a difference between the NETS. Re-run both sides "
+        "against one audit set."
+    )
 
 
 def stamp_summary(stamp: Mapping[str, Any], fields: Sequence[str] = ()) -> str:

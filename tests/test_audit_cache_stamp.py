@@ -9,6 +9,8 @@ the PR; a test that no mutation can break is not evidence.
 from __future__ import annotations
 
 import json
+import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ import pytest
 from chess_anti_engine.eval import audit, audit_cache
 from chess_anti_engine.eval.audit_cache import (
     AUDIT_CACHE_FORMAT,
+    AUDIT_SET_KEY,
     STAMP_FORMAT_KEY,
     AuditCacheError,
     audit_cache_stamp,
@@ -27,6 +30,7 @@ from chess_anti_engine.eval.audit_cache import (
     read_audit_cache,
     read_audit_cache_by_key,
     read_audit_cache_stamp,
+    require_same_audit_set,
     write_audit_cache,
 )
 
@@ -310,10 +314,17 @@ def test_ensure_cache_writable_is_the_preflight(tmp_path: Path) -> None:
 # The guard fires BEFORE expensive work, in both scripts that touch the cache
 # ---------------------------------------------------------------------------
 #
-# Both tests point every OTHER input at a path that does not exist. If the
-# guard ran late, the missing input would raise first and the test would fail
-# with FileNotFoundError instead of AuditCacheError — so the error TYPE is the
-# ordering assertion.
+# ⚑ THE ERROR TYPE IS *NOT* THE ORDERING ASSERTION, though an earlier revision
+# of this comment claimed it was. Both readers raise `AuditCacheError` with the
+# SAME text, so deleting the explicit pre-flight entirely leaves these tests
+# green — measured. That is the M10 lesson one level down: when a second guard
+# rejects the same input for the same REASON, neither the exception type nor its
+# message can separate a working guard from a deleted one.
+#
+# What these tests actually pin is that the script REFUSES at all. The ordering
+# property is pinned by observation instead, in
+# `test_the_guard_opens_nothing_but_the_cache_header` below, and the redundancy
+# itself is pinned by mutant Q3 (both --net guards removed together).
 
 
 def test_compare_buckets_refuses_a_stampless_cache_before_loading_anything(
@@ -566,9 +577,10 @@ def test_compare_buckets_refuses_an_unstamped_NET_cache(
 ) -> None:
     """A stamped BT4 cache must not launder an unstamped --net cache.
 
-    `--bt4` is valid here, so the only thing that can stop the run is the
-    `--net` guard; `--audit` is absent, so a late check would raise
-    FileNotFoundError instead and this test would fail.
+    `--bt4` is valid here, so the only thing that can stop the run is a `--net`
+    guard — but NOT which one: the pre-flight and the guarded loader raise the
+    same error, so this pins the refusal, not the ordering. See the section
+    comment above.
     """
     import scripts.audit_compare_buckets as acb
 
@@ -602,14 +614,212 @@ def test_compare_buckets_refuses_a_stale_NET_cache(
         acb.main()
 
 
-def test_audit_targets_per_position_dump_is_stamped(tmp_path: Path) -> None:
-    """The producer side of F1: the dump must come out readable by the guard."""
+def test_audit_targets_calls_write_audit_cache_on_the_dump_path() -> None:
+    """REACHABILITY, by AST — not a name-presence check.
+
+    The previous version of this test asserted `write_audit_cache` was importable
+    in `audit_targets` and then called it DIRECTLY, which is satisfied by a module
+    that imports the helper and writes the dump by hand. Measured: exactly that
+    mutant survived the whole file. A presence check is not a value read
+    [[reachability_cannot_be_grepped_by_source_name]], so this walks `main` and
+    requires the call to sit on the `args.dump_per_position` branch, with the
+    dump rows as its second argument.
+    """
+    import ast
+    import inspect
+
     import scripts.audit_targets as at
 
-    assert "write_audit_cache" in at.__dict__ or hasattr(at, "write_audit_cache")
+    tree = ast.parse(textwrap.dedent(inspect.getsource(at.main)))
+
+    guarded_calls: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        # `if args.dump_per_position is not None:`
+        test_src = ast.dump(node.test)
+        if "dump_per_position" not in test_src:
+            continue
+        guarded_calls.extend(
+            inner for inner in ast.walk(node)
+            if isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id == "write_audit_cache"
+        )
+
+    assert guarded_calls, (
+        "audit_targets.main writes the per-position dump WITHOUT calling "
+        "write_audit_cache on the --dump-per-position branch: the dump would "
+        "come out unstamped and every reader would refuse it."
+    )
+    # The rows argument must be the accumulated dump, not an empty placeholder.
+    row_args = {ast.dump(c.args[1]) for c in guarded_calls if len(c.args) > 1}
+    assert any("per_pos_dump" in a for a in row_args), (
+        f"write_audit_cache is called but not with the dump rows: {row_args}"
+    )
+
+
+def test_a_stamped_dump_in_the_audit_targets_ROW_SHAPE_still_joins(
+    tmp_path: Path,
+) -> None:
+    """CROSS-FILE CONTRACT: the stamp must not break `scripts/paired_compare.py`.
+
+    `audit_targets` writes `input_encoding` on every data row as a per-candidate
+    DICT, and the stamp header carries it as a SCALAR. `paired_compare` scans
+    every line for its ruler fields, so the header read as a second, disagreeing
+    ruler: `require_same_ruler` refused the dump outright, blaming it for "mixing
+    two rulers within itself", and the header also counted as one `unusable` row,
+    breaking the `rows = unusable + indexed` arithmetic operators are told to
+    check. The ledger makes this join mandatory for A/B verdicts, so this is a
+    live path, not a hypothetical.
+
+    A fixture that only exercises the stamp module cannot see this — it needs a
+    dump in the REAL producer's row shape, read by the REAL consumer.
+    """
+    import scripts.paired_compare as pc
+
+    cands = ("raw", "search", "sf_soft")
+    rows = [{
+        "key": f"k{i}", "phase": 1, "source": 0,
+        "input_encoding": {
+            c: ("stored" if c == "raw" else None if c == "sf_soft" else "fen_only")
+            for c in cands
+        },
+        "batch_size": 128,
+        "cand": {c: {"exp": 10.0 + i, "top1": 1.0} for c in cands},
+    } for i in range(50)]
+
     path = tmp_path / "per_position.jsonl"
-    write_audit_cache(path, ROWS, force=True,
-                      extra={"producer": "audit_targets.py --dump-per-position"})
-    stamp = read_audit_cache_stamp(path)
-    assert stamp["producer"] == "audit_targets.py --dump-per-position"
-    assert read_audit_cache(path) == ROWS
+    write_audit_cache(path, rows, force=True, extra={
+        "producer": "audit_targets.py --dump-per-position",
+        "audit_set": "data/audit_set_v1.jsonl",
+        # the scalar that collided with the rows' dict
+        "input_encoding": "stored",
+    })
+
+    dump = pc.load_dump(str(path), join_key="key", field="cand.raw.exp")
+    assert len(dump.rows) == len(rows)
+    assert dump.unusable == 0, "the provenance header was counted as a data row"
+    assert len(dump.provenance["input_encoding"]) == 1, (
+        "the header's scalar input_encoding was mistaken for a second ruler"
+    )
+    pc.require_same_ruler(dump, dump, label_a="A", label_b="B")
+
+    # And the stamp is still there and still enforced.
+    assert read_audit_cache_stamp(path)["producer"].startswith("audit_targets.py")
+
+
+# ---------------------------------------------------------------------------
+# `audit_set` is COMPARED, not merely recorded — review finding N1
+# ---------------------------------------------------------------------------
+
+
+def test_caches_from_different_audit_sets_are_refused() -> None:
+    """Recording a provenance value and never reading it is THIS PR's own defect.
+
+    Before this check, a full 4000-row report printed with one side stamped
+    `audit_set_v1` and the other `audit_set_v9_DIFFERENT` and said nothing.
+    """
+    a = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
+    b = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v9_DIFFERENT.jsonl"})
+    with pytest.raises(AuditCacheError, match="not scored over the same audit set"):
+        require_same_audit_set(a, b, label_a="net", label_b="bt4")
+
+
+def test_matching_audit_sets_are_accepted() -> None:
+    a = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
+    b = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
+    require_same_audit_set(a, b, label_a="net", label_b="bt4")
+
+
+def test_a_missing_audit_set_stamp_is_refused_not_assumed_equal() -> None:
+    """Absence is a failure here for the same reason it is for the versions."""
+    a = audit_cache_stamp()
+    b = audit_cache_stamp()
+    assert AUDIT_SET_KEY not in a
+    with pytest.raises(AuditCacheError, match="neither stamp records"):
+        require_same_audit_set(a, b, label_a="net", label_b="bt4")
+
+
+def test_compare_buckets_refuses_caches_from_different_audit_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reachability: the comparison runs on the real script's path."""
+    import scripts.audit_compare_buckets as acb
+
+    net = tmp_path / "net.jsonl"
+    bt4 = tmp_path / "bt4.jsonl"
+    write_audit_cache(net, ROWS, extra={AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
+    write_audit_cache(bt4, ROWS, extra={AUDIT_SET_KEY: "data/audit_set_v9.jsonl"})
+    monkeypatch.setattr("sys.argv", [
+        "audit_compare_buckets.py", "--net", str(net), "--bt4", str(bt4),
+        "--audit", str(tmp_path / "absent_audit.jsonl"),
+    ])
+    with pytest.raises(AuditCacheError, match="not scored over the same audit set"):
+        acb.main()
+
+
+# ---------------------------------------------------------------------------
+# Ordering, pinned by OBSERVATION rather than by exception type
+# ---------------------------------------------------------------------------
+
+_OPENED: list[str] = []
+_RECORDING = False
+_HOOK_INSTALLED = False
+
+
+def _install_open_hook() -> None:
+    """Record `open` events while `_RECORDING`. An audit hook cannot be removed,
+    so install at most one and keep it inert unless a test switches it on."""
+    global _HOOK_INSTALLED
+    if _HOOK_INSTALLED:
+        return
+
+    def _hook(event: str, args: tuple[Any, ...]) -> None:
+        if _RECORDING and event == "open" and args:
+            _OPENED.append(str(args[0]))
+
+    sys.addaudithook(_hook)
+    _HOOK_INSTALLED = True
+
+
+def test_the_guard_opens_nothing_but_the_cache_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal must cost no work: observe which files are OPENED.
+
+    An exception-type or message assertion cannot express "fired early" when two
+    guards raise identically. This watches the actual `open` syscalls: the
+    contaminated cache is opened (one `readline` for the header) and the large
+    `--audit` label set is never opened at all.
+    """
+    global _RECORDING
+    import scripts.audit_compare_buckets as acb
+
+    _install_open_hook()
+
+    net = _legacy_cache(tmp_path / "per_position_277.jsonl")
+    bt4 = tmp_path / "bt4.jsonl"
+    write_audit_cache(bt4, ROWS)
+    # A real, PRESENT, expensive input — not an absent path.
+    audit_set = tmp_path / "audit_set_v1.jsonl"
+    audit_set.write_text("\n".join("{}" for _ in range(50_000)), encoding="utf-8")
+
+    monkeypatch.setattr("sys.argv", [
+        "audit_compare_buckets.py", "--net", str(net), "--bt4", str(bt4),
+        "--audit", str(audit_set),
+    ])
+
+    _OPENED.clear()
+    _RECORDING = True
+    try:
+        with pytest.raises(AuditCacheError, match="UNSTAMPED"):
+            acb.main()
+    finally:
+        _RECORDING = False
+
+    opened = [o for o in _OPENED if str(tmp_path) in o]
+    assert str(audit_set) not in opened, (
+        f"the --audit label set was opened before the guard refused: {opened}"
+    )
+    assert str(net) in opened, "the guard did not even look at the cache"
