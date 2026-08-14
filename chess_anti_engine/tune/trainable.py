@@ -730,6 +730,7 @@ def _build_trial_model_config(tc: TrialConfig) -> ModelConfig:
         categorical_head_coupled=tc.categorical_head_coupled,
         policy_embedding_mode=tc.policy_embedding_mode,
         enable_policy_sf_head=tc.enable_policy_sf_head,
+        aux_policy_head_dim=tc.aux_policy_head_dim,
     )
 
 

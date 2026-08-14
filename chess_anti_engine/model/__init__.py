@@ -17,6 +17,7 @@ from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_his
 from chess_anti_engine.moves import MODEL_POLICY_ENCODING
 from chess_anti_engine.utils.architecture import (
     DEFAULT_PHASE_PIECE_THRESHOLDS,
+    normalize_aux_policy_head_dim,
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
@@ -39,7 +40,12 @@ from .transformer import ChessNet, TransformerConfig
 # whose search prior is read straight off the trunk -- a DIFFERENT policy from
 # the trained one -- and report it as the shared-embedding arm. Defaulting the
 # second rebuilds a policy_sf head the checkpoint does not have.
-ARCH_SCHEMA_VERSION = 19
+# v20: aux_policy_head_dim. Defaulting it rebuilds policy_soft / policy_sf at
+# full trunk width, so their q/k tensors no longer match the checkpoint's --
+# load_state_dict_tolerant DROPS the mismatched blocks with only a print() and
+# the heads come up RANDOMLY INITIALISED. Nothing crashes and no metric
+# necessarily moves, because both are auxiliary heads.
+ARCH_SCHEMA_VERSION = 20
 
 
 @dataclass
@@ -95,6 +101,11 @@ class ModelConfig:
     categorical_head_coupled: bool = False
     policy_embedding_mode: str = "off"
     enable_policy_sf_head: bool = True
+  # Projection width of the AUXILIARY policy heads (policy_soft / policy_sf)
+  # ONLY -- see transformer.AUX_POLICY_HEAD_DIM_HEADS. None = trunk width, which
+  # is today's exact behaviour. policy_own (the search prior, the only policy
+  # head an AOT package traces) and policy_future are never narrowed.
+    aux_policy_head_dim: int | None = None
     phase_piece_thresholds: tuple[int, int] = DEFAULT_PHASE_PIECE_THRESHOLDS
 
 
@@ -161,6 +172,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         categorical_head_coupled=bool(mc.get("categorical_head_coupled", False)),
         policy_embedding_mode=str(mc.get("policy_embedding_mode", "off")),
         enable_policy_sf_head=bool(mc.get("enable_policy_sf_head", True)),
+        aux_policy_head_dim=normalize_aux_policy_head_dim(mc.get("aux_policy_head_dim")),
         phase_piece_thresholds=normalize_phase_piece_thresholds(mc.get("phase_piece_thresholds")),
     )
 
@@ -214,6 +226,23 @@ _RESUME_CONFIG_OWNED_ENCODING_KEYS = (
     # silently revert on every resume and neither experiment could run.
     "policy_embedding_mode",
     "enable_policy_sf_head",
+    # Projection width of the AUXILIARY policy heads. Config-owned for the same
+    # reason as the keys above: the key exists to run a deliberate warm-start
+    # migration off a donor built at the other width, and checkpoint-owned it
+    # would silently revert to the donor's width on EVERY resume, so the
+    # experiment could never actually run.
+    #
+    # ⚑ Unlike the keys above, this one CHANGES TENSOR SHAPES rather than adding
+    # or removing state_dict keys: `policy_soft.q/k` and `policy_sf.q/k` keep
+    # their names and change size, so `load_state_dict_tolerant` drops them and
+    # they come up RANDOMLY INITIALISED (not zero-init, and therefore NOT
+    # function-preserving), with their optimizer moments reinitialised too. That
+    # is the intended cost of the migration — both are auxiliary heads that
+    # `policy_own` does not read — but it means such a resume is a partial head
+    # retrain, not a free warm start. Do not change this key expecting
+    # continuity. The rest of ModelConfig stays checkpoint-owned precisely
+    # because the same drop would hit shapes `policy_own` DOES read.
+    "aux_policy_head_dim",
 )
 
 
@@ -347,6 +376,7 @@ def model_config_from_flat_config(
         categorical_head_coupled=bool(cfg.get("categorical_head_coupled", False)),
         policy_embedding_mode=str(cfg.get("policy_embedding_mode", "off")),
         enable_policy_sf_head=bool(cfg.get("enable_policy_sf_head", True)),
+        aux_policy_head_dim=normalize_aux_policy_head_dim(cfg.get("aux_policy_head_dim")),
         phase_piece_thresholds=normalize_phase_piece_thresholds(
             cfg.get("phase_piece_thresholds")
         ),
@@ -410,6 +440,12 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "categorical_head_coupled": bool(cfg.categorical_head_coupled),
         "policy_embedding_mode": str(cfg.policy_embedding_mode),
         "enable_policy_sf_head": bool(cfg.enable_policy_sf_head),
+        # ⚑ THE SILENT ONE. Omitted here, the trainer builds 128-wide aux heads
+        # while every worker rebuilds them at trunk width from the manifest;
+        # load_state_dict_tolerant drops the mismatched tensors with only a
+        # print() and selfplay serves a RANDOM-INITIALISED policy_soft. Nothing
+        # crashes, and because both are auxiliary heads no metric need move.
+        "aux_policy_head_dim": normalize_aux_policy_head_dim(cfg.aux_policy_head_dim),
         "phase_piece_thresholds": list(normalize_phase_piece_thresholds(cfg.phase_piece_thresholds)),
     }
 
@@ -504,6 +540,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             categorical_head_coupled=bool(cfg.categorical_head_coupled),
             policy_embedding_mode=str(cfg.policy_embedding_mode),
             enable_policy_sf_head=bool(cfg.enable_policy_sf_head),
+            aux_policy_head_dim=normalize_aux_policy_head_dim(cfg.aux_policy_head_dim),
             phase_piece_thresholds=normalize_phase_piece_thresholds(cfg.phase_piece_thresholds),
         )
         return _attach_runtime_model_metadata(ChessNet(tcfg), cfg)
