@@ -269,6 +269,45 @@ Mechanics:
   sims, the SF MultiPV soft target at production label settings, the actual
   blended training target, and all four WDL components/blends. Reports land
   in `runs/target_audit_<sha>.md`.
+- **Scoring a FOREIGN net (LC0/BT4, Ceres) on the same ruler:** pass `--onnx
+  <net>.onnx` instead of `--checkpoint` to either `scripts/audit_targets.py` or
+  `scripts/value_regret.py`. The two flags are mutually exclusive and exactly
+  one is required — there is no default and no fallback, so a run cannot be
+  ambiguous about the weights behind its number, and the resolved net is
+  echoed on the report header and into `--dump-per-position`. The foreign net
+  goes through `chess_anti_engine/onnx/load.py`, which slices our planes to
+  LC0's 112, fills the LC0 history, and remaps Leela's 1858 policy ordering
+  into ours PER POSITION (`moves/leela_index.py`) — our `lc0_1858` and Leela's
+  agree on only 46 of 1858 slots, and castling/promotion cannot be mapped by
+  any static table. ⚑ An LC0 net declares `lc0_root`/`v1` planes, so
+  `--input-encoding stored` (audit-v2, 175-plane production rows) refuses it;
+  compare foreign and own nets under the DEFAULT `fen_only` with a pinned
+  `--batch-size`, and remember `--device cpu` is the only setting that
+  structurally cannot allocate on the training GPU.
+- **`--gpu-mem-fraction` on `--onnx` caps onnxruntime, not torch.** Both
+  rulers apply the fraction to two SEPARATE allocators, because a foreign net
+  is not a torch module: `torch.cuda.set_per_process_memory_fraction` bounds
+  the torch caching allocator, and ORT's CUDA arena is bounded only by
+  `gpu_mem_limit` in the CUDA provider options (the shape
+  `scripts/foreign_net_audit.py` has always used). The log says which is
+  which — `TORCH GPU allocator capped ...` at parse time, and
+  `onnxruntime session on [...]; CUDA arena capped at N bytes` once the
+  session exists — and a fraction on `--device cpu` prints `IGNORED` rather
+  than being dropped in silence. ⚑ A run on `--device cuda...` whose ORT
+  session comes up without `CUDAExecutionProvider` ABORTS: ORT drops an
+  unusable provider with a warning and runs on CPU, so the number would be a
+  CUDA-labelled CPU number. **`onnxruntime.get_available_providers()` cannot
+  see that happen** — it is the wheel's COMPILE-TIME list, and it can name a
+  provider that does not start (observed here: it reports CUDA while every ORT
+  session seen on this box has come back CPU-only; note there are TWO ORT
+  installs, a CPU-only wheel in the project `.venv` and a GPU wheel under
+  `/usr/bin/python3`, so which one a bare `python3` gets depends on venv
+  activation). The verdict is read off `session.get_providers()`, twice: a
+  76-byte throwaway probe session at PARSE TIME — before the audit set and
+  before Stockfish labels anything — and again on the real scoring session.
+  The probe costs one onnxruntime init (150-240ms cold, 20-50ms after) and is
+  paid ONLY by `--onnx --device cuda...`; `--device cpu` and every
+  `--checkpoint` run never build it.
 - Two standing numbers to watch on each report: (search-policy regret) vs
   (SF-soft-target regret) per phase — when search wins everywhere, the
   50k-node MultiPV-40 labeling is no longer worth its CPU bill — and
