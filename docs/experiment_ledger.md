@@ -47617,3 +47617,62 @@ arena block, which is CPU-only time and cannot contend with a `matched_sims` are
 (4-5 h, PGN out) → Ordo pooled fit + pentanomial verdicts by the pinned rules → #206 → #170
 (consumes the arena rows) → Tier-14 arm (a) launch behind its finalised prereg. Concurrent CPU-only
 work during the arenas: #423 to a clean verdict, and the Tier-14 prereg.
+
+## Tier-13 arenas: LAUNCHED, and the FIRST attempt was refused by a guard doing exactly its job
+
+**Sequence executed 2026-08-14 00:24-00:31.** Arm C reached 100/100 (`policy_loss` A 0.9031 /
+B 0.8846 / **C 0.8852**; `sf_nodes` 75000 pinned in all three; guard C/A **0.9802** and B/A **0.9795**,
+both far inside the 1.10 kill line). Log banked BEFORE the stop; `checkpoint_000099` + `params.json` +
+`progress.csv` banked to `scratchpad/tier13/banked/arm_C_iter100/`, `global_iter 990 == 890+100`,
+100 rows.
+
+⚑ **Teardown warned differently this time and the difference matters:** not "recorded NOTHING" but
+**"COULD NOT VERIFY worker(s) (1269254 1269256 1269259 1269261); a clean drain and lost in-flight
+games look identical here"** — the worker logs were deleted by Ray's session cleanup during teardown,
+so the instrument could not read them. Workers also did not drain in 90 s and were force-killed. ⇒ the
+in-flight-game verification is **not merely failing, it is unable to fire** on this path. That is a
+distinct finding for tasks #77/#78 from the earlier "recorded NOTHING", and it is the same family as
+everything else here: a check that cannot observe its subject reports the same thing whether the
+subject is healthy or not.
+
+**Merge + rebuild done, acceptance criterion met.** Merge commit `95626ce71`, two parents
+(`a2e23a84c`, `2c700dd70`). Flattened diff of the merged yaml against the pre-merge live yaml:
+**added 1 (`diff_focus_norm_shared = False`), removed 0, CHANGED 0** — exactly the criterion
+pre-committed in `54480e119`, so no deployed value was reverted. Merged yaml sha256
+`b588d276…11acc` (pin 3's identity). Extension rebuilt: compiled `ABI_VERSION = 4` against
+`_REQUIRED_MCTS_ABI = 4`.
+
+⚑ **A pre-merge near-miss worth recording.** The merge first aborted because main carries a TRACKED
+`scratchpad/tier14/prereg_draft.md` while the live tree had an UNTRACKED one. The obvious move — treat
+the local file as stale and let the merge overwrite it — would have **destroyed content**: the two
+versions are not nested. Main's has 62 lines the local lacks (the cost-being-traded falsifier, the
+two-mechanisms caveat); **the local has 9 lines main lacks** — the enumeration of live downstream
+consumers of `search_wdl_est` with their production settings, which is precisely the reachability
+evidence a Tier-14 prereg needs. Preserved as
+`scratchpad/tier14/prereg_draft.LOCAL_PREMERGE_20260814.md`; the two must be RECONCILED, not chosen
+between, when the prereg is finalised. ⇒ **"untracked and older-looking" is not "stale" — diff both
+directions before letting a merge overwrite anything.**
+
+### ⚑⚑ THE FIRST ARENA REFUSED TO RUN, AND THAT IS THE BEST OUTCOME AVAILABLE
+```
+--pgn-out: candidate and reference both resolve to the engine name
+'checkpoint_000099_trainer.pt'. Pass --pgn-candidate-name / --pgn-reference-name
+to distinguish them.
+```
+Every arm banks its weights as `arm_X_iter100/checkpoint_000099/trainer.pt`, and
+`engine_name_from_checkpoint` (`eval/arena_pgn.py:64`) builds identity from the **last two path
+components** — which are `checkpoint_000099/trainer.pt` for ALL THREE arms. **Had the writer defaulted
+instead of refusing, the PGN would have named both players identically and Ordo would have POOLED TWO
+ARMS INTO ONE PLAYER**, producing a pooled fit that looked complete and was meaningless. Cost of the
+guard: **59 seconds**, against 4-5 hours of games that would have had to be thrown away — and the
+contamination would have been invisible in the pentanomial row, which does not use names.
+
+**Deviation from the frozen command, recorded BEFORE the re-run:** two flags added,
+`--pgn-candidate-name <arm> --pgn-reference-name <arm>`. This is not a free choice — the names must
+equal the strings the pinned Ordo anchor uses (`-A arm_A_iter100`), or the anchor binds to nothing.
+Nothing else changed: same checkpoints, `--mode matched_sims --sims 32 --search-shape training
+--games 1600 --seed 42 --max-concurrent-games 16`.
+
+⇒ Amendment to pin 4, for any future arena: **checkpoint paths that differ only ABOVE the last two
+components are not distinguishable to the PGN writer.** Pass explicit engine names whenever the
+comparands are same-index checkpoints from different runs, which is the normal case for an A/B.
