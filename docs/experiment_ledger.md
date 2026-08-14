@@ -46806,3 +46806,69 @@ non-zero reading after teardown is expected whenever the host is in use and is *
 leak. ⇒ **the ownership test on this box is the `/proc/*/fd` sweep, never `nvidia-smi` memory.**
 Same shape as every other entry here: the field queried was populated and truthful, and it was not the
 field the question was about.
+
+---
+
+## #205 CLOSED — the mate concentration is REAL, its cp MAGNITUDE is the cap constant, and 60% of the gap is NOT in mate positions
+
+**CPU-only re-analysis, no GPU, no forward pass.** Script + inputs banked at
+`scratchpad/argmax_20260813/` (`cap_decomposition.py`; `full_ours-repeatfill.jsonl` md5
+`102bd4f8138c0d576cfa511f26aefdd2`, `full_BT4.jsonl` `1d8eaafe62d52b31cde563031bcce1fe`,
+`full_C1-512-15.jsonl` `c0a5ff9f38b6e279c4bd5b74c2f28d7f`, 4000 rows each — recovered out of a
+volatile `/tmp` scratchpad, per [[bank_the_dump_not_just_the_number]]). Join: 4000/4000 on all three
+nets and the audit set. Mate positions (deep MultiPV listed ≥1 mate line): **324 = 8.1%**.
+
+### My own hypothesis going in was WRONG, and the data says so
+I expected `AUDIT_REGRET_CAP_CP = 1000` plus `mate_to_effective_cp`'s ±1e5 to make a mate position's
+regret **binary** — 0 or capped — so that the bucket mean would just be `1000 × miss_rate`. It is not.
+Of 2503 listed moves in mate positions: 22.0% are best (0), **45.9% land in [100, 900)**, 27.8%
+saturate. And `1000 × 0.4753 = 475.3` against a measured **163.06**. ⇒ the mate bucket carries real
+graded information; the cap does not collapse it to a detector.
+
+### But the headline "mates carry 40% of the gap" IS a statement about the constant
+| `AUDIT_REGRET_CAP_CP` | ours | BT4 | gap | **mate share of gap** |
+|---|---|---|---|---|
+| 250 | 33.83 | 17.12 | 16.71 | **27.8%** |
+| 500 | 38.61 | 18.68 | 19.93 | 32.8% |
+| **1000 (production)** | **43.01** | **20.08** | **22.93** | **40.1%** |
+| 2000 | 50.26 | 22.39 | 27.87 | 50.7% |
+| 5000 | 72.01 | 29.14 | 42.87 | 68.0% |
+| uncapped | 703.65 | 215.18 | 488.48 | **97.2%** |
+
+The share is monotone in a constant nobody chose for this purpose. ⇒ **never quote the mate bucket in
+cp; quote the MISS RATE**, which is cap-invariant by construction (`regret > 0` does not depend on the
+clamp):
+
+| net | mate-position miss rate | 95% CI |
+|---|---|---|
+| **ours** | **154/324 = 0.4753** | [0.4209, 0.5297] |
+| BT4 | 59/324 = 0.1821 | [0.1401, 0.2241] |
+| C1-512-15 | 68/324 = 0.2099 | [0.1655, 0.2542] |
+
+**Ours misses SF's best move in mate positions 2.6× as often as BT4, CIs fully disjoint.** That is the
+durable finding and it needs no cap at all.
+
+### ⚑⚑ THE CORRECTION THAT MATTERS: mates are a CONCENTRATION, not the LOCATION
+`175598a36` framed the gap as living in mates. **It does not.** On the **3676 non-mate positions
+(91.9%)**, where the cap could bind on only **28 of them (0.8%)** and demonstrably changes nothing:
+
+| contrast | non-mate gap, cap 1000 | non-mate gap, **UNCAPPED** |
+|---|---|---|
+| ours − BT4 | **+14.94 [+12.64, +17.22]** | **+14.94 [+12.72, +17.24]** |
+| ours − C1-512-15 | **+13.56 [+11.43, +15.77]** | +13.56 [+11.36, +15.82] |
+
+(paired bootstrap, 4000 resamples, seed 42, n=3676). The two columns agree to the cent. So **59.9% of
+the 22.93 cp gap sits in ordinary positions and is completely cap-free.** Killing the cap question
+does not shrink the deficit — it relocates it to the bucket where there is no instrument artifact left
+to blame.
+
+⚑ And note the comparator split: against C1-512-15 the **top-1** gap is **resolved against us**
+(+13.56, CI excludes zero) while `E|listed` spanned zero (+0.64 [−1.59, +2.89], `f12b8d186`). Both are
+true — our MASS is comparable to C1-512-15's and our ARGMAX is not. That is the same "sharp on a
+mediocre move" signature, now confirmed on a second comparator and on the cap-free bucket.
+
+⇒ **#205 closed. The cap is exonerated as the cause; the mate-fold mechanism was already fixed
+(`437e103a1`); and the argmax deficit is general, not a mate specialty.** No cap change is warranted —
+lowering it would shrink the reported gap without changing a single move. Nothing here moves #206
+(run the real MCTS and score the SEARCH's move), which remains the decider for whether the fix is
+search-side or training-side.
