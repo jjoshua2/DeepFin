@@ -8,7 +8,9 @@ the PR; a test that no mutation can break is not evidence.
 """
 from __future__ import annotations
 
+import ast
 import json
+import os
 import sys
 import textwrap
 from pathlib import Path
@@ -20,11 +22,13 @@ import pytest
 from chess_anti_engine.eval import audit, audit_cache
 from chess_anti_engine.eval.audit_cache import (
     AUDIT_CACHE_FORMAT,
+    AUDIT_SET_DIGEST_KEY,
     AUDIT_SET_KEY,
     STAMP_FORMAT_KEY,
     AuditCacheError,
     audit_cache_stamp,
     audit_ruler_version,
+    audit_set_provenance,
     ensure_cache_writable,
     policy_map_version,
     read_audit_cache,
@@ -614,6 +618,11 @@ def test_compare_buckets_refuses_a_stale_NET_cache(
         acb.main()
 
 
+
+def _callee_name(func: ast.expr) -> str:
+    """Final name of a call target: `f` and `mod.f` both give "f"."""
+    return getattr(func, "attr", "") or getattr(func, "id", "")
+
 def test_audit_targets_calls_write_audit_cache_on_the_dump_path() -> None:
     """REACHABILITY, by AST — not a name-presence check.
 
@@ -625,7 +634,6 @@ def test_audit_targets_calls_write_audit_cache_on_the_dump_path() -> None:
     requires the call to sit on the `args.dump_per_position` branch, with the
     dump rows as its second argument.
     """
-    import ast
     import inspect
 
     import scripts.audit_targets as at
@@ -640,11 +648,18 @@ def test_audit_targets_calls_write_audit_cache_on_the_dump_path() -> None:
         test_src = ast.dump(node.test)
         if "dump_per_position" not in test_src:
             continue
+        # Accept BOTH callee spellings: a bare `write_audit_cache(...)` and an
+        # attribute access `audit_cache.write_audit_cache(...)`. Requiring
+        # `ast.Name` made a correct `from chess_anti_engine.eval import
+        # audit_cache` refactor — the import style this very file uses — fail
+        # the FIRST assertion, announcing that the dump is written without
+        # calling write_audit_cache about code that calls it. A gate that fails
+        # on a correct refactor and misattributes the cause is how gates get
+        # deleted.
         guarded_calls.extend(
             inner for inner in ast.walk(node)
             if isinstance(inner, ast.Call)
-            and isinstance(inner.func, ast.Name)
-            and inner.func.id == "write_audit_cache"
+            and _callee_name(inner.func) == "write_audit_cache"
         )
 
     assert guarded_calls, (
@@ -652,8 +667,16 @@ def test_audit_targets_calls_write_audit_cache_on_the_dump_path() -> None:
         "write_audit_cache on the --dump-per-position branch: the dump would "
         "come out unstamped and every reader would refuse it."
     )
-    # The rows argument must be the accumulated dump, not an empty placeholder.
-    row_args = {ast.dump(c.args[1]) for c in guarded_calls if len(c.args) > 1}
+    # The rows argument must be the accumulated dump, not an empty placeholder —
+    # matched positionally AND as the `rows=` keyword, since both spellings are
+    # the same call.
+    row_args: set[str] = set()
+    for call in guarded_calls:
+        if len(call.args) > 1:
+            row_args.add(ast.dump(call.args[1]))
+        row_args.update(
+            ast.dump(kw.value) for kw in call.keywords if kw.arg == "rows"
+        )
     assert any("per_pos_dump" in a for a in row_args), (
         f"write_audit_cache is called but not with the dump rows: {row_args}"
     )
@@ -714,21 +737,35 @@ def test_a_stamped_dump_in_the_audit_targets_ROW_SHAPE_still_joins(
 # ---------------------------------------------------------------------------
 
 
-def test_caches_from_different_audit_sets_are_refused() -> None:
+def test_caches_from_different_audit_sets_are_refused(tmp_path: Path) -> None:
     """Recording a provenance value and never reading it is THIS PR's own defect.
 
     Before this check, a full 4000-row report printed with one side stamped
     `audit_set_v1` and the other `audit_set_v9_DIFFERENT` and said nothing.
     """
-    a = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
-    b = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v9_DIFFERENT.jsonl"})
+    v1 = tmp_path / "audit_set_v1.jsonl"
+    v9 = tmp_path / "audit_set_v9.jsonl"
+    v1.write_text('{"a": 1}\n', encoding="utf-8")
+    v9.write_text('{"a": 2}\n', encoding="utf-8")
+    a = audit_cache_stamp(**audit_set_provenance(v1))
+    b = audit_cache_stamp(**audit_set_provenance(v9))
     with pytest.raises(AuditCacheError, match="not scored over the same audit set"):
         require_same_audit_set(a, b, label_a="net", label_b="bt4")
 
 
-def test_matching_audit_sets_are_accepted() -> None:
-    a = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
-    b = audit_cache_stamp(**{AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
+def test_the_same_file_by_different_paths_is_accepted(tmp_path: Path) -> None:
+    """The reason `audit_set` is compared by DIGEST and not by path string.
+
+    A relative and an absolute spelling of one file must not read as two audit
+    sets — every other field in this stamp is derived from content, and a name
+    comparison would have made this the only one that is not.
+    """
+    monkey = tmp_path / "audit_set_v1.jsonl"
+    monkey.write_text('{"a": 1}\n', encoding="utf-8")
+    rel = Path(os.path.relpath(monkey, Path.cwd()))
+    a = audit_cache_stamp(**audit_set_provenance(monkey))   # absolute
+    b = audit_cache_stamp(**audit_set_provenance(rel))      # relative
+    assert a[AUDIT_SET_KEY] != b[AUDIT_SET_KEY], "the two paths must differ"
     require_same_audit_set(a, b, label_a="net", label_b="bt4")
 
 
@@ -736,8 +773,8 @@ def test_a_missing_audit_set_stamp_is_refused_not_assumed_equal() -> None:
     """Absence is a failure here for the same reason it is for the versions."""
     a = audit_cache_stamp()
     b = audit_cache_stamp()
-    assert AUDIT_SET_KEY not in a
-    with pytest.raises(AuditCacheError, match="neither stamp records"):
+    assert AUDIT_SET_DIGEST_KEY not in a
+    with pytest.raises(AuditCacheError, match="audit_set_digest"):
         require_same_audit_set(a, b, label_a="net", label_b="bt4")
 
 
@@ -749,8 +786,12 @@ def test_compare_buckets_refuses_caches_from_different_audit_sets(
 
     net = tmp_path / "net.jsonl"
     bt4 = tmp_path / "bt4.jsonl"
-    write_audit_cache(net, ROWS, extra={AUDIT_SET_KEY: "data/audit_set_v1.jsonl"})
-    write_audit_cache(bt4, ROWS, extra={AUDIT_SET_KEY: "data/audit_set_v9.jsonl"})
+    v1 = tmp_path / "audit_set_v1.jsonl"
+    v9 = tmp_path / "audit_set_v9.jsonl"
+    v1.write_text('{"a": 1}\n', encoding="utf-8")
+    v9.write_text('{"a": 2}\n', encoding="utf-8")
+    write_audit_cache(net, ROWS, extra=audit_set_provenance(v1))
+    write_audit_cache(bt4, ROWS, extra=audit_set_provenance(v9))
     monkeypatch.setattr("sys.argv", [
         "audit_compare_buckets.py", "--net", str(net), "--bt4", str(bt4),
         "--audit", str(tmp_path / "absent_audit.jsonl"),
@@ -823,3 +864,74 @@ def test_the_guard_opens_nothing_but_the_cache_header(
         f"the --audit label set was opened before the guard refused: {opened}"
     )
     assert str(net) in opened, "the guard did not even look at the cache"
+
+
+# ---------------------------------------------------------------------------
+# `paired_compare` must stay cheap to import — review finding A
+# ---------------------------------------------------------------------------
+
+
+def test_paired_compare_imports_without_torch() -> None:
+    """`scripts/monitor_fen.sh` runs this on the LIVE training box.
+
+    Importing the stamp sentinel from `chess_anti_engine.eval.audit_cache` pulls
+    that package's `__init__` -> `.puzzles` -> torch: measured 3.97 s / 749 MB /
+    1209 modules against 0.01 s / 14 MB for the leaf, per monitoring cycle, on
+    the machine that is training. The sentinel therefore lives in
+    `chess_anti_engine.utils.audit_cache_format`, and this test is what stops a
+    tidy-looking import change putting it back.
+    """
+    import subprocess
+
+    probe = (
+        "import sys; import scripts.paired_compare; "
+        "print('torch' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(Path(__file__).resolve().parent.parent),
+        capture_output=True, text=True, check=True,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
+             "HOME": os.environ.get("HOME", "/tmp"), "CUDA_VISIBLE_DEVICES": ""},
+    )
+    assert out.stdout.strip() == "False", (
+        f"scripts/paired_compare.py now imports torch: {out.stdout!r} {out.stderr[-400:]!r}"
+    )
+
+
+def test_the_sentinel_has_exactly_one_definition() -> None:
+    """Re-exported, never re-declared — a second literal is how stamps drift."""
+    from chess_anti_engine.eval import audit_cache as ac
+    from chess_anti_engine.utils import audit_cache_format as leaf
+
+    assert ac.STAMP_FORMAT_KEY is leaf.STAMP_FORMAT_KEY
+    src = Path(ac.__file__).read_text(encoding="utf-8")
+    assert 'STAMP_FORMAT_KEY = ' not in src, "the sentinel is re-declared, not re-exported"
+
+
+# ---------------------------------------------------------------------------
+# Duplicate join keys are refused — review finding D (audit invariant L14)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_keys_are_refused_not_last_won(tmp_path: Path) -> None:
+    """2 rows, 1 key: the dict build collapsed them and the losers were invisible.
+
+    The row-count binding cannot catch this — it counts LINES, so a 2-row file
+    with one distinct key satisfies it. `paired_compare.load_dump` refuses the
+    same shape for the same reason.
+    """
+    path = tmp_path / "c.jsonl"
+    dupes = [dict(ROWS[0]), dict(ROWS[0])]
+    write_audit_cache(path, dupes)
+    assert len(read_audit_cache(path)) == 2  # the row binding is satisfied...
+    with pytest.raises(AuditCacheError, match="duplicate rows"):
+        read_audit_cache_by_key(path)        # ...and this is what catches it
+
+
+def test_a_row_without_a_key_names_the_file_and_line(tmp_path: Path) -> None:
+    """Review finding E: a bare KeyError loses both."""
+    path = tmp_path / "c.jsonl"
+    write_audit_cache(path, [{"phase": 1, "gap_cp": 3.0}])
+    with pytest.raises(AuditCacheError, match="line 2 has no 'key' field"):
+        read_audit_cache_by_key(path)

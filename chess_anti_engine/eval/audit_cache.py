@@ -92,14 +92,25 @@ from chess_anti_engine.moves.encode import move_to_index
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 from chess_anti_engine.moves.leela_index import leela_index_for_move
 from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
+from chess_anti_engine.utils import sha256_file
+from chess_anti_engine.utils.audit_cache_format import (
+    AUDIT_CACHE_FORMAT,
+    AUDIT_SET_DIGEST_KEY,
+    AUDIT_SET_KEY,
+    ROW_COUNT_KEY,
+    STAMP_FORMAT_KEY,
+)
 
 __all__ = [
     "AUDIT_CACHE_FORMAT",
+    "AUDIT_SET_DIGEST_KEY",
     "AUDIT_SET_KEY",
+    "ROW_COUNT_KEY",
     "STAMP_FORMAT_KEY",
     "AuditCacheError",
     "audit_cache_stamp",
     "audit_ruler_version",
+    "audit_set_provenance",
     "ensure_cache_writable",
     "policy_map_version",
     "read_audit_cache",
@@ -110,20 +121,13 @@ __all__ = [
     "write_audit_cache",
 ]
 
-#: Bumped only when the STAMP's own layout changes, not when a version does.
-AUDIT_CACHE_FORMAT = 1
-
-#: Sentinel key that distinguishes the header record from a data row. A data
-#: row is keyed by `key`; nothing else in the schema uses this name.
-STAMP_FORMAT_KEY = "audit_cache_format"
-
-#: Scoring set both producers record and `require_same_audit_set` COMPARES.
-AUDIT_SET_KEY = "audit_set"
-
-#: Row count, written by `write_audit_cache` and ENFORCED by `read_audit_cache`.
-#: The stamp otherwise binds only to line 1, so without this a stamp lifted from
-#: a good cache would certify a truncated file, or two caches concatenated.
-ROW_COUNT_KEY = "rows"
+# The stamp's wire-format vocabulary lives in a LEAF module and is re-exported
+# here, not re-declared. `scripts/paired_compare.py` needs only the sentinel to
+# skip a header, and importing it from this module would drag in
+# `chess_anti_engine.eval.__init__` -> `.puzzles` -> torch: measured 0.01 s /
+# 14 MB against 3.97 s / 749 MB, on a script `scripts/monitor_fen.sh` runs
+# against the live training box every monitoring cycle. Duplicating the
+# literals instead would invite exactly the drift the stamp exists to prevent.
 
 _REGENERATE = (
     "regenerate it with:\n"
@@ -488,11 +492,55 @@ def read_audit_cache(path: Path) -> list[dict[str, Any]]:
 
 
 def read_audit_cache_by_key(path: Path) -> dict[str, dict[str, Any]]:
-    """`read_audit_cache` keyed by each row's position `key`."""
+    """`read_audit_cache` keyed by each row's position `key`.
+
+    ⚑ DUPLICATE KEYS ARE REFUSED, not last-won. A dict build silently collapses
+    two rows claiming the same position into one, and the losers are invisible:
+    absent from the join and absent from any count, so the caller reads a clean
+    result over a smaller and biased sample. That is documented audit invariant
+    L14, and `scripts/paired_compare.load_dump` was hardened against exactly it
+    — "there is no principled winner between two rows claiming the same
+    position", so stop rather than guess.
+
+    The row-count binding does NOT cover this: it counts LINES, so two rows with
+    one key satisfy it. Latent rather than live today (`per_position_277.jsonl`
+    measures 4000 rows / 4000 unique keys), which is the moment to close it.
+    """
     out: dict[str, dict[str, Any]] = {}
-    for row in read_audit_cache(path):
-        out[str(row["key"])] = row
+    duplicates: list[str] = []
+    for lineno, row in enumerate(read_audit_cache(path), start=2):  # line 1 = stamp
+        if "key" not in row:
+            raise _reject(path, f"line {lineno} has no 'key' field")
+        key = str(row["key"])
+        if key in out:
+            duplicates.append(key)
+            continue
+        out[key] = row
+    if duplicates:
+        unique = sorted(set(duplicates))
+        raise _reject(
+            path,
+            f"{len(duplicates)} duplicate rows across {len(unique)} repeated "
+            f"'key' values, e.g. {unique[:3]} — two runs concatenated, a re-run "
+            "appended, or the wrong file. A join cannot pick between two rows "
+            "claiming the same position, and the row-count binding cannot see "
+            "this because it counts lines, not distinct keys",
+        )
     return out
+
+
+def audit_set_provenance(path: Path) -> dict[str, Any]:
+    """Stamp fields identifying the scoring set: readable path + CONTENT digest.
+
+    Both are recorded and they do different jobs. The path is for the human
+    reading the report banner; the DIGEST is what `require_same_audit_set`
+    compares, because a path string is not a provenance value —
+    `data/audit_set_v1.jsonl` and `/abs/path/data/audit_set_v1.jsonl` name one
+    file and compare unequal, while two genuinely different files can share a
+    basename. Every other field in this stamp is derived from content rather
+    than from a name; this makes the last one consistent with them.
+    """
+    return {AUDIT_SET_KEY: str(path), AUDIT_SET_DIGEST_KEY: sha256_file(path)[:16]}
 
 
 def require_same_audit_set(
@@ -500,25 +548,32 @@ def require_same_audit_set(
 ) -> None:
     """Refuse to join two caches scored over DIFFERENT audit sets.
 
-    `audit_set` is recorded by both producers. Recording a provenance value and
-    then never reading it is precisely the defect class this module exists to
-    kill — a value accepted and silently ignored — so it is COMPARED, not merely
-    stored. Measured before this existed: a 4000-row report printed happily with
-    one side stamped `audit_set_v1` and the other `audit_set_v9_DIFFERENT`, and
-    the banner did not even show the field.
+    Recording a provenance value and then never reading it is precisely the
+    defect class this module exists to kill — a value accepted and silently
+    ignored — so this is COMPARED, not merely stored. Measured before it
+    existed: a 4000-row report printed happily with one side stamped
+    `audit_set_v1` and the other `audit_set_v9_DIFFERENT`, and the banner did
+    not even show the field.
 
-    Absent on either side is a REFUSAL, not a pass, for the same reason the
-    version fields are: a cache old enough to lack the key is a cache whose
-    scoring set is unknown.
+    Compares the CONTENT DIGEST, so the same file reached by a relative and an
+    absolute path is accepted and two different files are refused however they
+    are spelled. Absent on either side is a REFUSAL, not a pass, for the same
+    reason the version fields are: a cache whose scoring set is unrecorded is a
+    cache whose scoring set is unknown.
     """
-    va, vb = a.get(AUDIT_SET_KEY), b.get(AUDIT_SET_KEY)
-    if va is not None and va == vb:
+    da, db = a.get(AUDIT_SET_DIGEST_KEY), b.get(AUDIT_SET_DIGEST_KEY)
+    if da is not None and da == db:
         return
-    detail = (
-        f"{label_a} says {va!r}, {label_b} says {vb!r}"
-        if va != vb else
-        f"neither stamp records '{AUDIT_SET_KEY}'"
-    )
+    if da is None or db is None:
+        detail = (
+            f"{label_a} records {da!r} and {label_b} records {db!r} for "
+            f"'{AUDIT_SET_DIGEST_KEY}'"
+        )
+    else:
+        detail = (
+            f"{label_a} scored {a.get(AUDIT_SET_KEY)!r} ({da}), "
+            f"{label_b} scored {b.get(AUDIT_SET_KEY)!r} ({db})"
+        )
     raise AuditCacheError(
         f"these two caches were not scored over the same audit set — {detail}.\n"
         "  Joining them would pair positions from different label sets and "

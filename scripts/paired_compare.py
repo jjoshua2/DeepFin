@@ -49,7 +49,11 @@ from typing import NamedTuple
 
 import numpy as np
 
-from chess_anti_engine.eval.audit_cache import STAMP_FORMAT_KEY
+# ⚑ The LEAF, not `eval.audit_cache`: that package's __init__ imports
+# `.puzzles` -> torch, which costs ~4.0 s and ~750 MB for one string
+# constant. This module is deliberately stdlib+numpy and
+# `scripts/monitor_fen.sh` runs it against the live training box.
+from chess_anti_engine.utils.audit_cache_format import STAMP_FORMAT_KEY
 
 PHASE_NAMES = ("endgame", "middlegame", "opening")
 

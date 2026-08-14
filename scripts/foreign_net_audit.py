@@ -87,6 +87,7 @@ from chess_anti_engine.eval.audit import (
     parse_audit_record,
 )
 from chess_anti_engine.eval.audit_cache import (
+    audit_set_provenance,
     ensure_cache_writable,
     stamp_summary,
     write_audit_cache,
@@ -409,8 +410,8 @@ def main() -> None:
         # count itself, and a caller-supplied one would read as though the
         # caller were the authority on it — the exact thing the row binding
         # exists to deny.
-        extra={"net": net_label, "audit_set": str(args.audit_set),
-               "topk": int(args.topk)},
+        extra={"net": net_label, "topk": int(args.topk),
+               **audit_set_provenance(args.audit_set)},
     )
     print(f"[audit] cache → {args.cache_out} ({len(cache_rows)} rows) "
           f"[{stamp_summary(stamp)}]")

@@ -136,7 +136,11 @@ from chess_anti_engine.eval.audit import (
     wdl_brier,
     wdl_ece,
 )
-from chess_anti_engine.eval.audit_cache import stamp_summary, write_audit_cache
+from chess_anti_engine.eval.audit_cache import (
+    audit_set_provenance,
+    stamp_summary,
+    write_audit_cache,
+)
 from chess_anti_engine.eval.audit_history import (
     INPUT_ENCODINGS,
     INPUT_ENCODING_DEFAULT,
@@ -1679,8 +1683,8 @@ def main() -> None:
         stamp = write_audit_cache(
             args.dump_per_position, per_pos_dump, force=True,
             extra={"producer": "audit_targets.py --dump-per-position",
-                   "audit_set": str(args.audit_set),
-                   "input_encoding": encoding},
+                   "input_encoding": encoding,
+                   **audit_set_provenance(args.audit_set)},
         )
         print(f"[audit] per-position dump → {args.dump_per_position} "
               f"({len(per_pos_dump)} rows) [{stamp_summary(stamp)}]")
