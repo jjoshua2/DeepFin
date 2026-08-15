@@ -50559,3 +50559,65 @@ that does not move THAT has not touched the defect. ⚑ The MultiPV-6 teacher re
 the phase-1 entry — it pushes mass ONTO the 6 covered moves, which is the wrong direction, and the
 sharp rows are the ones already fine. A full-width, non-fabricated teacher is still the only lever
 identified that reaches the tail. **No arm launched; this needs an explicit go.**
+
+## 2026-08-15 — ⚑⚑ C16 INTERPRETATION FACT: production's `target_batch` 1024 IS NEVER REALIZED. `enc_capacity` clips it to ~512.
+
+⚑ **Written BEFORE the deciding arm reports** (`b1_tb1` alive at ~2280s, `c16q_dump_b1_tb1.jsonl`
+absent). This is an interpretation fact, so it must be fixed in advance — deciding after the
+readout what the arm measured is the same failure as choosing a threshold after it.
+
+**VERIFIED IN SOURCE, not argued.** `gss_step` flushes when ANY of three conditions fire
+(`mcts/_mcts_tree.c:1972-1973`):
+
+    if (s->n_leaves >= target_batch ||
+        s->n_leaves + n_queries * 2 > g->enc_capacity || ...)
+
+`target_batch = (g->target_batch > 0) ? g->target_batch : GSS_GPU_BATCH` (`:1922`), and
+`GSS_GPU_BATCH` is **1024** (`:1313`). Production sets no `gumbel_target_batch`, so it takes the
+1024 fallback. **But `g->enc_capacity = PyArray_DIM(enc_arr, 0)` (`:4146`) — the buffer's own row
+count** — and that buffer is sized in Python:
+
+    _max_leaves_per_rep = max(256, n_boards * max(2, int(cfg.topk)))    gumbel_c.py:881
+    _enc_buf rows       = _max_leaves_per_rep * 2                        gumbel_c.py:1222
+
+At **production shape** (n_boards ~= 1, topk 16): `max(256, 16)` = **256**, buffer = **512**.
+The in-source comment at `gumbel_c.py:878` says so outright — "this gives a 512-slot buffer".
+
+⇒ **the second condition binds long before the first. Production's effective accumulation batch
+is ~512, and the nominal 1024 never happens.** Any `target_batch` above ~512 is **INERT at
+production shape**; 8 and 32 are not. Classic signature defect: a value accepted and then
+silently overridden by a different limit — nothing errors, nothing warns, and the config reads
+1024.
+
+**CONSEQUENCE FOR THE ARM, stated now.** The deciding contrast `b1_tb0` vs `b1_tb1` is
+effectively **512 vs 1**, NOT 1024 vs 1. That is still the RIGHT contrast — 512 is what production
+actually does — but the entry must say so, or a future reader will believe the arm tested 1024.
+
+**AND IT EXPLAINS THE B=256 CONTROL.** At the audit's historical default n_boards=256,
+`_max_leaves_per_rep = max(256, 256*16)` = **4096**, buffer **8192**, so `target_batch` binds and
+is NOT clipped — which is why `tb1024` vs `tb0` read **exactly 0.0000 on 0/4000 rows**: both
+resolve to 1024, identical BY CONSTRUCTION. That control is a tautology check, not evidence about
+the knob, and the entry should not be read as though it were.
+
+**ALSO: B=256 IS NOT EVEN THE SAME CODE PATH.** `_use_pipeline = _has_async and n_boards >= 64`
+(`gumbel_c.py:544`) and the audit's `LocalModelEvaluator` is async-capable, so B=256 takes the
+2-group pipelined path with two ephemeral 128-board sub-trees, while production at n_boards~=1
+takes the single-loop path. Different buffers, different flush arithmetic. ⇒ **every historical
+`audit_targets` number was made in a regime that is not production's**, which compounds the
+`--vloss-weight` defect already recorded at `25c75d310`.
+
+**B=256 arms, for the record — all NULL and the ordering runs the WRONG way** (paired `exp`,
+n=4000; positive control resolves a 3.1x sim change at +/-1.3 cp):
+
+    tb1024 (control)      +0.0000 [+0.0000, +0.0000]   null BY CONSTRUCTION   0/4000
+    tb0 seed 12345        +0.0000 [+0.0000, +0.0000]   null BY CONSTRUCTION   0/4000
+    tb32                  -0.1181 [-0.9525, +0.7058]   NULL                3830/4000
+    tb8                   +0.4748 [-0.5604, +1.5730]   NULL, point est WORSE 3836/4000
+    tb1                   +0.7067 [-0.4056, +1.9304]   NULL, point est WORSE 3838/4000   4.25x cost
+
+⇒ in the regime where the knob has least to do, lowering it is a null that trends the wrong way at
+up to **4.25x** the wall-clock. The production-shape arm is what decides.
+
+**The 6 banked post-deploy reports** that cannot be audited for which search they scored:
+`1051cc734`, `26cbfcef9`, `86d3b7358`, `a44a75199`, `df704b45b`, `ed9de8ee9` — **0 of 6 mention
+vloss at all**. PR #434 is the hygiene fix for the recording half.
