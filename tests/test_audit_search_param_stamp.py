@@ -19,8 +19,11 @@ These tests pin the halves that can fail:
   disagree with the search;
 * both consumers read the SAME stamp object, so the header and the dump cannot
   drift apart or from the run;
-* the added dump keys do not break `paired_compare.py`, the one tool that reads
-  these dumps for provenance, and are deliberately not ruler fields there.
+* the added dump keys do not break the tools that read these dumps —
+  `paired_compare.py`, `audit_compare_buckets.py` and `tail_stats.py` — and are
+  deliberately not ruler fields in `paired_compare`. The first and third are
+  exercised here rather than enumerated in prose: an enumeration is a claim, and
+  this one was already reported complete while `tail_stats` was missing from it.
 """
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ from pathlib import Path
 import pytest
 from scripts import audit_targets as at
 from scripts import paired_compare as pc
+from scripts import tail_stats
 
 AUDIT_TARGETS_SRC = Path(at.__file__)
 
@@ -425,7 +429,10 @@ def _dump_row(**stamp: float) -> dict[str, object]:
         "key": "pos1",
         "phase": 0,
         "input_encoding": {"raw": "fen_only", "sf_soft": None},
-        "cand": {"raw": {"exp": 12.0}},
+        # `exp` is what paired_compare joins on here; `top1` is what
+        # tail_stats reads (`cand.raw.top1`). Both, so one fixture serves both
+        # readers and neither check silently stops covering its tool.
+        "cand": {"raw": {"exp": 12.0, "top1": 30.0}},
         **stamp,
     }
 
@@ -531,4 +538,58 @@ def test_the_legacy_search_header_line_is_rendered_from_the_stamp() -> None:
     assert "- search: PLAY {play_sims_note} sims" in rendered
     assert "args.sims" not in rendered, (
         "the report still renders the pre-override --sims somewhere"
+    )
+
+
+def test_tail_stats_still_parses_a_dump_carrying_the_new_keys(
+    tmp_path: Path,
+) -> None:
+    """The third reader of these dumps, checked rather than asserted.
+
+    `scripts/tail_stats.py --raw-top1` reads `cand.raw.top1` off exactly these
+    files. It was reported as checked-and-inert while being absent from the
+    change entirely — the same defect this PR is about, one level up. A test
+    cannot be reported done without being run.
+    """
+    path = tmp_path / "dump_tail_stats.jsonl"
+    path.write_text(json.dumps(_dump_row(**_stamp(_args()))) + "\n", encoding="utf-8")
+    rows = tail_stats.load(str(path), True)
+    assert rows == {"pos1": (30.0, "endgame")}
+
+
+# The knobs `search_param_stamp`'s docstring declares as KNOWN GAPS. Verified by
+# execution while writing them down: two profile sets differing only in the
+# config's `gumbel_c_scale` (0.1 -> 0.4) or `volatility_q_scale` (0.0 -> 0.5)
+# produce a genuinely different RL search and a byte-identical stamp.
+DOCUMENTED_GAPS = (
+    "gumbel_c_scale",
+    "volatility_q_scale",
+    "volatility_fpu",
+    "volatility_anchor",
+    "syzygy_in_search",
+    "syzygy_path",
+)
+
+
+@pytest.mark.parametrize("knob", DOCUMENTED_GAPS)
+def test_the_docstring_names_every_knob_it_does_not_cover(knob: str) -> None:
+    """A doc that over-claims is how the next person gets fooled.
+
+    An earlier revision opened with "EVERY PROFILE-VARYING KNOB IS STAMPED PER
+    PROFILE", which was false — `gumbel_c_scale` and the `volatility_*` family
+    are profile-varying, config-sourced and unstamped. Shipping that sentence in
+    THIS file would have undone the point of the change, since the defect being
+    fixed is a claim in this file that outran the code.
+
+    Pinned in BOTH directions, so it cannot rot either way: the knob must be
+    named in the docstring AND must be absent from the stamp. Stamping one
+    without deleting it from the gap list fails here, and so does quietly
+    dropping it from the list.
+    """
+    doc = at.search_param_stamp.__doc__ or ""
+    assert "KNOWN GAPS" in doc
+    assert knob in doc, f"the docstring stopped naming the unstamped {knob}"
+    assert knob not in at.SEARCH_PARAM_FIELDS, (
+        f"{knob} is stamped now — remove it from the docstring's KNOWN GAPS "
+        "list, or the doc is claiming a gap that no longer exists"
     )

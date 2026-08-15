@@ -575,14 +575,16 @@ def profiles_for_audit(
     return profiles, requested
 
 
-# The search knobs that are NOT recoverable from anything else a report carries.
-# `--config` does not pin them: `--vloss-weight`, `--vloss-mode` and
-# `--target-batch` are CLI-only (the script never reads `gumbel_vloss_weight` /
-# `gumbel_target_batch` from the yaml), `--batch-size` / `--sims` / `--rl-sims`
-# override or select what the config would have said, and `--policy-temp` /
-# `--gumbel-topk` reshape the search with no config source at all. So a banked
-# report made without them is not known-wrong, it is UNKNOWN — which is the one
-# state a ruler must never be in.
+# The CLI-SOURCED search knobs that are not recoverable from anything else a
+# report carries. `--config` does not pin them: `--vloss-weight`, `--vloss-mode`
+# and `--target-batch` are CLI-only (the script never reads
+# `gumbel_vloss_weight` / `gumbel_target_batch` from the yaml), `--batch-size` /
+# `--sims` / `--rl-sims` override or select what the config would have said, and
+# `--policy-temp` / `--gumbel-topk` reshape the search with no config source at
+# all. So a banked report made without them is not known-wrong, it is UNKNOWN —
+# which is the one state a ruler must never be in.
+# ⚑ THIS IS NOT THE WHOLE SEARCH. The CONFIG-sourced knobs are outside this set
+# and are still unrecorded; `search_param_stamp`'s docstring names each one.
 SEARCH_PARAM_FIELDS: tuple[str, ...] = (
     "vloss_weight", "vloss_mode", "target_batch", "batch_size",
     "sims", "rl_sims", "fast_sims",
@@ -630,14 +632,42 @@ def search_param_stamp(
     than to a literal, and ``--gumbel k=v`` rewrites the built config outright.
     A stamp that echoed the flag would be a false record in all three cases.
 
-    ⚑ EVERY PROFILE-VARYING KNOB IS STAMPED PER PROFILE. ``--gumbel`` reaches
-    the PLAY row only unless ``--gumbel-training-rows`` is passed, so a single
+    ⚑ EVERY KNOB THIS STAMP COVERS IS STAMPED PER PROFILE — and the covered set
+    is SMALLER THAN "the search"; see the gaps below. ``--gumbel`` reaches the
+    PLAY row only unless ``--gumbel-training-rows`` is passed, so a single
     unqualified column is FALSE for whichever rows the override missed. That is
     not hypothetical: a single ``policy_temp`` column read off the PLAY profile
     gave BYTE-IDENTICAL provenance to two runs whose ``cand.train`` differed by
     −9.66 cp [−18.07, −3.00] under ``paired_compare`` (independent review of PR
     #434, executed on a 6-position audit). ``play_*``/``rl_*`` pairs, and
     ``fast_sims`` for row (e), are what make those two runs distinguishable.
+
+    ⚑⚑ KNOWN GAPS — DO NOT READ THIS STAMP AS "THE SEARCH". The knobs sourced
+    from ``--config`` rather than the CLI are profile-varying and are NOT here:
+
+    * ``gumbel_c_scale`` — ``build_search_profiles`` reads it for the RL rows
+      while PLAY takes ``PLAY_SEARCH_DEFAULTS``, so the two rows genuinely
+      differ on it and NEITHER value is recorded. MEASURED: two runs differing
+      only in the config's ``gumbel_c_scale`` produce a differing ``cand.train``
+      and byte-identical dump provenance (same review).
+    * ``volatility_q_scale`` / ``volatility_fpu`` / ``volatility_anchor`` — same
+      shape, and they additionally decide whether a row takes the C runner at
+      all, which is what can make ``vloss_weight`` / ``vloss_mode`` /
+      ``target_batch`` above inapplicable to that row while still stamped.
+    * ``syzygy_in_search`` / ``syzygy_path`` — the audited search probes
+      tablebases when the config says so.
+
+    The header records the config PATH, and that is a WEAK record: the yaml is
+    mutable and re-read every run, so a path does not pin the values it held.
+    Closing these means stamping the REALIZED ``GumbelConfig`` per profile,
+    which has to happen next to the cfgs in ``_net_candidates`` rather than
+    here; that is a follow-up, and until it lands this list is the boundary.
+
+    ⚑ ``--seed`` is NOT a gap. ``_build`` fixes ``add_noise=False`` and
+    ``temperature=0.0``, and ``gumbel.py`` computes ``scale = gumbel_scale if
+    add_noise else 0.0``, so the perturbation is identically zero and two seeds
+    are bit-identical. Checked rather than assumed, because "the seed is in the
+    dump filename" is exactly the kind of thing that gets asserted and is false.
 
     ⚑ ``gumbel_training_rows`` IS ITSELF A STAMPED FIELD, and it is what closes
     the same hole for every override with no dedicated column. ``--gumbel
