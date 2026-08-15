@@ -49328,3 +49328,95 @@ running, then treat a mismatch as owing an explanation rather than as a failure.
 A threshold would have passed silently in both directions. Related:
 [[a_gate_that_cannot_fail]], [[compute_instrument_resolution_before_the_threshold]],
 [[new_tests_here_are_vacuous_until_mutated]].
+
+---
+
+## RESULT — bt4heads arm B vs arm A @ iter 100: **ADOPT** (+13.9 Elo [+5.7, +22.1], n=4800)
+
+**Verdict date 2026-08-15.** Judged by the rule pre-committed in
+`scratchpad/bt4heads/LAUNCH_RUNBOOK.md` BEFORE launch, not re-derived: *ADOPT if the 95% CI
+lower bound > −10 Elo; REJECT if ≤ −10.* Lower bound is **+5.69** ⇒ **ADOPT**, comfortably.
+
+```
+candidate  scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt   (step 93646, global_iter 990)
+reference  scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099/trainer.pt    (step 91999)
+mode matched_sims · sims 32/32 · --search-shape training · seed 42 · games 4800 (2400 opening pairs)
+pentanomial (candidate POV)  WW 336 · WD_DW 505 · DD_WL 838 · LD_DL 457 · LL 264
+score 0.5200 +/- 0.0060 (SE)   Elo +13.9   95% CI [+5.69, +22.14]   duration 17533 s
+```
+
+Search config printed IDENTICAL on both sides (`c_scale 0.1`, `policy_temp 1.5`, `topk 16`,
+`tree_reuse cold`, `vloss_weight 1`) — only the WEIGHTS differ, which is the parity the
+verdict depends on. Read at FULL n only; the rolling pentanomials printed during the run
+were ignored by construction (see [[rolling_arena_optional_stopping_faked_112_elo]]).
+
+### ⚑ CONFOUND, stated because it is not zero: arm B took **+13.6% more optimizer steps**
+
+Both arms start from the SAME donor (91999 − 12138 = 79861 = 93646 − 13785 ✓), but over the
+100 iterations arm A used **12138** steps and arm B **13785** — `sum(train_steps_used)`.
+
+Cause is known and mechanical, not a config difference: arm B was PAUSED 2026-08-14 20:14
+and resumed 23:05. The 3017 resumed in-flight games then drained back through ingest
+(`replay_positions_ingested` 13k → 66k → 49k → 40k), and because the step budget is
+views-targeted, steps scale with ingest volume — iters 56-58 ran 387/557/415 steps against a
+~110-step baseline, at 1508/1139/1325 s versus ~290 s.
+
+**Direction of bias: FAVOURS arm B.** Magnitude cannot be separated from the intervention by
+this design. It is very unlikely to explain the whole effect — for +13.9 Elo to be pure step
+count, this lineage would have to be worth ~102 Elo per 100 iterations, and it has instead
+been measured FLAT (an ~11-Elo plateau; see [[no_rollback_target_the_run_is_a_plateau.md]]
+and [[absorption_works_fit_does_not_buy_elo]]). ⇒ **The ADOPT verdict does not depend on the
+confound** (non-inferiority vs −10 survives any plausible haircut). The stronger claim — that
+arm B is significantly BETTER, i.e. the CI excluding zero — DOES lean on it and should be
+quoted with this caveat attached.
+
+### The loss ruler pointed the WRONG WAY — a clean case for the standing rule
+
+At iters 50-60 arm B's `policy_loss` was **+4.96% WORSE** than arm A at equal
+`training_iteration`, widening from +2.4% at iter 10. The arena says arm B is **+13.9 Elo
+BETTER**. Decomposition taken BEFORE the arena read out (so this is not post-hoc):
+`policy_loss_curriculum` −0.05% (identical), `policy_loss_selfplay` **+5.66%** (the entire
+gap), `test_policy_loss` **−0.87%** (better), `test_policy_own_acc_top1` −0.04% (even).
+Not a mix artifact: reweighting arm A's per-component losses to arm B's 89%-selfplay mix
+gives 0.9344 vs its actual 0.9347. ~40% of the selfplay gap is a mechanical CE FLOOR —
+`data_policy_entropy` +2.66% (+0.0199 nats against a +0.0529 raw gap),
+`gumbel_policy_entropy_mean` +3.69% — i.e. arm B's own search emits softer targets on its own
+data. `sf_eval_loss` +566% and `categorical_loss` +25% are the intervention REDEFINING those
+targets, not regressions.
+⇒ Another entry for [[losses_are_decoupled_from_strength]]: a train-side loss that is
+worse, on self-generated targets, while held-out is even and play strength is up.
+
+### Execution deviation: `--max-concurrent-games 16` (default 128)
+
+NOT a prereg parameter (the prereg froze sims / search-shape / games / seed). Two runs at the
+default died with `CUDA error: out of memory` at **2494 MiB used of 32607** — an impossible
+OOM. Cause is the WSL2 dxg bridge, not our footprint: `dmesg` shows
+`dxgkio_make_resident: Ioctl failed: -12` at 03:48:31 and 03:53:04 (exactly the two deaths)
+and 7× `dxgvmb_send_sync_msg: wait_for_completion failed` at 03:41:00 (the moment
+`train.sh stop` force-killed the stack), while `nvidia-smi -L` returned rc=0 and a
+fresh-process torch probe reported 30.21 GiB free and completed a 4096² matmul. Large
+residency refused, small allocations fine — the known
+"do not debug a torch OOM that reports impossible numbers" signature
+([[wsl2_gpu_vmbus_wedge_signature]]). Throughput cost was small (5.54 s/game at conc-16
+*including* compile warmup vs 4.07 for the Tier-13 conc-default rows), and the arena writes
+its result only at the end, so an OOM at hour 6 would have lost everything.
+Neutrality argued by MECHANISM, not symmetry: concurrency changes inference batch
+composition and so can flip a move via reduction order, but it applies to both engines in the
+same pooled batch with seed-paired openings, so it carries no systematic advantage.
+⚑ **This row must NOT be pooled with the Tier-13 rows as if execution config were identical.**
+Full record: `scratchpad/bt4heads/banked/arena_execution_notes.md`.
+
+### Two instrument gaps found while running this
+
+1. **`runs/arena_results.jsonl` does not persist `max_concurrent_games`.** No arena row on
+   this project records the concurrency it ran at — the Tier-13 rows included. A measurement
+   whose execution config is unrecorded is not reproducible (cf. #203).
+2. **The runbook's frozen command omits `PYTHONPATH=.`**, which every script here needs; the
+   first launch died in seconds on `ModuleNotFoundError: scripts.match_vs_uci`. The frozen
+   command should carry the prefix.
+
+### Status
+
+Arm B is STOPPED (2026-08-15 03:41, clean drain, 3033 in-flight games suspended, 0 discarded).
+Nothing has been restarted — what runs next is Josh's call, and adopting the bt4heads config
+into production is a separate decision from this arena verdict.
