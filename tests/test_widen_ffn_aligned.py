@@ -82,12 +82,28 @@ def test_production_schedule_param_delta() -> None:
         1.894444, 1.666667, 1.638889, 1.905556, 1.783333, 1.794444, 1.744444, 1.5,
     )
     new = aligned_ffn_mults(cur, embed_dim=512, align=128)
-    delta = sum((int(512 * n) - int(512 * c)) * 512 * 2 for c, n in zip(cur, new))
-    assert delta == 709_632
+    grow = [int(512 * n) - int(512 * c) for c, n in zip(cur, new)]
+    # ⚑ THREE tensors grow per layer, not two: ffn.0.weight (g x 512),
+    # ffn.2.weight (512 x g) AND ffn.0.bias (g). An earlier version of this
+    # test omitted the bias and asserted 709,632 — which is why the measured
+    # delta on a real checkpoint came out 693 higher (693 == sum(grow)).
+    assert sum(grow) == 693
+    delta = sum(g * 512 * 2 + g for g in grow)
+    assert delta == 710_325
 
 
 def _tiny_ckpt(*, mults: tuple[float, ...], embed_dim: int = 8) -> dict:
-    """A checkpoint-shaped dict with real ffn tensors and matching opt state."""
+    """A checkpoint-shaped dict mirroring PRODUCTION's mixed optimizer state.
+
+    ⚑ Measured on bt4heads armB iter100 (479 params): AuroraWithAuxAdam splits
+    on rank, not on module. 2-D weights carry ``momentum_buffer`` (48 params);
+    1-D biases go through the AdamW fallback and carry ``exp_avg`` /
+    ``exp_avg_sq`` / ``step`` (431 params). An earlier version of this fixture
+    gave EVERY parameter a ``momentum_buffer``, which is why the tool shipped
+    handling only that buffer and would have crashed on the first resumed step
+    in ``exp_avg.add_(grad)``. A fixture that is tidier than production tests a
+    system that does not exist.
+    """
     model: dict[str, torch.Tensor] = {}
     names: list[str] = []
     state: dict[int, dict[str, torch.Tensor]] = {}
@@ -102,7 +118,16 @@ def _tiny_ckpt(*, mults: tuple[float, ...], embed_dim: int = 8) -> dict:
         ):
             model[key] = torch.randn(shape, generator=g)
             names.append(key)
-            state[len(names) - 1] = {"momentum_buffer": torch.randn(shape, generator=g)}
+            if len(shape) == 2:  # Aurora matrix path
+                state[len(names) - 1] = {
+                    "momentum_buffer": torch.randn(shape, generator=g)
+                }
+            else:  # AdamW fallback path
+                state[len(names) - 1] = {
+                    "exp_avg": torch.randn(shape, generator=g),
+                    "exp_avg_sq": torch.rand(shape, generator=g),
+                    "step": torch.tensor(1234.0),
+                }
     return {
         "model": model,
         "opt": {"state": state, "param_groups": [{"params": list(range(len(names)))}]},
@@ -196,27 +221,78 @@ def test_new_ffn2_columns_are_exactly_zero() -> None:
     assert torch.all(new_cols == 0), "ffn.2 new columns must be exactly zero"
 
 
-def test_optimizer_momentum_is_migrated_not_dropped() -> None:
-    """Shapes must track the parameter, and the ORIGINAL moments must survive."""
+def test_EVERY_shape_coupled_optimizer_tensor_is_migrated() -> None:
+    """⚑ Not just momentum_buffer — that omission was a first-step crash.
+
+    ``ffn.0.bias`` is widened by this tool AND lives on the AdamW side, so its
+    ``exp_avg``/``exp_avg_sq`` must widen with it. The migration is matched by
+    SHAPE, not by buffer name, so this asserts over whatever the entry holds.
+    """
     ck = _tiny_ckpt(mults=(1.25,))
     names = list(ck["opt_param_names"])
-    old = {
-        n: ck["opt"]["state"][names.index(n)]["momentum_buffer"].clone()
-        for n in names
-        if "ffn" in n
+    before = {
+        n: {k: (v.clone() if isinstance(v, torch.Tensor) else v)
+            for k, v in ck["opt"]["state"][names.index(n)].items()}
+        for n in names if "ffn" in n
     }
     old_h = int(8 * 1.25)
     ck, _ = widen_checkpoint(ck, align=8, seed=3)
-    for n, prev in old.items():
-        buf = ck["opt"]["state"][names.index(n)]["momentum_buffer"]
+
+    seen_adamw = False
+    for n, prev in before.items():
+        entry = ck["opt"]["state"][names.index(n)]
         param = ck["model"][n]
-        assert buf.shape == param.shape, f"{n}: moment {buf.shape} != param {param.shape}"
-        if n.endswith("ffn.2.weight"):
-            assert torch.equal(buf[:, :old_h], prev), f"{n}: original moments lost"
-            assert torch.all(buf[:, old_h:] == 0)
-        elif n.endswith(("ffn.0.weight", "ffn.0.bias")):
-            assert torch.equal(buf[:old_h], prev), f"{n}: original moments lost"
-            assert torch.all(buf[old_h:] == 0)
+        for key, old_val in prev.items():
+            new_val = entry[key]
+            if not isinstance(old_val, torch.Tensor) or old_val.ndim == 0:
+                assert new_val is old_val or torch.equal(new_val, old_val), (
+                    f"{n}.{key}: a scalar like 'step' must not be touched"
+                )
+                continue
+            if key in ("exp_avg", "exp_avg_sq"):
+                seen_adamw = True
+            if old_val.shape == param.shape:
+                continue  # this tensor did not need to grow
+            assert new_val.shape == param.shape, (
+                f"{n}.{key}: {tuple(new_val.shape)} != param {tuple(param.shape)} "
+                "— the first resumed step dies here"
+            )
+            if n.endswith("ffn.2.weight"):
+                assert torch.equal(new_val[:, :old_h], old_val), f"{n}.{key}: history lost"
+                assert torch.all(new_val[:, old_h:] == 0)
+            else:
+                assert torch.equal(new_val[:old_h], old_val), f"{n}.{key}: history lost"
+                assert torch.all(new_val[old_h:] == 0)
+
+    assert seen_adamw, (
+        "the fixture no longer exercises the AdamW fallback; this test would "
+        "pass again on the momentum-only implementation that crashed"
+    )
+
+
+def test_step_counters_are_left_alone() -> None:
+    """A scalar is not shape-coupled — padding it would corrupt bias correction."""
+    ck = _tiny_ckpt(mults=(1.25,))
+    names = list(ck["opt_param_names"])
+    i = names.index("blocks.0.ffn.0.bias")
+    ck, _ = widen_checkpoint(ck, align=8, seed=3)
+    assert ck["opt"]["state"][i]["step"].item() == pytest.approx(1234.0)
+
+
+def test_a_checkpoint_with_swa_is_REFUSED() -> None:
+    """Trainer.load swallows the SWA shape error and keeps RANDOM weights."""
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["swa_model"] = {"module.blocks.0.ffn.0.weight": torch.zeros(10, 8)}
+    with pytest.raises(ValueError, match="swa_model"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_optimizer_state_without_param_names_is_REFUSED() -> None:
+    """Silently skipping the migration is the failure this repo keeps shipping."""
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["opt_param_names"] = []
+    with pytest.raises(ValueError, match="opt_param_names"):
+        widen_checkpoint(ck, align=8, seed=3)
 
 
 def test_arch_is_rewritten_or_resume_rebuilds_the_old_widths() -> None:

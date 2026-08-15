@@ -48,10 +48,29 @@ in tensor COUNT, and here the count is unchanged while shapes differ. Left
 alone, ``load()`` reinitialises every moment plus the scheduler — and then the
 readout measures the optimizer reset, not the widening.
 
-Aurora persists exactly one buffer per parameter here (``momentum_buffer``,
-same shape as the parameter; no matrix preconditioners are checkpointed), so
-migration is a zero-pad in the new positions, addressed by name through
-``opt_param_names`` rather than by position.
+⚑ AN EARLIER REVISION OF THIS FILE CLAIMED "Aurora persists exactly one buffer
+per parameter here (``momentum_buffer``)". **That was wrong, and it was a crash.**
+Measured on a real production ``trainer.pt`` (bt4heads armB iter100, 479 params):
+only **48** parameters carry ``momentum_buffer``; **431 carry ``exp_avg`` /
+``exp_avg_sq`` / ``step``**, because ``AuroraWithAuxAdam`` routes everything
+outside ``matrix_optimizer_scope`` through an AdamW fallback. Per-layer that
+splits exactly on rank:
+
+    blocks.N.ffn.0.weight  (768, 512)  -> momentum_buffer
+    blocks.N.ffn.2.weight  (512, 768)  -> momentum_buffer
+    blocks.N.ffn.0.bias    (768,)      -> exp_avg, exp_avg_sq, step   <-- WIDENED
+    blocks.N.ffn.2.bias    (512,)      -> exp_avg, exp_avg_sq, step
+
+``ffn.0.bias`` is widened by this tool and is on the AdamW side, so padding only
+``momentum_buffer`` left its ``exp_avg``/``exp_avg_sq`` at the old width and the
+first resumed step died in ``exp_avg.add_(grad)`` on a shape mismatch.
+
+The migration is therefore **generic**: every tensor in a parameter's state entry
+whose shape equals that parameter's OLD shape is padded the same way the
+parameter was. Nothing is matched by buffer NAME, so a future optimizer that adds
+another shape-coupled buffer is carried automatically instead of silently
+dropped. Non-tensor and non-conforming entries (``step``) are left untouched.
+Parameters are addressed by name through ``opt_param_names``, never by position.
 
 ARCH
 ----
@@ -180,16 +199,51 @@ def widen_checkpoint(
     if not changes:
         return ck, changes
 
+    swa = ck.get("swa_model")
+    if swa:
+        # Resuming would build a WIDENED AveragedModel, fail to load these
+        # old-width tensors, and Trainer.load swallows that — leaving the SWA
+        # object on its random construction weights, which then get averaged
+        # into an exported model. Refusing beats a silent corruption. SWA is
+        # off in production (ledger: reverted), so this is a guard, not a gap.
+        raise ValueError(
+            "checkpoint carries a 'swa_model' state dict; widening it is not "
+            "implemented and resuming without it silently averages random "
+            "weights into the export. Re-export without SWA, or extend this tool."
+        )
+
     gen = torch.Generator().manual_seed(int(seed))
     model = ck["model"]
     names: list[str] = list(ck.get("opt_param_names") or [])
     opt_state = (ck.get("opt") or {}).get("state", {})
+    if opt_state and not names:
+        # Silently skipping the migration is this repo's signature defect: the
+        # tool would report success and the run would die at the first step.
+        raise ValueError(
+            "checkpoint has optimizer state but no 'opt_param_names'; the "
+            "migration cannot be addressed by name. Refusing rather than "
+            "emitting a checkpoint whose optimizer buffers are the wrong shape."
+        )
 
     def _opt_entry(param_name: str) -> dict[str, Any] | None:
         if param_name not in names:
             return None
         i = names.index(param_name)
         return opt_state.get(i, opt_state.get(str(i)))
+
+    def _migrate(entry: dict[str, Any] | None, old_shape: tuple[int, ...],
+                 grow: Any) -> None:
+        """Pad EVERY shape-coupled tensor in *entry*, matched by shape not name.
+
+        A name-matched migration is what broke: `momentum_buffer` was handled
+        and AdamW's `exp_avg`/`exp_avg_sq` were not. Shape-matching carries any
+        future buffer automatically and leaves scalars like `step` alone.
+        """
+        if entry is None:
+            return
+        for key, val in list(entry.items()):
+            if isinstance(val, torch.Tensor) and tuple(val.shape) == old_shape:
+                entry[key] = grow(val)
 
     for key in list(model.keys()):
         m_in, m_out = _FFN_IN_RE.search(key), _FFN_OUT_RE.search(key)
@@ -202,6 +256,7 @@ def widen_checkpoint(
         _, new_w = changes[layer]
         t = model[key]
 
+        old_shape = tuple(t.shape)
         if m_in is not None:
             if m_in.group(2) == "weight":
                 std = float(t.float().std())
@@ -211,14 +266,17 @@ def widen_checkpoint(
                 model[key] = _pad_rows(t, new_w, fill=extra)
             else:  # bias: new units start unbiased
                 model[key] = _pad_rows(t, new_w, fill=None)
-            ent = _opt_entry(key)
-            if ent is not None and "momentum_buffer" in ent:
-                ent["momentum_buffer"] = _pad_rows(ent["momentum_buffer"], new_w, fill=None)
+            # ⚑ Moments are ALWAYS zero-padded, including for ffn.0.weight whose
+            # PARAMETER rows are random: a new unit has no gradient history.
+            # w=new_w binds eagerly: _migrate calls this immediately, but a
+            # late-bound closure over a loop variable is one refactor away from
+            # padding every layer to the LAST layer's width (ruff B023).
+            _migrate(_opt_entry(key), old_shape,
+                     lambda v, w=new_w: _pad_rows(v, w, fill=None))
         else:
             model[key] = _pad_cols(t, new_w)
-            ent = _opt_entry(key)
-            if ent is not None and "momentum_buffer" in ent:
-                ent["momentum_buffer"] = _pad_cols(ent["momentum_buffer"], new_w)
+            _migrate(_opt_entry(key), old_shape,
+                     lambda v, w=new_w: _pad_cols(v, w))
 
     # ⚑ Without this the resume path rebuilds the OLD widths from the stale arch.
     arch["ffn_mult_by_layer"] = tuple(new_mults)
