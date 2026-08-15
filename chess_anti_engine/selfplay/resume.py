@@ -1094,6 +1094,22 @@ _PRESERVE_FILE_REASONS = frozenset(
     {"no_trial_id", "trial_mismatch", "config_mismatch"},
 )
 
+
+def initial_resume_counts() -> dict[str, int]:
+    """The worker's cross-session resume tally, zeroed.
+
+    One definition instead of three literals. The worker built this dict inline
+    and two tests built their own copies of it, so adding ``preserved`` broke
+    both doubles with a ``KeyError`` -- a drift the type checker cannot see,
+    because they are plain ``dict[str, int]``. A test double that silently
+    lacks a key the production code writes is the same class of defect this
+    module's counters exist to catch.
+    """
+    return {
+        "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
+        "preserved": 0,
+    }
+
 # A state file this far past ``max_age_s`` is garbage-collected without being
 # read. The multiple matters: an expired GAME is meant to be discarded through
 # should_resume_game (so it is counted with a reason), and only a directory
@@ -1112,22 +1128,43 @@ def count_unclaimed_resume_files(in_dir: Path) -> int:
     ``ResumeReport.note`` or ``note_preserved``. ``discarded`` counts files the
     resume EXAMINED and rejected; ``suspend_skipped`` counts games suspend
     failed to write. A file that nothing looked at is outside both, so both
-    report a truthful zero while the games expire at ``DEFAULT_MAX_AGE_S`` and
-    the sweep deletes them.
+    report a truthful zero.
+
+    The stranded files are NOT picked up later. ``resume_inflight_games`` runs
+    from ``on_state_ready``, which fires once per selfplay SESSION -- and a
+    session is the worker's whole continuous run, not one shard. (Verified on
+    the live arm-B worker: one ``_dispatch_selfplay_one_shard`` session, 32
+    resume calls, all inside three seconds of worker start, then nothing for the
+    next four hours while ~50 iterations of shards went out.) So the next resume
+    attempt is the next worker START. By then the files are past
+    ``DEFAULT_MAX_AGE_S`` (6h) and ``should_resume_game`` rejects them as stale;
+    ``sweep_orphan_state_files`` deletes them at
+    ``DEFAULT_MAX_AGE_S * _SWEEP_AGE_MULTIPLE`` (24h). Between 6h and 24h they
+    are examined and counted ``stale`` rather than silently dropped.
 
     MEASURED (2026-08-14 arm-B pause/resume): suspend 3046 games across four
     workers, resume restored 3017, and worker_02's directory held exactly 29
     ``*.game.npz`` afterwards -- the whole gap, in one worker, with
-    ``suspend_skipped=0`` and ``discarded=0`` everywhere.
+    ``suspend_skipped=0`` and ``discarded=0`` everywhere. Still all 29 there
+    3h50m later.
 
     ``.claimed`` and ``.tmp`` are excluded by the glob suffix: those belong to
     a resume or suspend that was interrupted, which is
     ``sweep_orphan_state_files``' business, not this counter's.
 
-    This is a snapshot of DIRECTORY STATE and is only meaningful once a worker's
-    resume phase has settled -- callers run it per selfplay thread against a
-    shared directory, so an early reading includes files another thread is about
-    to claim. Read the LAST value a worker reports, never an intermediate one.
+    ⚑ TWO THINGS THIS NUMBER IS NOT.
+
+    It is not stranded-only: files rejected for a reason in
+    ``_PRESERVE_FILE_REASONS`` are deliberately renamed BACK into ``in_dir`` and
+    match this glob. A worker that preserved 3 and stranded 0 counts 3 here.
+    Callers must report ``ResumeReport.preserved`` alongside it -- the count is
+    only interpretable as a pair.
+
+    It is not a settled reading. Callers run it per selfplay thread against a
+    shared directory, and the sample is separated from its emission by a
+    contended lock, so ANY single reading -- including the last one logged --
+    can be stale in either direction. Treat a nonzero value as "go look at the
+    directory", not as a measurement.
     """
     if not in_dir.is_dir():
         return 0
@@ -1302,7 +1339,9 @@ __all__ = [
     "ResumeReport",
     "ResumeStateError",
     "SuspendReport",
+    "count_unclaimed_resume_files",
     "decode_game",
+    "initial_resume_counts",
     "resume_inflight_games",
     "should_resume_game",
     "suspend_inflight_games",

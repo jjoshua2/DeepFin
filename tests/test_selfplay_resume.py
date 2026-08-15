@@ -42,6 +42,7 @@ from chess_anti_engine.selfplay.resume import (
     RESUME_FILE_SUFFIX,
     RESUME_FORMAT_VERSION,
     count_unclaimed_resume_files,
+    initial_resume_counts,
     resume_inflight_games,
     should_resume_game,
     suspend_inflight_games,
@@ -1428,7 +1429,7 @@ def _wired_session(tmp_path: Path) -> Any:
     session._pending_sf_refute = []
     session._resume_counts_lock = threading.Lock()
     session._resume_counts = {
-        "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
+        **initial_resume_counts(),
     }
     session._resume_skip_reasons = {}
     # Collaborators outside the wiring under test.
@@ -1649,4 +1650,162 @@ def test_surplus_suspended_games_are_stranded_and_only_the_new_counter_sees_them
     (out_dir / "unrelated.txt").write_bytes(b"x")
     assert count_unclaimed_resume_files(out_dir) == 2, (
         "claim/tmp debris and foreign files must not be counted as stranded games"
+    )
+
+
+def _resume_ready_session(tmp_path: Path, in_dir: Path) -> Any:
+    """`_bare_session` plus the fields `_resume_inflight_games` itself reads.
+
+    Deliberately a real `WorkerSession` and the real method: the whole point of
+    these tests is the WIRING between `count_unclaimed_resume_files` and the
+    log line, which a hand-rolled stand-in would not exercise.
+    """
+    import threading
+
+    session = _bare_session(tmp_path)
+    session.resume_dir = in_dir
+    session._resume_counts_lock = threading.Lock()
+    session._resume_counts = initial_resume_counts()
+    session._resume_skip_reasons = {}
+    session._resume_compat_fingerprint_active = FINGERPRINT
+    session._resume_trial_id_active = TRIAL_ID
+    session.model_sha = ""
+    session.model_step = 0
+    return session
+
+
+def _totals_line(caplog: pytest.LogCaptureFixture) -> dict[str, int]:
+    """The `selfplay resume totals:` line, parsed into its named fields.
+
+    Parsing BY NAME rather than by position is what makes an argument-order
+    mutation detectable: a swapped `%d` pair still prints a well-formed line,
+    and a positional read would happily agree with it.
+    """
+    lines = [
+        r.getMessage() for r in caplog.records
+        if "selfplay resume totals:" in r.getMessage()
+    ]
+    assert len(lines) == 1, f"expected exactly one totals line, got {lines}"
+    body = lines[0].split("selfplay resume totals:", 1)[1].split("[", 1)[0]
+    return {
+        k: int(v) for k, v in (tok.split("=") for tok in body.split())
+    }
+
+
+def test_worker_totals_line_reports_the_stranded_files_from_the_real_resume_dir(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The wiring, end to end through `WorkerSession._resume_inflight_games`.
+
+    The counter existing is not the feature; the counter reaching the operator
+    is. Four separate mutations of this method survived the whole suite
+    (`tests/test_selfplay_resume.py` plus all of `tests/test_worker*.py`) when
+    only `count_unclaimed_resume_files` itself was covered: hard-wiring
+    `left = 0`, globbing a directory that is not `self.resume_dir`, swapping the
+    `skipped`/`left` arguments, and reverting the emit guard. Each is a way for
+    a live worker to report no loss while games rot on disk -- the house defect
+    exactly (a value computed, then silently not delivered).
+
+    Field values are pinned and ASYMMETRIC (`suspend_skipped=0` vs
+    `left_on_disk=2`) so that an argument swap cannot produce the same line.
+    """
+    caplog.set_level("INFO", logger="test-worker")
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1
+    in_dir = tmp_path / "resume"
+    assert _suspend_all(source, in_dir) == 3
+
+    session = _resume_ready_session(tmp_path, in_dir)
+    session._resume_inflight_games(_fresh_state(game, batch_size=1, seed=11))
+
+    fields = _totals_line(caplog)
+    assert fields["resumed"] == 1
+    assert fields["discarded"] == 0
+    assert fields["preserved"] == 0
+    assert fields["suspend_skipped"] == 0
+    assert fields["left_on_disk"] == 2, (
+        "the two stranded games must reach the log line, read from the "
+        "session's real resume_dir"
+    )
+    assert count_unclaimed_resume_files(in_dir) == 2, "and the disk agrees"
+
+
+def test_worker_totals_line_is_emitted_when_leftovers_are_the_only_signal(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The guard must include `left`, or the worst case is the silent one.
+
+    A session that resumes nothing and discards nothing is exactly the shape of
+    the failure: every slot already spoken for, every suspended game stranded.
+    Under the original `if report.resumed or report.discarded:` guard that
+    worker logged NOTHING AT ALL, so widening the guard is load-bearing rather
+    than cosmetic.
+    """
+    caplog.set_level("INFO", logger="test-worker")
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1
+    in_dir = tmp_path / "resume"
+    assert _suspend_all(source, in_dir) == 3
+
+    # Zero resumable slots: `_resumable_slots` skips fenlist-seeded slots, since
+    # replacing one destroys an already-doled blind-spot seed.
+    target = _fresh_state(game, batch_size=2, seed=11)
+    for i in range(target.batch_size):
+        target.opening_source_arr[i] = "fenlist:seed"
+
+    session = _resume_ready_session(tmp_path, in_dir)
+    session._resume_inflight_games(target)
+
+    fields = _totals_line(caplog)
+    # Neither pre-existing counter fires here -- that is the point.
+    assert fields["resumed"] == 0
+    assert fields["discarded"] == 0
+    assert fields["left_on_disk"] == 3, "all three games are stranded"
+
+
+def test_left_on_disk_counts_preserved_files_and_the_line_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `left_on_disk` is NOT a stranded count, and must never be read as one.
+
+    A file refused for a `_PRESERVE_FILE_REASONS` reason is renamed BACK into
+    the directory on purpose, so it still matches the glob. Demand here is
+    ample (4 slots for 3 games), so NOTHING is stranded -- and `left_on_disk`
+    still reads 3. `no_trial_id` is documented as routine, which puts the
+    maximum-magnitude false alarm in the most ordinary state there is.
+
+    Hence `preserved` on the same line: the pair is interpretable where either
+    number alone is not, and `left_on_disk > preserved` is the condition worth
+    chasing. Without this test the fix for that conflation could be reverted
+    silently.
+    """
+    caplog.set_level("INFO", logger="test-worker")
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1
+    in_dir = tmp_path / "resume"
+    assert _suspend_all(source, in_dir) == 3
+
+    session = _resume_ready_session(tmp_path, in_dir)
+    session._resume_trial_id_active = "some-other-trial"
+    session._resume_inflight_games(_fresh_state(game, batch_size=4, seed=11))
+
+    fields = _totals_line(caplog)
+    assert fields["resumed"] == 0
+    assert fields["discarded"] == 0, "a preserved file is refused, not discarded"
+    assert fields["preserved"] == 3, (
+        "the preserved count must appear on the line, or left_on_disk=3 reads "
+        "as three lost games when nothing was lost"
+    )
+    assert fields["left_on_disk"] == 3, (
+        "preserved files are renamed back into the directory and DO match the "
+        "glob -- this is the documented behaviour, not a bug in the counter"
     )

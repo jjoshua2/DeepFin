@@ -87,6 +87,7 @@ from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
     count_unclaimed_resume_files,
+    initial_resume_counts,
     resume_inflight_games,
     suspend_inflight_games,
     sweep_orphan_state_files,
@@ -1138,9 +1139,7 @@ class WorkerSession:
   # In-flight resume counters (the flag + fingerprint are class-level defaults;
   # see _resume_inflight_enabled).
         self._resume_counts_lock = threading.Lock()
-        self._resume_counts: dict[str, int] = {
-            "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
-        }
+        self._resume_counts: dict[str, int] = initial_resume_counts()
         self._resume_skip_reasons: dict[str, int] = {}
         self._completion_telemetry_lock = threading.Lock()
         self._completion_games = 0
@@ -4125,15 +4124,23 @@ class WorkerSession:
                 trial_id=self._resume_trial_id(),
             )
         except Exception:
-            self.log.exception("selfplay resume: restore failed; starting fresh games")
+            # Report the leftovers HERE too. A restore that raised is exactly
+            # when files pile up in the dir, and returning early would make the
+            # worst case the one case with no count.
+            self.log.exception(
+                "selfplay resume: restore failed; starting fresh games "
+                "(left_on_disk=%d)", count_unclaimed_resume_files(self.resume_dir),
+            )
             return
         with self._resume_counts_lock:
             self._resume_counts["resumed"] += int(report.resumed)
             self._resume_counts["discarded"] += int(report.discarded)
+            self._resume_counts["preserved"] += int(report.preserved)
         left = count_unclaimed_resume_files(self.resume_dir)
         if report.resumed or report.discarded or left:
             with self._resume_counts_lock:
                 skipped = int(self._resume_counts["suspend_skipped"])
+                preserved = int(self._resume_counts["preserved"])
                 skip_reasons = ",".join(
                     f"{k}={v}" for k, v in sorted(self._resume_skip_reasons.items())
                 ) or "-"
@@ -4148,25 +4155,40 @@ class WorkerSession:
             # ask for, the surplus is never even claimed. `discarded` cannot see
             # them (it counts files the resume EXAMINED and rejected) and
             # `suspend_skipped` cannot either (suspend wrote them fine). Both
-            # read a truthful 0 while the games sit on disk until
-            # DEFAULT_MAX_AGE_S expires them and the sweep deletes them.
+            # read a truthful 0 while the games sit on disk. Nothing picks them
+            # up later either: this hook fires once per selfplay SESSION, and a
+            # session is the worker's whole continuous run (measured on the live
+            # arm-B worker: 32 resume calls in the three seconds after start,
+            # then none for four hours across ~50 iterations of shards). The
+            # next attempt is the next worker START, by which time they are
+            # stale (6h) and then swept (24h).
             # MEASURED at the arm-B pause: suspend 3046, resume 3017, and
             # exactly 29 *.game.npz left in worker_02's dir -- the whole gap,
             # one worker, invisible to every counter we had.
             #
+            # ⚑ `left_on_disk` is NOT a stranded count, which is why
+            # `preserved` is printed beside it and the two must be read as a
+            # pair. A file rejected for a _PRESERVE_FILE_REASONS reason is
+            # renamed BACK into the dir and still matches the glob, so a worker
+            # that preserved 3 and stranded 0 reports left_on_disk=3. That is
+            # the ordinary case, not an exotic one -- `no_trial_id` is routine.
+            # left_on_disk > preserved is the condition worth chasing.
+            #
             # It is a DIRECTORY STATE, deliberately not a per-call field on
             # ResumeReport: this hook runs once per selfplay thread against a
             # shared dir, so a per-call "stranded" number would count files
-            # another thread is about to claim. Only the final value -- the last
-            # line a worker logs -- is meaningful, which is why it is recomputed
-            # on every line rather than accumulated.
+            # another thread is about to claim. It is recomputed per line rather
+            # than accumulated for the same reason. ⚑ But no single reading is
+            # authoritative -- sample and emission are separated by a contended
+            # lock, so even the last line can be stale in either direction.
+            # Treat left_on_disk > preserved as "go look at the directory".
             self.log.info(
                 "selfplay resume totals: suspended=%d resumed=%d discarded=%d "
-                "suspend_skipped=%d left_on_disk=%d [%s]",
+                "preserved=%d suspend_skipped=%d left_on_disk=%d [%s]",
                 self._resume_counts["suspended"],
                 self._resume_counts["resumed"],
                 self._resume_counts["discarded"],
-                skipped, left, skip_reasons,
+                preserved, skipped, left, skip_reasons,
             )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
