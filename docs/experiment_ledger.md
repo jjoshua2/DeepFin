@@ -49420,3 +49420,86 @@ Full record: `scratchpad/bt4heads/banked/arena_execution_notes.md`.
 Arm B is STOPPED (2026-08-15 03:41, clean drain, 3033 in-flight games suspended, 0 discarded).
 Nothing has been restarted — what runs next is Josh's call, and adopting the bt4heads config
 into production is a separate decision from this arena verdict.
+
+---
+
+## PREREG — bt4heads PROMOTED TO PRODUCTION + AOT rebuilt (2026-08-15, NOT YET LAUNCHED)
+
+Written BEFORE launch per protocol rule 1. Follows the ADOPT verdict above (4528f08f1).
+
+### Hypothesis
+The bt4heads bundle's **+13.9 Elo [+5.7, +22.1]** over 100 iterations **compounds** rather
+than saturating. The lineage has otherwise been FLAT (~11-Elo plateau), so a bundle that is
+still gaining at iter 200 is the first genuine escape; one that has flattened is a one-off
+level shift and the attribution question becomes worth its cost.
+
+### The change
+`configs/pbt2_small.yaml`, 7 training keys promoted verbatim from
+`scratchpad/bt4heads/armB_bt4heads.yaml` — the values that were MEASURED, not re-derived:
+`model.aux_policy_head_dim: 128` · `model.categorical_head_coupled: true` ·
+`model.policy_embedding_mode: linear` · `selfplay.categorical_blend_frac: 0.69` ·
+`selfplay.categorical_search_blend_frac: 0.31` · `train.rebuild_categorical_target: true` ·
+`train.w_categorical: 0.0 -> 1.0` · `train.w_sf_move: 0.0 -> 0.05`.
+
+Dry-run on a COPY passed both gates before the live file was written:
+`flatten_run_config_defaults` raised no `ValueError` (⇒ no unknown key ⇒ **the process will
+boot**; an unknown key is FATAL at launch, not a soft revert) and `TrialConfig.from_dict`
+constructed (⇒ survives category (b) validation). All 10 promoted/operational keys then
+diffed EQUAL against the flattened arm-B config.
+
+Start weights: `data/salvage/bt4heads_iter100_20260815` (exported with
+`--metric training_iteration`, slot=00 iter=101 ckpt=checkpoint_000100, 800 shards, 3.7G).
+
+### ⚑ CONFOUND recorded IN ADVANCE: AOT is a SECOND change in this window
+
+Protocol rule 4 is one data-affecting change per readout window; this window has two.
+`distributed_inference_aot_dir` was pointed at **rebuilt** packages
+(`data/aot_models_512_bt4heads`, built from the promoted config + arm B's iter-100
+checkpoint). This is data-affecting: the AOT broker is a FIFTH policy path that never enters
+`ChessNet.forward`, and it produces the priors selfplay games are played with.
+
+It could not simply be carried over. `data/aot_models_512/*.pt2` were compiled **2026-07-14**,
+a month before the 2026-08-14 head surgery, and arm B ran with `aot_dir: ''` — so the old
+packages have NEVER served these heads. ⚑ `assert_uniform_constant_fqns` cannot catch that:
+it checks the packages agree with EACH OTHER, and all 24 stale packages are uniform, so it
+passes. A gate that cannot fail for the failure it looks like it covers.
+
+**Bound on the confound:** the rebuild ran with `--verify` (AOT vs eager per bucket). The
+measured parity is recorded at deploy. If AOT matches eager within tolerance, the data effect
+is small and the readout below is still about bt4heads; if it does not, this entry is VOID as
+a bt4heads readout and must be re-run with AOT off.
+
+### DECIDING YARDSTICK (exact command, pre-committed — do not re-derive)
+Candidate is production at **iter 200**; reference is the FROZEN arm-B iter-100 anchor that
+the ADOPT verdict was measured on.
+```bash
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate <prod>/checkpoint_000199/trainer.pt \
+  --reference scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt \
+  --sims 32 --search-shape training --games 4800 --seed 42 \
+  --max-concurrent-games 16
+```
+⚑ `PYTHONPATH=.` and `--max-concurrent-games 16` are both REQUIRED and both were learned the
+hard way on 2026-08-15 (a missing prefix killed the launch in seconds; the default concurrency
+OOMed twice against the WSL2 dxg bridge). Full checkpoint paths only. Read at FULL n only.
+
+### Pre-committed thresholds — three named outcomes, no post-hoc reading
+* **CONTINUE** — 95% CI lower bound **> 0**: still gaining. Keep running, next readout iter 300.
+* **KILL / ROLL BACK** — 95% CI upper bound **< 0**: degrading. Stop, restore
+  `data/salvage/bt4heads_iter100_20260815`, revert the 7 keys from
+  `scratchpad/.../pbt2_PRE_BT4HEADS.yaml`.
+* **SATURATED** — CI spans 0: the +13.9 was a one-off level shift, not a trajectory. This is
+  the trigger to spend GPU on ABLATING the 7-key bundle (most likely split: the
+  categorical-head group vs `w_sf_move`), which is exactly the question this readout defers.
+
+⚑ Regret is OUT of the verdict: the search config is frozen but the PID state is restored
+from the donor, so the series is not a strength readout. ⚑ Losses are OUT too — this same
+bundle read `policy_loss` **+4.96% WORSE** while play strength was **+13.9 Elo BETTER**.
+
+### Revert points
+| what | where |
+|---|---|
+| weights+opt+PID+replay @ arm B iter 101 | `data/salvage/bt4heads_iter100_20260815` (3.7G) |
+| pre-promotion production yaml | `scratchpad/.../pbt2_PRE_BT4HEADS.yaml` (also git) |
+| frozen arena anchor | `scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/` |
+| previous AOT packages | `data/aot_models_512/` left INTACT — rebuild went to a new dir |
