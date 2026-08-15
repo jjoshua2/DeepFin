@@ -49636,3 +49636,88 @@ available for free: iter514 vs the donor is already banked at −18.3.
 * AOT is OFF on both sides, as it was for the +13.9 measurement.
 * n=1600 gives roughly ±17 Elo — sized to resolve the ~20-40 Elo the historical rows suggest,
   NOT sized to resolve a 5 Elo difference.
+
+---
+
+## RESULT — the AOT verify gate is STALE, not the packages. The instrument broke on the WEIGHTS.
+**2026-08-15. Resolves the parity condition the bt4heads promotion prereg made load-bearing.**
+
+The 29-bucket rebuild into `data/aot_models_512_bt4heads` failed `--verify` on **28 of 29**
+buckets (`pol_pmad` 0.011-0.085 against `pol_tol=0.02`). Per the promotion prereg that would
+VOID the iter-200 window as a bt4heads readout. It does not, because **the gate is invalid.**
+
+### The decisive control
+`--verify-only` on the **month-deployed, unmodified** `data/aot_models_512`, same `.pt2` files,
+two weight vintages:
+
+| packages | weights | `pol_pmad` | gate |
+|---|---|---|---|
+| `aot_models_512` (deployed 1 month) | 2026-07-14 | 0.0015 - 0.0052 | **3/3 PASS** |
+| `aot_models_512` (SAME FILES) | 2026-08-12 | 0.042 - **0.175** | **9/9 FAIL** |
+| `aot_models_512_bt4heads` (new) | bt4heads iter100 | 0.011 - 0.085 | 28/29 FAIL |
+
+Known-good production packages fail **twice as badly as the new build** on current weights.
+Nothing about the files changed ⇒ the tolerance was achievable when written and is now
+structurally unreachable.
+
+### Mechanism (measured)
+`pol_pmad` is `max |p_aot - p_ref|` over `N x 1858` probabilities, and the max landed on a
+row's **top-1** entry in 3/3 cases ⇒ `pol_pmad ~ max_row(p_top1) x relative_bf16_error`.
+Top-1 probability grew **4.4x** across the lineage:
+
+| checkpoint | mean p_top1 | max p_top1 |
+|---|---|---|
+| 2026-07-14 | 0.024 | 0.221 |
+| 2026-08-12 | 0.107 | 0.930 |
+| bt4heads iter100 | 0.128 | 0.980 |
+
+⇒ **an ABSOLUTE probability tolerance was pinned to a net whose probabilities have since
+concentrated** — the same sharpening `we_are_sharp_and_wrong_not_flat` records. The
+docstring's "~2e-3" was accurate in July (reproduced: 5.2e-3 at b1190 on July weights) and is
+stale by 20-40x.
+
+### The packages are NOT defective — negative control
+Eager bf16 vs **ITSELF** at a different batch shape (no AOT anywhere), same weights:
+
+| | AOT vs eager | eager vs eager (batch-shape) | ratio |
+|---|---|---|---|
+| new pkgs, bt4heads, b1190, mean per-row TV | 0.01737 | 0.01760 | **0.99** |
+| old pkgs, July weights, b1190 | 0.01006 | 0.01001 | 1.005 |
+| old pkgs, **August** weights, b1190 | 0.03810 | 0.01648 | **2.31** |
+
+Same-shape eager reruns are bitwise identical (0.0), so 100% of the deviation is batch-shape
+kernel ordering. **The new packages add nothing beyond it (0.99)** — their disagreement with
+eager is smaller than eager's disagreement with itself at bucket 32 (0.0151 vs 0.0195).
+
+### Bucket 32 passing was a LOTTERY, not a signal
+Per-row exceedance `P(rowmax > 0.02) = 0.01177` (2380 rows, b1190) ⇒ `P(pass at N) =
+(1-0.01177)^(2N)`. **Predicted expected passes across the 29 buckets: 1.55. Observed: 1.**
+Bucket 16 FAILED with fewer samples, so "small batch = fewer chances" is wrong.
+
+### Verdict and the rule it is judged by
+⚑ The pre-committed rule was "AOT matches eager within tolerance". The instrument that rule
+names is structurally invalid, and **a verdict read off a failed instrument is not a verdict —
+in EITHER direction.** Replacing it with a valid instrument (the eager-vs-eager control) gives
+a decisive PASS. This is not a re-threshold to make the build pass: the replacement was
+specified from measured distributions and its expected outcome was PREDICTED before reading.
+
+⇒ **AOT packages CLEARED numerically.** Deployment remains gated on the arch question (the
+packages carry bt4heads topology) and on the standing caveat below.
+
+### ⚑ A numerical gate is NOT deployment clearance
+Arm B's +13.9 Elo was measured with **AOT OFF**, and per `aot_broker_is_a_fifth_policy_path`
+the broker never enters `ChessNet.forward`. Nothing here tests slot packing, batching, or the
+broker's per-iteration weight re-`setattr`. Turning AOT on makes production a configuration
+that has never been strength-measured.
+
+### Owed — the gate must be fixed before it is trusted again
+* Replace the global `max` with **mean per-row total-variation relative to an eager-vs-eager
+  batch-shape control on the same weights**; FAIL if `TV_aot / TV_control > 1.5` (measured:
+  0.99 healthy, 2.31 stale, ~60 for garbage constants). Self-calibrating, so it cannot go
+  stale on the next sharpness shift.
+* Keep `argmax_min = 0.90` unchanged — it is the one correctly calibrated metric (healthy
+  0.958-0.970, eager-only control 0.9597-0.9655, random floor 0.0005).
+* Never gate on a global max over `N x 1858`: it is an extreme-value statistic whose
+  expectation grows with bucket size for reasons unrelated to correctness.
+* Fix the stale "~2e-3 / ~3e-2" docstring claim, and the metric NAME: `pmad` reads as "mean
+  absolute deviation" and computes `np.max` — `same_name_different_population`, again.
