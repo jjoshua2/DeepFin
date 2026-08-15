@@ -1205,3 +1205,40 @@ def test_argmax_min_rejects_nan_and_out_of_range(
             "--buckets", "8", "--max-batch", "8", "--argmax-min", bad,
         ])
         assert rc == 2, f"--argmax-min {bad} was accepted (rc={rc})"
+
+
+def test_a_NEAR_degenerate_shape_control_does_not_fail_a_healthy_package() -> None:
+    """⚑ THE HOLE THE FIRST DIVERGENCE GUARD LEFT: degeneracy is a RANGE.
+
+    The guard's first revision escaped on ``lo > 0.0`` — exact equality, where a
+    band was meant. That covers the CPU regime where ``eager_batch_shape_control``
+    is BITWISE identical (TV exactly 0), and misses the case one float away: a
+    control that only re-associates a couple of reductions produces a TV around
+    1e-8. The softmax is mathematically unchanged, but ``hi / lo`` then reads tens
+    of thousands and the bucket FAILS — a healthy package rejected by the gate's
+    own safety check, which is the original defect wearing the safety check's hat.
+
+    Measured here: near-degenerate control TV ~9.3e-8 against a real ULP floor of
+    ~0.0175, so ``_FLOOR_DEGENERATE_TV`` at 1e-4 sits ~1000x clear of BOTH. The
+    package must PASS and must not be labelled FLOOR-DIVERGENCE.
+    """
+    rng = np.random.default_rng(17)
+    ref_pol = np.full((64, 4672), -1e9, dtype=np.float32)
+    ref_pol[:, :1858] = (rng.normal(0, 1, (64, 1858)) * 5.0).astype(np.float32)
+    ref_wdl = (rng.normal(0, 1, (64, 3)) * 1.5).astype(np.float32)
+
+    # Healthy AOT: one bf16 ULP away. Near-degenerate control: a uniform shift,
+    # which softmax is invariant to, so it carries no information about the floor.
+    aot_pol = bf16_ulp_perturbation(ref_pol, seed=5)
+    aot_wdl = bf16_ulp_perturbation(ref_wdl, seed=5)
+    ctl_pol = ref_pol + np.float32(1e-3)
+    ctl_wdl = ref_wdl + np.float32(1e-3)
+
+    ok, detail, _, _ = _compare_bucket(
+        aot_pol=aot_pol, aot_wdl=aot_wdl,
+        ref_pol=ref_pol, ref_wdl=ref_wdl,
+        ctl_pol=ctl_pol, ctl_wdl=ctl_wdl,
+        tv_ratio_max=2.0,
+    )
+    assert "FLOOR-DIVERGENCE" not in detail, detail
+    assert ok, detail

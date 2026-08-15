@@ -573,6 +573,11 @@ _ROW_EXCEED_K = 6.0
 # produce, so a wider gap means one estimator is broken. See `_floor`.
 _FLOOR_DIVERGENCE_MAX = 5.0
 
+# Below this the empirical floor estimate is not a measurement. See `_floor`:
+# a real bf16 floor here is ~0.018, an exactly-degenerate control is 0.0, and a
+# control that only re-associates a few reductions lands at ~1e-8.
+_FLOOR_DEGENERATE_TV = 1e-4
+
 
 def _compare_bucket(
     *,
@@ -673,7 +678,27 @@ def _compare_bucket(
         c_mean, c_tail = mean_row_tv(ctl_p, ref_p), tail_row_tv(ctl_p, ref_p)
         note = ""
         hi, lo = max(u_mean, c_mean), min(u_mean, c_mean)
-        if lo > 0.0 and hi / lo > _FLOOR_DIVERGENCE_MAX:
+        # ⚑ DEGENERACY IS A RANGE, NOT AN EXACT ZERO — and an earlier revision
+        # of this guard tested `lo > 0.0`, which is the same "exact equality
+        # where a band was meant" mistake the gate itself was built to stop.
+        # `eager_batch_shape_control` is BITWISE identical to the full batch on
+        # some backends (TV exactly 0), and that case was handled. But a control
+        # that merely re-associates a couple of reductions gives a TV like
+        # 1.9e-8 — mathematically the same softmax, numerically nonzero — and
+        # `hi/lo` then reads ~60000 and FAILS A HEALTHY PACKAGE. That is the
+        # original defect (a gate that rejects good packages) reintroduced by
+        # its own safety check.
+        #
+        # The ratio CANNOT separate the two dangerous-vs-harmless cases on its
+        # own: both the near-degenerate control and the sentinel-inflated ULP
+        # floor read `ulp >> shape`. What separates them is whether the SMALLER
+        # estimate is a plausible bf16 floor at all. A real one is ~0.018 here;
+        # 1e-4 sits ~200x below that and ~5000x above the numerical-noise case,
+        # so it splits them with orders of magnitude to spare and is not a tuned
+        # constant. Below it the control carries no information, so we fall back
+        # to the ULP floor alone — the same thing the `ctl is None` path does —
+        # rather than treating a non-measurement as a disagreement.
+        if lo > _FLOOR_DEGENERATE_TV and hi / lo > _FLOOR_DIVERGENCE_MAX:
             note = (f" ⚑FLOOR-DIVERGENCE ulp={u_mean:.5f} shape={c_mean:.5f} "
                     f"(x{hi / lo:.1f} > {_FLOOR_DIVERGENCE_MAX:g})")
         return max(u_mean, c_mean), max(u_tail, c_tail), note
