@@ -159,11 +159,23 @@ def test_the_written_checkpoint_keeps_no_manifest_for_the_optimizer_it_dropped(
     That is exactly the shape `_remap_optimizer_state_by_param_name` now raises
     `UntrustedOptimizerStateError` on: a manifest name that is not a key of the
     model payload is proof the mapping is wrong. It is harmless while `opt` is
-    absent -- nothing re-keys a state that is not there -- so this test pins the
-    INVARIANT (manifest and state travel together) rather than a symptom, and
-    will keep holding if a later edit preserves `opt`.
+    absent -- nothing re-keys a state that is not there.
 
-    Found by independent review of PR #427 (NIT 5).
+    ⚑ TWO assertions, and they are NOT the same kind of claim -- an earlier
+    version of this docstring said the pair "pins the INVARIANT and will keep
+    holding if a later edit preserves `opt`", and independent review FALSIFIED
+    that by building precisely that edit (keep `opt`, keep the manifest with it,
+    invariant respected) and watching this test fail anyway on `"opt" not in
+    written`. Two unconditional absence checks cannot express a co-occurrence
+    invariant. So they are now labelled for what each one is:
+
+      * the co-occurrence assertion IS the invariant, and survives that edit;
+      * the `"opt" not in written` assertion pins TODAY'S BEHAVIOUR (the script
+        drops the state outright) and is expected to need updating if that
+        behaviour ever changes deliberately.
+
+    Found by independent review of PR #427 (NIT 5); the docstring's own claim
+    falsified by the follow-up review of `7c7091d6c`.
     """
     import dataclasses
     import sys
@@ -200,6 +212,15 @@ def test_the_written_checkpoint_keeps_no_manifest_for_the_optimizer_it_dropped(
         sys.argv = argv
 
     written = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+
+    # THE INVARIANT. Survives any future edit that keeps `opt` as long as the
+    # manifest keeps travelling with it; fails only on a genuine desync.
+    assert ("opt" in written) == ("opt_param_names" in written), (
+        "manifest and optimizer state must travel together -- a checkpoint "
+        "carrying exactly one of them describes a state it does not contain"
+    )
+    # TODAY'S BEHAVIOUR, pinned separately and deliberately: the script drops
+    # the state outright. Update this line, not the one above, if that changes.
     assert "opt" not in written, "the optimizer state must still be dropped"
     assert "opt_param_names" not in written, (
         "a manifest naming the dropped optimizer's parameters was left behind -- "

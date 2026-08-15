@@ -4215,16 +4215,35 @@ class Trainer:
   # wipe this method exists to prevent, relocated from a WARNING into the quiet
   # channel. Found by independent review 2026-08-14.
   #
-  # ⚑ An earlier revision of this comment added "reachable from the first
-  # checkpoint that carries the manifest". That was OVERSTATED and is removed:
-  # `save` writes the manifest and the model payload through the IDENTICAL
-  # `.replace("_orig_mod.", "", 1)`, so a self-consistent save cannot produce a
-  # name the payload lacks. The reachable trigger is a checkpoint whose manifest
-  # and payload were written by DIFFERENT code -- a rename between save and
-  # load, or a payload rewritten in place by a tool that leaves
-  # `opt_param_names` untouched (`scripts/reinit_value_heads.py` does exactly
-  # that). Stating the wider claim would invite someone to "simplify" the guard
-  # away on finding that ordinary checkpoints never trip it.
+  # ⚑ WHAT CAN ACTUALLY TRIP THIS -- and the answer is "nothing in the tree
+  # today", which is the state we worked to reach, NOT evidence it is useless.
+  # BOTH operands of the predicate below are read out of the SAME checkpoint:
+  # the name comes from that file's `opt_param_names`, the membership test is
+  # against that file's `model` payload. The LIVE model appears nowhere in it.
+  # So a rename BETWEEN save and load cannot fire it -- one `save` wrote both
+  # sides, both carry the OLD name, they still agree with each other, and the
+  # renamed parameter simply falls out of `new_index_of_name` as an ordinary
+  # `dropped`. (Two earlier revisions of this comment got this wrong in two
+  # different directions; the third was falsified BY EXECUTION in independent
+  # review, arm "rename in manifest AND payload" -> accepted, `85 kept, 1
+  # dropped, 1 fresh`, no raise. Only "manifest renamed alone" raises.)
+  #
+  # The trigger is therefore ONE shape and only one: a checkpoint whose manifest
+  # and payload were written by DIFFERENT code -- an external tool that rewrites
+  # one side and leaves the other. `Trainer.save` is the sole in-tree writer of
+  # `opt_param_names`, and `scripts/reinit_value_heads.py` was the last tool
+  # that desynchronised them until it was fixed in this same PR. ⇒ **this guard
+  # is defence in depth against a FUTURE such tool. Do not delete it on finding
+  # that nothing produces its input today.**
+  #
+  # Not the reason a self-consistent save is safe, though it reads like one:
+  # `save` putting both sides through the identical `.replace("_orig_mod.",
+  # "", 1)` shows only that the NORMALISATION introduces no discrepancy. The
+  # property actually required is that the optimizer-held `named_parameters()`
+  # names are a SUBSET of the `state_dict()` keys -- which holds because nothing
+  # in the package overrides `state_dict`/`_save_to_state_dict` on an
+  # `nn.Module` and `save` writes the payload unfiltered. Measured on the live
+  # arm-B donor: 479 manifest names, 0 misses against 494 payload keys.
                 if name is None or name not in donor_model_state:
                     raise UntrustedOptimizerStateError(
                         f"donor optimizer slot {slot_id!r} resolves to "
