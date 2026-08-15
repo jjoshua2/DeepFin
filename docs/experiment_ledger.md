@@ -49898,3 +49898,58 @@ fallback), then re-run this exact command. Also still owed and never run: a DELI
 BROKEN package, the only way to read the gate's TRUE-POSITIVE rate on hardware. Until
 that exists, this run shows only that the gate does not false-fail when its control
 survives.
+
+## 2026-08-15 — `sf_p0_regret` fabrication: INERT on training, LIVE on the era probe
+
+**CPU audit, no training affected. Scripts + RESULTS.md at `scratchpad/sf_regret_audit/`.**
+
+**Measured.** `sf_multipv: 6` and `record_sf_p0_regret: true` are live (both verified through
+`flatten_run_config_defaults` + `TrialConfig.from_dict`, not by grep). Fabrication site is
+`selfplay/finalize.py:1281`: every legal move outside the MultiPV block gets
+`(worst_covered + 1)/2`. On 16,549 live replay rows, exactly 6 of a mean 27.1 legal moves are
+SF-scored; the other **67.6%** carry an invented **567cp** default against a worst *real*
+covered regret of 134cp — **4.22x inflation**. The banked "570cp / 68% / ~5x" reproduces exactly.
+
+**Reaches the loss? NO.** `w_sf_own_regret: 0.0` (`pbt2_small.yaml:476`), and it is in
+`TRAINER_WEIGHT_KEYS` so it is re-pushed from the yaml EVERY iteration — not a launch-only
+value a resume could revert. **Proved by execution with a mutation control:** perturbing all
+1176 fabricated entries moves `total` and `d(total)/d(logits)` by **bitwise zero**; the same
+harness at `w=0.7` moves 6.4% of the gradient norm. The instrument fires, so the null is real.
+
+**No historical wound either.** `git log -L` shows `sf_multipv` was **40** for the entire window
+`w_sf_own_regret: 0.7` was live, and commit `ed9de8ee9` (2026-08-06) made BOTH changes at once
+(40 -> 6 and 0.7 -> 0.0). At multipv 40 only 1.66% of legal moves were uncovered. ⇒ **the
+fabricated label and its consumer have never coexisted at meaningful magnitude.**
+
+**⚑ WHAT IS CONTAMINATED: THE ERA-FORGETTING PROBE.** `eval/era_probe.py:592` reads the same
+vector every iteration and is NOT gated by that weight; its docstring justifies itself as "the
+same quantity `losses.py` minimises under `w_sf_own_regret`", which has been **false since
+2026-08-06**. Live ruler reproduced BIT-EXACTLY at iter 218 (0.069640 / 0.067193 / 0.002447)
+from a CPU forward of `checkpoint_000218`, then split:
+
+    component      era        inwindow    gap
+    policy_eregret 0.069640   0.067193    +0.002447   (as reported)
+    fabricated     0.028745   0.029570    -0.000825   41.3% / 44.0% of the LEVEL
+    real SF        0.040895   0.037623    +0.003272
+
+The fabricated term is **not common-mode**: it suppresses the real +0.003272 gap to the reported
++0.002447, a **25% cut**. Effective fabricated value per unit uncovered mass is 0.440, so moving
+**0.01** of probability off the tail onto ANY covered move — including SF's 6th-best — improves
+the metric by **1.8x the entire measured gap**. ⇒ **a sharpening net improves this ruler without
+improving move choice**, and we are measurably a sharpening net (`p_top1` up 4.4x across the
+lineage; 3.7x narrower than BT4). Same family as `wdl_regret` measuring the agent, not the net.
+
+**Verdict: NULL on training, CAUTION on the ruler.** No config change. `record_sf_p0_regret`
+stays ON (1.5% of shard bytes — zarr compresses the 76%-constant vector away — and turning it
+off blinds the probe).
+
+**YARDSTICK for the follow-up (pre-committed):** re-score both frozen probe sets with
+`policy_eregret` renormalised over the <=6 COVERED moves only, across >=10 archived checkpoints
+spanning the run, and compare the TREND of masked vs unmasked `probe_gap`.
+**KILL RULE:** if the two trends have opposite sign, or differ by >2x in slope, then every
+forgetting-hinge verdict read off `probe_gap` needs re-deriving. **Confounds:** none, no
+training ran.
+
+**Two doc defects found in passing:** `finalize.py:69-70` still says uncovered moves "default to
+1.0" (stale — it is the midpoint), and `docs/model_heads.md` has NO row for `w_sf_own` or
+`w_sf_own_regret` despite both sitting in `total`.
