@@ -50035,3 +50035,48 @@ explains it — but that step is INFERRED, not measured.
   ⚑ But the obvious lever is a TRAP: `w_sf_own_regret` at MultiPV 6 assigns an invented 567cp to
   ~68% of legal moves, which pushes mass ONTO the 6 covered moves — i.e. MORE sharpening, the
   wrong direction. Any such arm needs a non-fabricated, full-width teacher.
+
+## 2026-08-15 — INSTRUMENT DEFECT: `audit_targets.py` scores a NON-PRODUCTION search by default
+
+Found while designing the C16 target-quality arms. No verdict is being revised yet; this
+records the defect and the blast radius.
+
+`scripts/audit_targets.py:1366` defaults `--vloss-weight 0`, and its help asserts
+**"0 = production (none)"**. That has been **FALSE since 2026-07-29**, when `21c21fc4f`
+(PR #286) set `gumbel_vloss_weight: 1` in `configs/pbt2_small.yaml:268`. The script never
+reads the key from `--config`, so passing the production config does NOT fix it.
+
+⇒ every default-invocation since 2026-07-29 scored a search production does not run, while
+the help told the operator it was scoring production. Same shape as the standing defect:
+**a value accepted and then silently ignored** — except here the value was never offered.
+
+**Blast radius is worse than the wrong number, because the reports are not auditable.**
+The report header and the per-position dump record **neither `--vloss-weight`, nor
+`--vloss-mode`, nor `--target-batch`**. So for the banked reports post-dating the deploy
+there is no way to recover WHICH search produced them. They are not known-wrong; they are
+**unknown**, which is the state a ruler must never be in. Cf. the standing rule that a
+verdict read off a stage that fails its invariant is not a verdict — in either direction.
+
+**Interaction that makes the default actively misleading rather than merely stale**:
+duplicate rate is `GSS_GPU_BATCH / boards-per-search-call`, and `--batch-size` is
+boards-per-call. Production runs boards-per-call ~= **1**; at `--batch-size 256` the script
+also takes a different code path (`_use_pipeline`, `gumbel_c.py:544`). So the regime the
+script defaults to is the regime where `target_batch` has the LEAST to do — an arm run
+there could only ever read null. **That is a gate that cannot fail**, and it is why the
+C16 arms were re-queued at boards-per-call 1.
+
+**NOT YET DONE — and deliberately separated:**
+1. Fixing the help text and RECORDING the three search params in the report header is pure
+   hygiene: it changes no number and makes future reports auditable. Do this.
+2. Changing the DEFAULT to production is a **ruler change**, and a ruler change invalidates
+   its records. It needs its own entry, its own before/after on a fixed checkpoint, and an
+   explicit statement of which banked reports it retires. Do NOT fold it into (1).
+
+**Controls already banked from the C16 design work** (all pre-registered):
+`--target-batch 1024` vs `0` at boards-per-call 256 differs by **exactly 0.0000, 0/4000
+rows** on every field — the negative control that exposed the dead regime. Seed 0 vs 12345
+likewise 0.0000, 0/4000. Positive control (100 sims vs 32) reads **-4.194 cp
+[-5.475, -2.906]**, so the instrument does resolve a real search change. Instrument
+halfwidth is **+/-1.3 cp at n=4000**, which means the pre-committed 2.0 cp bar sits INSIDE
+the resolution — that bar was mis-set and must be re-derived before any C16 verdict.
+`scripts/paired_compare.py` and the analysis script agree exactly.
