@@ -50427,3 +50427,51 @@ duplicate rate is `GSS_GPU_BATCH / boards-per-call`, so at 256 the knob has almo
 `gumbel_target_batch` is not touched. If MATERIAL, it does NOT license a live change on its own —
 it licenses a pre-registered arm, because this is a cp-on-stored-rows ruler and
 [[losses_are_decoupled_from_strength]] applies: nothing here has been shown to convert into Elo.
+
+## 2026-08-15 — AMENDMENT 2 to C16: I MADE THE SAME ERROR WHILE FIXING IT. The deciding arms run at n=2000, not 4000.
+
+⚑ **Written while the deciding arm is still running** (verified: PID 525122 alive at ~390s;
+`c16q_dump_b1_tb1.jsonl` does not exist on disk). Same legitimacy condition as `b513c601a`.
+
+**THE ERROR.** `b513c601a` set MATERIAL at **2.6 cp**, justified as "2x the halfwidth". That
+halfwidth — **+/-1.3 cp** — was measured at **n=4000**, on the boards-per-call **256** control
+arms. The deciding arms run at boards-per-call **1** against `c16q_audit_half.jsonl`, which is
+**n=2000**. Row counts confirmed directly:
+
+    c16q_dump_tb0.jsonl      4000 rows      (B=256 controls)
+    c16q_dump_tb1024.jsonl   4000 rows
+    c16q_dump_tb1.jsonl      4000 rows
+    c16q_dump_b1_tb0.jsonl   2000 rows      <- DECIDING REGIME
+    c16q_audit_half.jsonl    2000 rows      <- the input set for the B=1 arms
+
+If per-row variance is unchanged, halfwidth scales as `1/sqrt(n)` ⇒ **+/-1.84 cp at n=2000**.
+So the "2x halfwidth" bar should have been **3.68 cp**. As written, **2.6 cp is 1.41x the
+actual halfwidth — arithmetically WORSE, in halfwidth units, than the 2.0 cp bar I replaced it
+with** (2.0 / 1.3 = 1.54x). I fixed the number and reproduced the defect, because I took the
+resolution from the arms I had already measured instead of from **the arm that decides**. Same
+family as [[diff_the_file_you_measured_against_production]] and
+[[same_name_different_population]]: right quantity, wrong population.
+
+**CORRECTED RULE — and it no longer depends on my extrapolation being right.**
+The `1/sqrt(n)` scaling assumes per-row variance is unchanged between boards-per-call 256 and 1.
+That is an ASSUMPTION about a different search regime and I am not going to rest a verdict on it.
+
+    The halfwidth MUST be read off the DECIDING ARM'S OWN paired bootstrap and REPORTED.
+    Call it h.
+
+    MATERIAL       CI excludes 0 AND |delta| >= 2*h
+    BOUNDED NULL   CI wholly inside +/-2*h
+    INCONCLUSIVE   CI spans both
+
+    PREDICTION (falsifiable, stated now): h ~= 1.84 cp if per-row variance is unchanged.
+    If the realized h differs from 1.84 by more than ~30%, the B=1 regime has a materially
+    different variance and that is itself a finding to report, not to smooth over.
+
+**Nothing else in `b513c601a` changes** — the materiality argument (a defect worth less than a
+sizeable fraction of the 32->100 sims effect is not worth a throughput-costing config change),
+the BOUNDED-NULL framing, and the rule that a MATERIAL reading licenses a pre-registered arm
+rather than a live change, all stand.
+
+⚑ **THE GENERAL LESSON, now costed twice in one day: derive the threshold from the resolution of
+THE ARM THAT DECIDES, at ITS n, in ITS regime — never from a control arm's, however carefully
+that control was measured.** A halfwidth is a property of a measurement, not of an instrument.
