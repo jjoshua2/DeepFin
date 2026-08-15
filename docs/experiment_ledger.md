@@ -49953,3 +49953,85 @@ training ran.
 **Two doc defects found in passing:** `finalize.py:69-70` still says uncovered moves "default to
 1.0" (stale — it is the midpoint), and `docs/model_heads.md` has NO row for `w_sf_own` or
 `w_sf_own_regret` despite both sitting in `total`.
+
+## 2026-08-15 — TARGET AUDIT: the stored policy target is SHARP AND WRONG (MEASURED, no arm)
+
+CPU-only forensic characterisation of `policy_target` on live production shards.
+Instrument: `scratchpad/target_audit/tgt_probe{,2,3,4}.py`. Predictions pre-registered in
+`scratchpad/target_audit/tgt_predictions.md` BEFORE each run; **6 of 11 missed**, each miss
+explained there, none re-thresholded.
+
+**VERDICT: the policy target is 31 percentage points more confident than it is correct**, and
+that is a SUFFICIENT mechanism for "absorption 11.6x buys zero Elo".
+
+Live era (1d175, Aug 14-15, 6601 SF-labelled rows, sims 100 / topk 16 / c_scale 0.1):
+
+    target top-1 mass            0.734        entropy 0.752 nats
+    effective support            2.68         of 27.1 legal moves
+    target argmax == SF best     0.4193 [0.4075, 0.4313]
+    ==> OVERCONFIDENCE GAP       0.314
+
+Calibration is monotone but never catches up: on **essentially one-hot rows** (top-1 0.998,
+H 0.017 nats, n=1091) agreement is still only **0.768 [0.742, 0.792]**. **16.8% of ALL rows**
+carry top-1 > 0.99 with a mean of **22.3 legal moves**; 5.0% are exactly one-hot in f16. The
+target's own argmax is **NOT in SF's top-6 on 14.9% of rows**. cp regret of the target's argmax
+(SF-listed only): mean **21.5 cp**, 12.6% > 50 cp. Target-weighted **E[cp regret | listed] = 25.7 cp**.
+
+**AND THERE IS NO SECOND OPINION IN THE POLICY LOSS.** `w_policy: 1.0` and `w_soft: 1.0` train
+the SAME distribution at two temperatures — same argmax on **99.99%** of rows, entropy ratio
+1.84. Both SF position-level teachers are RECORDED on every eligible row and weighted **ZERO**
+(`w_sf_own: 0.0`, `w_sf_own_regret: 0.0`). `w_sf_move: 0.05` trains `policy_sf`, which is the
+OPPONENT's reply distribution, not a move teacher for this position. ⇒ **nothing in the policy
+loss can pull the 25.7 cp down.**
+
+⇒ a net that fits this target perfectly converges to a distribution that is sharp on a move
+averaging 21.5 cp worse than a 150-200k-node SF's pick. **Absorption gains are, by construction,
+gains in SHARP WRONGNESS.** This LOCATES the banked external finding (3.7x narrower, 14.1pp less
+accurate, miss rate 47.5% vs BT4 18.2%) **in the TRAINING TARGET rather than in the net or the
+fitting procedure** — the piece that was missing.
+
+**SECONDARY (confounded 2-point era contrast): the 08-12 sims-100/topk-16 deploy moved every
+target axis the wrong way.**
+
+    era                     C (Aug 9-10)   D (Aug 12-13)  E (Aug 14-15)
+    sims/topk               256/32         100/16         100/16
+    KL(prior||target) mean  1.068          0.313          0.331
+    rows with KL < 0.05     8.0%           30.5%          30.5%
+    target entropy          1.214          0.707          0.752
+    top-1 mass              0.619          0.744          0.730
+    SF top-1 agreement      0.4707         0.4306         0.4193   <- CIs DISJOINT vs C
+    cp regret of argmax     18.4           23.7           21.5
+
+D and E replicate each other across INDEPENDENT trials. ⇒ cutting sims 2.56x made the target
+**42% sharper, moved it 3.4x less off the net's own prior, and made it ~5pp LESS ACCURATE**.
+⚑ **This cuts AGAINST "search is inert"**: more sims demonstrably DOES buy target quality
+(+5pp agreement) — it just did not buy Elo. Search is also not inert trivially: only 0.18% of
+rows show zero movement, median KL 0.139 nats (~21% of the row's own target entropy).
+
+**NULLS — the target is structurally CLEAN.** Rows sum to 1.000, zero mass on illegal, dense
+over legal (median 22 of 29 above 1e-6), no C17-style degeneracy. Priority weighting does NOT
+change the verdict (agreement 0.4193 -> 0.4146) even though priority DOES concentrate on
+high-KL rows (KL mean 0.331 -> 0.739 weighted). `record_fast_ply_value` off ⇒ has_policy == 1
+on 100% of stored rows.
+
+**INSTRUMENT VALIDATION (all read null / exact):** shuffle control agreement 0.42 -> **0.0021**,
+flat in every confidence bin; cross-row legal-mask control target mass 1.000 -> **0.049**;
+`sf_p0_regret` decoding verified EXACT against the independent raw MultiPV cp column at ply gap
+1 — match_rate **1.000**, n=4767 (E) / 4933 (D) / 5377 (C), max abs dev p95 2.4e-4 (f16).
+
+**RULER CAVEATS.** The SF here is the SHARD's own label — 150-200k nodes, MultiPV 6 — NOT the
+>=1M-node audit ruler; every cp figure is a shallow-SF figure. Only `E|listed` and the
+MultiPV-covered set are quoted; the ~74% fabricated tail is excluded from every statistic. Era B
+ran `sf_multipv` ~40 so its listed-subset numbers are on a different ruler. `priority_policy_kl`
+is a TRUNCATED KL (0.13% negative, min -0.23) — immaterial here, not a proper divergence. We
+deliberately train to exploit SF weaknesses, so disagreement with SF is not automatically error;
+that the same gap appears against SF-agnostic BT4 on the same axis is why I do not think that
+explains it — but that step is INFERRED, not measured.
+
+**FALSIFIERS (no arm launched):**
+- Finding 3 predicts era-D/E weights are **WEAKER** than era-C weights. Paired arena vs a FROZEN
+  anchor, >=300 games, same search both sides, weights the only difference. If D/E >= C, dead.
+- Finding 1 predicts a position-level SF policy teacher would reduce top-1 overconfidence.
+  ⚑ But the obvious lever is a TRAP: `w_sf_own_regret` at MultiPV 6 assigns an invented 567cp to
+  ~68% of legal moves, which pushes mass ONTO the 6 covered moves — i.e. MORE sharpening, the
+  wrong direction. Any such arm needs a non-fabricated, full-width teacher.
