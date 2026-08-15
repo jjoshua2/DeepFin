@@ -572,42 +572,93 @@ def profiles_for_audit(
 # The search knobs that are NOT recoverable from anything else a report carries.
 # `--config` does not pin them: `--vloss-weight`, `--vloss-mode` and
 # `--target-batch` are CLI-only (the script never reads `gumbel_vloss_weight` /
-# `gumbel_target_batch` from the yaml), and `--batch-size` / `--sims` /
-# `--rl-sims` override or select what the config would have said. So a banked
+# `gumbel_target_batch` from the yaml), `--batch-size` / `--sims` / `--rl-sims`
+# override or select what the config would have said, and `--policy-temp` /
+# `--gumbel-topk` reshape the search with no config source at all. So a banked
 # report made without them is not known-wrong, it is UNKNOWN — which is the one
 # state a ruler must never be in.
 SEARCH_PARAM_FIELDS: tuple[str, ...] = (
-    "vloss_weight", "vloss_mode", "target_batch", "batch_size", "sims", "rl_sims",
+    "vloss_weight", "vloss_mode", "target_batch", "batch_size",
+    "sims", "rl_sims", "play_topk", "rl_topk", "policy_temp",
 )
 
 
-def search_param_stamp(args: argparse.Namespace, *, rl_sims: int) -> dict[str, int]:
+def realized_gumbel_value(
+    profile: _SearchProfile, field: str, fallback: float,
+) -> float:
+    """What ``_build`` will actually put in this profile's ``GumbelConfig``.
+
+    ``--gumbel k=v`` is applied by ``dataclasses.replace`` on the BUILT config,
+    i.e. AFTER the profile's own columns, so ``--gumbel simulations=300`` runs
+    the search at 300 while ``profile.sims`` still reads 256. Stamping the
+    profile column there would print a sim count nothing was searched at and
+    look like provenance while being false — the same failure this stamp exists
+    to end, one level down.
+
+    Last write wins, because ``_build`` collects the overrides into a dict
+    comprehension and a repeated key resolves the same way.
+    """
+    value = fallback
+    for key, override in profile.overrides:
+        if key == field:
+            value = override
+    return float(value)
+
+
+def search_param_stamp(
+    args: argparse.Namespace, *, profiles: dict[str, _SearchProfile],
+) -> dict[str, float]:
     """The search-parameter provenance carried by BOTH the report and the dump.
 
     One function, two consumers, so the header and the dump cannot drift apart
-    or from the arguments the run was actually given — the same reasoning that
-    makes ``profiles_for_audit`` a function rather than a stretch of ``main()``.
+    or from the search the run actually ran — the same reasoning that makes
+    ``profiles_for_audit`` a function rather than a stretch of ``main()``.
 
-    ``rl_sims`` is passed in RESOLVED (``profiles["train"].sims``) rather than
-    read off ``args``, because ``--rl-sims 0`` is a sentinel meaning "use the
-    config's ``mcts_simulations``". Stamping the sentinel would record a sim
-    count no row was ever searched at, which is worse than not stamping at all:
-    it would look like provenance and be false. Every other field is the CLI
-    value verbatim, because for those the CLI value IS what the search got.
+    Everything sim/topk/temp-shaped is read off the PROFILES, never off
+    ``args``, because three separate things move those between the flag and the
+    search: ``--rl-sims 0`` is a sentinel meaning "use the config's
+    ``mcts_simulations``", ``--gumbel-topk`` defaults to the PLAY table rather
+    than to a literal, and ``--gumbel k=v`` rewrites the built config outright.
+    A stamp that echoed the flag would be a false record in all three cases.
+
+    ⚑ NOT COMPLETE PROVENANCE ON ITS OWN. ``--gumbel`` reaches EVERY
+    ``GumbelConfig`` field, so an arbitrary override is recorded by the
+    ``gumbel_overrides`` entry that rides alongside this stamp in both the
+    header and the dump, not here. This tuple is the fixed set that has no other
+    record at all.
     """
+    play, train = profiles["search"], profiles["train"]
     return {
         "vloss_weight": int(args.vloss_weight),
         "vloss_mode": int(args.vloss_mode),
         "target_batch": int(args.target_batch),
         "batch_size": int(args.batch_size),
-        "sims": int(args.sims),
-        "rl_sims": int(rl_sims),
+        "sims": int(realized_gumbel_value(play, "simulations", play.sims)),
+        "rl_sims": int(realized_gumbel_value(train, "simulations", train.sims)),
+        "play_topk": int(realized_gumbel_value(play, "topk", play.topk)),
+        "rl_topk": int(realized_gumbel_value(train, "topk", train.topk)),
+        "policy_temp": realized_gumbel_value(play, "policy_temp", args.policy_temp),
     }
 
 
-def format_search_params(stamp: Mapping[str, int]) -> str:
-    """One greppable ``k=v`` line for the report header."""
-    return " ".join(f"{k}={v}" for k, v in stamp.items())
+def format_search_params(
+    stamp: Mapping[str, float],
+    *,
+    gumbel_overrides: tuple[tuple[str, float], ...] = (),
+) -> str:
+    """One greppable ``k=v`` line for the report header.
+
+    ``gumbel_overrides`` rides on the end rather than being folded in, because
+    the two are different objects: the stamp is the fixed set every run has, the
+    overrides are whatever else the operator reached into. Folding them in would
+    make the line's key set vary run to run.
+    """
+    line = " ".join(f"{k}={v}" for k, v in stamp.items())
+    if gumbel_overrides:
+        line += " gumbel_overrides=" + ",".join(
+            f"{k}={v}" for k, v in gumbel_overrides
+        )
+    return line
 
 
 def _wdl_softmax(logits: np.ndarray) -> np.ndarray:
@@ -1429,15 +1480,23 @@ def main() -> None:
                          "mirrors the C parent branch. *** Recorded in the report header "
                          "and the per-position dump.")
     ap.add_argument("--vloss-weight", type=int, default=0,
-                    help="C-search virtual-loss weight. ⚑ PRODUCTION IS 1 "
-                         "(`gumbel_vloss_weight: 1` in configs/pbt2_small.yaml since "
-                         "21c21fc4f, 2026-07-29) AND THIS DEFAULT IS 0, so the default "
-                         "invocation scores a search production does NOT run. This script "
-                         "does not read the key from --config — passing the production "
-                         "config does not fix it; pass --vloss-weight 1 explicitly to "
-                         "audit the production search. The default is left at 0 "
-                         "deliberately: changing it is a RULER CHANGE that would retire "
-                         "every banked report, and it needs its own ledger entry. "
+                    help="C-search virtual-loss weight. ⚑ PRODUCTION IS 1 ON THE "
+                         "TRAINING ROWS (`gumbel_vloss_weight: 1` in "
+                         "configs/pbt2_small.yaml since 21c21fc4f, 2026-07-29) AND THIS "
+                         "DEFAULT IS 0, so the default invocation scores a search "
+                         "production does NOT run for rows (d)/(e). This script does not "
+                         "read the key from --config — passing the production config does "
+                         "not fix it; pass --vloss-weight 1 to audit the production "
+                         "TRAINING search. ⚑ ONE FLAG, EVERY ROW: it is forwarded to all "
+                         "C-runner profiles, and the PLAY row (b) production value is a "
+                         "DIFFERENT number (`PLAY_SEARCH_VLOSS_WEIGHT = 3`, mcts/gumbel.py, "
+                         "which is what the UCI path defaults to). So no single invocation "
+                         "reproduces both production searches at once: at 1 row (b) is not "
+                         "the play search, at 3 rows (d)/(e) are not the training search. "
+                         "Per-profile values would be a SEARCH change and are not in this "
+                         "flag. The default is left at 0 deliberately: changing it is a "
+                         "RULER CHANGE that would retire every banked report, and it needs "
+                         "its own ledger entry. "
                          "At 0 a leaf already awaiting eval in the current batch carries "
                          "no penalty and a later halving rep re-walks straight back to it "
                          "(C17). >0 makes in-flight leaves count as penalized visits "
@@ -1591,7 +1650,7 @@ def main() -> None:
     rl_fast_sims = profiles["train_fast"].sims
   # Built ONCE, here, and handed to both the report header and the per-position
   # dump. Building it twice is how a stamp starts disagreeing with the run.
-    search_params = search_param_stamp(args, rl_sims=rl_sims)
+    search_params = search_param_stamp(args, profiles=profiles)
     for name, prof in profiles.items():
         print(
             f"[audit] {_CANDIDATE_NAMES[name]}: {prof.label} — "
@@ -1599,7 +1658,11 @@ def main() -> None:
             f"root={'log' if prof.q_visit_exp_root < 0 else 'linear'}",
             flush=True,
         )
-    print(f"[audit] search params: {format_search_params(search_params)}", flush=True)
+    print(
+        "[audit] search params: "
+        f"{format_search_params(search_params, gumbel_overrides=gumbel_overrides)}",
+        flush=True,
+    )
 
   # Production probes tablebases inside the search; the audited target has to
   # as well or the endgame bucket describes a search production never runs.
@@ -1873,9 +1936,11 @@ def main() -> None:
       # pins none of vloss_weight / vloss_mode / target_batch, so a report
       # without this line cannot be traced to the search that produced it.
       # ⚑ vloss_weight=0 is NOT production (the yaml runs 1) — see the flag's help.
-        f"- search params: {format_search_params(search_params)} "
-        f"(CLI, not read from the config; vloss_weight/vloss_mode/target_batch "
-        f"have no --config source at all, and rl_sims is the RESOLVED value)\n\n"
+        f"- search params: "
+        f"{format_search_params(search_params, gumbel_overrides=gumbel_overrides)} "
+        f"(vloss_weight/vloss_mode/target_batch have no --config source at all; "
+        f"the sims/topk/policy_temp entries are the REALIZED values, after the "
+        f"--rl-sims sentinel and any --gumbel override)\n\n"
         f"## Headline\n\n"
         f"- **production TRAINING target** expected regret (overall): {train_note} vs "
         f"SF-soft-target {'—' if headline_sf is None else f'{headline_sf[0]:.1f} cp'} — "
