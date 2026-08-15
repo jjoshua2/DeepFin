@@ -49777,3 +49777,64 @@ evidence for it so far, and the first that is not confounded by an anchor change
 * ⚑ The plateau is now the finding, not a suspicion. Any next experiment that
   claims Elo must beat a FROZEN anchor at n>=1600 paired, not beat its own sibling
   arm — a sibling contrast cannot distinguish "gained" from "lost less".
+
+## 2026-08-15 — C16 RE-MEASURED: real, not the C27 fixture artifact; production's target search freezes the tree within a round
+
+**Status: FINDING (no experiment launched). Instrument: CPU-only cross-implementation probe.**
+
+`docs/rl_loop_audit.md` C16 has read FAILED since 2026-07-26 ("3/6 boards diverge and
+the two implementations pick a different move"). C27 — the sibling row at
+`target_batch=1` — was later localised to a FIXTURE artifact (zero root logits ⇒ a
+uniform prior ⇒ exact ties broken in different orders). C16 was never re-tested under
+the fix that dissolved C27, and the C27 row asserts C16 is "an artifact of cross-rep
+leaf accumulation", i.e. C17's territory — and C17 was SOLVED by virtual loss (PR #278,
+merged). Two live hypotheses, never separated. Separated now.
+
+**Method.** 6 edge-case boards, `_HashEvaluator` (verified BATCH-INDEPENDENT: it hashes
+each row's own encoding in a per-row loop, so batching cannot change any single
+evaluation), non-degenerate root prior, `add_noise=False`, sims/topk at production
+100/16, sweeping `target_batch` and `vloss_weight`. Python `run_gumbel_root_many` is the
+reference; C is `run_gumbel_root_many_c`.
+
+**⚑ FIRST READING WAS WRONG AND IS RETRACTED.** The first sweep left `vloss_weight` at
+the `GumbelConfig` DEFAULT of 0. Production sets `gumbel_vloss_weight: 1`
+(`configs/pbt2_small.yaml:268`), a non-default. Numbers below are the corrected,
+production-matched run.
+
+    vloss  target_batch   max L1   boards diverging   same move
+        1             1   0.000000        0/6            yes
+        1             8   0.331541        3/6             no
+        1            32   0.731131        3/6             no
+        1             0   1.001326        3/6             no     <- PRODUCTION
+
+**Verdict: C16 is REAL and survives production's virtual loss.** It is NOT the C27
+tie artifact — with the ties removed, `target_batch=1` is EXACT (L1 0.000000) while
+every batched setting still diverges. Virtual loss roughly halves it (1.311 → 0.731 at
+tb=32) and does not close it. Max row L1 of 1.00 against a bound of 2.0 is not a
+distribution-shape nuance; on 3 of 6 boards the search returns a DIFFERENT MOVE.
+
+**Mechanism, and it is not a C-vs-Python bug.** `gumbel_target_batch` defaults to 0
+and production does not override it; `_mcts_tree.c:1922` maps 0 to `GSS_GPU_BATCH`
+= **1024**. `gumbel_c.py:83` states the consequence directly: a GPU batch under
+`target_batch=0` accumulates the visits of one sequential-halving round, and **within a
+round the tree cannot update**, so every visit allocated to a candidate descends to the
+same leaf — measured there at 496 rows for 16 distinct positions, **31x duplication**.
+So production's target-building search is not "sequential search with a small batching
+approximation"; the tree is FROZEN inside each round.
+
+**Why this matters for the plateau.** If the tree cannot update within a round, extra
+simulations inside a round buy re-evaluations of leaves already chosen, not new tree
+information. That is a mechanism for the banked null "3 doublings of sims = +5.8 Elo,
+search may be inert" (`flat_sims_ladder_means_search_may_be_inert`) and it sits on
+`target = search(net)`, which the plateau analysis independently points at.
+
+**What this does NOT say.** Neither side is ground truth: the Python path is unbatched,
+not "correct". The 6 boards are hand-picked edge cases under a synthetic evaluator, so
+the MAGNITUDE is not established for production positions with a real net — only the
+existence and the mechanism are. No Elo claim is made or implied.
+
+**Owed before any change:** a target-QUALITY readout (audit-set `better_in`, not Elo)
+across `gumbel_target_batch` ∈ {0, 32, 8} on production positions with a real net, with
+the GPU-round-trip cost measured alongside (~6x at tb=1 per `gumbel_c.py:450`). Pre-reg
+required; nothing launched. Probe:
+`scratchpad/c16_probe_20260815.py` (session scratchpad).
