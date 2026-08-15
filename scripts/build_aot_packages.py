@@ -32,7 +32,7 @@ import torch
 from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
 from chess_anti_engine.encoding.model_inputs import model_encoding_kwargs
 from chess_anti_engine.inference import (
-    _BATCH_BUCKETS,
+    _COMPILED_BATCH_BUCKETS,
     _aoti_load_package,
     _policy_output_full,
     build_aot_constants,
@@ -78,24 +78,66 @@ def parse_buckets_arg(text: str) -> tuple[int, ...]:
     return tuple(buckets)
 
 
+def required_broker_buckets(max_batch: int) -> tuple[int, ...]:
+    """The buckets the BROKER cannot run without, filtered by ``max_batch``.
+
+    ``SlotBroker`` pads every forward to a ``_COMPILED_BATCH_BUCKETS`` value
+    (``_compiled_padded_batch_size``) and loads only that ladder
+    (``select_compiled_aot_buckets``). ``should_use_aot_forward`` then does an
+    EXACT-KEY lookup on the padded total, so a package that is absent does NOT
+    degrade to the next size up — the batch falls through to eager.
+    """
+    return tuple(int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= int(max_batch))
+
+
 def select_buckets(
     *,
     max_batch: int,
     buckets: Sequence[int] | None = None,
+    allow_incomplete: bool = False,
 ) -> tuple[int, ...]:
     """Return bucket sizes to build, filtered by ``max_batch``.
 
-    Default source is :data:`_BATCH_BUCKETS` (authoritative AOT ladder).
+    Default source is :data:`_COMPILED_BATCH_BUCKETS` — **the ladder the broker
+    actually loads**, not :data:`_BATCH_BUCKETS`. The two are NOT nested: on
+    2026-08-15 the compiled ladder carried six sizes (680, 1020, 1190, 1792,
+    2336, 2720) that ``_BATCH_BUCKETS`` did not, and 1190 alone served ~49% of
+    live batches. Defaulting to ``_BATCH_BUCKETS`` therefore produced a
+    directory that looked complete, passed ``assert_uniform_constant_fqns``,
+    logged nothing, and ran EAGER for ~71% of forwards.
+
+    ``_BATCH_BUCKETS`` remains the ladder for :class:`AOTEvaluator`, which is
+    the worker-side evaluator and is unreachable in production (the driver drops
+    ``distributed_worker_aot_dir`` whenever ``distributed_worker_threaded`` is
+    set, and it is pinned on). It is deliberately NOT the default here.
+
+    Coverage is ENFORCED, not merely defaulted: an explicit ``--buckets`` that
+    omits a broker-required size raises unless *allow_incomplete* is set. A
+    partial ladder is legitimate for benchmarking, so the escape hatch exists —
+    but it has to be asked for, because the failure it guards is silent.
     """
     if int(max_batch) <= 0:
         raise ValueError(f"--max-batch must be positive, got {max_batch}")
-    source: Sequence[int] = buckets if buckets is not None else _BATCH_BUCKETS
+    source: Sequence[int] = (
+        buckets if buckets is not None else _COMPILED_BATCH_BUCKETS
+    )
     selected = tuple(int(b) for b in source if int(b) <= int(max_batch))
     if not selected:
         raise ValueError(
             f"no buckets <= max_batch={max_batch} "
             f"(source={list(source)!r})"
         )
+    if not allow_incomplete:
+        gap = sorted(set(required_broker_buckets(max_batch)) - set(selected))
+        if gap:
+            raise ValueError(
+                f"requested bucket ladder omits {gap}, which the broker pads to "
+                f"and loads (_COMPILED_BATCH_BUCKETS). Packages for those sizes "
+                f"would be missing, load_aot_packages would skip them SILENTLY, "
+                f"and should_use_aot_forward would fall through to eager for "
+                f"every batch of that size. Add them, or pass "
+                f"--allow-incomplete if this is a partial/bench build."
+            )
     return selected
 
 
@@ -888,7 +930,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--buckets",
         type=str,
         default=None,
-        help="Optional comma-separated bucket override (default: _BATCH_BUCKETS)",
+        help=(
+            "Optional comma-separated bucket override (default: the broker's "
+            "_COMPILED_BATCH_BUCKETS ladder). Must still cover every "
+            "broker-required size unless --allow-incomplete is given."
+        ),
+    )
+    p.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help=(
+            "Permit a --buckets ladder that omits broker-required sizes. For "
+            "bench/partial builds ONLY: the resulting directory runs eager for "
+            "the omitted sizes, silently."
+        ),
     )
     p.add_argument(
         "--resume",
@@ -967,7 +1022,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         buckets_override = (
             parse_buckets_arg(args.buckets) if args.buckets is not None else None
         )
-        buckets = select_buckets(max_batch=int(args.max_batch), buckets=buckets_override)
+        buckets = select_buckets(
+            max_batch=int(args.max_batch),
+            buckets=buckets_override,
+            allow_incomplete=bool(args.allow_incomplete),
+        )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
