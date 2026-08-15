@@ -49503,3 +49503,70 @@ bundle read `policy_loss` **+4.96% WORSE** while play strength was **+13.9 Elo B
 | pre-promotion production yaml | `scratchpad/.../pbt2_PRE_BT4HEADS.yaml` (also git) |
 | frozen arena anchor | `scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/` |
 | previous AOT packages | `data/aot_models_512/` left INTACT — rebuild went to a new dir |
+
+---
+
+## AMENDMENT to the bt4heads promotion (86492fa26) — the AOT rebuild was compiling a ladder nothing reads
+**2026-08-15, before deploy. Not a verdict — a defect found in the deploy step itself.**
+
+`scripts/build_aot_packages.py` defaults `--buckets` to `_BATCH_BUCKETS` (47 entries).
+**That is not the ladder the broker uses.** `SlotBroker` pads to `_COMPILED_BATCH_BUCKETS`
+(21 entries, `inference.py:796`) via `_compiled_padded_batch_size` (:925), and loads only
+that list via `select_compiled_aot_buckets` (:975). The two ladders are **not nested**:
+
+    in _COMPILED_BATCH_BUCKETS but ABSENT from _BATCH_BUCKETS:
+        680, 1020, 1190, 1792, 2336, 2720
+
+`load_aot_packages` **skips missing files silently**, and `should_use_aot_forward` is an
+**exact-key** match on the padded total — so a missing bucket does NOT degrade to the next
+one up, it falls through to eager. Log analysis over the post-sims-100 era (2026-08-12→15)
+puts **~71% of broker batches and ~78% of padded rows** on those six sizes; bucket 1190
+alone carries ~49% of batches.
+
+⇒ the build launched at 10:04 would have produced a directory that looked complete, passed
+`assert_uniform_constant_fqns`, logged no warning, and run **eager for ~71% of forwards** —
+i.e. the AOT speedup this deploy exists to capture would simply have been absent, with no
+instrument saying so. **The signature defect exactly: a value accepted and then ignored.**
+
+⚑ `_BATCH_BUCKETS` has **no production consumer at all.** Its only runtime reader is
+`AOTEvaluator` (`worker.py:1276`), and `distributed_runtime.py:1035` drops
+`distributed_worker_aot_dir` whenever `distributed_worker_threaded` is true — which
+`pbt2_small.yaml:597` pins true. The 47-list is dead code on the production path.
+
+**Why it was latent:** `data/aot_models_512/` (2026-07-14, the deployed dir) contains exactly
+the 21 compiled buckets. Whoever built it passed `--buckets` explicitly and **never recorded
+that anywhere** — not in the script default, not in a comment, not here. The knowledge lived
+only in one shell invocation, and the default silently reverted it.
+
+**Action taken:** killed pid 74483 at 10:41 (20 buckets in, 5 of them broker-usable), relaunched
+pid 98967 with `--resume --verify` and an explicit ladder = the 21 compiled buckets **plus 8
+gap-fillers** (`896, 1088, 1152, 1216, 1280, 1344, 1408, 1472`). Banked at
+`scratchpad/bt4heads/banked/aot_buckets_used.txt`.
+
+**DEPLOY GATE (hard):** assert the out-dir contains all 21 `_COMPILED_BATCH_BUCKETS` entries
+before `distributed_inference_aot_dir` is pointed at it. A count is not enough — check the
+SET, since 29 files can still be missing one of the 21.
+
+### Two measurements this produced, both worth keeping
+* **VRAM is ~123 MB per LOADED bucket and is NOT shared.** `load_constants` is called without
+  `user_managed` (`inference.py:2011`, :1181), so each package `cudaMalloc`s its own constant
+  blob. Read off `constants_info_[i].data_size` in each package's generated `wrapper.cpp`:
+  455 constants, **119,072,504 B** = 119.07 MB, plus ~3.75 MB of cubins. 21 buckets ≈ **2.6 GB**
+  (~8% of 32607 MiB) — fine now, would bind past ~40. `user_managed=True` would collapse this
+  to one shared payload, but the broker's `constants` dict is a **local that goes out of scope**,
+  so flipping it alone would leave every package pointing at freed device memory. Needs a
+  lifetime fix + a GPU smoke test. NOT done, filed.
+* **The gap-filler sizes are NOT confirmed.** They come from 10 s window MEANS
+  (`[broker] … avg N pos/batch`), not per-batch sizes. Calibrated against the one per-batch
+  histogram that overlaps a broker log (`scratchpad/bucket_hist_v3.json`, Jul 16): truth 15.36%
+  vs window-mean estimate 18.60% ⇒ the estimator **overstates padding by 1.21×**. The eight
+  extra packages are INERT until `_COMPILED_BATCH_BUCKETS` names them (a source edit, hence a
+  PR), so nothing is committed by building them — it only removes compile cost from that later
+  decision. **Before activating any of them, run `CAE_BUCKET_HIST=<path>` on the broker for one
+  iteration** (pure counters, zero GPU cost, already implemented at `inference.py:815-865`) and
+  place buckets on per-batch truth.
+
+### Owed
+Fix the script default so this cannot recur — either default `--buckets` to
+`_COMPILED_BATCH_BUCKETS`, or fail loud when the requested list does not cover it. A build that
+silently omits the buckets the only consumer needs should not be the default behaviour.
