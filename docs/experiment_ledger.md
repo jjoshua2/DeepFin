@@ -49721,3 +49721,59 @@ that has never been strength-measured.
   expectation grows with bucket size for reasons unrelated to correctness.
 * Fix the stale "~2e-3 / ~3e-2" docstring claim, and the metric NAME: `pmad` reads as "mean
   absolute deviation" and computes `np.max` — `same_name_different_population`, again.
+
+---
+
+## RESULT — era check: bt4heads arm B iter100 vs `ck_2026-08-09_iter514`: **NULL** (+0.4 Elo [−13.8, +14.7], n=1600)
+
+Prereg: `f1a62a547`. Read 2026-08-15 13:08, arena PID 118912, 5100s wall.
+
+```
+candidate   scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt
+reference   data/ratchet/snapshots/ck_2026-08-09_iter514.pt
+games 1600 · sims 32 · --search-shape training · seed 42 · config_hash 088409494b3c
+pentanomial (candidate POV)  WW 99 · WD_DW 160 · DD_WL 286 · LD_DL 154 · LL 101
+score 0.50062 +/- 0.0104 (SE)   Elo +0.43   95% CI [-13.8, +14.7]
+```
+
+### VERDICT by the pre-committed rule, not by post-hoc reading
+
+The rule was three-way and fixed before launch: CI lower > 0 ⇒ resume from bt4heads;
+CI upper < 0 ⇒ resume from iter514 instead; **CI spans 0 ⇒ resume from bt4heads**
+(keep the newest, per [[no_rollback_target_the_run_is_a_plateau]]). The CI spans 0.
+⇒ **RESUME FROM bt4heads.** No rollback.
+
+Only the n=1600 block was read. The log contains rolling reads at 1534 games and
+earlier; they were not used and are not quoted here
+([[rolling_arena_optional_stopping_faked_112_elo]]).
+
+### ⚑ WHAT THIS DOES *NOT* SAY, and the number that must not be misquoted
+
+bt4heads arm B is **not measurably stronger than a checkpoint from six days
+earlier.** It is also not measurably weaker. n=1600 resolves ~+/-14 Elo, so a real
+gain smaller than that is invisible to this design — the entry is NULL, not "equal".
+
+**This does NOT retract the +13.9 Elo [+5.7, +22.1] ADOPT verdict** (`4528f08f1`).
+The two are measured against DIFFERENT references and are arithmetically compatible:
+arm B beat Tier-13 **arm A** by ~14 Elo, and ties **iter514**, which places arm A
+roughly 14 Elo BELOW iter514. ⇒ the bt4heads bundle **recovered ground its own
+lineage had lost, and did not add any on top of the pre-Tier-13 era.** That is a
+weaker claim than "adopt" sounds, and it is the claim the evidence supports.
+
+This is the third independent instrument to land on the same shape: absorption
+11.6x in-window buys ZERO Elo; the lineage interior has no ruler resolution; and
+now a 6-day, ~100-iteration span reads +0.4. ⇒ **[[no_rollback_target_the_run_is_a_plateau]]
+is reconfirmed on a paired 1600-game arena against a frozen anchor** — the strongest
+evidence for it so far, and the first that is not confounded by an anchor change.
+
+### Consequences
+
+* Resume point: **bt4heads arm B iter100**. Settled; no further arena owed for this.
+* `data/aot_models_512_bt4heads` carries bt4heads topology and is therefore the
+  CORRECT arch for the resume point. The deploy of `distributed_inference_aot_dir`
+  is un-blocked by this verdict (still gated on PR #431/#432 merging and a clean
+  `--verify` run under the REPLACED gate — the old gate's 28/29 FAIL is void in
+  both directions, see `2f34c17f0`).
+* ⚑ The plateau is now the finding, not a suspicion. Any next experiment that
+  claims Elo must beat a FROZEN anchor at n>=1600 paired, not beat its own sibling
+  arm — a sibling contrast cannot distinguish "gained" from "lost less".
