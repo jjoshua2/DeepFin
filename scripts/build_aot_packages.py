@@ -351,14 +351,85 @@ def _softmax(logits: np.ndarray) -> np.ndarray:
     return e / np.clip(np.sum(e, axis=-1, keepdims=True), 1e-30, None)
 
 
-def mean_row_tv(p: np.ndarray, q: np.ndarray) -> float:
-    """Mean per-row total-variation distance between two probability batches.
+def row_tv(p: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Per-row total-variation distance: ``0.5 * sum|p - q|``, bounded in [0, 1]."""
+    return 0.5 * np.sum(np.abs(p - q), axis=-1)
 
-    ``TV = 0.5 * sum|p - q|`` per row, averaged over rows. Bounded in [0, 1]:
-    0 is identical, 1 is disjoint support. A whole-array ``max`` is deliberately
-    NOT used — see :func:`_compare_bucket`.
+
+def mean_row_tv(p: np.ndarray, q: np.ndarray) -> float:
+    """Mean per-row total variation. 0 is identical, 1 is disjoint support.
+
+    A whole-array ``max`` is deliberately NOT used — see :func:`_compare_bucket`.
+    But a mean ALONE is not enough either: it dilutes a defect confined to a few
+    rows, which is exactly the shape of a boundary/indexing bug at one bucket
+    size. That is why the gate also carries a tail statistic
+    (:func:`tail_row_tv`) and does not rely on this one on its own.
     """
-    return float(np.mean(0.5 * np.sum(np.abs(p - q), axis=-1)))
+    return float(np.mean(row_tv(p, q)))
+
+
+def tail_row_tv(p: np.ndarray, q: np.ndarray, *, quantile: float = 0.99) -> float:
+    """High quantile of the per-row TV — the arm with power against row-local damage.
+
+    A kernel that is wrong on 2% of rows and perfect on the rest barely moves
+    the mean but moves this a lot. It is a quantile rather than a max so that it
+    is not an extreme-value statistic that grows with bucket size (the defect
+    that broke the previous gate); at every bucket it estimates the same
+    population quantity.
+    """
+    return float(np.quantile(row_tv(p, q), quantile))
+
+
+def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarray:
+    """``ref_logits`` nudged by ±1 bf16 ULP — the FLOOR that never degenerates.
+
+    ⚑⚑ WHY THIS EXISTS, and why the batch-shape control is not sufficient on its
+    own. :func:`eager_batch_shape_control` measures the irreducible difference
+    empirically, which is the right idea — but it is **degenerate on some
+    backends**. Measured 2026-08-15 on CPU with the real ``ChessNet`` topology,
+    the chunked control is **bitwise identical** to the full batch at every size
+    from n=2 to n=128, so its TV is exactly 0. Dividing by that (even floored to
+    1e-6) manufactures an arbitrarily large ratio and FAILS a healthy package:
+    a measured case reads TV 4e-4 against control 0 as **x399, FAIL**, with
+    argmax agreement a perfect 1.0.
+
+    Note also that round-tripping ``ref_logits`` through bf16 is a NO-OP and
+    cannot serve as the floor: the model already runs in bf16, so the reference
+    logits are bf16 values widened to float32 and re-rounding changes nothing
+    (verified: exact array equality, TV 0.0).
+
+    So this is the smallest difference two bf16 pipelines could exhibit at all:
+    each logit moved by one unit in the last place (bf16 keeps 8 mantissa bits,
+    so the relative spacing is 2^-8). It is positive for any non-constant
+    logits, it is backend-independent, and — the property the whole gate turns
+    on — it **tracks sharpness**, because a fixed relative logit perturbation
+    produces a larger probability movement as the softmax concentrates.
+
+    It also corroborates the empirical control rather than replacing it. At the
+    net's realized sharpness (top-1 ~0.56-0.59) this floor reads TV **0.0202**
+    against the CUDA batch-shape control's **0.0176** at bucket 1190 — two
+    independent derivations of "irreducible bf16 disagreement", agreeing to
+    15%. The gate uses the LARGER of the two, since the true floor is at least
+    each of them.
+
+    ⚑ WHAT IS AND IS NOT BANKED. The CPU-derivable half of every claim above is
+    re-measured on each CI run by ``tests/test_aot_verify_gate.py`` — the
+    round-trip no-op, non-degeneracy, sharpness tracking, and the 0.0202 value
+    itself. The CUDA numbers (0.0176 control and 0.01737 AOT-vs-eager at bucket
+    1190) are single-run readings on hardware CI does not have; they are stated
+    as provenance, not as a calibration, and ``--tv-ratio-max``'s 1.5 default is
+    PROVISIONAL until a real calibration run banks a distribution of healthy
+    ratios across the ladder. A previous revision also quoted "2.31 (July
+    packages on August weights, stale)" as support for 1.5. That number is
+    withdrawn from the justification: it was never banked, and it argues against
+    itself — 2.31 > 1.5 means the new gate FAILS the very packages the rewrite
+    was meant to stop condemning, which would relabel the verdict rather than
+    correct it.
+    """
+    rng = np.random.default_rng(int(seed))
+    step = np.float32(2.0) ** -8  # bf16: 1 implicit + 7 explicit mantissa bits
+    sign = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=ref_logits.shape)
+    return ref_logits.astype(np.float32) * (np.float32(1.0) + sign * step)
 
 
 def _compare_bucket(
@@ -370,8 +441,8 @@ def _compare_bucket(
     ctl_pol: np.ndarray | None,
     ctl_wdl: np.ndarray | None,
     tv_ratio_max: float,
-    argmax_min: float,
-) -> tuple[bool, str]:
+    floor_seed: int = 0,
+) -> tuple[bool, str, int, int]:
     """Return (pass, detail) for one bucket, gated RELATIVE to an eager control.
 
     Compares in **probability space** (softmax), the quantities the broker
@@ -403,57 +474,77 @@ def _compare_bucket(
       AOT anywhere — purely from BLAS reduction order. Any absolute threshold
       below that floor is unreachable by a perfect package.
 
-    So the gate is now ``TV(aot, ref) / TV(control, ref)``, where *control* is
-    the same eager model on the same rows at a different batch shape. Measured:
-    **0.99** (new packages, healthy), **1.005** (July packages on July weights,
-    healthy), **2.31** (July packages on August weights, stale), and ~60 for a
-    package with unfilled constants. The control is recomputed per bucket from
-    the current weights, so the gate **cannot go stale** the way its predecessor
-    did.
+    So the gate is now a RATIO against an irreducible floor, on four arms:
+    mean row TV and tail (p99) row TV, for policy and for WDL. Each numerator is
+    divided by the SAME functional computed on the floor, so a healthy package
+    reads ~1 on every arm regardless of how sharp the net has become.
 
-    ``argmax_min`` is unchanged and is the one metric that was always correctly
-    calibrated: healthy reads 0.958-0.970, the eager-only control reads
-    0.9597-0.9655, and the random floor is ~1/1858 = 0.0005.
+    The floor is ``max`` of two independent estimates of "irreducible bf16
+    disagreement", because the true floor is at least each of them:
+
+    * :func:`eager_batch_shape_control` — empirical, the same weights on the
+      same rows at a different batch shape. ⚑ **This one can be exactly zero**
+      (CPU: bitwise identical from n=2 to n=128), which is why it cannot be the
+      sole denominator.
+    * :func:`bf16_ulp_perturbation` — analytic, every logit moved one bf16 ULP.
+      Never degenerate, backend-independent, and tracks sharpness.
+
+    ⚑ There is NO arbitrary epsilon floor. If BOTH estimates are zero the
+    reference is degenerate (constant logits), and then the only defensible
+    verdict is exact: any nonzero numerator FAILS. A `1e-6` clamp was tried and
+    removed — it silently converted "no information" into "x399, FAIL".
+
+    ARGMAX IS NOT GATED HERE. It is returned as ``(matches, rows)`` and gated by
+    the CALLER on rows POOLED across all ``verify_n`` trials. Per-trial it is a
+    coin flip at small buckets: at the healthy per-row rate of 0.96, requiring
+    ``>= 0.90`` of 8 rows means requiring 8/8, which spuriously fails **48%** of
+    the time. Pooling is what makes the criterion mean what its name says.
+    Healthy reads 0.958-0.970, the eager-only control 0.9597-0.9655, and the
+    random floor is ~1/1858 = 0.0005.
     """
     aot_pp, ref_pp = _softmax(aot_pol), _softmax(ref_pol)
     aot_wp, ref_wp = _softmax(aot_wdl), _softmax(ref_wdl)
-    tv_pol = mean_row_tv(aot_pp, ref_pp)
-    tv_wdl = mean_row_tv(aot_wp, ref_wp)
-    argmax_rate = float(
-        np.mean(np.argmax(aot_pol, axis=-1) == np.argmax(ref_pol, axis=-1))
-    )
 
-    if ctl_pol is None or ctl_wdl is None:
-        # No control available (bucket too small to re-chunk). Fall back to the
-        # argmax floor alone and SAY SO — a silently weakened gate is worse than
-        # a loud one. argmax still separates healthy (~0.96) from garbage.
-        ok = argmax_rate >= argmax_min
-        detail = (
-            f"tv_pol={tv_pol:.4g} tv_wdl={tv_wdl:.4g} ratio=n/a(no control) "
-            f"argmax_rate={argmax_rate:.4f} (argmax_min={argmax_min:g})"
-        )
-        return ok, detail
+    def _floor(ref_logits: np.ndarray, ref_p: np.ndarray,
+               ctl: np.ndarray | None) -> tuple[float, float]:
+        """(mean, tail) of the irreducible floor: max over both estimates."""
+        ulp_p = _softmax(bf16_ulp_perturbation(ref_logits, seed=floor_seed))
+        f_mean, f_tail = mean_row_tv(ulp_p, ref_p), tail_row_tv(ulp_p, ref_p)
+        if ctl is not None:
+            ctl_p = _softmax(ctl)
+            f_mean = max(f_mean, mean_row_tv(ctl_p, ref_p))
+            f_tail = max(f_tail, tail_row_tv(ctl_p, ref_p))
+        return f_mean, f_tail
 
-    ctl_tv_pol = mean_row_tv(_softmax(ctl_pol), ref_pp)
-    ctl_tv_wdl = mean_row_tv(_softmax(ctl_wdl), ref_wp)
-    # Floor the denominator: a control TV of ~0 means the two eager shapes hit
-    # the same kernel schedule, and dividing by it would manufacture a huge
-    # ratio out of pure noise.
-    floor = 1e-6
-    ratio_pol = tv_pol / max(ctl_tv_pol, floor)
-    ratio_wdl = tv_wdl / max(ctl_tv_wdl, floor)
-    ok = (
-        ratio_pol <= tv_ratio_max
-        and ratio_wdl <= tv_ratio_max
-        and argmax_rate >= argmax_min
-    )
+    def _ratio(num: float, den: float) -> float:
+        """No epsilon. A zero floor means the reference carries no scale, so the
+        only honest verdict is exact equality — inf if it is not met."""
+        if den > 0.0:
+            return num / den
+        return 0.0 if num == 0.0 else float("inf")
+
+    ctl_p = ctl_pol if (ctl_pol is not None and ctl_wdl is not None) else None
+    ctl_w = ctl_wdl if (ctl_pol is not None and ctl_wdl is not None) else None
+    fp_mean, fp_tail = _floor(ref_pol, ref_pp, ctl_p)
+    fw_mean, fw_tail = _floor(ref_wdl, ref_wp, ctl_w)
+
+    arms = {
+        "pol_mean": _ratio(mean_row_tv(aot_pp, ref_pp), fp_mean),
+        "pol_tail": _ratio(tail_row_tv(aot_pp, ref_pp), fp_tail),
+        "wdl_mean": _ratio(mean_row_tv(aot_wp, ref_wp), fw_mean),
+        "wdl_tail": _ratio(tail_row_tv(aot_wp, ref_wp), fw_tail),
+    }
+    ok = all(v <= tv_ratio_max for v in arms.values())
+
+    matches = int(np.sum(np.argmax(aot_pol, axis=-1) == np.argmax(ref_pol, axis=-1)))
+    rows = int(ref_pol.shape[0])
+    shown = " ".join(f"{k}=x{v:.2f}" for k, v in arms.items())
+    src = "shape+ulp" if ctl_p is not None else "ulp-only"
     detail = (
-        f"tv_pol={tv_pol:.4g}/ctl={ctl_tv_pol:.4g}=x{ratio_pol:.2f} "
-        f"tv_wdl={tv_wdl:.4g}/ctl={ctl_tv_wdl:.4g}=x{ratio_wdl:.2f} "
-        f"argmax_rate={argmax_rate:.4f} "
-        f"(tv_ratio_max={tv_ratio_max:g} argmax_min={argmax_min:g})"
+        f"{shown} floor={src} argmax={matches}/{rows} "
+        f"(tv_ratio_max={tv_ratio_max:g})"
     )
-    return ok, detail
+    return ok, detail, matches, rows
 
 
 def eager_batch_shape_control(
@@ -605,6 +696,8 @@ def verify_packages(
 
             all_ok = True
             details: list[str] = []
+            argmax_matches = 0
+            argmax_rows = 0
             for trial in range(int(verify_n)):
                 x = _real_position_batch(
                     b,
@@ -624,7 +717,7 @@ def verify_packages(
                 # weights — that is what stops it going stale as the net sharpens.
                 ctl_pol, ctl_wdl = eager_batch_shape_control(model, xt)
 
-                ok, detail = _compare_bucket(
+                ok, detail, matches, rows_n = _compare_bucket(
                     aot_pol=aot_pol,
                     aot_wdl=aot_wdl,
                     ref_pol=ref_pol,
@@ -632,11 +725,28 @@ def verify_packages(
                     ctl_pol=ctl_pol,
                     ctl_wdl=ctl_wdl,
                     tv_ratio_max=float(tv_ratio_max),
-                    argmax_min=float(argmax_min),
+                    floor_seed=int(seed) + trial,
                 )
                 details.append(f"n{trial}:{detail}")
+                argmax_matches += matches
+                argmax_rows += rows_n
                 if not ok:
                     all_ok = False
+
+            # ⚑ The argmax criterion is applied ONCE on rows POOLED across every
+            # trial, never per-trial. At the healthy per-row rate of 0.96, an
+            # 8-row bucket needs 8/8 to clear 0.90 and spuriously FAILS 48% of
+            # the time; pooling verify_n trials is what gives the threshold its
+            # nominal meaning. This is also the only consumer of verify_n's
+            # extra rows, so a verify_n that is silently ignored now changes a
+            # verdict instead of changing nothing.
+            argmax_rate = (argmax_matches / argmax_rows) if argmax_rows else 0.0
+            if argmax_rate < float(argmax_min):
+                all_ok = False
+            details.append(
+                f"pooled_argmax={argmax_matches}/{argmax_rows}"
+                f"={argmax_rate:.4f} (argmax_min={float(argmax_min):g})"
+            )
             status = "PASS" if all_ok else "FAIL"
             if all_ok:
                 n_pass += 1
@@ -720,8 +830,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.5,
         help="Max TV(aot,eager) / TV(eager-at-another-batch-shape,eager). "
-             "Measured: 0.99 healthy, 2.31 stale packages, ~60 for unfilled "
-             "constants (default: 1.5). Relative by construction, so it does "
+             "⚑ PROVISIONAL, not a calibration: it sits between a single CUDA "
+             "healthy reading (0.99 @ bucket 1190) and a package with unfilled "
+             "constants (~60). Only the CPU-derivable half is banked, by "
+             "tests/test_aot_verify_gate.py. Relative by construction, so it does "
              "not expire when the policy sharpens the way the old absolute "
              "--tol did.",
     )
@@ -757,10 +869,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.verify_n <= 0:
         print("error: --verify-n must be positive", file=sys.stderr)
         return 2
-    if args.tv_ratio_max <= 1.0:
-        print("error: --tv-ratio-max must exceed 1.0 (the control IS the "
-              "irreducible floor; <=1.0 can never pass)", file=sys.stderr)
+    if args.tv_ratio_max <= 0.0:
+        print("error: --tv-ratio-max must be positive", file=sys.stderr)
         return 2
+    # ⚑ NOT rejected at <=1.0. An earlier revision did, on the reasoning that
+    # "the control IS the irreducible floor so <=1.0 can never pass" — which
+    # this file's own measurement contradicts: a healthy package read 0.99
+    # (AOT-vs-eager TV 0.01737 BELOW the control's 0.01760). The floor is an
+    # estimate with its own variance, so ratios just under 1 are ordinary.
 
     try:
         buckets_override = (

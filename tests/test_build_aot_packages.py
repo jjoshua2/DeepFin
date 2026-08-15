@@ -116,37 +116,46 @@ def _wdl(*rows: list[float]) -> np.ndarray:
 def test_compare_bucket_pass_on_near_identical() -> None:
     pol = np.array([[2.0, 1.0, 0.0], [0.0, 3.0, 1.0]], dtype=np.float32)
     wdl = _wdl([1.0, 0.0, -1.0], [0.0, 1.0, 0.0])
-    ok, detail = _compare_bucket(
+    ok, detail, matches, rows = _compare_bucket(
         aot_pol=pol + 1e-3, aot_wdl=wdl + 1e-3, ref_pol=pol, ref_wdl=wdl,
         ctl_pol=pol + 1e-3, ctl_wdl=wdl + 1e-3,
-        tv_ratio_max=1.5, argmax_min=0.90,
+        tv_ratio_max=1.5,
     )
     assert ok, detail
+    assert (matches, rows) == (2, 2)
 
 
-def test_compare_bucket_fails_on_garbage_policy() -> None:
-    # A broken package (wrong/unfilled constants) -> argmax collapses.
+def test_compare_bucket_reports_a_collapsed_argmax_for_the_caller_to_gate() -> None:
+    """A broken package (wrong/unfilled constants) -> argmax collapses.
+
+    ⚑ ``_compare_bucket`` no longer gates on argmax — ``verify_packages`` does,
+    on rows POOLED across trials, because per-trial the criterion is a coin flip
+    at small buckets. So this asserts the COUNTS it hands back, which is the
+    thing the caller's verdict is computed from.
+    """
     ref_pol = np.array([[5.0, 0.0, 0.0], [0.0, 5.0, 0.0]], dtype=np.float32)
     aot_pol = np.array([[0.0, 0.0, 5.0], [5.0, 0.0, 0.0]], dtype=np.float32)
     wdl = _wdl([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
-    ok, _ = _compare_bucket(
+    ok, _, matches, rows = _compare_bucket(
         aot_pol=aot_pol, aot_wdl=wdl, ref_pol=ref_pol, ref_wdl=wdl,
         ctl_pol=ref_pol, ctl_wdl=wdl,
-        tv_ratio_max=1e9, argmax_min=0.90,
+        tv_ratio_max=1e9,  # TV arm disarmed: this is purely the argmax report
     )
-    assert not ok
+    assert (matches, rows) == (0, 2), "every row's argmax moved"
+    assert ok, "with the TV arm disarmed _compare_bucket has nothing left to fail on"
 
 
 def test_compare_bucket_fails_on_wdl_drift() -> None:
+    """⚑ wdl is the ONLY value head MCTS consumes, so it needs its own arm."""
     pol = np.array([[2.0, 1.0, 0.0]], dtype=np.float32)
     ref_wdl = _wdl([4.0, 0.0, 0.0])
     aot_wdl = _wdl([0.0, 4.0, 0.0])  # flipped -> large prob delta
-    ok, _ = _compare_bucket(
+    ok, detail, _, _ = _compare_bucket(
         aot_pol=pol, aot_wdl=aot_wdl, ref_pol=pol, ref_wdl=ref_wdl,
         ctl_pol=pol, ctl_wdl=ref_wdl + 1e-3,
-        tv_ratio_max=1.5, argmax_min=0.90,
+        tv_ratio_max=1.5,
     )
-    assert not ok
+    assert not ok, detail
 
 
 # ---------------------------------------------------------------------------
