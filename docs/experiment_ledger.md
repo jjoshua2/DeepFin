@@ -50475,3 +50475,87 @@ rather than a live change, all stand.
 ⚑ **THE GENERAL LESSON, now costed twice in one day: derive the threshold from the resolution of
 THE ARM THAT DECIDES, at ITS n, in ITS regime — never from a control arm's, however carefully
 that control was measured.** A halfwidth is a property of a measurement, not of an instrument.
+
+## 2026-08-15 — PHASE 2: THE NET **LEARNS** THE TARGET'S TAIL. A target-repair arm IS worth running.
+
+Follow-up to the same day's BT4 phase-1 correction (`1946346d1`). Question: **a bad target row
+only matters if the net learns it** — if the net smooths the tail away, target repair buys
+nothing, and this project has spent runs on levers that turned out inert. Instrument
+`scratchpad/target_vs_bt4/tb4_{net,select_old,bt4_netmove,phase2,tailsign}.py`; predictions
+pre-registered in `PREDICTIONS.md` (phase-2 block) **BEFORE any forward pass of our net**.
+**12 of 14 hit**; both misses explained there.
+
+**VERDICT: the net tracks the target MORE tightly on the BT4-corroborated tail than on ordinary
+rows, and inherits 91.5% of its deficit. By the pre-committed rule a target-repair arm IS worth
+running.**
+
+    decider (EXCESS over permuted target)   ratio_argmax          ratio_mass
+    BT4 tail / non-tail                     1.25 [1.081, 1.437]   1.39 [1.242, 1.554]  => LEARNS
+    argmax-not-listed / listed              0.566 [.456, .675]    0.505 [.424, .588]   => PARTIAL
+
+Rule: LEARNS if both >= 0.75; SMOOTHS if either <= 0.40; else PARTIAL. **Both tail CIs sit
+entirely ABOVE 1.0** — the net follows the target BETTER on the tail. The two deciders disagree,
+which was pre-registered as itself the result; **the SIGNED tail resolves it** (phase 1 showed
+30% of the tail is the target being BETTER):
+
+    BAD half   dQ <= -0.10, n=153   target dQ vs SF  -0.3041
+                                    NET    dQ vs SF  -0.2782   = 91.5% INHERITED
+                                    Q_net - Q_target +0.026 [-0.012, +0.063]  <- CI contains 0
+    GOOD half  dQ >= +0.10, n=66    target +0.2343 -> net +0.1542 (follows UP too)
+    non-tail   n=788                target -0.0015 -> net -0.0148
+
+⇒ **no material self-correction. The net is a faithful target-FOLLOWER in both directions, not a
+smoother.** `P(net == target)` = **0.6611** against `P(net == sf_best)` = **0.3685** — it follows
+its target roughly twice as often as it follows SF.
+
+**⚑⚑ THE JENSEN TRAP RECURRED AND WAS PRICED BEFORE ANY THRESHOLD.** The BT4 tail is partly
+DEFINED by high branching, so its chance level is `E[1/n_legal]` = **0.0410** against non-tail
+**0.0716** — **1.75x, 3.1pp of pure arithmetic** that a raw agreement difference would have
+credited to "smoothing". Every cross-stratum number is therefore an EXCESS over a MEASURED
+permuted-target control (0.0900, itself well above chance). ⚑ The direction survives WITHOUT the
+correction (raw 0.644 tail vs 0.584 non-tail), so the finding does not rest on it. **Third
+instance today — compute the chance level PER STRATUM before choosing any line.**
+
+**⚑ EXPOSURE IS IRRELEVANT TO THIS STATISTIC — and 12.8% of phase 1's rows were NEVER TRAINED
+ON.** `checkpoint_000100/trainer.pt` was written **03:39:57.53**; two of the 16 sampled shards
+were written **03:39:59 and 03:40:00**. Those 256 rows became a free, perfectly matched
+NEVER-SEEN control:
+
+    never-seen (0 exposures)      P(net==target) 0.6211 [.560, .678]
+    new-trained (1-2 exposures)                  0.6611 [.639, .683]
+    old-saturated (~8.8h)                        0.6690 [.648, .689]
+
+Spread **0.048** across the whole range; both pre-registered |diff| < 0.05 predictions HIT
+(0.040, 0.0079). ⇒ **tracking is a GENERALISED learned policy, not row memorisation** — which is
+exactly what makes a target change actionable: change the target function and the learned
+function moves. **ALWAYS diff the checkpoint mtime against the shard mtimes before claiming a net
+trained on a row.**
+
+**⚑ INDEX-SPACE HAZARD, caught before it bit.** `LocalModelEvaluator.evaluate_encoded` returns
+**4672-wide** logits off an `lc0_1858` checkpoint (it widens internally), while every stored shard
+array is compact **1858**. Gathering a 4672 vector with compact ids returns **a plausible logit
+for an unrelated move** — silent, no error, no shape mismatch. Caught by checking the shape before
+writing the gather; each row now carries both index vectors and the compact one is asserted
+against the row's stored mask.
+
+**NET PURITY — VERIFIED, NOT ASSERTED, and deliberately not a spot check.** Both yamls flattened
+through `flatten_run_config_defaults` and **all 394 keys diffed**: exactly **3** differ, all
+non-behavioural (`work_dir`, `salvage_seed_pool_dir`, and `diff_focus_norm_shared` absent vs
+`False`, which IS its default at `tune/trial_config.py:366` with every consumer reading
+`.get(..., False)`). "bt4heads_armB" is a work_dir and a seed pool, not a config fork. Checkpoint
+`arch` matches the shard contract on every key (`lc0_root_legacy_meta` / `v2_threats` /
+`lc0_1858` / `history_rep_fix True` / 512x16x16); `categorical_head_coupled=True` is a
+4,128-param branch off the VALUE hidden at `w_categorical: 0.0` and cannot reach the policy head.
+Loaded with `require_complete=True`. ⚑ This is the direct remedy for the four-key spot check that
+VOIDed the era arena earlier the same day (`0e6210b54`).
+
+**Alignment control carried forward and re-run**: decoded legal set == stored `legal_mask` on
+**2000/2000** rows for both samples; the script raises rather than proceeds on mismatch.
+
+**⇒ NEXT ARM — AND THE NUMBER IT MUST MOVE.** Not the 21.5 cp mean: BT4 says **68% of
+disagreements are already fine**, so repairing the mean moves rows that are not broken. The
+deciding quantity is the **bad-tail inheritance: target −0.304 Q vs SF, net −0.278.** A repair
+that does not move THAT has not touched the defect. ⚑ The MultiPV-6 teacher remains the trap from
+the phase-1 entry — it pushes mass ONTO the 6 covered moves, which is the wrong direction, and the
+sharp rows are the ones already fine. A full-width, non-fabricated teacher is still the only lever
+identified that reaches the tail. **No arm launched; this needs an explicit go.**

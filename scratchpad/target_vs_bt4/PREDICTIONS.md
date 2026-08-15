@@ -223,3 +223,173 @@ objectively worse; it does **not** by itself prove the target is not exploiting
 SF. The observation that WOULD close that gap is a paired arena of a net trained
 on this target versus one trained on an SF-corroborated target, which is not
 what this measurement is.
+
+---
+---
+
+# PHASE 2 — does the NET reproduce the target's tail, or smooth it?
+
+Written **2026-08-15**, after phase 1 was banked and **before any forward pass of our own
+net**. Phase 1's row selection, BT4 Q arrays and strata are reused unchanged.
+
+## Why this question
+
+Phase 1 localised the only defect BT4 corroborates: a `|dQ| >= 0.10` tail that is 22.6% of
+disagreement rows and carries 97% of the mean deficit, concentrated on low-confidence,
+many-legal-move rows and on rows where the target's argmax is outside SF's MultiPV-6
+(C = 0.7815 there, vs chance where it is listed). **A bad target row only matters if the net
+learns it.** If the net smooths the tail away, a target-repair arm is inert.
+
+## Which net — purity check, done BEFORE the measurement
+
+`data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt`.
+
+- **Same trial that WROTE these shards.** `trial_meta.json: owner_trial_id = 1d175_00000`,
+  `owner_trial_dir = .../train_trial_1d175_00000_0_lr=0.0000_2026-08-14_13-53-53`;
+  the salvage manifest's `replay_shard_paths_tried` is exactly the directory I sampled
+  (`runs/pbt2_small/replay/train_trial_1d175_...`, 800 shards copied).
+- **Config is production**, not asserted from a spot check: flattening BOTH yamls through
+  `flatten_run_config_defaults` and diffing ALL keys gives **3** differences —
+  `work_dir`, `salvage_seed_pool_dir`, and `diff_focus_norm_shared` (absent in armB, `False`
+  in prod; the field's default is `False` at `tune/trial_config.py:366` and every consumer
+  reads `.get("diff_focus_norm_shared", False)`, so absent == False). **Zero behavioural
+  differences.** The `bt4heads_armB` name is a work_dir and a seed pool, not a config fork.
+- **Checkpoint arch matches the shard contract on every input/output key**, read off the
+  embedded `arch`: `input_history_encoding = lc0_root_legacy_meta`,
+  `input_extra_features = v2_threats`, `policy_encoding = lc0_1858`, `history_rep_fix = True`,
+  512 x 16 x 16 — identical to the shard attrs. `use_dynamic_relations = False`.
+- ⚑ **One arm-specific model flag: `categorical_head_coupled = True`.** Per `docs/bt4.md`
+  that is a 4,128-param branch off the VALUE hidden and the live yaml carries
+  `w_categorical: 0.0`. It cannot reach the policy head. Stated, not assumed away.
+- Loader: `uci/model_loader.load_model_from_checkpoint`, which resolves `arch` from the
+  checkpoint itself with a strict schema check and `require_complete=True`, so a partial
+  load raises instead of silently fresh-initialising.
+
+## ⚑ The exposure defect, found before measuring, and what it forces
+
+`checkpoint_000100/trainer.pt` was written **2026-08-15 03:39:57.53** (end of iteration 101;
+progress.csv shows iters 96-101 at 03:19:10 / 03:23:44 / 03:27:32 / 03:31:36 / 03:35:50 /
+03:39:57, ~250 s each). My phase-1 shards were written **03:29:40 to 03:40:00**. So:
+
+- **256 of the 2000 rows (12.8%) come from two shards written AFTER the checkpoint**
+  (`shard_006069` 03:39:59, `shard_006070` 03:40:00). **This net provably never trained on
+  them.** They are removed from the primary population — and kept as a free, perfectly
+  matched **NEVER-SEEN negative control**.
+- The remaining **1744 rows** were written 1-10 minutes before the checkpoint, i.e. during
+  iterations 98-101, so they carry roughly **1-2 training exposures**, against the ~4.31
+  `train_views_per_position` a settled row receives. Absolute tracking will therefore be
+  BIASED LOW.
+- **The bias does not touch the question.** The deciding quantity is a CONTRAST between
+  strata (tail vs non-tail) drawn from the SAME 10-minute window, so exposure is matched by
+  construction. Two arms calibrate the absolute level anyway: the NEVER-SEEN 256, and a
+  fresh **OLD-SATURATED** sample of 2000 rows from `shards[300:316]` (~8.8 h before the
+  checkpoint, deep inside the replay window, exposure saturated).
+
+## ⚑⚑ Chance levels, computed BEFORE any threshold is chosen
+
+This is the trap phase 1 documented (`1/E[n]` vs `E[1/n]`), and it recurs here **worse**,
+because the BT4 tail stratum is partly DEFINED by having many legal moves:
+
+    stratum (within the 1744 NEW-TRAINED rows)        n     mean n_legal   chance E[1/n_legal]
+    all                                            1744        27.29            0.0678
+    disagreement                                   1007        27.31            0.0650
+      BT4 TAIL   |dQ| >= 0.10                       219        33.03            0.0410
+      BT4 NON-TAIL                                  788        25.73            0.0716
+    argmax NOT in SF MultiPV-6                      282        30.48            0.0441
+    argmax IS listed                               1462        26.68            0.0724
+    NEVER-SEEN population                           256        26.71            0.0676
+
+**Tail chance is 0.0410 and non-tail chance is 0.0716 — a 1.75x gap, 3.1 pp of pure
+arithmetic.** A raw `P(net argmax == target argmax)` comparison between those strata would
+credit the net with ~3 pp of "smoothing" that is only the branching factor. **No raw
+agreement difference between strata is quoted as a verdict anywhere below.**
+
+## Negative control (mandatory, per the brief)
+
+The permuted-target control from phase 1, reused: for row `i`, the argmax of
+`policy_target[perm[i]]` restricted to row `i`'s own legal set. Its level is **not** chance —
+phase 1 measured the analogous quantity at 0.116 against a chance of 0.068, because any
+plausible search policy concentrates on the same few good moves. So the control's level is
+**measured per stratum, never assumed**, and every verdict statistic is an EXCESS over it:
+
+    E_stratum = P(net argmax == target argmax) - P(net argmax == permuted-target argmax)
+
+This subtracts the "both concentrate on good moves" artifact and is chance-corrected by
+construction, which is exactly what the raw difference is not.
+
+## Predictions
+
+**Exact counts.**
+- NEW-TRAINED n = **1744**, NEVER-SEEN n = **256**, sum **2000** exactly.
+- Alignment control carried forward: decoded legal set == stored `legal_mask` on
+  **1744/1744** rows (phase 1 read 2000/2000; these are a subset, so anything but 100% means
+  I broke something between phases).
+- OLD-SATURATED sample: 16 shards from `shards[300:316]`, **2000** rows sampled from the
+  SF-labelled survivors, seed 20260816.
+- Net's argmax needing a NEW BT4 child eval (not already one of tgt/sf/foreign/rand):
+  **600-1400** of 2000.
+
+**Metric 1 — argmax tracking.**
+- `P(net argmax == target argmax)`, NEW-TRAINED, all rows: **0.45-0.70**.
+- Permuted-target baseline, same rows: **0.08-0.18**.
+- ⇒ `E_all` (excess) **0.30-0.60**.
+
+**Metric 2 — net probability mass on the target's argmax** (renormalised over legal;
+does not saturate).
+- mean mass on target argmax, NEW-TRAINED: **0.35-0.65**; on the permuted-target move:
+  **0.03-0.10**.
+
+**THE DECIDER.** Computed on disagreement rows, tail vs non-tail, both metrics:
+
+    ratio_argmax = E_tail / E_nontail        ratio_mass = M_tail / M_nontail
+
+where `M` is the excess mass (mass on target argmax minus mass on permuted-target argmax).
+
+- **"THE NET LEARNS THE TAIL"** predicts `ratio_argmax >= 0.75` **and** `ratio_mass >= 0.75`.
+- **"THE NET SMOOTHS THE TAIL"** predicts `ratio_argmax <= 0.40` **or** `ratio_mass <= 0.40`.
+- **0.40 < ratio < 0.75 on both ⇒ PARTIAL**, reported as partial. No re-thresholding.
+- The same rule is applied a second time to the shard-only stratum
+  (argmax outside SF's MultiPV-6 vs listed), which needs no BT4 and is therefore also
+  available on the OLD-SATURATED arm. Both readings are reported; if they disagree, that is
+  the result.
+- CIs: Wilson on each rate, and a **paired bootstrap over rows (10,000 resamples) on the
+  ratio itself**, because a ratio of two differences has no closed-form interval.
+
+**Metric 3 — is the net's own move better than the target it trained on?**
+`Q_BT4(net argmax)` vs `Q_BT4(target argmax)` vs `Q_BT4(sf_best)`, paired per row, tail rows.
+- If the net LEARNS the tail: `mean[Q_BT4(net) - Q_BT4(target)]` on tail rows ~ **0** (within
+  +/-0.03) — it is playing the same bad move.
+- If the net SMOOTHS the tail: **>= +0.10**, and it should recover a material fraction of the
+  tail's mean `dQ` of **-0.143** (phase 1, `|dQ| >= 0.10` subset).
+
+**WHAT WOULD MAKE A TARGET-REPAIR ARM NOT WORTH RUNNING** — pre-committed, either of:
+- (a) `ratio_argmax <= 0.40` **or** `ratio_mass <= 0.40` — the net already discards the tail,
+  so repairing it changes nothing the net reads; **or**
+- (b) on tail rows `mean[Q_BT4(net argmax) - Q_BT4(target argmax)] >= +0.05` with a bootstrap
+  95% CI excluding 0 — the net has ALREADY out-played the target on exactly the rows the
+  repair would target.
+
+**AND WORTH RUNNING** only if `ratio_argmax >= 0.75` AND `ratio_mass >= 0.75` AND
+`mean[Q_BT4(net) - Q_BT4(target)] <= +0.02` on tail rows — the net faithfully reproduces a
+move an SF-agnostic 191M net says is bad.
+
+**Exposure arms.**
+- NEVER-SEEN (n=256) vs NEW-TRAINED `P(net argmax == target argmax)`: predict
+  **|difference| < 0.05**. A large positive gap would mean 1-2 iterations of exposure already
+  memorises, which is itself a finding and would void the "these rows are undertrained"
+  caveat in the other direction.
+- OLD-SATURATED (n=2000, ~8.8 h, saturated views) vs NEW-TRAINED: predict
+  **|difference| < 0.05**; if OLD is materially HIGHER, the absolute tracking numbers here
+  are exposure-depressed and I say so and quote OLD for the level while still quoting the
+  NEW contrast for the verdict.
+- ⚑ The NEVER-SEEN tail stratum is n=43. It is **underpowered and will be reported as
+  indicative only**, never as a decider.
+
+## What stays inferred in phase 2
+
+Reproducing the target's argmax is not the same as the loss having driven it there — the net
+and the target could agree because both are competent, which is exactly what the permuted
+control subtracts, but the control cannot separate "learned this row" from "would have played
+this anyway". Only a training arm can. And BT4 remains a static 1-ply ruler with the phase-1
+caveats; nothing here re-opens whether the tail is objectively bad, only whether the net
+carries it.
