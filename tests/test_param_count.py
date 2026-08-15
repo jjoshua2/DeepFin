@@ -2,12 +2,12 @@
 
 The defect this file exists to prevent (`docs/rl_loop_audit.md` A6/J11): the
 production net's size was "corrected" from ~63M *up* to 78.8M on 2026-07-26 and
-the correction was the error. 78,812,768 is ``sum(v.numel())`` over the 496
+the correction was the error. 77,173,088 is ``sum(v.numel())`` over the
 ``state_dict`` entries, and a ``state_dict`` lists a tied parameter once per
 *reference*. The 16 ``layer_smolgens.N.gen_weight.weight`` keys are one shared
 ``nn.Linear`` (built once in ``ChessNet.__init__`` and passed to every
 ``Smolgen``), so 15 x 1,048,576 = 15,728,640 params get counted that were never
-allocated: 63,084,128 + 15,728,640 = 78,812,768 exactly.
+allocated: 61,444,448 + 15,728,640 = 77,173,088 exactly.
 
 Why it is worth a test rather than a careful docstring. The count is the
 denominator for params-per-FLOP reasoning, for the ``matrix_optimizer_scope``
@@ -39,7 +39,7 @@ from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 _REPO = Path(__file__).resolve().parents[1]
 
 # Measured 2026-07-26 by rebuilding each config and deduping by storage.
-_PRODUCTION_PARAMS = 63_084_128
+_PRODUCTION_PARAMS = 61_444_448
 _REFERENCE_PARAMS = 73_700_885
 # 16 per-layer Smolgen slots, one shared (gen_sz=256) -> (64*64) generator.
 _TIED_GEN_WEIGHT_NUMEL = 1_048_576
@@ -105,7 +105,7 @@ def test_state_dict_sum_double_counts_the_tied_smolgen(production_model: nn.Modu
     naive = sum(int(v.numel()) for v in sd.values())
     assert _count_distinct(sd) == _PRODUCTION_PARAMS
     assert naive - _PRODUCTION_PARAMS == (_TIED_GEN_WEIGHT_REFS - 1) * _TIED_GEN_WEIGHT_NUMEL
-    assert naive == 78_812_768, "the wrong number CLAUDE.md warns about"
+    assert naive == 77_173_088, "the wrong number CLAUDE.md warns about"
 
 
 def test_dedupe_helper_can_actually_see_tying() -> None:
@@ -126,8 +126,8 @@ def test_dedupe_helper_can_actually_see_tying() -> None:
 @pytest.mark.parametrize(
     ("doc", "claims"),
     [
-        ("CLAUDE.md", ("63,084,128", "63.08M", "73,700,885")),
-        ("tcec.md", ("63,084,128",)),
+        ("CLAUDE.md", ("61,444,448", "61.44M", "73,700,885")),
+        ("tcec.md", ("61,444,448",)),
     ],
 )
 def test_docs_quote_the_measured_count(doc: str, claims: tuple[str, ...]) -> None:
@@ -199,13 +199,13 @@ def test_claude_md_syzygy_pair_matches_the_production_config() -> None:
 
 
 def test_claude_md_smolgen_share_matches_the_model(production_model: nn.Module) -> None:
-    """CLAUDE.md's '26.7M of 63.08M (42.3%)' is a live claim, so measure it."""
+    """CLAUDE.md's '26.7M of 61.44M (43.5%)' is a live claim, so measure it."""
     smolgen = sum(
         p.numel() for n, p in production_model.named_parameters()
         if n.startswith("layer_smolgens.")
     )
     total = _count_distinct(production_model)
     assert f"{smolgen / 1e6:.1f}M" == "26.7M"
-    assert f"{100.0 * smolgen / total:.1f}%" == "42.3%"
+    assert f"{100.0 * smolgen / total:.1f}%" == "43.5%"
     text = (_REPO / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "`layer_smolgens` **26.7M of 63.08M (42.3%)**" in text
+    assert "`layer_smolgens` **26.7M of 61.44M (43.5%)**" in text

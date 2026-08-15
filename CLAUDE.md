@@ -42,16 +42,16 @@ see `docs/operations.md` for that and for salvage, blind-spot seeding, and lint 
 ## Configs
 
 - `configs/pbt2_small.yaml` — **production**, and the only config active training uses.
-  512-dim × 16-layer × 16-head, **63.08M trainable params** (63,084,128, counted
-  2026-07-26 by unique storage on `checkpoint_000042`). **An earlier revision of
+  512-dim × 16-layer × 16-head, **61.44M trainable params** (61,444,448, counted
+  2026-08-15 by unique storage on the post-bt4heads production config). **An earlier revision of
   this line "corrected" 63M up to 78.8M. That was the error, not the fix.**
-  78.81M is the sum of `numel()` over the 496 `state_dict` entries, which
+  77.17M is the sum of `numel()` over the `state_dict` entries, which
   double-counts weight tying: the 16 `layer_smolgens.N.gen_weight.weight` keys
   are **one shared tensor** (16 keys, 1 distinct storage, 1,048,576 params), so
   15 × 1,048,576 = 15,728,640 is counted 15 times too many — exactly the gap.
   Count unique `v.untyped_storage().data_ptr()`, never `sum(v.numel())`.
   Per-layer Smolgen still dominates, but by less than advertised:
-  `layer_smolgens` **26.7M of 63.08M (42.3%)**, not 42.4M of 78.8M (54%).
+  `layer_smolgens` **26.7M of 61.44M (43.5%)**, not 42.4M of 78.8M (54%).
   `ffn_mult` is per-layer and non-uniform (1.5 rising to ~1.9 in the upper
   blocks), so the count is not reproducible by assuming a flat multiplier.
   Related: only 28.6% of trainable params are in the Aurora matrix group
@@ -182,6 +182,11 @@ training compute, and one that loses the direct audit is killed without training
 - `scripts/probe_policy_targets.py`, `scripts/retarget_retrain.py`,
   `scripts/convert_shards_v2_threats.py` — policy/soft-policy divergence, offline
   SF-target retuning, offline v1→v2_threats shard conversion.
+- **`docs/bt4.md` is the reference-architecture record for BT4**, our comparison net on the
+  audit set — parsed from the shipped `.pb.gz`, not from `lczero-training` (that checkout is
+  stale and builds a *single* value head; BT4 ships three). Read it before claiming "lc0 does
+  X" about heads, sharing, or widths. ⚑ It is a WEIGHTS record: loss weights and training
+  targets are not in a `.pb.gz` and are NOT established by it.
 - **Production Syzygy is the colon-separated pair**
   `/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6` —
   `configs/pbt2_small.yaml`'s `syzygy_path`, and **both halves are local**. The directory
