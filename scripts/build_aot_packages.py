@@ -424,7 +424,7 @@ def tail_row_tv(p: np.ndarray, q: np.ndarray, *, quantile: float = 0.99) -> floa
 
 
 def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarray:
-    """``ref_logits`` nudged by ±1 bf16 ULP — the FLOOR that never degenerates.
+    """``ref_logits`` nudged by ±1 bf16 ULP **of the raw value** — the FLOOR.
 
     ⚑⚑ WHY THIS EXISTS, and why the batch-shape control is not sufficient on its
     own. :func:`eager_batch_shape_control` measures the irreducible difference
@@ -442,80 +442,90 @@ def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarra
     (verified: exact array equality, TV 0.0).
 
     So this is the smallest difference two bf16 pipelines could exhibit at all:
-    each logit moved by one unit in the last place (bf16 keeps 8 mantissa bits,
-    so the relative spacing is 2^-8). It is positive for any non-constant
-    logits, it is backend-independent, and — the property the whole gate turns
-    on — it **tracks sharpness**, because a fixed relative logit perturbation
-    produces a larger probability movement as the softmax concentrates.
+    each live logit moved by one unit in the last place of ITS OWN magnitude,
 
-    It also corroborates the empirical control rather than replacing it. At the
-    net's realized sharpness (top-1 ~0.56-0.59) this floor reads TV **0.0202**
-    against the CUDA batch-shape control's **0.0176** at bucket 1190 — two
-    independent derivations of "irreducible bf16 disagreement", agreeing to
-    15%. The gate uses the LARGER of the two, since the true floor is at least
-    each of them.
+        delta_i = sign_i * 2^(floor(log2|z_i|) - 7)
+
+    because bf16 carries 8 significand bits (1 implicit + 7 stored) and its
+    spacing at ``|z|`` is therefore ``2^(floor(log2|z|) - 7)``. It is positive
+    for any non-constant logits, it is backend-independent, and — the property
+    the whole gate turns on — it **tracks sharpness**, because a fixed logit
+    perturbation produces a larger probability movement as the softmax
+    concentrates.
+
+    ⚑⚑ THE PERTURBATION IS SHIFT-**COVARIANT**, NOT SHIFT-INVARIANT, AND THAT IS
+    THE CORRECT PHYSICS. An earlier revision centred each row on its live mean
+    first and then applied a *relative* ``2^-8``, making the nudge
+    ``|z - rowmean| * 2^-8``. The argument for it was that the raw logits'
+    "arbitrary common offset" would otherwise scale the floor, since adding a
+    constant to already-computed logits leaves the softmax and the measured
+    AOT-vs-eager TV unchanged. **That premise is mis-derived.** The offset is
+    not arbitrary — it is what the net emits — and a net whose head bias
+    actually moved emits larger-magnitude logits whose bf16 rounding error
+    genuinely IS larger. Rounding acts on the raw value, so the floor must move
+    with it: shift-COVARIANCE. Only a *post-hoc* constant added to a fixed
+    logit array (which no bf16 pipeline ever performs) leaves the error alone.
+
+    The centred form was not merely inelegant, it was **head-dependent by up to
+    22x**, because the two production heads have very different offset/spread
+    ratios. Measured 2026-08-15 on the real ``ChessNet`` (bt4heads iter100),
+    per-head row mean / within-row spread:
+
+        head    row mean  spread   centred floor (mean/tail)  raw-ULP floor      ratio
+        policy   -5.98     3.20      1.27e-2 / 1.95e-2        3.66e-3 / 6.58e-3   0.3x
+        wdl      -8.60     1.00      5.76e-4 / 1.27e-3        6.99e-3 / 2.86e-2   12.1x/22.6x
+
+    Consequence, measured: a package whose WDL differs from eager by EXACTLY one
+    bf16 ULP — the best a package can physically be — read ``wdl_mean=x12.25``,
+    ``wdl_rows_over=26/64``, **FAIL**. Whole-network corroboration (jitter every
+    weight by ±1 bf16 ULP, raw TV pol 2.91e-2 / wdl 6.14e-3) read ``pol_mean``
+    2.44 but ``wdl_mean`` 13.21 — the SAME physical perturbation reading 5.4x
+    differently on the two heads against one shared bound.
+
+    ⚑ Sentinels stay UNPERTURBED. The production policy array is 4672 wide but
+    the net emits 1858 real logits; ``_policy_output_full`` fills the other 2814
+    slots (60% of the row) with a -1e9 sentinel that softmax sends to exactly 0.
+    They must keep exactly zero mass, and an absolute ULP of -1e9 is ~3.9e6,
+    which would move them by more than the entire live range. The ``live`` mask
+    also protects the floor from the mask width: widening a row with sentinels
+    cannot change it at all, which is the padding-invariance property the
+    sentinel-mass defect (floor inflated 51x, every policy arm arithmetically
+    unable to fire) violated.
 
     ⚑ WHAT IS AND IS NOT BANKED. The CPU-derivable half of every claim above is
     re-measured on each CI run by ``tests/test_aot_verify_gate.py`` — the
-    round-trip no-op, non-degeneracy, sharpness tracking, and the 0.0202 value
-    itself. The CUDA numbers (0.0176 control and 0.01737 AOT-vs-eager at bucket
-    1190) are single-run readings on hardware CI does not have; they are stated
-    as provenance, not as a calibration. ``--tv-ratio-max``'s default is now
-    2.0, and it is no longer provisional in the way an earlier revision of this
-    docstring said: the healthy distribution WAS banked on 2026-08-15, 96
-    readings per arm across eight bucket sizes on production-shaped arrays (see
-    the calibration block above ``_ROW_EXCEED_K``). What remains un-banked is
-    the CUDA half — those 96 readings are synthetic-logit, so they calibrate the
-    STATISTICS, not the hardware. A previous revision also quoted "2.31 (July
-    packages on August weights, stale)" as support for 1.5. That number is
-    withdrawn from the justification: it was never banked, and it argues against
-    itself — 2.31 > 1.5 means the new gate FAILS the very packages the rewrite
-    was meant to stop condemning, which would relabel the verdict rather than
-    correct it.
+    round-trip no-op, non-degeneracy, sharpness tracking, padding invariance,
+    shift covariance and the per-head magnitudes. The CUDA numbers (0.0176
+    control and 0.01737 AOT-vs-eager at bucket 1190) are single-run readings on
+    hardware CI does not have, and they were taken against the CENTRED floor;
+    they are stated as provenance, not as a calibration, and **the gate has
+    still never been run on CUDA against a real AOT/eager discrepancy.** A
+    previous revision also quoted "2.31 (July packages on August weights,
+    stale)" as support for 1.5. That number is withdrawn from the
+    justification: it was never banked, and it argues against itself — 2.31 >
+    1.5 means the new gate FAILS the very packages the rewrite was meant to
+    stop condemning, which would relabel the verdict rather than correct it.
     """
     rng = np.random.default_rng(int(seed))
-    step = np.float32(2.0) ** -8  # bf16: 1 implicit + 7 explicit mantissa bits
-    # ⚑ CENTER FIRST. A relative perturbation of the RAW logits depends on their
-    # arbitrary common offset: adding a constant to every logit leaves the
-    # softmax — and the measured AOT-vs-eager TV — completely unchanged, but
-    # scales this floor by ~offset/256. A head bias drifting in that common-mode
-    # direction would then widen the denominator and let the same package
-    # discrepancy start passing. That is the WEIGHT-DEPENDENT VERDICT this gate
-    # exists to eliminate, reintroduced through the back door.
-    # ⚑ Centered by the row MEAN, not the row max. Both are shift-invariant,
-    # but max-centering pins the top logit at exactly 0, so the perturbation of
-    # the single entry that dominates the softmax is exactly 0 too — measured,
-    # that shrinks the floor 12x (0.0205 -> 0.00173) and would make the gate
-    # spuriously strict. Mean-centering privileges no entry and preserves the
-    # magnitude: 0.0205 centered vs 0.0194 raw at zero offset, and flat at
-    # 0.0203/0.0204 for offsets of +10 and +100 where the raw form inflates to
-    # 0.031 and 0.133.
-    # ⚑⚑ AND CENTER ON THE LIVE ENTRIES ONLY. The production policy array is
-    # 4672 wide but the net emits 1858 real logits; `_policy_output_full` fills
-    # the other 2814 slots (60% of the row!) with a -1e9 sentinel that softmax
-    # sends to exactly 0. A plain row mean is dominated by that sentinel mass —
-    # it lands near -6.0e8, so every REAL logit is centered to ~+6.0e8 and a
-    # 2^-8 relative nudge moves it by ~2.3e6, obliterating the O(1) logit
-    # spread. Measured 2026-08-15: the floor reads 0.0189 on the native 1858
-    # array and 0.9719 on the padded 4672 one, 51x too large. Since a row TV is
-    # bounded by 1, that CAPPED every policy arm below its own threshold and the
-    # gate became arithmetically incapable of failing on the production shape —
-    # a completely wrong policy passed with pol_mean x1.17, argmax 0/256.
-    # Mean-centering is shift-invariant but NOT outlier-robust, and the padding
-    # is 60% outliers. So: restrict both the center and the perturbation to the
-    # entries that can affect the softmax at all, and leave the sentinels alone
-    # (perturbing them is meaningless — exp(-1e9) is 0 either way).
     z = ref_logits.astype(np.float32)
     # e^-80 ~ 1.8e-35 of the top entry's mass: below float32 resolution, so an
     # entry this far down is inert in the softmax by construction, not by
     # threshold-picking. Guards the all-sentinel row (live is then everything).
     live = z > (np.max(z, axis=-1, keepdims=True) - np.float32(80.0))
-    n_live = np.maximum(np.sum(live, axis=-1, keepdims=True), 1)
-    mean_live = np.sum(np.where(live, z, np.float32(0.0)), axis=-1,
-                       keepdims=True) / n_live
-    z = z - mean_live  # shift-invariant: a common offset moves max and mean alike
+    absz = np.abs(z)
+    # ``frexp`` gives |z| = m * 2**e with m in [0.5, 1), so floor(log2|z|) = e-1
+    # and one bf16 ULP is 2^(e-1-7). Exact by construction — no log2 rounding
+    # can land an entry on the wrong side of a binade boundary.
+    _, binade = np.frexp(absz)
+    ulp = np.ldexp(np.float32(1.0), binade - 8).astype(np.float32)
     sign = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=z.shape)
-    return np.where(live, z * (np.float32(1.0) + sign * step), z)
+    # ⚑ z == 0 is left UNPERTURBED: log2(0) is undefined, and the honest bf16
+    # step there is the smallest subnormal (~9.2e-41), whose effect on a softmax
+    # is not representable — exp(9.2e-41) is exactly 1.0 in float32, so adding
+    # it would be a no-op anyway. Leaving it alone says so explicitly instead of
+    # relying on an underflow. It is also the only entry for which `frexp`
+    # returns a meaningless exponent.
+    return np.where(live & (absz > np.float32(0.0)), z + sign * ulp, z)
 
 
 # ⚑⚑ NULL CALIBRATION — measured, not chosen.
@@ -549,12 +559,44 @@ def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarra
 #
 # What the max arms were FOR — corruption confined to fewer than 1% of rows,
 # which a mean or a p99 dilutes away — is now covered properly, and better, by
-# `_ROW_EXCEED_K` below. So the surviving three arms are all well-concentrated
-# estimators reading 1.00 +/- 0.02 when healthy, with worst observed 1.46
-# against a default bound of 2.0. No normalization table is needed and none is
-# kept: the table only ever existed to prop up the estimators now removed.
+# `_ROW_EXCEED_K` below. No normalization table is needed and none is kept: the
+# table only ever existed to prop up the estimators now removed.
 #
-# tests/test_aot_verify_gate.py re-derives every number above on each CI run.
+# ⚑⚑ THE TABLE ABOVE WAS MEASURED WITH A CIRCULAR NULL, so read the one below
+# instead. It built "healthy" as `bf16_ulp_perturbation(..., seed=other)` — the
+# DENOMINATOR'S OWN FUNCTION — so every arm reads ~1.0 whatever that function
+# computes, including when it computes something with no physical meaning. It
+# also drew zero-mean logits only, the one regime where the centred and raw
+# forms coincide. It could not have detected the F1 defect and did not.
+#
+# ⚑ RE-MEASURED 2026-08-15 with a healthy model written INDEPENDENTLY of the
+# floor (a ±1 raw-bf16-ULP jitter derived from scratch in the test file), on
+# PRODUCTION-SHAPED arrays at the PRODUCTION REGIME — policy 4672 wide with 1858
+# live, row mean -6.08 spread 3.03; WDL 3 wide, row mean -8.46 spread 0.93:
+#
+#     bucket  trials  pol_mean med/worst  pol_tail med/worst  wdl_mean med/worst
+#         16     200   1.00 / 1.15        1.01 / 1.52         0.99 / 2.24
+#         32     200   1.00 / 1.06        1.00 / 1.29         1.03 / 1.53
+#         64      96   1.00 / 1.06        1.00 / 1.22         0.99 / 1.33
+#        128      96   1.00 / 1.04        1.01 / 1.13         1.01 / 1.21
+#        256      48   1.00 / 1.02        1.00 / 1.09         0.99 / 1.14
+#        512      48   1.00 / 1.01        0.99 / 1.08         1.00 / 1.07
+#       1024      24   1.00 / 1.01        0.99 / 1.04         1.00 / 1.03
+#       2048      12   1.00 / 1.00        1.00 / 1.03         0.99 / 1.03
+#       4096      12   1.00 / 1.00        1.00 / 1.02         1.00 / 1.03
+#
+# `pol_rows_over` and `wdl_rows_over` were 0 in all 568 trials.
+#
+# ⚑ THE MEDIANS ARE 1.00 EVERYWHERE, THE TAILS ARE NOT, and the residual is
+# entirely `wdl_mean` at the smallest buckets: a mean over THREE columns of 16
+# rows is a noisy estimator, and at bucket 16 it breaches the 2.0 default in
+# 2 of 200 healthy trials (worst 2.24). Bucket 16 is the smallest on the
+# DEFAULT ladder, so a verify runs 2 trials there and false-fails ~2% of the
+# time. That is stated, not tuned away: raising the bound to absorb it would
+# weaken the arm on every other bucket, where it reads 1.00 +/- 0.03.
+#
+# tests/test_aot_verify_gate.py re-derives the null on each CI run, in both
+# regimes and under two independent healthy models.
 
 # A row whose TV exceeds this multiple of the floor's OWN p99 is not bf16 noise.
 # Measured over 50 healthy runs per head at each of buckets {8, 32, 128, 512,
@@ -573,10 +615,60 @@ _ROW_EXCEED_K = 6.0
 # produce, so a wider gap means one estimator is broken. See `_floor`.
 _FLOOR_DIVERGENCE_MAX = 5.0
 
-# Below this the empirical floor estimate is not a measurement. See `_floor`:
-# a real bf16 floor here is ~0.018, an exactly-degenerate control is 0.0, and a
-# control that only re-associates a few reductions lands at ~1e-8.
+# Below this the SHAPE CONTROL is not a measurement. See `_floor`.
+#
+# ⚑ RE-MEASURED 2026-08-15 after the raw-ULP fix, on the real production net
+# (bt4heads iter100, CPU bf16, 80 resamples per bucket). The honest ULP floor
+# MEANS are now:
+#
+#     bucket    policy mean          wdl mean
+#          8    3.81e-3 .. 8.02e-3   2.24e-3 .. 2.14e-2
+#         16    4.32e-3 .. 6.98e-3   1.91e-3 .. 1.88e-2
+#         64    5.03e-3 .. 6.34e-3   7.59e-3 .. 1.42e-2
+#
+# so 1e-4 sits 19x below the smallest reading either head produces at or above
+# the smallest DEFAULT bucket (16), and ~1000x above the numerical case it has
+# to catch (a control that only re-associates a few reductions reads ~1e-7).
+#
+# ⚑ THE OLD JUSTIFICATION WAS A POLICY-HEAD NUMBER APPLIED TO BOTH HEADS. It
+# claimed "~200x below the real floor and ~5000x above the noise case" against
+# a real floor of 0.018 — which was the CENTRED policy floor, inflated by the
+# defect fixed in `bf16_ulp_perturbation`. On the WDL head the centred floor
+# was 4.22e-4 .. 6.34e-4, i.e. only ~4x above this constant, and 7.8% of
+# individual real WDL rows fell BELOW it. Fixing the physics moved the WDL
+# floor up ~20x, so the constant is now clear on BOTH heads rather than on one.
+#
+# ⚑ AND THE ESCAPE IS ONE-SIDED. It applies to the SHAPE CONTROL only, because
+# that is the estimator known to degenerate (bitwise identical on CPU). When it
+# was two-sided it fired whenever EITHER estimate was small, so a small ULP
+# estimate retired the cross-check and an inflated control then became the
+# floor unchallenged — demonstrated at production shapes: ULP wdl floor 5.43e-5
+# plus an inflated control made a COMPLETELY WRONG AOT wdl read
+# `ok=True wdl_mean=x1.00 wdl_rows_over=0`, where a healthy control on the same
+# inputs read `ok=False wdl_mean=x512.86`.
 _FLOOR_DEGENERATE_TV = 1e-4
+
+# ⚑ AN ABSOLUTE PLAUSIBILITY BOUND ON THE FLOOR ITSELF, which no ratio between
+# the two estimates can supply: if BOTH are inflated the same way, the
+# cross-check sees perfect agreement. A row TV of this size is not bf16 noise —
+# it is most of the distance to "the two distributions are disjoint" (row TV is
+# bounded by 1).
+#
+# Measured 2026-08-15 on the real net, worst floor over 80 resamples at each of
+# buckets {1, 2, 8, 16, 64, 128}: policy tail 1.89e-2, wdl tail 6.17e-2. The
+# original sentinel-mass defect read 0.9719. 0.25 is the geometric midpoint of
+# those (sqrt(6.17e-2 * 0.9719) = 0.245): 4.1x above anything the healthy net
+# produces, 3.9x below the defect it has to catch.
+#
+# It is also bounded analytically, not just empirically. One bf16 ULP moves a
+# logit by at most |z| * 2^-7, so the largest logit GAP change a row can see is
+# 2 * max|z| / 128, and a softmax's TV under a gap change d is at most d/4.
+# With the net's measured max|z_live| of 20.1 that caps the floor at ~0.079;
+# reaching 0.25 would need max|z_live| ~ 64, a 3x growth in logit magnitude
+# which is itself a red flag. ⚑ That means this bound alone would have caught
+# the sentinel defect (0.97) WITHOUT the cross-check — which matters because
+# the cross-check is unavailable in two reachable regimes (see `_floor`).
+_FLOOR_IMPLAUSIBLE_TV = 0.25
 
 
 def _compare_bucket(
@@ -633,8 +725,21 @@ def _compare_bucket(
       same rows at a different batch shape. ⚑ **This one can be exactly zero**
       (CPU: bitwise identical from n=2 to n=128), which is why it cannot be the
       sole denominator.
-    * :func:`bf16_ulp_perturbation` — analytic, every logit moved one bf16 ULP.
-      Never degenerate, backend-independent, and tracks sharpness.
+    * :func:`bf16_ulp_perturbation` — analytic, every live logit moved one bf16
+      ULP **of its own raw magnitude**. Backend-independent, and tracks
+      sharpness. ⚑ It is not "never degenerate": a WDL row whose three logits
+      share a binade has three equal ULPs, so the 2-in-8 sign draw that moves
+      them all the same way is a pure common shift the softmax cannot see. On
+      the real net that is 12-17% of rows at any one floor seed, which is
+      harmless at a batch statistic and NOT harmless at bucket 1 — see
+      ``_ratio``.
+
+    ⚑⚑ THE CROSS-CHECK BETWEEN THE TWO IS UNAVAILABLE IN TWO REACHABLE REGIMES
+    — on CPU (the shape control is bitwise identical, so the degeneracy escape
+    fires and the check never runs) and at ``ctl is None`` (there is no second
+    estimate at all). Both read ``floor=...ulp-only...`` in the detail line.
+    That is why the floor also carries an ABSOLUTE plausibility bound
+    (``_FLOOR_IMPLAUSIBLE_TV``), which needs no second estimate.
 
     ⚑ There is NO arbitrary epsilon floor. If BOTH estimates are zero the
     reference is degenerate (constant logits), and then the only defensible
@@ -653,8 +758,8 @@ def _compare_bucket(
     aot_wp, ref_wp = _softmax(aot_wdl), _softmax(ref_wdl)
 
     def _floor(ref_logits: np.ndarray, ref_p: np.ndarray,
-               ctl: np.ndarray | None) -> tuple[float, float, str]:
-        """(mean, tail, note) of the irreducible floor: max over both estimates.
+               ctl: np.ndarray | None) -> tuple[float, float, str, str]:
+        """(mean, tail, note, source) of the irreducible floor.
 
         Each statistic is computed on the floor with the SAME functional and the
         SAME row count as its numerator, so every arm reads ~1 when healthy.
@@ -662,63 +767,123 @@ def _compare_bucket(
         ⚑ The two estimates CROSS-CHECK each other, and the check is reported.
         They are independent derivations of "irreducible bf16 disagreement" and
         measured on real hardware they agree to 15% (0.0202 analytic vs 0.0176
-        empirical at bucket 1190). A large divergence therefore means one of
-        them is broken, and a BROKEN FLOOR IS THE ONE FAILURE THIS GATE CANNOT
-        SELF-DETECT: it silently rescales every arm, in the passing direction if
-        the floor is too big. This is not hypothetical — the sentinel-mass
-        defect fixed in `bf16_ulp_perturbation` on 2026-08-15 inflated the
-        policy floor 51x and made all three policy arms arithmetically incapable
-        of failing. It would have shown up here as a 45x divergence.
+        empirical at bucket 1190, both pre-fix readings). A large divergence
+        therefore means one of them is broken, and a BROKEN FLOOR IS THE ONE
+        FAILURE THIS GATE CANNOT SELF-DETECT: it silently rescales every arm, in
+        the passing direction if the floor is too big. This is not hypothetical
+        — the sentinel-mass defect fixed in `bf16_ulp_perturbation` on
+        2026-08-15 inflated the policy floor 51x and made all three policy arms
+        arithmetically incapable of failing. It would have shown up here as a
+        45x divergence.
+
+        ⚑⚑ AND THE CROSS-CHECK IS UNAVAILABLE IN TWO REACHABLE REGIMES, so it
+        cannot be the only guard against a broken floor:
+
+        * **On CPU there is no cross-check.** `eager_batch_shape_control` is
+          BITWISE identical to the full batch at every size from n=2 to n=128 on
+          CPU, so its TV is exactly 0, the degeneracy escape fires, and the
+          comparison never runs. Every CPU verify therefore runs `ulp-only`.
+        * **At `ctl is None` there is no second estimate at all** — the batch is
+          too small to re-chunk (bucket 1), or the control raised. Same outcome,
+          different reason, and the detail line distinguishes them.
+
+        That is why `_FLOOR_IMPLAUSIBLE_TV` exists: an ABSOLUTE bound on the
+        floor, which needs no second estimate and would have caught the
+        sentinel-mass defect (0.97) on its own.
+
+        ⚑ THE DEGENERACY ESCAPE IS ONE-SIDED — it tests the SHAPE CONTROL, never
+        the ULP estimate. See `_FLOOR_DEGENERATE_TV` for the measurement, and
+        the F3 demonstration of what the two-sided version let through.
+
+        ⚑ AND IT RETURNS THE ULP ESTIMATES ALONE, not `max(ulp, ctl)`. An
+        earlier revision's comment said it fell back "to the ULP floor alone —
+        the same thing the `ctl is None` path does" while the code still took
+        the max, so a control declared a NON-MEASUREMENT was still allowed to
+        WIDEN the floor whenever it was the larger of the two. That is exactly
+        F3's mechanism, and it was invisible because the detail line still said
+        `floor=shape+ulp`. The source label now says `ulp-only(ctl-degenerate)`.
         """
         ulp_p = _softmax(bf16_ulp_perturbation(ref_logits, seed=floor_seed))
         u_mean, u_tail = mean_row_tv(ulp_p, ref_p), tail_row_tv(ulp_p, ref_p)
-        if ctl is None:
-            return u_mean, u_tail, ""
-        ctl_p = _softmax(ctl)
-        c_mean, c_tail = mean_row_tv(ctl_p, ref_p), tail_row_tv(ctl_p, ref_p)
         note = ""
-        hi, lo = max(u_mean, c_mean), min(u_mean, c_mean)
-        # ⚑ DEGENERACY IS A RANGE, NOT AN EXACT ZERO — and an earlier revision
-        # of this guard tested `lo > 0.0`, which is the same "exact equality
-        # where a band was meant" mistake the gate itself was built to stop.
-        # `eager_batch_shape_control` is BITWISE identical to the full batch on
-        # some backends (TV exactly 0), and that case was handled. But a control
-        # that merely re-associates a couple of reductions gives a TV like
-        # 1.9e-8 — mathematically the same softmax, numerically nonzero — and
-        # `hi/lo` then reads ~60000 and FAILS A HEALTHY PACKAGE. That is the
-        # original defect (a gate that rejects good packages) reintroduced by
-        # its own safety check.
-        #
-        # The ratio CANNOT separate the two dangerous-vs-harmless cases on its
-        # own: both the near-degenerate control and the sentinel-inflated ULP
-        # floor read `ulp >> shape`. What separates them is whether the SMALLER
-        # estimate is a plausible bf16 floor at all. A real one is ~0.018 here;
-        # 1e-4 sits ~200x below that and ~5000x above the numerical-noise case,
-        # so it splits them with orders of magnitude to spare and is not a tuned
-        # constant. Below it the control carries no information, so we fall back
-        # to the ULP floor alone — the same thing the `ctl is None` path does —
-        # rather than treating a non-measurement as a disagreement.
-        if lo > _FLOOR_DEGENERATE_TV and hi / lo > _FLOOR_DIVERGENCE_MAX:
-            note = (f" ⚑FLOOR-DIVERGENCE ulp={u_mean:.5f} shape={c_mean:.5f} "
-                    f"(x{hi / lo:.1f} > {_FLOOR_DIVERGENCE_MAX:g})")
-        return max(u_mean, c_mean), max(u_tail, c_tail), note
+        if ctl is None:
+            f_mean, f_tail, src = u_mean, u_tail, "ulp-only"
+        else:
+            ctl_p = _softmax(ctl)
+            c_mean, c_tail = mean_row_tv(ctl_p, ref_p), tail_row_tv(ctl_p, ref_p)
+            # ⚑ DEGENERACY IS A RANGE, NOT AN EXACT ZERO — an earlier revision
+            # tested `> 0.0`, the same "exact equality where a band was meant"
+            # mistake the gate itself was built to stop. A control that merely
+            # re-associates a couple of reductions gives a TV like 1.9e-8 —
+            # mathematically the same softmax, numerically nonzero — and `hi/lo`
+            # then reads ~60000 and FAILS A HEALTHY PACKAGE.
+            if min(c_mean, c_tail) <= _FLOOR_DEGENERATE_TV:
+                f_mean, f_tail, src = u_mean, u_tail, "ulp-only(ctl-degenerate)"
+            else:
+                # ⚑ BOTH STATISTICS ARE CROSS-CHECKED, not just the mean. The
+                # TAIL sets the `_ROW_EXCEED_K` threshold, so a floor bug that
+                # inflated only the tail would silently disable BOTH exceedance
+                # arms — the gate's only power against single-row damage — while
+                # a mean-only cross-check reported everything in order.
+                for stat, u_stat, c_stat in (
+                    ("mean", u_mean, c_mean), ("tail", u_tail, c_tail),
+                ):
+                    hi, lo = max(u_stat, c_stat), min(u_stat, c_stat)
+                    if hi / lo > _FLOOR_DIVERGENCE_MAX:
+                        note += (
+                            f" ⚑FLOOR-DIVERGENCE[{stat}] ulp={u_stat:.5f} "
+                            f"shape={c_stat:.5f} "
+                            f"(x{hi / lo:.1f} > {_FLOOR_DIVERGENCE_MAX:g})"
+                        )
+                f_mean, f_tail = max(u_mean, c_mean), max(u_tail, c_tail)
+                src = "shape+ulp"
+        for stat, value in (("mean", f_mean), ("tail", f_tail)):
+            if value > _FLOOR_IMPLAUSIBLE_TV:
+                note += (
+                    f" ⚑FLOOR-IMPLAUSIBLE[{stat}]={value:.4f} "
+                    f"(> {_FLOOR_IMPLAUSIBLE_TV:g}; not bf16 noise)"
+                )
+        return f_mean, f_tail, note, src
 
     def _ratio(num: float, den: float) -> float:
         """No epsilon. A zero floor means the reference carries no scale, so the
-        only honest verdict is exact equality — inf if it is not met."""
+        only honest verdict is exact equality — inf if it is not met.
+
+        ⚑ ``inf``, NOT 0.0, and that is load-bearing: at a zero floor the
+        exceedance arms also threshold at ``k * 0`` and would catch a nonzero
+        numerator, so a mutant returning 0.0 here survives every verdict-only
+        test. `tests/test_aot_verify_gate.py` asserts the arm VALUE, not just
+        the verdict.
+
+        ⚑ A ZERO FLOOR IS REACHABLE ON REAL WDL OUTPUT AT BUCKET 1. Measured on
+        the production net: 12-17% of real WDL rows get a zero ULP floor at any
+        one seed, because their three logits share a bf16 binade (equal ULPs)
+        and the 2-in-8 draw that gives all three the same sign is a common shift
+        the softmax cannot see. A real row of ``[-15.5625, -15.5625, -15.5625]``
+        reads floor 0 at floor seeds 0 and 4 of 0..5 and ~2.8e-2 at the other
+        four. At bucket >= 2 the batch mean/tail absorb it; at bucket 1 the
+        floor IS that row, so ``wdl_mean`` reads ``inf`` and the bucket fails on
+        a package that is one ULP off. Bucket 1 is not on the default ladder,
+        but ``--buckets 1 --allow-incomplete`` reaches it and
+        ``data/aot_models_512_bt4heads/chess_b1.pt2`` exists. Curing it means
+        changing the floor from a single sign draw to something that cannot be
+        a null draw, which re-banks every calibration in this file; it is filed
+        rather than done here, and pinned by a test so it cannot drift silently.
+        """
         if den > 0.0:
             return num / den
         return 0.0 if num == 0.0 else float("inf")
 
     ctl_p = ctl_pol if (ctl_pol is not None and ctl_wdl is not None) else None
     ctl_w = ctl_wdl if (ctl_pol is not None and ctl_wdl is not None) else None
-    fp_mean, fp_tail, fp_note = _floor(ref_pol, ref_pp, ctl_p)
-    fw_mean, fw_tail, fw_note = _floor(ref_wdl, ref_wp, ctl_w)
+    fp_mean, fp_tail, fp_note, fp_src = _floor(ref_pol, ref_pp, ctl_p)
+    fw_mean, fw_tail, fw_note, fw_src = _floor(ref_wdl, ref_wp, ctl_w)
 
-    # Three well-concentrated ratio arms. Each reads 1.00 +/- 0.02 on a healthy
-    # package and 1.46 at the worst of 96 measured healthy readings; see the
-    # calibration block above for why the p99/max WDL arms are gone rather than
-    # normalized, and why no _ARM_NULL table is applied here any more.
+    # Three well-concentrated ratio arms. Each reads a MEDIAN of 1.00 on a
+    # healthy package at every bucket; the worst reading is bucket-dependent and
+    # is 2.24 at bucket 16 on `wdl_mean` — see the calibration block above for
+    # the full table, for why the p99/max WDL arms are gone rather than
+    # normalized, and for why no _ARM_NULL table is applied here any more.
     arms = {
         "pol_mean": _ratio(mean_row_tv(aot_pp, ref_pp), fp_mean),
         "pol_tail": _ratio(tail_row_tv(aot_pp, ref_pp), fp_tail),
@@ -753,9 +918,13 @@ def _compare_bucket(
     rows = int(ref_pol.shape[0])
     shown = " ".join(f"{k}=x{v:.2f}" for k, v in arms.items())
     shown += " " + " ".join(f"{k}={v}" for k, v in exceed.items())
-    src = "shape+ulp" if ctl_p is not None else "ulp-only"
+    # ⚑ The floor SOURCE is per head, because degeneracy is: on CPU the WDL
+    # control can be bitwise identical while the policy control is not. A single
+    # label averaged over both heads is the "accepted then silently ignored"
+    # shape — it would report `shape+ulp` for a bucket whose WDL arm was in fact
+    # gated on the ULP estimate alone.
     detail = (
-        f"{shown} floor={src} argmax={matches}/{rows} "
+        f"{shown} floor=pol:{fp_src} wdl:{fw_src} argmax={matches}/{rows} "
         f"(tv_ratio_max={tv_ratio_max:g} k={_ROW_EXCEED_K:g}){fp_note}{fw_note}"
     )
     return ok, detail, matches, rows
@@ -1065,13 +1234,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="Max TV(aot,eager) / TV(floor,eager) on each of the three ratio "
-             "arms (pol_mean, pol_tail, wdl_mean). All three read 1.00 +/- 0.02 "
-             "when healthy; worst of 96 measured healthy readings across 8 "
-             "bucket sizes is 1.46, and unfilled constants read >10. Relative "
-             "by construction, so it does not expire when the policy sharpens "
-             "the way the old absolute --tol did. Does NOT loosen the "
+             "arms (pol_mean, pol_tail, wdl_mean). Unfilled constants read >10. "
+             "Relative by construction, so it does not expire when the policy "
+             "sharpens the way the old absolute --tol did. Does NOT loosen the "
              "row-exceedance arms, which are gated at zero in units of the "
-             "package's own floor.",
+             "package's own floor. "
+             "MARGIN, re-measured 2026-08-15 at the production regime under an "
+             "independently written +/-1 bf16-ULP healthy model (568 trials): "
+             "the MEDIAN is 1.00 on every arm at every bucket, but the WORST "
+             "reading is bucket-dependent -- 2.24 at bucket 16, 1.53 at 32, "
+             "1.33 at 64, 1.21 at 128, and <=1.14 at 256 and above. Bucket 16 "
+             "is the SMALLEST ON THE DEFAULT LADDER and it breaches 2.0 in "
+             "2/200 healthy trials, all on wdl_mean (a mean over three columns "
+             "of sixteen rows). A verify runs 2 trials there, so expect a ~2% "
+             "false-fail rate per run at the default. That is reported rather "
+             "than absorbed: raising the bound would weaken the arm at every "
+             "other bucket, where it reads 1.00 +/- 0.03.",
     )
     p.add_argument(
         "--verify-n",

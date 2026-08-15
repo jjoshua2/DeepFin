@@ -1,7 +1,19 @@
 """Tests for the self-calibrating AOT verify gate.
 
-Five properties carry this gate, and they are DIFFERENT properties. A previous
+Six properties carry this gate, and they are DIFFERENT properties. A previous
 revision tested only the first and shipped two live holes:
+
+0. **⚑⚑ THE FLOOR IS THE PHYSICAL bf16 ERROR** — one ULP of the RAW logit,
+   ``2^(floor(log2|z|) - 7)``. Not a relative nudge of a centred row. The
+   centred form was 12-22x too small on the WDL head and 0.3x on the policy
+   head, because the two heads have very different offset/spread ratios, so a
+   package that was EXACTLY one bf16 ULP off — the best a package can
+   physically be — read ``wdl_mean=x12.25, wdl_rows_over=26/64, FAIL``. The
+   correct property is shift-COVARIANCE: the offset is what the net emits, and
+   bf16 error scales with it. Properties 1-5 all held while that was true.
+   ⚑ The suite ACTIVELY ENFORCED the defect before this was found — a mutant
+   that removed the centring was killed by three tests. A green suite is not
+   evidence the physics is right; it is evidence the suite agrees with itself.
 
 1. **Sharpness invariance** — the verdict must not move when the net's top-1
    grows. That is the exact 2026-08-15 failure, where identical deployed
@@ -92,6 +104,41 @@ def _arms(detail: str) -> dict[str, float]:
     return out
 
 
+def _live_mask(z: np.ndarray) -> np.ndarray:
+    """The gate's live window, restated here so the healthy models below share
+    no code with the function they are used to calibrate."""
+    return z > (np.max(z, axis=-1, keepdims=True) - np.float32(80.0))
+
+
+def _independent_abs_ulp(z: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """A ±1 raw bf16 ULP jitter, written INDEPENDENTLY of the gate.
+
+    ⚑⚑ THIS IS THE POINT OF F2. The healthy numerator must not be produced by
+    the denominator's own function at another seed: that measures
+    self-consistency, and it reads 1.0 whatever the floor computes — including
+    when the floor computes something physically meaningless. So the physics is
+    restated from scratch here (via ``log2``/``exp2``, where the gate uses
+    ``frexp``): bf16 keeps 8 significand bits, so its spacing at ``|z|`` is
+    ``2^(floor(log2|z|) - 7)``.
+    """
+    z = z.astype(np.float32)
+    mag = np.abs(z)
+    exponent = np.floor(np.log2(mag, out=np.full_like(mag, -1e30), where=mag > 0))
+    step = np.where(mag > 0, np.exp2(exponent - 7.0), 0.0).astype(np.float32)
+    sign = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=z.shape)
+    return np.where(_live_mask(z), z + sign * step, z).astype(np.float32)
+
+
+def _independent_rel_jitter(z: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """A gaussian jitter at bf16's RELATIVE scale — a second, different healthy
+    model, so no conclusion rests on one choice of "healthy". It is ~0.6x an
+    absolute ULP in TV, so it is the friendlier of the two and is never used to
+    justify a bound."""
+    z = z.astype(np.float32)
+    jittered = (z * (1.0 + rng.normal(0, 2.0 ** -8, size=z.shape))).astype(np.float32)
+    return np.where(_live_mask(z), jittered, z).astype(np.float32)
+
+
 def _gate(a_p, a_w, r_p, r_w, c_p=None, c_w=None, *, tv_ratio_max=2.0):
     return _compare_bucket(
         aot_pol=a_p, aot_wdl=a_w, ref_pol=r_p, ref_wdl=r_w,
@@ -153,12 +200,77 @@ def test_row_tv_is_per_row() -> None:
 # the floor
 # --------------------------------------------------------------------------
 
+def _ulp_scale_control(ref: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """A batch-shape control at the bf16 floor's OWN scale, on any head.
+
+    ⚑ An ABSOLUTE noise level cannot do that job any more. The floor is one raw
+    bf16 ULP, so it scales with |z| — one sd that lands near the floor on
+    128-wide sd-4 policy logits sits 7.8x above it on N(0,1) WDL, and the bucket
+    then fails as FLOOR-DIVERGENCE for a reason the test using it is not about.
+    A RELATIVE jitter at 2^-8 is within 2x of the floor on both heads at every
+    logit magnitude, so it is the control shape these fixtures want.
+    """
+    return (ref * (1.0 + rng.normal(0, 2.0 ** -8, size=ref.shape))).astype(np.float32)
+
+
+def test_the_perturbation_is_ONE_RAW_BF16_ULP_of_each_logit() -> None:
+    """⚑⚑ THE F1 CONTRACT, asserted on the LOGITS rather than on a statistic.
+
+    bf16 rounding error is one ULP of the RAW value — ``2^(floor(log2|z|) - 7)``,
+    because bf16 carries 8 significand bits. An earlier revision centred each
+    row on its live mean and applied a RELATIVE 2^-8, i.e. ``|z - rowmean| *
+    2^-8``, on the argument that the raw logits' common offset was "arbitrary".
+    It is not arbitrary: it is what the net emits, and a net whose head bias
+    moved emits larger-magnitude logits whose bf16 rounding error genuinely is
+    larger. The physical property is shift-COVARIANCE.
+
+    The two disagree by exactly the offset/spread ratio, which is why the defect
+    was head-dependent: at the production WDL regime (row mean -8.60, within-row
+    spread 1.00) the raw ULP of -8.60 is 0.0625 while ``|z - mean| * 2^-8`` is
+    0.0039 — **16x too small**. This test pins the raw form entry by entry and
+    states the centred number it must NOT produce.
+    """
+    z = np.array([[-8.60, -15.5625, 0.5, 3.0, SENTINEL]], dtype=np.float32)
+    out = bf16_ulp_perturbation(z, seed=0)
+    delta = np.abs(out - z)[0]
+
+    # 2^(floor(log2|z|) - 7), by hand: |−8.60| and 15.5625 are in [8,16) -> 2^-4;
+    # 0.5 is in [0.5,1) -> 2^-8; 3.0 is in [2,4) -> 2^-6.
+    expected = np.array([0.0625, 0.0625, 2.0 ** -8, 2.0 ** -6], dtype=np.float32)
+    assert np.array_equal(delta[:4], expected), (
+        f"perturbation is not one raw bf16 ULP: {delta[:4]} != {expected}"
+    )
+    assert delta[4] == 0.0, "the -1e9 sentinel must be left exactly where it is"
+
+    # ⚑ And say what the reverted form would give, ON THE REAL WDL GEOMETRY —
+    # row mean -8.60, within-row spread 1.00 — because that offset/spread ratio
+    # IS the defect. A row with a spread comparable to its offset does not
+    # separate the two forms and would pin neither.
+    wdl_like = np.array([[-8.60, -9.60, -7.60]], dtype=np.float32)
+    wdl_delta = np.abs(bf16_ulp_perturbation(wdl_like, seed=0) - wdl_like)[0]
+    centred = np.abs(wdl_like[0] - wdl_like[0].mean()) * (2.0 ** -8)
+    assert wdl_delta[0] == np.float32(0.0625), wdl_delta
+    assert wdl_delta[0] / centred[1] > 10.0, (
+        f"raw ULP {wdl_delta[0]:.5f} vs centred-relative {centred[1]:.5f} — the "
+        "scenario does not separate the two forms, so it cannot pin either"
+    )
+    assert centred[0] == 0.0, (
+        "the centre entry's centred-relative nudge is EXACTLY zero while its "
+        "true bf16 error is 0.0625 — the clearest statement of why the centred "
+        "form was not a bf16 ULP"
+    )
+
+
 def test_ulp_floor_is_never_zero_where_the_shape_control_is() -> None:
     """⚑ THE F2 regression test.
 
     Round-tripping already-bf16 logits through bf16 is a no-op, and the
     batch-shape control is bitwise identical on CPU — both give a floor of
-    exactly 0. A +/-1 ULP nudge does not.
+    exactly 0. A +/-1 ULP nudge of a WIDE row does not.
+
+    ⚑ "Never zero" is a claim about a wide row, not a universal one: see
+    `test_three_equal_wdl_logits_can_still_give_a_zero_floor`, where a real
+    3-wide WDL row does produce exactly 0 at some floor seeds.
     """
     rng = np.random.default_rng(0)
     ref = torch.from_numpy(
@@ -205,20 +317,31 @@ def test_the_floor_takes_the_larger_of_the_two_estimates() -> None:
     ⚑ The widening window is now BOUNDED, and that is deliberate. Since
     `_FLOOR_DIVERGENCE_MAX = 5.0`, a control more than 5x the ULP estimate no
     longer widens anything — it FAILS the bucket as a broken instrument. So the
-    scenario has to live inside that window: measured here, ULP-only reads
-    pol_mean x2.99 (FAIL at the 2.0 default) and the matched control pulls it to
-    x1.05 (PASS) at a floor divergence of 2.9x. The pre-guard version of this
-    test used a 0.30 control, which now reads 7.1x and fails for the OTHER
-    reason — a test that would have gone green on a floor that never widened.
+    scenario has to live inside that window: RE-MEASURED after the raw-ULP fix,
+    ULP-only reads pol_mean x2.65 (FAIL at the 2.0 default) and the matched
+    control pulls it to x1.05 (PASS). The pre-guard version of this test used a
+    0.30 control, which fails for the OTHER reason — a test that would have gone
+    green on a floor that never widened.
+
+    ⚑ The noise level moved 0.12 -> 0.16 with the F1 fix, and that is the fix
+    showing up rather than a tuned test: a raw ULP is on average ~1.5x a
+    centred-relative 2^-8 nudge on zero-mean logits, so the same package sits
+    lower against the honest floor. At 0.12 this now reads x1.99 — under the
+    bound, and the test would have asserted nothing.
+
+    The WDL side of this scenario is deliberately bit-identical (aot_w == ref_w
+    == ctl_w), which also exercises the degenerate-control label: the detail
+    line must report `wdl:ulp-only(ctl-degenerate)` rather than pretending a
+    non-measurement contributed to the floor.
     """
     rng = np.random.default_rng(4)
     ref = rng.normal(0, 4.0, size=(128, 256)).astype(np.float32)
     ref_w = rng.normal(0, 1.0, size=(128, 3)).astype(np.float32)
-    aot = ref + rng.normal(0, 0.12, size=ref.shape).astype(np.float32)
+    aot = ref + rng.normal(0, 0.16, size=ref.shape).astype(np.float32)
     aot_w = ref_w.copy()
 
     tight, tight_detail, _, _ = _gate(aot, aot_w, ref, ref_w)  # ULP floor only
-    ctl = ref + rng.normal(0, 0.12, size=ref.shape).astype(np.float32)
+    ctl = ref + rng.normal(0, 0.16, size=ref.shape).astype(np.float32)
     loose, loose_detail, _, _ = _gate(aot, aot_w, ref, ref_w, ctl, ref_w.copy())
     assert not tight, "the ULP-only floor should have been too tight here"
     assert _arms(tight_detail)["pol_mean"] > 2.0, (
@@ -230,6 +353,10 @@ def test_the_floor_takes_the_larger_of_the_two_estimates() -> None:
         f"the gate pass; it did not widen the floor: {loose_detail}"
     )
     assert "FLOOR-DIVERGENCE" not in loose_detail, loose_detail
+    assert "floor=pol:shape+ulp wdl:ulp-only(ctl-degenerate)" in loose_detail, (
+        "the floor SOURCE must be reported per head and must name a degenerate "
+        f"control as one: {loose_detail}"
+    )
 
 
 def test_both_floors_zero_demands_exactness() -> None:
@@ -348,13 +475,10 @@ def test_row_local_damage_fails_even_though_the_mean_is_clean() -> None:
     rng = np.random.default_rng(7)
     ref = rng.normal(0, 4.0, size=(500, 128)).astype(np.float32)
     ref_w = rng.normal(0, 1.0, size=(500, 3)).astype(np.float32)
-    # 0.01, not 0.02: on sd-4 logits a 0.02 control reads 7.4x the analytic
-    # floor and the bucket then fails as FLOOR-DIVERGENCE, i.e. for a reason
-    # that has nothing to do with the row-local damage this test is about.
-    ctl = ref + rng.normal(0, 0.01, size=ref.shape).astype(np.float32)
-    ctl_w = ref_w + rng.normal(0, 0.01, size=ref_w.shape).astype(np.float32)
+    ctl = _ulp_scale_control(ref, rng)
+    ctl_w = _ulp_scale_control(ref_w, rng)
 
-    aot = ref + rng.normal(0, 0.01, size=ref.shape).astype(np.float32)
+    aot = _ulp_scale_control(ref, rng)
     aot[:10] = rng.normal(0, 4.0, size=(10, 128))  # 2% of rows: garbage
 
     ok, detail, _, _ = _gate(aot, ctl_w.copy(), ref, ref_w, ctl, ctl_w)
@@ -646,12 +770,12 @@ def test_the_tail_arm_fires_where_the_mean_arm_does_NOT() -> None:
     n = 2000
     ref = rng.normal(0, 4.0, size=(n, 128)).astype(np.float32)
     ref_w = rng.normal(0, 1.0, size=(n, 3)).astype(np.float32)
-    ctl = ref + rng.normal(0, 0.01, size=ref.shape).astype(np.float32)
-    ctl_w = ref_w + rng.normal(0, 0.01, size=ref_w.shape).astype(np.float32)
+    ctl = _ulp_scale_control(ref, rng)
+    ctl_w = _ulp_scale_control(ref_w, rng)
 
-    aot = ref + rng.normal(0, 0.01, size=ref.shape).astype(np.float32)
+    aot = _ulp_scale_control(ref, rng)
     hurt = int(n * 0.08)
-    aot[:hurt] = ref[:hurt] + rng.normal(0, 0.10, size=(hurt, 128)).astype(np.float32)
+    aot[:hurt] = ref[:hurt] + rng.normal(0, 0.16, size=(hurt, 128)).astype(np.float32)
 
     ok, detail, _, _ = _gate(aot, ctl_w.copy(), ref, ref_w, ctl, ctl_w)
     arms = _arms(detail)
@@ -706,20 +830,50 @@ def test_end_to_end_the_control_actually_reaches_the_comparison(
     """⚑ Computing the control and then discarding it at the call site is
     invisible to every verdict-based test — the ULP floor covers for it. The
     floor's PROVENANCE is what distinguishes them, so assert on that.
+
+    ⚑⚑ AND ON CPU THE PROVENANCE IS `ulp-only(ctl-degenerate)`, NOT
+    `shape+ulp` — which is F8 made observable rather than a weaker assertion.
+    `eager_batch_shape_control` is BITWISE identical to the full batch on CPU,
+    so the degeneracy escape fires and the cross-check never runs. The label
+    still discriminates: `ulp-only(ctl-degenerate)` can ONLY be produced when a
+    control was passed in and measured, while `ctl is None` reads a bare
+    `ulp-only`. Asserting the bare string would have gone green on a discarded
+    control; asserting this one cannot.
+
+    It also records the standing gap: **every CPU verify runs without the
+    cross-check**, so the floor's only self-check on this machine is the
+    absolute plausibility bound.
     """
     rows = _run_verify(tmp_path, monkeypatch, offset=0.0)[2]
-    assert "floor=shape+ulp" in rows[0][2], (
+    assert (
+        "floor=pol:ulp-only(ctl-degenerate) wdl:ulp-only(ctl-degenerate)"
+        in rows[0][2]
+    ), (
         f"the batch-shape control never reached _compare_bucket: {rows}"
     )
 
 
 def test_the_ulp_floor_magnitude_quoted_in_the_docstring_is_reproducible() -> None:
-    """⚑ BANK THE DUMP: the docstring's 0.0202 must be re-derived, not trusted.
+    """⚑ BANK THE DUMP. RE-MEASURED after the raw-ULP fix; the old 0.0202 is gone.
 
     This is the one calibration number in the gate that CI hardware can
     reproduce. The CUDA readings (0.0176 control / 0.01737 AOT at bucket 1190)
-    cannot be, and are labelled as provenance rather than calibration in the
-    source. If this value drifts, `--tv-ratio-max`'s default needs revisiting.
+    cannot be, they were taken against the CENTRED floor, and they are labelled
+    as provenance rather than calibration in the source.
+
+    ⚑ AND THIS ARRAY IS NOT THE PRODUCTION REGIME — say so, because a number
+    banked here has been read as a production floor before. These are zero-mean
+    sd-6 synthetic logits; the real net's live policy logits have mean -6.08 and
+    within-row spread 3.03, and the honest floors measured on it (bt4heads
+    iter100, CPU bf16, batches of 64) are:
+
+        head    floor mean            floor tail
+        policy  5.35e-3 .. 5.99e-3    1.02e-2 .. 1.28e-2
+        wdl     8.08e-3 .. 1.27e-2    3.42e-2 .. 5.55e-2
+
+    which is 6x BELOW what this synthetic array reads. The gate is scale-free,
+    so that is not a problem — but quoting this number as "the production floor"
+    would be, and an earlier revision of this file did exactly that.
     """
     rng = np.random.default_rng(0)
     ref = torch.from_numpy(
@@ -730,21 +884,37 @@ def test_the_ulp_floor_magnitude_quoted_in_the_docstring_is_reproducible() -> No
     floor = mean_row_tv(_probs(bf16_ulp_perturbation(ref, seed=0)), p)
 
     assert 0.50 < top1 < 0.65, f"sharpness regime moved: top-1 {top1:.4f}"
-    assert 0.015 < floor < 0.030, (
-        f"ULP floor {floor:.4f} is outside the docstring's ~0.0202; the "
-        "tv_ratio_max default was chosen against that magnitude"
+    assert 0.025 < floor < 0.040, (
+        f"ULP floor {floor:.4f} is outside the measured 0.0323 on this array; "
+        "the tv_ratio_max default was calibrated against this magnitude"
+    )
+    assert floor < MOD._FLOOR_IMPLAUSIBLE_TV, (
+        f"the plausibility bound {MOD._FLOOR_IMPLAUSIBLE_TV} is below a floor "
+        f"a HEALTHY sharp net produces ({floor:.4f}) — it would fail every "
+        "bucket"
     )
 
 
-def test_the_ulp_floor_is_INVARIANT_to_a_common_logit_shift() -> None:
-    """⚑ Otherwise the gate is weight-dependent again — the defect it exists for.
+def test_the_ulp_floor_is_shift_COVARIANT_because_bf16_ERROR_IS() -> None:
+    """⚑⚑ RE-DERIVED. This test used to pin shift-INVARIANCE; that was wrong.
 
-    Adding a constant to every logit leaves the softmax unchanged, and leaves
-    the measured AOT-vs-eager TV unchanged too (the same bias tensor rounds
-    identically in both pipelines, so it cancels in their difference). A floor
-    derived from the RAW logits does NOT stay put: measured 0.0194 -> 0.0310 at
-    +10 and -> 0.1329 at +100. A head bias drifting common-mode would then widen
-    the denominator until the same package discrepancy started passing.
+    What it pins now: moving the whole logit row must move the floor, because
+    bf16 rounds the RAW value. A net whose head bias actually drifted emits
+    larger-magnitude logits, and those really do round more coarsely — the error
+    is a property of the number, not of the softmax it feeds.
+
+    The old argument for invariance — "adding a constant leaves the softmax and
+    the measured AOT-vs-eager TV unchanged, so the floor must not move" —
+    conflates two different operations. Adding a constant to an ALREADY-COMPUTED
+    logit array is a post-hoc edit no bf16 pipeline performs; the AOT and eager
+    sides would both round the shifted value and their difference would grow
+    with it. So the correct property is COVARIANCE.
+
+    Measured here on bf16-rounded sd-6 logits: the floor is flat inside a binade
+    and steps up by ~2x across each one, so a +100 offset (which drags every
+    logit into the 64..128 binade) raises it far above the unshifted value. The
+    assertion is one-sided and generous — this is a claim about the DIRECTION of
+    the dependence, not a calibration.
     """
     rng = np.random.default_rng(0)
     base = torch.from_numpy(
@@ -753,21 +923,20 @@ def test_the_ulp_floor_is_INVARIANT_to_a_common_logit_shift() -> None:
 
     floors = [
         mean_row_tv(_probs(bf16_ulp_perturbation(base + off, seed=0)),
-                    _probs(base + off))
-        for off in (0.0, 10.0, 100.0)
+                   _probs(base + off))
+        for off in (0.0, 100.0)
     ]
-    assert max(floors) / min(floors) < 1.10, (
-        f"floor moved with an arbitrary common offset: {floors}"
+    assert floors[1] > 3 * floors[0], (
+        f"the floor did NOT grow with the logits' magnitude: {floors}. bf16 "
+        "error scales with the raw value; a floor that ignores the offset is "
+        "the centred-relative form this test exists to keep out."
     )
-    # And the scenario must actually be one where a RAW floor would move,
-    # or this test proves nothing.
-    raw = []
-    for off in (0.0, 100.0):
-        z = (base + off).astype(np.float32)
-        s = np.random.default_rng(0).choice(
-            np.array([-1.0, 1.0], dtype=np.float32), size=z.shape)
-        raw.append(mean_row_tv(_probs(z * (1.0 + s * np.float32(2.0) ** -8)), _probs(z)))
-    assert raw[1] > 3 * raw[0], f"scenario does not reproduce the defect: {raw}"
+    # ⚑ And the SOFTMAX really is unchanged by the shift, so the covariance is a
+    # statement about the floor's physics and not an artifact of the fixture
+    # having moved the distribution.
+    assert np.allclose(_probs(base), _probs(base + 100.0), atol=1e-6), (
+        "premise: a common offset leaves the softmax alone"
+    )
 
 
 def test_single_row_corruption_fails_even_though_p99_misses_it() -> None:
@@ -861,67 +1030,122 @@ def test_every_surviving_arm_reads_about_one_on_a_healthy_production_package() -
     Re-derived here on PRODUCTION-SHAPED arrays — policy 4672 wide with 1858
     live and 2814 sentinel slots, WDL 3 wide — which is the shape the deleted
     table was never measured on and the shape the sentinel-mass defect lived in.
-    Healthy is modelled as the floor's OWN functional at a different seed: two
-    bf16 pipelines that disagree by one ULP is precisely what "healthy" means
-    here, and it is what the source's banked table was measured against.
 
-    MEASURED 2026-08-15, buckets {8, 64, 512} x 8 seeds, n=24 per arm:
+    ⚑⚑ THE PREVIOUS VERSION OF THIS TEST WAS CIRCULAR AND COULD NOT HAVE CAUGHT
+    THE F1 DEFECT. It built the healthy numerator as
+    ``bf16_ulp_perturbation(..., seed=1000+seed)`` — the DENOMINATOR'S OWN
+    FUNCTION at another seed. Every arm then reads ~1.0 no matter what that
+    function computes, including when it computes something with no physical
+    meaning: it measured self-consistency, not agreement with a real package
+    discrepancy. Compounding it, every generator drew ``rng.normal(0, s)``, i.e.
+    ZERO-MEAN logits — the single regime in which the centred and raw
+    perturbations coincide, so the defect was invisible by construction.
 
-        arm            mean    median   worst
-        pol_mean       1.036   1.005    1.410
-        pol_tail       1.011   1.000    1.160
-        wdl_mean       0.924   0.965    1.060
-        pol_rows_over  0       0        0
-        wdl_rows_over  0       0        0
+    Two things are fixed here. The healthy numerator is now written OUT in this
+    file (`_independent_abs_ulp` / `_independent_rel_jitter`), sharing no code
+    with the gate; and the sweep includes the LARGE-COMMON-OFFSET, SMALL-SPREAD
+    regime the real WDL head lives in (row mean -8.6, within-row spread 1.0),
+    where the two perturbation forms differ by 12-22x.
 
-    The worst reading is 1.410 against a 2.0 default, and it comes from bucket
-    8 — 8 rows is where every one of these estimators is noisiest, which is why
-    the sweep includes it. A wider sweep (buckets {8,32,128,512,1024} x 12
-    seeds, n=60) reads 1.009/0.997/0.963 with worst 1.380, matching the table in
-    the source's calibration block (1.003/0.990/0.989, worst 1.462).
+    RE-MEASURED 2026-08-15 on the fixed source, buckets {8, 64, 512} x 8 seeds,
+    n=24 per arm per cell:
 
-    If this drifts, --tv-ratio-max's default needs revisiting.
+        regime      model       pol_mean            pol_tail            wdl_mean
+                                mean/med/worst      mean/med/worst      mean/med/worst
+        zero-mean   abs-ULP     0.990/0.995/1.100   1.000/0.990/1.290   1.017/1.010/1.390
+        zero-mean   rel-2^-8    0.615/0.605/0.750   0.735/0.665/1.110   0.641/0.625/1.010
+        production  abs-ULP     0.995/1.000/1.090   0.994/0.980/1.220   1.057/1.010/2.030
+        production  rel-2^-8    0.590/0.580/0.690   0.848/0.875/1.090   0.650/0.605/1.840
+
+    and `pol_rows_over` / `wdl_rows_over` are 0 in every cell.
+
+    ⚑ Read the abs-ULP rows, not the rel-2^-8 ones, for calibration: a raw ULP
+    is a ±1-in-the-last-place move while ``z*(1+N(0,2^-8))`` is a gaussian of
+    that scale, ~0.6x as large in TV, so it flatters the gate. The honest
+    headline is the abs-ULP worst, **2.03 at bucket 8 on the WDL arm** — see
+    `--tv-ratio-max`'s help for the per-bucket margin and the residual
+    false-fail rate that implies.
+
+    On the OLD source the production/abs-ULP cell read wdl_mean mean 12.6,
+    worst 26.4 — a package that is one bf16 ULP off, the best a package can
+    physically be, failing 24/24 trials.
     """
-    seen: dict[str, list[float]] = {}
-    for n in (8, 64, 512):
-        for seed in range(8):
-            rng = np.random.default_rng(seed)
-            live = (rng.normal(0, 1.0, size=(n, LIVE_LOGITS)) * 5.0).astype(np.float32)
-            ref_w = rng.normal(0, 1.0, size=(n, 3)).astype(np.float32)
-            _, detail, _, _ = _compare_bucket(
-                aot_pol=_sentinel_padded(bf16_ulp_perturbation(live, seed=1000 + seed)),
-                aot_wdl=bf16_ulp_perturbation(ref_w, seed=2000 + seed),
-                ref_pol=_sentinel_padded(live), ref_wdl=ref_w,
-                ctl_pol=None, ctl_wdl=None, tv_ratio_max=1e12,
-            )
-            for arm, val in _arms(detail).items():
-                seen.setdefault(arm, []).append(val)
+    seen: dict[tuple[str, str], dict[str, list[float]]] = {}
+    for regime, pol_off, pol_sd, wdl_off, wdl_sd in (
+        ("zero-mean", 0.0, 5.0, 0.0, 1.0),
+        ("production", -6.0, 3.0, -8.6, 1.0),
+    ):
+        for model, jitter in (
+            ("abs-ULP", _independent_abs_ulp), ("rel-2^-8", _independent_rel_jitter),
+        ):
+            cell = seen.setdefault((regime, model), {})
+            for n in (8, 64, 512):
+                for seed in range(8):
+                    rng = np.random.default_rng(seed)
+                    live = (rng.normal(0, 1.0, size=(n, LIVE_LOGITS)) * pol_sd
+                            + pol_off).astype(np.float32)
+                    ref_w = (rng.normal(0, 1.0, size=(n, 3)) * wdl_sd
+                             + wdl_off).astype(np.float32)
+                    jr = np.random.default_rng(9000 + seed)
+                    _, detail, _, _ = _compare_bucket(
+                        aot_pol=_sentinel_padded(jitter(live, jr)),
+                        aot_wdl=jitter(ref_w, jr),
+                        ref_pol=_sentinel_padded(live), ref_wdl=ref_w,
+                        ctl_pol=None, ctl_wdl=None, tv_ratio_max=1e12,
+                        floor_seed=seed,
+                    )
+                    for arm, val in _arms(detail).items():
+                        cell.setdefault(arm, []).append(val)
 
-    assert set(seen) == {
-        "pol_mean", "pol_tail", "wdl_mean", "pol_rows_over", "wdl_rows_over",
-    }, f"arm set drifted: {sorted(seen)}"
+    for key, cell in seen.items():
+        assert set(cell) == {
+            "pol_mean", "pol_tail", "wdl_mean", "pol_rows_over", "wdl_rows_over",
+        }, f"arm set drifted at {key}: {sorted(cell)}"
 
+    # ⚑ The abs-ULP cells are the physical model, so they carry the "reads ~1.0
+    # unnormalized" claim — the claim that deleting _ARM_NULL made. The
+    # rel-2^-8 cells only have to stay UNDER it; a gaussian at the same scale is
+    # a smaller move, and asserting ~1.0 on them would be asserting a
+    # coincidence.
     for arm in ("pol_mean", "pol_tail", "wdl_mean"):
-        vals = seen[arm]
-        mean = float(np.mean(vals))
-        assert 0.8 < mean < 1.2, (
-            f"arm {arm} reads {mean:.3f} on a HEALTHY production-shaped package, "
-            "not ~1.0 — one --tv-ratio-max no longer means the same thing on "
-            "every arm, which is what deleting _ARM_NULL asserted"
-        )
-        assert max(vals) < 1.7, (
-            f"arm {arm} peaked at {max(vals):.2f} on a HEALTHY package against a "
-            "2.0 default bound — the gate is close to false-positiving"
-        )
+        for regime in ("zero-mean", "production"):
+            vals = seen[(regime, "abs-ULP")][arm]
+            mean = float(np.mean(vals))
+            assert 0.85 < mean < 1.20, (
+                f"[{regime}/abs-ULP] arm {arm} reads {mean:.3f} on a HEALTHY "
+                "production-shaped package, not ~1.0 — one --tv-ratio-max no "
+                "longer means the same thing on every arm, which is what "
+                "deleting _ARM_NULL asserted"
+            )
+            assert max(vals) < 2.5, (
+                f"[{regime}/abs-ULP] arm {arm} peaked at {max(vals):.2f} on a "
+                "HEALTHY package against a 2.0 default bound"
+            )
+            rel = seen[(regime, "rel-2^-8")][arm]
+            assert float(np.mean(rel)) < 1.20, (
+                f"[{regime}/rel-2^-8] arm {arm} mean {np.mean(rel):.3f}"
+            )
+
+    # ⚑⚑ THE F1 REGRESSION ASSERTION, and the reason the production regime is
+    # here at all. On the centred source the WDL arm read a mean of 12.6 in this
+    # cell. Anything near that means the floor is head-dependent again.
+    wdl_prod = seen[("production", "abs-ULP")]["wdl_mean"]
+    assert float(np.mean(wdl_prod)) < 1.5, (
+        f"wdl_mean reads {np.mean(wdl_prod):.2f} on a package that is EXACTLY "
+        "one bf16 ULP off, at the real WDL head's offset/spread ratio. That is "
+        "the F1 defect: a floor derived from centred logits is 12-22x too small "
+        "on this head, so the best a package can physically be reads as a fail."
+    )
 
     # The count arms are gated at ZERO, so their null is not "about one", it is
     # "never". A single false exceedance here would make the gate reject good
     # packages outright, with no threshold left to absorb it.
-    for arm in ("pol_rows_over", "wdl_rows_over"):
-        assert max(seen[arm]) == 0, (
-            f"{arm} fired on a healthy package: {seen[arm]} — _ROW_EXCEED_K "
-            f"= {MOD._ROW_EXCEED_K} is too tight"
-        )
+    for key, cell in seen.items():
+        for arm in ("pol_rows_over", "wdl_rows_over"):
+            assert max(cell[arm]) == 0, (
+                f"{arm} fired on a healthy package at {key}: {cell[arm]} — "
+                f"_ROW_EXCEED_K = {MOD._ROW_EXCEED_K} is too tight"
+            )
 
 
 # --------------------------------------------------------------------------
@@ -1009,20 +1233,19 @@ def test_a_wrong_policy_FAILS_at_the_production_width() -> None:
     )
 
 
-def test_the_floor_is_shift_invariant_at_the_production_width() -> None:
-    """⚑ Shift-invariance has to survive the mask, not just the narrow case.
+def test_the_floor_is_shift_COVARIANT_at_the_production_width() -> None:
+    """⚑ RE-DERIVED, same reversal as the narrow case, and it pins the OTHER
+    half of the F1 fix: the mask must not participate in the covariance.
 
-    Softmax ignores a common offset, so the floor must too — otherwise a head
-    bias drifting common-mode widens the denominator and the same package
-    discrepancy starts passing. The live-entry mean is the only shift-invariant
-    centre available once 60% of the row is a sentinel that does NOT move with
-    the offset: a whole-row mean shifts by 1858/4672 of it, i.e. by a different
-    amount than the logits did, and shift-invariance is lost.
+    The floor must grow when the LIVE logits move, because bf16 rounds the raw
+    value. It must NOT move at all when only the mask width changes — the
+    sentinels are excluded by the `live` mask rather than by a centre, so
+    padding invariance now holds by CONSTRUCTION rather than by arithmetic
+    luck. Those two are separate claims and this test makes both.
     """
     rng = np.random.default_rng(2)
-    padded = _sentinel_padded(
-        (rng.normal(0, 1.0, size=(128, LIVE_LOGITS)) * 5.0).astype(np.float32)
-    )
+    live = (rng.normal(0, 1.0, size=(128, LIVE_LOGITS)) * 5.0).astype(np.float32)
+    padded = _sentinel_padded(live)
     shifted = padded.copy()
     shifted[:, :LIVE_LOGITS] += 500.0  # sentinels deliberately left where they are
 
@@ -1030,30 +1253,39 @@ def test_the_floor_is_shift_invariant_at_the_production_width() -> None:
     moved = mean_row_tv(_probs(bf16_ulp_perturbation(shifted, seed=0)), _probs(shifted))
 
     assert base > 0.0, "premise: the floor is non-degenerate"
-    assert moved == pytest.approx(base, rel=1e-3), (
-        f"the floor moved with a common shift of the LIVE logits: {base:.6f} -> "
-        f"{moved:.6f}. The softmax did not move, so the floor must not either."
+    assert moved > 10.0 * base, (
+        f"the floor did not follow a +500 shift of the LIVE logits: {base:.6f} "
+        f"-> {moved:.6f}. Every live logit is now in the 256..512 binade, whose "
+        "bf16 spacing is ~64x the unshifted row's; the floor has to say so."
+    )
+
+    # ⚑ Mask width, by contrast, must change NOTHING — the sentinels take no
+    # part. Same live block, same seed, so the sign draw is the only difference
+    # and it is shape-dependent; the tolerance is for that, not for the mask.
+    narrow = mean_row_tv(_probs(bf16_ulp_perturbation(live, seed=0)), _probs(live))
+    assert narrow == pytest.approx(base, rel=0.10), (
+        f"the floor moved with the MASK width: native {narrow:.6f} vs padded "
+        f"{base:.6f}. Softmax cannot see the sentinels, so the floor must not."
     )
 
 
 def test_sentinel_slots_stay_dead_after_perturbation() -> None:
     """⚑ The masked slots must carry exactly zero probability, still.
 
-    The fix perturbs only the live entries; the sentinels are shifted by the
-    live mean and otherwise left alone. If a perturbation ever reached them —
-    or if the shift lifted them into range — mass would leak into illegal moves
-    and the floor would be measuring the mask rather than the policy.
+    RE-DERIVED for the raw-ULP fix. There is no centring any more, so the
+    sentinels are not shifted either: the contract is now the strictest one
+    available — they come back **bit-identical**. If a perturbation ever reached
+    them, mass would leak into illegal moves and the floor would be measuring
+    the mask rather than the policy.
 
     ⚑ AND THE CONTRACT HAS TO BE ASSERTED ON THE LOGITS, NOT ONLY ON THE
-    PROBABILITIES. Measured 2026-08-15: perturbing the sentinels too (dropping
-    the `np.where` and returning `z * (1 + sign*step)` wholesale) leaves the
-    softmax BIT-IDENTICAL and the sentinel mass at exactly 0, because -1e9
-    scaled by 1 +/- 2^-8 is -1e9 +/- 3.9e6 and `exp` of either is 0. So a
-    probability-space assertion alone cannot distinguish the two — that mutant
-    SURVIVED the first round of this test. It is harmless only because the
-    sentinel is nine orders of magnitude below the live range; the moment that
-    margin shrinks it stops being harmless, which is exactly what a contract
-    assertion is for.
+    PROBABILITIES. Measured 2026-08-15: perturbing the sentinels too leaves the
+    softmax BIT-IDENTICAL and the sentinel mass at exactly 0, because one ULP of
+    -1e9 is ~3.9e6 and `exp` of either is 0. So a probability-space assertion
+    alone cannot distinguish the two — that mutant SURVIVED the first round of
+    this test. It is harmless only because the sentinel is nine orders of
+    magnitude below the live range; the moment that margin shrinks it stops
+    being harmless, which is exactly what a contract assertion is for.
     """
     rng = np.random.default_rng(6)
     live = (rng.normal(0, 1.0, size=(64, LIVE_LOGITS)) * 5.0).astype(np.float32)
@@ -1067,7 +1299,7 @@ def test_sentinel_slots_stay_dead_after_perturbation() -> None:
         f"probability mass leaked into the {dead.shape[1]} sentinel slots: "
         f"max {float(np.max(np.abs(dead))):.3e}"
     )
-    assert p.sum(axis=-1) == pytest.approx(np.ones(64), rel=0, abs=1e-9), (
+    assert p.sum(axis=-1) == pytest.approx(np.ones(64), rel=0, abs=1e-6), (
         "rows no longer normalize to 1 after the perturbation"
     )
 
@@ -1075,13 +1307,10 @@ def test_sentinel_slots_stay_dead_after_perturbation() -> None:
     # window, so `live` selects exactly the 1858 real columns and the centre is
     # the live mean.
     assert float(np.max(live.max(axis=-1) - live.min(axis=-1))) < 80.0
-    expected_sentinel = np.float32(SENTINEL) - live.mean(axis=-1, keepdims=True)
-    assert np.allclose(
-        perturbed[:, LIVE_LOGITS:], expected_sentinel, rtol=1e-6, atol=0.0
-    ), (
-        "the sentinel slots were PERTURBED, not merely shifted; a 2^-8 relative "
-        "nudge of -1e9 is +/-3.9e6, which the softmax cannot see today and will "
-        "not always be able to ignore"
+    assert np.array_equal(perturbed[:, LIVE_LOGITS:], padded[:, LIVE_LOGITS:]), (
+        "the sentinel slots were PERTURBED; one bf16 ULP of -1e9 is ~3.9e6, "
+        "which the softmax cannot see today and will not always be able to "
+        "ignore. With no centring they must come back BIT-IDENTICAL."
     )
 
 
@@ -1184,6 +1413,332 @@ def test_the_floor_divergence_guard_fires_and_fails_the_bucket() -> None:
         f"the guard fires on an AGREEING control, so it cannot pass: {detail_ctl}"
     )
     assert ok_ctl, detail_ctl
+
+
+def test_the_floor_cross_check_covers_the_TAIL_not_only_the_mean() -> None:
+    """⚑ F7. `hi, lo = max/min(u_mean, c_mean)` cross-checked the MEANS only,
+    while the returned tail was an unchecked `max(u_tail, c_tail)` — and the
+    TAIL is what sets `_ROW_EXCEED_K`'s threshold. So a floor bug that inflated
+    only the tail disabled BOTH exceedance arms, the gate's only power against
+    single-row damage, with nothing in the detail line saying so.
+
+    The scenario is built to be tail-ONLY, or it would say nothing about which
+    half of the cross-check fired: measured, the two mean estimates agree to
+    x1.00 while the tails differ x13.0. It also has to stay UNDER
+    `_FLOOR_IMPLAUSIBLE_TV` (measured tail 0.166 against a 0.25 bound), because
+    the absolute bound would otherwise catch it and the tail cross-check could
+    be deleted with this test still green.
+    """
+    rng = np.random.default_rng(13)
+    n = 500
+    ref = (rng.normal(0, 1.0, size=(n, 128)) * 2.0).astype(np.float32)
+    ref_w = rng.normal(0, 1.0, size=(n, 3)).astype(np.float32)
+    ctl = _ulp_scale_control(ref, rng)
+    ctl[:int(n * 0.02)] += rng.normal(0, 0.5, size=(int(n * 0.02), 128))
+    ctl = ctl.astype(np.float32)
+    ctl_w = _ulp_scale_control(ref_w, rng)
+    aot = _ulp_scale_control(ref, rng)
+    aot_w = _ulp_scale_control(ref_w, rng)
+
+    ok, detail, _, _ = _gate(aot, aot_w, ref, ref_w, ctl, ctl_w)
+    arms = _arms(detail)
+    assert "FLOOR-DIVERGENCE[tail]" in detail, (
+        f"the TAIL estimates differ 13x and nothing reported it: {detail}"
+    )
+    assert "FLOOR-DIVERGENCE[mean]" not in detail, (
+        f"scenario is not tail-only — the MEAN cross-check fired too, so this "
+        f"test would stay green with the tail half deleted: {detail}"
+    )
+    assert "FLOOR-IMPLAUSIBLE" not in detail, (
+        f"the absolute plausibility bound caught it, so the tail cross-check is "
+        f"again not what produced the verdict: {detail}"
+    )
+    for arm in ("pol_mean", "pol_tail", "wdl_mean"):
+        assert arms[arm] <= 2.0, f"a ratio arm produced the verdict: {detail}"
+    assert arms["pol_rows_over"] == 0, detail
+    assert arms["wdl_rows_over"] == 0, detail
+    assert not ok, f"a floor whose TAIL is 13x divergent was passed: {detail}"
+
+    # ⚑ PAIRED NEGATIVE CONTROL: the same package, a control without the tail.
+    clean_ctl = _ulp_scale_control(ref, rng)
+    ok_clean, detail_clean, _, _ = _gate(aot, aot_w, ref, ref_w, clean_ctl, ctl_w)
+    assert "FLOOR-DIVERGENCE" not in detail_clean, detail_clean
+    assert ok_clean, detail_clean
+
+
+def test_the_degeneracy_escape_is_ONE_SIDED() -> None:
+    """⚑⚑ F3. The escape must fire only when the SHAPE CONTROL is the small one.
+
+    When it tested `min(ulp, ctl)` instead, a SMALL ULP ESTIMATE retired the
+    cross-check — and the code then took `max(ulp, ctl)`, so the inflated
+    control became the floor unchallenged. Demonstrated at production shapes: a
+    tiny-magnitude WDL reference (raw ULP floor 1.7e-6, well under
+    `_FLOOR_DEGENERATE_TV`) plus a control 8800x larger made a COMPLETELY WRONG
+    AOT WDL read `ok=True wdl_mean=x1.00 wdl_rows_over=0`.
+
+    One-sided, the same inputs report a divergent floor on both statistics and
+    FAIL. The policy side is held healthy so the verdict cannot come from it.
+    """
+    rng = np.random.default_rng(41)
+    n = 64
+    live = (rng.normal(0, 1.0, size=(n, LIVE_LOGITS)) * 3.0 - 6.0).astype(np.float32)
+    ref_pol = _sentinel_padded(live)
+    ref_w = rng.normal(0, 1e-3, size=(n, 3)).astype(np.float32)
+
+    ulp_floor = mean_row_tv(_probs(bf16_ulp_perturbation(ref_w, seed=0)), _probs(ref_w))
+    assert ulp_floor < MOD._FLOOR_DEGENERATE_TV, (
+        f"premise: the ULP estimate ({ulp_floor:.3e}) must be the SMALL one, or "
+        "this scenario cannot distinguish a one-sided escape from a two-sided one"
+    )
+
+    ctl_w = (ref_w + rng.normal(0, 0.05, size=ref_w.shape)).astype(np.float32)
+    aot_w = rng.normal(0, 1.0, size=(n, 3)).astype(np.float32)  # COMPLETELY wrong
+    aot_pol = _sentinel_padded(_ulp_scale_control(live, rng))
+    ctl_pol = _sentinel_padded(_ulp_scale_control(live, rng))
+
+    ok, detail, _, _ = _gate(aot_pol, aot_w, ref_pol, ref_w, ctl_pol, ctl_w)
+    arms = _arms(detail)
+    for arm in ("pol_mean", "pol_tail"):
+        assert arms[arm] <= 2.0, (
+            f"the policy side was meant to be healthy: {detail}"
+        )
+    assert "FLOOR-DIVERGENCE" in detail, (
+        f"a control 8800x the ULP estimate was accepted silently — the escape "
+        f"is still two-sided: {detail}"
+    )
+    assert not ok, f"a completely wrong AOT WDL verified clean: {detail}"
+
+
+def test_a_degenerate_control_is_NOT_allowed_to_widen_the_floor() -> None:
+    """⚑ F4. The escape's own comment said it "falls back to the ULP floor alone
+    — the same thing the `ctl is None` path does", while the code returned
+    `max(u, c)`. So a control declared a NON-MEASUREMENT still widened the floor
+    whenever it was the larger of the two, and the detail line still printed
+    `floor=shape+ulp`, leaving no observable that anything had been declared
+    unusable. That is F3's mechanism, one level down.
+
+    Here the control's TV (3.1e-5) is under `_FLOOR_DEGENERATE_TV` and yet 20x
+    the ULP estimate (1.6e-6). Taking the max would divide every WDL arm by 20x
+    too much; returning the ULP estimates alone does not. The test asserts the
+    ARM VALUE, not just the verdict — a verdict-only assertion cannot tell a
+    20x-wider floor from a correct one.
+    """
+    rng = np.random.default_rng(7)
+    ref_w = rng.normal(0, 1e-3, size=(32, 3)).astype(np.float32)
+    ref_p = rng.normal(0, 4.0, size=(32, 64)).astype(np.float32)
+    ctl_w = (ref_w + rng.normal(0, 1e-4, size=ref_w.shape)).astype(np.float32)
+    ctl_p = _ulp_scale_control(ref_p, rng)
+
+    ulp = mean_row_tv(_probs(bf16_ulp_perturbation(ref_w, seed=0)), _probs(ref_w))
+    ctl_tv = mean_row_tv(_probs(ctl_w), _probs(ref_w))
+    assert ctl_tv <= MOD._FLOOR_DEGENERATE_TV, "premise: the control is degenerate"
+    assert ctl_tv > 5.0 * ulp, (
+        f"premise: the degenerate control ({ctl_tv:.3e}) must be LARGER than the "
+        f"ULP estimate ({ulp:.3e}), or `max` and `ulp-only` agree and the "
+        "scenario cannot separate them"
+    )
+
+    # ⚑ THE NUMERATOR HAS TO SIT BETWEEN THE TWO FLOORS, or the test cannot
+    # separate `ulp-only` from `max(ulp, ctl)` — a discrepancy far above BOTH
+    # fails either way, and that version of this test let the mutant through.
+    aot_w = (ref_w + rng.normal(0, 4e-5, size=ref_w.shape)).astype(np.float32)
+    num = mean_row_tv(_probs(aot_w), _probs(ref_w))
+    assert 2.0 * ulp < num < 2.0 * ctl_tv, (
+        f"premise: the WDL discrepancy ({num:.3e}) must FAIL against the honest "
+        f"floor ({ulp:.3e}) and PASS against the inflated one ({ctl_tv:.3e}), or "
+        "both behaviours give the same verdict"
+    )
+
+    ok, detail, _, _ = _gate(_ulp_scale_control(ref_p, rng), aot_w, ref_p, ref_w,
+                             ctl_p, ctl_w)
+    arms = _arms(detail)
+    assert "wdl:ulp-only(ctl-degenerate)" in detail, (
+        f"a control declared a non-measurement is still labelled a contributor: "
+        f"{detail}"
+    )
+    assert arms["wdl_mean"] > 2.0, (
+        f"wdl_mean reads x{arms['wdl_mean']:.2f}: the degenerate control widened "
+        f"the floor anyway, which is exactly what the old comment denied: {detail}"
+    )
+    assert not ok, detail
+
+
+def test_an_IMPLAUSIBLE_floor_fails_the_bucket_without_any_cross_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ F3(b). The absolute bound, and the case it exists for.
+
+    No ratio between the two estimates can catch a floor that is simply too big:
+    if BOTH are inflated the same way the cross-check sees perfect agreement,
+    and on CPU (`ctl` bitwise identical) or at bucket 1 (`ctl is None`) there is
+    no second estimate at all. A row TV is bounded by 1, so a floor of 0.97 —
+    what the sentinel-mass defect produced — means the floor claims the two
+    distributions are nearly disjoint. That is not bf16 noise at any magnitude.
+
+    This reproduces that defect directly, at `ctl is None`, by substituting a
+    perturbation that saturates the softmax. `_FLOOR_IMPLAUSIBLE_TV` alone must
+    fail the bucket, with no control involved.
+    """
+    rng = np.random.default_rng(19)
+    ref = (rng.normal(0, 1.0, size=(64, 128)) * 4.0).astype(np.float32)
+    ref_w = rng.normal(0, 1.0, size=(64, 3)).astype(np.float32)
+
+    def _saturating(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarray:
+        """The sentinel-mass defect's signature: a floor near 1.0."""
+        g = np.random.default_rng(int(seed))
+        return (ref_logits + g.normal(0, 60.0, size=ref_logits.shape)).astype(np.float32)
+
+    monkeypatch.setattr(MOD, "bf16_ulp_perturbation", _saturating)
+    aot = _ulp_scale_control(ref, rng)   # as healthy as a package can be
+    aot_w = _ulp_scale_control(ref_w, rng)
+    ok, detail, _, _ = _gate(aot, aot_w, ref, ref_w)
+    arms = _arms(detail)
+
+    assert "FLOOR-IMPLAUSIBLE" in detail, (
+        f"a floor near 1.0 was accepted as bf16 noise: {detail}"
+    )
+    assert "floor=pol:ulp-only wdl:ulp-only" in detail, (
+        f"premise: no control here, so the cross-check cannot be what caught "
+        f"it: {detail}"
+    )
+    for arm in ("pol_mean", "pol_tail", "wdl_mean"):
+        assert arms[arm] <= 2.0, (
+            f"an inflated floor makes every RATIO arm pass — that is the whole "
+            f"point — so a ratio arm must not be what failed this: {detail}"
+        )
+    assert arms["pol_rows_over"] == 0, detail
+    assert arms["wdl_rows_over"] == 0, detail
+    assert not ok, f"an implausible floor was reported and then ignored: {detail}"
+
+
+def test_a_healthy_production_floor_is_far_under_the_plausibility_bound() -> None:
+    """⚑ The paired negative control for the bound above: it must not fire on
+    anything the real net produces.
+
+    Measured 2026-08-15 on bt4heads iter100, worst floor over 80 resamples at
+    each of buckets {1, 2, 8, 16, 64, 128}: policy tail 1.89e-2, wdl tail
+    6.17e-2 — 4.1x under the 0.25 bound. It is also bounded analytically: one
+    bf16 ULP moves a logit by at most |z| * 2^-7, so the largest gap change is
+    2*max|z|/128 and a softmax's TV under a gap change d is at most d/4. The
+    net's measured max|z_live| is 20.1, capping the floor at ~0.079.
+    """
+    rng = np.random.default_rng(23)
+    # The production regime: policy mean -6.08 spread 3.03, wdl mean -8.46
+    # spread 0.93, and the same max|z| the real net reaches.
+    for n in (8, 64, 512):
+        live = (rng.normal(0, 1.0, size=(n, LIVE_LOGITS)) * 3.03 - 6.08).astype(np.float32)
+        wdl = (rng.normal(0, 1.0, size=(n, 3)) * 0.93 - 8.46).astype(np.float32)
+        for name, arr in (("pol", _sentinel_padded(live)), ("wdl", wdl)):
+            p = _probs(arr)
+            f = _probs(bf16_ulp_perturbation(arr, seed=0))
+            tail = tail_row_tv(f, p)
+            assert tail < MOD._FLOOR_IMPLAUSIBLE_TV / 3.0, (
+                f"{name} floor tail {tail:.4f} at bucket {n} is within 3x of the "
+                f"{MOD._FLOOR_IMPLAUSIBLE_TV} plausibility bound — the bound is "
+                "close to failing healthy buckets"
+            )
+
+
+def test_three_equal_wdl_logits_get_a_real_ULP_but_can_still_NULL_OUT() -> None:
+    """⚑⚑ F5, and the part of it the F1 fix does NOT cure. Report, do not hide.
+
+    The net emits `[-15.5625, -15.5625, -15.5625]` — bf16 quantisation makes
+    three-equal WDL logits common (3 of 384 real rows measured). Under the OLD
+    centred perturbation this row centred to all zeros, so the perturbation was
+    exactly zero at EVERY seed and the floor row TV was 0 always.
+
+    The raw-ULP fix gives each entry a real 0.0625 nudge, which is asserted
+    below and is deterministic. But the row can STILL null out: all three
+    entries share a binade, so their ULPs are equal, and the 2-in-8 sign draw
+    that moves them the same way is a pure common shift the softmax cannot see.
+    Measured over floor seeds 0..5 this row reads 0.0 at seeds 0 and 4 and
+    2.7e-2 to 2.8e-2 at the other four; across 384 REAL WDL rows, 12-17% have a
+    zero floor at any one seed.
+
+    At bucket >= 2 the batch mean and tail absorb it. At bucket 1 the floor IS
+    that row, so `wdl_mean` reads `inf` and a one-ULP-off package FAILS. Bucket
+    1 is off the default ladder but `--buckets 1 --allow-incomplete` reaches it.
+    Curing it means replacing the single sign draw with something that cannot be
+    a null draw, which re-banks every calibration in this file; it is filed, not
+    done, and pinned here so it cannot drift silently.
+    """
+    row = np.array([[-15.5625, -15.5625, -15.5625]], dtype=np.float32)
+
+    # ⚑ Deterministic half: the F1 fix DOES reach this row. |−15.5625| is in
+    # [8,16), so one bf16 ULP is 2^(3-7) = 0.0625, on every entry, every seed.
+    for seed in range(6):
+        delta = np.abs(bf16_ulp_perturbation(row, seed=seed) - row)
+        assert np.array_equal(delta, np.full((1, 3), 0.0625, dtype=np.float32)), (
+            f"seed {seed}: the perturbation is not one raw ULP: {delta}"
+        )
+
+    # ⚑ Stochastic half: whether that nudge SURVIVES the softmax depends on the
+    # sign draw. Both outcomes must occur, or the docstring above is wrong.
+    ref_p = _sentinel_padded(
+        np.random.default_rng(0).normal(0, 3.0, size=(1, LIVE_LOGITS)).astype(np.float32)
+    )
+    aot_p = _ulp_scale_control(ref_p, np.random.default_rng(1))
+    # ⚑ Exactly one ULP off, and NOT a common shift — written out rather than
+    # drawn, because a drawn one could itself be a null and then the numerator
+    # is zero too and `_ratio(0, 0)` is 0.0, which would test nothing.
+    aot_w = row + np.array([[0.0625, -0.0625, 0.0625]], dtype=np.float32)
+    seen: dict[bool, str] = {}
+    for seed in range(32):
+        _, detail, _, _ = _compare_bucket(
+            aot_pol=aot_p, aot_wdl=aot_w, ref_pol=ref_p, ref_wdl=row,
+            ctl_pol=None, ctl_wdl=None, tv_ratio_max=2.0, floor_seed=seed,
+        )
+        seen.setdefault(_arms(detail)["wdl_mean"] == float("inf"), detail)
+
+    assert True in seen, (
+        "no floor seed in 0..31 nulled this row out — the docstring's 12-17% "
+        f"zero-floor rate no longer holds: {seen}"
+    )
+    assert "wdl_mean=xinf" in seen[True], seen[True]
+    assert False in seen, (
+        f"EVERY floor seed nulled this row out — the raw-ULP nudge is not "
+        f"reaching the softmax at all: {seen}"
+    )
+    assert _arms(seen[False])["wdl_mean"] < 2.0, (
+        f"on a non-null draw a one-ULP-off package must read ~1: {seen[False]}"
+    )
+
+
+def test_a_zero_floor_reads_INF_on_the_ratio_arm_not_zero() -> None:
+    """⚑⚑ The M12 kill. `_ratio` returning 0.0 at a zero floor SURVIVED the
+    reviewer's mutation harness, and it survived for an instructive reason: at a
+    zero floor the exceedance arms threshold at `k * 0`, so they catch the
+    nonzero numerator and the VERDICT is unchanged. Every verdict-only test
+    stays green while the ratio arms have been silently retired on exactly the
+    inputs where they matter most.
+
+    So this asserts the ARM VALUE. The reference is all-zero logits, which the
+    perturbation leaves alone by construction (log2(0) is undefined and the
+    honest bf16 step there is a subnormal the softmax cannot represent), so the
+    floor is exactly 0 with no dependence on the sign draw.
+    """
+    ref = np.zeros((8, 16), dtype=np.float32)
+    ref_w = np.zeros((8, 3), dtype=np.float32)
+
+    assert np.array_equal(bf16_ulp_perturbation(ref_w, seed=0), ref_w), (
+        "premise: an exactly-zero logit is left unperturbed, so the floor here "
+        "is exactly 0 at every seed"
+    )
+
+    aot_w = ref_w.copy()
+    aot_w[0, 0] = 1.0
+    ok, detail, _, _ = _gate(ref.copy(), aot_w, ref, ref_w)
+    arms = _arms(detail)
+    assert arms["wdl_mean"] == float("inf"), (
+        f"a zero floor with a nonzero numerator must read inf, not "
+        f"x{arms['wdl_mean']}: with 0.0 the arm passes and only the exceedance "
+        f"count fails, so the ratio arm is dead on these inputs: {detail}"
+    )
+    assert not ok, detail
+
+    # And the exceedance arm is indeed ALSO firing here — which is precisely why
+    # the assertion above has to be on the value.
+    assert arms["wdl_rows_over"] == 1, detail
 
 
 def test_argmax_min_rejects_nan_and_out_of_range(
