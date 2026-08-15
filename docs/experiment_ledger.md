@@ -50382,3 +50382,48 @@ trend, so they were fitted separately and the pooled fit reported only as a sens
 rows where the default collides with the 1000cp cap (24/30 rows) fabricated and real are
 genuinely indistinguishable; the mask leaves those alone, which biases toward **NOT** firing the
 rule — the conservative direction — and the 100% ordering agreement makes it moot.
+
+## 2026-08-15 — AMENDMENT to C16: the pre-committed 2.0 cp bar was MIS-SET. Re-derived BEFORE the deciding arm reports.
+
+⚑ **Written while the deciding arm is still running and its number is NOT visible** (verified:
+`audit_targets.py` PID 194500 alive at 1045s, no `ARM=b1_tb0 WALLCLOCK` completion line on
+disk). Recording this now rather than after the readout, because choosing a line after seeing
+the number is the failure the protocol exists to stop.
+
+**THE DEFECT.** C16's original bar was "material if the paired cp difference exceeds **2.0 cp**".
+The instrument's own halfwidth is **+/-1.3 cp at n=4000**. ⇒ **the bar sat INSIDE the resolution**:
+a reading of exactly 2.0 would have a CI comfortably spanning zero, so the rule could return
+"material" on a result the instrument cannot distinguish from null. Same family as the
+mis-specified sims-100 mechanism gate, and as the BT4 probe's shuffle gate whose kill line sat
+BELOW the chance level of the statistic it gated (`1946346d1`). **Three instances now — compute
+the instrument's resolution and chance level BEFORE choosing the threshold, every time.**
+
+**WHAT IS BEING DECIDED.** Whether `gumbel_target_batch` — which at the production value `0`
+resolves to `GSS_GPU_BATCH = 1024` and so batches an entire sequential-halving round, meaning the
+tree cannot update within a round — degrades TARGET quality at the production shape
+(boards-per-search-call ~= 1, `vloss_weight: 1`).
+
+**RE-DERIVED RULE, from instrument properties only.**
+
+    instrument halfwidth              +/-1.3 cp at n=4000   (from the banked controls)
+    positive-control yardstick        100 sims vs 32 sims = -4.194 cp [-5.475, -2.906]
+
+    MATERIAL       CI excludes 0 AND |delta| >= 2.6 cp   (2x halfwidth; ~62% of the whole
+                                                          32->100 sims effect)
+    BOUNDED NULL   CI wholly inside +/-2.6 cp            (a real bound, not "no evidence")
+    INCONCLUSIVE   CI spans both                          ⇒ more n, or the arm is unaffordable
+
+**Why 2.6 and not something smaller.** A target-construction defect worth less than ~62% of a
+2.56x sim change is not worth a config change that costs throughput — and the instrument cannot
+resolve it anyway. The bar is therefore set by BOTH resolution and materiality, and neither alone.
+
+**Both nulls already banked are on the record and neither is the deciding arm.** At
+boards-per-call **256**, `--target-batch 1024` vs `0` differs by **exactly 0.0000, 0/4000 rows**
+on every field, and seed 0 vs 12345 likewise. ⚑ That is a REGIME where the effect cannot exist —
+duplicate rate is `GSS_GPU_BATCH / boards-per-call`, so at 256 the knob has almost nothing to do.
+**A null there is a gate that cannot fail**, which is why the arm was re-queued at 1.
+
+**Pre-committed regardless of outcome:** if the verdict is BOUNDED NULL, C16 closes and
+`gumbel_target_batch` is not touched. If MATERIAL, it does NOT license a live change on its own —
+it licenses a pre-registered arm, because this is a cp-on-stored-rows ruler and
+[[losses_are_decoupled_from_strength]] applies: nothing here has been shown to convert into Elo.
