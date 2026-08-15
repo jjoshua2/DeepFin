@@ -460,9 +460,13 @@ def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarra
     round-trip no-op, non-degeneracy, sharpness tracking, and the 0.0202 value
     itself. The CUDA numbers (0.0176 control and 0.01737 AOT-vs-eager at bucket
     1190) are single-run readings on hardware CI does not have; they are stated
-    as provenance, not as a calibration, and ``--tv-ratio-max``'s 1.5 default is
-    PROVISIONAL until a real calibration run banks a distribution of healthy
-    ratios across the ladder. A previous revision also quoted "2.31 (July
+    as provenance, not as a calibration. ``--tv-ratio-max``'s default is now
+    2.0, and it is no longer provisional in the way an earlier revision of this
+    docstring said: the healthy distribution WAS banked on 2026-08-15, 96
+    readings per arm across eight bucket sizes on production-shaped arrays (see
+    the calibration block above ``_ROW_EXCEED_K``). What remains un-banked is
+    the CUDA half — those 96 readings are synthetic-logit, so they calibrate the
+    STATISTICS, not the hardware. A previous revision also quoted "2.31 (July
     packages on August weights, stale)" as support for 1.5. That number is
     withdrawn from the justification: it was never banked, and it argues against
     itself — 2.31 > 1.5 means the new gate FAILS the very packages the rewrite
@@ -486,10 +490,32 @@ def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarra
     # magnitude: 0.0205 centered vs 0.0194 raw at zero offset, and flat at
     # 0.0203/0.0204 for offsets of +10 and +100 where the raw form inflates to
     # 0.031 and 0.133.
+    # ⚑⚑ AND CENTER ON THE LIVE ENTRIES ONLY. The production policy array is
+    # 4672 wide but the net emits 1858 real logits; `_policy_output_full` fills
+    # the other 2814 slots (60% of the row!) with a -1e9 sentinel that softmax
+    # sends to exactly 0. A plain row mean is dominated by that sentinel mass —
+    # it lands near -6.0e8, so every REAL logit is centered to ~+6.0e8 and a
+    # 2^-8 relative nudge moves it by ~2.3e6, obliterating the O(1) logit
+    # spread. Measured 2026-08-15: the floor reads 0.0189 on the native 1858
+    # array and 0.9719 on the padded 4672 one, 51x too large. Since a row TV is
+    # bounded by 1, that CAPPED every policy arm below its own threshold and the
+    # gate became arithmetically incapable of failing on the production shape —
+    # a completely wrong policy passed with pol_mean x1.17, argmax 0/256.
+    # Mean-centering is shift-invariant but NOT outlier-robust, and the padding
+    # is 60% outliers. So: restrict both the center and the perturbation to the
+    # entries that can affect the softmax at all, and leave the sentinels alone
+    # (perturbing them is meaningless — exp(-1e9) is 0 either way).
     z = ref_logits.astype(np.float32)
-    z = z - np.mean(z, axis=-1, keepdims=True)
+    # e^-80 ~ 1.8e-35 of the top entry's mass: below float32 resolution, so an
+    # entry this far down is inert in the softmax by construction, not by
+    # threshold-picking. Guards the all-sentinel row (live is then everything).
+    live = z > (np.max(z, axis=-1, keepdims=True) - np.float32(80.0))
+    n_live = np.maximum(np.sum(live, axis=-1, keepdims=True), 1)
+    mean_live = np.sum(np.where(live, z, np.float32(0.0)), axis=-1,
+                       keepdims=True) / n_live
+    z = z - mean_live  # shift-invariant: a common offset moves max and mean alike
     sign = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=z.shape)
-    return z * (np.float32(1.0) + sign * step)
+    return np.where(live, z * (np.float32(1.0) + sign * step), z)
 
 
 # ⚑⚑ NULL CALIBRATION — measured, not chosen.
@@ -497,38 +523,55 @@ def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarra
 # Each arm divides a statistic of (AOT vs eager) by the SAME statistic of the
 # floor. That makes every arm scale-free, but it does NOT make them read the
 # same number when healthy: numerator and denominator are different random
-# draws, and a p99 or a max of a 3-column WDL row-TV is a far noisier estimator
-# than a mean over 1858 columns. Measured on healthy synthetic packages
-# perturbed at exactly the bf16 ULP scale, 40 seeds x buckets {64, 512, 4096}:
+# draws, and an order statistic of a 3-column WDL row-TV is a far noisier
+# estimator than a mean over 1858 columns.
 #
-#     arm        median      worst observed
-#     pol_mean     0.91          1.06
-#     pol_tail     1.19-1.29     1.82
-#     wdl_mean     1.15          1.70
-#     wdl_tail     1.88-1.98     3.14
-#     pol_max      1.25-1.71     2.37
-#     wdl_max      2.01-2.34     3.64
+# ⚑⚑ AN EARLIER REVISION ANSWERED THAT WITH A PER-ARM `_ARM_NULL` NORMALIZER,
+# AND THAT WAS THE WRONG FIX. Re-measured 2026-08-15 on PRODUCTION-SHAPED
+# arrays (policy 4672 wide with 1858 live, WDL 3 wide), 12 seeds x buckets
+# {8, 32, 128, 256, 512, 1024, 2048, 4096}, n=96 healthy readings per arm:
 #
-# ⇒ a SINGLE threshold across all six arms is wrong, and an earlier revision of
-# this file shipped exactly that: at 1.5 it would have spuriously FAILED a
-# perfectly healthy package on wdl_tail (1.90) and wdl_max (2.07) every time.
-# That is the original defect — a gate that fails good packages — wearing a
-# different hat.
+#     arm        mean    p99    worst      verdict
+#     pol_mean   1.003   1.18   1.181      keep
+#     pol_tail   0.990   1.11   1.178      keep
+#     wdl_mean   0.989   1.39   1.462      keep
+#     pol_max    0.985   1.12   1.179      superseded (see below)
+#     wdl_tail   1.040   2.09   2.495      DROPPED
+#     wdl_max    1.065   2.16   2.552      DROPPED
 #
-# So each arm is normalized by its own measured null before the threshold is
-# applied. After normalization every arm reads ~1.0 when healthy and the worst
-# observed reading across the whole sweep is 1.65, so the default bound of 2.0
-# carries real margin while a package with unfilled constants reads >10.
+# The two dropped arms are not mis-CALIBRATED, they are mis-SPECIFIED: their
+# healthy spread is 2.4x their own mean, so no constant can separate healthy
+# from corrupt. Normalizing them by a null big enough to stop false failures is
+# the SAME defect this gate exists to prevent — an arm that cannot fire — just
+# reached by arithmetic instead of by padding (cf. the sentinel-mass defect in
+# `bf16_ulp_perturbation`, found the same day). A p99 or a max over three
+# columns is a degenerate order statistic; it is deleted, not tuned.
 #
-# tests/test_aot_verify_gate.py re-derives these on every CI run.
-_ARM_NULL = {
-    "pol_mean": 0.91,
-    "pol_tail": 1.30,
-    "wdl_mean": 1.15,
-    "wdl_tail": 1.90,
-    "pol_max": 1.70,
-    "wdl_max": 2.30,
-}
+# What the max arms were FOR — corruption confined to fewer than 1% of rows,
+# which a mean or a p99 dilutes away — is now covered properly, and better, by
+# `_ROW_EXCEED_K` below. So the surviving three arms are all well-concentrated
+# estimators reading 1.00 +/- 0.02 when healthy, with worst observed 1.46
+# against a default bound of 2.0. No normalization table is needed and none is
+# kept: the table only ever existed to prop up the estimators now removed.
+#
+# tests/test_aot_verify_gate.py re-derives every number above on each CI run.
+
+# A row whose TV exceeds this multiple of the floor's OWN p99 is not bf16 noise.
+# Measured over 50 healthy runs per head at each of buckets {8, 32, 128, 512,
+# 2048}: ZERO runs produced an exceeding row at k=4, k=6 or k=10, on either
+# head. Sensitivity, same measurement: one corrupted row inside a 2048-row
+# batch is caught exactly (1 row flagged) while `wdl_mean`/`pol_mean` read x0.02
+# and x0.03 — i.e. FAR below 1.0, because the other 2047 rows are bit-exact and
+# dilute the defect into invisibility. That is the single-bad-row blind spot,
+# and it is the whole reason this criterion exists. 6.0 is the middle of the
+# measured no-false-positive band.
+_ROW_EXCEED_K = 6.0
+
+# The analytic (ULP) and empirical (batch-shape control) floor estimates are
+# independent derivations of the same quantity and agree to 15% on real
+# hardware. 5x is far outside any disagreement either could legitimately
+# produce, so a wider gap means one estimator is broken. See `_floor`.
+_FLOOR_DIVERGENCE_MAX = 5.0
 
 
 def _compare_bucket(
@@ -605,21 +648,35 @@ def _compare_bucket(
     aot_wp, ref_wp = _softmax(aot_wdl), _softmax(ref_wdl)
 
     def _floor(ref_logits: np.ndarray, ref_p: np.ndarray,
-               ctl: np.ndarray | None) -> tuple[float, float, float]:
-        """(mean, tail, max) of the irreducible floor: max over both estimates.
+               ctl: np.ndarray | None) -> tuple[float, float, str]:
+        """(mean, tail, note) of the irreducible floor: max over both estimates.
 
         Each statistic is computed on the floor with the SAME functional and the
         SAME row count as its numerator, so every arm reads ~1 when healthy.
+
+        ⚑ The two estimates CROSS-CHECK each other, and the check is reported.
+        They are independent derivations of "irreducible bf16 disagreement" and
+        measured on real hardware they agree to 15% (0.0202 analytic vs 0.0176
+        empirical at bucket 1190). A large divergence therefore means one of
+        them is broken, and a BROKEN FLOOR IS THE ONE FAILURE THIS GATE CANNOT
+        SELF-DETECT: it silently rescales every arm, in the passing direction if
+        the floor is too big. This is not hypothetical — the sentinel-mass
+        defect fixed in `bf16_ulp_perturbation` on 2026-08-15 inflated the
+        policy floor 51x and made all three policy arms arithmetically incapable
+        of failing. It would have shown up here as a 45x divergence.
         """
         ulp_p = _softmax(bf16_ulp_perturbation(ref_logits, seed=floor_seed))
-        f = [mean_row_tv(ulp_p, ref_p), tail_row_tv(ulp_p, ref_p),
-             float(np.max(row_tv(ulp_p, ref_p)))]
-        if ctl is not None:
-            ctl_p = _softmax(ctl)
-            f = [max(f[0], mean_row_tv(ctl_p, ref_p)),
-                 max(f[1], tail_row_tv(ctl_p, ref_p)),
-                 max(f[2], float(np.max(row_tv(ctl_p, ref_p))))]
-        return f[0], f[1], f[2]
+        u_mean, u_tail = mean_row_tv(ulp_p, ref_p), tail_row_tv(ulp_p, ref_p)
+        if ctl is None:
+            return u_mean, u_tail, ""
+        ctl_p = _softmax(ctl)
+        c_mean, c_tail = mean_row_tv(ctl_p, ref_p), tail_row_tv(ctl_p, ref_p)
+        note = ""
+        hi, lo = max(u_mean, c_mean), min(u_mean, c_mean)
+        if lo > 0.0 and hi / lo > _FLOOR_DIVERGENCE_MAX:
+            note = (f" ⚑FLOOR-DIVERGENCE ulp={u_mean:.5f} shape={c_mean:.5f} "
+                    f"(x{hi / lo:.1f} > {_FLOOR_DIVERGENCE_MAX:g})")
+        return max(u_mean, c_mean), max(u_tail, c_tail), note
 
     def _ratio(num: float, den: float) -> float:
         """No epsilon. A zero floor means the reference carries no scale, so the
@@ -630,41 +687,51 @@ def _compare_bucket(
 
     ctl_p = ctl_pol if (ctl_pol is not None and ctl_wdl is not None) else None
     ctl_w = ctl_wdl if (ctl_pol is not None and ctl_wdl is not None) else None
-    fp_mean, fp_tail, fp_max = _floor(ref_pol, ref_pp, ctl_p)
-    fw_mean, fw_tail, fw_max = _floor(ref_wdl, ref_wp, ctl_w)
+    fp_mean, fp_tail, fp_note = _floor(ref_pol, ref_pp, ctl_p)
+    fw_mean, fw_tail, fw_note = _floor(ref_wdl, ref_wp, ctl_w)
 
-    raw = {
+    # Three well-concentrated ratio arms. Each reads 1.00 +/- 0.02 on a healthy
+    # package and 1.46 at the worst of 96 measured healthy readings; see the
+    # calibration block above for why the p99/max WDL arms are gone rather than
+    # normalized, and why no _ARM_NULL table is applied here any more.
+    arms = {
         "pol_mean": _ratio(mean_row_tv(aot_pp, ref_pp), fp_mean),
         "pol_tail": _ratio(tail_row_tv(aot_pp, ref_pp), fp_tail),
         "wdl_mean": _ratio(mean_row_tv(aot_wp, ref_wp), fw_mean),
-        "wdl_tail": _ratio(tail_row_tv(aot_wp, ref_wp), fw_tail),
-        "pol_max": _ratio(float(np.max(row_tv(aot_pp, ref_pp))), fp_max),
-        "wdl_max": _ratio(float(np.max(row_tv(aot_wp, ref_wp))), fw_max),
     }
-    # Normalize by each arm's measured null so one threshold means the same
-    # thing on all six. See _ARM_NULL.
-    arms = {k: v / _ARM_NULL[k] for k, v in raw.items()}
-    # ⚑ THE WORST-ROW ARMS (pol_max / wdl_max) exist because p99 by
-    # construction ignores corruption confined to fewer than 1% of rows — a
-    # kernel that damages only its final boundary row at one exact bucket size,
-    # whose contribution to the mean is diluted by the whole batch and which
-    # leaves the pooled argmax far above 0.90.
+    # ⚑ THE ROW-EXCEEDANCE ARM covers what a mean or a p99 structurally cannot:
+    # corruption confined to a handful of rows — a kernel that damages only its
+    # final boundary row at one exact bucket size. Measured, one bad row in a
+    # 2048-row batch drives the mean arms DOWN to x0.02-0.03 (the other 2047
+    # rows are bit-exact, so they dilute both the numerator and any tail
+    # statistic), while leaving pooled argmax far above any sane threshold. So
+    # the dilution is not merely unhelpful, it points the wrong way.
     #
-    # A bare max was the ORIGINAL defect (an extreme-value statistic that grows
-    # with N, so big buckets failed for being big). A RATIO OF TWO MAXIMA OVER
-    # THE SAME N does not have that problem: both are the same order statistic
-    # on the same row count, so the N-dependence largely cancels — and whatever
-    # does not cancel is absorbed by _ARM_NULL, which was measured across three
-    # bucket sizes for exactly that reason.
-    ok = all(v <= tv_ratio_max for v in arms.values())
+    # This is a COUNT, not a ratio, and it is gated at zero. It is not scaled by
+    # tv_ratio_max: `k` is already expressed in units of the package's own
+    # floor, so the criterion is self-calibrating for the same reason the ratio
+    # arms are, and loosening it with the same knob would double-count.
+    exceed = {
+        "pol_rows_over": int(np.sum(row_tv(aot_pp, ref_pp) > _ROW_EXCEED_K * fp_tail)),
+        "wdl_rows_over": int(np.sum(row_tv(aot_wp, ref_wp) > _ROW_EXCEED_K * fw_tail)),
+    }
+    # A divergent floor FAILS rather than warns. The verdict is a ratio to the
+    # floor, so an untrustworthy floor makes every arm meaningless — and a
+    # verdict read off a failed instrument is not a verdict, in EITHER
+    # direction. Reporting it and passing anyway would be the same "accepted
+    # then silently ignored" defect the gate is built to catch.
+    ok = (all(v <= tv_ratio_max for v in arms.values())
+          and not any(exceed.values())
+          and not (fp_note or fw_note))
 
     matches = int(np.sum(np.argmax(aot_pol, axis=-1) == np.argmax(ref_pol, axis=-1)))
     rows = int(ref_pol.shape[0])
     shown = " ".join(f"{k}=x{v:.2f}" for k, v in arms.items())
+    shown += " " + " ".join(f"{k}={v}" for k, v in exceed.items())
     src = "shape+ulp" if ctl_p is not None else "ulp-only"
     detail = (
         f"{shown} floor={src} argmax={matches}/{rows} "
-        f"(tv_ratio_max={tv_ratio_max:g})"
+        f"(tv_ratio_max={tv_ratio_max:g} k={_ROW_EXCEED_K:g}){fp_note}{fw_note}"
     )
     return ok, detail, matches, rows
 
@@ -684,8 +751,16 @@ def eager_batch_shape_control(
     -shape reruns are bitwise identical (0.0), which is how the effect was
     attributed to shape rather than nondeterminism.
 
+    ⚑ THIS ESTIMATE IS DEGENERATE ON SOME BACKENDS and must never be the sole
+    floor. Measured on CPU with the real ``ChessNet`` topology it is BITWISE
+    identical to the full batch at every size from n=2 to n=128, i.e. TV exactly
+    0. That is why the gate takes the max of this and the analytic ULP floor,
+    and why the two now cross-check each other in ``_floor`` — see
+    ``_FLOOR_DIVERGENCE_MAX``.
+
     Returns ``(None, None)`` when the batch is too small to re-chunk into a
-    different shape; the caller degrades to the argmax floor and says so.
+    different shape; the caller then runs on the ULP floor alone, says so in the
+    detail line (``floor=ulp-only``), and loses the cross-check with it.
     """
     n = int(xt.shape[0])
     if n < 2:
@@ -964,14 +1039,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--tv-ratio-max",
         type=float,
         default=2.0,
-        help="Max TV(aot,eager) / TV(eager-at-another-batch-shape,eager). "
-             "Applied to arms NORMALIZED by their measured null (see _ARM_NULL), so "
-             "1.0 is the healthy level on every arm and 2.0 is the default "
-             "bound. Worst healthy reading observed across 40 seeds x buckets "
-             "{64,512,4096} is 1.65; unfilled constants read >10. Relative by "
-             "construction, so it does "
-             "not expire when the policy sharpens the way the old absolute "
-             "--tol did.",
+        help="Max TV(aot,eager) / TV(floor,eager) on each of the three ratio "
+             "arms (pol_mean, pol_tail, wdl_mean). All three read 1.00 +/- 0.02 "
+             "when healthy; worst of 96 measured healthy readings across 8 "
+             "bucket sizes is 1.46, and unfilled constants read >10. Relative "
+             "by construction, so it does not expire when the policy sharpens "
+             "the way the old absolute --tol did. Does NOT loosen the "
+             "row-exceedance arms, which are gated at zero in units of the "
+             "package's own floor.",
     )
     p.add_argument(
         "--verify-n",
@@ -1005,11 +1080,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.verify_n <= 0:
         print("error: --verify-n must be positive", file=sys.stderr)
         return 2
+    # Same nan/inf hole as --tv-ratio-max, one arm over: `rate < nan` is False,
+    # so `--argmax-min nan` silently retires the argmax check entirely.
+    if not math.isfinite(args.argmax_min) or not 0.0 <= args.argmax_min <= 1.0:
+        print("error: --argmax-min must be finite and in [0, 1]", file=sys.stderr)
+        return 2
     if not math.isfinite(args.tv_ratio_max) or args.tv_ratio_max <= 0.0:
         # ⚑ isfinite, not just > 0: argparse's float() accepts "inf", and every
-        # finite ratio then clears the bar — silently disabling all six TV arms
-        # while still reporting PASS. A package with completely wrong WDL and a
-        # preserved policy argmax would verify clean.
+        # finite ratio then clears the bar — silently disabling all three ratio
+        # arms while still reporting PASS. It also accepts "nan", and EVERY
+        # comparison against nan is False, so `v <= nan` disables them just as
+        # thoroughly while looking like an ordinary number in the log line.
         print("error: --tv-ratio-max must be positive and finite", file=sys.stderr)
         return 2
     # ⚑ NOT rejected at <=1.0. An earlier revision did, on the reasoning that

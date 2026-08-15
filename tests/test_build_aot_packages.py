@@ -169,11 +169,19 @@ def _wdl(*rows: list[float]) -> np.ndarray:
 
 
 def test_compare_bucket_pass_on_near_identical() -> None:
+    # ⚑ The control is the reference EXACTLY, which is the documented CPU
+    # regime (`eager_batch_shape_control` is bitwise identical from n=2 to
+    # n=128) and the case `_floor`'s `lo > 0.0` degeneracy escape covers. It
+    # used to be `pol + 1e-3` — a uniform shift, so the softmax is unchanged and
+    # the empirical floor is ~1.9e-8 rather than exactly 0. That is NOT covered
+    # by the escape, and `_FLOOR_DIVERGENCE_MAX` then reads x60159 and FAILS
+    # this healthy package. See the session report: the escape is exact-equality
+    # only, so a near-degenerate control is a false-FAIL path.
     pol = np.array([[2.0, 1.0, 0.0], [0.0, 3.0, 1.0]], dtype=np.float32)
     wdl = _wdl([1.0, 0.0, -1.0], [0.0, 1.0, 0.0])
     ok, detail, matches, rows = _compare_bucket(
         aot_pol=pol + 1e-3, aot_wdl=wdl + 1e-3, ref_pol=pol, ref_wdl=wdl,
-        ctl_pol=pol + 1e-3, ctl_wdl=wdl + 1e-3,
+        ctl_pol=pol.copy(), ctl_wdl=wdl.copy(),
         tv_ratio_max=1.5,
     )
     assert ok, detail
@@ -187,17 +195,49 @@ def test_compare_bucket_reports_a_collapsed_argmax_for_the_caller_to_gate() -> N
     on rows POOLED across trials, because per-trial the criterion is a coin flip
     at small buckets. So this asserts the COUNTS it hands back, which is the
     thing the caller's verdict is computed from.
+
+    ⚑ `tv_ratio_max=1e9` NO LONGER DISARMS THE WHOLE COMPARISON, and the old
+    version of this test asserted that it did. The row-exceedance arm is a count
+    gated at zero in units of the package's own floor and is deliberately
+    independent of that knob, so a package this wrong still fails — on
+    `pol_rows_over=2`, not on argmax. Proving "argmax is not gated" therefore
+    needs the other direction as well: a package whose argmax moves on EVERY row
+    while its probabilities stay inside the floor must PASS.
     """
     ref_pol = np.array([[5.0, 0.0, 0.0], [0.0, 5.0, 0.0]], dtype=np.float32)
     aot_pol = np.array([[0.0, 0.0, 5.0], [5.0, 0.0, 0.0]], dtype=np.float32)
     wdl = _wdl([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
-    ok, _, matches, rows = _compare_bucket(
+    ok, detail, matches, rows = _compare_bucket(
         aot_pol=aot_pol, aot_wdl=wdl, ref_pol=ref_pol, ref_wdl=wdl,
         ctl_pol=ref_pol, ctl_wdl=wdl,
-        tv_ratio_max=1e9,  # TV arm disarmed: this is purely the argmax report
+        tv_ratio_max=1e9,  # ratio arms disarmed; the count arm is not
     )
     assert (matches, rows) == (0, 2), "every row's argmax moved"
-    assert ok, "with the TV arm disarmed _compare_bucket has nothing left to fail on"
+    assert not ok, detail
+    assert "pol_rows_over=2" in detail, (
+        f"the verdict must come from the row-exceedance count, not from argmax: {detail}"
+    )
+
+    # ⚑ THE DIRECTION THAT PROVES THE ABSENCE OF AN ARGMAX GATE. Two rows whose
+    # top two logits are exactly tied; the package breaks the tie the other way,
+    # so argmax moves on 2/2 rows while the probability difference is ~1e-5 —
+    # far under the bf16 floor. A gate with any argmax term would fail this.
+    rng = np.random.default_rng(5)
+    tied_ref = rng.normal(0, 4.0, size=(2, 64)).astype(np.float32)
+    tied_ref[:, 0] = tied_ref[:, 1] = tied_ref.max(axis=1) + 1.0
+    tied_aot = tied_ref.copy()
+    tied_aot[:, 1] += np.float32(1e-4)
+    tied_wdl = rng.normal(0, 1.0, size=(2, 3)).astype(np.float32)
+    ok_tied, detail_tied, m_tied, n_tied = _compare_bucket(
+        aot_pol=tied_aot, aot_wdl=tied_wdl.copy(), ref_pol=tied_ref,
+        ref_wdl=tied_wdl, ctl_pol=tied_ref.copy(), ctl_wdl=tied_wdl.copy(),
+        tv_ratio_max=1.5,
+    )
+    assert (m_tied, n_tied) == (0, 2), "premise: the argmax moved on every row"
+    assert ok_tied, (
+        f"_compare_bucket failed a package whose only defect is a broken tie, "
+        f"so it is gating on argmax after all: {detail_tied}"
+    )
 
 
 def test_compare_bucket_fails_on_wdl_drift() -> None:
@@ -207,10 +247,18 @@ def test_compare_bucket_fails_on_wdl_drift() -> None:
     aot_wdl = _wdl([0.0, 4.0, 0.0])  # flipped -> large prob delta
     ok, detail, _, _ = _compare_bucket(
         aot_pol=pol, aot_wdl=aot_wdl, ref_pol=pol, ref_wdl=ref_wdl,
-        ctl_pol=pol, ctl_wdl=ref_wdl + 1e-3,
+        # Exact, not `ref_wdl + 1e-3`: a uniform shift leaves the softmax alone,
+        # so the empirical WDL floor is ~1e-9 and the bucket then fails on
+        # FLOOR-DIVERGENCE — which would make this test pass with the wdl arm
+        # deleted.
+        ctl_pol=pol.copy(), ctl_wdl=ref_wdl.copy(),
         tv_ratio_max=1.5,
     )
     assert not ok, detail
+    assert "FLOOR-DIVERGENCE" not in detail, detail
+    assert "wdl_mean=x0.00" not in detail, (
+        f"the wdl ratio arm did not move, so this says nothing about it: {detail}"
+    )
 
 
 # ---------------------------------------------------------------------------
