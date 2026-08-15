@@ -104,6 +104,16 @@ puzzle_interval: 0
 
 model:
   kind: transformer
+  # ── bt4heads, PROMOTED 2026-08-15 after arm B read +13.9 Elo [+5.7, +22.1]
+  # over arm A at iter 100, n=4800 (ledger 4528f08f1). These three plus the
+  # four training keys below are ONE BUNDLE — the arena measured the bundle,
+  # not any single lever, so do not revert them piecemeal expecting the
+  # attribution to hold. ⚑ policy_embedding_mode read NULL on its own in
+  # Tier-13 (ledger 7400c3a76); it rides along because it was in the arm that
+  # was measured, not because it is independently justified.
+  aux_policy_head_dim: 128
+  categorical_head_coupled: true
+  policy_embedding_mode: linear
   embed_dim: 512
   num_layers: 16
   num_heads: 16
@@ -189,6 +199,11 @@ stockfish:
   sf_pid_nodes_emergency_ease_step: 1000
 
 selfplay:
+  # bt4heads bundle, promoted 2026-08-15 (ledger 4528f08f1). Blend the
+  # categorical head into the selfplay value/search signal at the ratio arm B
+  # was measured with. Paired with train.w_categorical / rebuild_categorical_target.
+  categorical_blend_frac: 0.69
+  categorical_search_blend_frac: 0.31
   games_per_iter: 440
   # DELETED games_per_iter_start: ramp_iters is 0 so there is no ramp; start==games_per_iter. trainable_metrics.py:213
   # DELETED games_per_iter_ramp_iters: 0 = no ramp. trainable_metrics.py:214
@@ -456,11 +471,12 @@ train:
   w_soft: 1.0
   w_future: 0.01
   w_wdl: 1.0
-  w_sf_move: 0.0
+  w_sf_move: 0.05   # bt4heads bundle 2026-08-15 (was 0.0)
   w_sf_own: 0.0
   w_sf_own_regret: 0.0
   w_sf_eval: 0.0
-  w_categorical: 0.0
+  w_categorical: 1.0   # bt4heads bundle 2026-08-15 (was 0.0) — the head is now TRAINED
+  rebuild_categorical_target: true   # bt4heads bundle 2026-08-15
   w_volatility: 0.1
   w_sf_volatility: 0.05
   w_moves_left: 0.02
@@ -594,7 +610,15 @@ tune:
   distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
   distributed_inference_compile_mode: reduce-overhead
-  distributed_inference_aot_dir: data/aot_models_512
+  # ⚑⚑ EMPTIED 2026-08-15 WITH THE bt4heads PROMOTION — DO NOT RESTORE UNTIL REBUILT.
+  # data/aot_models_512/*.pt2 were compiled 2026-07-14, a month BEFORE the
+  # 2026-08-14 head surgery. The AOT broker is a separate policy path that never
+  # enters ChessNet.forward, and arm B's +13.9 Elo was measured with it OFF, so
+  # pointing it at those packages would deploy an unvalidated combination.
+  # assert_uniform_constant_fqns cannot catch this: it checks the packages agree
+  # with EACH OTHER, and all 24 are equally stale, so it passes.
+  # To re-enable: rebuild the whole dir from ONE current model, then verify.
+  distributed_inference_aot_dir: ''
   distributed_pause_selfplay_during_training: false
   # ⚑ LIVE IN THE `on` DIRECTION ONLY (audit C1). Both objects are lazily
   # constructed by the iter loop behind an `is None` guard, so false -> true
@@ -602,7 +626,8 @@ tune:
   # restarts (the running object is passed on unconditionally). The trial logs
   # one warning per such transition; if you need one of these off now, restart.
   distributed_prefetch_shards: true
-  distributed_async_test_eval: true
+  # false to match the configuration arm B's +13.9 Elo was measured under.
+  distributed_async_test_eval: false
   distributed_async_test_eval_timeout_s: 120.0
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1

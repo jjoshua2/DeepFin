@@ -45306,6 +45306,65 @@ Runner `scratchpad/ruler_vs_elo/run_missing_reads.sh` (REFUSES to run while trai
 verified) pins the banked ladder's ruler settings so the new dumps compare with the old;
 readout `correlate.py` refuses to compute below n=4 (verified at n=3).
 
+#### RESULT task #198 (2026-08-14) — **rho = −0.486, n=6 ⇒ WEAK. No procedural change.**
+
+Ran in the GPU pause window Josh opened; all three missing reads completed exit 0 under the
+pinned ladder settings (`--max-positions 2000 --min-pieces 8 --batch-size 128
+--input-encoding fen_only --gpu-mem-fraction 0.35`), so the new dumps are comparable with
+the three banked ones. Dumps banked at `scratchpad/ruler_vs_elo/iter{477,768,862}_dump.jsonl`
+alongside their logs. [[bank_the_dump_not_just_the_number]]
+
+| iter | value_regret (cp) | arena Elo vs boot512 |
+|---|---|---|
+| 477 | 81.2 | −54.6 |
+| 514 | 60.5 | +115.2 |
+| 672 | 66.0 | +87.8 |
+| 735 | 64.1 | +86.9 |
+| 768 | 60.5 | +67.7 |
+| 862 | 63.1 | +11.3 |
+
+**Spearman rho(value_regret, Elo) = −0.486.** The pre-committed bands were: ≤ −0.80 USABLE
+SCREEN · −0.80 < rho ≤ −0.40 WEAK, no procedural change · > −0.40 THE RULER DOES NOT TRACK
+PLAY STRENGTH. **−0.486 lands in the middle band**, and the middle band's pre-committed
+consequence is *nothing changes*. It is recorded as WEAK, not rounded toward either
+neighbouring verdict.
+
+**What this does and does not license.** The power calculation was written before the fact:
+n=6 can only CERTIFY |rho| ≥ 0.83 at p<0.05, so this result **does not certify a
+relationship and does not refute one**. Concretely:
+
+* `value_regret` **may not be used to screen candidates in place of an arena** — the ≤ −0.80
+  bar it would have had to clear was not cleared.
+* The stronger claim — "the value ruler does not track play strength" — is **also not
+  established**, because rho did not enter that band either. Anyone citing this row for
+  either purpose is over-reading it. [[most_experiments_here_are_unfalsifiable]]
+* The correct summary is: **at the only sample size we can afford, the ordering is
+  consistent with a moderate negative relationship and with no relationship, and the study
+  cannot separate them.** The design was pre-registered knowing this; the outcome is the
+  uninformative branch, which is why the band existed.
+
+**One structural note, visible in the table and worth more than the rho.** The single
+largest ruler value (477 at 81.2 cp) is also the single worst arena row (−54.6), and the
+single best arena row (514 at +115.2) has the joint-best ruler value (60.5). The
+*endpoints* agree; the interior (672/735/768/862) is where the ordering breaks — those four
+span 66.0 → 63.1 cp on the ruler (2.9 cp) while spanning +87.8 → +11.3 on the arena
+(76.5 Elo). ⇒ **the ruler has no resolution over the interior of our own lineage**, which is
+exactly the region a screen would be used in. That is a resolution statement, independent of
+the significance question, and it is the reason not to retry this study at larger n by adding
+more mid-lineage checkpoints: they land inside the ruler's noise band.
+[[compute_instrument_resolution_before_the_threshold]]
+
+**Confound restated (it was pre-registered, and it still applies):** the ruler grades against
+deep SF while we train an ANTI-engine, so a weak correlation has an innocent explanation. The
+decision-relevant part is unaffected — a ruler that cannot order our own lineage cannot screen
+our own work, whatever the reason. [[audit_first_cannot_judge_a_non_sf_teacher]]
+
+⇒ **#198 CLOSED. No procedural change. `value_regret` remains the designated VALUE yardstick
+for judging the value head (its own job, where it reads a 17.8% improvement) and is NOT
+promoted to an Elo screen.** [[value_head_frozen_since_iter8]]
+[[losses_are_decoupled_from_strength]]
+
+
 ### ⚑ METHOD NOTE: the audit-first rule cannot judge a NON-SF teacher (2026-08-13; draft: scratchpad/external_teacher/prereg_draft.md)
 
 Found while designing an external-teacher experiment. `docs/eval_protocol.md`'s audit-first
@@ -49015,6 +49074,26 @@ If any fails, the arm is measuring the control and must be stopped.
   different `blend_frac`.**
 - `policy_sf` trains on the OPPONENT's reply distribution, not a move-teacher
   [[sf_policy_target_is_opponent_reply]] — a 0.05 weight is deliberately small.
+- **⚑ ADDED AFTER LAUNCH (2026-08-14 ~23:05) — arm B was PAUSED and RESUMED mid-arm; arm A
+  was not.** The user asked for the GPU at iteration 55/100; training was stopped and
+  restarted ~3 h later onto the SAME trial (`1d175_00000`, restored from
+  `checkpoint_000054`, all seven arm-B keys re-verified realized in the resumed trial's
+  config table, no tolerant-load/reinit/scheduler warnings). Arm A ran its 100 iterations
+  uninterrupted, so **iterations 56-100 of arm B carry a restart transient that the control
+  does not**: post-restart winrate reads high for several iterations
+  [[winrate_spike_restart_sampling_bias]] and the replay window briefly re-composes
+  [[post_restart_snapshot_is_not_steady_state]].
+  **Assessed effect on the DECIDING yardstick: none by construction.** The verdict is a
+  paired 4800-game arena on the two checkpoints' WEIGHTS, and this entry already excludes
+  regret from the verdict entirely. The transient is a data-composition asymmetry over ~5 of
+  45 remaining iterations, not a metric contaminant. It is recorded because an unrecorded
+  asymmetry between an arm and its control is exactly what "one data-affecting change per
+  readout window" exists to catch — **if arm B reads NEGATIVE, this is a live alternative
+  explanation and must be quoted alongside the number; if it reads non-inferior, the pause
+  can only have hurt, so the verdict stands a fortiori.**
+  Pause artifacts banked at `scratchpad/bt4heads/banked/armB_pause_20260814/`
+  (`checkpoint_000054`, `params.json`, `progress_at_pause.csv`, and the full pre-pause
+  `chess_training_at_pause.log` — each start TRUNCATES `/tmp/chess_training.log`).
 
 ### Revert point — **ALREADY EXISTS. NOTHING TO TAKE.**
 **⚑ CORRECTION, same session:** an earlier draft of this entry recorded the revert point as
@@ -49249,6 +49328,181 @@ running, then treat a mismatch as owing an explanation rather than as a failure.
 A threshold would have passed silently in both directions. Related:
 [[a_gate_that_cannot_fail]], [[compute_instrument_resolution_before_the_threshold]],
 [[new_tests_here_are_vacuous_until_mutated]].
+
+---
+
+## RESULT — bt4heads arm B vs arm A @ iter 100: **ADOPT** (+13.9 Elo [+5.7, +22.1], n=4800)
+
+**Verdict date 2026-08-15.** Judged by the rule pre-committed in
+`scratchpad/bt4heads/LAUNCH_RUNBOOK.md` BEFORE launch, not re-derived: *ADOPT if the 95% CI
+lower bound > −10 Elo; REJECT if ≤ −10.* Lower bound is **+5.69** ⇒ **ADOPT**, comfortably.
+
+```
+candidate  scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt   (step 93646, global_iter 990)
+reference  scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099/trainer.pt    (step 91999)
+mode matched_sims · sims 32/32 · --search-shape training · seed 42 · games 4800 (2400 opening pairs)
+pentanomial (candidate POV)  WW 336 · WD_DW 505 · DD_WL 838 · LD_DL 457 · LL 264
+score 0.5200 +/- 0.0060 (SE)   Elo +13.9   95% CI [+5.69, +22.14]   duration 17533 s
+```
+
+Search config printed IDENTICAL on both sides (`c_scale 0.1`, `policy_temp 1.5`, `topk 16`,
+`tree_reuse cold`, `vloss_weight 1`) — only the WEIGHTS differ, which is the parity the
+verdict depends on. Read at FULL n only; the rolling pentanomials printed during the run
+were ignored by construction (see [[rolling_arena_optional_stopping_faked_112_elo]]).
+
+### ⚑ CONFOUND, stated because it is not zero: arm B took **+13.6% more optimizer steps**
+
+Both arms start from the SAME donor (91999 − 12138 = 79861 = 93646 − 13785 ✓), but over the
+100 iterations arm A used **12138** steps and arm B **13785** — `sum(train_steps_used)`.
+
+Cause is known and mechanical, not a config difference: arm B was PAUSED 2026-08-14 20:14
+and resumed 23:05. The 3017 resumed in-flight games then drained back through ingest
+(`replay_positions_ingested` 13k → 66k → 49k → 40k), and because the step budget is
+views-targeted, steps scale with ingest volume — iters 56-58 ran 387/557/415 steps against a
+~110-step baseline, at 1508/1139/1325 s versus ~290 s.
+
+**Direction of bias: FAVOURS arm B.** Magnitude cannot be separated from the intervention by
+this design. It is very unlikely to explain the whole effect — for +13.9 Elo to be pure step
+count, this lineage would have to be worth ~102 Elo per 100 iterations, and it has instead
+been measured FLAT (an ~11-Elo plateau; see [[no_rollback_target_the_run_is_a_plateau.md]]
+and [[absorption_works_fit_does_not_buy_elo]]). ⇒ **The ADOPT verdict does not depend on the
+confound** (non-inferiority vs −10 survives any plausible haircut). The stronger claim — that
+arm B is significantly BETTER, i.e. the CI excluding zero — DOES lean on it and should be
+quoted with this caveat attached.
+
+### The loss ruler pointed the WRONG WAY — a clean case for the standing rule
+
+At iters 50-60 arm B's `policy_loss` was **+4.96% WORSE** than arm A at equal
+`training_iteration`, widening from +2.4% at iter 10. The arena says arm B is **+13.9 Elo
+BETTER**. Decomposition taken BEFORE the arena read out (so this is not post-hoc):
+`policy_loss_curriculum` −0.05% (identical), `policy_loss_selfplay` **+5.66%** (the entire
+gap), `test_policy_loss` **−0.87%** (better), `test_policy_own_acc_top1` −0.04% (even).
+Not a mix artifact: reweighting arm A's per-component losses to arm B's 89%-selfplay mix
+gives 0.9344 vs its actual 0.9347. ~40% of the selfplay gap is a mechanical CE FLOOR —
+`data_policy_entropy` +2.66% (+0.0199 nats against a +0.0529 raw gap),
+`gumbel_policy_entropy_mean` +3.69% — i.e. arm B's own search emits softer targets on its own
+data. `sf_eval_loss` +566% and `categorical_loss` +25% are the intervention REDEFINING those
+targets, not regressions.
+⇒ Another entry for [[losses_are_decoupled_from_strength]]: a train-side loss that is
+worse, on self-generated targets, while held-out is even and play strength is up.
+
+### Execution deviation: `--max-concurrent-games 16` (default 128)
+
+NOT a prereg parameter (the prereg froze sims / search-shape / games / seed). Two runs at the
+default died with `CUDA error: out of memory` at **2494 MiB used of 32607** — an impossible
+OOM. Cause is the WSL2 dxg bridge, not our footprint: `dmesg` shows
+`dxgkio_make_resident: Ioctl failed: -12` at 03:48:31 and 03:53:04 (exactly the two deaths)
+and 7× `dxgvmb_send_sync_msg: wait_for_completion failed` at 03:41:00 (the moment
+`train.sh stop` force-killed the stack), while `nvidia-smi -L` returned rc=0 and a
+fresh-process torch probe reported 30.21 GiB free and completed a 4096² matmul. Large
+residency refused, small allocations fine — the known
+"do not debug a torch OOM that reports impossible numbers" signature
+([[wsl2_gpu_vmbus_wedge_signature]]). Throughput cost was small (5.54 s/game at conc-16
+*including* compile warmup vs 4.07 for the Tier-13 conc-default rows), and the arena writes
+its result only at the end, so an OOM at hour 6 would have lost everything.
+Neutrality argued by MECHANISM, not symmetry: concurrency changes inference batch
+composition and so can flip a move via reduction order, but it applies to both engines in the
+same pooled batch with seed-paired openings, so it carries no systematic advantage.
+⚑ **This row must NOT be pooled with the Tier-13 rows as if execution config were identical.**
+Full record: `scratchpad/bt4heads/banked/arena_execution_notes.md`.
+
+### Two instrument gaps found while running this
+
+1. **`runs/arena_results.jsonl` does not persist `max_concurrent_games`.** No arena row on
+   this project records the concurrency it ran at — the Tier-13 rows included. A measurement
+   whose execution config is unrecorded is not reproducible (cf. #203).
+2. **The runbook's frozen command omits `PYTHONPATH=.`**, which every script here needs; the
+   first launch died in seconds on `ModuleNotFoundError: scripts.match_vs_uci`. The frozen
+   command should carry the prefix.
+
+### Status
+
+Arm B is STOPPED (2026-08-15 03:41, clean drain, 3033 in-flight games suspended, 0 discarded).
+Nothing has been restarted — what runs next is Josh's call, and adopting the bt4heads config
+into production is a separate decision from this arena verdict.
+
+---
+
+## PREREG — bt4heads PROMOTED TO PRODUCTION + AOT rebuilt (2026-08-15, NOT YET LAUNCHED)
+
+Written BEFORE launch per protocol rule 1. Follows the ADOPT verdict above (4528f08f1).
+
+### Hypothesis
+The bt4heads bundle's **+13.9 Elo [+5.7, +22.1]** over 100 iterations **compounds** rather
+than saturating. The lineage has otherwise been FLAT (~11-Elo plateau), so a bundle that is
+still gaining at iter 200 is the first genuine escape; one that has flattened is a one-off
+level shift and the attribution question becomes worth its cost.
+
+### The change
+`configs/pbt2_small.yaml`, 7 training keys promoted verbatim from
+`scratchpad/bt4heads/armB_bt4heads.yaml` — the values that were MEASURED, not re-derived:
+`model.aux_policy_head_dim: 128` · `model.categorical_head_coupled: true` ·
+`model.policy_embedding_mode: linear` · `selfplay.categorical_blend_frac: 0.69` ·
+`selfplay.categorical_search_blend_frac: 0.31` · `train.rebuild_categorical_target: true` ·
+`train.w_categorical: 0.0 -> 1.0` · `train.w_sf_move: 0.0 -> 0.05`.
+
+Dry-run on a COPY passed both gates before the live file was written:
+`flatten_run_config_defaults` raised no `ValueError` (⇒ no unknown key ⇒ **the process will
+boot**; an unknown key is FATAL at launch, not a soft revert) and `TrialConfig.from_dict`
+constructed (⇒ survives category (b) validation). All 10 promoted/operational keys then
+diffed EQUAL against the flattened arm-B config.
+
+Start weights: `data/salvage/bt4heads_iter100_20260815` (exported with
+`--metric training_iteration`, slot=00 iter=101 ckpt=checkpoint_000100, 800 shards, 3.7G).
+
+### ⚑ CONFOUND recorded IN ADVANCE: AOT is a SECOND change in this window
+
+Protocol rule 4 is one data-affecting change per readout window; this window has two.
+`distributed_inference_aot_dir` was pointed at **rebuilt** packages
+(`data/aot_models_512_bt4heads`, built from the promoted config + arm B's iter-100
+checkpoint). This is data-affecting: the AOT broker is a FIFTH policy path that never enters
+`ChessNet.forward`, and it produces the priors selfplay games are played with.
+
+It could not simply be carried over. `data/aot_models_512/*.pt2` were compiled **2026-07-14**,
+a month before the 2026-08-14 head surgery, and arm B ran with `aot_dir: ''` — so the old
+packages have NEVER served these heads. ⚑ `assert_uniform_constant_fqns` cannot catch that:
+it checks the packages agree with EACH OTHER, and all 24 stale packages are uniform, so it
+passes. A gate that cannot fail for the failure it looks like it covers.
+
+**Bound on the confound:** the rebuild ran with `--verify` (AOT vs eager per bucket). The
+measured parity is recorded at deploy. If AOT matches eager within tolerance, the data effect
+is small and the readout below is still about bt4heads; if it does not, this entry is VOID as
+a bt4heads readout and must be re-run with AOT off.
+
+### DECIDING YARDSTICK (exact command, pre-committed — do not re-derive)
+Candidate is production at **iter 200**; reference is the FROZEN arm-B iter-100 anchor that
+the ADOPT verdict was measured on.
+```bash
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate <prod>/checkpoint_000199/trainer.pt \
+  --reference scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt \
+  --sims 32 --search-shape training --games 4800 --seed 42 \
+  --max-concurrent-games 16
+```
+⚑ `PYTHONPATH=.` and `--max-concurrent-games 16` are both REQUIRED and both were learned the
+hard way on 2026-08-15 (a missing prefix killed the launch in seconds; the default concurrency
+OOMed twice against the WSL2 dxg bridge). Full checkpoint paths only. Read at FULL n only.
+
+### Pre-committed thresholds — three named outcomes, no post-hoc reading
+* **CONTINUE** — 95% CI lower bound **> 0**: still gaining. Keep running, next readout iter 300.
+* **KILL / ROLL BACK** — 95% CI upper bound **< 0**: degrading. Stop, restore
+  `data/salvage/bt4heads_iter100_20260815`, revert the 7 keys from
+  `scratchpad/.../pbt2_PRE_BT4HEADS.yaml`.
+* **SATURATED** — CI spans 0: the +13.9 was a one-off level shift, not a trajectory. This is
+  the trigger to spend GPU on ABLATING the 7-key bundle (most likely split: the
+  categorical-head group vs `w_sf_move`), which is exactly the question this readout defers.
+
+⚑ Regret is OUT of the verdict: the search config is frozen but the PID state is restored
+from the donor, so the series is not a strength readout. ⚑ Losses are OUT too — this same
+bundle read `policy_loss` **+4.96% WORSE** while play strength was **+13.9 Elo BETTER**.
+
+### Revert points
+| what | where |
+|---|---|
+| weights+opt+PID+replay @ arm B iter 101 | `data/salvage/bt4heads_iter100_20260815` (3.7G) |
+| pre-promotion production yaml | `scratchpad/.../pbt2_PRE_BT4HEADS.yaml` (also git) |
+| frozen arena anchor | `scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/` |
+| previous AOT packages | `data/aot_models_512/` left INTACT — rebuild went to a new dir |
 
 ### FOLLOW-ON (PR #427, `fix/optremap-review-residuals`) — the guard against re-keying by position had, as its failure mode, re-keying by position
 
