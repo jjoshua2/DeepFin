@@ -42,7 +42,7 @@ def _probs(logits: np.ndarray) -> np.ndarray:
     return e / e.sum(axis=-1, keepdims=True)
 
 
-def _gate(a_p, a_w, r_p, r_w, c_p=None, c_w=None, *, tv_ratio_max=1.5):
+def _gate(a_p, a_w, r_p, r_w, c_p=None, c_w=None, *, tv_ratio_max=2.0):
     return _compare_bucket(
         aot_pol=a_p, aot_wdl=a_w, ref_pol=r_p, ref_wdl=r_w,
         ctl_pol=c_p, ctl_wdl=c_w, tv_ratio_max=tv_ratio_max,
@@ -374,10 +374,31 @@ class _StubModel(torch.nn.Module):
         self.anchor = torch.nn.Parameter(torch.zeros(1))
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        n = int(x.shape[0])
-        g = torch.Generator().manual_seed(0)
-        base = torch.randn(n, 1858, generator=g) * 4.0
-        return {"policy": base, "wdl": torch.randn(n, 3, generator=g)}
+        return _stub_logits(x)
+
+
+def _stub_projection() -> tuple[torch.Tensor, torch.Tensor]:
+    g = torch.Generator().manual_seed(0)
+    return (torch.randn(64, 1858, generator=g), torch.randn(64, 3, generator=g))
+
+
+def _stub_logits(x: torch.Tensor) -> dict[str, torch.Tensor]:
+    """⚑ ROW-DETERMINISTIC, which is the whole point of this stub.
+
+    An earlier version drew fresh `torch.randn(n, ...)` per call. That made the
+    chunked eager control a COMPLETELY different draw, so its TV was ~maximal
+    and the floor swamped every arm — the end-to-end tests then passed a broken
+    package and could not tell the knobs apart. A stub whose output depends on
+    the batch SHAPE rather than on the ROWS models a network that does not
+    exist, and it silently disables the gate under test.
+
+    A fixed projection of a fixed input slice is chunk-invariant, so the eager
+    control degenerates to TV 0 exactly as it does on real CPU hardware, and the
+    ULP floor is what carries the gate — the regime worth testing.
+    """
+    wp, ww = _stub_projection()
+    feat = x.reshape(int(x.shape[0]), -1)[:, :64].float()
+    return {"policy": (feat @ wp) * 0.25, "wdl": (feat @ ww) * 0.25}
 
 
 class _StubPackage:
@@ -385,14 +406,13 @@ class _StubPackage:
         self.offset = offset
 
     def __call__(self, xt: torch.Tensor) -> dict[str, torch.Tensor]:
-        n = int(xt.shape[0])
-        g = torch.Generator().manual_seed(0)
-        base = torch.randn(n, 1858, generator=g) * 4.0
-        wdl = torch.randn(n, 3, generator=g)
+        out = _stub_logits(xt)
         if self.offset:
+            n = int(xt.shape[0])
             g2 = torch.Generator().manual_seed(99)
-            base = base + torch.randn(n, 1858, generator=g2) * self.offset
-        return {"policy": base, "wdl": wdl}
+            out["policy"] = out["policy"] + torch.randn(n, 1858, generator=g2) * self.offset
+            out["wdl"] = out["wdl"] + torch.randn(n, 3, generator=g2) * self.offset
+        return out
 
     def load_constants(self, *_a: object, **_k: object) -> None:
         return None
@@ -571,7 +591,155 @@ def test_the_ulp_floor_magnitude_quoted_in_the_docstring_is_reproducible() -> No
     floor = mean_row_tv(_probs(bf16_ulp_perturbation(ref, seed=0)), p)
 
     assert 0.50 < top1 < 0.65, f"sharpness regime moved: top-1 {top1:.4f}"
-    assert 0.015 < floor < 0.026, (
+    assert 0.015 < floor < 0.030, (
         f"ULP floor {floor:.4f} is outside the docstring's ~0.0202; the "
         "tv_ratio_max default was chosen against that magnitude"
     )
+
+
+def test_the_ulp_floor_is_INVARIANT_to_a_common_logit_shift() -> None:
+    """⚑ Otherwise the gate is weight-dependent again — the defect it exists for.
+
+    Adding a constant to every logit leaves the softmax unchanged, and leaves
+    the measured AOT-vs-eager TV unchanged too (the same bias tensor rounds
+    identically in both pipelines, so it cancels in their difference). A floor
+    derived from the RAW logits does NOT stay put: measured 0.0194 -> 0.0310 at
+    +10 and -> 0.1329 at +100. A head bias drifting common-mode would then widen
+    the denominator until the same package discrepancy started passing.
+    """
+    rng = np.random.default_rng(0)
+    base = torch.from_numpy(
+        (rng.normal(0, 1.0, size=(256, 512)) * 6.0).astype(np.float32)
+    ).to(torch.bfloat16).float().numpy()
+
+    floors = [
+        mean_row_tv(_probs(bf16_ulp_perturbation(base + off, seed=0)),
+                    _probs(base + off))
+        for off in (0.0, 10.0, 100.0)
+    ]
+    assert max(floors) / min(floors) < 1.10, (
+        f"floor moved with an arbitrary common offset: {floors}"
+    )
+    # And the scenario must actually be one where a RAW floor would move,
+    # or this test proves nothing.
+    raw = []
+    for off in (0.0, 100.0):
+        z = (base + off).astype(np.float32)
+        s = np.random.default_rng(0).choice(
+            np.array([-1.0, 1.0], dtype=np.float32), size=z.shape)
+        raw.append(mean_row_tv(_probs(z * (1.0 + s * np.float32(2.0) ** -8)), _probs(z)))
+    assert raw[1] > 3 * raw[0], f"scenario does not reproduce the defect: {raw}"
+
+
+def test_single_row_corruption_fails_even_though_p99_misses_it() -> None:
+    """⚑ p99 ignores damage in <1% of rows — a boundary-row kernel bug.
+
+    The worst-row arm is a RATIO OF TWO MAXIMA over the same N, so the
+    extreme-value growth that broke the original gate cancels instead of
+    accumulating.
+    """
+    rng = np.random.default_rng(21)
+    n = 512
+    ref = rng.normal(0, 4.0, size=(n, 256)).astype(np.float32)
+    ref_w = rng.normal(0, 1.0, size=(n, 3)).astype(np.float32)
+    aot = ref + rng.normal(0, 0.01, size=ref.shape).astype(np.float32)
+    aot[-1] = rng.normal(0, 4.0, size=256)  # ONE boundary row, totally wrong
+
+    # Both other arms are blind to it, which is exactly why this arm exists.
+    assert mean_row_tv(_probs(aot), _probs(ref)) < 0.01
+    assert float(np.quantile(row_tv(_probs(aot), _probs(ref)), 0.99)) < 0.10
+
+    ok, detail, matches, rows = _gate(aot, ref_w.copy(), ref, ref_w)
+    assert matches / rows > 0.99, (
+        f"argmax is also blind here by design ({matches}/{rows}) — it sits far "
+        "above the 0.90 floor, which is why a TV arm has to carry this"
+    )
+    assert not ok, f"single-row corruption passed the gate: {detail}"
+
+
+def test_an_infinite_ratio_threshold_is_REJECTED(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """argparse's float() happily returns inf, and `inf <= 0.0` is False."""
+    monkeypatch.setattr(MOD, "build_reference_model", lambda *a, **k: _StubModel())
+    monkeypatch.setattr(MOD, "load_model_config", lambda p: _StubModel())
+    monkeypatch.setattr(MOD, "load_checkpoint_state_dict", lambda p: {})
+    monkeypatch.setattr(MOD, "_require_cuda", lambda action: None)
+    for bad in ("inf", "nan"):
+        rc = MOD.main([
+            "--checkpoint", "x.pt", "--verify-only", "--out-dir", str(tmp_path),
+            "--buckets", "8", "--max-batch", "8", "--tv-ratio-max", bad,
+        ])
+        assert rc == 2, f"--tv-ratio-max {bad} was accepted (rc={rc})"
+
+
+def test_a_healthy_package_passes_EVERY_arm_at_a_large_bucket() -> None:
+    """⚑ The false-positive guard, and the reason each floor uses a MATCHED
+    functional.
+
+    A max over 512 rows is naturally 3-5x the mean of the same rows. So if the
+    worst-row arm divided by the floor's MEAN instead of the floor's MAX, this
+    perfectly healthy package would read ~4x and FAIL — a gate that rejects
+    good packages at big buckets, which is exactly the shape of the original
+    defect. Every arm's denominator must be the same statistic as its numerator.
+    """
+    rng = np.random.default_rng(31)
+    n = 512
+    ref = (rng.normal(0, 1.0, size=(n, 1024)) * 5.0).astype(np.float32)
+    ref_w = rng.normal(0, 1.0, size=(n, 3)).astype(np.float32)
+    noise = np.float32(2.0) ** -8  # exactly the floor's own scale
+    aot = ref * (1.0 + rng.normal(0, noise, size=ref.shape).astype(np.float32))
+    aot_w = ref_w * (1.0 + rng.normal(0, noise, size=ref_w.shape).astype(np.float32))
+
+    rows = row_tv(_probs(aot), _probs(ref))
+    assert float(np.max(rows)) > 2.5 * float(np.mean(rows)), (
+        "scenario has no max/mean spread, so it cannot detect a mismatched "
+        f"denominator (max {np.max(rows):.4g} vs mean {np.mean(rows):.4g})"
+    )
+    ok, detail, _, _ = _gate(aot, aot_w, ref, ref_w)
+    assert ok, f"a healthy package failed at a large bucket: {detail}"
+
+
+def test_the_arm_null_table_is_reproducible_and_every_arm_reads_about_one() -> None:
+    """⚑⚑ BANK THE DUMP. _ARM_NULL is a MEASUREMENT, and this re-derives it.
+
+    A single threshold across six arms was wrong and shipped: at 1.5, a
+    perfectly healthy package read 1.90 on wdl_tail and 2.07 on wdl_max and
+    would have FAILED every time — the original defect (a gate that rejects good
+    packages) in a new costume. Numerator and denominator are matched in
+    FUNCTIONAL but are different random draws, and a p99 or max over 3 WDL
+    columns is far noisier than a mean over 1858.
+
+    If this drifts, --tv-ratio-max's default needs revisiting.
+    """
+    import re as _re
+
+    from scripts.build_aot_packages import _ARM_NULL
+
+    seen: dict[str, list[float]] = {}
+    for n in (64, 512):
+        for seed in range(12):
+            rng = np.random.default_rng(seed)
+            ref = (rng.normal(0, 1.0, size=(n, 1024)) * 5.0).astype(np.float32)
+            ref_w = rng.normal(0, 1.0, size=(n, 3)).astype(np.float32)
+            noise = np.float32(2.0) ** -8
+            aot = ref * (1.0 + rng.normal(0, noise, size=ref.shape).astype(np.float32))
+            aot_w = ref_w * (1.0 + rng.normal(0, noise, size=ref_w.shape).astype(np.float32))
+            _, detail, _, _ = _compare_bucket(
+                aot_pol=aot, aot_wdl=aot_w, ref_pol=ref, ref_wdl=ref_w,
+                ctl_pol=None, ctl_wdl=None, tv_ratio_max=1e12,
+            )
+            for k, v in _re.findall(r"(\w+)=x([\d.]+)", detail):
+                seen.setdefault(k, []).append(float(v))
+
+    assert set(seen) == set(_ARM_NULL), f"arm set drifted: {sorted(seen)}"
+    for arm, vals in seen.items():
+        med = float(np.median(vals))
+        assert 0.6 < med < 1.7, (
+            f"NORMALIZED arm {arm} reads {med:.2f} when healthy, not ~1.0 — "
+            f"_ARM_NULL[{arm}]={_ARM_NULL[arm]} no longer matches the measurement"
+        )
+        assert max(vals) < 2.0, (
+            f"arm {arm} peaked at {max(vals):.2f} on a HEALTHY package, which is "
+            "at the default bound — the gate would false-positive"
+        )

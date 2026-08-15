@@ -88,7 +88,7 @@ def test_arg_parser_defaults() -> None:
     assert args.config == Path("configs/pbt2_small.yaml")
     assert args.out_dir == Path("data/aot_models_512")
     assert args.max_batch == 4096
-    assert args.tv_ratio_max == pytest.approx(1.5)
+    assert args.tv_ratio_max == pytest.approx(2.0)
     assert args.argmax_min == pytest.approx(0.90)
     assert not args.verify
     assert not args.resume

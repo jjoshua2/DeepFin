@@ -20,6 +20,7 @@ Example::
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from collections.abc import Mapping, Sequence
@@ -428,8 +429,64 @@ def bf16_ulp_perturbation(ref_logits: np.ndarray, *, seed: int = 0) -> np.ndarra
     """
     rng = np.random.default_rng(int(seed))
     step = np.float32(2.0) ** -8  # bf16: 1 implicit + 7 explicit mantissa bits
-    sign = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=ref_logits.shape)
-    return ref_logits.astype(np.float32) * (np.float32(1.0) + sign * step)
+    # ⚑ CENTER FIRST. A relative perturbation of the RAW logits depends on their
+    # arbitrary common offset: adding a constant to every logit leaves the
+    # softmax — and the measured AOT-vs-eager TV — completely unchanged, but
+    # scales this floor by ~offset/256. A head bias drifting in that common-mode
+    # direction would then widen the denominator and let the same package
+    # discrepancy start passing. That is the WEIGHT-DEPENDENT VERDICT this gate
+    # exists to eliminate, reintroduced through the back door.
+    # ⚑ Centered by the row MEAN, not the row max. Both are shift-invariant,
+    # but max-centering pins the top logit at exactly 0, so the perturbation of
+    # the single entry that dominates the softmax is exactly 0 too — measured,
+    # that shrinks the floor 12x (0.0205 -> 0.00173) and would make the gate
+    # spuriously strict. Mean-centering privileges no entry and preserves the
+    # magnitude: 0.0205 centered vs 0.0194 raw at zero offset, and flat at
+    # 0.0203/0.0204 for offsets of +10 and +100 where the raw form inflates to
+    # 0.031 and 0.133.
+    z = ref_logits.astype(np.float32)
+    z = z - np.mean(z, axis=-1, keepdims=True)
+    sign = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=z.shape)
+    return z * (np.float32(1.0) + sign * step)
+
+
+# ⚑⚑ NULL CALIBRATION — measured, not chosen.
+#
+# Each arm divides a statistic of (AOT vs eager) by the SAME statistic of the
+# floor. That makes every arm scale-free, but it does NOT make them read the
+# same number when healthy: numerator and denominator are different random
+# draws, and a p99 or a max of a 3-column WDL row-TV is a far noisier estimator
+# than a mean over 1858 columns. Measured on healthy synthetic packages
+# perturbed at exactly the bf16 ULP scale, 40 seeds x buckets {64, 512, 4096}:
+#
+#     arm        median      worst observed
+#     pol_mean     0.91          1.06
+#     pol_tail     1.19-1.29     1.82
+#     wdl_mean     1.15          1.70
+#     wdl_tail     1.88-1.98     3.14
+#     pol_max      1.25-1.71     2.37
+#     wdl_max      2.01-2.34     3.64
+#
+# ⇒ a SINGLE threshold across all six arms is wrong, and an earlier revision of
+# this file shipped exactly that: at 1.5 it would have spuriously FAILED a
+# perfectly healthy package on wdl_tail (1.90) and wdl_max (2.07) every time.
+# That is the original defect — a gate that fails good packages — wearing a
+# different hat.
+#
+# So each arm is normalized by its own measured null before the threshold is
+# applied. After normalization every arm reads ~1.0 when healthy and the worst
+# observed reading across the whole sweep is 1.65, so the default bound of 2.0
+# carries real margin while a package with unfilled constants reads >10.
+#
+# tests/test_aot_verify_gate.py re-derives these on every CI run.
+_ARM_NULL = {
+    "pol_mean": 0.91,
+    "pol_tail": 1.30,
+    "wdl_mean": 1.15,
+    "wdl_tail": 1.90,
+    "pol_max": 1.70,
+    "wdl_max": 2.30,
+}
 
 
 def _compare_bucket(
@@ -506,15 +563,21 @@ def _compare_bucket(
     aot_wp, ref_wp = _softmax(aot_wdl), _softmax(ref_wdl)
 
     def _floor(ref_logits: np.ndarray, ref_p: np.ndarray,
-               ctl: np.ndarray | None) -> tuple[float, float]:
-        """(mean, tail) of the irreducible floor: max over both estimates."""
+               ctl: np.ndarray | None) -> tuple[float, float, float]:
+        """(mean, tail, max) of the irreducible floor: max over both estimates.
+
+        Each statistic is computed on the floor with the SAME functional and the
+        SAME row count as its numerator, so every arm reads ~1 when healthy.
+        """
         ulp_p = _softmax(bf16_ulp_perturbation(ref_logits, seed=floor_seed))
-        f_mean, f_tail = mean_row_tv(ulp_p, ref_p), tail_row_tv(ulp_p, ref_p)
+        f = [mean_row_tv(ulp_p, ref_p), tail_row_tv(ulp_p, ref_p),
+             float(np.max(row_tv(ulp_p, ref_p)))]
         if ctl is not None:
             ctl_p = _softmax(ctl)
-            f_mean = max(f_mean, mean_row_tv(ctl_p, ref_p))
-            f_tail = max(f_tail, tail_row_tv(ctl_p, ref_p))
-        return f_mean, f_tail
+            f = [max(f[0], mean_row_tv(ctl_p, ref_p)),
+                 max(f[1], tail_row_tv(ctl_p, ref_p)),
+                 max(f[2], float(np.max(row_tv(ctl_p, ref_p))))]
+        return f[0], f[1], f[2]
 
     def _ratio(num: float, den: float) -> float:
         """No epsilon. A zero floor means the reference carries no scale, so the
@@ -525,15 +588,32 @@ def _compare_bucket(
 
     ctl_p = ctl_pol if (ctl_pol is not None and ctl_wdl is not None) else None
     ctl_w = ctl_wdl if (ctl_pol is not None and ctl_wdl is not None) else None
-    fp_mean, fp_tail = _floor(ref_pol, ref_pp, ctl_p)
-    fw_mean, fw_tail = _floor(ref_wdl, ref_wp, ctl_w)
+    fp_mean, fp_tail, fp_max = _floor(ref_pol, ref_pp, ctl_p)
+    fw_mean, fw_tail, fw_max = _floor(ref_wdl, ref_wp, ctl_w)
 
-    arms = {
+    raw = {
         "pol_mean": _ratio(mean_row_tv(aot_pp, ref_pp), fp_mean),
         "pol_tail": _ratio(tail_row_tv(aot_pp, ref_pp), fp_tail),
         "wdl_mean": _ratio(mean_row_tv(aot_wp, ref_wp), fw_mean),
         "wdl_tail": _ratio(tail_row_tv(aot_wp, ref_wp), fw_tail),
+        "pol_max": _ratio(float(np.max(row_tv(aot_pp, ref_pp))), fp_max),
+        "wdl_max": _ratio(float(np.max(row_tv(aot_wp, ref_wp))), fw_max),
     }
+    # Normalize by each arm's measured null so one threshold means the same
+    # thing on all six. See _ARM_NULL.
+    arms = {k: v / _ARM_NULL[k] for k, v in raw.items()}
+    # ⚑ THE WORST-ROW ARMS (pol_max / wdl_max) exist because p99 by
+    # construction ignores corruption confined to fewer than 1% of rows — a
+    # kernel that damages only its final boundary row at one exact bucket size,
+    # whose contribution to the mean is diluted by the whole batch and which
+    # leaves the pooled argmax far above 0.90.
+    #
+    # A bare max was the ORIGINAL defect (an extreme-value statistic that grows
+    # with N, so big buckets failed for being big). A RATIO OF TWO MAXIMA OVER
+    # THE SAME N does not have that problem: both are the same order statistic
+    # on the same row count, so the N-dependence largely cancels — and whatever
+    # does not cancel is absorbed by _ARM_NULL, which was measured across three
+    # bucket sizes for exactly that reason.
     ok = all(v <= tv_ratio_max for v in arms.values())
 
     matches = int(np.sum(np.argmax(aot_pol, axis=-1) == np.argmax(ref_pol, axis=-1)))
@@ -828,12 +908,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--tv-ratio-max",
         type=float,
-        default=1.5,
+        default=2.0,
         help="Max TV(aot,eager) / TV(eager-at-another-batch-shape,eager). "
-             "⚑ PROVISIONAL, not a calibration: it sits between a single CUDA "
-             "healthy reading (0.99 @ bucket 1190) and a package with unfilled "
-             "constants (~60). Only the CPU-derivable half is banked, by "
-             "tests/test_aot_verify_gate.py. Relative by construction, so it does "
+             "Applied to arms NORMALIZED by their measured null (see _ARM_NULL), so "
+             "1.0 is the healthy level on every arm and 2.0 is the default "
+             "bound. Worst healthy reading observed across 40 seeds x buckets "
+             "{64,512,4096} is 1.65; unfilled constants read >10. Relative by "
+             "construction, so it does "
              "not expire when the policy sharpens the way the old absolute "
              "--tol did.",
     )
@@ -869,8 +950,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.verify_n <= 0:
         print("error: --verify-n must be positive", file=sys.stderr)
         return 2
-    if args.tv_ratio_max <= 0.0:
-        print("error: --tv-ratio-max must be positive", file=sys.stderr)
+    if not math.isfinite(args.tv_ratio_max) or args.tv_ratio_max <= 0.0:
+        # ⚑ isfinite, not just > 0: argparse's float() accepts "inf", and every
+        # finite ratio then clears the bar — silently disabling all six TV arms
+        # while still reporting PASS. A package with completely wrong WDL and a
+        # preserved policy argmax would verify clean.
+        print("error: --tv-ratio-max must be positive and finite", file=sys.stderr)
         return 2
     # ⚑ NOT rejected at <=1.0. An earlier revision did, on the reasoning that
     # "the control IS the irreducible floor so <=1.0 can never pass" — which
