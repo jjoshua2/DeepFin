@@ -50136,3 +50136,75 @@ banked weights instead of a purpose-run arm.
 
 Not a rolling read: the verdict is taken once at the pre-committed n, never off a partial
 arena (a 16-game rolling read once faked +112.3 Elo here).
+
+## 2026-08-15 — VOID: era-C vs era-D/E aborted at the lineage purity gate (prereg `c9a5829c0`), ZERO games played
+
+The pre-committed gate FAILED and the arena was not run. **Finding 3 of `666d20561` remains
+UNTESTED — neither supported nor refuted.**
+
+**Gate result.** `scratchpad/tier13/banked/arm_A_iter100/params.json` differs from the live
+yaml on **8 training-affecting keys beyond the era keys**: `policy_embedding_mode` off→linear,
+`w_categorical` 0.0→1.0, `w_sf_move` 0.0→0.05, `categorical_head_coupled` False→True,
+`aux_policy_head_dim` None→128, `categorical_blend_frac` 0.0→0.69,
+`categorical_search_blend_frac` 0.0→0.31, `rebuild_categorical_target` absent→True. The era
+keys themselves (`mcts_simulations` 100, `gumbel_topk` 16) do **not** differ — the live yaml is
+era-D/E too.
+
+**CAUSE — MY ERROR: the prereg outran its own premise by 7h44m.** All 8 keys entered the live
+yaml at `86492fa26` (08-15 10:05, "promote bt4heads bundle, NOT yet launched"); I wrote the
+prereg at 17:49. Against `86492fa26^` — the config production actually ran under while Tier-13
+executed — **arm A is CLEAN, zero training-target diffs.** So "arm A of Tier-13 IS production
+config" was TRUE when it was banked and FALSE when the gate ran. ⚑ I asserted it after reading
+FOUR keys (`mcts_simulations`, `gumbel_topk`, `gumbel_c_scale`, `policy_embedding_mode`) and
+generalising to "production config". **A four-key spot check is not a config identity.** Nor is
+this cosmetic: the bt4heads config builds a structurally different net —
+`bt4heads_iter100_20260815` trainer.pt is **665,662,247 B** against arm A's **685,324,155**.
+
+**SECOND, INDEPENDENT FAILURE THE GATE COULD NOT SEE — and it is the one that matters.** The
+gate diffs arm-vs-LIVE, but arm-vs-ARM is what confounds an arena. Against era-C's own yaml
+(`e650bb85f^`) the two arms ALSO differ on:
+- `opening_fen_list_path` **retire_860 → retire_217** — a different blind-spot opening pool,
+  i.e. **different selfplay data**. Training-affecting, not exempted by the gate.
+- `distributed_inference_aot_dir` `data/aot_models_512` → `''` and `distributed_async_test_eval`
+  True→False — **era-C ran with the AOT broker ON, arm A with it OFF.** The broker is a FIFTH
+  policy path (fp8/batching, never enters `ChessNet.forward`), so it changes selfplay inference
+  numerics and therefore the generated data.
+
+⇒ **a purity gate written arm-vs-live cannot see the confound that actually matters.** Future
+gates must diff **ARM AGAINST ARM**, and each arm against the config IT ACTUALLY RAN UNDER —
+never against today's yaml. Even a correctly-baselined gate would have failed here, on
+`opening_fen_list_path`.
+
+**METHOD RULE (cost: one over-reported first pass).** `params.json` vs
+`flatten_run_config_defaults(live yaml)` is an **ASYMMETRIC** comparison that manufactures ~73
+fake "absent" diffs. `params.json` is argparse defaults OVERRIDDEN by the launch yaml, while the
+flattener copies only keys the yaml literally contains and applies renames
+(`use_smolgen: true` → `no_smolgen: False`), so `use_smolgen` reads "absent from live" while
+sitting at line 123 of the live yaml. **Diff FLATTEN-vs-FLATTEN** using each arm's launch yaml,
+and resolve every "absent" against the realized `TrialConfig.from_dict` default. Provenance was
+confirmed first: `flatten(scratchpad/tier13/arm_A_off.yaml)` agrees with `params.json` on
+**315/315** shared keys, sole exception Ray appending `/tune` to `work_dir`.
+
+**Verified and reusable** (all three pairwise DISTINCT by sha256 over all 496 tensors):
+
+    A  iter 811  data/salvage/pre_sims100_20260812/seeds/slot_000/trainer.pt          07394a5b...
+    B  iter 990  scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099/trainer.pt  c705b299...
+    anchor 514   data/ratchet/snapshots/ck_2026-08-09_iter514.pt                      e37ef16f...
+
+⚑ **iter514 is the shared ANCESTOR of both arms, not independent of either** — the chain is
+379f6 iter514 → iter672 → 5ce02 → **811 = A** → 890 → b384d → **990 = B**. Usable as an anchor;
+describing it as out-of-lineage would be wrong.
+⚑ `global_iter` is **NOT** in `trainer.pt` (which carries only arch/model/opt/scheduler/step/
+peak_lr/zclip) — read it from `trial_meta.json` / `banked_identity.txt`.
+
+**The tempting argument for proceeding anyway is wrong-shaped and was correctly resisted**: one
+could say the bt4heads bundle has trained NO weights in either arm, so it cannot confound this
+arena. True of the arena, irrelevant to the gate — the gate tests whether arm A still REPRESENTS
+production, and it no longer does. And the arm-vs-arm diffs confound it regardless.
+
+⇒ **Finding 3 is not cleanly testable from banked weights.** A real test needs a purpose-run
+pair: one checkpoint, two arms, sims 256/32 vs 100/16, EVERYTHING else identical including the
+opening pool and the AOT setting. That is a training experiment and needs an explicit go.
+
+Evidence: `scratchpad/prereg_c9a58_phase1_gate_result.json`,
+`scratchpad/prereg_c9a58_lineage_gate2{.py,_result.json}`, `scratchpad/prereg_c9a58_ckpt_verify{.py,.json}`.
