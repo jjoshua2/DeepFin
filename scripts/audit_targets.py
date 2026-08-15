@@ -569,6 +569,47 @@ def profiles_for_audit(
     return profiles, requested
 
 
+# The search knobs that are NOT recoverable from anything else a report carries.
+# `--config` does not pin them: `--vloss-weight`, `--vloss-mode` and
+# `--target-batch` are CLI-only (the script never reads `gumbel_vloss_weight` /
+# `gumbel_target_batch` from the yaml), and `--batch-size` / `--sims` /
+# `--rl-sims` override or select what the config would have said. So a banked
+# report made without them is not known-wrong, it is UNKNOWN — which is the one
+# state a ruler must never be in.
+SEARCH_PARAM_FIELDS: tuple[str, ...] = (
+    "vloss_weight", "vloss_mode", "target_batch", "batch_size", "sims", "rl_sims",
+)
+
+
+def search_param_stamp(args: argparse.Namespace, *, rl_sims: int) -> dict[str, int]:
+    """The search-parameter provenance carried by BOTH the report and the dump.
+
+    One function, two consumers, so the header and the dump cannot drift apart
+    or from the arguments the run was actually given — the same reasoning that
+    makes ``profiles_for_audit`` a function rather than a stretch of ``main()``.
+
+    ``rl_sims`` is passed in RESOLVED (``profiles["train"].sims``) rather than
+    read off ``args``, because ``--rl-sims 0`` is a sentinel meaning "use the
+    config's ``mcts_simulations``". Stamping the sentinel would record a sim
+    count no row was ever searched at, which is worse than not stamping at all:
+    it would look like provenance and be false. Every other field is the CLI
+    value verbatim, because for those the CLI value IS what the search got.
+    """
+    return {
+        "vloss_weight": int(args.vloss_weight),
+        "vloss_mode": int(args.vloss_mode),
+        "target_batch": int(args.target_batch),
+        "batch_size": int(args.batch_size),
+        "sims": int(args.sims),
+        "rl_sims": int(rl_sims),
+    }
+
+
+def format_search_params(stamp: Mapping[str, int]) -> str:
+    """One greppable ``k=v`` line for the report header."""
+    return " ".join(f"{k}={v}" for k, v in stamp.items())
+
+
 def _wdl_softmax(logits: np.ndarray) -> np.ndarray:
     """Row-wise softmax of raw WDL logits, as `network_turn.py` does.
 
@@ -1273,7 +1314,15 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=256,
                     help="net forward batch. Raw policy regret is BATCH-SIZE "
                          "DEPENDENT (~0.8 cp between 64 and 256); pin it across "
-                         "every arm of a comparison. Echoed in the report header.")
+                         "every arm of a comparison. Echoed in the report header. "
+                         "⚑ IT IS ALSO BOARDS-PER-SEARCH-CALL, which is a SEARCH "
+                         "SHAPE, not just a throughput knob: it sets how many trees "
+                         "share one leaf-accumulation batch (see --target-batch), and "
+                         "at >= 64 boards the C runner additionally takes the 2-group "
+                         "eval pipeline (`_use_pipeline`, mcts/gumbel_c.py) that "
+                         "production distributed selfplay never reaches, because "
+                         "SlotInferenceClient has no evaluate_encoded_async. "
+                         "Production runs ~1 board per call.")
     ap.add_argument("--input-encoding", choices=INPUT_ENCODINGS,
                     default=INPUT_ENCODING_DEFAULT,
                     help="input encoding for row (a), the net's raw policy. "
@@ -1288,7 +1337,11 @@ def main() -> None:
                     help="matched-rows index for --input-encoding stored "
                          "(default: <audit-set>.matched_rows.npz); built by "
                          "scripts/match_audit_rows.py, not checked in")
-    ap.add_argument("--sims", type=int, default=256)
+    ap.add_argument("--sims", type=int, default=256,
+                    help="sim budget for the PLAY row (b) only. The training rows "
+                         "(d)/(e) follow the config's mcts_simulations / "
+                         "fast_simulations unless --rl-sims overrides them. Recorded "
+                         "in the report header and the per-position dump.")
     ap.add_argument("--policy-temp", type=float, default=1.0,
                     help="prior temperature on policy logits before gumbel search "
                          "(>1 softens prior, <1 sharpens, 1.0=no-op). Measures search-prior "
@@ -1343,17 +1396,28 @@ def main() -> None:
     ap.add_argument("--sf-workers", type=int, default=4)
     ap.add_argument("--nice", type=int, default=15)
     ap.add_argument("--target-batch", type=int, default=0,
-                    help="C-search leaf-accumulation batch. 0 = production (accumulate across "
-                         "halving reps to fill GSS_GPU_BATCH). 1 = flush per rep, which removes "
-                         "C17's duplicate leaves (29-76%% at 256 sims, -34%% tree nodes). Run the "
-                         "audit at 0 and at 1 to separate 'C17 wastes compute' from 'C17 corrupts "
-                         "the training target': duplicate visits still increment N, inflating "
-                         "max_visit and hence the root q_scale that sharpens the improved-policy "
-                         "target. C-runner only; the Python reference path takes no such argument.")
+                    help="C-search leaf-accumulation batch. 0 = production (no "
+                         "`gumbel_target_batch` in configs/pbt2_small.yaml, so selfplay passes "
+                         "0 and the C runner falls back to GSS_GPU_BATCH). 1 = flush per rep, "
+                         "which removes C17's duplicate leaves (29-76%% measured at 256 sims, "
+                         "-34%% tree nodes). Run the audit at 0 and at 1 to separate 'C17 wastes "
+                         "compute' from 'C17 corrupts the training target': duplicate visits "
+                         "still increment N, inflating max_visit and hence the root q_scale that "
+                         "sharpens the improved-policy target. ⚑ ONLY AT LOW BOARDS-PER-CALL. "
+                         "The duplicate rate is GSS_GPU_BATCH over boards-per-call and "
+                         "--batch-size IS boards-per-call, so at the --batch-size 256 default "
+                         "there is almost nothing to accumulate: 0 vs 1024 measured EXACTLY "
+                         "0.0000 on every field, 0/4000 rows (banked negative control, ledger "
+                         "2026-08-15). Production runs ~1 board per call; audit this knob at "
+                         "--batch-size 1 or the arm can only read null. C-runner only; the "
+                         "Python reference path takes no such argument. Recorded in the report "
+                         "header and the per-position dump.")
     ap.add_argument("--vloss-mode", type=int, default=0, choices=(0, 1),
                     help="How an in-flight walker is VALUED when --vloss-weight > 0. "
                          "0 = LEGACY, the parallel-PUCT construct: the pending visit is "
-                         "scored as a LOSS, biasing the child down. 1 = VIRTUAL_MEAN: it "
+                         "scored as a LOSS, biasing the child down. 0 is also what "
+                         "PRODUCTION runs — selfplay never passes vloss_mode, so the C "
+                         "runner's LEGACY default stands. 1 = VIRTUAL_MEAN: it "
                          "is valued at the child's existing mean, so the visit count "
                          "moves and the estimate does not. "
                          "*** 1 CURRENTLY RAISES: tree_gumbel_select_child mirrors "
@@ -1362,21 +1426,34 @@ def main() -> None:
                          "mode does not do what this help says (play-path audit "
                          "2026-08-03, F4). A comparison run made through it would be a "
                          "verdict off a broken instrument. Re-enable in the commit that "
-                         "mirrors the C parent branch. ***")
+                         "mirrors the C parent branch. *** Recorded in the report header "
+                         "and the per-position dump.")
     ap.add_argument("--vloss-weight", type=int, default=0,
-                    help="C-search virtual-loss weight. 0 = production (none), so a leaf "
-                         "already awaiting eval in the current batch carries no penalty and "
-                         "a later halving rep re-walks straight back to it (C17). >0 makes "
-                         "in-flight leaves count as penalized visits during descent, which "
-                         "removes the duplicates WITHOUT giving up the cross-rep batching "
-                         "that --target-batch 1 has to give up. C-runner only.")
+                    help="C-search virtual-loss weight. ⚑ PRODUCTION IS 1 "
+                         "(`gumbel_vloss_weight: 1` in configs/pbt2_small.yaml since "
+                         "21c21fc4f, 2026-07-29) AND THIS DEFAULT IS 0, so the default "
+                         "invocation scores a search production does NOT run. This script "
+                         "does not read the key from --config — passing the production "
+                         "config does not fix it; pass --vloss-weight 1 explicitly to "
+                         "audit the production search. The default is left at 0 "
+                         "deliberately: changing it is a RULER CHANGE that would retire "
+                         "every banked report, and it needs its own ledger entry. "
+                         "At 0 a leaf already awaiting eval in the current batch carries "
+                         "no penalty and a later halving rep re-walks straight back to it "
+                         "(C17). >0 makes in-flight leaves count as penalized visits "
+                         "during descent, which removes the duplicates WITHOUT giving up "
+                         "the cross-rep batching that --target-batch 1 has to give up. "
+                         "C-runner only. Recorded in the report header and the "
+                         "per-position dump.")
     ap.add_argument("--rl-sims", type=int, default=0,
                     help="override the TRAINING rows' sim budget (default: the config's "
                          "mcts_simulations). The node-matched control for --target-batch / "
                          "--vloss-weight: those buy ~60%% more distinct nodes per nominal "
                          "sim, so run the production arm at the matched node count to "
                          "separate 'less duplication' from 'more search'. Does not touch "
-                         "the PLAY row (--sims).")
+                         "the PLAY row (--sims). 0 is a sentinel meaning 'use the "
+                         "config'; the report header and the per-position dump record "
+                         "the RESOLVED value, never the sentinel.")
     ap.add_argument("--max-positions", type=int, default=0,
                     help=">0 limits positions (smoke runs)")
     ap.add_argument("--blunder-taus", type=str, default=None,
@@ -1424,12 +1501,15 @@ def main() -> None:
         )
 
   # Reject at PARSE time, not deep in the run. `_net_candidates` only forwards
-  # vloss_mode when vloss_weight > 0, and this script never prints or records
-  # vloss_mode, so `--vloss-mode 1` at the default `--vloss-weight 0` used to be
-  # accepted, dropped, and leave no trace -- the exact "value accepted and then
-  # silently ignored" pattern the rest of this PR removes, sitting in the flag
-  # it just re-documented. With a weight the search DOES raise, but only after
-  # the audit set, the checkpoint and the evaluator have loaded. Failing here
+  # vloss_mode when vloss_weight > 0, so `--vloss-mode 1` at the default
+  # `--vloss-weight 0` used to be accepted, dropped, and leave no trace -- the
+  # exact "value accepted and then silently ignored" pattern, sitting in the flag
+  # it had just re-documented. (`search_param_stamp` now records the requested
+  # mode in the header and the dump, so it no longer leaves NO trace -- but a
+  # recorded value that the search dropped is still the wrong outcome, and this
+  # guard is what makes the recorded mode the one the search ran.)
+  # With a weight the search DOES raise, but only after the audit set, the
+  # checkpoint and the evaluator have loaded. Failing here
   # makes the help text true for every flag combination and the failure cheap.
   # Local import: this module keeps the mcts/C-extension import lazy.
     from chess_anti_engine.mcts.gumbel_c import VLOSS_MODE_VIRTUAL_MEAN
@@ -1509,6 +1589,9 @@ def main() -> None:
     rl_c_scale = profiles["train"].c_scale
     rl_sims = profiles["train"].sims
     rl_fast_sims = profiles["train_fast"].sims
+  # Built ONCE, here, and handed to both the report header and the per-position
+  # dump. Building it twice is how a stamp starts disagreeing with the run.
+    search_params = search_param_stamp(args, rl_sims=rl_sims)
     for name, prof in profiles.items():
         print(
             f"[audit] {_CANDIDATE_NAMES[name]}: {prof.label} — "
@@ -1516,6 +1599,7 @@ def main() -> None:
             f"root={'log' if prof.q_visit_exp_root < 0 else 'linear'}",
             flush=True,
         )
+    print(f"[audit] search params: {format_search_params(search_params)}", flush=True)
 
   # Production probes tablebases inside the search; the audited target has to
   # as well or the endgame bucket describes a search production never runs.
@@ -1652,7 +1736,13 @@ def main() -> None:
                         None if c == "sf_soft" else "fen_only")
                     for c in cands
                 },
-                "batch_size": int(args.batch_size),
+                # The SEARCH the row was produced by, not just the net and the
+                # encoding: --vloss-weight / --vloss-mode / --target-batch are
+                # CLI-only and unrecoverable from --config, so without them a
+                # banked dump cannot be traced to the search that made it.
+                # `batch_size` lives in here (it used to be spelled out) so the
+                # header and the dump cannot disagree about it.
+                **search_params,
                 # null (not inf -> non-standard JSON "Infinity") for <2-move positions
                 "gap_cp": float(gap) if np.isfinite(gap) else None,
                 "n_legal": len(legal_ucis),
@@ -1778,7 +1868,14 @@ def main() -> None:
         f"- net: {net.label}\n"
         f"- search: PLAY {args.sims} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
-        f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n\n"
+        f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n"
+      # The search params, greppable, in one line. They are CLI-only: --config
+      # pins none of vloss_weight / vloss_mode / target_batch, so a report
+      # without this line cannot be traced to the search that produced it.
+      # ⚑ vloss_weight=0 is NOT production (the yaml runs 1) — see the flag's help.
+        f"- search params: {format_search_params(search_params)} "
+        f"(CLI, not read from the config; vloss_weight/vloss_mode/target_batch "
+        f"have no --config source at all, and rl_sims is the RESOLVED value)\n\n"
         f"## Headline\n\n"
         f"- **production TRAINING target** expected regret (overall): {train_note} vs "
         f"SF-soft-target {'—' if headline_sf is None else f'{headline_sf[0]:.1f} cp'} — "

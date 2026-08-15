@@ -163,6 +163,12 @@ def load_dump(
 # and raw-policy regret rulers are batch-size dependent (0.66 cp between 128
 # and 256 for value, ~0.8 cp between 64 and 256 for policy) and a paired delta
 # of that size is one this tool is routinely asked to adjudicate.
+# ⚑ `audit_targets.py` dumps ALSO carry `vloss_weight` / `vloss_mode` /
+# `target_batch` / `sims` / `rl_sims` (search provenance). They are DELIBERATELY
+# NOT ruler fields: an arm that varies one of them is exactly the comparison this
+# tool exists to adjudicate — `--target-batch 1024` vs `0` is a banked control —
+# so listing them here would refuse the join it is meant to perform. They are
+# recorded to be READ by the operator, not enforced.
 RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
 
 # ⚑ ABSENCE IS INFORMATIVE FOR `input_encoding`, AND ONLY FOR IT.
