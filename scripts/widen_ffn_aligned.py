@@ -11,7 +11,7 @@ already executes ``ceil(796/128)*128 = 896`` columns of tiles and masks 100 of
 them off. **The arithmetic is already being paid for and the result discarded.**
 
 Rounding the architecture up to the tile boundary turns that discarded work into
-real parameters at essentially unchanged cost: +709,632 params (+1.12%) for the
+real parameters at essentially unchanged cost: +710,325 params (+1.16%) for the
 production schedule, with the dominant GEMM already measured at ~86% of BF16
 peak, so there is no throughput headroom being claimed here — this buys
 CAPACITY, not speed.
@@ -71,6 +71,15 @@ parameter was. Nothing is matched by buffer NAME, so a future optimizer that add
 another shape-coupled buffer is carried automatically instead of silently
 dropped. Non-tensor and non-conforming entries (``step``) are left untouched.
 Parameters are addressed by name through ``opt_param_names``, never by position.
+
+⚑ WHICH BUILDS CAN EVEN PRODUCE AN INPUT FOR THIS TOOL
+------------------------------------------------------
+``opt_param_names`` is the key the optimizer migration is addressed by, and
+``Trainer.save`` writes it only on ``ops/live-20260725`` and on PR #427. On
+``main`` it is NOT written, so a checkpoint produced by ``main`` reaches the
+refusal below and this tool is INOPERABLE against it. That is a merge-order
+fact, not a bug: it fails loudly and refuses to emit a mis-migrated file. Do
+not "fix" it by relaxing the refusal.
 
 ARCH
 ----
@@ -212,23 +221,63 @@ def widen_checkpoint(
             "weights into the export. Re-export without SWA, or extend this tool."
         )
 
+    if arch.get("embed_dim_by_layer"):
+        # TransformerBlock sizes its FFN from THAT LAYER's embed_dim
+        # (transformer.py), while plan_widths uses the scalar. Production has
+        # this None; refusing beats planning widths for a net we are not reading.
+        raise ValueError(
+            "arch carries 'embed_dim_by_layer'; this tool plans FFN widths from "
+            "the scalar embed_dim and would compute the wrong widths for a "
+            "variable-width net. Refusing."
+        )
+
     gen = torch.Generator().manual_seed(int(seed))
     model = ck["model"]
     names: list[str] = list(ck.get("opt_param_names") or [])
-    opt_state = (ck.get("opt") or {}).get("state", {})
-    if opt_state and not names:
-        # Silently skipping the migration is this repo's signature defect: the
-        # tool would report success and the run would die at the first step.
+    opt = ck.get("opt") or {}
+
+    # ⚑ KEYED OFF `opt`, NOT `opt["state"]`. _ChainedOptimizer.state_dict()
+    # returns {"optimizers": [...]} with NO "state" key, so a guard that read
+    # opt["state"] saw {} , concluded "no optimizer state to migrate", and
+    # silently skipped everything — accepted-then-ignored, this repo's
+    # signature defect, inside the guard written to prevent it.
+    for nested in ("optimizers", "soda_anchors"):
+        if opt.get(nested) or ck.get(nested):
+            raise ValueError(
+                f"checkpoint carries '{nested}' (a chained/anchored optimizer "
+                "state this tool does not traverse). Its buffers would stay at "
+                "the old width and die at the first step, and "
+                "reset_mismatched_optimizer_state does not cover them. Refusing."
+            )
+    opt_state = opt.get("state", {})
+    if opt and not names:
         raise ValueError(
             "checkpoint has optimizer state but no 'opt_param_names'; the "
             "migration cannot be addressed by name. Refusing rather than "
-            "emitting a checkpoint whose optimizer buffers are the wrong shape."
+            "emitting a checkpoint whose optimizer buffers are the wrong shape. "
+            "(Trainer.save writes this key on the live branch and PR #427, but "
+            "NOT on main — see the module docstring.)"
         )
 
+    def _unwrap(name: str) -> str:
+        """Strip compile/DDP wrappers, as Trainer._wrap_agnostic_name does.
+
+        ⚑ The FFN regexes deliberately tolerate a `module.` / `_orig_mod.`
+        prefix, but `opt_param_names` is stored wrap-AGNOSTIC. Looking the
+        prefixed key up directly therefore missed every entry and skipped the
+        whole migration with no error — the regex said a prefix was expected
+        and the lookup said the opposite.
+        """
+        for pfx in ("module._orig_mod.", "_orig_mod.module.", "module.", "_orig_mod."):
+            if name.startswith(pfx):
+                return name[len(pfx):]
+        return name
+
     def _opt_entry(param_name: str) -> dict[str, Any] | None:
-        if param_name not in names:
+        key = _unwrap(param_name)
+        if key not in names:
             return None
-        i = names.index(param_name)
+        i = names.index(key)
         return opt_state.get(i, opt_state.get(str(i)))
 
     def _migrate(entry: dict[str, Any] | None, old_shape: tuple[int, ...],
@@ -245,6 +294,7 @@ def widen_checkpoint(
             if isinstance(val, torch.Tensor) and tuple(val.shape) == old_shape:
                 entry[key] = grow(val)
 
+    widened: list[str] = []
     for key in list(model.keys()):
         m_in, m_out = _FFN_IN_RE.search(key), _FFN_OUT_RE.search(key)
         matched = m_in or m_out
@@ -257,6 +307,7 @@ def widen_checkpoint(
         t = model[key]
 
         old_shape = tuple(t.shape)
+        widened.append(key)
         if m_in is not None:
             if m_in.group(2) == "weight":
                 std = float(t.float().std())
@@ -278,8 +329,28 @@ def widen_checkpoint(
             _migrate(_opt_entry(key), old_shape,
                      lambda v, w=new_w: _pad_cols(v, w))
 
+    # ⚑ F5: the refusal above only catches an ABSENT manifest. A truncated,
+    # stale or mismatched one passes it and then resolves nothing, so the
+    # migration is skipped with no error — the same silent skip one level in.
+    # Every widened tensor must have found its optimizer entry, or we refuse.
+    if opt_state:
+        orphans = sorted(k for k in widened if _opt_entry(k) is None)
+        if orphans:
+            raise ValueError(
+                f"widened {len(orphans)} tensor(s) with optimizer state present "
+                f"but no matching 'opt_param_names' entry: {orphans[:4]}"
+                f"{' ...' if len(orphans) > 4 else ''}. The manifest does not "
+                "describe this checkpoint; refusing rather than emitting buffers "
+                "at the wrong width."
+            )
+
     # ⚑ Without this the resume path rebuilds the OLD widths from the stale arch.
     arch["ffn_mult_by_layer"] = tuple(new_mults)
+    # F11: keep the scalar consistent with the schedule, as
+    # scripts/shrink_ffn_checkpoint.py already does. Every in-tree consumer
+    # reads ffn_mult_by_layer when present, so this is hygiene — but two tools
+    # that disagree about the same field is how the next reader gets it wrong.
+    arch["ffn_mult"] = float(new_mults[0])
     return ck, changes
 
 
@@ -311,7 +382,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         old_w, new_w = changes[layer]
         print(f"  layer {layer:2d}: {old_w} -> {new_w}")
     print(f"state_dict params: {before:,} -> {after:,} ({after - before:+,})")
-    print(f"arch ffn_mult_by_layer -> {list(ck['arch']['ffn_mult_by_layer'])}")
+    # ⚑ On the no-op path widen_checkpoint returns BEFORE materializing the
+    # schedule, so arch may carry None or no key at all — list(None) raised and
+    # no output file was written, on the very path the docstring advertises as
+    # safe to re-run. Recompute for display instead of assuming.
+    schedule = ck["arch"].get("ffn_mult_by_layer")
+    if not schedule:
+        _, schedule = plan_widths(ck["arch"], align=args.align)
+    print(f"arch ffn_mult_by_layer -> {list(schedule)}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     torch.save(ck, dst)
     print(f"wrote {dst}")

@@ -13,6 +13,8 @@ import pytest
 import torch
 
 from scripts.widen_ffn_aligned import (
+    _pad_cols,
+    _pad_rows,
     align_up,
     aligned_ffn_mults,
     plan_widths,
@@ -288,10 +290,17 @@ def test_a_checkpoint_with_swa_is_REFUSED() -> None:
 
 
 def test_optimizer_state_without_param_names_is_REFUSED() -> None:
-    """Silently skipping the migration is the failure this repo keeps shipping."""
+    """Silently skipping the migration is the failure this repo keeps shipping.
+
+    ⚑ The match string pins THIS guard, not merely "some ValueError mentioning
+    opt_param_names". Mutation-measured: `match="opt_param_names"` let the
+    disarmed-guard mutant SURVIVE, because the F5 orphan backstop below raises
+    on the same input and its message also contains the phrase. Two guards, one
+    regex that cannot tell them apart — a passing test that proved neither.
+    """
     ck = _tiny_ckpt(mults=(1.25,))
     ck["opt_param_names"] = []
-    with pytest.raises(ValueError, match="opt_param_names"):
+    with pytest.raises(ValueError, match="cannot be addressed by name"):
         widen_checkpoint(ck, align=8, seed=3)
 
 
@@ -331,3 +340,113 @@ def test_module_docstring_states_the_zero_column_reason() -> None:
     assert mod.__doc__ is not None
     assert re.search(r"zero", mod.__doc__, re.I)
     assert "mish(0) = 0" in mod.__doc__ or "mish(0)" in mod.__doc__
+
+
+# ---------------------------------------------------------------------------
+# Perimeter: every one of these was "accepted, then silently ignored".
+# ---------------------------------------------------------------------------
+
+def test_new_ffn0_bias_entries_are_exactly_zero() -> None:
+    """⚑ Mutation survivor: nothing pinned the new bias.
+
+    Not function-affecting — ffn.2's zero column kills the contribution either
+    way — but it sets the initial activation, hence dL/dW2[:,j], which is the
+    mechanism the module docstring's gradient argument rests on. An unpinned
+    premise in a load-bearing argument is worth a test.
+    """
+    ck = _tiny_ckpt(mults=(1.25,))
+    old_h = int(8 * 1.25)
+    ck, _ = widen_checkpoint(ck, align=8, seed=3)
+    new_bias = ck["model"]["blocks.0.ffn.0.bias"][old_h:]
+    assert new_bias.numel() > 0
+    assert torch.all(new_bias == 0), "new units must start unbiased"
+
+
+def test_a_nested_chained_optimizer_is_REFUSED() -> None:
+    """⚑⚑ THE guard-that-could-not-fire.
+
+    `_ChainedOptimizer.state_dict()` returns {"optimizers": [...]} with NO
+    "state" key. A refusal that read opt["state"] saw {}, concluded "nothing to
+    migrate", and skipped everything silently — the signature defect, inside the
+    guard written to prevent it. Reachable with optimizer: soap.
+    """
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["opt"] = {"optimizers": [{"state": {0: {"momentum_buffer": torch.zeros(10, 8)}}}]}
+    with pytest.raises(ValueError, match="optimizers"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_soda_anchors_are_REFUSED() -> None:
+    """Full param-shaped clones, siblings of `state`, outside the reset net."""
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["opt"]["soda_anchors"] = {0: torch.zeros(10, 8)}
+    with pytest.raises(ValueError, match="soda_anchors"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_a_wrapped_model_key_still_migrates_its_optimizer_state() -> None:
+    """⚑ The regex tolerates `_orig_mod.`; the name lookup did not.
+
+    Result was a widened parameter beside an un-widened moment, with no error.
+    """
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["model"] = {f"_orig_mod.{k}": v for k, v in ck["model"].items()}
+    old_h = int(8 * 1.25)
+    ck, changes = widen_checkpoint(ck, align=8, seed=3)
+    assert changes, "prefixed keys must still be recognised as FFN tensors"
+    names = ck["opt_param_names"]
+    i = names.index("blocks.0.ffn.0.weight")
+    buf = ck["opt"]["state"][i]["momentum_buffer"]
+    param = ck["model"]["_orig_mod.blocks.0.ffn.0.weight"]
+    assert buf.shape == param.shape, (
+        f"moment {tuple(buf.shape)} != param {tuple(param.shape)} — the wrapper "
+        "prefix defeated the by-name lookup"
+    )
+    assert torch.all(buf[old_h:] == 0)
+
+
+def test_a_manifest_that_does_not_describe_this_checkpoint_is_REFUSED() -> None:
+    """A PRESENT but wrong opt_param_names skipped the migration silently."""
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["opt_param_names"] = ["something.else.weight"] * len(ck["opt_param_names"])
+    with pytest.raises(ValueError, match="no matching 'opt_param_names'"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_variable_width_arch_is_REFUSED() -> None:
+    """TransformerBlock sizes the FFN per layer; plan_widths uses the scalar."""
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["arch"]["embed_dim_by_layer"] = [8, 16]
+    with pytest.raises(ValueError, match="embed_dim_by_layer"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_the_shrink_guards_actually_fire() -> None:
+    """⚑ Mutation survivor M11: both guards were unpinned.
+
+    They are the only symptom if `arch` and the tensors ever disagree in the
+    wrong direction — the tool plans widths from `arch` and pads tensors.
+    """
+    with pytest.raises(ValueError, match="refusing to SHRINK dim0"):
+        _pad_rows(torch.zeros(16, 4), 8, fill=None)
+    with pytest.raises(ValueError, match="refusing to SHRINK dim1"):
+        _pad_cols(torch.zeros(4, 16), 8)
+
+
+def test_the_scalar_ffn_mult_is_kept_consistent_with_the_schedule() -> None:
+    """scripts/shrink_ffn_checkpoint.py rewrites it; two tools must agree."""
+    ck = _tiny_ckpt(mults=(1.25, 1.75))
+    ck, _ = widen_checkpoint(ck, align=8, seed=3)
+    assert int(8 * ck["arch"]["ffn_mult"]) == int(8 * ck["arch"]["ffn_mult_by_layer"][0])
+
+
+def test_main_does_not_crash_on_an_already_aligned_scalar_arch(tmp_path) -> None:
+    """The documented 'safe to re-run' path raised list(None) and wrote nothing."""
+    import scripts.widen_ffn_aligned as mod
+
+    ck = _tiny_ckpt(mults=(2.0,))
+    del ck["arch"]["ffn_mult_by_layer"]
+    src, dst = tmp_path / "in.pt", tmp_path / "out.pt"
+    torch.save(ck, src)
+    assert mod.main(["--in", str(src), "--out", str(dst), "--align", "8"]) == 0
+    assert dst.exists(), "the no-op path must still write its output"
