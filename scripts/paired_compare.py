@@ -163,12 +163,19 @@ def load_dump(
 # and raw-policy regret rulers are batch-size dependent (0.66 cp between 128
 # and 256 for value, ~0.8 cp between 64 and 256 for policy) and a paired delta
 # of that size is one this tool is routinely asked to adjudicate.
-# ⚑ `audit_targets.py` dumps ALSO carry `vloss_weight` / `vloss_mode` /
-# `target_batch` / `sims` / `rl_sims` (search provenance). They are DELIBERATELY
-# NOT ruler fields: an arm that varies one of them is exactly the comparison this
-# tool exists to adjudicate — `--target-batch 1024` vs `0` is a banked control —
-# so listing them here would refuse the join it is meant to perform. They are
-# recorded to be READ by the operator, not enforced.
+# ⚑ `audit_targets.py` dumps ALSO carry a SEARCH-PROVENANCE stamp, whose exact
+# field list is `audit_targets.SEARCH_PARAM_FIELDS` — do not re-list it here,
+# because a copy went stale within one commit of being written. Everything in it
+# EXCEPT `batch_size` is deliberately NOT a ruler field: an arm that varies
+# `--target-batch` or `--vloss-weight` is exactly the comparison this tool exists
+# to adjudicate (`--target-batch 1024` vs `0` is a banked control), so listing
+# those would refuse the join it is meant to perform. They are recorded to be
+# READ by the operator, not enforced.
+# ⚑ Judged, not blanket: the sims / policy-temp entries are a WEAKER case for
+# staying out — joining `cand.train.*` across two sim budgets is not a comparison
+# anyone wants silently accepted, and this tool already knows the `--field` path,
+# so it could warn per-field. That is a behaviour change to this tool with its
+# own test matrix and is NOT folded in here; see PR #434's follow-ups.
 RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
 
 # ⚑ ABSENCE IS INFORMATIVE FOR `input_encoding`, AND ONLY FOR IT.

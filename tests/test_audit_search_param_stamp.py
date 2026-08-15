@@ -46,13 +46,48 @@ CLI_VALUES: dict[str, float] = {
     "policy_temp": 1.5,
 }
 
+# The value each flag is MOVED to when the fixture checks that its own stamp
+# field follows it. ⚑ Not `value + 41`: that put `policy_temp` at 42.5, which
+# `apply_policy_temp` silently swallows as out-of-band — so the fixture asserted
+# the stamp recorded a temperature the search would never have applied. A
+# fixture that pins a fiction is worse than no fixture, and `--policy-temp` is
+# now refused outside the band, so the moved value has to be IN band.
+MOVED_VALUES: dict[str, float] = {
+    "vloss_weight": 42,
+  # `main()` refuses mode 1 before any run, so this combination is unreachable
+  # end-to-end. The stamp is still required to be a faithful mapping, and
+  # dropping the case would let a hardcoded `"vloss_mode": 0` survive.
+    "vloss_mode": 1,
+    "target_batch": 1065,
+    "batch_size": 48,
+    "sims": 74,
+    "policy_temp": 2.2,       # inside [POLICY_TEMP_MIN, POLICY_TEMP_MAX]
+}
+
 # Distinct from every CLI value above, so a profile column and a flag can never
 # be confused for one another.
 FLAT: dict[str, object] = {
     "gumbel_c_scale": 0.1,
     "gumbel_topk": 16,
     "mcts_simulations": 100,
-    "fast_simulations": 32,
+    "fast_simulations": 24,
+}
+
+# What `_stamp(_args())` must produce. Spelled out rather than derived, so a
+# change to the stamp has to be restated here deliberately.
+DEFAULT_STAMP: dict[str, float | bool] = {
+    "vloss_weight": 1,
+    "vloss_mode": 0,
+    "target_batch": 1024,
+    "batch_size": 7,
+    "sims": 33,                  # --sims
+    "rl_sims": 100,              # FLAT mcts_simulations, via the --rl-sims sentinel
+    "fast_sims": 24,             # FLAT fast_simulations
+    "play_topk": 32,             # PLAY_SEARCH_DEFAULTS, via --gumbel-topk unset
+    "rl_topk": 16,               # FLAT gumbel_topk
+    "play_policy_temp": 1.5,     # --policy-temp
+    "rl_policy_temp": 1.5,       # --policy-temp, untouched by a PLAY-only override
+    "gumbel_training_rows": False,
 }
 
 
@@ -76,7 +111,7 @@ def _args(
     )
 
 
-def _stamp(args: argparse.Namespace) -> dict[str, float]:
+def _stamp(args: argparse.Namespace) -> dict[str, float | bool]:
     """Stamp built the way `main()` builds it: off the real profiles."""
     profiles, _ = at.profiles_for_audit(args, FLAT)
     return at.search_param_stamp(args, profiles=profiles)
@@ -90,28 +125,38 @@ def _stamp(args: argparse.Namespace) -> dict[str, float]:
 def test_stamp_records_every_declared_field() -> None:
     stamp = _stamp(_args())
     assert tuple(stamp) == at.SEARCH_PARAM_FIELDS
-    assert stamp == {
-        **CLI_VALUES,
-        "rl_sims": 100,       # FLAT's mcts_simulations, via the --rl-sims sentinel
-        "play_topk": 32,      # PLAY_SEARCH_DEFAULTS, via --gumbel-topk unset
-        "rl_topk": 16,        # FLAT's gumbel_topk
-    }
+    assert stamp == DEFAULT_STAMP
+
+
+# Which stamp field(s) each CLI flag is allowed to move. `--policy-temp` feeds
+# BOTH profiles, because it is applied to every built GumbelConfig; a
+# `--gumbel policy_temp=` override is the PLAY-only one.
+MOVES: dict[str, tuple[str, ...]] = {
+    "vloss_weight": ("vloss_weight",),
+    "vloss_mode": ("vloss_mode",),
+    "target_batch": ("target_batch",),
+    "batch_size": ("batch_size",),
+    "sims": ("sims",),
+    "policy_temp": ("play_policy_temp", "rl_policy_temp"),
+}
 
 
 @pytest.mark.parametrize("field", sorted(CLI_VALUES))
 def test_each_field_follows_its_own_cli_argument(field: str) -> None:
-    """Moving one argument moves that field and NOTHING else.
+    """Moving one argument moves its own stamp field(s) and NOTHING else.
 
     Presence is not the property under test: a stamp built from constants, or
     one that read `args.batch_size` where it meant `args.sims`, would satisfy a
     key-presence assertion and fail here.
     """
-    moved = CLI_VALUES[field] + 41
+    moved = MOVED_VALUES[field]
+    assert moved != CLI_VALUES[field], "a vacuous move proves nothing"
     stamp = _stamp(_args({field: moved}))
     baseline = _stamp(_args())
-    assert stamp[field] == moved
+    for target in MOVES[field]:
+        assert stamp[target] == moved
     for other in at.SEARCH_PARAM_FIELDS:
-        if other != field:
+        if other not in MOVES[field]:
             assert stamp[other] == baseline[other], (
                 f"moving --{field.replace('_', '-')} also moved {other}"
             )
@@ -151,17 +196,24 @@ def test_stamped_play_topk_is_the_resolved_play_default_when_the_flag_is_absent(
     assert _stamp(_args(gumbel_topk=9))["rl_topk"] == FLAT["gumbel_topk"]
 
 
+# (spec, PLAY-side stamp key, RL-side stamp key, value). Every knob a
+# `--gumbel` override can move has BOTH, because the override is PLAY-only
+# unless `--gumbel-training-rows` is passed — one unqualified column would be
+# false for whichever rows the override missed.
+OVERRIDE_ARMS = [
+    ("simulations=300", "sims", "rl_sims", 300.0),
+    ("topk=8", "play_topk", "rl_topk", 8.0),
+    ("policy_temp=2.2", "play_policy_temp", "rl_policy_temp", 2.2),
+]
+
+
 @pytest.mark.parametrize(
-    ("spec", "key", "expected"),
-    [
-        ("simulations=300", "sims", 300),
-        ("topk=8", "play_topk", 8),
-        ("policy_temp=2.2", "policy_temp", 2.2),
-    ],
+    ("spec", "play_key", "expected"),
+    [(spec, play_key, value) for spec, play_key, _rl, value in OVERRIDE_ARMS],
     ids=["simulations", "topk", "policy_temp"],
 )
 def test_a_gumbel_override_rewrites_the_stamp_not_just_the_search(
-    spec: str, key: str, expected: float,
+    spec: str, play_key: str, expected: float,
 ) -> None:
     """`--gumbel k=v` is applied by `dataclasses.replace` on the BUILT config.
 
@@ -171,25 +223,84 @@ def test_a_gumbel_override_rewrites_the_stamp_not_just_the_search(
     false, which is worse than provenance that is missing.
     """
     stamp = _stamp(_args(gumbel=[spec]))
-    assert stamp[key] == pytest.approx(expected)
+    assert stamp[play_key] == pytest.approx(expected)
     # the flag it overrides is genuinely different, or this proves nothing
-    assert _stamp(_args())[key] != pytest.approx(expected)
+    assert _stamp(_args())[play_key] != pytest.approx(expected)
 
 
-def test_a_gumbel_override_reaches_the_training_rows_only_under_the_flag() -> None:
-    """`--gumbel` is PLAY-only unless `--gumbel-training-rows` is passed."""
-    play_only = _stamp(_args(gumbel=["simulations=300"]))
-    assert play_only["sims"] == 300
-    assert play_only["rl_sims"] == 100
+@pytest.mark.parametrize(
+    ("spec", "play_key", "rl_key", "expected"),
+    OVERRIDE_ARMS,
+    ids=["simulations", "topk", "policy_temp"],
+)
+def test_a_play_only_override_must_not_move_the_training_side_of_the_stamp(
+    spec: str, play_key: str, rl_key: str, expected: float,
+) -> None:
+    """⚑ THE FINDING THIS SPLIT EXISTS FOR — B1, PR #434.
 
-    both = _stamp(_args(gumbel=["simulations=300"], gumbel_training_rows=True))
-    assert both["sims"] == 300
-    assert both["rl_sims"] == 300
+    `policy_temp` shipped as ONE unqualified column read off the PLAY profile.
+    Two 6-position audits differing only in `--gumbel-training-rows` then came
+    out with BYTE-IDENTICAL provenance in every field of both the report and the
+    dump, while `cand.train` — the production training-target row — genuinely
+    differed: `paired_compare --field cand.train.exp` read −9.66 cp
+    [−18.07, −3.00]. The stamp said "same search" about a significant delta.
+
+    Worse, the first version of the test above PINNED that behaviour: mutating
+    the stamp to read the `train` profile was KILLED by it. So this is the
+    assertion that has to exist alongside it — the PLAY side moves, the RL side
+    does NOT, and no single column can satisfy both.
+    """
+    play_only = _stamp(_args(gumbel=[spec]))
+    baseline = _stamp(_args())
+    assert play_only[play_key] == pytest.approx(expected)
+    assert play_only[rl_key] == pytest.approx(baseline[rl_key])
+    assert play_only[rl_key] != pytest.approx(expected)
+
+    both = _stamp(_args(gumbel=[spec], gumbel_training_rows=True))
+    assert both[play_key] == pytest.approx(expected)
+    assert both[rl_key] == pytest.approx(expected)
+
+
+def test_two_runs_differing_only_in_the_override_scope_get_different_stamps() -> None:
+    """The scope flag closes the hole for overrides with NO dedicated column.
+
+    `sims` / `topk` / `policy_temp` escape it only because they happen to have
+    `play_*`/`rl_*` pairs. `--gumbel halving_div=4` does not: with and without
+    `--gumbel-training-rows` it serializes the same `gumbel_overrides` and
+    reaches different rows. A stamp that cannot tell those apart is a gate that
+    cannot fail.
+    """
+    spec = ["halving_div=4"]
+    play_only = _stamp(_args(gumbel=spec))
+    both = _stamp(_args(gumbel=spec, gumbel_training_rows=True))
+    assert play_only != both, (
+        "two materially different searches carry identical provenance"
+    )
+    assert play_only["gumbel_training_rows"] is False
+    assert both["gumbel_training_rows"] is True
+    # and it is the SCOPE that separates them, not a coincidental column
+    assert {
+        k for k in at.SEARCH_PARAM_FIELDS if play_only[k] != both[k]
+    } == {"gumbel_training_rows"}
 
 
 def test_last_write_wins_matches_how_build_resolves_a_repeated_key() -> None:
     """`_build` collects the overrides into a dict comprehension."""
     assert _stamp(_args(gumbel=["simulations=300", "simulations=500"]))["sims"] == 500
+
+
+def test_row_e_realized_sims_is_stamped_separately_from_row_d() -> None:
+    """`train_fast` is a third profile and the report quotes its sim count.
+
+    Under `--gumbel simulations=17 --gumbel-training-rows` all three rows search
+    at 17; without `fast_sims` the header's "+ 32 fast" had no correction
+    anywhere in the artifact.
+    """
+    assert _stamp(_args())["fast_sims"] == FLAT["fast_simulations"]
+    both = _stamp(_args(gumbel=["simulations=17"], gumbel_training_rows=True))
+    assert (both["sims"], both["rl_sims"], both["fast_sims"]) == (17, 17, 17)
+    play_only = _stamp(_args(gumbel=["simulations=17"]))
+    assert play_only["fast_sims"] == FLAT["fast_simulations"]
 
 
 # --------------------------------------------------------------------------
@@ -339,7 +450,11 @@ def test_search_params_are_not_ruler_fields_so_two_arms_still_join(
     `require_same_ruler` REFUSE exactly the paired comparison the stamp exists
     to make legible.
     """
-    assert not {"vloss_weight", "vloss_mode", "target_batch"} & set(pc.RULER_FIELDS)
+  # ⚑ EXACT, not a sample. The first version listed 3 of the 9 fields and the
+  # sibling comment in paired_compare.py listed 5 — both went short within one
+  # commit of being written. `batch_size` is the one deliberate overlap: it is a
+  # genuine ruler (raw policy regret moves ~0.8 cp between 64 and 256).
+    assert set(at.SEARCH_PARAM_FIELDS) & set(pc.RULER_FIELDS) == {"batch_size"}
     paths = []
     for label, target_batch in (("a", 0), ("b", 1024)):
         p = tmp_path / f"dump_{label}.jsonl"
@@ -350,3 +465,70 @@ def test_search_params_are_not_ruler_fields_so_two_arms_still_join(
         pc.load_dump(str(p), join_key="key", field="cand.raw.exp") for p in paths
     ]
     pc.require_same_ruler(dumps[0], dumps[1], label_a="a", label_b="b")
+
+
+# --------------------------------------------------------------------------
+# guards that keep the STAMPED value the value the search ran
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("temp", [0.0, 0.01, 42.5, 1e300])
+def test_an_out_of_band_policy_temp_is_refused_rather_than_stamped(
+    temp: float,
+) -> None:
+    """`apply_policy_temp` swallows these, so the search runs the DEFAULT prior.
+
+    Before the stamp existed the value was merely missing from the artifact;
+    stamping it would print a temperature the audit never applied. The message
+    must name `--policy-temp`, not the `--gumbel` override that shares the band,
+    or a test could pass on the wrong guard.
+    """
+    with pytest.raises(SystemExit, match=r"--policy-temp=") as excinfo:
+        at._refuse_dead_override("policy_temp", temp, where="--policy-temp")
+    assert "--gumbel" not in str(excinfo.value)
+
+
+def test_the_untempered_prior_and_an_in_band_value_are_both_allowed() -> None:
+    """1.0 is an explicit "run the untempered prior", not a dead value."""
+    at._refuse_dead_override("policy_temp", 1.0, where="--policy-temp")
+    at._refuse_dead_override("policy_temp", 2.2, where="--policy-temp")
+
+
+def test_main_refuses_an_out_of_band_policy_temp_and_a_negative_vloss_weight() -> None:
+    """Reachability: the two guards must be CALLED, not merely defined.
+
+    Greps by name cannot show that, so this reads `main()`'s AST — a guard that
+    exists and is never invoked is this repo's signature defect.
+    """
+    body = ast.unparse(_main_body())
+    assert 'where=\'--policy-temp\'' in body or 'where="--policy-temp"' in body, (
+        "main() never applies the band guard to the dedicated --policy-temp flag"
+    )
+    assert "args.vloss_weight) < 0" in body, (
+        "main() never refuses a negative --vloss-weight, which the C runner drops"
+    )
+
+
+def test_the_legacy_search_header_line_is_rendered_from_the_stamp() -> None:
+    """B2: the report must not contradict itself one line apart.
+
+    The `- search: PLAY N sims / RL train ...` line predates the stamp and read
+    `args.sims` and the PRE-OVERRIDE profile columns, so at
+    `--sims 8 --gumbel simulations=17 --gumbel-training-rows` it printed
+    "PLAY 8 sims / RL train 8 full + 32 fast" directly above a stamp reading 17
+    — and it is the line an operator greps.
+    """
+    body = ast.unparse(_main_body())
+    assert "play_sims_note = search_params['sims']" in body
+    assert "rl_sims = search_params['rl_sims']" in body
+    assert "rl_fast_sims = search_params['fast_sims']" in body
+    assigns = [
+        n for n in ast.walk(_main_body())
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "report" for t in n.targets)
+    ]
+    rendered = ast.unparse(assigns[0].value)
+    assert "- search: PLAY {play_sims_note} sims" in rendered
+    assert "args.sims" not in rendered, (
+        "the report still renders the pre-override --sims somewhere"
+    )

@@ -288,8 +288,14 @@ def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], 
     return tuple(out)
 
 
-def _refuse_dead_override(key: str, value: float) -> None:
+def _refuse_dead_override(key: str, value: float, *, where: str = "--gumbel policy_temp") -> None:
     """Refuse a value that reaches the config and is then not read.
+
+    ``where`` names the flag in the message, because TWO flags reach the same
+    ``GumbelConfig.policy_temp``: the free-form ``--gumbel policy_temp=X`` and
+    the dedicated ``--policy-temp X``. An error blaming ``--gumbel`` for a
+    ``--policy-temp`` value sends the operator to the wrong flag, and it would
+    also let one guard's test pass on the other guard's message.
 
     Consults `mcts.gumbel.policy_temp_active` -- THE definition of "tempering
     is on", shared with `apply_policy_temp`, both `gumbel_c` bf16 gates and the
@@ -315,7 +321,7 @@ def _refuse_dead_override(key: str, value: float) -> None:
     if value == 1.0 or policy_temp_active(value):
         return
     raise SystemExit(
-        f"--gumbel: policy_temp={value!r} is inside the field but outside the "
+        f"{where}={value!r} is inside the field but outside the "
         f"band where it does anything ([{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}], "
         "or exactly 1.0 for the untempered prior), so `apply_policy_temp` "
         "would return the priors untouched. The audit would score the DEFAULT "
@@ -579,7 +585,10 @@ def profiles_for_audit(
 # state a ruler must never be in.
 SEARCH_PARAM_FIELDS: tuple[str, ...] = (
     "vloss_weight", "vloss_mode", "target_batch", "batch_size",
-    "sims", "rl_sims", "play_topk", "rl_topk", "policy_temp",
+    "sims", "rl_sims", "fast_sims",
+    "play_topk", "rl_topk",
+    "play_policy_temp", "rl_policy_temp",
+    "gumbel_training_rows",
 )
 
 
@@ -607,7 +616,7 @@ def realized_gumbel_value(
 
 def search_param_stamp(
     args: argparse.Namespace, *, profiles: dict[str, _SearchProfile],
-) -> dict[str, float]:
+) -> dict[str, float | bool]:
     """The search-parameter provenance carried by BOTH the report and the dump.
 
     One function, two consumers, so the header and the dump cannot drift apart
@@ -621,13 +630,24 @@ def search_param_stamp(
     than to a literal, and ``--gumbel k=v`` rewrites the built config outright.
     A stamp that echoed the flag would be a false record in all three cases.
 
-    ⚑ NOT COMPLETE PROVENANCE ON ITS OWN. ``--gumbel`` reaches EVERY
-    ``GumbelConfig`` field, so an arbitrary override is recorded by the
-    ``gumbel_overrides`` entry that rides alongside this stamp in both the
-    header and the dump, not here. This tuple is the fixed set that has no other
-    record at all.
+    ⚑ EVERY PROFILE-VARYING KNOB IS STAMPED PER PROFILE. ``--gumbel`` reaches
+    the PLAY row only unless ``--gumbel-training-rows`` is passed, so a single
+    unqualified column is FALSE for whichever rows the override missed. That is
+    not hypothetical: a single ``policy_temp`` column read off the PLAY profile
+    gave BYTE-IDENTICAL provenance to two runs whose ``cand.train`` differed by
+    −9.66 cp [−18.07, −3.00] under ``paired_compare`` (independent review of PR
+    #434, executed on a 6-position audit). ``play_*``/``rl_*`` pairs, and
+    ``fast_sims`` for row (e), are what make those two runs distinguishable.
+
+    ⚑ ``gumbel_training_rows`` IS ITSELF A STAMPED FIELD, and it is what closes
+    the same hole for every override with no dedicated column. ``--gumbel
+    halving_div=4`` with and without the flag are materially different searches
+    that serialize the same ``gumbel_overrides``; only the scope flag separates
+    them. Adding a knob here without asking "does this vary per profile, and is
+    its SCOPE recorded" re-opens the hole this stamp exists to close.
     """
     play, train = profiles["search"], profiles["train"]
+    fast = profiles["train_fast"]
     return {
         "vloss_weight": int(args.vloss_weight),
         "vloss_mode": int(args.vloss_mode),
@@ -635,14 +655,24 @@ def search_param_stamp(
         "batch_size": int(args.batch_size),
         "sims": int(realized_gumbel_value(play, "simulations", play.sims)),
         "rl_sims": int(realized_gumbel_value(train, "simulations", train.sims)),
+        "fast_sims": int(realized_gumbel_value(fast, "simulations", fast.sims)),
+      # train and train_fast are built by the same `_rl` closure and take the
+      # same overrides, so one column speaks for both; only `simulations`
+      # differs between them, which is why `fast_sims` is the lone extra.
         "play_topk": int(realized_gumbel_value(play, "topk", play.topk)),
         "rl_topk": int(realized_gumbel_value(train, "topk", train.topk)),
-        "policy_temp": realized_gumbel_value(play, "policy_temp", args.policy_temp),
+        "play_policy_temp": realized_gumbel_value(
+            play, "policy_temp", args.policy_temp,
+        ),
+        "rl_policy_temp": realized_gumbel_value(
+            train, "policy_temp", args.policy_temp,
+        ),
+        "gumbel_training_rows": bool(args.gumbel_training_rows),
     }
 
 
 def format_search_params(
-    stamp: Mapping[str, float],
+    stamp: Mapping[str, float | bool],
     *,
     gumbel_overrides: tuple[tuple[str, float], ...] = (),
 ) -> str:
@@ -1493,10 +1523,14 @@ def main() -> None:
                          "which is what the UCI path defaults to). So no single invocation "
                          "reproduces both production searches at once: at 1 row (b) is not "
                          "the play search, at 3 rows (d)/(e) are not the training search. "
-                         "Per-profile values would be a SEARCH change and are not in this "
-                         "flag. The default is left at 0 deliberately: changing it is a "
-                         "RULER CHANGE that would retire every banked report, and it needs "
-                         "its own ledger entry. "
+                         "A separate opt-in play-side weight would be additive and would "
+                         "change no number by itself — it is held back because choosing "
+                         "the PLAY row's default IS the same decision as changing this "
+                         "flag's default, and landing half of it would bank reports under "
+                         "a half-migrated ruler. Both belong to one ledger entry with a "
+                         "before/after on a pinned checkpoint. The default is left at 0 "
+                         "for that reason: changing it is a RULER CHANGE that retires "
+                         "every banked report. "
                          "At 0 a leaf already awaiting eval in the current batch carries "
                          "no penalty and a later halving rep re-walks straight back to it "
                          "(C17). >0 makes in-flight leaves count as penalized visits "
@@ -1553,6 +1587,19 @@ def main() -> None:
   # kept -- `profiles_for_audit` re-derives it from `args` below, so there is no
   # variable in `main()` that a later edit can forget to forward.
     parse_gumbel_overrides(args.gumbel)
+  # ⚑ THE DEDICATED FLAG GETS THE SAME BAND AS THE OVERRIDE, or this PR creates
+  # the false record it exists to remove. `--gumbel policy_temp=X` has been
+  # refused outside [POLICY_TEMP_MIN, POLICY_TEMP_MAX] since the override guard
+  # landed, for exactly the reason quoted there: `apply_policy_temp` silently
+  # swallows an out-of-band value, so the audit scores the DEFAULT prior. The
+  # dedicated `--policy-temp` reaches the same `GumbelConfig.policy_temp` and
+  # had no such check, which was survivable only while nothing recorded it:
+  # `--policy-temp 42.5` and `--policy-temp 1.0` produce dumps identical on
+  # every field. Now that the value is STAMPED, accepting it would print 42.5
+  # in the header of a report that scored 1.0 — provenance that is false, which
+  # this file's own thesis says is worse than provenance that is missing.
+  # Same guard, same instrument, so the two cannot drift apart.
+    _refuse_dead_override("policy_temp", float(args.policy_temp), where="--policy-temp")
     if args.dump_distributions and args.dump_per_position is None:
         raise SystemExit(
             "--dump-distributions needs --dump-per-position (it adds a field "
@@ -1582,6 +1629,20 @@ def main() -> None:
             "2026-08-03, F4). Comparing the two constructs through it would be a "
             "verdict off a broken instrument. Re-enable in the commit that mirrors "
             "the C parent branch."
+        )
+
+  # Same shape, and it only became a defect once the value was recorded:
+  # `_net_candidates` forwards the weight under `if vloss_weight > 0`, so a
+  # NEGATIVE weight is dropped exactly like `--vloss-mode 1` at weight 0 was --
+  # and the stamp would now print it in the header of a report whose search ran
+  # at 0. Refuse rather than stamp a value the search discarded.
+    if int(args.vloss_weight) < 0:
+        raise SystemExit(
+            f"--vloss-weight {args.vloss_weight} is refused: the C runner is "
+            "only handed a weight when it is > 0, so a negative value is "
+            "silently dropped and the search runs at 0 — while the report "
+            "header and the per-position dump would record your number. Pass 0 "
+            "for no virtual loss, or a positive weight."
         )
 
     if args.sf_soft_nodes is None:
@@ -1646,11 +1707,20 @@ def main() -> None:
     full_share = float(flat.get("playout_cap_fraction", 1.0))
     profiles, gumbel_overrides = profiles_for_audit(args, flat)
     rl_c_scale = profiles["train"].c_scale
-    rl_sims = profiles["train"].sims
-    rl_fast_sims = profiles["train_fast"].sims
   # Built ONCE, here, and handed to both the report header and the per-position
   # dump. Building it twice is how a stamp starts disagreeing with the run.
     search_params = search_param_stamp(args, profiles=profiles)
+  # ⚑ READ THE SIM COUNTS OFF THE STAMP, never off `profiles[...].sims` or
+  # `args.sims`. `--gumbel simulations=N` lands AFTER the profile columns, so
+  # the columns are pre-override: at `--sims 8 --gumbel simulations=17
+  # --gumbel-training-rows` all three rows searched at 17 while this header line
+  # printed "PLAY 8 sims / RL train 8 full + 32 fast" one line above a stamp
+  # reading 17 (independent review of PR #434, executed). A report that
+  # contradicts itself is worse than one that omits — and the WRONG line is the
+  # one an operator greps.
+    play_sims_note = search_params["sims"]
+    rl_sims = search_params["rl_sims"]
+    rl_fast_sims = search_params["fast_sims"]
     for name, prof in profiles.items():
         print(
             f"[audit] {_CANDIDATE_NAMES[name]}: {prof.label} — "
@@ -1929,7 +1999,7 @@ def main() -> None:
         f"ITS RECORDS — do not put row (a) from a `stored` run in a table with "
         f"row (a) from a `fen_only` run.\n"
         f"- net: {net.label}\n"
-        f"- search: PLAY {args.sims} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
+        f"- search: PLAY {play_sims_note} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
         f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n"
       # The search params, greppable, in one line. They are CLI-only: --config
