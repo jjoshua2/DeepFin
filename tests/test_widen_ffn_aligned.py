@@ -7,6 +7,7 @@ is the same function. Everything else is bookkeeping around that claim.
 
 from __future__ import annotations
 
+import math
 import re
 
 import pytest
@@ -387,7 +388,12 @@ def test_soda_anchors_are_REFUSED() -> None:
 def test_a_wrapped_model_key_still_migrates_its_optimizer_state() -> None:
     """⚑ The regex tolerates `_orig_mod.`; the name lookup did not.
 
-    Result was a widened parameter beside an un-widened moment, with no error.
+    Result would be a widened parameter beside an un-widened moment. NOTE the
+    reachability is DEFENSIVE, not live: `Trainer.save` runs
+    `strip_compile_prefix` over `state["model"]`, so a genuine checkpoint has
+    bare `blocks.N.ffn.*` keys and `_unwrap` never fires on it. This pins the
+    handling for hand-assembled or externally produced state dicts; do not read
+    it as "compiled checkpoints were broken".
     """
     ck = _tiny_ckpt(mults=(1.25,))
     ck["model"] = {f"_orig_mod.{k}": v for k, v in ck["model"].items()}
@@ -433,11 +439,28 @@ def test_the_shrink_guards_actually_fire() -> None:
         _pad_cols(torch.zeros(4, 16), 8)
 
 
-def test_the_scalar_ffn_mult_is_kept_consistent_with_the_schedule() -> None:
-    """scripts/shrink_ffn_checkpoint.py rewrites it; two tools must agree."""
-    ck = _tiny_ckpt(mults=(1.25, 1.75))
+def test_the_scalar_ffn_mult_is_the_FIRST_layers_mult_not_the_mean() -> None:
+    """⚑ R5: the two FFN tools DISAGREE here, and that is fine.
+
+    `scripts/shrink_ffn_checkpoint.py` writes `ffn_mult =
+    mean(normalized_schedule)`; this tool writes `new_mults[0]` (1.734375 vs 1.5
+    on the production schedule). The comment in widen_ffn_aligned.py used to
+    justify the line by claiming shrink "already does" the same thing — false.
+    The disagreement is harmless because the scalar is DECORATIVE whenever
+    `ffn_mult_by_layer` is present: every in-tree consumer prefers the schedule.
+    This test pins which of the two conventions THIS tool follows, so a future
+    "reconciliation" has to be a deliberate decision rather than a drift.
+    """
+    ck = _tiny_ckpt(mults=(1.25, 2.75))  # widths 10, 22 -> aligned 16, 24
     ck, _ = widen_checkpoint(ck, align=8, seed=3)
-    assert int(8 * ck["arch"]["ffn_mult"]) == int(8 * ck["arch"]["ffn_mult_by_layer"][0])
+    schedule = ck["arch"]["ffn_mult_by_layer"]
+    assert [int(8 * m) for m in schedule] == [16, 24]
+    mean = sum(schedule) / len(schedule)
+    assert ck["arch"]["ffn_mult"] == pytest.approx(schedule[0])
+    assert ck["arch"]["ffn_mult"] != pytest.approx(mean), (
+        "the fixture no longer distinguishes first-mult from mean-mult, so this "
+        "test would pass under shrink_ffn_checkpoint.py's convention too"
+    )
 
 
 def test_main_does_not_crash_on_an_already_aligned_scalar_arch(tmp_path) -> None:
@@ -450,3 +473,199 @@ def test_main_does_not_crash_on_an_already_aligned_scalar_arch(tmp_path) -> None
     torch.save(ck, src)
     assert mod.main(["--in", str(src), "--out", str(dst), "--align", "8"]) == 0
     assert dst.exists(), "the no-op path must still write its output"
+
+
+# ---------------------------------------------------------------------------
+# Independent review R1-R7.
+# ---------------------------------------------------------------------------
+
+def test_optimizer_state_with_no_state_key_and_no_names_is_REFUSED() -> None:
+    """⚑ R1: the F1 fix (`if opt` not `if opt_state`) was UNPINNED.
+
+    `test_optimizer_state_without_param_names_is_REFUSED` supplies an empty
+    `opt_param_names` alongside a POPULATED `opt["state"]`, so `opt` and
+    `opt["state"]` are both truthy and BOTH spellings of the guard raise —
+    reverting the fix left the whole suite green. This is the input that
+    separates them: an optimizer state dict with no "state" key at all, which is
+    exactly what `_ChainedOptimizer.state_dict()` returns. Under the
+    `opt_state`-keyed spelling the guard sees {} and waves the checkpoint
+    through with the migration silently skipped.
+    """
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["opt"] = {"param_groups": [{"params": [0]}]}  # truthy, but no "state"
+    del ck["opt_param_names"]
+    with pytest.raises(ValueError, match="cannot be addressed by name"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_aurora_scale_factor_ratio_is_pinned() -> None:
+    """⚑⚑ R2: widening is function-preserving but NOT dynamics-preserving.
+
+    `_aurora_update` ends with `out *= sqrt(max(1, orig_rows / orig_cols))`, so
+    growing `ffn.0.weight` from (796, 512) to (896, 512) multiplies the WHOLE
+    update — untouched rows included — by sqrt(896/796) = 1.0610. A widened arm
+    therefore differs from its control by capacity AND by a per-layer effective
+    step-size increase; see the module docstring's confound section, which this
+    test exists to keep honest.
+
+    The factor is imported from the real optimizer rather than re-derived: the
+    polar factor is stubbed out with an identity so the only thing left in the
+    output/input norm ratio is that trailing scale. `pp_iterations=1` skips the
+    row-norm rebalance, and unit-norm rows make the internal `scale` exactly 1.
+    """
+    from chess_anti_engine.train.aurora import _aurora_update
+
+    def scale_factor(rows: int, cols: int) -> float:
+        g = torch.Generator().manual_seed(0)
+        x = torch.randn(rows, cols, generator=g)
+        tall = x if rows >= cols else x.T
+        tall = tall / tall.norm(dim=-1, keepdim=True)
+        y = tall if rows >= cols else tall.T
+        out = _aurora_update(
+            y,
+            pp_iterations=1,
+            polar_method="polar_express",
+            polar_express_fn=lambda mat, **_: mat,
+        )
+        return float(out.norm() / y.norm())
+
+    f_old = scale_factor(796, 512)
+    f_new = scale_factor(896, 512)
+    assert f_old == pytest.approx(math.sqrt(796 / 512), rel=1e-5)
+    assert f_new == pytest.approx(math.sqrt(896 / 512), rel=1e-5)
+    assert f_new / f_old == pytest.approx(math.sqrt(896 / 796), rel=1e-5)
+    assert f_new / f_old == pytest.approx(1.0610, abs=5e-4), (
+        "the +6.1% figure quoted in the module docstring is stale"
+    )
+    # The output projection (512, h) is UNAFFECTED: max(1.0, 512/h) == 1.0.
+    assert scale_factor(512, 896) == pytest.approx(1.0, rel=1e-5)
+
+
+def test_arch_width_that_disagrees_with_the_stored_tensor_is_REFUSED() -> None:
+    """⚑ R3: `changes` came from `arch` and was never checked against `model`."""
+    ck = _tiny_ckpt(mults=(1.25,))  # arch says width 10
+    ck["model"]["blocks.0.ffn.0.weight"] = torch.zeros(12, 8)  # tensors say 12
+    with pytest.raises(ValueError, match="arch width disagrees with the stored tensor"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_a_planned_layer_that_widens_nothing_is_REFUSED() -> None:
+    """⚑ R3: arch rewritten while zero tensors moved = a checkpoint that lies.
+
+    Model keys the FFN patterns do not match (`layers.N.ffn.*` instead of
+    `blocks.N.ffn.*`) used to produce changes={0: (10, 16)}, zero widened
+    tensors, and an `arch` claiming width 16. On resume,
+    `load_state_dict_tolerant` — called WITHOUT `require_complete=True` — drops
+    the mismatched FFN tensors, leaving fresh-init FFNs under the catastrophic
+    load threshold, so nothing fires.
+    """
+    ck = _tiny_ckpt(mults=(1.25,))
+    ck["model"] = {k.replace("blocks.", "layers.", 1): v for k, v in ck["model"].items()}
+    with pytest.raises(ValueError, match="contributed no tensors to the widening"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_variable_width_arch_is_REFUSED_even_when_the_scalar_plan_is_ALIGNED() -> None:
+    """⚑ R4: the refusal sat AFTER `if not changes: return`, so it was skippable.
+
+    embed_dim 8 x mult 2.0 = 16, a multiple of 8, so plan_widths finds nothing to
+    do and the old code returned "already tile-aligned" — while the width
+    TransformerBlock actually builds from `embed_dim_by_layer` is
+    int(10 * 2.0) = 20, which is NOT aligned. A clean bill of health for a net
+    this tool cannot read.
+    """
+    ck = _tiny_ckpt(mults=(2.0,))
+    ck["arch"]["embed_dim_by_layer"] = [10]
+    changes, _ = plan_widths(ck["arch"], align=8)
+    assert changes == {}, "the fixture must exercise the ALIGNED (early-return) path"
+    with pytest.raises(ValueError, match="embed_dim_by_layer"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_swa_is_REFUSED_even_when_the_scalar_plan_is_ALIGNED() -> None:
+    """⚑ R4: same early-return skip, for the SWA refusal."""
+    ck = _tiny_ckpt(mults=(2.0,))
+    ck["swa_model"] = {"module.blocks.0.ffn.0.weight": torch.zeros(16, 8)}
+    changes, _ = plan_widths(ck["arch"], align=8)
+    assert changes == {}, "the fixture must exercise the ALIGNED (early-return) path"
+    with pytest.raises(ValueError, match="swa_model"):
+        widen_checkpoint(ck, align=8, seed=3)
+
+
+def test_the_trainers_real_rekeying_helper_is_what_the_unwrap_docstring_says() -> None:
+    """⚑ R6: `_unwrap`'s docstring used to claim parity with a helper that
+    does something else — and under a name (`Trainer._wrap_agnostic_name`) that
+    does not exist in this repo at all. The real one is the module-level
+    `strip_compile_prefix`. This pins the two properties the corrected docstring
+    asserts about it, so the correction cannot go stale silently.
+    """
+    from chess_anti_engine.train.trainer import strip_compile_prefix
+
+    # (1) first occurrence ANYWHERE, not just leading — this is why it reaches
+    #     AveragedModel's nested keys.
+    got = strip_compile_prefix({"module._orig_mod.blocks.0.ffn.0.weight": 1})
+    assert list(got) == ["module.blocks.0.ffn.0.weight"]
+    # (2) it never strips a `module.` segment.
+    assert list(strip_compile_prefix({"module.blocks.0.ffn.0.weight": 1})) == [
+        "module.blocks.0.ffn.0.weight"
+    ]
+
+
+def test_the_printed_schedule_is_valid_yaml_that_round_trips(tmp_path, capsys) -> None:
+    """⚑ R7: a Python list repr has to be hand-translated into the launch yaml,
+    and the launch yaml is the file that decides whether the widening is loaded
+    at all (`_maybe_load_bootstrap` never reads the checkpoint's arch). Print
+    the line to paste, and prove it parses back to the same schedule.
+    """
+    import yaml
+
+    import scripts.widen_ffn_aligned as mod
+
+    ck = _tiny_ckpt(mults=(1.25, 2.75))
+    src, dst = tmp_path / "in.pt", tmp_path / "out.pt"
+    torch.save(ck, src)
+    assert mod.main(["--in", str(src), "--out", str(dst), "--align", "8"]) == 0
+
+    lines = [
+        ln for ln in capsys.readouterr().out.splitlines()
+        if ln.startswith("ffn_mult_by_layer:")
+    ]
+    assert len(lines) == 1, f"expected exactly one yaml line, got {lines}"
+    parsed = yaml.safe_load(lines[0])
+    assert isinstance(parsed, dict), f"{lines[0]!r} is not a yaml mapping"
+    emitted = torch.load(dst, map_location="cpu", weights_only=False)
+    assert parsed["ffn_mult_by_layer"] == [
+        float(m) for m in emitted["arch"]["ffn_mult_by_layer"]
+    ]
+    assert [int(8 * m) for m in parsed["ffn_mult_by_layer"]] == [16, 24]
+
+
+def test_format_ffn_mult_yaml_round_trips_the_production_schedule() -> None:
+    import yaml
+
+    from scripts.widen_ffn_aligned import format_ffn_mult_yaml
+
+    cur = (
+        1.5, 1.5, 1.5, 1.5, 1.5, 1.555556, 1.65, 1.772222,
+        1.894444, 1.666667, 1.638889, 1.905556, 1.783333, 1.794444, 1.744444, 1.5,
+    )
+    new = aligned_ffn_mults(cur, embed_dim=512, align=128)
+    line = format_ffn_mult_yaml(new)
+    assert yaml.safe_load(line)["ffn_mult_by_layer"] == list(new)
+
+
+def test_module_docstring_records_the_optimizer_dynamics_CONFOUND() -> None:
+    """⚑⚑ R2 is a design confound, not a bug: it must reach the ledger prereg.
+
+    The docstring is the only place this is written down, so pin the load-bearing
+    phrases rather than trusting them to survive an edit.
+    """
+    import scripts.widen_ffn_aligned as mod
+
+    doc = mod.__doc__ or ""
+    assert "sqrt(h_new / h_old)" in doc
+    assert re.search(r"confound", doc, re.I), "the confound must be named as such"
+    assert re.search(r"Confounds", doc), "the ledger prereg line must be named"
+    assert re.search(r"_maybe_load_bootstrap", doc), (
+        "the deployment path that silently drops the widening must be named"
+    )

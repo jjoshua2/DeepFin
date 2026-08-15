@@ -40,6 +40,47 @@ correct implementation.
 ``mish(0) = 0``, killing the W2 gradient too, and both halves would stay dead
 forever. A "symmetric, obviously safe" all-zero widening is the failure mode.
 
+⚑⚑ FUNCTION-PRESERVING IS NOT DYNAMICS-PRESERVING — THIS IS A CONFOUND
+----------------------------------------------------------------------
+**The widening changes the effective step size of every layer it touches, for
+the OLD rows as well as the new ones.** Aurora's final line
+(``chess_anti_engine/train/aurora.py``, ``_aurora_update``) is::
+
+    out = out * math.sqrt(max(1.0, orig_rows / orig_cols))
+
+For ``blocks.N.ffn.0.weight`` of shape ``(h, embed_dim)`` that factor is
+``sqrt(h / embed_dim)``, so raising ``h`` multiplies the ENTIRE update tensor —
+not merely its new rows — by::
+
+    sqrt(h_new / h_old)
+
+Measured on a real production layer (796 -> 896 rows, 512 cols): total update
+norm 28.213 -> 29.933, ratio **1.0610 == sqrt(896/796)**, and the updates to the
+796 UNTOUCHED rows are 6.1% larger too. ``blocks.N.ffn.2.weight`` of shape
+``(embed_dim, h)`` is UNAFFECTED, because ``max(1.0, 512/h) == 1.0`` for every
+``h > 512``. Per production layer, the input-projection step-size increase is::
+
+    +6.1, +3.0, +6.3, +2.8, +2.5, +3.3, +2.5, +5.9, +5.6, +0.2  (percent)
+
+on the 10 of 16 blocks that grow; the other 6 are already tile-aligned and are
+untouched.
+
+⇒ **A widened arm differs from its control by TWO things, not one:** +1.16%
+capacity AND a per-layer 0.2–6.3% effective step-size increase on 10 of 16 FFN
+input projections. Any Elo / loss / regret readout that attributes a difference
+to "more capacity" is CONFOUNDED with an LR change concentrated in exactly the
+layers that grew. This MUST appear on the ledger prereg's **Confounds** line for
+any experiment launched from a widened checkpoint; a readout without it is not a
+capacity verdict.
+
+Neutralising it would mean a per-layer LR compensation of ``sqrt(h_old/h_new)``
+on the widened ``ffn.0.weight`` parameters. That is a SEPARATE intervention with
+its own dynamics (it is not a no-op on the new rows either), so it is
+deliberately NOT done here — this tool changes topology and nothing else.
+``tests/test_widen_ffn_aligned.py::test_aurora_scale_factor_ratio_is_pinned``
+pins the arithmetic, so if that line in ``aurora.py`` moves, the test fails and
+tells the next reader this section is stale.
+
 OPTIMIZER STATE
 ---------------
 A topology change resets the optimizer unless the state is migrated:
@@ -88,6 +129,26 @@ and ``ffn_mult_by_layer`` is not in ``_RESUME_CONFIG_OWNED_ENCODING_KEYS``, so
 the new schedule MUST be written into ``arch``. A widened ``state_dict`` with a
 stale ``arch`` rebuilds the old widths and the load fails (or, worse, a tolerant
 loader quietly skips the mismatched tensors).
+
+⚑⚑ DEPLOYMENT — THE LIKELY ROUTE SILENTLY DROPS THE WIDENING
+-------------------------------------------------------------
+Writing the schedule into ``arch`` only helps on the paths that READ ``arch``.
+``_maybe_load_bootstrap`` (``chess_anti_engine/tune/trainable_init.py``) does
+NOT: it builds the model from the LAUNCH YAML, then loads the checkpoint's
+weights through ``load_state_dict_tolerant`` and never calls
+``peek_checkpoint_arch``. So pointing a fresh trial's ``bootstrap_checkpoint``
+at a widened file while the launch yaml still carries the OLD
+``ffn_mult_by_layer`` **shape-skips all 30 widened tensors into fresh init**.
+The same hazard sits on the resume path: ``Trainer.load`` calls
+``load_state_dict_tolerant`` WITHOUT ``require_complete=True``, so a mismatch
+there is dropped rather than raised.
+
+The run then boots healthy, reports no error, and trains randomly-initialised
+FFNs in 10 of 16 blocks — well under the catastrophic-load threshold, so nothing
+fires. **Update ``ffn_mult_by_layer`` in the launch yaml BEFORE starting the
+arm.** ``main()`` prints the exact yaml line to paste; it is copy-pasteable on
+purpose, because a Python list repr that has to be hand-translated is how the
+wrong schedule gets typed.
 """
 
 from __future__ import annotations
@@ -204,10 +265,16 @@ def widen_checkpoint(
     arch = ck.get("arch")
     if not isinstance(arch, dict):
         raise ValueError("checkpoint has no 'arch' dict; cannot widen safely")
-    changes, new_mults = plan_widths(arch, align=align)
-    if not changes:
-        return ck, changes
 
+    # ⚑ F/R4: these two refusals answer "may this tool READ this checkpoint at
+    # all", not "does it have work to do", so they MUST precede the `not changes`
+    # early return below. They used to sit after it, and an already-aligned
+    # SCALAR plan therefore walked straight past both: with embed_dim 8,
+    # ffn_mult_by_layer (2.0,) and embed_dim_by_layer [10], plan_widths computes
+    # 8*2.0 = 16 (aligned), reports "already tile-aligned", and says nothing —
+    # while the width TransformerBlock actually builds is int(10 * 2.0) == 20,
+    # which is not a multiple of 8. A clean bill of health for a net this tool
+    # cannot read.
     swa = ck.get("swa_model")
     if swa:
         # Resuming would build a WIDENED AveragedModel, fail to load these
@@ -231,8 +298,37 @@ def widen_checkpoint(
             "variable-width net. Refusing."
         )
 
+    changes, new_mults = plan_widths(arch, align=align)
+    if not changes:
+        return ck, changes
+
     gen = torch.Generator().manual_seed(int(seed))
     model = ck["model"]
+
+    # ⚑ R3: `changes` is derived ENTIRELY from `arch`. Nothing had ever checked
+    # it against the tensors it is about to pad, so an `arch` that disagrees
+    # with the state_dict produced a file whose arch claims widths its weights
+    # do not have — and `load_state_dict_tolerant` (called WITHOUT
+    # require_complete=True on both the resume and bootstrap paths) drops those
+    # tensors silently at load. Verify the plan against the stored rows first.
+    in_weight_keys: dict[int, str] = {}
+    for key in model:
+        m = _FFN_IN_RE.search(key)
+        if m is not None and m.group(2) == "weight":
+            in_weight_keys[int(m.group(1))] = key
+    for layer, (old_w, _) in sorted(changes.items()):
+        stored_key = in_weight_keys.get(layer)
+        if stored_key is None:
+            continue  # caught by the post-loop "contributed no tensors" refusal
+        stored_rows = int(model[stored_key].shape[0])
+        if stored_rows != old_w:
+            raise ValueError(
+                f"arch width disagrees with the stored tensor: arch plans layer "
+                f"{layer} from an FFN width of {old_w}, but {stored_key!r} has "
+                f"{stored_rows} rows. Widening from a width the weights do not "
+                "have would emit an arch that lies about its own tensors, which "
+                "the tolerant loader then drops in silence. Refusing."
+            )
     names: list[str] = list(ck.get("opt_param_names") or [])
     opt = ck.get("opt") or {}
 
@@ -260,13 +356,29 @@ def widen_checkpoint(
         )
 
     def _unwrap(name: str) -> str:
-        """Strip compile/DDP wrappers, as Trainer._wrap_agnostic_name does.
+        """Strip compile/DDP wrappers from a model key. DEFENSIVE COVERAGE ONLY.
 
-        ⚑ The FFN regexes deliberately tolerate a `module.` / `_orig_mod.`
-        prefix, but `opt_param_names` is stored wrap-AGNOSTIC. Looking the
-        prefixed key up directly therefore missed every entry and skipped the
-        whole migration with no error — the regex said a prefix was expected
-        and the lookup said the opposite.
+        ⚑ This is NOT parity with the trainer's own re-keying, and an earlier
+        revision of this docstring claiming parity ("as Trainer's wrap-agnostic
+        name helper does") was wrong twice over. The real helper is the
+        module-level `strip_compile_prefix` in
+        `chess_anti_engine/train/trainer.py` — there is no
+        `Trainer._wrap_agnostic_name` — and it is
+        `k.replace("_orig_mod.", "", 1)`: the FIRST occurrence anywhere in the
+        key, deliberately non-leading so it also reaches `AveragedModel`'s
+        nested `module._orig_mod.*`, and it never strips a `module.` segment at
+        all. This function strips a fixed set of LEADING prefixes instead, which
+        is a different rule.
+
+        ⚑ It is also a no-op on every genuine input today: `Trainer.save` runs
+        `strip_compile_prefix` over `state["model"]`, so real checkpoints carry
+        bare `blocks.N.ffn.*` keys. This is therefore defensive coverage for
+        keys `Trainer.save` does not currently emit — a hand-assembled or
+        externally produced state dict — and NOT a live failure being repaired.
+        The `opt_param_names` manifest is stored wrap-agnostic regardless, so if
+        a prefixed key ever DID arrive, looking it up unstripped would miss its
+        optimizer entry; the F5 backstop below would then refuse rather than
+        emit a half-migrated file.
         """
         for pfx in ("module._orig_mod.", "_orig_mod.module.", "module.", "_orig_mod."):
             if name.startswith(pfx):
@@ -329,6 +441,27 @@ def widen_checkpoint(
             _migrate(_opt_entry(key), old_shape,
                      lambda v, w=new_w: _pad_cols(v, w))
 
+    # ⚑ R3: `changes` says which layers the ARCH rewrite below will claim to
+    # have widened. If a layer produced no tensors — because the model keys are
+    # spelled in a way the FFN regexes do not match, e.g. `layers.N.ffn.*` —
+    # then the emitted arch advertises widths that exist nowhere in the
+    # state_dict, and every consumer that loads tolerantly (resume AND
+    # bootstrap) drops those tensors into fresh init without a word.
+    widened_layers = {
+        int(m.group(1))
+        for k in widened
+        if (m := (_FFN_IN_RE.search(k) or _FFN_OUT_RE.search(k))) is not None
+    }
+    silent = sorted(set(changes) - widened_layers)
+    if silent:
+        raise ValueError(
+            f"planned layer(s) {silent} contributed no tensors to the widening: "
+            "their FFN parameters are absent from 'model' or are spelled in a "
+            "way this tool's key patterns do not match. Rewriting arch anyway "
+            "would emit a checkpoint whose declared widths no tensor has. "
+            "Refusing."
+        )
+
     # ⚑ F5: the refusal above only catches an ABSENT manifest. A truncated,
     # stale or mismatched one passes it and then resolves nothing, so the
     # migration is skipped with no error — the same silent skip one level in.
@@ -346,12 +479,32 @@ def widen_checkpoint(
 
     # ⚑ Without this the resume path rebuilds the OLD widths from the stale arch.
     arch["ffn_mult_by_layer"] = tuple(new_mults)
-    # F11: keep the scalar consistent with the schedule, as
-    # scripts/shrink_ffn_checkpoint.py already does. Every in-tree consumer
-    # reads ffn_mult_by_layer when present, so this is hygiene — but two tools
-    # that disagree about the same field is how the next reader gets it wrong.
+    # ⚑ R5: the scalar `ffn_mult` is DECORATIVE whenever a schedule is present.
+    # All 12 in-tree read sites prefer `ffn_mult_by_layer`, and
+    # `_resolve_ffn_mults` / `normalize_ffn_mult_by_layer` make the schedule
+    # authoritative, so nothing downstream consumes the value written here.
+    #
+    # An earlier revision of this comment justified the line by saying
+    # scripts/shrink_ffn_checkpoint.py "already does" the same thing. It does
+    # NOT: that tool writes `ffn_mult = mean(normalized_schedule)` while this
+    # one writes `new_mults[0]` — 1.734375 vs 1.5 on the production schedule.
+    # The two tools genuinely DISAGREE about what belongs in this field, and
+    # that disagreement is harmless for exactly the reason above: no consumer
+    # reads it while a schedule exists. Do not "reconcile" them on the strength
+    # of an agreement that was never there.
     arch["ffn_mult"] = float(new_mults[0])
     return ck, changes
+
+
+def format_ffn_mult_yaml(mults: Sequence[float]) -> str:
+    """Render *mults* as a copy-pasteable ``ffn_mult_by_layer:`` YAML line.
+
+    A flow sequence of plain floats, so ``yaml.safe_load`` round-trips it back
+    to the identical schedule. See the DEPLOYMENT section of the module
+    docstring for why this is printed as yaml rather than as a Python repr.
+    """
+    body = ", ".join(repr(float(m)) for m in mults)
+    return f"ffn_mult_by_layer: [{body}]"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -389,7 +542,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     schedule = ck["arch"].get("ffn_mult_by_layer")
     if not schedule:
         _, schedule = plan_widths(ck["arch"], align=args.align)
-    print(f"arch ffn_mult_by_layer -> {list(schedule)}")
+    # ⚑ Printed as YAML, not as a Python list repr, because the deployment path
+    # that drops this widening silently is a launch yaml carrying the OLD
+    # schedule (_maybe_load_bootstrap never reads the checkpoint's arch — see
+    # the module docstring). Hand-translating a repr into yaml is where the
+    # wrong schedule gets typed, so emit the line to paste.
+    print("PASTE INTO THE LAUNCH YAML's model: section (see DEPLOYMENT above):")
+    print(format_ffn_mult_yaml(schedule))
     dst.parent.mkdir(parents=True, exist_ok=True)
     torch.save(ck, dst)
     print(f"wrote {dst}")
