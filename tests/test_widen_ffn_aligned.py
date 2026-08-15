@@ -214,7 +214,7 @@ def test_optimizer_momentum_is_migrated_not_dropped() -> None:
         if n.endswith("ffn.2.weight"):
             assert torch.equal(buf[:, :old_h], prev), f"{n}: original moments lost"
             assert torch.all(buf[:, old_h:] == 0)
-        elif n.endswith("ffn.0.weight") or n.endswith("ffn.0.bias"):
+        elif n.endswith(("ffn.0.weight", "ffn.0.bias")):
             assert torch.equal(buf[:old_h], prev), f"{n}: original moments lost"
             assert torch.all(buf[old_h:] == 0)
 
