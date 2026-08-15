@@ -49838,3 +49838,63 @@ across `gumbel_target_batch` ∈ {0, 32, 8} on production positions with a real 
 the GPU-round-trip cost measured alongside (~6x at tb=1 per `gumbel_c.py:450`). Pre-reg
 required; nothing launched. Probe:
 `scratchpad/c16_probe_20260815.py` (session scratchpad).
+
+## 2026-08-15 — FIRST CUDA READING of the AOT verify gate: the analytic ULP floor is mis-scaled on BOTH heads, in opposite directions
+
+**Status: MEASUREMENT (PR #432 NOT merged). Instrument: `--verify-only` on real packages + real weights, RTX 5090, training stopped.**
+
+Every number in PR #432 was CPU-derived or synthetic; the gate had never been run against
+a real AOT-vs-eager discrepancy. It has now. Raw output banked at
+`scratchpad/aot_cuda_20260815/verify_run_seed0.txt`.
+
+    checkpoint  data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt
+    config      configs/pbt2_small.yaml (the LIVE file)
+    packages    a scratch COPY of data/aot_models_512_bt4heads (verified md5-identical after)
+    args        --verify-only --verify-n 2 --seed 0 --tv-ratio-max 2.0 --argmax-min 0.90
+    result      verified=17 failed=4
+
+**The 4 failures are the INSTRUMENT, not the packages.** Failing buckets are exactly
+1020, 1024, 2720, 4096, and each reads `floor=pol:ulp-only(ctl-degenerate)` while all 17
+passing buckets read `floor=pol:shape+ulp`. Where the empirical control survives,
+`pol_mean` is 0.97-1.04; where it degenerates, the SAME discrepancy reads **x2.79-x2.91**.
+Package health is uniform across both groups: `pol_rows_over` and `wdl_rows_over` are
+**0 at every bucket**, pooled argmax 0.947-0.974 everywhere.
+
+⇒ **the shape control is ~2.83x the raw-ULP floor**, and the raw-ULP estimate therefore
+UNDERSTATES the true policy floor by that factor on real hardware. Predicted before the
+run at 3.3x from pre-fix numbers; measured 2.83, stable across all 8 trials.
+
+**The other half: `wdl_mean` is 0.43-0.76 at EVERY bucket** (median ~0.49). If a healthy
+package reads ~1.0, the WDL floor is now ~2x too LARGE. So:
+
+    head             ULP floor vs physical
+    policy (1858)    ~2.8x too SMALL
+    wdl    (3)       ~2x   too LARGE
+
+Both are physically sensible — AOT and eager accumulate more than one ULP of divergence
+across a 1858-wide softmax's reductions and less across a 3-wide one. ⇒ **one ULP is not
+the right scale for either head, and the two heads need DIFFERENT scales.** That is
+precisely what an empirical control measures and an analytic estimate cannot. The
+`_FLOOR_DIVERGENCE_MAX = 5.0` cross-check correctly did NOT fire (2.83 < 5), reading this
+as legitimate estimator disagreement rather than a broken floor — its first calibration
+against real evidence.
+
+**NOT DONE, deliberately: `--tv-ratio-max` was NOT widened to 3.0.** The pre-committed
+rule bans fitting the constant to the run. The estimator is what is wrong.
+
+**Two incidental findings, both confirmed:**
+- The `main`-based #432 branch **cannot read the live config at all**: it dies on
+  `Unknown keys in yaml 'model:' section: ['aux_policy_head_dim']`. That is CLAUDE.md's
+  category-(a) hazard firing for real — the live yaml carries a key `main`'s schema does
+  not define, and at launch it is FATAL, not a soft reject. ⇒ #432 cannot verify
+  production until it carries the live branch's schema. The run above used a rig worktree
+  at live HEAD with #432's two files copied in.
+- `eager_batch_shape_control` degenerates at specific CUDA bucket sizes (1020, 1024, 2720,
+  4096), not only on CPU: its `n//2` chunking is bitwise identical to the full batch there.
+  The docstring said this was a CPU regime; it is a bucket-size regime.
+
+**Owed:** re-scale the floor per head (or make the control primary with a calibrated
+fallback), then re-run this exact command. Also still owed and never run: a DELIBERATELY
+BROKEN package, the only way to read the gate's TRUE-POSITIVE rate on hardware. Until
+that exists, this run shows only that the gate does not false-fail when its control
+survives.
