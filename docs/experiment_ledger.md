@@ -45306,6 +45306,65 @@ Runner `scratchpad/ruler_vs_elo/run_missing_reads.sh` (REFUSES to run while trai
 verified) pins the banked ladder's ruler settings so the new dumps compare with the old;
 readout `correlate.py` refuses to compute below n=4 (verified at n=3).
 
+#### RESULT task #198 (2026-08-14) — **rho = −0.486, n=6 ⇒ WEAK. No procedural change.**
+
+Ran in the GPU pause window Josh opened; all three missing reads completed exit 0 under the
+pinned ladder settings (`--max-positions 2000 --min-pieces 8 --batch-size 128
+--input-encoding fen_only --gpu-mem-fraction 0.35`), so the new dumps are comparable with
+the three banked ones. Dumps banked at `scratchpad/ruler_vs_elo/iter{477,768,862}_dump.jsonl`
+alongside their logs. [[bank_the_dump_not_just_the_number]]
+
+| iter | value_regret (cp) | arena Elo vs boot512 |
+|---|---|---|
+| 477 | 81.2 | −54.6 |
+| 514 | 60.5 | +115.2 |
+| 672 | 66.0 | +87.8 |
+| 735 | 64.1 | +86.9 |
+| 768 | 60.5 | +67.7 |
+| 862 | 63.1 | +11.3 |
+
+**Spearman rho(value_regret, Elo) = −0.486.** The pre-committed bands were: ≤ −0.80 USABLE
+SCREEN · −0.80 < rho ≤ −0.40 WEAK, no procedural change · > −0.40 THE RULER DOES NOT TRACK
+PLAY STRENGTH. **−0.486 lands in the middle band**, and the middle band's pre-committed
+consequence is *nothing changes*. It is recorded as WEAK, not rounded toward either
+neighbouring verdict.
+
+**What this does and does not license.** The power calculation was written before the fact:
+n=6 can only CERTIFY |rho| ≥ 0.83 at p<0.05, so this result **does not certify a
+relationship and does not refute one**. Concretely:
+
+* `value_regret` **may not be used to screen candidates in place of an arena** — the ≤ −0.80
+  bar it would have had to clear was not cleared.
+* The stronger claim — "the value ruler does not track play strength" — is **also not
+  established**, because rho did not enter that band either. Anyone citing this row for
+  either purpose is over-reading it. [[most_experiments_here_are_unfalsifiable]]
+* The correct summary is: **at the only sample size we can afford, the ordering is
+  consistent with a moderate negative relationship and with no relationship, and the study
+  cannot separate them.** The design was pre-registered knowing this; the outcome is the
+  uninformative branch, which is why the band existed.
+
+**One structural note, visible in the table and worth more than the rho.** The single
+largest ruler value (477 at 81.2 cp) is also the single worst arena row (−54.6), and the
+single best arena row (514 at +115.2) has the joint-best ruler value (60.5). The
+*endpoints* agree; the interior (672/735/768/862) is where the ordering breaks — those four
+span 66.0 → 63.1 cp on the ruler (2.9 cp) while spanning +87.8 → +11.3 on the arena
+(76.5 Elo). ⇒ **the ruler has no resolution over the interior of our own lineage**, which is
+exactly the region a screen would be used in. That is a resolution statement, independent of
+the significance question, and it is the reason not to retry this study at larger n by adding
+more mid-lineage checkpoints: they land inside the ruler's noise band.
+[[compute_instrument_resolution_before_the_threshold]]
+
+**Confound restated (it was pre-registered, and it still applies):** the ruler grades against
+deep SF while we train an ANTI-engine, so a weak correlation has an innocent explanation. The
+decision-relevant part is unaffected — a ruler that cannot order our own lineage cannot screen
+our own work, whatever the reason. [[audit_first_cannot_judge_a_non_sf_teacher]]
+
+⇒ **#198 CLOSED. No procedural change. `value_regret` remains the designated VALUE yardstick
+for judging the value head (its own job, where it reads a 17.8% improvement) and is NOT
+promoted to an Elo screen.** [[value_head_frozen_since_iter8]]
+[[losses_are_decoupled_from_strength]]
+
+
 ### ⚑ METHOD NOTE: the audit-first rule cannot judge a NON-SF teacher (2026-08-13; draft: scratchpad/external_teacher/prereg_draft.md)
 
 Found while designing an external-teacher experiment. `docs/eval_protocol.md`'s audit-first
