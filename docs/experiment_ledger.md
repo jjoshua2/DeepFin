@@ -49570,3 +49570,69 @@ SET, since 29 files can still be missing one of the 21.
 Fix the script default so this cannot recur — either default `--buckets` to
 `_COMPILED_BATCH_BUCKETS`, or fail loud when the requested list does not cover it. A build that
 silently omits the buckets the only consumer needs should not be the default behaviour.
+
+---
+
+## PREREG — is bt4heads iter100 actually our best net, or the best of a degraded era?
+**2026-08-15, written BEFORE the arena was launched and before any result was visible.**
+
+### Why this exists
+bt4heads arm B's **+13.9 Elo [+5.69, +22.14] n=4800** is measured against **Tier-13 arm_A
+iter100** — a sibling from the same 2026-08-12 donor at the same iteration count. Tier-13's
+own three arms were mutually NULL (+12.2 / +3.5 / −7.4), so arm_A is essentially the donor's
+trajectory. Transitively that reads "donor +14" — and **chaining is exactly what
+`arena_elo_is_anchor_dependent` says is off by up to 82 Elo.** bt4heads has NEVER been played
+against a pre-2026-08-12 checkpoint.
+
+The banked n=400 rows (no CIs recorded, so individually underpowered — this is a suspicion,
+not a fact) are same-signed and point downhill through late July/August:
+
+| contrast | Elo (n=400) |
+|---|---|
+| iter862_postmerge vs iter514 | −21.7 |
+| iter768 vs iter735_FINAL | −23.5 |
+| iter514 vs pre_search_authority slot_000 | −18.3 |
+| pre_search_authority slot_000 vs 07-11 boot | +87.8 |
+
+⇒ the hypothesis this tests: **the lineage peaked around 2026-08-09 and the donor everything
+since descends from is already ~20-40 Elo below that peak.** If true, bt4heads is the best of
+a degraded branch and we should resume from the peak instead.
+
+### Hypothesis
+bt4heads armB iter100 is at least as strong as `ck_2026-08-09_iter514`.
+
+### DECIDING YARDSTICK (exact command, pre-committed)
+```bash
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt \
+  --reference data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+  --sims 32 --search-shape training --games 1600 --seed 42 \
+  --max-concurrent-games 16
+```
+Search settings match the +13.9 row exactly so the two are comparable. Different
+architectures on the two sides is fine — `load_model_from_checkpoint` takes topology from each
+checkpoint's embedded `arch`. Read at FULL n only; **no rolling reads**
+(`rolling_arena_optional_stopping_faked_112_elo`).
+
+### Pre-committed thresholds — decided now, not after
+* **CI lower bound > 0** ⇒ **RESUME FROM bt4heads.** The era question is closed; the donor
+  branch is fine; proceed with the promotion already committed.
+* **CI upper bound < 0** ⇒ **RESUME FROM `ck_2026-08-09_iter514` INSTEAD.** The last four days
+  optimised below a peak we already had banked. The bt4heads bundle stays adopted (it beat its
+  own control) but must be re-applied on top of the older weights, and that is a new run.
+* **CI spans 0** ⇒ **RESUME FROM bt4heads** (keep the newest, per
+  `no_rollback_target_the_run_is_a_plateau`) and record that the era question is UNRESOLVED at
+  n=1600. Do NOT extend the same arena to chase significance — that is optional stopping. A
+  second seed is the only legitimate escalation.
+
+⚑ This is a 3-checkpoint neighbourhood, so if the read is ambiguous the transitivity check is
+available for free: iter514 vs the donor is already banked at −18.3.
+
+### Confounds, stated in advance
+* iter514 predates the 2026-08-09 20:58 `gumbel_c_scale` 0.025→0.1 change. The arena sets
+  search identically on BOTH sides, so this does not bias the contrast — but iter514's WEIGHTS
+  were trained under a different search regime, which is a real (and unavoidable) part of what
+  is being compared.
+* AOT is OFF on both sides, as it was for the +13.9 measurement.
+* n=1600 gives roughly ±17 Elo — sized to resolve the ~20-40 Elo the historical rows suggest,
+  NOT sized to resolve a 5 Elo difference.
