@@ -50208,3 +50208,102 @@ opening pool and the AOT setting. That is a training experiment and needs an exp
 
 Evidence: `scratchpad/prereg_c9a58_phase1_gate_result.json`,
 `scratchpad/prereg_c9a58_lineage_gate2{.py,_result.json}`, `scratchpad/prereg_c9a58_ckpt_verify{.py,.json}`.
+
+## 2026-08-15 — ⚑⚑ CORRECTION: BT4 (SF-AGNOSTIC) FALSIFIES "SHARP AND WRONG". Sharpness and wrongness are ANTI-CORRELATED.
+
+Closes the INFERRED step in the same day's TARGET AUDIT (`666d20561`). Instrument
+`scratchpad/target_vs_bt4/tb4_*.py`; predictions pre-registered in
+`scratchpad/target_vs_bt4/PREDICTIONS.md`. **15 of 21 hit; each of the 6 misses is explained
+there, none re-thresholded.** Ruler: BT4-it332 via ONNX, CPU-only, 1-ply value `Q = L-W` at
+`parent.push(m)` plus root policy. Era E, n=2000, paired per row.
+
+**VERDICT: the pre-committed decider returns UNDECIDED and the two BT4 value heads split
+across the line. But the specific claim in `666d20561` — that fitting the target harder
+converges the net onto SHARP WRONGNESS — is FALSIFIED.**
+
+    disagreement rows (n=1158)      winner head          vanilla-q head
+    C = P(BT4 prefers SF's move)    0.6036 [.575,.631]   0.5397 [.511,.568]
+    mean dQ                         -0.0333              -0.0274
+    mean dcp (BT4)                  -31.4                -18.0
+    shard-SF says, same listed rows -40.9 cp
+
+Rule was: CI wholly >0.58 ⇒ H_wrong; wholly <0.58 ⇒ H_exploit. Winner straddles, q is wholly
+below. The heads agree on magnitude (dQ correlation **0.985**) and differ by 0.064 — inside
+the pre-registered +/-0.08 robustness band, but that band straddles the line. **No head is
+picked.**
+
+**⚑⚑ FINDING THAT REVERSES THE AUDIT'S MECHANISM — C by target top-1 mass:**
+
+    top-1 mass      n     C (winner)            C (q)    mean dQ
+    [0,   0.5)     366    0.702 [.653,.747]     0.639    -0.033
+    [0.5, 0.9)     543    0.578 [.536,.619]     0.534    -0.047
+    [0.9, 0.99)    170    0.577 [.501,.648]     0.435    -0.016
+    [0.99, 1.01)    79    0.380 [.281,.490]     0.342    +0.022
+
+Pre-registered under H_wrong: C flat within 0.10 across bins. **MISS — it swings 0.32,
+monotonically the WRONG way for the audit.** On the target's MOST confident rows BT4 prefers
+the **TARGET** (dQ **+0.022**, dcp +53.9 [+8.6, +109]); the q head agrees. **Not the n_legal
+confound** — at top-1 >= 0.9, C is 0.515 / 0.493 / 0.533 across n_legal <=15 / 16-30 / >30,
+chance in every stratum. ⇒ **the BT4-corroborated wrongness lives on LOW-confidence,
+MANY-move rows, not on the sharp ones.** "Absorption converges onto sharp wrongness" is not
+what an SF-agnostic ruler sees.
+
+**THE DEFICIT IS A TAIL, NOT A PROPERTY OF THE TARGET.** 68.0% of disagreements are within
+20 cp by BT4; median |dQ| **0.009**; on **23.6%** BT4 rates the TARGET better. The
+`|dQ| >= 0.10` tail is **22.6%** of rows and carries **97% of the entire mean deficit**
+(-0.0324 of -0.0333) — and within that tail 30.2% of the time it is SF's move that is worse.
+Same rows, a random legal move is worse by >100 cp on 36.8% vs the target's 9.6%.
+
+**ON BT4's OWN POLICY THE TWO MOVES ARE AT PARITY.** BT4 top-1 == sf_best **0.5465**
+[.525,.568]; == target argmax **0.5325** [.511,.554]; **delta +0.014** — inside the
+pre-registered H_exploit band (<0.05), far from H_wrong (>=0.10). Median BT4 rank 1 for both.
+
+**THE FABRICATED TAIL HIDES REAL BADNESS, NOT EXPLOITATION.** Where the target's argmax is
+NOT in SF's MultiPV-6 (16.3% of rows — exactly where `sf_p0_regret` is ~74% invented and the
+ruler literally cannot speak): **C = 0.7815 [.733,.823]**, dQ -0.048. Where it IS listed:
+C 0.534 (winner) / **0.489** (q) — indistinguishable from chance. Pre-registered H_wrong
+prediction, and it HIT.
+
+**⚑ CORRECTION TO THE BANKED 0.4193.** **15.85%** of rows carry MULTIPLE moves at
+`sf_p0_regret == 0`. The target's argmax sits at regret exactly 0 on **0.4825** of rows
+versus the index-based 0.4193. ⇒ **6.15pp of the banked "disagreement" is a TIE among
+SF-equal-best moves**, and BT4 mildly prefers the TARGET on exactly those rows (C 0.415 /
+0.390). **Quote 0.4825 for "picks one of SF's best moves"; 0.4193 is an argmin-INDEX
+statistic, not an agreement rate.** Restricting to SF-strictly-worse rows (n=1035): winner
+C 0.6261 [.596,.655], q C 0.5575 [.527,.588].
+
+**CONTROLS.** Alignment PASS and EXACT: decoded-board legal set == stored `legal_mask` on
+**2000/2000** rows; plane round-trip 100%/100%; cross-row mask control 1.000 -> **0.053**;
+real-8-slot-history arm moves the policy stats by only +0.0045/+0.0040 (history fill is NOT
+load-bearing). Positive control PASS: Q(sf_best) - Q(random legal) **+0.467 [+0.442,+0.494]**,
+BT4-top1 == sf_best 0.5465. Castling-remap defect confirmed FIXED and live (`c49b89937`,
+PR #376, ancestor of the live HEAD).
+
+**⚑ THE SHUFFLE GATE TRIPPED AS WRITTEN AND IS REPORTED AS A FAILURE, NOT REPAIRED AWAY.**
+Foreign-target agreement read **0.116** against a kill line of 0.10 — because the chance
+baseline was derived as `1/E[n_legal]` = 0.037 when the statistic's chance level is
+`E[1/n_legal]` = **0.0678** (Jensen; n_legal p5 = 4, min 2). **The gate line sat BELOW the
+chance level of the quantity it gated.** Correctly specified the control passes: agreement
+collapses 0.421 -> 0.116 against chance 0.068, and the decider's own control collapses dQ
+-0.033 -> -0.272 (8x). Same family as the mis-specified sims-100 mechanism gate:
+**compute the instrument's chance level BEFORE choosing the line.**
+
+**STILL INFERRED.** BT4 is not ground truth — its own top-1 differs from the shard-SF on 45%
+of rows (Spearman between the two rulers 0.264). Static 1-ply value, no search;
+repeat-filled history; no repetition state. ⚑ **No static evaluator can see "objectively
+-25 cp but practically better against a HANDICAPPED Stockfish"** — that is the entire
+anti-engine thesis and it is structurally out of reach of this measurement. Closing it needs
+a training arm, not a ruler.
+
+**WHAT SURVIVES FROM `666d20561`:** the target IS far more confident than it is
+SF-agreeing (top-1 0.734 vs 0.4825 corrected), and the policy loss still contains **no second
+opinion** (`w_policy` and `w_soft` are the same distribution at two temperatures; `w_sf_own`
+and `w_sf_own_regret` are 0.0). Those are unchanged. What is withdrawn is the INFERENCE that
+this makes the sharp rows wrong.
+
+**FALSIFIER / NEXT ARM (none launched).** The only part of the target this measurement
+condemns is the ~10-22% BT4-corroborated blunder tail, concentrated on low-confidence,
+high-branching rows and on moves outside SF's MultiPV-6. ⇒ **price any target-repair arm
+against THAT TAIL, not against the 21.5 cp mean** — repairing the mean would move the 68% of
+rows BT4 says are already fine. A full-width, non-fabricated position-level teacher remains
+the only lever that reaches the tail without the MultiPV-6 sharpening trap.
