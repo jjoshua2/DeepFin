@@ -50080,3 +50080,59 @@ likewise 0.0000, 0/4000. Positive control (100 sims vs 32) reads **-4.194 cp
 halfwidth is **+/-1.3 cp at n=4000**, which means the pre-committed 2.0 cp bar sits INSIDE
 the resolution — that bar was mis-set and must be re-derived before any C16 verdict.
 `scripts/paired_compare.py` and the analysis script agree exactly.
+
+## 2026-08-15 — PRE-REGISTRATION: did training under the post-08-12 target make the net WEAKER? (NOT LAUNCHED)
+
+Deciding yardstick for **Finding 3** of the target audit (`666d20561`). Written BEFORE any
+game is played. GPU-queued behind the C16 sweep.
+
+**HYPOTHESIS.** The 08-12 sims-100/topk-16 deploy made the stored policy target ~5pp LESS
+accurate (SF top-1 agreement 0.4707 -> 0.4193, CIs disjoint, replicated across two
+independent trials). If the target got worse, weights trained on it should be WEAKER.
+
+**ARMS — same lineage, production config, weights the ONLY difference.**
+
+    A  era-C weights   data/salvage/pre_sims100_20260812/seeds/slot_000/trainer.pt
+                       global_iter 811, ckpt 2026-08-11 19:42, trained under sims 256 / topk 32
+    B  era-D/E weights scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099
+                       global_iter 990, Tier-13 arm A = the CONTROL arm
+                       (verified sims 100 / topk 16 / c_scale 0.1 / policy_embedding_mode off)
+
+Arm A of Tier-13 is production config, which is why it and not arm B/C is the era-D/E
+endpoint. **LINEAGE PURITY GATE, checked BEFORE any game:** diff `arm_A_iter100/params.json`
+against the live yaml; if any training-affecting key differs beyond the era keys themselves,
+**ABORT and report** — do not run a confounded arena.
+
+**DESIGN — 3 contrasts, because anchored Elo is anchor-dependent by up to 82 and a
+3-contrast design buys a free transitivity check.**
+
+    C3  candidate B vs reference A                  <- THE DECIDING CONTRAST
+    C1  A vs frozen anchor iter514
+    C2  B vs frozen anchor iter514
+    transitivity: (C2 - C1) must agree with C3 within the combined CI
+
+Fixed identical search BOTH sides, `matched_sims`, `--sims 32 --search-shape training
+--seed 42`, FULL checkpoint paths only (⚑ a `slot_000` SUBSTRING match has faked 70 Elo here).
+Mechanism for neutrality, not symmetry: both nets receive an identical search budget and
+neither era's training shape is used, so no path favours one set of weights. If C3 lands
+near null we owe a second shape before concluding.
+
+**⚑ RESOLUTION BEFORE THRESHOLD.** The C16 arms just demonstrated a pre-committed bar sitting
+INSIDE the instrument halfwidth. So the rule is stated in CI terms, and C3 runs FIRST at
+n=1600 with its realized halfwidth computed before the anchor contrasts are funded:
+
+    CONFIRM  Finding 3   C3 upper CI bound < 0        (B significantly weaker than A)
+    REFUTE   Finding 3   C3 lower CI bound > 0        (B significantly stronger)  -> Finding 3 DEAD
+    NULL                 CI spans 0
+    VOID                 transitivity fails, or the lineage purity gate fails
+
+**⚑ PRE-COMMITTED CONFOUND STATEMENT — written now, not after the number.** The 811 -> 990
+window is **179 iterations**, and the sims deploy is only one thing inside it. It also
+contains the deploy boundary itself (811 predates it by ~5h), the policy-adapter period, and
+the Tier-13 arm A restart. ⇒ **a CONFIRM is CONSISTENT with Finding 3 but does NOT isolate
+it**, and must not be reported as "the sims cut cost N Elo". A REFUTE is the stronger read:
+it kills the prediction outright. This asymmetry is accepted in advance as the price of using
+banked weights instead of a purpose-run arm.
+
+Not a rolling read: the verdict is taken once at the pre-committed n, never off a partial
+arena (a 16-game rolling read once faked +112.3 Elo here).
