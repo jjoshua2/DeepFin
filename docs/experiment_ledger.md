@@ -49145,6 +49145,111 @@ this arm, after the start-point confound (step 91,999 vs 79,861) and the `policy
   that the review cost no wall clock. A fatal finding stops arm B and it restarts having lost
   nothing but GPU time.
 
+### INDEPENDENT REVIEW VERDICT (2026-08-14, separate agent, reviewer ≠ author)
+
+**APPROVE-WITH-CHANGES. Nothing blocking arm B.** Full R1–R4 verified BY EXECUTION against the
+real arm-B donor at production architecture, not by reading.
+
+- **R1 closes the strengthened #8 ahead of iteration 1.** End-to-end at production scale
+  (479 slots, groups `[48, 0, 142, 289]`): `475 kept, 6 dropped, 4 fresh`, and **every one of
+  the 886 installed `(name, state-key)` moment tensors is `torch.equal` to the donor's own
+  tensor for that exact pair** — 0 mis-associated, removed head's state gone, new params
+  carrying none, `opt.step()` × 2 clean, no NaN, **0 partial entries**. Base-code control on
+  the same donor: `n_state: 0`. The donor has **no `opt_param_names`**, so the RECONSTRUCTION
+  is the hot path, and it reproduces `_optimizer_param_names()` **slot-for-slot, 481/481**, on
+  CPU and under `map_location=cuda` (tied-storage aliasing survives: 481 distinct storages
+  among 496 keys, one 16-key alias group).
+- **R3:** an ordinary resume is untouched — SHA-256 per state tensor, per-parameter-name state
+  map, all four groups' hyperparameters, and the scheduler state all identical base vs branch.
+- **R4:** `_split_decay_groups` fingerprinted as per-parameter NAME lists across 4 configs × 8
+  filters (32 combos), base and branch: **identical md5**.
+- **Mutations:** the new tests, run against unfixed base code, give **19 failed / 2 passed** —
+  the 2 being exactly the increase-path control. Six further mutants, each patch byte-verified
+  to have applied, all six killed.
+
+**⚑ R2 is the one to keep: the gates are NOT sufficient, and the reviewer said the reachability
+out loud rather than reporting the bound as a result.** Any same-shape swap INSIDE a group is
+accepted (`481 kept, 0 dropped, 0 fresh`), and a count-neutral rotation confined to group 2's
+**50-long identical-shape run** mis-associates 50 slots and passes both gates. **446 of 481
+production slots live in a shape class with ≥2 members inside their own group.** No such
+permutation was reachable from the reconstruction — but that is **a bound on the search, not a
+proof**. It would need a count-neutral parse error inside one group AND inside a same-shape run;
+all three known triggers are absent TODAY and were measured absent, not assumed: production
+registers **zero persistent buffers** (all four `register_buffer` sites `persistent=False`;
+`set(ckpt["model"]) ∩ named_buffers() == ∅`), **zero frozen parameters**, and no
+`state_dict`/`named_parameters` override or state-dict hook anywhere in `model/`.
+
+**Two corrections the reviewer made to MY brief, both mine:**
+1. I briefed that training was stopped. It was not — arm B was live throughout, and the reviewer
+   ran one 63M-param CUDA load + 2 Aurora steps against the training GPU before noticing. No OOM,
+   arm B unaffected, but it violates "no GPU-touching diagnostics while an arm trains" and the
+   cause was my briefing error, not the agent's judgement. **A review brief must state the live
+   state as a READ, not as a remembered fact.**
+2. I framed it as a pre-merge review. `c4a4e00b1` was already merged as `839f63d2b` and is what
+   arm B is running. The reviewer verified the live tree's `trainer.py` and both test files are
+   **byte-identical to `c4a4e00b1`**, which is what makes the verdict apply to the running code.
+
+**⚑ The full-suite delta is NOT independently reproduced.** The box hit load 53 (arm B plus other
+agents' suites); the reviewer's runs stalled at 76% / 49% with zero byte progress over 90 s and it
+killed them rather than compete with live training — the right call. So **"5552/15 vs 5531/15,
+same 15" remains MY claim, not a verified one.** What is verified: the two touched test files pass
+in full on the branch (42 tests, no failures).
+
+### ⚑ #8 RE-VERIFIED ON THE **LIVE** ARM-B CHECKPOINT (2026-08-14, iter 2) — every one of 479 slots accounted for
+
+The independent review closed the strengthened #8 by REPRODUCING the load from the same
+donor. That proves the mechanism. It does not prove the process that is actually training
+did the same thing — different torch invocation, real Ray actor, real machine state
+([[diff_the_file_you_measured_against_production]]). Read off
+`checkpoint_000001/trainer.pt` against `armB_launch_base_20260814`:
+
+| group | slots | reasoning |
+|---|---|---|
+| donor moments CARRIED (step 79861 → 80311) | **419** | 425 donor trained slots − 6 dropped |
+| dropped (`value_categorical` standalone tower) | **6** | as predicted |
+| fresh (`policy_embedding.*`, `value_categorical_coupled.*`) | **4** | as predicted |
+| SVD-narrowed aux heads, fresh at SURGERY time | **8** | `policy_soft.{q,k}.{weight,bias}`, `policy_sf.{q,k}.{weight,bias}` |
+| Aurora matrix group (stores `momentum_buffer`, no `step`) | **48** | `matrix_optimizer_scope: mlp_out` |
+| **total** | **479** | matches the remap report exactly |
+
+⇒ **The optimizer state survived into the running trainer.** A cold start would put every
+`step` counter at exactly 450 (the steps taken since load); 419 of them read **80311**.
+
+⚑ **The 8 narrowed-head slots are NOT a wipe and must not be read as one.** A 512→128 SVD
+narrowing makes the donor's moments for those tensors dimensionally invalid, so the surgery
+wrote fresh state at step 0. They were never applicable, rather than lost. Anyone re-reading
+this series later will see 12 slots at the low counter and should not count all 12 as fresh:
+**4 are new parameters, 8 are re-shaped ones.**
+
+### ⚑⚑ MY PASS CRITERION FOR THE ABOVE WAS VACUOUS — the fourth instrument failure of the day
+
+The first version of this check printed **PASS** off `live_min > donor_min * 0.9`. Donor min
+is **0** (those 8 narrowed heads), so the test reads `450 > 0` — **true for every possible
+input, including a total wipe.** A companion line counted "live slots reading < 100 steps (a
+COLD start would be ~all of them)", which is also wrong: after 450 steps a cold optimizer
+reads **450**, not <100. Both printed reassuring output about a run they could not have
+faulted.
+
+The conclusion survived only because the raw histogram was in the same output and
+`80311 = 79861 + 450` is unambiguous. **The number that decided it was one I printed for
+context, not the one I designated as the gate.**
+
+**Four this session, all the same shape:** `grep … | tail && echo FIRED` (fires on zero
+matches, because a pipeline's status is `tail`'s) · a mutation harness reporting six mutants
+killed that a no-op `sed` never created · an F9 test that passed with its guard removed
+because a *different* guard declined first · this. Every one produced confident output.
+
+**The tell is common to all four: I wrote the check and its expected answer together, so the
+check inherited the assumption instead of testing it.** Here the buried assumption was "all
+donor slots are at 79861" — false for 8 of 433.
+
+**RULE, and it is the one that actually caught this: state the exact expected COUNT before
+running, then treat a mismatch as owing an explanation rather than as a failure.** Predicting
+"4 cold / 427 carried" and observing "12 / 419" is what forced the narrowed-head discovery.
+A threshold would have passed silently in both directions. Related:
+[[a_gate_that_cannot_fail]], [[compute_instrument_resolution_before_the_threshold]],
+[[new_tests_here_are_vacuous_until_mutated]].
+
 ### FOLLOW-ON (PR #427, `fix/optremap-review-residuals`) — the guard against re-keying by position had, as its failure mode, re-keying by position
 
 Merged-pending. Not a training-target change; it changes what `Trainer.load` does on a
