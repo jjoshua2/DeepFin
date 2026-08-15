@@ -351,42 +351,141 @@ def _softmax(logits: np.ndarray) -> np.ndarray:
     return e / np.clip(np.sum(e, axis=-1, keepdims=True), 1e-30, None)
 
 
+def mean_row_tv(p: np.ndarray, q: np.ndarray) -> float:
+    """Mean per-row total-variation distance between two probability batches.
+
+    ``TV = 0.5 * sum|p - q|`` per row, averaged over rows. Bounded in [0, 1]:
+    0 is identical, 1 is disjoint support. A whole-array ``max`` is deliberately
+    NOT used — see :func:`_compare_bucket`.
+    """
+    return float(np.mean(0.5 * np.sum(np.abs(p - q), axis=-1)))
+
+
 def _compare_bucket(
     *,
     aot_pol: np.ndarray,
     aot_wdl: np.ndarray,
     ref_pol: np.ndarray,
     ref_wdl: np.ndarray,
-    pol_tol: float,
-    wdl_tol: float,
+    ctl_pol: np.ndarray | None,
+    ctl_wdl: np.ndarray | None,
+    tv_ratio_max: float,
     argmax_min: float,
 ) -> tuple[bool, str]:
-    """Return (pass, detail) for one bucket comparison.
+    """Return (pass, detail) for one bucket, gated RELATIVE to an eager control.
 
     Compares in **probability space** (softmax), the quantities the broker
     actually consumes — MCTS priors and value WDL. Raw-logit max-abs-diff is a
     useless criterion here: ``_policy_output_full`` leaves masked illegal-move
     slots at a large sentinel whose bf16-vs-max-autotune representation differs
-    by ~1e6, dwarfing every real difference. In prob space AOT-bf16 tracks
-    eager-bf16 to ~2e-3 (policy) / ~3e-2 (wdl) on real positions. ``argmax_min``
-    is a loose floor only — near-tied top moves flip under bf16 without any
-    quality loss, so a correct package sits ~0.96 while a broken one (wrong/
-    unfilled constants -> garbage) collapses toward random.
+    by ~1e6, dwarfing every real difference.
+
+    ⚑⚑ WHY THIS IS A RATIO AND NOT AN ABSOLUTE TOLERANCE. The previous gate was
+    ``max |p_aot - p_ref| <= 0.02`` over ``N x 1858`` probabilities. It broke on
+    2026-08-15, and it broke on the **WEIGHTS, not the packages**: the identical
+    month-deployed ``data/aot_models_512`` files read 0.0015-0.0052 (PASS) on
+    July weights and up to **0.175** (FAIL) on August weights. The max always
+    landed on a row's top-1 entry, and the net's top-1 probability had grown
+    4.4x (max 0.221 -> 0.980) as the policy concentrated. **An absolute
+    probability tolerance is pinned to a sharpness regime and expires when the
+    net sharpens.**
+
+    Two further defects in that design, both structural:
+
+    * A **global max over ``N x 1858``** is an extreme-value statistic. Its
+      expectation grows with bucket size for reasons unrelated to correctness,
+      so large buckets fail merely for being large. Measured exceedance
+      ``P(rowmax > 0.02) = 0.01177`` gives ``P(pass at N) = (1-0.01177)^(2N)``:
+      predicted 1.55 expected passes across 29 buckets, observed 1. It was a
+      lottery, not a test.
+    * It had no notion of the **irreducible** difference. Eager bf16 compared to
+      ITSELF at a different batch shape differs by TV 0.0176 — same weights, no
+      AOT anywhere — purely from BLAS reduction order. Any absolute threshold
+      below that floor is unreachable by a perfect package.
+
+    So the gate is now ``TV(aot, ref) / TV(control, ref)``, where *control* is
+    the same eager model on the same rows at a different batch shape. Measured:
+    **0.99** (new packages, healthy), **1.005** (July packages on July weights,
+    healthy), **2.31** (July packages on August weights, stale), and ~60 for a
+    package with unfilled constants. The control is recomputed per bucket from
+    the current weights, so the gate **cannot go stale** the way its predecessor
+    did.
+
+    ``argmax_min`` is unchanged and is the one metric that was always correctly
+    calibrated: healthy reads 0.958-0.970, the eager-only control reads
+    0.9597-0.9655, and the random floor is ~1/1858 = 0.0005.
     """
     aot_pp, ref_pp = _softmax(aot_pol), _softmax(ref_pol)
     aot_wp, ref_wp = _softmax(aot_wdl), _softmax(ref_wdl)
-    pol_pmad = float(np.max(np.abs(aot_pp - ref_pp)))
-    wdl_pmad = float(np.max(np.abs(aot_wp - ref_wp)))
+    tv_pol = mean_row_tv(aot_pp, ref_pp)
+    tv_wdl = mean_row_tv(aot_wp, ref_wp)
     argmax_rate = float(
         np.mean(np.argmax(aot_pol, axis=-1) == np.argmax(ref_pol, axis=-1))
     )
-    ok = pol_pmad <= pol_tol and wdl_pmad <= wdl_tol and argmax_rate >= argmax_min
+
+    if ctl_pol is None or ctl_wdl is None:
+        # No control available (bucket too small to re-chunk). Fall back to the
+        # argmax floor alone and SAY SO — a silently weakened gate is worse than
+        # a loud one. argmax still separates healthy (~0.96) from garbage.
+        ok = argmax_rate >= argmax_min
+        detail = (
+            f"tv_pol={tv_pol:.4g} tv_wdl={tv_wdl:.4g} ratio=n/a(no control) "
+            f"argmax_rate={argmax_rate:.4f} (argmax_min={argmax_min:g})"
+        )
+        return ok, detail
+
+    ctl_tv_pol = mean_row_tv(_softmax(ctl_pol), ref_pp)
+    ctl_tv_wdl = mean_row_tv(_softmax(ctl_wdl), ref_wp)
+    # Floor the denominator: a control TV of ~0 means the two eager shapes hit
+    # the same kernel schedule, and dividing by it would manufacture a huge
+    # ratio out of pure noise.
+    floor = 1e-6
+    ratio_pol = tv_pol / max(ctl_tv_pol, floor)
+    ratio_wdl = tv_wdl / max(ctl_tv_wdl, floor)
+    ok = (
+        ratio_pol <= tv_ratio_max
+        and ratio_wdl <= tv_ratio_max
+        and argmax_rate >= argmax_min
+    )
     detail = (
-        f"pol_pmad={pol_pmad:.4g} wdl_pmad={wdl_pmad:.4g} "
+        f"tv_pol={tv_pol:.4g}/ctl={ctl_tv_pol:.4g}=x{ratio_pol:.2f} "
+        f"tv_wdl={tv_wdl:.4g}/ctl={ctl_tv_wdl:.4g}=x{ratio_wdl:.2f} "
         f"argmax_rate={argmax_rate:.4f} "
-        f"(pol_tol={pol_tol:g} wdl_tol={wdl_tol:g} argmax_min={argmax_min:g})"
+        f"(tv_ratio_max={tv_ratio_max:g} argmax_min={argmax_min:g})"
     )
     return ok, detail
+
+
+def eager_batch_shape_control(
+    model: torch.nn.Module, xt: torch.Tensor
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Same eager model, same rows, a DIFFERENT batch shape.
+
+    This is the gate's denominator: the irreducible difference two runs of the
+    SAME weights show purely because a different batch shape selects a different
+    BLAS/Triton schedule and therefore a different float reduction order. AOT is
+    not involved on either side.
+
+    Measured 2026-08-15 at bucket 1190: eager-vs-eager TV **0.01760** against
+    AOT-vs-eager **0.01737** — the packages add nothing beyond this floor. Same
+    -shape reruns are bitwise identical (0.0), which is how the effect was
+    attributed to shape rather than nondeterminism.
+
+    Returns ``(None, None)`` when the batch is too small to re-chunk into a
+    different shape; the caller degrades to the argmax floor and says so.
+    """
+    n = int(xt.shape[0])
+    if n < 2:
+        return None, None
+    chunk = n // 2  # cheapest shape that is guaranteed != n
+    pols: list[np.ndarray] = []
+    wdls: list[np.ndarray] = []
+    with torch.no_grad():
+        for i in range(0, n, chunk):
+            o = model(xt[i : i + chunk])
+            pols.append(_policy_output_full(o).detach().float().cpu().numpy())
+            wdls.append(o["wdl"].detach().float().cpu().numpy())
+    return np.concatenate(pols, axis=0), np.concatenate(wdls, axis=0)
 
 
 def _real_position_batch(
@@ -441,8 +540,7 @@ def verify_packages(
     buckets: Sequence[int],
     max_batch: int,
     input_planes: int,
-    pol_tol: float,
-    wdl_tol: float,
+    tv_ratio_max: float,
     verify_n: int,
     seed: int,
     argmax_min: float = 0.90,
@@ -522,14 +620,18 @@ def verify_packages(
                 aot_wdl = out_aot["wdl"].detach().float().cpu().numpy()
                 ref_pol = _policy_output_full(out_ref).detach().float().cpu().numpy()
                 ref_wdl = out_ref["wdl"].detach().float().cpu().numpy()
+                # The gate's denominator, recomputed per bucket from the CURRENT
+                # weights — that is what stops it going stale as the net sharpens.
+                ctl_pol, ctl_wdl = eager_batch_shape_control(model, xt)
 
                 ok, detail = _compare_bucket(
                     aot_pol=aot_pol,
                     aot_wdl=aot_wdl,
                     ref_pol=ref_pol,
                     ref_wdl=ref_wdl,
-                    pol_tol=float(pol_tol),
-                    wdl_tol=float(wdl_tol),
+                    ctl_pol=ctl_pol,
+                    ctl_wdl=ctl_wdl,
+                    tv_ratio_max=float(tv_ratio_max),
                     argmax_min=float(argmax_min),
                 )
                 details.append(f"n{trial}:{detail}")
@@ -614,19 +716,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Skip building; only verify packages already in --out-dir",
     )
     p.add_argument(
-        "--tol",
+        "--tv-ratio-max",
         type=float,
-        default=2e-2,
-        help="Max abs diff for policy softmax PROBABILITIES vs eager (default: "
-             "2e-2; measured ~2e-3 AOT-vs-eager-bf16 on real positions)",
-    )
-    p.add_argument(
-        "--wdl-tol",
-        type=float,
-        default=8e-2,
-        help="Max abs diff for WDL softmax probabilities vs eager (default: "
-             "8e-2; measured up to ~6e-2 AOT-vs-eager-bf16 on the largest "
-             "buckets — divergence grows with batch; a broken package is >>1e-1)",
+        default=1.5,
+        help="Max TV(aot,eager) / TV(eager-at-another-batch-shape,eager). "
+             "Measured: 0.99 healthy, 2.31 stale packages, ~60 for unfilled "
+             "constants (default: 1.5). Relative by construction, so it does "
+             "not expire when the policy sharpens the way the old absolute "
+             "--tol did.",
     )
     p.add_argument(
         "--verify-n",
@@ -660,8 +757,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.verify_n <= 0:
         print("error: --verify-n must be positive", file=sys.stderr)
         return 2
-    if args.tol <= 0:
-        print("error: --tol must be positive", file=sys.stderr)
+    if args.tv_ratio_max <= 1.0:
+        print("error: --tv-ratio-max must exceed 1.0 (the control IS the "
+              "irreducible floor; <=1.0 can never pass)", file=sys.stderr)
         return 2
 
     try:
@@ -732,8 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 buckets=buckets,
                 max_batch=int(args.max_batch),
                 input_planes=input_planes,
-                pol_tol=float(args.tol),
-                wdl_tol=float(args.wdl_tol),
+                tv_ratio_max=float(args.tv_ratio_max),
                 verify_n=int(args.verify_n),
                 seed=int(args.seed),
                 argmax_min=float(args.argmax_min),

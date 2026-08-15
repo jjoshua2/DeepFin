@@ -88,8 +88,7 @@ def test_arg_parser_defaults() -> None:
     assert args.config == Path("configs/pbt2_small.yaml")
     assert args.out_dir == Path("data/aot_models_512")
     assert args.max_batch == 4096
-    assert args.tol == pytest.approx(2e-2)
-    assert args.wdl_tol == pytest.approx(8e-2)
+    assert args.tv_ratio_max == pytest.approx(1.5)
     assert args.argmax_min == pytest.approx(0.90)
     assert not args.verify
     assert not args.resume
@@ -119,7 +118,8 @@ def test_compare_bucket_pass_on_near_identical() -> None:
     wdl = _wdl([1.0, 0.0, -1.0], [0.0, 1.0, 0.0])
     ok, detail = _compare_bucket(
         aot_pol=pol + 1e-3, aot_wdl=wdl + 1e-3, ref_pol=pol, ref_wdl=wdl,
-        pol_tol=2e-2, wdl_tol=6e-2, argmax_min=0.90,
+        ctl_pol=pol + 1e-3, ctl_wdl=wdl + 1e-3,
+        tv_ratio_max=1.5, argmax_min=0.90,
     )
     assert ok, detail
 
@@ -131,7 +131,8 @@ def test_compare_bucket_fails_on_garbage_policy() -> None:
     wdl = _wdl([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
     ok, _ = _compare_bucket(
         aot_pol=aot_pol, aot_wdl=wdl, ref_pol=ref_pol, ref_wdl=wdl,
-        pol_tol=2e-2, wdl_tol=6e-2, argmax_min=0.90,
+        ctl_pol=ref_pol, ctl_wdl=wdl,
+        tv_ratio_max=1e9, argmax_min=0.90,
     )
     assert not ok
 
@@ -142,7 +143,8 @@ def test_compare_bucket_fails_on_wdl_drift() -> None:
     aot_wdl = _wdl([0.0, 4.0, 0.0])  # flipped -> large prob delta
     ok, _ = _compare_bucket(
         aot_pol=pol, aot_wdl=aot_wdl, ref_pol=pol, ref_wdl=ref_wdl,
-        pol_tol=2e-2, wdl_tol=6e-2, argmax_min=0.90,
+        ctl_pol=pol, ctl_wdl=ref_wdl + 1e-3,
+        tv_ratio_max=1.5, argmax_min=0.90,
     )
     assert not ok
 
@@ -252,7 +254,7 @@ def test_verify_packages_encodes_in_the_models_own_encoding(
 
     n_pass, n_fail, rows = MOD.verify_packages(
         out_dir=tmp_path, model=model, buckets=[2], max_batch=2,
-        input_planes=175, pol_tol=2e-2, wdl_tol=8e-2, verify_n=1, seed=3,
+        input_planes=175, tv_ratio_max=1.5, verify_n=1, seed=3,
     )
     assert (n_pass, n_fail) == (1, 0), rows
     assert calls == [{
@@ -260,9 +262,15 @@ def test_verify_packages_encodes_in_the_models_own_encoding(
         "input_history_encoding": _PROD_HISTORY,
         "seed": 3,
     }]
-    # And the model really saw production-encoded planes.
-    fed = model.seen[-1].float().numpy()
+    # And the model really saw production-encoded planes. seen[0] is the
+    # REFERENCE forward; the later calls are the batch-shape control, which by
+    # construction re-runs the same rows at a different batch size.
+    fed = model.seen[0].float().numpy()
     assert fed.shape == (2, 175, 8, 8)
+    assert [int(t.shape[0]) for t in model.seen[1:]] == [1, 1], (
+        "the eager control must re-run the batch at a DIFFERENT shape, got "
+        f"{[int(t.shape[0]) for t in model.seen[1:]]}"
+    )
     legacy = _real_position_batch(
         2, input_extra_features=_PROD_EXTRA,
         input_history_encoding="legacy", seed=3,
@@ -283,5 +291,5 @@ def test_verify_packages_refuses_a_model_that_does_not_declare_its_encoding(
     with pytest.raises(ValueError, match="input_history_encoding"):
         MOD.verify_packages(
             out_dir=tmp_path, model=model, buckets=[2], max_batch=2,
-            input_planes=175, pol_tol=2e-2, wdl_tol=8e-2, verify_n=1, seed=3,
+            input_planes=175, tv_ratio_max=1.5, verify_n=1, seed=3,
         )
