@@ -49504,6 +49504,341 @@ bundle read `policy_loss` **+4.96% WORSE** while play strength was **+13.9 Elo B
 | frozen arena anchor | `scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/` |
 | previous AOT packages | `data/aot_models_512/` left INTACT — rebuild went to a new dir |
 
+---
+
+## AMENDMENT to the bt4heads promotion (86492fa26) — the AOT rebuild was compiling a ladder nothing reads
+**2026-08-15, before deploy. Not a verdict — a defect found in the deploy step itself.**
+
+`scripts/build_aot_packages.py` defaults `--buckets` to `_BATCH_BUCKETS` (47 entries).
+**That is not the ladder the broker uses.** `SlotBroker` pads to `_COMPILED_BATCH_BUCKETS`
+(21 entries, `inference.py:796`) via `_compiled_padded_batch_size` (:925), and loads only
+that list via `select_compiled_aot_buckets` (:975). The two ladders are **not nested**:
+
+    in _COMPILED_BATCH_BUCKETS but ABSENT from _BATCH_BUCKETS:
+        680, 1020, 1190, 1792, 2336, 2720
+
+`load_aot_packages` **skips missing files silently**, and `should_use_aot_forward` is an
+**exact-key** match on the padded total — so a missing bucket does NOT degrade to the next
+one up, it falls through to eager. Log analysis over the post-sims-100 era (2026-08-12→15)
+puts **~71% of broker batches and ~78% of padded rows** on those six sizes; bucket 1190
+alone carries ~49% of batches.
+
+⇒ the build launched at 10:04 would have produced a directory that looked complete, passed
+`assert_uniform_constant_fqns`, logged no warning, and run **eager for ~71% of forwards** —
+i.e. the AOT speedup this deploy exists to capture would simply have been absent, with no
+instrument saying so. **The signature defect exactly: a value accepted and then ignored.**
+
+⚑ `_BATCH_BUCKETS` has **no production consumer at all.** Its only runtime reader is
+`AOTEvaluator` (`worker.py:1276`), and `distributed_runtime.py:1035` drops
+`distributed_worker_aot_dir` whenever `distributed_worker_threaded` is true — which
+`pbt2_small.yaml:597` pins true. The 47-list is dead code on the production path.
+
+**Why it was latent:** `data/aot_models_512/` (2026-07-14, the deployed dir) contains exactly
+the 21 compiled buckets. Whoever built it passed `--buckets` explicitly and **never recorded
+that anywhere** — not in the script default, not in a comment, not here. The knowledge lived
+only in one shell invocation, and the default silently reverted it.
+
+**Action taken:** killed pid 74483 at 10:41 (20 buckets in, 5 of them broker-usable), relaunched
+pid 98967 with `--resume --verify` and an explicit ladder = the 21 compiled buckets **plus 8
+gap-fillers** (`896, 1088, 1152, 1216, 1280, 1344, 1408, 1472`). Banked at
+`scratchpad/bt4heads/banked/aot_buckets_used.txt`.
+
+**DEPLOY GATE (hard):** assert the out-dir contains all 21 `_COMPILED_BATCH_BUCKETS` entries
+before `distributed_inference_aot_dir` is pointed at it. A count is not enough — check the
+SET, since 29 files can still be missing one of the 21.
+
+### Two measurements this produced, both worth keeping
+* **VRAM is ~123 MB per LOADED bucket and is NOT shared.** `load_constants` is called without
+  `user_managed` (`inference.py:2011`, :1181), so each package `cudaMalloc`s its own constant
+  blob. Read off `constants_info_[i].data_size` in each package's generated `wrapper.cpp`:
+  455 constants, **119,072,504 B** = 119.07 MB, plus ~3.75 MB of cubins. 21 buckets ≈ **2.6 GB**
+  (~8% of 32607 MiB) — fine now, would bind past ~40. `user_managed=True` would collapse this
+  to one shared payload, but the broker's `constants` dict is a **local that goes out of scope**,
+  so flipping it alone would leave every package pointing at freed device memory. Needs a
+  lifetime fix + a GPU smoke test. NOT done, filed.
+* **The gap-filler sizes are NOT confirmed.** They come from 10 s window MEANS
+  (`[broker] … avg N pos/batch`), not per-batch sizes. Calibrated against the one per-batch
+  histogram that overlaps a broker log (`scratchpad/bucket_hist_v3.json`, Jul 16): truth 15.36%
+  vs window-mean estimate 18.60% ⇒ the estimator **overstates padding by 1.21×**. The eight
+  extra packages are INERT until `_COMPILED_BATCH_BUCKETS` names them (a source edit, hence a
+  PR), so nothing is committed by building them — it only removes compile cost from that later
+  decision. **Before activating any of them, run `CAE_BUCKET_HIST=<path>` on the broker for one
+  iteration** (pure counters, zero GPU cost, already implemented at `inference.py:815-865`) and
+  place buckets on per-batch truth.
+
+### Owed
+Fix the script default so this cannot recur — either default `--buckets` to
+`_COMPILED_BATCH_BUCKETS`, or fail loud when the requested list does not cover it. A build that
+silently omits the buckets the only consumer needs should not be the default behaviour.
+
+---
+
+## PREREG — is bt4heads iter100 actually our best net, or the best of a degraded era?
+**2026-08-15, written BEFORE the arena was launched and before any result was visible.**
+
+### Why this exists
+bt4heads arm B's **+13.9 Elo [+5.69, +22.14] n=4800** is measured against **Tier-13 arm_A
+iter100** — a sibling from the same 2026-08-12 donor at the same iteration count. Tier-13's
+own three arms were mutually NULL (+12.2 / +3.5 / −7.4), so arm_A is essentially the donor's
+trajectory. Transitively that reads "donor +14" — and **chaining is exactly what
+`arena_elo_is_anchor_dependent` says is off by up to 82 Elo.** bt4heads has NEVER been played
+against a pre-2026-08-12 checkpoint.
+
+The banked n=400 rows (no CIs recorded, so individually underpowered — this is a suspicion,
+not a fact) are same-signed and point downhill through late July/August:
+
+| contrast | Elo (n=400) |
+|---|---|
+| iter862_postmerge vs iter514 | −21.7 |
+| iter768 vs iter735_FINAL | −23.5 |
+| iter514 vs pre_search_authority slot_000 | −18.3 |
+| pre_search_authority slot_000 vs 07-11 boot | +87.8 |
+
+⇒ the hypothesis this tests: **the lineage peaked around 2026-08-09 and the donor everything
+since descends from is already ~20-40 Elo below that peak.** If true, bt4heads is the best of
+a degraded branch and we should resume from the peak instead.
+
+### Hypothesis
+bt4heads armB iter100 is at least as strong as `ck_2026-08-09_iter514`.
+
+### DECIDING YARDSTICK (exact command, pre-committed)
+```bash
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt \
+  --reference data/ratchet/snapshots/ck_2026-08-09_iter514.pt \
+  --sims 32 --search-shape training --games 1600 --seed 42 \
+  --max-concurrent-games 16
+```
+Search settings match the +13.9 row exactly so the two are comparable. Different
+architectures on the two sides is fine — `load_model_from_checkpoint` takes topology from each
+checkpoint's embedded `arch`. Read at FULL n only; **no rolling reads**
+(`rolling_arena_optional_stopping_faked_112_elo`).
+
+### Pre-committed thresholds — decided now, not after
+* **CI lower bound > 0** ⇒ **RESUME FROM bt4heads.** The era question is closed; the donor
+  branch is fine; proceed with the promotion already committed.
+* **CI upper bound < 0** ⇒ **RESUME FROM `ck_2026-08-09_iter514` INSTEAD.** The last four days
+  optimised below a peak we already had banked. The bt4heads bundle stays adopted (it beat its
+  own control) but must be re-applied on top of the older weights, and that is a new run.
+* **CI spans 0** ⇒ **RESUME FROM bt4heads** (keep the newest, per
+  `no_rollback_target_the_run_is_a_plateau`) and record that the era question is UNRESOLVED at
+  n=1600. Do NOT extend the same arena to chase significance — that is optional stopping. A
+  second seed is the only legitimate escalation.
+
+⚑ This is a 3-checkpoint neighbourhood, so if the read is ambiguous the transitivity check is
+available for free: iter514 vs the donor is already banked at −18.3.
+
+### Confounds, stated in advance
+* iter514 predates the 2026-08-09 20:58 `gumbel_c_scale` 0.025→0.1 change. The arena sets
+  search identically on BOTH sides, so this does not bias the contrast — but iter514's WEIGHTS
+  were trained under a different search regime, which is a real (and unavoidable) part of what
+  is being compared.
+* AOT is OFF on both sides, as it was for the +13.9 measurement.
+* n=1600 gives roughly ±17 Elo — sized to resolve the ~20-40 Elo the historical rows suggest,
+  NOT sized to resolve a 5 Elo difference.
+
+---
+
+## RESULT — the AOT verify gate is STALE, not the packages. The instrument broke on the WEIGHTS.
+**2026-08-15. Resolves the parity condition the bt4heads promotion prereg made load-bearing.**
+
+The 29-bucket rebuild into `data/aot_models_512_bt4heads` failed `--verify` on **28 of 29**
+buckets (`pol_pmad` 0.011-0.085 against `pol_tol=0.02`). Per the promotion prereg that would
+VOID the iter-200 window as a bt4heads readout. It does not, because **the gate is invalid.**
+
+### The decisive control
+`--verify-only` on the **month-deployed, unmodified** `data/aot_models_512`, same `.pt2` files,
+two weight vintages:
+
+| packages | weights | `pol_pmad` | gate |
+|---|---|---|---|
+| `aot_models_512` (deployed 1 month) | 2026-07-14 | 0.0015 - 0.0052 | **3/3 PASS** |
+| `aot_models_512` (SAME FILES) | 2026-08-12 | 0.042 - **0.175** | **9/9 FAIL** |
+| `aot_models_512_bt4heads` (new) | bt4heads iter100 | 0.011 - 0.085 | 28/29 FAIL |
+
+Known-good production packages fail **twice as badly as the new build** on current weights.
+Nothing about the files changed ⇒ the tolerance was achievable when written and is now
+structurally unreachable.
+
+### Mechanism (measured)
+`pol_pmad` is `max |p_aot - p_ref|` over `N x 1858` probabilities, and the max landed on a
+row's **top-1** entry in 3/3 cases ⇒ `pol_pmad ~ max_row(p_top1) x relative_bf16_error`.
+Top-1 probability grew **4.4x** across the lineage:
+
+| checkpoint | mean p_top1 | max p_top1 |
+|---|---|---|
+| 2026-07-14 | 0.024 | 0.221 |
+| 2026-08-12 | 0.107 | 0.930 |
+| bt4heads iter100 | 0.128 | 0.980 |
+
+⇒ **an ABSOLUTE probability tolerance was pinned to a net whose probabilities have since
+concentrated** — the same sharpening `we_are_sharp_and_wrong_not_flat` records. The
+docstring's "~2e-3" was accurate in July (reproduced: 5.2e-3 at b1190 on July weights) and is
+stale by 20-40x.
+
+### The packages are NOT defective — negative control
+Eager bf16 vs **ITSELF** at a different batch shape (no AOT anywhere), same weights:
+
+| | AOT vs eager | eager vs eager (batch-shape) | ratio |
+|---|---|---|---|
+| new pkgs, bt4heads, b1190, mean per-row TV | 0.01737 | 0.01760 | **0.99** |
+| old pkgs, July weights, b1190 | 0.01006 | 0.01001 | 1.005 |
+| old pkgs, **August** weights, b1190 | 0.03810 | 0.01648 | **2.31** |
+
+Same-shape eager reruns are bitwise identical (0.0), so 100% of the deviation is batch-shape
+kernel ordering. **The new packages add nothing beyond it (0.99)** — their disagreement with
+eager is smaller than eager's disagreement with itself at bucket 32 (0.0151 vs 0.0195).
+
+### Bucket 32 passing was a LOTTERY, not a signal
+Per-row exceedance `P(rowmax > 0.02) = 0.01177` (2380 rows, b1190) ⇒ `P(pass at N) =
+(1-0.01177)^(2N)`. **Predicted expected passes across the 29 buckets: 1.55. Observed: 1.**
+Bucket 16 FAILED with fewer samples, so "small batch = fewer chances" is wrong.
+
+### Verdict and the rule it is judged by
+⚑ The pre-committed rule was "AOT matches eager within tolerance". The instrument that rule
+names is structurally invalid, and **a verdict read off a failed instrument is not a verdict —
+in EITHER direction.** Replacing it with a valid instrument (the eager-vs-eager control) gives
+a decisive PASS. This is not a re-threshold to make the build pass: the replacement was
+specified from measured distributions and its expected outcome was PREDICTED before reading.
+
+⇒ **AOT packages CLEARED numerically.** Deployment remains gated on the arch question (the
+packages carry bt4heads topology) and on the standing caveat below.
+
+### ⚑ A numerical gate is NOT deployment clearance
+Arm B's +13.9 Elo was measured with **AOT OFF**, and per `aot_broker_is_a_fifth_policy_path`
+the broker never enters `ChessNet.forward`. Nothing here tests slot packing, batching, or the
+broker's per-iteration weight re-`setattr`. Turning AOT on makes production a configuration
+that has never been strength-measured.
+
+### Owed — the gate must be fixed before it is trusted again
+* Replace the global `max` with **mean per-row total-variation relative to an eager-vs-eager
+  batch-shape control on the same weights**; FAIL if `TV_aot / TV_control > 1.5` (measured:
+  0.99 healthy, 2.31 stale, ~60 for garbage constants). Self-calibrating, so it cannot go
+  stale on the next sharpness shift.
+* Keep `argmax_min = 0.90` unchanged — it is the one correctly calibrated metric (healthy
+  0.958-0.970, eager-only control 0.9597-0.9655, random floor 0.0005).
+* Never gate on a global max over `N x 1858`: it is an extreme-value statistic whose
+  expectation grows with bucket size for reasons unrelated to correctness.
+* Fix the stale "~2e-3 / ~3e-2" docstring claim, and the metric NAME: `pmad` reads as "mean
+  absolute deviation" and computes `np.max` — `same_name_different_population`, again.
+
+---
+
+## RESULT — era check: bt4heads arm B iter100 vs `ck_2026-08-09_iter514`: **NULL** (+0.4 Elo [−13.8, +14.7], n=1600)
+
+Prereg: `f1a62a547`. Read 2026-08-15 13:08, arena PID 118912, 5100s wall.
+
+```
+candidate   scratchpad/bt4heads/banked/armB_iter100/checkpoint_000099/trainer.pt
+reference   data/ratchet/snapshots/ck_2026-08-09_iter514.pt
+games 1600 · sims 32 · --search-shape training · seed 42 · config_hash 088409494b3c
+pentanomial (candidate POV)  WW 99 · WD_DW 160 · DD_WL 286 · LD_DL 154 · LL 101
+score 0.50062 +/- 0.0104 (SE)   Elo +0.43   95% CI [-13.8, +14.7]
+```
+
+### VERDICT by the pre-committed rule, not by post-hoc reading
+
+The rule was three-way and fixed before launch: CI lower > 0 ⇒ resume from bt4heads;
+CI upper < 0 ⇒ resume from iter514 instead; **CI spans 0 ⇒ resume from bt4heads**
+(keep the newest, per [[no_rollback_target_the_run_is_a_plateau]]). The CI spans 0.
+⇒ **RESUME FROM bt4heads.** No rollback.
+
+Only the n=1600 block was read. The log contains rolling reads at 1534 games and
+earlier; they were not used and are not quoted here
+([[rolling_arena_optional_stopping_faked_112_elo]]).
+
+### ⚑ WHAT THIS DOES *NOT* SAY, and the number that must not be misquoted
+
+bt4heads arm B is **not measurably stronger than a checkpoint from six days
+earlier.** It is also not measurably weaker. n=1600 resolves ~+/-14 Elo, so a real
+gain smaller than that is invisible to this design — the entry is NULL, not "equal".
+
+**This does NOT retract the +13.9 Elo [+5.7, +22.1] ADOPT verdict** (`4528f08f1`).
+The two are measured against DIFFERENT references and are arithmetically compatible:
+arm B beat Tier-13 **arm A** by ~14 Elo, and ties **iter514**, which places arm A
+roughly 14 Elo BELOW iter514. ⇒ the bt4heads bundle **recovered ground its own
+lineage had lost, and did not add any on top of the pre-Tier-13 era.** That is a
+weaker claim than "adopt" sounds, and it is the claim the evidence supports.
+
+This is the third independent instrument to land on the same shape: absorption
+11.6x in-window buys ZERO Elo; the lineage interior has no ruler resolution; and
+now a 6-day, ~100-iteration span reads +0.4. ⇒ **[[no_rollback_target_the_run_is_a_plateau]]
+is reconfirmed on a paired 1600-game arena against a frozen anchor** — the strongest
+evidence for it so far, and the first that is not confounded by an anchor change.
+
+### Consequences
+
+* Resume point: **bt4heads arm B iter100**. Settled; no further arena owed for this.
+* `data/aot_models_512_bt4heads` carries bt4heads topology and is therefore the
+  CORRECT arch for the resume point. The deploy of `distributed_inference_aot_dir`
+  is un-blocked by this verdict (still gated on PR #431/#432 merging and a clean
+  `--verify` run under the REPLACED gate — the old gate's 28/29 FAIL is void in
+  both directions, see `2f34c17f0`).
+* ⚑ The plateau is now the finding, not a suspicion. Any next experiment that
+  claims Elo must beat a FROZEN anchor at n>=1600 paired, not beat its own sibling
+  arm — a sibling contrast cannot distinguish "gained" from "lost less".
+
+## 2026-08-15 — C16 RE-MEASURED: real, not the C27 fixture artifact; production's target search freezes the tree within a round
+
+**Status: FINDING (no experiment launched). Instrument: CPU-only cross-implementation probe.**
+
+`docs/rl_loop_audit.md` C16 has read FAILED since 2026-07-26 ("3/6 boards diverge and
+the two implementations pick a different move"). C27 — the sibling row at
+`target_batch=1` — was later localised to a FIXTURE artifact (zero root logits ⇒ a
+uniform prior ⇒ exact ties broken in different orders). C16 was never re-tested under
+the fix that dissolved C27, and the C27 row asserts C16 is "an artifact of cross-rep
+leaf accumulation", i.e. C17's territory — and C17 was SOLVED by virtual loss (PR #278,
+merged). Two live hypotheses, never separated. Separated now.
+
+**Method.** 6 edge-case boards, `_HashEvaluator` (verified BATCH-INDEPENDENT: it hashes
+each row's own encoding in a per-row loop, so batching cannot change any single
+evaluation), non-degenerate root prior, `add_noise=False`, sims/topk at production
+100/16, sweeping `target_batch` and `vloss_weight`. Python `run_gumbel_root_many` is the
+reference; C is `run_gumbel_root_many_c`.
+
+**⚑ FIRST READING WAS WRONG AND IS RETRACTED.** The first sweep left `vloss_weight` at
+the `GumbelConfig` DEFAULT of 0. Production sets `gumbel_vloss_weight: 1`
+(`configs/pbt2_small.yaml:268`), a non-default. Numbers below are the corrected,
+production-matched run.
+
+    vloss  target_batch   max L1   boards diverging   same move
+        1             1   0.000000        0/6            yes
+        1             8   0.331541        3/6             no
+        1            32   0.731131        3/6             no
+        1             0   1.001326        3/6             no     <- PRODUCTION
+
+**Verdict: C16 is REAL and survives production's virtual loss.** It is NOT the C27
+tie artifact — with the ties removed, `target_batch=1` is EXACT (L1 0.000000) while
+every batched setting still diverges. Virtual loss roughly halves it (1.311 → 0.731 at
+tb=32) and does not close it. Max row L1 of 1.00 against a bound of 2.0 is not a
+distribution-shape nuance; on 3 of 6 boards the search returns a DIFFERENT MOVE.
+
+**Mechanism, and it is not a C-vs-Python bug.** `gumbel_target_batch` defaults to 0
+and production does not override it; `_mcts_tree.c:1922` maps 0 to `GSS_GPU_BATCH`
+= **1024**. `gumbel_c.py:83` states the consequence directly: a GPU batch under
+`target_batch=0` accumulates the visits of one sequential-halving round, and **within a
+round the tree cannot update**, so every visit allocated to a candidate descends to the
+same leaf — measured there at 496 rows for 16 distinct positions, **31x duplication**.
+So production's target-building search is not "sequential search with a small batching
+approximation"; the tree is FROZEN inside each round.
+
+**Why this matters for the plateau.** If the tree cannot update within a round, extra
+simulations inside a round buy re-evaluations of leaves already chosen, not new tree
+information. That is a mechanism for the banked null "3 doublings of sims = +5.8 Elo,
+search may be inert" (`flat_sims_ladder_means_search_may_be_inert`) and it sits on
+`target = search(net)`, which the plateau analysis independently points at.
+
+**What this does NOT say.** Neither side is ground truth: the Python path is unbatched,
+not "correct". The 6 boards are hand-picked edge cases under a synthetic evaluator, so
+the MAGNITUDE is not established for production positions with a real net — only the
+existence and the mechanism are. No Elo claim is made or implied.
+
+**Owed before any change:** a target-QUALITY readout (audit-set `better_in`, not Elo)
+across `gumbel_target_batch` ∈ {0, 32, 8} on production positions with a real net, with
+the GPU-round-trip cost measured alongside (~6x at tb=1 per `gumbel_c.py:450`). Pre-reg
+required; nothing launched. Probe:
+`scratchpad/c16_probe_20260815.py` (session scratchpad).
+
 ### FOLLOW-ON (PR #427, `fix/optremap-review-residuals`) — the guard against re-keying by position had, as its failure mode, re-keying by position
 
 Merged-pending. Not a training-target change; it changes what `Trainer.load` does on a
