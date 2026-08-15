@@ -1892,3 +1892,103 @@ def test_settle_barrier_is_sized_from_the_path_the_session_actually_takes(
             "the threaded path must expect one hook per selfplay thread"
         )
     assert got >= 1, "a zero denominator would settle on the very first hook"
+
+
+def test_the_barrier_denominator_equals_the_hooks_the_threaded_run_fires(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The barrier's denominator against the hook count the session REALLY fires.
+
+    ⚑ The test above cannot see this. On the threaded branch its assertion is
+    `got == session._selfplay_state_count(games)` -- and `_resume_hooks_for_session`
+    RETURNS `self._selfplay_state_count(games)`, so both sides move together for
+    any mutation of the shared helper, and neither side moves at all for a
+    mutation of `_run_selfplay_threaded`'s `n_threads`. MEASURED: rewriting
+    `n_threads` to `state_count - 1` leaves that test GREEN. It catches a changed
+    RETURN (sizing off `games_per_batch` fails it) and nothing else. The number
+    that has to match is not `_selfplay_state_count`, it is how many times
+    `on_state_ready` actually runs -- decided in a different method. Two methods,
+    one number, no test joining them.
+
+    Drift there is silent in the worst direction. Too high and `_settle_resume_leftovers`
+    never reaches its denominator: no settled line, no `left_on_disk > preserved`
+    warning, and no `resume_left_on_disk` in `pending_outcome_stats` -- a worker
+    stranding games reports exactly what a healthy one reports. Too low and it
+    settles on a mid-flight reading and reports a number about a race. Both are
+    this repo's signature defect: computed, accepted, then silently not delivered.
+
+    So this drives the REAL `_dispatch_selfplay_one_shard` into the REAL
+    `_run_selfplay_threaded` with `play_batch` faked, counts the registrations
+    independently, and demands the settle fire exactly once on that count.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    import chess_anti_engine.worker as worker_mod
+
+    caplog.set_level("INFO", logger="test-worker")
+    in_dir = tmp_path / "resume"
+    in_dir.mkdir()
+    # Two stranded files so the settled line is emitted at all (it is guarded on
+    # a nonzero count) and so `left_on_disk` is asymmetric to the hook count.
+    for i in range(2):
+        (in_dir / f"g{i}{RESUME_FILE_SUFFIX}").write_bytes(b"x")
+
+    registrations: list[Any] = []
+    reg_lock = threading.Lock()
+
+    def _fake_play_batch(_model: Any, **kwargs: Any) -> tuple[list[Any], Any]:
+        state = SimpleNamespace(pending_outcome_stats={})
+        with reg_lock:
+            registrations.append(state)
+        kwargs["on_state_ready"](state)
+        return [], "stats"
+
+    monkeypatch.setattr(worker_mod, "play_batch", _fake_play_batch)
+
+    session = _resume_ready_session(tmp_path, in_dir, hooks=1)
+    # Deliberately left at the constructor default of 1: the dispatch must SIZE
+    # the barrier itself. Seeding it here would hide the very line under test.
+    session.args = cast(Any, SimpleNamespace(
+        threaded_selfplay=True, selfplay_threads=4,
+    ))
+    session.rng = np.random.default_rng(0)
+    session.device = "cpu"
+    session.model = None
+    session.sf = object()
+    session.inference_client = object()
+    session._direct_evaluator = None
+    session._resume_inflight_enabled = True
+    session._suspend_inflight_games = None
+    session._stop_fn = None
+    session._pause_fn = None
+    session._on_completed_game = None
+    session._record_selfplay_phase_timing = None
+    session._check_model_update = None
+    session._live_states_lock = threading.Lock()
+    session._live_states = []
+    session._pending_live_override = None
+    session._aggregate_thread_stats = lambda stats: stats
+    session._build_shared_diff_focus_norm = lambda cfgs, gpb: None
+
+    # 16 games over 4 threads: the state count is the THREAD count here, so a
+    # barrier sized off `games_per_batch` would be 16 and never settle.
+    session._dispatch_selfplay_one_shard(
+        games_per_batch=16, cfgs={}, need_local_model=False,
+    )
+
+    assert len(registrations) == 4, (
+        "the threaded run must fire one on_state_ready per selfplay thread"
+    )
+    assert session._resume_hooks_expected == len(registrations), (
+        "the settle barrier's denominator and the hooks the session really "
+        "fires are computed in two different methods and must agree"
+    )
+    fields = _settled_line(caplog)  # asserts EXACTLY one settled line
+    assert fields["hooks"] == len(registrations)
+    assert fields["left_on_disk"] == 2, "counted from the session's real resume_dir"
+    # Taken by the LAST hook: an earlier reading describes a race, and only the
+    # state that settled carries the number out to result.json.
+    settled = [s for s in registrations if s.pending_outcome_stats]
+    assert len(settled) == 1, "the leftover count must be published exactly once"
+    assert settled[0].pending_outcome_stats["resume_left_on_disk"] == 2
