@@ -1,0 +1,49 @@
+## Checkpoint table (gap = era - inwindow, x1e3)
+
+lineage    step  unmasked      mech      aggr  p@max era p@max inw  path
+379f6       639    2.7558    3.4419    4.2990    0.06775   0.07501  data/ratchet/snapshots/ck_2026-08-07_iter7.pt
+379f6     21924    1.7083    2.5173    3.5046    0.06516   0.07288  data/ratchet/snapshots/ck_2026-08-08_iter249.pt
+379f6     35288    0.7925    1.6211    3.3844    0.06418   0.07483  data/ratchet/snapshots/ck_2026-08-08_iter399.pt
+379f6     44613    1.6241    2.4842    3.6842    0.06583   0.07403  data/ratchet/snapshots/ck_2026-08-09_iter514.pt
+379f6     57999    1.9269    2.7843    4.1909    0.06439   0.07285  data/ratchet/snapshots/ck_resume_iter672.pt
+379f6     63897    3.6361    4.4446    4.4385    0.06409   0.07173  data/ratchet/snapshots/ck_2026-08-09_iter735_FINAL.pt
+5ce02     65441    2.4280    3.3309    3.7079    0.06443   0.07130  scratchpad/anchors_20260811/ckpt_5ce02_iter086
+379f6     67105    4.3634    4.8825    4.8965    0.07055   0.07692  data/ratchet/snapshots/ck_2026-08-10_iter768.pt
+5ce02     69836    1.7287    2.7471    3.2709    0.06458   0.07306  data/ratchet/snapshots/ck_2026-08-11_5ce02_iter138
+379f6     72938    5.1720    5.4731    5.3690    0.07234   0.07936  data/salvage/pre_mainmerge_20260810/seeds/slot_000
+379f6     76286    4.9688    5.2230    4.7245    0.07491   0.08078  data/ratchet/snapshots/ck_2026-08-10_iter862_postmerge
+5ce02     79213    1.9770    3.0433    4.1876    0.06495   0.07363  runs/pbt2_small/tune/train_trial_5ce02_00000_0_lr=0.0000_2026-08-11_04-19-24/checkpoint_000213
+5ce02     79861    2.4467    3.4131    3.7223    0.06527   0.07319  data/ratchet/snapshots/ck_2026-08-12_5ce02_iter218
+
+## Trend fit — lineage 379f6, n=9, steps 639..76286
+arm          slope/10k steps (x1e3)                     95% CI      r2
+unmasked                     0.4080          [-0.0166, 0.8327]   0.425
+mech                         0.3570          [-0.0106, 0.7245]   0.430
+aggr                         0.1643          [-0.0167, 0.3453]   0.397
+  ratio unmasked/mech = +1.143   same sign: True   |ratio|>2 or <0.5: False
+  ratio unmasked/aggr = +2.484   same sign: True   |ratio|>2 or <0.5: True
+  row-bootstrap (2000, paired) slope/10k steps x1e3:
+    unmasked    0.4084  [ -0.1254,   0.9708]  P(slope>0)=0.931
+    mech        0.3588  [ -0.1799,   0.9047]  P(slope>0)=0.905
+    aggr        0.1599  [ -0.1205,   0.4366]  P(slope>0)=0.866
+    ratio unmasked/mech: +1.109 [-0.149, +2.513]
+    ratio unmasked/aggr: +2.095 [-13.551, +19.324]
+
+## Trend fit — lineage 5ce02, n=4, steps 65441..79861
+arm          slope/10k steps (x1e3)                     95% CI      r2
+unmasked                     0.0135          [-1.4953, 1.5222]   0.001
+mech                         0.0719          [-1.2051, 1.3489]   0.028
+aggr                         0.2924          [-1.0413, 1.6262]   0.308
+  ratio unmasked/mech = +0.187   same sign: True   |ratio|>2 or <0.5: True
+  ratio unmasked/aggr = +0.046   same sign: True   |ratio|>2 or <0.5: True
+  row-bootstrap (2000, paired) slope/10k steps x1e3:
+    unmasked    0.0071  [ -1.7384,   1.7943]  P(slope>0)=0.500
+    mech        0.0676  [ -1.6682,   1.8643]  P(slope>0)=0.529
+    aggr        0.2940  [ -0.5133,   1.0871]  P(slope>0)=0.748
+    ratio unmasked/mech: +0.991 [-0.294, +2.302]
+    ratio unmasked/aggr: +0.718 [-21.052, +17.507]
+
+## Re-derivation of the banked claim `probe_gap_policy_eregret +83% over 514->735`
+  unmasked  514:   1.6241e-3   735:   3.6361e-3   change:  +123.9%
+  mech      514:   2.4842e-3   735:   4.4446e-3   change:   +78.9%
+  aggr      514:   3.6842e-3   735:   4.4385e-3   change:   +20.5%

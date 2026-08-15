@@ -50307,3 +50307,78 @@ high-branching rows and on moves outside SF's MultiPV-6. ⇒ **price any target-
 against THAT TAIL, not against the 21.5 cp mean** — repairing the mean would move the 68% of
 rows BT4 says are already fine. A full-width, non-fabricated position-level teacher remains
 the only lever that reaches the tail without the MultiPV-6 sharpening trap.
+
+## 2026-08-15 — ⚑⚑ CORRECTION: the era probe's "41-44% FABRICATED" WAS A MEASUREMENT ERROR. The sets are MultiPV-40. Kill rule does NOT fire.
+
+CPU only, training stopped. Scripts, `RESULTS.md` and per-row dumps at
+`scratchpad/era_probe_recheck/`; predictions registered before the run (`probe_PREREG.md`).
+**P3 MISSED, and the miss IS the finding.**
+
+**Gate.** Live ruler reproduced on CPU at `checkpoint_000218` (step 79861) to **7-8 significant
+figures** (era 0.069639894 vs live 0.069639878; gap 0.002446726 vs 0.002446729). ⚑ For the
+record this is fp32 agreement, not bitwise — the earlier entry's "bit-exact" OVERSTATES it; the
+live probe does the same no-autocast arithmetic on GPU, so reduction order differs.
+
+**⚑⚑ THE FROZEN PROBE SETS ARE MultiPV-40 DATA, SO THE CLAIMED CONTAMINATION IS NOT THERE.**
+Both sets were cut **2026-08-04T04:12Z** from the `13a9f` lineage. `git log -L` on `sf_multipv`:
+**40** from 2026-04-29 (`02c64f700`) to 2026-08-06 (`ed9de8ee9`) — the 40→6 change lands **TWO
+DAYS AFTER** the freeze. Corroborated structurally: mean **21.8 DISTINCT** regret values per row
+over 27.7 legal moves (MultiPV-6 admits at most 7), and on the 15.0%/14.4% of rows with L > 40
+the tied-at-max count is **exactly L−40** on 284/308 and 265/295 rows, **zero** rows below.
+
+    true fabricated mass @ iter 218   0.00126 / 0.00237     (banked: 0.0653 / 0.0732)
+    ⇒ OVER-COUNT                      51.6x / 30.9x
+    fabricated share of the LEVEL     1.5% / 3.0%           (banked: 41.3% / 44.0%)
+
+**The error:** `sfreg_probe_share.py:64` classified `is_fab = legal & (r >= max_legal(r))` —
+every move tied at the row maximum. Correct for MultiPV-6 shards, **wrong here**: mean 2.08
+legal moves per row sit at exactly 1.0 and 25.2% of rows have their maximum there, because
+`SF_OWN_REGRET_CAP_CP` clips **REAL** evaluations at 1000cp. ⇒ **the classifier counted
+Stockfish's own worst-move evaluations as invented.** A decomposition is only as good as its
+class boundary — **check the boundary against the era of the DATA, not the era of the CONFIG.**
+
+**Pre-committed yardstick run anyway. VERDICT: the kill rule does NOT fire.** Three arms
+(unmasked / mechanism-correct mask / the banked classifier) × 13 archived checkpoints, two
+lineages fitted SEPARATELY (`379f6` steps 639-76286, n=9; `5ce02` branched at step 57999, n=4).
+Trunk slopes per 10k steps ×1e-3: unmasked **+0.408** [−0.017, +0.833], masked **+0.357**
+[−0.011, +0.725] ⇒ **ratio +1.143, same sign** (paired row-bootstrap +1.109 [−0.149, +2.513]);
+pooled 13-point +1.022. **Shape-free and stronger**, since the trunk series is V-shaped and an
+OLS slope is a poor summary of it: r(unmasked, masked) = **0.9931** and **pairwise ordering
+agreement 78/78 = 100%** over all net pairs — every "net A has a wider gap than net B" statement
+is identical under both rulers. `5ce02`'s point ratio 0.187 is **NOT** a firing: both its slopes
+are zero within noise (P(slope>0) = 0.50/0.53, bootstrap ratio +0.991 [−0.294, +2.302]) — a
+ratio of two zero-slopes has no resolution.
+⚑ The rule was well specified and **WOULD** have fired on the banked classifier (ratio
+**2.484**). It cleared because the INPUT was wrong, not because the threshold was loose.
+
+**No forgetting-hinge verdict needs re-deriving.** The 2026-08-02 hinge proof (`40fcd2ddc`) is
+fabrication-free **BY CONSTRUCTION** — `build_sets.py:106` keeps only rows with
+`n_cov == n_legal`, and `n_legal` maxes at exactly 40 in all five sets. The one banked numeric
+`probe_gap` claim ("pre-736 slow drift +83% over 514→735") re-derives at **+123.9% unmasked /
++78.9% masked**; both rulers agree on direction and magnitude class. The source series is gone
+from disk, so +83% vs +124% is UNRECONCILED; per-iteration scatter on this column is ±20-25%
+(live `5ce02` 216/217/218 read 0.001626 / 0.001964 / 0.002447), so **a two-point ratio on this
+column is not a reliable read**.
+
+**⚑ WHAT IS ACTUALLY BROKEN, AND IT IS BIGGER: the "in-window" leg has NOT been in-window since
+2026-08-04.** `era_probe_inwindow_path` has pointed at `inwindow_20260804.npz` since 08-04
+(`pbt2_small.yaml:825`), it is the only in-window set on disk, and the paths are
+**CONSTRUCTION-ONLY**, so rebuilding is a manual pre-restart step — neither the 08-06 (`379f6`)
+nor the 08-11 (`5ce02`) restart did it. The window was pinned at 1.5M and evicting ~32k rows/iter
+on 08-04 (~47-iteration turnover), so INFERRED those rows left the window during 08-04/05,
+**before `379f6` even started**. ⇒ for the entire span `probe_gap` has been read, it is the
+difference between **two OLD-era sets cut 20 minutes apart**, not era-vs-in-window. Measured
+signature: the two legs correlate at **r = 0.987** across 13 nets and the gap is **3.6% of the
+level** (range 1.1-6.1%). The instrument entry above ("re-cut from the NEWEST shards, rebuilt at
+each restart") has been FALSE since the set was first cut.
+**OWED: rebuild the in-window leg at the next restart, and treat every `probe_gap` reading from
+2026-08-05 onward as era-vs-era until it is.** ⚑ A ruler change invalidates its records:
+rebuilding makes the current series incomparable with the post-rebuild one, and that is the
+correct trade.
+
+**Two caveats on the measurement itself.** (a) The trunk fit has **9** checkpoints, not the
+pre-committed ≥10; 13 exist across two lineages, but pooling would fit a lineage change as a
+trend, so they were fitted separately and the pooled fit reported only as a sensitivity. (b) On
+rows where the default collides with the 1000cp cap (24/30 rows) fabricated and real are
+genuinely indistinguishable; the mask leaves those alone, which biases toward **NOT** firing the
+rule — the conservative direction — and the 100% ordering agreement makes it moot.
