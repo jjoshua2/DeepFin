@@ -86,6 +86,7 @@ from chess_anti_engine.selfplay.state import build_diff_focus_normalizer
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
+    count_unclaimed_resume_files,
     resume_inflight_games,
     suspend_inflight_games,
     sweep_orphan_state_files,
@@ -4129,7 +4130,8 @@ class WorkerSession:
         with self._resume_counts_lock:
             self._resume_counts["resumed"] += int(report.resumed)
             self._resume_counts["discarded"] += int(report.discarded)
-        if report.resumed or report.discarded:
+        left = count_unclaimed_resume_files(self.resume_dir)
+        if report.resumed or report.discarded or left:
             with self._resume_counts_lock:
                 skipped = int(self._resume_counts["suspend_skipped"])
                 skip_reasons = ",".join(
@@ -4138,13 +4140,33 @@ class WorkerSession:
             # suspend_skipped is a LOSS count (games we meant to persist and
             # could not); printing it next to the successes is the only place
             # it is ever read.
+            #
+            # ⚑ `left_on_disk` is the OTHER loss, and until 2026-08-14 NOTHING
+            # counted it. `resume_inflight_games` stops at
+            # `report.resumed >= len(slots)` (resume.py) -- it is DEMAND-driven,
+            # so when more games were suspended than the restarting threads ever
+            # ask for, the surplus is never even claimed. `discarded` cannot see
+            # them (it counts files the resume EXAMINED and rejected) and
+            # `suspend_skipped` cannot either (suspend wrote them fine). Both
+            # read a truthful 0 while the games sit on disk until
+            # DEFAULT_MAX_AGE_S expires them and the sweep deletes them.
+            # MEASURED at the arm-B pause: suspend 3046, resume 3017, and
+            # exactly 29 *.game.npz left in worker_02's dir -- the whole gap,
+            # one worker, invisible to every counter we had.
+            #
+            # It is a DIRECTORY STATE, deliberately not a per-call field on
+            # ResumeReport: this hook runs once per selfplay thread against a
+            # shared dir, so a per-call "stranded" number would count files
+            # another thread is about to claim. Only the final value -- the last
+            # line a worker logs -- is meaningful, which is why it is recomputed
+            # on every line rather than accumulated.
             self.log.info(
                 "selfplay resume totals: suspended=%d resumed=%d discarded=%d "
-                "suspend_skipped=%d [%s]",
+                "suspend_skipped=%d left_on_disk=%d [%s]",
                 self._resume_counts["suspended"],
                 self._resume_counts["resumed"],
                 self._resume_counts["discarded"],
-                skipped, skip_reasons,
+                skipped, left, skip_reasons,
             )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:

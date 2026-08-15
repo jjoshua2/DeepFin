@@ -1101,6 +1101,39 @@ _PRESERVE_FILE_REASONS = frozenset(
 _SWEEP_AGE_MULTIPLE = 4.0
 
 
+def count_unclaimed_resume_files(in_dir: Path) -> int:
+    """How many suspended games are still sitting in ``in_dir``, unclaimed.
+
+    ⚑ THE LOSS NO COUNTER IN THIS MODULE CAN SEE. ``resume_inflight_games``
+    walks ``sorted(glob(...))`` and breaks at ``report.resumed >= len(slots)``:
+    it is DEMAND-driven, bounded by the slots the restarting threads present.
+    When suspend wrote more games than the new session ever asks for, the
+    surplus is never claimed, never decoded, and therefore never reaches
+    ``ResumeReport.note`` or ``note_preserved``. ``discarded`` counts files the
+    resume EXAMINED and rejected; ``suspend_skipped`` counts games suspend
+    failed to write. A file that nothing looked at is outside both, so both
+    report a truthful zero while the games expire at ``DEFAULT_MAX_AGE_S`` and
+    the sweep deletes them.
+
+    MEASURED (2026-08-14 arm-B pause/resume): suspend 3046 games across four
+    workers, resume restored 3017, and worker_02's directory held exactly 29
+    ``*.game.npz`` afterwards -- the whole gap, in one worker, with
+    ``suspend_skipped=0`` and ``discarded=0`` everywhere.
+
+    ``.claimed`` and ``.tmp`` are excluded by the glob suffix: those belong to
+    a resume or suspend that was interrupted, which is
+    ``sweep_orphan_state_files``' business, not this counter's.
+
+    This is a snapshot of DIRECTORY STATE and is only meaningful once a worker's
+    resume phase has settled -- callers run it per selfplay thread against a
+    shared directory, so an early reading includes files another thread is about
+    to claim. Read the LAST value a worker reports, never an intermediate one.
+    """
+    if not in_dir.is_dir():
+        return 0
+    return sum(1 for _ in in_dir.glob(f"*{RESUME_FILE_SUFFIX}"))
+
+
 def sweep_orphan_state_files(
     in_dir: Path, *, now_s: float | None = None, max_age_s: float = DEFAULT_MAX_AGE_S,
 ) -> int:

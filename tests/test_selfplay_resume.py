@@ -41,6 +41,7 @@ from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.resume import (
     RESUME_FILE_SUFFIX,
     RESUME_FORMAT_VERSION,
+    count_unclaimed_resume_files,
     resume_inflight_games,
     should_resume_game,
     suspend_inflight_games,
@@ -1580,3 +1581,72 @@ def test_run_selfplay_keeps_hooks_dark_with_the_flag_off(
     (kw,) = captured
     assert kw["on_suspend"] is None
     assert session._resume_counts["resumed"] == 0
+
+
+def test_surplus_suspended_games_are_stranded_and_only_the_new_counter_sees_them(
+    tmp_path: Path,
+) -> None:
+    """⚑ SUPPLY > DEMAND, which is the only regime in which this can fire.
+
+    `resume_inflight_games` walks `sorted(glob(...))` and breaks at
+    `report.resumed >= len(slots)`. It is DEMAND-driven: it restores as many
+    games as the restarting threads have slots for, and stops. When the previous
+    session suspended MORE games than the new one asks for, the surplus is never
+    claimed, never decoded, and so never reaches `note()` or `note_preserved()`.
+
+    Both pre-existing counters therefore read a TRUTHFUL ZERO on a real loss:
+    `discarded` counts files the resume examined and rejected, and
+    `suspend_skipped` counts games suspend failed to write. Neither is wrong;
+    neither can see this. The stranded files then expire at DEFAULT_MAX_AGE_S
+    and the sweep deletes them.
+
+    MEASURED in production first (2026-08-14 arm-B pause/resume): suspend 3046,
+    resume 3017, and exactly 29 *.game.npz left in worker_02's directory --
+    the entire gap, in one worker, with discarded=0 and suspend_skipped=0
+    everywhere. This test reproduces that shape in miniature.
+
+    ⚑ A version of this test with batch_size >= the number of suspended games
+    would pass with the new counter hard-wired to 0, which is why the asserted
+    numbers are pinned exactly rather than as "> 0".
+    """
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1  # keep the fourth slot out of the way
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(source, out_dir) == 3, "the SUPPLY side must be 3"
+    assert count_unclaimed_resume_files(out_dir) == 3
+
+    # DEMAND is one slot. Two games cannot be placed anywhere.
+    target = _fresh_state(game, batch_size=1, seed=11)
+    report = resume_inflight_games(
+        target, in_dir=out_dir, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    )
+
+    assert report.resumed == 1, "demand was one slot"
+    # THE BLIND SPOT, asserted as such: a real loss with both counters clean.
+    assert report.discarded == 0, "nothing was examined-and-rejected"
+    assert report.preserved == 0, "nothing was refused about our state either"
+    assert report.reasons == {}, "no reason is recorded, because none applies"
+    # THE COUNTER THAT SEES IT.
+    assert count_unclaimed_resume_files(out_dir) == 2, (
+        "two suspended games are stranded on disk and every pre-existing "
+        "counter reports zero loss"
+    )
+    # And they are whole games, not claim/tmp debris the sweep owns.
+    assert len(_state_files(out_dir)) == 2
+    assert not list(out_dir.glob("*.claimed"))
+
+    # ⚑ The counter must count STRANDED GAMES, not directory entries. Debris
+    # from an interrupted suspend/resume belongs to `sweep_orphan_state_files`,
+    # and counting it here would inflate a loss metric with files that are not
+    # lost games -- turning the one instrument that sees this loss into one that
+    # cries wolf. Added because a mutant returning `glob("*")` instead of
+    # `glob(f"*{RESUME_FILE_SUFFIX}")` SURVIVED the assertions above.
+    (out_dir / f"deadbeef{RESUME_FILE_SUFFIX}.claimed").write_bytes(b"x")
+    (out_dir / f"deadbeef{RESUME_FILE_SUFFIX}.tmp").write_bytes(b"x")
+    (out_dir / "unrelated.txt").write_bytes(b"x")
+    assert count_unclaimed_resume_files(out_dir) == 2, (
+        "claim/tmp debris and foreign files must not be counted as stranded games"
+    )
