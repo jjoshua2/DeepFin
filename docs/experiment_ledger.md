@@ -49074,6 +49074,26 @@ If any fails, the arm is measuring the control and must be stopped.
   different `blend_frac`.**
 - `policy_sf` trains on the OPPONENT's reply distribution, not a move-teacher
   [[sf_policy_target_is_opponent_reply]] — a 0.05 weight is deliberately small.
+- **⚑ ADDED AFTER LAUNCH (2026-08-14 ~23:05) — arm B was PAUSED and RESUMED mid-arm; arm A
+  was not.** The user asked for the GPU at iteration 55/100; training was stopped and
+  restarted ~3 h later onto the SAME trial (`1d175_00000`, restored from
+  `checkpoint_000054`, all seven arm-B keys re-verified realized in the resumed trial's
+  config table, no tolerant-load/reinit/scheduler warnings). Arm A ran its 100 iterations
+  uninterrupted, so **iterations 56-100 of arm B carry a restart transient that the control
+  does not**: post-restart winrate reads high for several iterations
+  [[winrate_spike_restart_sampling_bias]] and the replay window briefly re-composes
+  [[post_restart_snapshot_is_not_steady_state]].
+  **Assessed effect on the DECIDING yardstick: none by construction.** The verdict is a
+  paired 4800-game arena on the two checkpoints' WEIGHTS, and this entry already excludes
+  regret from the verdict entirely. The transient is a data-composition asymmetry over ~5 of
+  45 remaining iterations, not a metric contaminant. It is recorded because an unrecorded
+  asymmetry between an arm and its control is exactly what "one data-affecting change per
+  readout window" exists to catch — **if arm B reads NEGATIVE, this is a live alternative
+  explanation and must be quoted alongside the number; if it reads non-inferior, the pause
+  can only have hurt, so the verdict stands a fortiori.**
+  Pause artifacts banked at `scratchpad/bt4heads/banked/armB_pause_20260814/`
+  (`checkpoint_000054`, `params.json`, `progress_at_pause.csv`, and the full pre-pause
+  `chess_training_at_pause.log` — each start TRUNCATES `/tmp/chess_training.log`).
 
 ### Revert point — **ALREADY EXISTS. NOTHING TO TAKE.**
 **⚑ CORRECTION, same session:** an earlier draft of this entry recorded the revert point as
