@@ -106,6 +106,18 @@ def main() -> None:
         **dataclasses.asdict(mcfg),
     }
     ck.pop("opt", None)  # force Adam to rebuild momentum; positional indices unsafe across arch changes
+  # ⚑ The manifest MUST go with the state it describes. Popping `opt` alone left
+  # `opt_param_names` behind, describing an optimizer state that is no longer in
+  # the payload AND naming the OLD architecture while `ck["model"]` above was
+  # just rewritten to the new one. That is a self-INCONSISTENT checkpoint: the
+  # exact shape `_remap_optimizer_state_by_param_name` now raises
+  # `UntrustedOptimizerStateError` on, because a manifest name that is not a key
+  # of the model payload is proof the mapping is wrong. Harmless while `opt` is
+  # absent -- nothing re-keys a state that is not there -- but this file is
+  # precisely the tool that manufactures the hazard the guard exists to catch,
+  # and a later edit that preserves `opt` would arm it. Found by independent
+  # review of PR #427 (NIT 5). Fix the producer, not just the detector.
+    ck.pop("opt_param_names", None)
 
     print(f"reinit: {len(reinit_param_names)} params across {len(VALUE_HEADS)} heads")
     for n in reinit_param_names:

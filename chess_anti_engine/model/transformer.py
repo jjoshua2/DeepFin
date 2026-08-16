@@ -18,6 +18,7 @@ from chess_anti_engine.moves import (
 )
 from chess_anti_engine.utils.architecture import (
     DEFAULT_PHASE_PIECE_THRESHOLDS,
+    normalize_aux_policy_head_dim,
     normalize_phase_piece_thresholds,
 )
 
@@ -702,6 +703,33 @@ def _normalize_policy_embedding_mode(value: object) -> str:
     return mode
 
 
+# ⚑⚑ SAFETY SCOPE — the heads `aux_policy_head_dim` is allowed to narrow, and the
+# ONLY ones. `policy_own` is the SEARCH PRIOR and `policy_future` is not an
+# auxiliary SF teacher; both stay at full trunk width unconditionally.
+#
+# Narrowing `policy_own` would silently corrupt every AOT package:
+# `scripts/build_aot_packages.py` sets `model._inference_only = True`, and the
+# `_inference_only` branch of `ChessNet.forward` traces only `policy_own` + `wdl`,
+# so `policy_own`'s weights are baked into the exported constants while
+# `policy_soft` / `policy_sf` are not. A width change there is therefore not a
+# training-only experiment — it re-shapes the tensors search actually runs on.
+# `tests/test_aux_policy_head_dim.py` pins this tuple, so widening it is a
+# deliberate, reviewed act rather than a one-word edit at a construction site.
+AUX_POLICY_HEAD_DIM_HEADS = ("policy_soft", "policy_sf")
+
+
+def _resolve_aux_policy_head_dim(value: object, trunk_dim: int) -> int:
+    """Projection width for the auxiliary policy heads.
+
+    ``None`` means "trunk width" — today's behaviour, bit-identical. Anything
+    else must be a positive int; a non-positive or non-integral value raises
+    here rather than reaching ``nn.Linear``, because this codebase's signature
+    defect is a value that is accepted and then silently ignored.
+    """
+    dim = normalize_aux_policy_head_dim(value)
+    return int(trunk_dim) if dim is None else dim
+
+
 @dataclass
 class TransformerConfig:
     in_planes: int
@@ -753,6 +781,10 @@ class TransformerConfig:
     categorical_head_coupled: bool = False
     policy_embedding_mode: str = "off"
     enable_policy_sf_head: bool = True
+  # Projection width of the AUXILIARY policy heads only -- see
+  # AUX_POLICY_HEAD_DIM_HEADS. None keeps them at trunk width (today's exact
+  # behaviour, bit-identical). `policy_own` and `policy_future` ignore this.
+    aux_policy_head_dim: int | None = None
     phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (
         DEFAULT_PHASE_PIECE_THRESHOLDS
     )
@@ -1065,8 +1097,20 @@ class ChessNet(nn.Module):
         if cfg.use_deepnorm:
             self._apply_deepnorm_init()
 
+        # ⚑ `aux_policy_head_dim` narrows the AUXILIARY heads named in
+        # AUX_POLICY_HEAD_DIM_HEADS and nothing else. `policy_own` (the search
+        # prior, and the only policy head an AOT package traces) and
+        # `policy_future` are constructed with the bare trunk width on purpose --
+        # do not thread `aux_policy_dim` into either call.
+        aux_policy_dim = _resolve_aux_policy_head_dim(
+            cfg.aux_policy_head_dim, output_embed_dim
+        )
+  # The width actually BUILT, not the raw config value: `cfg.aux_policy_head_dim`
+  # may be `"128"` / `128.0` / `None` and this attribute is read as the built
+  # width (siblings do the same -- `enable_policy_sf_head`, `policy_embedding_mode`).
+        self.aux_policy_head_dim = aux_policy_dim
         self.policy_own = AttentionPolicyHead(output_embed_dim)
-        self.policy_soft = AttentionPolicyHead(output_embed_dim)
+        self.policy_soft = AttentionPolicyHead(output_embed_dim, aux_policy_dim)
         # policy_sf is trained only through `w_sf_move`, which has been 0.0 in
         # production: ~530k parameters receiving zero gradient that are still built,
         # checkpointed and published every iteration. `losses.py` treats a missing
@@ -1076,7 +1120,9 @@ class ChessNet(nn.Module):
         # sf_p0 terms -- they do not read this head.)
         self.enable_policy_sf_head = bool(cfg.enable_policy_sf_head)
         self.policy_sf: AttentionPolicyHead | None = (
-            AttentionPolicyHead(output_embed_dim) if self.enable_policy_sf_head else None
+            AttentionPolicyHead(output_embed_dim, aux_policy_dim)
+            if self.enable_policy_sf_head
+            else None
         )
         self.policy_future = AttentionPolicyHead(output_embed_dim)
 

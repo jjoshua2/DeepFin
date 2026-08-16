@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import torch
 
+from chess_anti_engine.inference import _COMPILED_BATCH_BUCKETS
 from chess_anti_engine.moves import POLICY_SIZE
 from scripts.build_aot_packages import (
     _compare_bucket,
@@ -18,6 +19,7 @@ from scripts.build_aot_packages import (
     package_path,
     parse_buckets_arg,
     plan_build_buckets,
+    required_broker_buckets,
     select_buckets,
 )
 
@@ -38,16 +40,69 @@ def test_parse_buckets_arg_rejects(bad: str) -> None:
 
 
 def test_select_buckets_filters_by_max_batch() -> None:
-    sel = select_buckets(max_batch=64, buckets=[1, 6, 24, 64, 128, 4096])
+    # allow_incomplete: this asserts the max_batch FILTER, not coverage, and the
+    # hand-picked ladder deliberately omits broker sizes (16, 32) below the cap.
+    sel = select_buckets(
+        max_batch=64, buckets=[1, 6, 24, 64, 128, 4096], allow_incomplete=True
+    )
     assert sel == (1, 6, 24, 64)
 
 
 def test_select_buckets_default_source_nonempty() -> None:
-    # Uses _BATCH_BUCKETS; every element must be <= a large cap.
     sel = select_buckets(max_batch=4096)
     assert sel
     assert all(b <= 4096 for b in sel)
     assert len(set(sel)) == len(sel)
+
+
+def test_select_buckets_default_covers_every_bucket_the_broker_loads() -> None:
+    """The default ladder must be the one SlotBroker actually loads.
+
+    This is the regression that shipped on 2026-08-15: the default was
+    ``_BATCH_BUCKETS``, which omitted six ``_COMPILED_BATCH_BUCKETS`` sizes
+    (680, 1020, 1190, 1792, 2336, 2720). ``load_aot_packages`` skips missing
+    files silently and ``should_use_aot_forward`` is an exact-key match, so the
+    build produced a directory that ran EAGER for ~71% of forwards with no
+    warning anywhere. A non-emptiness check cannot see that; a coverage check
+    can.
+    """
+    sel = set(select_buckets(max_batch=4096))
+    required = {int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 4096}
+    assert required <= sel, f"default ladder omits broker buckets: {sorted(required - sel)}"
+
+
+def test_required_broker_buckets_respects_max_batch() -> None:
+    assert set(required_broker_buckets(512)) == {
+        int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 512
+    }
+    assert all(b <= 512 for b in required_broker_buckets(512))
+
+
+def test_select_buckets_rejects_a_ladder_missing_a_broker_bucket() -> None:
+    """An explicit --buckets that drops a broker size must fail loud."""
+    partial = [b for b in _COMPILED_BATCH_BUCKETS if int(b) != 1190]
+    with pytest.raises(ValueError, match=r"1190"):
+        select_buckets(max_batch=4096, buckets=partial)
+
+
+def test_allow_incomplete_permits_a_partial_ladder() -> None:
+    """The escape hatch works, and returns exactly what was asked for."""
+    partial = [b for b in _COMPILED_BATCH_BUCKETS if int(b) != 1190]
+    sel = select_buckets(max_batch=4096, buckets=partial, allow_incomplete=True)
+    assert 1190 not in sel
+    assert set(sel) == {int(b) for b in partial}
+
+
+def test_coverage_check_is_scoped_by_max_batch() -> None:
+    """A small-max_batch build is not asked for buckets above the cap.
+
+    Otherwise the guard would make every capped build impossible.
+    """
+    sel = select_buckets(
+        max_batch=128,
+        buckets=[int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 128],
+    )
+    assert set(sel) == {int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 128}
 
 
 def test_select_buckets_rejects_bad_max_batch() -> None:

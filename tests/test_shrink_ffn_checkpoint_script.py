@@ -200,13 +200,28 @@ def test_optimize_target_schedule_rounds_nonaligned_budget_without_error() -> No
 
 
 def test_shrink_checkpoint_updates_arch_and_drops_optimizer(tmp_path: Path) -> None:
+    """⚑ Includes the manifest invariant: `opt_param_names` travels with `opt`.
+
+    `new_ckpt = dict(ckpt)` copies the manifest across, and this script pops
+    `opt` while rewriting `model` to a NARROWER architecture. Leaving
+    `opt_param_names` behind therefore produces a checkpoint whose manifest
+    describes an optimizer state it does not contain, at widths its payload no
+    longer has — the self-inconsistent shape
+    `Trainer._remap_optimizer_state_by_param_name` raises
+    `UntrustedOptimizerStateError` on, and the one
+    `scripts/reinit_value_heads.py` was fixed for in PR #427. This script is the
+    sibling producer that fix missed; the source fixture below carries a real
+    manifest so the assertion is not vacuous.
+    """
     module = _load_shrink_module()
     source_cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
     target_schedule = (1.0, 1.0)
+    source_model = build_model(source_cfg)
     ckpt = {
-        "model": build_model(source_cfg).state_dict(),
+        "model": source_model.state_dict(),
         "swa_model": build_model(source_cfg).state_dict(),
         "opt": {"state": {"stale": True}},
+        "opt_param_names": [n for n, _ in source_model.named_parameters()],
         "scheduler": {"stale": True},
         "step": 123,
         "arch": {
@@ -214,6 +229,7 @@ def test_shrink_checkpoint_updates_arch_and_drops_optimizer(tmp_path: Path) -> N
             **dataclasses.asdict(source_cfg),
         },
     }
+    assert ckpt["opt_param_names"], "fixture needs a real manifest to drop"
 
     new_ckpt, target_cfg, stats = module.shrink_checkpoint(
         ckpt,
@@ -224,7 +240,20 @@ def test_shrink_checkpoint_updates_arch_and_drops_optimizer(tmp_path: Path) -> N
     assert target_cfg.ffn_mult_by_layer == target_schedule
     assert tuple(new_ckpt["arch"]["ffn_mult_by_layer"]) == target_schedule
     assert new_ckpt["step"] == 123
+    # THE INVARIANT. Survives any future edit that keeps `opt`, as long as the
+    # manifest keeps travelling with it; fails only on a genuine desync.
+    assert ("opt" in new_ckpt) == ("opt_param_names" in new_ckpt), (
+        "manifest and optimizer state must travel together -- a checkpoint "
+        "carrying exactly one of them describes a state it does not contain"
+    )
+    # TODAY'S BEHAVIOUR, pinned separately and deliberately: the script drops
+    # both outright. Update these lines, not the one above, if that changes.
     assert "opt" not in new_ckpt
+    assert "opt_param_names" not in new_ckpt, (
+        "a manifest naming the pre-shrink parameters was left behind -- it "
+        "describes an optimizer state this checkpoint does not contain, at "
+        "widths its payload no longer has"
+    )
     assert "scheduler" not in new_ckpt
     assert stats["dropped_optimizer"] is True
     assert stats["dropped_scheduler"] is True
