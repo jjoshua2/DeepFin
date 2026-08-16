@@ -3,22 +3,35 @@
 ⚑⚑ THE ARM'S PREMISE IS "TEST THE STACK WE RUN". A CONFIG TEST THAT DIFFS
 AGAINST THE IN-TREE PRODUCTION YAML CANNOT SEE THAT PREMISE BREAK.
 
-``tests/test_lc0_control_config.py`` pins the control's *diff* against
-``configs/pbt2_small.yaml`` rather than pinning absolute numbers, which is the
-right design and still structurally blind: the in-tree file is whatever the
-branch happens to carry, and the live run reads the yaml **in the live working
-tree**, on the live branch, which moves independently. Measured 2026-08-16:
+``tests/test_lc0_control_config.py`` pins the control's *diff* rather than
+pinning absolute numbers, which is the right design. What it may NOT diff the
+ARCHITECTURE against is the in-tree ``configs/pbt2_small.yaml``: that file is
+whatever the branch happens to carry, and the live run reads the yaml **in the
+live working tree**, on the live branch, which moves independently. Measured
+2026-08-16, and STILL TRUE after the bt4heads promotion reached ``main``:
 
     this tree's configs/pbt2_small.yaml    63,084,128 trainable (unique storage)
     the LIVE tree's pbt2_small.yaml        61,444,448 trainable (unique storage)
 
 The live file carries the bt4heads bundle promoted 2026-08-15 —
 ``aux_policy_head_dim: 128``, ``categorical_head_coupled: true``,
-``policy_embedding_mode: linear``. ``aux_policy_head_dim`` is not in this
-tree's ``utils/config_yaml.py`` schema at all, so **this tree's code cannot
-build the live network**, and two of the three keys touch the POLICY HEAD —
-the arm's only yardstick. A number produced by the arm today would be about a
-network production does not run.
+``policy_embedding_mode: linear`` — and ``main``'s copy of the production yaml
+carries none of them, because ``main`` has committed nothing to that file since
+the live branch diverged. Two of the three touch the POLICY HEAD, the arm's
+only yardstick. A control judged against the in-tree copy would be a network
+production does not run.
+
+⚑ WHAT CHANGED ON 2026-08-16, AND WHAT DID NOT. PR #439 put all three keys into
+``main``'s SCHEMA (``utils/config_yaml.py``), so this tree can now BUILD the
+live network — before that it could not, and an unknown ``model:`` key is
+CLAUDE.md category (a), fatal at launch. ``configs/lc0_positive_control.yaml``
+now carries the three keys and the check below PASSES against the live file.
+What did NOT change is ``main``'s in-tree production YAML: it is still stale by
+exactly those three keys, so it is still the wrong reference, and every gate
+here still judges against the live file or the pin. ``LIVE_ARCH_PIN`` was
+RE-MEASURED in this tree from the live file after the merge (it agreed to the
+parameter), and ``tests/test_lc0_control_arch.py`` now BUILDS the pinned
+architecture rather than asserting that it cannot.
 
 So the architecture claim gets its own instrument, and the instrument prefers
 the LIVE FILE over any in-tree copy:
@@ -57,14 +70,20 @@ import torch
 
 # ── the recorded live architecture ────────────────────────────────────────────
 #
-# Measured 2026-08-16 by building `configs/pbt2_small.yaml` from the live
-# working tree at `ops/live-20260725` (2688a87e7) and counting unique storages.
+# Measured 2026-08-16 by building the LIVE working tree's
+# `configs/pbt2_small.yaml` (`ops/live-20260725`) and counting unique storages.
+# ⚑ RE-MEASURED the same day, from THIS tree's code, once PR #439 gave `main`
+# the schema to build it — `scripts/lc0_control_arch_pin.py --live-config <live>`
+# reproduced every field and both counts exactly. Before that merge the numbers
+# could only be taken in the live tree; they are now falsifiable here, and
+# `tests/test_lc0_control_arch.py::test_this_tree_builds_the_pinned_live_architecture`
+# rebuilds them on every run.
 # ⚑ Regenerate with `scripts/lc0_control_arch_pin.py` whenever production's
 # architecture moves; do NOT hand-edit a field to make a test pass.
 LIVE_ARCH_PIN: dict[str, Any] = {
     "recorded": "2026-08-16",
     "live_branch": "ops/live-20260725",
-    "live_commit": "2688a87e7",
+    "live_commit": "3f3ff00e6",
     "provenance": "bt4heads bundle promoted 2026-08-15, +13.9 Elo [+5.7, +22.1]",
     "trainable_params_unique_storage": 61_444_448,
     "state_dict_numel_sum": 77_173_088,
@@ -256,10 +275,12 @@ def assert_control_matches_live_architecture(
         "data'. A policy-head difference makes the top-1 yardstick a "
         "measurement of a network we do not run, and no number from such a run "
         "may be quoted as 'our stack'. Fix by re-pointing "
-        "configs/lc0_positive_control.yaml at the live model: section — which "
-        "requires this branch's code to be able to BUILD it (as of the pin, "
-        "'aux_policy_head_dim' is not in utils/config_yaml.py's schema on "
-        "main, so the bt4heads promotion must reach main first). "
+        "configs/lc0_positive_control.yaml at the live model: section and "
+        "regenerating the pin with scripts/lc0_control_arch_pin.py. ⚑ A live "
+        "model: key this tree's utils/config_yaml.py schema does not know is "
+        "CLAUDE.md category (a) and is FATAL AT LAUNCH, so such a key must "
+        "reach the schema BEFORE the control config can carry it — that is "
+        "what PR #439 did for the bt4heads bundle on 2026-08-16. "
         "--allow-arch-drift downgrades this to a banner for PLUMBING SMOKE "
         "RUNS ONLY.",
     )

@@ -1,18 +1,29 @@
 """The control must build the architecture PRODUCTION IS RUNNING.
 
-⚑⚑ `tests/test_lc0_control_config.py` pins the control's diff against the
-IN-TREE `configs/pbt2_small.yaml`. That is the right design and it is
-structurally blind: the live run reads the yaml in the LIVE working tree, on
-the live branch, and that file moves independently of whatever this branch
-carries. Measured 2026-08-16 — in-tree 63,084,128 trainable params, live
-61,444,448, and `aux_policy_head_dim` is not in this tree's schema at all, so
-this tree's code cannot even BUILD the live network.
+⚑⚑ THE IN-TREE `configs/pbt2_small.yaml` IS NOT THE FILE PRODUCTION READS.
+The live run reads the yaml in the LIVE working tree, on the live branch, and
+that file moves independently of whatever this branch carries. Measured
+2026-08-16 and unchanged by the bt4heads merge: in-tree 63,084,128 trainable
+params, live 61,444,448, the gap being exactly `aux_policy_head_dim: 128`,
+`categorical_head_coupled: true`, `policy_embedding_mode: linear` — which
+`main` has in its SCHEMA (PR #439) but not in its committed production yaml.
 
 So this file tests the OTHER instrument: the pin, the drift check, and the
-fact that the check prefers the live file over any in-tree copy. Every test
-here is written so that the situation improving BREAKS it — the pin going
-stale, or bt4heads reaching `main` — because a stale pin that keeps passing is
-the same blindness one level up.
+fact that the check prefers the live file over any in-tree copy.
+
+⚑ TWO OF THESE TESTS WERE MERGE-GUARDS, WRITTEN SO THAT THE SITUATION
+IMPROVING BROKE THEM. It improved on 2026-08-16, so they are INVERTED, not
+deleted: `test_this_tree_builds_the_pinned_live_architecture` used to require
+the flattener to RAISE and now requires it to build the pinned 61,444,448, and
+`test_the_control_config_matches_the_recorded_pin` used to require the control
+to be REFUSED and now requires it to be accepted — while still proving that
+dropping any one bt4heads key is refused, so the gate can still fail.
+
+`test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks` was NOT
+inverted, because its premise did not change: `main`'s production yaml is still
+stale. That test is the recorded justification for
+`tests/test_lc0_control_config.py` judging the architecture against the pin
+instead of against the file sitting next to it.
 """
 from __future__ import annotations
 
@@ -34,6 +45,7 @@ from chess_anti_engine.eval.lc0_control_arch import (
     model_section_drift,
     unique_storage_param_count,
 )
+from chess_anti_engine.model import build_model, model_config_from_flat_config
 from chess_anti_engine.utils import flatten_run_config_defaults
 
 REPO = Path(__file__).resolve().parent.parent
@@ -53,48 +65,144 @@ def _raw(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def test_the_pin_records_an_architecture_this_tree_cannot_build() -> None:
-    """⚑ THIS TEST IS SUPPOSED TO FAIL WHEN bt4heads REACHES `main`.
+def test_this_tree_builds_the_pinned_live_architecture() -> None:
+    """⚑⚑ THE INVERTED MERGE-GUARD. Until 2026-08-16 this asserted the OPPOSITE.
 
-    ``aux_policy_head_dim`` is not in ``utils/config_yaml.py``'s schema here,
-    and CLAUDE.md category (a) says an unknown key is FATAL AT LAUNCH:
-    ``flatten_run_config_defaults`` raises before ``run.py``'s parser exists.
-    That is why "re-point the control at the live model: section" is not a
-    one-line config edit — it needs the promotion on this branch first.
+    It used to require ``flatten_run_config_defaults`` to RAISE on
+    ``aux_policy_head_dim``: the key was not in ``utils/config_yaml.py``'s
+    schema, and CLAUDE.md category (a) makes an unknown ``model:`` key FATAL AT
+    LAUNCH, so "re-point the control at the live model: section" was not a
+    one-line config edit — it needed the promotion on this branch first. PR
+    #439 landed it, so the assertion is INVERTED, not deleted.
 
-    When it starts failing, regenerate ``LIVE_ARCH_PIN`` with
-    ``scripts/lc0_control_arch_pin.py`` and re-point the control config. Do not
-    delete the assertion.
+    Three teeth, each of which has been watched to fail under mutation:
+
+    * the flatten must SUCCEED — a bt4heads key leaving ``main``'s schema again
+      puts the arm back where it started, and that must be loud;
+    * each key must survive into the ``ModelConfig`` — "in the schema but never
+      read by the builder" is this repo's signature defect, and a schema-only
+      key would let the control config claim an architecture it does not build;
+    * the BUILT net must land on the pin's 61,444,448 unique-storage params and
+      77,173,088 state_dict numel. This is a RE-MEASUREMENT of the pin, not a
+      restatement of it: it runs this tree's builder over the pinned ``model:``
+      section, so the pin can no longer be a number nothing checks.
     """
     live_like = copy.deepcopy(_raw(PRODUCTION))
     live_like["model"] = dict(LIVE_ARCH_PIN["model"])
-    with pytest.raises(ValueError, match="aux_policy_head_dim"):
-        flatten_run_config_defaults(live_like)
+    flat = flatten_run_config_defaults(live_like)
+
+    model_cfg = model_config_from_flat_config(flat)
+    for key in LIVE_ONLY_MODEL_KEYS:
+        assert getattr(model_cfg, key) == LIVE_ARCH_PIN["model"][key], (
+            f"{key} is in the schema but does not reach ModelConfig — the "
+            "control config can carry it and the built net will not have it"
+        )
+
+    built = build_model(model_cfg)
+    assert unique_storage_param_count(built) == (
+        LIVE_ARCH_PIN["trainable_params_unique_storage"]
+    ), "this tree builds a different net from the pinned model: section"
+    assert sum(v.numel() for v in built.state_dict().values()) == (
+        LIVE_ARCH_PIN["state_dict_numel_sum"]
+    )
 
 
 def test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks() -> None:
+    """⚑⚑ NOT INVERTED — ITS PREMISE DID NOT CHANGE, AND IT IS LOAD-BEARING.
+
+    PR #439 gave ``main`` the SCHEMA for the bt4heads keys; it did not put them
+    in ``main``'s committed ``configs/pbt2_small.yaml``, and ``main`` has
+    committed nothing to that file since the live branch diverged. So the
+    in-tree production config is stale by exactly these three keys, and this
+    test is the RECORDED REASON that
+    ``tests/test_lc0_control_config.py::test_architecture_is_identical_to_production``
+    judges against ``LIVE_ARCH_PIN`` rather than against the yaml sitting next
+    to it. When someone syncs the in-tree copy, this fails — and that failure
+    is the prompt to revisit that reference decision, not to edit this line.
+    """
     in_tree = model_section(_raw(PRODUCTION))
     for key in LIVE_ONLY_MODEL_KEYS:
         assert key in LIVE_ARCH_PIN["model"], f"the pin lost {key}"
         assert key not in in_tree, (
-            f"{key} is now in the in-tree production config — the arm can "
-            "follow production; regenerate the pin and re-point the control"
+            f"{key} is now in the in-tree production config, which was stale by "
+            "exactly the bt4heads keys. Re-check whether the in-tree copy is a "
+            "faithful reference now, regenerate the pin, and revisit the "
+            "reference decision in tests/test_lc0_control_config.py"
         )
 
 
-def test_the_control_config_is_currently_refused(
+def test_the_control_config_matches_the_recorded_pin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """⚑⚑ THE FINDING ITSELF, AS A GATE. The arm as shipped would train
-    `main`'s 63,084,128-param net, not production's 61,444,448-param one."""
+    """⚑⚑ THE INVERTED FINDING. It used to assert the arm was REFUSED.
+
+    The shipped control config carried none of the bt4heads keys, so the arm
+    would have trained ``main``'s 63,084,128-param net rather than production's
+    61,444,448-param one, and this test pinned that refusal so the state could
+    not be forgotten. The config now carries them, so the refusal is inverted
+    into an acceptance — with the failing direction kept, because "it passes"
+    on its own is a constant, not a gate.
+
+    Both directions here: the shipped config is ACCEPTED against the pin, and
+    dropping ANY ONE of the three keys is still refused with that key named and
+    the "our stack" warning intact.
+    """
     monkeypatch.delenv(LIVE_CONFIG_ENV, raising=False)
-    with pytest.raises(ControlArchitectureDrift) as excinfo:
-        assert_control_matches_live_architecture(_raw(CONTROL))
-    message = str(excinfo.value)
+    control = _raw(CONTROL)
+    provenance = assert_control_matches_live_architecture(control)
+    assert "recorded pin" in provenance
+    assert "THE LIVE FILE WAS NOT READ" in provenance
+
     for key in LIVE_ONLY_MODEL_KEYS:
+        crippled = copy.deepcopy(control)
+        del crippled["model"][key]
+        with pytest.raises(ControlArchitectureDrift) as excinfo:
+            assert_control_matches_live_architecture(crippled)
+        message = str(excinfo.value)
         assert key in message, f"the drift report must name {key}"
-    assert "may be quoted as 'our stack'" in message
-    assert "recorded pin" in message, "the message must name what it judged against"
+        assert "may be quoted as 'our stack'" in message
+        assert "recorded pin" in message, (
+            "the message must name what it judged against"
+        )
+
+
+def test_the_recorded_pin_still_matches_the_live_file_when_one_is_named() -> None:
+    """⚑⚑ THE PIN IS A COMMITTED COPY TOO — THIS IS WHAT KEEPS IT HONEST.
+
+    Every other gate here judges against ``LIVE_ARCH_PIN``, which is the same
+    shape of object as the in-tree production yaml: a copy that can go stale
+    while the thing it describes moves. The pin's defence is that it is
+    REGENERABLE from the live file, and this is the test that regenerates it.
+    It can only run where the live file exists, so when it cannot it says what
+    was NOT checked rather than reporting a pass.
+
+    ⚑ It does NOT move any other test's verdict. The control is judged against
+    the pin whether or not ``$CHESS_LIVE_PRODUCTION_CONFIG`` is set — a guard
+    whose verdict follows the operator's shell is review F6's defect. This is a
+    SEPARATE proposition ("the pin is not stale") that only the operator can
+    supply the instrument for.
+    """
+    live = live_production_config_path()
+    if live is None:
+        pytest.skip(
+            f"${LIVE_CONFIG_ENV} is not set — the pin's freshness against the "
+            "LIVE production yaml was NOT checked by this run",
+        )
+    live_model = model_section(_raw(live))
+    pinned = dict(LIVE_ARCH_PIN["model"])
+  # Not `model_section_drift`: its lines are labelled control=/live=, and both
+  # sides here are references. A mislabelled diff is worse than no diff.
+    drift = [
+        f"{key}: live={live_model.get(key, '<absent>')!r} "
+        f"pin={pinned.get(key, '<absent>')!r}"
+        for key in sorted(set(live_model) | set(pinned))
+        if live_model.get(key, "<absent>") != pinned.get(key, "<absent>")
+    ]
+    assert drift == [], (
+        f"LIVE_ARCH_PIN is STALE against {live}:\n  " + "\n  ".join(drift) + "\n"
+        "Regenerate it with scripts/lc0_control_arch_pin.py --live-config "
+        "<live yaml>, then decide whether the control follows production."
+    )
 
 
 def test_the_check_passes_when_the_model_section_matches_the_reference(
@@ -253,8 +361,11 @@ def test_unique_storage_count_does_not_double_count_a_tied_tensor() -> None:
 def test_the_pin_matches_the_measurement_it_claims() -> None:
     """Internal consistency: the pin's two counts must be the ones recorded.
 
-    Not a re-measurement — this tree cannot build the live net — but it stops a
-    hand-edit that changes one number and not the other.
+    Not the re-measurement — that is
+    ``test_this_tree_builds_the_pinned_live_architecture``, which became
+    possible on 2026-08-16 — but a cheap independent stop on a hand-edit that
+    changes one number and not the other, since the tied-tensor identity below
+    only holds for the pair actually measured.
     """
     assert LIVE_ARCH_PIN["trainable_params_unique_storage"] == 61_444_448
     assert LIVE_ARCH_PIN["state_dict_numel_sum"] == 77_173_088

@@ -2,10 +2,13 @@
 """Read the LIVE production architecture and compare the control against it.
 
 ⚑ The point of this script is that it reads a file OUTSIDE this working tree.
-`tests/test_lc0_control_config.py` diffs the control against the in-tree
-`configs/pbt2_small.yaml`, which is the right *design* and cannot see the live
-run: the live yaml lives in the live working tree, on the live branch, and is
-re-read every iteration. See `chess_anti_engine/eval/lc0_control_arch.py`.
+No committed test can: the live yaml lives in the live working tree, on the
+live branch, and is re-read every iteration, while this tree carries `main`'s
+copy — stale by the whole bt4heads bundle as of 2026-08-16. The in-tree tests
+judge the architecture against `LIVE_ARCH_PIN`, and THIS SCRIPT is what makes
+that pin honest: `--emit` regenerates it from the live file and `--check`
+compares the control straight against the live file. See
+`chess_anti_engine/eval/lc0_control_arch.py`.
 
     # print the pin block to paste into lc0_control_arch.LIVE_ARCH_PIN
     PYTHONPATH=. python3 scripts/lc0_control_arch_pin.py \
@@ -22,6 +25,9 @@ neither, `--check` judges against the recorded pin and says so loudly, because
 ⚑ `--emit` must be run from a tree whose code can BUILD the live config. If the
 live yaml carries a `model:` key this tree's schema does not know, the flattener
 raises — that is category (a) from CLAUDE.md and it is the answer, not an error.
+This tree could not build the live config until PR #439 (2026-08-16) put the
+bt4heads keys into `main`'s schema; it can now, and the pin was regenerated
+here to prove it.
 """
 from __future__ import annotations
 

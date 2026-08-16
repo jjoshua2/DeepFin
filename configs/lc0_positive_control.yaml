@@ -15,24 +15,31 @@
 # model configs differ in any field, or if any trainer kwarg differs outside
 # the explicitly-listed set below.
 #
-# ⚑⚑ AND THAT TEST IS STRUCTURALLY BLIND, SO IT IS NOT THE ONLY INSTRUMENT.
-# It diffs against `configs/pbt2_small.yaml` IN THIS TREE. The live run reads
-# the copy in the LIVE working tree, on the live branch, and on 2026-08-15 that
-# file moved to the bt4heads bundle (`aux_policy_head_dim: 128`,
+# ⚑⚑ AND "PRODUCTION" IS TWO FILES THAT DISAGREE, SO THAT IS NOT THE ONLY
+# INSTRUMENT. The live run reads `configs/pbt2_small.yaml` in the LIVE working
+# tree, on the live branch; this tree carries `main`'s copy, and `main` has
+# committed nothing to that file since the live branch diverged. On 2026-08-15
+# the live file moved to the bt4heads bundle (`aux_policy_head_dim: 128`,
 # `categorical_head_coupled: true`, `policy_embedding_mode: linear`;
-# 61,444,448 trainable params against this branch's 63,084,128). Two of those
-# three keys touch the POLICY HEAD, which is this arm's only yardstick, and
-# `aux_policy_head_dim` is not in this branch's schema at all — so this branch
-# CANNOT BUILD the live network, and the in-tree diff above passes anyway.
+# 61,444,448 trainable params against this tree's 63,084,128) and `main`'s copy
+# did not follow. Two of those three keys touch the POLICY HEAD, which is this
+# arm's only yardstick.
 #
 # ⇒ `chess_anti_engine/eval/lc0_control_arch.py` judges against the LIVE FILE
 # (`$CHESS_LIVE_PRODUCTION_CONFIG`) or a recorded pin, and
-# `scripts/lc0_control_train.py` REFUSES TO LAUNCH on a drift.
-# ⚑⚑ AS OF 2026-08-16 IT REFUSES THIS FILE. The arm cannot be launched, and no
-# number from it may be quoted as "our stack", until the bt4heads promotion
-# reaches this branch and this config is re-pointed at the live `model:`
-# section. `--allow-arch-drift` exists for PLUMBING SMOKE RUNS ONLY and stamps
-# `valid_control: false` into the run's summary.json.
+# `scripts/lc0_control_train.py` REFUSES TO LAUNCH on a drift. The in-tree
+# architecture diff was re-pointed at that same pin on 2026-08-16, so it is no
+# longer judging against the stale copy either.
+#
+# ⚑ STATUS 2026-08-16: it ACCEPTS this file. PR #439 put the three keys into
+# `main`'s schema — an unknown `model:` key is CLAUDE.md category (a) and fatal
+# at launch, so the schema had to move first — and the `model:` section below
+# now carries them. `--allow-arch-drift` remains for PLUMBING SMOKE RUNS on a
+# deliberately small model, and stamps `valid_control: false` into the run's
+# summary.json. ⚑ Accepting the architecture is NOT the arm being validated:
+# the arm has still never been run, and the TRAINER axis below is still copied
+# from `main`'s committed `train:` section, which is 13 kwargs behind the live
+# one (measured 2026-08-16; see tests/test_lc0_control_config.py's header).
 #
 # This file is a SELF-CONTAINED COPY rather than an overlay on the production
 # yaml. Deliberate: `configs/pbt2_small.yaml` is the LIVE file, re-read every
@@ -149,6 +156,16 @@ model:
   input_history_encoding: lc0_root_legacy_meta
   input_extra_features: v2_threats
   gradient_checkpointing: false
+  # ── the bt4heads bundle, promoted to production 2026-08-15 ────────────────
+  # Added 2026-08-16 when PR #439 brought `aux_policy_head_dim` onto `main`,
+  # which is what made this branch able to BUILD the live net at all. Two of
+  # the three touch the POLICY HEAD — this arm's only yardstick — so without
+  # them the top-1 readout would describe a network we do not run.
+  # Not copied by hand: `scripts/lc0_control_arch_pin.py --check` reads the
+  # LIVE file and exits 1 on any drift, and it is launch guard 0.
+  aux_policy_head_dim: 128
+  categorical_head_coupled: true
+  policy_embedding_mode: linear
 
 selfplay:
   # ⚑ These five are SELFPLAY-section keys despite their sf_ names (checked

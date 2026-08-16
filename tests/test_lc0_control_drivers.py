@@ -356,15 +356,38 @@ def test_the_capture_records_the_kwargs_compute_loss_was_called_with() -> None:
 
 
 def test_the_architecture_guard_refuses_a_drifted_control(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Guard 0 must be the reason the run stops, before any GPU time is spent."""
+    """Guard 0 must be the reason the run stops, before any GPU time is spent.
+
+    ⚑ THE DRIFTED CONTROL IS NOW CONSTRUCTED, NOT ASSUMED. Until 2026-08-16
+    this passed the SHIPPED config in and expected a refusal, because the
+    shipped config was drifted — it predated the bt4heads promotion and could
+    not carry keys that were not yet in `main`'s schema. That premise expired
+    when PR #439 merged and the config was re-pointed, and a test that reads
+    "the guard refuses" while actually asserting "the config is broken" stops
+    testing the guard the moment the config is fixed.
+
+    So: the shipped config PASSES (guard 0 is not a constant refusal), a copy
+    with one `model:` key moved is REFUSED and names that key, and
+    `allow_drift` downgrades the refusal to a banner.
+    """
     monkeypatch.delenv("CHESS_LIVE_PRODUCTION_CONFIG", raising=False)
+    assert not lc0_control_train.preflight_architecture(
+        CONTROL, allow_drift=False,
+    ).startswith("DRIFTED"), "the shipped control config must pass guard 0"
+
+    raw = yaml.safe_load(CONTROL.read_text(encoding="utf-8"))
+    raw["model"]["num_layers"] = int(raw["model"]["num_layers"]) + 1
+    drifted = tmp_path / "drifted_control.yaml"
+    drifted.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
     with pytest.raises(SystemExit) as excinfo:
-        lc0_control_train.preflight_architecture(CONTROL, allow_drift=False)
+        lc0_control_train.preflight_architecture(drifted, allow_drift=False)
     assert "architecture is NOT production's" in str(excinfo.value)
+    assert "num_layers" in str(excinfo.value)
     assert lc0_control_train.preflight_architecture(
-        CONTROL, allow_drift=True,
+        drifted, allow_drift=True,
     ).startswith("DRIFTED")
 
 
@@ -405,7 +428,10 @@ def test_the_built_model_is_checked_against_the_pinned_parameter_count(
     The config-level check compares ``model:`` keys; this one compares the net
     those keys BUILT against the pinned count. Nothing passed ``model=`` before
     2026-08-16, so ``LIVE_ARCH_PIN['trainable_params_unique_storage']`` — the
-    arch fix's own headline number — gated nothing on any path.
+    arch fix's own headline number — gated nothing on any path. (The count is
+    also re-measured for real, against the live architecture, by
+    ``test_lc0_control_arch.py::test_this_tree_builds_the_pinned_live_architecture``;
+    this one is about the DRIVER passing ``model=`` at all.)
 
     The live file here matches the control exactly, so the section check
     passes and the ONLY thing that can refuse the run is the parameter count.

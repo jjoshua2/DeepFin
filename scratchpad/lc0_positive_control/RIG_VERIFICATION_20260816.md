@@ -225,10 +225,13 @@ unseeded** — it is the INFERENCE from it that was wrong.
 ## 4. Ingest path — shards → replay buffer → training step → checkpoint
 
 `scripts/lc0_control_train.py`, 8 steps × batch 512 = 4,096 rows, CUDA, no
-`torch.compile`, 8.69 s of training wall time. 63,084,128 trainable params (this
-branch's pinned production number; `tests/test_lc0_control_config.py` asserts the
-control's ModelConfig is field-identical to `configs/pbt2_small.yaml`'s rather than
-pinning the constant).
+`torch.compile`, 8.69 s of training wall time. 63,084,128 trainable params — ⚑ this
+branch's PRE-MERGE count, taken before PR #439; production's is 61,444,448 and this
+run has not been re-taken on it. `tests/test_lc0_control_config.py` asserts the
+control's ModelConfig is field-identical to the reference rather than pinning the
+constant, and since 2026-08-16 that reference is the LIVE `model:` section
+(`LIVE_ARCH_PIN`) overlaid on `configs/pbt2_small.yaml`, not the in-tree `model:`
+section — which is stale by the bt4heads bundle.
 
 Buffer is the production `DiskReplayBuffer`, opened `read_only=True`.
 
@@ -303,6 +306,12 @@ reviewer.**
 
 ### 6.1 F1 (P1) — ⚑⚑ THE ARM WOULD HAVE TRAINED AN ARCHITECTURE PRODUCTION DOES NOT RUN
 
+> ⚑ **STATE AS OF EARLIER ON 2026-08-16 — SUPERSEDED BY §6.1a BELOW, WHICH IS THE
+> CURRENT STATE.** Everything in this subsection is kept verbatim as the record of
+> the finding and the decision. The present-tense claims in it — "this branch cannot
+> build the live net", the guard firing — were true when written and are no longer.
+> The in-tree-vs-live 63,084,128 / 61,444,448 gap, however, IS still true.
+
 Measured, three ways:
 
 ```
@@ -341,7 +350,8 @@ New module `chess_anti_engine/eval/lc0_control_arch.py`:
 * `scripts/lc0_control_arch_pin.py` — `--emit` to regenerate the pin from a live
   config, `--check` as a standalone gate.
 
-Wired as **launch guard 0** in `lc0_control_train.py`. Today it FIRES:
+Wired as **launch guard 0** in `lc0_control_train.py`. When this section was written
+it FIRED:
 
 ```
 $ PYTHONPATH=. python3 scripts/lc0_control_arch_pin.py --check
@@ -362,6 +372,37 @@ re-point the control", and neither can be silenced by copying a number across.
 ⚑ `test_a_control_matching_the_stale_pin_still_fails_against_the_live_file` is the
 one that proves the instrument is not another in-tree copy: a control matching the
 committed pin EXACTLY still raises when `$CHESS_LIVE_PRODUCTION_CONFIG` disagrees.
+
+#### 6.1a UPDATE, later the same day — the guard fired, was answered, and was inverted
+
+PR #439 merged the bt4heads bundle to `main`; this branch merged `origin/main`. That
+put the three keys in the SCHEMA (not in `main`'s production yaml, which is still
+stale by them), so the "option (a) needs a promotion first" reasoning above was
+answered by the promotion actually happening, on its own PR, with its own review.
+`configs/lc0_positive_control.yaml` was then re-pointed at the live `model:` section,
+and the check now reads:
+
+```
+$ CHESS_LIVE_PRODUCTION_CONFIG=<live>/configs/pbt2_small.yaml \
+    PYTHONPATH=. python3 scripts/lc0_control_arch_pin.py --check
+OK: configs/lc0_positive_control.yaml matches the LIVE file <live>/configs/pbt2_small.yaml
+```
+
+The two merge-guards fired exactly as designed and were **inverted, not deleted**:
+
+| was | is | still fails when |
+|---|---|---|
+| `test_the_pin_records_an_architecture_this_tree_cannot_build` — the flattener must RAISE on `aux_policy_head_dim` | `test_this_tree_builds_the_pinned_live_architecture` — the flatten must succeed, each key must reach `ModelConfig`, and the BUILT net must be 61,444,448 / 77,173,088 | a key leaves the schema; a schema key never reaches the builder; this tree's builder produces a different net from the pinned `model:` section |
+| `test_the_control_config_is_currently_refused` | `test_the_control_config_matches_the_recorded_pin` | the shipped config drifts, **or** any one of the three bt4heads keys is dropped (all three checked, each still refused by name) |
+
+`test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks` was NOT inverted —
+its premise is unchanged, `main`'s production yaml is still stale — and it is now
+the recorded justification for `test_architecture_is_identical_to_production` judging
+against `LIVE_ARCH_PIN` instead of the file beside it. New:
+`test_the_recorded_pin_still_matches_the_live_file_when_one_is_named` regenerates the
+pin from the live file when `$CHESS_LIVE_PRODUCTION_CONFIG` is set, and reports that
+it did NOT check when it is not — the pin is a committed copy too, and this is what
+keeps it from becoming the blindness one level up.
 
 ### 6.2 F2 (P1) — the headline per-step guard could not fail; now it can, and does
 
@@ -530,15 +571,33 @@ verified apparatus, not the artifact the arm will read.
   It changes throughput, not the objective, but the compiled path is unexercised.
 * **`Trainer`/`tune` do not RAISE.** The value-blend guard protects this arm's entry
   point only; the trainer carries a log-only readout — see the decision note in §1.
-* **⚑⚑ THE ARM CANNOT BE LAUNCHED YET.** The param count here is this branch's
-  63,084,128, not the live tree's 61,444,448 (post-bt4heads). The claim that the
-  config test "follows a rebase automatically" was WRONG: `aux_policy_head_dim` is
-  not in this branch's `utils/config_yaml.py` schema, so this branch's code cannot
-  build the live network at all, and the in-tree config diff is structurally unable
-  to see it. `preflight_architecture` now REFUSES the launch. See §6.1.
+* **⚑ THE ARCHITECTURE BLOCK IS CLEARED; THE ARM IS STILL UNRUN.** As first
+  written this section said "THE ARM CANNOT BE LAUNCHED YET" — `aux_policy_head_dim`
+  was not in this branch's `utils/config_yaml.py` schema, so this branch's code could
+  not build the live network at all. PR #439 merged the bt4heads bundle to `main`
+  later on 2026-08-16 and this branch merged `origin/main`, so the schema is here,
+  `configs/lc0_positive_control.yaml` carries the three keys, and both
+  `scripts/lc0_control_arch_pin.py --check` (against the live file) and
+  `preflight_architecture` now PASS. `LIVE_ARCH_PIN` was re-measured in this tree
+  from the live file and reproduced 61,444,448 / 77,173,088 exactly.
+  ⚑ That clears a LAUNCH PRECONDITION and nothing else: **no arm has been run**, so
+  every number in this document is still a plumbing number.
 * **Nothing in this document was produced on production's architecture.** Every
-  smoke run since 2026-08-16 carries `--allow-arch-drift` and stamps
-  `valid_control: false` into its `summary.json`.
+  smoke run recorded here predates the merge, carries `--allow-arch-drift`, and
+  stamps `valid_control: false` into its `summary.json`. The 63,084,128 in §4 is
+  this branch's pre-merge count and has not been re-taken.
+* **⚑⚑ THE TRAINER AXIS IS STILL POINTED AT THE STALE COPY.** The architecture
+  reference moved to the live file; the trainer reference did not. Measured
+  2026-08-16, the LIVE `train:` section differs from `main`'s committed one in **13
+  trainer kwargs** — `w_sf_own_regret` 0.7→0.0, `w_sf_own` 0.1→0.0, `w_sf_eval`
+  0.1→0.0, `w_sf_move` 0.02→0.05, `w_categorical` 0.3→1.0, `sf_wdl_frac` 0.5→0.69,
+  `search_wdl_frac` 0.2→0.31, `categorical_target_params` (blend 0.0→0.69),
+  `rebuild_categorical_target` false→true, `sf_target_params.sf_policy_score_mode`
+  wdl→cp, `lr_T0` 999999→5000, `lr_T_mult` 1→2, `warmup_steps` 72→1000. So "our
+  EXACT net and trainer" currently holds for the NET only. ⚑ Note the live blend is
+  `0.69 + 0.31 = 1.00`, i.e. **`game_frac` 0.0**, against the 0.30 this arm's value
+  override was designed to preserve — so re-pointing is a real research decision,
+  not a copy, and needs a ledger entry with a pre-committed yardstick.
 * **`search_wdl_frac: 0.70` is a judgement call**, not a measured optimum. It holds
   `game_frac` at production's 0.30; lc0's own recipe would be 0.50.
 
@@ -601,7 +660,11 @@ control. A run without a receipt is recorded as `valid_control: false`.
 
 ### 7.5 Still not verified (unverified ≠ passed)
 
-* **No arm was run**, and it still cannot be until bt4heads reaches `main`.
+* **No arm was run.** ⚑ The reason recorded here on 2026-08-16 — "it still cannot be
+  until bt4heads reaches `main`" — was overtaken the same day: PR #439 merged, this
+  branch merged `origin/main`, and the architecture guard now passes against the live
+  file. Unrun is now a matter of compute and of the trainer-axis gap above, not of a
+  blocked precondition. See "What is NOT verified".
 * **The guard-2 band is still missing** — it needs a trained checkpoint.
 * **`--shuffle-targets` has still never been run against a trained net.** Its floor is
   unit-tested against a brute-force permutation average; its behaviour on a real model

@@ -54,8 +54,12 @@ guards make the states below unreachable" as a proof about the flag path; it is
 a proof about the default path only.
 
 `--allow-arch-drift` does the same for check 0, and exists because the arm's
-plumbing has to be smoke-testable on a branch whose code cannot yet build the
-live architecture. Both flags stamp `valid_control: false` into summary.json,
+plumbing has to be smoke-testable on a deliberately tiny model — the driver
+tests run 1 step on a 4-row batch, and a run that had to build production's
+61M-param net to exercise its wiring would not be a unit test. (Until
+2026-08-16 it had a second reason: this branch could not build the live
+architecture at all. PR #439 removed that one; the smoke-test reason stands.)
+Both flags stamp `valid_control: false` into summary.json,
 as does omitting `--purity-receipt` — with the reason named in
 `validity_problems`.
 
@@ -493,7 +497,9 @@ def main(argv: list[str] | None = None) -> int:
   # passed `model=`, so the arch fix's own headline number (61,444,448) was a
   # decoration inside the module that fixed a decoration (review F4). This is
   # the only check that can see this tree's code building a different net from
-  # the same `model:` keys — which is exactly what the bt4heads promotion does.
+  # the same `model:` keys — a schema key the builder ignores, a normalisation
+  # that differs, a head this tree wires up differently. The `model:` mapping
+  # agreeing is not the net agreeing.
     preflight_architecture(
         Path(args.config), allow_drift=bool(args.allow_arch_drift), model=model,
     )
