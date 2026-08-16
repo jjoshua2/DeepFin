@@ -387,17 +387,25 @@ def resolve_search_shape(shape: str) -> SideSearch:
 def _assert_training_shape_matches_production(side: SideSearch, prod) -> None:
     """Refuse to run a `training` arena that is not production's search.
 
-    ⚑ Not redundant with the test suite, and deliberately at RUN time. CI checks
-    the COMMITTED `configs/pbt2_small.yaml`; this script reads whichever yaml is
-    in the tree it runs from, and the live yaml is edited in place and lags the
-    commit. The gate that matters therefore has to fire in the live tree, on the
-    file the arena actually read — which is the shape of the original defect
-    (the guard existed, CI was not where it needed to fire, the failure went
-    unread for five days).
+    ⚑ WHAT IT CATCHES, stated narrowly on purpose: a reintroduced hand-written
+    knob list, failing loudly at the top of an arena rather than in a CI log
+    nobody reads — the shape of the original defect (the guard existed, the
+    failure went unread for five days).
 
-    Structurally this cannot trip while the shape stays DERIVED; it exists so
-    that reintroducing a hand-written knob list fails loudly at the top of an
-    arena instead of silently mislabelling its Elo.
+    ⚑⚑ WHAT IT CANNOT CATCH. It is YAML-SYMMETRIC: both `prod` and `side.gumbel`
+    are derived from ONE snapshot of the same file, so any yaml VALUE change
+    moves them together and this stays silent. An earlier version of this
+    docstring claimed the gate closed the "CI reads the committed yaml while the
+    arena reads the live one" gap; it structurally cannot, and the PR's own
+    `test_a_newly_promoted_knob_is_carried_without_editing_the_arena` proves it
+    (patch the yaml to 11, the derivation returns 11, no `SystemExit`). It is
+    equally blind to a knob MISCLASSIFIED into one of the two ownership sets.
+    The partition pin in `tests/test_arena_search_shape_plumbing.py` is what
+    covers both of those.
+
+    Shipping a comment that claims more than the code does is the very defect
+    this PR exists to remove, so the scope above is deliberately smaller than
+    the guard's reach feels.
 
     ⚑ The field list is recomputed HERE from ``dataclasses.fields`` and the two
     ownership sets rather than taken from ``training_shape_carried_fields()``.

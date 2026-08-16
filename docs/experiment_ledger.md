@@ -51012,3 +51012,223 @@ when its NEGATIVE control fails, instead of printing the blindness conclusion re
 conclusion is what this entry cites for "the banked rows keep their Elo", so a probe that
 prints it while its own measurement disagrees would launder a future regression into a
 citation. [[a_gate_that_cannot_fail]] applies to evidence scripts too, not only to tests.
+
+### ⚑⚑ THE INSTRUMENT FLEET IS **NOT** NOW CORRECT — `scripts/audit_targets.py` CARRIES THE IDENTICAL DRIFT
+
+Do not read this entry as "the arena was the drifted instrument and it is fixed". The
+*target-quality ruler this very entry points at* — the paragraph above cites
+`gumbel.py`'s own claim that *"the only yardsticks are target quality against the deep-SF
+ruler"* — has the same hand-written-field-list defect, on the same knobs, since the same
+2026-08-10 commit. Confirmed by execution:
+
+```
+$ grep -n "target_max_visit_cap\|target_untempered_prior" scripts/audit_targets.py
+$            # <- no output
+```
+
+`_SearchProfile`'s fixed column list is `label, sims, topk, c_scale, c_visit, c_visit_root,
+c_scale_root, q_visit_exp_root, volatility_q_scale, volatility_fpu, volatility_anchor,
+overrides`. `_build` therefore runs the `train` / `train_fast` rows at
+`target_max_visit_cap=0`, `target_untempered_prior=False` while production runs **5 / True**,
+and (same file, third knob) applies `policy_temp=1.0` while production runs **1.5**.
+
+⚑ **This is strictly worse than the arena's version.** The arena mislabels which agent played.
+`audit_targets` measures the **stored target**, which is precisely the object these knobs
+modify — so here the drift is a **corruption of the row, not a mislabel of it**, and it lands
+on the one instrument the target-only knobs were promoted to be judged by.
+
+**It was not hypothetical: rows were banked inside the window** (the reviewer explicitly left
+this unchecked; it has since been checked). See the 2026-08-16 entry and its AMENDMENT 2 —
+row (d) of that same-session paired ruler is VOID as labelled, and the "the 08-10 promotion
+sharpened the target" confound written there had to be retracted in the OPPOSITE direction,
+because both knobs were off in BOTH arms.
+
+⇒ **Follow-up (task #223):** fix it the same structural way — derive `_SearchProfile` from
+`build_selfplay_gumbel_config` and diff it, rather than adding three fields by hand. Adding
+the fields closes today's gap and leaves the mechanism that opened it intact; the next
+promotion reopens it silently. [[fixing_a_defect_class_reintroduces_it]]
+
+## 2026-08-16 — ⚑⚑ SAME-SESSION PAIRED RULER: the policy "gain" is MASS CONCENTRATION, 13.6 of 13.9 cp
+
+**Not a cross-era comparison.** Both checkpoints scored in ONE session, same `audit_set_v1.jsonl`
+(n=4000 policy / 3723 value), same ruler config, same production training shape
+(`--sims 100 --gumbel-topk 16 --gumbel-training-rows`, c_scale 0.1, linear root), same seed 42.
+Run while training was stopped, on idle GPU. Raw output: `scratchpad/audit_targets_resume_ckpt.out`,
+`scratchpad/rulers_anchor_20260727.out`, `scratchpad/value_regret_resume_ckpt.out`.
+
+- **A** = `data/salvage/ANCHOR_20260727_preC17_step65475_lr3e-5` — the designated long-baseline anchor.
+- **B** = `data/salvage/bt4heads_iter100_20260815` — the checkpoint the next restart resumes from.
+
+### The decomposition
+
+| net raw policy (row a) | A (07-27) | B (08-15) | Δ |
+|---|---|---|---|
+| **E[regret]** (mass-weighted by the net's OWN prior) | 67.4 cp | 53.5 cp | **−13.9** |
+| **top-1 regret** (the argmax move) | 49.5 cp | 49.2 cp | **−0.3** |
+| entropy (nats) | 1.4628 | 0.8215 | −0.641 |
+| mean top-1 mass | 0.5065 | 0.7071 | +0.201 |
+| effective support | 5.214 | 2.747 | −2.467 |
+| frac top-1 >= 0.99 | 0.015 | 0.096 | 6.4x |
+| **E − top1 GAP** | **17.9** | **4.3** | **−13.6** |
+
+`E[regret] = Σ_i p_i · regret_i` under the net's own policy. As `p` concentrates, `E` is dragged
+toward `regret_1` **whether or not the argmax improves**. ⇒ **13.6 of the 13.9 cp is the gap
+collapsing. 0.3 cp is move quality.** The two numbers are not independent readings of "the policy
+got better"; one is mostly a restatement of the sharpening.
+
+⇒ **NEVER quote `E[regret]` as a policy-quality delta without the paired top-1 and the support.**
+A sharpening net improves `E[regret]` for free. This is the same failure family as
+[[ruler_proxy_shape_beats_sim_count]] ("the policy gain was confidence inflation"), now measured
+on the FROZEN audit set with an explicit decomposition rather than inferred.
+
+### The TARGET shows it too, and worse
+
+| production training target (row d) | A | B | Δ |
+|---|---|---|---|
+| E[regret] | 45.4 cp | 41.5 cp | −3.9 |
+| **top-1 regret** | **37.8 cp** | **38.7 cp** | **+0.9 (WORSE)** |
+| entropy | 0.8110 | 0.5373 | −0.274 |
+| mean top-1 mass | 0.7134 | 0.8026 | +0.089 |
+| effective support | 2.695 | 1.977 | −0.718 |
+
+**The target the policy head trains on got SHARPER and its best move got slightly WORSE.** That is
+a coherent explanation for the net's own sharpening — the student is tracking the teacher, which
+[[the_policy_target_is_sharp_and_wrong]] Phase 2 established it does faithfully (91.5% inheritance
+on the bad tail, generalised not memorised).
+
+### ⚑ WHAT THIS IS **NOT** — confounds, stated not discovered
+
+1. **NOT "19 days of training bought 0.3 cp".** A and B are different LINEAGES and the interval
+   contains many deliberate changes: C17 virtual loss, `mcts_simulations` 32→100, `gumbel_c_scale`
+   0.025→0.1, the bt4heads head promotion, and more. **No single cause is attributable.**
+2. **⚑⚑ TWO OF THOSE CHANGES SHARPEN THE TARGET BY CONSTRUCTION, DELIBERATELY.**
+   `gumbel_target_untempered_prior: true` undoes `policy_temp` on the stored target's prior term,
+   and `gumbel_target_max_visit_cap: 5` shrinks sigma on the Q term — both promoted 2026-08-10
+   (tasks #175/#176). **So the target's sharpening is INTENDED, not drift**, and must not be
+   reported as pathology. The finding is not "it sharpened"; it is **"it sharpened and the top-1
+   did not improve"**.
+3. The audit set is **FEN-only, no history/castling** [[audit_set_has_no_history_or_castling]],
+   and row (c) is scored against a deeper version of itself — same-material comparisons only.
+4. Value moved the other way and independently: `value_regret` **58.7 → 53.4 cp (−5.3)**, TB-excluded,
+   >=8-man, n=3723. That ruler is a RANKING measure over the value head and does not carry the
+   concentration artifact, so the value improvement is not explained away by this finding.
+
+### What it licenses
+
+- A **falsifiable prediction** for the deciding instrument: if the E[regret] gains were mass
+  concentration, an arena between A and B should read far below what a −13.9 cp policy improvement
+  would imply. Cheap to test and **not yet run**.
+- `gumbel_target_untempered_prior` was justified BY target quality on this exact ruler. Its
+  post-promotion top-1 is **+0.9 cp worse** here — **confounded, so NOT a verdict on the knob**, but
+  it is the first paired reading on the ruler the knob was sold against, and it does not corroborate.
+
+## 2026-08-16 — ⚑ AMENDMENT (same session, before anyone reads it): row (b) REFUTES the strong reading
+
+The entry above is right about the RAW PRIOR and **wrong if read as "the net did not improve"**. I
+had pulled rows (a) and (d) and not (b). Correcting it here rather than leaving the stronger claim
+standing.
+
+### The control that makes the rest trustworthy
+
+Row **(c) SF MultiPV soft target** — which does **not depend on the net** — reads **18.6 / 12.4 in
+BOTH runs, identically**. Same audit set, same ruler, same conditions, two separate processes. ⇒
+the A-vs-B deltas below are real and not session drift. This is the positive control the pair
+needed and it was free.
+
+### All five rows, overall E[regret] / top-1 (n=4000)
+
+| | A (07-27 anchor) | B (08-15 resume) | Δ E | **Δ top-1** |
+|---|---|---|---|---|
+| a) net raw policy | 67.4 / 49.5 | 53.5 / 49.2 | −13.9 | **−0.3** |
+| **b) net + Gumbel search (PLAY)** | 44.2 / 43.6 | 39.7 / 39.5 | −4.5 | **−4.1** |
+| c) SF MultiPV soft target | 18.6 / 12.4 | 18.6 / 12.4 | 0.0 | 0.0 |
+| d) production training target | 45.4 / 37.8 | 41.5 / 38.7 | −3.9 | **+0.9 WORSE** |
+| e) fast-ply search | 48.0 / 39.5 | 43.5 / 39.6 | −4.5 | +0.1 |
+
+### What actually happened, corrected
+
+1. **The raw prior sharpened without improving its argmax** (−0.3 cp). The −13.9 cp E[regret] gain
+   there is 13.6 cp of mass concentration. **That part of the entry above stands.**
+2. **⚑ But the PLAYED move genuinely improved: row (b) top-1 −4.1 cp.** And it is NOT the same
+   artifact — row (b)'s E−top1 gap is already tiny at both points (0.6 → 0.2), so there is no
+   concentration headroom to harvest. **This is real move quality.**
+3. **The training target's own argmax got WORSE by 0.9 cp** while its E[regret] improved 3.9.
+
+⇒ **The net improved where it PLAYS, through search, while the target it trains on got slightly
+worse at top-1 and the raw prior's argmax stood still.** That is consistent with the banked
+[[search_gain_decomposed_target_hypothesis_dead]] picture: the search is doing the work.
+
+### The method rule, which is what generalises
+
+**A single `E[regret]` delta cannot distinguish "better moves" from "more confident about the same
+moves". The paired top-1 is what separates them, and the E−top1 GAP tells you which regime you are
+in.** Read them together or not at all:
+- large gap that shrinks ⇒ suspect concentration, check top-1 before claiming a gain (row a);
+- gap already small ⇒ E and top-1 move together and the delta is move quality (row b).
+
+Retracting the prediction as stated: I wrote "an arena should read far below what −13.9 cp implies".
+The right prediction is the **row (b)** one — **−4.1 cp on the played move** — and even that is
+confounded (different lineages, C17, sims 32→100, c_scale, bt4heads heads). It is a direction, not
+a magnitude, and an arena remains the only Elo instrument.
+
+### ⚑⚑ AMENDMENT 2, same session — ROW (d) IS NOT PRODUCTION'S TRAINING TARGET
+
+Found by the independent review of PR #437 (finding P2-B), then **confirmed by my own execution**
+before writing this:
+
+```
+$ grep -n "target_max_visit_cap\|target_untempered_prior" scripts/audit_targets.py
+$            # <- no output
+```
+
+`scripts/audit_targets.py::_SearchProfile` carries a FIXED field list —
+`label, sims, topk, c_scale, c_visit, c_visit_root, c_scale_root, q_visit_exp_root,
+volatility_q_scale, volatility_fpu, volatility_anchor, overrides` — and **neither promoted knob
+appears anywhere in the file**. So `_build` left `gumbel_target_max_visit_cap=0` and
+`gumbel_target_untempered_prior=False` while **production runs 5 / True**. Live since the same
+commit as the arena's drift (#437's P2-A), i.e. every `audit_targets` run since 2026-08-10.
+
+⚑ The `_SearchProfile` docstring *describes this exact trap* — an override outside the fixed list is
+"accepted by the CLI, printed in the header, and then dropped on the floor by `_build`... **that is
+this repo's signature defect**" — while the class was falling into it for these two fields. A
+warning written next to the hazard is not a guard against it.
+
+**This is worse than the arena's version of the same drift.** The arena mislabels which agent
+played; `audit_targets` measures the **stored target itself**, which is the exact object these two
+knobs modify. ⇒ **corruption of the row, not a mislabel of it.**
+
+**Disposition, row by row — the knobs are target-side only:**
+
+| row | status |
+|---|---|
+| a) raw policy | **UNAFFECTED** — no search. The mass-concentration finding STANDS. |
+| **b) net + search (PLAY)** | **UNAFFECTED** — play arm, not the tempered target arm. **The −4.1 cp genuine improvement STANDS.** |
+| c) SF soft target | UNAFFECTED — net-independent control. |
+| **d) "production training target"** | **VOID as labelled.** Measured with both knobs OFF. |
+| e) fast-ply | same defect; also not a production target. |
+
+**⚑ And the confound note must be RETRACTED IN THE OPPOSITE DIRECTION from what I wrote.** I said
+the A→B interval contained the `gumbel_target_untempered_prior` / `gumbel_target_max_visit_cap`
+promotion and that "the target's sharpening is intended". **False for this measurement**: both
+knobs were off in BOTH arms, so the promotion cannot explain any part of row (d)'s sharpening
+(entropy 0.811 → 0.537). Row (d) is a clean A/B *of the un-promoted target* — the sharpening is
+real and is **not** attributable to the two deliberate sharpening knobs. That makes the row (d)
+observation stronger on mechanism and still unusable as a statement about what production stores.
+
+**Correcting action, not deferred:** re-ran both checkpoints supplying the knobs through the
+override path, which `_assert_overrides_realized` verifies actually lands:
+
+```
+--gumbel target_max_visit_cap=5 --gumbel target_untempered_prior=1
+[audit] d) production training target (full sims): --gumbel realized target_max_visit_cap=5 target_untempered_prior=True
+```
+
+⇒ the override channel DOES reach the production knobs; only the fixed profile list does not.
+Numbers replace row (d) when the paired run lands. **Until then no row-(d) number in
+`a75f07fdb` / `c2a2c6290` may be quoted as production's training target.**
+
+**Method rule (third instance today):** an instrument whose config is a hand-maintained subset of a
+growing struct silently decays every time the struct grows. Both #437 findings and this one are the
+same shape as [[fixing_a_defect_class_reintroduces_it]]. The fix is not "add the two fields" — it is
+to make the profile carry the production `GumbelConfig` and diff it, so the next promotion cannot
+open a fresh gap. Recorded against task #223.
