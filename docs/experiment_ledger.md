@@ -53907,3 +53907,117 @@ observed range on banked data. That is the check whose absence produced F1.
 
 **Open decision for Josh: (a), (b) or (c).** It has a compute-budget component, so it is not
 mine to make unilaterally. #440 stays BLOCKED until it is answered; nothing is launched.
+
+## 2026-08-16 — THE BAD TAIL IS **SCREENABLE AT LABEL TIME** (OOF AUC 0.737) — and my cost model for the repair arm was INVERTED
+
+Follow-up to the 2026-08-15 phase-2 entry, which closed: *"A full-width, non-fabricated
+teacher is still the only lever identified that reaches the tail. No arm launched; this
+needs an explicit go."* That arm has been blocked on COST. This entry attacks the cost,
+not the mechanism. **No arm launched, nothing live changed, CPU-only, zero GPU.**
+
+Predictions pre-registered in `scratchpad/tailscreen/PREDICTIONS_tailscreen.md` BEFORE any
+number was computed. Rigs `scratchpad/tailscreen/tailscreen{,_cv}.py`, results
+`tailscreen{,_cv}_results.json`. Reads only banked `scratchpad/target_vs_bt4/` artifacts.
+
+**QUESTION.** A blanket re-label is unaffordable. Is the bad tail PREDICTABLE from
+quantities already stored on every replay row — so the expensive teacher can be spent only
+where it changes the target?
+
+**ANSWER: yes, materially better than chance.** Out-of-fold (5-fold) logistic screen on
+four stored features, predicting `dQ = Q_target - Q_sf <= -0.10`:
+
+    OOF AUC (log_n_legal, log_sf_regret, top1_mass, not_listed)  0.7371 [0.6971, 0.7770]
+    OOF AUC (the two features with marginal signal only)         0.6630 [0.6246, 0.7031]
+    NEGATIVE CONTROL, labels shuffled                            0.4793   <- procedure is clean
+
+    sel   bad_capt  lift   deficit   label_x  loop_x
+    0.10     0.275  2.75     0.348     1.186   1.176
+    0.15     0.366  2.44     0.486     1.279   1.265
+    0.20     0.458  2.29     0.551     1.371   1.353
+    0.30     0.601  2.00     0.681     1.557   1.529
+    1.00     1.000  1.00     1.000     2.857   2.764   <- BLANKET, the thing to beat
+
+⇒ **48.6% of the bad tail's total dQ deficit for a 1.265x loop cost, against 2.764x for
+the blanket re-label.** Per unit of deficit repaired the targeted spend is **~3.2x more
+efficient**. That is the number that unblocks the arm's economics.
+
+⚑ **NOTE THE INTERACTION.** `not_listed` (AUC 0.489) and `top1_mass` (0.481) carry
+**zero marginal signal** and yet adding them lifts the model 0.663 -> 0.737. Features with
+no univariate signal can carry conditional signal; a marginal-AUC screen would have
+discarded both. The 4-feature set is the full set, not a selected one, so this number is
+not in-sample optimism — and the shuffled-label control at 0.479 confirms the fit is not
+manufacturing it.
+
+### ⚑⚑ VERDICT: **UNCLASSIFIED BY MY OWN PREREG.** The two clauses do not tile the space.
+
+I pre-committed **SCREENABLE** = ">=50% of BAD rows in the top 15%" and **NOT SCREENABLE**
+= "best AUC < 0.65". The result is 0.366 and 0.737: **both clauses evaluate FALSE.** I
+wrote a rule with a hole in the middle and the result landed in it.
+
+Reporting only the clause that passes would be precisely the one-way gate I have been
+rejecting in review all week ([[a_gate_that_cannot_fail]], and its mirror). So, stated
+plainly: **the screen is real and well above chance, and it is WEAKER than the operating
+point I pre-registered.** The rig now evaluates and prints BOTH clauses.
+
+### Prediction scorecard: **0 of 7 clean hits.**
+
+| # | predicted | measured | |
+|---|---|---|---|
+| P1 | reproduce 153/66/788 | 176/82/900, then EXACT after correction | **MISS, then caught** |
+| P2 | `sf_cp_regret_tgt` AUC 0.75-0.88 | **0.617** | MISS |
+| P3 | `not_listed` AUC 0.62-0.75 | **0.489** (no signal) | MISS |
+| P4 | `n_legal` AUC 0.55-0.63 | 0.640 | miss (marginal) |
+| P5 | `neg_top1_mass` AUC 0.50-0.60 | 0.481 | miss (marginal) |
+| P6 | top-15% captures >=50% of BAD | **0.366** | MISS |
+| P7 | cost 1.9x at 15% | **1.265x loop** (model was wrong) | MISS |
+
+My priors on this were systematically wrong in both directions. The pre-registration is
+the only reason that is legible rather than narrated away.
+
+### ⚑⚑ TWO CORRECTIONS, both mine, both caught before the conclusion
+
+**(1) WRONG POPULATION — caught ONLY by the pre-registered count.** My first pass read
+`tb4_q_q.npz` and skipped the `~postckpt_mask` restriction, giving 176/82/900 against the
+ledger's 153/66/788 and a bad-mean dQ of -0.2751 against -0.3041. Every AUC in that pass
+was void. `tb4_phase2.py` reads `tb4_q_WINNER.npz` and restricts to `trained`. Fixed;
+population now reproduces **153/66/788 with bad mean dQ -0.3041 exactly**.
+⇒ **P1 existed solely to catch this, and it did.** A screen fitted on the wrong 1158 rows
+would have looked entirely plausible. [[same_name_different_population]]
+
+**(2) ⚑⚑ THE COST MODEL WAS INVERTED — I read a 7x SAVING as a 7x COST.** My first cost
+column was `1 + f*6`, from reading [[sf_multipv_width_costs_7x]] as "MultiPV 40 costs 7x".
+**It says the opposite.** At a fixed `go nodes N` budget both settings spend N nodes, so
+**MultiPV width costs ZERO CPU** — [[sf_cpu_cost_split]] measured wall time FLAT across
+MultiPV 40/16/8/1 and states "`sf_multipv` is not a CPU lever at all". The 7x is the
+saving from NARROWING (MultiPV 3 reaches production's depth at ~100k nodes, not ~698k).
+
+⇒ **Width is not paid for in CPU. It is paid for in DEPTH, and depth is bought with NODES.**
+The real escalation axis is the node ratio 175k -> 500k = 2.857x on labels, ~2.764x on the
+loop at labels ~95% of cost. Corrected throughout.
+
+⚑ The two memories looked contradictory and are not; I nearly filed a conflict. **A "7x"
+with no direction attached is a number waiting to be read backwards.** Both records now
+need the direction in the claim itself, not in the body.
+
+### What this does and does not establish
+
+- **DOES:** a targeted spend beats a blanket one by ~3.2x per unit of deficit repaired, so
+  "the repair arm is unaffordable" is no longer supportable on the blanket-cost argument.
+- **DOES NOT:** show that a deeper/wider teacher actually FIXES the bad tail. The screen
+  says *where* to spend, never that spending helps. The deciding quantity is still the one
+  the phase-2 entry pinned: **bad-tail inheritance, target -0.304 Q vs SF against net
+  -0.278.** An arm that does not move THAT has not touched the defect.
+- **DOES NOT:** transfer to the 2.92% SF-unconverged LABEL slice
+  ([[sf_teacher_is_unconverged_on_3pct_of_labels]]). That is a *value*-label instability
+  between node budgets; this is the *policy* target's bad tail. Different populations,
+  different statistics — do not merge the two numbers. Same trap as P1, one level up.
+
+**The residual that bounds any label-time screen:** rows in the shallow teacher's most
+confident quartile (<=8cp regret) that are nonetheless BAD — n=8, **5.2% of all bad rows**,
+mean dQ -0.1615. Bad rate 3.05% inside that quartile vs 19.46% outside. Small, but it is
+the part no screen built from the shallow teacher can ever reach.
+
+**NEXT (not launched, needs an explicit go):** prereg an arm that escalates the top ~15-20%
+by this screen to a 500k-node label and reads out on bad-tail inheritance. Cost ~1.27-1.35x
+loop. ⚑ Per [[an_exact_command_means_it_was_run]] its yardstick must be EXECUTED to a real
+exit code, and its statistic shown to MOVE with the intervention, before the entry lands.

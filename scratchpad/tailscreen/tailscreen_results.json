@@ -1,0 +1,346 @@
+{
+  "split_valid_only": {
+    "n": 1744,
+    "bad": 153,
+    "good": 66,
+    "nontail": 1525,
+    "bad_mean_dQ": -0.3041024891228006
+  },
+  "split_valid_and_disagree": {
+    "n": 1007,
+    "bad": 153,
+    "good": 66,
+    "nontail": 788,
+    "bad_mean_dQ": -0.3041024891228006
+  },
+  "P1": "EXACT match to ledger 153/66/788",
+  "n_pop": 1007,
+  "n_bad": 153,
+  "base_rate": 0.1519364448857994,
+  "auc": {
+    "sf_cp_regret_tgt": {
+      "auc": 0.6172,
+      "ci95": [
+        0.5749,
+        0.6571
+      ]
+    },
+    "not_listed": {
+      "auc": 0.489,
+      "ci95": [
+        0.4506,
+        0.5291
+      ]
+    },
+    "n_legal": {
+      "auc": 0.6395,
+      "ci95": [
+        0.5951,
+        0.6837
+      ]
+    },
+    "neg_top1_mass": {
+      "auc": 0.4812,
+      "ci95": [
+        0.4385,
+        0.5242
+      ]
+    },
+    "combo_regret_plus_notlisted": {
+      "auc": 0.589,
+      "ci95": [
+        0.5438,
+        0.6315
+      ]
+    }
+  },
+  "curve": {
+    "sf_cp_regret_tgt": [
+      {
+        "select_frac": 0.05,
+        "n_selected": 50,
+        "bad_captured": 0.0392,
+        "random_baseline": 0.05,
+        "lift": 0.784,
+        "deficit_captured": 0.0705,
+        "cost_multiplier": 1.3
+      },
+      {
+        "select_frac": 0.1,
+        "n_selected": 101,
+        "bad_captured": 0.0915,
+        "random_baseline": 0.1,
+        "lift": 0.915,
+        "deficit_captured": 0.1685,
+        "cost_multiplier": 1.6
+      },
+      {
+        "select_frac": 0.15,
+        "n_selected": 151,
+        "bad_captured": 0.1373,
+        "random_baseline": 0.15,
+        "lift": 0.915,
+        "deficit_captured": 0.2002,
+        "cost_multiplier": 1.9
+      },
+      {
+        "select_frac": 0.2,
+        "n_selected": 201,
+        "bad_captured": 0.2092,
+        "random_baseline": 0.2,
+        "lift": 1.046,
+        "deficit_captured": 0.2482,
+        "cost_multiplier": 2.2
+      },
+      {
+        "select_frac": 0.3,
+        "n_selected": 302,
+        "bad_captured": 0.3007,
+        "random_baseline": 0.3,
+        "lift": 1.002,
+        "deficit_captured": 0.3679,
+        "cost_multiplier": 2.8
+      },
+      {
+        "select_frac": 0.5,
+        "n_selected": 504,
+        "bad_captured": 0.6732,
+        "random_baseline": 0.5,
+        "lift": 1.346,
+        "deficit_captured": 0.7564,
+        "cost_multiplier": 4.0
+      }
+    ],
+    "not_listed": [
+      {
+        "select_frac": 0.05,
+        "n_selected": 50,
+        "bad_captured": 0.0458,
+        "random_baseline": 0.05,
+        "lift": 0.915,
+        "deficit_captured": 0.0325,
+        "cost_multiplier": 1.3
+      },
+      {
+        "select_frac": 0.1,
+        "n_selected": 101,
+        "bad_captured": 0.085,
+        "random_baseline": 0.1,
+        "lift": 0.85,
+        "deficit_captured": 0.0738,
+        "cost_multiplier": 1.6
+      },
+      {
+        "select_frac": 0.15,
+        "n_selected": 151,
+        "bad_captured": 0.1242,
+        "random_baseline": 0.15,
+        "lift": 0.828,
+        "deficit_captured": 0.1034,
+        "cost_multiplier": 1.9
+      },
+      {
+        "select_frac": 0.2,
+        "n_selected": 201,
+        "bad_captured": 0.1569,
+        "random_baseline": 0.2,
+        "lift": 0.784,
+        "deficit_captured": 0.1245,
+        "cost_multiplier": 2.2
+      },
+      {
+        "select_frac": 0.3,
+        "n_selected": 302,
+        "bad_captured": 0.2941,
+        "random_baseline": 0.3,
+        "lift": 0.98,
+        "deficit_captured": 0.3067,
+        "cost_multiplier": 2.8
+      },
+      {
+        "select_frac": 0.5,
+        "n_selected": 504,
+        "bad_captured": 0.4706,
+        "random_baseline": 0.5,
+        "lift": 0.941,
+        "deficit_captured": 0.484,
+        "cost_multiplier": 4.0
+      }
+    ],
+    "n_legal": [
+      {
+        "select_frac": 0.05,
+        "n_selected": 50,
+        "bad_captured": 0.0523,
+        "random_baseline": 0.05,
+        "lift": 1.046,
+        "deficit_captured": 0.04,
+        "cost_multiplier": 1.3
+      },
+      {
+        "select_frac": 0.1,
+        "n_selected": 101,
+        "bad_captured": 0.1176,
+        "random_baseline": 0.1,
+        "lift": 1.176,
+        "deficit_captured": 0.1466,
+        "cost_multiplier": 1.6
+      },
+      {
+        "select_frac": 0.15,
+        "n_selected": 151,
+        "bad_captured": 0.1895,
+        "random_baseline": 0.15,
+        "lift": 1.264,
+        "deficit_captured": 0.2024,
+        "cost_multiplier": 1.9
+      },
+      {
+        "select_frac": 0.2,
+        "n_selected": 201,
+        "bad_captured": 0.3072,
+        "random_baseline": 0.2,
+        "lift": 1.536,
+        "deficit_captured": 0.3198,
+        "cost_multiplier": 2.2
+      },
+      {
+        "select_frac": 0.3,
+        "n_selected": 302,
+        "bad_captured": 0.451,
+        "random_baseline": 0.3,
+        "lift": 1.503,
+        "deficit_captured": 0.465,
+        "cost_multiplier": 2.8
+      },
+      {
+        "select_frac": 0.5,
+        "n_selected": 504,
+        "bad_captured": 0.6928,
+        "random_baseline": 0.5,
+        "lift": 1.386,
+        "deficit_captured": 0.6682,
+        "cost_multiplier": 4.0
+      }
+    ],
+    "neg_top1_mass": [
+      {
+        "select_frac": 0.05,
+        "n_selected": 50,
+        "bad_captured": 0.0065,
+        "random_baseline": 0.05,
+        "lift": 0.131,
+        "deficit_captured": 0.0023,
+        "cost_multiplier": 1.3
+      },
+      {
+        "select_frac": 0.1,
+        "n_selected": 101,
+        "bad_captured": 0.0196,
+        "random_baseline": 0.1,
+        "lift": 0.196,
+        "deficit_captured": 0.009,
+        "cost_multiplier": 1.6
+      },
+      {
+        "select_frac": 0.15,
+        "n_selected": 151,
+        "bad_captured": 0.0523,
+        "random_baseline": 0.15,
+        "lift": 0.349,
+        "deficit_captured": 0.0385,
+        "cost_multiplier": 1.9
+      },
+      {
+        "select_frac": 0.2,
+        "n_selected": 201,
+        "bad_captured": 0.1242,
+        "random_baseline": 0.2,
+        "lift": 0.621,
+        "deficit_captured": 0.1205,
+        "cost_multiplier": 2.2
+      },
+      {
+        "select_frac": 0.3,
+        "n_selected": 302,
+        "bad_captured": 0.2157,
+        "random_baseline": 0.3,
+        "lift": 0.719,
+        "deficit_captured": 0.2004,
+        "cost_multiplier": 2.8
+      },
+      {
+        "select_frac": 0.5,
+        "n_selected": 504,
+        "bad_captured": 0.4837,
+        "random_baseline": 0.5,
+        "lift": 0.967,
+        "deficit_captured": 0.4534,
+        "cost_multiplier": 4.0
+      }
+    ],
+    "combo_regret_plus_notlisted": [
+      {
+        "select_frac": 0.05,
+        "n_selected": 50,
+        "bad_captured": 0.0327,
+        "random_baseline": 0.05,
+        "lift": 0.654,
+        "deficit_captured": 0.0911,
+        "cost_multiplier": 1.3
+      },
+      {
+        "select_frac": 0.1,
+        "n_selected": 101,
+        "bad_captured": 0.1111,
+        "random_baseline": 0.1,
+        "lift": 1.111,
+        "deficit_captured": 0.1534,
+        "cost_multiplier": 1.6
+      },
+      {
+        "select_frac": 0.15,
+        "n_selected": 151,
+        "bad_captured": 0.1569,
+        "random_baseline": 0.15,
+        "lift": 1.046,
+        "deficit_captured": 0.2082,
+        "cost_multiplier": 1.9
+      },
+      {
+        "select_frac": 0.2,
+        "n_selected": 201,
+        "bad_captured": 0.2026,
+        "random_baseline": 0.2,
+        "lift": 1.013,
+        "deficit_captured": 0.238,
+        "cost_multiplier": 2.2
+      },
+      {
+        "select_frac": 0.3,
+        "n_selected": 302,
+        "bad_captured": 0.2876,
+        "random_baseline": 0.3,
+        "lift": 0.959,
+        "deficit_captured": 0.3176,
+        "cost_multiplier": 2.8
+      },
+      {
+        "select_frac": 0.5,
+        "n_selected": 504,
+        "bad_captured": 0.6275,
+        "random_baseline": 0.5,
+        "lift": 1.255,
+        "deficit_captured": 0.6752,
+        "cost_multiplier": 4.0
+      }
+    ]
+  },
+  "blind_spot": {
+    "definition": "sf_cp_regret_tgt <= 1cp AND dQ <= -0.10",
+    "n": 0,
+    "share_of_bad": 0.0,
+    "mean_dQ": null
+  },
+  "terminal_in_bad": 153
+}
