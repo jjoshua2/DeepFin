@@ -51497,3 +51497,72 @@ end-proximity does not reach the loss through that path today. If it is ever swi
 table becomes live and the two corpora stop being comparable on the value term.
 
 ⇒ Recorded against task #199 as a pre-committed interpretation constraint, not a defect.
+
+### LEDGER ENTRY (owed, and flagged missing by the second review) — the FULL EP repetition change set
+
+The 2026-08-16 prereg above covered the *originally identified* divergence. Closing the review
+findings changed behaviour BEYOND that, and protocol rule 1 has no carve-out for correctness
+fixes, so the whole set is recorded here. PR #436, head `56b8ab20d`.
+
+**What changes on the production path.** The repetition key now includes a LEGAL en-passant
+component. That reaches: model input plane 103 (repetition), MCTS `SOLVED_DRAW`, and selfplay
+game termination. It is not a search-only tweak.
+
+**Four sub-changes, three of them found by FUZZING the defect class rather than by fixing the
+named FEN** — and that is the transferable part. The author fuzzed 40,000 inconsistent-ep
+positions on the reviewed head and found, besides the 463 known `c=False py=True` cases,
+**10 in the opposite direction** that nobody had predicted:
+
+1. drop the captured-pawn requirement;
+2. **add python-chess's capturer-rank mask** (`BB_RANKS[4 if turn else 3]`) — without it a b2
+   pawn "captured" on c3 (`Nr1n4/3N4/6P1/k3P3/8/8/1PpnR1RK/8 w - c3`);
+3. clear the captured square from **every** enemy attacker set (the simulation contradicted its
+   own occupancy: a piece there vanished as a blocker while still radiating attacks);
+4. reject an OCCUPIED ep target square.
+
+⇒ **Fixing only the reported instance would have shipped (2) as a live defect under a comment
+claiming parity.** [[internal_equivalence_cannot_find_a_shared_wrong_rule]]
+
+**Evidence.** 240,000 positions / 3 seeds: pawn-consistent domain **0 mismatches**; residual
+**9 of 27,787**, all key-SPLITTING. Reachable-play sweep 62,922 plies / 9,098 ep-set:
+**0 mismatches** — the change is a no-op in real play. `zobrist_hash` byte-identical across the
+change (106,111 plies; independently re-checked by the reviewer over 172,943).
+
+**The independent reviewer's powered instrument, which is the number to quote.** Broad random
+corpora were a **vacuous pass** (19,072 uniform plies gave 53 legal-ep positions, 9 real 2-folds,
+empty intersection — FP=0 on BOTH trees, proving nothing). Purpose-built: legal-ep position plus
+a 4-ply reversible knight cycle ⇒ **base 87/87 false positives, PR 0/87**, with **3,897 genuine
+repetitions detected identically on both trees**. A false-positive fix that also silenced genuine
+repetitions would have been a FAIL, and it did not.
+
+### ⚑ OPEN, carried knowingly: the parity claim is FALSE for KINGLESS boards, in the MERGE direction
+
+Reviewer finding B5. `bitboards_have_legal_ep` returns 0 when the mover has no king; python-chess's
+`is_into_check` returns `False` there, so `has_legal_en_passant()` is **True**. `8/8/8/3pP3/8/8/8/8
+w - d6 0 1` is **pawn-consistent** — inside the domain the fix asserts is clean — and reads
+`c=False, py=True`, i.e. **key-MERGING**, the dangerous direction (Josh: a representation that
+makes you think you can draw and then you lose is worse than a rarer split).
+
+⚑⚑ **The author's 720,000-position sweep could not see it BY CONSTRUCTION**: `_random_sparse_board`
+always places both kings. A sweep whose generator excludes the failure mode is
+[[a_gate_that_cannot_fail]] wearing a large sample size — the same shape as the defect this PR
+fixes, one level down, and the third time today a fix for our signature defect harboured a fresh
+instance [[fixing_a_defect_class_reintroduces_it]].
+
+**Accepted as P2, not P1, and here is the reasoning rather than a shrug:** a kingless board is
+illegal by the rules of chess and cannot arise from `play_batch`, selfplay, or UCI input parsing.
+It is reachable only by constructing a `CBoard` directly. So the correct action is to **narrow the
+claim to match the code** — the comment must not assert parity outside the king-bearing domain —
+and to make the sweep able to generate kingless boards so the exclusion is pinned rather than
+accidental. Whether an illegal board can reach a `CBoard` on ANY production path is explicitly
+**not verified** by either pass.
+
+**Also stale on merge:** the W1 entry (2026-08-0x) describes `CBoard.hash` as the repetition key.
+After this merge the repetition key is `CBoard.hash` PLUS a legal-ep component; W1's TT-corruption
+narrative is unaffected (that was fixed separately by `cboard_transposition_key`), but the
+characterisation no longer describes the repetition path.
+
+**What this change is still NOT evidence for:** anything about Elo, and anything about the
+plateau. Measured incidence ~5.4e-6 per search — orders of magnitude below what a 1600-game
+paired arena resolves. It is a correctness fix and must never be promoted into a causal story
+about why the loop is flat.
