@@ -132,10 +132,25 @@ def collect(
         x = np.asarray(arrs["x"])
         gid = np.asarray(arrs["game_id"]).astype(np.int64)
         ply = np.asarray(arrs["ply_index"]).astype(np.int64)
-        scan["rows_scanned"] += int(raw.shape[0])
+        n_rows_shard = int(raw.shape[0])
+        # ⚑⚑ PRODUCTION ONLY BUILDS THIS LABEL ON SELFPLAY SLOTS.
+        # `finalize.py:867` gates `want_sf_p0_regret` on `is_selfplay_slot`, so a
+        # curriculum row NEVER receives the midpoint imputation. Screening on
+        # unfiltered rows prices a tail that a large minority of the population
+        # never carries -- and the two eras differ in exactly this composition
+        # (wide 0.72 selfplay vs live MPV6 0.91), which is the dimension the
+        # "the historical alpha transfers" claim compares across.
+        has_sp = np.asarray(arrs.get("has_is_selfplay", np.zeros(n_rows_shard))).astype(bool)
+        is_sp = np.asarray(arrs.get("is_selfplay", np.zeros(n_rows_shard))).astype(bool)
+        selfplay = has_sp & is_sp
+        scan["rows_scanned"] += n_rows_shard
+        scan["rows_selfplay"] += int(selfplay.sum())
         index = {(int(gid[i]), int(ply[i])): i for i in range(raw.shape[0])}
         for i in range(raw.shape[0]):
             # ⚑ P0 SHIFT. Row i's own block is the position AFTER row i's move.
+            if not selfplay[i]:
+                scan["skipped_not_selfplay"] += 1
+                continue
             parent = index.get((int(gid[i]), int(ply[i]) - P0_PARENT_PLY_OFFSET))
             if parent is None or not has_raw[parent]:
                 continue
@@ -256,15 +271,26 @@ def bootstrap_alphas(
 
 
 def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
-    """Fit both alphas and score every censor against the reference gradient."""
-    s_t = s_m = s_m_rk = s_m_1mrk = 0.0
-    num_g = den_g = 0.0
+    """Fit both alphas and score every censor against the reference gradient.
+
+    ⚑ ONE POPULATION, DETERMINED BEFORE ANY FITTING. An earlier version selected
+    rows in the fitting loop and then dropped `‖g_true‖ == 0` rows in the metric
+    loop, so `alpha_grad` was the least-squares optimum of a statistic OTHER than
+    the pooled L2 printed beside it: a flat row contributes `row_num = 0` with
+    `row_den > 0`, dragging the fit toward 0 while contributing nothing to the
+    metric. Measured on a 2-row case, fitted 0.3637 against a true argmin of
+    0.7340 — 33% worse on the very number it claimed to minimise. Both passes now
+    iterate exactly `usable`.
+
+    ⚑ NO FABRICATED TRUTH IN THE REFERENCE. A legal move the wide label never
+    scored at ANY rank has no observed regret. Filling it with `r_k` (the old
+    behaviour) fed pure "alpha = 0" evidence into the gradient fit from moves
+    nobody measured. The support is now restricted to scored moves and the prior
+    renormalised over it; the dropped mass is reported, not assumed negligible.
+    """
     usable: list[Row] = []
-    # ⚑ BOTH alphas are ratios of SUMS OVER ROWS, so keeping each row's five
-    # contributions makes the bootstrap exact rather than approximate: resampling
-    # rows and re-summing reproduces the estimator on the resampled population
-    # without re-running it.
-    per_row: list[tuple[float, float, float, float, float]] = []
+    prep: list[dict[str, Any]] = []
+    dropped_mass: list[float] = []
     for row in rows:
         p_full = row.prior
         if p_full is None:
@@ -273,26 +299,59 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
         hid = [pos[m] for m in row.hidden if m in pos]
         if not hid:
             continue
-        mass = float(p_full[hid].sum())
+        # Restrict to the moves the wide label actually scored. `hidden` is
+        # already scored-by-construction; `surfaced` likewise.
+        scored = np.array([int(m) in row.regret for m in row.legal])
+        if not scored.any():
+            continue
+        dropped_mass.append(float(p_full[~scored].sum()))
+        p = p_full[scored]
+        total = float(p.sum())
+        if total <= 0:
+            continue
+        p = p / total
+        legal_s = row.legal[scored]
+        r_true = np.array([row.regret[int(m)] for m in legal_s])
+        known = np.array([int(m) in set(row.surfaced) for m in legal_s])
+        if known.all():
+            continue
+        mass = float(p[~known].sum())
         if mass <= 0:
             continue
+        g_true = gradient(p, r_true)
+        norm = float(np.linalg.norm(g_true))
+        if norm <= 0:
+            # A flat reference gradient cannot discriminate between censors, and
+            # including it biases the fit while contributing nothing measurable.
+            continue
         usable.append(row)
-        true_tail = float(sum(p_full[j] * row.regret[int(row.legal[j])] for j in hid))
+        prep.append({"p": p, "r_true": r_true, "known": known, "g_true": g_true,
+                     "norm": norm, "mass": mass, "r_k": row.r_k})
+
+    s_t = s_m = s_m_rk = s_m_1mrk = 0.0
+    num_g = den_g = 0.0
+    # ⚑ BOTH alphas are ratios of SUMS OVER ROWS, so keeping each row's five
+    # contributions makes the bootstrap exact rather than approximate: resampling
+    # rows and re-summing reproduces the estimator on the resampled population
+    # without re-running it.
+    per_row: list[tuple[float, float, float, float, float]] = []
+    for q in prep:
+        p, r_true, known, r_k = q["p"], q["r_true"], q["known"], q["r_k"]
+        mass = q["mass"]
+        true_tail = float(p[~known] @ r_true[~known])
         s_t += true_tail
         s_m += mass
-        s_m_rk += mass * row.r_k
-        s_m_1mrk += mass * (1.0 - row.r_k)
+        s_m_rk += mass * r_k
+        s_m_1mrk += mass * (1.0 - r_k)
         # g(alpha) = g0 + alpha * d, so the gradient-optimal alpha is closed form.
-        r_true = np.array([row.regret.get(int(m), row.r_k) for m in row.legal])
-        known = np.array([int(m) in set(row.surfaced) for m in row.legal])
-        r0 = np.where(known, r_true, row.r_k)
-        u = np.where(known, 0.0, (1.0 - row.r_k) / 2.0)
-        d = p_full * (u - float(p_full @ u))
-        row_num = float(d @ (gradient(p_full, r_true) - gradient(p_full, r0)))
+        r0 = np.where(known, r_true, r_k)
+        u = np.where(known, 0.0, (1.0 - r_k) / 2.0)
+        d = p * (u - float(p @ u))
+        row_num = float(d @ (q["g_true"] - gradient(p, r0)))
         row_den = float(d @ d)
         num_g += row_num
         den_g += row_den
-        per_row.append((true_tail, mass * row.r_k, mass * (1.0 - row.r_k), row_num, row_den))
+        per_row.append((true_tail, mass * r_k, mass * (1.0 - r_k), row_num, row_den))
 
     alpha_value = 2.0 * (s_t - s_m_rk) / s_m_1mrk
     alpha_grad = num_g / den_g
@@ -304,23 +363,17 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
     num2: dict[str, float] = dict.fromkeys(alpha_grid, 0.0)
     press: dict[str, list[float]] = {n: [] for n in (*alpha_grid, "true")}
     den2 = 0.0
-    for row in usable:
-        p = row.prior
-        assert p is not None
-        r_true = np.array([row.regret.get(int(m), row.r_k) for m in row.legal])
-        known = np.array([int(m) in set(row.surfaced) for m in row.legal])
-        g_true = gradient(p, r_true)
-        norm = float(np.linalg.norm(g_true))
-        if norm <= 0:
-            continue
+    for q in prep:
+        p, r_true, known = q["p"], q["r_true"], q["known"]
+        g_true, norm, r_k = q["g_true"], q["norm"], q["r_k"]
         den2 += norm ** 2
         press["true"].append(float(g_true[~known].sum()))
         for name in alpha_grid:
             fill = {
-                "r_k censor": row.r_k,
-                "midpoint (live)": (row.r_k + 1.0) / 2.0,
-                "alpha_value": tail_value(row.r_k, alphas["alpha_value"]),
-                "alpha_grad": tail_value(row.r_k, alphas["alpha_grad"]),
+                "r_k censor": r_k,
+                "midpoint (live)": (r_k + 1.0) / 2.0,
+                "alpha_value": tail_value(r_k, alphas["alpha_value"]),
+                "alpha_grad": tail_value(r_k, alphas["alpha_grad"]),
             }[name]
             g_hat = gradient(p, np.where(known, r_true, fill))
             cos[name].append(float(g_hat @ g_true / (np.linalg.norm(g_hat) * norm + 1e-12)))
@@ -332,6 +385,7 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
     cap = SF_OWN_REGRET_CAP_CP
     return {
         "n_rows": len(usable),
+        "dropped_unscored_mass_mean": float(np.mean(dropped_mass)) if dropped_mass else 0.0,
         "alpha_value_ci": ci["alpha_value"],
         "alpha_grad_ci": ci["alpha_grad"],
         "alpha_value": alpha_value,
@@ -392,6 +446,7 @@ def main() -> int:
         shards.extend(select_shards(Path(d), args.max_shards))
     scan: dict[str, Any] = {
         "shard_names": [p.name for p in shards], "rows_scanned": 0,
+        "rows_selfplay": 0, "skipped_not_selfplay": 0,
         "coverage_sum": 0.0, "coverage_n": 0, "unscored_mass_sum": 0.0,
         "surfaced_not_legal": 0, "skipped_shards": [], "skipped_shards_omitted": 0,
     }
@@ -400,9 +455,33 @@ def main() -> int:
         raise SystemExit("no rows with a parent MultiPV block wider than --k")
 
     coverage, unscored = check_invariants(scan, len(rows))
-    print(f"shards {len(shards)}   rows scanned {scan['rows_scanned']}   analysed {len(rows)}")
+    print(f"shards {len(shards)}   rows scanned {scan['rows_scanned']}"
+          f"   selfplay {scan['rows_selfplay']}   analysed {len(rows)}")
+    print(f"  ⚑ non-selfplay rows dropped: {scan['skipped_not_selfplay']}"
+          f"   (production never builds sf_p0_regret on them -- finalize.py:867)")
     print(f"  wide label covers {coverage:.4f} of legal moves")
     print(f"  policy mass on moves the wide label never scored: {unscored:.6f}")
+    # ⚑ THE COVERAGE ASSERT IS STRUCTURALLY INERT WHEN THE BLOCK IS NARROWER THAN
+    # THE LEGAL COUNT (e.g. MultiPV 6 vs 30 legal): a misaligned run then silently
+    # DISCARDS most rows instead of tripping, printing a healthy coverage from the
+    # handful that survive. `surfaced_not_legal` is the detector that still has
+    # power there, so it must be visible rather than buried in the JSON.
+    snl = int(scan["surfaced_not_legal"])
+    frac_snl = snl / max(scan["rows_selfplay"], 1)
+    print(f"  ⚑ surfaced-move-not-legal rows: {snl} ({frac_snl:.4f} of selfplay rows)"
+          f"   -- the P0 detector that still fires at narrow MultiPV")
+    if frac_snl > 0.02:
+        raise AssertionError(
+            f"surfaced_not_legal {frac_snl:.4f} > 0.02: SF's own top move is not legal in "
+            "the row it was joined to. That is a position mismatch (the P0 shift), not noise.",
+        )
+    kept = len(rows) / max(scan["rows_selfplay"], 1)
+    print(f"  rows kept / selfplay rows: {kept:.4f}")
+    if kept < 0.10:
+        raise AssertionError(
+            f"kept only {kept:.4f} of selfplay rows: a misaligned join discards most rows "
+            "while leaving the coverage and unscored-mass diagnostics looking healthy.",
+        )
 
     weighting = "policy_target (search target — NOT what the loss weights by)"
     if args.checkpoint:

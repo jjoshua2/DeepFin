@@ -55,6 +55,9 @@ def _shard(
     return {
         "sf_multipv_raw": np.stack([_pad(parent_block), _pad(child_block)]),
         "has_sf_multipv_raw": np.array([True, True]),
+        # production only builds sf_p0_regret on selfplay slots (finalize.py:867)
+        "is_selfplay": np.array([True, True]),
+        "has_is_selfplay": np.array([True, True]),
         "legal_mask": legal,
         "policy_target": policy,
         "x": np.zeros((2, 4, 8, 8), dtype=np.float32),
@@ -66,7 +69,8 @@ def _shard(
 def _collect(monkeypatch: pytest.MonkeyPatch, arrs: dict[str, Any], k: int = 2):
     monkeypatch.setattr(tcs, "load_shard_arrays", lambda _path: (arrs, {}))
     scan: dict[str, Any] = {
-        "shard_names": [], "rows_scanned": 0, "coverage_sum": 0.0, "coverage_n": 0,
+        "shard_names": [], "rows_scanned": 0, "rows_selfplay": 0,
+        "skipped_not_selfplay": 0, "coverage_sum": 0.0, "coverage_n": 0,
         "unscored_mass_sum": 0.0, "surfaced_not_legal": 0,
         "skipped_shards": [], "skipped_shards_omitted": 0,
     }
@@ -270,3 +274,65 @@ def test_pooled_l2_is_not_the_per_row_mean() -> None:
     v = res["variants"]["midpoint (live)"]
     assert v["rel_l2_median"] > 10.0 * v["rel_l2_pooled"]
     assert v["rel_l2_pooled"] < 5.0
+
+
+def test_non_selfplay_rows_are_excluded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """⚑ Production never builds this label off a curriculum slot.
+
+    `finalize.py:867` gates `want_sf_p0_regret` on `is_selfplay_slot`, so pricing
+    the tail on non-selfplay rows measures an imputation those rows never carry.
+    Mutation: dropping the `selfplay[i]` guard makes this analyse the row.
+    """
+    arrs = _shard(
+        parent_block=GOOD_PARENT, child_block=BAD_CHILD,
+        child_legal=CHILD_LEGAL, child_policy=FLAT_POLICY,
+    )
+    arrs["is_selfplay"] = np.array([True, False])
+    rows, _, scan = _collect(monkeypatch, arrs)
+    assert rows == []
+    assert scan["skipped_not_selfplay"] == 1
+
+
+def test_flat_reference_rows_leave_the_fit() -> None:
+    """⚑ A row with ||g_true|| == 0 must not steer alpha_grad.
+
+    It contributes row_num = 0 with row_den > 0, dragging the fit toward zero
+    while contributing NOTHING to the pooled L2 the fit claims to minimise. The
+    earlier version selected rows in the fitting loop and dropped flat rows only
+    in the metric loop; measured on a 2-row case it fitted 0.3637 against a true
+    argmin of 0.7340. Mutation: admitting flat rows to the fit changes alpha_grad.
+    """
+    live = _analysable({0: 0.0, 1: 0.2, 2: 0.4, 3: 0.8}, np.array([0.4, 0.3, 0.2, 0.1]))
+    flat = _analysable(dict.fromkeys(range(4), 0.25), np.array([0.25] * 4))
+    only_live = tcs.analyse([live], ("alpha_grad",))
+    with_flat = tcs.analyse([live, flat], ("alpha_grad",))
+    assert with_flat["n_rows"] == only_live["n_rows"] == 1
+    assert with_flat["alpha_grad_raw"] == pytest.approx(only_live["alpha_grad_raw"])
+
+
+def test_n_rows_describes_the_population_the_variants_describe() -> None:
+    """`n_rows` and every variant statistic must count the SAME rows."""
+    live = _analysable({0: 0.0, 1: 0.2, 2: 0.4, 3: 0.8}, np.array([0.4, 0.3, 0.2, 0.1]))
+    flat = _analysable(dict.fromkeys(range(4), 0.25), np.array([0.25] * 4))
+    res = tcs.analyse([live, flat], ("midpoint (live)",))
+    assert res["n_rows"] == 1, "the flat row is in neither the fit nor the metric"
+
+
+def test_never_scored_moves_do_not_enter_the_reference() -> None:
+    """⚑ A legal move the wide label never scored has NO observed regret.
+
+    Filling it with r_k fed pure 'alpha = 0' evidence from moves nobody measured.
+    Mutation: reinstating `row.regret.get(m, row.r_k)` over the full legal set
+    pulls alpha_grad toward 0 here.
+    """
+    regrets = {0: 0.0, 1: 0.2, 2: 0.9}          # move 3 is legal but NEVER scored
+    row = tcs.Row(legal=np.array([0, 1, 2, 3]), regret=regrets,
+                  surfaced=[0, 1], hidden=[2], r_k=0.2)
+    row.prior = np.array([0.3, 0.3, 0.2, 0.2])
+    got = tcs.analyse([row], ("alpha_grad",))
+    same_without = tcs.Row(legal=np.array([0, 1, 2]), regret=regrets,
+                           surfaced=[0, 1], hidden=[2], r_k=0.2)
+    same_without.prior = np.array([0.375, 0.375, 0.25])
+    ref = tcs.analyse([same_without], ("alpha_grad",))
+    assert got["alpha_grad_raw"] == pytest.approx(ref["alpha_grad_raw"], rel=1e-9)
+    assert got["dropped_unscored_mass_mean"] == pytest.approx(0.2)

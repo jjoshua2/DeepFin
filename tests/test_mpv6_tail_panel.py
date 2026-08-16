@@ -114,7 +114,9 @@ def test_substituted_keeps_prod_regrets_for_surfaced_moves() -> None:
     row = panel.build_rows([_one()], "matched_scored", substitute=True)[0]
     assert row.r_k == pytest.approx(50 / CAP)
     assert row.regret[11] == pytest.approx(50 / CAP), "surfaced move keeps the PROD value"
-    assert row.regret[12] == pytest.approx(300 / CAP), "hidden move takes MATCHED's value"
+    # MATCHED rebased into PROD's frame: delta = mean(0-0, -50-(-60)) = +5, so
+    # move 12's score -300 becomes -295 and its regret is measured off PROD's best.
+    assert row.regret[12] == pytest.approx(295 / CAP), "hidden move takes MATCHED's REBASED value"
     assert row.surfaced == [10, 11]
     assert sorted(row.hidden) == [12, 13]
 
@@ -123,8 +125,8 @@ def test_the_truth_arm_selects_which_search_prices_the_tail() -> None:
     """⚑ The primary and the truth panel must not be reading the same arm."""
     m = panel.build_rows([_one()], "matched_scored", substitute=True)[0]
     d = panel.build_rows([_one()], "deep_scored", substitute=True)[0]
-    assert m.regret[12] == pytest.approx(300 / CAP)
-    assert d.regret[12] == pytest.approx(400 / CAP)
+    assert m.regret[12] == pytest.approx(295 / CAP)   # MATCHED, rebased by +5
+    assert d.regret[12] == pytest.approx(350 / CAP)   # DEEP,    rebased by +50
     assert m.r_k == pytest.approx(d.r_k), "both keep PROD's censoring point"
 
 
@@ -238,6 +240,8 @@ def _fake_shard_arrays(n_rows: int) -> dict[str, Any]:
     ])
     return {
         "x": xs,
+        "is_selfplay": np.ones(n_rows, dtype=bool),
+        "has_is_selfplay": np.ones(n_rows, dtype=bool),
         "legal_mask": np.ones((n_rows, 1858), dtype=bool),
         "_input_history_encoding": np.array(["lc0_root_legacy_meta"]),
         "_policy_encoding": np.array([ENC]),
@@ -268,14 +272,79 @@ def test_sampling_spreads_across_shards_instead_of_draining_the_first(
 def test_sampling_backfills_when_a_shard_is_short(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
 ) -> None:
-    """A quota is a target, not a cap on the total: short shards must be covered."""
-    arrs = _fake_shard_arrays(40)
-    monkeypatch.setattr(panel, "load_shard_arrays", lambda _p: (arrs, {}))
-    shards = [tmp_path / f"shard_{i:03d}.zarr" for i in range(2)]
+    """⚑ A quota is a TARGET, not a cap on the total — short shards must be covered.
+
+    An earlier version of this test handed BOTH shards the same fixture, so the
+    second shard held only duplicates and the test exercised dedup exhaustion
+    rather than backfill. It passed while there was no backfill pass at all.
+    This version gives shard 0 only TWO usable positions, so the deficit is real:
+    without a second pass the result is 2 + quota, not `want`.
+    """
+    small, big = _fake_shard_arrays(2), _fake_shard_arrays(40)
+    shards = [tmp_path / "shard_000.zarr", tmp_path / "shard_001.zarr", tmp_path / "shard_002.zarr"]
+    monkeypatch.setattr(
+        panel, "load_shard_arrays",
+        lambda path: ((small if path.name == "shard_000.zarr" else big), {}),
+    )
     scan: dict[str, Any] = {"rows_scanned": 0, "skipped_narrow": 0,
                             "skipped_shards": [], "skipped_shards_omitted": 0}
-    # 16 distinct positions exist in total; asking for 30 must return all of them
-    # rather than stopping at the first shard's quota of 15.
-    out = panel.sample_positions(shards, scan, 30, 0)
-    assert len(out) == 16
-    assert scan["sampled_shards"] == 2
+    out = panel.sample_positions(shards, scan, 12, 0)
+    per_shard = {sh.name: sum(o["shard"] == sh.name for o in out) for sh in shards}
+    assert per_shard["shard_000.zarr"] == 2, "the short shard gives all it has"
+    assert len(out) == 12, f"the deficit must be backfilled, got {per_shard}"
+
+
+def test_non_selfplay_positions_are_not_sampled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    """⚑ finalize.py:867 gates sf_p0_regret on is_selfplay_slot.
+
+    Mutation: dropping the `selfplay[i]` guard samples these rows.
+    """
+    arrs = _fake_shard_arrays(20)
+    arrs["is_selfplay"] = np.zeros(20, dtype=bool)
+    monkeypatch.setattr(panel, "load_shard_arrays", lambda _p: (arrs, {}))
+    scan: dict[str, Any] = {"rows_scanned": 0, "skipped_narrow": 0,
+                            "skipped_shards": [], "skipped_shards_omitted": 0}
+    assert panel.sample_positions([tmp_path / "shard_000.zarr"], scan, 5, 0) == []
+    assert scan["skipped_not_selfplay"] > 0
+
+
+def test_rebase_offset_is_the_confound_cross_arm_check_cannot_see() -> None:
+    """⚑⚑ THE FINDING THIS FIX EXISTS FOR.
+
+    `to_regret` measures each arm against ITS OWN best, so a uniform level shift
+    between the arms cancels out of every regret DIFFERENCE — `cross_arm_check`
+    reads exactly 1.000 — while landing entirely on the substituted tail, which
+    is the one quantity being measured. Rebasing removes the dependence instead
+    of merely checking for it.
+    """
+    shifted = [(m, sc - 20.0) for m, sc in MATCHED]
+    plain = _result(PROD, MATCHED, DEEP, PRIOR, LEGAL)
+    off = _result(PROD, shifted, DEEP, PRIOR, LEGAL)
+
+    # the falsifier is blind to it, by construction
+    assert panel.cross_arm_check([plain], "prod_scored", "matched_scored")["ratio"] == pytest.approx(
+        panel.cross_arm_check([off], "prod_scored", "matched_scored")["ratio"])
+
+    # ... and the offset is exactly recovered and removed
+    assert panel.rebase_offset(PROD, MATCHED) == pytest.approx(5.0)
+    assert panel.rebase_offset(PROD, shifted) == pytest.approx(25.0)
+    a = panel.build_rows([plain], "matched_scored", substitute=True)[0]
+    b = panel.build_rows([off], "matched_scored", substitute=True)[0]
+    assert a.regret[12] == pytest.approx(b.regret[12]), "rebased tail is offset-invariant"
+
+    # ⚑ WITHOUT rebasing, the SAME 20 cp shift lands entirely on the tail -- 300 cp
+    # becomes 320 cp -- while the falsifier above reads exactly 1.000 either way.
+    # That is the defect in one line: the confound's domain (absolute level) and
+    # the check's domain (regret differences) are disjoint.
+    c = panel.build_rows([plain], "matched_scored", substitute=True, rebase=False)[0]
+    d = panel.build_rows([off], "matched_scored", substitute=True, rebase=False)[0]
+    assert c.regret[12] == pytest.approx(300 / CAP)
+    assert d.regret[12] == pytest.approx(320 / CAP)
+    assert d.regret[12] - c.regret[12] == pytest.approx(20 / CAP), "the leak IS the shift"
+
+
+def test_rebase_needs_two_common_moves() -> None:
+    assert panel.rebase_offset([(1, 0.0)], [(1, 0.0), (2, -5.0)]) is None
+    assert panel.rebase_offset([(1, 0.0), (2, -5.0)], [(9, 1.0)]) is None

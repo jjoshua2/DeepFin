@@ -24,8 +24,13 @@ this panel exists to avoid: a deeper arm finds bigger refutations everywhere, so
 its tail regrets are larger for reasons that have nothing to do with censoring.
 So there are THREE arms on the same positions:
 
-  PROD    — an exact replica of the live labeller, read off the live yaml rather
-            than assumed: MultiPV 6, 150,000 nodes (the realized median of
+  PROD    — the live labeller's SETTINGS, read off the live yaml rather than
+            assumed. ⚑ NOT an exact replica: this arm searches with `fresh=True`
+            (cold TT) while production labels through `StockfishPool.submit`,
+            which defaults `fresh=False` — a WARM, pooled engine. Cold is the
+            right choice HERE (a warm TT would let one arm steer the next, which
+            is the agreement being measured) but it is a real difference from
+            production and is named rather than papered over. Settings: MultiPV 6, 150,000 nodes (the realized median of
             `sf_label_meta[:,0]`, pinned at `sf_label_nodes_floor`, NOT the 200k
             cap), Threads 1, Hash 17 MB, and `stockfish_syzygy_path` — which is
             the 3-4-5 directory ALONE, not the colon-separated production pair
@@ -130,6 +135,13 @@ def sample_positions(
             record_skipped_shard(scan, shard, exc)
             continue
         x = np.asarray(arrs["x"])
+        n_shard = int(x.shape[0])
+        # ⚑⚑ production only builds sf_p0_regret on SELFPLAY slots (finalize.py:867),
+        # so a curriculum row never carries the imputation this panel prices.
+        has_sp = np.asarray(arrs.get("has_is_selfplay", np.zeros(n_shard))).astype(bool)
+        is_sp = np.asarray(arrs.get("is_selfplay", np.zeros(n_shard))).astype(bool)
+        selfplay = has_sp & is_sp
+        scan["rows_selfplay"] = scan.get("rows_selfplay", 0) + int(selfplay.sum())
         legal_mask = np.asarray(arrs["legal_mask"]).astype(bool)
         hist = str(np.asarray(arrs["_input_history_encoding"]).reshape(-1)[0])
         pol_enc = str(np.asarray(arrs["_policy_encoding"]).reshape(-1)[0])
@@ -137,6 +149,9 @@ def sample_positions(
         for i in rng.permutation(int(x.shape[0])):
             if len(out) >= target:
                 break
+            if not selfplay[int(i)]:
+                scan["skipped_not_selfplay"] = scan.get("skipped_not_selfplay", 0) + 1
+                continue
             board = decode_board_from_planes(x[int(i)], input_history_encoding=hist)
             if board is None or board.is_game_over():
                 continue
@@ -156,6 +171,47 @@ def sample_positions(
                 "in_tb": pieces <= TB_PIECE_LIMIT, "pieces": pieces,
                 "shard": shard.name,
             })
+    # ⚑ SECOND PASS = the actual backfill. The first pass caps each shard at its
+    # quota, so a SHORT shard's deficit was permanently lost -- the docstring
+    # claimed a backfill that did not exist, and the test named for it used one
+    # fixture for every shard so it could never create a short shard.
+    if len(out) < want:
+        for shard in shards:
+            if len(out) >= want:
+                break
+            try:
+                arrs, _ = load_shard_arrays(shard)
+            except (OSError, ValueError, KeyError):
+                continue
+            x = np.asarray(arrs["x"])
+            n_shard = int(x.shape[0])
+            has_sp = np.asarray(arrs.get("has_is_selfplay", np.zeros(n_shard))).astype(bool)
+            is_sp = np.asarray(arrs.get("is_selfplay", np.zeros(n_shard))).astype(bool)
+            selfplay = has_sp & is_sp
+            legal_mask = np.asarray(arrs["legal_mask"]).astype(bool)
+            hist = str(np.asarray(arrs["_input_history_encoding"]).reshape(-1)[0])
+            pol_enc = str(np.asarray(arrs["_policy_encoding"]).reshape(-1)[0])
+            for i in rng.permutation(n_shard):
+                if len(out) >= want:
+                    break
+                if not selfplay[int(i)]:
+                    continue
+                board = decode_board_from_planes(x[int(i)], input_history_encoding=hist)
+                if board is None or board.is_game_over():
+                    continue
+                key = position_key(board)
+                if key in seen or board.legal_moves.count() <= PROD_MULTIPV:
+                    continue
+                seen.add(key)
+                pieces = int(chess.popcount(board.occupied))
+                out.append({
+                    "fen": board.fen(), "board": board, "x": x[int(i)],
+                    "legal_mask": legal_mask[int(i)], "policy_encoding": pol_enc,
+                    "n_legal": board.legal_moves.count(),
+                    "phase": phase_bucket(round(float(x[int(i)][:12].sum()))),
+                    "in_tb": pieces <= TB_PIECE_LIMIT, "pieces": pieces,
+                    "shard": shard.name,
+                })
     scan["sampled_shards"] = len({o["shard"] for o in out})
     return out
 
@@ -290,13 +346,38 @@ def attach_priors(results: list[dict[str, Any]], checkpoint: str, batch: int) ->
     return device
 
 
-def build_rows(results: list[dict[str, Any]], truth_arm: str, *, substitute: bool) -> list[Row]:
+def rebase_offset(prod: list[tuple[int, float]], truth: list[tuple[int, float]]) -> float | None:
+    """Per-row level offset between two arms, on the moves BOTH scored.
+
+    ⚑⚑ THIS IS THE CONFOUND `cross_arm_check` STRUCTURALLY CANNOT SEE. `to_regret`
+    measures each arm against ITS OWN best, so a uniform level shift between the
+    arms cancels out of every regret difference — the ratio reads exactly 1.000
+    while the shift lands entirely on the substituted tail, which is the one
+    quantity being measured. Measured impact: a 20 cp offset moves alpha from
+    0.1986 to 0.245 (+23%) with the falsifier passing at 1.000.
+
+    So do not merely check the levels agree — REMOVE the dependence. Scores are
+    mapped into the PROD arm's frame before any regret is taken.
+    """
+    ps = dict(prod)
+    common = [(ps[m], sc) for m, sc in truth if m in ps]
+    if len(common) < 2:
+        return None
+    return float(np.mean([a - b for a, b in common]))
+
+
+def build_rows(
+    results: list[dict[str, Any]], truth_arm: str, *, substitute: bool, rebase: bool = True,
+) -> list[Row]:
     """Price the tail with `truth_arm` as the withheld truth.
 
     ``substitute=True`` keeps the PROD arm's own regrets for the moves production
     actually surfaced, so only the CENSORING is varied. ``substitute=False`` takes
     every regret from `truth_arm`, which also re-scores the surfaced moves and
     therefore answers a different question — see the module docstring.
+
+    ``rebase`` maps the truth arm's raw scores into the PROD arm's level before
+    taking regrets, so the substituted tail carries no inter-arm offset.
     """
     rows: list[Row] = []
     for r in results:
@@ -304,15 +385,27 @@ def build_rows(results: list[dict[str, Any]], truth_arm: str, *, substitute: boo
         if prior is None:
             continue
         legal = r["legal_idx"]
+        truth_scored = r[truth_arm]
+        if substitute and rebase:
+            delta = rebase_offset(r["prod_scored"], truth_scored)
+            if delta is None:
+                continue
+            truth_scored = [(m, sc + delta) for m, sc in truth_scored]
+            r["rebase_delta"] = delta
         prod_reg = to_regret(r["prod_scored"])
-        truth_reg = to_regret(r[truth_arm])
+        truth_reg = to_regret(truth_scored)
         surfaced = [mi for mi, _ in r["prod_scored"]]
         hidden = [int(m) for m in legal if int(m) not in set(surfaced) and int(m) in truth_reg]
         if not hidden:
             continue
         if substitute:
-            regret = {**{m: truth_reg[m] for m in hidden},
-                      **{m: prod_reg[m] for m in surfaced}}
+            # ⚑ In PROD's frame: regret is measured off PROD's own best, and the
+            # hidden moves' scores have been rebased into that same frame above.
+            best = r["prod_scored"][0][1]
+            regret = {m: prod_reg[m] for m in surfaced}
+            for m in hidden:
+                sc = dict(truth_scored)[m]
+                regret[m] = min(max(best - sc, 0.0), SF_OWN_REGRET_CAP_CP) / SF_OWN_REGRET_CAP_CP
             r_k = max(prod_reg[m] for m in surfaced)
         else:
             if any(m not in truth_reg for m in surfaced):
