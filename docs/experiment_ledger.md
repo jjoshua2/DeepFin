@@ -1126,8 +1126,25 @@ every future checkpoint, with no dedicated GPU run and no re-generation.
 ### HYPOTHESIS
 
 Capturing the root prior's argmax + its probability at the ply that produced the row
-costs ~4 bytes/row and makes the (prior top-1, MCTS choice) pair available on every
-subsequently generated row, for any checkpoint, forever.
+costs **8 bytes/row** (int32 index + float16 prob + two uint8 presence flags; ~12 MB
+over a 1.5M-row window) and makes the (prior top-1, MCTS choice) pair available on
+every subsequently generated row, for any checkpoint, forever.
+
+⚑ **`prior_top1_prob` is at T = 1.0 and is NOT the mass the search used.** Search
+divides root logits by `gumbel_policy_temp` (live **1.5**), so the tree was seeded with
+a FLATTER prior than this number reports; at T > 1 the stored value is systematically
+the higher of the two. The **index is unaffected** — argmax is invariant under division
+by a positive scalar — so `a_P`, the half the ΔQ pair actually needs, is identical
+either way. T = 1.0 is chosen deliberately: `π_θ` is a property of θ, whereas
+`gumbel_policy_temp` is a search knob, and a stored column defined against it would
+silently change meaning the day the knob moves while old and new rows sit in the same
+replay window under the same name. The schema already takes this side —
+`gumbel_target_untempered_prior` (production **true**) exists to undo the same
+temperature on the stored target's log-prior term. ⇒ read this field as "the net's
+confidence in its own top move", never as "the mass search gave that move"; a consumer
+wanting the latter must apply the era's `gumbel_policy_temp` itself, and must first
+establish what it was for those rows. Rationale in
+`selfplay/network_turn._prior_top1`.
 
 ### WHAT IT DOES NOT CLAIM
 
@@ -1194,6 +1211,20 @@ mirror paths (`mirror_sample` and `maybe_mirror_batch_arrays`) off that one regi
 instead of two hand-written tuples. Mutation-verified: reverting either path to a copy
 fails `tests/test_mirror_augmentation.py` (mutant M1 killed 7 tests, M2 killed 2).
 
+⚑ **The completeness guard did not guard completeness.** The registry-walking test
+claimed "add a new index field to the schema and forget the mirror, and this fails",
+but it iterates `POLICY_INDEX_FIELDS` — so it structurally cannot see the forgettable
+step, which is REGISTERING. Proven: a `foo_move_index` added to `_OPTIONAL_FIELD_SPECS`
++ `_SCALAR_FIELDS` + `ReplaySample` and omitted from the registry left **seven suites
+green** (135 tests). Replaced by a partition guard that walks
+`_OPTIONAL_FIELD_SPECS` — the place a field is actually added — and requires every
+scalar integer spec to be classified exactly once, either registered as a move index or
+listed in the test's `_NOT_A_MOVE_INDEX` with a reason. The exemption list is
+TEST-SIDE on purpose: `POLICY_INDEX_FIELDS` is unchanged, so no production consumer of
+that registry (`validate_arrays`' range check, the two mirror paths) sees a widened
+set. Both branches demonstrated by execution — the `foo_move_index` case RED, the
+current tree GREEN.
+
 ### NEGATIVE CONTROL
 
 `test_prior_disagrees_with_search_in_the_fixture` asserts the test fixture actually
@@ -1215,9 +1246,19 @@ mutant M3 (capture reads `c_probs` instead of the prior): killed, 5 tests.
   field only pays off if it accumulates passively from the deploy, and a default-off
   knob would need a yaml key to do anything — which is the "wired but never enabled"
   failure this field exists to route around.
-- **Resume format bumped 1 → 2.** Four new per-record columns; a v1 file lacks them and
-  would KeyError on decode, so the bump converts that into the documented
-  discard-with-reason. Costs at most one session's suspended in-flight games, once.
+- **Resume format bumped 1 → 2.** Four new per-record columns. ⚑ CORRECTED: the bump
+  is NOT load-bearing against a crash — forcing the gate to accept a v1 file yields a
+  graceful `reasons={'unreadable': N}`, not an uncaught `KeyError` (measured by the
+  independent review). The bump is still right, for a weaker and honest reason:
+  `version_mismatch` names the actual cause where `unreadable` would misattribute it.
+  Costs at most one session's suspended in-flight games, once.
+- **The round-trip the bump pays for is now asserted.** It was not: deleting both
+  `_rebuild_record` restore lines left every suite green (review mutant M9). The fields
+  are captured from the ply's logits and — unlike `x` / `relations` — cannot be
+  recomputed from the replayed board, so `tests/test_selfplay_resume.py` now carries
+  `test_prior_top1_survives_suspend_and_resume` (distinct dyadic values per record plus
+  one deliberately-absent row) and the two fields are in `_assert_record_identical`,
+  behind a non-vacuity assertion that the session captured any at all.
 - `record_prior_top1` is a RESTART key (baked into the frozen `GameConfig` at session
   start) and is `_RESUME_COMPAT_EXEMPT` (a game spanning a flip yields fewer covered
   rows, never a wrong one).

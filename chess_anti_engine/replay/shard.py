@@ -155,7 +155,9 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     # Generating net's raw root prior top-1 (see ReplaySample). The index is a
     # MOVE INDEX in this shard's policy encoding -> it is registered in
     # POLICY_INDEX_FIELDS below, which is what makes mirror augmentation remap
-    # rather than copy it. The prob is a plain scalar and is mirror-invariant.
+    # rather than copy it. The prob is a plain scalar and is mirror-invariant,
+    # and is the net's T=1.0 mass, NOT the search's tempered prior -- see
+    # selfplay/network_turn._prior_top1 before reading a confidence off it.
     _OptFieldSpec("prior_top1_index",     "has_prior_top1",        (),            _I32_DT),
     _OptFieldSpec("prior_top1_prob",      "has_prior_top1_prob",   (),            _F16),
     _OptFieldSpec("future_sf_regret_sum", "has_future_sf_regret_sum", (),         _F16),

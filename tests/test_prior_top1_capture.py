@@ -334,6 +334,54 @@ def test_the_flag_changes_what_lands_in_a_written_shard(tmp_path) -> None:
 
 
 @requires_c
+def test_the_kill_switch_also_kills_priors_carried_in_from_a_resumed_game(
+    tmp_path,
+) -> None:
+    """⚑ The flag gates the WRITE, not only the capture.
+
+    ``record_prior_top1`` is `_RESUME_COMPAT_EXEMPT`, so a game suspended by a
+    session that had it ON resumes into a session that has it OFF still carrying
+    priors on its restored records. If finalize only asked "does this record hold
+    a prior?", the kill switch would leave those rows covered — a switch that
+    turns the field off for new plies but not for the shard is not a kill switch,
+    and it breaks the pre-committed "0% coverage when disabled" arm of this
+    change's yardstick.
+
+    Reproduced without the resume machinery, which is not what is under test:
+    records built with the flag ON (so they genuinely carry values), finalized
+    under a game config with the flag OFF — exactly the state a resumed game is
+    in. The in-memory non-vacuity assertion is the load-bearing one: without it
+    this would pass just as well against records that never had a prior.
+    """
+    state, _inp, _boards = _run_c(GameConfig(record_prior_top1=True))
+    carried = sum(
+        1 for i in range(_BATCH)
+        for r in state.samples_per_game[i] if r.prior_top1_index is not None
+    )
+    assert carried >= 3, "fixture carries no priors — the assertion below is vacuous"
+
+    # The session's frozen GameConfig now says OFF, as it would after a restart
+    # that flipped the kill switch while these games were in flight.
+    object.__setattr__(state, "game", dataclasses.replace(
+        state.game, record_prior_top1=False,
+    ))
+    assert state.game.record_prior_top1 is False
+    off = _write_and_reload(state, tmp_path, "carried_off")
+
+    assert int(np.asarray(off.get("has_prior_top1", np.zeros(1))).astype(bool).sum()) == 0
+    assert int(
+        np.asarray(off.get("has_prior_top1_prob", np.zeros(1))).astype(bool).sum()
+    ) == 0
+    # ...and the records themselves were not mutated -- finalize declines to
+    # WRITE the value, it does not erase selfplay's in-memory state.
+    still = sum(
+        1 for i in range(_BATCH)
+        for r in state.samples_per_game[i] if r.prior_top1_index is not None
+    )
+    assert still == carried
+
+
+@requires_c
 def test_written_index_is_compact_and_not_a_raw_4672_id(tmp_path) -> None:
     """The encoding translation at finalize is real.
 

@@ -56,7 +56,13 @@ class ReplaySample:
   # index is in the SHARD's policy encoding (compact when policy_encoding is
   # lc0_1858), like sf_move_index -- so it MUST be mirror-remapped, not copied.
     prior_top1_index: int | None = None
-    prior_top1_prob: float | None = None  # prior mass on that move, [0, 1]
+  # ⚑ Softmax at T = 1.0 over the legal moves: the NET's mass on that move, NOT
+  # the mass the search seeded its tree with (search divides root logits by
+  # gumbel_policy_temp, production 1.5, so the search's prior is flatter and
+  # this number is the higher of the two). The INDEX is unaffected -- argmax is
+  # temperature-invariant. Rationale for storing the untempered one:
+  # selfplay/network_turn._prior_top1.
+    prior_top1_prob: float | None = None  # in [0, 1]
 
     sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
     sf_multipv_raw: np.ndarray | None = None  # (SF_MULTIPV_RAW_MAX, 5) int16 raw MultiPV rows

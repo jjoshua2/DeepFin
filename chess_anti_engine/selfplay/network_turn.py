@@ -514,8 +514,36 @@ def _prior_top1(logits_full: np.ndarray, mask: np.ndarray) -> tuple[int, float]:
 
     Reads the network's policy logits for one ply BEFORE search touches them,
     so the returned move is ``argmax pi_theta(s)`` for exactly the theta that is
-    about to choose a move via MCTS at the same node. Softmax is over the legal
-    moves only, matching how the ply paths build their prior.
+    about to choose a move via MCTS at the same node.
+
+    ⚑⚑ TEMPERATURE: the softmax is over the legal moves at **T = 1.0**, which is
+    NOT the temperature the search ran. Search divides the root (and every leaf)
+    logit by ``SearchConfig.gumbel_policy_temp`` -- production runs **1.5** --
+    so the returned probability is the NET's prior mass on that move, and is
+    NOT the prior mass the tree was seeded with. At T > 1 the search's prior is
+    flatter, so this value is systematically the HIGHER of the two. The returned
+    INDEX is unaffected: argmax is invariant under division by a positive
+    scalar, so ``a_P`` is identical either way and the DeltaQ pair is unharmed.
+
+    T = 1.0 is deliberate, on three grounds:
+
+    1. ``pi_theta`` is a property of theta. ``gumbel_policy_temp`` is a search
+       hyperparameter, and a stored column defined in terms of it silently
+       changes meaning the day someone moves the knob -- while old and new rows
+       sit in the same replay window under the same name, which is this repo's
+       "same name, different measurement" defect written to disk.
+    2. The schema already takes this side elsewhere: ``target_untempered_prior``
+       (production **true**) exists precisely to undo ``gumbel_policy_temp`` on
+       the STORED target's log-prior term, so "store the untempered prior" is
+       the established convention here, not a new one.
+    3. It is recoverable in neither direction from the other, and T = 1 is the
+       one of the two that does not need a per-row record of which temperature
+       was live when the row was written.
+
+    ⇒ read ``prior_top1_prob`` as "the net's confidence in its own top move",
+    never as "the mass search gave that move". A consumer that wants the latter
+    must apply the era's ``gumbel_policy_temp`` itself, and must first establish
+    what it was for those rows.
 
     ⚑ Called from BOTH ``_append_records_via_c`` and
     ``_append_records_via_python`` on purpose. The two paths must store the same
@@ -530,7 +558,10 @@ def _prior_top1(logits_full: np.ndarray, mask: np.ndarray) -> tuple[int, float]:
     legal = np.flatnonzero(m)
     if legal.size == 0:
         return -1, 0.0
-    lg = np.asarray(logits_full, dtype=np.float64).reshape(-1)[legal]
+  # Index THEN widen: masking first keeps the float64 copy to the ~30 legal
+  # entries instead of allocating a 4672-wide (37 KB) one per net ply. float32
+  # -> float64 is exact, so this is bit-identical to widening first.
+    lg = np.asarray(logits_full).reshape(-1)[legal].astype(np.float64, copy=False)
     k = int(np.argmax(lg))
     top = float(lg[k])
     if not math.isfinite(top):

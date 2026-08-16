@@ -602,13 +602,118 @@ def test_mirror_batch_leaves_inactive_prior_top1_rows_alone():
     assert int(mirrored["prior_top1_index"][0]) == -1
 
 
-def test_every_registered_policy_index_field_is_remapped_by_both_paths():
-    """Completeness guard, behavioural rather than by source inspection.
+# Every SCALAR INTEGER optional shard field that is NOT a move index, with the
+# reason. This is the exemption half of
+# ``test_no_scalar_int_shard_field_escapes_the_move_index_classification``: the
+# test walks ``_OPTIONAL_FIELD_SPECS`` — the one place a new field is actually
+# added — and demands that each such field be EITHER registered in
+# ``POLICY_INDEX_FIELDS`` (⇒ range-checked and mirror-remapped) OR listed here.
+#
+# ⚑ Adding a name here is a decision, not paperwork: it asserts the value is not
+# an index into policy space, and therefore that mirroring it unchanged is
+# correct. Get that wrong and every mirrored row carries the wrong move, with no
+# exception and no shape change. If you are adding a field and are unsure, it
+# belongs in POLICY_INDEX_FIELDS — a remap of a non-index is loud (it will not
+# round-trip in that field's own tests), a copy of an index is silent.
+_NOT_A_MOVE_INDEX: dict[str, str] = {
+    "game_id": "opaque game identifier",
+    "ply_index": "ply counter — '_index' in the name, not an index into policy space",
+    "seed_id": "blind-spot seed identifier",
+    "seed_family_id": "blind-spot seed family identifier",
+    "opening_source_code": "enum of where the opening came from",
+    "sf_played_rank": "1-based rank WITHIN the MultiPV list, not a move id",
+    "future_sf_regret_count": "how many future plies the regret aggregate covers",
+    "is_network_turn": "boolean",
+    "is_selfplay": "boolean",
+}
 
-    replay/shard.POLICY_INDEX_FIELDS is the schema's statement of which scalars
-    hold a move index. Anything on that list that a mirror path COPIES is a
-    silent corruption of that field, so this drives the list itself: add a new
-    index field to the schema and forget the mirror, and this fails.
+
+def test_no_scalar_int_shard_field_escapes_the_move_index_classification():
+    """⚑ The completeness half. It walks the specs, NOT the registry.
+
+    The forgettable step when adding a move-index field is REGISTERING it: the
+    author adds an ``_OptFieldSpec``, a ``_SCALAR_FIELDS`` row and a
+    ``ReplaySample`` attribute, and the value then flows to disk and back
+    without ever passing through ``POLICY_INDEX_FIELDS`` — so nothing
+    range-checks it and both mirror paths COPY it, which is the wrong move on
+    every mirrored row.
+
+    ``test_every_registered_policy_index_field_is_remapped_by_both_paths``
+    below cannot see that, by construction: it iterates the registry, and being
+    in the registry is precisely what the forgotten step would have done. It is
+    a guard on the mirror paths, not on the schema. Its docstring used to claim
+    the schema case; a `foo_move_index` added to ``_OPTIONAL_FIELD_SPECS`` and
+    omitted from the registry left seven suites green.
+
+    So derive the field set from the place a field is actually ADDED, and
+    require every scalar integer spec to be classified exactly once: registered
+    as a move index, or listed in ``_NOT_A_MOVE_INDEX`` with a reason. Adding a
+    field and classifying it nowhere fails here.
+
+    Scope note: scalar (``shape == ()``) and integer-dtyped. A move index cannot
+    be a float, and the non-scalar policy-space fields are covered by
+    ``POLICY_SIZED_FIELDS`` and its own guards.
+    """
+    from chess_anti_engine.replay.shard import (
+        _OPTIONAL_FIELD_SPECS,
+        POLICY_INDEX_FIELDS,
+    )
+
+    int_dtypes = {np.dtype(np.uint8), np.dtype(np.int32), np.dtype(np.int64)}
+    registered = dict(POLICY_INDEX_FIELDS)
+    specs = {s.arr: s for s in _OPTIONAL_FIELD_SPECS}
+
+    scalar_ints = [
+        s for s in _OPTIONAL_FIELD_SPECS if s.shape == () and s.dtype in int_dtypes
+    ]
+    # Non-vacuity: this test is worthless if the filter selects nothing, and it
+    # must at least reach the field this guard was written for.
+    assert len(scalar_ints) >= 10
+    assert "prior_top1_index" in {s.arr for s in scalar_ints}
+
+    unclassified = [
+        s.arr for s in scalar_ints
+        if s.arr not in registered and s.arr not in _NOT_A_MOVE_INDEX
+    ]
+    assert not unclassified, (
+        "scalar integer shard field(s) classified neither as a move index nor as "
+        f"a non-index: {unclassified}. Add each to replay/shard.POLICY_INDEX_FIELDS "
+        "(if it holds a move id — it will then be range-checked by validate_arrays "
+        "and mirror-remapped by both augmentation paths) or to _NOT_A_MOVE_INDEX "
+        "in this file with the reason it is not one."
+    )
+
+    # Both directions: no name may be classified twice, and nothing may be
+    # exempted that does not exist (a rename would otherwise leave a dead
+    # exemption behind that silently re-opens the hole under the old name).
+    both = sorted(set(registered) & set(_NOT_A_MOVE_INDEX))
+    assert not both, f"classified as both an index and a non-index: {both}"
+    stale = sorted(set(_NOT_A_MOVE_INDEX) - {s.arr for s in scalar_ints})
+    assert not stale, f"_NOT_A_MOVE_INDEX names no longer in the schema: {stale}"
+
+    # And the registry must name real specs with their real presence flags —
+    # validate_arrays' range check and the mirror lookup are both keyed on this
+    # pair, so a typo in either half is a check that silently never applies.
+    for name, flag in registered.items():
+        assert name in specs, f"POLICY_INDEX_FIELDS names a non-existent field: {name}"
+        assert specs[name].flag == flag, (
+            f"{name}: registry flag {flag!r} != schema flag {specs[name].flag!r}"
+        )
+
+
+def test_every_registered_policy_index_field_is_remapped_by_both_paths():
+    """Behaviour guard on the two MIRROR PATHS, driven by the registry.
+
+    ``replay/shard.POLICY_INDEX_FIELDS`` is the schema's statement of which
+    scalars hold a move index. Anything on that list that a mirror path COPIES
+    instead of remapping is a silent corruption of that field, so this drives
+    the list itself and exercises both paths on every entry.
+
+    ⚑ What it does NOT catch, and what its docstring used to claim it did: a
+    field added to ``_OPTIONAL_FIELD_SPECS`` and never registered. Iterating the
+    registry cannot see an absence from the registry. That case is
+    ``test_no_scalar_int_shard_field_escapes_the_move_index_classification``
+    above; the two are complementary and neither replaces the other.
     """
     from chess_anti_engine.replay.shard import POLICY_INDEX_FIELDS
 
