@@ -50732,3 +50732,123 @@ out to be 2.20 cp at the deciding arm's own n — the bar was inside the noise, 
 against the wrong n, then against the control arms' n). The rule that finally decided it was
 stated in halfwidths and required the halfwidth to be READ OFF THE DECIDING ARM. That is the
 generalisable form: **a halfwidth is a property of a measurement, not of an instrument.**
+
+## 2026-08-16 — PREREG + DAMAGE: the EP-blind repetition key. **HYGIENE FIX, ~1e-6, but SHARP when it fires.**
+
+**Entered BEFORE deployment, per protocol rule 1.** Full prereg (with the amendment history)
+at `scratchpad/ep_repetition_damage/PREREG_DRAFT_epfix.md`; full measurement at
+`scratchpad/ep_repetition_damage/epmeas_REPORT.md`. Fix in PR #436.
+
+### The defect (PROVEN end-to-end, not hypothesised)
+
+`cboard_compute_hash` excludes en passant; `cboard_is_repetition` scans `hash_stack` with it.
+python-chess 1.11.2 includes ep in position identity when the capture is LEGAL
+(`self.ep_square if self.has_legal_en_passant() else None`). Our key therefore MERGES positions
+FIDE treats as DISTINCT ⇒ **false-positive repetitions**. Reproduced on the production C encoder
+with both controls: non-repetition ⇒ plane 103 clear; genuine repetition ⇒ set;
+`e2e4 g8f6 g1f3 f6g8 f3g1` from a position with a black pawn on d4 ⇒ python-chess says NOT a
+repetition, **plane 103 set**.
+
+It reaches `cboard_search_terminal` (`Q=0.0, SOLVED_DRAW`), and since `tree_resolve_from_children`
+ends `return has_draw ? SOLVED_DRAW : SOLVED_LOSS;` with `solved_flip` leaving DRAW unchanged,
+**one spurious drawn child converts a proven-LOST node into a proven-DRAWN node** — and SOLVED is
+terminal, so more visits never correct it.
+
+⚑ **Three source comments justify the current behaviour by asserting it matches python-chess.
+All three are factually wrong.** `_lc0_ext.c:960` even says "EP-blind by design". A comment
+asserting "by design" records that someone made a choice, not that the choice matches the spec.
+
+### Damage — MEASURED
+
+| axis | measured |
+|---|---|
+| (A) per-position key error, our own games | **0 in 789,276** (5,677 games), 95% CI [0, 4.67e-6] |
+| (A) structural estimate, same corpus | **~1.1e-6** (~1 in 900k positions, ~1 in 6,700 games) |
+| (A) independent random-playout population | **1 in 944,166** = 1.06e-6 |
+| (B) firing inside the REAL production Gumbel search | **5.4e-6 per full-ply search** (~1 in 186,000) |
+| (C) consequence WHEN it fires | **3/3 changed the stored policy target** (TV 0.7–9.9%); **1/3 changed the played move** |
+
+⇒ **VERDICT: HYGIENE FIX. Nothing banked is invalidated.** That is a result, not an absence of
+one — it was live that this had been corrupting training rows and arena verdicts for months, and
+three independent routes exclude it. But it is **rare and SHARP, not frequent and harmless**: the
+185 non-firing roots came back bit-identical, so there is no diffuse background effect. The
+defect is either absent or it moves the target.
+
+The B arm ran through an instrumented build **proven bit-identical to the live `.so`** on 32 real
+roots (same moves, same root values, same SHA-256 over all 32 float64 policy targets) — the
+production path, not a variant of it.
+
+**⚑ TWO BOUNDS ON THIS VERDICT.**
+1. **Bound to the CURRENT SEARCH SHAPE.** The defect needs the search to explore a move-REVERSAL
+   line. A constructed root with the defect one ply away does **not** fire at production shape
+   (`gumbel_topk 16`, 100 sims) but **does** at topk 64 / 256 sims. ⇒ **raising `mcts_simulations`
+   or `gumbel_topk` raises this rate**, and this verdict does not transfer to a wider search.
+   Same structural hazard as the frozen-search-config rule for `wdl_regret`.
+2. **Tree reuse NOT measured.** Production carries a persistent tree, so a spurious `SOLVED_DRAW`
+   is STICKY across plies ⇒ **B is a LOWER BOUND on per-game contamination.**
+
+### ⚑⚑ THE YARDSTICK AS FIRST WRITTEN COULD NOT HAVE FIRED — amended before deploy
+
+The prereg demanded false positives → 0 "over a corpus where the pre-fix build shows a non-zero
+count" and **did not name the corpus**. The measurement then established that our largest and
+most natural corpus — 789,276 positions from our own banked games — is **ZERO pre-fix**. Pointing
+the gate there gives 0 → 0, recorded as a PASS, proving only that the corpus lacks the case.
+That is a gate that cannot fail, with a real number attached. Amended to:
+
+- **Leg (a), load-bearing — the DETERMINISTIC reproducer.** Non-zero **by construction** (measured:
+  exactly 1 FP through the same code path as the corpus scan), so it cannot degrade into a
+  zero-vs-zero comparison. **PASS = 1 → 0**, with the genuine-repetition control still reading SET.
+- **Leg (b), corroboration only — the 944,166-position random-playout corpus** (pre-fix 1 FP).
+  **PASS = 1 → 0**, but a single event has no resolution: leg (b) can only contradict, never decide.
+- **BARRED as positive controls**: the 789,276 banked-game corpus and the never-had-an-ep negative
+  controls — all zero pre-fix by construction.
+- **FALSE NEGATIVES**: `st_rep2_missed` / `IMPOSSIBLE_prod_lt_fixed` read **0 everywhere** pre-fix,
+  so any non-zero post-fix count is unambiguously introduced ⇒ **FAIL**. This is what catches the
+  lazy implementation that reuses the PSEUDO-legal `cboard_ep_capture_available`.
+
+**⚑ The correct semantics are already MEASURED, which raises the bar on the implementation.** The
+measurement build's mode-1 (legal-ep-aware) key read **0 mismatches vs python-chess across
+944,166 + 789,276 = 1.73M positions**. ⇒ PR #436 must implement mode-1 semantics; if it differs
+from mode 1 on any of those positions, the PR is wrong, not the oracle.
+
+### ⚑⚑ THIS MUST NOT BE JUDGED BY ELO — pre-committed
+
+Our paired arenas resolve tens of Elo at n=1600. An effect at **5.4e-6 per search** is orders of
+magnitude below that floor. **No Elo number will be recorded as this change's verdict**, and an
+arena null here would be a statement about the arena, not about the fix. Deriving a threshold an
+instrument cannot reach converts the protocol into a rubber stamp.
+
+Regression tripwires only (5 iterations post-restart, vs the last 5 clean pre-stop iterations):
+iteration wall time ±15%, zclip clip rate unchanged, no new WARNING/ERROR classes, games/hour
+±15%. These are health checks; **none is evidence the fix helped.**
+
+### Confounds — stated, not discovered
+
+1. **The restart is a large confound.** Post-restart winrate reads ~+0.110 too high from sampling
+   bias, and a restart restoring PID state re-injects the search-authority step. The regret series
+   is NOT a valid net signal across this boundary.
+2. `zobrist_hash` is persisted in selfplay resume records; if the fix changes its value, every
+   pre-existing resume record becomes unverifiable. PR #436's compatibility decision must be
+   verified in effect at the first post-restart teardown, not assumed.
+3. Training is STOPPED, so the baseline is the last clean pre-stop iterations, not a same-session
+   control.
+4. Rows already ingested were built under the old rule and are **not** retroactively corrected.
+
+### Method notes that generalise past this experiment
+
+- **A batch-level count of (C) is an ARTIFACT.** 32 roots share one tree and one eval-batching
+  schedule, so 10 spurious fires produced 31-of-32 "changed" targets — and **the determinism
+  control cannot catch it**. (C) had to be re-measured one root at a time.
+- The measuring agent **over-predicted the rate at every level** (A by 10–100×, the mechanism gate
+  by 2–5×, the enriched firing rate by ~10×), each prediction recorded before measuring
+  (`epmeas_PREREG.md`), with the honest note that arm A was NOT pre-registered.
+- Incidental, no consequence claimed: our C FEN writer emits the ep square when a capture is
+  PSEUDO-legal and python-chess only when LEGAL. That FEN goes to Stockfish, which re-validates.
+
+### Deploy gate — none of these is optional
+
+PR #436 reviewed by someone **other than its author** → this entry → **re-run the schema preflight
+AFTER #436 merges** (it was run against code without the fix; a live yaml key the new code does not
+define is FATAL at launch) → `salvage-export --top-n 1 --metric training_iteration` revert point →
+rebuild with `python3 scripts/build_production_extensions.py` (NOT `pip install -e .`) → restart
+from `data/salvage/bt4heads_iter100_20260815` (`global_iter` 991).
