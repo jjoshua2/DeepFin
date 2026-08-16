@@ -52810,3 +52810,70 @@ number into a unit. Do not report `A >= P` as "we beat production".
 **Not yet satisfied:** the legs are gated on `lc0_control_heldout.py purity` (running 2h36m at
 the time of writing). A leg scored without a `--purity-receipt` stamps `valid_control: false`
 and is a smoke test, not the arm.
+
+### ⚑⚑ SAME SESSION — THE PURITY GATE FAILED. The legs do not launch, and the failure is a 175x instrument gap.
+
+The gate the arm was explicitly built to pass, FAILED, ~10 minutes after the reference levels
+above were banked. Recorded immediately because a pre-committed gate that fires is a RESULT,
+and this is the class of result that gets quietly re-narrated into "needs a tweak".
+
+```
+FAIL: held-out inputs also occur in train. This set measures exposure recency, not generalisation.
+frozen held-out rows 100000      frozen distinct x 96853
+train rows scanned   78,531,074  (unique ids 78,514,038, unique inputs 72,648,414)
+intersecting ids     29     <-- RECORD level; under-reports exposure
+EXPOSED inputs       5065   (5.2296% of held-out x)   <-- THE GATE
+```
+
+**⚑⚑ THE FINDING IS THE RATIO, NOT THE FAILURE. 29 vs 5065 is 175x.** Both counters are
+correct and both are truthful about what they count. A record-id join says the sets are
+essentially disjoint (29 rows in 100,000, 0.029%); an INPUT-level join says **5.23%** of the
+held-out positions were trained on. The gate uses the input level, which is the level the
+question is about — a net does not memorise a record id, it memorises a position. Had this
+been gated on record ids it would have PASSED at 0.029% and the arm would have run on a set
+that measures exposure recency. [[exposure_recency_dominates_heldout_ce]]
+[[same_name_different_population]] — the same shape as `reviewDecision`, as
+`gh pr view --json comments`, and as the bucket-vs-continuous SF ruler earlier today: the
+field you queried is populated and truthful, and it is not the field the question was about.
+
+**Consequence: legs 1 and 2 DO NOT LAUNCH.** `lc0_control_train.py` refuses on a receipt
+recording `pure=False` (`purity_receipt_problems`, :313-337). This is the guard working. The
+run was launched without `--receipt`, so no receipt file exists and none should be
+manufactured.
+
+### What this does and does NOT invalidate — and the reference levels SURVIVE in kind
+
+**Not invalidated: the band and the anchor.** Neither net ever trained on the lc0 corpus —
+the 20 band members are UNTRAINED, and the production anchor was trained on OUR
+selfplay-vs-SF data. Exposure to the lc0 TRAIN set can only inflate a net that trained on it,
+i.e. **the legs, which is exactly what was blocked.** So the contamination cannot have
+flattered either reference level.
+
+**But the SET will change, so the NUMBERS must be recomputed.** Trimming 5,065 exposed inputs
+leaves ~91,788 distinct — still ample. A ruler change invalidates its records
+[[a_ruler_change_must_invalidate_its_records]], so band mean 7.171% / sd 1.097pp / bar
+10.461% and anchor 45.992% are all superseded pending recomputation on the trimmed set.
+
+**⚑ They must NOT be re-measured — they must be RECOMPUTED.** Every band and anchor `.npz`
+stores PER-ROW `hit` keyed by `row_ids`, byte-identical across all 21 files (verified above).
+So the clean-subset numbers are a mask-and-mean over data already on disk: **zero GPU, zero
+re-scoring, and exactly the same nets.** Re-running them would introduce a needless
+re-measurement where an arithmetic restriction is available and is strictly more comparable.
+
+**Blocker on doing that today:** the purity tool banks the exposed input COUNT
+(`_write_purity_receipt`, :111) but never the exposed IDENTIFIERS, and this run printed only
+5 example hashes. The subtraction is arithmetic but its operand was not kept.
+
+### Owed, in order
+1. `lc0_control_heldout.py purity --exposed-out <f>` — dump the exposed input hashes AND the
+   held-out `row_ids` carrying them, so the restriction is executable.
+2. **Cache the train input-hash set to disk.** This scan read 42.2 GB over 2h40m to rebuild a
+   set that is a pure function of a fixed corpus. Re-verification after the rebuild should
+   cost seconds, not another 2h40m — otherwise the honest re-check is the step that gets
+   skipped under time pressure, which is how a gate stops being run at all.
+3. Rebuild the frozen set as the trimmed complement; re-verify purity → PASS receipt.
+4. Recompute band + anchor by masking the banked per-row arrays. Re-ledger the levels.
+5. Only then launch legs 1 and 2, both with `--purity-receipt`.
+
+**The arm is NOT dead and no compute is lost** — the band, the anchor and the corpus all
+survive. What is lost is the frozen SET, which is the cheapest of the four to rebuild.
