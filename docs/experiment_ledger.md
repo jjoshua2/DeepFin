@@ -52047,3 +52047,57 @@ thresholds and paired checkpoint comparisons that cross the merge stand as writt
 - **One checkpoint.** `checkpoint_000218`. Per [[knob_effects_reverse_sign_between_checkpoints]] a
   different net explores different lines — but a flip needs the structural cycle above, not a
   preference, so the exposure is low.
+
+---
+
+## 2026-08-16 — CORRECTION to AMENDMENT 2: **`lr_T0`/`lr_T_mult` ARE DEAD KEYS. MY "COSINE RESTART" REASON WAS WRONG.**
+
+AMENDMENT 2 above listed three reasons the lc0 control was disqualified. **Reason 1 as I wrote it
+is FALSE and is retracted.** I claimed the control ran "effectively no cosine restart" against a
+live config "cosine annealing restarting every 5000 steps with `T_mult: 2`". **Neither config runs
+cosine annealing at all.**
+
+Measured: `configs/pbt2_small.yaml` sets **`lr_schedule: sqrt_release`**, and `lr_T0`/`lr_T_mult`
+are read **only** inside `trainer.py`'s
+`if self._lr_schedule in ("cosine", "cosine_warm_restarts", "warm_restarts")` branch (:2311-2314).
+At `sqrt_release` that branch never runs. The live yaml already says so in two comments it carries
+at :526-527 — *"DELETED lr_T0: consumed only by the CosineAnnealingWarmRestarts branch …
+unreachable at lr_schedule: sqrt_release"*. **The refutation was sitting in the file I was
+diffing against, and I did not read it.**
+
+⇒ **I committed this project's signature defect — treating a configured value as an applied one —
+inside a ledger entry whose subject was that same defect.** The `trainer_kwargs_from_config()`
+diff is a REALIZED-kwargs diff, so it correctly reported the two keys as differing; what it cannot
+report is that **the consumer is unreachable**. A realized-value diff answers "what was passed",
+never "what was used". [[reachability_cannot_be_grepped_by_source_name]],
+[[dead_config_keys_pin_to_realized]].
+
+### What survives, and it is NOT nothing
+
+The **conclusion** (the trainer axis was not production's, and the arm was not runnable) stands —
+11 of the 13 kwargs were real. The LR-path concern also survives, but by a different and *worse*
+mechanism, found while checking my claim:
+
+- **Real LR difference:** `warmup_steps` **72 → 1000** (live's). One key, not three.
+- **⚑ NEW, and no trainer-kwarg diff can ever see it:** `lr_release_cycle_steps: 0` hands the
+  `sqrt_release` cycle length to whatever `train_steps(steps=N)` is called with. **Production calls
+  it per iteration at N≈88 — a sawtooth. The supervised driver calls it ONCE with the entire
+  budget — a single long cycle whose release phase covers the last ~20% of training.** Same config
+  value, different realized LR trajectory, because the *caller's* granularity differs.
+  ⇒ **The prereg's deciding yardstick reads held-out top-1 at mid-budget vs LAST — and "last" sits
+  inside that release tail.** A slope measured across a release ramp is partly a measurement of the
+  ramp. This is a DRIVER-level difference; guard 0c compares configs and is structurally blind to
+  it. **Recorded as an open confound, NOT fixed** — fixing it means choosing a cycle policy, which
+  is a research decision needing its own entry.
+
+### Method rule earned
+
+**A "realized value" diff and a "reachable consumer" check are two different instruments, and the
+first is the one that looks rigorous.** Before calling any kwarg difference material, grep the
+key's read site and confirm the enclosing branch is live under the *current* mode. Cheap; it would
+have cost one grep and saved a false published reason.
+
+Re-pointed trainer now differs from live in **2** deliberate kwargs (`sf_wdl_frac` 0.0,
+`search_wdl_frac` 1.0), both because lc0 rows carry no SF label, holding live's `game_frac` at
+**0.00**. Realized value composition measured through a real `compute_loss` call:
+outcome **0.3000 → 0.0000**, search **0.7001 → 1.0001**, mass 1.0000 both.
