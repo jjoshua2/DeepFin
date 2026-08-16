@@ -50981,3 +50981,34 @@ to this exact defect.
 carried set exceeds the exclusions; the equality test asserts the set of fields on which
 production differs from the dataclass default is NON-EMPTY and contains both knobs, then
 proves that dropping any one of them breaks the comparison.
+
+### ⚑⚑ THE FIX FOR THIS DEFECT REINTRODUCED THE SAME DEFECT ONE LAYER DOWN — caught in review, not by the author
+
+Making the training shape **exhaustive** made it carry `volatility_q_scale` / `volatility_fpu`
+/ `volatility_anchor` at production's values (0.0 today). `selfplay/match.pick_moves_for_boards`
+builds its `GumbelConfig` from the dedicated volatility **arguments** and applies
+`gumbel_overrides` **afterwards** via `dataclasses.replace` — so the override dict WINS.
+
+⇒ `arena_standard.py --search-shape training --volatility-q-scale 0.5` would have **silently
+reset the request to zero**, kept the run on the C path (`volatility_search_enabled` reads the
+final config), and reported a volatility arena that ran **no volatility search**. While the
+shape carried three knobs this was harmless; it became live the instant the shape became
+correct.
+
+**The lesson, which generalises past this file:** the audit was right, the derivation was
+right, and the defect was in the **PRECEDENCE at the point of use**. A value can be correctly
+computed, correctly carried, and then silently overwritten one layer down by something whose
+only claim to authority is that it is applied later. When a config object stops being sparse,
+every place that merges it with anything else changes meaning — so widening what a config
+carries is a **behaviour change at every merge site**, not just at the producer.
+
+Closed by routing both play loops through one `overrides_with_volatility` helper (explicit
+request layered LAST) with two tests, both **mutated**: reverting the precedence turns both
+RED, and the end-to-end one reports the literal clobber (`volatility_q_scale: 0.0` reaching
+the search under a 0.5 request).
+
+⚑ Also hardened in the same pass: `scratchpad/arenashape_blindness_probe.py` now **ABORTS**
+when its NEGATIVE control fails, instead of printing the blindness conclusion regardless. That
+conclusion is what this entry cites for "the banked rows keep their Elo", so a probe that
+prints it while its own measurement disagrees would launder a future regression into a
+citation. [[a_gate_that_cannot_fail]] applies to evidence scripts too, not only to tests.
