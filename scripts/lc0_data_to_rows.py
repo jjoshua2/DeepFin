@@ -59,13 +59,19 @@ The gates
 The one known divergence — OURS is the wrong side
 -------------------------------------------------
 Measured over 345,231 positions: 15 rows (1 in 23,000) fail the bit-exact plane
-gate, always on a repetition plane. It is not a converter defect. Our
-production encoder (``encoding/lc0.py::_check_repetitions``, both the Python
-and the C path, which agree with each other) keys a position WITHOUT
-``ep_square``, so two positions four plies apart that differ only by a legal
-en-passant right read as a repetition to us and as distinct positions to lc0
-and to python-chess. ⚑ Both our paths agreeing is exactly why an internal
-equivalence check could never have found this; it took an external referee.
+gate, always on a repetition plane. It is not a converter defect, and it is not
+an oversight either — it is DELIBERATE and documented as such. Our production
+encoder keys a position WITHOUT ``ep_square``: ``encoding/lc0.py``'s
+``_check_repetitions`` omits it in a comment calling the false positives
+"extremely rare and harmless", and ``_lc0_ext.c:960`` labels the C key
+*"repetition key; EP-blind by design"* — with an EP-AWARE ``transposition_key``
+defined three lines below it. So the correct key exists and the repetition path
+deliberately does not use it. The consequence is that two positions four plies
+apart differing only by a legal en-passant right read as a repetition to us and
+as distinct positions to lc0 AND to python-chess. ⚑ A comment asserting "by
+design" is not evidence the design is right: this simplification was never
+reconciled against either external implementation. Both our paths agreeing is
+exactly why an internal equivalence check could never have found it.
 Such rows are classified by :func:`known_repetition_ep_alias`, COUNTED as
 ``rep_ep_alias_rows``, and DROPPED — never emitted — while the rest of the game
 continues, because the board itself is correct.
@@ -118,13 +124,21 @@ Three options, and the one taken:
     as ``search_wdl`` (its true analogue: a search-improved root value), and
     leave ``sf_wdl`` absent so ``has_sf_wdl = 0``.
 
-⚑ (c) has a trap the operator must close, and it is not closable here.
-``losses.py`` falls the SF component back to the raw one-hot outcome when
-``has_sf_wdl`` is 0 — so running these rows at the production ``sf_wdl_frac``
-would put ~0.69 weight on the deep game outcome, silently, with no error. The
-control run MUST set ``sf_wdl_frac: 0.0`` and put the whole non-outcome share
-on ``search_wdl_frac``. ``--emit-manifest`` writes those required overrides next
-to the shards so the requirement travels with the data.
+⚑ (c) has a trap, and it is REAL: ``losses.py`` falls the SF component back to
+the raw one-hot outcome when ``has_sf_wdl`` is 0 — so running these rows at the
+production ``sf_wdl_frac: 0.50`` would train value on ~50% deep game outcome,
+silently, with no error. The control run MUST set ``sf_wdl_frac: 0.0`` (and
+``sf_wdl_frac_floor: 0.0``) and put the whole non-outcome share on
+``search_wdl_frac``.
+
+⚑ That requirement used to live only as prose in a manifest nothing reads,
+which is not a guard. ``check-run-config`` now makes it EXECUTABLE: it loads a
+training yaml the way production does, asks the shards whether any Stockfish
+label exists, and exits 1 when the two disagree. Pointing the production config
+at these shards fails it today. It is still operator-invoked — a refusal inside
+the trainer would be the real end state, but that is a training-affecting change
+and needs its own ledger entry, so it is named as the follow-up rather than
+smuggled into an offline-tooling PR.
 
 ``categorical_target`` is not emitted (``has_categorical = 0`` masks that head):
 it is an outcome-derived auxiliary and the outcome already reaches the loss via
@@ -147,9 +161,10 @@ import json
 import struct
 import sys
 import tarfile
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 import chess
 import numpy as np
@@ -498,10 +513,68 @@ def repair_en_passant(board: chess.Board, rec: V6Record) -> chess.Board | None:
         candidate.ep_square = chess.square(file_index, rank)
         if set(board_leela_slots(candidate)) == want:
             matches.append(candidate)
-    return matches[0] if len(matches) == 1 else None
+    if len(matches) > 1:
+        # ⚑ PROVABLY UNREACHABLE, and it raises rather than picking one anyway.
+        # Reaching this line means the early return above did NOT fire, i.e. the
+        # target legal set contains an en-passant capture — and distinct ep
+        # squares add distinct capture moves, so at most one candidate can
+        # reproduce it. `test_at_most_one_en_passant_witness_is_REACHABLE`
+        # brute-forces that claim over every ep file rather than asserting it,
+        # so if python-chess's semantics ever change the premise, this stops
+        # being an unreachable branch and the test says so first.
+        raise AssertionError(
+            f"ambiguous en-passant reconstruction ({len(matches)} witnesses) — the "
+            "uniqueness premise in repair_en_passant no longer holds",
+        )
+    return matches[0] if matches else None
 
 
 # ── record -> targets ──────────────────────────────────────────────────────────
+
+_LEELA_SUFFIX_TO_PIECE: dict[str, int] = {
+    "q": chess.QUEEN, "r": chess.ROOK, "b": chess.BISHOP, "": chess.KNIGHT,
+}
+
+
+def move_from_leela_slot(board: chess.Board, slot: int) -> chess.Move | None:
+    """Decode a Leela 1858 slot into a move on ``board`` WITHOUT enumerating legality.
+
+    ⚑ This is the REVERSE of :func:`leela_index_for_move`, and the direction
+    matters. A decoder that picks its answer out of ``board.legal_moves``
+    cannot produce an illegal move, so asking "is the result legal" would be a
+    tautology. This one reads the slot's own UCI string out of Leela's table,
+    un-orients it (rank-flip when Black is to move) and applies Leela's two
+    spelling conventions from the board alone:
+
+    * the BARE back-rank slot is promotion-to-KNIGHT for Leela (ours is queen);
+    * castling is spelled king-takes-rook (``e1h1``), while our ``chess.Move``
+      is the king's two-square hop.
+
+    So a mirrored board, a permuted index space or an inverted promotion
+    convention all yield a move that is genuinely not legal, and the check that
+    consumes this has content. Returns None only for a slot outside the table.
+    """
+    if not 0 <= slot < LEELA_POLICY_SIZE:
+        return None
+    uci = LC0_1858_MOVE_STRS[slot]
+    unorient = (lambda sq: sq) if board.turn == chess.WHITE else chess.square_mirror
+    from_square = unorient(chess.parse_square(uci[0:2]))
+    to_square = unorient(chess.parse_square(uci[2:4]))
+    mover = board.piece_at(from_square)
+    promotion: int | None = None
+    if (
+        mover is not None
+        and mover.piece_type == chess.PAWN
+        and chess.square_rank(to_square) in (0, 7)
+    ):
+        promotion = _LEELA_SUFFIX_TO_PIECE.get(uci[4:], chess.KNIGHT)
+    elif mover is not None and mover.piece_type == chess.KING:
+        target = board.piece_at(to_square)
+        if target is not None and target.color == mover.color and target.piece_type == chess.ROOK:
+            kingside = chess.square_file(to_square) > chess.square_file(from_square)
+            to_square = chess.square(6 if kingside else 2, chess.square_rank(from_square))
+    return chess.Move(from_square, to_square, promotion=promotion)
+
 
 def _wdl_from_q_d(q: float, d: float) -> np.ndarray:
     """lc0 (q, d) as our (W, D, L) triple, side-to-move POV."""
@@ -521,7 +594,6 @@ class PolicyTargets:
 
     policy: np.ndarray   # (1858,) float32, sums to 1
     legal_mask: np.ndarray  # (1858,) uint8
-    argmax_move: chess.Move
     gather_agrees: bool
 
 
@@ -545,32 +617,28 @@ def build_policy_targets(
         ),
     )[0]
     gather_agrees = True
-    best_move = None
-    best_value = -1.0
     for move in board.legal_moves:
         leela = leela_index_for_move(board, move)
         compact = compact_index_for_move(board, move)
         if int(gather[compact]) != leela:
             gather_agrees = False
-        value = float(probabilities[leela])
-        policy[compact] = max(value, 0.0)
+        policy[compact] = max(float(probabilities[leela]), 0.0)
         legal_mask[compact] = 1
-        if value > best_value:
-            best_value, best_move = value, move
     total = float(policy.sum())
     if total > 0.0:
         policy /= total
-    if best_move is None:  # pragma: no cover - guarded by the caller
-        raise ValueError("position has no legal moves; lc0 does not record those")
     return PolicyTargets(
         policy=policy.astype(np.float32),
         legal_mask=legal_mask,
-        argmax_move=best_move,
         gather_agrees=gather_agrees,
     )
 
 
 # ── verification ───────────────────────────────────────────────────────────────
+
+EP_ALIAS_DROP_REASON = "repetition ep-alias row (dropped, see known_repetition_ep_alias)"
+# Sample size below which the chess960 rate check declines to answer.
+CHESS960_MIN_GAMES = 400
 
 @dataclass
 class VerifyStats:
@@ -614,21 +682,79 @@ class VerifyStats:
             and self.production_aux_mismatch == 0
         )
 
+    # ⚑ THE TWO COUNTER SCOPES, declared rather than assumed. Everything else
+    # here is ATTEMPT-scoped: it records what the gates saw over `attempts` and
+    # survives an abandoned game. These are ROW-scoped: they describe rows that
+    # were EMITTED, so an abandoned game must give them back. A numerator from
+    # one scope over a denominator from the other is exactly how a rate of
+    # 110.4651% got reported.
+    ROW_SCOPED: ClassVar[tuple[str, ...]] = ("rows", "best_idx_is_argmax")
+
+    def row_scoped_snapshot(self) -> tuple[int, int, dict[str, int]]:
+        return self.rows, self.best_idx_is_argmax, dict(self.played_promotions)
+
+    def restore_row_scoped(self, snapshot: tuple[int, int, dict[str, int]]) -> None:
+        self.rows, self.best_idx_is_argmax, promotions = snapshot
+        self.played_promotions.clear()
+        self.played_promotions.update(promotions)
+
+    def consistency_problems(self) -> list[str]:
+        """Internal-arithmetic violations. ⚑ Closes the CLASS, not the instance.
+
+        Every rate this reports is a numerator over ``attempts`` or over
+        ``rows``; if a numerator ever exceeds its denominator, or the drop
+        ledger stops summing to the drop count, the report is describing
+        something other than the run. Both failures are invisible on a clean
+        run and appear on exactly the runs you would be reading these numbers
+        for, so they are checked rather than eyeballed.
+        """
+        problems: list[str] = []
+        for label, num in (
+            ("planes_exact", self.planes_exact), ("support_exact", self.support_exact),
+            ("gather_agrees", self.gather_agrees), ("argmax_legal", self.argmax_legal),
+            ("production_aux_matches", self.production_aux_matches),
+            ("rows_with_repetition", self.rows_with_repetition),
+            ("rep_ep_alias_rows", self.rep_ep_alias_rows), ("rows", self.rows),
+        ):
+            if num > self.attempts:
+                problems.append(f"{label}={num} exceeds attempts={self.attempts}")
+        if self.best_idx_is_argmax > self.rows:
+            problems.append(
+                f"best_idx_is_argmax={self.best_idx_is_argmax} exceeds rows={self.rows}",
+            )
+        dropped_ledger = sum(
+            count for reason, count in self.drop_reasons.items()
+            if reason != EP_ALIAS_DROP_REASON
+        )
+        if dropped_ledger != self.games_dropped:
+            problems.append(
+                f"drop_reasons sums to {dropped_ledger} but games_dropped={self.games_dropped}",
+            )
+        return problems
+
     def note(self, what: str) -> None:
         self.drop_reasons[what] = self.drop_reasons.get(what, 0) + 1
 
     def note_promotion(self, symbol: str) -> None:
         self.played_promotions[symbol] = self.played_promotions.get(symbol, 0) + 1
 
-    def chess960_problem(self, *, min_games: int = 150, low: float = 0.01, high: float = 0.12) -> str | None:
+    def chess960_problem(
+        self, *, min_games: int = CHESS960_MIN_GAMES, low: float = 0.005, high: float = 0.12,
+    ) -> str | None:
         """Why the chess960 detector's own rate is not believable, or None.
 
         ⚑ A detector that silently stops firing looks exactly like clean data.
-        ~4% of lc0 T91 games start from a DFRC/chess960 position (measured
-        independently by the download agent and here), so a run over enough
-        games that reports far from that is reporting on a detector that
-        broke, not on a corpus that changed. Below ``min_games`` the rate is
-        too noisy to judge and the check abstains rather than guessing.
+        3.73% of lc0 T91 games start from a DFRC/chess960 position (112/3,000
+        here; 36/900 in an independent reviewer's sample), so a run over enough
+        games reporting far from that describes a detector that broke, not a
+        corpus that changed. Below ``min_games`` the rate is too noisy to judge
+        and the check ABSTAINS — which :meth:`overall_verdict` treats as
+        inconclusive, never as a pass.
+
+        ⚑ The bounds are sized so a CLEAN run does not trip them. At the true
+        3.73% rate, ``min_games=150`` has mean 5.6 and P(<=1) ~ 2.4%: with the
+        old ``low=0.01`` roughly 1 clean run in 40 would have FAILED. 400 games
+        has mean 14.9 and P(<= 2 = 0.005) < 0.1%.
         """
         if self.games < min_games:
             return None  # see chess960_status(): this abstention is reported, not hidden
@@ -637,7 +763,7 @@ class VerifyStats:
             return None
         return f"chess960 drop rate {rate:.4f} outside the expected [{low}, {high}]"
 
-    def chess960_status(self, *, min_games: int = 150) -> str:
+    def chess960_status(self, *, min_games: int = CHESS960_MIN_GAMES) -> str:
         """Human-readable form of :meth:`chess960_problem`.
 
         ⚑ "abstained" and "within band" are DIFFERENT readings and are printed
@@ -648,6 +774,31 @@ class VerifyStats:
         return self.chess960_problem() or (
             f"within expected band ({self.drop_reasons.get('chess960', 0)}/{self.games})"
         )
+
+    def overall_verdict(self) -> tuple[str, int]:
+        """``(verdict, exit code)`` — THREE states, because there are three.
+
+        ⚑ An ABSTENTION IS NOT A PASS. The previous go/no-go was
+        ``stats.ok and chess960_problem() is None``, and ``chess960_problem``
+        returns None while abstaining — so a 40-game run printed ``PASS`` with
+        the chess960 check having declined to answer. This module's own
+        docstring warned against exactly that. Exit 0 = PASS, 1 = FAIL,
+        2 = INCONCLUSIVE (nothing failed, but something declined to answer).
+        """
+        problems = self.consistency_problems()
+        if problems:
+            return f"FAIL (counter arithmetic: {problems[0]})", 1
+        if not self.ok:
+            return "FAIL", 1
+        abstained = [
+            label for label, status in (("chess960", self.chess960_status()),)
+            if status.startswith("ABSTAINED")
+        ]
+        if self.chess960_problem() is not None:
+            return f"FAIL ({self.chess960_problem()})", 1
+        if abstained:
+            return f"INCONCLUSIVE (abstained: {', '.join(abstained)})", 2
+        return "PASS", 0
 
     def divergence(self, text: str) -> None:
         if self.first_divergence is None:
@@ -672,7 +823,8 @@ class VerifyStats:
             f"argmax ILLEGAL    {self.argmax_illegal}/{n} "
             f"({pct(self.argmax_illegal, n)})",
             f"prod aux planes   {self.production_aux_matches}/{n} "
-            f"({pct(self.production_aux_matches, n)})",
+            f"({pct(self.production_aux_matches, n)}) "
+            f"[INTERNAL: our encoder vs our encoder, not refereed by lc0]",
             f"best_idx==argmax  {self.best_idx_is_argmax}/{self.rows} "
             f"({pct(self.best_idx_is_argmax, self.rows)}) [reported, not gated]",
             f"played promotions {self.played_promotions or '{}'} "
@@ -680,6 +832,13 @@ class VerifyStats:
             f"drop reasons      {self.drop_reasons or '{}'}",
             f"chess960 rate     {self.chess960_status()}",
             f"first divergence  {self.first_divergence or 'none'}",
+            "⚑ The rates above are ONE NESTED measurement, not independent gates: the",
+            "  gates run in sequence and a failure abandons the game, so every later",
+            "  numerator is conditional on every earlier gate having passed and none of",
+            "  them ever sees a row an earlier one rejected. The shortfall from 100% is",
+            "  the SAME rows removed from all of them. Games dropped before any position",
+            f"  is attempted ({self.games_dropped} here) contribute 0 to the denominator,",
+            "  so it reads 'positions of games we could reconstruct', not 'positions of T91'.",
         ]
 
 
@@ -800,49 +959,60 @@ def convert_game(
         stats.games_ep_repaired += 1
     board = repaired
     samples: list[ReplaySample] = []
-    # An abandoned game emits NOTHING, so its already-counted rows have to come
-    # back off `rows` too — otherwise the reported row count exceeds the rows
-    # actually written and the two numbers quietly stop meaning the same thing.
-    rows_at_entry = stats.rows
+    # An abandoned game emits NOTHING, so every ROW-SCOPED counter has to come
+    # back off. ⚑ The two scopes are the whole point (see VerifyStats): the
+    # attempt-scoped counters describe what the GATES SAW and must NOT be rolled
+    # back, the row-scoped ones describe what was EMITTED and must be. Mixing a
+    # numerator from one scope with a denominator from the other is what
+    # produced a reported rate of 110.4651%.
+    row_scope = stats.row_scoped_snapshot()
     # Set when the previous ply pushed a promotion: the decode of a promotion
     # slot is only CONFIRMED once this record's planes have been compared, so
     # the counter is credited here rather than at the push.
     pending_promotion: str | None = None
     for ply, rec in enumerate(records):
-        verdict = _gate_position(name, ply, board, rec, stats, options)
-        if verdict == "fail":
+        gated = _gate_position(name, ply, board, rec, stats, options)
+        if gated.verdict == "fail":
             stats.games_dropped += 1
-            stats.rows = rows_at_entry
+            stats.restore_row_scoped(row_scope)
             return []
-        if verdict == "skip":
-            # Board and chain are sound; only the row is unusable. Keep walking.
-            move = board_leela_slots(board).get(rec.played_idx)
-            if move is None:
-                break
-            pending_promotion = (
-                None if move.promotion is None else chess.piece_symbol(move.promotion)
-            )
-            board.push(move)
-            continue
-        if pending_promotion is not None:
-            stats.note_promotion(pending_promotion)
-            pending_promotion = None
-        if collect:
-            samples.append(_row_from(board, rec, options, game_id=game_id, ply=ply))
-        stats.rows += 1
-        slots = board_leela_slots(board)
-        move = slots.get(rec.played_idx)
+        # The move is decoded identically whether or not the row is kept, so the
+        # chain and the promotion accounting do not fork on the verdict.
+        move = board_leela_slots(board).get(rec.played_idx)
+        if gated.verdict == "ok":
+            if pending_promotion is not None:
+                stats.note_promotion(pending_promotion)
+            if collect:
+                samples.append(_row_from(rec, options, gated, game_id=game_id, ply=ply))
+            stats.rows += 1
+        pending_promotion = None
         if move is None:
             if ply + 1 < len(records):
                 stats.games_dropped += 1
                 stats.note("played_idx is not a legal move")
-                stats.rows = rows_at_entry
+                stats.restore_row_scoped(row_scope)
                 return []
             break  # last record of the game: nothing left to chain onto
         if move.promotion is not None:
             pending_promotion = chess.piece_symbol(move.promotion)
         board.push(move)
     return samples
+
+
+@dataclass(frozen=True)
+class GatedPosition:
+    """A gate verdict plus the artifacts it already computed.
+
+    ``_row_from`` used to re-encode the board twice and rebuild the policy
+    targets from scratch — four ``encode_position`` calls per row, most of the
+    runtime over 345k rows. Handing the gate's own results forward also removes
+    the possibility that the row is built from a DIFFERENT encode than the one
+    that passed the gate.
+    """
+
+    verdict: str  # "ok" | "skip" (row unusable, chain sound) | "fail" (abandon game)
+    production_planes: np.ndarray | None = None
+    targets: PolicyTargets | None = None
 
 
 def _gate_position(
@@ -852,9 +1022,19 @@ def _gate_position(
     rec: V6Record,
     stats: VerifyStats,
     options: ConvertOptions,
-) -> str:
-    """``"ok"`` / ``"skip"`` (row unusable, chain sound) / ``"fail"`` (abandon game)."""
+) -> GatedPosition:
+    """Run every gate on one position."""
     stats.attempts += 1
+
+    def fail(gate: str, detail: str) -> GatedPosition:
+        # ⚑ Both halves, always: `divergence` records WHERE, `note` keeps
+        # `drop_reasons` summing to `games_dropped`. The failure path used to
+        # call only the first, so the drop ledger was empty on exactly the runs
+        # you would be reading it for.
+        stats.divergence(f"{name} ply {ply}: {detail}")
+        stats.note(f"gate failure: {gate}")
+        return GatedPosition("fail")
+
     planes_lc0_root = encode_position(
         board, add_features=False, input_history_encoding=LC0_HISTORY_ROOT,
     )
@@ -870,33 +1050,43 @@ def _gate_position(
             # The board is right; only OUR repetition plane is. Drop the row and
             # let the game continue — the chain is unaffected.
             stats.rep_ep_alias_rows += 1
-            stats.note("repetition ep-alias row (dropped, see known_repetition_ep_alias)")
-            return "skip"
+            stats.note(EP_ALIAS_DROP_REASON)
+            return GatedPosition("skip")
         stats.planes_mismatch += 1
-        stats.divergence(f"{name} ply {ply}: planes {bad[:6]} differ ({board.fen()})")
-        return "fail"
+        return fail("planes_bit_exact", f"planes {bad[:6]} differ ({board.fen()})")
     stats.planes_exact += 1
+
+    # ⚑ BEFORE the support gate, and decoded by `move_from_leela_slot`, which
+    # never consults `board.legal_moves`. Ordered first because the support gate
+    # would otherwise shadow it, and decoded independently because picking the
+    # argmax out of the legal moves would make `is_legal` a tautology — which is
+    # what this check used to be.
+    argmax_move = move_from_leela_slot(board, int(np.argmax(np.asarray(rec.probabilities))))
+    if argmax_move is not None and board.is_legal(argmax_move):
+        stats.argmax_legal += 1
+    else:
+        stats.argmax_illegal += 1
+        return fail(
+            "argmax_is_legal",
+            f"lc0's own policy argmax decodes to {argmax_move} which is illegal "
+            f"({board.fen()})",
+        )
 
     slots = board_leela_slots(board)
     if set(slots) != leela_support(rec):
         stats.support_mismatch += 1
-        stats.divergence(f"{name} ply {ply}: legal set != lc0 policy support ({board.fen()})")
-        return "fail"
+        return fail(
+            "legal_set_matches_policy_support",
+            f"legal set != lc0 policy support ({board.fen()})",
+        )
     stats.support_exact += 1
 
     targets = build_policy_targets(board, rec, planes_lc0_root)
-    if targets.gather_agrees:
-        stats.gather_agrees += 1
-    else:
+    if not targets.gather_agrees:
         stats.gather_disagrees += 1
-        stats.divergence(f"{name} ply {ply}: gather map != per-move reference")
-        return "fail"
-    if board.is_legal(targets.argmax_move):
-        stats.argmax_legal += 1
-    else:  # pragma: no cover - unreachable while the legal-set gate holds
-        stats.argmax_illegal += 1
-        stats.divergence(f"{name} ply {ply}: policy argmax is illegal")
-        return "fail"
+        return fail("gather_matches_reference", "gather map != per-move reference")
+    stats.gather_agrees += 1
+
     if int(np.argmax(np.asarray(rec.probabilities))) == rec.best_idx:
         stats.best_idx_is_argmax += 1
 
@@ -906,13 +1096,11 @@ def _gate_position(
         input_history_encoding=options.input_history_encoding,
         input_extra_features=options.input_extra_features,
     )
-    if _production_aux_consistent(production, planes_lc0_root, board):
-        stats.production_aux_matches += 1
-    else:
+    if not _production_aux_consistent(production, planes_lc0_root, board):
         stats.production_aux_mismatch += 1
-        stats.divergence(f"{name} ply {ply}: production planes diverge from lc0_root")
-        return "fail"
-    return "ok"
+        return fail("production_aux_planes", "production planes diverge from lc0_root")
+    stats.production_aux_matches += 1
+    return GatedPosition("ok", production_planes=production, targets=targets)
 
 
 def _production_aux_consistent(
@@ -944,23 +1132,21 @@ def _production_aux_consistent(
 
 
 def _row_from(
-    board: chess.Board,
     rec: V6Record,
     options: ConvertOptions,
+    gated: GatedPosition,
     *,
     game_id: int,
     ply: int,
 ) -> ReplaySample:
-    planes = encode_position(
-        board,
-        add_features=True,
-        input_history_encoding=options.input_history_encoding,
-        input_extra_features=options.input_extra_features,
-    )
-    lc0_root = encode_position(
-        board, add_features=False, input_history_encoding=LC0_HISTORY_ROOT,
-    )
-    targets = build_policy_targets(board, rec, lc0_root)
+    """Build the row from the artifacts the gate ALREADY produced.
+
+    Recomputing them here would both double the runtime and open a gap between
+    the encode that passed the gate and the encode that was written.
+    """
+    if gated.production_planes is None or gated.targets is None:
+        raise ValueError("_row_from needs a gate verdict of 'ok'")
+    planes, targets = gated.production_planes, gated.targets
     outcome = _wdl_from_q_d(rec.result_q, rec.result_d)
     return ReplaySample(
         x=planes.astype(np.float32, copy=False),
@@ -977,6 +1163,53 @@ def _row_from(
         input_history_encoding=options.input_history_encoding,
         history_rep_fix=options.history_rep_fix,
     )
+
+
+# ── the run-config gate ────────────────────────────────────────────────────────
+#
+# ⚑ This exists because a REQUIREMENT THAT LIVES ONLY IN PROSE IS NOT A GUARD.
+# The rows carry no Stockfish label, and `losses.py` falls the SF component of
+# the value blend back to the RAW ONE-HOT OUTCOME when `has_sf_wdl` is 0 — no
+# error, no log line. So a control run launched at the production
+# `sf_wdl_frac: 0.50` would train value on ~50% deep game outcome, which is the
+# exact regime production avoids, and the positive control would be measuring
+# something nobody chose. Nothing in the trainer refuses that today, so this
+# command does, and it must be run before the launch.
+
+VALUE_BLEND_KEYS = ("sf_wdl_frac", "sf_wdl_frac_floor")
+
+
+def run_config_problems(
+    config: Mapping[str, object], *, shards_have_sf_wdl: bool,
+) -> list[str]:
+    """Reasons this config must not be pointed at lc0-derived shards."""
+    if shards_have_sf_wdl:
+        return []
+    problems = [
+        f"{key}={value!r} but the shards carry NO Stockfish label, so losses.py "
+        f"silently redirects that share onto the raw game outcome; set {key}: 0.0"
+        for key in VALUE_BLEND_KEYS
+        if isinstance(value := config.get(key), (int, float)) and float(value) > 0.0
+    ]
+    search = config.get("search_wdl_frac")
+    if not isinstance(search, (int, float)) or float(search) <= 0.0:
+        problems.append(
+            "search_wdl_frac is 0/absent, so nothing carries lc0's best_q/best_d and "
+            "the whole value target collapses onto the game outcome",
+        )
+    return problems
+
+
+def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
+    """Whether ANY shard under ``shard_dir`` carries a Stockfish value label."""
+    from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
+
+    for path in iter_shard_paths(shard_dir):
+        arrs, _meta = load_shard_arrays(path)
+        flags = arrs.get("has_sf_wdl")
+        if flags is not None and int(np.asarray(flags).sum()) > 0:
+            return True
+    return False
 
 
 # ── policy-shape statistics ────────────────────────────────────────────────────
@@ -1110,7 +1343,10 @@ def run_corruption_check(
     clean = VerifyStats()
     convert_game("clean", records, clean, options, game_id=0, collect=False)
     results: dict[str, dict[str, object]] = {
-        "clean": {"caught_by": None, "ok": clean.ok, "rows": clean.rows},
+        # ⚑ OBSERVED, not asserted. Hardcoding `None` here would make the
+        # negative control incapable of reporting that the clean run also trips
+        # a gate — which is the one thing it exists to rule out.
+        "clean": {"caught_by": _first_failing_gate(clean), "ok": clean.ok, "rows": clean.rows},
     }
     target = min(len(records) - 1, max(1, len(records) // 2))
     clean_agrees = _best_idx_is_argmax(records[target])
@@ -1209,8 +1445,12 @@ def _first_failing_gate(stats: VerifyStats) -> str | None:
     ):
         if count:
             return name
-    if stats.drop_reasons:
-        return f"chain: {sorted(stats.drop_reasons)[0]}"
+    # ⚑ The e.p.-alias drop is BENIGN — a row we chose not to emit, not a
+    # corruption anyone detected. Crediting it would let a mutant that merely
+    # provokes one read as "caught by a gate".
+    chain = sorted(r for r in stats.drop_reasons if r != EP_ALIAS_DROP_REASON)
+    if chain:
+        return f"chain: {chain[0]}"
     return None
 
 
@@ -1309,9 +1549,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
     _print(stats.rate_lines())
     if args.json_report:
         Path(args.json_report).write_text(json.dumps(asdict(stats), indent=2), encoding="utf-8")
-    passed = stats.ok and stats.chess960_problem() is None
-    print("VERDICT:", "PASS" if passed else "FAIL")
-    return 0 if passed else 1
+    verdict, code = stats.overall_verdict()
+    print("VERDICT:", verdict)
+    return code
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
@@ -1391,6 +1631,24 @@ def undetected_hard(results: dict[str, dict[str, object]]) -> list[str]:
     ]
 
 
+def cmd_check_run_config(args: argparse.Namespace) -> int:
+    """Refuse a training config that would silently mis-target these rows."""
+    import yaml
+
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    config = flatten_run_config_defaults(yaml.safe_load(Path(args.config).read_text()))
+    have_sf = shard_dir_has_sf_wdl(Path(args.shards))
+    problems = run_config_problems(config, shards_have_sf_wdl=have_sf)
+    print(f"shards carry a Stockfish value label: {have_sf}")
+    for key in (*VALUE_BLEND_KEYS, "search_wdl_frac"):
+        print(f"  {key} = {config.get(key, '<absent>')!r}")
+    for problem in problems:
+        print(f"REFUSED: {problem}")
+    print("VERDICT:", "PASS" if not problems else "FAIL")
+    return 0 if not problems else 1
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
     options = _options(args)
     out = Path(args.out)
@@ -1418,9 +1676,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
         (out / "lc0_rows_manifest.json").write_text(
             json.dumps(_manifest(options, stats), indent=2), encoding="utf-8",
         )
-    passed = stats.ok and stats.chess960_problem() is None
-    print("VERDICT:", "PASS" if passed else "FAIL")
-    return 0 if passed else 1
+    verdict, code = stats.overall_verdict()
+    print("VERDICT:", verdict)
+    return code
 
 
 def _write_shard(
@@ -1457,8 +1715,14 @@ def build_parser() -> argparse.ArgumentParser:
         ("stats", cmd_stats),
         ("convert", cmd_convert),
         ("corrupt-check", cmd_corrupt_check),
+        ("check-run-config", cmd_check_run_config),
     ):
         child = sub.add_parser(name)
+        if name == "check-run-config":
+            child.add_argument("--config", type=Path, required=True)
+            child.add_argument("--shards", type=Path, required=True)
+            child.set_defaults(handler=handler)
+            continue
         child.add_argument("--data", type=Path, nargs="+", required=True)
         child.add_argument("--limit-games", type=int, default=0)
         child.add_argument("--history-encoding", default="lc0_root_legacy_meta")
@@ -1477,7 +1741,9 @@ def build_parser() -> argparse.ArgumentParser:
             # cap would be 1.1 GB / 2.2 GB here, because our x is 175 planes.
             child.add_argument("--rows-per-shard", type=int, default=8192)
             child.add_argument("--max-rows", type=int, default=0)
-            child.add_argument("--emit-manifest", action="store_true", default=True)
+            child.add_argument(
+                "--no-manifest", dest="emit_manifest", action="store_false", default=True,
+            )
     return parser
 
 
