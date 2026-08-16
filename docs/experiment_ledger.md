@@ -758,6 +758,59 @@ the raw-prior top move and `a_M` the Gumbel/MCTS move (recoverable offline via
 | exactly one outside SF6 | **buy it** — this IS the missing S×T relation |
 | both outside SF6 | buy both — the missing T×T relation, the most valuable case |
 
+#### STEP-0 READOUT (2026-08-16) — **WE ALREADY OWN ~60% OF THE ΔQ DATASET**
+
+`scripts/dq_free_dataset_screen.py`, 18 wide-era shards, k=6 simulated, prior from
+`checkpoint_000218`. This costs nothing and needed no `searchmoves`: it is a re-read of
+banked shards, run BEFORE the query path merged.
+
+| | n | share |
+|---|---|---|
+| usable rows (played move recovered) | 1177 | — |
+| prior == search — nothing to adjudicate | 649 | 0.551 |
+| **DISAGREE — the ΔQ pool** | **528** | **0.449** |
+|  ↳ both already in SF6 — **ΔQ IS FREE** | 315 | **0.597** |
+|  ↳ exactly one outside — buy it (S×T) | 163 | 0.309 |
+|  ↳ both outside — buy both (T×T) | 50 | 0.095 |
+
+⇒ **~40% of the disagreements need a query; ~60% are already paid for.** Recovery was
+clean: 1177 recovered, **0 ambiguous**.
+
+⚑⚑ **A FIRST PASS OF THIS SCREEN MEASURED THE WRONG PAIR AND READ 0.713 FREE.** It compared
+the prior's top move against **SF's own best** instead of against the SEARCH move. SF's best
+is rank 1 BY CONSTRUCTION, so "both candidates surfaced" silently degenerates into "is the
+net's move surfaced" and the free fraction comes out too high. The corrected pairing reads
+**0.597**. ⇒ the pre-registered 4-way split REQUIRES the played move
+(`cast_probe.recover_played_move`), and `argmax(policy_target)` is not it.
+[[same_name_different_population]].
+
+⚑ **THE ΔQ-MAGNITUDE SPLIT IS A TAUTOLOGY — DO NOT QUOTE IT.** The screen also reports
+"free" rows at median 21 cp vs "buyable" at 100 cp, which reads as *queries buy the big ΔQ*.
+It is forced: "buyable" MEANS SF ranked the net's move 7th or worse, so its regret is ≥ that
+row's `r_k` by construction while every free row's is ≤ `r_k`. The split conditions on the
+compared quantity. Only the ABSOLUTE scale is a reading (unpriced moves: median 100 cp, p90
+601 cp — real gaps, not garbage). [[never_condition_a_control_on_its_own_outcome]].
+
+**WHAT IS GENUINELY USABLE: P(needs a query | prior confidence) is MONOTONE**, and nothing
+forces it — the net's confidence is not tied to SF's ranking of its move.
+
+| prior confidence | n | P(query) |
+|---|---|---|
+| [0.0, 0.2) | 118 | **0.720** |
+| [0.2, 0.4) | 594 | 0.406 |
+| [0.4, 0.6) | 836 | 0.281 |
+| [0.6, 0.8) | 640 | 0.217 |
+| [0.8, 1.0) | 649 | **0.171** |
+
+4.2× spread, monotone in every bin ⇒ a usable pre-query gate, satisfying
+[[proxy_must_be_monotone_in_the_intervention]].
+
+**Limitations, stated not buried.** (1) 3567 of 4744 rows had **no stored child**, so the
+usable subset is conditioned on both plies being stored — 75% attrition, representativeness
+unverified. (2) MultiPV-**40**-era data with simulated truncation; the rate transfers
+structurally, the era is not production's. (3) One checkpoint (iter 218), and
+[[knob_effects_reverse_sign_between_checkpoints]] applies — run a second before concluding.
+
 ⇒ the SF spend is a small fraction of "one targeted comparison per disagreement", and the split
 across those four cases is itself the first readout.
 

@@ -103,13 +103,17 @@ def gradient(p: np.ndarray, r: np.ndarray) -> np.ndarray:
 class Row:
     """One analysed position: the wide truth, the surfaced set, and the prior."""
 
-    __slots__ = ("game_id", "hidden", "legal", "prior", "r_k", "regret", "surfaced")
+    __slots__ = ("game_id", "hidden", "legal", "ply", "prior", "r_k", "regret", "surfaced")
 
     def __init__(
         self, legal: np.ndarray, regret: dict[int, float],
         surfaced: list[int], hidden: list[int], r_k: float, game_id: int = -1,
+        ply: int = -1,
     ) -> None:
         self.game_id = int(game_id)
+        # Carried so a consumer can locate this row's CHILD (game_id, ply+1) and
+        # recover the played move. Not used by this screen's own analysis.
+        self.ply = int(ply)
         self.legal = legal
         self.regret = regret
         self.surfaced = surfaced
@@ -216,7 +220,8 @@ def collect(
             unscored = float(p[[j for j, m in enumerate(legal_idx) if int(m) not in regret]].sum())
             scan["unscored_mass_sum"] += unscored
             rows.append(Row(legal_idx, regret, surfaced, hidden,
-                            max(regret[m] for m in surfaced), game_id=int(gid[i])))
+                            max(regret[m] for m in surfaced), game_id=int(gid[i]),
+                            ply=int(ply[i])))
             rows[-1].prior = p
             planes.append(x[i])
     return rows, planes
