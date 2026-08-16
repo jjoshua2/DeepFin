@@ -51417,3 +51417,32 @@ no such pair is banked with the needed separation.
 **No decision changes.** The knobs stay as they are at the EP restart, for the reasons already
 recorded — the case for leaving them alone never rested on the mechanism, only on the absence
 of an evidence-backed direction, which this strengthens.
+
+### SCREEN — the Tier-13 arms cannot serve as the similar-vintage discriminator (STOPPED before the test)
+
+The entry above named the missing design: two checkpoints of **similar vintage** and **different
+learned entropy**. The Tier-13 arms look like exactly that — A/B/C at iter100 share a donor
+(`pre_policy_adapter_20260812`), a data window and an iteration count, differing only in
+architecture arm. So before running the contrast I measured whether the design has any leverage,
+with the bar stated in advance at **0.05 nats**.
+
+| arm @ iter100 | baseline target entropy | E | top-1 | argmax accuracy |
+|---|---|---|---|---|
+| A | 0.6721 | 41.59 | 37.17 | 50.58% |
+| B | 0.6691 | 40.88 | 36.20 | 49.85% |
+| C | 0.6818 | 41.05 | 36.08 | 50.98% |
+
+**Spread 0.0127 nats** — against 0.284 across the five-checkpoint ladder and 0.455 across the
+`policy_temp` sweep. ⇒ **SCREEN FAILS; the knob arms were NOT run.** Three points spread over
+0.013 nats cannot resolve a relationship whose whole span is 0.28, and running them anyway would
+have produced a rho over noise that looks like evidence.
+
+This is [[compute_instrument_resolution_before_the_threshold]] applied before the fact rather
+than after, and it cost 3 runs instead of 6. It also independently corroborates the Tier-13 NULL
+(`7400c3a76`): the three arms are indistinguishable on target entropy AND on argmax accuracy
+(49.85–50.98%), which is what a null contrast should look like on a fourth, unrelated instrument.
+
+⇒ **The similar-vintage discriminator remains UNAVAILABLE.** Nothing banked has the needed
+entropy separation at matched vintage, so the entropy-vs-weights question stays open and the
+mechanism stays unsupported. It would need a purpose-built pair, which is not worth GPU while
+the loop's actual blocker is elsewhere.
