@@ -606,12 +606,27 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_s
     # it directly -- it has to be restored into a Board first.
     #
     # ⚑ Both the laziness and the reuse are load-bearing, not tidiness.
-    # ``Board.copy()`` is far more expensive than the key build, and ~9% of
-    # stack entries carry an ep square in real games, so copying per entry cost
-    # 36% of encode_position throughput on the production encoding
-    # (5253/s -> 3342/s). ``restore`` overwrites the whole position, so one
-    # probe serves every entry, and boards with no ep square anywhere never
-    # allocate it at all.
+    # ``Board.copy()`` is far more expensive than the key build, so copying per
+    # entry cost 36% of encode_position throughput. ``restore`` overwrites the
+    # whole position, so one probe serves every entry, and boards with no ep
+    # square anywhere never allocate it at all.
+    #
+    # ⚑ What that optimisation does NOT do is make this function free, and an
+    # earlier version of this comment implied it did. Measured paired and
+    # interleaved (review finding B3): asking python-chess the legality question
+    # still costs **1.6x-2.1x** of _check_repetitions at 17%-37% ep density, and
+    # 1.1x-1.4x of a whole encode_position. That is accepted, not overlooked:
+    #
+    #   - it is NOT a training cost. Production runs
+    #     ``input_history_encoding: lc0_root_legacy_meta``, so
+    #     ``uses_lc0_root_history`` is true, selfplay/network_turn.py's
+    #     encode_position call is gated OFF, and the batch encode goes through C
+    #     ``encode_full_batch``. This function is reached from eval/puzzles.py,
+    #     mcts/puct.py, mcts/gumbel.py and model/__init__.py -- eval and
+    #     Python-search paths;
+    #   - the alternative is hand-rolling ep legality in Python, which
+    #     reintroduces exactly the two-implementations-drifting defect this key
+    #     was fixed for. The reference path should ask the reference.
     probe: list[chess.Board] = []
 
     def _state_has_legal_ep(s) -> bool:
