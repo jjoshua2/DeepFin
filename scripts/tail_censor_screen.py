@@ -97,20 +97,34 @@ def gradient(p: np.ndarray, r: np.ndarray) -> np.ndarray:
 
 
 class Row:
-    """One analysed position: the wide truth, the surfaced set, and the prior."""
+    """One analysed position: the wide truth, the surfaced set, and the prior.
 
-    __slots__ = ("hidden", "legal", "prior", "r_k", "regret", "surfaced")
+    ``game_id``, ``score`` and ``logits`` are carried for downstream screens that
+    need them and are not read by this one: ``game_id`` so a successor can split
+    DISJOINTLY by game rather than by row, ``score`` because a relational
+    objective needs the raw centipawn gaps that ``regret`` has already clipped at
+    ``SF_OWN_REGRET_CAP_CP``, and ``logits`` because an objective over logit
+    DIFFERENCES cannot be reconstructed from ``prior`` once a probability
+    underflows. None of the three changes any number this screen reports.
+    """
+
+    __slots__ = ("game_id", "hidden", "legal", "logits", "prior", "r_k", "regret", "score",
+                 "surfaced")
 
     def __init__(
         self, legal: np.ndarray, regret: dict[int, float],
         surfaced: list[int], hidden: list[int], r_k: float,
+        game_id: int = -1, score: dict[int, float] | None = None,
     ) -> None:
         self.legal = legal
         self.regret = regret
         self.surfaced = surfaced
         self.hidden = hidden
         self.r_k = r_k
+        self.game_id = game_id
+        self.score = score if score is not None else {}
         self.prior: np.ndarray | None = None
+        self.logits: np.ndarray | None = None
 
 
 def collect(
@@ -183,7 +197,10 @@ def collect(
             p = p / p.sum()
             unscored = float(p[[j for j, m in enumerate(legal_idx) if int(m) not in regret]].sum())
             scan["unscored_mass_sum"] += unscored
-            rows.append(Row(legal_idx, regret, surfaced, hidden, max(regret[m] for m in surfaced)))
+            rows.append(Row(
+                legal_idx, regret, surfaced, hidden, max(regret[m] for m in surfaced),
+                game_id=int(gid[i]), score=dict(scored),
+            ))
             rows[-1].prior = p
             planes.append(x[i])
     return rows, planes
@@ -207,11 +224,15 @@ def attach_prior(rows: list[Row], planes: list[np.ndarray], checkpoint: str, bat
             xb = torch.from_numpy(np.stack(planes[start:start + batch])).float().to(device)
             out = model(xb)
             logits = out["policy"] if "policy" in out else out["policy_own"]
+            raw = logits.float().cpu().numpy()
             probs = torch.softmax(logits.float(), dim=-1).cpu().numpy()
-            for row, pr in zip(chunk, probs):
+            for row, pr, lg in zip(chunk, probs, raw):
                 sub = pr[row.legal]
                 total = float(sub.sum())
                 row.prior = sub / total if total > 0 else None
+                # Kept UNNORMALISED on purpose: every objective downstream reads
+                # logit DIFFERENCES, which any additive shift leaves invariant.
+                row.logits = lg[row.legal].astype(np.float64)
     return device
 
 
