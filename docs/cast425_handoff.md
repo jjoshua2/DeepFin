@@ -1,8 +1,11 @@
 # Handoff — CAST / issue #425 / the MultiPV-6 tail
 
 **Written 2026-08-16.** For whoever picks this up next (Claude, Codex, or Grok).
-Everything achievable without GPU time is finished. What remains needs either
-production selfplay to accumulate data, or a scheduled arena.
+**All offline analysis that can answer these research questions from existing data is
+finished.** ⚑ That is deliberately narrower than "everything without a GPU is done":
+the replay-schema plumbing in §7 is CPU-only engineering that remains open. What it
+cannot do without waiting is *produce* the data — that needs production selfplay to
+accumulate, and any Elo claim needs a scheduled arena.
 
 ⚑ Read `docs/experiment_ledger.md` entries dated 2026-08-14 → 2026-08-16 for the
 full record. This file is the map, not the territory.
@@ -70,8 +73,20 @@ training-relevant number is α_grad ≈ 0.14 [0.13, 0.16].*
 
 ## 4. Live state — what is and is not in effect
 
-- **`w_sf_own_regret: 0.0`** in `configs/pbt2_small.yaml`. The tail defect costs us
-  **nothing today**.
+⚑⚑ **READ THESE OFF THE LIVE TREE, NOT OFF THIS BRANCH.** `configs/pbt2_small.yaml`
+differs between the live branch and `main` on ~55 keys, and this one is among them:
+
+| | `w_sf_own_regret` |
+|---|---|
+| **LIVE** — `/home/josh/projects/chess` on `ops/live-20260725`, line 486 | **`0.0`** |
+| this branch / `main`, line 862 | `0.7` ⚑ **not what production runs** |
+
+An earlier revision of this file stated `0.0` unqualified, which is *false on the
+branch the file lives on* — a reader checking the in-tree config would have found
+`0.7` and concluded the doc was wrong. This is the stale-config trap PR #443 exists
+to eliminate; do not make production claims from the in-tree config.
+
+- ⇒ **the tail defect costs us nothing today**, because the LIVE weight is `0.0`.
 - **`record_sf_p0_regret: true`** — so the (wrong) vector is banked into *every shard*.
   Latent, not inert. This is what re-opens the old `w_sf_own_regret: 0.7` verdict,
   which ran at MultiPV **40**.
@@ -85,8 +100,15 @@ training-relevant number is α_grad ≈ 0.14 [0.13, 0.16].*
 | PR | contents | state |
 |---|---|---|
 | **#428** | `tail_censor_screen.py`, `mpv6_tail_panel.py`, `dq_free_dataset_screen.py`, ledger | reviewed, 15/15 threads resolved, CI green |
-| **#444** | `searchmoves` in `uci.py` + forwarded through `StockfishPool` | reviewed twice (incl. delta), 1/1 resolved, CI green |
+| **#444** | `searchmoves` in `uci.py` + forwarded through `StockfishPool` | independently reviewed **and** delta-reviewed; **both rounds produced findings, all subsequently fixed**; current head `74a30cd1`, CI green on that head; 1/1 threads resolved |
 | branch `relational/sf6-screen` | `relational_sf6_screen.py` — backs the relational negative | **pushed, no PR.** 100-file diff off an older base; its verdict is banked. Retrievable for verification, not proposed for merge. |
+
+⚑ **Do not read #444 as carrying a post-fix approval.** The delta review returned
+APPROVE-WITH-CHANGES — it found the 43-test property battery vacuous for the very
+`$`→`\Z` mutation it claimed to catch, and the source-grep ordering assertion to be
+theatre. Both were fixed in `74a30cd1` (three previously-surviving mutants now die;
+the theatre test deleted), and the closure is posted on the PR. **No third review has
+happened.** If one is wanted, it should be a fresh delta on `74a30cd1`.
 
 ⚑ **CI green means less than it looks**: this repo's CI does not re-run when the base
 advances. Re-check before merging.
@@ -135,6 +157,17 @@ on every future checkpoint, with no dedicated run.
 ⚑ This is a **data-affecting change**: it needs its own ledger entry first, and the
 code must be deployed **before** any yaml key referencing it — an unknown key is
 survivable mid-run but **fatal at launch**.
+
+### Sequencing — do these in this order
+
+1. **Drain/merge the instrumentation you need to trust the experiment first** (#423 is
+   the most mature; #442 and #443 explicitly still want independent review; #432 and
+   #438 are substantial instrument changes). An experiment run on unmerged, unreviewed
+   instruments cannot be judged.
+2. **Then add the two `prior_top1_*` replay fields and let them accumulate passively.**
+3. ⚑ **Do NOT schedule a dedicated ΔQ GPU run merely to manufacture same-model pairs.**
+   Normal selfplay creates that dataset for ~4 bytes/row. Spend GPU on the arena that
+   judges a training change, not on generating rows production is already generating.
 
 ### Do NOT build a confidence gate
 
