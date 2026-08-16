@@ -51843,3 +51843,83 @@ board. The repo's own test is the instrument.
   is on `ops/live-20260725`, the converter (`scripts/lc0_data_to_rows.py`) is on `main`/#438.
   Neither branch has both. This is exactly "never let a fix and the code it fixes be separated by
   a branch boundary" — see task #231.
+
+---
+
+## 2026-08-16 — lc0 positive control: AMENDMENT 2. **THE ARM WAS NOT RUNNABLE, AND THE REASON WAS A STALE REFERENCE — TWICE, ON TWO DIFFERENT AXES.**
+
+Launch blocker 1 of the PREREG above ("bt4heads is not on `main`") is **CLEARED**: PR #439 merged,
+`aux_policy_head_dim` is in main's schema, and the arm's guard 0 now reports
+`OK: configs/lc0_positive_control.yaml matches the LIVE file` at **61,444,448** trainable params
+(unique storage) — it was REFUSING at 63,084,128 before the merge. That is the guard's own
+output, not an assertion.
+
+**Clearing it exposed that the same defect was present on a second axis nobody had checked.**
+
+### The NET axis was fixed. The TRAINER axis was not.
+
+The arm's claim is "our EXACT net and trainer, on someone else's data". Measured by
+`trainer_kwargs_from_config()`, control vs the LIVE file, **13 kwargs differ**:
+
+| kwarg | control (from `main`) | LIVE |
+|---|---|---|
+| `lr_T0` | 999999 | **5000** |
+| `lr_T_mult` | 1 | **2** |
+| `warmup_steps` | 72 | **1000** |
+| `w_sf_own_regret` | 0.7 | **0.0** |
+| `w_sf_own` | 0.1 | **0.0** |
+| `w_sf_eval` | 0.1 | **0.0** |
+| `w_sf_move` | 0.02 | 0.05 |
+| `w_categorical` | 0.3 | **1.0** |
+| `rebuild_categorical_target` | False | **True** |
+| `categorical_target_params.blend_frac` | 0.0 | **0.69** |
+| `sf_wdl_frac` | 0.0 (deliberate) | 0.69 |
+| `search_wdl_frac` | 0.7 (deliberate) | 0.31 |
+| `sf_target_params.sf_policy_score_mode` | wdl | cp |
+
+### Why this is DISQUALIFYING and not cosmetic
+
+1. **⚑⚑ THE LR SCHEDULE SHAPES THE QUANTITY THE VERDICT IS READ FROM.** The one deciding
+   yardstick is a **SLOPE** — held-out top-1 at mid-budget vs last. `lr_T0: 999999` is
+   effectively no cosine restart; live is cosine annealing restarting every 5000 steps with
+   `T_mult: 2`, behind 1000 warmup steps instead of 72. A flat-LR run and a restarting-cosine
+   run have entirely different slope signatures **for reasons that have nothing to do with the
+   stack under test**. The arm would have measured `main`'s LR schedule and reported it as a
+   property of our training stack.
+2. **Non-zero SF-teacher losses on a corpus with NO SF labels.** `w_sf_own_regret` 0.7,
+   `w_sf_own` 0.1, `w_sf_eval` 0.1 are all live-ZERO. lc0 rows carry no SF label at all.
+3. **⚑⚑ THE VALUE-SIDE RATIONALE IS FALSIFIED BY THE LIVE FILE.** The config header argues at
+   length that `search_wdl_frac: 0.70` is chosen to keep `game_frac` at **"production's 0.30 —
+   the one number production deliberately controls"**. Live is `0.69 + 0.31 = 1.00`, so
+   production's `game_frac` is **0.00**. The arm was carefully preserving a number production
+   does not have. The whole override was derived from a stale reference.
+
+### The generalisable finding
+
+**The arm's own config header says "MEASURED, not asserted" and reports the trainer diff as
+"exactly TWO entries".** That measurement was real, correct, reproducible — and taken against
+`main`'s committed copy of a file that only ever changes on the live branch. ⇒ **"measured, not
+asserted" is not a defence when the REFERENCE is wrong.** It upgrades an assumption into a
+number without touching the thing that made it wrong, and the number then carries the authority
+of a measurement. Same shape as [[diff_the_file_you_measured_against_production]] and
+[[same_name_different_population]], now with the twist that the rig had already been hardened
+once against exactly this on the architecture axis and the trainer axis was not swept with it.
+
+⇒ **When you fix a stale-reference defect, enumerate every axis that reads the same reference.**
+Fixing the `model:` half and leaving the `train:` half is the same failure the fix was for.
+Instance of [[fixing_a_defect_class_reintroduces_it]] — here the incomplete sweep, not a fresh bug.
+
+### Status and what is owed
+
+- **NOT LAUNCHED.** Re-pointing the trainer is a research decision (it changes what the arm
+  trains), so it gets this amendment rather than a silent edit, per protocol rule 1.
+- ⚑ Open risk being measured before launch: `rebuild_categorical_target: True` +
+  `blend_frac 0.69` + `w_categorical 1.0` **on a corpus with no SF source**. That is this
+  codebase's signature shape (a value accepted, then silently falling back). To be established
+  by measurement on real converted rows, not by reading the config.
+- AMENDMENT 3 (guard 2's random-init seed BAND) is still owed BEFORE the primary readout.
+- **Confound, accepted deliberately:** the held-out half is being converted with the SAME
+  main-based converter as the 122 train dirs, which does NOT carry the EP repetition fix merged
+  today. Converting one half with the fix and the other without would make the held-out gap a
+  measurement of an ENCODER DIFFERENCE rather than of generalisation. Consistency beats
+  correctness here; the EP rate is ~1e-6 and re-converting both halves is ~105 core-hours.
