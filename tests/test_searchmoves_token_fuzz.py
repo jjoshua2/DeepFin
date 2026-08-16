@@ -86,7 +86,11 @@ def test_bad_fen_is_actually_unparseable() -> None:
     That literal was the sole thing standing between this file and the defect
     class it exists to close. It is now this assertion instead.
     """
-    with pytest.raises(ValueError):
+    # ⚑ `match=` is required by ruff PT011, and it earns its keep here: a bare
+    # `ValueError` would also be satisfied by python-chess raising for some
+    # UNRELATED reason, which would let the constant drift to a different kind
+    # of invalid FEN and still pass. This pins WHY it is unparseable.
+    with pytest.raises(ValueError, match="fen"):
         chess.Board(BAD_FEN)
 
 
