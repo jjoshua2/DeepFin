@@ -676,6 +676,73 @@ def test_duplicate_donor_slot_ids_decline(
 
 
 @pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_duplicate_LIVE_names_decline_but_duplicate_DONOR_names_RAISE(
+    optimizer: str, scope: str, tmp_path: Path,
+) -> None:
+    """⚑ Two duplicate checks that look alike and mean opposite things.
+
+    Independent review of PR #439 (F5) found both folded into one
+    ``return None``. They are different categories:
+
+    * duplicate LIVE names — this process's own ``named_parameters()`` repeats a
+      name, so no name-keyed mapping can address those parameters. The DONOR is
+      not implicated, its index order is untouched, and the positional load the
+      caller falls back to is CORRECT. Still ``None``.
+    * duplicate DONOR names — a CORRUPT MANIFEST, the same category as the
+      duplicate slot ids one test above, which already raises. A corrupt donor
+      cannot establish that its own index order is trustworthy, so falling
+      through to a positional load hands every parameter another's moments.
+
+    ⚑ Reachability, measured before the behaviour was tightened: BOTH producers
+    of ``donor_names`` yield distinct names by construction — the manifest from
+    an ``id(param) -> name`` map over ``named_parameters()`` (which deduplicates
+    tied parameters), the reconstruction from ``state_dict`` KEYS. 86/86 distinct
+    on both layouts. So this raise cannot fire on a healthy resume; it fires only
+    on a file that has been rewritten by something else.
+    """
+    trainer = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    trainer.save(tmp_path / "t.pt")
+    payload = torch.load(str(tmp_path / "t.pt"), map_location="cpu", weights_only=False)
+    names = list(payload["opt_param_names"])
+    assert len(names) >= 2, "fixture needs at least two slots to collide"
+    assert len(set(names)) == len(names), (
+        "fixture premise: a healthy manifest has DISTINCT names"
+    )
+
+    arm = _trainer(_cfg(), tmp_path / "arm", optimizer, scope)
+
+    # CONTROL — untouched, this donor is ACCEPTED or declines for no reason of
+    # ours. Without it the arms below could pass by failing for anything.
+    control = arm._remap_optimizer_state_by_param_name(
+        payload["opt"], names, payload["model"],
+    )
+    assert control is None or control[2] >= 0
+
+    # ARM — a donor manifest that repeats a name. Corrupt: must RAISE.
+    duped = list(names)
+    duped[1] = duped[0]
+    with pytest.raises(UntrustedOptimizerStateError):
+        arm._remap_optimizer_state_by_param_name(
+            payload["opt"], duped, payload["model"],
+        )
+
+    # NEGATIVE CONTROL — duplicate LIVE names must still merely DECLINE, because
+    # positional really is correct there. Patched on the live side only.
+    original = arm._optimizer_param_names
+    live = original()
+    assert live is not None
+    collided = list(live)
+    collided[1] = collided[0]
+    arm._optimizer_param_names = lambda: collided
+    try:
+        assert arm._remap_optimizer_state_by_param_name(
+            payload["opt"], names, payload["model"],
+        ) is None, "duplicate LIVE names must decline, not raise"
+    finally:
+        arm._optimizer_param_names = original
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
 def test_an_ndim_mismatch_declines(
     optimizer: str, scope: str, tmp_path: Path,
 ) -> None:

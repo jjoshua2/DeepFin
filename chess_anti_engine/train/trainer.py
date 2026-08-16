@@ -1496,6 +1496,27 @@ def state_dict_digest(sd: Mapping[str, Any]) -> str:
     return digest.hexdigest()[:16]
 
 
+def strip_compile_prefix_from_name(name: str) -> str:
+    """Drop ``torch.compile``'s ``_orig_mod.`` wrapper segment from ONE name.
+
+    ⚑⚑ THE PROJECT'S SINGLE DEFINITION OF THIS RULE. ``strip_compile_prefix``
+    (keys of a mapping) and ``Trainer._wrap_agnostic_name`` (a single
+    ``named_parameters()`` name) both delegate here, so the two cannot drift
+    apart. They previously carried the rule TWICE, and independent review of
+    PR #439 mutated the second copy to ``removeprefix`` and watched the whole
+    suite pass — the only survivor of 20 mutations.
+
+    ⚑ ``replace(..., 1)``, NEVER ``removeprefix``: the segment is not always
+    leading. ``AveragedModel`` (SWA) nests the compiled module, so its keys read
+    ``module._orig_mod.embed.weight`` and ``removeprefix`` leaves them untouched.
+    That is not hypothetical — it is PR #267's J9 defect verbatim, which shipped
+    because its own tests only inspected output where the prefix happened to be
+    leading. No real submodule is named ``_orig_mod``, so removing the first
+    occurrence anywhere is safe.
+    """
+    return name.replace("_orig_mod.", "", 1)
+
+
 def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
     """Drop ``torch.compile``'s ``_orig_mod.`` wrapper segment from state_dict keys.
 
@@ -1507,14 +1528,11 @@ def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
     then reports every key as unexpected and leaves a fresh-init model behind
     with no error — the failure mode that destroyed the model on 2026-04-27.
 
-    ``replace(..., 1)`` rather than ``removeprefix`` because the segment is not
-    always leading: ``AveragedModel`` (SWA) nests the compiled module, so its
-    keys read ``module._orig_mod.embed.weight``. ``removeprefix`` left those
-    untouched, so ``save()``'s ``swa_model`` entry was never actually made
-    wrap-agnostic despite the comment claiming it was. No real submodule is
-    named ``_orig_mod``, so removing the first occurrence anywhere is safe.
+    The rule itself lives in ``strip_compile_prefix_from_name`` -- including why
+    it is ``replace(..., 1)`` and never ``removeprefix`` -- so that this and
+    ``Trainer._wrap_agnostic_name`` cannot disagree.
     """
-    return {k.replace("_orig_mod.", "", 1): v for k, v in sd.items()}
+    return {strip_compile_prefix_from_name(k): v for k, v in sd.items()}
 
 
 def align_compile_prefix(
@@ -3983,12 +4001,20 @@ class Trainer:
     def _wrap_agnostic_name(name: str) -> str:
         """The parameter's name with ``torch.compile``'s wrapper segment removed.
 
-        Same normalisation ``strip_compile_prefix`` applies to state_dict KEYS,
-        applied to a single name: checkpoints are written wrap-agnostic while a
-        compiled trainer's ``named_parameters()`` reports ``_orig_mod.``-prefixed
-        names for the very same parameter objects the optimizer holds.
+        Checkpoints are written wrap-agnostic, while a compiled trainer's
+        ``named_parameters()`` reports ``_orig_mod.``-prefixed names for the very
+        same parameter objects the optimizer holds — so every name-based path
+        here has to normalise before it compares.
+
+        ⚑ DELEGATES to ``strip_compile_prefix_from_name`` rather than restating
+        the rule. It used to carry its own ``replace(..., 1)``, which made this
+        the project's SECOND copy: independent review of PR #439 mutated it to
+        ``removeprefix`` and the entire suite still passed, the only survivor of
+        20 mutations. Equivalent in this function's actual domain today (these
+        names are never nested), but that is a fact about today's inputs, and the
+        divergence of exactly these two spellings is PR #267's J9 defect.
         """
-        return name.replace("_orig_mod.", "", 1)
+        return strip_compile_prefix_from_name(name)
 
     def _optimizer_param_names(self) -> list[str] | None:
         """Wrap-agnostic parameter names in the optimizer's flattened order.
@@ -4172,8 +4198,27 @@ class Trainer:
         live_names = self._optimizer_param_names()
         if live_names is None or len(live_names) != sum(len(g["params"]) for g in groups_new):
             return None
-        if len(set(live_names)) != len(live_names) or len(set(donor_names)) != len(donor_names):
+  # ⚑ TWO DIFFERENT FAILURES, and they are deliberately NOT merged. Reviewed and
+  # decided 2026-08-16 (independent review of PR #439, F5).
+  #
+  # LIVE names duplicated -> `return None`, and that is right: the LIVE model is
+  # this process's own `named_parameters()`, so a repeat means two parameters
+  # genuinely share a name and no name-keyed mapping can address them. The donor
+  # file is not implicated, its index order is as good as it ever was, and the
+  # positional load the caller falls back to is the correct behaviour.
+  #
+  # DONOR names duplicated -> a CORRUPT MANIFEST, the same category the duplicate
+  # slot-id check below RAISES on. By this method's own argument a corrupt donor
+  # cannot establish that its index order is trustworthy.
+        if len(set(live_names)) != len(live_names):
             return None
+        if len(set(donor_names)) != len(donor_names):
+            raise UntrustedOptimizerStateError(
+                f"donor optimizer manifest repeats a parameter name "
+                f"({len(donor_names)} names, {len(set(donor_names))} distinct); "
+                "the name -> slot mapping is not one-to-one and the donor's own "
+                "index order cannot be trusted either"
+            )
         donor_slot_ids: list[Any] = []
         for group in groups_ckpt:
             donor_slot_ids.extend(group.get("params", ()))
@@ -4231,10 +4276,16 @@ class Trainer:
   # The trigger is therefore ONE shape and only one: a checkpoint whose manifest
   # and payload were written by DIFFERENT code -- an external tool that rewrites
   # one side and leaves the other. `Trainer.save` is the sole in-tree writer of
-  # `opt_param_names`, and `scripts/reinit_value_heads.py` was the last tool
-  # that desynchronised them until it was fixed in this same PR. ⇒ **this guard
-  # is defence in depth against a FUTURE such tool. Do not delete it on finding
-  # that nothing produces its input today.**
+  # `opt_param_names`, and TWO scripts rewrote the payload while leaving the
+  # manifest: `scripts/reinit_value_heads.py` (fixed in PR #427) and
+  # `scripts/shrink_ffn_checkpoint.py` (fixed here -- independent review of
+  # #439 found this comment claimed the first was "the last tool", which was
+  # false the moment it was written). ⇒ **this guard is defence in depth against
+  # a FUTURE such tool. Do not delete it on finding that nothing produces its
+  # input today** -- the class has now produced two instances, and both were
+  # harmless only because a separate caller-side accident (no `opt` in the file
+  # ⇒ the manifest is never read) stopped them short. That is a property of the
+  # caller, not of the producers.
   #
   # Not the reason a self-consistent save is safe, though it reads like one:
   # `save` putting both sides through the identical `.replace("_orig_mod.",
@@ -4451,7 +4502,14 @@ class Trainer:
                 )
             if by_name is not None:
                 opt_state, remap_report, kept, changed = by_name
-  # print, not logging.info: see the splice message below.
+  # print, not logging.info: the Ray actor has no logging handler, so INFO is
+  # dropped (measured 2026-08-12: zero INFO records in arm A's 2,494-line log)
+  # and a successful re-key would be silent while only the WARNINGs below are
+  # loud. Same channel as the tolerant-load report. ⚑ Rationale inlined rather
+  # than cross-referenced: it used to say "see the splice message below", and
+  # that message is a `logging.info` on this branch, so the pointer contradicted
+  # itself. Don't reintroduce the cross-reference — the two call sites are free
+  # to disagree, and this note has to stand on its own.
                 print(
                     "[resume] Re-keyed the donor optimizer state onto this "
                     f"model's parameters by name ({remap_report})"

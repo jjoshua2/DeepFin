@@ -40712,7 +40712,18 @@ or a payload rewritten in place by `scripts/reinit_value_heads.py`, which leaves
 this entry twice above. [[server_info_logs_are_discarded_by_uvicorn]]
 
 **Revert point:** `4adafe91a` is the last commit before the review-residual fixes;
-`ed3a8737c` is the last before the `UntrustedOptimizerStateError` behaviour change itself.
+`ed3a8737c` is the last before the `UntrustedOptimizerStateError` behaviour change itself;
+`449879b6d` is the should-fix pass that reworded the mass-turnover WARNING.
+
+⚑⚑ **ALL THREE OF THOSE SHAs ARE UNREACHABLE FROM BOTH `main` AND `ops/live-20260725`.**
+Verified 2026-08-16 (`git branch -r --contains`): they exist only on the unmerged
+`origin/fix/optremap-review-residuals` (and its sibling `origin/fix/optremap-n1-positional-fallback`),
+because PR #427 was SQUASH-merged into the live branch as `45da6ba79` and forward-ported to
+`main` as a cherry-pick with a different SHA again (PR #439). ⇒ **`git show <sha>` on either
+long-lived branch fails, and deleting those remote branches destroys these revert points
+outright.** To revert this change use the squash/cherry-pick commit on the branch you are
+actually on, not the SHAs above. Recorded here rather than in the PR description because a
+PR body does not survive into the file a future operator reads.
 
 **Coverage note.** The mass-turnover WARNING was, until `449879b6d`, the one change in this
 area that **nothing could detect** — the reviewer mutated it to `if False:` and the whole file
