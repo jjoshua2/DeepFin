@@ -842,7 +842,7 @@ rate is ~1/3 regardless. This FAILS
 0.04–0.12 elsewhere) — when the net is unsure, BOTH candidates tend to sit outside SF6.
 n=17, so this is a direction to test prospectively, not a finding.
 
-#### SELECTION CHECK — the 75% attrition is close to RANDOM (good news)
+#### SELECTION CHECK — no material bias DETECTED on measured observables
 
 Recovered vs dropped rows on observables computable BEFORE recovery, so any gap is a
 selection effect rather than an outcome:
@@ -858,7 +858,10 @@ selection effect rather than an outcome:
 
 `top1_in_sf6` — the variable that most directly drives the free fraction — differs by
 **1.1%**, and prior confidence is identical to three decimals. ⇒ **the 59.7% headline is
-much less fragile than 75% attrition suggests.** `r_k` is the only visible gap (11.5%),
+much less fragile than 75% attrition suggests.** ⚑ State this as *no material selection
+bias was DETECTED on the measured pre-recovery observables* — NOT as "missingness is
+random". Six observables agreeing bounds the bias we looked for; it cannot establish
+ignorability against an unmeasured cause of a ply not being stored. `r_k` is the only visible gap (11.5%),
 consistent with the small ply difference.
 
 ⇒ **NET: the headline survives the selection test; the confidence gate does not survive the
