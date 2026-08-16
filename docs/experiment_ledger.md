@@ -51715,3 +51715,73 @@ end. Different populations — [[same_name_different_population]].
 ### Revert / cost
 
 Offline arm, fully revertible — nothing production-side to roll back.
+
+---
+
+## 2026-08-16 — #192 EVIDENCE BANKED, and its DECIDING YARDSTICK WAS MIS-SPECIFIED FOR ITS OWN HYPOTHESIS
+
+Two separate results. The second is the one that transfers.
+
+### 1. The 08-12 NULL is now witnessed
+
+The 08-12 iter218-vs-iter138 arena was run and verdicted NULL, but its **evidence did not exist**:
+zero rows in `runs/arena_results.jsonl`, no dump on disk — the verdict survived only as prose.
+Re-run 2026-08-16 to bank it.
+
+**iter218 (global_iter 890) vs iter138 (811), same trial `5ce02_00000`, same `holdout_generation` 2:
++3.5 Elo, 95% CI [-26.5, +33.5]**, 400 games / 200 pairs, score 0.5050 +/- 0.0220, pentanomial
+(candidate POV) `{WW:35, WD_DW:26, DD_WL:72, LD_DL:42, LL:25}`. git `53007f67d`, `config_hash`
+088409494b3c, seed 42, 25.8 min. **NULL** by the pre-committed rule (SUCCESS = >+15 AND CI lo > 0;
+KILL = < -25).
+
+The 08-12 read was -3.5 [-33.9, +26.9], penta {32,31,67,41,29}; CI widths 60.8 vs 60.0. ⚑ **Same
+seed ⇒ same 200 opening pairs ⇒ these are CORRELATED REPLICATES. Do not pool them.** The 7-Elo
+sign flip is ~3 pair outcomes inside a +/-30 instrument. Banked to
+`scratchpad/task192_rerun_20260816/` (row, stdout, read-once prereg, guard script).
+
+⚑ **Read-once was enforced STRUCTURALLY, not by discipline** — `--report-every 500` exceeds the
+400-game budget, so no rolling Elo block could print. Worth stating why that matters here: the
+08-12 run's 8-pair intermediate read **+112.3**. A number that large, that early, in a +/-30
+instrument is exactly the optional-stopping trap
+[[rolling_arena_optional_stopping_faked_112_elo]], and the only reliable defence is making the
+peek impossible rather than resolving not to look.
+
+### 2. ⚑⚑ THE SIMS-100 PREREG DECIDES A **SEARCH** CHANGE WITH A **WEIGHTS-ONLY** ARENA
+
+The deploy under test was `mcts_simulations` 32 -> 100 + `gumbel_topk` 16. Its deciding yardstick
+is this arena. But this arena holds **search identical on both sides by construction** and varies
+only the weights, so **it cannot attribute the treatment at all.** Enumerated while choosing the
+contrast, before spending GPU:
+
+| contrast | constructible? | attributes the deploy? |
+|---|---|---|
+| weights-only, search frozen (what ran) | yes | **NO** — search is identical both sides |
+| search-only Swiss, same checkpoint | technically | **NO** — needs 256 sims (BANNED, OOMed the run 2026-06-18); `matched_sims` is definitionally incompatible with a treatment that IS the sim count; and it would only restate "more search plays stronger" — the shape of the `gumbel_c_scale` +239.5 Elo trap |
+| **the true counterfactual** — one start, two arms trained N iters at 256/32 vs 100/16, judged under ONE fixed search | **NO** — never run, cannot be reconstructed from banked artifacts | yes |
+
+⇒ **The gate could not have decided its own hypothesis in any of its three possible forms.** This
+is [[a_guard_must_share_the_criterion_instrument]] applied to a prereg rather than to a test: the
+criterion was about SEARCH, the instrument varies WEIGHTS, and nobody noticed because both are
+"an arena" and both emit Elo. Same family as
+[[a_gate_that_cannot_fail]] and as this ledger's own EP-fix yardstick, which was amended
+pre-deploy after the measurement showed it would have scored 0 -> 0 as a PASS.
+
+**⇒ PROTOCOL CONSEQUENCE, pre-committed here rather than after the next one:** before a prereg is
+accepted, state the treatment's AXIS (weights / search / target / data) and require the deciding
+yardstick to VARY THAT AXIS. An instrument that holds the treated axis fixed is not underpowered,
+it is measuring something else — and it will return a clean, well-formed, entirely irrelevant
+number with a CI attached.
+
+**Status of the sims-100 deploy: it remains DEPLOYED and UNJUDGED.** Its mechanism gate passed
+(1.51x/sec, banked) and that is a THROUGHPUT result, not an Elo one. Nothing here licenses either
+keeping or reverting it on strength grounds; the honest record is that no constructible offline
+arena can settle it and the true counterfactual would cost two training arms.
+
+### Instrument note
+
+`config_hash` equality "across arena rows" is **vacuous for a single-row contrast**. The
+load-bearing check is the live yaml sha256 equal before launch and after the run (`config_hash` is
+its 12-char prefix). Checkpoint architecture is read from each checkpoint's embedded `arch`, not
+the live yaml, so the 08-15 bt4heads promotion could not leak into either side. Realized search
+verified byte-identical both sides: `c_scale=0.1 c_visit=50.0 policy_temp=1.5 topk=16
+vloss_weight=1 target_batch=0 tree_reuse=cold`.
