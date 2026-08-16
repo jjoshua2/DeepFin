@@ -58,8 +58,8 @@ The gates
 
 The one known divergence — OURS is the wrong side
 -------------------------------------------------
-Measured over 230,828 positions: exactly ONE row failed the bit-exact plane
-gate, on the frame-0 repetition plane. It is not a converter defect. Our
+Measured over 345,231 positions: 15 rows (1 in 23,000) fail the bit-exact plane
+gate, always on a repetition plane. It is not a converter defect. Our
 production encoder (``encoding/lc0.py::_check_repetitions``, both the Python
 and the C path, which agree with each other) keys a position WITHOUT
 ``ep_square``, so two positions four plies apart that differ only by a legal
@@ -733,7 +733,10 @@ def known_repetition_ep_alias(
     ``ep_square`` — its own comment calls the resulting false positives "extremely
     rare and harmless". They are real: two positions four plies apart that differ
     only by a LEGAL en-passant right are treated as a repetition by us and are
-    not one for lc0 or for python-chess. Measured here at 1 row in 230,828.
+    not one for lc0 or for python-chess. Measured here at 15 rows in 345,231
+    (1 in 23,000). ⚑ An earlier read of "1 in 230,828" was an UNDERCOUNT by an
+    order of magnitude: before this classifier existed the first such row
+    abandoned its whole game, so the run could only ever see one per game.
 
     Three conditions, all required, so this can only ever excuse that one
     mechanism:
