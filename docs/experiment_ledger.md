@@ -405,7 +405,68 @@ Pooled `sqrt(Σ‖Δ‖² / Σ‖g_true‖²)` and the median are both reported.
    hundred current positions run at production-shaped ~200k MPV6 against a wide search.
 3. Positions are the wide-label era's distribution.
 
-### READOUT (2026-08-15) — ⚑⚑ THE HISTORICAL α **TRANSFERS**. The live midpoint is 2.5-3.2× too harsh on REAL MultiPV-6 labels.
+### ⚑⚑ SUPERSEDED 2026-08-16 — the 08-15 panel numbers below are VOID (baseline-mixing confound)
+
+An independent review (reviewer ≠ author) found that `build_rows(substitute=True)` mixed two
+regret BASELINES: `r_k` came from PROD's own best while the substituted tail came from
+MATCHED's/DEEP's. `to_regret` measures each arm against ITS OWN best, so a uniform level shift
+between arms **cancels out of every regret difference** — `cross_arm_check` reads exactly
+1.000 — while landing **entirely on the substituted tail**, the one quantity being measured.
+The falsifier's domain (the top-6 moves both arms surfaced) and the confound's domain (the
+absolute level) are disjoint. A test now pins the leak at exactly 20 cp under a 20 cp shift
+while the ratio stays 1.000.
+
+Fixed by REMOVING the dependence, not checking for it: `rebase_offset()` maps the truth arm's
+raw scores into PROD's frame per row before any regret is taken. Re-run:
+
+| panel | 08-15 (confounded) | 08-16 (rebased) | shift |
+|---|---|---|---|
+| (A) MATCHED-substituted — PRIMARY | 0.1986 [0.092, 0.302] | **0.2719 [0.1838, 0.3751]** | **+0.073** |
+| (A) tablebase-free | 0.2252 [0.142, 0.321] | 0.2096 [0.1342, 0.3093] | −0.016 |
+| (B) DEEP-substituted | 0.0979 [0.015, 0.177] | **0.1976 [0.1252, 0.2781]** | **+0.100** |
+| (B′) ALL-DEEP | −0.0002 [−0.073, 0.066] | 0.0567 [−0.0242, 0.1514] | +0.057 |
+
+**α was biased LOW**, so the old numbers OVERSTATED how wrong the midpoint is: the overstatement
+ratio is **2.11×–2.87×**, not the 2.54×–3.15× banked on 08-15. Three other review findings also
+landed (`alpha_grad` fitted on a superset of the population whose L2 it claimed to minimise;
+never-scored moves entering the reference with a fabricated `r_k`; no `is_selfplay` filter) —
+see the 08-16 screen re-run below, where they moved α by <0.002 combined.
+
+### READOUT (2026-08-16) — the midpoint verdict is ROBUST; "the historical α transfers" is NOT
+
+**Judged by the rule pre-committed 2026-08-14 18:37.** Falsifier first: PROD vs MATCHED
+**1.066**, inside the pre-registered [0.90, 1.111]. Primary is (A), all positions,
+**α_value = 0.2719 [0.1838, 0.3751]**.
+
+| clause | fires? | consequence |
+|---|---|---|
+| CI excludes 1.0 from below | **YES** (upper bound 0.375) | **the live midpoint IS too harsh on production labels** |
+| CI covers 0.1759 | **NO** (lower bound 0.1838) | the historical screen does **not** transfer on the primary |
+
+⇒ By the letter of the pre-committed table this is the FOURTH row: **"excludes BOTH 0.1759 and
+1.0 ⇒ a THIRD number; neither the historical result nor the live rule stands, and the tail needs
+re-deriving from this panel alone."** Recording that as written rather than reaching for the arm
+that agrees. It excludes 0.1759 by 0.008 — a hair — and two of the four panels ((A) tablebase-free
+0.1342–0.3093 and (B) 0.1252–0.2781) DO cover it. But the primary was named in advance and it
+does not.
+
+**What survives, and it is the load-bearing half:** every arm, every population, both
+instruments, and both the confounded and corrected fits put α far below 1.0 and the
+overstatement at **2.1×–2.9×**. The live midpoint being much too harsh is not in question.
+What is no longer supported is the sharper claim that the wide-era α = 0.176 carries over
+unchanged — the honest range on production labels is now **α ≈ 0.06–0.37 depending on the arm**,
+and the arms disagree more than any one of their CIs suggests.
+
+⚑ **(A) remains an UPPER BOUND**, recorded 08-15 BEFORE this re-run and unchanged by it: MATCHED
+is median depth **9** against PROD's **12** with bestmove agreement 0.622, because at a fixed node
+budget you cannot widen MultiPV without weakening the search. A weaker search sees bigger gaps.
+That is consistent with (A) 0.2719 sitting above (B) 0.1976.
+
+⚑ **α_value and α_grad NO LONGER COINCIDE on the panel** — (A) reads 0.2719 vs 0.1018. The
+ledger's earlier "one scalar in ~0.14–0.18 serves both objectives" was a SCREEN-population
+statement and does not hold here. Do not carry it across populations.
+
+### SUPERSEDED READOUT (2026-08-15) — retained for the audit trail; numbers VOID, see above
 
 Judged by the rule pre-committed below at 18:37 on 2026-08-14, before the run reported.
 `scripts/mpv6_tail_panel.py`, 500 positions from the live MPV6 era, banked to
