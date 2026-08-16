@@ -119,6 +119,10 @@ import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
 
 import chess
 import numpy as np
@@ -157,6 +161,14 @@ from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+from chess_anti_engine.eval.production_shape import (
+    LIVE_CONFIG_ENV,
+    assert_matches_production,
+    compare_config_values,
+    format_shape_table,
+    load_live_config,
+    production_selfplay_gumbel_config,
+)
 from scripts.net_source import (
     NetSource,
     add_net_source_args,
@@ -192,6 +204,27 @@ class _SearchProfile:
     c_visit_root: float
     c_scale_root: float
     q_visit_exp_root: float
+  # ⚑ THE THREE FIELDS THIS CLASS USED TO DROP (task #227, found 2026-08-16).
+  # `build_selfplay_gumbel_config` -- the production selfplay mapping -- sets
+  # all three from the live yaml, and this hand-list carried none of them, so
+  # every training row scored GumbelConfig's DEFAULTS instead:
+  #
+  #     policy_temp             live 1.5   audit used --policy-temp default 1.0
+  #     target_max_visit_cap    live 5     audit used 0
+  #     target_untempered_prior live True  audit used False
+  #
+  # The last two are not incidental. In `mcts/gumbel.py` they are the ONLY two
+  # adjustments separating the STORED target `imp_store` from the play
+  # distribution `imp_all`; with both at their defaults that code takes the
+  # `imp_store = imp_all` branch, so the rows headed "production training
+  # target" were scoring the PLAY distribution. An audit-first gate measuring
+  # the wrong object certifies nothing.
+  #
+  # They are populated from `production_selfplay_gumbel_config`, never from a
+  # fresh `flat.get(...)` call -- a second hand-list would drift the same way.
+    policy_temp: float = 1.0
+    target_max_visit_cap: int = 0
+    target_untempered_prior: bool = False
   # NOTE (play-path audit 2026-08-03, F2): c_puct / cpuct_factor / cpuct_base /
   # fpu_reduction used to live here on the premise that "they act on tree
   # descent, so omitting them leaves a hybrid search". That premise is FALSE
@@ -215,6 +248,52 @@ class _SearchProfile:
   # and precisely the null a `--gumbel policy_temp=2.2` sweep would produce.
   # `_assert_overrides_realized` closes it at the dispatch.
     overrides: tuple[tuple[str, float], ...] = ()
+  # The GumbelConfig production selfplay would build for THIS row, straight
+  # from production's own builder. Present on the training rows, None on the
+  # PLAY row (whose shape is intentionally PLAY_SEARCH_DEFAULTS, not the
+  # selfplay shape). `_build` starts from this object rather than reassembling
+  # a config field by field, so a knob added to the production mapping arrives
+  # here automatically instead of needing a new column above.
+    production_base: GumbelConfig | None = None
+
+
+# Fields on which the audit's TRAINING rows deliberately differ from live
+# selfplay. A dict, not a set: there is nowhere to record a deviation without
+# also recording why it is one, so an undocumented deviation cannot be added.
+# Anything NOT in here must match production exactly or the run is refused.
+TRAIN_SHAPE_DEVIATIONS: dict[str, str] = {
+    "simulations": (
+        "per-row by design — the full-sims and playout-capped fast rows are "
+        "different budgets, and --rl-sims re-prices the full row for the "
+        "node-matched readout"
+    ),
+    "add_noise": (
+        "root Gumbel noise perturbs the stored visit distribution, so the "
+        "training rows measure the noise-free SHAPE of the target rather than "
+        "one noisy draw of it; the alternative is a non-deterministic ruler"
+    ),
+    "input_history_encoding": "read off the loaded checkpoint, not the yaml",
+    "input_extra_features": "read off the loaded checkpoint, not the yaml",
+    "policy_encoding": "read off the loaded checkpoint, not the yaml",
+    "compute_relations": "read off the loaded checkpoint, not the yaml",
+}
+
+# Production search keys whose VALUE the audit's --config must agree with the
+# live yaml on. Deliberately the keys `build_selfplay_gumbel_config` consumes:
+# a guard must share the criterion's instrument, so this is the set that
+# actually reaches the search, not every key whose name starts with `gumbel_`.
+PRODUCTION_SEARCH_KEYS: tuple[str, ...] = (
+    "mcts_simulations",
+    "fast_simulations",
+    "gumbel_topk",
+    "gumbel_policy_temp",
+    "gumbel_c_scale",
+    "gumbel_target_max_visit_cap",
+    "gumbel_target_untempered_prior",
+    "volatility_q_scale",
+    "volatility_fpu",
+    "volatility_anchor",
+)
 
 
 def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], ...]:
@@ -473,12 +552,20 @@ def build_search_profiles(
     legacy LINEAR root via the c_visit_root/c_scale_root/q_visit_exp_root
     sentinels below), which is the deliberate "training/RL stays bit-identical"
     choice from PR #84 — the sentinels are not placeholders.
+
+    ⚑ The training rows' knobs now come from
+    ``production_selfplay_gumbel_config`` — production's OWN builder — rather
+    than from a hand-list of ``flat.get`` calls. The hand-list was the #227
+    defect: it silently omitted `gumbel_policy_temp`,
+    `gumbel_target_max_visit_cap` and `gumbel_target_untempered_prior`, which
+    between them are what makes a stored TRAINING target differ from a PLAY
+    distribution at all. Reading the builder's output means a knob added to
+    production selfplay is carried here automatically, and one this script
+    overrides shows up in `assert_matches_production` instead of vanishing.
     """
     from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
 
     rl = GumbelConfig()  # the RL/training shape, by construction
-    rl_c_scale = float(flat.get("gumbel_c_scale", rl.c_scale))  # pyright: ignore[reportArgumentType]
-    rl_topk = int(flat.get("gumbel_topk", rl.topk))  # pyright: ignore[reportArgumentType]
     rl_sims = int(flat.get("mcts_simulations", 256))  # pyright: ignore[reportArgumentType]
   # Node-matched arm for the C17 readout. `--target-batch 1` and `--vloss-weight`
   # both buy ~60% more DISTINCT nodes at the same nominal sim count, so any gain
@@ -490,6 +577,11 @@ def build_search_profiles(
     rl_fast_sims = int(flat.get("fast_simulations", 32))  # pyright: ignore[reportArgumentType]
 
     def _rl(label: str, sims: int) -> _SearchProfile:
+      # ONE call to production's builder per row, and every knob below is read
+      # off its result. Note what is NOT here any more: `flat.get("gumbel_...")`
+      # lookups. Each of those was an independent opportunity to omit a key,
+      # and three of them had already been taken.
+        prod = production_selfplay_gumbel_config(flat, simulations=sims)
         return _SearchProfile(
           # Training rows follow the yaml by default; `--gumbel` reaches them
           # only under `--gumbel-training-rows`. Overriding the TARGET's own
@@ -497,19 +589,23 @@ def build_search_profiles(
           # print it in the column headed "production training target" —
           # the same reasoning that already makes `--gumbel-topk` PLAY-only.
             overrides=gumbel_overrides if override_training_rows else (),
-            label=label, sims=sims, topk=rl_topk, c_scale=rl_c_scale,
+            label=label, sims=sims, topk=int(prod.topk), c_scale=float(prod.c_scale),
             c_visit=rl.c_visit, c_visit_root=rl.c_visit_root,
             c_scale_root=rl.c_scale_root, q_visit_exp_root=rl.q_visit_exp_root,
+          # The three fields #227 found missing. They reach the search through
+          # `production_base` below; they are also mirrored onto the profile so
+          # the report header can PRINT the target shape it scored.
+            policy_temp=float(prod.policy_temp),
+            target_max_visit_cap=int(prod.target_max_visit_cap),
+            target_untempered_prior=bool(prod.target_untempered_prior),
           # Volatility search is an open, default-off flag family that the
           # audit-first rule still has to be able to judge. Carrying the
           # values means enabling them in the yaml changes the audited
           # target, instead of the audit quietly scoring the baseline.
-            volatility_q_scale=float(flat.get("volatility_q_scale", 0.0)),  # pyright: ignore[reportArgumentType]
-            volatility_fpu=float(flat.get("volatility_fpu", 0.0)),  # pyright: ignore[reportArgumentType]
-            volatility_anchor=(
-                float(flat["volatility_anchor"])  # pyright: ignore[reportArgumentType]
-                if flat.get("volatility_anchor") is not None else None
-            ),
+            volatility_q_scale=float(prod.volatility_q_scale),
+            volatility_fpu=float(prod.volatility_fpu),
+            volatility_anchor=float(prod.volatility_anchor),
+            production_base=prod,
         )
 
     return {
@@ -538,6 +634,185 @@ _VALUE_NAMES = {
     "blend": "iii) production WDL blend",
     "search_root": "iv) search root WDL",
 }
+
+
+def build_profile_gumbel_config(
+    name: str,
+    p: _SearchProfile,
+    *,
+    hist: str,
+    extra: str,
+    pol_enc: str,
+    use_rel: bool,
+    play_policy_temp: float,
+) -> GumbelConfig:
+    """The ``GumbelConfig`` this profile's search will actually be handed.
+
+    Module-level and public for the same reason ``build_selfplay_gumbel_config``
+    is: it used to be a closure inside ``_net_candidates``, so nothing outside
+    could call it and the only way to check that the production-shape guard
+    RUNS was to read the source. An AST test cannot tell a called guard from a
+    dead one, and "accepted then silently ignored" is this codebase's signature
+    defect. With this addressable, ``tests/test_production_shape_guard.py``
+    drives it with a stub profile and watches the guard fire.
+
+    add_noise=False on every profile: root Gumbel noise (`gumbel_scale` 0.75
+    selfplay / 0.25 curriculum) DOES perturb the stored visit distribution, so
+    the training-target rows measure the noise-free shape of the target rather
+    than a single noisy draw of it. That is a deliberate, stated deviation --
+    the alternative is a non-deterministic ruler -- and it is the ONE axis on
+    which the train profiles still differ from live selfplay.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+  # TRAINING rows: start from the config production's OWN builder produced for
+  # this row and change only the documented deviations. Nothing is re-listed,
+  # so nothing can be re-dropped -- the #227 defect is not "these three fields
+  # were wrong", it is "a hand-list was the mechanism", and a hand-list that is
+  # merely longer fails again at the next knob.
+    if p.production_base is not None:
+        cfg = dataclasses.replace(
+            p.production_base,
+            simulations=int(p.sims),
+            add_noise=False,
+            input_history_encoding=hist, input_extra_features=extra,
+            policy_encoding=pol_enc, compute_relations=use_rel,
+        )
+      # Every key above is in TRAIN_SHAPE_DEVIATIONS; the assertion proves the
+      # converse, that nothing OUTSIDE that map drifted.
+        assert_matches_production(
+            cfg, p.production_base,
+            exempt=TRAIN_SHAPE_DEVIATIONS,
+            where=_CANDIDATE_NAMES.get(name, name),
+        )
+      # Printed on the SUCCESS path too. A guard that only speaks when it fails
+      # is indistinguishable from a guard that is not running.
+        print(
+            f"[shape] {_CANDIDATE_NAMES.get(name, name)}: realized vs "
+            f"production selfplay\n"
+            + format_shape_table(
+                cfg, p.production_base, exempt=TRAIN_SHAPE_DEVIATIONS,
+            ),
+            flush=True,
+        )
+        if p.overrides:
+            base = GumbelConfig()
+            cfg = dataclasses.replace(cfg, **{
+                k: _coerce_override(getattr(base, k), v) for k, v in p.overrides
+            })
+        return cfg
+  # PLAY row: intentionally NOT the selfplay shape (PLAY_SEARCH_DEFAULTS), so
+  # it has no production_base to check against and keeps the explicit
+  # construction. `--policy-temp` applies here and here only.
+    cfg = GumbelConfig(
+        simulations=int(p.sims), add_noise=False, temperature=0.0,
+        input_history_encoding=hist, input_extra_features=extra,
+        policy_encoding=pol_enc, compute_relations=use_rel,
+        policy_temp=float(play_policy_temp), topk=int(p.topk),
+        c_scale=p.c_scale, c_visit=p.c_visit,
+        c_visit_root=p.c_visit_root, c_scale_root=p.c_scale_root,
+        q_visit_exp_root=p.q_visit_exp_root,
+        volatility_q_scale=p.volatility_q_scale,
+        volatility_fpu=p.volatility_fpu,
+    )
+  # `replace` rather than a `**kw` spread: the spread erased every field's type
+  # into the dict's value type, so the constructor call above type-checked as
+  # though `full_tree`, `halving_div` and the two target knobs were all floats.
+    if p.volatility_anchor is not None:
+        cfg = dataclasses.replace(cfg, volatility_anchor=float(p.volatility_anchor))
+    if p.overrides:
+      # `replace` reaches EVERY GumbelConfig field, including the ones
+      # `_SearchProfile` has no column for — which is why the overrides ride as
+      # a raw pair list rather than as new profile fields.
+        base = GumbelConfig()
+        cfg = dataclasses.replace(cfg, **{
+            k: _coerce_override(getattr(base, k), v) for k, v in p.overrides
+        })
+    return cfg
+
+
+def load_audit_config(config_path: str, *, allow_stale: bool) -> dict[str, Any]:
+    """Load ``--config`` AND prove it is production's. One function, on purpose.
+
+    These were two statements in ``main()`` until the mutation run: deleting the
+    check line left the load intact, the audit ran, and no test noticed —
+    "a value that is accepted and then silently ignored", applied to the guard
+    itself. Fusing them means the only way to skip the check is to stop calling
+    the loader, which is a visible edit rather than a deleted line.
+
+    The residual gap is real and worth stating: nothing proves ``main()`` calls
+    THIS function rather than ``flatten_run_config_defaults`` directly. That
+    regress ends only at an end-to-end run, which needs a GPU and an hour of
+    Stockfish.
+    """
+    flat = dict(flatten_run_config_defaults(load_yaml_file(config_path)))
+    _assert_config_is_production(config_path, flat, allow_stale=allow_stale)
+    return flat
+
+
+def _assert_config_is_production(
+    config_path: str, flat: dict[str, object], *, allow_stale: bool,
+) -> None:
+    """Refuse to audit a config whose search keys disagree with the LIVE yaml.
+
+    The reference is the live file named by ``$CHESS_ANTI_ENGINE_LIVE_CONFIG``,
+    NOT the in-tree ``configs/pbt2_small.yaml`` — the in-tree copy is stale by
+    construction on every branch except the live one, because the live working
+    tree is its only writer and its edits are routinely uncommitted. An audit
+    run against the in-tree copy from a worktree is the exact failure this
+    check exists for, and it is silent today.
+
+    Two ways this DEGRADES rather than crashes, both loudly:
+      * the live config cannot be resolved (running off the training host) —
+        say so and continue, because an instrument that only works on one
+        machine is a regression;
+      * ``--allow-stale-config`` — an operator deliberately auditing a
+        historical or experimental config. Printed as a warning, never silent.
+    """
+    live = load_live_config()
+    if live is None:
+        print(
+            "[shape] WARNING: no live production config resolved "
+            f"(${LIVE_CONFIG_ENV} unset or unreadable). The search shape below "
+            f"is whatever {config_path} says; it has NOT been shown to match "
+            "the running trial.",
+            flush=True,
+        )
+        return
+    print(live.header(), flush=True)
+    if not live.authoritative:
+        print(
+            f"[shape] WARNING: the reference above is the IN-TREE config, which "
+            f"is stale by construction unless this checkout is the live tree. "
+            f"Set ${LIVE_CONFIG_ENV} for an authoritative comparison.",
+            flush=True,
+        )
+    diffs = compare_config_values(flat, live.flat, PRODUCTION_SEARCH_KEYS)
+    if not diffs:
+        print(
+            f"[shape] --config {config_path}: all {len(PRODUCTION_SEARCH_KEYS)} "
+            "production search keys match the live config by VALUE",
+            flush=True,
+        )
+        return
+    detail = "\n  ".join(str(d) for d in diffs)
+    if allow_stale:
+        print(
+            f"[shape] WARNING (--allow-stale-config): {config_path} disagrees "
+            f"with the live config on:\n  {detail}\n"
+            "  These numbers describe the config named above, NOT the running "
+            "trial. Do not put them in a table with live-config readings.",
+            flush=True,
+        )
+        return
+    raise SystemExit(
+        f"[shape] --config {config_path} is not the production search shape:\n"
+        f"  {detail}\n"
+        f"  The live config is {live.path}. Audit that file, or pass "
+        "--allow-stale-config if you deliberately mean to score a different "
+        "configuration. Refusing to run — the report header would name a "
+        "production target this config does not produce."
+    )
 
 
 def profiles_for_audit(
@@ -659,7 +934,6 @@ def _net_candidates(
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
     from chess_anti_engine.inference import LocalModelEvaluator
     from chess_anti_engine.mcts.gumbel import (
-        GumbelConfig,
         run_gumbel_root_many,
         volatility_search_enabled,
         warn_volatility_python_path,
@@ -704,33 +978,13 @@ def _net_candidates(
   # than a single noisy draw of it. That is a deliberate, stated deviation --
   # the alternative is a non-deterministic ruler -- and it is the ONE axis on
   # which the train profiles still differ from live selfplay.
-    def _build(p: _SearchProfile) -> GumbelConfig:
-        kw = {}
-        if p.volatility_anchor is not None:
-            kw["volatility_anchor"] = p.volatility_anchor
-        cfg = GumbelConfig(
-            simulations=int(p.sims), add_noise=False, temperature=0.0,
-            input_history_encoding=hist, input_extra_features=extra,
-            policy_encoding=pol_enc, compute_relations=use_rel,
-            policy_temp=float(policy_temp), topk=int(p.topk),
-            c_scale=p.c_scale, c_visit=p.c_visit,
-            c_visit_root=p.c_visit_root, c_scale_root=p.c_scale_root,
-            q_visit_exp_root=p.q_visit_exp_root,
-            volatility_q_scale=p.volatility_q_scale,
-            volatility_fpu=p.volatility_fpu,
-            **kw,
+    cfgs = {
+        name: build_profile_gumbel_config(
+            name, p, hist=hist, extra=extra, pol_enc=pol_enc,
+            use_rel=use_rel, play_policy_temp=float(policy_temp),
         )
-        if p.overrides:
-          # `replace` reaches EVERY GumbelConfig field, including the ones
-          # `_SearchProfile` has no column for — which is why the overrides ride
-          # as a raw pair list rather than as new profile fields.
-            base = GumbelConfig()
-            cfg = dataclasses.replace(cfg, **{
-                k: _coerce_override(getattr(base, k), v) for k, v in p.overrides
-            })
-        return cfg
-
-    cfgs = {name: _build(p) for name, p in profiles.items()}
+        for name, p in profiles.items()
+    }
   # Guard the DISPATCH, not the CLI: these are the objects each runner is about
   # to be handed, so an override that survives to here survives into the search.
     _assert_overrides_dispatched(
@@ -1289,10 +1543,17 @@ def main() -> None:
                          "(default: <audit-set>.matched_rows.npz); built by "
                          "scripts/match_audit_rows.py, not checked in")
     ap.add_argument("--sims", type=int, default=256)
+    ap.add_argument("--allow-stale-config", action="store_true",
+                    help="proceed when --config disagrees with the live production "
+                         "yaml on a search key. For deliberately auditing a historical "
+                         "or experimental config; the mismatch is printed either way.")
     ap.add_argument("--policy-temp", type=float, default=1.0,
                     help="prior temperature on policy logits before gumbel search "
                          "(>1 softens prior, <1 sharpens, 1.0=no-op). Measures search-prior "
-                         "calibration on the REAL audit-set distribution (vs puzzle bias).")
+                         "calibration on the REAL audit-set distribution (vs puzzle bias). "
+                         "PLAY row (b) ONLY: the training rows take gumbel_policy_temp "
+                         "from the production config, because a target row scored at a "
+                         "temperature selfplay does not use is not a production target.")
     ap.add_argument("--gumbel", action="append", default=None, metavar="k=v",
                     help="override any GumbelConfig field on the PLAY row (b). "
                          "Repeatable, and comma-separated pairs are accepted: "
@@ -1458,7 +1719,7 @@ def main() -> None:
         tag="audit",
     )
 
-    flat = flatten_run_config_defaults(load_yaml_file(args.config))
+    flat = load_audit_config(args.config, allow_stale=bool(args.allow_stale_config))
     sf_params = _sf_soft_params_from_flat(flat)
     train_temp = float(flat.get("temperature", 1.0))
     sf_wdl_frac = float(flat.get("sf_wdl_frac", 0.0))
@@ -1513,7 +1774,13 @@ def main() -> None:
         print(
             f"[audit] {_CANDIDATE_NAMES[name]}: {prof.label} — "
             f"sims={prof.sims} topk={prof.topk} c_scale={prof.c_scale} "
-            f"root={'log' if prof.q_visit_exp_root < 0 else 'linear'}",
+            f"root={'log' if prof.q_visit_exp_root < 0 else 'linear'} "
+          # The three #227 fields, on the header line: a target row that does
+          # not print cap/untempered is a row from a build that predates the
+          # fix, and the distinction matters because the numbers moved.
+            f"policy_temp={prof.policy_temp} "
+            f"target_cap={prof.target_max_visit_cap} "
+            f"untempered_prior={prof.target_untempered_prior}",
             flush=True,
         )
 

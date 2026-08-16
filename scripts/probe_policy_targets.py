@@ -10,8 +10,13 @@ How the two targets are constructed (selfplay/finalize.py:finalize_game):
   configured policy encoding.
 - ``policy_soft_target`` is ``apply_policy_temperature(eff_probs,
   soft_policy_temp)`` applied to the SAME post-override distribution —
-  i.e. ``p^(1/T)`` renormalized, with T = 3.0 in production
-  (selfplay/temperature.py:apply_policy_temperature).
+  i.e. ``p^(1/T)`` renormalized (selfplay/temperature.py:apply_policy_temperature).
+  ⚑ This line used to assert "T = 3.0 in production". The live yaml has said
+  ``soft_policy_temp: 2.0`` for as long as anyone checked, so the claim was
+  simply wrong — which is why T is no longer written down here at all. It is
+  RECOVERED from the stored arrays by ``_recover_soft_policy_temp`` and
+  compared against the live config at run time; see the ``[shape]`` line the
+  probe prints above its table.
 
 So the soft target is a deterministic retempering of the hard target, not an
 independent signal. Construction does NOT differ between selfplay
@@ -19,7 +24,7 @@ independent signal. Construction does NOT differ between selfplay
 on network turns, and both game types flow through the same ``finalize_game``
 path; the ``is_selfplay`` flag tags the game type. The only way the two
 targets coincide exactly is when the visit distribution is (near-)one-hot —
-``p^(1/3)`` fixes one-hot vectors — so divergence here directly measures how
+``p^(1/T)`` fixes one-hot vectors for EVERY T — so divergence here measures how
 often search output is still multi-modal.
 
 Streams the most recent shards from a replay dir and reports, per source
@@ -92,6 +97,102 @@ def _row_metrics(p: np.ndarray, q: np.ndarray) -> dict[str, np.ndarray]:
     }
 
 
+def _recover_soft_policy_temp(p: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Per-row estimate of the T that produced ``q`` from ``p``, or NaN.
+
+    ``q = p**(1/T) / Z`` implies, for any reference index r::
+
+        log q_i - log q_r = (1/T) * (log p_i - log p_r)
+
+    so with ``A_i = log p_i - log p_r`` and ``B_i = log q_i - log q_r`` the
+    least-squares slope through the origin, ``sum(A*B) / sum(B*B)``, IS T. No
+    config value enters the estimate — it is read out of the stored arrays.
+
+    ⚑ This is the guard that a `soft_policy_temp` config read could not be.
+    Reading the key proves the operator's config says 2.0; it says nothing
+    about the temperature the SHARDS on disk were written at, and shards
+    outlive config edits by the length of the replay window. Comparing the
+    recovered T against the live key is a value read on both sides.
+
+    One-hot rows carry no information (``p**(1/T)`` fixes them for every T) and
+    return NaN, which is also why this probe's headline TV statistic is small
+    whenever search output is peaked.
+    """
+    tau = 1e-6
+    p64 = np.maximum(p.astype(np.float64), 0.0)
+    q64 = np.maximum(q.astype(np.float64), 0.0)
+    p64 /= np.maximum(p64.sum(axis=1, keepdims=True), _EPS)
+    q64 /= np.maximum(q64.sum(axis=1, keepdims=True), _EPS)
+    mask = (p64 > tau) & (q64 > tau)
+    ref = p64.argmax(axis=1)
+    rows = np.arange(p64.shape[0])
+    log_p = np.where(mask, np.log(np.maximum(p64, _EPS)), 0.0)
+    log_q = np.where(mask, np.log(np.maximum(q64, _EPS)), 0.0)
+    a = np.where(mask, log_p - log_p[rows, ref][:, None], 0.0)
+    b = np.where(mask, log_q - log_q[rows, ref][:, None], 0.0)
+    num = (a * b).sum(axis=1)
+    den = (b * b).sum(axis=1)
+    out = np.full(p64.shape[0], np.nan, dtype=np.float64)
+  # The floor is division-by-zero protection and nothing more — MEASURED, after
+  # an earlier revision of this comment claimed it was load-bearing against
+  # near-degenerate rows. It is not: the `mask` above already drops every entry
+  # below 1e-6, so any surviving off-reference entry contributes a LARGE
+  # log-ratio. On near-one-hot rows (entries 1e-3 down to 1e-9) `den` measures
+  # 130.8, 364.5, 0.0, 0.0 — never small-but-positive. So `den > 0.0` and
+  # `den > 1e-6` select identically, and no test can distinguish them. Recorded
+  # rather than deleted because "this guard is inert" is worth knowing.
+    ok = den > 1e-6
+    out[ok] = num[ok] / den[ok]
+    return out
+
+
+def _check_soft_policy_temp(recovered: np.ndarray) -> str:
+    """Compare the temperature the SHARDS were written at against the live yaml.
+
+    Returns a report line. Degrades loudly (never crashes) when the live config
+    is unreadable, because this probe is otherwise host-independent.
+
+    The failing input: shards written at one `soft_policy_temp` read against a
+    config carrying another — which is exactly the state this file's own
+    docstring was in before 2026-08-16, claiming "T = 3.0 in production" while
+    the live yaml said 2.0.
+    """
+    from chess_anti_engine.eval.production_shape import LIVE_CONFIG_ENV, load_live_config
+
+    finite = recovered[np.isfinite(recovered)]
+    if finite.size == 0:
+        return (
+            "[shape] soft_policy_temp: NOT CHECKED — every sampled row is "
+            "(near-)one-hot, so no temperature is recoverable from the data."
+        )
+    med = float(np.median(finite))
+    live = load_live_config()
+    if live is None:
+        return (
+            f"[shape] soft_policy_temp: shards were written at T~={med:.4f} "
+            f"({finite.size} informative rows). NOT compared against production "
+            f"— ${LIVE_CONFIG_ENV} is unset or unreadable."
+        )
+    want = float(live.flat.get("soft_policy_temp", 2.0))
+    ok = abs(med - want) <= 0.05 * max(1.0, want)
+    verdict = "MATCHES" if ok else "DOES NOT MATCH"
+    line = (
+        f"[shape] soft_policy_temp: shards were written at T~={med:.4f} over "
+        f"{finite.size} informative rows; live config says {want} -> {verdict}. "
+        f"({live.path})"
+    )
+    if not ok:
+        line += (
+            "\n[shape] ⚑ The stored soft targets do NOT come from the live "
+            "temperature. Either the replay window predates a config edit — in "
+            "which case the trainer is consuming targets built at the OLD T for "
+            "another window's worth of iterations — or soft_policy_temp is not "
+            "reaching selfplay at all. Do not read the divergence numbers below "
+            "as a property of the live setting."
+        )
+    return line
+
+
 def _collect(
     replay_dir: Path, positions: int, chunk_rows: int = 4096,
 ) -> dict[str, np.ndarray]:
@@ -100,7 +201,10 @@ def _collect(
         raise SystemExit(f"no shards found under {replay_dir}")
 
     cols: dict[str, list[np.ndarray]] = {
-        k: [] for k in ("tv", "kl_pq", "kl_qp", "argmax_agree", "source", "phase")
+        k: []
+        for k in (
+            "tv", "kl_pq", "kl_qp", "argmax_agree", "source", "phase", "temp_hat",
+        )
     }
     seen = 0
     used_shards = 0
@@ -145,6 +249,10 @@ def _collect(
                 cols[key].append(metrics[key][valid])
             cols["source"].append(source)
             cols["phase"].append(phase)
+          # Recovered from the SAME rows the statistics are computed over, so
+          # the temperature check cannot be about a different population than
+          # the numbers it is vouching for.
+            cols["temp_hat"].append(_recover_soft_policy_temp(p, q)[valid])
             seen += int(valid.sum())
             if seen >= positions:
                 break
@@ -210,6 +318,10 @@ def main() -> None:
     )
     print(f"[probe] replay dir: {args.replay_dir}  "
           f"(streamed {n_total} samples from {int(data['_used_shards'])} newest shards)")
+  # Printed BEFORE the table, because it decides whether the table is about
+  # the live setting or about a superseded one.
+    temp_line = _check_soft_policy_temp(data["temp_hat"])
+    print(temp_line)
     print(header)
     print("-" * len(header))
     for name, g in groups.items():
@@ -226,6 +338,13 @@ def main() -> None:
         "positions": n_total,
         "shards_used": int(data["_used_shards"]),
         "identical_tv_threshold": _IDENTICAL_TV,
+      # Banked, not just printed: a reader of this JSON months from now must be
+      # able to tell which temperature the numbers describe without rerunning.
+        "soft_policy_temp_check": temp_line,
+        "soft_policy_temp_recovered_median": (
+            float(np.median(data["temp_hat"][np.isfinite(data["temp_hat"])]))
+            if np.isfinite(data["temp_hat"]).any() else None
+        ),
         "groups": groups,
         "argv": sys.argv,
     }

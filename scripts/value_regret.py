@@ -101,6 +101,63 @@ def _piece_count(fen: str) -> int:
     return sum(1 for c in fen.split(" ", 1)[0] if c.isalpha())
 
 
+def _report_encoding_vs_production(
+    enc_kwargs: dict[str, str], *, input_encoding: str,
+) -> None:
+    """Print the checkpoint's declared input layout against production's.
+
+    This ruler runs no search, so it has no search shape to drift. Its
+    production-shape dependence is entirely in the INPUT: a checkpoint built
+    for a different plane layout than the live run's is scored happily and
+    silently today, and the resulting cp number is not comparable with any
+    other reading of this ruler.
+
+    Deliberately a WARNING and not a refusal, unlike the search guards:
+    scoring a foreign or historical net (lc0/BT4, an old checkpoint, a
+    different feature version) against the frozen audit set is a legitimate
+    and frequent use of this script — see docs/bt4.md. Refusing would break
+    the comparison the eval protocol is built on. What was missing is that the
+    mismatch was never SAID, so a cross-layout number could be put in a table
+    beside a production one without anything marking it.
+    """
+    from chess_anti_engine.eval.production_shape import (
+        LIVE_CONFIG_ENV,
+        load_live_config,
+        production_input_encoding,
+    )
+
+    live = load_live_config()
+    if live is None:
+        print(
+            f"[shape] checkpoint declares {enc_kwargs}; NOT compared against "
+            f"production (${LIVE_CONFIG_ENV} unset or unreadable).",
+            flush=True,
+        )
+        return
+    want = production_input_encoding(live.flat)
+    print(live.header(), flush=True)
+    diffs = [
+        f"{k}: checkpoint {enc_kwargs.get(k, '<absent>')!r} vs production {v!r}"
+        for k, v in want.items()
+        if enc_kwargs.get(k) != v
+    ]
+    if not diffs:
+        print(
+            f"[shape] checkpoint input layout MATCHES production: {want} "
+            f"(scored with --input-encoding {input_encoding})",
+            flush=True,
+        )
+        return
+    print(
+        "[shape] ⚑ WARNING: this checkpoint's input layout is NOT production's:\n  "
+        + "\n  ".join(diffs)
+        + "\n  The cp figure below is a valid reading of THIS net, but it is a "
+        "different ruler from a production-layout reading and the two must not "
+        "share a table, trend or threshold.",
+        flush=True,
+    )
+
+
 def value_1ply_regret(
     *, net: NetSource, positions, device: str, batch_size: int, pos_chunk: int,
     input_encoding: str = INPUT_ENCODING_DEFAULT,
@@ -137,6 +194,7 @@ def value_1ply_regret(
         device=device, gpu_mem_fraction=gpu_mem_fraction, tag="value-regret",
     )
     enc_kwargs = model_encoding_kwargs(model)
+    _report_encoding_vs_production(enc_kwargs, input_encoding=encoding)
     if matched_rows is not None and encoding == "stored":
         matched_rows.require_model_compatible(enc_kwargs)
     # Dynamic-relation checkpoints apply their attention bias only when the

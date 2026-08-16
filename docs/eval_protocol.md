@@ -269,6 +269,28 @@ Mechanics:
   sims, the SF MultiPV soft target at production label settings, the actual
   blended training target, and all four WDL components/blends. Reports land
   in `runs/target_audit_<sha>.md`.
+- **⚑⚑ A RULER CHANGE INVALIDATES ITS RECORDS: rows (d) and (e) MOVED on
+  2026-08-16 and are not comparable with any earlier reading.** The training
+  rows were built from a hand-list of search fields that silently omitted three
+  the production selfplay builder sets from the live yaml —
+  `gumbel_policy_temp` (live **1.5**, audit used the `--policy-temp` default
+  **1.0**), `gumbel_target_max_visit_cap` (live **5**, audit used **0**) and
+  `gumbel_target_untempered_prior` (live **true**, audit used **False**). The
+  last two are the ONLY two adjustments that separate the stored target
+  `imp_store` from the play distribution `imp_all` in `mcts/gumbel.py`, so with
+  both at their defaults the rows headed "production training target" were
+  scoring the PLAY distribution. Any (d)/(e) number banked before that date
+  describes a target production does not store; do not put one in a table,
+  trend or threshold with a number from after it. The PLAY row (b) and the SF
+  soft-target row (c) are unaffected.
+- The training rows are now derived by calling production's own
+  `build_selfplay_gumbel_config` rather than by re-listing its fields, and the
+  realized-vs-production table is printed on every run under `[shape]`. A field
+  the audit overrides without declaring it in `TRAIN_SHAPE_DEVIATIONS` stops
+  the run. Point `$CHESS_ANTI_ENGINE_LIVE_CONFIG` at the live yaml so `--config`
+  is value-checked against the running trial; without it the audit falls back
+  to the in-tree copy and says so, because the in-tree copy is stale by
+  construction on every branch but the live one.
 - **Scoring a FOREIGN net (LC0/BT4, Ceres) on the same ruler:** pass `--onnx
   <net>.onnx` instead of `--checkpoint` to either `scripts/audit_targets.py` or
   `scripts/value_regret.py`. The two flags are mutually exclusive and exactly
