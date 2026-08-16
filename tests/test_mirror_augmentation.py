@@ -479,3 +479,159 @@ def test_mirror_sample_preserves_per_head_mask_alignment():
     assert (m.sf_policy_target * (m.sf_legal_mask == 0)).sum() == 0
     assert (m.future_policy_target * (m.future_legal_mask == 0)).sum() == 0
     assert int(m.sf_legal_mask[int(m.sf_move_index)]) == 1
+
+
+# ---------------------------------------------------------------------------
+# prior_top1_index: the generating net's raw-prior top-1 MOVE INDEX.
+#
+# ⚑ The whole hazard of this field is that it looks like a scalar and is not:
+# it lives in policy space, so a mirrored row must have it REMAPPED. A copy
+# raises nothing, changes no shape, and leaves a plausible in-range index --
+# it is simply the wrong move on every mirrored row. These tests exist to fail
+# on exactly that, in both mirror paths.
+#
+# Every entry of both mirror maps is self-distinct (mirror(i) != i for all i),
+# so `expected != original` holds for any index and the assertions below cannot
+# go vacuous by accidentally picking a fixed point.
+# ---------------------------------------------------------------------------
+
+
+def test_mirror_sample_remaps_prior_top1_index_compact():
+    compact_idx = 10
+    expected = int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
+    assert expected != compact_idx  # a copy would be indistinguishable otherwise
+    policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    policy[compact_idx] = 1.0
+    sample = ReplaySample(
+        x=np.zeros((18, 8, 8), dtype=np.float32),
+        policy_target=policy,
+        wdl_target=1,
+        prior_top1_index=compact_idx,
+        prior_top1_prob=0.75,
+    )
+
+    mirrored = mirror_sample(sample)
+
+    assert mirrored.prior_top1_index == expected
+    # The probability rides along unchanged: mass on a move is mirror-invariant.
+    assert mirrored.prior_top1_prob == 0.75
+
+
+def test_mirror_sample_remaps_prior_top1_index_full_width():
+    full_idx = int(COMPACT_TO_FULL_POLICY[10])
+    expected = mirror_policy_index(full_idx)
+    assert expected != full_idx
+    policy = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    policy[full_idx] = 1.0
+    sample = ReplaySample(
+        x=np.zeros((18, 8, 8), dtype=np.float32),
+        policy_target=policy,
+        wdl_target=1,
+        prior_top1_index=full_idx,
+        prior_top1_prob=0.5,
+    )
+
+    mirrored = mirror_sample(sample)
+
+    assert mirrored.prior_top1_index == expected
+
+
+def test_mirror_sample_prior_top1_lands_on_the_mirrored_legal_move():
+    """Consistency check with a co-mirrored mask.
+
+    Stronger than comparing against the map: it re-derives the answer from a
+    field mirrored by a DIFFERENT mechanism (legal_mask goes through
+    mirror_policy, the index through the index remap). A copied index lands on
+    an illegal square of the mirrored position and this fails.
+    """
+    compact_idx = 10
+    policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    policy[compact_idx] = 1.0
+    legal_mask = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.uint8)
+    legal_mask[compact_idx] = 1
+    sample = ReplaySample(
+        x=np.zeros((18, 8, 8), dtype=np.float32),
+        policy_target=policy,
+        wdl_target=1,
+        legal_mask=legal_mask,
+        prior_top1_index=compact_idx,
+        prior_top1_prob=0.9,
+    )
+
+    mirrored = mirror_sample(sample)
+
+    assert mirrored.legal_mask is not None
+    assert mirrored.prior_top1_index is not None
+    assert int(mirrored.legal_mask[int(mirrored.prior_top1_index)]) == 1
+    # ...and the pre-mirror slot is no longer the legal one, so the assertion
+    # above is not satisfied by a mask that simply stayed put.
+    assert int(mirrored.legal_mask[compact_idx]) == 0
+
+
+def test_mirror_batch_remaps_prior_top1_index():
+    compact_idx = 10
+    expected = int(COMPACT_MIRROR_POLICY_MAP[compact_idx])
+    assert expected != compact_idx
+    batch = {
+        "x": np.zeros((1, 18, 8, 8), dtype=np.float32),
+        "policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
+        "prior_top1_index": np.array([compact_idx], dtype=np.int32),
+        "prior_top1_prob": np.array([0.75], dtype=np.float16),
+    }
+    batch["policy_target"][0, compact_idx] = 1.0
+
+    mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+
+    assert int(mirrored["prior_top1_index"][0]) == expected
+    assert float(mirrored["prior_top1_prob"][0]) == 0.75
+
+
+def test_mirror_batch_leaves_inactive_prior_top1_rows_alone():
+    """A row with the has_ flag off carries -1 and must pass through untouched:
+    -1 is not a move, and remapping it would index the mirror map out of range.
+    """
+    batch = {
+        "x": np.zeros((1, 18, 8, 8), dtype=np.float32),
+        "policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
+        "prior_top1_index": np.array([-1], dtype=np.int32),
+    }
+    batch["policy_target"][0, 0] = 1.0
+
+    mirrored = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+
+    assert int(mirrored["prior_top1_index"][0]) == -1
+
+
+def test_every_registered_policy_index_field_is_remapped_by_both_paths():
+    """Completeness guard, behavioural rather than by source inspection.
+
+    replay/shard.POLICY_INDEX_FIELDS is the schema's statement of which scalars
+    hold a move index. Anything on that list that a mirror path COPIES is a
+    silent corruption of that field, so this drives the list itself: add a new
+    index field to the schema and forget the mirror, and this fails.
+    """
+    from chess_anti_engine.replay.shard import POLICY_INDEX_FIELDS
+
+    idx = 10
+    expected = int(COMPACT_MIRROR_POLICY_MAP[idx])
+    assert expected != idx
+
+    for name, _flag in POLICY_INDEX_FIELDS:
+        policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+        policy[idx] = 1.0
+        sample = ReplaySample(
+            x=np.zeros((18, 8, 8), dtype=np.float32),
+            policy_target=policy,
+            wdl_target=1,
+        )
+        setattr(sample, name, idx)
+        assert getattr(mirror_sample(sample), name) == expected, f"mirror_sample: {name}"
+
+        batch = {
+            "x": np.zeros((1, 18, 8, 8), dtype=np.float32),
+            "policy_target": np.zeros((1, COMPACT_POLICY_SIZE), dtype=np.float32),
+            name: np.array([idx], dtype=np.int32),
+        }
+        batch["policy_target"][0, idx] = 1.0
+        out = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+        assert int(out[name][0]) == expected, f"maybe_mirror_batch_arrays: {name}"

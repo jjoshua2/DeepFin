@@ -45,6 +45,19 @@ class ReplaySample:
     sf_played_move_index: int | None = None  # regret-sampled curriculum reply, if different from best
     sf_played_rank: int | None = None  # 1=best among MultiPV candidates
     sf_played_regret: float | None = None  # best_score - played_score in WDL winrate units
+  # The generating net's RAW root policy prior, captured at selfplay time
+  # BEFORE search re-ranks it. Together with policy_target (the search-improved
+  # distribution) these give a SAME-MODEL (prior top-1 vs MCTS choice) pair on
+  # every row: both come from the one theta that played the ply, by
+  # construction. Nothing else in the schema records the generating prior --
+  # _NetRecord.policy_probs never leaves selfplay memory -- so a checkpoint's
+  # prior can otherwise only be paired against a DIFFERENT (historical) net's
+  # played move. Written only when selfplay.record_prior_top1 is on.
+  # index is in the SHARD's policy encoding (compact when policy_encoding is
+  # lc0_1858), like sf_move_index -- so it MUST be mirror-remapped, not copied.
+    prior_top1_index: int | None = None
+    prior_top1_prob: float | None = None  # prior mass on that move, [0, 1]
+
     sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
     sf_multipv_raw: np.ndarray | None = None  # (SF_MULTIPV_RAW_MAX, 5) int16 raw MultiPV rows
     sf_label_meta: np.ndarray | None = None   # (6,) int32 record-level SF eval metadata
