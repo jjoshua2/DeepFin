@@ -586,18 +586,46 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_s
     Builds a set of all position keys seen before the history window,
     then checks each history position against it (O(1) per lookup).
     """
+    # Keys mirror python-chess's own repetition key, Board._transposition_key():
+    #
+    #     return (self.pawns, self.knights, self.bishops, self.rooks,
+    #             self.queens, self.kings,
+    #             self.occupied_co[WHITE], self.occupied_co[BLACK],
+    #             self.turn, self.clean_castling_rights(),
+    #             self.ep_square if self.has_legal_en_passant() else None)
+    #
+    # ⚑ ep_square is kept when an ep capture is LEGAL and dropped otherwise --
+    # it is not dropped unconditionally. Omitting it entirely (as this did) is a
+    # false POSITIVE: a position with a legal ep then compares equal to the same
+    # pieces/turn/castling without it, and the C path agreed only because it had
+    # the same defect. Reusing python-chess's own predicate here keeps the two
+    # paths on one ruler and makes that ruler the correct one.
+
+    def _state_has_legal_ep(s) -> bool:
+        """has_legal_en_passant() for a stack entry, which is not a Board.
+
+        Restoring into a throwaway copy is the only way to ask python-chess the
+        legality question about a historical state, and it is why this is gated
+        on ``s.ep_square`` first: the restore is far more expensive than the key
+        build, and ep_square is unset in the overwhelming majority of positions.
+        """
+        if s.ep_square is None:
+            return False
+        probe = board.copy(stack=False)
+        s.restore(probe)
+        return probe.has_legal_en_passant()
+
     def _skey(s):
-  # Omit ep_square: python-chess is_repetition ignores EP when no EP
-  # capture is legal. Excluding it avoids false negatives and matches
-  # the old behavior. False positives are extremely rare and harmless.
         return (s.pawns, s.knights, s.bishops, s.rooks, s.queens, s.kings,
-                s.occupied_w, s.occupied_b, s.turn, s.castling_rights)
+                s.occupied_w, s.occupied_b, s.turn, s.castling_rights,
+                s.ep_square if _state_has_legal_ep(s) else None)
 
     def _bkey():
         return (board.pawns, board.knights, board.bishops, board.rooks,
                 board.queens, board.kings, int(board.occupied_co[chess.WHITE]),
                 int(board.occupied_co[chess.BLACK]), board.turn,
-                board.castling_rights)
+                board.castling_rights,
+                board.ep_square if board.has_legal_en_passant() else None)
 
   # The history window covers stack indices [earliest_si .. stack_len-1] + current board.
   # earliest_si is the index corresponding to hist_idx = n_steps - 1.

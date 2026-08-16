@@ -597,13 +597,24 @@ typedef struct {
     uint64_t hist_occ[CBOARD_HISTORY_MAX][2];  /* color occupancy */
     int8_t hist_turn[CBOARD_HISTORY_MAX];      /* side to move */
     uint8_t hist_castling[CBOARD_HISTORY_MAX]; /* castling rights */
-    uint64_t hist_hash[CBOARD_HISTORY_MAX];    /* hist_hash of each snapshot,
-                                                * recorded while it was the
-                                                * live position. Lets the
-                                                * current-repetition check see
-                                                * the kept window even after
+    uint64_t hist_hash[CBOARD_HISTORY_MAX];    /* REPETITION KEY of each
+                                                * snapshot (cboard_repetition_key,
+                                                * i.e. ep-aware), recorded while
+                                                * it was the live position. Lets
+                                                * the current-repetition check
+                                                * see the kept window even after
                                                 * hash_stack saturation,
                                                 * without recomputing hashes. */
+    int8_t hist_ep[CBOARD_HISTORY_MAX];        /* ep_square of each snapshot.
+                                                * The encoder's reconstruction
+                                                * path re-derives a slot's key
+                                                * from the stored bitboards, and
+                                                * legal-ep is not recoverable
+                                                * from them alone, so the ep
+                                                * square must be kept too or the
+                                                * reconstructed keys land on a
+                                                * different ruler from
+                                                * hash_stack's. */
     int8_t hist_was_rep[CBOARD_HISTORY_MAX];   /* was this snapshot a repetition
                                                 * when it was the live position?
                                                 * Recorded at push time (full
@@ -616,6 +627,14 @@ typedef struct {
     int8_t hist_head;                          /* circular buffer write index */
     uint16_t ply;                              /* total half-moves from game start */
 } CBoard;
+
+/* Reset the per-slot ep squares to the "no ep" sentinel. Callers that build a
+ * CBoard with memset(0) must call this: hist_ep is int8_t, so a zeroed slot
+ * reads as ep on square 0 (a1), not as "no ep". Slots below hist_len are always
+ * written explicitly, so this only guards slots a later reader might reach. */
+static inline void cboard_reset_hist_ep(CBoard *b) {
+    for (int i = 0; i < CBOARD_HISTORY_MAX; i++) b->hist_ep[i] = -1;
+}
 
 /* Normalize an untrusted ep-square to the CBoard invariant (-1 or 0..63).
  * Several paths shift by ep_square after only an `>= 0` check, so an
@@ -703,12 +722,21 @@ static uint64_t cboard_compute_hash(const CBoard *b) {
     }
     if (b->turn == BLACK_C) h ^= ZOBRIST_TURN;
     h ^= ZOBRIST_CASTLING[b->castling & 0xF];
-    /* EP excluded from hash — this hash is the REPETITION key, where FIDE
-     * (and python-chess is_repetition()) treat an unusable ep right as
-     * irrelevant, and it is persisted in selfplay resume records. Anything
-     * that needs "same legal move set" must use cboard_transposition_key
-     * below instead; keying a search transposition table on this hash
-     * silently equates positions with different legal moves (audit W1). */
+    /* EP excluded from this hash. It is the persisted POSITION-IDENTITY hash,
+     * NOT the repetition key: selfplay resume records store it as pos_hash /
+     * final_pos_hash and `selfplay/resume.py` re-derives and compares it, so
+     * perturbing its value would make every in-flight record fail with
+     * ResumeStateError("position_mismatch") — a reason NOT in
+     * _PRESERVE_FILE_REASONS, so those games are DISCARDED, not deferred.
+     *
+     * ⚑ Do not use this hash to answer a question about equivalence:
+     *   - "same legal move set"  -> cboard_transposition_key (pseudo-legal ep)
+     *   - "same position for repetition" -> cboard_repetition_key (LEGAL ep)
+     * Both are defined below as this hash XOR an ep term, so this value stays
+     * bit-identical while they answer correctly. Keying a search transposition
+     * table on this raw hash silently equates positions with different legal
+     * moves (audit W1); keying REPETITION on it silently equates positions that
+     * python-chess distinguishes (see cboard_repetition_key). */
     return h;
 }
 
@@ -747,6 +775,112 @@ static inline int cboard_ep_capture_available(const CBoard *b) {
 static inline uint64_t cboard_transposition_key(const CBoard *b) {
     uint64_t k = b->hash;
     if (cboard_ep_capture_available(b))
+        k ^= ZOBRIST_EP[sq_file(b->ep_square)];
+    return k;
+}
+
+/* Legality-EXACT en-passant availability: is there an ep capture that is
+ * actually LEGAL (survives pin and check)?
+ *
+ * This is the predicate python-chess's repetition key uses. Verified against
+ * python-chess 1.11.2:
+ *
+ *     def _transposition_key(self):
+ *         return (..., self.ep_square if self.has_legal_en_passant() else None)
+ *
+ * and has_legal_en_passant() is `self.ep_square is not None and
+ * any(self.generate_legal_ep())` — LEGAL, not pseudo-legal.
+ *
+ * ⚑ Deliberately NOT cboard_ep_capture_available: that one is pseudo-legal on
+ * purpose (a pinned capturer answers 1). For a transposition table that is
+ * harmless — it splits an entry, costing a hit, never correctness. For
+ * REPETITION it is wrong in the other direction: it would split the key for a
+ * position whose ep cannot legally be played, so a genuine repetition of that
+ * position would go UNDETECTED (false negative — a real draw missed). We are
+ * not trading one unsound answer for another; this predicate matches
+ * python-chess exactly.
+ *
+ * Cost is paid only when ep_square is set (rare), hence the early-out. The
+ * occupancy is simulated fully — capturer removed from its origin, captured
+ * pawn removed from its square, capturer placed on ep_square — so the
+ * horizontal "ep skewer" (both pawns leaving one rank to expose a rook/queen
+ * on the king) is handled by construction rather than by a special case. */
+static inline int bitboards_have_legal_ep(const uint64_t bb[6],
+                                          const uint64_t occ[2],
+                                          int turn, int ep_square) {
+    if (ep_square < 0 || ep_square >= 64) return 0;   /* the common path */
+    int us = turn, them = 1 - us;
+    uint64_t us_kings = bb[KING] & occ[us];
+    if (!us_kings) return 0;                 /* malformed: no king to expose */
+
+    uint64_t ep_bit = 1ULL << ep_square;
+    uint64_t attackers;
+    int captured_sq;
+    if (us == WHITE_C) {
+        /* White to move, so black just pushed; white pawns capture upward. */
+        attackers = ((ep_bit >> 7) & 0xFEFEFEFEFEFEFEFEULL)
+                  | ((ep_bit >> 9) & 0x7F7F7F7F7F7F7F7FULL);
+        captured_sq = ep_square - 8;
+    } else {
+        attackers = ((ep_bit << 7) & 0x7F7F7F7F7F7F7F7FULL)
+                  | ((ep_bit << 9) & 0xFEFEFEFEFEFEFEFEULL);
+        captured_sq = ep_square + 8;
+    }
+    uint64_t candidates = (bb[PAWN] & occ[us]) & attackers;
+    if (!candidates) return 0;
+    if (captured_sq < 0 || captured_sq >= 64) return 0;
+
+    uint64_t cap_bit = 1ULL << captured_sq;
+    /* The pawn to be captured must really be there. A caller-supplied ep_square
+     * (from_raw / from_board on a hand-written FEN) need not be consistent. */
+    if (!(bb[PAWN] & occ[them] & cap_bit)) return 0;
+
+    int king_sq = lsb64(us_kings);
+    uint64_t all = occ[0] | occ[1];
+    uint64_t them_pawns_after = (bb[PAWN] & occ[them]) & ~cap_bit;
+    uint64_t them_knights = bb[KNIGHT] & occ[them];
+    uint64_t them_bishops = bb[BISHOP] & occ[them];
+    uint64_t them_rooks   = bb[ROOK]   & occ[them];
+    uint64_t them_queens  = bb[QUEEN]  & occ[them];
+    uint64_t them_kings   = bb[KING]   & occ[them];
+
+    int from_sq;
+    FOR_EACH_BIT(candidates, from_sq) {
+        /* The mover is a pawn, so king_sq is unaffected by the move itself. */
+        uint64_t occ_after = (all & ~(1ULL << from_sq) & ~cap_bit) | ep_bit;
+        if (!is_attacked_by(king_sq, occ_after,
+                            them_pawns_after, them_knights, them_bishops,
+                            them_rooks, them_queens, them_kings, them))
+            return 1;
+    }
+    return 0;
+}
+
+static inline int cboard_has_legal_ep(const CBoard *b) {
+    return bitboards_have_legal_ep(b->bb, b->occ, b->turn, b->ep_square);
+}
+
+/* Key for REPETITION detection: cboard_compute_hash plus the en-passant file
+ * when an ep capture is actually LEGAL. This is the C mirror of python-chess's
+ * Board._transposition_key(), which is what is_repetition() compares.
+ *
+ * FIDE and python-chess agree that an UNUSABLE ep right is irrelevant — that
+ * much the pre-fix comment had right. Where it went wrong was concluding that
+ * ep may therefore be dropped ENTIRELY: python-chess drops it only when
+ * has_legal_en_passant() is false and KEEPS it otherwise. Dropping it
+ * unconditionally makes a position with a legal ep compare EQUAL to the same
+ * pieces/turn/castling without it — a false repetition. That is not a cosmetic
+ * plane bug: cboard_search_terminal (mcts/_mcts_tree.c) answers a repetition
+ * with SOLVED_DRAW, and tree_resolve_from_children lets one drawn child turn a
+ * proven-LOST node into a proven-DRAWN one. SOLVED is terminal, so more visits
+ * never correct it and the error propagates upward — unsound, and directional
+ * (positions only ever look better than they are).
+ *
+ * XOR-on-top of b->hash rather than folded into it, so the persisted
+ * position-identity hash keeps its value (see cboard_compute_hash). */
+static inline uint64_t cboard_repetition_key(const CBoard *b) {
+    uint64_t k = b->hash;
+    if (cboard_has_legal_ep(b))
         k ^= ZOBRIST_EP[sq_file(b->ep_square)];
     return k;
 }
@@ -809,6 +943,11 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     int is_pawn_move = (moving_piece == PAWN);
     int is_irreversible = is_pawn_move || is_capture;
 
+    /* The pre-move position's repetition key, computed ONCE. Both the history
+     * slot and the hash_stack record this position, and the legality-exact ep
+     * test behind it is not free when ep_square is set. */
+    uint64_t rep_key = cboard_repetition_key(b);
+
     /* --- Save current position to history circular buffer --- */
     {
         int slot = b->hist_head;
@@ -835,11 +974,15 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
              * inside a saturated run stay undetected — bounded, and confined
              * to positions already drawn by rule. */
             for (int k = 0; !was_rep && k < b->hist_len; k++) {
-                if (b->hist_hash[k] == b->hash) was_rep = 1;
+                if (b->hist_hash[k] == rep_key) was_rep = 1;
             }
         }
         b->hist_was_rep[slot] = (int8_t)was_rep;
-        b->hist_hash[slot] = b->hash;
+        /* Repetition key, not the identity hash: hist_hash is only ever
+         * compared against other repetition keys (here, and in the encoder's
+         * current-position supplement), so it must be on the same ruler. */
+        b->hist_hash[slot] = rep_key;
+        b->hist_ep[slot] = b->ep_square;
         b->hist_head = (slot + 1) % CBOARD_HISTORY_MAX;
         if (b->hist_len < CBOARD_HISTORY_MAX)
             b->hist_len++;
@@ -850,10 +993,11 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
         /* Irreversible move: clear the hash stack (no repetition possible across these) */
         b->hash_stack_len = 0;
     } else {
-        /* Hash already excludes EP, so use it directly for repetition detection. */
-        uint64_t rep_hash = b->hash;
+        /* The ep-aware repetition key, matching python-chess's
+         * _transposition_key(); b->hash alone would equate a legal-ep position
+         * with the same pieces/turn/castling without the ep right. */
         if (b->hash_stack_len < CBOARD_HASH_STACK_MAX)
-            b->hash_stack[b->hash_stack_len++] = rep_hash;
+            b->hash_stack[b->hash_stack_len++] = rep_key;
     }
 
     /* --- Save old state for incremental hash update --- */
@@ -957,8 +1101,10 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
     h ^= ZOBRIST_CASTLING[old_castling & 0xF];
     h ^= ZOBRIST_CASTLING[b->castling & 0xF];
 
-    /* EP square is stored for encoding but excluded from the Zobrist hash
-     * (better transposition detection, and _check_repetitions does the same). */
+    /* EP square is stored for encoding and excluded from b->hash, which is the
+     * persisted position-identity hash. The ep-dependent keys are layered on
+     * top of it: cboard_transposition_key (pseudo-legal ep) and
+     * cboard_repetition_key (LEGAL ep, matching python-chess). */
     b->ep_square = -1;
     if (is_pawn_move) {
         int diff = to_sq - from_sq;
@@ -1052,18 +1198,23 @@ static int cboard_insufficient_material(const CBoard *b) {
 }
 
 /* Fast repetition: any prior occurrence (2-fold). Good for search pruning.
- * Hash already excludes EP, matching python-chess is_repetition() semantics. */
+ * Keyed on cboard_repetition_key — b->hash XOR the ep file when an ep capture
+ * is LEGAL — which is the C mirror of python-chess's Board._transposition_key(),
+ * the key its is_repetition() compares. Using the raw b->hash here (as this did
+ * before) reports a false repetition whenever a legal-ep position shares its
+ * pieces/turn/castling with an earlier one. */
 static int cboard_is_repetition(const CBoard *b) {
-    uint64_t h = b->hash;
+    uint64_t h = cboard_repetition_key(b);
     for (int i = 0; i < b->hash_stack_len; i++) {
         if (b->hash_stack[i] == h) return 1;
     }
     return 0;
 }
 
-/* Strict repetition: 3-fold (current + 2 prior). Matches FIDE/python-chess rules. */
+/* Strict repetition: 3-fold (current + 2 prior). Matches FIDE/python-chess rules.
+ * Same key as cboard_is_repetition. */
 static int cboard_is_threefold_repetition(const CBoard *b) {
-    uint64_t h = b->hash;
+    uint64_t h = cboard_repetition_key(b);
     int count = 0;
     for (int i = 0; i < b->hash_stack_len; i++) {
         if (b->hash_stack[i] == h) {
@@ -1188,12 +1339,21 @@ static void cboard_encode_hist_planes_root(const uint64_t hist_bb[6],
     }
 }
 
-/* Compute a position key for repetition detection (from bitboards + meta).
- * Matches _check_repetitions which omits EP square from the key, so EP is
- * not mixed in here either. */
+/* Compute a REPETITION KEY from loose bitboards + meta — the free-standing
+ * twin of cboard_repetition_key, for callers that hold a history snapshot
+ * rather than a CBoard.
+ *
+ * ⚑ ep_square is REQUIRED and must be the snapshot's own. It mirrors
+ * python-chess's Board._transposition_key(), which keeps ep_square exactly when
+ * has_legal_en_passant() is true; a caller that cannot supply the snapshot's ep
+ * square must pass -1 and accept that its keys will not match a CBoard's for
+ * legal-ep positions. This used to omit ep unconditionally to "match"
+ * _check_repetitions — which was itself wrong the same way, and has been fixed
+ * alongside this (encoding/lc0.py::_check_repetitions). */
 static uint64_t cboard_hist_hash(const uint64_t hist_bb[6],
                                   const uint64_t hist_occ[2],
-                                  int hist_turn, uint8_t castling) {
+                                  int hist_turn, uint8_t castling,
+                                  int hist_ep_square) {
     uint64_t h = 0;
     for (int color = 0; color < 2; color++) {
         for (int pt = 0; pt < 6; pt++) {
@@ -1206,6 +1366,8 @@ static uint64_t cboard_hist_hash(const uint64_t hist_bb[6],
     }
     if (hist_turn == BLACK_C) h ^= ZOBRIST_TURN;
     h ^= ZOBRIST_CASTLING[castling & 0xF];
+    if (bitboards_have_legal_ep(hist_bb, hist_occ, hist_turn, hist_ep_square))
+        h ^= ZOBRIST_EP[sq_file(hist_ep_square)];
     return h;
 }
 
@@ -1310,7 +1472,8 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
         for (int hi = hist_n - 1; hi >= 0; hi--) {
             int idx = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
             uint64_t h = cboard_hist_hash(
-                b->hist_bb[idx], b->hist_occ[idx], b->hist_turn[idx], b->hist_castling[idx]
+                b->hist_bb[idx], b->hist_occ[idx], b->hist_turn[idx],
+                b->hist_castling[idx], b->hist_ep[idx]
             );
             int repeated = 0;
             for (int j = 0; j < seen_n; j++) {
@@ -1329,8 +1492,9 @@ static void cboard_fill_lc0_112_root(const CBoard *b, float * restrict out) {
      * (the stack stops appending when full), matching the pre-refactor
      * default path, which also checked the reconstructed window hashes. */
     int cur_rep = cboard_is_repetition(b);
+    uint64_t cur_rep_key = cboard_repetition_key(b);
     for (int k = 0; !cur_rep && k < b->hist_len; k++) {
-        if (b->hist_hash[k] == b->hash) cur_rep = 1;
+        if (b->hist_hash[k] == cur_rep_key) cur_rep = 1;
     }
     if (cur_rep) {
         for (int i = 0; i < 64; i++) out[12*64 + i] = 1.0f;
