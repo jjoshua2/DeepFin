@@ -451,6 +451,36 @@ see the 08-16 screen re-run below, where they moved α by <0.002 combined.
 2. **The primary instrument is invalid** (see the retraction below). A pre-registered criterion
    evaluated on an instrument that does not measure a well-defined quantity is not a verdict.
 
+#### The GAME-CLUSTER rerun landed (2026-08-16, `scratchpad/panel_clustered.json`, seed 1)
+
+Same seed and same 500 positions, so **every point estimate is byte-identical** to the row-bootstrap
+run — the correct signature, since the resampling unit changes the interval and not the estimate.
+
+| arm | n_games/n_rows | α_value | ROW CI | GAME-CLUSTER CI | width | covers 0.1779 |
+|---|---|---|---|---|---|---|
+| (B) **PRIMARY** deep_substituted | 395/498 | 0.1976 | [0.1252, 0.2781] | **[0.1249, 0.2780]** | 1.00× | **YES** |
+| (A) MATCHED — diagnostic only | 395/498 | 0.2719 | [0.1838, 0.3751] | [0.1805, 0.3846] | 1.07× | no, **by 0.0026** |
+| (A) MATCHED, TB-free | 370/453 | 0.2096 | [0.1342, 0.3093] | [0.1198, 0.3190] | 1.14× | **YES** |
+| (B') ALL-DEEP | 394/496 | 0.0567 | [−0.0242, 0.1514] | [−0.0389, 0.1444] | 1.04× | no, by 0.0335 |
+
+⚑ **Clustering barely moved the panel, and the reason is structural: the panel's sampler already
+draws ~ONE position per game (1.26 rows/game).** So its row bootstrap was already close to a game
+bootstrap by construction, and there was almost no within-game correlation left to absorb. This
+does NOT generalise to the truncation screen, which runs **5.4 rows/game** (925 games / 5028 rows)
+— that is where the clustering fix genuinely bites. ⇒ *the same method fix has very different
+force on two instruments; check the rows-per-cluster ratio before claiming a clustered CI
+changed (or did not change) anything.*
+
+⇒ **MATCHED's exclusion of the historical α collapsed from 0.008 to 0.0026** — a coin flip, not a
+regime shift. Combined with its ill-posed estimand, nothing rests on it. The PRIMARY (B) **covers**
+0.1779. **All four arms exclude α = 1.0 on BOTH α_value and α_grad** (α_grad upper bounds 0.1247–0.2288).
+
+⚑ The banked `scratchpad/panel_clustered.log` carries **stale LABELS** — it prints "(A)
+SELF-CONSISTENCY — PRIMARY" and "row bootstrap draws" because the interpreter had already loaded
+the pre-edit file when the relabel was written ([[running_scripts_keep_the_old_file]]). The
+NUMBERS are the clustered ones (`n_games` is banked in the JSON, which is only computed under
+clustering). Trust `panel_clustered.json`; the current script prints the corrected labels.
+
 **The honest statement is:** the historical point estimate does not reproduce *exactly* on the
 production panel, and the evidence does not establish a genuine regime shift. Across every
 credible instrument α is **O(0.1–0.25)**, while **α = 1 is decisively wrong**.
