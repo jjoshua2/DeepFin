@@ -58,6 +58,22 @@ static inline int py_read_castling_mask(PyObject *state, uint8_t *out) {
     return 0;
 }
 
+/* Read a python-chess _BoardState's ep_square as the CBoard invariant
+ * (-1 or 0..63). Required by the repetition key: python-chess keeps ep_square
+ * in Board._transposition_key() exactly when has_legal_en_passant() is true, so
+ * a reconstructed history key that omits it lands on a different ruler from the
+ * keys cboard_push records. Silent fallback to -1 on a missing/odd attribute,
+ * matching the other readers here. */
+static inline int py_read_ep_square(PyObject *state) {
+    PyObject *v = PyObject_GetAttrString(state, "ep_square");
+    if (!v) { PyErr_Clear(); return -1; }
+    if (v == Py_None) { Py_DECREF(v); return -1; }
+    long ep = PyLong_AsLong(v);
+    Py_DECREF(v);
+    if (ep == -1 && PyErr_Occurred()) { PyErr_Clear(); return -1; }
+    return (int)cboard_sanitize_ep((int)ep);
+}
+
 /* Read the 6 piece bitboards + 2 occupancy bitboards + turn from a
  * python-chess snapshot (Board or _BoardState). Missing attrs silently
  * zero out — these snapshots sometimes lack occupied_w/b on older
@@ -310,6 +326,7 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
 
     CBoard *b = &self->board;
     memset(b, 0, sizeof(CBoard));
+    cboard_reset_hist_ep(b);  /* int8_t 0 would read as ep on a1, not "no ep" */
 
     /* Read bitboards from python-chess board. On any attr-miss or conversion
      * failure, DECREF self and propagate the Python exception. */
@@ -418,8 +435,10 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             uint8_t s_castling = 0;
             if (py_read_castling_mask(s, &s_castling) < 0) PyErr_Clear();
             b->hist_castling[slot] = s_castling;
+            int s_ep = py_read_ep_square(s);
+            b->hist_ep[slot] = (int8_t)s_ep;
             b->hist_hash[slot] = cboard_hist_hash(
-                b->hist_bb[slot], b->hist_occ[slot], s_turn, s_castling);
+                b->hist_bb[slot], b->hist_occ[slot], s_turn, s_castling, s_ep);
             b->hist_len++;
         }
         b->hist_head = n_hist % CBOARD_HISTORY_MAX;
@@ -437,7 +456,8 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
             uint8_t h_castling = 0;
             if (py_read_castling_mask(s, &h_castling) < 0) PyErr_Clear();
 
-            uint64_t h_hash = cboard_hist_hash(h_bb, h_occ, h_turn, h_castling);
+            uint64_t h_hash = cboard_hist_hash(h_bb, h_occ, h_turn, h_castling,
+                                               py_read_ep_square(s));
 
             if (b->hash_stack_len < CBOARD_HASH_STACK_MAX)
                 b->hash_stack[b->hash_stack_len++] = h_hash;
@@ -478,7 +498,8 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
                     if (!e) { stack_hashes[j] = 0; continue; }
                     py_read_hist_bitboards(e, e_bb, e_occ, &e_turn);
                     if (py_read_castling_mask(e, &e_cast) < 0) PyErr_Clear();
-                    stack_hashes[j] = cboard_hist_hash(e_bb, e_occ, e_turn, e_cast);
+                    stack_hashes[j] = cboard_hist_hash(e_bb, e_occ, e_turn, e_cast,
+                                                       py_read_ep_square(e));
                 }
                 for (int i = 0; i < n_hist; i++) {
                     Py_ssize_t si = stack_len - n_hist + i;  /* slot's _stack index */
@@ -515,6 +536,7 @@ static PyObject* PyCBoard_from_raw(PyTypeObject *type, PyObject *args) {
     if (!self) return NULL;
     CBoard *b = &self->board;
     memset(b, 0, sizeof(CBoard));
+    cboard_reset_hist_ep(b);  /* int8_t 0 would read as ep on a1, not "no ep" */
 
     b->bb[PAWN]   = pawns;
     b->bb[KNIGHT] = knights;
@@ -608,6 +630,25 @@ static PyObject* PyCBoard_is_checkmate(PyCBoard *self, PyObject *Py_UNUSED(args)
 /* is_stalemate() -> bool */
 static PyObject* PyCBoard_is_stalemate(PyCBoard *self, PyObject *Py_UNUSED(args)) {
     return PyBool_FromLong(cboard_is_stalemate(&self->board));
+}
+
+/* is_repetition() -> bool. Exposed so the repetition predicate can be asserted
+ * DIRECTLY. is_game_over() ORs it with the fifty-move, insufficient-material and
+ * no-legal-move axes, so a test reading that cannot tell which axis fired, and
+ * an encoded plane only reports it through the encoder. */
+static PyObject* PyCBoard_is_repetition(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    return PyBool_FromLong(cboard_is_repetition(&self->board));
+}
+
+/* is_threefold_repetition() -> bool */
+static PyObject* PyCBoard_is_threefold_repetition(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    return PyBool_FromLong(cboard_is_threefold_repetition(&self->board));
+}
+
+/* has_legal_en_passant() -> bool. The legality-EXACT ep predicate behind the
+ * repetition key; python-chess's method of the same name is its oracle. */
+static PyObject* PyCBoard_has_legal_en_passant(PyCBoard *self, PyObject *Py_UNUSED(args)) {
+    return PyBool_FromLong(cboard_has_legal_ep(&self->board));
 }
 
 static int cboard_can_claim_fifty_moves(const CBoard *b) {
@@ -919,6 +960,12 @@ static PyMethodDef PyCBoard_methods[] = {
     {"result", (PyCFunction)PyCBoard_result, METH_NOARGS, "Game result string"},
     {"is_checkmate", (PyCFunction)PyCBoard_is_checkmate, METH_NOARGS, "Check if checkmate"},
     {"is_stalemate", (PyCFunction)PyCBoard_is_stalemate, METH_NOARGS, "Check if stalemate"},
+    {"is_repetition", (PyCFunction)PyCBoard_is_repetition, METH_NOARGS,
+     "2-fold repetition of the current position (python-chess is_repetition(2))"},
+    {"is_threefold_repetition", (PyCFunction)PyCBoard_is_threefold_repetition, METH_NOARGS,
+     "3-fold repetition of the current position (python-chess is_repetition(3))"},
+    {"has_legal_en_passant", (PyCFunction)PyCBoard_has_legal_en_passant, METH_NOARGS,
+     "Is an en-passant capture available AND legal (python-chess has_legal_en_passant)"},
     {"root_terminal_actions", (PyCFunction)PyCBoard_root_terminal_actions, METH_VARARGS,
      "Return (mate_action, draw_actions) for legal root policy indices"},
     {"encode_planes", (PyCFunction)PyCBoard_encode_planes, METH_NOARGS,
@@ -957,7 +1004,11 @@ static PyGetSetDef PyCBoard_getset[] = {
     {"kings", (getter)PyCBoard_get_kings, NULL, "Kings bitboard", NULL},
     {"occ_white", (getter)PyCBoard_get_occ_white, NULL, "White occupancy", NULL},
     {"occ_black", (getter)PyCBoard_get_occ_black, NULL, "Black occupancy", NULL},
-    {"zobrist_hash", (getter)PyCBoard_get_zobrist_hash, NULL, "Zobrist hash of current position (repetition key; EP-blind by design)", NULL},
+    {"zobrist_hash", (getter)PyCBoard_get_zobrist_hash, NULL,
+     "Zobrist POSITION-IDENTITY hash (pieces, turn, castling; EP-blind). This is "
+     "the value persisted as pos_hash/final_pos_hash in selfplay resume records, "
+     "so it is deliberately stable. It is NOT the repetition key -- repetition "
+     "needs the EP file when an EP capture is legal (see is_repetition()).", NULL},
     {"transposition_key", (getter)PyCBoard_get_transposition_key, NULL,
      "Search transposition key: zobrist_hash plus the EP file when an EP capture "
      "is available. Two boards sharing it have the same legal move set.", NULL},

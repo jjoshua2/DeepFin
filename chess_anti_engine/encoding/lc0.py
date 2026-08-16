@@ -586,18 +586,87 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_s
     Builds a set of all position keys seen before the history window,
     then checks each history position against it (O(1) per lookup).
     """
+    # Keys mirror python-chess's own repetition key, Board._transposition_key():
+    #
+    #     return (self.pawns, self.knights, self.bishops, self.rooks,
+    #             self.queens, self.kings,
+    #             self.occupied_co[WHITE], self.occupied_co[BLACK],
+    #             self.turn, self.clean_castling_rights(),
+    #             self.ep_square if self.has_legal_en_passant() else None)
+    #
+    # ⚑ ep_square is kept when an ep capture is LEGAL and dropped otherwise --
+    # it is not dropped unconditionally. Omitting it entirely (as this did) is a
+    # false POSITIVE: a position with a legal ep then compares equal to the same
+    # pieces/turn/castling without it, and the C path agreed only because it had
+    # the same defect. Reusing python-chess's own predicate here keeps the two
+    # paths on one ruler and makes that ruler the correct one.
+
+    # One reusable probe board, built lazily. A stack entry is a _BoardState,
+    # not a Board, so python-chess cannot be asked the legality question about
+    # it directly -- it has to be restored into a Board first.
+    #
+    # ⚑ Both the laziness and the reuse are load-bearing, not tidiness.
+    # ``Board.copy()`` is far more expensive than the key build, so copying per
+    # entry cost 36% of encode_position throughput. ``restore`` overwrites the
+    # whole position, so one probe serves every entry, and boards with no ep
+    # square anywhere never allocate it at all.
+    #
+    # ⚑ What that optimisation does NOT do is make this function free, and an
+    # earlier version of this comment implied it did. Measured paired and
+    # interleaved (review finding B3): asking python-chess the legality question
+    # still costs **1.6x-2.1x** of _check_repetitions at 17%-37% ep density, and
+    # 1.1x-1.4x of a whole encode_position. That is accepted, not overlooked:
+    #
+    #   - it is NOT a training cost. Production runs
+    #     ``input_history_encoding: lc0_root_legacy_meta``, so
+    #     ``uses_lc0_root_history`` is true, selfplay/network_turn.py's
+    #     encode_position call is gated OFF, and the batch encode goes through C
+    #     ``encode_full_batch``. This function is reached from eval/puzzles.py,
+    #     mcts/puct.py, mcts/gumbel.py and model/__init__.py -- eval and
+    #     Python-search paths;
+    #   - the alternative is hand-rolling ep legality in Python, which
+    #     reintroduces exactly the two-implementations-drifting defect this key
+    #     was fixed for. The reference path should ask the reference.
+    probe: list[chess.Board] = []
+
+    def _state_has_legal_ep(s) -> bool:
+        if s.ep_square is None:
+            return False
+        # Cheap pseudo-legal pre-filter, mirroring the C path's early-out and
+        # built from python-chess's OWN tables (the body of
+        # generate_pseudo_legal_ep) rather than hand-rolled file masks. An ep
+        # square is set on ~9% of stack entries but a pawn actually attacks it
+        # on far fewer, so this keeps the restore off almost every entry.
+        #
+        # It is only ever a filter: it can reject, never accept. Anything that
+        # survives it is answered by python-chess itself below, so a
+        # conservative pre-filter cannot make the verdict wrong.
+        if chess.BB_SQUARES[s.ep_square] & s.occupied:
+            return False
+        our_occ = s.occupied_w if s.turn else s.occupied_b
+        capturers = (
+            s.pawns & our_occ
+            & chess.BB_PAWN_ATTACKS[not s.turn][s.ep_square]
+            & chess.BB_RANKS[4 if s.turn else 3]
+        )
+        if not capturers:
+            return False
+        if not probe:
+            probe.append(board.copy(stack=False))
+        s.restore(probe[0])
+        return probe[0].has_legal_en_passant()
+
     def _skey(s):
-  # Omit ep_square: python-chess is_repetition ignores EP when no EP
-  # capture is legal. Excluding it avoids false negatives and matches
-  # the old behavior. False positives are extremely rare and harmless.
         return (s.pawns, s.knights, s.bishops, s.rooks, s.queens, s.kings,
-                s.occupied_w, s.occupied_b, s.turn, s.castling_rights)
+                s.occupied_w, s.occupied_b, s.turn, s.castling_rights,
+                s.ep_square if _state_has_legal_ep(s) else None)
 
     def _bkey():
         return (board.pawns, board.knights, board.bishops, board.rooks,
                 board.queens, board.kings, int(board.occupied_co[chess.WHITE]),
                 int(board.occupied_co[chess.BLACK]), board.turn,
-                board.castling_rights)
+                board.castling_rights,
+                board.ep_square if board.has_legal_en_passant() else None)
 
   # The history window covers stack indices [earliest_si .. stack_len-1] + current board.
   # earliest_si is the index corresponding to hist_idx = n_steps - 1.

@@ -29,6 +29,7 @@ from chess_anti_engine.mcts.search_options import (
     realized_rows,
 )
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
+from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 
 from .protocol import (
@@ -490,14 +491,26 @@ class Engine:
         if cmd.fen is None:
             start = chess.Board()
         else:
+  # Two rejection causes, one rejection path: a FEN that will not parse, and a
+  # FEN that parses into a position whose kings the Python and C halves of the
+  # engine would disagree about (unsearchable_king_reason). Both fall back to
+  # the start position with the same operator-visible message, so a driver only
+  # has to recognise one failure shape.
+  # ⚑ This covers the FEN ONLY. The `moves` loop below can reach the same state
+  # from a legal FEN, and is guarded separately — see there.
+            reason: str | None
             try:
                 start = chess.Board(cmd.fen)
             except ValueError as exc:
+                start, reason = chess.Board(), str(exc)
+            else:
+                reason = unsearchable_king_reason(start)
+            if reason is not None:
   # Falling back to the start position is a silent wrong-position answer: the
   # engine then returns a confidently-scored move for a board the caller never
   # asked about. Say so — EPD/puzzle/blind-spot drivers feed arbitrary FENs.
                 _println(
-                    f"info string position: rejected FEN {cmd.fen!r} ({exc}); "
+                    f"info string position: rejected FEN {cmd.fen!r} ({reason}); "
                     "using the start position"
                 )
                 self._board = chess.Board()
@@ -524,6 +537,39 @@ class Engine:
                 )
                 break
             new_board.push(mv)
+  # ⚑ LEGAL IS NOT ENOUGH. python-chess's legal_moves includes CAPTURING THE
+  # ENEMY KING whenever the side not to move is already in check — and such a
+  # position is one we deliberately ACCEPT above, because EPD/puzzle drivers
+  # send them. So `position fen <opposite-check FEN> moves <...>`, the ordinary
+  # GUI idiom, walks a legal FEN into a kingless board one push at a time and
+  # the FEN guard never sees it. Measured end to end:
+  #   4k2r/8/8/8/3p4/8/2P5/4R1K1 w - - 0 1  moves e1e8 h8h7 c2c4
+  #   -> 4R3/7r/8/8/2Pp4/8/8/6K1 b - c3 0 2, which python-chess says has a
+  #      legal ep and bitboards_have_legal_ep says does not: the key-MERGING
+  #      divergence _cboard_impl.h's precondition (i) is about.
+  # Checked AFTER the push, against the same predicate, so any future way of
+  # breaking the precondition is caught by the one rule rather than by a
+  # hand-enumerated list of move shapes.
+  # ⚑ Two narrowings of this line are SEMANTICALLY EQUIVALENT today, and mutants
+  # that make them correctly survive the suite on purpose: (a) guard only
+  # CAPTURE pushes, and (b) guard only the FIRST ply. Both hold for the same
+  # reason -- only a capture can remove a king, no push can duplicate one or add
+  # a promoted marker, and a king capture needs the side not to move to be in
+  # check, which cannot recur after a push. Measured for (b): exhaustive 3-ply
+  # expansion from opposite-check roots fires at ply 1 only.
+  # It is still written unconditionally, because that equivalence is a property
+  # of the CURRENT predicate (three king clauses) and evaporates the moment a
+  # fourth is added — which is exactly how the FEN-only version of this guard
+  # became wrong. Cheap unconditional beats a correctness argument with a
+  # shelf life.
+            post_reason = unsearchable_king_reason(new_board)
+            if post_reason is not None:
+                new_board.pop()
+                self._warn_moves_truncated(
+                    cmd.moves, parsed, uci,
+                    f"leaves an unsearchable position ({post_reason})",
+                )
+                break
             parsed.append(mv)
         self._board = new_board
   # Record intent; the tree is advanced in _handle_go so ponder mode
