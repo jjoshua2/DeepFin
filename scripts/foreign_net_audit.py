@@ -174,8 +174,15 @@ def _to_wdl_probs(raw: np.ndarray) -> np.ndarray:
 
 def _score_onnx(
     boards: list[chess.Board], args: argparse.Namespace,
-) -> tuple[np.ndarray, np.ndarray]:
-    """(policy in LEELA 1858 order, WDL probabilities) for an ONNX net."""
+) -> tuple[np.ndarray, np.ndarray, dict[str, str]]:
+    """(policy in LEELA 1858 order, WDL probabilities, RESOLVED head names).
+
+    ⚑ The heads are returned, not just printed. `--policy-output` /
+    `--wdl-output` default to None and the real choice is made here by width,
+    so stamping the ARGUMENTS would record `null` for two runs that resolved to
+    different tensors — a provenance field that is accepted and then means
+    nothing. The caller stamps what was actually read.
+    """
     sess, in_name, in_dtype = _session(
         args.onnx, args.gpu_mem_gb,
         input_format=args.input_format, ort_threads=int(args.ort_threads),
@@ -235,7 +242,8 @@ def _score_onnx(
         wdl[s:s + bs] = _to_wdl_probs(out[wdl_idx])
         if s % (bs * 8) == 0:
             print(f"[audit] {s + min(bs, len(boards) - s)}/{len(boards)}", flush=True)
-    return pol, wdl
+    return pol, wdl, {"policy_output": out_names[pol_idx],
+                      "wdl_output": out_names[wdl_idx]}
 
 
 def _score_checkpoint(
@@ -340,6 +348,14 @@ def main() -> None:
 
     positions = [parse_audit_record(ln) for ln in
                  args.audit_set.read_text().splitlines() if ln.strip()]
+    # ⚑ DIGEST THE SET NOW, NOT AT WRITE TIME. The scoring pass below is minutes
+    # to hours; digesting afterwards describes whatever is on disk THEN. Replace
+    # or edit the audit set during the pass and the rows — derived from the
+    # positions held in memory here — get stamped with the new file's digest, and
+    # a later reader accepts them as belonging to a set they were never scored
+    # against. Capturing it beside the read binds the stamp to what was actually
+    # loaded. (Codex inline review, #442.)
+    set_provenance = audit_set_provenance(args.audit_set)
     if args.max_positions > 0:
         positions = positions[: args.max_positions]
     print(f"[audit] {len(positions)} positions from {args.audit_set}")
@@ -351,10 +367,21 @@ def main() -> None:
             boards, args.checkpoint, device=args.device, batch_size=int(args.batch_size),
         )
         pol = None
+        # Our own net has one policy head and one WDL head, read off the model —
+        # there is nothing to select, so there is nothing to record. An empty
+        # dict says that; a null-valued key would claim a choice was made.
+        input_contract: dict[str, str] = {"input_format": "checkpoint"}
     else:
         net_label = f"{args.onnx} [{args.input_format}]"
-        pol, wdl = _score_onnx(boards, args)
+        pol, wdl, heads = _score_onnx(boards, args)
         pol_full = None
+        input_contract = {"input_format": str(args.input_format), **heads}
+        if args.input_format == INPUT_FORMAT_LC0_PLANES:
+            # Recorded only where they take effect: the Ceres TPG record carries
+            # its own history slots, so --history/--history-fill are inert there
+            # and stamping them would record a setting that changed nothing.
+            input_contract["history"] = str(args.history)
+            input_contract["history_fill"] = str(args.history_fill)
 
     # Aggregate by group; also keep per-criticality-bucket regret (shared edges).
     bucket_names = list(CRITICALITY_BUCKET_NAMES)
@@ -410,8 +437,17 @@ def main() -> None:
         # count itself, and a caller-supplied one would read as though the
         # caller were the authority on it — the exact thing the row binding
         # exists to deny.
+        # ⚑ THE INPUT CONTRACT IS PART OF THE RULER. `--history-fill zero` vs
+        # `repeat` and `--history` change the TENSORS the net is fed — `zero` is
+        # documented as breaking BT4's WDL outright — and the output heads
+        # select which numbers are read back. Two caches produced from the SAME
+        # ONNX file under different preprocessing used to carry indistinguishable
+        # stamps, so a reader accepted one as current provenance for the other.
+        # `net` is deliberately NOT one of these: it names the SUBJECT of the
+        # measurement, and `STAMP_NON_IDENTITY_KEYS` excludes it so two
+        # foreign-net caches can still be paired. (Codex inline review, #442.)
         extra={"net": net_label, "topk": int(args.topk),
-               **audit_set_provenance(args.audit_set)},
+               **input_contract, **set_provenance},
     )
     print(f"[audit] cache → {args.cache_out} ({len(cache_rows)} rows) "
           f"[{stamp_summary(stamp)}]")

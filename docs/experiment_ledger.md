@@ -41568,3 +41568,83 @@ the warning. Now pinned by payload (count, live denominator, kept/dropped/fresh 
 that mutant exits 1. Its arithmetic was also wrong: `changed` is `dropped + fresh`, counted on
 opposite sides, so it can exceed the live parameter count and must not be rendered as a
 fraction of it. [[a_gate_that_cannot_fail]]
+
+---
+
+## OWED: re-dump the three banked monitor baselines so the provenance gate can FIRE (#442)
+
+**Status: OPEN, blocking nothing, owed at the next maintenance window.** Recorded here
+rather than in PR #442's description because a PR body does not survive into the file a
+future operator reads. [[uncommitted_live_yaml_edits_lose_proven_wins]]
+
+**What #442 shipped.** `scripts/paired_compare.py` now VALIDATES the provenance stamp it
+had been recognising and discarding, and `value_regret.py` / `blindspot_panel.py` now
+stamp their `--dump-per-position` output — previously only `audit_targets.py` did, so the
+gate was inert on every automated comparison.
+
+**Why it still cannot REFUSE on the production path.** `require_same_stamp` opens with
+`if not a.stamp or not b.stamp: warn; return`. Every automated comparison in
+`scripts/monitor_fen.sh` puts an UNSTAMPED legacy baseline on side A:
+
+```
+scratchpad/canary_512_iter20/vdump_boot_swaptime.jsonl   # value_regret, boot512
+scratchpad/canary_512_iter20/panel_v1_live.jsonl         # blindspot_panel v1
+scratchpad/canary_512_iter20/panel_v2_live.jsonl         # blindspot_panel v2
+```
+
+Verified 2026-08-16 by reading line 1 of each: all three begin with a bare data row.
+⇒ **on the live monitor the gate warns and can never refuse.** "Warn forever" is the state
+this repo's rules class as a gate that cannot fail, so this entry is the bounded exit.
+
+**Why it WAITS rather than shipping in the PR.** The re-dump is a GPU read of a 61.44M net
+over 2000 audit positions plus two blindspot panels, and training is live; the standing
+rule is no concurrent GPU work outside a pause window. [[batch_gpu_work_into_pause_windows]]
+The boot512 checkpoint is banked (`scratchpad/canary_512_iter20/live_ckpt19_trainer.pt`,
+685 MB), so nothing expires and nothing is lost by waiting.
+
+**⚑ A RE-STAMP UTILITY WAS CONSIDERED AND REJECTED.** Stamping a legacy dump in place would
+write `policy_map_version` / `audit_ruler_version` values that were never recorded when the
+numbers were produced — asserting a provenance nobody measured. That converts *unverified*
+into *verified false*, which is strictly worse than the warning, and it is the exact defect
+class (a value accepted and then trusted) the stamp exists to stop. **Re-dump or warn; do
+not re-stamp.**
+
+**The exact commands, in a pause window** (one per baseline; `--force` is deliberate — these
+are replacements, and the numbers must be IDENTICAL because the checkpoint and ruler are
+unchanged):
+
+```bash
+BASE=scratchpad/canary_512_iter20
+CK=$BASE/live_ckpt19_trainer.pt
+PYTHONPATH=. python3 scripts/value_regret.py --checkpoint "$CK" \
+    --max-positions 2000 --gpu-mem-fraction 0.15 \
+    --dump-per-position "$BASE/vdump_boot_swaptime.jsonl"
+for P in v1 v2; do
+  PYTHONPATH=. python3 scripts/blindspot_panel.py --checkpoint "$CK" \
+      --panel "data/blindspot_panel_$P.jsonl" \
+      --dump-per-position "$BASE/panel_${P}_live.jsonl"
+done
+```
+
+**⚑ PRE-COMMITTED READOUT — the value the re-dump has to move, and the value it must NOT.**
+
+```bash
+# 1. MUST move: the monitor's provenance token, on the next deep cycle.
+grep -o "prov:[^|]*" scratchpad/live_read/monitor/monitor.log | tail -3
+#    before: "vs_boot:UNVERIFIED(RULER)"  (the batch_size row-field warning)
+#    after : "prov:ok"                    (stamped both sides, batch_size on both)
+# 2. MUST NOT move: the yardstick itself. Same checkpoint, same ruler.
+grep "paired delta" scratchpad/live_read/monitor/paired_*_vs_boot.log | tail -2
+```
+
+**Kill rule, decided now.** If the re-dumped `vdump_boot_swaptime.jsonl` moves the banked
+`paired delta` by more than the CI half-width of the cycle it is read against, the re-dump
+did NOT reproduce the baseline — restore the old file from backup and treat the difference
+as a RULER CHANGE to be diagnosed, not as a new baseline. A baseline that silently moved is
+worse than one that cannot be provenance-checked. [[a_ruler_change_must_invalidate_its_records]]
+
+**⚑ Do not read `prov:ok` as "the gate fired".** It means both sides are stamped and the
+stamps agree — the passing branch. The refusing branch is exercised by
+`tests/test_paired_compare_gate_is_wired.py::test_prov_names_each_outcome_of_a_real_paired_compare[refused]`,
+which drives the real script; on the production path it stays unexercised until two genuinely
+different rulers are compared, which is the point. [[a_gate_that_cannot_fail]]

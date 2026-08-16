@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import chess
+import numpy as np
 import pytest
 
 from chess_anti_engine.eval import audit, audit_cache
@@ -935,3 +936,248 @@ def test_a_row_without_a_key_names_the_file_and_line(tmp_path: Path) -> None:
     write_audit_cache(path, [{"phase": 1, "gap_cp": 3.0}])
     with pytest.raises(AuditCacheError, match="line 2 has no 'key' field"):
         read_audit_cache_by_key(path)
+
+
+# ---------------------------------------------------------------------------
+# #442 review B1 — the wire format changed, so the header must be UNMISTAKABLE
+# and every reader must skip it the same way
+# ---------------------------------------------------------------------------
+
+
+def test_a_data_row_may_not_carry_the_header_sentinel(tmp_path: Path) -> None:
+    """⚑ The sentinel is ENFORCED at the writer, not documented as a convention.
+
+    Every reader — `read_audit_cache`, `paired_compare.load_dump`,
+    `iter_data_rows`, and any `jq`/`grep` an operator writes — separates header
+    from body on this one key. That is sound only while the writer cannot emit a
+    row answering to it. Refused at write time because a reader can only guess
+    which of two candidate headers is real, and by then the file is banked.
+    """
+    path = tmp_path / "c.jsonl"
+    with pytest.raises(AuditCacheError, match="carries the header sentinel"):
+        write_audit_cache(path, [{**ROWS[0], STAMP_FORMAT_KEY: 1}])
+
+
+def test_the_core_stamp_keys_match_what_the_writer_actually_emits() -> None:
+    """⚑ The drift pin for `CORE_STAMP_KEYS`.
+
+    `paired_compare.require_same_stamp` REFUSES a one-sided core key on the
+    argument that every stamp ever written carries all of them. That argument is
+    a claim about `audit_cache_stamp`, so it has to be checked against
+    `audit_cache_stamp` — otherwise the set is an unpinned constant and the
+    refusal's justification rots the first time the writer changes.
+    """
+    from chess_anti_engine.utils.audit_cache_format import (
+        AUDIT_RULER_VERSION_KEY,
+        CORE_STAMP_KEYS,
+        POLICY_MAP_VERSION_KEY,
+    )
+
+    assert set(audit_cache_stamp()) >= CORE_STAMP_KEYS
+    # Named explicitly: `CORE_STAMP_KEYS <= ...` alone is satisfied by the EMPTY
+    # set, which is the shape of "this refusal can never fire".
+    assert {POLICY_MAP_VERSION_KEY, AUDIT_RULER_VERSION_KEY}.issubset(CORE_STAMP_KEYS)
+    # ...and nothing the CALLER supplies may sneak in: `extra` is writer skew,
+    # which is the warn path, not the refuse path.
+    assert CORE_STAMP_KEYS.isdisjoint({"producer", "net", "topk", "input_encoding"})
+
+
+def test_iter_data_rows_skips_the_header_and_reads_legacy_dumps(tmp_path: Path) -> None:
+    """The shared SKIP reader, on both shapes it has to survive.
+
+    `tests/test_onnx_net_source.py` counted the header as a scored position
+    (`assert len(rows) == 2` reading 3) — CI-red, and the same off-by-one that
+    every ad-hoc consumer of these dumps inherited when they became stamped.
+    """
+    from chess_anti_engine.utils.audit_cache_format import is_stamp_record, iter_data_rows
+
+    stamped = tmp_path / "stamped.jsonl"
+    write_audit_cache(stamped, ROWS)
+    assert [r["key"] for r in iter_data_rows(stamped)] == [r["key"] for r in ROWS]
+    assert not any(is_stamp_record(r) for r in iter_data_rows(stamped))
+    # The header IS there — the helper is skipping it, not reading a file that
+    # never had one. Without this the assertion above passes on any reader.
+    assert is_stamp_record(json.loads(stamped.read_text().splitlines()[0]))
+
+    legacy = tmp_path / "legacy.jsonl"
+    legacy.write_text(
+        "".join(json.dumps(r) + "\n" for r in ROWS) + "\n", encoding="utf-8",
+    )
+    assert [r["key"] for r in iter_data_rows(legacy)] == [r["key"] for r in ROWS]
+
+
+def test_the_leaf_format_module_stays_importable_without_torch() -> None:
+    """`iter_data_rows` must not be the thing that drags torch back in.
+
+    The whole reason the vocabulary lives in a leaf is that
+    `scripts/paired_compare.py` runs against the live training box every
+    monitoring cycle. A file-reading helper is exactly the sort of addition
+    that reaches for a project import.
+    """
+    proc = __import__("subprocess").run(
+        [sys.executable, "-c",
+         "import sys; import chess_anti_engine.utils.audit_cache_format as m; "
+         "m.iter_data_rows; print('torch' in sys.modules)"],
+        capture_output=True, text=True, cwd=str(Path(__file__).resolve().parents[1]),
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "False", proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# #442 — Codex inline findings: what the stamp DESCRIBES has to be what was
+# actually read, and it has to name every artifact the numbers depend on
+# ---------------------------------------------------------------------------
+
+
+def test_compare_buckets_refuses_an_audit_set_the_caches_never_scored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex P1: the two cache stamps agreeing says nothing about `--audit`.
+
+    Both caches are stamped from ONE audit set; `--audit` then points at a
+    different file with the SAME keys. Before this, its deep-best and WDL labels
+    were joined onto the caches' regret and bucket columns and the provenance
+    banner printed success.
+    """
+    import scripts.audit_compare_buckets as acb
+
+    real = _write_lines(tmp_path / "real_audit.jsonl",
+                        [json.dumps({"key": r["key"], "bestmove": "e2e4"}) for r in ROWS])
+    other = _write_lines(tmp_path / "other_audit.jsonl",
+                         [json.dumps({"key": r["key"], "bestmove": "d2d4"}) for r in ROWS])
+    prov = audit_set_provenance(Path(real))
+    net, bt4 = tmp_path / "net.jsonl", tmp_path / "bt4.jsonl"
+    write_audit_cache(net, ROWS, extra=dict(prov))
+    write_audit_cache(bt4, ROWS, extra=dict(prov))
+
+    monkeypatch.setattr("sys.argv", [
+        "audit_compare_buckets.py", "--bt4", str(bt4), "--net", str(net),
+        "--audit", str(other),
+    ])
+    with pytest.raises(AuditCacheError, match="not scored over the same audit set") as exc:
+        acb.main()
+    assert "--audit label set" in str(exc.value)   # names WHICH input disagreed
+
+
+def test_compare_buckets_accepts_the_audit_set_the_caches_DID_score(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The passing control for the refusal above — a gate that cannot pass is
+    the same defect in the other direction. Reaching the row join (a KeyError on
+    this deliberately minimal fixture) proves the digest check let it through.
+    """
+    import scripts.audit_compare_buckets as acb
+
+    real = _write_lines(tmp_path / "real_audit.jsonl",
+                        [json.dumps({"key": r["key"], "bestmove": "e2e4"}) for r in ROWS])
+    prov = audit_set_provenance(Path(real))
+    net, bt4 = tmp_path / "net.jsonl", tmp_path / "bt4.jsonl"
+    write_audit_cache(net, ROWS, extra=dict(prov))
+    write_audit_cache(bt4, ROWS, extra=dict(prov))
+    monkeypatch.setattr("sys.argv", [
+        "audit_compare_buckets.py", "--bt4", str(bt4), "--net", str(net),
+        "--audit", str(real),
+    ])
+    with pytest.raises(KeyError):          # past both provenance gates
+        acb.main()
+
+
+@pytest.mark.parametrize(
+    ("module", "costly_call"),
+    [
+        ("scripts.foreign_net_audit", "_score_onnx("),
+        ("scripts.value_regret", "value_1ply_regret("),
+        ("scripts.audit_targets", "_shallow_sf_records("),
+    ],
+)
+def test_the_audit_set_digest_is_taken_before_the_scoring_pass(
+    module: str, costly_call: str,
+) -> None:
+    """Codex P2: a digest taken AFTER the pass describes the file as it is THEN.
+
+    The pass is minutes to an hour. Replace or edit the audit set while it runs
+    and rows derived from the positions held in memory get stamped with the new
+    file's digest — a later reader then accepts them as belonging to a set they
+    were never scored against. Same shape as this repo's fail-fast rule for
+    `--onnx` resolution, and pinned the same way.
+    """
+    import importlib
+    import inspect
+
+    src = inspect.getsource(importlib.import_module(module).main)
+    assert src.index("audit_set_provenance(") < src.index(costly_call), (
+        f"{module}.main digests the audit set only after {costly_call} — the "
+        "stamp then describes whatever is on disk at write time"
+    )
+
+
+def test_foreign_net_audit_stamps_the_heads_it_RESOLVED_not_the_flags() -> None:
+    """Codex P2: `--policy-output`/`--wdl-output` default to None.
+
+    The real choice is made by output WIDTH inside `_score_onnx`, so stamping
+    the arguments records `null` for two runs that read different tensors — a
+    provenance field accepted and then meaning nothing. Driven through a fake
+    ORT session so it needs neither onnxruntime nor a net.
+    """
+    import argparse
+
+    import scripts.foreign_net_audit as fna
+
+    class _Out:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class _Sess:
+        def get_outputs(self) -> list[_Out]:
+            return [_Out("value"), _Out("policy")]
+
+        def get_providers(self) -> list[str]:
+            return ["CPUExecutionProvider"]
+
+        def run(self, _o: object, feed: dict[str, Any]) -> list[Any]:
+            n = len(next(iter(feed.values())))
+            return [np.zeros((n, 3), np.float32),
+                    np.zeros((n, fna.COMPACT_POLICY_SIZE), np.float32)]
+
+    args = argparse.Namespace(
+        onnx="fake.onnx", gpu_mem_gb=0.0, ort_threads=0, batch_size=2,
+        input_format=fna.INPUT_FORMAT_LC0_PLANES, history="lc0_root",
+        history_fill="repeat", policy_output=None, wdl_output=None,
+    )
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(fna, "_session", lambda *a, **k: (_Sess(), "in", np.dtype(np.float32)))
+    try:
+        _pol, _wdl, heads = fna._score_onnx([chess.Board()], args)
+    finally:
+        monkey.undo()
+    # Widths are [3, 1858] with the WDL head FIRST — the resolved names cannot
+    # be recovered from the flags, both of which are None.
+    assert heads == {"policy_output": "policy", "wdl_output": "value"}
+
+
+def test_stored_mode_names_the_matched_rows_snapshot_in_the_stamp() -> None:
+    """Codex P2: in `stored` mode the scores are a function of that NPZ.
+
+    Two runs over different matched-row snapshots used to carry identical
+    stamps, pass both provenance gates, and let `paired_compare` attribute an
+    INPUT-HISTORY difference to the checkpoints. Structural, because reaching
+    the writer needs a real checkpoint and a real NPZ; it asserts the digest is
+    computed and that the PATH is excluded from identity while the digest is not.
+    """
+    import inspect
+
+    from chess_anti_engine.utils.audit_cache_format import (
+        MATCHED_ROWS_DIGEST_KEY,
+        MATCHED_ROWS_KEY,
+        STAMP_NON_IDENTITY_KEYS,
+    )
+    from scripts import value_regret
+
+    src = inspect.getsource(value_regret.main)
+    assert "MATCHED_ROWS_DIGEST_KEY: sha256_file(" in src
+    assert "**matched_provenance" in src
+    # The path is for the human and must not be compared; the digest must be.
+    assert MATCHED_ROWS_KEY in STAMP_NON_IDENTITY_KEYS
+    assert MATCHED_ROWS_DIGEST_KEY not in STAMP_NON_IDENTITY_KEYS
