@@ -1018,6 +1018,55 @@ def test_the_mass_turnover_WARNING_actually_reaches_a_log_record(
     assert f"of {n_live} parameters" not in message
 
 
+def _leaf_optimizers(trainer: Trainer) -> list[torch.optim.Optimizer]:
+    """Every optimizer that actually HOLDS state, chained children included.
+
+    ⚑ `_bank_fingerprints` / `_read_state` read `trainer.opt.state`, which is
+    EMPTY for a `_ChainedOptimizer` — its state lives in its children. That is
+    the very nesting guard (b) exists for, so a chained control written with the
+    flat helpers measures nothing and passes vacuously. Same trap one level up
+    from the one the guard covers.
+    """
+    inner = _unwrap_optimizer(trainer.opt)
+    if isinstance(inner, _ChainedOptimizer):
+        return list(inner.optimizers)
+    return [trainer.opt]
+
+
+def _bank_chained(trainer: Trainer) -> dict[tuple[str, str], float]:
+    by_id = {id(p): n for n, p in trainer.model.named_parameters()}
+    banked: dict[tuple[str, str], float] = {}
+    stamp = 0
+    for opt in _leaf_optimizers(trainer):
+        for group in opt.param_groups:
+            for param in group["params"]:
+                if param.grad is None:
+                    param.grad = torch.randn_like(param)
+        opt.step()
+        for group in opt.param_groups:
+            for param in group["params"]:
+                for key, value in (opt.state.get(param) or {}).items():
+                    if not torch.is_tensor(value) or not value.is_floating_point():
+                        continue
+                    stamp += 1
+                    value.copy_(torch.full_like(value, float(stamp) + 0.5))
+                    banked[by_id[id(param)], key] = float(stamp) + 0.5
+    assert banked, "donor carries no optimizer moments — the control would be vacuous"
+    return banked
+
+
+def _read_chained(trainer: Trainer) -> dict[tuple[str, str], float]:
+    by_id = {id(p): n for n, p in trainer.model.named_parameters()}
+    seen: dict[tuple[str, str], float] = {}
+    for opt in _leaf_optimizers(trainer):
+        for group in opt.param_groups:
+            for param in group["params"]:
+                for key, value in (opt.state.get(param) or {}).items():
+                    if torch.is_tensor(value) and value.is_floating_point() and value.numel():
+                        seen[by_id[id(param)], key] = float(value.flatten()[0])
+    return seen
+
+
 def _trainer_kw(cfg: ModelConfig, log_dir: Path, **kwargs: object) -> Trainer:
     """``_trainer`` with arbitrary optimizer kwargs, for the unsupported combos."""
     return Trainer(
@@ -1100,6 +1149,69 @@ def test_soda_plus_a_name_changing_warm_start_REFUSES(
     )
     assert "soda_anchors" in refusals[0], "the message must name the offending key"
 
+    # ⚑ THE PREDICATE IS STRUCTURAL, AND ONLY THIS ARM SAYS SO. Every assertion
+    # above is satisfied by a SODA-specific test (`{"soda_anchors"} & set(...)`),
+    # so without an UNKNOWN key nothing distinguishes the structural predicate
+    # from a name check — and structural is the property that was chosen
+    # deliberately, because the hazard is "the re-key emits only {state,
+    # param_groups}", which is true of the NEXT wrapper too. Delta review
+    # confirmed the name-only variant survives the suite without this.
+    future = dict(payload)
+    future["opt"] = dict(payload["opt"]) | {"some_future_wrapper_key": {}}
+    future_names = arm._donor_optimizer_param_names(future)
+    assert future_names is not None
+    with pytest.raises(UnsupportedWarmStartError, match="some_future_wrapper_key"):
+        arm._remap_optimizer_state_by_param_name(
+            future["opt"], future_names, future["model"],
+        )
+
+
+def test_soap_plus_soda_unwraps_to_the_chained_optimizer_through_load(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `_unwrap_optimizer` must actually unwrap — pinned through `load()`.
+
+    Delta review neutered its loop to ``while False:`` and the suite still
+    passed. Its own docstring justifies its existence with "SOAP + SODA is
+    precisely the combination that produces both", and nothing drove that
+    combination through `load()`: with the loop dead, `self.opt` is the
+    `SODAWeightDecayWrapper`, the `isinstance` test misses the
+    `_ChainedOptimizer` one layer down, and guard (b) silently stops existing
+    for the exact configuration it was written for.
+
+    So this drives a soap+soda WIDTH migration through the real `load()` and
+    requires the refusal. It fails if the unwrap stops working, which no
+    assertion on `_unwrap_optimizer` in isolation would do as convincingly.
+    """
+    donor = _trainer_kw(
+        _cfg(), tmp_path / "t", optimizer="soap",
+        matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    inner = _unwrap_optimizer(donor.opt)
+    assert not isinstance(donor.opt, _ChainedOptimizer), (
+        "fixture premise: the SODA wrapper must sit OUTSIDE, so an isinstance "
+        "test on self.opt alone cannot see the chained optimizer"
+    )
+    assert isinstance(inner, _ChainedOptimizer), (
+        "fixture premise: soap + a non-default scope must build a "
+        "_ChainedOptimizer underneath the SODA wrapper"
+    )
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+
+    arm = _trainer_kw(
+        dataclasses.replace(_cfg(), aux_policy_head_dim=8), tmp_path / "arm",
+        optimizer="soap", matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+    assert [
+        r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ], (
+        "soap+soda resized the aux heads and nothing refused -- the unwrap did "
+        f"not reach the chained optimizer. records={[r.getMessage() for r in caplog.records]}"
+    )
+
 
 def test_a_chained_optimizer_REFUSES_rather_than_sweeping_a_view_it_cannot_see(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
@@ -1124,8 +1236,35 @@ def test_a_chained_optimizer_REFUSES_rather_than_sweeping_a_view_it_cannot_see(
         "fixture premise: the chained state_dict must NOT expose the flat view -- "
         "if it grows one, this guard can be replaced by a real sweep"
     )
+    banked = _bank_chained(donor)
     ckpt = tmp_path / "t.pt"
     donor.save(ckpt)
+
+    # ⚑⚑ CONTROL — AN ORDINARY CHAINED RESUME MUST STILL LOAD.
+    #
+    # The absence of this control WAS the defect. An earlier revision gated the
+    # guard on the optimizer TYPE alone, so every ordinary `soap` resume became a
+    # full cold start (172/172 donor moments -> 0/172) with the scheduler and
+    # ZClip skipped as well, and nothing here noticed — because the only
+    # negative control ran `aurora`/`mlp_out`, which cannot reach a guard whose
+    # entire domain is `soap`. Its SODA sibling above had exactly this control;
+    # this test did not, and that asymmetry is what shipped the regression.
+    #
+    # Asserted on VALUES: a fired guard cold-starts, so surviving donor moments
+    # are the proof it did not.
+    same = _trainer_kw(
+        _cfg(), tmp_path / "same", optimizer="soap", matrix_optimizer_scope="mlp_out",
+    )
+    with caplog.at_level(logging.WARNING):
+        same.load(ckpt)
+    assert not [
+        r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ], "control: an ordinary chained resume resizes nothing and must NOT be refused"
+    assert set(_read_chained(same).values()) & set(banked.values()), (
+        "control: an ordinary chained resume lost every donor moment -- the "
+        "optimizer cold-started, which is what a fired guard would do"
+    )
+    caplog.clear()
 
     arm = _trainer_kw(
         dataclasses.replace(_cfg(), aux_policy_head_dim=8), tmp_path / "arm",

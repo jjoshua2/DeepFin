@@ -4671,16 +4671,50 @@ class Trainer:
   # drops and leave donor-shaped moments under the resized q/k -- exactly the
   # `aux_policy_head_dim` case above -- until the first CHILD step crashes.
   # Refuse instead of sweeping a view that cannot see the state.
-            if isinstance(_unwrap_optimizer(self.opt), _ChainedOptimizer):
+  #
+  # ⚑⚑ GATED ON AN ACTUAL SHAPE CHANGE, NOT ON THE OPTIMIZER TYPE. An earlier
+  # revision tested only `isinstance(..., _ChainedOptimizer)`, which turned every
+  # ORDINARY chained resume -- identical config, nothing resized, 172/172 donor
+  # moments restored correctly -- into a full cold start that also skipped the
+  # donor scheduler and ZClip. That is a regression against working behaviour,
+  # and the message was FALSE in the case it fired on: it asserted moments sat
+  # "under tensors this warm start resized" when nothing had been. Found by
+  # delta review of `051210c08`.
+  #
+  # ⚑ The reason it survived my own tests is worth keeping: the production
+  # negative control ran `aurora`/`mlp_out`, which is the right control FOR
+  # PRODUCTION and structurally blind to this guard, whose entire domain is
+  # `soap`. A negative control has to run in the GUARD's domain or it cannot
+  # reach the guard at all and passes for the wrong reason. The tell was already
+  # in the suite: the SODA test had an ordinary-resume control and this one did
+  # not. That asymmetry WAS the defect.
+  #
+  # Compared donor-side, because it is the donor's stored shapes the child
+  # optimizers' moments were built against; an ADDED parameter is absent from
+  # the payload, is not a resize, and is the splice path's business, not this
+  # sweep's.
+            donor_model = ckpt.get("model") or {}
+            resized = [
+                name
+                for name, param in self.model.named_parameters()
+                if torch.is_tensor(
+                    donor := donor_model.get(self._wrap_agnostic_name(name))
+                )
+                and tuple(donor.shape) != tuple(param.shape)
+            ]
+            if resized and isinstance(_unwrap_optimizer(self.opt), _ChainedOptimizer):
                 raise UnsupportedWarmStartError(
                     "this run's optimizer is a _ChainedOptimizer (`optimizer: "
                     "soap` with a non-default `matrix_optimizer_scope`), whose "
-                    "state lives in its child optimizers; "
+                    "state lives in its child optimizers, and this warm start "
+                    f"resizes {len(resized)} parameter(s) ({', '.join(resized[:4])}"
+                    f"{', ...' if len(resized) > 4 else ''}). "
                     "reset_mismatched_optimizer_state sweeps the outer flat view "
                     "and would report NOTHING while leaving donor-shaped moments "
-                    "under tensors this warm start resized. That combination is "
-                    "NOT supported by the warm-start path -- see "
-                    "UnsupportedWarmStartError. Production (`aurora` + "
+                    "under those tensors, crashing at the first CHILD step. That "
+                    "combination is NOT supported by the warm-start path -- see "
+                    "UnsupportedWarmStartError. An ordinary chained resume, which "
+                    "resizes nothing, is unaffected. Production (`aurora` + "
                     "`mlp_out`) never reaches this"
                 )
             reset = reset_mismatched_optimizer_state(
