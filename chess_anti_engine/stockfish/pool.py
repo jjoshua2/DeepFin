@@ -4,6 +4,7 @@ import logging
 import queue
 import threading
 
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 
@@ -144,14 +145,21 @@ class StockfishPool:
         nodes: int | None,
         syzygy_path: str | None,
         fresh: bool,
+        searchmoves: Sequence[str] | None = None,
     ) -> StockfishResult:
         engine: StockfishUCI = self._worker_state.engine
         try:
+            # Both optional arguments are forwarded ONLY when set, so the call
+            # the production label path makes stays byte-identical to the one
+            # it made before either existed.
+            extra: dict[str, object] = {}
             if fresh:
-                return engine.search(
-                    fen, nodes=nodes, syzygy_path=syzygy_path, fresh=True,
-                )
-            return engine.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+                extra["fresh"] = True
+            if searchmoves:
+                extra["searchmoves"] = searchmoves
+            return engine.search(
+                fen, nodes=nodes, syzygy_path=syzygy_path, **extra,  # pyright: ignore[reportArgumentType]
+            )
         except BaseException:
             # The ORIGINAL raise must reach the caller — it is the one that
             # names what went wrong. `suppress` is load-bearing: _replace_engine
@@ -197,11 +205,18 @@ class StockfishPool:
         self, fen: str, *, nodes: int | None = None,
         syzygy_path: str | None = None,
         fresh: bool = False,
+        searchmoves: Sequence[str] | None = None,
     ) -> Future[StockfishResult]:
   # The shared executor gives this request to the first free engine-owning
   # thread. `fresh` requests a cold-TT (ucinewgame) search; it is forwarded
   # only when set so the default engine call stays identical.
+  #
+  # `searchmoves` restricts the ROOT to those moves, which is what makes a
+  # TARGETED comparison affordable: the whole node budget is spent separating
+  # the listed candidates instead of re-deriving the full move list. It is
+  # validated in StockfishUCI.search, so a bad token raises here rather than
+  # being silently dropped -- see `_validated_searchmoves`.
         assert self._exec is not None
         return self._exec.submit(
-            self._search, fen, nodes, syzygy_path, fresh,
+            self._search, fen, nodes, syzygy_path, fresh, searchmoves,
         )
