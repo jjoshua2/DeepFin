@@ -53635,3 +53635,87 @@ and CLAUDE.md states the views-targeting behaviour outright. A throughput gate o
 be per-unit-work, never per-iteration. Same family as
 `compute_instrument_resolution_before_the_threshold`: the ruler was chosen before checking what
 it actually varies with.
+
+---
+
+## 2026-08-16 — ⚑⚑ #440 (SF teacher upgrade): PREREG BLOCKED. Its PASS branch cannot be reached.
+
+**Independent review (reviewer != author): REQUEST-CHANGES.
+github.com/jjoshua2/DeepFin/pull/440#issuecomment-5308855719. NOT launched. Do NOT run the
+pre-registered command as written — see F2, it corrupts a banked cache.**
+
+### The two tooling fixes are REAL — reproduced, bug and fix
+
+Verified by execution (worktree, CPU-only, 4 positions, nice 19; live tree untouched, nothing
+written under `data/`):
+- The two binaries report distinct UCI `id name`; identity comes from the ENGINE, not the
+  misleading symlink chain.
+- Arm NEW now refuses arm OLD's rows, re-labels, and Stockfish actually launches.
+- **The deciding statistic MOVES: `--field cand.sf_soft.top1` mean 21.8 -> 51.2, while
+  `--raw-top1` on the SAME pair is identical (77.2 / 77.2).** That single line is the original
+  defect and its repair, side by side.
+- `<unrecorded>` is treated as **must re-label**, not as a wildcard (reviewer killed their own
+  wildcard mutant). 21/21 new tests pass.
+
+### ⚑⚑ F1 (BLOCKING) — THE PASS BRANCH IS ARITHMETICALLY UNREACHABLE
+
+From a dump **already banked in this repo** at the prereg's EXACT settings (500k nodes,
+MultiPV 40, `audit_set_v1`): `cand.sf_soft.top1 > 300cp` occurs on **18/2000 = 0.90%**, so the
+>300cp tail is ~**36 positions at n=4000**. The pre-committed PASS requires **">= 40 fixed in
+arm B" — more than the entire tail exists.**
+
+⇒ **the gate can KILL but can never PASS.** A one-way ratchet wearing the costume of a test.
+
+And the threshold's justification used the **wrong denominator**: "±40 of 4000 = 1.0pp" — a
+flip count's denominator is the ~36-position TAIL, not the 4000-position set. The entry CITES
+"compute the instrument's resolution before the threshold" without performing it. The check
+cost **under a minute** against a file already in the tree.
+
+**This is the THIRD independent reason this gate could not fire, and each is a different KIND:**
+(1) it read candidate (a) while gating on (c) — wrong field; (2) the label cache omitted engine
+identity so arm NEW replayed arm OLD — invariant to the intervention; (3) the threshold lies
+outside the statistic's achievable range. Each was invisible to the fix for the previous one.
+⇒ **a gate needs all three checks: read the reader; execute two arms and see DIFFERENT numbers;
+compute the statistic's RANGE on banked data and confirm BOTH branches are reachable.**
+
+### ⚑ F2 (BLOCKING) — the pre-registered command CORRUPTS the banked cache
+
+The cache path derives from the audit-set path, so **both arms append to the same
+`data/audit_set_v1.jsonl.shallow_sf.jsonl`**. Measured on a COPY: afterwards, any run *without*
+`--stockfish` hard-exits with the mixed-engine refusal — permanently destroying the cache's
+documented purpose. The refusal's own message recommends a per-engine copy; the pre-registered
+command does not take that advice. **Fix the command before it is ever run.**
+
+### The third level, asked for and found
+
+- **F3 — the CACHE learned provenance; the DUMP did not.** The two arms' dumps are identical in
+  every field outside `cand`: no `sf_id`, no `sf_soft_nodes/multipv`. `paired_compare.py`'s
+  `RULER_FIELDS = ("input_encoding","batch_size")` therefore **cannot refuse a mixed-teacher
+  join**, and the only evidence the arms differed is a console line. Same shape as every other
+  finding today: provenance recorded where it is checked, absent where it is joined.
+- **F4** — `engine_identity`'s `timeout_s` is accepted and never enforced (proven: blocked 25s
+  with `timeout_s=3.0`), and it uses `stdout=PIPE`, the configuration this repo documents as
+  hanging the handshake.
+- **F5** — the new `--phase` flag accepts any string and silently prints `n=0`, sitting right
+  beside the `--field` guard that was just made loud.
+- **F6** — `build_audit_set.py` deep labels still carry no engine identity and `--resume` skips
+  by key alone, so referee B can silently become mixed-engine.
+
+### ⚑ LEDGER CORRECTION OWED (a claim I let stand)
+
+"`go nodes N` is deterministic ... so the honest prior for a repeat read is exactly 0" is
+**FALSE on this path**. `_shallow_sf_records` never passes `fresh=True`, so the transposition
+table **carries across positions**. Measured: same binary, only the visit ORDER reversed —
+**4/4 positions changed label, 2 changed top-1 move.** The pre-registered repeat-run null will
+not read 0, and it is the wrong variance component regardless.
+
+⚑ This does NOT contradict the 2026-08-16 SF-instability result: that used
+`blindspot_deepsf_scaling.py`, which issues `ucinewgame` per budget (COLD TT) and WAS verified
+deterministic on 20 re-scored pilot rows. **Determinism is a property of TT hygiene, per
+script — never of `go nodes N`.**
+
+### Disposition
+
+Tooling fixes: keep. Prereg: **BLOCKED** until the PASS branch is re-derived against the
+measured ~36-position tail (and the resolution actually computed), and the command is changed
+to a per-engine cache copy. Task #213 stays open.
