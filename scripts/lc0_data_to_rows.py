@@ -126,10 +126,16 @@ Three options, and the one taken:
 
 ⚑ (c) has a trap, and it is REAL: ``losses.py`` falls the SF component back to
 the raw one-hot outcome when ``has_sf_wdl`` is 0 — so running these rows at the
-production ``sf_wdl_frac: 0.50`` would train value on ~50% deep game outcome,
-silently, with no error. The control run MUST set ``sf_wdl_frac: 0.0`` (and
-``sf_wdl_frac_floor: 0.0``) and put the whole non-outcome share on
-``search_wdl_frac``.
+LIVE ``sf_wdl_frac: 0.69`` would train value on **69%** deep game outcome,
+silently, with no error, against a LIVE ``game_frac`` of **0.00**. The control
+run MUST set ``sf_wdl_frac: 0.0`` (and ``sf_wdl_frac_floor: 0.0``) and put the
+whole non-outcome share on ``search_wdl_frac``.
+
+⚑ The numbers in this file said 0.50/0.80 until 2026-08-16. That was `main`'s
+committed ``configs/pbt2_small.yaml``; the LIVE one has run ``sf_wdl_frac 0.69 /
+search_wdl_frac 0.31`` since the bt4heads promotion, so live's ``game_frac`` is
+ZERO and the whole non-outcome share is 1.00, not 0.70. Corrected in place; the
+mechanism was never wrong, only the reference file.
 
 ⚑ That requirement used to live only as prose in a manifest nothing reads,
 which is not a guard. ``check-run-config`` now makes it EXECUTABLE: it loads a
@@ -1316,7 +1322,7 @@ def _row_from(
 # The rows carry no Stockfish label, and `losses.py` falls the SF component of
 # the value blend back to the RAW ONE-HOT OUTCOME when `has_sf_wdl` is 0 — no
 # error, no log line. So a control run launched at the production
-# `sf_wdl_frac: 0.50` would train value on ~50% deep game outcome, which is the
+# LIVE `sf_wdl_frac: 0.69` would train value on 69% deep game outcome, which is the
 # exact regime production avoids, and the positive control would be measuring
 # something nobody chose. Nothing in the trainer refuses that today, so this
 # command does, and it must be run before the launch.
@@ -1343,7 +1349,9 @@ def run_config_problems(
     ⚑ ``shards_have_search_wdl`` is REQUIRED, with no default, because the
     default that reads naturally (``True``) is the bug: ``compute_loss`` falls
     the SEARCH component back to the raw one-hot exactly the way it falls the
-    SF component back, and the search share is the LARGER term here (0.70).
+    SF component back, and the search share is the WHOLE value target here
+    (``search_wdl_frac: 1.0`` since the 2026-08-16 trainer re-point; it read
+    0.70 before, derived from `main`'s stale ``game_frac``).
     A default would have re-created review F1 at the next call site.
     """
     problems: list[str] = []
@@ -1419,8 +1427,8 @@ def shard_dir_search_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
     ⚑ The bigger term, and the one that had no reader until PR #438's review
     F1. ``compute_loss`` falls the SEARCH component back to the raw one-hot
     exactly the way it falls the SF component back, and on the lc0 control
-    ``search_wdl_frac`` is 0.70 of the value target — so an unlabelled corpus
-    here trains almost the whole value head on the game result while
+    ``search_wdl_frac`` is **1.0** — the ENTIRE value target — so an unlabelled
+    corpus here trains the whole value head on the game result while
     ``sf_wdl_frac: 0.0`` keeps every SF-side check clean.
     """
     return shard_dir_label_coverage(shard_dir, "has_search_wdl")
@@ -1746,7 +1754,13 @@ def _manifest(options: ConvertOptions, stats: VerifyStats) -> dict[str, object]:
         },
         "required_training_overrides": {
             "sf_wdl_frac": 0.0,
-            "search_wdl_frac": "the whole non-outcome share (lc0's own recipe: 0.5)",
+            "search_wdl_frac": (
+                "the whole non-outcome share. LIVE production is sf 0.69 + "
+                "search 0.31 = 1.00, i.e. game_frac 0.00, so the arm that "
+                "preserves live's outcome share runs search_wdl_frac: 1.0. "
+                "lc0's own recipe would be 0.5 search / 0.5 outcome, which is a "
+                "different experiment"
+            ),
         },
         "why": (
             "losses.py falls the SF component back to the raw one-hot outcome "

@@ -14,8 +14,9 @@ is the same lesson one domain over (**NOT COMMITTED = NOT DEPLOYED**). Every lat
 change to this file must be an AMENDMENT with its own date and reason, appended
 rather than edited in place, and the git history is what makes that checkable.
 
-Amendments so far: the debug-corpus amendment (2026-08-15, below) and the guard-1
-correction (2026-08-16, below). Both were written before any training step.
+Amendments so far: the debug-corpus amendment (2026-08-15, below), the guard-1
+correction (2026-08-16, below) and the TRAINER RE-POINT (2026-08-16, below). All
+were written before any training step.
 
 ## Why this exists at all
 
@@ -52,6 +53,10 @@ what we feed the loop. If it plateaus the same way production did, H_stack is li
 Supervised only. No selfplay, no MCTS, no PID, no curriculum. Production
 architecture and optimizer (`aurora`, `matrix_optimizer_scope: mlp_out`) unchanged —
 the point is to test THE STACK WE RUN, so any architecture change voids the arm.
+
+⚑ "Production" means the LIVE working tree's `configs/pbt2_small.yaml`, not `main`'s
+committed copy, on BOTH axes. Enforced as launch guards 0/0b (architecture, against
+`LIVE_ARCH_PIN`) and 0c (trainer, against `LIVE_TRAINER_PIN`). See AMENDMENT 3.
 
 **Train set**: converted T91 rows, tars `20260810-1417` … onward, EXCLUDING the
 held-out window below.
@@ -128,6 +133,9 @@ A verdict off a failed instrument is not a verdict, in either direction.
    0.69 of the value weight would land silently on the deep outcome. Read the
    realized weight off the first training row and record it. A configured value is
    not an applied value.
+   > ⚑ EXTENDED 2026-08-16 by AMENDMENT 3: the same verification is now owed by
+   > the CATEGORICAL head, whose rebuild drops an unavailable component's weight
+   > onto the raw outcome by the identical rule. Measured, both bars, every step.
 4. **Held-out purity.** Assert zero row-id intersection between train and held-out,
    by id, not by tar name.
 
@@ -220,8 +228,12 @@ never a testable statement; the seed spread was the whole signal.
 **Corrected guard 2.** `--seed` is applied before `build_model` and recorded in the
 score metadata, and the gate is a BAND over several seeds against a trained
 checkpoint. ⚑ **The band is not in this file, because it requires a trained
-checkpoint and there is none.** It must be measured and appended here as AMENDMENT 3
-BEFORE the primary readout, not alongside it.
+checkpoint and there is none.** It must be measured and appended here as a FURTHER
+AMENDMENT (the next free number) BEFORE the primary readout, not alongside it.
+> ⚑ This sentence reserved "AMENDMENT 3" for the band. The trainer re-point landed
+> in that slot first, on 2026-08-16, and reserving an index in a document that only
+> grows by appending was the mistake — an amendment is identified by what it
+> contains, not by its number. The band is still owed and still unmeasured.
 
 ### The constants this file is cited for
 
@@ -230,6 +242,96 @@ code that name this document as their source, so the derivation is now executabl
 `lc0_control_eval.paired_halfwidth_pp(n, discordance)` reproduces every row of the
 resolution table above, and `MATERIAL_BAR_PP = 2 × paired_halfwidth_pp(100_000, 0.10)`
 = 0.392. `tests/test_lc0_control_drivers.py` pins both against the table.
+
+## ⚑⚑ AMENDMENT 3 (2026-08-16, written BEFORE any training step): "OUR EXACT TRAINER" WAS `main`'s TRAINER, AND THE VALUE OVERRIDE PROTECTED A NUMBER PRODUCTION DOES NOT HAVE
+
+**No arm has run and no number from this arm exists**, so this cannot be threshold
+shopping. It is the same correction AMENDMENT 2's architecture half received, on the
+axis that did not get it: the arm's claim is "our EXACT net and trainer", and until
+now only the NET was judged against the file production reads.
+
+### The measurement
+
+`trainer_kwargs_from_config()` on `configs/lc0_positive_control.yaml` against the
+LIVE `configs/pbt2_small.yaml` differed in **13 kwargs**. Against `main`'s committed
+copy — what every test in the tree checked — it differed in **2**, and `main` has
+committed nothing to that file since the live branch diverged.
+
+| kwarg | control (was) | LIVE |
+|---|---|---|
+| `warmup_steps` | 72 | **1000** |
+| `w_categorical` | 0.3 | **1.0** |
+| `rebuild_categorical_target` | False | **True** |
+| `categorical_target_params` | blend 0.0 / search 0.0 | **0.69 / 0.31** |
+| `w_sf_own_regret` | 0.7 | **0.0** |
+| `w_sf_own` | 0.1 | **0.0** |
+| `w_sf_eval` | 0.1 | **0.0** |
+| `w_sf_move` | 0.02 | **0.05** |
+| `sf_target_params.sf_policy_score_mode` | wdl | **cp** |
+| `lr_T0` / `lr_T_mult` | 999999 / 1 | **5000 / 2** (both DEAD — see below) |
+| `sf_wdl_frac` | 0.0 | 0.69 — the declared deviation |
+| `search_wdl_frac` | 0.7 | 0.31 — the declared deviation |
+
+### ⚑⚑ THE CONSEQUENCE THAT MATTERS: `game_frac` IS 0.00, NOT 0.30
+
+The arm's value override was justified — in the config header, in the config test,
+and in `value_blend_guard.PRODUCTION_GAME_FRAC` — as "hand the SF share to lc0's own
+search value so `game_frac` stays at production's **0.30**". Live's blend is
+`sf_wdl_frac 0.69 + search_wdl_frac 0.31 = **1.00**`, i.e. **`game_frac` 0.00**.
+Production puts NO weight on the raw game outcome. The 0.30 was `1 - 0.50 - 0.20`
+off `main`'s copy, and `search_wdl_frac: 0.70` was chosen to reproduce it — so the
+override was *introducing* a 0.30 outcome share rather than preserving one, and the
+guard's bar admitted exactly that.
+
+**Re-derived:** `sf_wdl_frac: 0.0`, `search_wdl_frac: **1.0**`. Both value
+components are then lc0's own root `best_q`/`best_d`, `game_frac` is 0.00 as live's
+is, and `value_blend_guard`'s bar moves 0.30 → 0.00 with it. Rejected alternatives,
+recorded so the choice is falsifiable: lc0's own 0.5 search / 0.5 outcome recipe
+(moves `game_frac` to 0.50 — a second deviation on the one axis this arm holds
+fixed, and substitutes lc0's recipe for ours); keeping 0.70/0.30 (now a deviation
+rather than a preservation); and 0.31 search with the SF share simply dropped —
+which is precisely what the LEAK produces, so it would make the chosen target
+indistinguishable from the failure guard 3 exists to catch.
+
+### The LR-schedule scare, and what it actually was
+
+`lr_T0: 999999` / `lr_T_mult: 1` looked like the most disqualifying entry — an arm
+running no cosine restart against a production that restarts every 5000 steps and
+doubles. **Measured: both are DEAD.** They are read only by the
+`CosineAnnealingWarmRestarts` branch, and both files run `lr_schedule: sqrt_release`,
+which never constructs it — the live file deletes them with exactly that comment.
+The control now deletes them too, landing the same realized defaults (5000 / 2) on
+both sides. The REAL schedule difference was `warmup_steps` **72 vs 1000**, which is
+now live's 1000. ⚑ A budget shorter than the warmup never reaches the base LR, so a
+run with `--steps <= warmup_steps` is recorded `valid_control: false` with that
+reason named.
+
+### ⚑⚑ THE CATEGORICAL HEAD: ARMED, INERT, AND THE INERTNESS IS NOT IN THE CONFIG
+
+Live runs `rebuild_categorical_target: true` with `blend_frac 0.69 /
+search_blend_frac 0.31` and `w_categorical: 1.0`. The arm now carries all of it.
+Measured on real converted rows (`data/lc0_rows/training-run2-test91-20260810-1417`):
+
+* Converted lc0 rows carry **no `categorical_target` column** (19 array keys, and
+  that is not one), so `rebuild_categorical_target_in_arrays` returns the batch
+  UNCHANGED and `categorical_ce` is 0.0000 over 0 rows. **It does not degenerate.**
+* But the mechanism IS armed. `targets.normalize_categorical_blend_fracs` DROPS a
+  component whose row is missing and does **not** redistribute its weight, so if the
+  corpus ever carried a `categorical_target`, `blend_frac`'s 0.69 would land on the
+  raw game outcome — the WDL leak's exact shape, on the sibling value head, with no
+  error and no metric named for it. Measured: the trained-toward value moves
+  `0.6900·(outcome − E[sf])` = **0.345** on a row with `E[sf] = 0.5`.
+
+⇒ the inertness is a property of `scripts/lc0_data_to_rows.py`'s OUTPUT, not of this
+config, so it is not argued in a comment. `assert_categorical_rebuild_is_inert` reads
+it off every training batch alongside the WDL blend, and the run refuses with no
+checkpoint if it ever stops being true.
+
+### What this amendment does NOT change
+
+The hypothesis, the primary yardstick, the two slopes, the 2.0 pp bar, the 0.392 pp
+resolution and every guard threshold are untouched. What changes is which training
+recipe the slopes describe.
 
 ## Confounds to state in the readout, not discover afterwards
 
@@ -249,7 +351,19 @@ resolution table above, and `MATERIAL_BAR_PP = 2 × paired_halfwidth_pp(100_000,
   short **upstream** — it size-matches the index and parses cleanly to 614 games /
   53,083 positions — so it is a short hour, not a truncated download.
 - Our value target and lc0's differ; `wdl_target` ← lc0 outcome, `search_wdl` ←
-  lc0 `best_q`/`best_d`, `sf_wdl` deliberately ABSENT.
+  lc0 `best_q`/`best_d`, `sf_wdl` deliberately ABSENT. ⚑ Since AMENDMENT 3 the WDL
+  target is **100% `search_wdl`** (live's `game_frac` is 0.00 and the arm holds it
+  there), so the game outcome enters the value target NOWHERE. Realized and
+  measured, not configured: outcome 0.0000 / search 1.0000, mass 1.0000.
+- ⚑ **Four heads production trains carry weights here that train NOTHING**, because
+  the corpus has no target for them: `w_soft 1.0`, `w_future 0.01`,
+  `w_categorical 1.0` and `w_sf_move 0.05` all sit at live's value over 0 rows.
+  They are left at production's values rather than zeroed so the arm carries two
+  documented deviations instead of six undocumented ones; the driver prints each
+  head's realized ROW COUNT, and a head with 0 rows trained nothing. The
+  consequence for the readout is that this arm's total loss is NOT comparable in
+  magnitude to production's, and the policy head carries a larger share of the
+  gradient than it does in the live loop.
 - ~3.7% of T91 games are chess960/DFRC and are dropped; ~1 row in 23,000 is dropped
   for the e.p.-blind repetition divergence.
 

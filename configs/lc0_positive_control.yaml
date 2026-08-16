@@ -37,9 +37,15 @@
 # now carries them. `--allow-arch-drift` remains for PLUMBING SMOKE RUNS on a
 # deliberately small model, and stamps `valid_control: false` into the run's
 # summary.json. ⚑ Accepting the architecture is NOT the arm being validated:
-# the arm has still never been run, and the TRAINER axis below is still copied
-# from `main`'s committed `train:` section, which is 13 kwargs behind the live
-# one (measured 2026-08-16; see tests/test_lc0_control_config.py's header).
+# the arm has still never been run.
+#
+# ⚑⚑ AND THE TRAINER AXIS HAD THE SAME DEFECT, CLOSED LATER ON 2026-08-16.
+# Until then the `train:` section below was copied from `main`'s committed one,
+# which is THIRTEEN trainer kwargs behind the live file — so "our EXACT net and
+# trainer" held for the net only. It is now copied from the LIVE `train:` /
+# `selfplay:` sections, judged against `LIVE_TRAINER_PIN`
+# (`chess_anti_engine/eval/lc0_control_trainer.py`) exactly as the architecture
+# is judged against `LIVE_ARCH_PIN`, and enforced as launch guard 0c.
 #
 # This file is a SELF-CONTAINED COPY rather than an overlay on the production
 # yaml. Deliberate: `configs/pbt2_small.yaml` is the LIVE file, re-read every
@@ -47,24 +53,38 @@
 # this arm's realized config a function of whatever production happened to be
 # doing that hour — unreproducible by construction.
 #
-# ── EVERY DIFFERENCE FROM configs/pbt2_small.yaml, AND WHY ────────────────────
+# ── EVERY DIFFERENCE FROM THE LIVE configs/pbt2_small.yaml, AND WHY ───────────
 #
 # MEASURED, not asserted. The mechanical diff of `trainer_kwargs_from_config()`
-# between the two files is exactly TWO entries, and `model_config_from_flat_
+# against the LIVE file is exactly TWO entries, and `model_config_from_flat_
 # config()` differs in ZERO fields:
 #
-#   search_wdl_frac: prod=0.2 ctrl=0.7
-#   sf_wdl_frac:     prod=0.5 ctrl=0.0
+#   sf_wdl_frac:     live=0.69 ctrl=0.0
+#   search_wdl_frac: live=0.31 ctrl=1.0
 #
-# Everything else — optimizer, LR schedule, zclip, every loss weight, every
-# Aurora knob, `sf_target_params`, `moves_left_max_plies` — is identical.
+# Everything else — optimizer, LR schedule, warmup, zclip, every loss weight,
+# every Aurora knob, `sf_target_params`, `categorical_target_params`,
+# `rebuild_categorical_target`, `moves_left_max_plies` — is identical.
+#
+# ⚑ SUPERSEDED, KEPT AS THE RECORD OF THE DEFECT. Before 2026-08-16 this block
+# read "the mechanical diff ... is exactly TWO entries: search_wdl_frac
+# prod=0.2 ctrl=0.7 / sf_wdl_frac prod=0.5 ctrl=0.0", and it was TRUE — of
+# `main`'s committed copy, which is not the file production reads. Against the
+# LIVE file the same command returned THIRTEEN. The count was right, the
+# reference was wrong, and nothing in the sentence said which file it meant.
+# The thirteen, live-vs-`main` (ctrl -> live): `categorical_target_params`
+# blend 0.0->0.69, `lr_T0` 999999->5000, `lr_T_mult` 1->2,
+# `rebuild_categorical_target` False->True, `search_wdl_frac` 0.7->0.31,
+# `sf_target_params.sf_policy_score_mode` wdl->cp, `sf_wdl_frac` 0.0->0.69,
+# `w_categorical` 0.3->1.0, `w_sf_eval` 0.1->0.0, `w_sf_move` 0.02->0.05,
+# `w_sf_own` 0.1->0.0, `w_sf_own_regret` 0.7->0.0, `warmup_steps` 72->1000.
 #
 # Three keys are changed in the yaml; the third does not reach the trainer:
 #
-#  1. sf_wdl_frac: 0.50 -> 0.0        ⚑⚑ THE LOAD-BEARING ONE. See below.
-#  2. search_wdl_frac: 0.20 -> 0.70   the SF share, re-pointed at lc0's own
+#  1. sf_wdl_frac: 0.69 -> 0.0        ⚑⚑ THE LOAD-BEARING ONE. See below.
+#  2. search_wdl_frac: 0.31 -> 1.0    the SF share, re-pointed at lc0's own
 #                                     search value (best_q/best_d).
-#  3. sf_wdl_frac_floor: 0.45 -> 0.0  ⚑ NOT a trainer kwarg — it is read only
+#  3. sf_wdl_frac_floor: 0.69 -> 0.0  ⚑ NOT a trainer kwarg — it is read only
 #     by `TrialConfig`/the PID ramp, which this arm never runs. Zeroed anyway;
 #     see (2) in the notes below.
 #
@@ -81,12 +101,13 @@
 # absent (`_get_mask` defaults it to 0.0) the SF component IS the raw one-hot
 # game outcome, for every row, with no error and no warning.
 #
-# Left at production values the realized value target here would be:
-#     game_frac 0.30 (intended) + sf_wdl_frac 0.50 (leaked) = 0.80 on the raw
-#     deep game outcome, versus the 0.30 on paper.
-# Measured, not argued: see the realized-weight table in the PR and
-# `chess_anti_engine/train/value_blend_guard.py`, which reads the fracs off an
-# actual `compute_loss` call and raises rather than letting the run proceed.
+# Left at LIVE values the realized value target here would be:
+#     game_frac 0.00 (intended) + sf_wdl_frac 0.69 (leaked) = 0.69 on the raw
+#     deep game outcome, versus the 0.00 on paper. Measured on real converted
+#     rows through the real `compute_loss`: outcome 0.6899, search 0.3100.
+# Measured, not argued: see `chess_anti_engine/train/value_blend_guard.py`,
+# which reads the fracs off an actual `compute_loss` call and raises rather
+# than letting the run proceed.
 #
 # ⚑ (2) matters because the override could otherwise EXPIRE MID-RUN.
 # `tune/trainable_config_ops.py` recomputes the SF weight every iteration via
@@ -98,16 +119,37 @@
 # the tune trainable at all, so the ramp is doubly unreachable — but the guard
 # asserts it rather than relying on that.)
 #
-# (3) production's value target is 0.30 outcome / 0.50 SF / 0.20 search. lc0
-# has no SF, and the only other search-derived value the corpus carries is
-# lc0's own root `best_q`/`best_d`, which the converter stores as `search_wdl`.
-# Handing the SF share to it keeps `game_frac` at production's 0.30 EXACTLY —
-# the one number production deliberately controls — instead of letting the deep
-# outcome swell to 0.80 by default. The converter's manifest suggests lc0's own
-# recipe (0.5 search / 0.5 outcome); 0.70/0.30 is chosen instead because
-# holding OUR outcome share fixed is the smaller deviation from the stack under
-# test. Either way this is a value-side choice and the arm's yardstick is
-# POLICY top-1, which it does not touch.
+# (3) ⚑⚑ THE LIVE value target is 0.00 outcome / 0.69 SF / 0.31 search. This
+# paragraph used to say "0.30 outcome / 0.50 SF / 0.20 search" and derive
+# `search_wdl_frac: 0.70` from preserving that 0.30. Both halves were `main`'s
+# numbers. Live's `game_frac` is ZERO — the SF and search shares sum to exactly
+# 1.00 — so there is no outcome share to preserve, and 0.70/0.30 was not
+# "holding production's number fixed", it was introducing a 0.30 outcome share
+# production does not have.
+#
+# Re-derived: lc0 has no SF, and the only other search-derived value the corpus
+# carries is lc0's own root `best_q`/`best_d`, which the converter stores as
+# `search_wdl`. Handing the whole SF share to it gives 1.00 search / 0.00
+# outcome, which keeps `game_frac` at LIVE's 0.00 EXACTLY. Both components are
+# then a SEARCH value from the agent that generated the position, which is the
+# closest structural analogue of live's SF-plus-own-search mix available in a
+# corpus with one search.
+#
+# ⚑ Alternatives considered and rejected, so the choice is falsifiable:
+#  * lc0's own recipe (0.5 search / 0.5 outcome), which the converter's
+#    manifest suggests. REJECTED: it would move `game_frac` 0.00 -> 0.50, a
+#    second deviation on the exact axis this arm holds fixed, and it would
+#    substitute lc0's training recipe for ours in an arm whose premise is
+#    "our EXACT trainer".
+#  * keeping 0.70/0.30. REJECTED: it is now a 0.30 DEVIATION from live rather
+#    than a preservation of anything, and `value_blend_guard`'s bar would have
+#    to stay at the stale 0.30 to admit it.
+#  * an intermediate 0.31 search / 0.69 outcome (live's search frac, SF share
+#    dropped). REJECTED: it is exactly what the LEAK produces — see the
+#    "Left at LIVE values" paragraph — so it would make the arm's chosen
+#    target indistinguishable from the failure the guard exists to catch.
+# Either way this is a value-side choice and the arm's yardstick is POLICY
+# top-1, which it does not touch.
 #
 # ── WHAT IS ABSENT, AND WHY THAT IS SAFE ─────────────────────────────────────
 #
@@ -168,22 +210,52 @@ model:
   policy_embedding_mode: linear
 
 selfplay:
-  # ⚑ These five are SELFPLAY-section keys despite their sf_ names (checked
-  # against utils/config_yaml.py's schema, which is fatal at launch on a
-  # misplaced key — this file was written with them under `stockfish:` first
+  # ⚑ These are SELFPLAY-section keys despite their sf_ / categorical_ names
+  # (checked against utils/config_yaml.py's schema, which is fatal at launch on
+  # a misplaced key — this file was written with them under `stockfish:` first
   # and would not have booted). There is no Stockfish in this arm; they are
   # here for ONE reason: `trainer_kwargs_from_config` folds them into
-  # `sf_target_params`, and omitting them would make that kwarg differ from
-  # production for a reason unrelated to the experiment — noise in the very
-  # diff that is supposed to prove the stack is unchanged. They are INERT
-  # (`rebuild_sf_targets` and `sf_policy_sparse_ce` are both false, and no row
-  # carries an SF label to rebuild from), and pinned verbatim so the diff
-  # against production is exactly the four documented keys and nothing else.
+  # `sf_target_params` / `categorical_target_params`, and omitting them would
+  # make those kwargs differ from production for a reason unrelated to the
+  # experiment — noise in the very diff that is supposed to prove the stack is
+  # unchanged. Pinned verbatim from the LIVE file so the trainer diff is
+  # exactly the two documented value-blend keys and nothing else.
+  #
+  # INERTNESS OF sf_target_params, established from the consumer rather than
+  # asserted: `trainer.py` reads `self.sf_target_params` in exactly two places
+  # — `rebuild_sf_targets_in_arrays` (gated on `self.rebuild_sf_targets`) and
+  # the `sf_sparse_params` hand-off (gated on `self.sf_policy_sparse_ce`).
+  # Both flags default False and neither file sets them, so no consumer is
+  # active; and no converted row carries an SF label to rebuild from anyway.
+  # `sf_policy_score_mode: cp` is therefore inert HERE and is set to live's
+  # value regardless — an inert key that matches production costs nothing and
+  # removes an entry from the diff that is supposed to mean something.
   sf_policy_temp: 0.012
   sf_policy_label_smooth: 0.01
   sf_wdl_use_cp_logistic: true
   sf_wdl_cp_slope: 0.0060
   sf_wdl_cp_draw_width: 120.0
+  sf_policy_score_mode: cp    # LIVE. main's copy says `wdl`; see the header.
+  sf_policy_cp_temp: 16.2     # the mode-selected temp once the mode is `cp`
+  # ── the categorical target's blend, from the LIVE file ────────────────────
+  # ⚑⚑ THESE ARE ARMED-BUT-INERT AND THE INERTNESS IS MEASURED, NOT ASSUMED.
+  # They reach the trainer as `categorical_target_params`, which is consumed
+  # only by `rebuild_categorical_target_in_arrays` — and that function returns
+  # the batch UNCHANGED when `categorical_target` is not in it. Converted lc0
+  # rows have no such column (measured: the sampled arrays carry 19 keys and
+  # `categorical_target` is not one), so the rebuild is a no-op and
+  # `categorical_ce` is 0.0 over 0 rows.
+  # ⚑ It is a no-op for a reason OUTSIDE this config, so
+  # `assert_categorical_rebuild_is_inert` measures it on the real batch at
+  # launch instead of trusting this comment. If the corpus ever gained a
+  # `categorical_target`, `categorical_target_value` would DROP the sf term
+  # (no `has_sf_wdl`) WITHOUT redistributing it, landing 0.69 of the
+  # categorical target on the raw game outcome — the WDL leak's exact shape,
+  # one head over.
+  categorical_blend_frac: 0.69
+  categorical_search_blend_frac: 0.31
+  categorical_bins: 32
+  hlgauss_sigma: 0.04
   # Present ONLY because trainer_kwargs_from_config reads it as
   # moves_left_max_plies. It must equal the converter's --moves-left-max-plies
   # (default 450.0), which is what the stored `moves_left` was divided by.
@@ -217,21 +289,27 @@ train:
   feature_dropout_p: 0.0
   accum_steps: 1
   warm_start_lr_max_ratio: 2.0
-  warmup_steps: 72
+  warmup_steps: 1000
   lr_eta_min: 0.00001
   lr_schedule: sqrt_release
   lr_release_start_frac: 0.80
   lr_release_min_scale: 0.1
   lr_release_shape: sqrt
-  lr_T0: 999999
-  lr_T_mult: 1
+  # ⚑ `lr_T0` / `lr_T_mult` are DELETED, matching the live file, which deletes
+  # them with the reason: they are read only by the
+  # `CosineAnnealingWarmRestarts` branch (`trainer.py`, `lr_schedule in
+  # ("cosine", "cosine_warm_restarts", "warm_restarts")`) and both configs run
+  # `sqrt_release`, so that branch is never constructed. Deleting them lands
+  # `trainer_kwargs_from_config`'s defaults (5000 / 2) on BOTH sides, which is
+  # what the live run realizes. Carrying `999999 / 1` here was a live-vs-main
+  # DIFF in a dead knob — the diff was real, the effect was not.
   use_compile: true
   compile_mode: max-autotune
   log_level: INFO
   swa_start: -1
   swa_freq: 50
 
-  # ── loss weights: verbatim from production ──────────────────────────────
+  # ── loss weights: verbatim from the LIVE file ───────────────────────────
   # ⚑ Several of these heads have NO TARGET in an lc0 shard (soft_policy_t,
   # future_policy_t, sf_policy_t, sf_p0_*, categorical_t, volatility_t,
   # sf_volatility_t are all absent). compute_loss returns a zero loss for a
@@ -242,24 +320,43 @@ train:
   # ones are inert is not asserted from this comment: the driver prints each
   # head's realized ROW COUNT from the smoke step, and a head with 0 rows is a
   # head that trained nothing.
+  # ⚑ Re-pointed 2026-08-16 from `main`'s committed values to the LIVE ones.
+  # Five moved (`w_sf_move` 0.02->0.05, `w_sf_own` 0.1->0.0, `w_sf_own_regret`
+  # 0.7->0.0, `w_sf_eval` 0.1->0.0, `w_categorical` 0.3->1.0). Every one of
+  # them is inert on this corpus either way, so this changes no realized
+  # number here — it changes what the diff MEANS, which is the whole value of
+  # the diff. Three of the five now being 0 is a bonus: production stopped
+  # training its SF-teacher heads, so three armed-but-inert weights on a
+  # corpus with no SF labels became three zeros.
   w_policy: 1.0
   w_soft: 1.0
   w_future: 0.01
   w_wdl: 1.0
-  w_sf_move: 0.02
-  w_sf_own: 0.1
-  w_sf_own_regret: 0.7
-  w_sf_eval: 0.10
-  w_categorical: 0.30
+  w_sf_move: 0.05
+  w_sf_own: 0.0
+  w_sf_own_regret: 0.0
+  w_sf_eval: 0.0
+  w_categorical: 1.0
   w_volatility: 0.10
   w_sf_volatility: 0.05
   w_moves_left: 0.02
+  # LIVE (bt4heads bundle, 2026-08-15). A no-op on this corpus: the rebuild
+  # returns the batch untouched when there is no `categorical_target` column,
+  # and converted lc0 rows have none. Measured at launch by
+  # `assert_categorical_rebuild_is_inert`, not taken on trust — see the
+  # `categorical_blend_frac` note in `selfplay:`.
+  rebuild_categorical_target: true
 
   # ── the value blend: THE ONLY SEMANTIC CHANGE ───────────────────────────
-  sf_wdl_frac: 0.0          # production 0.50 — see the header. NOT optional.
-  sf_wdl_frac_floor: 0.0    # production 0.45 — kills the PID ramp's floor too.
-  search_wdl_frac: 0.70     # production 0.20 + the 0.50 SF share; game_frac
-                            # stays at production's 0.30.
+  # ⚑⚑ RE-DERIVED 2026-08-16 AGAINST THE LIVE FILE. The live blend is
+  # `sf_wdl_frac 0.69 + search_wdl_frac 0.31 = 1.00`, i.e. **game_frac 0.00**.
+  # The 0.30 this arm used to protect is `main`'s stale number and the old
+  # `search_wdl_frac: 0.70` was derived from it. See the header.
+  sf_wdl_frac: 0.0          # LIVE 0.69 — see the header. NOT optional.
+  sf_wdl_frac_floor: 0.0    # LIVE 0.69 — kills the PID ramp's floor too.
+  search_wdl_frac: 1.0      # LIVE 0.31 + the 0.69 SF share, handed to lc0's
+                            # own best_q/best_d. game_frac stays at LIVE's
+                            # 0.00, which is the number this preserves.
   use_adjusted_wdl_target: false
   sf_wdl_conf_power: 1.0    # inert: its only consumer is the aux sf_eval mask,
   sf_wdl_draw_scale: 0.55   # and no row carries sf_wdl. Kept verbatim anyway.
@@ -275,5 +372,23 @@ train:
   # count on the driver's --steps flag, and `train_window_fraction` /
   # `train_views_per_ingested_position` are omitted rather than set to a value
   # that would read as if the production budgeting were in force.
+  #
+  # ⚑⚑ `train_steps: 800` IS NOT A BUDGET AND IT IS BELOW THE WARMUP. It is
+  # LIVE's value, carried verbatim like everything else in this section, and it
+  # is inert here — the driver takes the budget from `--steps`. But 800 < the
+  # 1000-step `warmup_steps` above, so a run that actually used it would never
+  # reach the base LR and its held-out SLOPE would describe the warmup ramp
+  # rather than the trainer. `scripts/lc0_control_train.py` records
+  # `--steps <= warmup_steps` in `summary.json`'s `validity_problems` and
+  # stamps `valid_control: false`; it does NOT refuse, because every plumbing
+  # smoke here is 1-8 steps by design.
+  #
+  # ⚑ `lr_release_cycle_steps: 0` hands the sqrt_release CYCLE LENGTH to the
+  # caller: `Trainer.train_steps(steps=N)` uses N as the cycle, so this arm's
+  # LR holds flat for 80% of `--steps` and releases to 0.1x over the last 20%.
+  # Production reaches the same code with N ~= 88 (one iteration), so it runs a
+  # sawtooth per iteration where this arm runs ONE long cycle. Same config,
+  # same scheduler, different call shape — a driver-level difference the trainer
+  # diff cannot see, stated here rather than discovered in the readout.
   train_steps: 800
   lr_release_cycle_steps: 0

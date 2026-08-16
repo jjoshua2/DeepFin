@@ -36,15 +36,25 @@ The value target `compute_loss` actually built was intercepted at its
 `soft_cross_entropy` call and decomposed back into component shares by least squares
 (`tests/test_value_blend_guard.py`).
 
+⚑⚑ **RE-MEASURED 2026-08-16 AGAINST THE LIVE BLEND (§8). The table below is the
+`main`-blend measurement and is KEPT as the record; `sf 0.50 / search 0.20` is
+`main`'s committed pair, and LIVE runs `0.69 / 0.31`.** Every conclusion in this
+section survives the change — only the numbers move, and they move in the worse
+direction (0.69 leaks, not 0.50).
+
 | config | intended `game_frac` | realized outcome share | search share | target sums to |
 |---|---|---|---|---|
-| production blend (`sf 0.50 / search 0.20`) on lc0 rows | 0.30 | **0.80** | 0.20 | 1.000 |
-| this arm (`sf 0.00 / search 0.70`) on lc0 rows | 0.30 | **0.30** | 0.70 | 1.000 |
-| production blend on SF-LABELLED rows | 0.30 | 0.30 | 0.20 | 1.000 |
+| `main` blend (`sf 0.50 / search 0.20`) on lc0 rows | 0.30 | **0.80** | 0.20 | 1.000 |
+| this arm as shipped 2026-08-15 (`sf 0.00 / search 0.70`) on lc0 rows | 0.30 | **0.30** | 0.70 | 1.000 |
+| `main` blend on SF-LABELLED rows | 0.30 | 0.30 | 0.20 | 1.000 |
+| **LIVE blend (`sf 0.69 / search 0.31`) on lc0 rows** | **0.00** | **0.6900** | 0.3100 | 1.0000 |
+| **this arm AFTER the re-point (`sf 0.00 / search 1.00`)** | **0.00** | **0.0000** | 1.0001 | 1.0000 |
 
-⇒ at production settings **0.50 of the value target — 62.5% of all outcome-borne
+⇒ at `main`'s settings **0.50 of the value target — 62.5% of all outcome-borne
 mass — silently relocates onto the deep game outcome**, and the third row shows this
 is a property of the DATA, not of the weights, so nothing about production changes.
+At LIVE's settings the leak is **0.69 of the entire target**, against an intended
+outcome share of ZERO.
 
 ⚑ The `target sums to` column is load-bearing. An earlier version of this
 measurement computed the outcome share as `1 - search_share`, which assumes the
@@ -112,20 +122,24 @@ unreachable — the assertion does not rely on that.)
 
 ### The guard, and where it lives
 
-`chess_anti_engine/train/value_blend_guard.py`. Three checks at three levels, in
+`chess_anti_engine/train/value_blend_guard.py`. Five checks at four levels, in
 `scripts/lc0_control_train.py`:
 
 0. **launch, architecture** — `assert_control_matches_live_architecture` (added
    2026-08-16, review F1). See §6.1.
+0c. **launch, trainer** — `assert_control_matches_live_trainer` (added 2026-08-16,
+   §8). The other half of "our exact net and trainer".
 1. **launch, config** — `assert_pid_cannot_reassert_sf_wdl`.
 2. **launch, corpus** — the converter's own `run_config_problems` is IMPORTED and
    reused, not restated, driven by MEASURED SF-label coverage
    (`shard_dir_sf_wdl_coverage`) rather than `any()`. See §6.4.
 3. **realized, per-step** — the wrapped `compute_loss` kwargs plus the batch's own
    `sf_wdl_rows`, judged by `assert_no_silent_outcome_fallback` at `max_leak=0.0`
-   AND `max_outcome_borne=0.30`. Judged on the WORST step, not the first or the
-   mean, so a leak that begins partway through a long run cannot be diluted under
-   the bar. ⚑ `--allow-leak` no longer skips it — see §6.2.
+   AND `max_outcome_borne=` **`0.00`** (⚑ 0.30 until 2026-08-16 — that was `main`'s
+   `game_frac`; live's is 0.00, §8.2). Judged on the WORST step, not the first or
+   the mean, so a leak that begins partway through a long run cannot be diluted
+   under the bar. ⚑ `--allow-leak` no longer skips it — see §6.2. The same wrap
+   feeds `assert_categorical_rebuild_is_inert` (§8.3).
 
 The blend arithmetic is NOT duplicated: `losses.normalize_value_blend_fracs` was
 extracted from `compute_loss` and is called by both, so the guard cannot drift from
@@ -586,20 +600,20 @@ verified apparatus, not the artifact the arm will read.
   smoke run recorded here predates the merge, carries `--allow-arch-drift`, and
   stamps `valid_control: false` into its `summary.json`. The 63,084,128 in §4 is
   this branch's pre-merge count and has not been re-taken.
-* **⚑⚑ THE TRAINER AXIS IS STILL POINTED AT THE STALE COPY.** The architecture
-  reference moved to the live file; the trainer reference did not. Measured
-  2026-08-16, the LIVE `train:` section differs from `main`'s committed one in **13
-  trainer kwargs** — `w_sf_own_regret` 0.7→0.0, `w_sf_own` 0.1→0.0, `w_sf_eval`
-  0.1→0.0, `w_sf_move` 0.02→0.05, `w_categorical` 0.3→1.0, `sf_wdl_frac` 0.5→0.69,
+* ~~**⚑⚑ THE TRAINER AXIS IS STILL POINTED AT THE STALE COPY.**~~ **CLOSED
+  2026-08-16 — see §8.** Kept as the record of the finding: the architecture
+  reference moved to the live file and the trainer reference did not, leaving the
+  LIVE `train:`/`selfplay:` sections differing from `main`'s in **13 trainer
+  kwargs** — `w_sf_own_regret` 0.7→0.0, `w_sf_own` 0.1→0.0, `w_sf_eval` 0.1→0.0,
+  `w_sf_move` 0.02→0.05, `w_categorical` 0.3→1.0, `sf_wdl_frac` 0.5→0.69,
   `search_wdl_frac` 0.2→0.31, `categorical_target_params` (blend 0.0→0.69),
   `rebuild_categorical_target` false→true, `sf_target_params.sf_policy_score_mode`
-  wdl→cp, `lr_T0` 999999→5000, `lr_T_mult` 1→2, `warmup_steps` 72→1000. So "our
-  EXACT net and trainer" currently holds for the NET only. ⚑ Note the live blend is
-  `0.69 + 0.31 = 1.00`, i.e. **`game_frac` 0.0**, against the 0.30 this arm's value
-  override was designed to preserve — so re-pointing is a real research decision,
-  not a copy, and needs a ledger entry with a pre-committed yardstick.
-* **`search_wdl_frac: 0.70` is a judgement call**, not a measured optimum. It holds
-  `game_frac` at production's 0.30; lc0's own recipe would be 0.50.
+  wdl→cp, `lr_T0` 999999→5000, `lr_T_mult` 1→2, `warmup_steps` 72→1000 — so "our
+  EXACT net and trainer" held for the NET only.
+* ~~**`search_wdl_frac: 0.70` is a judgement call**, not a measured optimum. It holds
+  `game_frac` at production's 0.30; lc0's own recipe would be 0.50.~~ **WITHDRAWN:
+  the 0.30 it held `game_frac` at was `main`'s. Live's `game_frac` is 0.00 and
+  `search_wdl_frac` is now 1.0. §8.**
 
 ---
 
@@ -672,3 +686,202 @@ control. A run without a receipt is recorded as `valid_control: false`.
 * **`torch.compile` is still unexercised.**
 * The `has_search_wdl` coverage above is a 10,870-row sample of one production day,
   not the whole replay window.
+
+---
+
+## 8. Third round (2026-08-16) — the TRAINER axis, re-pointed at the LIVE recipe
+
+Prereg AMENDMENT 3 is the pre-registration for this; everything here is the
+measurement behind it. **No arm was run.** Author is not the author of §§1–7.
+
+### 8.1 The gap, and what closed it
+
+`trainer_kwargs_from_config(configs/lc0_positive_control.yaml)` vs the LIVE
+`configs/pbt2_small.yaml`: **13 differing kwargs before, 2 after**, and the 2 are the
+declared value-blend deviations. Judged in CI against `LIVE_TRAINER_PIN`
+(`chess_anti_engine/eval/lc0_control_trainer.py`), the exact construction
+`LIVE_ARCH_PIN` uses for the architecture, with `scripts/lc0_control_arch_pin.py
+--axis trainer` to regenerate it and `--check` (default `--axis both`) to gate the
+control straight against the live file.
+
+| kwarg | before | after | reason |
+|---|---|---|---|
+| `warmup_steps` | 72 | **1000** | LIVE. The only REAL LR-schedule difference. |
+| `lr_T0` / `lr_T_mult` | 999999 / 1 | **deleted** | ⚑ DEAD both sides — read only by the `CosineAnnealingWarmRestarts` branch, and both files run `lr_schedule: sqrt_release`. Deleting lands the realized defaults 5000/2 on both sides, as live does. |
+| `w_sf_move` | 0.02 | **0.05** | LIVE. Inert (no `sf_policy_t`). |
+| `w_sf_own` / `w_sf_own_regret` / `w_sf_eval` | 0.1 / 0.7 / 0.1 | **0.0** | LIVE zeroed its SF-teacher heads in the bt4heads era. Inert either way; three fewer armed weights. |
+| `w_categorical` | 0.3 | **1.0** | LIVE. Inert — no `categorical_t`. |
+| `rebuild_categorical_target` | False | **True** | LIVE. No-op on this corpus; §8.3. |
+| `categorical_target_params` | 0.0 / 0.0 | **0.69 / 0.31** | LIVE (`selfplay.categorical_*_blend_frac`). §8.3. |
+| `sf_target_params.sf_policy_score_mode` | wdl | **cp** | LIVE. Inert, from the CONSUMER not from the corpus: `trainer.py` reads `self.sf_target_params` only under `rebuild_sf_targets` or `sf_policy_sparse_ce`, both False in both files. |
+| `sf_wdl_frac` | 0.0 | **0.0** (LIVE 0.69) | DECLARED DEVIATION 1. §8.2. |
+| `search_wdl_frac` | 0.7 | **1.0** (LIVE 0.31) | DECLARED DEVIATION 2. §8.2. |
+
+### 8.2 ⚑⚑ `game_frac` IS 0.00 — the number the override protected did not exist
+
+Live: `sf_wdl_frac 0.69 + search_wdl_frac 0.31 = 1.00`. Production puts **no** weight
+on the raw game outcome. The arm's `search_wdl_frac: 0.70` was chosen to hold
+`game_frac` at "production's 0.30", which is `1 − 0.50 − 0.20` off `main`'s copy — so
+it was *adding* a 0.30 outcome share, not preserving one. `value_blend_guard`'s bar
+carried the same stale number, so the gate admitted exactly the state its docstring
+claimed it was preventing.
+
+Realized composition, through the real `compute_loss` on real converted rows
+(`data/lc0_rows/training-run2-test91-20260810-1417`, least-squares decomposition of
+the target `soft_cross_entropy` was called with):
+
+| config | normalized sf / search / game | sf eff. rows | search eff. rows | REALIZED outcome | REALIZED search | mass |
+|---|---|---|---|---|---|---|
+| BEFORE — shipped control | 0.00 / 0.70 / 0.30 | 0/64 | 64/64 | **0.3000** | 0.7001 | 1.0000 |
+| COUNTERFACTUAL — live blend verbatim | 0.69 / 0.31 / 0.00 | 0/64 | 64/64 | **0.6900** | 0.3100 | 1.0000 |
+| AFTER — re-pointed control | 0.00 / 1.00 / 0.00 | 0/64 | 64/64 | **0.0000** | 1.0001 | 1.0000 |
+
+`PRODUCTION_GAME_FRAC` moves 0.30 → **0.00** with it, and
+`test_the_bar_is_the_live_production_game_frac_not_a_literal` pins the constant to
+`LIVE_TRAINER_PIN` so it cannot drift again (the module cannot import the pin
+without a cycle, so the pinning lives in the test).
+
+### 8.3 ⚑⚑ `rebuild_categorical_target` WITH NO SF LABELS — it does NOT degenerate, and it IS armed
+
+The highest-risk item of the re-point, and the answer has two halves.
+
+**It is inert today, measured.** `rebuild_categorical_target_in_arrays` returns the
+batch UNCHANGED when `categorical_target` is not in it, and a batch sampled from the
+real converted rows carries 19 array keys — `categorical_target` is not one of them.
+Realized on 8 steps at production width: `categorical_loss 0.000000` over 0 rows;
+`rebuild applies to this batch 0.0`.
+
+**And it is armed.** `targets.normalize_categorical_blend_fracs` (extracted from
+`categorical_target_value` in this change, so the guard shares the criterion's
+instrument) DROPS an unavailable component's weight and does **not** redistribute it:
+
+| sf available | search available | sf_frac | search_frac | **game_frac** |
+|---|---|---|---|---|
+| yes | yes | 0.69 | 0.31 | **0.00** |
+| **no** | yes | 0.00 | 0.31 | **0.69** |
+| yes | no | 0.69 | 0.00 | 0.31 |
+| no | no | 0.00 | 0.00 | 1.00 |
+
+So on a corpus with no `sf_wdl`, 0.69 of the categorical target would be the raw game
+outcome. Measured on the real builder: the trained-toward value goes **0.330822 →
+0.675822** on the identical row, a shift of **0.345 = 0.69 × (1.0 − E[sf])**.
+
+⇒ the inertness is a property of `scripts/lc0_data_to_rows.py`'s OUTPUT, not of the
+config, so it is not left as a comment. New `assert_categorical_rebuild_is_inert` in
+`train/value_blend_guard.py` reads it off **every training batch** next to the WDL
+blend, judged on the WORST step, against the same `PRODUCTION_GAME_FRAC` bar, and the
+run exits non-zero with no checkpoint if it ever stops holding.
+
+⚑ The batch it judges is `compute_loss`'s SECOND POSITIONAL argument. A wrapper
+reading `kwargs["batch"]` would silently observe an empty batch and report
+"no categorical target" forever — mutant M9 below is exactly that, and it is killed.
+
+### 8.4 The LR-schedule scare was a dead knob
+
+`lr_T0: 999999` looked like the most disqualifying entry: no cosine restart against a
+production restarting every 5000 steps. **Both configs run `lr_schedule:
+sqrt_release`, under which `CosineAnnealingWarmRestarts` is never constructed**, and
+the live file DELETES both keys with that reason written next to them. The real
+difference was `warmup_steps` 72 → 1000.
+
+⚑ Consequence recorded as a gate, not prose: a run whose `--steps` does not exceed
+`warmup_steps` never reaches the base LR, so its slope describes the warmup ramp.
+`summary.json` now records `warmup_steps` and lists that as a
+`validity_problems` entry (⇒ `valid_control: false`). Refusing instead would break
+every 1-8 step plumbing smoke, which is the whole reason the flag path exists.
+
+### 8.5 Guard 0c, and the `--allow-leak` split
+
+`preflight_trainer` is launch guard 0c in `scripts/lc0_control_train.py`.
+`--allow-arch-drift` does **not** downgrade it — trainer kwargs are width-independent,
+so the tiny-model smokes keep the recipe verbatim. `--allow-leak` **does**, because
+that flag works by putting the value blend BACK to production's, which is by
+construction a trainer deviation; refusing it would make the headline realized guard
+unreachable again, which is the defect review F2 closed.
+
+### 8.6 Realized smoke at PRODUCTION WIDTH (first one in this document)
+
+8 steps, batch 64, CUDA, `--no-compile`, real converted rows, with
+`$CHESS_LIVE_PRODUCTION_CONFIG` set:
+
+```
+[preflight] architecture (config) matches the LIVE file .../configs/pbt2_small.yaml
+[preflight] trainer recipe matches the LIVE file .../configs/pbt2_small.yaml
+[preflight] sf_wdl coverage 0/729379 · search_wdl coverage 729379/729379
+[model] 61444448 trainable params on cuda
+[preflight] architecture (built model) matches the LIVE file ...
+
+REALIZED VALUE BLEND      sf 0.000000  search 1.000000  game 0.000000
+                          leaked_to_outcome 0.000000  outcome_borne 0.000000
+REALIZED CATEGORICAL      blend 0.690000 / 0.310000  target column present 0.0
+                          rebuild applies 0.0  outcome_borne 0.000000
+categorical_loss 0.000000 · soft/future/sf_move/sf_eval/volatility all 0.000000
+policy_loss 3.180211 · wdl_loss 1.084961 · loss 4.268469
+[guard] PASS
+valid_control false — no --purity-receipt; --steps 8 <= warmup_steps 1000
+```
+
+⚑ **61,444,448 — this is the first run recorded in this document on production's
+architecture.** §4's 63,084,128 is this branch's pre-merge count and stands as
+superseded. It is still a PLUMBING number: 8 steps, one converted hour, no receipt.
+
+### 8.7 Mutation battery — 14 mutants, each killed
+
+Each applied in a `cp -a` copy (never in place), the original text asserted absent,
+the single killing test run in the copy, required to FAIL, then restored.
+
+| mutant | file | killing test | result |
+|---|---|---|---|
+| M1 unlisted trainer drift is not a problem | `eval/lc0_control_trainer.py` | `test_the_trainer_guard_refuses_an_undeclared_deviation` | KILLED |
+| M2 a deviation that stopped deviating is fine | `eval/lc0_control_trainer.py` | `test_the_trainer_guard_refuses_a_deviation_that_stopped_deviating` | KILLED |
+| M3 the bar reverts to `main`'s 0.30 | `train/value_blend_guard.py` | `test_the_bar_is_the_live_production_game_frac_not_a_literal` | KILLED |
+| M3b same, via the superseded override | `train/value_blend_guard.py` | `test_the_superseded_0_70_override_is_now_refused` | KILLED |
+| M4 categorical assert always returns | `train/value_blend_guard.py` | `test_the_categorical_guard_fires_if_the_corpus_gains_a_target` | KILLED |
+| M5 categorical `outcome_borne_frac` hard-zeroed | `train/value_blend_guard.py` | `test_the_categorical_guard_fires_if_the_corpus_gains_a_target` | KILLED |
+| M6 `applies` ignores whether the corpus HAS a target | `train/value_blend_guard.py` | `test_the_categorical_guard_passes_on_the_lc0_corpus` | KILLED |
+| M7 the dropped categorical share IS redistributed | `train/targets.py` | `test_normalize_categorical_blend_fracs_drops_without_redistributing` | KILLED |
+| M7b same, through `categorical_target_value` | `train/targets.py` | `test_the_rebuild_moves_0_69_onto_the_outcome_when_sf_is_absent` | KILLED |
+| M8 driver: the categorical guard call is deleted | `scripts/lc0_control_train.py` | `test_the_categorical_guard_fails_the_run_on_a_corpus_that_gains_a_target` | KILLED |
+| M9 driver: the wrapper reads the batch from `kwargs` | `scripts/lc0_control_train.py` | `test_the_categorical_guard_fails_the_run_on_a_corpus_that_gains_a_target` | KILLED |
+| M10 driver: guard 0c is never called | `scripts/lc0_control_train.py` | `test_the_trainer_guard_refuses_a_drifted_control_at_launch` | KILLED |
+| M11 the warmup validity problem is never recorded | `scripts/lc0_control_train.py` | `test_the_control_run_completes_and_writes_a_summary` | KILLED |
+| M12 `LIVE_TRAINER_PIN["warmup_steps"] 1000 -> 999` | `eval/lc0_control_trainer.py` | `test_the_recorded_pin_still_matches_the_live_file_when_one_is_named` (with `$CHESS_LIVE_PRODUCTION_CONFIG`) | KILLED |
+
+⚑ **M10 SURVIVED on the first pass** — the library tests proved
+`assert_control_matches_live_trainer` can refuse a drifted recipe, and nothing proved
+the DRIVER calls it. Replacing `preflight_trainer(...)` with a constant left the
+whole lc0-control suite green. `test_the_trainer_guard_refuses_a_drifted_control_at_launch`
+was written for that mutant, and it is the same finding
+`tests/test_lc0_control_drivers.py` was created for in §6.10.
+
+### 8.8 Still NOT verified after this round
+
+* **No arm was run**; every number here is 8 steps or fewer.
+* The categorical guard has never fired on a REAL corpus, because no real corpus
+  carries a `categorical_target`. Its firing state is constructed
+  (`_write_shards(..., with_categorical_target=True)`), which is the honest way to
+  test a mechanism that is inert by circumstance — but it is not a field observation.
+* `w_soft 1.0`, `w_future 0.01`, `w_categorical 1.0` and `w_sf_move 0.05` are live's
+  values over ZERO rows. The arm's total loss is therefore not comparable in
+  magnitude to production's, and the policy head carries a larger share of the
+  gradient than in the live loop. That is a deliberate consequence of copying
+  production rather than zeroing, and it belongs in the readout.
+* `warmup_steps: 1000` on a from-scratch supervised run is production's number for a
+  CONTINUING run. Whether 1000 is the right warmup for this arm's budget is an
+  unasked question; the arm answers "what does OUR trainer do", and that is our
+  trainer.
+* The freshness gates (`test_the_recorded_pin_still_matches_the_live_file...`) SKIP
+  when `$CHESS_LIVE_PRODUCTION_CONFIG` is unset, i.e. in CI. Both pins are committed
+  copies and only an operator with the live tree can falsify them.
+* **⚑ The sqrt_release CYCLE differs by CALL SHAPE, and no trainer diff can see it.**
+  `lr_release_cycle_steps: 0` means `Trainer.train_steps(steps=N)` uses N as the
+  cycle: flat for 80% of N, then release to `lr_release_min_scale` 0.1 over the last
+  20%. Production reaches that code with N ≈ 88 (one iteration, called repeatedly),
+  so it runs a SAWTOOTH per iteration; this arm calls it once with the whole budget
+  and runs ONE long cycle. Identical config, identical scheduler, different LR path.
+  It is a property of the DRIVER, so guard 0c is structurally blind to it. ⚑ It also
+  means the arm's `Δ_heldout` LAST reading is taken inside the release tail while the
+  MID reading is on the flat — the slope the prereg decides on is measured across an
+  LR change. Not fixed here (fixing it means either an explicit
+  `lr_release_cycle_steps` or a chunked driver loop, both training-affecting), and
+  named so the readout cannot discover it.

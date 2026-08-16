@@ -26,6 +26,7 @@ import yaml
 
 from chess_anti_engine.eval import lc0_control_arch
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
+from chess_anti_engine.train.target_builder import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.replay.sample import ReplaySample
 from chess_anti_engine.replay.shard import (
     ShardMeta,
@@ -36,6 +37,7 @@ from chess_anti_engine.train.value_blend_guard import (
     ValueBlendMisconfigured,
     value_blend_readout,
 )
+from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from scripts import lc0_control_eval, lc0_control_heldout, lc0_control_train
 
 REPO = Path(__file__).resolve().parent.parent
@@ -62,8 +64,30 @@ def _tiny_config(tmp_path: Path, **overrides: Any) -> Path:
     return path
 
 
+def _live_stub(path: Path, model: dict[str, Any], control_config: Path) -> Path:
+    """A stand-in for the LIVE production yaml: this ``model:``, LIVE's trainer.
+
+    ⚑ A stub carrying only ``model:`` is not a plausible live config, and since
+    launch guard 0c reads the SAME ``$CHESS_LIVE_PRODUCTION_CONFIG`` it would
+    refuse the run for reasons the architecture test is not about — every
+    trainer kwarg would fall back to a library default. So the stub takes the
+    control's own ``train:``/``selfplay:`` with the two declared value-blend
+    deviations put BACK to live's values, which is what makes it "live".
+    """
+    from chess_anti_engine.eval.lc0_control_trainer import LIVE_TRAINER_PIN
+
+    raw = yaml.safe_load(control_config.read_text(encoding="utf-8"))
+    live_kwargs = LIVE_TRAINER_PIN["kwargs"]
+    raw["train"]["sf_wdl_frac"] = float(live_kwargs["sf_wdl_frac"])
+    raw["train"]["search_wdl_frac"] = float(live_kwargs["search_wdl_frac"])
+    raw["model"] = dict(model)
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return path
+
+
 def _lc0_like_sample(
     seed: int, *, with_sf_wdl: bool, with_search_wdl: bool = True,
+    with_categorical_target: bool = False,
 ) -> ReplaySample:
     """One converted-lc0-looking row: a search WDL, and no SF label.
 
@@ -94,16 +118,26 @@ def _lc0_like_sample(
     if with_sf_wdl:
         sf = rng.random(3).astype(np.float32)
         sample.sf_wdl = sf / sf.sum()
+    if with_categorical_target:
+  # ⚑ The column the CONVERTER does not write. Its absence is the only reason
+  # production's armed `rebuild_categorical_target` is inert on this arm, so
+  # the corpus that would arm it has to be constructible here.
+        categorical = np.zeros((DEFAULT_CATEGORICAL_BINS,), dtype=np.float32)
+        categorical[DEFAULT_CATEGORICAL_BINS - 1] = 1.0
+        sample.categorical_target = categorical
     return sample
 
 
 def _write_shards(
     shard_dir: Path, seeds: list[int], *, with_sf_wdl: bool = False,
-    with_search_wdl: bool = True,
+    with_search_wdl: bool = True, with_categorical_target: bool = False,
 ) -> Path:
     shard_dir.mkdir(parents=True, exist_ok=True)
     samples = [
-        _lc0_like_sample(s, with_sf_wdl=with_sf_wdl, with_search_wdl=with_search_wdl)
+        _lc0_like_sample(
+            s, with_sf_wdl=with_sf_wdl, with_search_wdl=with_search_wdl,
+            with_categorical_target=with_categorical_target,
+        )
         for s in seeds
     ]
     save_local_shard_arrays(
@@ -138,9 +172,22 @@ def test_the_control_run_completes_and_writes_a_summary(tmp_path: Path) -> None:
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     realized = summary["realized"]
     assert realized["leaked_to_outcome"] == 0.0
-    assert realized["outcome_borne_frac (game_frac + leak)"] == pytest.approx(0.30)
-    assert realized["search_wdl_frac (realized)"] == pytest.approx(0.70)
+  # ⚑ 0.00, not the 0.30 this asserted until 2026-08-16. The LIVE blend is
+  # `sf 0.69 + search 0.31 = 1.00`, so production puts NO weight on the raw
+  # game outcome and neither does the re-pointed arm.
+    assert realized["outcome_borne_frac (game_frac + leak)"] == pytest.approx(0.0)
+    assert realized["search_wdl_frac (realized)"] == pytest.approx(1.0)
+  # The categorical rebuild carries production's armed 0.69/0.31 and is inert
+  # here because the rows have no `categorical_target` column — measured, not
+  # assumed, and recorded in the artifact so a later corpus change is visible.
+    categorical = summary["realized_categorical"]
+    assert categorical["categorical_target column present"] == 0.0
+    assert categorical["rebuild applies to this batch"] == 0.0
+    assert categorical["categorical outcome_borne_frac"] == pytest.approx(0.0)
     assert summary["valid_control"] is False, "--allow-arch-drift must be recorded"
+    assert any("warmup_steps" in p for p in summary["validity_problems"]), (
+        "a 1-step run cannot have left LR warmup and the artifact must say so"
+    )
 
 
 def test_the_realized_guard_fails_the_run_and_writes_no_checkpoint(
@@ -155,7 +202,14 @@ def test_the_realized_guard_fails_the_run_and_writes_no_checkpoint(
     production's blend, pointed at rows that carry no SF label.
     """
     shards = _write_shards(tmp_path / "rows", list(range(16)))
-    config = _tiny_config(tmp_path, train={"sf_wdl_frac": 0.5, "search_wdl_frac": 0.2})
+  # ⚑ THE LIVE production blend (`sf 0.69 + search 0.31 = 1.00`, `game_frac`
+  # 0.00), not `main`'s stale 0.50/0.20. On SF-labelled rows this is a clean
+  # pass; on lc0 rows the 0.69 falls to the raw outcome. Using the stale pair
+  # here would ALSO have tripped the outcome-borne bar, for the unrelated
+  # reason that its intended `game_frac` is 0.30.
+    config = _tiny_config(
+        tmp_path, train={"sf_wdl_frac": 0.69, "search_wdl_frac": 0.31},
+    )
     out = tmp_path / "leak_run"
     with pytest.raises(SystemExit) as excinfo:
         lc0_control_train.main([
@@ -167,6 +221,39 @@ def test_the_realized_guard_fails_the_run_and_writes_no_checkpoint(
     assert not (out / "checkpoint.pt").exists(), (
         "a run that failed the realized guard must leave no checkpoint behind"
     )
+
+
+def test_the_categorical_guard_fails_the_run_on_a_corpus_that_gains_a_target(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE ARMED MECHANISM, DRIVEN THROUGH THE ENTRY POINT.
+
+    The arm carries production's `rebuild_categorical_target: true` with
+    `categorical_blend_frac: 0.69`, and that is a NO-OP today only because
+    `scripts/lc0_data_to_rows.py` writes no `categorical_target` column. The
+    inertness is a property of the CONVERTER, so this constructs the corpus the
+    converter does not currently produce and requires the run to refuse it: with
+    no `sf_wdl`, 0.69 of the categorical target becomes the raw game outcome.
+
+    ⚑ Through `main()`, not by calling the assert. The finding this covers is a
+    WIRING one — a guard whose call site is missing is a guard that reads as
+    protection — and the batch it judges is `compute_loss`'s SECOND POSITIONAL
+    argument, which a wrapper reading `kwargs` would silently see as empty.
+    """
+    shards = _write_shards(
+        tmp_path / "cat_rows", list(range(16)), with_categorical_target=True,
+    )
+    out = tmp_path / "cat_run"
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+            "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        ])
+    message = str(excinfo.value)
+    assert "CATEGORICAL target rebuild" in message
+    assert "0.6900 of its mass" in message
+    assert not (out / "checkpoint.pt").exists()
 
 
 def test_the_trainer_publishes_the_effective_label_mass_and_warns_on_a_leak(
@@ -192,7 +279,14 @@ def test_the_trainer_publishes_the_effective_label_mass_and_warns_on_a_leak(
     about wiring, and a direct call cannot see a missing call site.
     """
     labelled = _write_shards(tmp_path / "sf_rows", list(range(16)), with_sf_wdl=True)
-    config = _tiny_config(tmp_path, train={"sf_wdl_frac": 0.5, "search_wdl_frac": 0.2})
+  # ⚑ THE LIVE production blend (`sf 0.69 + search 0.31 = 1.00`, `game_frac`
+  # 0.00), not `main`'s stale 0.50/0.20. On SF-labelled rows this is a clean
+  # pass; on lc0 rows the 0.69 falls to the raw outcome. Using the stale pair
+  # here would ALSO have tripped the outcome-borne bar, for the unrelated
+  # reason that its intended `game_frac` is 0.30.
+    config = _tiny_config(
+        tmp_path, train={"sf_wdl_frac": 0.69, "search_wdl_frac": 0.31},
+    )
     out = tmp_path / "labelled_run"
     with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"):
         rc = lc0_control_train.main([
@@ -223,13 +317,20 @@ def test_the_trainer_publishes_the_effective_label_mass_and_warns_on_a_leak(
         ])
     warned = [r.getMessage() for r in caplog.records if "RAW GAME OUTCOME" in r.getMessage()]
     assert warned, "the production-path warning did not fire on a real leak"
-    assert "0.5000 of the WDL target" in warned[0]
-    assert "sf_wdl_frac leaked 0.5000" in warned[0]
+    assert "0.6900 of the WDL target" in warned[0]
+    assert "sf_wdl_frac leaked 0.6900" in warned[0]
 
 
 def test_launch_refuses_a_production_blend_without_allow_leak(tmp_path: Path) -> None:
     shards = _write_shards(tmp_path / "rows", list(range(8)))
-    config = _tiny_config(tmp_path, train={"sf_wdl_frac": 0.5, "search_wdl_frac": 0.2})
+  # ⚑ THE LIVE production blend (`sf 0.69 + search 0.31 = 1.00`, `game_frac`
+  # 0.00), not `main`'s stale 0.50/0.20. On SF-labelled rows this is a clean
+  # pass; on lc0 rows the 0.69 falls to the raw outcome. Using the stale pair
+  # here would ALSO have tripped the outcome-borne bar, for the unrelated
+  # reason that its intended `game_frac` is 0.30.
+    config = _tiny_config(
+        tmp_path, train={"sf_wdl_frac": 0.69, "search_wdl_frac": 0.31},
+    )
     with pytest.raises(SystemExit, match="REFUSING TO LAUNCH"):
         lc0_control_train.main([
             "--config", str(config), "--shards", str(shards),
@@ -327,7 +428,9 @@ def test_the_realized_guard_is_judged_on_the_worst_step_not_the_first() -> None:
     A leak that begins partway through a run — a live edit, a controller push —
     is invisible to the first step and diluted to nothing by a mean over 800.
     """
-    capture = lc0_control_train._LossCapture()
+    capture = lc0_control_train._LossCapture(
+        rebuild_categorical=False, categorical_params=None,
+    )
     capture.readouts = [
         value_blend_readout(sf_wdl_frac=0.0, search_wdl_frac=0.7,
                             sf_effective_rows=0.0, search_effective_rows=512.0,
@@ -341,8 +444,11 @@ def test_the_realized_guard_is_judged_on_the_worst_step_not_the_first() -> None:
 
 def test_the_capture_records_the_kwargs_compute_loss_was_called_with() -> None:
     """A configured value is not an applied value — this is the applied one."""
-    capture = lc0_control_train._LossCapture()
+    capture = lc0_control_train._LossCapture(
+        rebuild_categorical=False, categorical_params=None,
+    )
     capture.observe(
+        {},
         {"sf_wdl_frac": 0.5, "search_wdl_frac": 0.2},
         {
             "sf_wdl_effective_rows": torch.tensor(0.0),
@@ -388,6 +494,43 @@ def test_the_architecture_guard_refuses_a_drifted_control(
     assert "num_layers" in str(excinfo.value)
     assert lc0_control_train.preflight_architecture(
         drifted, allow_drift=True,
+    ).startswith("DRIFTED")
+
+
+def test_the_trainer_guard_refuses_a_drifted_control_at_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ GUARD 0c AT THE ENTRY POINT — WITHOUT THIS ITS CALL SITE IS OPTIONAL.
+
+    `tests/test_lc0_control_config.py` proves the library assert can refuse a
+    drifted recipe; this proves the DRIVER calls it. Measured: with only the
+    library tests, replacing `preflight_trainer(...)` in `main()` with a
+    constant left the whole lc0-control suite green — this repo's signature
+    defect, and precisely why `tests/test_lc0_control_drivers.py` exists.
+
+    Also pins the `--allow-leak` split: that flag exists to restore
+    production's value blend so the realized guard can be seen firing, which
+    IS a trainer deviation, so it must downgrade this guard while
+    `--allow-arch-drift` must not.
+    """
+    monkeypatch.delenv("CHESS_LIVE_PRODUCTION_CONFIG", raising=False)
+    shards = _write_shards(tmp_path / "rows", list(range(8)))
+    config = _tiny_config(tmp_path, train={"w_moves_left": 0.99})
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_train.main([
+            "--config", str(config), "--shards", str(shards),
+            "--out-dir", str(tmp_path / "drift_run"), "--steps", "1",
+            "--batch-size", "4", "--device", "cpu", "--no-compile",
+            "--allow-arch-drift",
+        ])
+    assert "TRAINER is NOT production's" in str(excinfo.value)
+    assert "w_moves_left" in str(excinfo.value)
+    assert not (tmp_path / "drift_run" / "checkpoint.pt").exists()
+
+  # ...and `--allow-leak` downgrades it, or the leak demonstration that review
+  # F2 made reachable becomes unreachable again from the other side.
+    assert lc0_control_train.preflight_trainer(
+        flatten_run_config_defaults(load_yaml_file(str(config))), allow_leak=True,
     ).startswith("DRIFTED")
 
 
@@ -438,8 +581,7 @@ def test_the_built_model_is_checked_against_the_pinned_parameter_count(
     """
     config = _tiny_config(tmp_path)
     control_model = yaml.safe_load(config.read_text(encoding="utf-8"))["model"]
-    live = tmp_path / "live_pbt2_small.yaml"
-    live.write_text(yaml.safe_dump({"model": dict(control_model)}), encoding="utf-8")
+    live = _live_stub(tmp_path / "live_pbt2_small.yaml", control_model, config)
     monkeypatch.setenv("CHESS_LIVE_PRODUCTION_CONFIG", str(live))
   # The pin's `model:` section IS the live file's here, so the pin's count
   # applies — and it is deliberately not the count this tree builds.

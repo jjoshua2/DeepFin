@@ -49,12 +49,27 @@ around two rules this codebase keeps re-learning:
 
 The check can FAIL: point it at lc0 shards with a non-zero ``sf_wdl_frac`` and
 it raises. ``tests/test_value_blend_guard.py`` mutates exactly that way.
+
+⚑⚑ AND THE CATEGORICAL HEAD HAS THE SAME HOLE, THROUGH A DIFFERENT DOOR.
+``rebuild_categorical_target`` + ``categorical_target_params`` rebuild the
+HL-Gauss target from ``wdl_target`` blended with ``sf_wdl`` / ``search_wdl``,
+and ``targets.normalize_categorical_blend_fracs`` DROPS a component whose row
+is missing WITHOUT REDISTRIBUTING IT — the dropped share falls to the raw
+outcome, exactly as it does in ``compute_loss``. At live's ``blend_frac: 0.69``
+on a corpus with no ``sf_wdl`` that is 0.69 of the categorical target on the
+game outcome. On converted lc0 rows today it is INERT for a reason outside the
+config — the rows carry no ``categorical_target`` column at all, so the rebuild
+returns the batch untouched and the head trains 0 rows — and
+``assert_categorical_rebuild_is_inert`` measures that on the real batch instead
+of trusting it. An inertness that depends on a converter's output is one
+converter change away from being a silent 0.69.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from chess_anti_engine.train.losses import normalize_value_blend_fracs
+from chess_anti_engine.train.targets import normalize_categorical_blend_fracs
 
 
 class ValueBlendMisconfigured(RuntimeError):
@@ -184,10 +199,20 @@ def value_blend_readout(
     )
 
 
-# Production's `game_frac` = 1 - sf_wdl_frac(0.50) - search_wdl_frac(0.20).
-# The control holds it at exactly this by construction, so it is the bar the
-# TOTAL outcome share is judged against rather than a number picked here.
-PRODUCTION_GAME_FRAC = 0.30
+# The LIVE production `game_frac` = 1 - sf_wdl_frac(0.69) - search_wdl_frac(0.31)
+# = 0.00. The control holds it at exactly this by construction, so it is the bar
+# the TOTAL outcome share is judged against rather than a number picked here.
+#
+# ⚑⚑ SUPERSEDED 2026-08-16, AND THE OLD VALUE WAS AN INSTANCE OF THE DEFECT
+# THIS MODULE EXISTS TO CATCH. It read 0.30, derived as
+# `1 - sf_wdl_frac(0.50) - search_wdl_frac(0.20)` from `main`'s COMMITTED
+# `configs/pbt2_small.yaml` — which `main` has not touched since the live branch
+# diverged. The live file has run `0.69 / 0.31` since the bt4heads promotion,
+# so production puts NO weight on the raw game outcome and the bar was 0.30 too
+# loose: a control training 0.30 of its value target on the deep game outcome
+# would have cleared a gate whose docstring claimed it was holding production's
+# number fixed. Measured against the live file, not inferred.
+PRODUCTION_GAME_FRAC = 0.0
 
 
 def assert_outcome_is_not_the_whole_target(
@@ -308,4 +333,132 @@ def assert_pid_cannot_reassert_sf_wdl(
         "alone) only while sf_wdl_frac <= 0, so a non-zero start lets the "
         "controller re-raise the SF share every iteration and the lc0 "
         "override expires mid-run without a log line."
+    )
+
+
+@dataclass(frozen=True)
+class CategoricalRebuildReadout:
+    """What ``rebuild_categorical_target`` REALIZED on one batch.
+
+    ``target_present`` is the load-bearing field and the reason this is a
+    readout rather than a config check: ``rebuild_categorical_target_in_arrays``
+    returns the batch UNCHANGED when ``categorical_target`` is not among the
+    sampled arrays, so on a corpus that carries no such column the whole
+    mechanism is inert no matter what the fracs say. That inertness is a
+    property of the CONVERTER's output, not of the config, which is why it is
+    measured per batch.
+
+    ``sf_labelled_frac`` / ``search_labelled_frac`` are the share of rows
+    carrying each label. The rebuild decides availability PER ROW, so a
+    partially labelled batch leaks in proportion; the fracs are the exact
+    weights on which the outcome share below is a linear interpolation.
+    """
+
+    rebuild_enabled: bool
+    blend_frac: float
+    search_blend_frac: float
+    target_present: bool
+    sf_labelled_frac: float
+    search_labelled_frac: float
+    batch_rows: float
+
+    @property
+    def applies(self) -> bool:
+        """True when the rebuild would actually rewrite the stored target."""
+        return (
+            self.rebuild_enabled
+            and self.target_present
+            and (self.blend_frac > 0.0 or self.search_blend_frac > 0.0)
+        )
+
+    def _fracs(self, *, sf_available: bool, search_available: bool) -> tuple[float, float, float]:
+        return normalize_categorical_blend_fracs(
+            self.blend_frac, self.search_blend_frac,
+            sf_available=sf_available, search_available=search_available,
+        )
+
+    @property
+    def outcome_borne_frac(self) -> float:
+        """Share of the REBUILT categorical target that is the raw outcome.
+
+        ⚑ Computed through ``normalize_categorical_blend_fracs`` — the same
+        function ``categorical_target_value`` builds the target with — over the
+        four availability corners, weighted by the measured label fracs. Not a
+        second copy of the ``blend_sum > 1`` renormalisation rule, which is
+        where a hand-derived ``1 - blend - search_blend`` would be wrong.
+
+        0.0 when the rebuild does not apply: a mechanism that never runs puts
+        nothing anywhere, and reporting the configured share there would make
+        every lc0 batch look like a failure.
+        """
+        if not self.applies:
+            return 0.0
+        sf_p, search_p = self.sf_labelled_frac, self.search_labelled_frac
+        total = 0.0
+        for sf_available, sf_weight in ((True, sf_p), (False, 1.0 - sf_p)):
+            for search_available, search_weight in (
+                (True, search_p), (False, 1.0 - search_p),
+            ):
+                _sf, _search, game = self._fracs(
+                    sf_available=sf_available, search_available=search_available,
+                )
+                total += sf_weight * search_weight * game
+        return total
+
+    def as_table(self) -> list[tuple[str, float]]:
+        """Ordered rows for a human-readable realized-target table."""
+        return [
+            ("rebuild_categorical_target (realized)", float(self.rebuild_enabled)),
+            ("categorical blend_frac", self.blend_frac),
+            ("categorical search_blend_frac", self.search_blend_frac),
+            ("categorical_target column present", float(self.target_present)),
+            ("rebuild applies to this batch", float(self.applies)),
+            ("sf_labelled_frac", self.sf_labelled_frac),
+            ("search_labelled_frac", self.search_labelled_frac),
+            ("categorical outcome_borne_frac", self.outcome_borne_frac),
+        ]
+
+
+def assert_categorical_rebuild_is_inert(
+    readout: CategoricalRebuildReadout,
+    *,
+    max_outcome_borne: float = PRODUCTION_GAME_FRAC,
+    context: str = "",
+) -> None:
+    """Raise when the categorical rebuild puts the outcome back in the target.
+
+    ⚑⚑ THE CONFIGURED VALUES HERE ARE PRODUCTION'S AND THEY ARE ARMED. The lc0
+    control carries live's ``rebuild_categorical_target: true`` with
+    ``blend_frac 0.69`` / ``search_blend_frac 0.31`` because matching
+    production is the arm's whole premise, and on today's converted corpus that
+    combination is a NO-OP — there is no ``categorical_target`` column for the
+    rebuild to rewrite. The no-op is what makes it safe, and the no-op is a
+    property of ``scripts/lc0_data_to_rows.py``'s output rather than of this
+    config, so it is asserted per batch instead of argued in a comment.
+
+    If a converted row ever carries a ``categorical_target``, this fires: with
+    no ``sf_wdl``, ``blend_frac``'s 0.69 is dropped and NOT redistributed, so
+    0.69 of the categorical target becomes the raw one-hot game outcome. Same
+    defect as ``assert_no_silent_outcome_fallback``, same bar, different head.
+    """
+    if readout.outcome_borne_frac <= max_outcome_borne + 1e-9:
+        return
+    where = f" [{context}]" if context else ""
+    raise ValueBlendMisconfigured(
+        f"the CATEGORICAL target rebuild puts "
+        f"{readout.outcome_borne_frac:.4f} of its mass on the RAW GAME "
+        f"OUTCOME{where}, above the bar of {max_outcome_borne:.4f} "
+        f"(production's game_frac). blend_frac={readout.blend_frac:.4f} "
+        f"search_blend_frac={readout.search_blend_frac:.4f} over a batch with "
+        f"sf_labelled_frac={readout.sf_labelled_frac:.4f} and "
+        f"search_labelled_frac={readout.search_labelled_frac:.4f} "
+        f"({readout.batch_rows:.0f} rows). "
+        "targets.normalize_categorical_blend_fracs DROPS an unavailable "
+        "component's weight WITHOUT redistributing it, so the missing label's "
+        "share falls to the outcome — silently, exactly as losses.py does for "
+        "the WDL head. On a corpus with no sf_wdl either zero "
+        "categorical_blend_frac and hand its share to "
+        "categorical_search_blend_frac, or turn rebuild_categorical_target "
+        "off; and say which in the arm's config, because both are deviations "
+        "from production."
     )

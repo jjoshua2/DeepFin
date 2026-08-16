@@ -16,7 +16,7 @@ error, no warning, no metric named for it. At the production `sf_wdl_frac:
 outcome instead of the 0.30 on paper, and every number it produced would be
 about an experiment nobody chose.
 
-Four checks, at four different levels, because each can be satisfied by a run
+Five checks, at four different levels, because each can be satisfied by a run
 that still does the wrong thing:
 
   0. LAUNCH, architecture. `assert_control_matches_live_architecture` — the
@@ -24,6 +24,10 @@ that still does the wrong thing:
      `configs/pbt2_small.yaml` is not the file the live run reads. This one
      judges against the LIVE yaml when `$CHESS_LIVE_PRODUCTION_CONFIG` names
      it, and against a recorded pin otherwise.
+  0c. LAUNCH, trainer. `assert_control_matches_live_trainer` — the same
+     question about the OTHER half of "our exact net and trainer". Until
+     2026-08-16 only the net half was checked and the recipe was `main`'s,
+     thirteen kwargs behind live. No downgrade flag; see `preflight_trainer`.
   1. LAUNCH, config-level. `assert_pid_cannot_reassert_sf_wdl` — an override
      the difficulty controller can undo is not an override.
   2. LAUNCH, corpus-level. The converter's own `run_config_problems` is REUSED
@@ -34,7 +38,15 @@ that still does the wrong thing:
      run and the fracs it is ACTUALLY CALLED WITH — together with the batch's
      own EFFECTIVE label mass for both components — are fed to
      `value_blend_guard`. A configured value is not an applied value; this is
-     the only one of the four that measures the applied one.
+     the only one that measures the applied one. The same wrap feeds
+     `assert_categorical_rebuild_is_inert`, which asks the identical question
+     about the CATEGORICAL value head: production runs
+     `rebuild_categorical_target: true` with `blend_frac 0.69`, and
+     `targets.normalize_categorical_blend_fracs` drops an unavailable
+     component's weight onto the raw outcome exactly as `losses.py` does. It is
+     a no-op on today's corpus only because converted rows carry no
+     `categorical_target` column — a property of the CONVERTER, so it is
+     measured per batch rather than argued.
 
 Check 3 fails loudly (non-zero exit, no checkpoint written).
 
@@ -95,9 +107,15 @@ from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.train import trainer as trainer_module
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
+from chess_anti_engine.eval.lc0_control_trainer import (
+    ControlTrainerDrift,
+    assert_control_matches_live_trainer,
+)
 from chess_anti_engine.train.value_blend_guard import (
+    CategoricalRebuildReadout,
     ValueBlendMisconfigured,
     ValueBlendReadout,
+    assert_categorical_rebuild_is_inert,
     assert_no_silent_outcome_fallback,
     assert_pid_cannot_reassert_sf_wdl,
     value_blend_readout,
@@ -123,14 +141,52 @@ class _LossCapture:
     step. The kwargs recorded here are the ones the trained objective used.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, rebuild_categorical: bool, categorical_params: Any) -> None:
         self.calls = 0
         self.kwargs: dict[str, Any] = {}
         self.readouts: list[ValueBlendReadout] = []
+  # ⚑ The categorical rebuild happens in `Trainer._prepare_arrays`, BEFORE the
+  # batch exists, so its two config inputs cannot be read off the call the way
+  # the blend fracs can. They are taken from the trainer kwargs and the BATCH
+  # supplies what actually varies: whether the corpus carries a
+  # `categorical_target` at all, and how much of it is labelled.
+        self._rebuild_categorical = bool(rebuild_categorical)
+        self._categorical_params = categorical_params
+        self.categorical_readouts: list[CategoricalRebuildReadout] = []
 
-    def observe(self, kwargs: dict[str, Any], result: dict[str, torch.Tensor]) -> None:
+    def _observe_categorical(self, batch: dict[str, Any], rows: float) -> None:
+        def labelled_frac(mask_key: str, column: str) -> float:
+  # Mirrors `rebuild_categorical_target_in_arrays`: a component is available
+  # only when BOTH its column and its mask say so, and an absent mask reads
+  # 0.0 (`_get_mask`'s default), never "everything is labelled".
+            column_value = batch.get(column)
+            mask = batch.get(mask_key)
+            if column_value is None or mask is None or rows <= 0.0:
+                return 0.0
+            return float(torch.as_tensor(mask).float().mean().item())
+
+        target = batch.get("categorical_t")
+        self.categorical_readouts.append(CategoricalRebuildReadout(
+            rebuild_enabled=self._rebuild_categorical,
+            blend_frac=float(getattr(self._categorical_params, "blend_frac", 0.0)),
+            search_blend_frac=float(
+                getattr(self._categorical_params, "search_blend_frac", 0.0),
+            ),
+            target_present=target is not None,
+            sf_labelled_frac=labelled_frac("has_sf_wdl", "sf_wdl"),
+            search_labelled_frac=labelled_frac("has_search_wdl", "search_wdl"),
+            batch_rows=rows,
+        ))
+
+    def observe(
+        self,
+        batch: dict[str, Any],
+        kwargs: dict[str, Any],
+        result: dict[str, torch.Tensor],
+    ) -> None:
         self.calls += 1
         self.kwargs = dict(kwargs)
+        self._observe_categorical(batch, float(result["batch_rows"].detach().item()))
         self.readouts.append(value_blend_readout(
             sf_wdl_frac=float(kwargs.get("sf_wdl_frac", 0.0)),
             search_wdl_frac=float(kwargs.get("search_wdl_frac", 0.0)),
@@ -156,6 +212,13 @@ class _LossCapture:
         """
         return max(self.readouts, key=lambda r: r.leaked_to_outcome)
 
+    @property
+    def worst_categorical(self) -> CategoricalRebuildReadout:
+        """The categorical call with the largest outcome share — same rule as
+        ``worst``, and for the same reason: a corpus whose ``categorical_target``
+        appears partway through a run must not be averaged away."""
+        return max(self.categorical_readouts, key=lambda r: r.outcome_borne_frac)
+
 
 class CaptureRealizedLosses:
     """Wrap ``trainer.compute_loss`` for the duration of the block.
@@ -165,8 +228,11 @@ class CaptureRealizedLosses:
     see what the guard is judging.
     """
 
-    def __init__(self) -> None:
-        self.capture = _LossCapture()
+    def __init__(self, *, rebuild_categorical: bool, categorical_params: Any) -> None:
+        self.capture = _LossCapture(
+            rebuild_categorical=rebuild_categorical,
+            categorical_params=categorical_params,
+        )
         self._original = trainer_module.compute_loss
 
     def __enter__(self) -> _LossCapture:
@@ -174,7 +240,11 @@ class CaptureRealizedLosses:
 
         def wrapped(*args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
             result = original(*args, **kwargs)
-            capture.observe(kwargs, result)
+  # ⚑ `compute_loss(outputs, batch, **loss_kwargs)` — the batch is the SECOND
+  # POSITIONAL argument at both of `trainer.py`'s call sites. Reading it out of
+  # `kwargs` would silently observe an empty batch on every step.
+            batch = args[1] if len(args) > 1 else kwargs.get("batch", {})
+            capture.observe(batch, kwargs, result)
             return result
 
         trainer_module.compute_loss = wrapped
@@ -376,6 +446,40 @@ def preflight_architecture(
     return provenance
 
 
+def preflight_trainer(cfg: dict[str, Any], *, allow_leak: bool) -> str:
+    """LAUNCH guard 0c — the arm must train with PRODUCTION'S RECIPE.
+
+    ⚑ ``--allow-arch-drift`` does NOT downgrade this one, and ``--allow-leak``
+    does. That split is not arbitrary. ``--allow-arch-drift`` exists because the
+    plumbing has to be smoke-testable on a deliberately tiny model, and trainer
+    kwargs are width-independent — every smoke run in
+    ``tests/test_lc0_control_drivers.py`` shrinks ``model:`` and ``batch_size``
+    while keeping the recipe verbatim, and ``batch_size`` is not a trainer
+    kwarg — so a drifted architecture says nothing about the recipe.
+    ``--allow-leak``, by contrast, works by putting the value blend BACK to
+    production's, which is precisely the pair of kwargs
+    ``LC0_TRAINER_DEVIATIONS`` says must differ. A leak demonstration is a
+    trainer deviation by construction; refusing it here would make the headline
+    realized guard unreachable again, which is exactly the defect review F2
+    closed.
+
+    ⚑ The env var is resolved HERE and passed in, so the library function's
+    verdict does not depend on the caller's shell (review F6, same as guard 0).
+    """
+    try:
+        provenance = assert_control_matches_live_trainer(
+            cfg, live_config=live_production_config_path(),
+            context="lc0 control launch (trainer)",
+        )
+    except ControlTrainerDrift as exc:
+        if not allow_leak:
+            raise SystemExit(f"REFUSING TO LAUNCH — {exc}") from exc
+        print(f"⚑ --allow-leak: IGNORING launch guard — {exc}")
+        return "DRIFTED (--allow-leak)"
+    print(f"[preflight] trainer recipe matches {provenance}")
+    return provenance
+
+
 def _metric_fields(metrics: Any, predicate: Any) -> list[tuple[str, Any]]:
     return [
         (field.name, getattr(metrics, field.name))
@@ -390,6 +494,10 @@ def print_realized(capture: _LossCapture, metrics: Any) -> None:
     print("\n=== REALIZED VALUE BLEND (read off compute_loss, worst of "
           f"{capture.calls} calls) ===")
     for name, value in readout.as_table():
+        print(f"  {name:38s} {value:.6f}")
+    print("\n=== REALIZED CATEGORICAL TARGET (worst of "
+          f"{capture.calls} calls) ===")
+    for name, value in capture.worst_categorical.as_table():
         print(f"  {name:38s} {value:.6f}")
     print("\n=== REALIZED LOSS WEIGHTS (the kwargs compute_loss received) ===")
     for key in sorted(capture.kwargs):
@@ -426,9 +534,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--allow-leak", action="store_true",
-        help="⚑ downgrade the LAUNCH guards to a banner so the run reaches the "
-             "REALIZED per-step guard and that guard can be observed raising. "
-             "It does NOT skip the realized guard. The run is NOT a valid control.",
+        help="⚑ downgrade the LAUNCH guards (0c, 1 and 2) to a banner so the "
+             "run reaches the REALIZED per-step guard and that guard can be "
+             "observed raising. It does NOT skip the realized guard. The run "
+             "is NOT a valid control.",
     )
     parser.add_argument(
         "--allow-arch-drift", action="store_true",
@@ -450,6 +559,7 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.config), allow_drift=bool(args.allow_arch_drift),
     )
     cfg = flatten_run_config_defaults(load_yaml_file(str(args.config)))
+    trainer_provenance = preflight_trainer(cfg, allow_leak=bool(args.allow_leak))
     shard_dirs = [Path(d) for d in args.shards]
     coverage = preflight(cfg, shard_dirs, allow_leak=bool(args.allow_leak))
 
@@ -529,7 +639,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[data] replay buffer: {len(buf)} rows in the hot shuffle pool "
           f"over {staged} shard(s)")
 
-    with CaptureRealizedLosses() as capture:
+    with CaptureRealizedLosses(
+        rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
+        categorical_params=kwargs["categorical_target_params"],
+    ) as capture:
         metrics = trainer.train_steps(
             _as_replay_buffer(buf), batch_size=batch_size, steps=int(args.steps),
         )
@@ -546,12 +659,20 @@ def main(argv: list[str] | None = None) -> int:
   # flag opens the LAUNCH gate; this one still closes.
     try:
         assert_no_silent_outcome_fallback(readout, context="realized training step")
+  # ⚑ The SAME defect on the sibling value head, and it needs its own read
+  # because `compute_loss`'s blend fracs cannot see it: the categorical
+  # rebuild runs in `_prepare_arrays`, upstream of the loss. Inert on today's
+  # corpus for a reason that lives in the CONVERTER (no `categorical_target`
+  # column) rather than in the config, so it is measured every step.
+        assert_categorical_rebuild_is_inert(
+            capture.worst_categorical, context="realized training step",
+        )
     except ValueBlendMisconfigured as exc:
         raise SystemExit(
             f"REALIZED VALUE-BLEND GUARD FAILED — no checkpoint written.\n{exc}",
         ) from exc
-    print("\n[guard] PASS: no SF-to-outcome leak and no all-outcome value "
-          "target on any observed step")
+    print("\n[guard] PASS: no SF-to-outcome leak, no all-outcome value target, "
+          "and no outcome-borne categorical rebuild on any observed step")
 
     ckpt = out_dir / "checkpoint.pt"
     trainer.save(ckpt)
@@ -559,6 +680,12 @@ def main(argv: list[str] | None = None) -> int:
   # `valid_control: false` says a run is disqualified without saying what for,
   # which is the same "a flag instead of a measurement" shape as the rest of
   # this review's findings.
+  # ⚑ The LR-warmup entry is not bookkeeping. Production's `warmup_steps` is
+  # 1000 and this arm now carries it verbatim, so a run whose whole budget is
+  # shorter than the warmup NEVER REACHES THE BASE LR — its held-out slope is a
+  # property of the warmup ramp, not of the trainer. It is recorded rather than
+  # refused because every plumbing smoke here is 1-8 steps by design; what must
+  # not happen is such a run being quoted as the arm.
     validity_problems = [
         message for flag, message in (
             (args.allow_leak, "--allow-leak: the LAUNCH value-blend guards were "
@@ -567,13 +694,19 @@ def main(argv: list[str] | None = None) -> int:
                                     "architecture"),
             (receipt is None, "no --purity-receipt: the trained corpus is not "
                               "tied to any held-out purity check"),
+            (int(args.steps) <= int(kwargs["warmup_steps"]),
+             f"--steps {int(args.steps)} does not exceed warmup_steps "
+             f"{int(kwargs['warmup_steps'])}: the LR never reached the base "
+             "value, so no slope from this run describes the trainer"),
         ) if flag
     ]
     summary = {
         "steps": int(args.steps),
         "batch_size": batch_size,
+        "warmup_steps": int(kwargs["warmup_steps"]),
         "trainable_params": params,
         "architecture_judged_against": arch_provenance,
+        "trainer_judged_against": trainer_provenance,
         "valid_control": not validity_problems,
         "validity_problems": validity_problems,
   # ⚑ REVIEW F5 — CORPUS IDENTITY. `--shards` was a CLI argument that left no
@@ -596,6 +729,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "compute_loss_calls": capture.calls,
         "realized": dict(readout.as_table()),
+        "realized_categorical": dict(capture.worst_categorical.as_table()),
         "metrics": {
             f.name: getattr(metrics, f.name)
             for f in dataclasses.fields(type(metrics))
