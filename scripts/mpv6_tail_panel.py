@@ -13,8 +13,14 @@ is the instrument for it.
 ⚑⚑ "WHAT IS THE TAIL WORTH" IS TWO QUESTIONS, AND ONE WIDE ARM CANNOT ANSWER BOTH.
 
   (A) SELF-CONSISTENCY — what would the label's OWN search have said about the
-      moves it did not surface? The imputation is a claim about that search, so
-      the comparison must hold the node budget fixed and vary only the width.
+      moves it did not surface? ⚑⚑ THIS ESTIMAND IS ILL-POSED AND THE PANEL NO
+      LONGER TREATS IT AS PRIMARY. To expose those moves you must widen MultiPV,
+      and at a fixed node budget widening ALTERS THE SEARCH ITSELF (measured:
+      median depth 9 vs PROD's 12, bestmove agreement 0.62). There is no
+      intervention that varies width while holding search strength, so the
+      counterfactual has no realisation and MATCHED's bias has no established
+      direction. MATCHED is retained as a WIDTH-SENSITIVITY DIAGNOSTIC; it must
+      not nominate alpha.
   (B) TRUTH — what do those moves actually deserve? That needs a stronger
       engine, which also re-scores the SURFACED moves, i.e. it indicts the whole
       label rather than just its tail.
@@ -36,19 +42,24 @@ So there are THREE arms on the same positions:
             the 3-4-5 directory ALONE, not the colon-separated production pair
             that `syzygy_path` names for the playing ENGINES.
   MATCHED — identical to PROD in every respect except width: same nodes, same
-            hash, same tablebases, MultiPV at full legal width. This is the
-            arm that answers (A), and it is the primary readout.
+            hash, same tablebases, MultiPV at full legal width. ⚑ A
+            width-sensitivity DIAGNOSTIC, NOT an estimator of a production
+            counterfactual — see (A) above. Do not read its alpha as a value
+            for the tail, and do not read it as a bound in either direction.
   DEEP    — MultiPV at full width, a far larger node budget, a real TT and the
-            full Syzygy pair. This answers (B), and is deliberately NOT a
-            production replica.
+            full Syzygy pair. This answers (B), is deliberately NOT a production
+            replica, and is the arm whose alpha is worth quoting.
 
 ⚑ THE PANEL MEASURES ITS OWN CONFOUNDS RATHER THAN ASSUMING THEM AWAY.
 Two cross-arm ratios are reported on the moves each pair BOTH surfaced:
 
-  PROD vs MATCHED — SHOULD be ~1.0. These differ only in width at an identical
-                    budget, so a ratio away from 1 means widening the search
-                    changed the surfaced scores too, and the (A) substitution is
-                    not clean. This is a falsifier for the primary readout.
+  PROD vs MATCHED — the WIDTH-SENSITIVITY reading. A ratio away from 1 means
+                    widening at a fixed budget changed the surfaced scores too.
+                    ⚑ It is NOT sufficient as a validity check: regrets are
+                    self-relative, so this ratio is blind to a uniform level
+                    shift between the arms (which is why `rebase_offset` exists),
+                    and it says nothing about the depth gap that makes (A)'s
+                    estimand ill-posed.
   MATCHED vs DEEP — the size of the depth effect, i.e. exactly how much of the
                     (B) answer is not about censoring at all.
 
@@ -477,13 +488,16 @@ def report(label: str, res: dict[str, Any]) -> None:
     glo, ghi = res["alpha_grad_ci"]
     print(f"    alpha_value {res['alpha_value']:.4f} [{vlo:.4f}, {vhi:.4f}]"
           f"    alpha_grad {res['alpha_grad_raw']:.4f} [{glo:.4f}, {ghi:.4f}]")
-    # The historical MultiPV-40 truncation screen fitted 0.1759 [banked
-    # 2026-08-14]. Whether that survives the real MultiPV-6 substitution is the
-    # question this panel exists to answer, so say it rather than leave it to
-    # the reader's memory.
-    verdict = "CONSISTENT with" if vlo <= 0.1759 <= vhi else "INCONSISTENT with"
-    print(f"      -> {verdict} the historical truncation screen's alpha = 0.1759"
-          f"  ({N_BOOT} row bootstrap draws)")
+    # The historical MultiPV-40 truncation screen fits alpha_value 0.1779
+    # [0.1572, 0.2005] under a game-cluster bootstrap (2026-08-16). Printed so a
+    # reader does not have to remember it. ⚑ Coverage by one arm is a comparison,
+    # NOT a transfer verdict -- an earlier revision fired a pre-registered "does
+    # not transfer" branch on 0.008 of a unit that a row-level bootstrap
+    # manufactured.
+    verdict = "covers" if vlo <= 0.1759 <= vhi else "does NOT cover"
+    print(f"      -> {verdict} the historical screen's alpha = 0.1779 [0.1572, 0.2005]"
+          f"  ({N_BOOT} GAME-CLUSTER bootstrap draws)")
+    print("      ⚑ a single arm failing to cover is NOT a regime shift; see the ledger.")
     for name in GRID:
         v = res["variants"][name]
         print(f"      {name:17s} cos {v['cos']:.4f}  relL2 {v['rel_l2_pooled']:.4f}"
@@ -592,9 +606,8 @@ def main() -> int:
               f"ratio {c['ratio']:.3f}   bestmove agree {c['bestmove_agreement']:.3f}")
         print(f"          {why}")
     if not 0.9 <= xa["prod_scored_vs_matched_scored"]["ratio"] <= 1.111:
-        print("  ⚑⚑ PROD vs MATCHED IS NOT ~1.0. Widening the search at a FIXED budget")
-        print("     changed the surfaced scores, so the primary readout's substitution is")
-        print("     NOT clean and its alpha carries a width effect on top of the censoring.")
+        print("  ⚑ PROD vs MATCHED IS NOT ~1.0 — widening at a FIXED budget moved the")
+        print("    surfaced scores. Informational only: (A) is a diagnostic, not the primary.")
 
     device = attach_priors(results, args.checkpoint, args.batch)
     print(f"  prior: {args.checkpoint} on {device}")
@@ -603,9 +616,9 @@ def main() -> int:
                            "prod_nodes": args.prod_nodes, "deep_nodes": args.deep_nodes}
     panels = (
         ("matched_substituted", "matched_scored", True,
-         "(A) SELF-CONSISTENCY — PRIMARY. Same budget, tail from full width"),
+         "(A) WIDTH-SENSITIVITY DIAGNOSTIC — ill-posed estimand, does NOT nominate alpha"),
         ("deep_substituted", "deep_scored", True,
-         "(B) TRUTH — tail from the deep ruler, surfaced still production's"),
+         "(B) PRIMARY — tail from the deep ruler, surfaced still production's"),
         ("deep_all", "deep_scored", False,
          "(B') ALL-DEEP — every regret from the ruler; indicts the whole label"),
     )
