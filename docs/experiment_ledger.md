@@ -577,6 +577,85 @@ construction), and arms (B)/(B') from the DEEP ruler, which re-score the SURFACE
 therefore indict the whole label rather than its tail — a separate question, not a better
 answer to this one.
 
+### READOUT (2026-08-16) — ⚑⚑ RELATIONAL SF6 SUPERVISION **LOSES**, and the top-6-only half is GEOMETRICALLY FORBIDDEN
+
+**Question** (from the CAST/MDT solver-structure framing): if you know only Stockfish's six
+scored candidates, does a RELATIONAL loss — pairwise order, margins, indifference bands, with NO
+fabricated values for unobserved moves — recover more of the full-information policy gradient
+than the best constant-tail rule? **Answer: no.** `scripts/relational_sf6_screen.py`
+(branch `relational/sf6-screen`), 5059 rows of the wide-MPV40 era, held-out split by `game_id`.
+
+**Best relational 0.9049 vs the constant tail 0.9158 on the SAME held-out rows: −0.0110.**
+⚑ The hurdle was RE-MEASURED on the held-out rows rather than compared against the published
+0.9054 — using the published figure would have silently gifted the relational side ~0.01.
+
+⚑⚑ **THE ANSWER IS STRUCTURAL, NOT EMPIRICAL — AND IT IS ONE LINE OF ALGEBRA.**
+
+    dL/dz_i = p_i (r_i − E_p[r]) = Σ_j p_i p_j (r_i − r_j)
+
+Verified exactly (max abs diff 2.8e-17). **The reference gradient IS a pairwise object, and its
+pair term is the regret DIFFERENCE.** So:
+- **surfaced × surfaced**: the difference is OBSERVED ⇒ that block is recoverable exactly (pinned
+  to machine precision by a test).
+- **surfaced × tail**: needs a tail **MAGNITUDE** — precisely what relational supervision declines
+  to supply and what a fitted α does supply.
+
+Relational supervision is not a different *kind* of information here. It is the same object with
+one block deleted.
+
+**CEILING 1 — top-6-only support is forbidden before any loss design.** A loss over only the six
+surfaced logits has a gradient supported on six coordinates, so its cosine is bounded by the
+fraction of ‖g_true‖ living there:
+
+| measure | agent (pre-review-fix estimator) | independent recompute (post-fix) |
+|---|---|---|
+| mean / row | **0.8432** | **0.8794** |
+| pooled | 0.8276 | 0.7894 |
+| median | 0.9076 | 0.9672 |
+| p10 | 0.6051 | 0.6700 |
+
+Both below the 0.9054 hurdle on both measures ⇒ **the top-6-only half is answered by geometry.**
+Cause: the net's prior puts real mass outside SF's six (mean 15–20%, **p90 ≈ 0.64**), so the
+censored tail carries ~21–29% of the reference gradient's energy.
+
+**CEILING 2 — the escape exists and then collapses.** "Move X was not surfaced" IS an observation
+(`r_X ≥ r_6`), so an UNMARGINED surfaced-over-tail constraint may legitimately place gradient on
+the tail. Ceiling **0.9934**. But its `t→∞` limit is `−p_i·mass(T)` / `+p_j·mass(S)` — gradient
+proportional to the prior with ONE global magnitude, i.e. **the shape of a constant tail with its
+fitted scale playing α's role.** ⇒ **the order constraint does not escape the constant tail; it
+BECOMES one.**
+
+**Secondary readings.**
+- **Indifference weighting helps** (`w_ij = min(1, |Q_i−Q_j|/τ)`): **+0.0249** (0.8831 vs 0.8582),
+  isolated by a single-knob ablation. Real, and an order of magnitude short of the gap.
+- **Listwise CE is ANTI-correlated (−0.133)**, not broken: matching a sharpened SF distribution
+  opposes a gradient that wants mass shifted by *current prior* weight. It also invents a
+  temperature, so it never belonged in the "no fabricated values" class.
+- **Pure pairwise within the six reads 0.6531**; hinge/Borda-limit variants 0.4024.
+
+⚑ **SIDE FINDING THAT REFRAMES THE INCUMBENT: most of the constant tail's fidelity is SET
+MEMBERSHIP, not the six VALUES.** Permuting SF's scores within a row and refitting leaves the
+constant tail at cos **0.6445** against 0.9159 with true scores — **70% survives** destroying
+every value while keeping the surfaced/tail split. (The agent's own permutation scheme read
+0.4349 ⇒ 53%; the schemes differ — mine permutes across all scored moves and recomputes `r_6` —
+so quote the mechanism, not a single decimal.) This is consistent with the algebra: what the
+target mostly encodes is *which moves SF looked at*, plus one magnitude.
+
+**What this does NOT establish.**
+1. **ΔQ is untouched.** This screens what can be extracted from SF's EXISTING six. It says nothing
+   about *buying* the missing comparison — which is exactly the S×T block the algebra shows is
+   the only part missing. ⇒ **the negative here strengthens the ΔQ direction rather than weakening
+   it**, because it identifies precisely what has to be purchased.
+2. **Era.** MultiPV-**40** wide-label data. Real MPV-6 constant-tail cosines top out ~0.81–0.87
+   (2026-08-16 panel), so the exact numbers are era-specific; the ceiling argument is geometric
+   and should transfer, but that is an argument, not a measurement.
+3. The screen ran on the estimator BEFORE the 08-16 review fixes (n=5059, α 0.1759 vs the
+   corrected n=5028, α 0.1779). The shift is <0.002 and the ceiling is geometric, so the verdict
+   is unaffected — but the exact cosines are on the older pipeline.
+4. Four losing variants remain edge-pinned; closed analytically (every pure-order variant
+   converges to the Borda limit, and the pinned hinge and the closed-form limit agree to 4 dp)
+   rather than by widening the search again.
+
 ### PRE-REGISTERED FOLLOW-UP — targeted prior-vs-search adjudication (`ΔQ`), NOT a dense SF target
 
 The rank curve above is the empirical case for it: **relevant tail mass is concentrated in the
