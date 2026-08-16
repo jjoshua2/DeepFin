@@ -53448,3 +53448,20 @@ documented startup line, which is the model for the rule above:
 [probe] inwindow set loaded: path=/home/josh/projects/chess/data/era_probe/inwindow_20260816.npz
   rows=2048/2048 digest=7cc435c69645e74b planes=175 policy_width=1858
 ```
+
+### 2026-08-16 relaunch — BOOT VERIFIED CLEAN
+
+Relaunched 12:38:03 after the pool fix (`8f5cca43d`). Trial
+`train_trial_dea5e_00000_0_lr=0.0000_2026-08-16_12-38-11`. Every check contrasts sharply with
+the aborted boot, which is the point -- these are observations that COULD have failed:
+
+| check | aborted boot | this boot |
+|---|---|---|
+| `salvage warmstart loaded ... from` | `pre_search_authority_20260809` | **`bt4heads_iter100_20260815`** |
+| `Dropped donor optimizer state` | 8 params | **0** |
+| tolerant-load `shape_skipped` | 8 aux-head keys | **empty** |
+| shards seeded | 817 (wrong pool) | **800** (== manifest `copied_replay_shards`) |
+| `[probe] inwindow set loaded` | 08-04 path (pre-edit) | **`inwindow_20260816.npz` 2048/2048** |
+
+The throughput yardstick pre-committed in `0f295875c` is now armed and reads out on the first
+5 CLEAN iterations (excluding iteration 1).
