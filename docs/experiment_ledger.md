@@ -49839,6 +49839,60 @@ the GPU-round-trip cost measured alongside (~6x at tb=1 per `gumbel_c.py:450`). 
 required; nothing launched. Probe:
 `scratchpad/c16_probe_20260815.py` (session scratchpad).
 
+### FOLLOW-ON (PR #427, `fix/optremap-review-residuals`) — the guard against re-keying by position had, as its failure mode, re-keying by position
+
+Merged-pending. Not a training-target change; it changes what `Trainer.load` does on a
+checkpoint whose recovered name mapping is UNTRUSTWORTHY. Entered here because it converts
+loads that previously SUCCEEDED into refusals, and a refusal also resets the LR scheduler to
+warmup — so it is restart-affecting even though no loss, weight or config key moves.
+
+**The defect the fix closes.** The identity-based re-key returns `None` when it declines.
+`load` treated `None` uniformly as "not applicable" and fell through to
+`self.opt.load_state_dict(...)`, which is keyed by INTEGER INDEX into flattened
+`param_groups` order. With donor and live counts equal — the ordinary case — every parameter
+then received some OTHER parameter's moments: non-empty, correctly shaped, steppable,
+**wrong**, and completely unlogged, with `optimizer_state_loaded` left True so the scheduler
+and zclip were restored on top. `reset_mismatched_optimizer_state` cannot catch it because the
+shapes match by construction. ⇒ the guard against positional re-keying fell back to positional
+re-keying. `UntrustedOptimizerStateError` now separates "not applicable, positional is CORRECT"
+from "the mapping is WRONG", and only the first still returns `None`.
+
+**Production-path evidence (independent review, replayed against the LIVE arm-B
+`checkpoint_000031`):** 479 manifest names, 479 distinct slot ids, **0 name misses**, 910
+moment tensors, **0 shape disagreements**. ⇒ **nothing that loads today newly refuses.** The
+widened `value.dim() != 0` exemption inspects exactly the same 910 tensors (Aurora stores
+`step` as a python int, so the 0-dim branch is never taken on the real donor) — strictly wider
+with zero new false positives.
+
+**⚑ PRE-COMMITTED VERIFICATION, owed at the NEXT restart** (this is the whole point of the
+entry — the fix is a refusal that must never fire on a healthy resume):
+
+```bash
+# The load-path lines go to the Ray WORKER log, never to /tmp/chess_training.log.
+LOG=$(ls -t /tmp/ray/session_*/logs/worker-*.out | head -1)
+grep -c "REFUSING to load the donor optimizer state by position" "$LOG"   # MUST be 0
+grep -c "reinitialising optimizer"                                "$LOG"   # MUST be 0
+grep -n  "name-based optimizer remap"                             "$LOG"   # MUST show ~475 kept
+```
+
+**Kill rule, decided now:** any non-zero `REFUSING` count on a resume from a checkpoint this
+same code wrote is a REGRESSION, not a catch — revert `fix/optremap-review-residuals` and
+resume from the pre-#427 commit. A `REFUSING` on a checkpoint written by OTHER code (a rename,
+or a payload rewritten in place by `scripts/reinit_value_heads.py`, which leaves
+`opt_param_names` stale) is the guard WORKING and must be read as such.
+⚑ Show the instrument fires before reading a 0 as a pass — the same false-negative that bit
+this entry twice above. [[server_info_logs_are_discarded_by_uvicorn]]
+
+**Revert point:** `4adafe91a` is the last commit before the review-residual fixes;
+`ed3a8737c` is the last before the `UntrustedOptimizerStateError` behaviour change itself.
+
+**Coverage note.** The mass-turnover WARNING was, until `449879b6d`, the one change in this
+area that **nothing could detect** — the reviewer mutated it to `if False:` and the whole file
+still passed, exit 0, because every test asserted on optimizer STATE after the load and none on
+the warning. Now pinned by payload (count, live denominator, kept/dropped/fresh breakdown), and
+that mutant exits 1. Its arithmetic was also wrong: `changed` is `dropped + fresh`, counted on
+opposite sides, so it can exceed the live parameter count and must not be rendered as a
+fraction of it. [[a_gate_that_cannot_fail]]
 ## 2026-08-15 — FIRST CUDA READING of the AOT verify gate: the analytic ULP floor is mis-scaled on BOTH heads, in opposite directions
 
 **Status: MEASUREMENT (PR #432 NOT merged). Instrument: `--verify-only` on real packages + real weights, RTX 5090, training stopped.**
