@@ -44,6 +44,8 @@ START = chess.STARTING_FEN
 # is what makes these properties discriminating.
 BAD_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - x 1"
 FENS = [START, BAD_FEN]
+FEN_IDS = ["START", "BAD_FEN"]
+
 
 # All legal in the start position. (No promotion is possible there — an earlier
 # comment claimed otherwise; promotions are exercised against their own FEN.)
@@ -69,14 +71,33 @@ def _accepted(token: str, fen: str = START) -> bool:
     return True
 
 
-@pytest.mark.parametrize("fen", FENS)
+def test_bad_fen_is_actually_unparseable() -> None:
+    """⚑⚑ THE PREMISE THIS WHOLE FILE RESTS ON, asserted about the CONSTANT.
+
+    Every discriminating property below works by the argument "under `BAD_FEN`
+    legality is skipped, so a rejection can only have come from the SYNTAX gate".
+    If `BAD_FEN` ever drifts to something python-chess CAN parse, the legality
+    gate switches back on, starts absorbing rejections, and the entire battery
+    silently reverts to the vacuity it was written to fix — no error, all green.
+
+    Measured: with `BAD_FEN` alone drifted to a parseable FEN, reintroducing the
+    `\\Z`→`$` anchor bug left the battery at 250 passed / 1 failed, and the only
+    failure was a test that had re-declared the bad FEN as its own literal.
+    That literal was the sole thing standing between this file and the defect
+    class it exists to close. It is now this assertion instead.
+    """
+    with pytest.raises(ValueError):
+        chess.Board(BAD_FEN)
+
+
+@pytest.mark.parametrize("fen", FENS, ids=FEN_IDS)
 @pytest.mark.parametrize("move", VALID_IN_START)
 def test_the_valid_corpus_is_accepted(move: str, fen: str) -> None:
     """POSITIVE CONTROL: a reject-everything regex must fail the battery here."""
     assert _accepted(move, fen), move
 
 
-@pytest.mark.parametrize("fen", FENS)
+@pytest.mark.parametrize("fen", FENS, ids=FEN_IDS)
 @pytest.mark.parametrize("sep", SEPARATORS)
 @pytest.mark.parametrize(
     "shape",
@@ -94,7 +115,7 @@ def test_no_separator_survives_in_any_position(
     assert not _accepted(variant, fen), repr(variant)
 
 
-@pytest.mark.parametrize("fen", FENS)
+@pytest.mark.parametrize("fen", FENS, ids=FEN_IDS)
 @pytest.mark.parametrize("keyword", KEYWORDS)
 @pytest.mark.parametrize("shape", ["e2e4 {k}", "e2e4\n{k}", "{k} e2e4", "{k}"],
                          ids=["after", "newline", "before", "alone"])
@@ -102,7 +123,7 @@ def test_no_uci_keyword_can_ride_along(shape: str, keyword: str, fen: str) -> No
     assert not _accepted(shape.format(k=keyword), fen)
 
 
-@pytest.mark.parametrize("fen", FENS)
+@pytest.mark.parametrize("fen", FENS, ids=FEN_IDS)
 @pytest.mark.parametrize("bad", ["k", "K", "p", "x", "Q", "1", "qq", "qn"])
 def test_only_the_four_promotion_pieces_are_permitted(bad: str, fen: str) -> None:
     """⚑ BAD_FEN is what makes this bite: widening `[qrbn]?` to `[a-z]?` left the
@@ -121,13 +142,13 @@ def test_every_real_promotion_suffix_is_accepted() -> None:
         assert _validated_searchmoves(fen, [f"e7e8{suffix}"]) == [f"e7e8{suffix}"]
 
 
-@pytest.mark.parametrize("fen", FENS)
+@pytest.mark.parametrize("fen", FENS, ids=FEN_IDS)
 @pytest.mark.parametrize("bad", ["", " ", "e2", "e2e", "e2e4e5", "z2z4", "e0e4", "e9e4"])
 def test_structurally_malformed_tokens_are_rejected(bad: str, fen: str) -> None:
     assert not _accepted(bad, fen)
 
 
-@pytest.mark.parametrize("fen", FENS)
+@pytest.mark.parametrize("fen", FENS, ids=FEN_IDS)
 @pytest.mark.parametrize("variant", ["E2E4", "E2e4", "e2E4", "E7E8Q"])
 def test_case_is_not_normalised_away(variant: str, fen: str) -> None:
     """UCI is lowercase on the wire; accepting uppercase would be a silent fix.
@@ -158,7 +179,7 @@ def test_a_legal_move_for_a_different_position_is_still_rejected() -> None:
 
 def test_unparseable_fen_keeps_syntax_but_drops_legality() -> None:
     """The documented carve-out, pinned so it cannot silently widen."""
-    bad_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - x 1"
+    bad_fen = BAD_FEN  # ⚑ the CONSTANT, not a copy: a copy re-opens the vacuity
     # legality is skipped ...
     assert _validated_searchmoves(bad_fen, ["e4e5"]) == ["e4e5"]
     # ... but syntax is NOT, which is what keeps the `go` line well formed.
