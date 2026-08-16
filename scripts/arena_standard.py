@@ -319,7 +319,7 @@ def production_selfplay_search_config():
     return production_selfplay_configs()["search"]
 
 
-def production_selfplay_gumbel_config():
+def production_selfplay_gumbel_config(cfgs: dict | None = None):
     """The ``GumbelConfig`` production selfplay actually searches with.
 
     Built by ``selfplay.network_turn.build_selfplay_gumbel_config`` — THE
@@ -328,10 +328,14 @@ def production_selfplay_gumbel_config():
     object, so "which knobs does production set" stopped being a question the
     arena answers from memory. ``simulations`` is arena-owned and passed here
     only because the mapping requires it; it is excluded from what is carried.
+
+    ``cfgs`` lets a caller that already built the bundle pass it in rather than
+    re-running the yaml -> reco -> worker channel, which is not cheap.
     """
     from chess_anti_engine.selfplay.network_turn import build_selfplay_gumbel_config
 
-    cfgs = production_selfplay_configs()
+    if cfgs is None:
+        cfgs = production_selfplay_configs()
     return build_selfplay_gumbel_config(
         search=cfgs["search"], game=cfgs["game"], simulations=1,
     )
@@ -357,8 +361,10 @@ def resolve_search_shape(shape: str) -> SideSearch:
             target_batch=int(PLAY_SEARCH_TARGET_BATCH),
         )
     if shape == "training":
-        search = production_selfplay_search_config()
-        prod = production_selfplay_gumbel_config()
+        # ONE trip through yaml -> reco -> worker, shared by both views of it.
+        cfgs = production_selfplay_configs()
+        search = cfgs["search"]
+        prod = production_selfplay_gumbel_config(cfgs)
         # DERIVED, never restated. Every GumbelConfig field that is neither
         # arena-owned nor checkpoint-owned is copied from the config production
         # itself builds, so a knob promoted into the yaml reaches the arena with
