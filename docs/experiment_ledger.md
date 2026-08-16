@@ -52163,3 +52163,94 @@ complete reproducer.
 and the 6 held-out dirs were converted by the SAME pre-EP-fix binary, so the two halves share
 whatever this defect does and the held-out gap does not measure an encoder difference. Recorded on
 that arm's Confounds line.
+
+---
+
+## 2026-08-16 — ⚑⚑ CORRECTION to the #228 entry above: **"TWO REPETITION DEFECTS" IS WRONG. THE SECOND ONE IS lc0's, AND OUR CODE IS CORRECT.**
+
+The entry above concluded *"There are TWO repetition defects, not one … This is the other, and it
+is still open."* That framing is **retracted**. The divergence is real and the gate was right to
+fire, but the defect is **in lc0's board identity, not in ours** — and the reason I got it wrong is
+worth more than the correction itself.
+
+⚑ **I inferred "our defect" from "our gate failed".** The gate compares OUR planes against lc0's
+and reports a difference; it does not, and cannot, say which side is right. I had one external
+referee (lc0) and treated a two-way disagreement as a verdict. **The tie-breaker was a THIRD
+reference — python-chess — and it sides with us.** Same shape as
+[[internal_equivalence_cannot_find_a_shared_wrong_rule]] one level up: two references can only
+tell you that someone is wrong, never who.
+
+### The three references
+
+| reference | plane 12 (frame-0 repetition) at ply 158 |
+|---|---|
+| our encoder — Python `_check_repetitions` **and** the production C path | **1 — repetition** |
+| python-chess `is_repetition(2)` | **1 — repetition** |
+| lc0's shipped plane in the v6 record | **0 — not a repetition** |
+
+**The chess:** at ply 154 Black played **a7a5**. White's b5 pawn attacks a6, but b5 is **absolutely
+pinned by Rb4 against Kb7**, so `bxa6 e.p.` was never a legal move. FIDE 9.2.2 defines sameness by
+"the possible moves of all the pieces of both players", with the ep right as the named exception —
+an ep capture that was never possible cannot distinguish the positions. Ply 158 == ply 154, after
+Rg5-g6-g5 / Kd6-c5-d6.
+
+**Mechanism, read from lc0's own source rather than inferred:** `board.cc ChessBoard::ApplyMove`
+stores the ep right as a **phantom pawn on rank 1/8 of `pawns_`**, set iff `kPawnAttacks[ep_sq]`
+intersects enemy pawns — a **pseudo-legal** test, blind to pins. `board.h` declares
+`bool operator==(const ChessBoard&) const = default;`, so `pawns_` *including the phantom* is board
+identity, and `position.cc ComputeLastMoveRepetitions` compares with it. The phantom splits two
+FIDE-identical positions.
+
+⇒ **It is the exact MIRROR IMAGE of #436.** We were ep-BLIND where ep was legal; lc0 is
+ep-SENSITIVE where ep is illegal. #436 neither caused this nor could fix it.
+
+### Blast radius — production is NOT affected, measured
+
+- **Our rule is the correct one, so no production row is wrong.** Production C encoder with
+  `history_rep_fix: true` vs python-chess over **1,450,624 repetition-plane comparisons**
+  (1,500 real games × 8 frames): **zero mismatches.** C and Python also agree bit-exact on all 112
+  planes of the failing position under both flag settings.
+- **Rate: 1 event in 40,611,875 plies (~350k games)**, and the count is *computed*, not just
+  observed: phantom-ep present 0.107% × ep actually illegal given phantom 0.298% × recurrence 1.03%
+  ≈ **1 in 30M plies**, predicting ~0.66 per 20M-ply scan. 60 of 130 tars scanned.
+- **The cost is entirely to the lc0 rig: ONE position in 772,745 discarded all 6,487 games in that
+  tar** (`VerifyStats.ok` requires `planes_mismatch == 0`), ≈ **0.8% of the corpus**.
+- **#436 is confirmed working on real data:** the old ep-alias class ran at ~15 rows/tar pre-fix and
+  appears **0 times in 40.6M plies** now.
+
+### ⚑ THE INSTRUMENT PRODUCED SIX FALSE POSITIVES BEFORE IT PRODUCED THE ONE REAL RESULT
+
+A first wider scan reported **7** disagreements. **Six were artifacts of the scan itself**, all
+Chess960/DFRC: `chess.Board.push()` rewrites `castling_rights` through `clean_castling_rights()`,
+which returns 0 on a non-960 board whose king is not on e1/e8 — so the replay chain silently
+dropped every 960 castling right from ply 1, and `_transposition_key()` could no longer separate
+positions differing only by a right a rook lost and later "regained". **The records' own
+`castling_us_*` fields prove lc0 was right in all six.** The production converter is immune:
+`castling_reconstruction_problem` drops chess960 games at record 0.
+
+⇒ **A scan that finds 7 anomalies has not found 7 anomalies until each is adjudicated
+individually.** The six shared a signature (all 960) that was visible before any of them was
+believed. [[predict_the_exact_count_before_running]] — and note the prediction here was WRONG in
+the safe direction (1–3 expected in 20 tars, 0 observed; phantom-ep rate over-predicted 10–20×),
+which is exactly why the six had to be checked rather than counted.
+
+### DECISION: no converter change. The gate stays strict.
+
+The sound fix would be a converter-side classifier — a sibling of `known_repetition_ep_alias` in
+the opposite direction, excusing a divergence only when python-chess adjudicates for US. **Decided
+against, now, with reasons rather than deferral:**
+
+1. It buys **0.8% of the corpus**, which is immaterial to this arm's power.
+2. A tolerance path is precisely the shape that turns a gate into
+   [[a_gate_that_cannot_fail]], and this gate's strictness is the reason it caught two real
+   encoder facts that every internal check was blind to.
+3. Matching lc0 instead is **not** an option worth pricing: it would mean adopting a pseudo-legal
+   ep rule into our repetition key, which also drives `cboard_search_terminal`'s draw detection —
+   a behaviour change to every training row and to search, needing its own prereg.
+
+Revisit only if the rate rises or corpus size becomes binding. The rejected tar and its `_staging`
+output are retained as the reproducer.
+
+A minimal failing test exists at `scratchpad/rep2_20260816/test_rep2_lc0_pseudo_legal_ep_repetition.py`
+(FEN + 5 moves, no data dependency; two passing controls plus one that fails on current code). It is
+**not** promoted into `tests/` — promoting it would assert the tolerance this entry just declined.
