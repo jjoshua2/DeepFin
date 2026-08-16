@@ -51037,3 +51037,91 @@ growing struct silently decays every time the struct grows. Both #437 findings a
 same shape as [[fixing_a_defect_class_reintroduces_it]]. The fix is not "add the two fields" — it is
 to make the profile carry the production `GumbelConfig` and diff it, so the next promotion cannot
 open a fresh gap. Recorded against task #223.
+
+## 2026-08-16 — ⚑⚑ THE TWO PROMOTED TARGET KNOBS REVERSE SIGN BETWEEN CHECKPOINTS. NO CHANGE AT THE RESTART.
+
+Follow-on to AMENDMENT 2 above and to PR #437's P2-B. Having established that
+`scripts/audit_targets.py` never applied `gumbel_target_max_visit_cap` /
+`gumbel_target_untempered_prior` (and ran `policy_temp` 1.0 against production's 1.5), I
+re-ran the ruler with all three supplied through the override path — `_assert_overrides_realized`
+confirms they land (`realized target_max_visit_cap=5 target_untempered_prior=True`,
+`rl_policy_temp=1.5`).
+
+**Design.** Six arms, two checkpoints × three settings, one session, seed 42, same
+`audit_set_v1.jsonl`, n=4000, GPU otherwise idle. Row (d) = the STORED TARGET.
+`prod` = (5, True, 1.5) · `noknob` = (0, False, 1.5) · `instr` = (0, False, 1.0), i.e. what
+every banked `audit_targets` run actually measured. **A** = `ANCHOR_20260727_preC17`,
+**B** = `bt4heads_iter100_20260815` (production). Paired on FEN, 20k-resample bootstrap on the
+per-position delta. Reported as E[regret] AND top-1 AND entropy AND argmax accuracy together,
+per the standing rule that E[regret] rewards sharpness.
+
+### The result: the effect of the two knobs is CHECKPOINT-DEPENDENT and FLIPS SIGN
+
+| the 2 knobs, at production `policy_temp` 1.5 | **B (production ckpt)** | **A (anchor)** |
+|---|---|---|
+| E[regret] | −0.09 [−0.94, +0.78] ns | **−2.22 [−2.93, −1.54] BETTER** |
+| top-1 | +1.58 [−0.03, +3.28] ns | **−1.79 [−3.48, −0.18] BETTER** |
+| entropy | −0.090 sharper | −0.031 sharper |
+| **argmax == deep-SF best** | **−0.875 pp [−1.63, −0.10] WORSE** | **+0.825 pp [+0.05, +1.60] BETTER** |
+
+**Both directions are significant.** Not a null and a signal — two opposite signals.
+
+⚑ **Had I stopped at the production checkpoint I would have written "these knobs cost 0.875 pp
+of argmax accuracy, turn them off", and it would have been wrong as a general claim.** Same
+failure as the row-(b) amendment earlier today, one level up: there it was *pull every ROW
+before concluding*, here it is **run every CHECKPOINT before concluding**. Single-checkpoint
+offline screens are how both of these knobs were priced in the first place.
+
+### A mechanism that fits, offered as a HYPOTHESIS (n=2, not a finding)
+
+The knobs SHARPEN the stored target. The two checkpoints differ in exactly the quantity that
+should decide whether sharpening helps — baseline target entropy with the knobs off:
+**A 0.976 nats, B 0.692 nats.** Sharpening helps the SOFT target and hurts the SHARP one, and
+**production is the sharp one**. Coherent with the banked confidence-ratchet picture
+[[ruler_proxy_shape_beats_sim_count]]: the loop has been sharpening the target for months, so a
+knob whose value was measured earlier in that trajectory can have expired without anyone
+touching it.
+
+**This is n=2 and the two checkpoints differ in lineage as well as entropy, so it is not
+established.** Falsifier: score a third checkpoint of intermediate entropy; the hypothesis
+predicts an intermediate effect, and predicts the sign of the accuracy delta flips at some
+entropy between 0.692 and 0.976. Anything non-monotone kills it.
+
+### The third knob, isolated
+
+`policy_temp` 1.0 → 1.5 ALONE (the instrument's own error, nothing to do with the promotion):
+E **+1.59 [+1.01, +2.16]** on B and **+4.38 [+3.57, +5.29]** on A — both significantly WORSE —
+while top-1 on B is **−0.07 [−1.36, +1.16] ns** and entropy rises 0.154/0.165. That is a pure
+sharpness artifact in the benign direction: softening the prior de-concentrates mass, E[regret]
+rises, the RANKING does not move. Textbook illustration of why E[regret] is never read alone.
+
+### What the banked `audit_targets` numbers were wrong BY
+
+Total instrument drift (`instr` → `prod`), i.e. how far every row banked since 2026-08-10 sits
+from production's real stored target: **E +1.50 [+0.87, +2.15] on B**, **+2.16 [+1.36, +3.03] on
+A** — both significant, both in the direction of the instrument reporting the target as BETTER
+than it is. Top-1: +1.50 [+0.26, +2.83] on B (significant), +0.42 [−1.14, +1.99] on A (ns).
+
+### DECISION — no yaml change at the EP restart
+
+`gumbel_target_max_visit_cap: 5` and `gumbel_target_untempered_prior: true` **stay as they
+are.** Reasons, in order:
+
+1. **There is no evidence-backed direction.** Two checkpoints, two significant opposite answers.
+   "Revert them" is as unsupported as "keep them".
+2. **Protocol rule 4** — one data-affecting change per readout window. The EP restart already
+   carries the repetition fix and the era-probe in-window swap. Adding a target-shape change
+   would confound both.
+3. The knobs are **target-only**, so nothing about play changes either way, and the decision
+   costs nothing to defer to a window where it can actually be read.
+
+⚑ But their standing is now WORSE than "carried on mechanism": the ledger's own V4 called
+`max_visit_cap` *"NEGATIVE on its only measurement"* and shipped it default-off; confound 3
+recorded `untempered_prior` as failing its screen and *"the first thing to drop"*. Both are live
+anyway, and the 3-key bundle's pre-committed deciding arena (400 games vs
+`ck_resume_iter672.pt` at iter 972) **was never run**. That arena cannot judge these two knobs —
+they are invisible to it by construction — so the deciding yardstick for the bundle was
+mis-specified for two of its three keys from the start. [[a_gate_that_cannot_fail]]
+
+**Owed, and now cheap:** the entropy-conditional falsifier above, on a third checkpoint. Task #225.
+Banked: `scratchpad/knobab/*.jsonl` (6 × 4000 per-position dumps) + `paired_ci.py`.
