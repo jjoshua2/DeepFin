@@ -622,6 +622,17 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
         f"build_selfplay_gumbel_config names {sorted(mentioned)} but only "
         f"{sorted(set(config_driven.values()))} reach the returned GumbelConfig"
     )
+    # ⚑ HONEST NOTE ON THIS LAST CLAUSE. Since the training shape became the
+    # DERIVED complement, `pinned` covers every carried field by construction, so
+    # `live_and_unpinned` can no longer be non-empty and this clause is a
+    # tautology. It is kept because its FIRST half (the `config_driven` set
+    # equality above) still discriminates -- it is what proves each knob is
+    # OBSERVED to flow through the real mapping -- and because deleting the
+    # clause would delete the message that finally named the defect. Do NOT
+    # read a green here as evidence that the arena carries production's shape:
+    # `test_the_training_shape_equals_productions_gumbel_config_field_by_field`
+    # and `test_the_three_ownership_sets_partition_gumbelconfig` are the checks
+    # that can actually fail, and the mutation test above proves they do.
     search = production_selfplay_search_config()
     pinned = set(resolve_search_shape("training").gumbel) | _ARENA_OWNED_GUMBEL_FIELDS
     live_and_unpinned = {
