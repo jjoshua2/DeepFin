@@ -40732,3 +40732,291 @@ the warning. Now pinned by payload (count, live denominator, kept/dropped/fresh 
 that mutant exits 1. Its arithmetic was also wrong: `changed` is `dropped + fresh`, counted on
 opposite sides, so it can exceed the live parameter count and must not be rendered as a
 fraction of it. [[a_gate_that_cannot_fail]]
+
+---
+
+## 2026-08-16 — PREREG — **STOCKFISH TEACHER UPGRADE, dev-20260420-ed651aab → dev-20260810-5062aee5 (STAGED, NOT DEPLOYED)**
+
+Task #213. Binary is built and verified; **nothing production reads has been touched**, the live
+yaml is unedited, and no training was restarted. This entry is the launch record required by
+protocol rule 1 and must be read before anyone points `stockfish_path` at the new build.
+
+### Provenance of the CURRENT teacher — established by resolution, not by filename
+
+`configs/pbt2_small.yaml:141` sets `stockfish_path` to `<repo>/e2e_server/publish/stockfish`.
+That is a **two-hop symlink**, and the intermediate name is misleading, so the chain is recorded
+in full rather than the final answer alone:
+
+```
+<repo>/e2e_server/publish/stockfish
+  -> ~/local_stockfish/extract/usr/games/stockfish
+  -> ~/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
+```
+
+Version read off the binary's own `uci` / `compiler` response, not off any path component:
+
+| | value |
+|---|---|
+| id name | `Stockfish dev-20260420-ed651aab` |
+| upstream commit | `ed651aab544a330a9c8ae0dc2d8d51d5d48a8112` (2026-04-20, "Replacing std::clamp with std::min") |
+| build | g++ 11.4.0, `x86-64-bmi2`, 64bit BMI2 AVX2 SSE41 SSSE3 SSE2 POPCNT |
+| nets | `EvalFile nn-f68ec79f0fe3.nnue` + `EvalFileSmall nn-47fc8b7fff06.nnue` (dual net) |
+
+⚑ **`e2e_server/publish/` is the SERVER'S PUBLISH DIRECTORY, and it contains exactly this one
+symlink.** So the two ways a selfplay worker can obtain Stockfish converge on the same file:
+`--stockfish-path` reads it directly, and `--stockfish-from-server` (`worker.py:3611`) downloads
+the sha256-pinned copy the server serves *from that same path*. Repointing the symlink therefore
+changes the teacher for **both** paths at once, including for remote workers, and it does so
+without any yaml edit. That is a deployment hazard, not a convenience — see Deployment below.
+
+### Target
+
+`5062aee519a1ba262d472d8ab139851ced56573e` (2026-08-10, "Place continuation history on large
+pages"), upstream `HEAD` at time of writing. `git rev-list --count ed651aab..HEAD` = **175**
+commits, confirming the "~175 commits / ~4 months" framing exactly.
+
+### Compatibility — MEASURED, source diff AND binary diff AND our own parser
+
+This is the part that matters, because our signature defect is a value that is accepted and then
+silently ignored, and a renamed UCI option is precisely that shape.
+
+**Every option we set, checked against the running binaries** (`uci` output of both, sorted,
+diffed). The complete diff of the option surface is **two lines**:
+
+```
+< option name EvalFile      type string default nn-f68ec79f0fe3.nnue
+< option name EvalFileSmall type string default nn-47fc8b7fff06.nnue
+---
+> option name EvalFile      type string default nn-ab28990d4ea3.nnue
+```
+
+| option | we set it at | old | new | verdict |
+|---|---|---|---|---|
+| `UCI_ShowWDL` | `stockfish/uci.py:404` | check, default false | identical | **unchanged** |
+| `Threads` | `uci.py:405` | spin 1..MaxThreads | identical | **unchanged** |
+| `Hash` | `uci.py:407` | spin 1..MaxHashMB | identical | **unchanged** |
+| `SyzygyPath` | `uci.py:409`, `:510` | string | identical | **unchanged** |
+| `MultiPV` | `uci.py:411` | spin 1..MAX_MOVES | identical | **unchanged** |
+| `UCI_Elo` | `match_vs_uci.py --option-*` | spin 1320..3190 | identical (`Skill::LowestElo/HighestElo` unchanged) | **unchanged** |
+| `EvalFileSmall` | **never set by us** | present | **REMOVED** | **no impact on us** |
+
+**Every field we parse** (`stockfish/uci.py:_parse_info_fields`, and the second parser in
+`scripts/blunder_check_cp.py:93`): `multipv`, `nodes`, `depth`, `score cp`, `score mate`, `wdl`,
+`pv`. `UCIEngine::on_update_full` and `UCIEngine::format_score` are **byte-identical** between the
+two commits — same fields, same order, same `cp`/`mate`/TB_CP=20000 encoding.
+
+⚑ **The cp ruler did NOT silently rescale.** `win_rate_model`, `win_rate_params` (the `as[]`/`bs[]`
+polynomials) and the internal→cp map `round(100 * v / a)` are byte-identical. This was the single
+highest-risk silent failure available — a retuned normalisation would have kept the field name
+`score cp` while changing what a centipawn means, invalidating `sf_eval`, the cp-logistic blend and
+every banked cp number at once. It did not happen. **Same ruler.**
+
+⚑ **`SyzygyPath` parsing was REFACTORED** (`std::string Paths` split on `SepChar` →
+`std::vector<std::filesystem::path> Paths`) — and this one deserved the check, because production
+Syzygy is the **colon-separated pair** and a separator regression would have silently dropped the
+6-man DTZ half with no error. It still splits on `':'` on Linux (`tbprobe.cpp:1406`), and this is
+confirmed empirically, not just by reading: driving the new binary through our own `StockfishUCI`
+with the full production pair returns `cp 19997` (= TB_CP − plies) on a 5-man position, i.e. the
+probe fires. **No impact.**
+
+**End-to-end parse check** — the new binary driven through our own `StockfishUCI` at production
+label settings (MultiPV 6, 75k nodes, production Syzygy pair), 4 positions covering the cp, mate
+and tablebase score paths: every retained field present, MultiPV rank count 6/6, WDL vectors
+normalise. Script banked at `scratchpad/sf213_parse_check.py`.
+
+⇒ **No UCI option and no parse field changed. The integration is compatible.** What changed is the
+EVAL, and that is the whole point of the upgrade — and the whole risk.
+
+### ⚑ The NNUE architecture changed, so the LABELS MOVE even though the ENCODING does not
+
+The dual big+small net collapsed to a **single net** `nn-ab28990d4ea3.nnue`, with a new feature set
+(`nnue/features/pp_3wide.cpp`) alongside `half_ka_v2_hm` and `full_threats`. Measured on the same
+positions, same 75k nodes, same MultiPV 6:
+
+| position | old cp | new cp | old wdl (W,D,L) | new wdl |
+|---|---|---|---|---|
+| startpos | 34 | **22** | 0.074 / 0.920 / 0.006 | 0.049 / **0.942** / 0.009 |
+| middlegame | 195 | **179** | 0.975 / 0.025 / 0.000 | 0.953 / **0.047** / 0.000 |
+
+The new teacher is **systematically less extreme and more drawish**, and the MultiPV spread
+compresses (old PV cps `34…−15`, new `22…−3`). `sf_eval` and the SF half of the WDL blend consume
+these numbers directly, so **the value target's distribution shifts on day one** while every
+field name, range and unit stays put. This is a distribution shift, not a bug, and it is exactly
+why no cross-era comparison of an SF-derived metric survives the upgrade.
+
+### Cost — measured, and it is NOT free
+
+| | old | new | delta |
+|---|---|---|---|
+| `bench` (MultiPV 1, 1 thread) | 1,217,135 nps | 1,124,739 nps | **−7.6%** |
+| production label (MultiPV 6, 75k nodes, n=40) | 116.1 ms/label | 134.8 ms/label | **+16.1% wallclock** |
+
+Labels are node-budgeted (`go nodes N`), so a slower engine buys nothing at fixed `sf_nodes` — it
+is a pure cost. And SF is already **18.3 of 32 cores** [[loop_is_gpu_bound_cpu_two_thirds_idle]],
+so +16% on the label path is a curriculum-throughput hit, not spare capacity. ⚑ The MultiPV-1
+bench number **understates it by half**; quote the +16.1%, not the −7.6%. (Caveat: old is the
+official g++ 11.4 release build, new is our g++ 15.3 PGO build, so a few points of this are
+toolchain, not engine.)
+
+### Hypothesis
+
+Our net matches its policy target's bad tail at 91.5% — it learns the target faithfully, so **our
+ceiling is the target's ceiling** [[the_policy_target_is_sharp_and_wrong]]. A teacher 175 commits
+stronger should produce a label set with a **smaller bad tail** at the same node budget. If it does
+not, the upgrade is a pure cost (+16.1%) plus a curriculum perturbation, and must not ship.
+
+### ⚑⚑ WHY THE OBVIOUS INSTRUMENTS ARE ALL VOID HERE — read this before proposing a yardstick
+
+- **`wdl_regret` is VOID.** It measures the AGENT (net + search) against the curriculum, and the PID
+  drives it to hold winrate at setpoint [[wdl_regret_measures_agent_not_net]]. An SF upgrade makes
+  the curriculum opponent stronger at fixed settings, which injects a STEP into the regret series
+  arithmetically indistinguishable from the net changing — the identical failure that made the
+  `gumbel_c_scale` change read as +239.5 Elo of progress while the net measurably degraded 51.6
+  Elo. The series is frozen-search-only, and this change unfreezes the curriculum. **A regret move
+  after this deploy is not evidence of anything.** A fresh baseline is required and the old series
+  does not continue across the boundary.
+- **Arena Elo of our net is void as a TEACHER readout.** Swapping SF changes no weights, so a
+  same-day arena reads ~0 by construction. It measures nothing about label quality.
+- **Training loss is void** — losses are decoupled from strength here
+  [[losses_are_decoupled_from_strength]].
+
+### ⚑⚑ DOES THE UPGRADE INVALIDATE THE FROZEN AUDIT SET? — answered, not left implicit
+
+**Partly, and the two halves must be separated.**
+
+- Its **POSITIONS** (`data/audit_set_v1.jsonl.manifest.jsonl`) are just positions. They are
+  **fully valid** and are reused unchanged.
+- Its **LABELS** are `Stockfish dev-20260420-ed651aab` at ≥1M nodes / MultiPV ≥10. They are that
+  engine's opinion. So the frozen set **cannot be a neutral judge of its own successor**: scoring a
+  new-SF label set against an old-SF referee is biased toward the old arm by construction. Using it
+  alone would reproduce [[audit_first_cannot_judge_a_non_sf_teacher]] one level up.
+
+⇒ The set is **not discarded and not treated as neutral. It is repurposed as the ADVERSARIAL
+referee**, and a second, home-biased referee is built over the *same manifest* so the two biases
+bracket the answer. A referee does not need to be unbiased in absolute terms — it needs to be
+unbiased **between the arms**, and since no single SF can be, two opposed ones are used and the
+verdict is only read where they agree.
+
+⚑ The audit set does NOT need regenerating for any other purpose: it is the model-scoring ruler,
+and re-labelling it would invalidate every banked model score at once
+[[a_ruler_change_must_invalidate_its_records]]. The second referee below is a NEW FILE at a NEW
+path. `data/audit_set_v1.jsonl` is not touched, appended to, or re-labelled.
+
+### THE ONE DECIDING YARDSTICK (exact command)
+
+Expected **deep-SF regret (cp) of the SF MultiPV soft target** — candidate (c) of
+`scripts/audit_targets.py`, which is the actual policy label the pipeline stores — with the SF
+binary as the ONLY thing that differs between arms:
+
+```
+# arm OLD (baseline) and arm NEW — identical but for --stockfish
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set <REFEREE> --config configs/pbt2_small.yaml \
+  --stockfish <BINARY> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
+  --dump-jsonl scratchpad/sf213/<referee>_<arm>.jsonl
+
+# the readout, paired by fen
+PYTHONPATH=. python3 scripts/tail_stats.py \
+  scratchpad/sf213/<referee>_old.jsonl scratchpad/sf213/<referee>_new.jsonl --raw-top1
+```
+
+run over the **2×2** of {referee A, referee B} × {arm OLD, arm NEW}:
+
+- **Referee A (adversarial, biased toward OLD)** = `data/audit_set_v1.jsonl`, unchanged.
+- **Referee B (home, biased toward NEW)** = same positions, new-SF deep labels:
+  ```
+  mkdir -p runs/sf213 && cp data/audit_set_v1.jsonl.manifest.jsonl \
+      runs/sf213/audit_set_sf5062aee5.jsonl.manifest.jsonl
+  PYTHONPATH=. nice -n 15 python3 scripts/build_audit_set.py \
+      --out runs/sf213/audit_set_sf5062aee5.jsonl \
+      --stockfish <NEW> --nodes 1000000 --multipv 10 --sf-workers 8
+  ```
+  ⚑ The `cp` of the manifest is load-bearing and is why this is cheap and valid:
+  `build_audit_set.py:212` **reuses an existing manifest instead of re-sampling**, so referee B is
+  the identical position set with a different labeller — not a new sample. A new sample would make
+  the two referees incomparable [[same_name_different_population]]. ⚑ It writes to `runs/`, never
+  to `data/`.
+
+### Pre-committed thresholds — the verdict is only read WHERE THE TWO REFEREES AGREE
+
+Primary quantity: **paired `>300cp` tail flip count** (`new-in-B` minus `fixed-in-B` from
+`tail_stats.py`), which is the readout that tracks the Cheese single-collapse failure mode
+[[cheese_loss_blunder_profile]]. Secondary, reported but not deciding: P90 and mean.
+
+| referee A (adversarial) | referee B (home) | verdict |
+|---|---|---|
+| NEW has fewer tail blowups, net ≤ −40 | NEW fewer, net ≤ −40 | **PASS — deploy.** Won on a referee biased against it. |
+| NEW has more, net ≥ +40 | NEW more, net ≥ +40 | **KILL — do not deploy.** Lost on its OWN home referee; unambiguous. |
+| any split, or either \|net\| < 40 | " | **INCONCLUSIVE — do not deploy for label quality.** Not a pass. |
+
+±40 of 4000 paired positions = 1.0pp, chosen as ~2× the paired flip noise this readout has shown
+on repeat runs of an unchanged pipeline. ⚑ Pre-committing INCONCLUSIVE as a distinct, non-shipping
+outcome is deliberate: a split is the EXPECTED reading if the two teachers simply differ without
+either being better, and "we could not tell" must not be laundered into "no reason not to ship"
+when shipping costs a measured +16.1%.
+
+### What a PASS does NOT establish — stated now, not discovered later
+
+- **Not an Elo claim, and not a ceiling claim.** It says the new teacher's stored policy label has a
+  smaller bad tail on 4000 audit positions. Whether the net converts that into strength is a
+  day-plus paired-CI question and is NOT this readout [[most_experiments_here_are_unfalsifiable]].
+- **Not a value-target verdict.** The yardstick is the POLICY label. `sf_eval` and the WDL blend
+  shift too (measured above) and are not scored here; `scripts/value_regret.py` is the value ruler
+  and would need its own referee-pair treatment.
+- **Nothing about the exploit surface.** We train to exploit SF's weaknesses. A stronger SF has
+  *different* weaknesses, so a better label set may still make the anti-engine objective harder.
+  This readout cannot see that, and a PASS must not be quoted as if it could.
+
+### Confounds — named before launch
+
+1. **Toolchain differs** (g++ 11.4 official release vs our g++ 15.3 PGO static build). Affects the
+   cost numbers; does not affect move choice, which is deterministic per binary at fixed nodes.
+2. **One data-affecting change per readout window** (protocol rule 4). This upgrade must NOT share
+   a window with any target-knob, search or loss change. The search config has been frozen since
+   2026-08-09 20:58 and must stay frozen across this readout.
+3. **Node budget is not a strength budget.** The new engine reaches different depth at the same
+   `go nodes` (measured: 9→10, 11→11, 12→13 on three positions, and 17→**12** on the TB position).
+   "Matched nodes" is matched COST, not matched strength, in both directions.
+4. **TB-saturated positions have arbitrary MultiPV order.** On the 5-man probe both engines scored
+   all six PVs at exactly 19997 and picked different moves (`h1f1` vs `e1g1`). That is a tie-break
+   difference, not a strength difference [[wdl_regret_filter_leaks_huge_cp]] — the readout must not
+   count it as a tail flip. Positions where the referee's top-1 is TB-saturated are excluded.
+5. **`_set_options` silently drops unknown options** (see below). Any arm that configures SF via
+   `scripts/match_vs_uci.py` is exposed to it.
+
+### ⚑ Defect found while checking, NOT introduced by this task
+
+`scripts/match_vs_uci.py:343` `_set_options`:
+
+```python
+for k, v in opts.items():
+    if k in eng.options:      # <- no else. unknown option: dropped, SILENTLY
+```
+
+The `try/except` below it warns only for options that DO exist and fail to set. An option the
+engine does not recognise produces **no warning and no error** — it is accepted from the caller and
+never reaches the engine. That is this codebase's signature defect in its purest form, and this
+upgrade is exactly the event that arms it: `EvalFileSmall` is now an unknown option, so
+`--option-b EvalFileSmall=...` would have configured the old engine and silently no-op the new one,
+with the run reporting success either way. Not fixed here (this branch is prereg-only, and a code
+change would violate one-change-per-window); **filed as follow-up, and the fix is an `else:` that
+raises rather than warns.**
+
+### Deployment (NOT PERFORMED — the user's decision)
+
+Staged binary: `~/sf213_build/staged/stockfish-dev-20260810-5062aee5-bmi2`, statically linked
+against libstdc++/libgcc **deliberately** — the system libstdc++ is GCC 11 and lacks
+`GLIBCXX_3.4.32`, so a dynamically linked g++ 15 build does not run here at all, and workers
+fetch this binary over the network via `--stockfish-from-server` onto hosts we do not control.
+Verified: `uci`, `compiler`, `bench`, and the full production label path.
+
+⚑ **Deploy is NOT a yaml edit.** `stockfish_path` points at a symlink chain; repointing it swaps
+the teacher for direct-path AND from-server workers simultaneously, with no config-diff to review
+and no ledger trace. Whatever is done, do it by **replacing the symlink target**, record the old
+target in the Revert points table first, and remember that a symlink swap is invisible to
+`params_json`/config auditing [[uncommitted_live_yaml_edits_lose_proven_wins]]. Do NOT delete the
+existing binary — revert must be a one-line symlink restore.
+
+**Revert point owed before deploy**: a salvage snapshot per protocol rule 2, because the replay
+window will hold ~a day of labels made by the OLD teacher and a symlink revert does not undo them.
