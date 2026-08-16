@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -580,3 +581,162 @@ def test_match_stamp_shape_preserves_null_candidates() -> None:
     assert got["sf_soft"] is None
     assert got["raw"] == "fen_only"
     assert got == _audit_targets_stamp("fen_only")
+
+
+def _stamped_header(path: Path, *, ruler: str, n: int = 6, off: float = 0.0,
+             extra: dict | None = None) -> str:
+    """A dump with a provenance HEADER on line 1, like `audit_cache` writes."""
+    head = {"audit_cache_format": 1, "rows": n,
+            "audit_set": "data/audit_set_v1.jsonl",
+            "audit_set_digest": "deadbeef", "audit_ruler_version": ruler,
+            **(extra or {})}
+    lines = [json.dumps(head)]
+    lines += [json.dumps({"fen": f"p{i}", "value": 10.0 + off + i, "phase": 1})
+              for i in range(n)]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_the_stamp_is_captured_not_merely_skipped(tmp_path) -> None:
+    """⚑ The header is not a data row, but "not a data row" is not "not evidence".
+
+    Before PR #423's review `load_dump` recognised the stamp by its sentinel and
+    DROPPED it, so nothing downstream could check what the dump declared.
+    """
+    from scripts.paired_compare import load_dump
+
+    d = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA"))
+    assert d.stamp["audit_ruler_version"] == "RULER-AAA"
+    # And it still is not counted as a row, which is what the skip was for.
+    assert len(d.rows) == 6
+    assert d.unusable == 0
+
+
+def test_two_dumps_from_different_rulers_are_refused(tmp_path) -> None:
+    """The reviewer's scenario, reproduced: two dumps declaring different
+    `audit_ruler_version` used to join to exit 0 and print a verdict under a
+    banner that reads as a provenance certificate."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="RULER-BBB", off=-5.0))
+    with pytest.raises(SystemExit, match="audit_ruler_version"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_matching_pair_is_not_refused(tmp_path) -> None:
+    """⚑ The control that stops this being a gate that cannot pass. Two dumps
+    from ONE ruler must join even though every other stamp field is identical
+    too — a guard that refuses everything is not a guard."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="RULER-AAA", off=-5.0))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_differing_non_identity_key_is_not_refused(tmp_path) -> None:
+    """`rows` and the human-readable `audit_set` PATH legitimately differ; the
+    DIGEST is the provenance value and is deliberately not excluded."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA", n=6))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="RULER-AAA", n=4, off=-5.0))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_differing_audit_set_digest_is_refused(tmp_path) -> None:
+    """Two checkpoints scored against DIFFERENT position sets cannot be paired,
+    and the digest is what says so — a path string cannot."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                           extra={"audit_set_digest": "cafebabe"}))
+    with pytest.raises(SystemExit, match="audit_set_digest"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_stamp_key_added_later_is_guarded_without_editing_this_file(
+    tmp_path,
+) -> None:
+    """⚑ Why the rule is an EXCLUDE set. A version field added to the stamp
+    later must be compared the day it appears; an include list would have to be
+    edited in lockstep with the writer and would fail SILENTLY when it was not."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                           extra={"future_field_nobody_has_written_yet": "v1"}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                           extra={"future_field_nobody_has_written_yet": "v2"}))
+    with pytest.raises(SystemExit, match="future_field_nobody_has_written_yet"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_unstamped_dumps_warn_rather_than_refuse(tmp_path, capsys) -> None:
+    """Dumps predating stamping are legitimately unstamped, and
+    `require_same_ruler` already refuses the encoding mismatch that actually
+    invalidates a join."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl",
+                               [{"fen": "p0", "value": 1.0, "phase": 1}]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl",
+                               [{"fen": "p0", "value": 2.0, "phase": 1}]))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+    assert "no provenance stamp" in capsys.readouterr().out
+
+
+def test_the_stamp_gate_is_WIRED_into_the_command_line_path(
+    tmp_path, monkeypatch,
+) -> None:
+    """⚑ THE MUTANT THAT SURVIVED THE FIRST BATTERY. Every other test in this
+    group calls `require_same_stamp` DIRECTLY, so deleting its call from `main`
+    left them all green — a guard that is correct and never invoked, which is
+    this codebase's signature defect wearing the fix's own clothes.
+
+    This one goes through the real entry point.
+    """
+    from scripts.paired_compare import main
+
+    a = _stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA")
+    b = _stamped_header(tmp_path / "b.jsonl", ruler="RULER-BBB", off=-5.0)
+    monkeypatch.setattr(sys, "argv", ["paired_compare.py", a, b])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "audit_ruler_version" in str(exc.value)
+
+
+def test_the_command_line_path_still_joins_a_matching_pair(
+    tmp_path, capsys, monkeypatch,
+) -> None:
+    """The wiring test's control: `main` must still produce a verdict when the
+    stamps agree, or the gate above would be indistinguishable from a crash."""
+    from scripts.paired_compare import main
+
+    a = _stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA")
+    b = _stamped_header(tmp_path / "b.jsonl", ruler="RULER-AAA", off=-5.0)
+    monkeypatch.setattr(sys, "argv", ["paired_compare.py", a, b])
+    main()
+    assert "paired delta" in capsys.readouterr().out
+
+
+def test_a_stamp_key_only_one_side_declares_is_reported(tmp_path, capsys) -> None:
+    """⚑ Killed mutant M5 (union -> intersection over the two key sets).
+
+    A key present on only one side means the two dumps came from different
+    scorer BUILDS. It is a warning rather than a refusal — the older build
+    simply did not write the field, and refusing would make every stamp
+    addition retroactively unjoinable — but it must be SAID. With an
+    intersection the key is never examined and the operator hears nothing,
+    which is silence standing in for a finding.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                                  extra={"only_on_a": "v1"}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+    out = capsys.readouterr().out
+    assert "only_on_a" in out
+    assert "only one side" in out

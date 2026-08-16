@@ -44,10 +44,31 @@ AUDIT_SET_KEY = "audit_set"
 #: stamp is a derived digest; this one is too.
 AUDIT_SET_DIGEST_KEY = "audit_set_digest"
 
+#: Stamp keys that may legitimately DIFFER between two dumps being compared.
+#: Everything else in a stamp is ruler identity and must match, so this is
+#: expressed as an EXCLUDE set rather than an include list: a version field
+#: added to the stamp later is then guarded automatically, whereas an include
+#: list would silently fail to cover it. Same reasoning as
+#: `scripts/paired_compare.py` skipping on the SENTINEL rather than
+#: special-casing one key.
+#:
+#:   - `STAMP_FORMAT_KEY` is equal by construction on any pair a reader accepts.
+#:   - `ROW_COUNT_KEY` differs whenever two dumps cover different position
+#:     counts, which a paired join handles by intersecting.
+#:   - `AUDIT_SET_KEY` is a human-readable PATH, and this module's own comment on
+#:     `AUDIT_SET_DIGEST_KEY` says why a path is not a provenance value. The
+#:     digest is the field that must agree, and it is deliberately not excluded.
+STAMP_NON_IDENTITY_KEYS: frozenset[str] = frozenset({
+    STAMP_FORMAT_KEY,
+    ROW_COUNT_KEY,
+    AUDIT_SET_KEY,
+})
+
 __all__ = [
     "AUDIT_CACHE_FORMAT",
     "AUDIT_SET_DIGEST_KEY",
     "AUDIT_SET_KEY",
     "ROW_COUNT_KEY",
     "STAMP_FORMAT_KEY",
+    "STAMP_NON_IDENTITY_KEYS",
 ]
