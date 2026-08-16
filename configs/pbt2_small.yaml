@@ -94,7 +94,17 @@ worker_wheel_path: null
 # ⚑ COST, STATED: naming this key here CLOBBERS any `--salvage-seed-pool-dir` CLI value
 # (the live-yaml reload overlays it). If you ever want a salvage-pool restart, blank or
 # delete this line in the SAME action as passing the CLI flag.
-salvage_seed_pool_dir: "/home/josh/projects/chess/data/salvage/pre_search_authority_20260809"
+# ⚑⚑ 2026-08-16: THIS KEY SILENTLY ATE A RESTART. `salvage-restart <pool>` was launched with
+# the CLI flag naming bt4heads_iter100_20260815; the launcher echoed it, and the trial then
+# loaded pre_search_authority_20260809 -- the value below -- exactly as lines 94-96 predict.
+# Symptom chain, for whoever hits this next: the tolerant load reports the 8 bt4heads aux-head
+# params (policy_soft/policy_sf .q/.k) as BOTH shape_skipped AND missing, i.e. randomly
+# re-initialised, because the 08-09 donor predates aux_policy_head_dim: 128 and carries them at
+# 512. If you see those 8 names at a resume, you are on the wrong pool -- check line 439-ish of
+# the trial log (`[trial] salvage warmstart loaded slot=... from <path>`) BEFORE reading any
+# metric. That log line is the only thing that proves which pool actually won.
+# The key is now kept EQUAL to the pool the CLI passes, so precedence cannot decide the run.
+salvage_seed_pool_dir: "/home/josh/projects/chess/data/salvage/bt4heads_iter100_20260815"
 salvage_restore_donor_config: false
 salvage_restore_full_trainer_state: true
 salvage_restore_pid_state: true

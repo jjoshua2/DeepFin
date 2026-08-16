@@ -53349,3 +53349,102 @@ refill with data made under the resumed settings.
 3. `lr=3e-05` MATCHES the resumed checkpoint's warm-start regime — a 3e-5 checkpoint
    restarted at 3e-4 cost **-494 Elo** once [[warm_start_lr_regime_destroys_net]].
 4. GPU idle, no trainer running, resume pool intact.
+
+---
+
+## 2026-08-16 — ⚑⚑ THE EP RESTART LOADED THE WRONG SALVAGE POOL (aborted at boot, zero damage)
+
+**Status: DEVIATION, caught before the first training step. Run stopped, cause fixed,
+relaunch pending. No metric from this boot may be quoted.**
+
+### What happened
+
+`./scripts/train.sh salvage-restart /home/josh/projects/chess/data/salvage/bt4heads_iter100_20260815`
+was launched at 12:30. The launcher echoed the flag verbatim:
+
+```
+Starting training with configs/pbt2_small.yaml (extra: --salvage-seed-pool-dir
+  /home/josh/projects/chess/data/salvage/bt4heads_iter100_20260815 --salvage-restore-pid-state ...)
+```
+
+The trial then loaded a **different pool**:
+
+```
+[trial] salvage warmstart loaded slot=0 of 1 from
+  /home/josh/projects/chess/data/salvage/pre_search_authority_20260809/seeds/slot_000
+```
+
+⇒ **the CLI value was accepted, echoed, and silently overridden** by the live yaml's
+`salvage_seed_pool_dir`, which named the 2026-08-09 pool. This is the codebase's signature
+defect in its purest form, and **the yaml documents it at the exact line** (lines 94-96:
+"naming this key here CLOBBERS any `--salvage-seed-pool-dir` CLI value ... blank or delete
+this line in the SAME action as passing the CLI flag"). The pre-restart checklist I ran
+(schema dry-run, `lr` regime, resume-source integrity, category (a)/(b)/(c) triage) did not
+include "prove the pool argument reaches the loader", so the one check that would have caught
+it was the one not run.
+
+### How it was caught, and the general lesson
+
+NOT by the pool path -- by an **arithmetic impossibility two levels downstream**. The boot
+logged `Dropped donor optimizer state for 8 parameter(s) whose shape changed`, naming
+`policy_soft.q/k` and `policy_sf.q/k` as `(128, 512) <- stale (512, 512)`. Direct inspection
+of the intended pool showed its banked tensors are **(128, 512) for both the weights AND the
+optimizer moments** -- so the file being loaded could not be the file named on the command
+line. Only then did the pool path get read.
+
+⇒ **The discrepancy was visible in a shape, not in a path.** Same shape as the ordinary-
+population coverage of 1.04 and the `reviewDecision` false negative: the field queried was
+populated and truthful, and it was not the field the question was about.
+
+### What the wrong pool would have done, had it not been caught
+
+Three independent harms, none of which announce themselves in a metric:
+
+1. **Randomly re-initialised heads.** The 08-09 donor predates `aux_policy_head_dim: 128`, so
+   the tolerant load reported the 8 aux-head params as BOTH `shape_skipped` AND `missing` --
+   missing means freshly initialised. The run would have trained an Aug-09 trunk with random
+   aux policy heads and called it a resume.
+2. **PID step re-injection, for the THIRD time.** `pre_search_authority_20260809` is the exact
+   pool CLAUDE.md names as re-injecting the +271 Elo search gain: its PID state was calibrated
+   at `gumbel_c_scale` 0.025 and would have been restored into a run using 0.1.
+3. **Six days of training discarded** (bt4heads arm B iters 1-100).
+
+### Blast radius: ZERO to production data. Verified, not assumed.
+
+- No checkpoint written (`find runs/pbt2_small/tune -name checkpoint_* -newermt 12:25` -> empty).
+- No model published to workers.
+- The 817 seeded shards landed in the **new trial's own per-trial replay dir**
+  (`train_trial_c4d17_00000_0_lr=0.0000_2026-08-16_12-30-18/`), not in any other trial's.
+- Teardown reported all 4 workers "recorded NOTHING this teardown" -- normally a warning, here
+  the confirmation that **no selfplay from the mis-booted net entered the replay buffer**.
+- Cost: ~6 minutes wall clock and ~2G of disk in an abandoned trial dir.
+
+### Fix applied
+
+`salvage_seed_pool_dir` is now set **EQUAL to the pool the CLI passes**, rather than blanked.
+Blanking would restore CLI authority but leaves the next operator relying on precedence;
+making the two agree means **precedence cannot decide the run**. A comment block above the key
+records the symptom chain -- specifically that seeing those 8 aux-head names at a resume is the
+fingerprint of a pre-bt4heads donor -- and names the log line that settles it.
+
+### ⚑ ADDED TO THE PRE-RESTART CHECKLIST, PERMANENTLY
+
+**A launch argument is not in effect until a log line names the value it resolved to.**
+Before reading ANY post-restart metric, grep the trial log for
+`[trial] salvage warmstart loaded slot=... from <path>` and confirm the path. The launcher
+echoing the flag proves only that the flag was parsed, never that it won.
+
+### Unchanged by this deviation
+
+The throughput prereg committed in `0f295875c` stands as written -- baseline (262.5s median,
+401 games), thresholds (PASS <=315s AND >=361 games; INVESTIGATE 315-340s; KILL >340s), and
+its rationale (#436 has zero measured target effect, so throughput is the only axis on which
+it can hurt). It is simply **unread**: this boot produced no clean iteration.
+
+The `era_probe_inwindow_path` re-point (task #220) DID take effect and is verified by its own
+documented startup line, which is the model for the rule above:
+
+```
+[probe] inwindow set loaded: path=/home/josh/projects/chess/data/era_probe/inwindow_20260816.npz
+  rows=2048/2048 digest=7cc435c69645e74b planes=175 policy_width=1858
+```
