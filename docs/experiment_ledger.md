@@ -53250,3 +53250,102 @@ checkpoint >= 30 iterations past iter-100. Still ~1.0 ⇒ the July->August step 
 lineage-specific and deployment is clear. ~2.3 with argmax still ~0.96 ⇒ **the ratio arm is
 measuring weight vintage rather than package health**, and the gate needs a fourth revision
 before it can gate anything. **That checkpoint does not exist** — training is down.
+
+## 2026-08-16 — DEPLOY (pre-registered): RESUME production after the 4-day outage, on live code carrying #436. User-authorized.
+
+**PROTOCOL NOTE — this is a RESUME, not an experiment, and the honest framing matters.**
+Production has been DOWN since 2026-08-12. The restart's value is **getting the loop running
+again**, NOT deploying #436 — because #436's measured effect on everything we can measure is
+**zero**:
+
+- `826efa30b`: paired PRE-vs-POST on two separately built worktrees, with a determinism
+  control (bit-identical PRE-vs-PRE) and a **positive control proving the harness can see the
+  change** — **0/4000 rows moved, 0 flips in 4.13M verdicts.**
+- ⚑ And the two nulls are DIFFERENT CLAIMS: `audit_targets`' search rows are a **REAL** null
+  (the path fires 10,938x, 4,190 genuine repetitions found, stacks to depth 25), while
+  `value_regret` and audit row (a) are **STRUCTURALLY BLIND** — every root has an empty
+  hash_stack and `value_regret` runs no search at all. Do not quote the blind legs as
+  evidence of no effect.
+- `_mcts_tree.c` is **byte-identical**; search inherits the fix via `#include`.
+
+⇒ **Do not describe this restart as an EP-fix deploy with an expected quality change.** There
+is no expected quality change. There IS an expected COST.
+
+### Hypothesis and the ONE deciding yardstick — THROUGHPUT, because that is the known risk
+
+`4eaa0c7dd` withdrew this PR's own cost claim in the WORSE direction: the Python-path
+regression was **NOT** fixed. Re-measured paired and interleaved in ONE process on a saturated
+box, alternating BASE/PR with the median of per-round paired ratios:
+
+| ep density | BASE | PR | paired ratio |
+|---|---|---|---|
+| 16.6% | 41,631/s | 25,999/s | **1.59x** |
+| 36.8% | 41,241/s | 20,412/s | **2.12x** |
+| 51.5% | 38,224/s | 19,237/s | **1.94x** |
+
+Whole `encode_position` on `lc0_root_legacy_meta` + `v2_threats`: **1.12x / 1.40x**.
+
+**HYPOTHESIS:** the microbenchmark cost does NOT propagate to a material end-to-end slowdown,
+because encoding is a minority of iteration wall-clock.
+
+**BASELINE, banked BEFORE launch** — `runs/bt4heads_armB/.../progress.csv`, arm B iters
+90-101 (the last clean pre-outage window):
+
+| metric | median | min | max |
+|---|---|---|---|
+| `time_this_iter_s` | **262.5** | 224.7 | 283.9 |
+| `train_time_s` | 103.5 | 89.5 | 110.5 |
+| `selfplay_games` | **401** | 390 | 418 |
+
+**THE COMMAND (runs against the new run's progress.csv after 5 clean iterations):**
+```
+python3 -c "import csv,statistics as st;r=list(csv.DictReader(open(P)))[-5:];\
+print(st.median(float(x['time_this_iter_s']) for x in r),\
+      st.median(float(x['selfplay_games']) for x in r))"
+```
+
+**PRE-COMMITTED THRESHOLDS** (median over the first 5 CLEAN iterations, excluding iteration 1):
+- **PASS:** `time_this_iter_s` <= **315s** (+20% on 262.5) AND `selfplay_games` >= **361** (-10% on 401).
+- **INVESTIGATE:** `time_this_iter_s` in (315, 340]. The encode cost would then be propagating
+  more than the microbenchmark predicts, and the next step is profiling the encoder, not
+  reverting.
+- **KILL / REVERT:** `time_this_iter_s` > **340s** (+30%) sustained over 5 iterations.
+
+⚑ **Iteration 1 is EXCLUDED by construction** — post-restart is not steady state
+[[post_restart_snapshot_is_not_steady_state]], the async holdout eval pays a cold compile, and
+the drain transient biases early rows.
+
+⚑ **NO LEARNING METRIC IS READ IN THIS WINDOW.** Post-restart winrate reads ~+0.110 too high
+from sampling bias [[winrate_spike_restart_sampling_bias]], and `wdl_regret` measures the
+AGENT, not the net. Quality is judged on the normal day-plus cadence, not here.
+
+### What else changes, and what deliberately does not
+
+**ONE construction-only re-point:** `era_probe_inwindow_path`
+`inwindow_20260804.npz` -> `inwindow_20260816.npz` (task #220). It is a DIAGNOSTIC probe, not
+a training target, so it does not violate one-data-change-per-window. It is construction-only
+(`trainable_init._init_era_probes` runs once), so a restart is the ONLY time it can be applied.
+⚑ **This is a ruler change and it invalidates its records**: `probe_gap` becomes incomparable
+with the 08-05-onward series. That is the correct trade — the old in-window leg was built from
+a window this checkpoint no longer sits in.
+[[a_ruler_change_must_invalidate_its_records]]
+
+**Deliberately NOT changed:** the two promoted target knobs stay as-is (task #225 verdict); no
+temperature keys (#180); no merge-guard inversions (#195); no `gate_min_games_per_side` (#188).
+Bundling those would confound the throughput readout, which is the only thing this window can
+decide.
+
+### Revert point
+**`data/salvage/bt4heads_iter100_20260815`** (3.7G, manifest verified) — which is also the
+checkpoint being RESUMED FROM, so the revert point is preserved by construction and no fresh
+`salvage-export` is needed. ⚑ Note a yaml revert is NOT a rollback: the replay window will
+refill with data made under the resumed settings.
+
+### Pre-flight checks RUN before launch (not asserted)
+1. Live tree on `ops/live-20260725`, clean, **0 ahead / 0 behind** origin.
+2. **Schema dry-run on a COPY** — `flatten_run_config_defaults` OK (324 keys), then
+   `TrialConfig.from_dict` OK, `lr=3e-05`. This clears category (a) FATAL-AT-LAUNCH and
+   category (b) trial-kill. ⚑ It says nothing about category (c) silent wrongness.
+3. `lr=3e-05` MATCHES the resumed checkpoint's warm-start regime — a 3e-5 checkpoint
+   restarted at 3e-4 cost **-494 Elo** once [[warm_start_lr_regime_destroys_net]].
+4. GPU idle, no trainer running, resume pool intact.

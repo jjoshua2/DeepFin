@@ -822,7 +822,7 @@ tune:
   # observation that can FAIL: `[probe] era set loaded: path=... rows=... digest=...` on
   # success, `[probe] era: no probe set at <p>` if the build step was skipped.
   era_probe_path: /home/josh/projects/chess/data/era_probe/era_20260804.npz
-  era_probe_inwindow_path: /home/josh/projects/chess/data/era_probe/inwindow_20260804.npz
+  era_probe_inwindow_path: /home/josh/projects/chess/data/era_probe/inwindow_20260816.npz
   era_probe_rows: 2048          # construction-only, like the two paths above
   era_probe_interval: 1         # LIVE-RELOADABLE; <= 0 disables scoring (sets stay loaded,
                                 # columns read nan) -- the throttle for a contended box
