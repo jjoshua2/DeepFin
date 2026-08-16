@@ -8,6 +8,7 @@ import logging
 import re
 import threading
 import time
+from collections.abc import Sequence
 from concurrent.futures import Future
 from typing import Any, cast
 
@@ -41,10 +42,16 @@ class _DelayedStockfishPool(StockfishPool):
     def submit(
         self, fen: str, *, nodes: int | None = None,
         syzygy_path: str | None = None, fresh: bool = False,
+        searchmoves: Sequence[str] | None = None,
     ) -> Future[StockfishResult]:
         del nodes, syzygy_path, fresh
         board = chess.Board(fen)
-        move = next(iter(board.legal_moves), chess.Move.null())
+        # Honour the restriction rather than discarding it: this fake picks the
+        # first legal move, which would mask a caller that lost its searchmoves.
+        if searchmoves:
+            move = chess.Move.from_uci(str(next(iter(searchmoves))))
+        else:
+            move = next(iter(board.legal_moves), chess.Move.null())
         result = StockfishResult(
             bestmove_uci=move.uci(),
             wdl=np.asarray([0.0, 1.0, 0.0], dtype=np.float32),
