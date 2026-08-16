@@ -894,6 +894,88 @@ def test_the_runtime_check_is_silent_when_the_shape_is_right() -> None:
     assert resolve_search_shape("training").shape == "training"
 
 
+def test_an_explicit_volatility_request_survives_the_training_shape() -> None:
+    """REGRESSION (caught in review of this PR, not by me).
+
+    Making the training shape exhaustive made it carry `volatility_q_scale` /
+    `volatility_fpu` / `volatility_anchor` at production's values (0.0 today).
+    `pick_moves_for_boards` applies `gumbel_overrides` AFTER the dedicated
+    volatility arguments, so the shape silently reset an explicit
+    `--volatility-q-scale` back to zero, kept the run on the C path, and would
+    have reported a volatility arena that ran no volatility search -- the exact
+    accepted-then-ignored defect this module exists to stop, reintroduced by the
+    fix for another instance of it.
+
+    ⚑ Asserted on the MERGED dict the search actually receives, not on the flags,
+    because the flags were always correct; it was the precedence that was not.
+    """
+    from scripts.arena_standard import overrides_with_volatility
+
+    side = resolve_search_shape("training")
+    # The shape genuinely carries these -- otherwise this test guards nothing.
+    assert side.gumbel["volatility_q_scale"] == 0.0
+    assert side.gumbel["volatility_fpu"] == 0.0
+
+    merged = overrides_with_volatility(
+        side, {"volatility_q_scale": 0.5, "volatility_fpu": 0.25,
+               "volatility_anchor": 0.07},
+    )
+    assert merged["volatility_q_scale"] == 0.5, "the shape clobbered the request"
+    assert merged["volatility_fpu"] == 0.25
+    assert merged["volatility_anchor"] == 0.07
+    # ...and it does not quietly drop the rest of the shape while doing so.
+    assert merged["target_max_visit_cap"] == side.gumbel["target_max_visit_cap"]
+    assert merged["c_scale"] == side.gumbel["c_scale"]
+
+    # No request => the shape's own values, unchanged.
+    assert overrides_with_volatility(side, None) == side.gumbel
+    assert overrides_with_volatility(side, {}) == side.gumbel
+
+
+def test_volatility_reaches_the_search_through_the_merged_overrides(
+    monkeypatch: Any,
+) -> None:
+    """End of the wire, not the helper: what does the SEARCH receive?
+
+    `overrides_with_volatility` returning the right dict proves nothing if a
+    play loop still passes `side.gumbel` straight down. This drives the real
+    matched_sims loop and reads the config off the search entry point.
+    """
+    seen = _capture_c_search(monkeypatch)
+    captured: list[Any] = []
+
+    real = match_mod.pick_moves_for_boards
+
+    def spy(*args: Any, **kwargs: Any):
+        captured.append(dict(kwargs.get("gumbel_overrides") or {}))
+        return real(*args, **kwargs)
+
+    # The play loop imports it from `selfplay.match` at CALL time, so patching
+    # the module attribute is what the loop will actually pick up.
+    monkeypatch.setattr(match_mod, "pick_moves_for_boards", spy)
+    from scripts import arena_standard as arena_mod
+
+    model = _DummyModel().eval()
+    board = chess.Board()
+    board.push_uci("e2e4")
+    side = _side(gumbel={"c_scale": 0.1, "volatility_q_scale": 0.0})
+    arena_mod.play_paired_games_matched_sims(
+        model, model, [board],
+        device="cpu", rng=np.random.default_rng(0),
+        sims_candidate=2, sims_reference=2,
+        max_plies=2, temperature=0.0, gumbel_add_noise=False,
+        search_candidate=side, search_reference=side,
+        volatility_candidate={"volatility_q_scale": 0.5},
+    )
+
+    assert seen, "the search was never invoked"
+    assert captured, "pick_moves_for_boards was never called"
+    # The CANDIDATE side must carry the request; at least one call has it.
+    assert any(c.get("volatility_q_scale") == 0.5 for c in captured), (
+        f"no call carried the explicit volatility request; saw {captured}"
+    )
+
+
 def test_the_record_shows_the_target_only_knobs_it_ran() -> None:
     """A banked row must be re-readable as to WHICH regime it measured.
 

@@ -429,6 +429,30 @@ def _assert_training_shape_matches_production(side: SideSearch, prod) -> None:
         )
 
 
+def overrides_with_volatility(
+    side: SideSearch, vol: dict[str, float] | None,
+) -> dict[str, float]:
+    """The shape's knobs with an EXPLICIT ``--volatility-*`` request layered ON TOP.
+
+    ⚑ Precedence, and it is not academic. ``pick_moves_for_boards`` builds its
+    ``GumbelConfig`` from the dedicated volatility ARGUMENTS first and applies
+    ``gumbel_overrides`` afterwards via ``dataclasses.replace``, so the override
+    dict WINS. While the training shape carried three knobs that was harmless.
+    The moment it became exhaustive it started carrying
+    ``volatility_q_scale`` / ``volatility_fpu`` / ``volatility_anchor`` at
+    production's values (0.0 today), which would silently reset an explicit
+    ``--volatility-q-scale 0.5`` back to zero, keep the run on the C path, and
+    report a volatility arena that never ran a volatility search.
+
+    That is the accepted-then-ignored defect this file exists to prevent,
+    reintroduced by the fix for a different instance of it. So the two are merged
+    in ONE place, explicit request last, and both play loops call this rather
+    than passing the shape and the flags down separate parameters where only
+    their arrival order decides the winner.
+    """
+    return {**side.gumbel, **(vol or {})}
+
+
 def apply_search_overrides(
     base: SideSearch,
     *,
@@ -914,10 +938,9 @@ def play_paired_games_matched_sims(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
-                gumbel_overrides=side.gumbel,
+                gumbel_overrides=overrides_with_volatility(side, extra),
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
-                **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
 
@@ -1153,10 +1176,9 @@ def play_paired_games_matched_sims_rolling(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
-                gumbel_overrides=side.gumbel,
+                gumbel_overrides=overrides_with_volatility(side, extra),
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
-                **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
         for i in active:

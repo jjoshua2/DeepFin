@@ -123,6 +123,19 @@ def main() -> None:
     moved = sum(x != y for x, y in zip(act_a, act_sharp, strict=True))
     print(f"INSTRUMENT CHECK  c_scale 0.1->0.9 moved {moved}/{len(boards)} actions")
 
+    # ⚑ All THREE arms are ENFORCED, not just printed. The conclusion below is
+    # the evidence the ledger cites for "the banked rows are mislabelled, not
+    # invalidated", so the script must refuse to print it whenever any arm fails
+    # -- above all the NEGATIVE control. A probe that prints "never affects the
+    # played move" while its own measurement says otherwise would launder a
+    # regression into a citation.
+    if differing != 0:
+        raise SystemExit(
+            f"NEGATIVE CONTROL FAILED: {differing}/{len(boards)} played actions "
+            "changed. The two knobs are NOT target-only on this code, so an "
+            "arena is NOT blind to them and the ledger's claim that the "
+            "2026-08-10..15 rows keep their Elo does NOT hold. Re-derive it."
+        )
     if moved == 0:
         raise SystemExit("the probe cannot see ANY action change; it proves nothing")
     if int((l1 > 1e-6).sum()) == 0:
