@@ -53786,3 +53786,78 @@ Independent review of 4 PRs: **1 APPROVE-WITH-CHANGES, 3 REQUEST-CHANGES, 5 bloc
 Every one of the four PRs was authored to FIX an instance of "a value accepted and then silently
 ignored", and every one shipped a fresh instance of the same class. The authors' suites and both
 lint gates were green in all four cases.
+
+---
+
+## 2026-08-16 — VERDICT, EP fix (#436) throughput: gate says KILL, the loop says KEEP. **KEEPING.**
+
+**Both readouts below were specified BEFORE either was computed** — the pre-committed rule in
+`0f295875c`, the corrected ingest-invariant units in `ed49607a1` (written when only iterations
+1-3 existed). Nothing here is a post-hoc choice of window.
+
+### (1) The pre-committed rule, applied exactly as written — **KILL/REVERT**
+
+Median over the first 5 CLEAN iterations excluding iteration 1 (iters 2-6):
+
+| | measured | threshold | verdict |
+|---|---|---|---|
+| `time_this_iter_s` | **738.7s** | PASS <=315, INVESTIGATE <=340 | **KILL/REVERT** |
+| `selfplay_games` | **381** | PASS >= 361 | pass |
+
+**Recorded as KILL. "Clean" was NOT redefined to exclude the slow iterations** — that would be
+the optional-stopping failure this ledger exists to prevent.
+
+### (2) The corrected readout, at steady state (iters 9-13, backlog drained)
+
+The full decay, iteration by iteration:
+
+| iter | time_s | steps | ms/step | stale_games |
+|---|---|---|---|---|
+| 1 | 2212.6 | 52 | 18851 *(compile)* | 0 |
+| 2 | 1160.5 | 378 | 2837 | 1546 |
+| 3 | 1149.1 | 447 | 2160 | 1795 |
+| 4 | 738.7 | 371 | 1492 | 1474 |
+| 5 | 489.8 | 249 | 1343 | 817 |
+| 6 | 339.4 | 132 | 1263 | 348 |
+| 8 | 207.0 | 77 | 1217 | 20 |
+| 10 | 261.3 | 86 | 1177 | 1 |
+| 13 | 247.7 | 92 | 1168 | 30 |
+
+Steady state (iters 9-13) vs the armB baseline (iters 90-101):
+
+| | live | baseline | delta |
+|---|---|---|---|
+| **`time_this_iter_s`** | **261.3** | 262.5 | **−0.5%** |
+| **`ingest_ms`** | **142,006** | 141,706 | **+0.2%** |
+| `selfplay_games` | 388 | 401 | −3.2% |
+| `replay_positions_ingested` | 10,601 | 11,648 | −9.0% |
+| `ms/step` | 1163 | 1053 | +10.4% |
+| `distributed_stale_games` | 33 | 62 | drained |
+
+⇒ **Iteration time is AT baseline (−0.5%) and the ingest/selfplay path — the ONLY path #436
+touches — is FLAT at +0.2%.** The KILL fired entirely on a restart transient: a stale backlog
+(`distributed_stale_games` peaking at 1795 vs a baseline of 62) inflating ingest, which inflates
+the step budget through views-targeting, which inflates iteration time.
+
+**DECISION: KEEP #436.** Grounds, in order of strength: (a) its measured cost is in
+`encode_position`, called by selfplay workers and never by the trainer, and `ingest_ms` is flat;
+(b) the regression was in `train_ms`, which #436 cannot reach; (c) it decayed to baseline with
+no intervention — a real cost does not decay.
+
+**Residual, stated not buried:** `ms/step` sits **+10.4%** above baseline at steady state. Not
+attributable to #436 by the mechanism above, and confounded with a −9.0% ingest volume (86-99
+steps vs a baseline 98.5, so a different batching regime). **Left OPEN as task #238** rather
+than waved through; it is small, it is real, and it is not what this gate was about.
+
+### ⚑⚑ THE GATE WAS MIS-SPECIFIED, AND THAT IS THE DURABLE FINDING
+
+**It fixed a threshold on iteration TIME while the step budget is explicitly a FUNCTION of
+ingest volume** (`train_views_per_position`) — a fact stated outright in CLAUDE.md. So the
+metric cannot separate "the loop got slower" from "the loop did more work", and it fired on the
+latter. The measurement I should have pre-committed is the one I only wrote down mid-run:
+**per-unit-work (`ms/step`) and per-path (`ingest_ms`), never per-iteration.**
+
+⇒ **A throughput gate on this loop MUST be per-unit-work.** Same family as
+"compute the instrument's resolution before setting the threshold": the ruler was chosen before
+checking what it co-varies with. Recording it against myself, in the same session, judged by the
+rule I wrote and not by the answer I wanted.
