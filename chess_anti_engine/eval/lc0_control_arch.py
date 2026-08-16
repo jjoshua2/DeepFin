@@ -121,6 +121,15 @@ LIVE_ARCH_PIN: dict[str, Any] = {
 
 LIVE_CONFIG_ENV = "CHESS_LIVE_PRODUCTION_CONFIG"
 
+# ⚑ The sentinel a provenance string carries when the premise was judged against
+# a COMMITTED PIN rather than the live file. It is a shared constant rather than
+# a literal repeated at each site because `lc0_control_train` MATCHES ON IT to
+# raise a validity problem (review F2): a second copy in the consumer would stop
+# matching the moment either producer reworded its message, and the check would
+# go quiet instead of going red — the exact "gate that cannot fail" shape this
+# rig keeps rediscovering. One definition, two producers, one consumer.
+LIVE_FILE_UNREAD = "THE LIVE FILE WAS NOT READ"
+
 
 class ControlArchitectureDrift(RuntimeError):
     """The control would train a network production is not running."""
@@ -202,7 +211,7 @@ def _reference_model_section(
             f"{origin} ({pinned.get('recorded', '<undated>')}, "
             f"{pinned.get('live_branch', '<no branch>')} "
             f"{pinned.get('live_commit', '<no commit>')}) — no live config was "
-            "given, so THE LIVE FILE WAS NOT READ"
+            f"given, so {LIVE_FILE_UNREAD}"
         )
     from chess_anti_engine.utils import load_yaml_file
 

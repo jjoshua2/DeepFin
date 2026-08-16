@@ -11,10 +11,14 @@ file's header for the full measured diff).
 
 lc0 shards carry no `sf_wdl`. `train/losses.py` falls the SF component of the
 value blend back to the RAW ONE-HOT GAME OUTCOME for any row without one — no
-error, no warning, no metric named for it. At the production `sf_wdl_frac:
-0.50` this arm would silently train 0.80 of its value target on the deep game
-outcome instead of the 0.30 on paper, and every number it produced would be
-about an experiment nobody chose.
+error, no warning, no metric named for it. ⚑ The worked example that used to sit
+here quoted `sf_wdl_frac: 0.50` / `0.80` / `0.30` off **`main`'s** copy of
+`configs/pbt2_small.yaml`, which is stale by construction — the live branch is
+the only writer. Re-derived against the LIVE file: production runs
+`sf_wdl_frac 0.69 + search_wdl_frac 0.31 = 1.00`, so production's intended raw
+game-outcome share is **0.00**, and on a corpus with no `sf_wdl` column at all
+this arm would train **1.00** of its value target on the deep game outcome.
+Every number it produced would be about an experiment nobody chose.
 
 Five checks, at four different levels, because each can be satisfied by a run
 that still does the wrong thing:
@@ -27,7 +31,10 @@ that still does the wrong thing:
   0c. LAUNCH, trainer. `assert_control_matches_live_trainer` — the same
      question about the OTHER half of "our exact net and trainer". Until
      2026-08-16 only the net half was checked and the recipe was `main`'s,
-     thirteen kwargs behind live. No downgrade flag; see `preflight_trainer`.
+     thirteen kwargs behind live. ⚑ `--allow-leak` DOES downgrade this one to a
+     banner (`preflight_trainer(..., allow_leak=...)`); the line that used to sit
+     here claimed there was no downgrade flag, which overstated the guarantee to
+     exactly the operator most likely to rely on it.
   1. LAUNCH, config-level. `assert_pid_cannot_reassert_sf_wdl` — an override
      the difficulty controller can undo is not an override.
   2. LAUNCH, corpus-level. The converter's own `run_config_problems` is REUSED
@@ -50,7 +57,7 @@ that still does the wrong thing:
 
 Check 3 fails loudly (non-zero exit, no checkpoint written).
 
-⚑ `--allow-leak` DOWNGRADES ONLY THE LAUNCH GUARDS (1 and 2). It used to skip
+⚑ `--allow-leak` DOWNGRADES ONLY THE LAUNCH GUARDS (0c, 1 and 2). It used to skip
 check 3 as well, which made check 3 — the headline of this script —
 UNREACHABLE: guard 1 refuses every `sf_wdl_frac > 0` config outright, nothing
 downstream can raise the frac, and the only way past guard 1 also skipped the
@@ -96,6 +103,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.eval.lc0_control_arch import (
+    LIVE_FILE_UNREAD as _LIVE_FILE_UNREAD,
     ControlArchitectureDrift,
     assert_control_matches_live_architecture,
     live_production_config_path,
@@ -193,7 +201,9 @@ class _LossCapture:
   # ⚑ EFFECTIVE, not `sf_wdl_rows`. `sf_wdl_rows` is the LABEL count: it
   # ignores the `sf_search_dampen_*` shortfall and reads non-zero on a batch
   # with no `sf_wdl` column at all. And the search count is not optional — it
-  # is 0.70 of this arm's value target and had no reader until review F1.
+  # is 1.00 of this arm's value target (the shipped control config runs
+  # search_wdl_frac 1.0; the 0.70 this line quoted until 2026-08-16 came off
+  # main's stale yaml) and had no reader until review F1.
             sf_effective_rows=float(result["sf_wdl_effective_rows"].detach().item()),
             search_effective_rows=float(
                 result["search_wdl_effective_rows"].detach().item(),
@@ -368,7 +378,8 @@ def preflight(
   # gate needs answered is "do ALL these rows carry a label", so measure it.
   #
   # ⚑⚑ AND BOTH LABELS, not just the SF one (review F1). `search_wdl_frac` is
-  # 0.70 of this arm's value target and `compute_loss` falls the search
+  # 1.00 of this arm's value target (search_wdl_frac 1.0 as shipped; the 0.70
+  # here was main's stale number) and `compute_loss` falls the search
   # component back to the raw one-hot on an unlabelled row exactly as it falls
   # the SF component back. Measuring one and assuming the other is how the
   # larger term went unchecked.
@@ -698,6 +709,20 @@ def main(argv: list[str] | None = None) -> int:
              f"--steps {int(args.steps)} does not exceed warmup_steps "
              f"{int(kwargs['warmup_steps'])}: the LR never reached the base "
              "value, so no slope from this run describes the trainer"),
+  # ⚑ REVIEW F2. Judging the arm's WHOLE PREMISE — "production's net and
+  # production's trainer" — against a committed pin is strictly weaker
+  # evidence than judging it against the live file, because the pin is a
+  # snapshot and `configs/pbt2_small.yaml` is written only on the live branch.
+  # The tests that catch a stale pin SKIP when no live file is named, and that
+  # is correct for CI (making CI read an absolute host path was rejected as
+  # review F6). So the check has to live HERE, in the run artifact: the same
+  # rule the receipt already gets one entry up, for the same reason.
+            (_LIVE_FILE_UNREAD in arch_provenance
+             or _LIVE_FILE_UNREAD in trainer_provenance,
+             "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or "
+             "--live-config omitted): the architecture and/or trainer premise "
+             "was judged against a COMMITTED PIN, which cannot detect that the "
+             "live file has moved since the pin was recorded"),
         ) if flag
     ]
     summary = {
@@ -707,6 +732,15 @@ def main(argv: list[str] | None = None) -> int:
         "trainable_params": params,
         "architecture_judged_against": arch_provenance,
         "trainer_judged_against": trainer_provenance,
+  # ⚑ REVIEW F6. Guard 0c certifies `kwargs` against the live trainer recipe,
+  # and THEN the driver overwrites these two from the CLI. Both are in
+  # LIVE_TRAINER_PIN ("cuda" / True), so a run can be certified and then execute
+  # a different recipe with nothing in the artifact saying so. `--no-compile` is
+  # plausibly objective-neutral, but "plausibly neutral" is an argument, not a
+  # record: a reader needs the REALIZED values to check it. Recorded rather than
+  # refused, because the CPU/no-compile path is how every plumbing smoke runs.
+        "realized_after_guard": {"device": kwargs["device"],
+                                 "use_compile": kwargs["use_compile"]},
         "valid_control": not validity_problems,
         "validity_problems": validity_problems,
   # ⚑ REVIEW F5 — CORPUS IDENTITY. `--shards` was a CLI argument that left no

@@ -31,10 +31,16 @@ instance of it. Both halves are measured now, and
 ``tests/test_value_blend_guard.py`` drives the search-side state.
 
 lc0-derived shards (``scripts/lc0_data_to_rows.py``) carry no ``sf_wdl`` at
-all, so EVERY row takes that branch. At the production
-``sf_wdl_frac: 0.50`` / ``search_wdl_frac: 0.20`` the intended 0.30 outcome
-share becomes 0.80 — a different experiment from the one on paper, reached
-without a single line of output.
+all, so EVERY row takes that branch. ⚑ This example quoted
+``sf_wdl_frac: 0.50`` / ``search_wdl_frac: 0.20`` / an intended 0.30 outcome
+share until 2026-08-16. All three came off **``main``'s** copy of
+``configs/pbt2_small.yaml``, which is stale by construction — only the live
+branch writes that file. Re-derived against the LIVE file: production runs
+``sf_wdl_frac: 0.69`` / ``search_wdl_frac: 0.31``, summing to 1.00, so the
+intended outcome share is **0.00** and on an unlabelled corpus it becomes
+**1.00** — a different experiment from the one on paper, reached without a
+single line of output. (The stale numbers sat 170 lines above the
+``PRODUCTION_GAME_FRAC`` comment that explains at length where they came from.)
 
 The mitigation ``sf_wdl_frac: 0.0`` already lives in the converter's manifest.
 A manifest is documentation. This module is the check, and it is designed
@@ -123,7 +129,9 @@ class ValueBlendReadout:
         """Value weight that fell from the SEARCH component onto the outcome.
 
         ⚑ THE HALF THAT HAD NO INSTRUMENT UNTIL 2026-08-16, and the LARGER one
-        for this arm: the lc0 control puts 0.70 of its value target here. PR
+        for this arm: the lc0 control puts 1.00 of its value target here (the
+        shipped config runs ``search_wdl_frac: 1.0``; the 0.70 this line quoted
+        until 2026-08-16 was ``main``'s stale number). PR
         #438's review reproduced, through the real ``compute_loss``, a target
         that was 100% raw game outcome while every guard read clean, because
         the readout only ever looked at the SF side.

@@ -34,6 +34,7 @@ from chess_anti_engine.replay.shard import (
     save_local_shard_arrays,
 )
 from chess_anti_engine.train.value_blend_guard import (
+    CategoricalRebuildReadout,
     ValueBlendMisconfigured,
     value_blend_readout,
 )
@@ -442,6 +443,44 @@ def test_the_realized_guard_is_judged_on_the_worst_step_not_the_first() -> None:
     assert capture.worst.leaked_to_outcome == pytest.approx(0.5)
 
 
+def test_the_categorical_guard_is_judged_on_the_worst_step_not_the_first() -> None:
+    """⚑ The MIRROR of the test above, and it was missing until review F1.
+
+    ``worst`` had a purpose-built test; its sibling ``worst_categorical`` had
+    none, so the mutant ``categorical_readouts[0]`` survived the whole suite.
+    That is the "fix one axis, leave its sibling" shape — here inside the very
+    commit that named it.
+
+    The scenario is reachable with no code change: ``stage_shards`` symlinks N
+    converted directories into one pool, so a MIXED-VINTAGE corpus is the normal
+    case. Early batches draw from today's rows (no ``categorical_target`` column
+    at all, so the rebuild is inert), and a later batch draws from a shard that
+    carries the column with no ``sf_wdl`` — at which point the whole rebuilt
+    categorical target is the raw one-hot game outcome. Judged on the first
+    readout that reads 0.0 and the guard passes; judged on the worst it is 1.0
+    and the run is refused with no checkpoint written.
+    """
+    capture = lc0_control_train._LossCapture(
+        rebuild_categorical=True, categorical_params=None,
+    )
+    inert = CategoricalRebuildReadout(
+        rebuild_enabled=True, blend_frac=0.69, search_blend_frac=0.0,
+        target_present=False, sf_labelled_frac=0.0, search_labelled_frac=0.0,
+        batch_rows=512.0,
+    )
+    leaking = CategoricalRebuildReadout(
+        rebuild_enabled=True, blend_frac=0.69, search_blend_frac=0.0,
+        target_present=True, sf_labelled_frac=0.0, search_labelled_frac=0.0,
+        batch_rows=512.0,
+    )
+  # The premise of the test, asserted rather than assumed: the first readout
+  # really is the benign one, so picking [0] really would report a clean run.
+    assert inert.outcome_borne_frac == pytest.approx(0.0)
+    capture.categorical_readouts = [inert, leaking]
+    assert capture.worst_categorical is leaking
+    assert capture.worst_categorical.outcome_borne_frac == pytest.approx(1.0)
+
+
 def test_the_capture_records_the_kwargs_compute_loss_was_called_with() -> None:
     """A configured value is not an applied value — this is the applied one."""
     capture = lc0_control_train._LossCapture(
@@ -741,6 +780,56 @@ def test_a_run_without_a_purity_receipt_is_not_a_valid_control(
     assert summary["valid_control"] is False
     assert any("purity" in p for p in summary["validity_problems"])
     assert summary["purity_receipt"] is None
+
+
+def test_a_run_judged_only_against_the_pins_is_not_a_valid_control(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ REVIEW F2. The artifact already SAID the live file was not read, in the
+    provenance strings — and recorded no validity problem for it, so a full arm
+    run with the env var unset could write `valid_control: true` while BOTH
+    premise axes were judged against committed snapshots.
+
+    That is strictly weaker evidence, for the same reason the receipt is: a pin
+    cannot detect that the live file moved after it was recorded. The freshness
+    tests that WOULD catch it skip when no live file is named, and making CI read
+    an absolute host path was rejected — so the run artifact is the only place
+    this can live.
+    """
+    monkeypatch.delenv(lc0_control_arch.LIVE_CONFIG_ENV, raising=False)
+    shards = _write_shards(tmp_path / "rows", list(range(8)))
+    out = tmp_path / "pin_only"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+    ]) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+  # The premise, asserted rather than assumed: the provenance really does carry
+  # the sentinel, so this test is about the MISSING VERDICT and not about a
+  # string that never appears.
+    assert lc0_control_arch.LIVE_FILE_UNREAD in summary["trainer_judged_against"]
+    assert any("COMMITTED PIN" in p for p in summary["validity_problems"]), (
+        "a run judged only against the pins must say so in validity_problems"
+    )
+
+
+def test_the_realized_device_and_compile_survive_into_the_artifact(
+    tmp_path: Path,
+) -> None:
+    """⚑ REVIEW F6. Guard 0c certifies `kwargs` against the live recipe and the
+    driver THEN overwrites `device` and `use_compile` from the CLI. Both are in
+    the pin ("cuda" / True), so without this the artifact gives a reader no way
+    to tell which recipe actually ran."""
+    shards = _write_shards(tmp_path / "rows", list(range(8)))
+    out = tmp_path / "realized"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+    ]) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["realized_after_guard"] == {"device": "cpu", "use_compile": False}
 
 
 def test_purity_exits_zero_on_a_genuinely_disjoint_split(tmp_path: Path) -> None:

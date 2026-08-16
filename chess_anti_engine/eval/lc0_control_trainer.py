@@ -66,6 +66,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.eval.lc0_control_arch import LIVE_FILE_UNREAD
 from chess_anti_engine.train.trainer import trainer_kwargs_from_config
 
 # ── the recorded live trainer ────────────────────────────────────────────────
@@ -271,7 +272,7 @@ def _reference_signature(
             f"{origin} ({pinned.get('recorded', '<undated>')}, "
             f"{pinned.get('live_branch', '<no branch>')} "
             f"{pinned.get('live_commit', '<no commit>')}) — no live config was "
-            "given, so THE LIVE FILE WAS NOT READ"
+            f"given, so {LIVE_FILE_UNREAD}"
         )
     from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
