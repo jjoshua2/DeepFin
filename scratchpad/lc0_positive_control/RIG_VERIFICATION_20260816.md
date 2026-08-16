@@ -2,7 +2,8 @@
 
 **Status: PLUMBING ONLY. The arm was NOT run and no conclusion about the RL loop is
 drawn or licensed here.** Everything below is a property of the apparatus, measured
-at smoke scale. The prereg is `PREREG_DRAFT.md` in this directory; it is unchanged.
+at smoke scale. The prereg is `docs/lc0_positive_control_prereg.md` (committed 2026-08-16;
+until then it was an untracked `PREREG_DRAFT.md` in this directory — review F2a).
 
 Companion to that prereg, which requires four guards to pass before its primary
 readout may be read. Three of them are apparatus questions and are answered here.
@@ -192,15 +193,32 @@ Computed on exactly the 100,000 frozen held-out rows, not on the pool:
 | | |
 |---|---|
 | mean `n_legal` | 27.6351 |
-| **`E[1/n_legal]` — CHANCE TOP-1** | **0.064577** |
+| **`E[1/n_legal]` — the UNIFORM-MOVER floor** | **0.064577** |
 | `1/E[n_legal]` — WRONG (Jensen) | 0.036186 |
 | ratio | **1.7846×** |
 
-⇒ quoting `1/E[n]` would put the negative control's floor **44% below its own floor**.
+⇒ quoting `1/E[n]` would put a uniform mover's floor **44% below its own floor**.
 
-**Random-init floor (prereg guard 2)**, same 100,000 rows, untrained net:
-**0.062050**. That sits at the chance level (0.25 pp below it), so the evaluator is
-not manufacturing agreement.
+⚑⚑ **CORRECTION (2026-08-16, PR #438 review F2b). NEITHER NEGATIVE CONTROL IS JUDGED
+AGAINST THIS NUMBER, AND THIS SECTION USED TO SAY THEY WERE.** `E[1/n_legal]` is the
+floor for a UNIFORM RANDOM MOVER. Neither control produces one:
+
+* **Guard 1 (shuffled targets)** scores each prediction against another row's REAL
+  target, so its expectation is the marginal collision rate `Σ_m p_pred(m)·p_tgt(m)`
+  — measured **0.003283** on 100,000 real converted rows against an `E[1/n_legal]` of
+  0.063622, i.e. **19× apart**. A correctly-behaving control could not have hit the
+  band it was being judged against. The floor is now computed from the scored run
+  itself and gated; see prereg AMENDMENT 2.
+* **Guard 2 (random init)** is a fixed arbitrary function over a highly non-uniform
+  argmax distribution and is NOT expected to sit at any particular point. The
+  sentence this correction replaces — "**0.062050** … sits at the chance level (0.25
+  pp below it), so the evaluator is not manufacturing agreement" — is exactly the
+  argument `scripts/lc0_control_eval.py`'s docstring was written to refute, and it is
+  withdrawn. Four unseeded draws of the same command spanned 2.18 pp; the gate is a
+  SEEDED BAND, and **that band is not measured yet** (it needs a trained checkpoint).
+
+The random-init measurement itself stands as a number — **0.062050 on 100,000 rows,
+unseeded** — it is the INFERENCE from it that was wrong.
 
 ---
 
@@ -523,3 +541,71 @@ verified apparatus, not the artifact the arm will read.
   `valid_control: false` into its `summary.json`.
 * **`search_wdl_frac: 0.70` is a judgement call**, not a measured optimum. It holds
   `game_frac` at production's 0.30; lc0's own recipe would be 0.50.
+
+---
+
+## 7. Second-review round (2026-08-16, PR #438 F1–F11) — what changed in the rig
+
+Fixed by a third party (neither the author of the rig nor the reviewer who filed
+F1–F11). Everything here is a property of the apparatus; **no arm was run**.
+
+### 7.1 The outcome-borne share now measures BOTH components (F1, F10)
+
+`compute_loss` falls the SEARCH component back to the raw one-hot exactly as it falls
+the SF component back, and it returned no search-side count at all — so
+`outcome_borne_frac` could report **0.3000 on a value target that was 100% raw game
+outcome**, with all three guards passing. Reproduced through the real `compute_loss`
+and now pinned by `tests/test_value_blend_guard.py`.
+
+Two new `compute_loss` scalars, `sf_wdl_effective_rows` / `search_wdl_effective_rows`,
+taken off the blend site itself. They are the EFFECTIVE mass, not the label count,
+which also closes F10: `sf_effective = sf_available * keep`, so the
+`sf_search_dampen_*` shortfall lands on the one-hot too, and a count read off
+`has_sf_wdl.sum()` agreed with the realized one only because both knobs are 0.0 today.
+The columns read 0 when the label COLUMN is absent, where a mask sum would not.
+
+The corpus preflight measures `has_search_wdl` coverage per directory alongside
+`has_sf_wdl`, and `run_config_problems` takes `shards_have_search_wdl` as a REQUIRED
+argument — the natural default (`True`) is the bug.
+
+⚑ **Nothing produced before this changes.** `has_search_wdl` reads **10,870/10,870 =
+1.000000** on a real production selfplay sample, and 204,800/204,800 on the converted
+lc0 hour the reviewer measured. The metric was wrong; no number was.
+
+### 7.2 The negative control can now pass and fail (F2b) — see prereg AMENDMENT 2
+
+Guard 1 was judged against `E[1/n_legal]` and converges to `Σ_m p_pred(m)·p_tgt(m)` —
+19× apart on real rows. The floor is now computed from the scored run itself,
+banked in the score `.npz`, and gated at 5σ. Both directions are tested, and the
+brute-force check averages 200 real permutations against the derived expectation
+rather than restating the formula.
+
+### 7.3 The pin gates something (F4)
+
+`assert_control_matches_live_architecture(pin=…)` read only the pin's parameter count
+and took the reference `model:` section from the module global — the signature defect
+inside the module written to close an instance of it. `pin` is honoured; `model=` is
+now passed by the driver AFTER `build_model` (guard 0b), which is the only check that
+can see this tree's code building a different net from the same `model:` keys. The env
+var is resolved at the CALL SITE, so the library function's verdict no longer depends
+on the caller's shell (F6), and an empty reference `model:` section is refused rather
+than agreed with (F7).
+
+### 7.4 Corpus identity (F5)
+
+`purity --receipt` banks the frozen sha256 and the train directories actually scanned;
+`lc0_control_train --purity-receipt` refuses to launch on a corpus the receipt does not
+cover, and `summary.json` records the resolved shard dirs, their per-label coverage,
+the receipt, and a `validity_problems` list naming EVERY reason a run is not a valid
+control. A run without a receipt is recorded as `valid_control: false`.
+
+### 7.5 Still not verified (unverified ≠ passed)
+
+* **No arm was run**, and it still cannot be until bt4heads reaches `main`.
+* **The guard-2 band is still missing** — it needs a trained checkpoint.
+* **`--shuffle-targets` has still never been run against a trained net.** Its floor is
+  unit-tested against a brute-force permutation average; its behaviour on a real model
+  is not.
+* **`torch.compile` is still unexercised.**
+* The `has_search_wdl` coverage above is a 10,870-row sample of one production day,
+  not the whole replay window.

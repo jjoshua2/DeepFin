@@ -47,6 +47,7 @@ from scripts.lc0_data_to_rows import (
     repair_en_passant,
     run_config_problems,
     shard_dir_has_sf_wdl,
+    shard_dir_search_wdl_coverage,
     _wdl_from_q_d,
 )
 
@@ -860,14 +861,18 @@ def test_run_config_gate_refuses_the_production_value_blend_on_sf_less_shards() 
     share onto the raw game outcome when `has_sf_wdl` is 0, so this is the
     difference between a positive control and a value-collapse run."""
     production_like: dict[str, object] = {"sf_wdl_frac": 0.50, "sf_wdl_frac_floor": 0.45, "search_wdl_frac": 0.20}
-    problems = run_config_problems(production_like, shards_have_sf_wdl=False)
+    problems = run_config_problems(
+        production_like, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    )
     assert len(problems) == 2
     assert all("set sf_wdl_frac" in p or "set sf_wdl_frac_floor" in p for p in problems)
 
 
 def test_run_config_gate_accepts_the_prescribed_override() -> None:
     prescribed: dict[str, object] = {"sf_wdl_frac": 0.0, "sf_wdl_frac_floor": 0.0, "search_wdl_frac": 0.50}
-    assert run_config_problems(prescribed, shards_have_sf_wdl=False) == []
+    assert run_config_problems(
+        prescribed, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    ) == []
 
 
 def test_run_config_gate_refuses_a_target_with_nothing_but_the_outcome() -> None:
@@ -877,13 +882,17 @@ def test_run_config_gate_refuses_a_target_with_nothing_but_the_outcome() -> None
     collapsed: dict[str, object] = {
         "sf_wdl_frac": 0.0, "sf_wdl_frac_floor": 0.0, "search_wdl_frac": 0.0,
     }
-    problems = run_config_problems(collapsed, shards_have_sf_wdl=False)
+    problems = run_config_problems(
+        collapsed, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    )
     assert any("collapses onto the raw game outcome" in p for p in problems)
   # ⚑ AND THE SAME COLLAPSE WITH SF LABELS PRESENT. The gate used to
   # short-circuit on `shards_have_sf_wdl` and return [] before reaching this,
   # so one SF-labelled shard in a mixed --shards list waved through a config
   # that trains 100% of the value target on the raw outcome (PR #438 review F6).
-    still_collapsed = run_config_problems(collapsed, shards_have_sf_wdl=True)
+    still_collapsed = run_config_problems(
+        collapsed, shards_have_sf_wdl=True, shards_have_search_wdl=True,
+    )
     assert any("collapses onto the raw game outcome" in p for p in still_collapsed)
 
 
@@ -891,7 +900,71 @@ def test_run_config_gate_stays_out_of_the_way_when_shards_DO_carry_sf() -> None:
     """Negative control: on our own selfplay shards the production blend is
     correct and this must not fire."""
     production_like: dict[str, object] = {"sf_wdl_frac": 0.50, "sf_wdl_frac_floor": 0.45, "search_wdl_frac": 0.20}
-    assert run_config_problems(production_like, shards_have_sf_wdl=True) == []
+    assert run_config_problems(
+        production_like, shards_have_sf_wdl=True, shards_have_search_wdl=True,
+    ) == []
+
+
+def test_run_config_gate_refuses_a_search_share_the_shards_do_not_carry() -> None:
+    """⚑⚑ REVIEW F1, AT THE CONFIG GATE — the LARGER term.
+
+    ``compute_loss`` falls the SEARCH component back to the raw one-hot exactly
+    the way it falls the SF component back, and the lc0 control puts 0.70 of
+    its value target there. The gate measured only the SF side, so the
+    prescribed override — ``sf_wdl_frac: 0.0``, the share handed to search —
+    read CLEAN on a corpus with no ``has_search_wdl`` while training almost the
+    whole value head on the game result.
+    """
+    prescribed: dict[str, object] = {
+        "sf_wdl_frac": 0.0, "sf_wdl_frac_floor": 0.0, "search_wdl_frac": 0.70,
+    }
+    problems = run_config_problems(
+        prescribed, shards_have_sf_wdl=False, shards_have_search_wdl=False,
+    )
+    assert any("NO search value label" in p for p in problems)
+  # ...and the collapse line fires too: with neither label surviving, nothing
+  # but the outcome carries value weight.
+    assert any("collapses onto the raw game outcome" in p for p in problems)
+  # The negative control: the SAME config on shards that DO carry the label.
+    assert run_config_problems(
+        prescribed, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    ) == []
+
+
+def test_search_wdl_coverage_is_a_fraction_not_a_boolean(tmp_path: Path) -> None:
+    """A partially-labelled corpus must be measurable as partial.
+
+    ⚑ Same shape as the SF-side coverage function, and for the same reason:
+    ``any()`` over a mixed corpus reports the label present from one row in
+    millions, and the rest of the rows train their search share on the outcome.
+    """
+    from chess_anti_engine.replay.sample import ReplaySample
+    from chess_anti_engine.replay.shard import (
+        ShardMeta, local_shard_path, samples_to_arrays, save_local_shard_arrays,
+    )
+
+    def _row(*, with_search: bool) -> ReplaySample:
+        policy = np.zeros(1858, dtype=np.float32)
+        policy[0] = 1.0
+        sample = ReplaySample(
+            x=np.zeros((175, 8, 8), dtype=np.float32),
+            policy_target=policy,
+            wdl_target=0,
+            legal_mask=np.ones(1858, dtype=np.uint8),
+            has_policy=True,
+        )
+        if with_search:
+            sample.search_wdl = np.array([0.5, 0.3, 0.2], dtype=np.float32)
+        return sample
+
+    save_local_shard_arrays(
+        local_shard_path(tmp_path, 0),
+        arrs=samples_to_arrays(
+            [_row(with_search=True)] * 3 + [_row(with_search=False)] * 7,
+        ),
+        meta=ShardMeta(policy_encoding="lc0_1858", policy_size=1858),
+    )
+    assert shard_dir_search_wdl_coverage(tmp_path) == (3, 10)
 
 
 def test_the_rows_this_converter_writes_really_carry_no_sf_label(tmp_path: Path) -> None:

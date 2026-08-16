@@ -6,11 +6,13 @@ Three subcommands, in the order they must be run:
   freeze  --shards <the 6 newest hourly dirs> --out <frozen.json>
           Builds the explicit row-id list and prints its sha256.
 
-  purity  --frozen <frozen.json> --train-shards <train dirs>
+  purity  --frozen <frozen.json> --train-shards <train dirs> [--receipt <f>]
           Asserts ZERO EXPOSURE — no held-out INPUT (`x` alone) occurs
           anywhere in train — and reports the record-id intersection
           alongside it. Exit 1 on any overlap, and exit 1 when the train side
-          turns out to hold no rows at all.
+          turns out to hold no rows at all. `--receipt` banks WHICH
+          directories were scanned and the frozen artifact's sha256, so the
+          training driver can refuse a corpus this check never saw.
 
   chance  --frozen <frozen.json> --shards <the same 6 dirs>
           Computes E[1/n_legal] on exactly the frozen rows — the negative
@@ -19,7 +21,7 @@ Three subcommands, in the order they must be run:
 
 ⚑ `freeze` must run BEFORE the first training step, and the sha256 it prints
 goes in the ledger. A held-out set chosen after seeing a number is not a
-held-out set. See scratchpad/lc0_positive_control/PREREG_DRAFT.md.
+held-out set. See docs/lc0_positive_control_prereg.md.
 
 Why the id is a content digest rather than the tar name, and why the purity
 check is by id: chess_anti_engine/eval/lc0_control_rows.py.
@@ -27,6 +29,8 @@ check is by id: chess_anti_engine/eval/lc0_control_rows.py.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -83,6 +87,36 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_purity_receipt(
+    path: Path, *, frozen: Path, train_shards: list[Path], result: object, pure: bool,
+) -> str:
+    """Bank WHAT was checked, not just that it passed.
+
+    ⚑ REVIEW F5. `purity --train-shards ...` and `lc0_control_train --shards
+    ...` were two free-floating CLI arguments with nothing tying them together,
+    so the arm's headline held-out slope had no machine-checkable evidence that
+    the corpus it TRAINED on is the corpus purity CLEARED. That is the same
+    shape as the `game_id` purity check `lc0_control_rows.py` rejects: an
+    assertion that can only fail if someone types the wrong thing twice — and
+    here not even that. The receipt names the directories and the frozen
+    artifact's sha256; `lc0_control_train --purity-receipt` refuses to launch
+    on a corpus the receipt does not cover.
+    """
+    receipt: dict[str, object] = {
+        "frozen": str(Path(frozen).resolve()),
+        "frozen_sha256": hashlib.sha256(Path(frozen).read_bytes()).hexdigest(),
+        "train_shards": sorted(str(Path(d).resolve()) for d in train_shards),
+        "train_rows": int(getattr(result, "train_rows", 0)),
+        "frozen_rows": int(getattr(result, "frozen_rows", 0)),
+        "exposed_inputs": int(getattr(result, "exposed_inputs", 0)),
+        "intersecting_ids": int(getattr(result, "intersecting_ids", 0)),
+        "pure": bool(pure),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
+    return str(receipt["frozen_sha256"])
+
+
 def cmd_purity(args: argparse.Namespace) -> int:
     payload = load_frozen(Path(args.frozen))
     try:
@@ -102,6 +136,16 @@ def cmd_purity(args: argparse.Namespace) -> int:
           "<-- RECORD level; under-reports exposure")
     print(f"EXPOSED inputs       {result.exposed_inputs}   "
           f"({result.exposed_input_frac * 100:.4f}% of held-out x)   <-- THE GATE")
+    if args.receipt is not None:
+  # ⚑ Written on FAIL too, and it records `pure: false`. A receipt that only
+  # exists when the news is good is an artifact you can produce by re-running
+  # until it appears.
+        digest = _write_purity_receipt(
+            Path(args.receipt), frozen=Path(args.frozen),
+            train_shards=list(args.train_shards), result=result,
+            pure=result.is_pure,
+        )
+        print(f"receipt              {args.receipt}  (frozen sha256 {digest})")
     if result.is_pure:
         print("PURE: zero exposed inputs and zero record-id intersection")
         return 0
@@ -146,6 +190,13 @@ def build_parser() -> argparse.ArgumentParser:
     purity = sub.add_parser("purity")
     purity.add_argument("--frozen", type=Path, required=True)
     purity.add_argument("--train-shards", type=Path, nargs="+", required=True)
+    purity.add_argument(
+        "--receipt", type=Path, default=None,
+        help="write a JSON receipt naming the frozen sha256 and the train "
+             "directories actually scanned. `lc0_control_train "
+             "--purity-receipt` refuses to launch on a corpus it does not "
+             "cover — without one, nothing ties the trained rows to this check.",
+    )
     purity.set_defaults(handler=cmd_purity)
 
     chance = sub.add_parser("chance")

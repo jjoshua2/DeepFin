@@ -1325,7 +1325,10 @@ VALUE_BLEND_KEYS = ("sf_wdl_frac", "sf_wdl_frac_floor")
 
 
 def run_config_problems(
-    config: Mapping[str, object], *, shards_have_sf_wdl: bool,
+    config: Mapping[str, object],
+    *,
+    shards_have_sf_wdl: bool,
+    shards_have_search_wdl: bool,
 ) -> list[str]:
     """Reasons this config must not be pointed at lc0-derived shards.
 
@@ -1336,6 +1339,12 @@ def run_config_problems(
     guard and trains 100% of the value target on the raw one-hot outcome. The
     SF-label problems are label-dependent; "nothing but the outcome carries
     value weight" is not.
+
+    ⚑ ``shards_have_search_wdl`` is REQUIRED, with no default, because the
+    default that reads naturally (``True``) is the bug: ``compute_loss`` falls
+    the SEARCH component back to the raw one-hot exactly the way it falls the
+    SF component back, and the search share is the LARGER term here (0.70).
+    A default would have re-created review F1 at the next call site.
     """
     problems: list[str] = []
     if not shards_have_sf_wdl:
@@ -1347,10 +1356,20 @@ def run_config_problems(
         ]
     sf = config.get("sf_wdl_frac")
     search = config.get("search_wdl_frac")
+    if not shards_have_search_wdl and isinstance(search, (int, float)) and float(search) > 0.0:
+        problems.append(
+            f"search_wdl_frac={float(search)!r} but the shards carry NO search "
+            "value label (has_search_wdl), so losses.py silently redirects that "
+            "share onto the raw game outcome too — the same fallback as the SF "
+            "component, on the larger term",
+        )
     effective_sf = (
         float(sf) if shards_have_sf_wdl and isinstance(sf, (int, float)) else 0.0
     )
-    effective_search = float(search) if isinstance(search, (int, float)) else 0.0
+    effective_search = (
+        float(search)
+        if shards_have_search_wdl and isinstance(search, (int, float)) else 0.0
+    )
     if effective_sf <= 0.0 and effective_search <= 0.0:
         problems.append(
             "search_wdl_frac is 0/absent and no SF share survives on these shards, "
@@ -1360,14 +1379,14 @@ def run_config_problems(
     return problems
 
 
-def shard_dir_sf_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
-    """``(labelled_rows, total_rows)`` for the Stockfish value label.
+def shard_dir_label_coverage(shard_dir: Path, flag: str) -> tuple[int, int]:
+    """``(labelled_rows, total_rows)`` for one ``has_*`` column.
 
     ⚑ A FRACTION, not a boolean. ``any()`` over a mixed corpus reports "these
-    shards carry an SF label" from a single labelled row out of millions, and
+    shards carry the label" from a single labelled row out of millions, and
     every downstream decision then reasons about a corpus that does not exist.
-    Reads ``has_sf_wdl`` through the LAZY shard loader so the 175-plane inputs
-    are never decoded.
+    Reads the flag through the LAZY shard loader so the 175-plane inputs are
+    never decoded.
     """
     from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
 
@@ -1375,7 +1394,7 @@ def shard_dir_sf_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
     rows = 0
     for path in iter_shard_paths(shard_dir):
         arrs, _meta = load_shard_arrays(path, lazy=True)
-        flags = arrs.get("has_sf_wdl")
+        flags = arrs.get(flag)
         if flags is None:
   # ⚑ Row count off the INPUT array, not off `meta["positions"]`. That key is
   # optional and reads None on shards written without it, and an unlabelled
@@ -1387,6 +1406,24 @@ def shard_dir_sf_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
         rows += int(values.shape[0])
         labelled += int((values > 0).sum())
     return labelled, rows
+
+
+def shard_dir_sf_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
+    """``(labelled_rows, total_rows)`` for the Stockfish value label."""
+    return shard_dir_label_coverage(shard_dir, "has_sf_wdl")
+
+
+def shard_dir_search_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
+    """``(labelled_rows, total_rows)`` for the SEARCH value label.
+
+    ⚑ The bigger term, and the one that had no reader until PR #438's review
+    F1. ``compute_loss`` falls the SEARCH component back to the raw one-hot
+    exactly the way it falls the SF component back, and on the lc0 control
+    ``search_wdl_frac`` is 0.70 of the value target — so an unlabelled corpus
+    here trains almost the whole value head on the game result while
+    ``sf_wdl_frac: 0.0`` keeps every SF-side check clean.
+    """
+    return shard_dir_label_coverage(shard_dir, "has_search_wdl")
 
 
 def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
@@ -1839,8 +1876,16 @@ def cmd_check_run_config(args: argparse.Namespace) -> int:
 
     config = flatten_run_config_defaults(yaml.safe_load(Path(args.config).read_text()))
     have_sf = shard_dir_has_sf_wdl(Path(args.shards))
-    problems = run_config_problems(config, shards_have_sf_wdl=have_sf)
+  # ⚑ Coverage, not presence, on the SEARCH side: a share that is not carried
+  # by EVERY row still lands on the raw outcome for the rest of them.
+    search_labelled, search_rows = shard_dir_search_wdl_coverage(Path(args.shards))
+    have_search = search_rows > 0 and search_labelled == search_rows
+    problems = run_config_problems(
+        config, shards_have_sf_wdl=have_sf, shards_have_search_wdl=have_search,
+    )
     print(f"shards carry a Stockfish value label: {have_sf}")
+    print(f"shards carry a search value label:    {have_search} "
+          f"({search_labelled}/{search_rows} rows)")
     for key in (*VALUE_BLEND_KEYS, "search_wdl_frac"):
         print(f"  {key} = {config.get(key, '<absent>')!r}")
     for problem in problems:

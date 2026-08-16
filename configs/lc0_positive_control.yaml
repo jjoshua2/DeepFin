@@ -1,6 +1,6 @@
 # lc0 POSITIVE CONTROL — supervised training on external lc0 T91 rows.
 #
-# Prereg: scratchpad/lc0_positive_control/PREREG_DRAFT.md
+# Prereg: docs/lc0_positive_control_prereg.md
 # Data:   scripts/lc0_data_to_rows.py convert  (lc0 v6 -> our 175-plane
 #         v2_threats + lc0_1858 rows)
 # Driver: scripts/lc0_control_train.py  (NOT run.py — there is no selfplay,

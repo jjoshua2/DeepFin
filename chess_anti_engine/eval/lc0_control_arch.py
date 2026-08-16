@@ -25,7 +25,9 @@ the LIVE FILE over any in-tree copy:
 
 1. ``live_production_config_path()`` reads ``$CHESS_LIVE_PRODUCTION_CONFIG``.
    The repo is public, so the live path is never committed — it is supplied by
-   whoever launches the arm.
+   whoever launches the arm. ⚑ The DRIVERS call it and pass the result in;
+   ``assert_control_matches_live_architecture`` never reads the environment
+   itself, so its verdict does not change with the caller's shell.
 2. When that env var names a readable yaml, the check compares the control
    against **that file's** ``model:`` section. This is the only mode in which
    the check has actually seen production.
@@ -33,6 +35,9 @@ the LIVE FILE over any in-tree copy:
    recorded measurement of the live architecture, with the date and the branch
    it was taken on. A stale pin is still infinitely better than the in-tree
    copy, because the pin at least *knows* it is describing a different file.
+4. The pinned COUNT is checked against the BUILT net whenever a caller passes
+   ``model=``. That is the only check that can see "same ``model:`` keys,
+   different code" — which is precisely the state this branch is in.
 
 The parameter count is counted by UNIQUE ``untyped_storage().data_ptr()``.
 ``sum(v.numel() for v in state_dict().values())`` reads 77,173,088 on the live
@@ -158,13 +163,27 @@ def model_section_drift(
     return drift
 
 
-def _reference_model_section(live_config: Path | None) -> tuple[dict[str, Any], str]:
-    """The ``model:`` section to judge against, and where it came from."""
+def _reference_model_section(
+    live_config: Path | None, pinned: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """The ``model:`` section to judge against, and where it came from.
+
+    ⚑ ``pinned`` is a PARAMETER, not the module global. It was the global until
+    2026-08-16, which made ``assert_control_matches_live_architecture``'s
+    ``pin=`` argument accepted and then silently ignored — this repo's
+    signature defect, inside the module written to close an instance of it (PR
+    #438 review F4). The provenance string it returns says which pin it used.
+    """
     if live_config is None:
-        return dict(LIVE_ARCH_PIN["model"]), (
-            f"the recorded pin ({LIVE_ARCH_PIN['recorded']}, "
-            f"{LIVE_ARCH_PIN['live_branch']} {LIVE_ARCH_PIN['live_commit']}) — "
-            f"${LIVE_CONFIG_ENV} was not set, so THE LIVE FILE WAS NOT READ"
+        origin = (
+            "the recorded pin"
+            if pinned is LIVE_ARCH_PIN else "a CALLER-SUPPLIED pin"
+        )
+        return dict(pinned["model"]), (
+            f"{origin} ({pinned.get('recorded', '<undated>')}, "
+            f"{pinned.get('live_branch', '<no branch>')} "
+            f"{pinned.get('live_commit', '<no commit>')}) — no live config was "
+            "given, so THE LIVE FILE WAS NOT READ"
         )
     from chess_anti_engine.utils import load_yaml_file
 
@@ -185,14 +204,38 @@ def assert_control_matches_live_architecture(
     drift that matters here is a key the flattener would reject outright.
     Returns the provenance string of whatever it judged against, so a caller
     can print which instrument fired.
+
+    ⚑ ``live_config=None`` means "judge against ``pin``", and NOTHING here
+    reads the environment. It used to call ``live_production_config_path()``
+    itself, which overloaded ``None`` into two different meanings — "no live
+    config" at the call site and "go read $CHESS_LIVE_PRODUCTION_CONFIG" inside
+    — so the same call returned different verdicts in the operator's shell than
+    in a test (review F6: one arch test failed whenever the env var was set,
+    i.e. in exactly the mode the rig's own docs prescribe). Resolve the env at
+    the CALL SITE with ``live_production_config_path()``; both drivers do.
+
+    ⚑ ``model`` is the BUILT net, and it is the only argument that can catch
+    "same yaml keys, different code": the pinned parameter count is a property
+    of the live TREE's builder, not of the ``model:`` section alone. It is
+    checked whenever the reference's own count is known — against the pin, and
+    against a live file whose ``model:`` section the pin describes exactly.
     """
     pinned = dict(pin) if pin is not None else LIVE_ARCH_PIN
-    if live_config is None:
-        live_config = live_production_config_path()
-    reference, provenance = _reference_model_section(live_config)
-    if live_config is not None:
-        expected_params = None
-    else:
+    reference, provenance = _reference_model_section(live_config, pinned)
+    if not reference:
+        raise ControlArchitectureDrift(
+            f"the reference architecture is EMPTY (judged against {provenance}"
+            f"){f' [{context}]' if context else ''}. Every drift comparison "
+            "against it is vacuous: an absent `model:` section agrees with any "
+            "control, and the parameter crosscheck is off in live-file mode. "
+            "Point the check at a config that HAS a `model:` section.",
+        )
+  # The pin's parameter count describes the pin's own `model:` section. It
+  # applies to a live file only when that file's section is byte-identical —
+  # otherwise the live tree is building something the pin never measured, and
+  # a count taken from the pin would be an invented number.
+    expected_params: int | None = None
+    if live_config is None or reference == dict(pinned["model"]):
         expected_params = int(pinned["trainable_params_unique_storage"])
 
     problems = model_section_drift(model_section(control_raw_config), reference)

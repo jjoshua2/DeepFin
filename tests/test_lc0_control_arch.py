@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
@@ -96,15 +97,26 @@ def test_the_control_config_is_currently_refused(
     assert "recorded pin" in message, "the message must name what it judged against"
 
 
-def test_the_check_passes_when_the_model_section_matches_the_reference() -> None:
-    """The guard must be capable of PASSING, or it is a constant, not a check."""
+def test_the_check_passes_when_the_model_section_matches_the_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard must be capable of PASSING, or it is a constant, not a check.
+
+    ⚑ REVIEW F6: this test used to FAIL whenever ``$CHESS_LIVE_PRODUCTION_CONFIG``
+    was set — i.e. in the operator's own shell, in the mode the rig's docs
+    prescribe — because ``live_config=None`` meant "no live config" here and
+    "go read the env" inside the function. The env is now resolved at the CALL
+    SITE, so ``None`` has exactly one meaning. The ``setenv`` below proves it:
+    the verdict must not move.
+    """
+    monkeypatch.setenv(LIVE_CONFIG_ENV, "/nonexistent/live/pbt2_small.yaml")
     matching = {"model": dict(LIVE_ARCH_PIN["model"])}
     provenance = assert_control_matches_live_architecture(matching, live_config=None)
     assert "recorded pin" in provenance
 
 
 def test_a_control_matching_the_stale_pin_still_fails_against_the_live_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """⚑⚑ THE POINT OF THE MODULE: the reference is a file OUTSIDE this tree.
 
@@ -117,17 +129,87 @@ def test_a_control_matching_the_stale_pin_still_fails_against_the_live_file(
     moved = dict(LIVE_ARCH_PIN["model"])
     moved["embed_dim"] = 640
     live.write_text(yaml.safe_dump({"model": moved}), encoding="utf-8")
-    monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
     with pytest.raises(ControlArchitectureDrift, match="embed_dim"):
-        assert_control_matches_live_architecture({"model": dict(LIVE_ARCH_PIN["model"])})
+        assert_control_matches_live_architecture(
+            {"model": dict(LIVE_ARCH_PIN["model"])}, live_config=live,
+        )
 
 
-def test_the_provenance_says_when_the_live_file_was_not_read(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_caller_supplied_pin_is_the_one_judged_against() -> None:
+    """⚑⚑ REVIEW F4 — ``pin=`` WAS ACCEPTED AND SILENTLY IGNORED.
+
+    Only ``pin["trainable_params_unique_storage"]`` was read; the reference
+    ``model:`` section came from the MODULE GLOBAL, so a caller's pin judged
+    nothing and the raised message reported ``LIVE_ARCH_PIN``'s provenance as
+    though it were the caller's. That is this repo's signature defect inside
+    the module written to close an instance of it.
+
+    Both directions here: a control matching the caller's pin PASSES (it would
+    have raised against the global), and one that does not FAILS.
+    """
+    pin: dict[str, Any] = {
+        "recorded": "2020-01-01",
+        "live_branch": "toy",
+        "live_commit": "deadbeef",
+        "trainable_params_unique_storage": 1234,
+        "model": {"embed_dim": 64, "num_layers": 4},
+    }
+    provenance = assert_control_matches_live_architecture(
+        {"model": dict(pin["model"])}, pin=pin,
+    )
+    assert "CALLER-SUPPLIED pin" in provenance, (
+        "the provenance must not claim to be the recorded pin"
+    )
+    assert "deadbeef" in provenance
+    with pytest.raises(ControlArchitectureDrift, match="num_layers"):
+        assert_control_matches_live_architecture(
+            {"model": {"embed_dim": 64, "num_layers": 5}}, pin=pin,
+        )
+
+
+def test_the_pinned_parameter_count_is_checked_against_a_built_model() -> None:
+    """⚑ REVIEW F4, second half: ``model=`` had no caller either, so the pinned
+    61,444,448 gated nothing on any path.
+
+    A control whose ``model:`` section matches the pin EXACTLY, built by code
+    that produces a different net, must still be refused — that is the only
+    check that can see "same yaml keys, different builder", which is precisely
+    the state this branch is in relative to the live tree.
+    """
+    pin: dict[str, Any] = {
+        "recorded": "2020-01-01", "live_branch": "toy", "live_commit": "deadbeef",
+        "trainable_params_unique_storage": 105,
+        "model": {"embed_dim": 64},
+    }
+    right = torch.nn.Linear(10, 10)  # 100 weights + 5 would be 105; this is 110
+    assert unique_storage_param_count(right) == 110
+    with pytest.raises(ControlArchitectureDrift, match="trainable params"):
+        assert_control_matches_live_architecture(
+            {"model": dict(pin["model"])}, model=right, pin=pin,
+        )
+    pin["trainable_params_unique_storage"] = 110
+    assert assert_control_matches_live_architecture(
+        {"model": dict(pin["model"])}, model=right, pin=pin,
+    )
+
+
+def test_an_empty_reference_model_section_is_refused_not_agreed_with(
+    tmp_path: Path,
 ) -> None:
+    """⚑ REVIEW F7. A live yaml with no ``model:`` section made both sides
+    ``{}``, the drift list empty, and — in live-file mode — the parameter
+    crosscheck off as well. The guard agreed with a file that said nothing."""
+    empty = tmp_path / "no_model.yaml"
+    empty.write_text(yaml.safe_dump({"train": {"lr": 0.0003}}), encoding="utf-8")
+    with pytest.raises(ControlArchitectureDrift, match="reference architecture is EMPTY"):
+        assert_control_matches_live_architecture(
+            _raw(CONTROL), live_config=empty,
+        )
+
+
+def test_the_provenance_says_when_the_live_file_was_not_read() -> None:
     """"Judged against the pin" and "judged against production" are different
     claims and must not print the same string."""
-    monkeypatch.delenv(LIVE_CONFIG_ENV, raising=False)
     provenance = assert_control_matches_live_architecture(
         {"model": dict(LIVE_ARCH_PIN["model"])},
     )

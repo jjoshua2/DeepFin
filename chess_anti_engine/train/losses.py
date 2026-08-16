@@ -1069,6 +1069,28 @@ def compute_loss(
         )
     else:
         search_component = blend_fallback_target
+  # ⚑ THE TWO FALLBACKS, COUNTED — the denominators of the outcome-borne share.
+  # BOTH components fall back to `blend_fallback_target` (the raw one-hot), and
+  # until 2026-08-16 only the SF side had a count, so `search_wdl_frac` — 0.70
+  # of the lc0 control's value target — could land entirely on the outcome with
+  # every guard reading clean (PR #438 review F1).
+  #
+  # These are the EFFECTIVE mass, not the label count, and the difference is
+  # load-bearing in two ways `has_sf_wdl.sum()` cannot express:
+  #   * `sf_effective = sf_available * keep`, so the `1 - keep` shortfall the
+  #     sf_search_dampen_* knobs remove also lands on the one-hot (F10). Both
+  #     knobs are 0.0 in production today, which is exactly the kind of "agrees
+  #     by coincidence" that stops being true after one live edit.
+  #   * when the `sf_wdl` / `search_wdl` COLUMN is absent the component is the
+  #     one-hot for every row regardless of the mask, so the count must be 0
+  #     rather than the mask's sum.
+    zero_rows = torch.zeros((), device=search_available.device)
+    sf_wdl_effective_rows = (
+        sf_effective.sum() if sf_wdl_probs is not None else zero_rows
+    )
+    search_wdl_effective_rows = (
+        search_available.sum() if search_wdl_probs is not None else zero_rows
+    )
     if terminal_taper is None:
   # Bit-identical to the pre-feature blend: same expressions, same order.
         target += sf_wdl_frac_f * sf_component
@@ -1277,6 +1299,12 @@ def compute_loss(
         "sf_wdl_degenerate_rows": sf_wdl_degenerate_rows,
         "sf_wdl_orphaned_rows": sf_wdl_orphaned_rows,
         "sf_wdl_rows": sf_wdl_rows,
+  # Value-blend fallback denominators — see the blend site. `sf_wdl_rows` above
+  # is the LABEL count and is NOT interchangeable with these: it ignores `keep`
+  # and reads non-zero on a batch whose `sf_wdl` column is missing entirely.
+  # Mapped to `sf_wdl_effective_frac` / `search_wdl_effective_frac`.
+        "sf_wdl_effective_rows": sf_wdl_effective_rows,
+        "search_wdl_effective_rows": search_wdl_effective_rows,
         "sf_eval_pv_orphan_rows": sf_eval_pv_orphan_rows,
         "sf_eval_pv_checked_rows": sf_eval_pv_checked_rows,
         "batch_rows": batch_rows,

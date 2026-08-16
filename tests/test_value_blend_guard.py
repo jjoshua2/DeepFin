@@ -29,12 +29,16 @@ BATCH = 8
 POLICY = 32
 
 
-def _batch(*, with_sf_wdl: bool) -> dict[str, torch.Tensor]:
+def _batch(*, with_sf_wdl: bool, with_search_wdl: bool = True) -> dict[str, torch.Tensor]:
     """A minimal batch shaped like an lc0-derived row set.
 
     lc0 rows carry `search_wdl` and `has_search_wdl` and NO `sf_wdl` —
     `with_sf_wdl=True` adds the production-shaped columns so the same test can
     show the leak closing when every row IS labelled.
+
+    ⚑ `with_search_wdl=False` is review F1's state: `compute_loss` falls the
+    SEARCH component back to the same raw one-hot, and that half had no
+    instrument at all until 2026-08-16.
     """
     torch.manual_seed(0)
     batch: dict[str, torch.Tensor] = {
@@ -42,15 +46,39 @@ def _batch(*, with_sf_wdl: bool) -> dict[str, torch.Tensor]:
         "policy_t": torch.full((BATCH, POLICY), 1.0 / POLICY),
         "wdl_t": torch.zeros(BATCH, dtype=torch.int64),
         "has_policy": torch.ones(BATCH),
+    }
+    if with_search_wdl:
   # Deliberately not a one-hot and not degenerate, so the search component is
   # distinguishable from the outcome component in the built target.
-        "search_wdl": torch.tensor([[0.5, 0.3, 0.2]]).repeat(BATCH, 1),
-        "has_search_wdl": torch.ones(BATCH),
-    }
+        batch["search_wdl"] = torch.tensor([[0.5, 0.3, 0.2]]).repeat(BATCH, 1)
+        batch["has_search_wdl"] = torch.ones(BATCH)
     if with_sf_wdl:
         batch["sf_wdl"] = torch.tensor([[0.2, 0.5, 0.3]]).repeat(BATCH, 1)
         batch["has_sf_wdl"] = torch.ones(BATCH)
     return batch
+
+
+def _readout_from_compute_loss(
+    batch: dict[str, torch.Tensor],
+    outputs: dict[str, torch.Tensor],
+    **kwargs: Any,
+) -> Any:
+    """The guard's readout, built from the REAL `compute_loss` return values.
+
+    ⚑ Not from hand-written row counts. The finding this closes was that the
+    readout's inputs did not exist: `compute_loss` returned no search-side
+    count at all, so no correct caller could have been written. Building the
+    readout here through the same keys the driver reads means a rename or a
+    dropped key fails this test rather than silently zeroing a term.
+    """
+    result = compute_loss(outputs, batch, **kwargs)
+    return value_blend_readout(
+        sf_wdl_frac=float(kwargs.get("sf_wdl_frac", 0.0)),
+        search_wdl_frac=float(kwargs.get("search_wdl_frac", 0.0)),
+        sf_effective_rows=float(result["sf_wdl_effective_rows"].item()),
+        search_effective_rows=float(result["search_wdl_effective_rows"].item()),
+        batch_rows=float(result["batch_rows"].item()),
+    )
 
 
 def _outputs() -> dict[str, torch.Tensor]:
@@ -119,8 +147,9 @@ def _decompose(target: torch.Tensor, batch: dict[str, torch.Tensor]) -> dict[str
     if "sf_wdl" in batch:
         names.append("sf")
         columns.append(batch["sf_wdl"][0].numpy().astype(np.float64))
-    names.append("search")
-    columns.append(batch["search_wdl"][0].numpy().astype(np.float64))
+    if "search_wdl" in batch:
+        names.append("search")
+        columns.append(batch["search_wdl"][0].numpy().astype(np.float64))
     basis = np.stack(columns, axis=1)
     total = float(target[0].sum().item())
     assert total == pytest.approx(1.0, abs=1e-5), (
@@ -191,6 +220,86 @@ def test_labelled_rows_do_not_leak_so_production_is_untouched(
     assert shares["total"] == pytest.approx(1.0, abs=1e-5)
 
 
+def test_missing_search_wdl_silently_moves_the_search_share_onto_the_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ REVIEW F1, THE DEFECT ITSELF, through the production loss.
+
+    This is the arm's OWN blend — `sf_wdl_frac: 0.0`, `search_wdl_frac: 0.70` —
+    on rows that carry no `has_search_wdl`. The value target is 100% raw game
+    outcome. Before 2026-08-16 all three guards passed here and the readout
+    printed `outcome_borne_frac 0.3000`, because nothing measured the search
+    half: `compute_loss` did not even return a count for it.
+    """
+    batch, outputs = _batch(with_sf_wdl=False, with_search_wdl=False), _outputs()
+    kwargs = {"sf_wdl_frac": 0.0, "search_wdl_frac": 0.70}
+    target = _captured_wdl_target(monkeypatch, batch, outputs, **kwargs)
+
+    shares = _decompose(target, batch)
+    assert shares["outcome"] == pytest.approx(1.0, abs=1e-5)
+    assert shares["total"] == pytest.approx(1.0, abs=1e-5)
+
+    readout = _readout_from_compute_loss(batch, outputs, **kwargs)
+    assert readout.search_effective_rows == 0.0
+    assert readout.leaked_from_sf == 0.0, "the SF half is genuinely clean here"
+    assert readout.leaked_from_search == pytest.approx(0.70)
+    assert readout.outcome_borne_frac == pytest.approx(1.0)
+    with pytest.raises(ValueBlendMisconfigured, match="RAW GAME OUTCOME"):
+        assert_no_silent_outcome_fallback(readout, context="review F1")
+
+
+def test_the_readout_agrees_with_the_target_compute_loss_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The readout's outcome share IS the target's, on both label regimes.
+
+    ⚑ The pairing is the test. A readout that reports 0.30 while the solved
+    target reads 1.00 is the exact failure F1 filed, and only a test that
+    computes BOTH from the same call can see it — either number alone looks
+    ordinary.
+    """
+    kwargs = {"sf_wdl_frac": 0.0, "search_wdl_frac": 0.70}
+    for with_search in (True, False):
+        batch, outputs = _batch(with_sf_wdl=False, with_search_wdl=with_search), _outputs()
+        target = _captured_wdl_target(monkeypatch, batch, outputs, **kwargs)
+        readout = _readout_from_compute_loss(batch, outputs, **kwargs)
+        assert _decompose(target, batch)["outcome"] == pytest.approx(
+            readout.outcome_borne_frac, abs=1e-5,
+        ), f"readout disagrees with the built target (search labels: {with_search})"
+
+
+def test_the_dampened_sf_share_lands_on_the_outcome_and_is_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ REVIEW F10. `sf_effective = has_sf_wdl * keep`, and the `1 - keep`
+    shortfall the `sf_search_dampen_*` knobs remove falls onto the SAME one-hot.
+
+    Both knobs are 0.0 in production and in the control today, so a leak read
+    off `has_sf_wdl.sum()` agrees with the realized one BY COINCIDENCE. The
+    yaml marks them live-tunable, and this is the trainer's production warning.
+    Here SF says STM losing and search says STM winning on every row, so
+    `sf_search_dampen_sf_low: 1.0` removes the whole SF component.
+    """
+    batch, outputs = _batch(with_sf_wdl=True), _outputs()
+    batch["sf_wdl"] = torch.tensor([[0.1, 0.2, 0.7]]).repeat(BATCH, 1)
+    batch["search_wdl"] = torch.tensor([[0.7, 0.2, 0.1]]).repeat(BATCH, 1)
+    kwargs = {
+        "sf_wdl_frac": 0.50, "search_wdl_frac": 0.20,
+        "sf_search_dampen_sf_low": 1.0,
+    }
+    target = _captured_wdl_target(monkeypatch, batch, outputs, **kwargs)
+    assert _decompose(target, batch)["outcome"] == pytest.approx(0.80, abs=1e-5)
+
+    readout = _readout_from_compute_loss(batch, outputs, **kwargs)
+    assert readout.sf_effective_rows == pytest.approx(0.0), (
+        "every row is has_sf_wdl=1, so a LABEL count would read BATCH here and "
+        "report a leak of 0.00 on a target that is 0.80 raw outcome"
+    )
+    assert readout.leaked_to_outcome == pytest.approx(0.50)
+    with pytest.raises(ValueBlendMisconfigured):
+        assert_no_silent_outcome_fallback(readout)
+
+
 @pytest.mark.parametrize(
     ("sf", "search", "expected"),
     [
@@ -231,7 +340,8 @@ def test_normalization_is_the_one_compute_loss_uses(monkeypatch: pytest.MonkeyPa
 
 def test_guard_raises_on_the_leak_and_names_the_number() -> None:
     readout = value_blend_readout(
-        sf_wdl_frac=0.50, search_wdl_frac=0.20, sf_wdl_rows=0.0, batch_rows=512.0,
+        sf_wdl_frac=0.50, search_wdl_frac=0.20,
+        sf_effective_rows=0.0, search_effective_rows=512.0, batch_rows=512.0,
     )
     assert readout.leaked_to_outcome == pytest.approx(0.50)
     assert readout.outcome_borne_frac == pytest.approx(0.80)
@@ -241,7 +351,8 @@ def test_guard_raises_on_the_leak_and_names_the_number() -> None:
 
 def test_guard_passes_on_the_override() -> None:
     readout = value_blend_readout(
-        sf_wdl_frac=0.0, search_wdl_frac=0.70, sf_wdl_rows=0.0, batch_rows=512.0,
+        sf_wdl_frac=0.0, search_wdl_frac=0.70,
+        sf_effective_rows=0.0, search_effective_rows=512.0, batch_rows=512.0,
     )
     assert readout.leaked_to_outcome == 0.0
     assert readout.outcome_borne_frac == pytest.approx(0.30)
@@ -251,7 +362,8 @@ def test_guard_passes_on_the_override() -> None:
 def test_guard_passes_when_every_row_carries_a_label() -> None:
     """Production's own shape must not trip the guard."""
     readout = value_blend_readout(
-        sf_wdl_frac=0.50, search_wdl_frac=0.20, sf_wdl_rows=512.0, batch_rows=512.0,
+        sf_wdl_frac=0.50, search_wdl_frac=0.20,
+        sf_effective_rows=512.0, search_effective_rows=512.0, batch_rows=512.0,
     )
     assert readout.leaked_to_outcome == 0.0
     assert_no_silent_outcome_fallback(readout)
@@ -260,7 +372,8 @@ def test_guard_passes_when_every_row_carries_a_label() -> None:
 def test_guard_catches_a_partial_leak() -> None:
     """Half the rows labelled leaks half the SF share, and is not tolerated."""
     readout = value_blend_readout(
-        sf_wdl_frac=0.50, search_wdl_frac=0.20, sf_wdl_rows=256.0, batch_rows=512.0,
+        sf_wdl_frac=0.50, search_wdl_frac=0.20,
+        sf_effective_rows=256.0, search_effective_rows=512.0, batch_rows=512.0,
     )
     assert readout.leaked_to_outcome == pytest.approx(0.25)
     with pytest.raises(ValueBlendMisconfigured):

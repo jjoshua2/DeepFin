@@ -2,18 +2,18 @@
 """Top-1 agreement with lc0's visit-argmax, on frozen rows, paired (McNemar).
 
 The lc0 positive control's yardstick, exactly as
-`scratchpad/lc0_positive_control/PREREG_DRAFT.md` defines it and no other
-metric. Two subcommands:
+`docs/lc0_positive_control_prereg.md` defines it and no other metric. Two
+subcommands:
 
   score    --config <yaml> --frozen <frozen.json> --shards <dirs>
            [--checkpoint <ckpt.pt>] [--seed N] [--shuffle-targets]
            --out <scores.npz>
            Per-row hit/miss against `argmax(policy_target)`. Omit
            --checkpoint to score an untrained net — that is prereg guard 2,
-           the RANDOM-INIT FLOOR, and it must land at the chance level
-           `scripts/lc0_control_heldout.py chance` printed. `--shuffle-targets`
-           is prereg guard 1, the NEGATIVE CONTROL: it permutes the targets
-           across rows, so any trained net must collapse to the same floor.
+           the RANDOM-INIT FLOOR, whose gate is a SEEDED BAND (see below).
+           `--shuffle-targets` is prereg guard 1, the NEGATIVE CONTROL: it
+           permutes the targets across rows, and the run EXITS 1 when the
+           result does not collapse to the floor that control actually has.
 
   compare  --a <scores_A.npz> --b <scores_B.npz>
            Paired difference on the rows BOTH files scored, with the McNemar
@@ -22,18 +22,40 @@ metric. Two subcommands:
            and refuses to report a slope whose halfwidth exceeds the
            pre-committed bar.
 
+⚑⚑ THE NEGATIVE CONTROL'S FLOOR IS **NOT** `E[1/n_legal]`, AND IT IS NOT A
+CONSTANT. `--shuffle-targets` scores each prediction against ANOTHER ROW'S REAL
+TARGET, so under a uniformly random permutation its expectation is the marginal
+collision rate
+
+    E[hit rate] = SUM_m p_pred(m) * p_tgt(m)
+
+— a property of the SCORED RUN, not of the position set. Measured on 100,000
+real converted lc0 rows: `E[1/n_legal]` = 0.063622 while `SUM_m p_tgt(m)^2` =
+0.003283, i.e. **19x apart**, so a correctly-behaving control could never have
+hit the band the prereg named (review F2b; prereg AMENDMENT 2). Getting the
+JENSEN direction right — `E[1/n]` vs `1/E[n]`, the correction already in
+`heldout.py chance` — did not make it the right QUANTITY: both are floors for a
+UNIFORM MOVER, and this control does not produce one.
+
+So the floor is computed from the same score, printed next to the observed
+rate, and GATED: the run exits 1 when the shuffled rate sits more than
+`--negative-control-z` standard errors ABOVE its collision rate. That is the
+direction with a failure mode behind it — a shuffled control that still agrees
+is a rig leaking row identity into the prediction, which is the exact thing
+guard 1 exists to detect.
+
 ⚑ THE RANDOM-INIT FLOOR IS SEEDED, AND THE SEED IS IN THE OUTPUT. Four
 unseeded draws of the identical command on the identical 100,000 frozen rows
 read 0.058770 / 0.062050 / 0.071630 / 0.073500 / 0.080590 — a 2.18 pp spread,
-5.6x the 0.392 pp material bar, straddling chance 0.064577 in both directions.
-A guard whose own value moves further than the effect it gates on is not a
-guard. `--seed` names the draw; the spread across seeds is what the prereg's
-band must be derived from, NOT one invocation.
+5.6x the 0.392 pp material bar. A guard whose own value moves further than the
+effect it gates on is not a guard. `--seed` names the draw; the prereg's band
+must be derived from the spread across seeds, NOT from one invocation.
 
-⚑ AND A RANDOM-INIT NET IS NOT EXPECTED TO SIT AT CHANCE. It is a fixed
-arbitrary function over a highly non-uniform argmax distribution, so it beats
-uniform guessing on the frequent moves. "Above chance" is not evidence the
-evaluator manufactures agreement; only the seeded band can say that.
+⚑ AND A RANDOM-INIT NET IS NOT EXPECTED TO SIT AT ANY PARTICULAR POINT. It is a
+fixed arbitrary function over a highly non-uniform argmax distribution, so it
+beats uniform guessing on the frequent moves. "Above chance" is not evidence the
+evaluator manufactures agreement; only the seeded band can say that, and that
+band is NOT YET MEASURED — it needs a trained checkpoint (prereg AMENDMENT 2).
 
 ⚑ WHY PAIRED, AND WHY IT REFUSES TO PAD. Two independent top-1 rates at
 n=100,000 resolve ~0.30 pp; the same rows scored by both checkpoints resolve
@@ -64,6 +86,110 @@ from chess_anti_engine.train.losses import apply_policy_mask_to_logits
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.model import build_model, model_config_from_flat_config
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+
+
+Z_95 = 1.959963985
+
+
+def paired_halfwidth_pp(*, n: int, discordance: float) -> float:
+    """95% halfwidth (in pp) of the McNemar paired difference at this n.
+
+    ⚑ THE PREREG'S CONSTANTS, DERIVED RATHER THAN QUOTED. `--max-halfwidth-pp`
+    and `--sample` were hard-coded defaults citing a file that had never been
+    committed (review F2a). The file is committed now, and this reproduces its
+    resolution table so the numbers are checkable rather than remembered:
+
+        n=100,000 discordance 0.10 -> 0.196 pp   (the paired resolution)
+        n=100,000 discordance 0.20 -> 0.277 pp
+        2x the first               -> 0.392 pp   (MATERIAL_BAR_PP below)
+
+    Same estimator as `cmd_compare`: with `b + c = discordance * n` and the
+    worst case `c - b = 0`, `var = (b + c) / n^2` and `half = 1.96 * sqrt(var)`.
+    """
+    if n <= 0:
+        raise ValueError("n must be positive")
+    return 100.0 * Z_95 * float(np.sqrt(max(0.0, discordance) / n))
+
+
+# The prereg's resolution point and material bar. Both are DERIVED, not typed:
+# 100,000 paired rows resolve ~0.2 pp, and the bar is 2x the resolution so an
+# effect the instrument cannot see is never material.
+PREREG_SAMPLE_ROWS = 100_000
+PREREG_DISCORDANCE = 0.10
+MATERIAL_BAR_PP = round(2.0 * paired_halfwidth_pp(
+    n=PREREG_SAMPLE_ROWS, discordance=PREREG_DISCORDANCE,
+), 3)
+
+# How far above its own floor a shuffled-target control may land before the run
+# is refused. 5 sigma rather than 2: at n=100,000 and a collision rate of
+# ~0.0033 one SE is ~0.018 pp, so 2 sigma would refuse on ordinary permutation
+# noise while 5 sigma still refuses anything the leak this guards against would
+# produce (a rig leaking row identity moves the rate by whole percentage
+# points, hundreds of sigma).
+NEGATIVE_CONTROL_Z = 5.0
+
+
+def shuffled_control_expectation(
+    predicted: np.ndarray, target: np.ndarray,
+) -> float:
+    """`SUM_m p_pred(m) * p_tgt(m)` — the shuffled control's TRUE floor.
+
+    ⚑ NOT `E[1/n_legal]`. Scoring row `i`'s prediction against row `pi(i)`'s
+    target, with `pi` uniform over all permutations (fixed points included,
+    each with probability `1/n`), gives
+
+        E[hits] = SUM_i SUM_j (1/n) * 1[tgt_j == pred_i]
+                = (1/n) SUM_m count_pred(m) * count_tgt(m)
+
+    exactly — no large-n approximation and no derangement correction. For a
+    trained net `p_pred ~ p_tgt`, so this is close to `SUM_m p_tgt(m)^2`:
+    0.003283 on 100,000 real lc0 rows, against an `E[1/n_legal]` of 0.063622.
+
+    The marginals are permutation-invariant, so it does not matter whether the
+    shuffled or the original target array is passed.
+    """
+    width = int(max(predicted.max(initial=0), target.max(initial=0))) + 1
+    n = int(predicted.size)
+    if n == 0:
+        return 0.0
+    pred_counts = np.bincount(predicted, minlength=width).astype(np.float64)
+    tgt_counts = np.bincount(target, minlength=width).astype(np.float64)
+    return float((pred_counts * tgt_counts).sum() / (n * n))
+
+
+def negative_control_problem(
+    *, observed: float, expected: float, rows: int, max_z: float,
+) -> tuple[float, str | None]:
+    """`(z, problem)` for a shuffled-target run against its own floor.
+
+    ONE-SIDED, deliberately. Landing BELOW the collision rate is what an
+    unusually lucky permutation does and has no failure mode behind it; landing
+    ABOVE it is the rig agreeing with a target it was not shown, which is the
+    only thing this control exists to detect.
+
+    The SE is the independent-Bernoulli one. Sampling the permutation is
+    sampling WITHOUT replacement, whose variance is no larger, so this is the
+    conservative side of the approximation.
+    """
+    if rows <= 0:
+        return 0.0, "the negative control scored ZERO rows, so it checked nothing"
+    se = float(np.sqrt(max(expected * (1.0 - expected), 0.0) / rows))
+    if se <= 0.0:
+        z = 0.0 if observed <= expected else float("inf")
+    else:
+        z = (observed - expected) / se
+    if z <= max_z:
+        return z, None
+    return z, (
+        f"the shuffled-target control scored {observed:.6f}, which is {z:.1f} "
+        f"standard errors ABOVE its own floor {expected:.6f} (SUM_m "
+        f"p_pred(m)*p_tgt(m) over {rows} rows, SE {se:.6f}). A control scored "
+        "against OTHER ROWS' targets cannot beat the marginal collision rate "
+        "unless the prediction carries row identity — i.e. the rig is "
+        "manufacturing agreement, and no verdict off it is a verdict in either "
+        "direction. ⚑ The floor is NOT E[1/n_legal]: that is the uniform-mover "
+        "reference and sits ~19x higher (prereg AMENDMENT 2)."
+    )
 
 
 def _policy_logits(outputs: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -205,21 +331,27 @@ def _score_rows(
     *,
     batch_size: int,
     shuffle_targets_seed: int | None = None,
-) -> tuple[np.ndarray, int]:
-    """Per-row hit vector aligned to ``wanted``, plus the tied-argmax count.
+) -> tuple[np.ndarray, int, np.ndarray, np.ndarray]:
+    """``(hits, tied, predicted, target)`` aligned to ``wanted``.
 
     ⚑ ``shuffle_targets_seed`` is PREREG GUARD 1, the NEGATIVE CONTROL: each
     row is scored against another row's lc0 target. Every row keeps a real
     target, just not its own, so a net that learned the position-to-move
-    mapping must collapse to the chance floor. A net that does not has been
-    reading something in the RIG rather than in the position.
+    mapping must collapse to the MARGINAL COLLISION RATE between the two
+    distributions. A net that does not has been reading something in the RIG
+    rather than in the position.
+
+    ⚑ The move ids are returned, not only the hits, because that floor is
+    computed FROM THEM (`shuffled_control_expectation`). A hit vector has
+    already thrown away everything the floor is a function of, which is how the
+    gate ended up being compared against an unrelated constant.
     """
     predicted, target, tied = _predict_rows(
         trainer, shard_dirs, wanted, batch_size=batch_size,
     )
     if shuffle_targets_seed is not None:
         target = target[np.random.default_rng(shuffle_targets_seed).permutation(target.size)]
-    return (predicted == target).astype(np.uint8), tied
+    return (predicted == target).astype(np.uint8), tied, predicted, target
 
 
 def cmd_score(args: argparse.Namespace) -> int:
@@ -229,11 +361,18 @@ def cmd_score(args: argparse.Namespace) -> int:
         Path(args.config), args.checkpoint, args.device, seed=int(args.seed),
     )
     shuffle_seed = int(args.shuffle_seed) if args.shuffle_targets else None
-    hits, tied = _score_rows(
+    hits, tied, predicted, target = _score_rows(
         trainer, args.shards, wanted, batch_size=int(args.batch_size),
         shuffle_targets_seed=shuffle_seed,
     )
     rate = float(hits.mean())
+    collision = shuffled_control_expectation(predicted, target)
+    z, problem = (0.0, None)
+    if shuffle_seed is not None:
+        z, problem = negative_control_problem(
+            observed=rate, expected=collision, rows=int(hits.size),
+            max_z=float(args.negative_control_z),
+        )
     np.savez_compressed(
         Path(args.out),
         row_ids=np.array(wanted, dtype="U32"),
@@ -250,6 +389,12 @@ def cmd_score(args: argparse.Namespace) -> int:
             "rows": int(hits.size),
             "top1_agreement": rate,
             "tied_argmax_rows": int(tied),
+  # ⚑ The negative control's floor, banked WITH the score. It is a property of
+  # this run's own prediction marginal, so it cannot be recomputed later from
+  # the hit vector alone — and a gate whose reference is not in the artifact is
+  # a gate nobody can re-check.
+            "shuffled_collision_rate": collision,
+            "negative_control_z": z if shuffle_seed is not None else None,
         })], dtype=object),
         allow_pickle=True,
     )
@@ -261,7 +406,15 @@ def cmd_score(args: argparse.Namespace) -> int:
     print(f"rows scored       {hits.size}")
     print(f"top-1 agreement   {rate:.6f}  ({rate * 100:.4f}%)")
     print(f"tied-argmax rows  {tied}")
+    print(f"shuffled floor    {collision:.6f}   "
+          "<-- SUM_m p_pred(m)*p_tgt(m); NOT E[1/n_legal]")
+    if shuffle_seed is not None:
+        print(f"negative control  {z:+.2f} sigma vs that floor "
+              f"(bar {float(args.negative_control_z):.1f})")
     print(f"written           {args.out}")
+    if problem is not None:
+        print(f"FAIL: {problem}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -310,16 +463,42 @@ def cmd_compare(args: argparse.Namespace) -> int:
   # printed it without comment. A slope whose own CI is wider than the effect
   # size it is compared to cannot decide anything, so this refuses rather than
   # letting prose carry the gate.
+  #
+  # ⚑⚑ AND THE HALFWIDTH ALONE CANNOT CARRY IT (review F8). `var = (b + c -
+  # (c-b)^2/n) / n^2` is exactly 0 when `b == c == 0`, so a comparison of a
+  # file against itself — or of two near-identical checkpoints — passes the bar
+  # at ANY n, including n=1. The gate that enforces the prereg's n had a state
+  # in which it could not fire, which is the same shape as every other finding
+  # in this review. n is now checked in its own right, and the zero-discordance
+  # case is refused by name rather than by an inequality it satisfies
+  # vacuously.
     half_pp = half * 100.0
-    bar_pp = float(args.max_halfwidth_pp)
-    if half_pp > bar_pp:
-        message = (
-            f"halfwidth {half_pp:.4f} pp exceeds the pre-committed bar "
-            f"{bar_pp:.4f} pp at n={n}. The prereg derives that bar at "
-            "n=100,000; at this n the comparison cannot resolve the effect it "
-            "is being judged against. Score more rows, or pass "
-            "--max-halfwidth-pp explicitly with the bar you are re-deriving."
+    prereg_bar_in_force = args.max_halfwidth_pp is None
+    bar_pp = MATERIAL_BAR_PP if prereg_bar_in_force else float(args.max_halfwidth_pp)
+    problems: list[str] = []
+    if b + c == 0:
+        problems.append(
+            f"the two score files are discordant on ZERO of {n} paired rows, so "
+            "the McNemar halfwidth is 0.0000 pp BY CONSTRUCTION and clears any "
+            "bar at any n. That is not a resolved comparison, it is two files "
+            "that agree on every row — check that they are different "
+            "checkpoints.",
         )
+    if prereg_bar_in_force and n < PREREG_SAMPLE_ROWS:
+        problems.append(
+            f"n={n} is below the prereg's resolution point "
+            f"{PREREG_SAMPLE_ROWS}, at which the {bar_pp:.4f} pp bar was "
+            "derived. Score the full frozen set, or pass --max-halfwidth-pp "
+            "explicitly with the bar you are re-deriving at this n.",
+        )
+    if half_pp > bar_pp:
+        problems.append(
+            f"halfwidth {half_pp:.4f} pp exceeds the pre-committed bar "
+            f"{bar_pp:.4f} pp at n={n}. At this n the comparison cannot resolve "
+            "the effect it is being judged against.",
+        )
+    if problems:
+        message = " | ".join(problems)
         if not args.allow_underpowered:
             print(f"FAIL: {message}", file=sys.stderr)
             return 1
@@ -359,18 +538,32 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument(
         "--shuffle-targets", action="store_true",
         help="prereg guard 1, the NEGATIVE CONTROL: score each row against "
-             "another row's lc0 target. Any net must collapse to chance.",
+             "another row's lc0 target. Any net must collapse to the marginal "
+             "collision rate SUM_m p_pred(m)*p_tgt(m) — NOT to E[1/n_legal], "
+             "which sits ~19x higher and is the uniform-mover reference.",
     )
     score.add_argument("--shuffle-seed", type=int, default=0)
+    score.add_argument(
+        "--negative-control-z", type=float, default=NEGATIVE_CONTROL_Z,
+        help="how many SEs above its own floor a shuffled control may land "
+             "before the run is refused (exit 1).",
+    )
     score.set_defaults(handler=cmd_score)
 
     compare = sub.add_parser("compare")
     compare.add_argument("--a", type=Path, required=True)
     compare.add_argument("--b", type=Path, required=True)
     compare.add_argument(
-        "--max-halfwidth-pp", type=float, default=0.392,
-        help="the prereg's material bar. A slope whose 95%% halfwidth exceeds "
-             "it is refused rather than reported.",
+  # ⚑ Default None, not the number: "the operator re-derived a bar for this n"
+  # and "the operator typed the prereg's own bar" are different claims, and
+  # only the first may switch off the n floor. A concrete default cannot tell
+  # them apart.
+        "--max-halfwidth-pp", type=float, default=None,
+        help=f"the prereg's material bar ({MATERIAL_BAR_PP} pp = 2x the paired "
+             "resolution at n=100,000; see paired_halfwidth_pp). A slope whose "
+             "95%% halfwidth exceeds it is refused rather than reported. "
+             "Passing it explicitly also waives the n floor, because it says "
+             "you re-derived the bar at the n you have.",
     )
     compare.add_argument("--allow-underpowered", action="store_true")
     compare.set_defaults(handler=cmd_compare)
