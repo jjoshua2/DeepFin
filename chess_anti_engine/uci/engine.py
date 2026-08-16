@@ -98,6 +98,56 @@ def _attach_log_file(path: str) -> None:
     _println(f"info string LogFile attached: {path!r}")
 
 
+def _unsearchable_king_reason(board: chess.Board) -> str | None:
+    """Why ``board``'s kings make it unsearchable, or None if they are fine.
+
+    ``chess.Board(fen)`` is a STRUCTURAL parse: it raises only on a malformed
+    FEN string, never on an impossible position. ``4k3/8/8/8/8/8/8/8 w - - 0 1``
+    parses happily, and until this guard existed it was stored and searched.
+
+    The condition checked is deliberately narrow: **python-chess's
+    ``Board.king(color)`` and the C ``lsb64(bb[KING] & occ[color])`` must
+    provably designate the same square.** Every king-safety answer on either
+    side of the Python/C boundary is computed relative to that square, so when
+    the two disagree — or when one of them does not exist — the two
+    implementations are answering about different positions. Measured on this
+    branch, all three ways of breaking it diverge, and all three in the
+    key-MERGING direction (we drop an en-passant term python-chess keeps, which
+    invents a repetition):
+
+      * no king             ``4k3/8/8/3pP3/8/8/8/8 w - d6``   — ``king()`` is
+        None, so python-chess's ``is_into_check`` short-circuits to False and
+        calls every ep capture legal, while ``bitboards_have_legal_ep`` returns
+        0 on ``!us_kings``;
+      * king marked promoted ``4k3/8/8/K~2pP2r/8/8/8/8 w - d6`` — ``Board.king``
+        masks with ``~promoted`` and returns None, while the C reads the raw
+        king bitboard;
+      * two kings of a colour ``4k3/8/7K/r2pP3/8/8/8/K7 w - d6`` — ``Board.king``
+        takes ``msb``, the C takes ``lsb``, and they pick different squares.
+
+    ⚑ This is NOT ``board.status() == Status.VALID`` and must not become it.
+    The comment on the caller's rejection path exists because EPD, puzzle and
+    blind-spot drivers feed arbitrary FENs, and those are routinely
+    weird-but-legal: pawns in odd files, lopsided material, the side not to move
+    already in check, an ep square that no double push could have produced.
+    ``VALID`` rejects all of those and would gut the very callers the fall-back
+    message was written for. This predicate says nothing about any of them.
+    ``selfplay/opening.py`` DOES use the full ``is_valid()`` — correctly, since a
+    training seed is supposed to be a real position — which is why the training
+    path never had this hole.
+    """
+    for color, name in ((chess.WHITE, "white"), (chess.BLACK, "black")):
+        king_bb = board.kings & board.occupied_co[color]
+        n_kings = chess.popcount(king_bb)
+        if n_kings != 1:
+            return f"{name} has {n_kings} kings, need exactly 1"
+        if board.king(color) is None:
+  # popcount is 1, so the square exists but carries a '~' promoted marker and
+  # Board.king()'s `& ~promoted` drops it. The C reads the raw king bitboard.
+            return f"{name}'s only king is marked promoted, so python-chess sees none"
+    return None
+
+
 def emit_handshake(options: EngineOptions) -> None:
     """Print the UCI `uci` response — id, options, uciok — using ``options``
     defaults. Kept out of the Engine class so ``__main__`` can reply to the
@@ -490,14 +540,24 @@ class Engine:
         if cmd.fen is None:
             start = chess.Board()
         else:
+  # Two rejection causes, one rejection path: a FEN that will not parse, and a
+  # FEN that parses into a position whose kings the Python and C halves of the
+  # engine would disagree about (_unsearchable_king_reason). Both fall back to
+  # the start position with the same operator-visible message, so a driver only
+  # has to recognise one failure shape.
+            reason: str | None
             try:
                 start = chess.Board(cmd.fen)
             except ValueError as exc:
+                start, reason = chess.Board(), str(exc)
+            else:
+                reason = _unsearchable_king_reason(start)
+            if reason is not None:
   # Falling back to the start position is a silent wrong-position answer: the
   # engine then returns a confidently-scored move for a board the caller never
   # asked about. Say so — EPD/puzzle/blind-spot drivers feed arbitrary FENs.
                 _println(
-                    f"info string position: rejected FEN {cmd.fen!r} ({exc}); "
+                    f"info string position: rejected FEN {cmd.fen!r} ({reason}); "
                     "using the start position"
                 )
                 self._board = chess.Board()

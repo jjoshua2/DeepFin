@@ -829,3 +829,215 @@ def test_the_kingless_divergence_is_in_the_key_merging_direction() -> None:
     assert cb_without.has_legal_en_passant() is False
     assert cb_with.zobrist_hash == cb_without.zobrist_hash, (
         "the two boards must differ only in the ep right")
+
+
+# ---------------------------------------------------------------------------
+# Review round 4: the precondition above is now ENFORCED, not asserted.
+#
+# The previous revision of bitboards_have_legal_ep's comment accepted the
+# kingless MERGE "ONLY because a kingless board cannot arise from play_batch,
+# selfplay, MCTS or UCI parsing". Three of those four hold. UCI did not:
+# chess.Board(fen) is a structural parse, "4k3/8/8/8/8/8/8/8 w - - 0 1" does not
+# raise, _handle_position's only filter was `except ValueError`, and nothing
+# under chess_anti_engine/uci/ consulted status(). The board was stored and
+# searched. Enumerating the paths is not checking them.
+#
+# uci/engine.py::_unsearchable_king_reason closes it. These tests pin the two
+# halves that can rot independently: the divergence is real (so the guard is not
+# decorative), and the guard is actually REACHED from _handle_position.
+# ---------------------------------------------------------------------------
+
+# Two further ways to break precondition (i), neither covered above. Both make
+# python-chess's Board.king() disagree with the C's lsb64(bb[KING] & occ[us]),
+# and both diverge in the MERGING direction like the kingless case.
+_PROMOTED_KING_FEN = "4k3/8/8/K~2pP2r/8/8/8/8 w - d6 0 1"
+_TWO_WHITE_KINGS_FEN = "4k3/8/7K/r2pP3/8/8/8/K7 w - d6 0 1"
+
+_KING_DISAGREEMENT_FENS = [
+    ("mover kingless", _MOVER_KINGLESS_FEN),
+    # popcount(kings & occupied_co[WHITE]) == 1, but the '~' promoted marker
+    # makes Board.king() mask it away -- so a popcount-only guard would miss it.
+    ("king marked promoted", _PROMOTED_KING_FEN),
+    # Board.king() takes msb (h6, safe); the C takes lsb (a1, attacked down the
+    # a-file once the capture vacates d5/e5).
+    ("two kings of one colour", _TWO_WHITE_KINGS_FEN),
+]
+
+
+@pytest.mark.parametrize(("label", "fen"), _KING_DISAGREEMENT_FENS[1:])
+def test_promoted_and_double_king_also_merge(label: str, fen: str) -> None:
+    """The header comment quantifies these two; pin them so it cannot go stale.
+
+    The kingless row is already covered by
+    ``test_kingless_board_is_a_known_accepted_divergence``; these are the two
+    the comment used to wave at as "a third, unquantified".
+    """
+    board = chess.Board(fen)
+    assert board.ep_square == chess.D6, f"{label}: python-chess dropped the ep"
+    assert board.has_legal_en_passant() is True, (
+        f"{label}: the ORACLE moved -- re-derive before changing this"
+    )
+    assert CBoard.from_board(board).has_legal_en_passant() is False, (
+        f"{label}: C no longer diverges; if intended, update the header comment"
+    )
+    # ...and the divergence MERGES: python-chess separates these two boards.
+    without_ep = chess.Board(fen.replace(" d6 ", " - "))
+    assert board._transposition_key() != without_ep._transposition_key()
+    with_ep_cb = CBoard.from_board(board)
+    without_ep_cb = CBoard.from_board(without_ep)
+    assert int(with_ep_cb.zobrist_hash) == int(without_ep_cb.zobrist_hash), label
+    assert (
+        with_ep_cb.has_legal_en_passant() == without_ep_cb.has_legal_en_passant()
+    ), f"{label}: expected the C repetition keys to be equal (the merge)"
+
+
+def test_board_fen_parse_does_not_reject_a_kingless_position() -> None:
+    """The premise of the guard: python-chess hands us one without complaint.
+
+    If a future python-chess raises here, ``_handle_position``'s pre-existing
+    ``except ValueError`` would already cover it and the guard becomes redundant
+    -- this says so out loud rather than leaving it implied.
+    """
+    board = chess.Board("4k3/8/8/8/8/8/8/8 w - - 0 1")
+    assert board.king(chess.WHITE) is None
+    assert board.status() != chess.STATUS_VALID
+    assert CBoard.from_board(board).has_legal_en_passant() is False
+
+
+@pytest.mark.parametrize(
+    ("label", "fen"),
+    [*_KING_DISAGREEMENT_FENS,
+     ("no kings at all", _KINGLESS_FEN),
+     ("opponent kingless", _OPPONENT_KINGLESS_FEN)],
+)
+def test_uci_king_guard_rejects_every_disagreeing_board(label: str, fen: str) -> None:
+    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+
+    reason = _unsearchable_king_reason(chess.Board(fen))
+    assert reason is not None, (
+        f"{label}: guard accepted a board whose kings the C and Python halves "
+        f"disagree about -- see bitboards_have_legal_ep's precondition (i)"
+    )
+    assert "king" in reason, reason
+
+
+def test_uci_king_guard_is_symmetric_because_search_flips_the_mover() -> None:
+    """The guard checks BOTH colours although precondition (i) is mover-only.
+
+    At the root an absent OPPONENT king agrees with python-chess -- that is what
+    ``test_kingless_board_is_a_known_accepted_divergence``'s opponent row
+    asserts. It stops agreeing one ply later: search pushes moves, the opponent
+    becomes the mover, and ``bitboards_have_legal_ep`` hits its ``!us_kings``
+    early-out inside the tree. A mover-only guard would leave the hole open one
+    node deeper, which is why this is not over-reach.
+    """
+    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+
+    root = chess.Board(_OPPONENT_KINGLESS_FEN)
+    assert root.king(chess.WHITE) is not None
+    assert root.king(chess.BLACK) is None
+    # the root itself agrees -- so no ep divergence pins this case
+    assert CBoard.from_board(root).has_legal_en_passant() is root.has_legal_en_passant()
+
+    # ...but with the kingless side ON MOVE, which is what a child of that root
+    # looks like, the merging divergence is back.
+    kingless_mover = chess.Board("4K3/8/8/8/3Pp3/8/8/8 b - d3 0 1")
+    assert kingless_mover.king(chess.BLACK) is None
+    assert kingless_mover.has_legal_en_passant() is True
+    assert CBoard.from_board(kingless_mover).has_legal_en_passant() is False
+
+    reason = _unsearchable_king_reason(root)
+    assert reason is not None, (
+        "guard is one-sided; a black-kingless root reaches search and its "
+        "children put the kingless side on move"
+    )
+    assert "black" in reason, reason
+
+
+def test_uci_king_guard_is_not_status_valid() -> None:
+    """The guard must NOT be widened into ``status() == VALID``.
+
+    ``_handle_position``'s fall-back message names EPD/puzzle/blind-spot drivers,
+    which feed weird-but-legal FENs. Every board here is status-INVALID and must
+    still be ACCEPTED; a future tightening to ``is_valid()`` fails this.
+    """
+    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+
+    weird_but_searchable = [
+        ("opposite check", "4k3/8/8/8/8/8/8/3KR3 w - - 0 1"),
+        ("impossible ep", "4k3/8/8/8/8/8/8/4K3 w - e6 0 1"),
+        ("pawn on rank 1", "4k3/8/8/8/8/8/8/P3K3 w - - 0 1"),
+    ]
+    for label, fen in weird_but_searchable:
+        board = chess.Board(fen)
+        assert board.status() != chess.STATUS_VALID, (
+            f"{label}: fixture stopped being status-invalid, pick another"
+        )
+        assert _unsearchable_king_reason(board) is None, (
+            f"{label}: the king guard has been widened into is_valid(), which "
+            f"rejects the EPD/puzzle callers the fall-back path exists for"
+        )
+
+
+def test_uci_king_guard_accepts_normal_positions() -> None:
+    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+
+    assert _unsearchable_king_reason(chess.Board()) is None
+    assert _unsearchable_king_reason(chess.Board(_REPRO_FEN)) is None
+    assert _unsearchable_king_reason(chess.Board(_BOTH_KINGS_FEN)) is None
+
+
+@pytest.mark.parametrize(
+    ("label", "fen"),
+    [*_KING_DISAGREEMENT_FENS, ("no kings at all", _KINGLESS_FEN)],
+)
+def test_handle_position_actually_applies_the_king_guard(
+    label: str, fen: str, capsys,
+) -> None:
+    """WIRING, not just the predicate.
+
+    A predicate that ``_handle_position`` never calls leaves every test above
+    green while the engine still searches the board -- this repo's signature
+    defect. Drive the real handler and assert the operator-visible outcome: the
+    same "rejected FEN ...; using the start position" line the unparseable-FEN
+    case emits, and ``_board`` actually reset.
+    """
+    from unittest.mock import MagicMock
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import CmdPosition
+
+    # Sanity: python-chess parses it, so the pre-existing ValueError filter
+    # cannot be what rejects it.
+    assert chess.Board(fen).piece_map(), label
+
+    engine = Engine(worker=MagicMock())
+    engine._handle_position(CmdPosition(fen=fen, moves=()))
+
+    out = capsys.readouterr().out
+    assert "info string position: rejected FEN" in out, f"{label}: {out!r}"
+    assert "using the start position" in out, f"{label}: {out!r}"
+    assert "king" in out, f"{label}: message does not name the condition: {out!r}"
+    assert engine._board == chess.Board(), label
+
+
+def test_handle_position_still_accepts_a_weird_but_legal_fen(capsys) -> None:
+    """Negative control for the wiring test.
+
+    Without it, a handler that rejected everything would satisfy every
+    assertion above.
+    """
+    from unittest.mock import MagicMock
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import CmdPosition
+
+    fen = "4k3/8/8/8/8/8/8/3KR3 w - - 0 1"  # side not to move is in check
+    assert chess.Board(fen).status() != chess.STATUS_VALID
+
+    engine = Engine(worker=MagicMock())
+    engine._handle_position(CmdPosition(fen=fen, moves=()))
+
+    out = capsys.readouterr().out
+    assert "rejected FEN" not in out, out
+    assert engine._board == chess.Board(fen)
