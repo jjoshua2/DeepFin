@@ -28,6 +28,7 @@ import pytest
 
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from scripts import audit_targets as at
+from scripts.net_source import NetSource
 
 
 def _args(**over: Any) -> SimpleNamespace:
@@ -203,7 +204,7 @@ def test_net_candidates_actually_invokes_the_dispatch_guard(
     with pytest.raises(SystemExit) as excinfo:
         at._net_candidates(
             [chess.Board()],
-            checkpoint="unused-the-loader-is-stubbed",
+            net=NetSource(checkpoint="unused-the-loader-is-stubbed"),
             device="cpu",
             batch_size=1,
             seed=0,

@@ -97,6 +97,45 @@ def normalize_embed_dim_by_layer(
     return vals
 
 
+def normalize_aux_policy_head_dim(value: Any = None) -> int | None:
+    """Normalize the AUXILIARY policy heads' projection width.
+
+    ``None`` (and yaml's ``null`` / an absent key) means "trunk width" — today's
+    exact behaviour, bit-identical. Anything else must be a positive integer.
+
+    ⚑ Kept None-preserving on purpose. Collapsing ``None`` to ``0`` or to a
+    hardcoded default would build zero-width or wrongly-sized ``q``/``k``
+    projections that ``load_state_dict_tolerant`` then DROPS with only a
+    ``print()`` — the silent-wrongness shape this repo keeps getting bitten by.
+
+    ⚑ ``off`` / ``false`` mean ``None`` too, matching the sibling normalizers
+    above. A bare yaml ``off`` parses as the BOOLEAN ``False``, so without this
+    the natural operator edit to END the experiment
+    (``aux_policy_head_dim: off``) would be rejected by ``_coerce_positive_int``
+    — a category-(b) live-yaml failure that KILLS the trial mid-iteration
+    instead of reverting the heads to trunk width.
+    """
+    if value is None or value is False:
+        return None
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.lower() in ("", "none", "null", "off", "false"):
+            return None
+        value = raw
+    try:
+        return _coerce_positive_int(value, name="aux_policy_head_dim")
+    except (TypeError, ValueError) as exc:
+        # ⚑ Every rejection path is normalized to ONE ValueError that NAMES the
+        # key. Raw `int()` failures do not: a yaml list/dict surfaces as
+        # `TypeError`, and `aux_policy_head_dim: wide` surfaces as
+        # "invalid literal for int() with base 10: 'wide'" — which tells an
+        # operator staring at a boot failure nothing about which of the ~200
+        # yaml keys they mistyped.
+        raise ValueError(
+            f"aux_policy_head_dim must be a positive int or None, got {value!r}"
+        ) from exc
+
+
 # The project's ONE definition of a game phase, as piece counts:
 # ``end`` is ``count <= 13``, ``open`` is ``count > 22``, ``mid`` is the rest.
 #

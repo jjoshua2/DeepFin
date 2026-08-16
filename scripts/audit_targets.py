@@ -162,6 +162,13 @@ from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+from scripts.net_source import (
+    NetSource,
+    add_net_source_args,
+    apply_gpu_mem_cap,
+    net_source_from_args,
+    reject_stored_encoding_for_onnx,
+)
 
 _CANDIDATE_NAMES = {
     "raw": "a) net raw policy",
@@ -622,7 +629,7 @@ def _search_wdl_like_selfplay(q: float, net_wdl: np.ndarray) -> np.ndarray:
 def _net_candidates(
     boards: list[chess.Board],
     *,
-    checkpoint: str,
+    net: NetSource,
     device: str,
     batch_size: int,
     seed: int,
@@ -638,6 +645,7 @@ def _net_candidates(
     vloss_weight: int = 0,
     vloss_mode: int = 0,
     stored_x: np.ndarray | None = None,
+    gpu_mem_fraction: float | None = None,
 ) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
@@ -662,10 +670,17 @@ def _net_candidates(
         warn_volatility_python_path,
     )
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
-    from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
-    model = load_model_from_checkpoint(checkpoint, device=device)
-    model.eval()
+    # `net` carries exactly one of a checkpoint or a foreign ONNX spec and
+    # raises if that is not true, so this cannot silently score a default net.
+    # Every encoding below is read OFF the loaded model, never assumed: an
+    # LC0/Ceres net declares lc0_root/v1/az_4672 and the searches and the raw
+    # forward then all encode boards the way that net needs.
+    # gpu_mem_fraction is carried this far because on the --onnx path the cap
+    # is an ORT SESSION-CONSTRUCTION argument (gpu_mem_limit): there is no
+    # later point at which it can be applied, and torch's own cap does not
+    # bound the ONNX session.
+    model = net.load(device=device, gpu_mem_fraction=gpu_mem_fraction, tag="audit")
     hist = str(getattr(model, "input_history_encoding", "legacy"))
     extra = str(getattr(model, "input_extra_features", "v1"))
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
@@ -1252,7 +1267,11 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--audit-set", type=Path, default=Path("data/audit_set_v1.jsonl"))
-    ap.add_argument("--checkpoint", type=str, required=True)
+    add_net_source_args(
+        ap,
+        checkpoint_help="one of ours: trainer.pt or checkpoint dir. Mutually "
+        "exclusive with --onnx; exactly one is required.",
+    )
     ap.add_argument("--config", type=Path, default=Path("configs/pbt2_small.yaml"),
                     help="production config for target-construction params")
     ap.add_argument("--device", default="cuda")
@@ -1306,10 +1325,14 @@ def main() -> None:
                          "topk would score a search selfplay never runs. At 256 "
                          "sims, ~30 legal moves means topk=32 ≈ all-legal.")
     ap.add_argument("--gpu-mem-fraction", type=float, default=None,
-                    help="cap this process to a fraction of GPU memory "
-                         "(set_per_process_memory_fraction) so a high-sim audit run "
-                         "CONCURRENT with a live trainer fails-fast on its own OOM instead "
-                         "of faulting the shared GPU/broker. e.g. 0.4 on a 32GB card.")
+                    help="cap this process to a fraction of GPU memory so a high-sim "
+                         "audit run CONCURRENT with a live trainer fails-fast on its own "
+                         "OOM instead of faulting the shared GPU/broker. e.g. 0.4 on a "
+                         "32GB card. Applied to BOTH allocators a run can use: the torch "
+                         "caching allocator (set_per_process_memory_fraction) and, on "
+                         "--onnx, onnxruntime's CUDA arena (gpu_mem_limit, computed "
+                         "against the card's total memory). The two are separate -- "
+                         "torch's cap does not bound an ORT session.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--stockfish", type=str, default=None,
                     help="needed only when the shallow-SF cache is incomplete")
@@ -1382,6 +1405,12 @@ def main() -> None:
                          "already emitted.")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
+  # Same fail-fast reasoning as the flags below, and the most expensive one to
+  # get wrong: exactly one of --checkpoint/--onnx, and for --onnx the graph's
+  # tensor names, resolved and printed HERE -- before the audit set loads and
+  # long before SF spends an hour labelling.
+    net = net_source_from_args(args)
+    reject_stored_encoding_for_onnx(net, args.input_encoding)
   # Parsed at PARSE time so a malformed threshold list fails before the model
   # is loaded. () when the flag is absent, which is what keeps every code path
   # below identical to the default run.
@@ -1424,11 +1453,15 @@ def main() -> None:
     if args.sf_soft_nodes is None:
         args.sf_soft_nodes = {"low": 500_000, "high": 2_000_000}[args.sf_effort]
 
-    if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
-        import torch
-        torch.cuda.set_per_process_memory_fraction(
-            float(args.gpu_mem_fraction), torch.device(args.device).index or 0)
-        print(f"[audit] GPU memory capped at fraction {args.gpu_mem_fraction}")
+    # Caps the TORCH allocator and says only that. The --onnx session gets its
+    # own cap at load time via ORT's gpu_mem_limit; torch's fraction cannot
+    # reach it, and printing a bare "GPU memory capped" here claimed it could.
+    apply_gpu_mem_cap(
+        net=net,
+        device=str(args.device),
+        gpu_mem_fraction=args.gpu_mem_fraction,
+        tag="audit",
+    )
 
     flat = flatten_run_config_defaults(load_yaml_file(args.config))
     sf_params = _sf_soft_params_from_flat(flat)
@@ -1494,7 +1527,7 @@ def main() -> None:
     sz_path = str(flat.get("syzygy_path") or "") if flat.get("syzygy_in_search") else ""
 
     raw_probs, search_by_profile, root_q_by_profile, root_wdl = _net_candidates(
-        boards, checkpoint=args.checkpoint, device=args.device,
+        boards, net=net, device=args.device,
         batch_size=int(args.batch_size), seed=int(args.seed),
         profiles=profiles, requested_gumbel_overrides=gumbel_overrides,
         policy_temp=float(args.policy_temp),
@@ -1503,6 +1536,7 @@ def main() -> None:
         vloss_weight=int(args.vloss_weight),
         vloss_mode=int(args.vloss_mode),
         stored_x=stored_x,
+        gpu_mem_fraction=args.gpu_mem_fraction,
     )
     search_probs = search_by_profile["search"]
   # The production WDL blend's search component comes from the RL search, so
@@ -1606,10 +1640,16 @@ def main() -> None:
             # Criticality = deep-SF gap between the best and 2nd-best listed line
             # (cp). Small gap = quiet position where SF's "best" is near-arbitrary
             # among near-equal moves; large gap = decision-critical. Shared with
-            # bt4_audit / audit_compare_buckets so the joined comparison agrees.
+            # foreign_net_audit (was bt4_audit, renamed in #414) /
+            # audit_compare_buckets so the joined comparison agrees.
             gap = criticality_gap(pos.move_cp)
             per_pos_dump.append({
                 "key": pos.key, "phase": pos.phase, "source": pos.source,
+                # Which NET produced the row. The report header alone is not
+                # enough: dumps outlive reports and get joined to each other,
+                # and a checkpoint row and a foreign-ONNX row are otherwise
+                # indistinguishable.
+                "net": net.label,
                 # A dump is a report: carry the ruler it was made with, or a
                 # downstream join can silently mix two encodings.
                 "input_encoding": {
@@ -1754,7 +1794,7 @@ def main() -> None:
         f"always fen_only; row (c) has no net input. ⚑ A RULER CHANGE INVALIDATES "
         f"ITS RECORDS — do not put row (a) from a `stored` run in a table with "
         f"row (a) from a `fen_only` run.\n"
-        f"- checkpoint: {args.checkpoint}\n"
+        f"- net: {net.label}\n"
         f"- search: PLAY {args.sims} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
         f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n\n"
