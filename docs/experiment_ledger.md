@@ -53054,3 +53054,47 @@ most positions are bit-stable and a small set moves a lot. **Per-rung >= 0.20: 3
 75k->150k, 35 at 150k->500k** — comparable, UNLIKE the harvest population where movement
 concentrated at the bottom of the ladder. So on ordinary positions the instability is not
 purely a low-budget artifact.
+
+### ⚑ AMENDMENT (minutes later, same session) — I OVERSTATED MY OWN NULL. Corrected.
+
+The section above is headed *"THE HARVEST DOES NOT ENRICH FOR SF INSTABILITY"* and says
+*"there is no evidence the harvest concentrates SF-unstable positions."* **The first is too
+strong and is withdrawn.** Caught by the executing agent, which read the prereg's own
+restriction more strictly than I did and declined to make any enrichment statement in either
+direction.
+
+**Why it is too strong:** the harvest arm is n=123, CI **[1.33%, 9.23%]**. Against the
+ordinary 5.25%, the enrichment ratios NOT excluded run from **0.25x to 1.76x**. A harvest that
+genuinely enriched by 1.7x is entirely consistent with these data. "No enrichment was
+detected" and "there is no enrichment" are different claims and I wrote the second.
+
+**What survives, stated at the strength the data support:**
+- The harvest rate is **not detectably different from the ordinary base rate in either
+  direction** (Fisher one-sided p=0.7764; point estimates 4.07% vs 5.25%).
+- The harvest is therefore **NOT a demonstrated route to SF-unstable positions**, and any plan
+  that assumed it concentrates them needs its own evidence.
+- ⚑ What is NOT established: that the harvest anti-selects, or that its criteria are provably
+  orthogonal to depth-instability. The earlier paragraph asserting orthogonality as a
+  established fact is downgraded to: *the data show no enrichment signal, at a resolution that
+  could not see one below ~1.8x.*
+
+⇒ **Resolving this needs a bigger harvest arm, not a bigger ordinary arm.** The ordinary side
+is already tight ([4.06%, 6.67%]); all the uncertainty is in the 123 harvest rows. Cost to
+halve that CI is ~370 more harvest positions on the 3-budget ladder (~7 CPU-minutes at the
+measured 1.19 s/row). Cheap, and NOT run today because it changes no decision: PROCEED is
+carried by the ordinary base rate alone.
+
+**Two instrument facts from the run, recorded because they cost nothing and are load-bearing
+for reuse:**
+- **k=63 is robust to the threshold boundary** — recomputed on exact integer millis it is
+  still 63; 5 rows sit within +/-0.005 of the 0.20 cut and none flip. The verdict does not
+  hang on float noise at the cutoff.
+- **The instrument is run-to-run deterministic under load** — the 20 pilot rows were re-scored
+  inside the full 1200-row run and agree exactly on all three budgets, 0 disagreements.
+  Node-limited search with cold TT reproduces regardless of machine load, which is what makes
+  the harvest comparator re-derivable rather than re-measurable.
+- **Inert population difference, reported rather than suppressed:** all 4000 audit FENs carry
+  `fullmove = 1` (the builder normalises it) while harvest rows carry real fullmove numbers.
+  The HALFMOVE clock is not normalised (2604/4000 nonzero), so the 50-move input SF actually
+  uses is genuine on both sides, and the fullmove counter does not affect search. Judged inert
+  and design unchanged.
