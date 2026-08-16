@@ -51369,3 +51369,51 @@ frozen set — worth knowing, not worth stacking onto the EP readout window.
 
 Banked: `scratchpad/knobab/{A,B,iter218,iter514,iter672}_{prod,noknob}.jsonl` (10 × 4000
 per-position dumps), `B_instr`/`A_instr`, and `paired_ci.py`.
+
+### READOUT — the fixed-weight discriminator does NOT reproduce the entropy ordering
+
+Prereg `6a925cf4b` (`scratchpad/knobab/PREREG_temp_sweep.md`), committed before the run. Same
+checkpoint throughout — `bt4heads_iter100_20260815`, production weights — with `policy_temp`
+sweeping the stored target's entropy at **constant vintage, lineage, weights and data**. That
+is the collinearity removed rather than acknowledged.
+
+| `policy_temp` | OFF-arm entropy | accuracy delta (knobs ON − OFF) | |
+|---|---|---|---|
+| 1.0 | 0.537 | −0.225 [−0.73, +0.28] | ns |
+| **1.5 (production)** | 0.692 | **−0.875 [−1.63, −0.10]** | **SIG** |
+| 2.0 | 0.809 | −0.500 [−1.40, +0.40] | ns |
+| 3.0 | 0.992 | −0.100 [−1.18, +0.98] | ns |
+
+- **Prereg 1 (rho > 0): PASS but weakly** — rho = **+0.400**, against +1.000 across the five
+  checkpoints.
+- **Prereg 2a: FAIL.** The hypothesis required the SHARPEST arm (0.537) to be at least as
+  negative as production's 0.692. It is **less** negative (−0.225 vs −0.875). The relation is
+  **non-monotone**: it dips at 0.692 and recovers in BOTH directions.
+- Prereg 2b: PASS (softest arm −0.100 > −0.875).
+
+⇒ **VERDICT: INCONCLUSIVE**, and substantively **the entropy mechanism is NOT supported by the
+design built to test it.** Three of the four arms are individually ns, so this sweep cannot
+separate "non-monotone" from "noise" — it is underpowered for the ~0.1–0.9 pp effects in play,
+with CI half-widths of 0.5–1.1 pp. It neither confirms nor kills. What it does do is **remove
+the clean support**: when weights are held fixed and only entropy moves, the monotone ordering
+that was perfect across five checkpoints does not appear.
+
+**⚑ So the five-checkpoint rho = +1.000 is now MORE likely to be about the WEIGHTS than about
+entropy.** The two candidate explanations were never separated by that ladder, I said so in its
+prereg, and the discriminator has come down against the one I favoured. Recording that against
+my own hypothesis, in the session that produced it.
+
+**The honest limitation, which cuts both ways.** `policy_temp` raises entropy by tempering the
+PRIOR at inference; training lowers it by sharpening the LEARNED distribution. Those are not
+the same operation and need not have the same effect on how much a target benefits from further
+sharpening — so a null here does not strictly refute an entropy story about the ladder. It does
+mean **no experiment currently supports one**, and the mechanism should not be quoted as though
+it were established. [[most_experiments_here_are_unfalsifiable]]
+
+**What would settle it** — two checkpoints of SIMILAR vintage and DIFFERENT learned entropy
+(e.g. two Tier-13 arms, or a pair either side of a temperature-affecting promotion). Not run;
+no such pair is banked with the needed separation.
+
+**No decision changes.** The knobs stay as they are at the EP restart, for the reasons already
+recorded — the case for leaving them alone never rested on the mechanism, only on the absence
+of an evidence-backed direction, which this strengthens.
