@@ -534,8 +534,11 @@ def first_record_en_passant_risk(board: chess.Board) -> str | None:
     """Why this game's FIRST position may carry an e.p. square we cannot see.
 
     ⚑ THE GAP THIS CLOSES, AND WHY NO EXISTING GATE COULD SEE IT.
-    lc0's classical 112-plane format cannot express en passant at all, so the
-    first position of a game is reconstructed without it and
+    lc0's classical 112-plane format cannot express en passant at all — MEASURED
+    on this corpus, not assumed: T91 is ``version=6, input_format=1``, and over
+    4,000 positions the 206 that carry an ``ep_square`` show NO marker anywhere
+    in their own record (no pawn on rank 1/8 in frame 0, plane 110 zero in all
+    206). So the first position of a game is reconstructed without it and
     :func:`repair_en_passant` recovers the marker only when an e.p. CAPTURE is
     legal — the support set is the only witness. Measured over 60,000 random
     positions by an independent reviewer: **94.5% of positions carrying an
@@ -551,6 +554,11 @@ def first_record_en_passant_risk(board: chess.Board) -> str | None:
     this whole PR started from: **a check that compares our output against our
     own reconstruction can only ever find transcription errors, never a wrong
     rule.** Only an external referee, or a guard on the premise, can.
+
+    ⚑ And it cannot be recovered from lc0's stored history either — the obvious
+    alternative fix. A game's FIRST record has no history to read: measured over
+    300 T91 first records, frames 1-7 (planes 13-103) are ALL ZERO in 300 of
+    300. There is nothing to diff a double-push against.
 
     So this guards the PREMISE instead. An e.p. square can exist only if the
     side that just moved double-pushed a pawn, which puts that pawn on one
