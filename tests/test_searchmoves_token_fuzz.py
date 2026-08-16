@@ -31,7 +31,22 @@ from chess_anti_engine.stockfish.uci import _validated_searchmoves
 
 START = chess.STARTING_FEN
 
-# Legal in the start position, and one promotion-shaped token that is not.
+# ⚑⚑ THE ORACLE NEEDS *BOTH* FENS, AND THE SECOND ONE IS LOAD-BEARING.
+# Against a parseable FEN, `_validated_searchmoves` runs syntax THEN legality,
+# and `chess.Move.from_uci` raises `InvalidMoveError` (a ValueError) on a
+# malformed token — so a rejection proves nothing about WHICH gate fired. The
+# first revision of this file tested only START and was therefore vacuous for
+# the very `$`→`\Z` regression it was written for: reverting the anchor left
+# the separator property 15/15 green.
+#
+# Against a FEN python-chess cannot parse, legality is SKIPPED by design, so a
+# rejection can only have come from the SYNTAX gate. That isolates the regex and
+# is what makes these properties discriminating.
+BAD_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - x 1"
+FENS = [START, BAD_FEN]
+
+# All legal in the start position. (No promotion is possible there — an earlier
+# comment claimed otherwise; promotions are exercised against their own FEN.)
 VALID_IN_START = ["e2e4", "d2d4", "g1f3", "b1c3", "a2a3", "h2h4"]
 
 # Anything that could split or extend the `go` line. `searchmoves` consumes
@@ -46,43 +61,54 @@ SEPARATORS = [
 KEYWORDS = ["stop", "quit", "movetime", "infinite", "ponder", "depth", "nodes"]
 
 
-def _accepted(token: str) -> bool:
+def _accepted(token: str, fen: str = START) -> bool:
     try:
-        _validated_searchmoves(START, [token])
+        _validated_searchmoves(fen, [token])
     except ValueError:
         return False
     return True
 
 
-def test_the_valid_corpus_is_accepted() -> None:
-    """Guard on the guard: if these were rejected the battery would be vacuous."""
-    for move in VALID_IN_START:
-        assert _accepted(move), move
+@pytest.mark.parametrize("fen", FENS)
+@pytest.mark.parametrize("move", VALID_IN_START)
+def test_the_valid_corpus_is_accepted(move: str, fen: str) -> None:
+    """POSITIVE CONTROL: a reject-everything regex must fail the battery here."""
+    assert _accepted(move, fen), move
 
 
+@pytest.mark.parametrize("fen", FENS)
 @pytest.mark.parametrize("sep", SEPARATORS)
-@pytest.mark.parametrize("move", ["e2e4"])
-def test_no_separator_survives_in_any_position(move: str, sep: str) -> None:
-    """Trailing, leading, embedded, and doubled — all must be rejected."""
-    for variant in (
-        f"{move}{sep}",          # ⚑ the case `$` missed
-        f"{sep}{move}",
-        f"{move}{sep}{move}",
-        f"{move[:2]}{sep}{move[2:]}",
-        f"{move}{sep}{sep}",
-    ):
-        assert not _accepted(variant), repr(variant)
+@pytest.mark.parametrize(
+    "shape",
+    ["{m}{s}", "{s}{m}", "{m}{s}{m}", "{h}{s}{t}", "{m}{s}{s}"],
+    ids=["trailing", "leading", "doubled-move", "embedded", "doubled-sep"],
+)
+def test_no_separator_survives_in_any_position(
+    shape: str, sep: str, fen: str,
+) -> None:
+    """⚑ `{m}{s}` under BAD_FEN is the case `$` missed. One variant per test id,
+    so a failure names the exact shape and separator rather than hiding in a loop.
+    """
+    m = "e2e4"
+    variant = shape.format(m=m, s=sep, h=m[:2], t=m[2:])
+    assert not _accepted(variant, fen), repr(variant)
 
 
+@pytest.mark.parametrize("fen", FENS)
 @pytest.mark.parametrize("keyword", KEYWORDS)
-def test_no_uci_keyword_can_ride_along(keyword: str) -> None:
-    for variant in (f"e2e4 {keyword}", f"e2e4\n{keyword}", f"{keyword} e2e4", keyword):
-        assert not _accepted(variant), repr(variant)
+@pytest.mark.parametrize("shape", ["e2e4 {k}", "e2e4\n{k}", "{k} e2e4", "{k}"],
+                         ids=["after", "newline", "before", "alone"])
+def test_no_uci_keyword_can_ride_along(shape: str, keyword: str, fen: str) -> None:
+    assert not _accepted(shape.format(k=keyword), fen)
 
 
+@pytest.mark.parametrize("fen", FENS)
 @pytest.mark.parametrize("bad", ["k", "K", "p", "x", "Q", "1", "qq", "qn"])
-def test_only_the_four_promotion_pieces_are_permitted(bad: str) -> None:
-    assert not _accepted(f"e7e8{bad}")
+def test_only_the_four_promotion_pieces_are_permitted(bad: str, fen: str) -> None:
+    """⚑ BAD_FEN is what makes this bite: widening `[qrbn]?` to `[a-z]?` left the
+    START-only version fully green, because legality rejected the token instead.
+    """
+    assert not _accepted(f"e7e8{bad}", fen)
 
 
 def test_every_real_promotion_suffix_is_accepted() -> None:
@@ -95,33 +121,34 @@ def test_every_real_promotion_suffix_is_accepted() -> None:
         assert _validated_searchmoves(fen, [f"e7e8{suffix}"]) == [f"e7e8{suffix}"]
 
 
+@pytest.mark.parametrize("fen", FENS)
 @pytest.mark.parametrize("bad", ["", " ", "e2", "e2e", "e2e4e5", "z2z4", "e0e4", "e9e4"])
-def test_structurally_malformed_tokens_are_rejected(bad: str) -> None:
-    assert not _accepted(bad)
+def test_structurally_malformed_tokens_are_rejected(bad: str, fen: str) -> None:
+    assert not _accepted(bad, fen)
 
 
-def test_case_is_not_normalised_away() -> None:
-    """UCI is lowercase on the wire; accepting uppercase would be a silent fix."""
-    for variant in ("E2E4", "E2e4", "e2E4", "E7E8Q"):
-        assert not _accepted(variant)
+@pytest.mark.parametrize("fen", FENS)
+@pytest.mark.parametrize("variant", ["E2E4", "E2e4", "e2E4", "E7E8Q"])
+def test_case_is_not_normalised_away(variant: str, fen: str) -> None:
+    """UCI is lowercase on the wire; accepting uppercase would be a silent fix.
 
-
-def test_rejection_happens_before_any_engine_byte() -> None:
-    """The whole point: a bad token must not cost a Stockfish process.
-
-    `_validated_searchmoves` is a pure function over (fen, tokens) — it holds no
-    engine handle and cannot write. This pins that structurally, so a future
-    refactor that moves validation inside the protocol section fails here.
+    ⚑ Also needs BAD_FEN: with `re.IGNORECASE` added, the START-only version
+    stayed green because python-chess rejected the uppercase token downstream.
     """
-    import inspect
+    assert not _accepted(variant, fen)
 
-    src = inspect.getsource(_validated_searchmoves)
-    for forbidden in ("_send", "_protocol_section", "self."):
-        assert forbidden not in src, (
-            f"{forbidden!r} appears in _validated_searchmoves — validation must "
-            "stay outside the protocol section, or a caller's typo desyncs and "
-            "costs an engine restart"
-        )
+
+# ⚑ DELETED: `test_rejection_happens_before_any_engine_byte`.
+# It grepped `inspect.getsource(_validated_searchmoves)` for `_send`,
+# `_protocol_section` and `self.` — and was THEATRE. An independent reviewer
+# performed the exact refactor its docstring named (moving validation inside
+# `_protocol_section`) and the battery stayed 43/43 green: the ordering lives in
+# `search`, not in the validator's own body, so reading that body cannot see it.
+# `"self."` is unfalsifiable there by construction — it can never appear in a
+# module-level function. The property IS already covered, properly, by
+# `test_stockfish_searchmoves.py::test_malformed_move_raises_naming_the_token`,
+# which asserts on `engine.commands == []` and `desynced is False`. A guard that
+# cannot fail is worse than no guard: it reads as assurance.
 
 
 def test_a_legal_move_for_a_different_position_is_still_rejected() -> None:
