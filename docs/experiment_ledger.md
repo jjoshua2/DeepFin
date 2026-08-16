@@ -50852,3 +50852,132 @@ AFTER #436 merges** (it was run against code without the fix; a live yaml key th
 define is FATAL at launch) → `salvage-export --top-n 1 --metric training_iteration` revert point →
 rebuild with `python3 scripts/build_production_extensions.py` (NOT `pip install -e .`) → restart
 from `data/salvage/bt4heads_iter100_20260815` (`global_iter` 991).
+## 2026-08-15 — INSTRUMENT DEFECT: `--search-shape training` measured a search production does not run (2026-08-10 → 2026-08-15). Six banked rows REGIME-MISLABELLED; none INVALIDATED.
+
+**The designed guard was already firing and nobody read it.**
+`tests/test_arena_search_shape_plumbing.py::test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert`
+exists precisely to catch this and had been RED since 2026-08-10:
+
+> production selfplay configures `['target_max_visit_cap', 'target_untempered_prior']` away
+> from the GumbelConfig default `{'target_max_visit_cap': (5, 0), 'target_untempered_prior':
+> (True, False)}`, but the arena's training shape does not carry it — `--search-shape
+> training` would measure a search production does not run
+
+### WHEN — bounded by commit, not guessed
+- `c5d1b4882` (2026-08-10 **20:59**, PR #390) added both knobs to the mapping and to the
+  guard's expected set, with an in-test comment asserting each "is carried into the arena's
+  training shape anyway (below)". **It did not touch `scripts/arena_standard.py` at all**
+  (`git show c5d1b4882 -- scripts/arena_standard.py` is empty). The comment was false when
+  written; that is the origin.
+- `c62eb8ff2` (2026-08-10 **23:28**) promoted `gumbel_target_max_visit_cap: 5` and
+  `gumbel_target_untempered_prior: true` into `configs/pbt2_small.yaml`, which is what turned
+  the latent hole into a live divergence and the guard RED.
+- ⇒ **affected window = 2026-08-10 23:28 → this fix.** Both knobs entered in ONE commit, so
+  the window has one edge, not two.
+
+### WHY it happened, and why patching two rows would not have fixed it
+The training shape RESTATED three knobs by hand (`c_scale`, `topk`, `policy_temp`). A
+promoted knob needed a human to remember to grow that list. The mechanism, not the two
+values, was the defect.
+
+### The three-column audit (all 30 GumbelConfig fields + the 2 C-path fn args)
+Full table in the PR. Rows where the columns differ, and the verdict for each:
+
+| field | production | arena `training` | arena `play` | verdict |
+| --- | --- | --- | --- | --- |
+| `simulations` | 100 | arena flag | arena flag | **correct** — a match property, not a training knob |
+| `add_noise` | True | arena flag (False) | arena flag (False) | **correct** — root noise is selfplay exploration |
+| `temperature` | 0.0 | arena flag | arena flag | **correct** — move selection is a match property |
+| `topk` / `c_scale` / `policy_temp` | 16 / 0.1 / 1.5 | same | 32 / 0.025 / 1.0 | **correct** — `play` is *supposed* to differ |
+| `c_visit_root`/`c_scale_root`/`q_visit_exp_root` | −1 / −1 / 99 (LINEAR root) | same | 900 / 7 / −1 (LOG root) | **correct** — the root transform is the shapes' defining difference |
+| `vloss_weight` | 1 | 1 | 3 | **correct** |
+| **`target_max_visit_cap`** | **5** | **0** | 0 | ⚑ **DRIFT** |
+| **`target_untempered_prior`** | **True** | **False** | False | ⚑ **DRIFT** |
+
+The other 22 fields agreed **only because production leaves them at the `GumbelConfig`
+default**. That is the measure of the fragility: agreement was coincidence, not construction.
+
+⚑ Judged against the RIGHT target per shape. `play` differing from production selfplay is
+NOT a bug — it is the tuned UCI/match regime and is supposed to differ. Only the `training`
+column is judged against production.
+
+### SEVERITY — MEASURED, not argued. The six rows keep their Elo.
+Both drifted knobs are **TARGET-side only**. In both search paths the played move comes from
+`imp_all` (uncapped sigma, tempered prior) and only the STORED row comes from `imp_store`;
+`selfplay/match.pick_moves_for_boards` discards the policy and returns actions only.
+
+Probe (`scratchpad/arenashape_blindness_probe.py`, CPU, C path, 16 real positions, arena cfg
+vs arena cfg + both knobs, same seed):
+
+| sims | played actions differing | root values | stored policy L1 (min/max/mean) | positions with policy changed |
+| --- | --- | --- | --- | --- |
+| 32 (the banked rows' budget) | **0 / 16** | identical | 0.0159 / 0.0454 / 0.0312 | 16 / 16 |
+| 256 | **0 / 16** | identical | 0.5155 / 0.8891 / 0.7127 | 16 / 16 |
+
+Positive control (the knobs ARE live): stored policy moves on 16/16 at both budgets.
+Instrument control (the probe CAN see action changes): `c_scale` 0.1→0.9 moves 14/16 actions
+at 32 sims, 10/16 at 256.
+
+⇒ **an arena is empirically blind to both knobs**, so the six rows played the moves
+production's search would have played. Their Elo is not corrupted.
+
+### ⚑ What the six rows can and cannot still support — ANNOTATED, NOT DELETED
+All six ran `training` on **both** sides, so the CONTRAST is intact. Per
+[[same_setting_both_sides_is_not_neutrality]] a shared wrong setting still changes what a
+comparison is SENSITIVE to — here it does not, because the setting cannot reach the played
+move, but the LABEL was wrong and the JSONL `gumbel` dict did not even list the two knobs,
+so no reader could have established that from the record.
+
+| ts | label | rows | CAN still support | CANNOT support |
+| --- | --- | --- | --- | --- |
+| 2026-08-14T02:21:35 | `tier13_BvsA_iter100` | +12.2 [−2.1, +26.5] n=1600 | the B-vs-A contrast as measured | being called "production's search shape" |
+| 2026-08-14T04:10:50 | `tier13_CvsB_iter100` | −7.4 [−21.6, +6.9] n=1600 | the C-vs-B contrast | same |
+| 2026-08-14T05:54:12 | `tier13_CvsA_iter100` | +3.5 [−10.8, +17.7] n=1600 | the C-vs-A contrast | same |
+| 2026-08-15T03:58:20 | (bt4heads armB smoke) | +10.9 [−81, +104] n=32 | nothing — n=32 | anything |
+| 2026-08-15T08:52:22 | bt4heads armB vs tier13 arm_A | +13.9 [+5.7, +22.1] n=4800 | the armB-vs-armA contrast | same |
+| 2026-08-15T13:08:04 | era check armB vs `ck_2026-08-09_iter514` | +0.4 [−13.8, +14.7] n=1600 | the era-check contrast | same |
+
+⚑⚑ **Tier-13's NULL is NOT overturned by this, and the era check's NULL is NOT overturned by
+this.** Do not cite this entry as a reason to re-run either. The correction is to the
+regime LABEL and to the record's completeness, not to any verdict.
+
+⚑ Rows banked BEFORE 2026-08-10 23:28 are unaffected by *this* defect (both knobs were at
+their defaults in production, so the training shape was correct). They remain subject to the
+earlier, separate 2026-07-28/29 invalidations already recorded above.
+
+### THE FIX — structural, not two more restated knobs
+`scripts/arena_standard.py`:
+1. The training shape is **DERIVED** from `selfplay.network_turn.build_selfplay_gumbel_config`
+   — the mapping production itself calls — instead of restating knobs. The carried set is the
+   **COMPLEMENT** of two small, explicitly justified exclusion sets
+   (`ARENA_OWNED_GUMBEL_FIELDS`, `CHECKPOINT_OWNED_GUMBEL_FIELDS`). A newly promoted knob is
+   carried with **zero edits**.
+2. A **run-time** refusal (`_assert_training_shape_matches_production`): a `training` arena
+   that does not reproduce production's `GumbelConfig` exits instead of running. This is
+   deliberately not only a pytest check — CI reads the COMMITTED yaml while an arena reads the
+   live one, which is exactly how the original failure stayed unread.
+   ⚑ Its field list is recomputed from `dataclasses.fields` and the ownership sets, NOT from
+   the builder's helper: a guard that shares the builder's field list cannot see that list
+   narrow. (Caught by mutation while writing it — the first version was vacuous.)
+3. The realized/record view now carries the whole set, so a banked row is self-describing:
+   `target_max_visit_cap` and `target_untempered_prior` appear in the JSONL from now on.
+
+### MUTATION EVIDENCE — four directions, all measured
+A throwaway copy with a genuinely NEW knob (`GumbelConfig.fake_probe_knob`,
+`SearchConfig.gumbel_fake_probe_knob=7`, wired through the production mapping):
+
+| # | mutation | expected | observed |
+| --- | --- | --- | --- |
+| A | new knob, unclassified | RED | RED — partition pin names `fake_probe_knob` |
+| B | knob hidden in `ARENA_OWNED_GUMBEL_FIELDS` | RED | RED — the exclusion set is pinned by name too, so the escape hatch fails |
+| C | knob classified as carried | GREEN + value arrives | GREEN (34 passed); production 7 → arena 7, **no edit to the shape logic** |
+| D | classified but derivation drops it | RED | RED — the field-by-field equality test fires |
+
+⚑ Direction B exists because `carried` is a complement: widening an exclusion set silently
+narrows it. Pinning only `carried` would have left misclassification as a silent route back
+to this exact defect.
+
+**Not a gate that cannot fail:** the partition test asserts `len(carried) >= 20` and that the
+carried set exceeds the exclusions; the equality test asserts the set of fields on which
+production differs from the dataclass default is NON-EMPTY and contains both knobs, then
+proves that dropping any one of them breaks the comparison.
