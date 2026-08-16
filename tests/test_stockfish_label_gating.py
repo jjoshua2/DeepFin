@@ -61,10 +61,23 @@ class _FakePool(StockfishPool):
     def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
         self.calls: list[dict] = []
 
-    def submit(self, fen: str, *, nodes=None, syzygy_path=None, fresh: bool = False):
-        self.calls.append({"fen": fen, "nodes": nodes, "syzygy_path": syzygy_path, "fresh": fresh})
+    def submit(
+        self, fen: str, *, nodes=None, syzygy_path=None, fresh: bool = False,
+        searchmoves=None,
+    ):
+        # `searchmoves` is RECORDED and HONOURED, not accepted and dropped. A
+        # fake that swallowed it would let a caller lose the restriction while
+        # every test here still passed — the exact defect the real pool's
+        # end-to-end test exists to catch, re-introduced one layer down.
+        self.calls.append({
+            "fen": fen, "nodes": nodes, "syzygy_path": syzygy_path,
+            "fresh": fresh, "searchmoves": None if searchmoves is None else list(searchmoves),
+        })
         fut: Future = Future()
-        fut.set_result(StockfishResult(bestmove_uci="a2a3", wdl=np.array([0.0, 1.0, 0.0]), pvs=[]))
+        best = next(iter(searchmoves)) if searchmoves else "a2a3"
+        fut.set_result(StockfishResult(
+            bestmove_uci=best, wdl=np.array([0.0, 1.0, 0.0]), pvs=[],
+        ))
         return fut
 
 
