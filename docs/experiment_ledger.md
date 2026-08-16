@@ -51933,7 +51933,7 @@ Follow-up to the merge entry above. [[a_ruler_change_must_invalidate_its_records
 `cboard_is_repetition`'s KEY, `cboard_search_terminal` answers a repetition with `SOLVED_DRAW`, and
 SOLVED is terminal — so the concern was live and specific. **Measured, paired, and it is a null.**
 
-Arms: PRE `/home/josh/projects/chess-basetest-436` @ `3f3ff00e6`; POST `.../chess-mergetest-436` @
+Arms: PRE `<worktrees>/chess-basetest-436` @ `3f3ff00e6`; POST `<worktrees>/chess-mergetest-436` @
 `f8db8836e`, verified blob-identical to the live merge `1692fdf3c` on all four changed source files.
 Checkpoint pinned by path: `data/tail_screen_20260814/checkpoint_000218`. Both trees built with
 `scripts/build_production_extensions.py`; `check_c_extensions_fresh.py` clean in both.
