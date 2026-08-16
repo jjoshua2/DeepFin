@@ -51923,3 +51923,127 @@ Instance of [[fixing_a_defect_class_reintroduces_it]] — here the incomplete sw
   today. Converting one half with the fix and the other without would make the held-out gap a
   measurement of an ENCODER DIFFERENCE rather than of generalisation. Consistency beats
   correctness here; the EP rate is ~1e-6 and re-converting both halves is ~105 core-hours.
+
+---
+
+## 2026-08-16 — EP repetition fix (#436): **THE FROZEN RULERS ARE UNAFFECTED. NO BANKED RECORD NEEDS AN INVALIDATION NOTE.** But two of the three rulers are blind to it *by construction*, and that is the part to remember.
+
+Follow-up to the merge entry above. [[a_ruler_change_must_invalidate_its_records]] says a change to
+`cboard_search_terminal`'s inputs retires the records taken before it. #436 changes
+`cboard_is_repetition`'s KEY, `cboard_search_terminal` answers a repetition with `SOLVED_DRAW`, and
+SOLVED is terminal — so the concern was live and specific. **Measured, paired, and it is a null.**
+
+Arms: PRE `/home/josh/projects/chess-basetest-436` @ `3f3ff00e6`; POST `.../chess-mergetest-436` @
+`f8db8836e`, verified blob-identical to the live merge `1692fdf3c` on all four changed source files.
+Checkpoint pinned by path: `data/tail_screen_20260814/checkpoint_000218`. Both trees built with
+`scripts/build_production_extensions.py`; `check_c_extensions_fresh.py` clean in both.
+Raw outputs banked under `scratchpad/epruler_20260816/` (`SUMMARY.json` + dumps + counter logs).
+
+### Determinism control FIRST, because without it the rest is noise
+
+PRE vs PRE, identical seed and args, 400 audit rows → **dump md5 `b926e173…` both runs, bit-identical.**
+The `audit_targets` C search is deterministic at a fixed seed, so a PRE-vs-POST difference of *any*
+size would have been visible. The comparison is valid, and its resolution is EXACT — there is no
+CI to quote because the paired difference is not a statistic, it is a byte comparison.
+
+### Positive control, because a null from a gate that cannot fail is not a null
+
+`4k1n1/8/8/8/3p4/8/4P3/4K1N1 w - - 0 1`, then `e2e4` (legal ep for Black) and two 4-ply knight
+shuffles back to the same placement:
+
+| | python-chess (oracle) | PRE | POST |
+|---|---|---|---|
+| threefold at `…3pP3/8/8/4K1N1 b - - 8 5` | **False** | **True** — `result()` `1/2-1/2` | **False** — `*` |
+
+⇒ PRE invents a draw out of a stale ep-blind key; POST matches the oracle. **The harness can see the
+change.** Everything below is measured against an instrument already proven to fire.
+
+### The rulers: 0 rows moved, out of 4000
+
+| ruler | population | rows changed | evidence |
+|---|---|---|---|
+| `audit_targets.py` (rows a–e) | 4000 audit rows × 61 scalar fields | **0** | dump md5 `c2e16cb5…` identical; both markdown reports identical |
+| `value_regret.py` | 3723 TB-excluded positions, overall **49.8 cp** | **0** | npz md5 `c3917c9d…` identical |
+| production encoder planes | 4000 roots + 112,166 one-ply children | **0** | blake2b `9567e9ae…` / `a6bd5dca…` identical in both arms |
+
+### ⚑⚑ THE MECHANISM NUMBER — and it splits the rulers into two different kinds of null
+
+A third worktree (`chess-instr-436`, POST + counters, measurement build only) carries a parallel
+ep-blind `hash_stack_old`, so **both rules are evaluated on every repetition check** and the flips
+are counted exactly rather than inferred. `rep_disagree` fires =1 on the positive control.
+
+| population | legal-ep keys built (path FIRES) | rep checks | stack non-empty | repetitions found PRE / POST | **verdict flips** | max stack |
+|---|---|---|---|---|---|---|
+| audit search, 4000 roots @100 sims | 10,938 | 2,751,682 | 1,700,670 | 4,190 / 4,190 | **0** | 15 |
+| audit search, 400 roots @**512** sims | 4,578 | 1,208,489 | 791,414 | 6,088 / 6,088 | **0** | 25 |
+| search from **history-carrying** roots (600 lifted from 429 real games, stacks to 225 plies) | 1,354 | 173,811 | 108,093 | 234 / 234 | **0** | 100 |
+| `value_regret` / audit row (a) encoder | 2,666 | 448,345 | **107,877 at depth 1, 340,468 at depth 0** | **0 / 0** | **0** | **1** |
+| real-game replay, 429 games / 37,150 plies (python-exact, harness proven non-vacuous) | 101 | 37,150 | — | 100 / 100 twofold | **0** | — |
+
+**Totals in search: 4,133,982 repetition verdicts, 16,870 legal-ep keys built, ZERO flips.**
+
+The two nulls are NOT the same claim:
+
+- **`audit_targets` search rows (b)/(d)/(e): a REAL null.** The changed path fires 10,938 times, the
+  search genuinely detects 4,190 repetitions, stacks reach depth 15 (25 at 512 sims), and not one
+  verdict moves. The gate could fail and did not.
+- **`value_regret` and audit row (a): STRUCTURALLY BLIND — [[a_gate_that_cannot_fail]].** The stack
+  histogram is the proof: **every one of the 4000 roots has `hash_stack_len == 0` and every one of
+  the 112,166 one-ply children has exactly 1.** A one-entry stack holds the parent, whose turn
+  differs, so a match is arithmetically impossible. `value_regret` also runs **no search at all**
+  (`mcts_tree` counters read 0 across the board — it is a 1-ply value probe). Its null is not
+  evidence about the fix. It *is* still sufficient for the records question: a number that cannot
+  move has not moved.
+
+### Why zero, structurally — so this generalises past today's checkpoint
+
+A flip needs a stack entry and the current position to match ep-blind but differ ep-aware. A position
+carrying an ep square exists **only immediately after a double push, which is irreversible and clears
+`hash_stack`** — so at that position the stack is empty and nothing can be compared. The ep-bearing
+key only ever reaches the stack one ply later, and flipping a verdict then needs a ≥4-ply *exact*
+return cycle straight out of the double push. Gumbel sequential halving spends its budget on the
+root's strongest candidates, and a null shuffle off a double push is never one. That is why 4.1M
+verdicts produce zero, and why 5× the sim budget and 100-deep real-game stacks do not change it.
+
+### VERDICT (pre-committed rule: any per-row change ⇒ invalidate)
+
+**NO. No banked frozen-ruler record needs an invalidation note.** `audit_targets` and `value_regret`
+numbers taken before 2026-08-16 remain directly comparable to numbers taken after. Trends,
+thresholds and paired checkpoint comparisons that cross the merge stand as written.
+
+### Corrections to standing notes — both were wrong, both measured
+
+1. ⚑ **The audit-set note's TITLE is half wrong — its BODY was already right.** Re-verified directly
+   against `data/audit_set_v1.jsonl` by the main session: history **0/4000** ✓, castling
+   **556/4000 (13.9%)**, ep **5/4000**. ⚑ Those exact numbers were ALREADY recorded in the standing
+   note's body, together with the observation that the castling zero came from a **600-row subset
+   draw**. What was wrong is the note's NAME and one-line description — "no history *or castling*" —
+   which is the part that gets read at a glance and quoted onward.
+   ⇒ **The correction is not "we measured castling wrong", it is "a compressed title outlived the
+   nuance in the body it summarised".** Consequence that actually bites: the banked corruption result
+   *"castling K↔Q swapped ⇒ Δ exactly 0.00"* is a property of that 600-row draw, **not** of the audit
+   set, and must not be cited as "the ruler cannot see castling" — on the full 4000 the corruption has
+   556 rows to act on and has never been run there. Only the HISTORY blindness (and, at 5 rows,
+   effectively ep) survives as structural.
+   Separately and still worth keeping: the `key` field prints `-` for both castling and ep, so it is
+   the wrong field to derive any "the audit set has no X" claim from. Use `fen`.
+2. ⚑ **#436 does not change `cboard_search_terminal`, and it does not make a kingless mover terminal
+   in C.** `_mcts_tree.c` is byte-identical across the merge; the search inherits the change purely by
+   `#include`ing `_cboard_impl.h`. The kingless handling is (a) `bitboards_have_legal_ep` returning 0
+   on `!us_kings`, a documented ep-predicate divergence, and (b) `utils/bitboards.py::
+   unsearchable_king_reason`, a Python **input-validity guard** on UCI/puzzle/seed entry points. It
+   rejects such boards from being searched; it does not declare them terminal. The briefing I was
+   given said otherwise and it does not survive reading the diff.
+
+### What this does NOT establish — stated, not inferred
+
+- **Nothing about production training data.** `history_rep_fix: true` is live, selfplay roots carry
+  full game history, and the fix does change `hist_hash`/`hist_was_rep` there. Not measured; out of
+  scope for the rulers question.
+- **`arena_standard.py` was not run.** The history-carrying-root search (234 repetitions, 0 flips)
+  and the 429-game replay (0 flips) are the proxy for it, not a substitute.
+- **Search shape.** Run at `--batch-size 32` (boards-per-call), not production's ~1. Tree shape
+  differs; the mechanism counters are the reason to expect the null to hold anyway, not the batch.
+- **One checkpoint.** `checkpoint_000218`. Per [[knob_effects_reverse_sign_between_checkpoints]] a
+  different net explores different lines — but a flip needs the structural cycle above, not a
+  preference, so the exposure is low.
