@@ -76,9 +76,14 @@ def unsearchable_king_reason(board: chess.Board) -> str | None:
     routinely weird-but-legal positions: pawns in odd files, lopsided material,
     the side not to move already in check, an ep square that no double push
     could have produced. ``VALID`` rejects all of those and would gut those
-    callers. This predicate says nothing about any of them -- it fires on 0 of
-    5.9M real FENs across the blindspot, audit, wac.epd and lichess-puzzle
-    corpora. ``selfplay/opening.py::_fen_reject_reason`` DOES use the full
+    callers. This predicate says nothing about any of them. False-rejection
+    control: 0 rejections over 13,817 real FENs (``data/audit_set_v1*.jsonl``,
+    every ``data/blindspot_fens_auto_*.txt``, and the local ``.epd`` suites),
+    measured by the author of this docstring; independently 0 over 5,892,504 FENs including wac.epd and the
+    lichess puzzle set, measured by a reviewer and ATTRIBUTED rather than
+    re-run here -- asserting an inherited number as if it were your own
+    measurement is the habit that got four revisions of _cboard_impl.h's
+    en-passant comment retracted. ``selfplay/opening.py::_fen_reject_reason`` DOES use the full
     ``is_valid()``, correctly, since a training seed is meant to be a real
     position -- which is why the training path never had this hole.
 

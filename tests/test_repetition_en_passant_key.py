@@ -842,7 +842,8 @@ def test_the_kingless_divergence_is_in_the_key_merging_direction() -> None:
 # under chess_anti_engine/uci/ consulted status(). The board was stored and
 # searched. Enumerating the paths is not checking them.
 #
-# uci/engine.py::_unsearchable_king_reason closes it. These tests pin the two
+# utils/bitboards.py::unsearchable_king_reason closes it, called from
+# uci/engine.py::_handle_position. These tests pin the two
 # halves that can rot independently: the divergence is real (so the guard is not
 # decorative), and the guard is actually REACHED from _handle_position.
 # ---------------------------------------------------------------------------
@@ -1226,3 +1227,108 @@ def test_parse_setup_and_best_rejects_a_king_capturing_setup_move() -> None:
     expected = chess.Board()
     expected.push(chess.Move.from_uci("e2e4"))
     assert board == expected, "the setup move must still be applied"
+
+
+def test_parse_setup_and_best_rejects_a_setup_move_that_captures_a_surplus_king() -> None:
+    """MG10: the PRE-push check in ``_parse_setup_and_best`` is load-bearing.
+
+    Both checks in that function look identical, but only one of them can catch
+    this. With two black kings the setup move CAPTURES the surplus one, so the
+    post-push board has exactly one king a side and the post-push check passes
+    cleanly. Deleting the pre-push check left the whole suite green while a
+    two-king board -- one of the three divergence classes in
+    ``unsearchable_king_reason``'s own docstring -- was accepted as a puzzle:
+
+        k7/4k3/8/8/3p4/8/2P5/4R1K1 w - - 0 1   pre: "black has 2 kings"
+        after e1e7                             post: None      <- accepted
+
+    The mirror of the round-5 lesson: there, only the POST check could catch a
+    push that removed the last king; here, only the PRE check can catch a push
+    that removes a surplus one. Neither is redundant, and neither can be
+    justified from the other.
+    """
+    from chess_anti_engine.eval.puzzles import _parse_setup_and_best
+    from chess_anti_engine.utils.bitboards import unsearchable_king_reason
+
+    fen = "k7/4k3/8/8/3p4/8/2P5/4R1K1 w - - 0 1"
+    board = chess.Board(fen)
+    # The fixture must bite for the RIGHT reason: rejected before the push...
+    pre_reason = unsearchable_king_reason(board)
+    assert pre_reason is not None
+    assert "2 kings" in pre_reason
+    # ...and NOT after it, which is what makes the pre-push check irreplaceable.
+    after = board.copy()
+    after.push(chess.Move.from_uci("e1e7"))
+    assert unsearchable_king_reason(after) is None, (
+        "fixture no longer distinguishes the two checks -- the surplus king must "
+        "be the piece the setup move captures"
+    )
+
+    assert _parse_setup_and_best(fen, ["e1e7", "d4d3"]) is None
+
+
+def test_load_epd_reports_why_lines_were_skipped(tmp_path, caplog) -> None:
+    """A guard that silently eats input is how a corpus quietly shrinks.
+
+    ``puzzle_total`` surfaces the denominator but never the cause. This matches
+    ``selfplay/opening.py::_load_fen_list``, which logs count + reasons.
+    """
+    import logging
+
+    from chess_anti_engine.eval.puzzles import load_epd
+
+    epd = tmp_path / "t.epd"
+    epd.write_text(
+        '8/8/8/3pP3/8/8/8/8 w - d6 bm e5d6; id "kingless";\n'
+        'not-a-fen w - - bm e2e4; id "garbage";\n'
+        '4k3/8/8/3pP3/8/8/8/4K3 w - d6 bm e5d6; id "fine";\n',
+    )
+    with caplog.at_level(logging.WARNING):
+        loaded = load_epd(str(epd))
+
+    assert [p.puzzle_id for p in loaded.puzzles] == ["fine"]
+    text = caplog.text
+    assert "skipped 2 unusable line(s)" in text, text
+    assert "unsearchable position" in text, text
+    # white is checked first, so it is white that gets named for a board with
+    # no kings at all -- assert the string the code actually produces.
+    assert "white has 0 kings" in text, text
+
+
+def test_move_loop_TRUNCATES_rather_than_skipping_the_offending_move(capsys) -> None:
+    """``break``, not ``continue``: everything after the bad push is dropped.
+
+    Skipping one move and carrying on desynchronises the game -- the engine then
+    searches a position that never occurred, and answers it confidently. The
+    existing truncation test cannot see the difference, because there the
+    offending push is move 1 and the NEXT move is illegal on the popped board
+    anyway, so ``continue`` and ``break`` agree by accident.
+
+    Here move 2 is a perfectly legal white move on the popped root, so the two
+    diverge: ``break`` leaves the root and no applied moves, ``continue`` would
+    apply ``c2c3``. (``g1h1`` looks like the obvious choice and is NOT legal --
+    the black rook on h8 covers h1 -- which is why the assertion below checks.)
+    """
+    from unittest.mock import MagicMock
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import CmdPosition
+
+    root = chess.Board(_KING_CAPTURE_FEN)
+    assert chess.Move.from_uci("c2c3") in root.legal_moves, (
+        "fixture broken: the follow-up move must be legal on the ROOT, or "
+        "continue and break cannot be told apart"
+    )
+
+    engine = Engine(worker=MagicMock())
+    engine._handle_position(
+        CmdPosition(fen=_KING_CAPTURE_FEN, moves=("e1e8", "c2c3")),
+    )
+
+    out = capsys.readouterr().out
+    assert "ignored 2 of 2 move(s)" in out, out
+    assert engine._pending_moves == [], (
+        "the loop skipped the offending move and kept going -- the engine is "
+        "now searching a position the caller never sent"
+    )
+    assert engine._board == root

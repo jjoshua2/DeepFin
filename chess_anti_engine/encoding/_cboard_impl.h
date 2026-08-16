@@ -860,7 +860,7 @@ static inline uint64_t cboard_transposition_key(const CBoard *b) {
  *     oracle KEEPS, so "8/8/8/3pP3/8/8/8/8 w - d6 0 1" and the same board with
  *     no ep right share our repetition key while python-chess separates them.
  *     That is the invent-a-repetition direction this whole key exists to remove,
-     and it is NOT accepted on the grounds of being rare.
+ *     and it is NOT accepted on the grounds of being rare.
  *
  *     ⚑ WHAT IS AND IS NOT GUARANTEED — stated as coverage of named entry
  *     points, NOT as a property of every board that could reach here. Two
@@ -885,12 +885,24 @@ static inline uint64_t cboard_transposition_key(const CBoard *b) {
  *     shared predicate utils/bitboards.py::unsearchable_king_reason:
  *       - UCI: uci/engine.py::_handle_position, on the parsed FEN and after each
  *         `moves` push (truncating via _warn_moves_truncated);
- *       - puzzles: eval/puzzles.py::load_epd and ::_parse_setup_and_best, the
- *         latter also after its setup push. ⚑ NOT an offline-only path —
- *         load_epd is imported by tune/trainable.py and run_puzzle_eval by
+ *       - puzzles: eval/puzzles.py::load_epd, and ::_parse_setup_and_best on BOTH
+ *         sides of its setup push (the pre-push check is the only thing catching
+ *         a setup move that CAPTURES a surplus king, which would otherwise leave
+ *         a legal-looking post-push board). ⚑ NOT an offline-only path — load_epd
+ *         is imported by tune/trainable.py and run_puzzle_eval by
  *         tune/trainable_phases.py::_run_puzzle_eval_if_due, INSIDE the training
  *         loop. It is inert by CONFIG (puzzle_epd: null, puzzle_interval: 0),
- *         which is a materially weaker claim than "off the training path";
+ *         which is a materially weaker claim than "off the training path".
+ *         ⚑ FUNCTION-complete, NOT FILE-complete: eval/puzzles.py has two other
+ *         board-mutating sites and NEITHER is guarded —
+ *         run_policy_sequence_eval pushes _parse_solution_sequence's moves, which
+ *         are Move.from_uci'd and never legality-checked at all (Board.push does
+ *         not validate), and run_value_head_puzzle_eval pushes every legal_moves
+ *         entry, which includes the king capture from the very opposite-check
+ *         class the guard accepts. Both were checked for a tune/ caller and have
+ *         none — _run_puzzle_eval_if_due reaches only run_puzzle_eval — so they
+ *         are off the training loop and left alone deliberately rather than
+ *         missed. Do not read this bullet as "that file is closed";
  *       - selfplay/arena seeds: selfplay/opening.py::_fen_reject_reason, on the
  *         full board.is_valid() — stricter, and appropriate for a seed list.
  *     The UCI/puzzle predicate is deliberately NOT status()==VALID, which would

@@ -550,6 +550,14 @@ class Engine:
   # Checked AFTER the push, against the same predicate, so any future way of
   # breaking the precondition is caught by the one rule rather than by a
   # hand-enumerated list of move shapes.
+  # ⚑ Narrowing this to captures only is SEMANTICALLY EQUIVALENT today, and a
+  # mutant that does so correctly survives the suite on purpose: only a capture
+  # can remove a king, and no push can duplicate one or add a promoted marker.
+  # It is still written unconditionally, because that equivalence is a property
+  # of the CURRENT predicate (three king clauses) and evaporates the moment a
+  # fourth is added — which is exactly how the FEN-only version of this guard
+  # became wrong. Cheap unconditional beats a correctness argument with a
+  # shelf life.
             post_reason = unsearchable_king_reason(new_board)
             if post_reason is not None:
                 new_board.pop()
