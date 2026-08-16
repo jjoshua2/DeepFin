@@ -52101,3 +52101,65 @@ Re-pointed trainer now differs from live in **2** deliberate kwargs (`sf_wdl_fra
 `search_wdl_frac` 1.0), both because lc0 rows carry no SF label, holding live's `game_frac` at
 **0.00**. Realized value composition measured through a real `compute_loss` call:
 outcome **0.3000 → 0.0000**, search **0.7001 → 1.0001**, mass 1.0000 both.
+
+---
+
+## 2026-08-16 — #228 RESOLVED AS A **SECOND, INDEPENDENT** REPETITION DEFECT. THE EP FIX DOES NOT EXPLAIN IT.
+
+**Pre-registered prediction, stated before the run and correct:** the ledger characterised this
+divergence as "NOT the known EP-alias", so the gate was expected to **still fail** with #436
+applied. It does.
+
+### Method — how the branch split was worked around
+
+The EP fix lives on `ops/live-20260725`; the converter (`scripts/lc0_data_to_rows.py`, PR #435)
+lives on `main`. **Neither branch has both**, which is task #231 in miniature. Rather than attempt
+the full live→main reconciliation (a 10,937-line ledger conflict), a scratch tree was built from
+`origin/main` and the EP fix's **8 files only** were grafted from the live merge `1692fdf3c`
+(`git checkout <sha> -- <paths>`), then rebuilt with `scripts/build_production_extensions.py`.
+Verified the graft took: `tests/test_repetition_en_passant_key.py` **62 passed** in that tree.
+
+### Result
+
+`data/lc0_training/training-run2-test91-20260813-1117.tar`, re-converted with the EP fix:
+
+```
+RuntimeError: refusing to write rows while a verification gate is failing:
+  training-run2-test91-20260813-1117/training.222367284.gz ply 158:
+  planes [12] differ (8/1K6/2Bk4/pP4R1/1r4P1/2n5/8/8 w - - 4 80)
+```
+
+0 shards published; the gate correctly refused. Log banked at
+`scratchpad/ep228_20260816/VERDICT_epfixed.log`.
+
+### Why this is conclusive rather than suggestive
+
+**The failing position has NO en passant square** (`… w - - 4 80`) and a halfmove clock of 4 at
+move 80. The EP fix changes the repetition KEY only where a **legal ep capture exists**; here there
+is no ep target at all, so the fixed code path is not merely insufficient — **it is not reachable
+on this position.** Plane 12 is the repetition plane of the most recent history frame, so the
+disagreement is squarely repetition semantics and squarely NOT the ep alias.
+
+⇒ **There are TWO repetition defects, not one.** #436 closed the ep-alias one. This is the other,
+and it is still open.
+
+### Why it matters beyond the lc0 corpus
+
+This one is **not** confined to an offline rig. Production runs `history_rep_fix: true` and
+selfplay roots carry full game history, so production rows are built by the same repetition
+machinery that disagrees with lc0's own planes here. The lc0 gate is currently the only instrument
+that has ever caught it, which is [[internal_equivalence_cannot_find_a_shared_wrong_rule]] earning
+its keep for the second time: our Python and C paths agree with each other and are blind to this by
+construction.
+
+### Scope, measured rather than assumed
+
+**122 of 124 train tars PASSED** the same gate, so the divergence is rare — but the gate is
+per-run and rejects a whole tar, so "rare" is an upper bound on frequency and says nothing about
+severity. Root cause NOT yet established; the position, ply, game blob and plane index above are a
+complete reproducer.
+
+⚑ Consequence for the lc0 positive control: **none, deliberately.** The 122 accepted train dirs
+and the 6 held-out dirs were converted by the SAME pre-EP-fix binary, so the two halves share
+whatever this defect does and the held-out gap does not measure an encoder difference. Recorded on
+that arm's Confounds line.
