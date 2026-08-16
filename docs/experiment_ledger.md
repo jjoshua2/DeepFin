@@ -51603,3 +51603,115 @@ reproducer; the tar and the unpublished partial output dir are both retained.
 ⚑ Method note worth keeping: this was found by lc0's own planes, an **external** implementation.
 Our Python and C repetition paths agree with each other and would never have surfaced it —
 [[internal_equivalence_cannot_find_a_shared_wrong_rule]], now with a second real-data instance.
+
+---
+
+## PREREG — the lc0 POSITIVE CONTROL for the training stack (NOT LAUNCHED)
+
+Entered 2026-08-16, before any converted shard has been trained on and before any number
+from this arm exists. Satisfies protocol rule 1 for PR #438 (`feat/lc0-positive-control-training`).
+The full design, resolution table and guard derivations live in `docs/lc0_positive_control_prereg.md`
+**on that branch**; this entry is the launch record and is deliberately shorter than the prereg.
+
+### Hypothesis
+
+Every verdict this project has produced was measured against the loop under suspicion — we have
+never fed our training stack data we did not generate. So a flat loop cannot distinguish
+**H_target** (our targets/data-generation are the defect, the stack is fine) from **H_stack**
+(our training code or architecture is the defect, and no target would have saved it). These have
+opposite remedies. Clean external lc0 T91 data is the discriminator.
+
+Trained supervised on lc0 rows, our production architecture (61.44M, 512x16x16) and trainer will
+show held-out generalisation still improving at the end of the budget.
+
+### THE ONE DECIDING YARDSTICK (exact command)
+
+```
+PYTHONPATH=. python3 scripts/lc0_control_eval.py compare \
+  --a <score_mid_budget.json> --b <score_last.json>
+```
+
+run on BOTH frozen row sets — the held-out set and an equally sized frozen sample of rows
+ALREADY TRAINED ON. Defaults are the pre-committed constants and must not be passed by hand:
+`--sample 100000`, `--max-halfwidth-pp 0.392`. Scores come from
+`scripts/lc0_control_eval.py score --frozen <ids> --shards ... --checkpoint ...`.
+
+### Pre-committed thresholds — a PLATEAU ALONE IS NOT A VERDICT
+
+A stack that plateaus because it CONVERGED looks identical, in held-out top-1, to one that
+plateaus because it CANNOT GENERALISE. Opposite remedies, so the readout is the JOINT reading of
+two slopes, last vs mid-budget:
+
+| `Δ_heldout` | `Δ_train` | verdict |
+|---|---|---|
+| >= +2.0 pp, CI lower > +0.392 pp | anything | **PASS** — stack learns and generalises; H_stack disfavoured |
+| within +/-0.392 pp | >= +2.0 pp | **H_stack LIVE** — the iter-249 signature reproduced on clean external data |
+| within +/-0.392 pp | within +/-0.392 pp | **CONVERGED/CAPACITY-LIMITED — INCONCLUSIVE**, not a pass and not a failure |
+| anything else | anything else | **AMBIGUOUS** — ONE 2x budget extension, then read once. No second extension. |
+
+0.392 pp = 2 x the measured paired halfwidth at n=100,000. 2.0 pp is ~10x resolution, deliberately
+far above the noise floor.
+
+### What this arm may NOT conclude
+
+- **Fit is not the readout.** Absorption is already 11.6x in-window; the banked failure is that
+  policy STOPPED GENERALISING ~iter 249. A training-loss curve proves nothing here.
+- **No Elo claim.** No arena, no selfplay, no PID.
+- **A PASS does not vindicate our targets** — it removes the alternative, nothing more.
+
+### Confound that asymmetrically restricts a PLATEAU (amendment, pre-launch)
+
+T91 is upstream-described as **"another debug run for training BT4 in RL mode"**, not the flagship
+line (T80 is dead — newest non-empty tar 2025-09-24), and its teacher is 15x1024 BT4-shaped,
+far larger than our 512x16 student. So a PLATEAU has a second live explanation ("this corpus is
+not good enough to learn from") competing with H_stack, and **this arm alone cannot separate them**:
+an `H_stack LIVE` reading is therefore **PROVISIONAL**, and its named discriminator is a second
+corpus, decided now so it cannot become a post-hoc excuse. A PASS is unaffected — a debug corpus
+that teaches our net is still a corpus that teaches our net.
+
+Corpus INTEGRITY is verified and is a separate question from corpus QUALITY: 130/130 files
+byte-exact against the published index, every game blob a multiple of 8356 B with `version==6`,
+400 games replayed against python-chess with 0 mismatches. The server publishes no checksums, so
+our sha256s pin what we hold, not what upstream intended.
+
+⚑ Cross-corpus LOSS comparison against production is **pre-committed as uninterpretable** and must
+not appear in the readout: T91 draws 61.51% vs our 30.73% (exactly 2.00x) and 152 vs 66 plies from
+end. Different populations — [[same_name_different_population]].
+
+### Guards (a verdict off a failed instrument is not a verdict, in either direction)
+
+1. **Negative control, shuffled labels.** ⚑ CORRECTED IN-BRANCH: the floor is NOT `E[1/n_legal]`
+   (0.063622) — that is the uniform-mover reference. The shuffled floor is `Σ_m p_pred(m)·p_tgt(m)`
+   (0.003283), **19x apart**. Getting the Jensen direction right did not make it the right
+   QUANTITY. Computed from the same score, and `score --shuffle-targets` exits 1 when the observed
+   rate sits > 5 SE ABOVE it — the direction with a failure mode behind it (a rig leaking row
+   identity into the prediction).
+2. **Random-init floor.** ⚑ "It sits at chance" was never testable: four unseeded draws of the
+   identical command on identical rows read 0.0588 / 0.0621 / 0.0716 / 0.0735 / 0.0806 — a 2.18 pp
+   spread, **5.6x the material bar**, straddling the reference in both directions. Replaced by a
+   seed BAND. **⚑ OUTSTANDING PRE-LAUNCH OBLIGATION: the band needs a trained checkpoint and none
+   exists, so it must be measured and appended as AMENDMENT 3 BEFORE the primary readout — not
+   alongside it.**
+3. **`sf_wdl_frac: 0.0` VERIFIED IN EFFECT, not configured.** lc0 shards carry no `sf_wdl` and
+   `train/losses.py` falls the SF component back to the raw one-hot outcome when `has_sf_wdl=0`, so
+   at production's ~0.69 the value weight would land silently on the deep outcome. Read the realized
+   weight off the first training row. A configured value is not an applied value — this project's
+   signature defect.
+4. **Held-out purity** by row id, not tar name; the held-out set is the LAST 6 hourly tars,
+   time-disjoint, frozen with its sha256 before the first step. A held-out set drawn from the same
+   window measures exposure recency, not generalisation —
+   [[exposure_recency_dominates_heldout_ce]].
+
+### Launch blockers (both open as of this entry)
+
+1. **bt4heads is not on `main`.** `aux_policy_head_dim` is absent from main's schema; PR #438 is
+   based on `main` and would build 63,084,128 params instead of production's 61,444,448. A bridge
+   PR is open. ⚑ Note the branch split this exposed: **#436 (EP fix) and #437 (arena shape) both
+   target `ops/live-20260725` and will never reach `main`**, so a main-based arm silently lacks
+   them. Read `baseRefName` before assuming a fix is present.
+2. **Training must be stopped and that is Josh's call.** It currently is. This arm touches no
+   production weights, no live yaml and no replay window; the GPU is its only shared resource.
+
+### Revert / cost
+
+Offline arm, fully revertible — nothing production-side to roll back.
