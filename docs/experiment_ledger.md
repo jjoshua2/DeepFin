@@ -620,9 +620,18 @@ pair term is the regret DIFFERENCE.** So:
 - **surfaced × tail**: needs a tail **MAGNITUDE** — precisely what relational supervision declines
   to supply and what a fitted α does supply.
 - **tail × tail**: also unobserved, and a CONSTANT tail zeroes it by construction (all tail
-  regrets equal ⇒ every `r_i − r_j` inside T is 0) while `g_true`'s is not. So the constant tail
-  does not merely mis-scale the missing information, it deletes one block outright — which is the
-  other half of why cosine caps at ~0.905 no matter how α is fitted.
+  regrets equal ⇒ every `r_i − r_j` inside T is 0) while `g_true`'s is not. **MEASURED, not
+  asserted** (n=1908 wide-era rows, pooled): `‖g_TT‖ / ‖g_true‖` = **0.2137**, and
+  `‖g_ST‖ / ‖g_true‖` = **0.7769**. So a constant tail *mis-scales* 78% of the reference and
+  *deletes* 21% of it outright. That is a ceiling no choice of α can lift, and it is why cosine
+  caps near 0.905 however α is fitted.
+
+  ⚑ **I predicted 5–15% for the T×T share and measured 21.4% — outside my band, so the
+  explanation is owed.** I reasoned only from the per-pair weight (`p_i p_j`, a product of two
+  small numbers) and ignored two things that dominate it: **count** — ~21 tail moves give ~420
+  tail×tail pairs against ~126 surfaced×tail — and **spread**, since tail regrets range from
+  ~186 cp at rank 7 to ~635 cp at rank 40, so the `r_i − r_j` factors inside T are large. Weight
+  per pair is small; the block is not.
 
 ⇒ **fifteen pairwise labels from six SF values are not fifteen new pieces of supervision.** They
 are the same information re-expressed; the regret gradient already IS their aggregate. The
