@@ -51785,3 +51785,61 @@ its 12-char prefix). Checkpoint architecture is read from each checkpoint's embe
 the live yaml, so the 08-15 bt4heads promotion could not leak into either side. Realized search
 verified byte-identical both sides: `c_scale=0.1 c_visit=50.0 policy_temp=1.5 topk=16
 vloss_weight=1 target_batch=0 tree_reuse=cold`.
+
+---
+
+## 2026-08-16 — EP repetition fix: **MERGED AND DEPLOYED TO THE LIVE TREE. NOT YET RESTARTED.**
+
+Closes the launch half of the prereg above. PR #436 merged to `ops/live-20260725` as `1692fdf3c`;
+live tree fast-forwarded `3f3ff00e6 → 1692fdf3c`; extensions rebuilt with
+`scripts/build_production_extensions.py` (GCC15 + native + LTO). **The running process has NOT
+been restarted — training was already stopped, and the restart is Josh's call.** Until it
+restarts, the fix is on disk and not in any produced row.
+
+### Convergence cost, recorded because it is the reusable part
+
+Seven rounds. **Every round in which the author reviewed their own work shipped a defect that a
+separate reviewer then found — 4 for 4** (rounds 4, 5, 6, 7). Two model families (Codex and a
+Claude review agent) independently found the same round-4 P1. Round 7 confirmed by AST comparison
+(docstrings stripped) for Python and a string-aware comment-stripped comparison for the C header
+(35,589 chars identical) that **no production logic changed** in the final documentation round.
+
+⚑ **My own round-4 instruction was the defect's cause**: I told the author to "make the
+precondition true" and named the FEN boundary, so they guarded the FEN and not the moves that
+follow. A fix scoped by the reviewer's framing inherits the reviewer's blind spot. Name the
+PROPERTY, not the site.
+
+### CI verdict: the DELTA is 0, and the absolute number is meaningless
+
+`gh pr checks 436` read `test FAIL`. The live branch's suite is **red by design** (config-policy
+tests that assert the live yaml does not ship certain keys — it does, deliberately). Measured
+rather than assumed, base vs merge result, extensions built in BOTH trees:
+
+| | `ops/live-20260725` (base) | base + #436 |
+|---|---|---|
+| FAILED/ERROR | **15** | **15** |
+| delta introduced | — | **0** (set-identical) |
+
+⚑ **The first attempt at this comparison was invalid and said so only because the counts were
+absurd.** The base worktree had no built C extension, so pytest **aborted at collection**
+(`Interrupted: 4 errors during collection`) and ran nothing; my grep counted only `^FAILED` and
+reported "0 failures" for a run that executed zero tests. A clean-looking 0 from an aborted
+run is [[an_exit_code_is_an_or_over_axes]] one level down — **the count and the collection status
+are separate axes, and I read one.** Build the extension in every tree you compare.
+
+### Verified in the live tree AFTER the rebuild, not asserted
+
+`tests/test_repetition_en_passant_key.py` — **62 passed** against the freshly built extension.
+⚑ Note the ad-hoc probe that did NOT work, as a method warning: constructing
+`chess.Board('7k/8/3n4/3pP3/8/8/8/4K3 w - d6 0 1')` NORMALISES the ep square away (python-chess
+drops it when no legal ep capture exists), so a hand-rolled FEN probe silently tests the wrong
+board. The repo's own test is the instrument.
+
+### What is still owed
+
+- **The restart.** Until then no produced row carries the fix.
+- **#228**: re-run `data/lc0_training/training-run2-test91-20260813-1117.tar` — the free
+  discriminator for the non-alias repetition divergence. ⚑ Blocked by a BRANCH SPLIT: the EP fix
+  is on `ops/live-20260725`, the converter (`scripts/lc0_data_to_rows.py`) is on `main`/#438.
+  Neither branch has both. This is exactly "never let a fix and the code it fixes be separated by
+  a branch boundary" — see task #231.
