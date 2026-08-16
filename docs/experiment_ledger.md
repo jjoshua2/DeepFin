@@ -53146,3 +53146,107 @@ raise is not, and is not what this finding supports.
 This is the same defect class the rest of today's entries record, committed by me twice in one
 hour: a truthful number read against the wrong noun. The 5.25% was never wrong — it was
 answering the opponent question while I was asking the label question.
+
+## 2026-08-16 — AOT VERIFY re-run under the #432 gate: **bt4heads is SOUND at iter-100 (37/44)**, the old 28/29 FAIL is VOID — but the new gate is **NOT weights-invariant**, so #432's central claim is unproven.
+
+Run because the old gate was known invalid (the decisive control at ~line 49645). Executed with
+the eager model **pinned by content**, since the package directory records no provenance
+(task #234).
+
+### POSITIVE CONTROL FIRST — it makes the primary readable
+
+Month-deployed, unmodified `data/aot_models_512`, same 21 `.pt2` files, two weight vintages:
+
+| arm | weights | ratio | verdict |
+|---|---|---|---|
+| **A** | **2026-07-14 (the vintage they were COMPILED from)** | **~1.0 (0.94-1.25)** | **16/21 PASS** |
+| B | 2026-08-12 | ~2.3 everywhere | 0/21 FAIL |
+
+**Arm A is the control that matters, and it passes.** Known-good deployed packages read ~1.0
+against the irreducible floor — they add essentially nothing beyond eager-vs-eager batch-shape
+noise. The old gate's 0.175 absolute reading is dissolved. ⇒ **the primary result is readable.**
+
+### ⚑⚑ BUT THE GATE IS STILL WEIGHT-DEPENDENT — and this CORRECTS my own framing
+
+I briefed this control as "the new gate should resolve that contradiction". It resolved it in
+ONE direction only. **The same unmodified files still flip 1.0 -> 2.3 purely by changing
+weights.** PR #432's central claim — self-calibrating, therefore cannot go stale on the next
+sharpness shift — is **NOT established by this measurement**. The weight-dependence survived
+the fix; it moved from the absolute metric into the ratio.
+
+**It is a STEP, not a ramp, and NOT sharpness-driven** [[a_step_is_not_a_ramp]]. On b1190,
+deployed packages:
+
+| ckpt | mean p_top1 | ratio | argmax |
+|---|---|---|---|
+| jul14 | 0.0231 | **1.02** | 0.971 |
+| aug10 | 0.0397 | **2.35** | 0.945 |
+| aug11 | 0.1000 | 2.48 | 0.966 |
+| aug12 | 0.1030 | 2.36 | 0.967 |
+
+Sharpness rose 2.5x from aug10->aug11 with NO ratio movement; the jump had already happened by
+aug10. **The obvious mechanism was refuted directly, not assumed away:** constant rebinding is
+complete and correct — all 457 package fqns are satisfiable from the model, and the 71
+uncovered model constants are exactly the tied `layer_smolgens.*.gen_weight` storages (the same
+tying CLAUDE.md's param count turns on). Perturbing every parameter x1.02 and rebinding held
+the ratio at 1.01. **So: not stale constants, not uniform scaling. UNDIAGNOSED.** Argmax stays
+healthy (0.944-0.971) throughout — the packages keep picking the same moves at ratio 2.4.
+
+### PRIMARY — bt4heads: 37 PASS / 7 FAIL of 44
+
+Ratio arms ~1.0 across the board (pol_mean 0.92-1.32, pol_tail 0.87-1.23, wdl_mean 0.43-1.04)
+with `pol_rows_over = 0` and `wdl_rows_over = 0` at **every one of the 44 buckets**. That is
+the healthy signature. The 7 failures are all instrument, not package:
+- **1020, 1024, 2720, 4096** — shape control degenerated, floor lost its dominant term, ratio
+  inflated to ~2.8. **These four fail identically in BOTH controls, including July packages on
+  July weights.**
+- **bucket 4** — every arm ~1.0, pooled argmax 8/8 = 1.000, failed PURELY on
+  `FLOOR-DIVERGENCE`. ⚑ A floor-divergence note ALONE fails a bucket (`ok = ... and not
+  (fp_note or fw_note)`), and on this hardware ulp/shape estimates routinely disagree 5-6x (11
+  of 21 buckets in control B). **`_FLOOR_DIVERGENCE_MAX = 5.0` is under-calibrated for real GPU
+  readings.**
+- **bucket 6** — pooled argmax 10/12 = 0.833, n=12, small-sample. **bucket 1** — the
+  zero-WDL-floor artifact the code documents itself.
+
+**On the 21 buckets production actually loads:** bt4heads **17 PASS / 4 FAIL** vs
+deployed-on-native-weights **16 PASS / 5 FAIL** — same four degenerate-floor buckets in both.
+⇒ **bt4heads is no worse than the set that ran production for a month.**
+
+**The old 28/29 FAIL at `pol_pmad` 0.011-0.085 is VOID in both directions** and is replaced by
+this reading. `pol_pmad` no longer exists.
+
+### ⚑ A BANKED INTERPRETATION IS WITHDRAWN
+This file previously recorded the 2.31 calibration figure and labelled it **stale**. The new
+gate reproduces it at **2.36**. ⇒ **that reading was the INSTRUMENT, and "staleness" was an
+interpretation the data do not support.**
+
+### ⚑ #432 CANNOT GATE THE PACKAGES IT WAS WRITTEN FOR
+Its worktree is off `main`, which lacks the bt4heads model code: `load_model_config` raises
+`Unknown keys in yaml 'model:' section: ['aux_policy_head_dim']`. Running the gate from its own
+branch **fails outright**. The fix is script-only (no library change), so the valid combination
+is the new script against the live tree's library — which is what was run.
+⇒ **#432 needs `ops/live-20260725`'s model code merged before it can gate anything.**
+[[live_branch_lacks_merged_code]] — the same shape as #443's stale-config finding today.
+
+### PROVENANCE — pinned by content, exact
+Config `configs/pbt2_small.yaml` @ `86492fa26`, sha256 `088409494b3c...`; today's live file is
+**byte-identical** to the promotion commit. Checkpoint
+`data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt`, `global_iter=991`.
+**Pairing proof: 494/494 keys, 0 missing, 0 unexpected, 0 shape mismatches, planes=175.** The
+two rival configs each mismatch by 18 keys — a decisive discriminator, not a coincidence.
+**No `.pt2` was touched: all 65 files md5-identical, mtimes and sizes unchanged.**
+
+⚑ The directory holds **44 buckets, not 29** — the union of an interrupted 47-bucket build and a
+29-bucket `--resume`. All 21 the broker loads are present.
+
+### VERDICT AND THE LIMIT OF IT
+**Sound at iter-100: YES. Cleared for open-ended production deployment: NOT ESTABLISHED.**
+Production rebinds weights every iteration, and the controls prove these same files can move
+1.0 -> 2.3 on a weight change nobody can explain. Nothing here says bt4heads stays at 1.0 at
+iter 150.
+
+**The observation that settles it:** re-run this verify against the first bt4heads-topology
+checkpoint >= 30 iterations past iter-100. Still ~1.0 ⇒ the July->August step was
+lineage-specific and deployment is clear. ~2.3 with argmax still ~0.96 ⇒ **the ratio arm is
+measuring weight vintage rather than package health**, and the gate needs a fourth revision
+before it can gate anything. **That checkpoint does not exist** — training is down.
