@@ -52408,3 +52408,145 @@ converged for this purpose and the verdict table applies.
 - A run without a `--purity-receipt` stamps `valid_control: false` and is a smoke test, not
   the arm. The 400-step calibration run reported here earlier is one such: it established
   throughput and that the guard stack passes on real data, and it is quotable for nothing else.
+
+## 2026-08-16 — ⚑⚑ THE MISSION MACHINERY POINTS **AT** STOCKFISH, NOT AWAY FROM IT. And no instrument we own can tell whether the anti-engine thesis is working.
+
+Read-only inventory + code analysis, zero GPU. Full report banked at
+`scratchpad/mission_gap_20260816/REPORT.md`. This is not an experiment verdict — it is a
+finding about what our experiments have been ABLE to say, and the answer is narrower than
+the project's stated purpose.
+
+### Finding 1 — the blind-spot flywheel is a CLOSE-THE-GAP-TO-STOCKFISH mechanism
+
+`selfplay/blindspot_harvest.py:34-35` capture band: `net_ok = 0.2` / `sf_lost = -0.5`,
+i.e. *"net thinks fine, SF says lost"*. It harvests positions where **WE are wrong and SF
+is right**, vets them with **deeper** SF, and **retires a seed when the net's value head
+crosses `net_q <= -0.4` — i.e. when the net has come to AGREE with Stockfish.** Every gate
+points toward SF.
+
+⚑ **Stated fairly: training on your own blind spots is a legitimate curriculum, and this
+is a working one. It is simply not an anti-engine mechanism.** The two claims are
+independent and the file's name asserts the second.
+
+**Nothing in the repo selects, detects, or trains on a position where Stockfish is WRONG.**
+Grepped `fortress`, `horizon`, `closed position`, `locked`, `blocked_pawns`, `closedness`,
+`position_type`, `is_closed`: every `horizon` hit is UCI time management, every `locked`
+hit is a threading lock. **Zero detectors, zero steering.** Both production books are
+UHO/beam books chosen for BALANCE — the generic-testing objective.
+
+### Finding 2 — the two Stockfishes are 13x apart and nobody named which one we mean
+
+| role | budget | site |
+|---|---|---|
+| OPPONENT we train against | **75,000 nodes**, further handicapped by the PID | `configs/pbt2_small.yaml:147` |
+| JUDGE we grade against | **>=1,000,000 nodes**, unhandicapped, MultiPV 10 | `scripts/build_audit_set.py:184-185` |
+
+"Exploit Stockfish" is not well-posed until one of those is named. Every audit-set verdict
+we have is about the 1M-node engine; every game we play is against the 75k one.
+
+### Finding 3 — WE HAVE NEVER PLAYED STOCKFISH ON THIS LINEAGE
+
+The only net-vs-Stockfish games on disk are `runs/matches/deepfin_g465_vs_sf1320_*_20260601`
+— **2026-06-01, UCI_Elo 1320, a net predating the 512 swap.** Everything since is vs Cheese
+or rofChade. ⇒ **We test our anti-Stockfish thesis exclusively against engines that are not
+Stockfish.**
+
+### Finding 4 — the flywheel is a one-way ratchet with its supply valve shut
+
+| arm | state |
+|---|---|
+| A harvest | RUNNING (newest writer file 2026-08-15 03:38) |
+| B deep-SF vetting gate | **STOPPED 2026-08-12 17:52** (sentinel; the live monitor started 17:56:31, AFTER it, so it is honouring it — established by process start time, not assumed) |
+| C feed (staged -> pool) | **STOPPED 2026-07-24 14:48 — 23 days** |
+| D retire/probation | STOPPED 2026-08-12 17:52, having run every cycle for 1,504 cycles |
+| E dole (pool -> games) | WIRED correctly; runs whenever training runs |
+
+Feed off while retire ran every iteration, and retirement is monotone ⇒ staged candidates
+went **~470-491 -> 3,100**: **~2,610 deep-SF-vetted blind-spot positions harvested, paid
+for in CPU, and never fed to anything.** Active pool 180 seeds, frozen 2026-08-12 07:39.
+
+⚑ **Pool size is NOT the binding resource** — `opening_fen_dole_max_fraction: 0.08` x ~440
+games/iter = **36 seeded games/iter**, and the cap binds by 7-14x at every pool size tried.
+Refilling the pool changes rotation, not exposure. **The only lever on blind-spot volume is
+that fraction.** This corrects the standing instinct that the pool needs topping up.
+
+### Finding 5 — no instrument we own can separate the two hypotheses
+
+`arena_standard.py` is net-vs-net (Stockfish is not in the room). `audit_targets.py` and
+`value_regret.py` use deep SF as the ORACLE — and `docs/rl_loop_audit.md:783` already says
+it: *"a model succeeding at [exploiting SF] diverges from SF and would score WORSE on such a
+ruler."* `wdl_regret` measures the AGENT and is void whenever search moves.
+⇒ **No instrument, running or shelved, reads UP when the net gets better at exploiting
+Stockfish without also reading up when it merely gets stronger.**
+
+**The counted gap.** 255 dated ledger entries since 2026-06-16; **70 cite a generic ruler
+command, 8 cite a mission one (~8.8:1)** — and 3 of the 8 are the flywheel's own maintenance
+scripts. **Experiments whose PRE-COMMITTED DECIDING yardstick was mission-aligned: about
+ONE** (the 2026-08-11 Cheese arm), **and it self-invalidated** (stopped at 24 of 60 games
+because it looked good; plus a 1.49x nps confound making it an AGENT reading).
+
+⚑ Meanwhile `blindspot_panel` has **109 banked readings** (07-07 -> 08-12) with
+**pre-committed** thresholds, and **81 of 109 sat at or above the KILL bar while 6 ever
+reached SUCCESS** — never adjudicated. v1's held-out panel is **FLAT** (first-10 mean 24.20
+BLIND, last-10 23.70). Not quoted as a verdict: those thresholds belong to a specific
+experiment, the panel is FEN-only, and v2 straddles the 07-11 46M->512 swap. The point is
+that the generic rulers get pre-registrations and corrections while the mission-flavoured
+one accumulates unread rows in a log file.
+
+### The sharp question: is our net MORE anti-SF than a generically-equal net?
+
+**THE EXISTING EVIDENCE CANNOT ANSWER THIS.** Not "no" — unmeasured. The claim is a
+comparison to a counterfactual and needs (a) a strength-matched reference and (b) Stockfish
+as the OPPONENT; per Finding 3 we have never run (b) on this lineage.
+
+The Cheese 0.6875 cannot carry it, on four counts: n=24, optional stopping, the 1.49x nps
+confound, and — fatally for a SPECIALISATION claim — **no reference arm.**
+
+⚑ **And the best adjacent evidence leans the WRONG WAY.** BT4 is lc0-selfplay-trained and
+therefore SF-agnostic. On the 16.3% of rows where our argmax falls outside SF's MultiPV-6 —
+the most anti-SF-looking population we have — **BT4 corroborates SF at C = 0.7815**; only
+the top-confidence bin (n=79) prefers our target. ⇒ **our divergence from Stockfish is,
+where an independent judge can see it, predominantly ERROR rather than exploitation.**
+That measures the TARGET, at 1 ply, on audit-style positions — not the NET, in PLAY, against
+STOCKFISH. **A warning, not a verdict**, and recorded as such.
+
+### What WOULD answer it — a double difference
+
+> Delta = [ S(ours vs SF) - S(ref vs SF) ] - [ S(ours vs non-SF) - S(ref vs non-SF) ]
+
+with `ref` strength-matched head-to-head. **Generic strength enters both brackets and
+cancels; Delta > 0 is anti-Stockfish specialisation and nothing else.** Full two-tier design
+(Tier A SF-Error Corpus screen, ~10 GPU-min/readout after a one-time build; Tier B the 2x2
+node-limited match, ~8.5 GPU-h) with controls and failure inputs is in the banked report.
+
+⚑ **The design constraint that makes it work: STOCKFISH IS NEVER THE JUDGE.** It is either
+the SUBJECT (adjudicated by Syzygy + BT4, 2-of-2, both non-SF and both already local) or the
+OPPONENT (ground truth = the game result). **If the panel ever drifts to using SF at ANY
+budget as the adjudicator, the instrument silently reverts to an agreement-with-SF ruler and
+reads anti-SF gains as losses** — the exact failure it exists to avoid.
+
+### ACTION TAKEN, not deferred: the containment probe is RUNNING
+
+The one script that ever questioned SF's oracle status
+(`scripts/blindspot_deepsf_scaling.py`, dead since 2026-07-08) found **0/56 verdict flips
+and 0/56 |delta| >= 0.20** — and the branch was silently abandoned rather than recorded as a
+containment failure. ⚑ **But that null spans 4M -> 16M nodes, where SF has long converged.
+The engine we PLAY is 75k. The 75k -> 4M window has never been measured.**
+
+Launched: same script, `--nodes-list 75000,150000,500000,1000000,4000000`, all 123 severe
+rows, production Syzygy pair, cold TT per budget, output to a NEW file (the 07-08 bank is
+untouched). **Pre-committed reading: if the 75k->4M flip rate is also ~0, the
+fortress/horizon premise is in trouble and no instrument should be built on it.** Population
+caveat stated in advance: this is the harvest candidate stream (positions where the NET was
+wrong), not a sample of live selfplay positions, so a null bounds SF instability on THAT
+population only.
+
+### Decisions this hands to the operator, stated as decisions
+
+1. **The 2,610 stranded seeds and flywheel arms B/C/D.** Given Finding 1, "turn it back on"
+   would feed a mechanism that optimises AGREEMENT with Stockfish. Not a measurement — an
+   operator call, and it should be made knowing what the mechanism actually does.
+2. **`opening_fen_sf_refute_frac: 0.9` is the one arm pointed the right way** — it generates
+   data from what Stockfish DOES rather than what it SAYS a position is worth
+   (`worker.py:2147-2155` -> `selfplay/opening.py:688-697`). **It has never been read out as
+   an experiment.** That is the cheapest mission-aligned readout available.
