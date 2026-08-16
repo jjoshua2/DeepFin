@@ -104,6 +104,14 @@ as Brier score and expected calibration error.
 
 Shallow SF results are cached to <audit>.shallow_sf.jsonl (append-only,
 resumable) so reruns against new checkpoints don't repay the CPU bill.
+⚑⚑ THE CACHE IS KEYED BY ENGINE IDENTITY AS WELL AS (nodes, multipv). It used
+to be keyed by (nodes, multipv) ALONE, which meant two arms differing only in
+`--stockfish` both read the FIRST arm's labels and row (c) came out
+byte-identical — a teacher-comparison that structurally could not detect a
+teacher change (MEASURED 2026-08-16: two arms, two different Stockfish
+binaries, identical `cand.sf_soft`, and Stockfish never launched for the
+second). Rows now carry `sf_id` (`id name`) and a run that names an engine
+reuses only that engine's rows.
 GPU use is the batched forwards + search only; --max-positions and
 --batch-size bound the run (5k positions / 256 sims fits in <1h on a 5090).
 
@@ -113,7 +121,9 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import collections
 import json
+import subprocess
 import threading
 import time
 from collections.abc import Mapping
@@ -873,6 +883,56 @@ def _net_candidates(
     return raw_out, search_out, root_q, root_wdl_out
 
 
+UNRECORDED_SF_ID = "<unrecorded>"
+
+
+def engine_identity(path: str, *, timeout_s: float = 60.0) -> str:
+    """The engine's own ``id name``, e.g. ``Stockfish dev-20260810-5062aee5``.
+
+    Read by driving the binary directly rather than through ``StockfishUCI``:
+    that class discards every line before ``uciok`` and sits on the production
+    selfplay path, so widening it for a ruler script is the wrong trade.
+
+    ⚑ The identity comes from the ENGINE, never from the path. `stockfish_path`
+    in production is a two-hop symlink whose intermediate name is misleading, so
+    a filename-derived key would record the wrong provenance and still look
+    plausible.
+    """
+    proc = subprocess.Popen(
+        [path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True, bufsize=1,
+    )
+    name = ""
+    try:
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        proc.stdin.write("uci\n")
+        proc.stdin.flush()
+        deadline = time.monotonic() + timeout_s
+        for line in proc.stdout:
+            s = line.strip()
+            if s.startswith("id name "):
+                name = s[len("id name "):].strip()
+            if s == "uciok" or time.monotonic() > deadline:
+                break
+        try:
+            proc.stdin.write("quit\n")
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            # The engine already exited. Nothing to ask it to do.
+            pass
+    finally:
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            # Our own child, by handle -- never a name pattern.
+            proc.kill()
+            proc.wait(timeout=10)
+    if not name:
+        raise SystemExit(f"{path}: engine did not report an `id name` before uciok")
+    return name
+
+
 def _shallow_sf_records(
     positions: list[AuditPosition],
     *,
@@ -883,9 +943,20 @@ def _shallow_sf_records(
     workers: int,
     nice: int,
 ) -> dict[str, dict]:
-    """Shallow (production-strength) SF search per position, JSONL-cached."""
+    """Shallow (production-strength) SF search per position, JSONL-cached.
+
+    ⚑ Reuse is gated on ENGINE IDENTITY, not just (nodes, multipv) — see the
+    module docstring. When ``stockfish`` is given, only rows this exact engine
+    wrote are reused; anything else is re-labelled. When it is not given the
+    cache is read as-is, but a cache holding MORE THAN ONE engine's rows at
+    these settings is refused rather than silently averaged: that is a mixed
+    ruler, and a mixed ruler is not a ruler.
+    """
+    sf_id = engine_identity(str(stockfish)) if stockfish is not None else None
     cache: dict[str, dict] = {}
     other_node_counts: set[int] = set()
+    foreign: collections.Counter[str] = collections.Counter()
+    accepted_ids: collections.Counter[str] = collections.Counter()
     if cache_path.exists():
         with open(cache_path, encoding="utf-8") as f:
             for line in f:
@@ -893,9 +964,30 @@ def _shallow_sf_records(
                 if line:
                     d = json.loads(line)
                     if int(d.get("nodes_requested", 0)) == nodes and int(d.get("multipv", 0)) == multipv:
+                        row_id = str(d.get("sf_id") or UNRECORDED_SF_ID)
+                        if sf_id is not None and row_id != sf_id:
+                            foreign[row_id] += 1
+                            continue
+                        accepted_ids[row_id] += 1
                         cache[str(d["key"])] = d
                     elif int(d.get("multipv", 0)) == multipv:
                         other_node_counts.add(int(d.get("nodes_requested", 0)))
+    if sf_id is not None:
+        print(f"[sf-soft] engine `{sf_id}`")
+    if len(accepted_ids) > 1:
+        raise SystemExit(
+            f"{cache_path}: rows at {nodes} nodes / multipv {multipv} come from "
+            f"{len(accepted_ids)} different engines ({dict(accepted_ids)}). A "
+            "mixed-provenance cache is a mixed ruler. Pass --stockfish to pin "
+            "one engine, or point --audit-set at a per-engine copy."
+        )
+    if foreign:
+        print(
+            f"[sf-soft] ⚑ ignoring {sum(foreign.values())} cached rows at these "
+            f"settings written by a different or unrecorded engine "
+            f"({dict(foreign)}); they will be RE-LABELLED by `{sf_id}`. This is "
+            "the cost of the cache never having recorded which engine made it."
+        )
     todo = [p for p in positions if p.key not in cache]
     if todo and stockfish is None:
         hint = "pass --stockfish to populate the cache"
@@ -939,6 +1031,9 @@ def _shallow_sf_records(
                         "key": pos.key,
                         "nodes_requested": nodes,
                         "multipv": multipv,
+                        # Provenance. Without it two teachers share one cache
+                        # and a teacher comparison reads its own first arm.
+                        "sf_id": sf_id,
                         "cp": None if res.cp is None else int(res.cp),
                         "mate": res.mate,
                         "wdl": None if res.wdl is None else [float(v) for v in res.wdl],

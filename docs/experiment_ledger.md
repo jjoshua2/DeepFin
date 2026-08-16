@@ -40743,7 +40743,7 @@ protocol rule 1 and must be read before anyone points `stockfish_path` at the ne
 
 ### Provenance of the CURRENT teacher — established by resolution, not by filename
 
-`configs/pbt2_small.yaml:141` sets `stockfish_path` to `<repo>/e2e_server/publish/stockfish`.
+`configs/pbt2_small.yaml:91` sets `stockfish_path` to `<repo>/e2e_server/publish/stockfish`.
 That is a **two-hop symlink**, and the intermediate name is misleading, so the chain is recorded
 in full rather than the final answer alone:
 
@@ -40764,7 +40764,7 @@ Version read off the binary's own `uci` / `compiler` response, not off any path 
 
 ⚑ **`e2e_server/publish/` is the SERVER'S PUBLISH DIRECTORY, and it contains exactly this one
 symlink.** So the two ways a selfplay worker can obtain Stockfish converge on the same file:
-`--stockfish-path` reads it directly, and `--stockfish-from-server` (`worker.py:3611`) downloads
+`--stockfish-path` reads it directly, and `--stockfish-from-server` (`worker.py:3617`) downloads
 the sha256-pinned copy the server serves *from that same path*. Repointing the symlink therefore
 changes the teacher for **both** paths at once, including for remote workers, and it does so
 without any yaml edit. That is a deployment hazard, not a convenience — see Deployment below.
@@ -40902,23 +40902,85 @@ and re-labelling it would invalidate every banked model score at once
 [[a_ruler_change_must_invalidate_its_records]]. The second referee below is a NEW FILE at a NEW
 path. `data/audit_set_v1.jsonl` is not touched, appended to, or re-labelled.
 
-### THE ONE DECIDING YARDSTICK (exact command)
+### ⚑⚑ THE FIRST VERSION OF THIS YARDSTICK COULD NOT FIRE — TWO INDEPENDENT REASONS, BOTH MEASURED
+
+Recorded here because both are the house defect (a value accepted and then silently ignored)
+sitting **in the instrument**, and because the entry originally shipped commands that had never
+been executed. Fixed 2026-08-16, and every command below has now been RUN — output pasted.
+
+**(1) The readout addressed the wrong candidate.** The gate is on candidate **(c) `sf_soft`**,
+but the command read `tail_stats.py --raw-top1`, and `tail_stats.py:28` was
+`r.get("cand", {}).get("raw", {}).get("top1")` — candidate **(a)**, the net's own policy, read off
+the checkpoint (`audit_targets.py` `"raw": raw_probs[i]`) with **zero dependence on
+`--stockfish`**. The script's whole argument surface was `(dump_a, dump_b, --raw-top1, --tail-cp)`;
+`cand.sf_soft` was not addressable at all. Two arms differing only in the SF binary give
+byte-identical (a), so the statistic is identically 0, `|net| = 0 < 40`, and **INCONCLUSIVE was
+pre-committed for any teacher** — after four 4000-position `audit_targets` runs plus a
+4000-position 1M-node `build_audit_set`. FIX: `tail_stats.py` takes `--field <dotted.path>`;
+`--raw-top1` is kept as a documented alias for `--field cand.raw.top1`. It also now REFUSES a
+field that resolves on zero rows, because returning `{}` reads as "no difference".
+
+**(2) ⚑⚑ THE SHALLOW-SF LABEL CACHE HAD NO ENGINE IDENTITY, SO ARM NEW READ ARM OLD'S LABELS.**
+`<audit-set>.shallow_sf.jsonl` matched on `(nodes_requested, multipv)` **alone**. Candidate (c) is
+built from that cache, and `data/audit_set_v1.jsonl.shallow_sf.jsonl` **already holds 4000 rows at
+exactly `(500000, 40)`** — the settings below — none of which record which engine wrote them
+(measured: `Counter({(50000, 40, None): 4000, (500000, 40, None): 4000, (100000, 40, None): 2000})`).
+⇒ Referee A's 2×2 would have reused those rows for BOTH arms and **never launched Stockfish**.
+
+MEASURED, not argued (4 positions, both binaries, `--sf-effort low --sf-soft-multipv 40`):
+
+```
+$ python3 scripts/tail_stats.py mini_old.jsonl mini_new.jsonl --field cand.sf_soft.top1
+>300cp tail, paired (n=4): both 0, new-in-B 0, fixed-in-B 0  (net +0 blowups)
+cand.sf_soft identical on 4/4 positions        # and no `[sf-soft] labeling` line in either arm
+```
+
+FIX: rows carry `sf_id` (the engine's own `id name`, read from the ENGINE — the path is a
+misleading two-hop symlink); a run naming `--stockfish` reuses only that engine's rows; a
+cache-only run holding two engines' rows at one setting is REFUSED as a mixed ruler. After the fix,
+the same two arms:
+
+```
+$ ... --stockfish <OLD>   ->  [sf-soft] engine `Stockfish dev-20260420-ed651aab`
+                              [sf-soft] ⚑ ignoring 4 cached rows ... ({'<unrecorded>': 4})
+                              [sf-soft] labeling 4 positions at 500000 nodes, multipv 40
+$ ... --stockfish <NEW>   ->  [sf-soft] engine `Stockfish dev-20260810-5062aee5`
+                              [sf-soft] ⚑ ignoring 8 cached rows ...
+                              [sf-soft] labeling 4 positions at 500000 nodes, multipv 40
+$ python3 scripts/tail_stats.py fix_old.jsonl fix_new.jsonl --field cand.sf_soft.top1
+fix_old.jsonl  all  n=4 mean=  28.5 med= 7.0 P90= 74.2
+fix_new.jsonl  all  n=4 mean=  37.2 med=24.5 P90= 78.7
+cand.sf_soft identical on 2/4 positions (was 4/4)
+```
+
+⚑ **COST CONSEQUENCE FOR THE REAL RUN: the banked 4000 rows at (500k, 40) are `<unrecorded>` and
+will be RE-LABELLED by whichever binary an arm names.** That is the honest price of a cache that
+never recorded its own provenance; budget arm OLD as a full labeling run, not a cache hit.
+
+### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, see below)
 
 Expected **deep-SF regret (cp) of the SF MultiPV soft target** — candidate (c) of
 `scripts/audit_targets.py`, which is the actual policy label the pipeline stores — with the SF
 binary as the ONLY thing that differs between arms:
 
 ```
-# arm OLD (baseline) and arm NEW — identical but for --stockfish
+# arm OLD (baseline) and arm NEW — identical but for --stockfish.
+# ⚑ The checkpoint is pinned by PATH AND STEP and must be the SAME in all four cells:
+#   data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt  (step 93744)
+# It does not enter candidate (c) at all, but audit_targets requires exactly one of
+# --checkpoint/--onnx, and an unpinned net makes rows (a)/(b)/(d)/(e) uninterpretable.
 PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
   --audit-set <REFEREE> --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
   --stockfish <BINARY> --sf-effort low --sf-soft-multipv 40 \
   --sf-workers 8 --max-positions 4000 --seed 0 \
-  --dump-jsonl scratchpad/sf213/<referee>_<arm>.jsonl
+  --dump-per-position runs/sf213/<referee>_<arm>.jsonl
 
-# the readout, paired by fen
+# the readout, paired by position key. ⚑ --field, NOT --raw-top1: the gate is on
+# candidate (c), and --raw-top1 reads candidate (a), which cannot move with --stockfish.
 PYTHONPATH=. python3 scripts/tail_stats.py \
-  scratchpad/sf213/<referee>_old.jsonl scratchpad/sf213/<referee>_new.jsonl --raw-top1
+  runs/sf213/<referee>_old.jsonl runs/sf213/<referee>_new.jsonl \
+  --field cand.sf_soft.top1
 ```
 
 run over the **2×2** of {referee A, referee B} × {arm OLD, arm NEW}:
@@ -40933,10 +40995,16 @@ run over the **2×2** of {referee A, referee B} × {arm OLD, arm NEW}:
       --stockfish <NEW> --nodes 1000000 --multipv 10 --sf-workers 8
   ```
   ⚑ The `cp` of the manifest is load-bearing and is why this is cheap and valid:
-  `build_audit_set.py:212` **reuses an existing manifest instead of re-sampling**, so referee B is
+  `build_audit_set.py` **reuses an existing manifest instead of re-sampling**, so referee B is
   the identical position set with a different labeller — not a new sample. A new sample would make
   the two referees incomparable [[same_name_different_population]]. ⚑ It writes to `runs/`, never
   to `data/`.
+  ⚑ `--replay-dir` is deliberately ABSENT and the command above is the executed one. It used to be
+  `required=True` and this command exited 2 (`error: the following arguments are required:
+  --replay-dir`) even though the manifest-reuse path never reads it. It is now **conditionally
+  required** — demanded only when a manifest has to be SAMPLED — rather than satisfied with a
+  decorative value the run ignores, which is the defect class this whole entry keeps tripping over.
+  The README it writes records `replay dirs: [] (manifest reused; not re-sampled)`.
 
 ### Pre-committed thresholds — the verdict is only read WHERE THE TWO REFEREES AGREE
 
@@ -40950,11 +41018,48 @@ Primary quantity: **paired `>300cp` tail flip count** (`new-in-B` minus `fixed-i
 | NEW has more, net ≥ +40 | NEW more, net ≥ +40 | **KILL — do not deploy.** Lost on its OWN home referee; unambiguous. |
 | any split, or either \|net\| < 40 | " | **INCONCLUSIVE — do not deploy for label quality.** Not a pass. |
 
-±40 of 4000 paired positions = 1.0pp, chosen as ~2× the paired flip noise this readout has shown
-on repeat runs of an unchanged pipeline. ⚑ Pre-committing INCONCLUSIVE as a distinct, non-shipping
+**±40 IS PROVISIONAL AND UNMEASURED — stated plainly rather than dressed up.** An earlier revision
+of this line said it was "chosen as ~2× the paired flip noise this readout has shown on repeat runs
+of an unchanged pipeline". That cited no run and no number, and it **cannot have been measured on
+this readout**: until 2026-08-16 the readout could not address candidate (c) at all (see above), so
+no repeat-run flip count for this quantity exists. The claim is WITHDRAWN. ±40 of 4000 paired
+positions = 1.0pp and is a judgement call, not a calibration — it is stated as a FALSIFIER, not as
+a number to quote. [[compute_instrument_resolution_before_the_threshold]]
+
+⚑ **What would measure it, and it must be done BEFORE the verdict is read** (it is cheap relative
+to the 2×2 — one extra arm, no new referee): run arm OLD **twice** against referee A with the same
+binary and the same pinned checkpoint, into two different dump paths, and read the paired flip
+count between them with `--field cand.sf_soft.top1`. That is the null distribution of this exact
+statistic. Note `go nodes N` is deterministic per binary at fixed threads, so the honest prior is
+that the repeat reads **exactly 0** and the threshold is bounded by the RE-LABELLING variance
+between two `--sf-workers 8` runs rather than by search noise. If the repeat reads 0, ±40 is
+strictly conservative and should be revised DOWN, in a ledger edit made before the arms are read.
+
+⚑ Pre-committing INCONCLUSIVE as a distinct, non-shipping
 outcome is deliberate: a split is the EXPECTED reading if the two teachers simply differ without
 either being better, and "we could not tell" must not be laundered into "no reason not to ship"
 when shipping costs a measured +16.1%.
+
+### ⚑ THE COMMANDS ABOVE WERE EXECUTED (2026-08-16) — exit codes, not careful writing
+
+The lesson of this entry is that "an exact command" means one that was RUN. Each was executed on a
+4-position mini referee (`--max-positions 4`, reduced `--sims`, `--device cpu` to leave the GPU
+alone); the reduction changes rows (b)/(d)/(e) and **not** candidate (c), which is the deciding row.
+
+| command | exit | note |
+|---|---|---|
+| `audit_targets ... --dump-jsonl ...` (as originally written) | **2** | `error: unrecognized arguments: --dump-jsonl` — the flag is `--dump-per-position` |
+| same, corrected flag, no net pinned | **1** | `pass exactly one of --checkpoint (one of ours) or --onnx; neither was given` |
+| `build_audit_set ... ` (as originally written, no `--replay-dir`) | **2** | `error: the following arguments are required: --replay-dir` |
+| `audit_targets` corrected, arm OLD, referee A | **0** | `[sf-soft] engine \`Stockfish dev-20260420-ed651aab\`` |
+| `audit_targets` corrected, arm NEW, referee A | **0** | `[sf-soft] engine \`Stockfish dev-20260810-5062aee5\`` |
+| `build_audit_set` corrected (referee B, manifest reuse) | **0** | `[manifest] reusing ... (4 positions)`, `[label] finished 4 positions` |
+| `audit_targets` corrected, arms OLD/NEW, referee B | **0**/**0** | full 2×2 completed |
+| `tail_stats --field cand.sf_soft.top1` on each pair | **0** | referee A: mean 28.5 → 37.2; referee B: 269.0 → 259.2 |
+
+⇒ the 2×2 now runs end to end and the deciding statistic MOVES between arms. Before the two fixes
+it was 0 on all four cells by construction. Nothing about the teacher's quality is claimed here —
+this establishes only that the instrument can fire.
 
 ### What a PASS does NOT establish — stated now, not discovered later
 
