@@ -52706,3 +52706,57 @@ tree, the window reopens silently on that date and this entry's dates become wro
 
 **No re-runs owed.** The pre-08-09 record is intact and the post-08-10 instance was already
 voided. The cost of this defect was two days of ruler credibility, not the archive.
+
+### ⚑ AMENDMENT (same session, ~1h later) — the scope bound STANDS, but its closing sentence was wrong: #443 does NOT close the defect by default
+
+Independent review of PR #443 (reviewer ≠ author; REQUEST-CHANGES, 2 blocking) found that
+the fix is only armed when `$CHESS_ANTI_ENGINE_LIVE_CONFIG` is exported — **and it is
+exported nowhere.** Verified directly, not taken on report:
+
+- `CHESS_ANTI_ENGINE_LIVE_CONFIG` is UNSET in this shell and appears in the repo only in two
+  docstrings and one line of `docs/eval_protocol.md`. No `scripts/*.sh`, no `train.sh`, no
+  ops doc sets it.
+- `origin/main:configs/pbt2_small.yaml` contains **0 of the 3** #227 keys; the live tree's
+  contains **3**.
+
+⇒ With the env unset, `load_live_config()` falls back to the IN-TREE config, and off `main`
+that file lacks all three keys, so the audit runs at `policy_temp 1.0 / cap 0 / untempered
+False` — **the exact #227 defect** — while its own summary line reads *"all 10 production
+search keys match the live config by VALUE."* CLAUDE.md MANDATES worktrees for branch work,
+so this is the NORMAL invocation, not an edge case. The reviewer reproduced the
+`imp_store == imp_all` branch verbatim on that path.
+
+**This is [[main_yaml_is_not_what_production_runs]] firing again** — the memory that says a
+stale checkout makes the config check FALSE-POSITIVE. And it is
+[[fixing_a_defect_class_reintroduces_it]] for the third time: the fix for a hand-list
+introduced `PRODUCTION_SEARCH_KEYS`, a hand-list of 10 key names, which is structurally
+unable to notice a NEW production knob — the same failure one level up. Unlike the previous
+two instances this one was caught by a Claude reviewer rather than Codex.
+
+**CORRECTION to the entry above.** Where it says *"any reading relying on the yaml was broken
+until PR #443"*, read instead: **broken until PR #443 AND the env var is exported.** The
+merged fix alone does not restore the ruler; the ops change does. Everything else in that
+entry — the two start dates, the defaults table, the `git log -S` window, the
+`--gumbel ... --gumbel-training-rows` discriminator, and the conclusion that pre-08-09
+verdicts survive — is unaffected and stands. If anything the window is now better supported:
+historical worktree runs were at defaults too, exactly as the bound assumes.
+
+**Also found, and recorded because they are instrument facts rather than PR nits:**
+- The arena guard's INVOCATION is untested — the reviewer rebuilt `resolve_search_shape`
+  with the guard call replaced by `pass` and **35/35 tests still passed**. A correct guard
+  nothing proves is reached; the same defect this session already hit once on
+  `require_same_stamp`.
+- **Rows (d)/(e) moved and nothing stops a pre-fix dump being paired against a post-fix
+  one.** `paired_compare.RULER_FIELDS` is `("input_encoding", "batch_size")`; the audit dump
+  carries no search-shape stamp. A doc note in `eval_protocol.md` cannot stop a tool. ⇒ the
+  invalidation this file records is not MECHANISED. Owed: a search-shape stamp in the dump,
+  wired into `RULER_FIELDS`, with absence mapped to the pre-fix shape.
+- Two pre-existing tests regress (`test_arena_search_shape_plumbing.py`), one of them a real
+  plumbing break: `arena_standard.PRODUCTION_CONFIG` is STILL resolved at import time and
+  still backs the openings default, the recorded config digest and the provenance strings,
+  while the search shape now comes from a separate call-time resolution. The commit message
+  claims that duplication was removed. It was not — it was halved, and the banked digest is
+  the half that would be wrong when the two disagree.
+
+**Status: #443 is NOT mergeable as it stands.** No banked verdict changes; the scope bound
+above is unaffected.
