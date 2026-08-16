@@ -53552,3 +53552,86 @@ fail-closed on a corpus fingerprint, so this is a provenance note, not a defect.
 `pytest tests/test_lc0_control_rows.py tests/test_lc0_control_drivers.py -q` -> **80 passed**.
 `./scripts/lint.sh` (bare, whole-repo) -> ruff clean, basedpyright 0/0/0, `lint: OK`.
 8 mutations applied across the three deliverables, all killed.
+
+### 2026-08-16 — ⚑ THE EP THROUGHPUT GATE IS CONFOUNDED. Recorded BEFORE the readout.
+
+**Written while only iterations 1-2 exist and BEFORE the pre-committed median is computed, so
+this is a stated confound and not a post-hoc excuse. The verdict will still be recorded by the
+rule as written (`0f295875c`). It is going to read KILL/REVERT. Do not act on that alone.**
+
+| | baseline (armB 90-101) | iter 1 | iter 2 |
+|---|---|---|---|
+| `time_this_iter_s` | 262.5 | 2212.6 | 1160.5 |
+| `train_time_s` | 103.5 | 886.7 | 634.8 |
+| `selfplay_games` | 401 | 383 | 382 |
+
+**The baseline IS comparable — checked, not assumed.** `armB_bt4heads.yaml` vs the live yaml
+differ on exactly **4 keys**: `work_dir`, `salvage_seed_pool_dir`, `diff_focus_norm_shared`
+(None->False), and the `era_probe_inwindow_path` I re-pointed. Nothing affecting batch, views,
+window or step budget.
+
+### The decomposition, and why it exonerates #436
+
+| | baseline | live | ratio |
+|---|---|---|---|
+| `batches_drawn` (steps) | 98.5 | 378 | **3.84x** |
+| **ms per step** | 1053 | 2837 | **2.69x** |
+| `ingest_ms` | 141,706 | 140,645 | **1.00x** |
+| `replay_positions_ingested` | 11,648 | 25,558 | 2.19x |
+| `distributed_stale_games` | 62 | 773 | **12.5x** |
+| `distributed_stale_positions` | 1,263 | 18,406 | **14.6x** |
+
+3.84 x 2.69 = 10.3, which reproduces the 9.8x `train_ms`. So the regression is entirely inside
+TRAINING: more steps AND slower steps.
+
+⇒ **#436 cannot be the cause, on a mechanism argument with a measurement behind it.** Its cost
+was measured on the Python repetition path inside `encode_position` (1.12-1.40x on the whole
+function), which is borne by SELFPLAY WORKERS. The trainer does not call `encode_position` --
+it reads pre-encoded `x(175,8,8)` rows out of zarr. And the instrument that WOULD carry a
+selfplay-side cost, **`ingest_ms`, is unchanged at 1.00x**, with `selfplay_games` at 382-383
+against a 401 baseline.
+
+**Mechanism for the steps: views-targeting, working as designed.** Step budget scales with
+ingest volume (`train_views_per_position`), and `replay_positions_ingested` is 2.19x baseline
+because a large post-restart backlog is draining -- `distributed_stale_games` 12.5x and
+`distributed_stale_positions` 14.6x are the fingerprint. More ingest -> more steps.
+
+**The ms/step 2.69x is NOT yet explained** and is the part worth chasing. Candidate on the
+evidence: `replay_pmass_rows_full` is 2.22x baseline (243,172 -> 540,444), so per-step sampling
+work over the priority mass may scale with it. NOT established -- recorded as the open question,
+not as the answer.
+
+### One hypothesis of mine, KILLED
+
+I suspected my own `era_probe_inwindow_path` re-point: two 2048-row probe sets scored every
+iteration (`era_probe_interval: 1`). **Falsified by the instrument's own column**: `probe_ms`
+is **894 ms live vs 1423 ms in the baseline** -- the probe got FASTER, and both probe legs were
+fully populated (12/12) in the baseline too. It is ~1 s of a ~1160 s iteration. The re-point is
+not the cause.
+
+⚑ Its OUTPUT did move, as expected and by construction: `probe_inwindow_policy_eregret`
+0.0681 -> 0.1516 and `probe_gap_policy_eregret` +0.0009 -> -0.0821. That is a DIFFERENT SET of
+rows, so the in-window probe series is **not continuous across this restart** and those two
+columns must not be compared across the boundary. New baseline starts here.
+
+### What the corrected yardstick is, pinned NOW
+
+Iteration time is the wrong unit while ingest volume is 2.19x. The ingest-invariant readouts,
+pinned before either is computed:
+1. **`ingest_ms` per `replay_positions_ingested`** -- the selfplay/encode path, where #436's
+   cost would actually land.
+2. **`train_ms` per `batches_drawn`** (ms/step) -- must return toward ~1053 as the backlog
+   drains. **A transient decays; a real cost does not.** That is the discriminator.
+3. **games/hour at steady state.**
+
+⇒ **Do NOT revert #436 on the pre-committed gate alone.** Record the verdict by the rule, then
+re-read on the corrected units once `distributed_stale_*` returns to baseline.
+
+### ⚑ The protocol lesson, against myself
+
+The gate was mis-specified: **it fixed a threshold on iteration TIME while the step budget is
+explicitly a function of ingest volume**, so it cannot distinguish "slower" from "more work" --
+and CLAUDE.md states the views-targeting behaviour outright. A throughput gate on this loop must
+be per-unit-work, never per-iteration. Same family as
+`compute_instrument_resolution_before_the_threshold`: the ruler was chosen before checking what
+it actually varies with.
