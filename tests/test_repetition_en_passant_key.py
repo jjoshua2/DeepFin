@@ -567,11 +567,23 @@ def test_c_matches_python_chess_on_inconsistent_ep_fens(
 
 
 def _random_sparse_board(rng: random.Random) -> chess.Board:
+    """A random sparse position, which SOMETIMES OMITS A KING.
+
+    ⚑ The omission is the point. An earlier revision always placed both kings, so
+    720,000 samples reported zero key-MERGING divergences while one sat just
+    outside the generator's reach — the sweep was a gate that structurally could
+    not fail, which is the defect class this whole file exists to close. Review
+    finding B5. The kingless arm is counted and asserted non-empty below, so it
+    cannot quietly stop being generated either.
+    """
     board = chess.Board.empty()
     squares = list(chess.SQUARES)
     rng.shuffle(squares)
-    board.set_piece_at(squares.pop(), chess.Piece(chess.KING, chess.WHITE))
-    board.set_piece_at(squares.pop(), chess.Piece(chess.KING, chess.BLACK))
+    roll = rng.random()
+    if roll >= 0.10:   # 10% have no white king
+        board.set_piece_at(squares.pop(), chess.Piece(chess.KING, chess.WHITE))
+    if roll < 0.85 or roll >= 0.95:   # 10% have no black king
+        board.set_piece_at(squares.pop(), chess.Piece(chess.KING, chess.BLACK))
     for _ in range(rng.randint(2, 12)):
         square = squares.pop()
         piece_type = rng.choice([chess.PAWN, chess.PAWN, chess.PAWN, chess.KNIGHT,
@@ -601,11 +613,20 @@ def test_ep_predicate_oracle_sweep_over_inconsistent_ep_fields() -> None:
     there). The residual is asserted to stay in that class AND to stay in the
     key-SPLITTING direction: we can miss a repetition there, never invent one,
     which is the direction this whole fix exists to remove.
+
+    ⚑ Second precondition, added after review B5 found the first one false: the
+    SIDE TO MOVE must have a king. Boards where it does not are generated on
+    purpose (``_random_sparse_board``), counted, and asserted to diverge in
+    exactly the documented shape rather than swept into the "consistent" bucket
+    -- an earlier revision of this test could not produce one at all, so its zero
+    was a gate that could not fire.
     """
     rng = random.Random(20260816)
     n = consistent = pawn_consistent_mismatch = 0
     residual_split = residual_merge = 0
     pop_legal_ep = pop_cap_empty = pop_cap_pawn = pop_cap_nonpawn = 0
+    pop_no_mover_king = kingless_merge = kingless_agree = 0
+    kingless_unexpected: list[str] = []
     examples: list[str] = []
 
     while n < 30_000:
@@ -641,6 +662,23 @@ def test_ep_predicate_oracle_sweep_over_inconsistent_ep_fields() -> None:
             int(board.turn), 0, ep, 0,
         ).has_legal_en_passant()
 
+        if board.king(board.turn) is None:
+            # Documented, accepted divergence: python-chess's is_into_check
+            # answers False with no king, so it calls the ep capture legal; we
+            # have no king to test for exposure and answer 0. Assert the SHAPE,
+            # not just "something differs" -- the only tolerated disagreement
+            # here is ours=False / python-chess=True.
+            pop_no_mover_king += 1
+            if ours is oracle:
+                kingless_agree += 1
+            elif ours is False and oracle is True:
+                kingless_merge += 1
+            else:
+                kingless_unexpected.append(
+                    f"{probe.board_fen()} {'w' if board.turn else 'b'} "
+                    f"ep={chess.SQUARE_NAMES[ep]} ours={ours} py={oracle}")
+            continue
+
         if (not in_board) or cap_pawn or cap_empty:
             consistent += 1
             if ours is not oracle:
@@ -662,11 +700,22 @@ def test_ep_predicate_oracle_sweep_over_inconsistent_ep_fields() -> None:
 
     # The corpus must contain each discriminating population, or the zeros below
     # are vacuous.
-    assert consistent > 20_000, consistent
+    assert consistent > 15_000, consistent
     assert pop_legal_ep > 100, f"too few legal-ep positions: {pop_legal_ep}"
     assert pop_cap_empty > 1_000, f"too few missing-pawn ep fields: {pop_cap_empty}"
     assert pop_cap_pawn > 20, f"too few consistent ep fields: {pop_cap_pawn}"
     assert pop_cap_nonpawn > 1_000, f"too few non-pawn captured squares: {pop_cap_nonpawn}"
+    # ...including the one the previous revision structurally could not produce.
+    assert pop_no_mover_king > 1_000, (
+        "the generator stopped emitting boards whose MOVER has no king, so the "
+        f"kingless divergence is untested again: {pop_no_mover_king}")
+    assert kingless_merge > 0, (
+        "no kingless MERGE observed -- either the ep geometry stopped occurring "
+        "in that arm, or the C predicate changed and "
+        "test_kingless_board_is_a_known_accepted_divergence should have failed too")
+    assert not kingless_unexpected, (
+        "a kingless divergence in an UNDOCUMENTED shape (expected ours=False, "
+        "python-chess=True)", kingless_unexpected[:5])
 
     assert pawn_consistent_mismatch == 0, examples
     assert residual_merge == 0, (
@@ -676,3 +725,107 @@ def test_ep_predicate_oracle_sweep_over_inconsistent_ep_fields() -> None:
     # deliberately NOT asserted to be zero, and deliberately NOT left unbounded.
     assert residual_split < 0.01 * pop_cap_nonpawn, (
         f"residual grew: {residual_split} of {pop_cap_nonpawn} non-pawn cases")
+
+
+# ---------------------------------------------------------------------------
+# The kingless boundary (review B5).
+#
+# python-chess's is_into_check opens
+#
+#     king = self.king(self.turn)
+#     if king is None:
+#         return False          # -> the ep capture is LEGAL
+#
+# so has_legal_en_passant() is True on a board whose mover has no king.
+# bitboards_have_legal_ep answers 0: there is no king whose exposure the capture
+# could create. That is the key-MERGING direction -- we drop an ep term the oracle
+# keeps -- and it is accepted ONLY because a kingless board cannot arise from
+# play_batch, selfplay, MCTS or UCI parsing, never because it is rare.
+#
+# ⚑ This test asserts the divergence EXISTS. That is deliberate: it is the only
+# thing that will speak up if someone later "fixes" the predicate to match the
+# oracle here, or moves the king check and changes the answer by accident. A
+# boundary nobody asserts is a boundary that moves silently -- which is what let
+# the original en-passant defect live for months, and what let the 720,000-sample
+# sweep report zero merges while this case sat outside its generator.
+# ---------------------------------------------------------------------------
+
+# Mover has no king, and a black pawn stands on d5 -- so the ep field is
+# PAWN-CONSISTENT, i.e. this sits inside the domain the predicate's comment
+# claims exactness over on every axis except the king.
+_KINGLESS_FEN = "8/8/8/3pP3/8/8/8/8 w - d6 0 1"
+_MOVER_KINGLESS_FEN = "8/8/8/3pP3/8/8/8/4k3 w - d6 0 1"
+_OPPONENT_KINGLESS_FEN = "4K3/8/8/3pP3/8/8/8/8 w - d6 0 1"
+_BOTH_KINGS_FEN = "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"
+
+
+def _c_has_legal_ep_both_ways(board: chess.Board) -> tuple[bool, bool]:
+    from_board = CBoard.from_board(board).has_legal_en_passant()
+    from_raw = CBoard.from_raw(
+        board.pawns, board.knights, board.bishops, board.rooks,
+        board.queens, board.kings,
+        int(board.occupied_co[chess.WHITE]), int(board.occupied_co[chess.BLACK]),
+        int(board.turn), 0,
+        board.ep_square if board.ep_square is not None else -1, 0,
+    ).has_legal_en_passant()
+    return from_board, from_raw
+
+
+@pytest.mark.parametrize(
+    ("label", "fen", "oracle", "ours"),
+    [
+        ("no kings at all", _KINGLESS_FEN, True, False),
+        ("mover has no king", _MOVER_KINGLESS_FEN, True, False),
+        # The precondition is about the MOVER. An absent OPPONENT king is not a
+        # divergence, and pinning that is what stops the carve-out being widened
+        # to "any missing king" by someone reading the two rows above.
+        ("opponent has no king", _OPPONENT_KINGLESS_FEN, True, True),
+        ("control: both kings", _BOTH_KINGS_FEN, True, True),
+    ],
+)
+def test_kingless_board_is_a_known_accepted_divergence(
+    label: str, fen: str, oracle: bool, ours: bool,
+) -> None:
+    board = chess.Board(fen)
+
+    # The fixture must still be the thing it claims to be, on every axis but the
+    # king -- otherwise it could pass for the wrong reason.
+    assert board.ep_square == chess.D6, f"{label}: python-chess dropped the ep"
+    assert board.piece_at(chess.D5) == chess.Piece(chess.PAWN, chess.BLACK), (
+        f"{label}: the ep field must stay PAWN-CONSISTENT, or this stops being "
+        f"a case inside the claimed domain")
+    assert board.has_legal_en_passant() is oracle, (
+        f"{label}: the ORACLE moved. Re-derive the C rule before editing this.")
+
+    from_board, from_raw = _c_has_legal_ep_both_ways(board)
+    assert from_board is ours, (
+        f"{label}: from_board answered {from_board}, the recorded boundary is "
+        f"{ours}. If this change was deliberate, update bitboards_have_legal_ep's "
+        f"header comment -- the claim and the code must move together.")
+    assert from_raw is ours, f"{label}: from_raw disagrees with from_board"
+
+
+def test_the_kingless_divergence_is_in_the_key_merging_direction() -> None:
+    """Name the direction, because it is the bad one and must not be softened.
+
+    The two boards below differ ONLY in the ep right. python-chess separates
+    them; we do not. Asserting the keys directly rather than the predicate is
+    what ties the carve-out to its actual consequence -- a repetition we would
+    report that python-chess would not.
+    """
+    with_ep = chess.Board(_KINGLESS_FEN)
+    without_ep = chess.Board(_KINGLESS_FEN.replace(" d6 ", " - "))
+
+    assert with_ep.ep_square == chess.D6
+    assert without_ep.ep_square is None
+    assert with_ep._transposition_key() != without_ep._transposition_key(), (
+        "python-chess separates these two positions")
+
+    cb_with = CBoard.from_board(with_ep)
+    cb_without = CBoard.from_board(without_ep)
+    # Neither is credited with a legal ep, so neither gets the ep term and the
+    # repetition keys coincide. zobrist_hash is the ep-blind base of both.
+    assert cb_with.has_legal_en_passant() is False
+    assert cb_without.has_legal_en_passant() is False
+    assert cb_with.zobrist_hash == cb_without.zobrist_hash, (
+        "the two boards must differ only in the ep right")

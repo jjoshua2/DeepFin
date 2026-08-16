@@ -628,10 +628,25 @@ typedef struct {
     uint16_t ply;                              /* total half-moves from game start */
 } CBoard;
 
-/* Reset the per-slot ep squares to the "no ep" sentinel. Callers that build a
- * CBoard with memset(0) must call this: hist_ep is int8_t, so a zeroed slot
- * reads as ep on square 0 (a1), not as "no ep". Slots below hist_len are always
- * written explicitly, so this only guards slots a later reader might reach. */
+/* Reset the per-slot ep squares to the "no ep" sentinel: hist_ep is int8_t, so a
+ * zeroed slot reads as ep on square 0 (a1), not as "no ep".
+ *
+ * ⚑ DEFENCE IN DEPTH, NOT A LIVE INVARIANT — say so rather than imply a duty no
+ * test enforces. Established by mutation (review B7): making this a no-op is
+ * INDISTINGUISHABLE — the mutant survives both the new tests and the whole
+ * repetition/encode/lc0 subset, and for two independent reasons.
+ *   1. Slots at or beyond hist_len are never read. cboard_fill_lc0_112_root walks
+ *      back over min(hist_len, CBOARD_HISTORY_MAX) slots, every one of which
+ *      cboard_push or from_board wrote. The tell is that hist_turn and
+ *      hist_castling are left zeroed by the SAME memsets and nobody resets them.
+ *   2. Even if such a slot were read, hist_ep == 0 (a1) cannot produce a
+ *      candidate under bitboards_have_legal_ep's capturer-rank mask — a1 is
+ *      attackable only from b2, which is on neither rank 4 nor rank 5 — so 0 is
+ *      already indistinguishable from -1.
+ * It is kept because reason 2 evaporates if that rank mask is ever relaxed, and
+ * it costs 7 stores at construction. Do NOT write a test that "proves" the
+ * callers are required: by construction there is no observation that separates
+ * calling it from not, and a test asserting otherwise would be vacuous. */
 static inline void cboard_reset_hist_ep(CBoard *b) {
     for (int i = 0; i < CBOARD_HISTORY_MAX; i++) b->hist_ep[i] = -1;
 }
@@ -820,20 +835,55 @@ static inline uint64_t cboard_transposition_key(const CBoard *b) {
  * so this comment's "matches python-chess" cannot go stale silently.
  *
  * ⚑ It is NOT "matches python-chess exactly", and the old comment's version of
- * that sentence is what let the original defect live for months. The exact
- * claim, measured over 240,000 random inconsistent-ep positions (three seeds,
- * ZERO mismatches), is: we agree with python-chess whenever the ep field is
- * PAWN-CONSISTENT — captured square empty, or holding an enemy pawn — which
- * covers every position reachable from a legal double push. When a NON-PAWN
- * stands on the captured square (a position illegal by the rules of chess: the
- * ep square asserts a pawn just double-pushed onto an occupied square) we
- * answer exact legality while python-chess answers its own approximation
- * (pin_mask + _ep_skewered, both sound only when a pawn is there); ~1 in 3,000
- * such positions differs. Chasing it would mean transcribing those
- * approximations into C — replacing a correct test with an incorrect one for
- * positions that cannot occur. The sweep asserts the residual stays in that
- * class AND in the key-SPLITTING direction, so the error there can only MISS a
- * repetition, never invent one.
+ * that sentence is what let the original defect live for months. THE CLAIM, AND
+ * ITS TWO PRECONDITIONS — both narrower than an earlier revision of this comment
+ * asserted, and each narrowed only after a reviewer executed the case it got
+ * wrong:
+ *
+ *   we agree with python-chess on every position where (i) THE SIDE TO MOVE HAS
+ *   EXACTLY ONE KING and (ii) the ep field is PAWN-CONSISTENT — captured square
+ *   empty, or holding an enemy pawn.
+ *
+ * (i) is about the MOVER only, and that is measured, not assumed: a board where
+ * the OPPONENT has no king agrees fine, because the king we look up is the one
+ * whose exposure the capture could create.
+ *
+ * That domain contains everything reachable from a legal double push. Outside it
+ * there are exactly two known divergence classes, and they run in OPPOSITE
+ * directions, so neither may be summarised away:
+ *
+ *   - NO KING for the side to move → we return 0 where python-chess returns 1.
+ *     `is_into_check` opens `king = self.king(self.turn); if king is None:
+ *     return False`, i.e. an ep capture on a kingless board is LEGAL to it, so
+ *     has_legal_en_passant() is true. We have no king to test for exposure and
+ *     answer 0. ⚑ This is the key-MERGING direction — we DROP an ep term the
+ *     oracle KEEPS, so "8/8/8/3pP3/8/8/8/8 w - d6 0 1" and the same board with
+ *     no ep right share our repetition key while python-chess separates them.
+ *     That is the invent-a-repetition direction this whole key exists to remove,
+ *     and it is accepted ONLY because a kingless board cannot arise from
+ *     play_batch, selfplay, MCTS or UCI parsing — every one of those starts from
+ *     a legal position. It is NOT accepted on the grounds of being rare.
+ *     Note this also re-opens the C-vs-Python split: _check_repetitions asks
+ *     python-chess and answers True on the same board.
+ *   - NON-PAWN on the captured square → we return 1 where python-chess returns 0
+ *     (~1 in 3,000 such positions). Also illegal by the rules of chess: the ep
+ *     square asserts a pawn just double-pushed onto an occupied square. Here WE
+ *     are the exact one — python-chess answers with pin_mask + _ep_skewered,
+ *     which are sound only when a pawn is there — and the direction is
+ *     key-SPLITTING, so it can only MISS a repetition, never invent one. Chasing
+ *     it would mean transcribing those approximations into C, replacing a correct
+ *     test with an incorrect one for positions that cannot occur.
+ *
+ * (A third, unquantified: with TWO kings for the mover we take lsb64 where
+ * python-chess's king() takes msb. Also illegal, also excluded by (i).)
+ *
+ * ⚑ The measurement that used to back this sentence COULD NOT SEE THE KINGLESS
+ * CASE: its generator always placed both kings, so 720,000 samples reporting
+ * zero merges was a gate that structurally could not fail — this repo's own
+ * signature defect, one level down, inside the fix for it. The sweep now emits
+ * kingless boards deliberately and classifies them, and
+ * test_kingless_board_is_a_known_accepted_divergence pins the exact FEN, so
+ * whichever side of the boundary a future change lands on, a test moves with it.
  *
  * Cost is paid only when ep_square is set (rare), hence the early-out. The
  * occupancy is simulated fully — capturer removed from its origin, captured
@@ -846,7 +896,15 @@ static inline int bitboards_have_legal_ep(const uint64_t bb[6],
     if (ep_square < 0 || ep_square >= 64) return 0;   /* the common path */
     int us = turn, them = 1 - us;
     uint64_t us_kings = bb[KING] & occ[us];
-    if (!us_kings) return 0;                 /* malformed: no king to expose */
+    /* ⚑ DELIBERATE, DOCUMENTED DIVERGENCE — see the header comment's precondition
+     * (i). python-chess's is_into_check() returns False when there is no king,
+     * making the ep capture LEGAL to it; we have nothing to test for exposure and
+     * answer 0. That is the key-MERGING direction, accepted only because a
+     * kingless board is unreachable from play. Moving this to `return 1` would
+     * match the oracle and is a defensible alternative — but do it deliberately,
+     * and update test_kingless_board_is_a_known_accepted_divergence, which asserts
+     * today's answer BY NAME so the boundary cannot move silently. */
+    if (!us_kings) return 0;
 
     uint64_t ep_bit = 1ULL << ep_square;
     /* The ep TARGET must be empty, mirroring python-chess's own guard in
@@ -1016,7 +1074,17 @@ static void cboard_push(CBoard *b, int from_sq, int to_sq, int promotion) {
 
     /* The pre-move position's repetition key, computed ONCE. Both the history
      * slot and the hash_stack record this position, and the legality-exact ep
-     * test behind it is not free when ep_square is set. */
+     * test behind it is not free when ep_square is set.
+     *
+     * ⚑ DECISION RECORDED (review B9), so it is explicit rather than absent: do
+     * NOT cache the POST-move key on the board to save cboard_is_repetition's
+     * recomputation at every cboard_search_terminal check. It would erase the
+     * C-path cost, and it is exactly the write-here/read-there construct whose
+     * failures this PR exists to fix — a stored key that silently stops matching
+     * the rule that produced it is this defect, one layer up. The ep_square < 0
+     * early-out already bounds the work to the plies carrying an ep square:
+     * measured 4.6% on uniform play, 10.3% on a double-push-biased corpus, of
+     * which only ~0.3% carry a LEGAL ep and reach the attack scans. */
     uint64_t rep_key = cboard_repetition_key(b);
 
     /* --- Save current position to history circular buffer --- */
