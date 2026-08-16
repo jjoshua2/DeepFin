@@ -405,7 +405,70 @@ Pooled `sqrt(Σ‖Δ‖² / Σ‖g_true‖²)` and the median are both reported.
    hundred current positions run at production-shaped ~200k MPV6 against a wide search.
 3. Positions are the wide-label era's distribution.
 
-### PRE-REGISTERED, READ NOT YET TAKEN (2026-08-14 18:37) — the real MultiPV-6 calibration panel
+### READOUT (2026-08-15) — ⚑⚑ THE HISTORICAL α **TRANSFERS**. The live midpoint is 2.5-3.2× too harsh on REAL MultiPV-6 labels.
+
+Judged by the rule pre-committed below at 18:37 on 2026-08-14, before the run reported.
+`scripts/mpv6_tail_panel.py`, 500 positions from the live MPV6 era, banked to
+`scratchpad/mpv6_tail_panel_spread_20260815.json`.
+
+| panel | α_value (95% CI, 1000 row draws) | vs 1.0 | vs 0.1759 | midpoint / TRUE |
+|---|---|---|---|---|
+| **(A) MATCHED-substituted — PRIMARY** | **0.1986 [0.0922, 0.3022]** | **excludes** | **covers** | 569.4 / 224.4 = **2.54×** |
+| (A) tablebase-free (n=458) | 0.2252 [0.1416, 0.3213] | excludes | covers | 558.1 / 215.8 = 2.59× |
+| (B) DEEP-substituted | 0.0979 [0.0147, 0.1766] | excludes | covers (edge) | 569.4 / 181.0 = **3.15×** |
+| (B′) ALL-DEEP | −0.0002 [−0.0729, 0.0663] | excludes | EXCLUDES | 590.5 / 181.0 = 3.26× |
+
+⇒ **BOTH pre-committed clauses fire: the CI excludes 1.0 from below AND covers 0.1759.** The
+live midpoint IS too harsh on production labels, and the MultiPV-40 truncation screen's answer
+TRANSFERS — it was not an artifact of truncating a wide label. The historical screen read
+564.9 / 206.4 = **2.74×**; the panel reads **2.54×** (A) and **3.15×** (B) on real MPV6 data
+from a different era, a different net-weighting population, and a different instrument.
+
+⚑ **The pre-registered negative branch did NOT fire.** It was written down precisely so it
+could: "if the CI covers 1.0, α = 0.1759 was an MPV-40 truncation artifact." The n=6 smoke had
+pointed at 0.92, i.e. AT 1.0. It did not survive n=500.
+
+⚑⚑ **(B′) IS THE SHARPEST STATEMENT AND IT IS NOT THE SAME CLAIM.** Under one uniformly-deep
+ruler scoring EVERY move, α = **−0.0002 [−0.073, 0.066]** and the `r_6` censor's bias is
+**+0.1 cp** — the censored tail is worth *the worst surfaced move*, full stop. That is
+`eval/audit.py::move_regrets`'s optimistic floor being exactly right and
+`finalize._build_sf_p0_regret_vector`'s midpoint being 3.26× too high. It is a DIFFERENT claim
+from (A)/(B) because it also re-scores the surfaced moves (its `r_6` is 181.1 cp against
+production's actual 138.9), so it does not tell production what to do with the `r_6` it has.
+
+**⚑ MY OWN FALSIFIER WAS TOO GENEROUS, AND THE SAME RUN SAYS SO.** PROD vs MATCHED read
+**1.102** against a pre-registered band of [0.90, 1.111] — a pass by 0.009. But two other
+printed diagnostics show the arm is compromised anyway: MATCHED's median depth is **9** against
+PROD's **12**, and their bestmove agreement is **0.574**. **At a fixed node budget you cannot
+widen MultiPV without weakening the search**, so the (A) counterfactual — "what would the
+label's own search have said" — has no clean instrument, and a ratio band was the wrong
+falsifier for it. The correct one is DEPTH PARITY, which (A) structurally cannot meet.
+⇒ **(A)'s α is an UPPER BOUND, not a clean read**, and the data agrees: a weaker search sees
+bigger gaps, so (A)'s withheld truth is 224.4 cp against (B)'s 181.0. Record the lesson as
+[[guard_must_share_the_criterion_instrument]]: the band tested the ratio, the assumption lived
+in the depth.
+
+**Population correction, caught before banking.** The first run (`..._20260814.json`) drew all
+500 positions from ONE shard — one worker's upload batch, a few dozen correlated games —
+because `sample_positions` filled from the front. Fixed to a per-shard quota. Point estimates
+moved ≤0.07 and every CI **widened 7-47%** (deep_all +47%), which is exactly the direction a
+correlated population biases them. Both populations give the same verdict; only the first one's
+confidence was unearned.
+
+**What this does NOT establish.**
+1. **No training change is licensed by this entry.** Moving the imputation from `(worst+1)/2`
+   to `worst + α(1−worst)/2` with α ≈ 0.15 is the obvious candidate and it is training-affecting,
+   so it needs its OWN entry with a pre-committed yardstick and kill rule before launch. The
+   number here is an input to that entry, not a substitute for it.
+2. Cosine tops out at **0.81** for every constant, worse than the historical screen's 0.905.
+   A constant tail still cannot reproduce the within-tail gradient, and hidden SF rank still
+   does not exist at MPV 6 — see the retraction above.
+3. The CI is over ROWS. It does not cover Stockfish's own per-position noise, and PROD/MATCHED
+   carry the 3-4-5 tablebases while DEEP carries the pair (the TB-free split is reported).
+4. One net (`checkpoint_000218`, Aug 12), one era, `lc0_1858`. The prior weighting is the
+   training-relevant one (`train/losses.py:888-890`), not `policy_target`.
+
+### PRE-REGISTERED 2026-08-14 18:37, JUDGED ABOVE — the real MultiPV-6 calibration panel
 
 ⚑ **Registered BEFORE the run finished, because the whole point is not to choose the reading
 after seeing it.** `scripts/mpv6_tail_panel.py`, 500 positions from the LIVE (MultiPV-6) era.
