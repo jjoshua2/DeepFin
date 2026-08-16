@@ -50926,3 +50926,52 @@ on the bad tail, generalised not memorised).
 - `gumbel_target_untempered_prior` was justified BY target quality on this exact ruler. Its
   post-promotion top-1 is **+0.9 cp worse** here — **confounded, so NOT a verdict on the knob**, but
   it is the first paired reading on the ruler the knob was sold against, and it does not corroborate.
+
+## 2026-08-16 — ⚑ AMENDMENT (same session, before anyone reads it): row (b) REFUTES the strong reading
+
+The entry above is right about the RAW PRIOR and **wrong if read as "the net did not improve"**. I
+had pulled rows (a) and (d) and not (b). Correcting it here rather than leaving the stronger claim
+standing.
+
+### The control that makes the rest trustworthy
+
+Row **(c) SF MultiPV soft target** — which does **not depend on the net** — reads **18.6 / 12.4 in
+BOTH runs, identically**. Same audit set, same ruler, same conditions, two separate processes. ⇒
+the A-vs-B deltas below are real and not session drift. This is the positive control the pair
+needed and it was free.
+
+### All five rows, overall E[regret] / top-1 (n=4000)
+
+| | A (07-27 anchor) | B (08-15 resume) | Δ E | **Δ top-1** |
+|---|---|---|---|---|
+| a) net raw policy | 67.4 / 49.5 | 53.5 / 49.2 | −13.9 | **−0.3** |
+| **b) net + Gumbel search (PLAY)** | 44.2 / 43.6 | 39.7 / 39.5 | −4.5 | **−4.1** |
+| c) SF MultiPV soft target | 18.6 / 12.4 | 18.6 / 12.4 | 0.0 | 0.0 |
+| d) production training target | 45.4 / 37.8 | 41.5 / 38.7 | −3.9 | **+0.9 WORSE** |
+| e) fast-ply search | 48.0 / 39.5 | 43.5 / 39.6 | −4.5 | +0.1 |
+
+### What actually happened, corrected
+
+1. **The raw prior sharpened without improving its argmax** (−0.3 cp). The −13.9 cp E[regret] gain
+   there is 13.6 cp of mass concentration. **That part of the entry above stands.**
+2. **⚑ But the PLAYED move genuinely improved: row (b) top-1 −4.1 cp.** And it is NOT the same
+   artifact — row (b)'s E−top1 gap is already tiny at both points (0.6 → 0.2), so there is no
+   concentration headroom to harvest. **This is real move quality.**
+3. **The training target's own argmax got WORSE by 0.9 cp** while its E[regret] improved 3.9.
+
+⇒ **The net improved where it PLAYS, through search, while the target it trains on got slightly
+worse at top-1 and the raw prior's argmax stood still.** That is consistent with the banked
+[[search_gain_decomposed_target_hypothesis_dead]] picture: the search is doing the work.
+
+### The method rule, which is what generalises
+
+**A single `E[regret]` delta cannot distinguish "better moves" from "more confident about the same
+moves". The paired top-1 is what separates them, and the E−top1 GAP tells you which regime you are
+in.** Read them together or not at all:
+- large gap that shrinks ⇒ suspect concentration, check top-1 before claiming a gain (row a);
+- gap already small ⇒ E and top-1 move together and the delta is move quality (row b).
+
+Retracting the prediction as stated: I wrote "an arena should read far below what −13.9 cp implies".
+The right prediction is the **row (b)** one — **−4.1 cp on the played move** — and even that is
+confounded (different lineages, C17, sims 32→100, c_scale, bt4heads heads). It is a direction, not
+a magnitude, and an arena remains the only Elo instrument.
