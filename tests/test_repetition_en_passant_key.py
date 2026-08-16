@@ -990,7 +990,12 @@ def test_uci_king_guard_accepts_normal_positions() -> None:
 
 @pytest.mark.parametrize(
     ("label", "fen"),
-    [*_KING_DISAGREEMENT_FENS, ("no kings at all", _KINGLESS_FEN)],
+    [*_KING_DISAGREEMENT_FENS,
+     ("no kings at all", _KINGLESS_FEN),
+     # N11: every other fixture here is white-to-move, so conditioning the FEN
+     # guard on `start.turn == chess.WHITE` survived them all. Black to move,
+     # black kingless -- cheap to add, so added rather than argued about.
+     ("black to move, black kingless", "4K3/8/8/8/3Pp3/8/8/8 b - d3 0 1")],
 )
 def test_handle_position_actually_applies_the_king_guard(
     label: str, fen: str, capsys,
@@ -1272,6 +1277,16 @@ def test_load_epd_reports_why_lines_were_skipped(tmp_path, caplog) -> None:
 
     ``puzzle_total`` surfaces the denominator but never the cause. This matches
     ``selfplay/opening.py::_load_fen_list``, which logs count + reasons.
+
+    ⚑ THE FIXTURE SHAPE IS THE TEST. An earlier version used one line per
+    reason, which made "number of skipped LINES" and "number of distinct
+    REASONS" numerically identical -- so ``sum(skipped.values())`` could be
+    replaced by ``len(skipped)``, the ``+ 1`` aggregation could be replaced by
+    ``= 1``, and a whole ``_skip`` call could be deleted, all without failing.
+    The fixture was doing the work, which is the same defect the break-vs-
+    continue test above was rewritten to remove. So: THREE distinct reasons,
+    with one of them occurring TWICE, and the per-reason strings asserted rather
+    than the total alone.
     """
     import logging
 
@@ -1279,8 +1294,18 @@ def test_load_epd_reports_why_lines_were_skipped(tmp_path, caplog) -> None:
 
     epd = tmp_path / "t.epd"
     epd.write_text(
-        '8/8/8/3pP3/8/8/8/8 w - d6 bm e5d6; id "kingless";\n'
+        # 2 x the SAME reason string -- the reason keys carry their king detail,
+        # so both lines must break the SAME clause for the counts to diverge:
+        # 5 skipped lines vs 4 distinct reasons.
+        '8/8/8/3pP3/8/8/8/8 w - d6 bm e5d6; id "kingless a";\n'
+        '8/8/8/8/8/8/4P3/8 w - - bm e2e4; id "kingless b";\n'
+        # 1 x unparseable FEN
         'not-a-fen w - - bm e2e4; id "garbage";\n'
+        # 1 x no bm opcode
+        '4k3/8/8/8/8/8/8/4K3 w - - 0 1\n'
+        # 1 x no parseable bm move -- the reason that silently cost wac.epd 8%
+        '4k3/8/8/8/8/8/8/4K3 w - - bm zzzz; id "nonsense move";\n'
+        # and one good line, so the loader is not simply returning empty
         '4k3/8/8/3pP3/8/8/8/4K3 w - d6 bm e5d6; id "fine";\n',
     )
     with caplog.at_level(logging.WARNING):
@@ -1288,11 +1313,25 @@ def test_load_epd_reports_why_lines_were_skipped(tmp_path, caplog) -> None:
 
     assert [p.puzzle_id for p in loaded.puzzles] == ["fine"]
     text = caplog.text
-    assert "skipped 2 unusable line(s)" in text, text
-    assert "unsearchable position" in text, text
+
+    # The total is a count of LINES, not of reason categories. 5 != 3.
+    assert "skipped 5 unusable line(s)" in text, text
+
+    # Per-reason aggregation: the repeated reason must report 2, not 1, and the
+    # singletons must report 1 -- so neither `= 1` nor `len(skipped)` passes.
+    assert "2 x unsearchable position (white has 0 kings" in text, text
+    assert "1 x unparseable FEN" in text, text
+    assert "1 x no bm opcode" in text, text
+    assert "1 x no parseable bm move" in text, text
+
+    # 5 skipped LINES across 4 distinct REASONS. Pinning both, separately, is
+    # what stops `sum(skipped.values())` and `len(skipped)` being interchangeable.
+    assert text.count(" x ") == 4, text
+
     # white is checked first, so it is white that gets named for a board with
     # no kings at all -- assert the string the code actually produces.
     assert "white has 0 kings" in text, text
+
 
 
 def test_move_loop_TRUNCATES_rather_than_skipping_the_offending_move(capsys) -> None:

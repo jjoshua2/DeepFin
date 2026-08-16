@@ -894,15 +894,18 @@ static inline uint64_t cboard_transposition_key(const CBoard *b) {
  *         loop. It is inert by CONFIG (puzzle_epd: null, puzzle_interval: 0),
  *         which is a materially weaker claim than "off the training path".
  *         ⚑ FUNCTION-complete, NOT FILE-complete: eval/puzzles.py has two other
- *         board-mutating sites and NEITHER is guarded —
- *         run_policy_sequence_eval pushes _parse_solution_sequence's moves, which
- *         are Move.from_uci'd and never legality-checked at all (Board.push does
- *         not validate), and run_value_head_puzzle_eval pushes every legal_moves
- *         entry, which includes the king capture from the very opposite-check
- *         class the guard accepts. Both were checked for a tune/ caller and have
- *         none — _run_puzzle_eval_if_due reaches only run_puzzle_eval — so they
- *         are off the training loop and left alone deliberately rather than
- *         missed. Do not read this bullet as "that file is closed";
+ *         board-mutating sites and NEITHER is guarded. run_value_head_puzzle_eval
+ *         pushes every legal_moves entry, which includes the king capture from
+ *         the very opposite-check class the guard accepts. run_policy_sequence_eval
+ *         has THREE pushes and only one of them, board.push(seq[cur_step + 1]),
+ *         is an unchecked Move.from_uci (Board.push does not validate); the other
+ *         two push `picked`, an argmax over list(b.legal_moves), so they carry the
+ *         SAME king-capture exposure as run_value_head_puzzle_eval — and that
+ *         board is re-encoded on the next round trip through next_active. Both
+ *         were checked for a tune/ caller and have none — _run_puzzle_eval_if_due
+ *         reaches only run_puzzle_eval — so they are off the training loop and
+ *         left alone deliberately rather than missed. Do not read this bullet as
+ *         "that file is closed";
  *       - selfplay/arena seeds: selfplay/opening.py::_fen_reject_reason, on the
  *         full board.is_valid() — stricter, and appropriate for a seed list.
  *     The UCI/puzzle predicate is deliberately NOT status()==VALID, which would

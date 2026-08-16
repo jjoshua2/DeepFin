@@ -77,10 +77,16 @@ def unsearchable_king_reason(board: chess.Board) -> str | None:
     the side not to move already in check, an ep square that no double push
     could have produced. ``VALID`` rejects all of those and would gut those
     callers. This predicate says nothing about any of them. False-rejection
-    control: 0 rejections over 13,817 real FENs (``data/audit_set_v1*.jsonl``,
-    every ``data/blindspot_fens_auto_*.txt``, and the local ``.epd`` suites),
-    measured by the author of this docstring; independently 0 over 5,892,504 FENs including wac.epd and the
-    lichess puzzle set, measured by a reviewer and ATTRIBUTED rather than
+    control, stated with its denominator spelled out because the first version
+    of this sentence quietly inflated it: 0 rejections over 9,817 FEN records --
+    4,000 from ``data/audit_set_v1.jsonl``, 5,767 seed lines across
+    ``data/blindspot_fens_auto_*.txt``, 50 from ``data/wac.epd`` (one file, not
+    a suite) -- which de-duplicate to 4,693 DISTINCT positions, the blindspot
+    files overlapping heavily. An earlier revision said 13,817 by globbing
+    ``audit_set_v1*.jsonl``, whose ``.manifest.jsonl`` sibling is set-identical
+    to the base file (4,000/4,000), so the audit set was counted twice.
+    Independently 0 over 5,892,504 FENs including the lichess puzzle set,
+    measured by a reviewer and ATTRIBUTED rather than
     re-run here -- asserting an inherited number as if it were your own
     measurement is the habit that got four revisions of _cboard_impl.h's
     en-passant comment retracted. ``selfplay/opening.py::_fen_reject_reason`` DOES use the full

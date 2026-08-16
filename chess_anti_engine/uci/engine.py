@@ -550,9 +550,13 @@ class Engine:
   # Checked AFTER the push, against the same predicate, so any future way of
   # breaking the precondition is caught by the one rule rather than by a
   # hand-enumerated list of move shapes.
-  # ⚑ Narrowing this to captures only is SEMANTICALLY EQUIVALENT today, and a
-  # mutant that does so correctly survives the suite on purpose: only a capture
-  # can remove a king, and no push can duplicate one or add a promoted marker.
+  # ⚑ Two narrowings of this line are SEMANTICALLY EQUIVALENT today, and mutants
+  # that make them correctly survive the suite on purpose: (a) guard only
+  # CAPTURE pushes, and (b) guard only the FIRST ply. Both hold for the same
+  # reason -- only a capture can remove a king, no push can duplicate one or add
+  # a promoted marker, and a king capture needs the side not to move to be in
+  # check, which cannot recur after a push. Measured for (b): exhaustive 3-ply
+  # expansion from opposite-check roots fires at ply 1 only.
   # It is still written unconditionally, because that equivalence is a property
   # of the CURRENT predicate (three king clauses) and evaporates the moment a
   # fourth is added — which is exactly how the FEN-only version of this guard
