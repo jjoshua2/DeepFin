@@ -25,6 +25,11 @@ from typing import Any
 
 import numpy as np
 
+# All three CLI defaults below name paths INSIDE the checkout, so they are
+# derived from this file rather than written absolute — an absolute default
+# names one machine's copy and silently misses on any other.
+_REPO = Path(__file__).resolve().parents[1]
+
 
 class _MeasuredEvaluator:
     def __init__(self, inner: Any) -> None:
@@ -224,10 +229,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--publish-dir",
-        default="/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish",
+        default=str(_REPO / "runs/pbt2_small/server/trials/4c17c_00000/publish"),
     )
-    parser.add_argument("--aot-dir", default="/home/josh/projects/chess/data/aot_models_512")
-    parser.add_argument("--stockfish-path", default="/home/josh/projects/chess/e2e_server/publish/stockfish")
+    parser.add_argument("--aot-dir", default=str(_REPO / "data/aot_models_512"))
+    parser.add_argument("--stockfish-path", default=str(_REPO / "e2e_server/publish/stockfish"))
     parser.add_argument("--orders", default="4,6,8:8,6,4")
     parser.add_argument("--max-plies", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)

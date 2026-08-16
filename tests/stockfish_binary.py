@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 SF_CANDIDATES = [
-    "/home/josh/projects/chess/e2e_server/publish/stockfish",
+    # The checkout's own published engine, derived from this file rather than
+    # written absolute — an absolute path only ever named one machine's copy.
+    str(Path(__file__).resolve().parents[1] / "e2e_server" / "publish" / "stockfish"),
     "/usr/bin/stockfish",
     "/usr/games/stockfish",
 ]

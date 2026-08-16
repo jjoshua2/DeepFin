@@ -38,9 +38,12 @@ import time
 from chess_anti_engine.selfplay.opening import _fen_reject_reason, seed_board_from_line
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from scripts.blindspot_continuation import parse_seeds
-from scripts.blindspot_deepsf_calibrate import deep_verdict, ensure_parent, resolve_syzygy
-
-_DEFAULT_SF = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+from scripts.blindspot_deepsf_calibrate import (
+    _DEFAULT_SF,
+    deep_verdict,
+    ensure_parent,
+    resolve_syzygy,
+)
 
 
 def _prefix_line(fen_part: str, moves: list[str], drop: int) -> str:

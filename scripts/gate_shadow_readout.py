@@ -328,7 +328,7 @@ def main() -> int:
     if not path.is_file():
         print(f"no such file: {path}\n"
               "  (a git worktree has no runs/; point this at the live checkout, "
-              "e.g. /home/josh/projects/chess/runs/pbt2_small/<trial>/progress.csv)")
+              "e.g. ~/projects/chess/runs/pbt2_small/<trial>/progress.csv)")
         return _NO_FILE
 
     if args.rederive_reference is not None:

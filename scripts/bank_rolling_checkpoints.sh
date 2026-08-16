@@ -17,8 +17,11 @@
 # constructs a DiskReplayBuffer (that deletes shards -- audit G12).
 set -uo pipefail
 
-TUNE_GLOB='/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_*'
-DST=/home/josh/projects/chess/data/salvage/rolling
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Still a GLOB, not a path: `*` is literal inside double quotes, and line ~29
+# relies on it being expanded there (unquoted) rather than here.
+TUNE_GLOB="$REPO_ROOT/runs/pbt2_small/tune/train_trial_*"
+DST="$REPO_ROOT/data/salvage/rolling"
 EVERY=${EVERY:-5}        # keep checkpoints whose index is a multiple of this
 KEEP=${KEEP:-24}         # cap on retained dirs (~656M each)
 SLEEP=${SLEEP:-900}

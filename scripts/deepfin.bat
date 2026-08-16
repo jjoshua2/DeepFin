@@ -11,7 +11,7 @@ REM (System Properties -> Environment Variables). The WSLENV line forwards
 REM whichever value is in scope into the WSL process as-is; GUI launches
 REM are non-interactive shells, so we can't rely on .bashrc being sourced.
 REM
-REM set DEEPFIN_CKPT=/home/josh/ckpts/deepfin.pt
+REM set DEEPFIN_CKPT=/home/<user>/ckpts/deepfin.pt
 REM =================================
 REM
 REM If you use a non-default WSL distro, change `wsl.exe` below to

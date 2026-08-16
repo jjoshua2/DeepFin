@@ -24,12 +24,15 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.stockfish.uci import StockfishUCI
 
 _TAG = re.compile(r"bucket=(\w+).*?sq=(-?[0-9.]+).*?outcome=(\w+).*?game=(\d+)")
-_DEFAULT_SF = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+# Repo-relative, derived from this file: the published engine lives in the
+# checkout, so an absolute path only ever named one machine's copy of it.
+_DEFAULT_SF = str(Path(__file__).resolve().parents[1] / "e2e_server" / "publish" / "stockfish")
 
 
 def ensure_parent(path: str) -> None:

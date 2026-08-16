@@ -69,7 +69,7 @@ set -u
 # the transition-only alerter — the whole point of this file — could only be
 # pinned by reading it, and "reads correct" is exactly how the 27-identical-lines
 # behaviour survived in the first place.
-cd "${WATCHDOG_ROOT:-/home/josh/projects/chess}" || exit 2
+cd "${WATCHDOG_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}" || exit 2
 MARKER="${WATCHDOG_MARKER:-/tmp/chess_training.intentional_stop}"
 LOGF="${WATCHDOG_LOGF:-scratchpad/watchdog.log}"
 ALERTF="${WATCHDOG_ALERTF:-scratchpad/watchdog_alerts.log}"

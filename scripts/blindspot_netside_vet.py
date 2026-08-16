@@ -137,6 +137,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+from pathlib import Path
 
 import chess
 import chess.engine
@@ -150,7 +151,9 @@ from chess_anti_engine.moves.encode import move_to_index_for_encoding
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
-_DEFAULT_SF = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+# Repo-relative, derived from this file: the published engine lives in the
+# checkout, so an absolute path only ever named one machine's copy of it.
+_DEFAULT_SF = str(Path(__file__).resolve().parents[1] / "e2e_server" / "publish" / "stockfish")
 
 
 def _q(info: chess.engine.InfoDict, pov: chess.Color) -> float:

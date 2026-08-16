@@ -29,6 +29,13 @@ from chess_anti_engine.moves import index_to_move
 from chess_anti_engine.stockfish import StockfishUCI
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
+# Defined AFTER the import block on purpose: ruff's E402 tolerates a bare
+# `sys.path` manipulation ahead of imports, but not an assignment, so hoisting
+# this above them turns all six local imports into findings.
+# The CLI defaults below name paths inside the checkout, so they are derived
+# from this file rather than written absolute.
+_REPO = Path(__file__).resolve().parent.parent
+
 
 @dataclass
 class ScoredPosition:
@@ -370,11 +377,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument(
         "--stockfish-path",
-        default="/home/josh/projects/chess/e2e_server/publish/stockfish",
+        default=str(_REPO / "e2e_server/publish/stockfish"),
     )
     parser.add_argument("--sf-nodes", type=int, default=10000)
     parser.add_argument("--multipv", type=int, default=80)
-    parser.add_argument("--syzygy-path", default="/home/josh/projects/chess/data/syzygy_3-4-5")
+    parser.add_argument("--syzygy-path", default=str(_REPO / "data/syzygy_3-4-5"))
     parser.add_argument("--json-out", default="")
     args = parser.parse_args()
 
