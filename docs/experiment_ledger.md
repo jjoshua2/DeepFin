@@ -53465,3 +53465,90 @@ the aborted boot, which is the point -- these are observations that COULD have f
 
 The throughput yardstick pre-committed in `0f295875c` is now armed and reads out on the first
 5 CLEAN iterations (excluding iteration 1).
+
+---
+
+## 2026-08-16 — lc0 positive control: purity REPAIRED, levels recomputed, and the bar STAYS at 0.392 pp
+
+**Status: instrument repaired and re-verified PURE. Legs still NOT launched (GPU is training).
+Decision recorded below CHANGES the remediation that was proposed to me.**
+
+Worktree `chess-pcontrol`, branch `feat/lc0-positive-control-training`, commit `bb50580ee`.
+
+### The repair
+
+The 2026-08-16 purity gate FAILED at 5.23% exposed inputs (ledger `383687a52`). The exposed
+ids are now recoverable rather than merely counted, the train-id index is cached fail-closed
+(keyed on a sha256 over every file's relpath+size+mtime_ns; **2h40m -> 30 min cold, 111 s
+warm**), and the frozen set minus the exposed inputs re-verifies **PURE, exit 0**.
+
+- clean set: **91,789 rows**, sha256 `50a542c1adf9190c04cf400ca579a23e8bf44973f68fafc1e79a5f39b24b7183`
+- `frozen_full.json` untouched (sha `f05b393d...`, matches the prereg); 20 band `.npz` + anchor untouched.
+
+**Reference levels RECOMPUTED BY MASKING — no GPU, no re-scoring**, all 21 files re-asserted
+byte-identical on `row_ids` in frozen order before and after:
+
+| | OLD (n=100,000) | NEW (n=91,789) |
+|---|---|---|
+| band mean | 7.1708% | **7.3216%** |
+| band sd (ddof=1) | 1.0967 pp | **1.0698 pp** |
+| **BAND BAR (mean+3sd)** | 10.4610% | **10.5311%** |
+| **anchor top-1** | 45.9920% | **46.0186%** |
+
+⚑ **The removed slice is NOT exchangeable, and that is the interesting part.** On the 8,211
+removed rows the band scores **5.4859%** vs 7.3216% kept (−1.84 pp) while the anchor scores
+45.69% vs 46.02% (−0.32 pp). The exposed rows are systematically HARDER for an untrained net
+and near-neutral for a trained one. So contamination could not have flattered the anchor
+(+0.027 pp), which is the reassuring direction — but the band bar moved for a real reason, not
+noise.
+
+### ⚑⚑ MY CORRECTION TO THE PROPOSED REMEDIATION — the bar does NOT move
+
+I was told `compare` refuses the clean set (it hard-refuses `n < PREREG_SAMPLE_ROWS = 100_000`
+while the prereg bar is in force) and that the fix is to pass `--max-halfwidth-pp 0.4092`,
+the bar re-derived at n=91,789. **Re-derived correctly — and it is the wrong fix.**
+
+`bar_pp` is a MAXIMUM ALLOWED HALFWIDTH (`if half_pp > bar_pp: problems.append(...)`), so a
+LARGER bar is MORE PERMISSIVE. Checked against the script's own function:
+
+```
+n=100000  expected halfwidth=0.1960 pp   clears 0.392 bar? True  margin=2.000x
+n= 91789  expected halfwidth=0.2046 pp   clears 0.392 bar? True  margin=1.916x
+```
+
+⇒ **the clean set already clears the ORIGINAL 0.392 pp bar with 1.92x margin.** Only the
+n-FLOOR blocks it. But `--max-halfwidth-pp` is ONE flag doing TWO things — it disables the
+n-floor *and* replaces the bar — so the proposed command would have **loosened a
+pre-committed threshold as an invisible side effect of fixing an unrelated floor.** That is
+this codebase's signature defect in a command line: one knob, two effects, one unintended.
+
+**DECISION: the material bar STAYS at 0.392 pp.** The legs run with
+`--max-halfwidth-pp 0.392` — numerically identical to the pre-committed value, so the bar is
+NOT amended; the flag is used only to bypass an n-floor that is now wrong. Direction matters
+and is stated deliberately: this is the STRICTER of the two options, and it is the one that
+costs me margin.
+
+**Follow-up owed (task #237):** the n-floor should be derived from the frozen set's own row
+count and pinned to its sha256, not hard-coded to 100,000. Until then `--max-halfwidth-pp` is
+load-bearing for a reason unrelated to its name, which is exactly the kind of thing this
+ledger exists to catch. ⚑ Do NOT let that flag become the habitual way to run this rig.
+
+### Prediction miss, recorded rather than re-narrated
+
+Banked before results (`scratchpad/purfix_prediction_20260816.md`): surviving **distinct
+inputs 91,788 — EXACT**. Surviving ROWS predicted 94,770, actual **91,789** — 8,211 rows
+removed, one short of the arithmetic maximum 8,212. ⇒ **512 of the 513 held-out positions that
+repeat within the set are ALSO in train.** The independence model was wrong; direction called
+right, magnitude at the extreme. The clean set is now essentially one row per position.
+
+### Honest caveat carried forward
+
+The clean receipt records `train_index_cached: true` — the ids came from the cache built by
+the full 42.2 GB read earlier in the same session, not from a second cold read. The cache is
+fail-closed on a corpus fingerprint, so this is a provenance note, not a defect.
+
+### Gates
+
+`pytest tests/test_lc0_control_rows.py tests/test_lc0_control_drivers.py -q` -> **80 passed**.
+`./scripts/lint.sh` (bare, whole-repo) -> ruff clean, basedpyright 0/0/0, `lint: OK`.
+8 mutations applied across the three deliverables, all killed.
