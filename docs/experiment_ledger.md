@@ -52760,3 +52760,53 @@ historical worktree runs were at defaults too, exactly as the bound assumes.
 
 **Status: #443 is NOT mergeable as it stands.** No banked verdict changes; the scope bound
 above is unaffected.
+
+## 2026-08-16 — #199 lc0 control: THE THREE REFERENCE LEVELS ARE MEASURED. Banked BEFORE either leg is trained.
+
+Per AMENDMENT 4 (`PREREG_READOUT.md`), the deciding rule needs all three levels fixed before
+the arm reads out. All three now exist. **No leg has been trained or scored at the time this
+is written** — that is the point of writing it now.
+
+| level | what it is | value |
+|---|---|---|
+| shuffled floor | `SUM_m p_pred(m)*p_tgt(m)` under label shuffle | **0.19% (random-init) / 0.34% (production anchor)** |
+| **random-init band** | 20 seeds of the production architecture, untrained | mean **7.171%**, sd **1.097pp**, min 5.664%, max 9.539% |
+| **BAND BAR = mean + 3sd** | the PASS line for "learned anything at all" | **10.461%** |
+| **production anchor** `bt4heads_iter100_20260815` | live checkpoint, trained on OUR data, scored on the SAME 100k lc0 rows | **45.992%** |
+
+**⚑ The shuffled floor is PER-NET, not a constant.** The prereg quotes 0.19% and the anchor
+run printed 0.34%. That is not drift: the statistic is `SUM_m p_pred(m)*p_tgt(m)`, which
+depends on the predicting net's own distribution, so a trained net has a different floor from
+a random one. Recorded because two different numbers under one name is exactly the shape this
+file exists to catch — here it is benign, and it is benign for a stated reason.
+
+**The bar is parametric and it MATTERS that it is.** mean+3sd = **10.461%** sits ABOVE the
+observed max of 9.539%. Had the bar been "beat the observed max" it would have been 9.539% at
+n=20 and 8.9% at n=9 — a bar that silently gets harder as seeds are added, because a max over
+k draws is an order statistic in k. At the prereg's n=9 the bar read 11.18%; at the full n=20
+it reads 10.461%. **The n=20 value is the operative one**, as the prereg specified.
+
+**Instrument integrity checks, run rather than assumed:** all 20 band files and the anchor
+carry BYTE-IDENTICAL `row_ids` over the same 100,000 rows. So every comparison here is
+PAIRED, not two marginal means over possibly-different samples.
+
+### The verdict table, now fully numeric (pre-committed, nothing left to judgement)
+
+Let `A` = a leg's final held-out top-1.
+
+| condition | verdict |
+|---|---|
+| `A < 0.10461` | **STACK IS BROKEN** — our trainer, on clean external data with production's own recipe, cannot beat an untrained net. The outcome that would redirect the project. |
+| `0.10461 <= A < 0.45992` | **LEARNS BUT WEAKLY** — resolved only by the slope, never by this number alone. |
+| `A >= 0.45992` | **STACK IS FINE** — the defect is upstream, in our TARGETS. |
+
+**Slope rule:** if `A(30000) - A(15000) > 0.010967` (the band sd) the budget was still binding
+and **a BROKEN verdict is NOT available** — the honest conclusion is "under-trained".
+
+⚑ **The anchor is a SCALE, not a pass mark.** It is trained on a different distribution and
+under-reads on lc0 rows by an unknown amount. It converts "the arm reached X%" from a bare
+number into a unit. Do not report `A >= P` as "we beat production".
+
+**Not yet satisfied:** the legs are gated on `lc0_control_heldout.py purity` (running 2h36m at
+the time of writing). A leg scored without a `--purity-receipt` stamps `valid_control: false`
+and is a smoke test, not the arm.
