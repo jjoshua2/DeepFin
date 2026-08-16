@@ -1,0 +1,243 @@
+# lc0 POSITIVE CONTROL — supervised training on external lc0 T91 rows.
+#
+# Prereg: scratchpad/lc0_positive_control/PREREG_DRAFT.md
+# Data:   scripts/lc0_data_to_rows.py convert  (lc0 v6 -> our 175-plane
+#         v2_threats + lc0_1858 rows)
+# Driver: scripts/lc0_control_train.py  (NOT run.py — there is no selfplay,
+#         no MCTS, no PID, no curriculum and no server in this arm)
+#
+# ── WHY THIS FILE IS NOT configs/pbt2_small.yaml ──────────────────────────────
+#
+# The arm's whole claim is "our EXACT net and trainer, on someone else's data",
+# so ARCHITECTURE AND OPTIMIZER ARE COPIED VERBATIM from the production config
+# and any drift voids the arm. That is not left to good intentions:
+# `tests/test_lc0_control_config.py` rebuilds BOTH configs and fails if the
+# model configs differ in any field, or if any trainer kwarg differs outside
+# the explicitly-listed set below.
+#
+# This file is a SELF-CONTAINED COPY rather than an overlay on the production
+# yaml. Deliberate: `configs/pbt2_small.yaml` is the LIVE file, re-read every
+# training iteration and edited during operations, so an overlay would make
+# this arm's realized config a function of whatever production happened to be
+# doing that hour — unreproducible by construction.
+#
+# ── EVERY DIFFERENCE FROM configs/pbt2_small.yaml, AND WHY ────────────────────
+#
+# MEASURED, not asserted. The mechanical diff of `trainer_kwargs_from_config()`
+# between the two files is exactly TWO entries, and `model_config_from_flat_
+# config()` differs in ZERO fields:
+#
+#   search_wdl_frac: prod=0.2 ctrl=0.7
+#   sf_wdl_frac:     prod=0.5 ctrl=0.0
+#
+# Everything else — optimizer, LR schedule, zclip, every loss weight, every
+# Aurora knob, `sf_target_params`, `moves_left_max_plies` — is identical.
+#
+# Three keys are changed in the yaml; the third does not reach the trainer:
+#
+#  1. sf_wdl_frac: 0.50 -> 0.0        ⚑⚑ THE LOAD-BEARING ONE. See below.
+#  2. search_wdl_frac: 0.20 -> 0.70   the SF share, re-pointed at lc0's own
+#                                     search value (best_q/best_d).
+#  3. sf_wdl_frac_floor: 0.45 -> 0.0  ⚑ NOT a trainer kwarg — it is read only
+#     by `TrialConfig`/the PID ramp, which this arm never runs. Zeroed anyway;
+#     see (2) in the notes below.
+#
+# Two production budget keys are OMITTED (`train_window_fraction`,
+# `train_views_per_ingested_position`). Neither is a trainer kwarg either, so
+# neither shows in the diff above; see the `train_steps` note at the bottom.
+#
+# ⚑⚑ (1) IS NOT A TUNING CHOICE — IT IS THE DIFFERENCE BETWEEN THIS ARM AND A
+# DIFFERENT, UNCHOSEN EXPERIMENT.
+#
+# lc0 shards carry NO `sf_wdl` field. `train/losses.py` builds the SF component
+# of the value blend as `sf_effective * sf_wdl_probs + (1 - sf_effective) *
+# game_one_hot`, and `sf_effective` is `has_sf_wdl * keep`. With `has_sf_wdl`
+# absent (`_get_mask` defaults it to 0.0) the SF component IS the raw one-hot
+# game outcome, for every row, with no error and no warning.
+#
+# Left at production values the realized value target here would be:
+#     game_frac 0.30 (intended) + sf_wdl_frac 0.50 (leaked) = 0.80 on the raw
+#     deep game outcome, versus the 0.30 on paper.
+# Measured, not argued: see the realized-weight table in the PR and
+# `chess_anti_engine/train/value_blend_guard.py`, which reads the fracs off an
+# actual `compute_loss` call and raises rather than letting the run proceed.
+#
+# ⚑ (2) matters because the override could otherwise EXPIRE MID-RUN.
+# `tune/trainable_config_ops.py` recomputes the SF weight every iteration via
+# `_dynamic_sf_wdl_weight(sf_wdl_start=tc.sf_wdl_frac, sf_wdl_floor=...)` and
+# assigns it whenever the result is not None; it returns None only while
+# `sf_wdl_start <= 0`. So zeroing the START disables the ramp at its source and
+# the FLOOR is never read. It is zeroed anyway: a non-zero floor beside a zero
+# start is a config that intends to reassert the weight. (This arm does not run
+# the tune trainable at all, so the ramp is doubly unreachable — but the guard
+# asserts it rather than relying on that.)
+#
+# (3) production's value target is 0.30 outcome / 0.50 SF / 0.20 search. lc0
+# has no SF, and the only other search-derived value the corpus carries is
+# lc0's own root `best_q`/`best_d`, which the converter stores as `search_wdl`.
+# Handing the SF share to it keeps `game_frac` at production's 0.30 EXACTLY —
+# the one number production deliberately controls — instead of letting the deep
+# outcome swell to 0.80 by default. The converter's manifest suggests lc0's own
+# recipe (0.5 search / 0.5 outcome); 0.70/0.30 is chosen instead because
+# holding OUR outcome share fixed is the smaller deviation from the stack under
+# test. Either way this is a value-side choice and the arm's yardstick is
+# POLICY top-1, which it does not touch.
+#
+# ── WHAT IS ABSENT, AND WHY THAT IS SAFE ─────────────────────────────────────
+#
+# No `stockfish:` and no `tune:` section, and `selfplay:` keeps only the seven
+# keys that reach the trainer or the model. Nothing in the supervised path
+# reads the rest. This is verified, not assumed — the config test diffs
+# `trainer_kwargs_from_config()` and `model_config_from_flat_config()` against
+# production, and an omitted key that DID reach either would show up as an
+# unlisted difference. That is how the two keys below were found: `max_plies`
+# (it becomes `moves_left_max_plies`, and must equal the 450.0 the converter
+# normalized `moves_left` by) and `history_rep_fix` (a ModelConfig field).
+#
+# ⚑ Config-key categories (CLAUDE.md "Working on a live run"): every key here
+# is in `utils/config_yaml.py`'s schema — checked by loading this file through
+# `flatten_run_config_defaults`, which is fatal at launch on an unknown key. No
+# new key is introduced by this arm.
+
+seed: 0
+work_dir: runs/lc0_positive_control
+device: cuda
+# Epoch count for the supervised arm; the driver takes the real budget from
+# --steps, this is here so the schema-visible field is not silently stale.
+iterations: 1
+
+model:
+  # ⚑ VERBATIM from configs/pbt2_small.yaml. 512x16x16, 61,444,448 trainable
+  # params. Any edit here voids the arm — see tests/test_lc0_control_config.py.
+  kind: transformer
+  embed_dim: 512
+  num_layers: 16
+  num_heads: 16
+  ffn_mult: 1.5
+  ffn_mult_by_layer: [1.5, 1.5, 1.5, 1.5, 1.5, 1.555556, 1.65, 1.772222, 1.894444, 1.666667, 1.638889, 1.905556, 1.783333, 1.794444, 1.744444, 1.5]
+  use_smolgen: true
+  smolgen_mode: per_layer
+  smolgen_bias_scale: layer_head
+  smolgen_bias_norm: center_rms
+  smolgen_relation_basis: true
+  smolgen_relation_norm: none
+  smolgen_relation_coeff_norm: none
+  smolgen_relation_scale: none
+  input_pos_encoding: arc_adapter
+  qkv_projection: split
+  use_deepnorm: true
+  policy_encoding: lc0_1858
+  input_history_encoding: lc0_root_legacy_meta
+  input_extra_features: v2_threats
+  gradient_checkpointing: false
+
+selfplay:
+  # ⚑ These five are SELFPLAY-section keys despite their sf_ names (checked
+  # against utils/config_yaml.py's schema, which is fatal at launch on a
+  # misplaced key — this file was written with them under `stockfish:` first
+  # and would not have booted). There is no Stockfish in this arm; they are
+  # here for ONE reason: `trainer_kwargs_from_config` folds them into
+  # `sf_target_params`, and omitting them would make that kwarg differ from
+  # production for a reason unrelated to the experiment — noise in the very
+  # diff that is supposed to prove the stack is unchanged. They are INERT
+  # (`rebuild_sf_targets` and `sf_policy_sparse_ce` are both false, and no row
+  # carries an SF label to rebuild from), and pinned verbatim so the diff
+  # against production is exactly the four documented keys and nothing else.
+  sf_policy_temp: 0.012
+  sf_policy_label_smooth: 0.01
+  sf_wdl_use_cp_logistic: true
+  sf_wdl_cp_slope: 0.0060
+  sf_wdl_cp_draw_width: 120.0
+  # Present ONLY because trainer_kwargs_from_config reads it as
+  # moves_left_max_plies. It must equal the converter's --moves-left-max-plies
+  # (default 450.0), which is what the stored `moves_left` was divided by.
+  max_plies: 450
+  # ⚑ MODEL IDENTITY, not a selfplay knob: it lands in ModelConfig and the
+  # loader refuses to default it, because a rep-fix-trained net fed
+  # unfixed history is a silent input mismatch. The converter stamps
+  # `history_rep_fix: true` into every shard's meta, and production is true.
+  history_rep_fix: true
+
+train:
+  # ── verbatim from production ────────────────────────────────────────────
+  optimizer: aurora
+  matrix_optimizer_scope: mlp_out
+  matrix_lr_multiplier: 20
+  matrix_weight_decay: 0.0001
+  aux_weight_decay: 0.0001
+  aurora_uw_floor: 0.0
+  aurora_pp_iterations: 3
+  aurora_pp_beta: 0.25
+  aurora_polar_steps: 8
+  aurora_polar_method: polar_express
+  aurora_polar_dtype: fp16
+  aurora_polar_safety: 1.01
+  lr: 0.00003
+  batch_size: 512
+  zclip_alpha: 0.97
+  zclip_clip_factor: 1.0
+  zclip_max_norm: 6.5
+  zclip_z_thresh: 2.0
+  feature_dropout_p: 0.0
+  accum_steps: 1
+  warm_start_lr_max_ratio: 2.0
+  warmup_steps: 72
+  lr_eta_min: 0.00001
+  lr_schedule: sqrt_release
+  lr_release_start_frac: 0.80
+  lr_release_min_scale: 0.1
+  lr_release_shape: sqrt
+  lr_T0: 999999
+  lr_T_mult: 1
+  use_compile: true
+  compile_mode: max-autotune
+  log_level: INFO
+  swa_start: -1
+  swa_freq: 50
+
+  # ── loss weights: verbatim from production ──────────────────────────────
+  # ⚑ Several of these heads have NO TARGET in an lc0 shard (soft_policy_t,
+  # future_policy_t, sf_policy_t, sf_p0_*, categorical_t, volatility_t,
+  # sf_volatility_t are all absent). compute_loss returns a zero loss for a
+  # head whose target is missing and masked_mean divides by a zero-clamped
+  # denominator, so those terms contribute exactly 0 to `total` and 0 gradient.
+  # They are LEFT AT PRODUCTION VALUES rather than zeroed, because zeroing them
+  # would be a second, undocumented deviation from the stack under test. Which
+  # ones are inert is not asserted from this comment: the driver prints each
+  # head's realized ROW COUNT from the smoke step, and a head with 0 rows is a
+  # head that trained nothing.
+  w_policy: 1.0
+  w_soft: 1.0
+  w_future: 0.01
+  w_wdl: 1.0
+  w_sf_move: 0.02
+  w_sf_own: 0.1
+  w_sf_own_regret: 0.7
+  w_sf_eval: 0.10
+  w_categorical: 0.30
+  w_volatility: 0.10
+  w_sf_volatility: 0.05
+  w_moves_left: 0.02
+
+  # ── the value blend: THE ONLY SEMANTIC CHANGE ───────────────────────────
+  sf_wdl_frac: 0.0          # production 0.50 — see the header. NOT optional.
+  sf_wdl_frac_floor: 0.0    # production 0.45 — kills the PID ramp's floor too.
+  search_wdl_frac: 0.70     # production 0.20 + the 0.50 SF share; game_frac
+                            # stays at production's 0.30.
+  use_adjusted_wdl_target: false
+  sf_wdl_conf_power: 1.0    # inert: its only consumer is the aux sf_eval mask,
+  sf_wdl_draw_scale: 0.55   # and no row carries sf_wdl. Kept verbatim anyway.
+  sf_wdl_floor_at_regret: 0.10
+  sf_search_dampen_sf_low: 0.0
+  sf_search_dampen_sf_high: 0.0
+
+  # ── step budget ─────────────────────────────────────────────────────────
+  # ⚑ Production sizes its steps from INGEST (train_views_per_ingested_position
+  # against positions the selfplay loop added this iteration). This arm has no
+  # ingest: the corpus is fixed and finite, so that denominator is zero and the
+  # views target is meaningless here. The budget is therefore an explicit step
+  # count on the driver's --steps flag, and `train_window_fraction` /
+  # `train_views_per_ingested_position` are omitted rather than set to a value
+  # that would read as if the production budgeting were in force.
+  train_steps: 800
+  lr_release_cycle_steps: 0
