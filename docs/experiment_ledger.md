@@ -50975,3 +50975,65 @@ Retracting the prediction as stated: I wrote "an arena should read far below wha
 The right prediction is the **row (b)** one — **−4.1 cp on the played move** — and even that is
 confounded (different lineages, C17, sims 32→100, c_scale, bt4heads heads). It is a direction, not
 a magnitude, and an arena remains the only Elo instrument.
+
+### ⚑⚑ AMENDMENT 2, same session — ROW (d) IS NOT PRODUCTION'S TRAINING TARGET
+
+Found by the independent review of PR #437 (finding P2-B), then **confirmed by my own execution**
+before writing this:
+
+```
+$ grep -n "target_max_visit_cap\|target_untempered_prior" scripts/audit_targets.py
+$            # <- no output
+```
+
+`scripts/audit_targets.py::_SearchProfile` carries a FIXED field list —
+`label, sims, topk, c_scale, c_visit, c_visit_root, c_scale_root, q_visit_exp_root,
+volatility_q_scale, volatility_fpu, volatility_anchor, overrides` — and **neither promoted knob
+appears anywhere in the file**. So `_build` left `gumbel_target_max_visit_cap=0` and
+`gumbel_target_untempered_prior=False` while **production runs 5 / True**. Live since the same
+commit as the arena's drift (#437's P2-A), i.e. every `audit_targets` run since 2026-08-10.
+
+⚑ The `_SearchProfile` docstring *describes this exact trap* — an override outside the fixed list is
+"accepted by the CLI, printed in the header, and then dropped on the floor by `_build`... **that is
+this repo's signature defect**" — while the class was falling into it for these two fields. A
+warning written next to the hazard is not a guard against it.
+
+**This is worse than the arena's version of the same drift.** The arena mislabels which agent
+played; `audit_targets` measures the **stored target itself**, which is the exact object these two
+knobs modify. ⇒ **corruption of the row, not a mislabel of it.**
+
+**Disposition, row by row — the knobs are target-side only:**
+
+| row | status |
+|---|---|
+| a) raw policy | **UNAFFECTED** — no search. The mass-concentration finding STANDS. |
+| **b) net + search (PLAY)** | **UNAFFECTED** — play arm, not the tempered target arm. **The −4.1 cp genuine improvement STANDS.** |
+| c) SF soft target | UNAFFECTED — net-independent control. |
+| **d) "production training target"** | **VOID as labelled.** Measured with both knobs OFF. |
+| e) fast-ply | same defect; also not a production target. |
+
+**⚑ And the confound note must be RETRACTED IN THE OPPOSITE DIRECTION from what I wrote.** I said
+the A→B interval contained the `gumbel_target_untempered_prior` / `gumbel_target_max_visit_cap`
+promotion and that "the target's sharpening is intended". **False for this measurement**: both
+knobs were off in BOTH arms, so the promotion cannot explain any part of row (d)'s sharpening
+(entropy 0.811 → 0.537). Row (d) is a clean A/B *of the un-promoted target* — the sharpening is
+real and is **not** attributable to the two deliberate sharpening knobs. That makes the row (d)
+observation stronger on mechanism and still unusable as a statement about what production stores.
+
+**Correcting action, not deferred:** re-ran both checkpoints supplying the knobs through the
+override path, which `_assert_overrides_realized` verifies actually lands:
+
+```
+--gumbel target_max_visit_cap=5 --gumbel target_untempered_prior=1
+[audit] d) production training target (full sims): --gumbel realized target_max_visit_cap=5 target_untempered_prior=True
+```
+
+⇒ the override channel DOES reach the production knobs; only the fixed profile list does not.
+Numbers replace row (d) when the paired run lands. **Until then no row-(d) number in
+`a75f07fdb` / `c2a2c6290` may be quoted as production's training target.**
+
+**Method rule (third instance today):** an instrument whose config is a hand-maintained subset of a
+growing struct silently decays every time the struct grows. Both #437 findings and this one are the
+same shape as [[fixing_a_defect_class_reintroduces_it]]. The fix is not "add the two fields" — it is
+to make the profile carry the production `GumbelConfig` and diff it, so the next promotion cannot
+open a fresh gap. Recorded against task #223.
