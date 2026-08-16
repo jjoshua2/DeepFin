@@ -53098,3 +53098,51 @@ for reuse:**
   The HALFMOVE clock is not normalised (2604/4000 nonzero), so the 50-move input SF actually
   uses is genuine on both sides, and the fullmove counter does not affect search. Judged inert
   and design unchanged.
+
+### ⚑⚑ SECOND AMENDMENT — I READ THE LABEL CLAIM OFF THE WRONG RUNG. The number is 2.9%, not 5.25%.
+
+The entry above says *"Production SF labels are 150k-200k at MultiPV 6 ... So on ~1 position in
+20, the value label we train on is taken at a budget where the teacher has not converged."*
+**The premise is right and the arithmetic is off by the wrong rung.** 5.25% is the
+**75k-vs-500k** figure. 75,000 is `sf_nodes` — the OPPONENT's search budget in selfplay. It is
+not the budget our LABELS are queried at. [[sf_label_nodes_are_not_sf_nodes]]
+
+The rung that answers the label question is **150k -> 500k**, which the same run already
+measured:
+
+| comparison | what it is about | k/1200 | rate | 95% CI |
+|---|---|---|---|---|
+| 75k -> 500k | the OPPONENT's budget vs converged | 63 | 5.25% | [4.06%, 6.67%] |
+| 75k -> 150k | opponent vs label budget | 32 | 2.67% | [1.83%, 3.74%] |
+| **150k -> 500k** | **our LABEL budget vs converged** | **35** | **2.92%** | **[2.04%, 4.03%]** |
+
+⇒ **~2.9% of production value labels — not 5.25% — sit at a budget where SF's own verdict
+still moves >= 0.20 WDL units by 500k.** Roughly 1 in 34, not 1 in 20. Still a real defect on
+the ordinary distribution, and still ~3x the 1% bar, but the correct magnitude is 1.8x smaller
+than what the entry claimed.
+
+**And the correction DISSOLVES the "two opposite readings" tension I recorded.** The entry
+posed LABEL DEFECT (down-weight) against OPPORTUNITY (up-weight) as needing a prereg to
+decide. They are not in conflict, because **they live at two different budgets that are two
+different knobs**:
+
+- The **OPPONENT** plays at `sf_nodes` 75k. SF being unconverged there is exactly what an
+  anti-engine should exploit — that is the 5.25% figure, and it is an OPPORTUNITY.
+- The **LABEL** is queried at 150k-200k. SF being unconverged there is noisy supervision —
+  that is the 2.92% figure, and it is a DEFECT.
+
+⇒ The coherent treatment is **not** to choose: raise the LABEL budget toward convergence on
+the unstable slice while leaving `sf_nodes` where it is. We learn the truth and keep playing
+an opponent that is wrong in the way we want to exploit. The two knobs are already separate in
+the config, so this needs no new plumbing.
+
+⚑ Cost check before anyone reads that as a recommendation: raising label nodes is the
+expensive axis (nodes dominate, and MultiPV 6 at 150k-200k is already the dominant CPU cost
+[[sf_cpu_cost_split]] [[sf_multipv_width_costs_7x]]). Screening WHICH rows need it is the
+cheap part — a 150k/500k agreement check is ~1.2 s/position. **A targeted re-label of the
+~2.9% unstable slice is the affordable version and the one to pre-register**; a blanket budget
+raise is not, and is not what this finding supports.
+
+This is the same defect class the rest of today's entries record, committed by me twice in one
+hour: a truthful number read against the wrong noun. The 5.25% was never wrong — it was
+answering the opponent question while I was asking the label question.
