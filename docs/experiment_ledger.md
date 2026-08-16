@@ -52634,3 +52634,75 @@ cheap one that removes the ambiguity: **re-run this probe on a sample of ordinar
 positions rather than harvest candidates, and pre-commit the CONTINUOUS threshold** (the
 bucket has now been shown to be the wrong instrument for this question). Zero GPU, ~15 CPU
 minutes at n=123.
+
+## 2026-08-16 — ⚑ SCOPE BOUND on the #227 row-(d) defect: the blast radius is TWO DAYS and ONE CONDITION, not the whole record
+
+**Context.** PR #443 (task #227) fixes `scripts/audit_targets.py`'s `_SearchProfile`, which
+hand-listed its search fields and omitted three that `build_selfplay_gumbel_config` sets from
+the live yaml. Confirmed independently at `chess_anti_engine/mcts/gumbel.py:1150` — with
+`target_cap <= 0` and `log_prior_store is log_prior` the code takes `imp_store = imp_all`, so
+rows (d)/(e) headed *"production training target"* were scoring the **PLAY distribution**. The
+finding is real and is already recorded (2026-08-15 entry, line ~50855).
+
+**What was NOT established there, and is the point of this entry: WHEN it started, and WHICH
+banked readings it touches.** "A ruler change invalidates its records" is a rule about a SET;
+nobody had bounded the set. Bounded now, by measurement:
+
+**1. Production's defaults ARE the audit's hand-listed values.** `mcts/gumbel.py:206,262,291`
+and `selfplay/config.py:63,71,83`:
+
+| knob | production default | what the audit used | live value today |
+|---|---|---|---|
+| `gumbel_policy_temp` | **1.0** | 1.0 (`--policy-temp` default) | 1.5 |
+| `gumbel_target_max_visit_cap` | **0** | 0 | 5 |
+| `gumbel_target_untempered_prior` | **False** | False | true |
+
+**2. None of the three keys existed in the live yaml before 2026-08-09.**
+`git log -S` on `configs/pbt2_small.yaml` returns exactly one commit per key:
+`7f4304db9` (2026-08-09, `gumbel_policy_temp: 1.5`) and `c62eb8ff2` (2026-08-10, the other
+two). `git show 7f4304db9^:configs/pbt2_small.yaml` contains none of the three.
+
+⇒ **Before 2026-08-09 production ran the defaults, the hand-list carried those same defaults,
+and row (d) was CORRECT.** Every leg-(d) verdict banked before 08-09 SURVIVES unconditionally —
+including the whole C17 / `target_batch` body (this file ~6427–7082), the 2026-07-25
+`train_views` verdict, and the 2026-08-07 target analysis (~37670), which the 2026-07-25 entry's
+own PR #246 correction had already re-pointed onto the RL search. **The hand-list was not wrong
+when written. It went wrong when production moved and it did not** — which is precisely why the
+fix had to be the mechanism (derive from production's builder) and not three more fields.
+
+**3. TWO start dates, TWO different defects — do not merge them.**
+- **From 2026-08-09** (`policy_temp` 1.0 → 1.5): row (d) is the right OBJECT at the wrong
+  TEMPERATURE. A magnitude error. Production's stored target still equalled its own play
+  distribution in this window (cap 0 / untempered False were still the live values), so the row
+  was not mislabelled — only miscalibrated.
+- **From 2026-08-10** (`cap` 0 → 5, `untempered_prior` False → true): production's stored target
+  genuinely diverges from its play distribution, while row (d) stays on cap 0 / untempered
+  False. **This is the date the LABEL becomes false** — a category error, not a magnitude one.
+
+**4. THE DISCRIMINATOR that bounds it further: an explicit override immunises a reading.**
+`--gumbel <knob>=<v> --gumbel-training-rows` sets the knob on the training rows directly and
+never consults `_SearchProfile`. So the defect bites a reading only if BOTH hold:
+  (i) taken on/after 2026-08-10, **and**
+  (ii) it did NOT pass explicit `--gumbel` overrides for these knobs on the training rows.
+
+The two 2026-08-10 preregs (~40022, ~40115) and the entropy-ladder readout (~51328) all pass the
+overrides explicitly **on both arms** — the sigma prereg's own command block spells out
+`--gumbel target_max_visit_cap=0 --gumbel-training-rows` and says why `--gumbel` alone would be
+"a perfectly reproducible null". They are SOUND AS RUN, which is the same conclusion the
+2026-08-16 amendment reached from the other direction ("both knobs were off in BOTH arms").
+**⚑ Corollary, and it is the actionable half: those preregs' yardsticks were sound only because
+they hand-set the knobs. Any FUTURE reading that relies on the yaml — which is the normal way to
+run the tool — was broken until PR #443.**
+
+⇒ **Residual invalidated set: readings taken on/after 2026-08-10 with no explicit training-row
+override.** The identified instance is the 2026-08-16 same-session paired ruler, already marked
+`row (d) ... VOID as labelled` at ~51042. No other banked leg-(d) reading falls in the window.
+
+**5. What this does NOT license.** The bound is on rows (d)/(e) only. Rows (a)/(b)/(c) never
+claimed to be the training target and are untouched. And the bound rests on the live yaml's
+history — if a future restart adds a target-shaping key without PR #443's derived guard in the
+tree, the window reopens silently on that date and this entry's dates become wrong.
+[[fixing_a_defect_class_reintroduces_it]] [[a_ruler_change_must_invalidate_its_records]]
+
+**No re-runs owed.** The pre-08-09 record is intact and the post-08-10 instance was already
+voided. The cost of this defect was two days of ruler credibility, not the archive.
