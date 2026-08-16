@@ -49893,3 +49893,842 @@ the warning. Now pinned by payload (count, live denominator, kept/dropped/fresh 
 that mutant exits 1. Its arithmetic was also wrong: `changed` is `dropped + fresh`, counted on
 opposite sides, so it can exceed the live parameter count and must not be rendered as a
 fraction of it. [[a_gate_that_cannot_fail]]
+## 2026-08-15 — FIRST CUDA READING of the AOT verify gate: the analytic ULP floor is mis-scaled on BOTH heads, in opposite directions
+
+**Status: MEASUREMENT (PR #432 NOT merged). Instrument: `--verify-only` on real packages + real weights, RTX 5090, training stopped.**
+
+Every number in PR #432 was CPU-derived or synthetic; the gate had never been run against
+a real AOT-vs-eager discrepancy. It has now. Raw output banked at
+`scratchpad/aot_cuda_20260815/verify_run_seed0.txt`.
+
+    checkpoint  data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt
+    config      configs/pbt2_small.yaml (the LIVE file)
+    packages    a scratch COPY of data/aot_models_512_bt4heads (verified md5-identical after)
+    args        --verify-only --verify-n 2 --seed 0 --tv-ratio-max 2.0 --argmax-min 0.90
+    result      verified=17 failed=4
+
+**The 4 failures are the INSTRUMENT, not the packages.** Failing buckets are exactly
+1020, 1024, 2720, 4096, and each reads `floor=pol:ulp-only(ctl-degenerate)` while all 17
+passing buckets read `floor=pol:shape+ulp`. Where the empirical control survives,
+`pol_mean` is 0.97-1.04; where it degenerates, the SAME discrepancy reads **x2.79-x2.91**.
+Package health is uniform across both groups: `pol_rows_over` and `wdl_rows_over` are
+**0 at every bucket**, pooled argmax 0.947-0.974 everywhere.
+
+⇒ **the shape control is ~2.83x the raw-ULP floor**, and the raw-ULP estimate therefore
+UNDERSTATES the true policy floor by that factor on real hardware. Predicted before the
+run at 3.3x from pre-fix numbers; measured 2.83, stable across all 8 trials.
+
+**The other half: `wdl_mean` is 0.43-0.76 at EVERY bucket** (median ~0.49). If a healthy
+package reads ~1.0, the WDL floor is now ~2x too LARGE. So:
+
+    head             ULP floor vs physical
+    policy (1858)    ~2.8x too SMALL
+    wdl    (3)       ~2x   too LARGE
+
+Both are physically sensible — AOT and eager accumulate more than one ULP of divergence
+across a 1858-wide softmax's reductions and less across a 3-wide one. ⇒ **one ULP is not
+the right scale for either head, and the two heads need DIFFERENT scales.** That is
+precisely what an empirical control measures and an analytic estimate cannot. The
+`_FLOOR_DIVERGENCE_MAX = 5.0` cross-check correctly did NOT fire (2.83 < 5), reading this
+as legitimate estimator disagreement rather than a broken floor — its first calibration
+against real evidence.
+
+**NOT DONE, deliberately: `--tv-ratio-max` was NOT widened to 3.0.** The pre-committed
+rule bans fitting the constant to the run. The estimator is what is wrong.
+
+**Two incidental findings, both confirmed:**
+- The `main`-based #432 branch **cannot read the live config at all**: it dies on
+  `Unknown keys in yaml 'model:' section: ['aux_policy_head_dim']`. That is CLAUDE.md's
+  category-(a) hazard firing for real — the live yaml carries a key `main`'s schema does
+  not define, and at launch it is FATAL, not a soft reject. ⇒ #432 cannot verify
+  production until it carries the live branch's schema. The run above used a rig worktree
+  at live HEAD with #432's two files copied in.
+- `eager_batch_shape_control` degenerates at specific CUDA bucket sizes (1020, 1024, 2720,
+  4096), not only on CPU: its `n//2` chunking is bitwise identical to the full batch there.
+  The docstring said this was a CPU regime; it is a bucket-size regime.
+
+**Owed:** re-scale the floor per head (or make the control primary with a calibrated
+fallback), then re-run this exact command. Also still owed and never run: a DELIBERATELY
+BROKEN package, the only way to read the gate's TRUE-POSITIVE rate on hardware. Until
+that exists, this run shows only that the gate does not false-fail when its control
+survives.
+
+## 2026-08-15 — `sf_p0_regret` fabrication: INERT on training, LIVE on the era probe
+
+**CPU audit, no training affected. Scripts + RESULTS.md at `scratchpad/sf_regret_audit/`.**
+
+**Measured.** `sf_multipv: 6` and `record_sf_p0_regret: true` are live (both verified through
+`flatten_run_config_defaults` + `TrialConfig.from_dict`, not by grep). Fabrication site is
+`selfplay/finalize.py:1281`: every legal move outside the MultiPV block gets
+`(worst_covered + 1)/2`. On 16,549 live replay rows, exactly 6 of a mean 27.1 legal moves are
+SF-scored; the other **67.6%** carry an invented **567cp** default against a worst *real*
+covered regret of 134cp — **4.22x inflation**. The banked "570cp / 68% / ~5x" reproduces exactly.
+
+**Reaches the loss? NO.** `w_sf_own_regret: 0.0` (`pbt2_small.yaml:476`), and it is in
+`TRAINER_WEIGHT_KEYS` so it is re-pushed from the yaml EVERY iteration — not a launch-only
+value a resume could revert. **Proved by execution with a mutation control:** perturbing all
+1176 fabricated entries moves `total` and `d(total)/d(logits)` by **bitwise zero**; the same
+harness at `w=0.7` moves 6.4% of the gradient norm. The instrument fires, so the null is real.
+
+**No historical wound either.** `git log -L` shows `sf_multipv` was **40** for the entire window
+`w_sf_own_regret: 0.7` was live, and commit `ed9de8ee9` (2026-08-06) made BOTH changes at once
+(40 -> 6 and 0.7 -> 0.0). At multipv 40 only 1.66% of legal moves were uncovered. ⇒ **the
+fabricated label and its consumer have never coexisted at meaningful magnitude.**
+
+**⚑ WHAT IS CONTAMINATED: THE ERA-FORGETTING PROBE.** `eval/era_probe.py:592` reads the same
+vector every iteration and is NOT gated by that weight; its docstring justifies itself as "the
+same quantity `losses.py` minimises under `w_sf_own_regret`", which has been **false since
+2026-08-06**. Live ruler reproduced BIT-EXACTLY at iter 218 (0.069640 / 0.067193 / 0.002447)
+from a CPU forward of `checkpoint_000218`, then split:
+
+    component      era        inwindow    gap
+    policy_eregret 0.069640   0.067193    +0.002447   (as reported)
+    fabricated     0.028745   0.029570    -0.000825   41.3% / 44.0% of the LEVEL
+    real SF        0.040895   0.037623    +0.003272
+
+The fabricated term is **not common-mode**: it suppresses the real +0.003272 gap to the reported
++0.002447, a **25% cut**. Effective fabricated value per unit uncovered mass is 0.440, so moving
+**0.01** of probability off the tail onto ANY covered move — including SF's 6th-best — improves
+the metric by **1.8x the entire measured gap**. ⇒ **a sharpening net improves this ruler without
+improving move choice**, and we are measurably a sharpening net (`p_top1` up 4.4x across the
+lineage; 3.7x narrower than BT4). Same family as `wdl_regret` measuring the agent, not the net.
+
+**Verdict: NULL on training, CAUTION on the ruler.** No config change. `record_sf_p0_regret`
+stays ON (1.5% of shard bytes — zarr compresses the 76%-constant vector away — and turning it
+off blinds the probe).
+
+**YARDSTICK for the follow-up (pre-committed):** re-score both frozen probe sets with
+`policy_eregret` renormalised over the <=6 COVERED moves only, across >=10 archived checkpoints
+spanning the run, and compare the TREND of masked vs unmasked `probe_gap`.
+**KILL RULE:** if the two trends have opposite sign, or differ by >2x in slope, then every
+forgetting-hinge verdict read off `probe_gap` needs re-deriving. **Confounds:** none, no
+training ran.
+
+**Two doc defects found in passing:** `finalize.py:69-70` still says uncovered moves "default to
+1.0" (stale — it is the midpoint), and `docs/model_heads.md` has NO row for `w_sf_own` or
+`w_sf_own_regret` despite both sitting in `total`.
+
+## 2026-08-15 — TARGET AUDIT: the stored policy target is SHARP AND WRONG (MEASURED, no arm)
+
+CPU-only forensic characterisation of `policy_target` on live production shards.
+Instrument: `scratchpad/target_audit/tgt_probe{,2,3,4}.py`. Predictions pre-registered in
+`scratchpad/target_audit/tgt_predictions.md` BEFORE each run; **6 of 11 missed**, each miss
+explained there, none re-thresholded.
+
+**VERDICT: the policy target is 31 percentage points more confident than it is correct**, and
+that is a SUFFICIENT mechanism for "absorption 11.6x buys zero Elo".
+
+Live era (1d175, Aug 14-15, 6601 SF-labelled rows, sims 100 / topk 16 / c_scale 0.1):
+
+    target top-1 mass            0.734        entropy 0.752 nats
+    effective support            2.68         of 27.1 legal moves
+    target argmax == SF best     0.4193 [0.4075, 0.4313]
+    ==> OVERCONFIDENCE GAP       0.314
+
+Calibration is monotone but never catches up: on **essentially one-hot rows** (top-1 0.998,
+H 0.017 nats, n=1091) agreement is still only **0.768 [0.742, 0.792]**. **16.8% of ALL rows**
+carry top-1 > 0.99 with a mean of **22.3 legal moves**; 5.0% are exactly one-hot in f16. The
+target's own argmax is **NOT in SF's top-6 on 14.9% of rows**. cp regret of the target's argmax
+(SF-listed only): mean **21.5 cp**, 12.6% > 50 cp. Target-weighted **E[cp regret | listed] = 25.7 cp**.
+
+**AND THERE IS NO SECOND OPINION IN THE POLICY LOSS.** `w_policy: 1.0` and `w_soft: 1.0` train
+the SAME distribution at two temperatures — same argmax on **99.99%** of rows, entropy ratio
+1.84. Both SF position-level teachers are RECORDED on every eligible row and weighted **ZERO**
+(`w_sf_own: 0.0`, `w_sf_own_regret: 0.0`). `w_sf_move: 0.05` trains `policy_sf`, which is the
+OPPONENT's reply distribution, not a move teacher for this position. ⇒ **nothing in the policy
+loss can pull the 25.7 cp down.**
+
+⇒ a net that fits this target perfectly converges to a distribution that is sharp on a move
+averaging 21.5 cp worse than a 150-200k-node SF's pick. **Absorption gains are, by construction,
+gains in SHARP WRONGNESS.** This LOCATES the banked external finding (3.7x narrower, 14.1pp less
+accurate, miss rate 47.5% vs BT4 18.2%) **in the TRAINING TARGET rather than in the net or the
+fitting procedure** — the piece that was missing.
+
+**SECONDARY (confounded 2-point era contrast): the 08-12 sims-100/topk-16 deploy moved every
+target axis the wrong way.**
+
+    era                     C (Aug 9-10)   D (Aug 12-13)  E (Aug 14-15)
+    sims/topk               256/32         100/16         100/16
+    KL(prior||target) mean  1.068          0.313          0.331
+    rows with KL < 0.05     8.0%           30.5%          30.5%
+    target entropy          1.214          0.707          0.752
+    top-1 mass              0.619          0.744          0.730
+    SF top-1 agreement      0.4707         0.4306         0.4193   <- CIs DISJOINT vs C
+    cp regret of argmax     18.4           23.7           21.5
+
+D and E replicate each other across INDEPENDENT trials. ⇒ cutting sims 2.56x made the target
+**42% sharper, moved it 3.4x less off the net's own prior, and made it ~5pp LESS ACCURATE**.
+⚑ **This cuts AGAINST "search is inert"**: more sims demonstrably DOES buy target quality
+(+5pp agreement) — it just did not buy Elo. Search is also not inert trivially: only 0.18% of
+rows show zero movement, median KL 0.139 nats (~21% of the row's own target entropy).
+
+**NULLS — the target is structurally CLEAN.** Rows sum to 1.000, zero mass on illegal, dense
+over legal (median 22 of 29 above 1e-6), no C17-style degeneracy. Priority weighting does NOT
+change the verdict (agreement 0.4193 -> 0.4146) even though priority DOES concentrate on
+high-KL rows (KL mean 0.331 -> 0.739 weighted). `record_fast_ply_value` off ⇒ has_policy == 1
+on 100% of stored rows.
+
+**INSTRUMENT VALIDATION (all read null / exact):** shuffle control agreement 0.42 -> **0.0021**,
+flat in every confidence bin; cross-row legal-mask control target mass 1.000 -> **0.049**;
+`sf_p0_regret` decoding verified EXACT against the independent raw MultiPV cp column at ply gap
+1 — match_rate **1.000**, n=4767 (E) / 4933 (D) / 5377 (C), max abs dev p95 2.4e-4 (f16).
+
+**RULER CAVEATS.** The SF here is the SHARD's own label — 150-200k nodes, MultiPV 6 — NOT the
+>=1M-node audit ruler; every cp figure is a shallow-SF figure. Only `E|listed` and the
+MultiPV-covered set are quoted; the ~74% fabricated tail is excluded from every statistic. Era B
+ran `sf_multipv` ~40 so its listed-subset numbers are on a different ruler. `priority_policy_kl`
+is a TRUNCATED KL (0.13% negative, min -0.23) — immaterial here, not a proper divergence. We
+deliberately train to exploit SF weaknesses, so disagreement with SF is not automatically error;
+that the same gap appears against SF-agnostic BT4 on the same axis is why I do not think that
+explains it — but that step is INFERRED, not measured.
+
+**FALSIFIERS (no arm launched):**
+- Finding 3 predicts era-D/E weights are **WEAKER** than era-C weights. Paired arena vs a FROZEN
+  anchor, >=300 games, same search both sides, weights the only difference. If D/E >= C, dead.
+- Finding 1 predicts a position-level SF policy teacher would reduce top-1 overconfidence.
+  ⚑ But the obvious lever is a TRAP: `w_sf_own_regret` at MultiPV 6 assigns an invented 567cp to
+  ~68% of legal moves, which pushes mass ONTO the 6 covered moves — i.e. MORE sharpening, the
+  wrong direction. Any such arm needs a non-fabricated, full-width teacher.
+
+## 2026-08-15 — INSTRUMENT DEFECT: `audit_targets.py` scores a NON-PRODUCTION search by default
+
+Found while designing the C16 target-quality arms. No verdict is being revised yet; this
+records the defect and the blast radius.
+
+`scripts/audit_targets.py:1366` defaults `--vloss-weight 0`, and its help asserts
+**"0 = production (none)"**. That has been **FALSE since 2026-07-29**, when `21c21fc4f`
+(PR #286) set `gumbel_vloss_weight: 1` in `configs/pbt2_small.yaml:268`. The script never
+reads the key from `--config`, so passing the production config does NOT fix it.
+
+⇒ every default-invocation since 2026-07-29 scored a search production does not run, while
+the help told the operator it was scoring production. Same shape as the standing defect:
+**a value accepted and then silently ignored** — except here the value was never offered.
+
+**Blast radius is worse than the wrong number, because the reports are not auditable.**
+The report header and the per-position dump record **neither `--vloss-weight`, nor
+`--vloss-mode`, nor `--target-batch`**. So for the banked reports post-dating the deploy
+there is no way to recover WHICH search produced them. They are not known-wrong; they are
+**unknown**, which is the state a ruler must never be in. Cf. the standing rule that a
+verdict read off a stage that fails its invariant is not a verdict — in either direction.
+
+**Interaction that makes the default actively misleading rather than merely stale**:
+duplicate rate is `GSS_GPU_BATCH / boards-per-search-call`, and `--batch-size` is
+boards-per-call. Production runs boards-per-call ~= **1**; at `--batch-size 256` the script
+also takes a different code path (`_use_pipeline`, `gumbel_c.py:544`). So the regime the
+script defaults to is the regime where `target_batch` has the LEAST to do — an arm run
+there could only ever read null. **That is a gate that cannot fail**, and it is why the
+C16 arms were re-queued at boards-per-call 1.
+
+**NOT YET DONE — and deliberately separated:**
+1. Fixing the help text and RECORDING the three search params in the report header is pure
+   hygiene: it changes no number and makes future reports auditable. Do this.
+2. Changing the DEFAULT to production is a **ruler change**, and a ruler change invalidates
+   its records. It needs its own entry, its own before/after on a fixed checkpoint, and an
+   explicit statement of which banked reports it retires. Do NOT fold it into (1).
+
+**Controls already banked from the C16 design work** (all pre-registered):
+`--target-batch 1024` vs `0` at boards-per-call 256 differs by **exactly 0.0000, 0/4000
+rows** on every field — the negative control that exposed the dead regime. Seed 0 vs 12345
+likewise 0.0000, 0/4000. Positive control (100 sims vs 32) reads **-4.194 cp
+[-5.475, -2.906]**, so the instrument does resolve a real search change. Instrument
+halfwidth is **+/-1.3 cp at n=4000**, which means the pre-committed 2.0 cp bar sits INSIDE
+the resolution — that bar was mis-set and must be re-derived before any C16 verdict.
+`scripts/paired_compare.py` and the analysis script agree exactly.
+
+## 2026-08-15 — PRE-REGISTRATION: did training under the post-08-12 target make the net WEAKER? (NOT LAUNCHED)
+
+Deciding yardstick for **Finding 3** of the target audit (`666d20561`). Written BEFORE any
+game is played. GPU-queued behind the C16 sweep.
+
+**HYPOTHESIS.** The 08-12 sims-100/topk-16 deploy made the stored policy target ~5pp LESS
+accurate (SF top-1 agreement 0.4707 -> 0.4193, CIs disjoint, replicated across two
+independent trials). If the target got worse, weights trained on it should be WEAKER.
+
+**ARMS — same lineage, production config, weights the ONLY difference.**
+
+    A  era-C weights   data/salvage/pre_sims100_20260812/seeds/slot_000/trainer.pt
+                       global_iter 811, ckpt 2026-08-11 19:42, trained under sims 256 / topk 32
+    B  era-D/E weights scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099
+                       global_iter 990, Tier-13 arm A = the CONTROL arm
+                       (verified sims 100 / topk 16 / c_scale 0.1 / policy_embedding_mode off)
+
+Arm A of Tier-13 is production config, which is why it and not arm B/C is the era-D/E
+endpoint. **LINEAGE PURITY GATE, checked BEFORE any game:** diff `arm_A_iter100/params.json`
+against the live yaml; if any training-affecting key differs beyond the era keys themselves,
+**ABORT and report** — do not run a confounded arena.
+
+**DESIGN — 3 contrasts, because anchored Elo is anchor-dependent by up to 82 and a
+3-contrast design buys a free transitivity check.**
+
+    C3  candidate B vs reference A                  <- THE DECIDING CONTRAST
+    C1  A vs frozen anchor iter514
+    C2  B vs frozen anchor iter514
+    transitivity: (C2 - C1) must agree with C3 within the combined CI
+
+Fixed identical search BOTH sides, `matched_sims`, `--sims 32 --search-shape training
+--seed 42`, FULL checkpoint paths only (⚑ a `slot_000` SUBSTRING match has faked 70 Elo here).
+Mechanism for neutrality, not symmetry: both nets receive an identical search budget and
+neither era's training shape is used, so no path favours one set of weights. If C3 lands
+near null we owe a second shape before concluding.
+
+**⚑ RESOLUTION BEFORE THRESHOLD.** The C16 arms just demonstrated a pre-committed bar sitting
+INSIDE the instrument halfwidth. So the rule is stated in CI terms, and C3 runs FIRST at
+n=1600 with its realized halfwidth computed before the anchor contrasts are funded:
+
+    CONFIRM  Finding 3   C3 upper CI bound < 0        (B significantly weaker than A)
+    REFUTE   Finding 3   C3 lower CI bound > 0        (B significantly stronger)  -> Finding 3 DEAD
+    NULL                 CI spans 0
+    VOID                 transitivity fails, or the lineage purity gate fails
+
+**⚑ PRE-COMMITTED CONFOUND STATEMENT — written now, not after the number.** The 811 -> 990
+window is **179 iterations**, and the sims deploy is only one thing inside it. It also
+contains the deploy boundary itself (811 predates it by ~5h), the policy-adapter period, and
+the Tier-13 arm A restart. ⇒ **a CONFIRM is CONSISTENT with Finding 3 but does NOT isolate
+it**, and must not be reported as "the sims cut cost N Elo". A REFUTE is the stronger read:
+it kills the prediction outright. This asymmetry is accepted in advance as the price of using
+banked weights instead of a purpose-run arm.
+
+Not a rolling read: the verdict is taken once at the pre-committed n, never off a partial
+arena (a 16-game rolling read once faked +112.3 Elo here).
+
+## 2026-08-15 — VOID: era-C vs era-D/E aborted at the lineage purity gate (prereg `c9a5829c0`), ZERO games played
+
+The pre-committed gate FAILED and the arena was not run. **Finding 3 of `666d20561` remains
+UNTESTED — neither supported nor refuted.**
+
+**Gate result.** `scratchpad/tier13/banked/arm_A_iter100/params.json` differs from the live
+yaml on **8 training-affecting keys beyond the era keys**: `policy_embedding_mode` off→linear,
+`w_categorical` 0.0→1.0, `w_sf_move` 0.0→0.05, `categorical_head_coupled` False→True,
+`aux_policy_head_dim` None→128, `categorical_blend_frac` 0.0→0.69,
+`categorical_search_blend_frac` 0.0→0.31, `rebuild_categorical_target` absent→True. The era
+keys themselves (`mcts_simulations` 100, `gumbel_topk` 16) do **not** differ — the live yaml is
+era-D/E too.
+
+**CAUSE — MY ERROR: the prereg outran its own premise by 7h44m.** All 8 keys entered the live
+yaml at `86492fa26` (08-15 10:05, "promote bt4heads bundle, NOT yet launched"); I wrote the
+prereg at 17:49. Against `86492fa26^` — the config production actually ran under while Tier-13
+executed — **arm A is CLEAN, zero training-target diffs.** So "arm A of Tier-13 IS production
+config" was TRUE when it was banked and FALSE when the gate ran. ⚑ I asserted it after reading
+FOUR keys (`mcts_simulations`, `gumbel_topk`, `gumbel_c_scale`, `policy_embedding_mode`) and
+generalising to "production config". **A four-key spot check is not a config identity.** Nor is
+this cosmetic: the bt4heads config builds a structurally different net —
+`bt4heads_iter100_20260815` trainer.pt is **665,662,247 B** against arm A's **685,324,155**.
+
+**SECOND, INDEPENDENT FAILURE THE GATE COULD NOT SEE — and it is the one that matters.** The
+gate diffs arm-vs-LIVE, but arm-vs-ARM is what confounds an arena. Against era-C's own yaml
+(`e650bb85f^`) the two arms ALSO differ on:
+- `opening_fen_list_path` **retire_860 → retire_217** — a different blind-spot opening pool,
+  i.e. **different selfplay data**. Training-affecting, not exempted by the gate.
+- `distributed_inference_aot_dir` `data/aot_models_512` → `''` and `distributed_async_test_eval`
+  True→False — **era-C ran with the AOT broker ON, arm A with it OFF.** The broker is a FIFTH
+  policy path (fp8/batching, never enters `ChessNet.forward`), so it changes selfplay inference
+  numerics and therefore the generated data.
+
+⇒ **a purity gate written arm-vs-live cannot see the confound that actually matters.** Future
+gates must diff **ARM AGAINST ARM**, and each arm against the config IT ACTUALLY RAN UNDER —
+never against today's yaml. Even a correctly-baselined gate would have failed here, on
+`opening_fen_list_path`.
+
+**METHOD RULE (cost: one over-reported first pass).** `params.json` vs
+`flatten_run_config_defaults(live yaml)` is an **ASYMMETRIC** comparison that manufactures ~73
+fake "absent" diffs. `params.json` is argparse defaults OVERRIDDEN by the launch yaml, while the
+flattener copies only keys the yaml literally contains and applies renames
+(`use_smolgen: true` → `no_smolgen: False`), so `use_smolgen` reads "absent from live" while
+sitting at line 123 of the live yaml. **Diff FLATTEN-vs-FLATTEN** using each arm's launch yaml,
+and resolve every "absent" against the realized `TrialConfig.from_dict` default. Provenance was
+confirmed first: `flatten(scratchpad/tier13/arm_A_off.yaml)` agrees with `params.json` on
+**315/315** shared keys, sole exception Ray appending `/tune` to `work_dir`.
+
+**Verified and reusable** (all three pairwise DISTINCT by sha256 over all 496 tensors):
+
+    A  iter 811  data/salvage/pre_sims100_20260812/seeds/slot_000/trainer.pt          07394a5b...
+    B  iter 990  scratchpad/tier13/banked/arm_A_iter100/checkpoint_000099/trainer.pt  c705b299...
+    anchor 514   data/ratchet/snapshots/ck_2026-08-09_iter514.pt                      e37ef16f...
+
+⚑ **iter514 is the shared ANCESTOR of both arms, not independent of either** — the chain is
+379f6 iter514 → iter672 → 5ce02 → **811 = A** → 890 → b384d → **990 = B**. Usable as an anchor;
+describing it as out-of-lineage would be wrong.
+⚑ `global_iter` is **NOT** in `trainer.pt` (which carries only arch/model/opt/scheduler/step/
+peak_lr/zclip) — read it from `trial_meta.json` / `banked_identity.txt`.
+
+**The tempting argument for proceeding anyway is wrong-shaped and was correctly resisted**: one
+could say the bt4heads bundle has trained NO weights in either arm, so it cannot confound this
+arena. True of the arena, irrelevant to the gate — the gate tests whether arm A still REPRESENTS
+production, and it no longer does. And the arm-vs-arm diffs confound it regardless.
+
+⇒ **Finding 3 is not cleanly testable from banked weights.** A real test needs a purpose-run
+pair: one checkpoint, two arms, sims 256/32 vs 100/16, EVERYTHING else identical including the
+opening pool and the AOT setting. That is a training experiment and needs an explicit go.
+
+Evidence: `scratchpad/prereg_c9a58_phase1_gate_result.json`,
+`scratchpad/prereg_c9a58_lineage_gate2{.py,_result.json}`, `scratchpad/prereg_c9a58_ckpt_verify{.py,.json}`.
+
+## 2026-08-15 — ⚑⚑ CORRECTION: BT4 (SF-AGNOSTIC) FALSIFIES "SHARP AND WRONG". Sharpness and wrongness are ANTI-CORRELATED.
+
+Closes the INFERRED step in the same day's TARGET AUDIT (`666d20561`). Instrument
+`scratchpad/target_vs_bt4/tb4_*.py`; predictions pre-registered in
+`scratchpad/target_vs_bt4/PREDICTIONS.md`. **15 of 21 hit; each of the 6 misses is explained
+there, none re-thresholded.** Ruler: BT4-it332 via ONNX, CPU-only, 1-ply value `Q = L-W` at
+`parent.push(m)` plus root policy. Era E, n=2000, paired per row.
+
+**VERDICT: the pre-committed decider returns UNDECIDED and the two BT4 value heads split
+across the line. But the specific claim in `666d20561` — that fitting the target harder
+converges the net onto SHARP WRONGNESS — is FALSIFIED.**
+
+    disagreement rows (n=1158)      winner head          vanilla-q head
+    C = P(BT4 prefers SF's move)    0.6036 [.575,.631]   0.5397 [.511,.568]
+    mean dQ                         -0.0333              -0.0274
+    mean dcp (BT4)                  -31.4                -18.0
+    shard-SF says, same listed rows -40.9 cp
+
+Rule was: CI wholly >0.58 ⇒ H_wrong; wholly <0.58 ⇒ H_exploit. Winner straddles, q is wholly
+below. The heads agree on magnitude (dQ correlation **0.985**) and differ by 0.064 — inside
+the pre-registered +/-0.08 robustness band, but that band straddles the line. **No head is
+picked.**
+
+**⚑⚑ FINDING THAT REVERSES THE AUDIT'S MECHANISM — C by target top-1 mass:**
+
+    top-1 mass      n     C (winner)            C (q)    mean dQ
+    [0,   0.5)     366    0.702 [.653,.747]     0.639    -0.033
+    [0.5, 0.9)     543    0.578 [.536,.619]     0.534    -0.047
+    [0.9, 0.99)    170    0.577 [.501,.648]     0.435    -0.016
+    [0.99, 1.01)    79    0.380 [.281,.490]     0.342    +0.022
+
+Pre-registered under H_wrong: C flat within 0.10 across bins. **MISS — it swings 0.32,
+monotonically the WRONG way for the audit.** On the target's MOST confident rows BT4 prefers
+the **TARGET** (dQ **+0.022**, dcp +53.9 [+8.6, +109]); the q head agrees. **Not the n_legal
+confound** — at top-1 >= 0.9, C is 0.515 / 0.493 / 0.533 across n_legal <=15 / 16-30 / >30,
+chance in every stratum. ⇒ **the BT4-corroborated wrongness lives on LOW-confidence,
+MANY-move rows, not on the sharp ones.** "Absorption converges onto sharp wrongness" is not
+what an SF-agnostic ruler sees.
+
+**THE DEFICIT IS A TAIL, NOT A PROPERTY OF THE TARGET.** 68.0% of disagreements are within
+20 cp by BT4; median |dQ| **0.009**; on **23.6%** BT4 rates the TARGET better. The
+`|dQ| >= 0.10` tail is **22.6%** of rows and carries **97% of the entire mean deficit**
+(-0.0324 of -0.0333) — and within that tail 30.2% of the time it is SF's move that is worse.
+Same rows, a random legal move is worse by >100 cp on 36.8% vs the target's 9.6%.
+
+**ON BT4's OWN POLICY THE TWO MOVES ARE AT PARITY.** BT4 top-1 == sf_best **0.5465**
+[.525,.568]; == target argmax **0.5325** [.511,.554]; **delta +0.014** — inside the
+pre-registered H_exploit band (<0.05), far from H_wrong (>=0.10). Median BT4 rank 1 for both.
+
+**THE FABRICATED TAIL HIDES REAL BADNESS, NOT EXPLOITATION.** Where the target's argmax is
+NOT in SF's MultiPV-6 (16.3% of rows — exactly where `sf_p0_regret` is ~74% invented and the
+ruler literally cannot speak): **C = 0.7815 [.733,.823]**, dQ -0.048. Where it IS listed:
+C 0.534 (winner) / **0.489** (q) — indistinguishable from chance. Pre-registered H_wrong
+prediction, and it HIT.
+
+**⚑ CORRECTION TO THE BANKED 0.4193.** **15.85%** of rows carry MULTIPLE moves at
+`sf_p0_regret == 0`. The target's argmax sits at regret exactly 0 on **0.4825** of rows
+versus the index-based 0.4193. ⇒ **6.15pp of the banked "disagreement" is a TIE among
+SF-equal-best moves**, and BT4 mildly prefers the TARGET on exactly those rows (C 0.415 /
+0.390). **Quote 0.4825 for "picks one of SF's best moves"; 0.4193 is an argmin-INDEX
+statistic, not an agreement rate.** Restricting to SF-strictly-worse rows (n=1035): winner
+C 0.6261 [.596,.655], q C 0.5575 [.527,.588].
+
+**CONTROLS.** Alignment PASS and EXACT: decoded-board legal set == stored `legal_mask` on
+**2000/2000** rows; plane round-trip 100%/100%; cross-row mask control 1.000 -> **0.053**;
+real-8-slot-history arm moves the policy stats by only +0.0045/+0.0040 (history fill is NOT
+load-bearing). Positive control PASS: Q(sf_best) - Q(random legal) **+0.467 [+0.442,+0.494]**,
+BT4-top1 == sf_best 0.5465. Castling-remap defect confirmed FIXED and live (`c49b89937`,
+PR #376, ancestor of the live HEAD).
+
+**⚑ THE SHUFFLE GATE TRIPPED AS WRITTEN AND IS REPORTED AS A FAILURE, NOT REPAIRED AWAY.**
+Foreign-target agreement read **0.116** against a kill line of 0.10 — because the chance
+baseline was derived as `1/E[n_legal]` = 0.037 when the statistic's chance level is
+`E[1/n_legal]` = **0.0678** (Jensen; n_legal p5 = 4, min 2). **The gate line sat BELOW the
+chance level of the quantity it gated.** Correctly specified the control passes: agreement
+collapses 0.421 -> 0.116 against chance 0.068, and the decider's own control collapses dQ
+-0.033 -> -0.272 (8x). Same family as the mis-specified sims-100 mechanism gate:
+**compute the instrument's chance level BEFORE choosing the line.**
+
+**STILL INFERRED.** BT4 is not ground truth — its own top-1 differs from the shard-SF on 45%
+of rows (Spearman between the two rulers 0.264). Static 1-ply value, no search;
+repeat-filled history; no repetition state. ⚑ **No static evaluator can see "objectively
+-25 cp but practically better against a HANDICAPPED Stockfish"** — that is the entire
+anti-engine thesis and it is structurally out of reach of this measurement. Closing it needs
+a training arm, not a ruler.
+
+**WHAT SURVIVES FROM `666d20561`:** the target IS far more confident than it is
+SF-agreeing (top-1 0.734 vs 0.4825 corrected), and the policy loss still contains **no second
+opinion** (`w_policy` and `w_soft` are the same distribution at two temperatures; `w_sf_own`
+and `w_sf_own_regret` are 0.0). Those are unchanged. What is withdrawn is the INFERENCE that
+this makes the sharp rows wrong.
+
+**FALSIFIER / NEXT ARM (none launched).** The only part of the target this measurement
+condemns is the ~10-22% BT4-corroborated blunder tail, concentrated on low-confidence,
+high-branching rows and on moves outside SF's MultiPV-6. ⇒ **price any target-repair arm
+against THAT TAIL, not against the 21.5 cp mean** — repairing the mean would move the 68% of
+rows BT4 says are already fine. A full-width, non-fabricated position-level teacher remains
+the only lever that reaches the tail without the MultiPV-6 sharpening trap.
+
+## 2026-08-15 — ⚑⚑ CORRECTION: the era probe's "41-44% FABRICATED" WAS A MEASUREMENT ERROR. The sets are MultiPV-40. Kill rule does NOT fire.
+
+CPU only, training stopped. Scripts, `RESULTS.md` and per-row dumps at
+`scratchpad/era_probe_recheck/`; predictions registered before the run (`probe_PREREG.md`).
+**P3 MISSED, and the miss IS the finding.**
+
+**Gate.** Live ruler reproduced on CPU at `checkpoint_000218` (step 79861) to **7-8 significant
+figures** (era 0.069639894 vs live 0.069639878; gap 0.002446726 vs 0.002446729). ⚑ For the
+record this is fp32 agreement, not bitwise — the earlier entry's "bit-exact" OVERSTATES it; the
+live probe does the same no-autocast arithmetic on GPU, so reduction order differs.
+
+**⚑⚑ THE FROZEN PROBE SETS ARE MultiPV-40 DATA, SO THE CLAIMED CONTAMINATION IS NOT THERE.**
+Both sets were cut **2026-08-04T04:12Z** from the `13a9f` lineage. `git log -L` on `sf_multipv`:
+**40** from 2026-04-29 (`02c64f700`) to 2026-08-06 (`ed9de8ee9`) — the 40→6 change lands **TWO
+DAYS AFTER** the freeze. Corroborated structurally: mean **21.8 DISTINCT** regret values per row
+over 27.7 legal moves (MultiPV-6 admits at most 7), and on the 15.0%/14.4% of rows with L > 40
+the tied-at-max count is **exactly L−40** on 284/308 and 265/295 rows, **zero** rows below.
+
+    true fabricated mass @ iter 218   0.00126 / 0.00237     (banked: 0.0653 / 0.0732)
+    ⇒ OVER-COUNT                      51.6x / 30.9x
+    fabricated share of the LEVEL     1.5% / 3.0%           (banked: 41.3% / 44.0%)
+
+**The error:** `sfreg_probe_share.py:64` classified `is_fab = legal & (r >= max_legal(r))` —
+every move tied at the row maximum. Correct for MultiPV-6 shards, **wrong here**: mean 2.08
+legal moves per row sit at exactly 1.0 and 25.2% of rows have their maximum there, because
+`SF_OWN_REGRET_CAP_CP` clips **REAL** evaluations at 1000cp. ⇒ **the classifier counted
+Stockfish's own worst-move evaluations as invented.** A decomposition is only as good as its
+class boundary — **check the boundary against the era of the DATA, not the era of the CONFIG.**
+
+**Pre-committed yardstick run anyway. VERDICT: the kill rule does NOT fire.** Three arms
+(unmasked / mechanism-correct mask / the banked classifier) × 13 archived checkpoints, two
+lineages fitted SEPARATELY (`379f6` steps 639-76286, n=9; `5ce02` branched at step 57999, n=4).
+Trunk slopes per 10k steps ×1e-3: unmasked **+0.408** [−0.017, +0.833], masked **+0.357**
+[−0.011, +0.725] ⇒ **ratio +1.143, same sign** (paired row-bootstrap +1.109 [−0.149, +2.513]);
+pooled 13-point +1.022. **Shape-free and stronger**, since the trunk series is V-shaped and an
+OLS slope is a poor summary of it: r(unmasked, masked) = **0.9931** and **pairwise ordering
+agreement 78/78 = 100%** over all net pairs — every "net A has a wider gap than net B" statement
+is identical under both rulers. `5ce02`'s point ratio 0.187 is **NOT** a firing: both its slopes
+are zero within noise (P(slope>0) = 0.50/0.53, bootstrap ratio +0.991 [−0.294, +2.302]) — a
+ratio of two zero-slopes has no resolution.
+⚑ The rule was well specified and **WOULD** have fired on the banked classifier (ratio
+**2.484**). It cleared because the INPUT was wrong, not because the threshold was loose.
+
+**No forgetting-hinge verdict needs re-deriving.** The 2026-08-02 hinge proof (`40fcd2ddc`) is
+fabrication-free **BY CONSTRUCTION** — `build_sets.py:106` keeps only rows with
+`n_cov == n_legal`, and `n_legal` maxes at exactly 40 in all five sets. The one banked numeric
+`probe_gap` claim ("pre-736 slow drift +83% over 514→735") re-derives at **+123.9% unmasked /
++78.9% masked**; both rulers agree on direction and magnitude class. The source series is gone
+from disk, so +83% vs +124% is UNRECONCILED; per-iteration scatter on this column is ±20-25%
+(live `5ce02` 216/217/218 read 0.001626 / 0.001964 / 0.002447), so **a two-point ratio on this
+column is not a reliable read**.
+
+**⚑ WHAT IS ACTUALLY BROKEN, AND IT IS BIGGER: the "in-window" leg has NOT been in-window since
+2026-08-04.** `era_probe_inwindow_path` has pointed at `inwindow_20260804.npz` since 08-04
+(`pbt2_small.yaml:825`), it is the only in-window set on disk, and the paths are
+**CONSTRUCTION-ONLY**, so rebuilding is a manual pre-restart step — neither the 08-06 (`379f6`)
+nor the 08-11 (`5ce02`) restart did it. The window was pinned at 1.5M and evicting ~32k rows/iter
+on 08-04 (~47-iteration turnover), so INFERRED those rows left the window during 08-04/05,
+**before `379f6` even started**. ⇒ for the entire span `probe_gap` has been read, it is the
+difference between **two OLD-era sets cut 20 minutes apart**, not era-vs-in-window. Measured
+signature: the two legs correlate at **r = 0.987** across 13 nets and the gap is **3.6% of the
+level** (range 1.1-6.1%). The instrument entry above ("re-cut from the NEWEST shards, rebuilt at
+each restart") has been FALSE since the set was first cut.
+**OWED: rebuild the in-window leg at the next restart, and treat every `probe_gap` reading from
+2026-08-05 onward as era-vs-era until it is.** ⚑ A ruler change invalidates its records:
+rebuilding makes the current series incomparable with the post-rebuild one, and that is the
+correct trade.
+
+**Two caveats on the measurement itself.** (a) The trunk fit has **9** checkpoints, not the
+pre-committed ≥10; 13 exist across two lineages, but pooling would fit a lineage change as a
+trend, so they were fitted separately and the pooled fit reported only as a sensitivity. (b) On
+rows where the default collides with the 1000cp cap (24/30 rows) fabricated and real are
+genuinely indistinguishable; the mask leaves those alone, which biases toward **NOT** firing the
+rule — the conservative direction — and the 100% ordering agreement makes it moot.
+
+## 2026-08-15 — AMENDMENT to C16: the pre-committed 2.0 cp bar was MIS-SET. Re-derived BEFORE the deciding arm reports.
+
+⚑ **Written while the deciding arm is still running and its number is NOT visible** (verified:
+`audit_targets.py` PID 194500 alive at 1045s, no `ARM=b1_tb0 WALLCLOCK` completion line on
+disk). Recording this now rather than after the readout, because choosing a line after seeing
+the number is the failure the protocol exists to stop.
+
+**THE DEFECT.** C16's original bar was "material if the paired cp difference exceeds **2.0 cp**".
+The instrument's own halfwidth is **+/-1.3 cp at n=4000**. ⇒ **the bar sat INSIDE the resolution**:
+a reading of exactly 2.0 would have a CI comfortably spanning zero, so the rule could return
+"material" on a result the instrument cannot distinguish from null. Same family as the
+mis-specified sims-100 mechanism gate, and as the BT4 probe's shuffle gate whose kill line sat
+BELOW the chance level of the statistic it gated (`1946346d1`). **Three instances now — compute
+the instrument's resolution and chance level BEFORE choosing the threshold, every time.**
+
+**WHAT IS BEING DECIDED.** Whether `gumbel_target_batch` — which at the production value `0`
+resolves to `GSS_GPU_BATCH = 1024` and so batches an entire sequential-halving round, meaning the
+tree cannot update within a round — degrades TARGET quality at the production shape
+(boards-per-search-call ~= 1, `vloss_weight: 1`).
+
+**RE-DERIVED RULE, from instrument properties only.**
+
+    instrument halfwidth              +/-1.3 cp at n=4000   (from the banked controls)
+    positive-control yardstick        100 sims vs 32 sims = -4.194 cp [-5.475, -2.906]
+
+    MATERIAL       CI excludes 0 AND |delta| >= 2.6 cp   (2x halfwidth; ~62% of the whole
+                                                          32->100 sims effect)
+    BOUNDED NULL   CI wholly inside +/-2.6 cp            (a real bound, not "no evidence")
+    INCONCLUSIVE   CI spans both                          ⇒ more n, or the arm is unaffordable
+
+**Why 2.6 and not something smaller.** A target-construction defect worth less than ~62% of a
+2.56x sim change is not worth a config change that costs throughput — and the instrument cannot
+resolve it anyway. The bar is therefore set by BOTH resolution and materiality, and neither alone.
+
+**Both nulls already banked are on the record and neither is the deciding arm.** At
+boards-per-call **256**, `--target-batch 1024` vs `0` differs by **exactly 0.0000, 0/4000 rows**
+on every field, and seed 0 vs 12345 likewise. ⚑ That is a REGIME where the effect cannot exist —
+duplicate rate is `GSS_GPU_BATCH / boards-per-call`, so at 256 the knob has almost nothing to do.
+**A null there is a gate that cannot fail**, which is why the arm was re-queued at 1.
+
+**Pre-committed regardless of outcome:** if the verdict is BOUNDED NULL, C16 closes and
+`gumbel_target_batch` is not touched. If MATERIAL, it does NOT license a live change on its own —
+it licenses a pre-registered arm, because this is a cp-on-stored-rows ruler and
+[[losses_are_decoupled_from_strength]] applies: nothing here has been shown to convert into Elo.
+
+## 2026-08-15 — AMENDMENT 2 to C16: I MADE THE SAME ERROR WHILE FIXING IT. The deciding arms run at n=2000, not 4000.
+
+⚑ **Written while the deciding arm is still running** (verified: PID 525122 alive at ~390s;
+`c16q_dump_b1_tb1.jsonl` does not exist on disk). Same legitimacy condition as `b513c601a`.
+
+**THE ERROR.** `b513c601a` set MATERIAL at **2.6 cp**, justified as "2x the halfwidth". That
+halfwidth — **+/-1.3 cp** — was measured at **n=4000**, on the boards-per-call **256** control
+arms. The deciding arms run at boards-per-call **1** against `c16q_audit_half.jsonl`, which is
+**n=2000**. Row counts confirmed directly:
+
+    c16q_dump_tb0.jsonl      4000 rows      (B=256 controls)
+    c16q_dump_tb1024.jsonl   4000 rows
+    c16q_dump_tb1.jsonl      4000 rows
+    c16q_dump_b1_tb0.jsonl   2000 rows      <- DECIDING REGIME
+    c16q_audit_half.jsonl    2000 rows      <- the input set for the B=1 arms
+
+If per-row variance is unchanged, halfwidth scales as `1/sqrt(n)` ⇒ **+/-1.84 cp at n=2000**.
+So the "2x halfwidth" bar should have been **3.68 cp**. As written, **2.6 cp is 1.41x the
+actual halfwidth — arithmetically WORSE, in halfwidth units, than the 2.0 cp bar I replaced it
+with** (2.0 / 1.3 = 1.54x). I fixed the number and reproduced the defect, because I took the
+resolution from the arms I had already measured instead of from **the arm that decides**. Same
+family as [[diff_the_file_you_measured_against_production]] and
+[[same_name_different_population]]: right quantity, wrong population.
+
+**CORRECTED RULE — and it no longer depends on my extrapolation being right.**
+The `1/sqrt(n)` scaling assumes per-row variance is unchanged between boards-per-call 256 and 1.
+That is an ASSUMPTION about a different search regime and I am not going to rest a verdict on it.
+
+    The halfwidth MUST be read off the DECIDING ARM'S OWN paired bootstrap and REPORTED.
+    Call it h.
+
+    MATERIAL       CI excludes 0 AND |delta| >= 2*h
+    BOUNDED NULL   CI wholly inside +/-2*h
+    INCONCLUSIVE   CI spans both
+
+    PREDICTION (falsifiable, stated now): h ~= 1.84 cp if per-row variance is unchanged.
+    If the realized h differs from 1.84 by more than ~30%, the B=1 regime has a materially
+    different variance and that is itself a finding to report, not to smooth over.
+
+**Nothing else in `b513c601a` changes** — the materiality argument (a defect worth less than a
+sizeable fraction of the 32->100 sims effect is not worth a throughput-costing config change),
+the BOUNDED-NULL framing, and the rule that a MATERIAL reading licenses a pre-registered arm
+rather than a live change, all stand.
+
+⚑ **THE GENERAL LESSON, now costed twice in one day: derive the threshold from the resolution of
+THE ARM THAT DECIDES, at ITS n, in ITS regime — never from a control arm's, however carefully
+that control was measured.** A halfwidth is a property of a measurement, not of an instrument.
+
+## 2026-08-15 — PHASE 2: THE NET **LEARNS** THE TARGET'S TAIL. A target-repair arm IS worth running.
+
+Follow-up to the same day's BT4 phase-1 correction (`1946346d1`). Question: **a bad target row
+only matters if the net learns it** — if the net smooths the tail away, target repair buys
+nothing, and this project has spent runs on levers that turned out inert. Instrument
+`scratchpad/target_vs_bt4/tb4_{net,select_old,bt4_netmove,phase2,tailsign}.py`; predictions
+pre-registered in `PREDICTIONS.md` (phase-2 block) **BEFORE any forward pass of our net**.
+**12 of 14 hit**; both misses explained there.
+
+**VERDICT: the net tracks the target MORE tightly on the BT4-corroborated tail than on ordinary
+rows, and inherits 91.5% of its deficit. By the pre-committed rule a target-repair arm IS worth
+running.**
+
+    decider (EXCESS over permuted target)   ratio_argmax          ratio_mass
+    BT4 tail / non-tail                     1.25 [1.081, 1.437]   1.39 [1.242, 1.554]  => LEARNS
+    argmax-not-listed / listed              0.566 [.456, .675]    0.505 [.424, .588]   => PARTIAL
+
+Rule: LEARNS if both >= 0.75; SMOOTHS if either <= 0.40; else PARTIAL. **Both tail CIs sit
+entirely ABOVE 1.0** — the net follows the target BETTER on the tail. The two deciders disagree,
+which was pre-registered as itself the result; **the SIGNED tail resolves it** (phase 1 showed
+30% of the tail is the target being BETTER):
+
+    BAD half   dQ <= -0.10, n=153   target dQ vs SF  -0.3041
+                                    NET    dQ vs SF  -0.2782   = 91.5% INHERITED
+                                    Q_net - Q_target +0.026 [-0.012, +0.063]  <- CI contains 0
+    GOOD half  dQ >= +0.10, n=66    target +0.2343 -> net +0.1542 (follows UP too)
+    non-tail   n=788                target -0.0015 -> net -0.0148
+
+⇒ **no material self-correction. The net is a faithful target-FOLLOWER in both directions, not a
+smoother.** `P(net == target)` = **0.6611** against `P(net == sf_best)` = **0.3685** — it follows
+its target roughly twice as often as it follows SF.
+
+**⚑⚑ THE JENSEN TRAP RECURRED AND WAS PRICED BEFORE ANY THRESHOLD.** The BT4 tail is partly
+DEFINED by high branching, so its chance level is `E[1/n_legal]` = **0.0410** against non-tail
+**0.0716** — **1.75x, 3.1pp of pure arithmetic** that a raw agreement difference would have
+credited to "smoothing". Every cross-stratum number is therefore an EXCESS over a MEASURED
+permuted-target control (0.0900, itself well above chance). ⚑ The direction survives WITHOUT the
+correction (raw 0.644 tail vs 0.584 non-tail), so the finding does not rest on it. **Third
+instance today — compute the chance level PER STRATUM before choosing any line.**
+
+**⚑ EXPOSURE IS IRRELEVANT TO THIS STATISTIC — and 12.8% of phase 1's rows were NEVER TRAINED
+ON.** `checkpoint_000100/trainer.pt` was written **03:39:57.53**; two of the 16 sampled shards
+were written **03:39:59 and 03:40:00**. Those 256 rows became a free, perfectly matched
+NEVER-SEEN control:
+
+    never-seen (0 exposures)      P(net==target) 0.6211 [.560, .678]
+    new-trained (1-2 exposures)                  0.6611 [.639, .683]
+    old-saturated (~8.8h)                        0.6690 [.648, .689]
+
+Spread **0.048** across the whole range; both pre-registered |diff| < 0.05 predictions HIT
+(0.040, 0.0079). ⇒ **tracking is a GENERALISED learned policy, not row memorisation** — which is
+exactly what makes a target change actionable: change the target function and the learned
+function moves. **ALWAYS diff the checkpoint mtime against the shard mtimes before claiming a net
+trained on a row.**
+
+**⚑ INDEX-SPACE HAZARD, caught before it bit.** `LocalModelEvaluator.evaluate_encoded` returns
+**4672-wide** logits off an `lc0_1858` checkpoint (it widens internally), while every stored shard
+array is compact **1858**. Gathering a 4672 vector with compact ids returns **a plausible logit
+for an unrelated move** — silent, no error, no shape mismatch. Caught by checking the shape before
+writing the gather; each row now carries both index vectors and the compact one is asserted
+against the row's stored mask.
+
+**NET PURITY — VERIFIED, NOT ASSERTED, and deliberately not a spot check.** Both yamls flattened
+through `flatten_run_config_defaults` and **all 394 keys diffed**: exactly **3** differ, all
+non-behavioural (`work_dir`, `salvage_seed_pool_dir`, and `diff_focus_norm_shared` absent vs
+`False`, which IS its default at `tune/trial_config.py:366` with every consumer reading
+`.get(..., False)`). "bt4heads_armB" is a work_dir and a seed pool, not a config fork. Checkpoint
+`arch` matches the shard contract on every key (`lc0_root_legacy_meta` / `v2_threats` /
+`lc0_1858` / `history_rep_fix True` / 512x16x16); `categorical_head_coupled=True` is a
+4,128-param branch off the VALUE hidden at `w_categorical: 0.0` and cannot reach the policy head.
+Loaded with `require_complete=True`. ⚑ This is the direct remedy for the four-key spot check that
+VOIDed the era arena earlier the same day (`0e6210b54`).
+
+**Alignment control carried forward and re-run**: decoded legal set == stored `legal_mask` on
+**2000/2000** rows for both samples; the script raises rather than proceeds on mismatch.
+
+**⇒ NEXT ARM — AND THE NUMBER IT MUST MOVE.** Not the 21.5 cp mean: BT4 says **68% of
+disagreements are already fine**, so repairing the mean moves rows that are not broken. The
+deciding quantity is the **bad-tail inheritance: target −0.304 Q vs SF, net −0.278.** A repair
+that does not move THAT has not touched the defect. ⚑ The MultiPV-6 teacher remains the trap from
+the phase-1 entry — it pushes mass ONTO the 6 covered moves, which is the wrong direction, and the
+sharp rows are the ones already fine. A full-width, non-fabricated teacher is still the only lever
+identified that reaches the tail. **No arm launched; this needs an explicit go.**
+
+## 2026-08-15 — ⚑⚑ C16 INTERPRETATION FACT: production's `target_batch` 1024 IS NEVER REALIZED. `enc_capacity` clips it to ~512.
+
+⚑ **Written BEFORE the deciding arm reports** (`b1_tb1` alive at ~2280s, `c16q_dump_b1_tb1.jsonl`
+absent). This is an interpretation fact, so it must be fixed in advance — deciding after the
+readout what the arm measured is the same failure as choosing a threshold after it.
+
+**VERIFIED IN SOURCE, not argued.** `gss_step` flushes when ANY of three conditions fire
+(`mcts/_mcts_tree.c:1972-1973`):
+
+    if (s->n_leaves >= target_batch ||
+        s->n_leaves + n_queries * 2 > g->enc_capacity || ...)
+
+`target_batch = (g->target_batch > 0) ? g->target_batch : GSS_GPU_BATCH` (`:1922`), and
+`GSS_GPU_BATCH` is **1024** (`:1313`). Production sets no `gumbel_target_batch`, so it takes the
+1024 fallback. **But `g->enc_capacity = PyArray_DIM(enc_arr, 0)` (`:4146`) — the buffer's own row
+count** — and that buffer is sized in Python:
+
+    _max_leaves_per_rep = max(256, n_boards * max(2, int(cfg.topk)))    gumbel_c.py:881
+    _enc_buf rows       = _max_leaves_per_rep * 2                        gumbel_c.py:1222
+
+At **production shape** (n_boards ~= 1, topk 16): `max(256, 16)` = **256**, buffer = **512**.
+The in-source comment at `gumbel_c.py:878` says so outright — "this gives a 512-slot buffer".
+
+⇒ **the second condition binds long before the first. Production's effective accumulation batch
+is ~512, and the nominal 1024 never happens.** Any `target_batch` above ~512 is **INERT at
+production shape**; 8 and 32 are not. Classic signature defect: a value accepted and then
+silently overridden by a different limit — nothing errors, nothing warns, and the config reads
+1024.
+
+**CONSEQUENCE FOR THE ARM, stated now.** The deciding contrast `b1_tb0` vs `b1_tb1` is
+effectively **512 vs 1**, NOT 1024 vs 1. That is still the RIGHT contrast — 512 is what production
+actually does — but the entry must say so, or a future reader will believe the arm tested 1024.
+
+**AND IT EXPLAINS THE B=256 CONTROL.** At the audit's historical default n_boards=256,
+`_max_leaves_per_rep = max(256, 256*16)` = **4096**, buffer **8192**, so `target_batch` binds and
+is NOT clipped — which is why `tb1024` vs `tb0` read **exactly 0.0000 on 0/4000 rows**: both
+resolve to 1024, identical BY CONSTRUCTION. That control is a tautology check, not evidence about
+the knob, and the entry should not be read as though it were.
+
+**ALSO: B=256 IS NOT EVEN THE SAME CODE PATH.** `_use_pipeline = _has_async and n_boards >= 64`
+(`gumbel_c.py:544`) and the audit's `LocalModelEvaluator` is async-capable, so B=256 takes the
+2-group pipelined path with two ephemeral 128-board sub-trees, while production at n_boards~=1
+takes the single-loop path. Different buffers, different flush arithmetic. ⇒ **every historical
+`audit_targets` number was made in a regime that is not production's**, which compounds the
+`--vloss-weight` defect already recorded at `25c75d310`.
+
+**B=256 arms, for the record — all NULL and the ordering runs the WRONG way** (paired `exp`,
+n=4000; positive control resolves a 3.1x sim change at +/-1.3 cp):
+
+    tb1024 (control)      +0.0000 [+0.0000, +0.0000]   null BY CONSTRUCTION   0/4000
+    tb0 seed 12345        +0.0000 [+0.0000, +0.0000]   null BY CONSTRUCTION   0/4000
+    tb32                  -0.1181 [-0.9525, +0.7058]   NULL                3830/4000
+    tb8                   +0.4748 [-0.5604, +1.5730]   NULL, point est WORSE 3836/4000
+    tb1                   +0.7067 [-0.4056, +1.9304]   NULL, point est WORSE 3838/4000   4.25x cost
+
+⇒ in the regime where the knob has least to do, lowering it is a null that trends the wrong way at
+up to **4.25x** the wall-clock. The production-shape arm is what decides.
+
+**The 6 banked post-deploy reports** that cannot be audited for which search they scored:
+`1051cc734`, `26cbfcef9`, `86d3b7358`, `a44a75199`, `df704b45b`, `ed9de8ee9` — **0 of 6 mention
+vloss at all**. PR #434 is the hygiene fix for the recording half.
+
+## 2026-08-15 — C16 VERDICT: **BOUNDED NULL**. `gumbel_target_batch` is not worth changing. CLOSED.
+
+Deciding arm at the PRODUCTION shape (boards-per-search-call **1**, `vloss_weight: 1`,
+sims 100 / topk 16), n=2000, paired, 20000 bootstrap. Judged by the twice-amended rule
+(`b513c601a`, `ef01a0219`) — **both amendments written while the arm was still running and its
+number was not on disk.**
+
+    deciding field `exp` (cand row = train), b1_tb1 - b1_tb0:
+        paired delta  -1.1867 cp   95% CI [-3.3008, +1.0976]   1921/2000 rows differ
+
+    realized halfwidth h            2.1992 cp
+    PREDICTED h                     1.84 cp  ->  +19.5%, inside the +/-30% band  ==> HIT
+    MATERIAL bound (2h)             +/-4.3984 cp
+    CI wholly inside +/-2h?         YES
+    CI excludes 0?                  NO
+
+⇒ **BOUNDED NULL by the pre-committed rule.** This is a real bound, not "no evidence": at
+production shape the effect of `target_batch` on target quality is **smaller than 4.40 cp**.
+The pre-registered variance prediction HIT, so the B=1 regime does not have a materially
+different per-row variance — no separate finding owed there.
+
+**Cost: 2.23x wall-clock** (b1_tb0 1505.4 s vs b1_tb1 3354.8 s). ⇒ a bounded-null quality
+change at 2.23x the cost. **`gumbel_target_batch` stays at its production value. C16 is CLOSED.**
+
+⚑ Recall the interpretation fact from `a674ac329`: the contrast is effectively **512 vs 1**, not
+1024 vs 1, because `enc_capacity` (512 at production shape) binds before `GSS_GPU_BATCH` (1024).
+The null is about 512-vs-1, which is the comparison that matters since 512 is what production
+actually does.
+
+**⚑ NOT THE VERDICT — a hypothesis-generating observation, labelled as such.** The pre-committed
+deciding field was `exp`, and switching fields after a readout is precisely the failure the
+protocol bans. But three TAIL metrics moved with CIs excluding zero:
+
+    blunder100    -0.0091  [-0.0144, -0.0038]
+    blunder50     -0.0103  [-0.0169, -0.0037]
+    out_of_top10  -0.0112  [-0.0197, -0.0028]
+
+and the target came out slightly FLATTER (entropy +0.0104 [-0.0023, +0.0227], top-1 mass
+-0.0039 [-0.0102, +0.0024]), which is the direction the 2026-08-06 lc0 comparison says we want
+(our targets are ~2.4x sharper than lc0's).
+
+⚑⚑ **This is NOT a verdict and must not be cited as one.** It is three of nine reported fields,
+none pre-committed, with no multiplicity correction. It is noted ONLY because it coincides with
+an INDEPENDENTLY derived finding from the same day — the BT4 phase-1/phase-2 result that the
+target's defect is a **TAIL, not a mean**, and that repairs must be priced against the tail
+because 68% of disagreements are already fine (`1946346d1`, `2c419fff2`). Two instruments
+pointing at the tail from different directions is a reason to PRE-REGISTER a tail-metric arm,
+not a reason to re-read this one. **If that arm is ever run, `exp` remains a reported field and
+the tail metric must be named as the decider IN ADVANCE, with its own resolution computed
+first.**
+
+**Protocol note worth keeping.** C16's original bar was 2.0 cp against a halfwidth that turned
+out to be 2.20 cp at the deciding arm's own n — the bar was inside the noise, twice over (first
+against the wrong n, then against the control arms' n). The rule that finally decided it was
+stated in halfwidths and required the halfwidth to be READ OFF THE DECIDING ARM. That is the
+generalisable form: **a halfwidth is a property of a measurement, not of an instrument.**

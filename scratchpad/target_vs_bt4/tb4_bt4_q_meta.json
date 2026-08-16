@@ -1,0 +1,7 @@
+{
+  "net": "data/lc0/onnx/BT4-it332-vanilla-q.onnx",
+  "tag": "q",
+  "n_rows": 2000,
+  "n_unique_children": 6556,
+  "n_terminal_children": 0
+}
