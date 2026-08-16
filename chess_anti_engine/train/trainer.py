@@ -103,6 +103,47 @@ from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 
 
+class UnsupportedWarmStartError(Exception):
+    """This optimizer layout cannot be warm-started across a parameter change.
+
+    ⚑ NOT a subclass of ``ValueError``/``RuntimeError``, deliberately: the
+    generic handler in ``Trainer.load`` catches those and reports
+    *"Optimizer state incompatible with new model layout"*, which is a
+    MISATTRIBUTION here. The layout is fine; the warm-start machinery does not
+    cover it. A dedicated type gets a dedicated message naming the exact config
+    combination, so an operator is told the combination is unsupported instead
+    of hunting a layout bug that does not exist.
+
+    Two combinations raise it, both found by independent review of PR #439 and
+    both **unreachable from production**, which runs ``optimizer: aurora`` +
+    ``matrix_optimizer_scope: mlp_out`` with no ``weight_decay_mode`` key:
+
+    * ``weight_decay_mode: soda`` reaching the NAME-based re-key. The re-key
+      reconstructs ``{state, param_groups}`` and nothing else, so
+      ``SODAWeightDecayWrapper``'s top-level ``soda_anchors`` is dropped; its
+      ``load_state_dict`` then finds an anchor missing for every marked
+      parameter and raises, and the whole optimizer cold-starts.
+    * ``optimizer: soap`` with a non-default matrix scope, which builds a
+      ``_ChainedOptimizer`` whose state lives in its CHILDREN while the outer
+      ``state`` stays empty. ``reset_mismatched_optimizer_state`` sweeps the
+      outer view, finds nothing, and leaves donor-shaped moments under resized
+      tensors -- silent until the first child ``opt.step()``.
+
+    ⚑ PR #439 does not create either defect; the ``_ChainedOptimizer`` nesting
+    is documented at its construction site. What #439 changes is WHO CAN REACH
+    them: before it, ``aux_policy_head_dim`` did not exist on ``main``, so no
+    ``main``-based warm start could resize the auxiliary heads. Widening
+    reachability without widening the guard is this repo's signature defect, so
+    the combinations are refused here rather than filed. Refusing means the
+    donor state is discarded and the run cold-starts -- loud and bounded --
+    instead of training on moments that belong to other tensors.
+
+    The real fix (carry wrapper keys through the re-key; recurse the sweep into
+    child optimizers) is optimizer-state surgery on warm-start code and belongs
+    in its own reviewed PR, not in a forward-port bridge.
+    """
+
+
 class UntrustedOptimizerStateError(ValueError):
     """The donor optimizer state could not be re-keyed by NAME, and its INDEX
     order must not be trusted either.
@@ -611,6 +652,25 @@ class _ChainedOptimizer(torch.optim.Optimizer):
             for opt in self.optimizers
             for group in opt.param_groups
         ]
+
+
+def _unwrap_optimizer(opt: torch.optim.Optimizer) -> torch.optim.Optimizer:
+    """The innermost optimizer behind any ``.base`` wrapper chain.
+
+    ``SODAWeightDecayWrapper`` wraps whatever the optimizer branch built, so an
+    ``isinstance`` test on ``self.opt`` alone misses a ``_ChainedOptimizer``
+    sitting one layer down -- and SOAP + SODA is precisely the combination that
+    produces both. Bounded by identity so a wrapper that returns itself as its
+    own ``base`` cannot spin.
+    """
+    seen: set[int] = set()
+    while id(opt) not in seen:
+        seen.add(id(opt))
+        base = getattr(opt, "base", None)
+        if not isinstance(base, torch.optim.Optimizer):
+            break
+        opt = base
+    return opt
 
 
 @dataclass(frozen=True)
@@ -4323,6 +4383,30 @@ class Trainer:
                             "off and the mapping cannot be trusted"
                         )
 
+  # ⚑ THE RECONSTRUCTION BELOW EMITS EXACTLY {state, param_groups}. Any other
+  # top-level key the donor carries is therefore DROPPED, silently, and the only
+  # signal is whatever the consumer does when it finds it missing. Today that is
+  # `SODAWeightDecayWrapper`'s `soda_anchors`: losing it makes its
+  # `load_state_dict` raise for every marked parameter, and the generic handler
+  # then cold-starts the WHOLE optimizer and skips the donor scheduler/ZClip
+  # while blaming the model layout.
+  #
+  # Checked STRUCTURALLY rather than by testing `weight_decay_mode == "soda"`:
+  # the hazard is "this re-key cannot carry that key", which is true of the next
+  # wrapper too, and a mode-name test would not see it. Reached only after the
+  # identical-names early return above, so an ORDINARY resume -- SODA included --
+  # never comes here and keeps carrying its anchors through the positional load.
+        unsupported = sorted(set(ckpt_opt) - {"state", "param_groups"})
+        if unsupported:
+            raise UnsupportedWarmStartError(
+                f"the donor optimizer state carries top-level key(s) {unsupported} "
+                "that the name-based re-key cannot reconstruct, and this warm "
+                "start changes parameter names so the re-key is required. Most "
+                "likely `weight_decay_mode: soda` (SODAWeightDecayWrapper adds "
+                "`soda_anchors`). That combination is NOT supported by the "
+                "warm-start path -- see UnsupportedWarmStartError. Production "
+                "(`aurora` + `mlp_out`, no `weight_decay_mode`) never reaches this"
+            )
         new_index_of_name = {name: index for index, name in enumerate(live_names)}
         state_remap = {
             slot_id: new_index_of_name[name]
@@ -4580,6 +4664,25 @@ class Trainer:
   # changing the count -- e.g. aux_policy_head_dim re-widening
   # policy_soft/policy_sf q/k -- so load_state_dict "succeeds" and the first
   # opt.step() crashes OUTSIDE this try. Drop what no longer fits, loudly.
+  # ⚑ ...but the sweep reads the FLAT `{state, param_groups}` view, and
+  # `_ChainedOptimizer` does not have one: its state lives in its children while
+  # the outer `state` stays empty (documented at its construction site, which is
+  # also why `_decay_group_layout` is None there). The sweep would report zero
+  # drops and leave donor-shaped moments under the resized q/k -- exactly the
+  # `aux_policy_head_dim` case above -- until the first CHILD step crashes.
+  # Refuse instead of sweeping a view that cannot see the state.
+            if isinstance(_unwrap_optimizer(self.opt), _ChainedOptimizer):
+                raise UnsupportedWarmStartError(
+                    "this run's optimizer is a _ChainedOptimizer (`optimizer: "
+                    "soap` with a non-default `matrix_optimizer_scope`), whose "
+                    "state lives in its child optimizers; "
+                    "reset_mismatched_optimizer_state sweeps the outer flat view "
+                    "and would report NOTHING while leaving donor-shaped moments "
+                    "under tensors this warm start resized. That combination is "
+                    "NOT supported by the warm-start path -- see "
+                    "UnsupportedWarmStartError. Production (`aurora` + "
+                    "`mlp_out`) never reaches this"
+                )
             reset = reset_mismatched_optimizer_state(
                 self.opt,
                 param_names={id(p): n for n, p in self.model.named_parameters()},
@@ -4590,6 +4693,25 @@ class Trainer:
                     "shape changed in this warm start; they restart at zero "
                     "moments / step 0: %s", len(reset), "; ".join(reset),
                 )
+        except UnsupportedWarmStartError as exc:
+  # ⚑ Its own handler, above the generic one, so the message names the CONFIG
+  # COMBINATION instead of the generic "incompatible with new model layout",
+  # which is a misattribution: the layout is fine, the warm-start path does not
+  # cover this optimizer. End state is the same cold start -- the point is that
+  # the operator is told which knob to change, and that removing the guard is a
+  # visible change rather than a silent return to wrong moments.
+            optimizer_state_loaded = False
+            logging.getLogger(__name__).warning(
+                "REFUSING to warm-start this optimizer: %s. The optimizer "
+                "cold-starts at zero moments and the donor scheduler/ZClip state "
+                "is NOT restored. This is deliberate: the alternative is an "
+                "optimizer holding moments that belong to other tensors, which "
+                "no downstream instrument can detect.",
+                exc,
+            )
+            self.opt.load_state_dict(fresh_opt_state)
+            self._scheduler.load_state_dict(fresh_scheduler_state)
+            self.reset_optimizer_reference_weights()
         except UntrustedOptimizerStateError as exc:
   # ⚑ REFUSE the positional fallback rather than take it. Reaching the generic
   # handler below would be enough to cold-start, but this branch exists so the

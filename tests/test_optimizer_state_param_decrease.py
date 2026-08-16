@@ -37,7 +37,13 @@ import pytest
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.train.trainer import Trainer, UntrustedOptimizerStateError
+from chess_anti_engine.train.trainer import (
+    Trainer,
+    UnsupportedWarmStartError,
+    UntrustedOptimizerStateError,
+    _ChainedOptimizer,
+    _unwrap_optimizer,
+)
 
 # (optimizer, matrix_optimizer_scope). The second is PRODUCTION's layout.
 _LAYOUTS = [("adamw", "default"), ("aurora", "mlp_out")]
@@ -1010,3 +1016,166 @@ def test_the_mass_turnover_WARNING_actually_reaches_a_log_record(
     # donor-side, fresh is live-side), so `changed` may exceed `n_live`. The
     # message must therefore never render it as a fraction of the live count.
     assert f"of {n_live} parameters" not in message
+
+
+def _trainer_kw(cfg: ModelConfig, log_dir: Path, **kwargs: object) -> Trainer:
+    """``_trainer`` with arbitrary optimizer kwargs, for the unsupported combos."""
+    return Trainer(
+        build_model(cfg), device="cpu", lr=1e-3, warmup_steps=10,
+        warmup_lr_start=1e-5, use_amp=False, log_dir=log_dir,
+        tb_log_interval=1000, prefetch_batches=False, model_config=cfg,
+        w_sf_move=0.0, **kwargs,  # pyright: ignore[reportArgumentType]
+    )
+
+
+def test_soda_plus_a_name_changing_warm_start_REFUSES(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `weight_decay_mode: soda` cannot survive the NAME-based re-key.
+
+    Codex review of PR #439 (P2). The re-key reconstructs `{state,
+    param_groups}` and nothing else, so `SODAWeightDecayWrapper`'s top-level
+    `soda_anchors` is dropped; its `load_state_dict` then finds an anchor
+    missing for every marked parameter and raises, and the generic handler
+    cold-starts the WHOLE optimizer while blaming the model layout.
+
+    #439 does not create this. It widens WHO REACHES it: before #439
+    `aux_policy_head_dim` did not exist on `main`, so no `main`-based warm start
+    could resize the auxiliary heads. The full fix (carry wrapper keys through
+    the re-key) is optimizer-state surgery and belongs in its own PR; refusing
+    loudly is what this PR owes.
+    """
+    donor = _trainer_kw(
+        _cfg(), tmp_path / "t", optimizer="aurora",
+        matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    assert "soda_anchors" in payload["opt"], (
+        "fixture premise: the SODA wrapper must actually add its top-level key"
+    )
+
+    # CONTROL — an ORDINARY resume (identical names) must NOT fire. It never
+    # reaches the re-key, so the positional load carries the anchors intact.
+    twin = _trainer_kw(
+        _cfg(), tmp_path / "twin", optimizer="aurora",
+        matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    with caplog.at_level(logging.WARNING):
+        twin.load(ckpt)
+    assert not [r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()], (
+        "control: an ordinary SODA resume must not be refused"
+    )
+    caplog.clear()
+
+    # ARM — a warm start that CHANGES names, so the re-key is required.
+    arm = _trainer_kw(
+        _cfg(coupled=True, policy_embedding_mode="linear"), tmp_path / "arm",
+        optimizer="aurora", matrix_optimizer_scope="mlp_out",
+        weight_decay_mode="soda",
+    )
+    # The TYPE, read at the source. `UnsupportedWarmStartError` is deliberately
+    # not a ValueError/RuntimeError, so the generic handler cannot swallow it and
+    # misreport it as "incompatible with new model layout".
+    donor_names = arm._donor_optimizer_param_names(payload)
+    assert donor_names is not None
+    with pytest.raises(UnsupportedWarmStartError):
+        arm._remap_optimizer_state_by_param_name(
+            payload["opt"], donor_names, payload["model"],
+        )
+    assert not isinstance(UnsupportedWarmStartError("x"), ValueError | RuntimeError), (
+        "must not inherit from the types the generic handler catches, or the "
+        "operator gets a misattributed message instead of the combination name"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+    refusals = [
+        r.getMessage() for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ]
+    assert refusals, (
+        "SODA + a name-changing warm start was absorbed silently; the operator "
+        f"has no signal. records={[r.getMessage() for r in caplog.records]}"
+    )
+    assert "soda_anchors" in refusals[0], "the message must name the offending key"
+
+
+def test_a_chained_optimizer_REFUSES_rather_than_sweeping_a_view_it_cannot_see(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `_ChainedOptimizer`'s state lives in its CHILDREN.
+
+    Codex review of PR #439 (P2). `reset_mismatched_optimizer_state` reads the
+    flat `{state, param_groups}` view; `_ChainedOptimizer.state_dict` returns
+    `{"optimizers": [...]}` and its outer `state` stays empty, so the sweep
+    reports NOTHING and leaves donor-shaped moments under tensors this warm
+    start resized — silent until the first CHILD `opt.step()`. The nesting is
+    pre-existing and documented at the construction site; what #439 adds is a
+    width migration (`aux_policy_head_dim`) that makes it reachable from `main`.
+    """
+    donor = _trainer_kw(
+        _cfg(), tmp_path / "t", optimizer="soap", matrix_optimizer_scope="mlp_out",
+    )
+    assert isinstance(_unwrap_optimizer(donor.opt), _ChainedOptimizer), (
+        "fixture premise: soap + a non-default scope must build a _ChainedOptimizer"
+    )
+    assert "state" not in donor.opt.state_dict(), (
+        "fixture premise: the chained state_dict must NOT expose the flat view -- "
+        "if it grows one, this guard can be replaced by a real sweep"
+    )
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+
+    arm = _trainer_kw(
+        dataclasses.replace(_cfg(), aux_policy_head_dim=8), tmp_path / "arm",
+        optimizer="soap", matrix_optimizer_scope="mlp_out",
+    )
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+    refusals = [
+        r.getMessage() for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ]
+    assert refusals, (
+        "a _ChainedOptimizer warm start swept a view that cannot see its state "
+        f"and said nothing. records={[r.getMessage() for r in caplog.records]}"
+    )
+    assert "_ChainedOptimizer" in refusals[0], "the message must name the combination"
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_NEITHER_unsupported_combination_guard_fires_on_a_supported_layout(
+    optimizer: str, scope: str, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑⚑ THE CHECK THAT MATTERS MORE THAN THE GUARDS THEMSELVES.
+
+    A refusal on a healthy resume is an outage. Production is `aurora` +
+    `matrix_optimizer_scope: mlp_out` with `weight_decay_mode` ABSENT from
+    `configs/pbt2_small.yaml`, so neither guard may fire — not on an ordinary
+    resume, and not on the width migration this PR exists to enable.
+
+    Asserted on VALUES, not just on the absence of a log line: a guard that
+    fired would cold-start the optimizer, so surviving donor moments prove it
+    did not.
+    """
+    donor = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    banked = _bank_fingerprints(donor)
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+
+    for label, cfg in (
+        ("ordinary resume", _cfg()),
+        ("aux_policy_head_dim width migration", dataclasses.replace(_cfg(), aux_policy_head_dim=8)),
+    ):
+        caplog.clear()
+        twin = _trainer(cfg, tmp_path / f"twin-{label.split()[0]}", optimizer, scope)
+        with caplog.at_level(logging.WARNING):
+            twin.load(ckpt)
+        assert not [
+            r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+        ], f"{label}: a guard fired on a SUPPORTED layout ({optimizer}/{scope})"
+        survived = set(_read_state(twin).values()) & set(banked.values())
+        assert survived, (
+            f"{label}: no donor moment survived on {optimizer}/{scope} -- the "
+            "optimizer cold-started, which is what a fired guard would do"
+        )
