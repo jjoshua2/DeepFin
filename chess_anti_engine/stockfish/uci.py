@@ -3,17 +3,19 @@ from __future__ import annotations
 import ctypes
 import os
 import pty
+import re
 import select
 import signal
 import subprocess
 import termios
 import threading
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import partial
 
+import chess
 import numpy as np
 
 
@@ -302,6 +304,72 @@ class _SearchInfoAccumulator:
         )
 
 
+#: One UCI long-algebraic move: from-square, to-square, optional promotion.
+#: Deliberately does NOT admit the null move ``0000``. "Search only the null
+#: move" is not a meaningful restriction, and ``0000`` is exactly what
+#: ``StockfishResult.bestmove_uci`` falls back to when a search produced no
+#: move — so a caller feeding one search's bestmove into the next search's
+#: ``searchmoves`` would otherwise turn a missing move into a silent
+#: full-width search.
+_UCI_MOVE_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbn]?$")
+
+
+def _validated_searchmoves(fen: str, searchmoves: Sequence[str]) -> list[str]:
+    """Return ``searchmoves`` as UCI tokens, or raise ``ValueError``.
+
+    Two checks, and they are deliberately not the same kind of check:
+
+    * **Syntax — always runs.** A token that is not well-formed UCI long
+      algebraic is rejected. This is protocol safety rather than chess: the
+      tokens are concatenated into the ``go`` line, so anything else could
+      inject a UCI keyword (or, without the anchored regex, a newline) into a
+      command the engine then misreads.
+    * **Legality against ``fen`` — runs when the FEN is readable.** This one is
+      a judgement call, so: we DO check it. Stockfish silently ignores a root
+      move that is not legal in the position, and a ``searchmoves`` list whose
+      entries are ALL ignored widens the search back to every root move with no
+      error anywhere — the caller gets a full-width search and believes it got a
+      restricted one. That is precisely the "accepted and then silently ignored"
+      failure this driver must not have, and it is the same reason we refuse to
+      drop malformed tokens. The cost is one ``chess.Board`` plus a legality
+      test per move, paid only on the restricted path; a search is orders of
+      magnitude more expensive, and the default path pays nothing because this
+      function is never called for it.
+
+    ⚑ The legality half is SKIPPED when python-chess cannot parse ``fen``.
+    ``search`` passes the FEN to the engine verbatim and the ENGINE is its
+    authority: the two parsers genuinely disagree — python-chess raises on a
+    non-numeric move clock where Stockfish's stream extraction leaves it at 0
+    and searches the position anyway — and making those FENs newly unsearchable
+    the moment a caller restricts the root would invent a failure mode that has
+    nothing to do with move legality. Syntax still holds in that case, so the
+    ``go`` line is still well formed.
+
+    ⚑ Standard chess only. Under ``UCI_Chess960`` a castling move is encoded
+    king-takes-rook (``e1h1``) and a standard-mode board calls it illegal. The
+    driver never sets that option, so no legitimate caller can hit it today; a
+    future one would need ``chess.Board(fen, chess960=True)`` here.
+    """
+    tokens = [str(move) for move in searchmoves]
+    for token in tokens:
+        if not _UCI_MOVE_RE.match(token):
+            raise ValueError(
+                f"searchmoves contains a malformed UCI move: {token!r} "
+                "(expected long algebraic, e.g. 'e2e4' or 'e7e8q')",
+            )
+    try:
+        board = chess.Board(fen)
+    except ValueError:
+        return tokens
+    for token in tokens:
+        if not board.is_legal(chess.Move.from_uci(token)):
+            raise ValueError(
+                f"searchmoves contains a move that is not legal in this "
+                f"position: {token!r} (fen {fen!r})",
+            )
+    return tokens
+
+
 class StockfishUCI:
     # Class-level default so the guard holds for an instance built without
     # __init__ (tests drive the parser through object.__new__).
@@ -562,6 +630,7 @@ class StockfishUCI:
         self, fen: str, *, nodes: int | None = None,
         syzygy_path: str | None = None,
         fresh: bool = False,
+        searchmoves: Sequence[str] | None = None,
     ) -> StockfishResult:
         """Node-limited search from FEN.
 
@@ -574,7 +643,32 @@ class StockfishUCI:
         a warm TT would let the shallow pass steer the deep one and overstate
         their agreement — the same hygiene scripts/blindspot_deepsf_gate.py
         applies between admission verdicts.
+
+        ``searchmoves`` restricts the ROOT to those moves (UCI long algebraic,
+        e.g. ``["e2e4", "d2d4"]``), so the engine spends its whole node budget
+        comparing them instead of the full move list. Every token is validated —
+        see ``_validated_searchmoves``; a bad one raises ``ValueError`` and is
+        never dropped. With MultiPV > 1 the engine then returns at most
+        ``len(searchmoves)`` PV lines, which the parser handles: it keys PVs by
+        the rank the engine reports and never assumes MultiPV of them arrive.
+
+        ⚑ ``None`` and ``[]`` both mean "no restriction" and emit exactly the
+        ``go`` line this method emitted before ``searchmoves`` existed. ``[]``
+        is the one soft edge here: a caller that computes a filtered move list
+        which comes out empty gets a FULL-WIDTH search rather than an error.
+        That is the documented contract (the production selfplay label path
+        calls this method with no ``searchmoves`` on every label, and must stay
+        byte-identical), so a caller that can produce an empty list is
+        responsible for deciding what an empty list means before calling.
         """
+        # Validate BEFORE the protocol section. `_protocol_section` poisons the
+        # engine on ANY raise, including one that happens before a byte is
+        # written, and `StockfishPool` then throws the process away. A caller's
+        # typo must not cost a Stockfish restart, and nothing has been sent yet
+        # at this point, so there is nothing to desync.
+        move_tokens = (
+            _validated_searchmoves(fen, searchmoves) if searchmoves else []
+        )
         with self._lock, self._protocol_section():
             if fresh:
                 self._new_game_locked()
@@ -582,7 +676,17 @@ class StockfishUCI:
                 self._set_syzygy_path_locked(str(syzygy_path))
             self._send(f"position fen {fen}")
             n = int(self.nodes) if nodes is None else int(nodes)
-            self._send(f"go nodes {n}")
+            go_cmd = f"go nodes {n}"
+            if move_tokens:
+                # ⚑⚑ `searchmoves` MUST BE THE LAST PARAMETER ON THIS LINE.
+                # Per the UCI spec it consumes every remaining token, so
+                # anything appended after it is swallowed as a move:
+                # `go nodes 1000 searchmoves e2e4 movetime 50` restricts the
+                # root to {e2e4, movetime, 50} — the two junk moves are
+                # ignored by the engine and the time limit silently vanishes.
+                # A future `go` parameter goes in the line ABOVE, never here.
+                go_cmd = f"{go_cmd} searchmoves {' '.join(move_tokens)}"
+            self._send(go_cmd)
 
             bestmove = None
             info = _SearchInfoAccumulator()
