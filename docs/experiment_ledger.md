@@ -52550,3 +52550,87 @@ population only.
    data from what Stockfish DOES rather than what it SAYS a position is worth
    (`worker.py:2147-2155` -> `selfplay/opening.py:688-697`). **It has never been read out as
    an experiment.** That is the cheapest mission-aligned readout available.
+
+## 2026-08-16 — SF verdict instability, 75k -> 4M nodes: **the premise SURVIVES, but only on the continuous ruler — and the BUCKET ruler the 2026-07-08 branch used under-reports it ~6x.**
+
+Pre-committed in the mission-gap entry above ("if the 75k->4M flip rate is also ~0, the
+fortress/horizon premise is in trouble"). Executed same session. Raw rows banked at
+`scratchpad/mission_gap_20260816/sf_scaling_75k_to_4M.jsonl`; the 2026-07-08 bank was NOT
+overwritten (new output path, verified before launch).
+
+Method: `scripts/blindspot_deepsf_scaling.py`, all **123** severe-harvest rows,
+`--nodes-list 75000,150000,500000,1000000,4000000`, production Syzygy pair, **cold TT per
+budget** (independent convergence check, not an incremental deepening).
+
+### The two rulers disagree, and that IS the finding
+
+| ruler | 75k vs 4M | 95% CI |
+|---|---|---|
+| **3-way verdict bucket** (LOST/MID/FINE at -0.5/-0.2) | **1 / 123 = 0.81%** | [0.14%, 4.4%] |
+| **continuous `|delta sq|` >= 0.20** | **6 / 123 = 4.88%** | [2.25%, 10.23%] |
+
+⚑⚑ **A position can move 0.4 WDL-score units without crossing a bucket boundary.** The
+bucket metric is what the abandoned 2026-07-08 branch reported (`0/56` flips) and it is the
+coarse one. On the SAME rows the continuous statistic finds **six times** as much movement.
+⇒ **that branch's "the phenomenon is absent" was partly a property of its RULER, not of
+Stockfish.** Same shape as every other instrument finding in this file: the number was
+real, and it did not measure what the question needed.
+
+Continuous distribution: **median 0.000, p90 0.059, max 0.812.** So it is not diffuse noise
+— most positions are bit-stable and a thin tail moves a lot. That tail is the whole
+hypothesis.
+
+### Where the instability lives — all of it is at the BOTTOM of the ladder
+
+| step | verdict changes |
+|---|---|
+| 75,000 -> 150,000 | **3** |
+| 150,000 -> 500,000 | 1 |
+| 500,000 -> 1,000,000 | **0** |
+| 1,000,000 -> 4,000,000 | 1 |
+
+**500k..4M is stable on 122/123.** Three of the four bucket changes happen at or below 500k
+— i.e. inside the window we actually play, and outside the window 07-08 measured.
+
+⚑ And 2 of the 3 changed-verdict rows are **non-monotone wobble that returns to the same
+bucket**, which is why "3 flips" (2.44%) and "75k disagrees with 4M" (0.81%) are different
+numbers. **The endpoint comparison is the one the mission question needs** — a position
+where 75k and 4M agree is not a position where the engine we play is exploitably wrong.
+Quote 0.81% for the bucket claim, never 2.44%.
+
+### Morphology — n=1, and it is the right shape
+
+`5k2/8/7p/p1P2pp1/3P1P2/2P3P1/8/4K3` — a **locked pawn endgame**. 75k reads **MID (-0.34)**;
+from 150k onward it is **LOST (-1.00)** and never moves again. That is a textbook horizon
+effect at exactly the budget we train against. One position cannot carry a verdict, but it
+is evidence the mechanism is real rather than a statistical artifact.
+
+### VERDICT against the pre-committed rule
+
+**The premise SURVIVES, weakly, and only on the continuous ruler.** The flip rate is not
+~0. But:
+
+- **It is NOT established that the play window is more unstable than the converged one.**
+  6/123 vs the banked 0/56 at 4M->16M gives **p = 0.10**, one-sided — suggestive, not
+  significant. ⚑ And the two are **DIFFERENT SAMPLES of the same stream measured six weeks
+  apart, not a paired comparison.** Do not quote this as "the low window is worse".
+- **On the BUCKET ruler, 0.81% sits at the Tier-A corpus yield bar (<1% => ABANDON)**
+  written in the mission-gap entry. On the CONTINUOUS ruler, 4.88% clears it 5x. **Which
+  ruler the Tier-A screen uses therefore decides whether Tier-A is worth building** — that
+  is a design decision the prereg must make explicitly, BEFORE the corpus is generated, and
+  it is now the load-bearing one.
+- **Population caveat, stated in advance and still binding:** these are harvest CANDIDATES
+  (positions where the NET was wrong and SF called them lost), already SF-adjudicated. That
+  is plausibly a population where SF is unusually CONFIDENT, so this may under-read the rate
+  on general selfplay positions — or over-read it, since the rows are selected for sharpness.
+  **Direction unknown.** A general-position sample is a different measurement and is owed
+  before any corpus is built on this number.
+- n=123. Everything here is a wide interval.
+
+### Consequence, as a decision
+
+Tier A is **not abandoned**, and it is **not cleared to build** either. The next step is the
+cheap one that removes the ambiguity: **re-run this probe on a sample of ordinary selfplay
+positions rather than harvest candidates, and pre-commit the CONTINUOUS threshold** (the
+bucket has now been shown to be the wrong instrument for this question). Zero GPU, ~15 CPU
+minutes at n=123.
