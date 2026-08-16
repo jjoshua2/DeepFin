@@ -52322,3 +52322,89 @@ and sat open because the flag's optionality was never checked. Cf.
 Shuffled-target floor observed alongside, for reference: ~0.0024–0.0030
 (`Σ_m p_pred(m)·p_tgt(m)`), consistent with the prereg's 0.003283 and ~19× below the
 `E[1/n_legal]` = 0.063622 uniform-mover reference the prereg corrected.
+
+## 2026-08-16 — lc0 control AMENDMENT 4: **the READOUT rule, pre-committed BEFORE the arm was launched.**
+
+Written before any arm checkpoint existed. AMENDMENT 3 measured guard 2's random-init
+band; this one says what the arm has to DO to that band to mean anything, and adds the
+reference the prereg was missing. Full text banked at
+`scratchpad/lc0_control_run_20260816/PREREG_READOUT.md`.
+
+**The question, restated in one line:** feed our EXACT production net and production
+trainer someone else's clean supervised data. **Learns ⇒ the defect is in our TARGETS.
+Plateaus ⇒ the defect is in our TRAINING STACK.**
+
+### The instrument, and the three levels
+
+`lc0_control_eval.py score` over the frozen held-out set (`frozen_full.json`, sha256
+`f05b393db8df9d752f43fd8741813128cac74f6dc1c5d9d0d192f6318ae22986`), 100,000 rows,
+metric = top-1 policy agreement against lc0's own visit-argmax.
+
+| level | what it is | value |
+|---|---|---|
+| shuffled floor | `SUM_m p_pred(m)*p_tgt(m)` under label shuffle | **0.19%** |
+| random-init band | 20 seeds of the production architecture, untrained | **mean + 3sd on the FULL 20-seed band, computed BEFORE the arm is scored** (at n=9: mean 7.043%, sd 1.378pp ⇒ 11.18%) |
+| production anchor | the LIVE-architecture production checkpoint (`bt4heads_iter100_20260815`, verified **61,444,448** unique-storage params = exact production count), trained on OUR data, scored on the SAME rows | to be measured before the arm reads out |
+
+⚑ **The band bar is parametric (mean+3sd), NOT the observed max.** A max over k draws is
+an order statistic that grows with k, so a max-based bar is not comparable across band
+sizes and silently gets harder every time I add a seed. The sd had not converged at k=8
+(spread 3.875pp) — which is exactly why the bar must not be an extremum.
+
+⚑ **A 7% random-init floor against a 0.19% shuffled floor is itself the reason the band
+exists.** An untrained 61M net's argmax is ~37x better than chance purely from encoding
+geometry, so "beats chance" would have been a vacuous bar — [[a_gate_that_cannot_fail]].
+
+⚑ **The production anchor is load-bearing and is NOT a pass mark.** It is trained on a
+different distribution and under-reads on lc0 rows by an unknown amount, so it cannot be
+"the score to beat". What it does is supply a SCALE: without it, "the arm reached X%" has
+no units. Recording this distinction now, because the temptation at readout will be to
+quote it as a threshold.
+
+### Pre-committed verdicts
+
+`A` = arm's final held-out top-1, `B` = band mean+3sd (20 seeds), `P` = production anchor.
+
+- **STACK IS BROKEN** — `A < B`. Our trainer, given clean external data and production's
+  own recipe, cannot beat an untrained network. Stated first because it is the outcome
+  actually being tested for, and the one that would redirect the project.
+- **STACK LEARNS BUT WEAKLY** — `B <= A < P`. Ambiguous between "trainer is weak" and
+  "distribution mismatch"; resolved by the slope below, never by the single number.
+- **STACK IS FINE** — `A >= P`. The training stack works on clean data ⇒ the defect is
+  upstream, in our TARGETS.
+
+### The slope needs TWO COMPLETE RUNS, and that is forced rather than preferred
+
+One number cannot separate "plateaued" from "budget too small", and that is the whole
+difference between STACK IS BROKEN and *I did not train it long enough*. So: **leg 1
+`--steps 15000`, leg 2 `--steps 30000`, both seed 0**, scored independently. Both are
+>> `warmup_steps 1000`, so neither is disqualified by the warmup validity rule.
+
+⚑ **They are NOT one run checkpointed twice.** The live recipe sets
+`lr_release_cycle_steps: 0`, which makes the `sqrt_release` cycle length equal to whatever
+`train_steps(steps=N)` is called with. Chunking one call into segments to write
+intermediate checkpoints would therefore **change the realized LR trajectory** — the
+mid-point checkpoint would be a partially-annealed net, not "the same run, earlier". Two
+complete runs are each properly annealed at their own budget. This is the same
+caller-granularity effect recorded in the AMENDMENT 2 correction, now biting the
+experiment design rather than a config diff.
+
+**Slope rule:** if `A(30000) - A(15000)` exceeds the band sd, the budget was still binding
+and **a BROKEN verdict is NOT available from these two legs** — the correct conclusion is
+"under-trained" and a longer leg is owed. If the legs agree within the band sd, the arm has
+converged for this purpose and the verdict table applies.
+
+### Confounds, named now rather than discovered later
+
+- **`warmup_steps 1000` + a one-shot `sqrt_release` cycle** are production's VALUES reached
+  through a different CALLER GRANULARITY: production calls `train_steps` once per iteration
+  at N≈88 (a sawtooth); this driver calls it once with the whole budget (one long cycle,
+  release over the last ~20%). **No config-comparison guard can see this** — it is an
+  accepted, named difference, not something certified away.
+- One distribution, one architecture, one seed per leg. Nothing here separates "our
+  trainer" from "our trainer at seed 0".
+- The corpus is 122 of 124 directories; the #228 gate rejection (0.8%) has no manifest and
+  therefore no shards to stage.
+- A run without a `--purity-receipt` stamps `valid_control: false` and is a smoke test, not
+  the arm. The 400-step calibration run reported here earlier is one such: it established
+  throughput and that the guard stack passes on real data, and it is quotable for nothing else.
