@@ -31,6 +31,13 @@ DST="$REPO_ROOT/data/salvage/rolling"
 EVERY=${EVERY:-5}        # keep checkpoints whose index is a multiple of this
 KEEP=${KEEP:-24}         # cap on retained dirs (~656M each)
 SLEEP=${SLEEP:-900}
+# One pass, then exit. The loop is unbounded by design (this is a daemon), and a
+# test that has to wait for `timeout` to kill it pays the full duration on EVERY
+# case even though the work finished in the first millisecond -- ~80s per serial
+# suite run for four cases. A seam that ENDS the loop is cheaper than a shorter
+# timeout and, unlike one, it also proves the pass completed rather than that it
+# was cut short. Unset in production, where the daemon must never exit.
+ONCE=${ONCE:-0}
 
 mkdir -p "$DST"
 
@@ -65,5 +72,6 @@ while :; do
         done
     fi
 
+    [ "$ONCE" = 1 ] && break
     sleep "$SLEEP"
 done

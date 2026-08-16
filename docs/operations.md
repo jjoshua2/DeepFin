@@ -31,6 +31,21 @@ cadenced FEN-panel reads + the seed retire/probation step (log
 `scratchpad/live_read/monitor/`); `scripts/ratchet_loop.sh` — the daily strength
 ratchet (log `scratchpad/ratchet_loop.log`).
 
+**⚑ Ops scripts now operate on THE TREE THEY LIVE IN.** `monitor_fen.sh`,
+`recover_stall.sh` and `run_bootstrap_512x16.sh` used to `cd` to a hardcoded absolute
+root, so they drove the main checkout no matter where they were launched from; they now
+`cd "$(dirname "$0")/.."`. Launched from `train.sh` / `watchdog_loop.sh` in the repo root
+this is identical behaviour — but running one **out of a `git worktree` now drives the
+worktree**, where `runs/` does not exist and the script will find no trial. Given the
+standing "use a worktree for all branch work" rule, run these from the main checkout, or
+`cd` there first. (`ratchet_common.sh` is *sourced*, so it uses `${BASH_SOURCE[0]}`, not
+`$0`; `RATCHET_ROOT` / `WATCHDOG_ROOT` still override.) Engine-running tools
+(`blindspot_*`) do NOT have this problem — they discover the published Stockfish through
+`chess_anti_engine.utils.engine_discovery`, which falls back from the current checkout to
+the **main** checkout via `git rev-parse --git-common-dir`, because
+`e2e_server/publish/` is untracked runtime output that exists only where it was
+published. `CAE_STOCKFISH` overrides.
+
 ## The nightly pause window
 
 `scripts/pause_window.sh <cmd>` runs a job with the trial parked and selfplay drained,

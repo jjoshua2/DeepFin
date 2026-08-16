@@ -35,14 +35,22 @@ def _make_checkout(root: Path) -> Path:
 
 
 def _run_one_pass(script: Path) -> subprocess.CompletedProcess[str]:
-    """One loop iteration. The script loops forever, so `timeout` bounds it.
+    """One loop iteration, ENDED by the script's own `ONCE` seam.
+
+    ⚑ Not by waiting for `timeout` to kill it. The banking work finishes in the
+    first milliseconds and the script then sleeps; without the seam every case
+    paid the full timeout, ~80s per serial suite run for four cases that were
+    already done. `timeout` stays as a backstop only, and a return code of 124
+    (killed) is itself a failure — see
+    `test_the_once_seam_actually_ends_the_loop`.
 
     `timeout` signals the process it spawned, by pid -- never a name pattern.
     """
     return subprocess.run(
-        ["timeout", "20", "bash", str(script)],
+        ["timeout", "60", "bash", str(script)],
         capture_output=True, text=True, check=False,
-        env={"PATH": "/usr/bin:/bin", "SLEEP": "600", "EVERY": "5", "KEEP": "24"},
+        env={"PATH": "/usr/bin:/bin", "SLEEP": "600", "EVERY": "5", "KEEP": "24",
+             "ONCE": "1"},
     )
 
 
@@ -98,4 +106,51 @@ def test_the_glob_is_expanded_at_the_point_of_use() -> None:
     assert not offenders, (
         f"unquoted variable expansion in a for-loop: {offenders}. Quote the "
         'prefix and let only the trailing `*` glob: `for x in "$DIR"/pat_*`.'
+    )
+
+
+def test_the_once_seam_actually_ends_the_loop(tmp_path: Path) -> None:
+    """⚑ The seam must TERMINATE the script, not merely be accepted by it.
+
+    A knob that is read and then ignored is this codebase's signature defect;
+    here it would show up only as a slow suite, which nobody reads as a bug. A
+    124 means `timeout` did the killing and `ONCE` did nothing.
+    """
+    root = tmp_path / "plain_checkout"
+    root.mkdir()
+    script = _make_checkout(root)
+
+    result = _run_one_pass(script)
+
+    # ⚑ EXIT CODE, NOT WALL CLOCK. An `elapsed < N` assertion here was flaky on
+    # a loaded box (this repo runs its tests beside live training), and a flaky
+    # guard is a guard people learn to re-run rather than read. `timeout`
+    # returns 124 when it had to do the killing, so a 0 IS the proof the script
+    # ended itself — deterministic at any load, with the negative control below
+    # supplying the contrast.
+    assert result.returncode == 0, (
+        f"exit {result.returncode} (124 = killed by timeout, so ONCE was read "
+        f"and then ignored). stderr={result.stderr!r}"
+    )
+
+
+def test_without_the_seam_the_script_still_loops(tmp_path: Path) -> None:
+    """The negative control: `ONCE` unset must NOT exit, or it is not a seam.
+
+    Without this, deleting the `while :;` loop entirely would pass every other
+    test in this file — the daemon would bank once and quit, and the rolling
+    bank would silently stop rolling.
+    """
+    root = tmp_path / "plain_checkout"
+    root.mkdir()
+    script = _make_checkout(root)
+
+    result = subprocess.run(
+        ["timeout", "3", "bash", str(script)],
+        capture_output=True, text=True, check=False,
+        env={"PATH": "/usr/bin:/bin", "SLEEP": "600", "EVERY": "5", "KEEP": "24"},
+    )
+    assert result.returncode == 124, (
+        f"the script exited on its own (code {result.returncode}) with ONCE "
+        "unset — it is a daemon and must keep looping"
     )

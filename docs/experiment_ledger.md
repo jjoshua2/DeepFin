@@ -22466,8 +22466,9 @@ job holds 13.8 GB (5.1 s/step vs 0.75 s/step) — the deviation is identical in 
 ### THE ONE DECIDING MEASUREMENT (exact command)
 
 ```
-SC=<session-scratch>/capsize
-PYTHONPATH=. nice -n 19 .venv/bin/python -u $SC/slope.py \
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+SC="$SCRATCH/capsize"
+PYTHONPATH=. nice -n 19 .venv/bin/python -u "$SC/slope.py" \
   --corpus $SC/corpus --arm {L,M,S} --seed {0,1} \
   --batch-size 256 --chunk-steps 176 --chunks 48 --eval-every 2 \
   --out $SC/run_{arm}_s{seed}
@@ -23057,7 +23058,8 @@ excluded from the wide train corpus by construction.
 ### ONE deciding yardstick (exact command)
 
 ```
-PYTHONPATH=. nice -n 19 .venv/bin/python <session-scratch>/rowsparam/analyze_rp.py
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+PYTHONPATH=. nice -n 19 .venv/bin/python "$SCRATCH/rowsparam/analyze_rp.py"
 ```
 
 Deciding statistic **B** = mean over seeds {0,1} of
@@ -26577,8 +26579,9 @@ SHOWN not to reach the loss — otherwise F measures a field artefact, not rehea
 **Instrument** (banked, CPU-only, no GPU, ~40 s at `nice -n 19`, recomputes from scratch):
 
 ```
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
 PYTHONPATH=~/projects/chess nice -n 19 python3 \
-  <session-scratch>/absorb_20260802/f_unblock/f_diff.py
+  "$SCRATCH/absorb_20260802/f_unblock/f_diff.py"
 ```
 Output `f_unblock/f_diff_report.json`; trace + verdict `f_unblock/F_UNBLOCK.md`.
 

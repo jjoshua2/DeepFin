@@ -137,7 +137,6 @@ from __future__ import annotations
 import argparse
 import json
 import random
-from pathlib import Path
 
 import chess
 import chess.engine
@@ -150,10 +149,15 @@ from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.moves.encode import move_to_index_for_encoding
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from chess_anti_engine.utils.engine_discovery import default_stockfish
 
-# Repo-relative, derived from this file: the published engine lives in the
-# checkout, so an absolute path only ever named one machine's copy of it.
-_DEFAULT_SF = str(Path(__file__).resolve().parents[1] / "e2e_server" / "publish" / "stockfish")
+# ⚑ DISCOVERED, not merely repo-relative. `e2e_server/publish/` is UNTRACKED
+# runtime output, so it exists only in the checkout that published it — a
+# checkout-relative default resolves to nothing in the `git worktree` CLAUDE.md
+# mandates for branch work, which is where these tools are run. The shared
+# lookup falls back through $CAE_STOCKFISH, this checkout, the MAIN checkout and
+# PATH. (Codex inline review, #441.)
+_DEFAULT_SF = default_stockfish()
 
 
 def _q(info: chess.engine.InfoDict, pov: chess.Color) -> float:
