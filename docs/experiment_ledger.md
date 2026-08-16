@@ -52964,3 +52964,93 @@ and 7 tracked `/tmp/claude-1000/-home-josh-.../` scratchpad paths (6 in this ver
 Low consequence, but `tests/test_rare_sound_move_coverage.py:29-31` — a comment #441 EDITS —
 claims that exact form "were scrubbed before landing: this repository is PUBLIC". Either
 widen the pattern or narrow the claim.
+
+## 2026-08-16 — READOUT: SF instability on the ORDINARY population = **5.25%**. VERDICT **PROCEED**. My predicted count MISSED by 4-10x, and the HARVEST DOES NOT ENRICH.
+
+Executed against `PREREG_ordinary_population.md` (committed `72e29e41d`, BEFORE any ordinary
+position was scored). Raw rows: `scratchpad/mission_gap_20260816/sf_scaling_ordinary_n1200.jsonl`.
+The banked harvest files were untouched (new output path, verified).
+
+**Row count PREDICTED 1200, ACTUAL 1200** — `parse_all` -> `select(rows, 0)` returned exactly
+the sample, so nothing was silently subsetted by the `--control-n` stride.
+
+### PRIMARY — pure lookup against the pre-committed table
+
+| | k | rate | 95% CI |
+|---|---|---|---|
+| **ordinary (audit_set_v1, n=1200)** | **63** | **5.2500%** | **[4.0575%, 6.6674%]** |
+| harvest candidates (n=123), SAME 75k-vs-500k ruler | 5 | 4.0650% | [1.33%, 9.23%] |
+
+Rule was `k<=5 ABANDON / 6..19 INCONCLUSIVE / k>=20 PROCEED`. **k=63 ⇒ PROCEED.** The base
+rate clears the 1% Tier-A yield bar by **5x**.
+
+### ⚑ MY PRE-RECORDED PREDICTION WAS WRONG, AND THE MISS IS THE FINDING
+
+The prereg states: *"I predict k in the range 6-19, i.e. INCONCLUSIVE"*, reasoning that the
+harvest selects on net-error AND SF-lost adjudication and should therefore enrich 3-8x over
+base, putting ordinary at ~0.5-1.4%. **Actual 5.25% — between 4x and 10x my prediction, and
+ABOVE the harvest rate rather than below it.** Recorded as a miss rather than re-narrated;
+the prediction was written down precisely so this could not be quietly reinterpreted.
+
+### THE PHASE CONFOUND IS DISCHARGED BY MEASUREMENT, NOT ARGUED AWAY
+
+The prereg named this in advance and bound me to it: *"a PROCEED verdict here must be
+re-checked on a phase-matched draw before any corpus is built."* The audit set carries
+`phase`, so the check was free:
+
+| phase | n | k | rate | 95% CI |
+|---|---|---|---|---|
+| opening | 369 | 15 | 4.065% | [2.29%, 6.62%] |
+| middlegame | 432 | 25 | 5.787% | [3.78%, 8.42%] |
+| endgame | 399 | 23 | 5.764% | [3.69%, 8.52%] |
+
+All three CIs overlap and **every one clears the 1% bar by >=4x**, so ANY reweighting to a
+natural selfplay phase distribution lands in [4.1%, 5.8%] and cannot change the verdict.
+**PROCEED stands unconditionally; the owed re-check is DISCHARGED.**
+
+⚑ Note against intuition: **endgame is NOT more unstable than middlegame.** The only
+morphology we had was a locked pawn endgame, which invited the "horizon effects live in
+endgames" reading. It is not supported — instability is roughly uniform across phases.
+
+### ⚑⚑ THE HARVEST DOES NOT ENRICH FOR SF INSTABILITY — reported as a NULL, with its limits
+
+Fisher one-sided (harvest > ordinary): **p = 0.7764**. The harvest point estimate (4.07%) is
+BELOW the ordinary base rate (5.25%). **There is no evidence the harvest concentrates
+SF-unstable positions.**
+
+⚑ **The prereg forbids the converse claim and I am honouring it.** It says no enrichment
+conclusion unless ordinary lands <= 1%; ordinary is 5.25%, so this is a NULL, not a
+demonstration that the harvest ANTI-selects. And the two populations differ in more than
+harvest-selection — different eras (harvest 2026-07-08 vs audit set's replay rows) and
+different phase composition — so this is not a clean paired contrast.
+[[same_name_different_population]]
+
+**What it does establish:** the harvest's criteria (net was wrong) AND (SF adjudicated lost)
+are **orthogonal to SF's own depth-instability**. Selecting on net failure does not find
+positions where SF is unconverged. Those are different phenomena and we had been treating
+them as one.
+
+### ⚑⚑ WHAT THIS MEANS FOR THE LOOP — the sharper reading is about our LABELS, not our corpus
+
+This control was built to test the harvest. Its more consequential result is about training data:
+
+**~5% of ordinary selfplay positions are ones where Stockfish's own verdict is still moving by
+>= 0.20 WDL-score units between 75k and 500k nodes.** Production SF labels are 150k-200k at
+MultiPV 6 [[sf_label_nodes_are_not_sf_nodes]]. So on ~1 position in 20, **the value label we
+train on is taken at a budget where the teacher has not converged** — and this is the ordinary
+distribution, not a curated tail.
+
+Two live readings, both stated, neither yet decided:
+- **LABEL DEFECT** — ~5% of `sf_wdl` targets are teacher-noise rather than ground truth.
+  Actionable: raise nodes on the unstable slice, or down-weight it.
+- **OPPORTUNITY** — these are exactly the positions where an anti-engine has something to
+  exploit, and they are 5% of everything rather than a rare harvest yield.
+
+⚑ Do NOT collapse these into one. They imply opposite treatments of the same rows
+(down-weight vs up-weight), and nothing here decides between them. That is the next prereg.
+
+**Distribution (secondary):** median 0.0010, p90 0.1011, max 0.9310 — again a thin heavy tail;
+most positions are bit-stable and a small set moves a lot. **Per-rung >= 0.20: 32 at
+75k->150k, 35 at 150k->500k** — comparable, UNLIKE the harvest population where movement
+concentrated at the bottom of the ladder. So on ordinary positions the instability is not
+purely a low-budget artifact.
