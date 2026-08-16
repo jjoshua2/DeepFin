@@ -51446,3 +51446,54 @@ than after, and it cost 3 runs instead of 6. It also independently corroborates 
 entropy separation at matched vintage, so the entropy-vs-weights question stays open and the
 mechanism stays unsupported. It would need a purpose-built pair, which is not worth GPU while
 the loop's actual blocker is elsewhere.
+
+## 2026-08-16 — PRE-FLIGHT on the converted lc0 corpus: schema CLEAN, but two corpus-shape differences stated BEFORE the arm runs
+
+65 of 124 T91 tars converted (29 GB) at the time of writing. Nobody had yet checked that the
+output loads through OUR production path, so this is that check, plus the interpretation caveats
+the positive control will need. Written now so they cannot become post-hoc excuses.
+
+### Schema — CLEAN. Diffed against a real production replay shard, not against the writer's intent
+
+Every field the lc0 rows carry matches production's **dtype and per-row shape exactly**:
+`x float16 (175,8,8)` · `policy_target float16 (1858,)` · `legal_mask uint8 (1858,)` ·
+`wdl_target int8` · `search_wdl float16 (3,)` · `moves_left float16` · `ply_index int32` ·
+`priority float32`, plus the matching `has_*` flags. **`lc0-only` fields: none.** `x` is in
+[−1,1] on both; `policy_target` rows sum to 1.0 on both (min 0.99971, max 1.00030 over 512 rows).
+⇒ the converter is not inventing structure, and a loader that reads production reads these.
+
+`moves_left_max_plies: 450.0` in the manifest **matches production's live `max_plies: 450`**
+(`configs/pbt2_small.yaml:216`). I initially flagged this as a possible 1.875× scale error after
+reading `trainer.py:1754`'s `_f("max_plies", 240, int)` — **that 240 is only the dataclass
+fallback**, and production sets 450, so the normalizers agree. Checked, not assumed.
+
+**Production carries 65 fields the lc0 rows do not** — every `sf_*` field, `categorical_target`,
+`policy_soft_target`, the whole `future_sf_regret_*` family, `seed_id`, `volatility_target`. That
+is expected and the manifest is honest about it (`value_channels.sf_wdl: "ABSENT — lc0 data
+carries no Stockfish label"`, `required_training_overrides: {sf_wdl_frac: 0.0,
+search_wdl_frac: 0.5}`). It is also exactly why PR #438's fallback trap matters: with `sf_wdl`
+absent, anything that silently falls back to it is training on nothing.
+
+### ⚑ The two corpus-shape differences — measured, ~57.6k production rows vs ~240.6k lc0 rows
+
+| | PRODUCTION (our selfplay) | lc0 T91 | |
+|---|---|---|---|
+| W / D / L | 33.53% / **30.73%** / 35.74% | 19.20% / **61.51%** / 19.29% | **draws exactly 2.00×** |
+| mean plies-to-end | **66** | **152** | 2.3× |
+| rows within 20 plies of the end | 16.19% | 3.31% | 4.9× |
+| rows within 60 plies of the end | 50.44% | 12.71% | 4.0× |
+
+**Why this must be recorded now.** The control's whole logic is "feed our net clean lc0 data —
+learns ⇒ our TARGETS are the defect; plateaus ⇒ our STACK is". Both arms' value heads see
+**materially different label distributions**: a head fed 61.5% draws will show different loss,
+calibration and entropy than one fed 30.7%, for reasons that have nothing to do with target
+quality or stack health. ⇒ **a raw loss comparison ACROSS the two corpora is not interpretable**,
+and the arm's verdict must rest on within-corpus learning curves (does the lc0 arm improve on
+lc0-held-out) rather than on any cross-corpus number.
+
+**One thing I checked and it is NOT a problem:** `wdl_terminal_outcome_plies` is **unset in the
+live yaml**, so the terminal-proximal outcome transfer is OFF and the 4–5× difference in
+end-proximity does not reach the loss through that path today. If it is ever switched on, this
+table becomes live and the two corpora stop being comparable on the value term.
+
+⇒ Recorded against task #199 as a pre-committed interpretation constraint, not a defect.
