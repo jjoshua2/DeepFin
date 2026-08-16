@@ -56,7 +56,11 @@ from typing import Any
 
 import numpy as np
 
-from chess_anti_engine.replay.shard import SF_CP_SENTINEL, load_shard_arrays
+from chess_anti_engine.replay.shard import (
+    SF_CP_SENTINEL,
+    load_shard_arrays,
+    sf_eval_pv_orphan_flags,
+)
 from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 from scripts.diagnostic_replay_utils import record_skipped_shard, select_shards
 
@@ -99,12 +103,13 @@ def gradient(p: np.ndarray, r: np.ndarray) -> np.ndarray:
 class Row:
     """One analysed position: the wide truth, the surfaced set, and the prior."""
 
-    __slots__ = ("hidden", "legal", "prior", "r_k", "regret", "surfaced")
+    __slots__ = ("game_id", "hidden", "legal", "prior", "r_k", "regret", "surfaced")
 
     def __init__(
         self, legal: np.ndarray, regret: dict[int, float],
-        surfaced: list[int], hidden: list[int], r_k: float,
+        surfaced: list[int], hidden: list[int], r_k: float, game_id: int = -1,
     ) -> None:
+        self.game_id = int(game_id)
         self.legal = legal
         self.regret = regret
         self.surfaced = surfaced
@@ -140,6 +145,15 @@ def collect(
         # never carries -- and the two eras differ in exactly this composition
         # (wide 0.72 selfplay vs live MPV6 0.91), which is the dimension the
         # "the historical alpha transfers" claim compares across.
+        # ⚑ A desynced row's stored eval disagrees with its own rank-1 PV, i.e. the
+        # block describes a DIFFERENT position. A wrong-position block can keep
+        # enough coincidentally-legal moves to pass both coverage guards and then
+        # feed its ranks straight into both fitted alphas. cast_probe already
+        # rejects these; this screen read the raw block unconditionally.
+        orphan_f, checked_f = sf_eval_pv_orphan_flags(arrs)
+        orphaned = np.asarray(orphan_f).astype(bool)
+        scan["desync_checked"] += int(np.asarray(checked_f).sum())
+        scan["desync_orphaned"] += int(orphaned.sum())
         has_sp = np.asarray(arrs.get("has_is_selfplay", np.zeros(n_rows_shard))).astype(bool)
         is_sp = np.asarray(arrs.get("is_selfplay", np.zeros(n_rows_shard))).astype(bool)
         selfplay = has_sp & is_sp
@@ -153,6 +167,9 @@ def collect(
                 continue
             parent = index.get((int(gid[i]), int(ply[i]) - P0_PARENT_PLY_OFFSET))
             if parent is None or not has_raw[parent]:
+                continue
+            if orphaned[i] or orphaned[parent]:
+                scan["desync_rows_rejected"] += 1
                 continue
             scored: list[tuple[int, float]] = []
             for r in raw[parent].tolist():
@@ -198,7 +215,8 @@ def collect(
             p = p / p.sum()
             unscored = float(p[[j for j, m in enumerate(legal_idx) if int(m) not in regret]].sum())
             scan["unscored_mass_sum"] += unscored
-            rows.append(Row(legal_idx, regret, surfaced, hidden, max(regret[m] for m in surfaced)))
+            rows.append(Row(legal_idx, regret, surfaced, hidden,
+                            max(regret[m] for m in surfaced), game_id=int(gid[i])))
             rows[-1].prior = p
             planes.append(x[i])
     return rows, planes
@@ -234,28 +252,41 @@ N_BOOT = 1000
 
 
 def bootstrap_alphas(
-    per_row: np.ndarray, *, n_boot: int = N_BOOT, seed: int = 0,
+    per_row: np.ndarray, groups: np.ndarray | None = None, *,
+    n_boot: int = N_BOOT, seed: int = 0,
 ) -> dict[str, tuple[float, float]]:
-    """Percentile CIs for both alphas by resampling ROWS.
+    """Percentile CIs for both alphas by resampling GAMES, not plies.
 
-    ⚑ A point estimate with no interval is what let the earlier version of this
-    work report a tail price whose bounds varied only the outside population's
-    mean. Both alphas are ratios of row-additive sums, so the resample is exact:
-    columns are (true_tail, mass*r_k, mass*(1-r_k), grad_num, grad_den).
+    ⚑⚑ THE RESAMPLING UNIT IS THE GAME. Adjacent plies of one game share an
+    opening, a material structure and a phase, so they are NOT independent
+    replicas. Resampling rows treats them as if they were and returns an interval
+    narrower than the population earns — which matters most for exactly the
+    borderline calls an interval is consulted for. Measured here: the row
+    bootstrap put alpha_value's lower bound at 0.1838, excluding the historical
+    0.1759 by 0.008 and firing a pre-registered "does not transfer" branch on
+    eight thousandths of a unit that the wrong unit of analysis manufactured.
 
-    The interval is over ROWS, which is the sampling unit. It does not cover
-    Stockfish's own noise at a fixed position — two runs of the same search on
-    the same row are not independent draws here.
+    Both alphas are ratios of row-additive sums, so the resample stays exact:
+    columns are (true_tail, mass*r_k, mass*(1-r_k), grad_num, grad_den). Passing
+    `groups=None` falls back to per-row resampling and is for tests only.
     """
     if per_row.size == 0:
         return {"alpha_value": (float("nan"), float("nan")),
                 "alpha_grad": (float("nan"), float("nan"))}
     rng = np.random.default_rng(seed)
     n = per_row.shape[0]
+    if groups is None:
+        blocks = [np.array([i]) for i in range(n)]
+    else:
+        order = np.argsort(groups, kind="stable")
+        starts = np.flatnonzero(np.r_[True, np.diff(groups[order]) != 0])
+        blocks = np.split(order, starts[1:])
+    n_blocks = len(blocks)
     vals: list[float] = []
     grads: list[float] = []
     for _ in range(n_boot):
-        idx = rng.integers(0, n, size=n)
+        pick = rng.integers(0, n_blocks, size=n_blocks)
+        idx = np.concatenate([blocks[k] for k in pick])
         c = per_row[idx].sum(axis=0)
         if c[2] > 0:
             vals.append(2.0 * (c[0] - c[1]) / c[2])
@@ -326,7 +357,8 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
             continue
         usable.append(row)
         prep.append({"p": p, "r_true": r_true, "known": known, "g_true": g_true,
-                     "norm": norm, "mass": mass, "r_k": row.r_k})
+                     "norm": norm, "mass": mass, "r_k": row.r_k,
+                     "game_id": int(getattr(row, "game_id", -1))})
 
     s_t = s_m = s_m_rk = s_m_1mrk = 0.0
     num_g = den_g = 0.0
@@ -356,7 +388,9 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
     alpha_value = 2.0 * (s_t - s_m_rk) / s_m_1mrk
     alpha_grad = num_g / den_g
     alphas = {"alpha_value": alpha_value, "alpha_grad": float(np.clip(alpha_grad, 0.0, 2.0))}
-    ci = bootstrap_alphas(np.asarray(per_row, dtype=np.float64))
+    games = np.array([q["game_id"] for q in prep], dtype=np.int64)
+    ci = bootstrap_alphas(np.asarray(per_row, dtype=np.float64),
+                          games if (games >= 0).all() else None)
 
     cos: dict[str, list[float]] = {n: [] for n in alpha_grid}
     rel: dict[str, list[float]] = {n: [] for n in alpha_grid}
@@ -385,6 +419,7 @@ def analyse(rows: list[Row], alpha_grid: tuple[str, ...]) -> dict[str, Any]:
     cap = SF_OWN_REGRET_CAP_CP
     return {
         "n_rows": len(usable),
+        "n_games": int(np.unique(games).size),
         "dropped_unscored_mass_mean": float(np.mean(dropped_mass)) if dropped_mass else 0.0,
         "alpha_value_ci": ci["alpha_value"],
         "alpha_grad_ci": ci["alpha_grad"],
@@ -445,8 +480,11 @@ def main() -> int:
     for d in args.replay_dir:
         shards.extend(select_shards(Path(d), args.max_shards))
     scan: dict[str, Any] = {
-        "shard_names": [p.name for p in shards], "rows_scanned": 0,
+        # full paths, not bare names: replay directories reuse shard filenames,
+        # so `shard_000123.zarr` alone cannot name a multi-directory population.
+        "shard_names": [str(p) for p in shards], "rows_scanned": 0,
         "rows_selfplay": 0, "skipped_not_selfplay": 0,
+        "desync_checked": 0, "desync_orphaned": 0, "desync_rows_rejected": 0,
         "coverage_sum": 0.0, "coverage_n": 0, "unscored_mass_sum": 0.0,
         "surfaced_not_legal": 0, "skipped_shards": [], "skipped_shards_omitted": 0,
     }
@@ -459,6 +497,8 @@ def main() -> int:
           f"   selfplay {scan['rows_selfplay']}   analysed {len(rows)}")
     print(f"  ⚑ non-selfplay rows dropped: {scan['skipped_not_selfplay']}"
           f"   (production never builds sf_p0_regret on them -- finalize.py:867)")
+    print(f"  desync (sf_eval_pv_orphan_flags): {scan['desync_checked']} checked, "
+          f"{scan['desync_orphaned']} orphaned, {scan['desync_rows_rejected']} pairs rejected")
     print(f"  wide label covers {coverage:.4f} of legal moves")
     print(f"  policy mass on moves the wide label never scored: {unscored:.6f}")
     # ⚑ THE COVERAGE ASSERT IS STRUCTURALLY INERT WHEN THE BLOCK IS NARROWER THAN
@@ -506,8 +546,10 @@ def main() -> int:
     print(f"  alpha_value {res['alpha_value']:.4f} [{vlo:.4f}, {vhi:.4f}]"
           f"   alpha_grad {res['alpha_grad_raw']:.4f} [{glo:.4f}, {ghi:.4f}]"
           f"  (clipped {res['alpha_grad']:.4f})")
-    print(f"  95% CIs over {N_BOOT} row-level bootstrap draws; they do NOT cover "
-          "Stockfish's own\n  per-position noise, only the sampling of rows.")
+    print(f"  95% CIs over {N_BOOT} GAME-CLUSTER bootstrap draws"
+          f" ({res['n_games']} games / {res['n_rows']} rows); adjacent plies of one game")
+    print("  are not independent, so the resampling unit is the game. They do NOT cover")
+    print("  Stockfish's own per-position noise.")
     print("\nGRADIENT FIDELITY  dL/dz = p*(r - E_p[r])")
     print("  ⚑ pooled rel L2 is the reportable one: rows with ||g_true|| ~ 0 make the")
     print("    per-row MEAN explode (one row read 4557). Median shown alongside.")

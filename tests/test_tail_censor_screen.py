@@ -70,7 +70,8 @@ def _collect(monkeypatch: pytest.MonkeyPatch, arrs: dict[str, Any], k: int = 2):
     monkeypatch.setattr(tcs, "load_shard_arrays", lambda _path: (arrs, {}))
     scan: dict[str, Any] = {
         "shard_names": [], "rows_scanned": 0, "rows_selfplay": 0,
-        "skipped_not_selfplay": 0, "coverage_sum": 0.0, "coverage_n": 0,
+        "skipped_not_selfplay": 0, "desync_checked": 0, "desync_orphaned": 0,
+        "desync_rows_rejected": 0, "coverage_sum": 0.0, "coverage_n": 0,
         "unscored_mass_sum": 0.0, "surfaced_not_legal": 0,
         "skipped_shards": [], "skipped_shards_omitted": 0,
     }
@@ -336,3 +337,61 @@ def test_never_scored_moves_do_not_enter_the_reference() -> None:
     ref = tcs.analyse([same_without], ("alpha_grad",))
     assert got["alpha_grad_raw"] == pytest.approx(ref["alpha_grad_raw"], rel=1e-9)
     assert got["dropped_unscored_mass_mean"] == pytest.approx(0.2)
+
+
+def test_bootstrap_resamples_games_not_plies() -> None:
+    """⚑⚑ THE RESAMPLING UNIT IS THE GAME.
+
+    Adjacent plies of one game share an opening, material and phase, so they are
+    not independent replicas. Resampling rows treats them as if they were and
+    returns an interval NARROWER than the population earns. This matters most for
+    the borderline calls an interval is consulted for: the row bootstrap put
+    alpha_value's lower bound at 0.1838, excluding the historical 0.1759 by 0.008
+    and firing a pre-registered branch on a margin the wrong unit manufactured.
+
+    Mutation: ignoring `groups` (per-row resampling) collapses the interval here.
+    """
+    # 40 rows that are really 2 games of 20 identical plies. Row resampling sees
+    # 40 independent draws; game resampling correctly sees 2.
+    a = np.tile(np.array([[0.30, 0.05, 0.50, 0.02, 0.10]]), (20, 1))
+    b = np.tile(np.array([[0.05, 0.05, 0.50, 0.00, 0.10]]), (20, 1))
+    per_row = np.vstack([a, b])
+    games = np.array([0] * 20 + [1] * 20, dtype=np.int64)
+
+    wide = tcs.bootstrap_alphas(per_row, games, n_boot=400)
+    narrow = tcs.bootstrap_alphas(per_row, None, n_boot=400)
+    w = wide["alpha_value"][1] - wide["alpha_value"][0]
+    n = narrow["alpha_value"][1] - narrow["alpha_value"][0]
+    assert w > 3.0 * n, (
+        f"clustering must widen the interval: game {w:.4f} vs row {n:.4f} — if these "
+        "are close, `groups` is being ignored and the CI is the wrong unit")
+
+
+def test_bootstrap_clusters_are_all_or_nothing() -> None:
+    """A sampled game contributes ALL its plies, never a subset.
+
+    With one game there is exactly one block, so every draw reproduces the full
+    sample and the interval must collapse to the point estimate. Mutation:
+    resampling rows within a cluster gives a non-degenerate interval here.
+    """
+    per_row = np.array([[0.3, 0.05, 0.5, 0.02, 0.1], [0.1, 0.05, 0.5, 0.01, 0.1]])
+    one = tcs.bootstrap_alphas(per_row, np.array([7, 7]), n_boot=200)
+    lo, hi = one["alpha_value"]
+    assert hi - lo == pytest.approx(0.0, abs=1e-12)
+
+
+def test_desync_rows_are_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """⚑ A desynced row's block describes a DIFFERENT position.
+
+    `cast_probe` already rejected these; this screen read the raw block
+    unconditionally. Mutation: dropping the `orphaned[...]` guard analyses the row.
+    """
+    arrs = _shard(
+        parent_block=GOOD_PARENT, child_block=BAD_CHILD,
+        child_legal=CHILD_LEGAL, child_policy=FLAT_POLICY,
+    )
+    monkeypatch.setattr(tcs, "sf_eval_pv_orphan_flags",
+                        lambda _a: (np.array([True, False]), np.array([True, True])))
+    rows, _, scan = _collect(monkeypatch, arrs)
+    assert rows == []
+    assert scan["desync_rows_rejected"] == 1

@@ -143,6 +143,7 @@ def sample_positions(
         selfplay = has_sp & is_sp
         scan["rows_selfplay"] = scan.get("rows_selfplay", 0) + int(selfplay.sum())
         legal_mask = np.asarray(arrs["legal_mask"]).astype(bool)
+        gid = np.asarray(arrs["game_id"]).astype(np.int64)
         hist = str(np.asarray(arrs["_input_history_encoding"]).reshape(-1)[0])
         pol_enc = str(np.asarray(arrs["_policy_encoding"]).reshape(-1)[0])
         scan["rows_scanned"] += int(x.shape[0])
@@ -169,7 +170,7 @@ def sample_positions(
                 "legal_mask": legal_mask[int(i)], "policy_encoding": pol_enc,
                 "n_legal": n_legal, "phase": phase_bucket(round(float(x[int(i)][:12].sum()))),
                 "in_tb": pieces <= TB_PIECE_LIMIT, "pieces": pieces,
-                "shard": shard.name,
+                "shard": shard.name, "game_id": int(gid[int(i)]),
             })
     # ⚑ SECOND PASS = the actual backfill. The first pass caps each shard at its
     # quota, so a SHORT shard's deficit was permanently lost -- the docstring
@@ -189,6 +190,7 @@ def sample_positions(
             is_sp = np.asarray(arrs.get("is_selfplay", np.zeros(n_shard))).astype(bool)
             selfplay = has_sp & is_sp
             legal_mask = np.asarray(arrs["legal_mask"]).astype(bool)
+            gid = np.asarray(arrs["game_id"]).astype(np.int64)
             hist = str(np.asarray(arrs["_input_history_encoding"]).reshape(-1)[0])
             pol_enc = str(np.asarray(arrs["_policy_encoding"]).reshape(-1)[0])
             for i in rng.permutation(n_shard):
@@ -210,7 +212,7 @@ def sample_positions(
                     "n_legal": board.legal_moves.count(),
                     "phase": phase_bucket(round(float(x[int(i)][:12].sum()))),
                     "in_tb": pieces <= TB_PIECE_LIMIT, "pieces": pieces,
-                    "shard": shard.name,
+                    "shard": shard.name, "game_id": int(gid[int(i)]),
                 })
     scan["sampled_shards"] = len({o["shard"] for o in out})
     return out
@@ -270,6 +272,8 @@ def run_panel(
     # for the labeller's 150k, not for 4M nodes at full width.
     deep_timeout = max(600.0, deep_nodes / 20_000.0)
 
+    created: list[StockfishUCI] = []
+
     def engines() -> tuple[StockfishUCI, StockfishUCI, StockfishUCI]:
         trio = getattr(local, "trio", None)
         if trio is None:
@@ -284,6 +288,8 @@ def run_panel(
                                 hash_mb=deep_hash_mb, syzygy_path=DEEP_SYZYGY, nice=nice,
                                 read_timeout_s=deep_timeout)
             trio = (prod, matched, deep)
+            with done:
+                created.extend(trio)
             local.trio = trio
         return trio
 
@@ -315,8 +321,17 @@ def run_panel(
                 "deep_depth": int(d_res.depth or 0),
             })
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        list(ex.map(one, positions))
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(one, positions))
+    finally:
+        # StockfishUCI has no destructor; without this a default run leaks nine
+        # Stockfish children and their hash allocations until the parent exits.
+        for eng in created:
+            try:
+                eng.close()
+            except Exception:
+                pass
     return results
 
 
@@ -412,7 +427,8 @@ def build_rows(
                 continue
             regret = dict(truth_reg)
             r_k = max(truth_reg[m] for m in surfaced)
-        row = Row(legal=legal, regret=regret, surfaced=surfaced, hidden=hidden, r_k=r_k)
+        row = Row(legal=legal, regret=regret, surfaced=surfaced, hidden=hidden, r_k=r_k,
+                  game_id=int(r.get("game_id", -1)))
         row.prior = prior
         rows.append(row)
     return rows
@@ -498,13 +514,20 @@ def main() -> int:
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--json-out", type=Path, default=None)
+    ap.add_argument("--dump-out", type=Path, default=None,
+                    help="bank the raw per-position three-arm PVs. ⚑ The SF searches are "
+                         "the expensive part and they are deterministic given the "
+                         "positions, so a re-analysis (a different estimator, a different "
+                         "CI unit) should never have to pay for them twice.")
     args = ap.parse_args()
 
     shards: list[Path] = []
     for d in args.replay_dir:
         shards.extend(select_shards(Path(d), args.max_shards))
     scan: dict[str, Any] = {
-        "shard_names": [p.name for p in shards], "rows_scanned": 0, "searched": 0,
+        # full paths, not bare names: replay directories reuse shard filenames,
+        # so `shard_000123.zarr` alone cannot name a multi-directory population.
+        "shard_names": [str(p) for p in shards], "rows_scanned": 0, "searched": 0,
         "skipped_narrow": 0, "skipped_no_tail": 0,
         "skipped_shards": [], "skipped_shards_omitted": 0,
         "git_sha": git_sha(),
@@ -603,6 +626,18 @@ def main() -> int:
             out["modes"]["matched_substituted_non_tb"] = res
     print(f"\n  ({sum(r['in_tb'] for r in results)} of {len(results)} positions are"
           f" within tablebase range, where the arms' TB sets differ)")
+
+    if args.dump_out:
+        args.dump_out.parent.mkdir(parents=True, exist_ok=True)
+        args.dump_out.write_text(json.dumps({
+            "scan": scan,
+            "positions": [
+                {k: (v if k not in ("x", "legal_mask", "prior", "legal_idx") else None)
+                 for k, v in r.items()}
+                for r in results
+            ],
+        }, indent=2, sort_keys=True, default=float))
+        print(f"raw three-arm dump -> {args.dump_out}")
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

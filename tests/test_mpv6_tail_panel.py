@@ -240,6 +240,7 @@ def _fake_shard_arrays(n_rows: int) -> dict[str, Any]:
     ])
     return {
         "x": xs,
+        "game_id": np.arange(n_rows, dtype=np.int64),
         "is_selfplay": np.ones(n_rows, dtype=bool),
         "has_is_selfplay": np.ones(n_rows, dtype=bool),
         "legal_mask": np.ones((n_rows, 1858), dtype=bool),

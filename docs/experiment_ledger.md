@@ -443,12 +443,17 @@ see the 08-16 screen re-run below, where they moved α by <0.002 combined.
 | CI excludes 1.0 from below | **YES** (upper bound 0.375) | **the live midpoint IS too harsh on production labels** |
 | CI covers 0.1759 | **NO** (lower bound 0.1838) | the historical screen does **not** transfer on the primary |
 
-⇒ By the letter of the pre-committed table this is the FOURTH row: **"excludes BOTH 0.1759 and
-1.0 ⇒ a THIRD number; neither the historical result nor the live rule stands, and the tail needs
-re-deriving from this panel alone."** Recording that as written rather than reaching for the arm
-that agrees. It excludes 0.1759 by 0.008 — a hair — and two of the four panels ((A) tablebase-free
-0.1342–0.3093 and (B) 0.1252–0.2781) DO cover it. But the primary was named in advance and it
-does not.
+⇒ By the letter of the pre-committed table this reads as the FOURTH row ("a THIRD number").
+**⚑⚑ THAT VERDICT IS WITHDRAWN — TWICE OVER, AND BOTH REASONS ARE METHOD FAULTS OF MINE:**
+1. **The margin was manufactured by the wrong resampling unit.** The lower bound 0.1838 excluded
+   0.1759 by **0.008** while the CI resampled ROWS. Adjacent plies of one game are not independent
+   replicas, so that interval was too narrow. Fixed to a GAME-CLUSTER bootstrap.
+2. **The primary instrument is invalid** (see the retraction below). A pre-registered criterion
+   evaluated on an instrument that does not measure a well-defined quantity is not a verdict.
+
+**The honest statement is:** the historical point estimate does not reproduce *exactly* on the
+production panel, and the evidence does not establish a genuine regime shift. Across every
+credible instrument α is **O(0.1–0.25)**, while **α = 1 is decisively wrong**.
 
 **What survives, and it is the load-bearing half:** every arm, every population, both
 instruments, and both the confounded and corrected fits put α far below 1.0 and the
@@ -457,10 +462,25 @@ What is no longer supported is the sharper claim that the wide-era α = 0.176 ca
 unchanged — the honest range on production labels is now **α ≈ 0.06–0.37 depending on the arm**,
 and the arms disagree more than any one of their CIs suggests.
 
-⚑ **(A) remains an UPPER BOUND**, recorded 08-15 BEFORE this re-run and unchanged by it: MATCHED
-is median depth **9** against PROD's **12** with bestmove agreement 0.622, because at a fixed node
-budget you cannot widen MultiPV without weakening the search. A weaker search sees bigger gaps.
-That is consistent with (A) 0.2719 sitting above (B) 0.1976.
+⚑⚑ **RETRACTED: "(A) IS AN UPPER BOUND" WAS NEVER ESTABLISHED.** I wrote that on 08-15 from
+"a weaker search sees bigger gaps", supported by (A) TRUE 224.4 cp sitting above (B)'s 181.0.
+**That is an observation, not a monotonicity argument.** Widening MultiPV at a fixed budget both
+weakens and widens the search: it can miss refutations (scoring bad moves too generously, biasing
+α DOWN) as easily as it can inflate gaps. Nothing here fixes the sign, and one paired comparison
+does not fix it either. Codex raised this as a P1 and is right.
+
+⇒ **(A) IS NOT A VALID INSTRUMENT FOR THIS QUESTION, AND THAT DEMOTES THE PRE-REGISTRATION'S OWN
+PRIMARY.** The deeper problem is that (A)'s target quantity may not exist: "what would the label's
+own search have said about the moves it did not surface" presumes a counterfactual that a fixed
+node budget cannot realise, because you cannot vary width while holding search strength. So the
+08-14 pre-registration named a primary that turned out not to measure a well-defined thing.
+**Honouring a pre-registration does not mean treating a later-invalidated instrument as truth** —
+it means saying so rather than quietly switching to the arm that agrees. The valid arms are (B)
+and (A)-tablebase-free, and they DO cover 0.1759; (B′) answers a different question.
+
+**A matched-STRENGTH wide arm is the missing instrument** — full width at whatever node budget
+restores PROD's median depth 12 — and until it exists the transfer question is open, not answered
+in either direction.
 
 ⚑ **α_value and α_grad NO LONGER COINCIDE on the panel** — (A) reads 0.2719 vs 0.1018. The
 ledger's earlier "one scalar in ~0.14–0.18 serves both objectives" was a SCREEN-population
@@ -599,6 +619,15 @@ pair term is the regret DIFFERENCE.** So:
   to machine precision by a test).
 - **surfaced × tail**: needs a tail **MAGNITUDE** — precisely what relational supervision declines
   to supply and what a fitted α does supply.
+- **tail × tail**: also unobserved, and a CONSTANT tail zeroes it by construction (all tail
+  regrets equal ⇒ every `r_i − r_j` inside T is 0) while `g_true`'s is not. So the constant tail
+  does not merely mis-scale the missing information, it deletes one block outright — which is the
+  other half of why cosine caps at ~0.905 no matter how α is fitted.
+
+⇒ **fifteen pairwise labels from six SF values are not fifteen new pieces of supervision.** They
+are the same information re-expressed; the regret gradient already IS their aggregate. The
+bottleneck is not extracting more algebra from observed values, it is ACQUIRING the missing
+cross-boundary comparisons.
 
 Relational supervision is not a different *kind* of information here. It is the same object with
 one block deleted.
@@ -627,34 +656,98 @@ BECOMES one.**
 
 **Secondary readings.**
 - **Indifference weighting helps** (`w_ij = min(1, |Q_i−Q_j|/τ)`): **+0.0249** (0.8831 vs 0.8582),
-  isolated by a single-knob ablation. Real, and an order of magnitude short of the gap.
+  isolated by a single-knob ablation. ⚑ Read it narrowly: it says SF's tiny WITHIN-top-6 score
+  differences carry enough noise/irrelevant sharpening that treating near-ties as equivalent
+  improves use of the OBSERVED block. **It does not touch censoring.** Worth keeping as an add-on
+  for any future SF-ranking or regret auxiliary, not as an answer to the tail.
 - **Listwise CE is ANTI-correlated (−0.133)**, not broken: matching a sharpened SF distribution
   opposes a gradient that wants mass shifted by *current prior* weight. It also invents a
   temperature, so it never belonged in the "no fabricated values" class.
 - **Pure pairwise within the six reads 0.6531**; hinge/Borda-limit variants 0.4024.
 
-⚑ **SIDE FINDING THAT REFRAMES THE INCUMBENT: most of the constant tail's fidelity is SET
-MEMBERSHIP, not the six VALUES.** Permuting SF's scores within a row and refitting leaves the
-constant tail at cos **0.6445** against 0.9159 with true scores — **70% survives** destroying
-every value while keeping the surfaced/tail split. (The agent's own permutation scheme read
-0.4349 ⇒ 53%; the schemes differ — mine permutes across all scored moves and recomputes `r_6` —
-so quote the mechanism, not a single decimal.) This is consistent with the algebra: what the
-target mostly encodes is *which moves SF looked at*, plus one magnitude.
+⚑ **SIDE FINDING THAT REFRAMES THE INCUMBENT: much of the constant tail's direction comes from
+SET MEMBERSHIP, not the six VALUES.** Permuting SF's scores within a row and refitting leaves the
+constant tail at cos **0.6445** against 0.9159 with true scores. (A different permutation scheme
+read 0.4349; the schemes differ — mine permutes across all scored moves and recomputes `r_6` — so
+quote the MECHANISM, not a decimal.)
+
+⚑ **Say "the cosine retains ~70% of its magnitude", NOT "70% of the information survives".**
+Cosine is not linear in information: a ratio of two cosines is not a fraction of gradient content
+explained, and an earlier draft of this entry said so. The defensible claim is the qualitative
+one — destroying SF's score ordering entirely still leaves a surprisingly large cosine, because
+surfaced-set membership plus the prior's own geometry already fixes most of the direction. That
+is consistent with the algebra: what the target mostly encodes is *which moves SF looked at*,
+plus one magnitude.
 
 **What this does NOT establish.**
-1. **ΔQ is untouched.** This screens what can be extracted from SF's EXISTING six. It says nothing
-   about *buying* the missing comparison — which is exactly the S×T block the algebra shows is
-   the only part missing. ⇒ **the negative here strengthens the ΔQ direction rather than weakening
-   it**, because it identifies precisely what has to be purchased.
-2. **Era.** MultiPV-**40** wide-label data. Real MPV-6 constant-tail cosines top out ~0.81–0.87
+1. **ΔQ is untouched, and this SHARPENS it.** The screen bounds what is extractable from SF's
+   EXISTING six; it says nothing about *buying* the missing S×T / T×T comparisons. ⇒ the negative
+   **strengthens** ΔQ by naming what has to be purchased. And the missing block is not generically
+   "surfaced × tail" — it is specifically *comparisons involving high-prior, student-important
+   moves that SF6 did not evaluate*, which is a far cheaper query policy than "every disagreement".
+2. **Branch/counterfactual solver structure is NOT falsified by this.** The screen tested one
+   reading of the CAST/MDT idea — richer supervision from the SAME root solver output — and that
+   loses for the algebraic reason above. The other reading, how solver decisions change ACROSS
+   states (`Q(s,a_A) − Q(s,a_B)` versus the same contrast at `s'`), carries information no single
+   root's six scalars contain. Not pursued now because ΔQ is cheaper and closer to the
+   demonstrated hole, but it is untested, not refuted.
+3. **Era.** MultiPV-**40** wide-label data. Real MPV-6 constant-tail cosines top out ~0.81–0.87
    (2026-08-16 panel), so the exact numbers are era-specific; the ceiling argument is geometric
    and should transfer, but that is an argument, not a measurement.
-3. The screen ran on the estimator BEFORE the 08-16 review fixes (n=5059, α 0.1759 vs the
+4. The screen ran on the estimator BEFORE the 08-16 review fixes (n=5059, α 0.1759 vs the
    corrected n=5028, α 0.1779). The shift is <0.002 and the ceiling is geometric, so the verdict
    is unaffected — but the exact cosines are on the older pipeline.
-4. Four losing variants remain edge-pinned; closed analytically (every pure-order variant
+5. Four losing variants remain edge-pinned; closed analytically (every pure-order variant
    converges to the Borda limit, and the pinned hinge and the closed-form limit agree to 4 dp)
    rather than by widening the search again.
+
+### PRE-REGISTERED (2026-08-16) — ΔQ as an INFORMATION-VALUE experiment, not a loss
+
+⚑ **Registered before any code.** The relational-SF6 negative above says exactly where the hole
+is (the S×T / T×T blocks), so ΔQ is now the cheapest instrument aimed at it. **Phase 1 measures
+whether the missing comparison is worth buying. It does NOT add a loss, a target, or a config
+key** — that decision needs its own entry after this one reads out.
+
+**Query policy — buy only the comparisons that are actually missing.** For each row let `a_P` be
+the raw-prior top move and `a_M` the Gumbel/MCTS move (recoverable offline via
+`cast_probe.recover_played_move`, 1380/1380). Then:
+
+| case | action |
+|---|---|
+| `a_P == a_M` | nothing to adjudicate — no query |
+| both already in SF6 | **ΔQ is free**, already banked in `sf_multipv_raw` |
+| exactly one outside SF6 | **buy it** — this IS the missing S×T relation |
+| both outside SF6 | buy both — the missing T×T relation, the most valuable case |
+
+⇒ the SF spend is a small fraction of "one targeted comparison per disagreement", and the split
+across those four cases is itself the first readout.
+
+**MEASURE (phase 1, no training change):** disagreement rate `a_P ≠ a_M`; the four-way case
+split; SF verdict flip rate; **rescue** (search materially better than prior) vs **corruption**
+(prior materially better) rates and magnitudes; the margin distribution and what noise threshold
+it must clear; and **SF CPU per useful verdict**.
+
+**H3 GETS ITS REAL TARGET FROM THIS, and it is not "is this position hard":**
+
+    P(buying the missing candidate evaluation CHANGES the training decision | pre-query diagnostics)
+
+That is a value-of-information question, answerable from the phase-1 dataset by holding out the
+purchased verdict and predicting it from what was observable before the query.
+
+**PRE-COMMITTED KILL RULE.** If, on ≥300 disagreement rows, the verdict flips the
+prior-vs-search ordering with a margin clearing the noise threshold on **<10%** of rows, ΔQ is
+not worth wiring into training and phase 2 is dropped. Recorded now so a thin positive cannot
+be re-read as encouraging later.
+
+⚑ **PREREQUISITE, AND IT IS NOT DONE.** `searchmoves` now exists on `StockfishUCI` (built
+2026-08-16, legality-validated, 7/7 mutations) but **`StockfishPool` does not forward it** —
+`pool.py::_search`/`submit` have a fixed `(fen, nodes, syzygy_path, fresh)` signature. A caller
+reaching for it through the pool finds it silently unavailable, which is this repo's signature
+defect shape. Close that, with an independent review, before phase 1 runs.
+
+⚑ **This does NOT explain the current run.** `w_sf_own_regret` is **0.0** live (audit A7), so
+none of the tail work — and none of this — is acting on the network today. It is about how not to
+turn that channel back on, and what to buy instead.
 
 ### PRE-REGISTERED FOLLOW-UP — targeted prior-vs-search adjudication (`ΔQ`), NOT a dense SF target
 
