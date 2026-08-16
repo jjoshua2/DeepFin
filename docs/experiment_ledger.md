@@ -51320,3 +51320,52 @@ mis-specified for two of its three keys from the start. [[a_gate_that_cannot_fai
 
 **Owed, and now cheap:** the entropy-conditional falsifier above, on a third checkpoint. Task #225.
 Banked: `scratchpad/knobab/*.jsonl` (6 × 4000 per-position dumps) + `paired_ci.py`.
+
+### READOUT — entropy ladder: **INCONCLUSIVE by the pre-committed rule**, but the LADDER is significant
+
+Prereg `e616041e7` (`scratchpad/knobab/PREREG_entropy_ladder.md`), committed BEFORE the three
+new checkpoints were scored. Same protocol throughout: n=4000, seed 42, `audit_set_v1`, both
+arms at production `policy_temp` 1.5, paired on FEN, 20k bootstrap, row (d) = stored target.
+
+| checkpoint | baseline entropy (knobs OFF) | accuracy delta (ON − OFF) | | ΔE |
+|---|---|---|---|---|
+| `bt4heads_iter100` **(production)** | 0.692 | **−0.875 pp** [−1.63, −0.10] | SIG | −0.09 |
+| `ck_resume_iter672` | 0.775 | −0.325 [−1.10, +0.45] | ns | +0.10 |
+| `ck_2026-08-09_iter514` (banked peak) | 0.788 | −0.275 [−1.03, +0.50] | ns | −0.48 |
+| `ck_2026-07-29_iter218` | 0.961 | +0.125 [−0.70, +0.98] | ns | −1.90 |
+| `ANCHOR_20260727_preC17` | 0.976 | **+0.825 pp** [+0.05, +1.60] | SIG | −2.22 |
+
+- **Prereg 1 (rho > 0): PASS, and strongly** — Spearman **rho = +1.000**. All five checkpoints
+  fall in exact rank order. Under the null that is 1 ordering out of 5! = 120, so the
+  pre-specified statistic is significant at **p = 0.0083 one-sided**.
+- **Prereg 2 (sign crossing): PASS** — everything below 0.75 entropy is negative, everything
+  above 0.92 is positive, no violations.
+- **Prereg 4: FIRES** — all three NEW deltas have CIs spanning zero.
+
+⇒ **VERDICT: INCONCLUSIVE**, as rule 4 defined it: *"the effect would then be real only at the
+extremes and too small to act on."* That is precisely the picture. **The ladder is significant;
+no individual interior checkpoint is.** I am recording the pre-committed verdict rather than
+promoting it to CONFIRMED on the strength of rho, because rule 4 anticipated exactly this
+outcome and reinterpreting it after seeing rho = 1.000 is the optional-stopping failure this
+protocol exists to prevent [[rolling_arena_optional_stopping_faked_112_elo]].
+
+**What it does support.** The direction is no longer a two-point curiosity — it is monotone
+across five checkpoints with a significant rank statistic, and the two ENDS are individually
+significant in opposite directions. The mechanism (these knobs sharpen; sharpening helps a soft
+target and hurts a sharp one) survives a real attempt to break it.
+
+**⚑ The confound I stated in advance stands, and the data confirm it is unavoidable here.**
+Baseline entropy is monotone in training time across this set — 218 (0.961) → 514 (0.788) →
+672 (0.775) → 991/`bt4heads` (0.692), with the 07-27 anchor earliest and softest at 0.976. So
+"entropy" and "how late in the run" are perfectly collinear in these five and **this design
+cannot separate them.** Anything that breaks the collinearity — two checkpoints of similar
+vintage and different entropy, or an artificially retempered target — would be the discriminating
+experiment. Not run.
+
+**No action changes.** The decision above stands unchanged: the knobs stay as they are at the EP
+restart. An INCONCLUSIVE read is not a licence to move a production key, and the effect at
+production's own entropy (−0.875 pp) is a fraction of a percent of argmax accuracy on a 4000-row
+frozen set — worth knowing, not worth stacking onto the EP readout window.
+
+Banked: `scratchpad/knobab/{A,B,iter218,iter514,iter672}_{prod,noknob}.jsonl` (10 × 4000
+per-position dumps), `B_instr`/`A_instr`, and `paired_ci.py`.
