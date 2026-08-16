@@ -54021,3 +54021,13 @@ the part no screen built from the shallow teacher can ever reach.
 by this screen to a 500k-node label and reads out on bad-tail inheritance. Cost ~1.27-1.35x
 loop. ⚑ Per [[an_exact_command_means_it_was_run]] its yardstick must be EXECUTED to a real
 exit code, and its statistic shown to MOVE with the intervention, before the entry lands.
+
+### 2026-08-16 — CONTAMINATION MARKER: iters ~22+ of `train_trial_dea5e` are AGENT-LOADED, do not read as throughput
+
+Two PR-fix subagents (lint + targeted test runs, CPU-only) were running concurrently from
+~iter 21. `time_this_iter_s` went 263.7 -> 312.1 -> 337.3 while `error.txt` stayed absent
+and the trial stayed healthy. **This is CPU contention with the selfplay workers, not a
+regression.** Same failure recorded at `d5687700f` (iters 151-162 of the prior run).
+Steady-state baseline for this trial is the iters 16-21 band, **~248-266s**.
+⇒ **Do not open a throughput readout while agents are running**, and do not compare an
+iteration from this window against a clean baseline.
