@@ -52877,3 +52877,90 @@ re-measurement where an arithmetic restriction is available and is strictly more
 
 **The arm is NOT dead and no compute is lost** — the band, the anchor and the corpus all
 survive. What is lost is the frozen SET, which is the cheapest of the four to rebuild.
+
+## 2026-08-16 — ⚑⚑ PR #440 (SF UPGRADE PREREG): THE DECIDING YARDSTICK READS A QUANTITY THAT IS INVARIANT TO THE INTERVENTION
+
+Found by independent review, **verified here by direct inspection before acting**. This is a
+protocol failure on my side: a prereg was written and staged whose pre-committed gate
+**cannot fire**, and it passed my own read because the prose named the right quantity.
+
+**The prereg names candidate (c)** — *"the >300cp tail of the SF MultiPV soft target —
+candidate (c)"*. In `scripts/audit_targets.py:167-173`:
+
+```
+"raw":     "a) net raw policy"
+"sf_soft": "c) SF MultiPV soft target"
+```
+
+**The readout command reads candidate (a).** `scripts/tail_stats.py:28`:
+
+```python
+v = r.get("cand", {}).get("raw", {}).get("top1") if raw_top1 else r.get("value")
+```
+
+and its ENTIRE argument surface is four items — `dump_a`, `dump_b`, `--raw-top1`,
+`--tail-cp`. **There is no flag that can reach `cand.sf_soft.*` at all.**
+
+**Why that makes the gate unfireable, not merely mislabelled.** Candidate (a) is the net's
+raw policy read off the checkpoint and scored against the audit-set referee
+(`audit_targets.py:1579`, `"raw": raw_probs[i]`). It has **no dependence on `--stockfish`**.
+Two arms differing only in the Stockfish binary produce **byte-identical** `cand.raw.*`. So
+the pre-committed statistic is identically 0 for ANY teacher, `|net| = 0 < 40` on both
+referees, and the verdict is **INCONCLUSIVE by construction** — for a 2x2 costing four
+4000-position `audit_targets` runs plus a 4000-position 1M-node `build_audit_set` build.
+[[a_gate_that_cannot_fail]]
+
+⚑ This is the standing review bias landing on my own work: *a metric that does not mean what
+its name says*. The prereg's prose, its confounds, its "what a PASS does NOT establish"
+section and its VOIDing of `wdl_regret` are all sound. The one line that had to be executable
+was not executed.
+
+**And it was never executed — both "exact commands" fail at argparse:**
+- `audit_targets.py: error: unrecognized arguments: --dump-jsonl` (exit 2). The flag is
+  `--dump-per-position`.
+- Corrected, it then fails: *"pass exactly one of --checkpoint or --onnx; neither was given"*
+  — the arm pins no checkpoint, which also violates
+  [[pin_the_start_checkpoint_by_path_and_step]].
+- `build_audit_set.py: error: the following arguments are required: --replay-dir` (exit 2),
+  required even though the manifest-reuse path never reads it.
+
+⇒ [[a_required_grep_must_be_run_before_it_is_written]], again. **Rule, restated with teeth:
+"ONE deciding yardstick as an exact command" means the command was RUN — to a real exit code,
+on a real dump — before the entry is committed. Not that it was written carefully.** An
+argparse error is the cheapest possible falsifier and it was available the whole time.
+
+**Consequences.** #440 is REQUEST-CHANGES and the SF upgrade (task #213) stays blocked — but
+blocked on a fixable yardstick, not on a scientific problem. Nothing was deployed: verified
+against the live box, not the diff — `e2e_server/publish/stockfish` still resolves to
+`dev-20260420-ed651aab`, the staged `dev-20260810-5062aee5` is present and unlinked, and that
+directory holds exactly the one symlink. **"STAGED, NOT DEPLOYED" is true.**
+
+**Fix:** give `tail_stats.py` a field selector (`--field cand.sf_soft.top1`) so the readout can
+address the quantity the prereg pre-commits on; `paired_compare.py --field` is not a
+substitute because it reports mean/CI, not the >300cp flip COUNT the entry gates on. Then
+re-run both commands to a real exit code and paste the outputs into the entry before the arm
+is launched.
+
+### Same review, a second gate that stops being able to fail — PR #441 (path scrub)
+
+`tests/stockfish_binary.py`'s candidate[0] on `main` is the ABSOLUTE
+`/home/josh/projects/chess/e2e_server/publish/stockfish`, which resolves from ANY worktree.
+#441 makes it checkout-relative. Verified here: **`git ls-files e2e_server` returns 0 files —
+the directory is untracked runtime output and exists ONLY in the live tree.** So in every
+worktree and every fresh clone `find_stockfish()` returns `None`, and
+`test_e2e_smoke.py:34`'s `pytestmark = skipif(SF_PATH is None)` silently skips **all 18**
+tests (plus `test_selfplay_resume.py`, `test_sparse_multipv_labels.py`).
+
+⚑ CLAUDE.md MANDATES running `tests/test_e2e_smoke.py` for selfplay-path changes, and a
+standing rule mandates running tests IN THE WORKTREE. After #441, obeying both turns the
+mandated smoke test into 18 silent skips. **A hygiene PR that converts the project's only
+end-to-end wiring check into a gate that cannot fail.** The scrub itself is correct and must
+land — the fix is a `CAE_STOCKFISH` env candidate plus `shutil.which("stockfish")`, which is
+the very idiom #441's own new test docstring names and is the one part it omits.
+
+**Residual leak, confirmed at 162 hits/18 files, all allowlisted** — plus two shapes the
+guard's regex structurally cannot match: `distributed_worker_username: josh` in 17 configs,
+and 7 tracked `/tmp/claude-1000/-home-josh-.../` scratchpad paths (6 in this very file).
+Low consequence, but `tests/test_rare_sound_move_coverage.py:29-31` — a comment #441 EDITS —
+claims that exact form "were scrubbed before landing: this repository is PUBLIC". Either
+widen the pattern or narrow the claim.
