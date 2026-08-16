@@ -53861,3 +53861,49 @@ latter. The measurement I should have pre-committed is the one I only wrote down
 "compute the instrument's resolution before setting the threshold": the ruler was chosen before
 checking what it co-varies with. Recording it against myself, in the same session, judged by the
 rule I wrote and not by the answer I wanted.
+
+### 2026-08-16 AMENDMENT REQUIREMENT for #440 — the tail statistic has NO RESOLUTION at n=4000
+
+Following the blocking F1 above (PASS needs >=40 fixed; the tail is ~36 positions), I computed
+the resolution that the entry cited but never performed. **The problem is worse than the
+threshold: the instrument is too coarse for ANY threshold.**
+
+Measured tail rate **0.90% (18/2000)** at the prereg's exact settings. McNemar paired
+half-width on the tail flip-rate, `half = 1.96*sqrt(d/n_tail)`:
+
+| n_tail | audit positions needed | half @ d=0.3 | half @ d=0.5 |
+|---|---|---|---|
+| **36 (today, n=4000)** | 4,000 | **17.9pp** | 23.1pp |
+| 100 | 11,111 | 10.7pp | 13.9pp |
+| 115 | 12,778 | 10.0pp | 12.9pp |
+| 400 | 44,444 | 5.4pp | 6.9pp |
+
+⇒ **At n=4000 the tail cannot resolve anything.** Moving the threshold down makes PASS
+*reachable* but still unresolvable — a gate that fires on noise is not an improvement on a gate
+that cannot fire. Resolving a 10pp change in the tail fix-rate needs ~115 tail positions =
+**~12,800 audit positions, ~3.2x the current set**, and every one is a 500k-node MultiPV-40
+label.
+
+### The three ways out, and my recommendation
+
+- **(a) Buy the resolution.** ~3.2x the audit set. Real money in SF CPU; the labels are the
+  expensive axis. Only worth it if the tail is genuinely the only place the effect lives.
+- **(b) Lower the cp cut to enlarge the tail.** Cheap, but it silently changes the QUESTION —
+  ">300cp" was chosen as "where the teacher is badly wrong". A wider cut measures something else
+  and must not inherit this entry's hypothesis.
+- **(c) RECOMMENDED — gate on the FULL paired distribution at n=4000**, where the paired
+  half-width is `1.96*sqrt(0.3/4000)` = **1.7pp**, and demote the >300cp tail to a DESCRIPTIVE
+  secondary whose CI is reported and explicitly labelled uninformative at this n.
+
+**(c) is recommended because it makes both branches reachable at the current cost**, and because
+the honest form of the hypothesis is "a better teacher improves the labels", which is a
+statement about the distribution. If the effect exists ONLY in a 36-position tail and nowhere
+in 4000 paired positions, that is itself a finding — and one this design would report rather
+than hide.
+
+⚑ **The pre-committed effect size must be chosen against the 1.7pp resolution BEFORE the arms
+are run**, and both PASS and KILL must be demonstrated reachable inside the statistic's
+observed range on banked data. That is the check whose absence produced F1.
+
+**Open decision for Josh: (a), (b) or (c).** It has a compute-budget component, so it is not
+mine to make unilaterally. #440 stays BLOCKED until it is answered; nothing is launched.
