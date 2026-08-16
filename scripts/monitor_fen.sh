@@ -89,12 +89,33 @@ while true; do
     # "paired delta". So a refusal read as an empty DELTA and a warning read as
     # nothing at all: the gate fired into a void. `_prov` collects both onto the
     # monitor line, where the rest of the yardstick already goes.
+    #
+    # ⚑⚑ AND IT HAS TO GREP THE *STAMP* CHECK, NOT THE WORD "WARNING". The
+    # first version matched any WARNING in the log, which also catches
+    # `require_same_ruler`'s ROW-level warnings -- a different gate answering a
+    # different question. MEASURED on the real production log
+    # (scratchpad/live_read/monitor/paired_*_vs_boot.log): every deep cycle
+    # carries "'batch_size' not declared by boot512", so `_prov` returned
+    # UNVERIFIED on every cycle and `prov:ok` was UNREACHABLE -- for a reason
+    # that has nothing to do with the provenance stamp. A token that reports
+    # the same thing whatever happened reports nothing. Each cause now gets its
+    # own name, and `tests/test_paired_compare_gate_is_wired.py` drives the
+    # REAL paired_compare to produce each log, so the strings cannot drift out
+    # from under these greps.
     _prov() {   # $1 = label, $2 = paired_compare exit status, $3 = its log
         if [ "$2" != 0 ]; then
             PROV="$PROV ${1}:REFUSED($2)"
-        elif grep -q "WARNING" "$3" 2>/dev/null; then
-            PROV="$PROV ${1}:UNVERIFIED"
+            return
         fi
+        local _why=""
+        # require_same_stamp: one side carries no provenance header at all.
+        grep -q "carries no provenance stamp" "$3" 2>/dev/null && _why="$_why+UNSTAMPED"
+        # require_same_stamp: an identity key only one side declares.
+        grep -q "declared by only one side" "$3" 2>/dev/null && _why="$_why+PARTIAL"
+        # require_same_ruler: a per-ROW ruler field one side never recorded.
+        grep -q "cannot verify both sides used the same ruler" "$3" 2>/dev/null && _why="$_why+RULER"
+        [ -n "$_why" ] && PROV="$PROV ${1}:UNVERIFIED(${_why#+})"
+        return 0
     }
     if [ "$DO_DEEP" = 1 ]; then
         for P in v1 v2; do

@@ -901,3 +901,111 @@ def test_the_row_count_guard_is_wired_into_the_command_line_path(
     with pytest.raises(SystemExit) as exc:
         main()
     assert "9999 rows" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# #442 independent review — B3, and the Codex inline findings on this file
+# ---------------------------------------------------------------------------
+
+
+def test_a_provenance_header_that_follows_data_rows_is_refused(tmp_path) -> None:
+    """A stamp certifies the body BELOW it, so a late header certifies nothing.
+
+    Codex inline finding on `load_dump`: an unstamped dump with a stamped one
+    appended presents a single header, which the reader accepted as line-1
+    provenance. MEASURED before the fix — the pre-header rows were counted into
+    `n_data_lines`, so a declared `rows` covering the whole file satisfied the
+    count guard too, and the verdict printed under a banner certifying rows
+    written before the stamp existed.
+    """
+    from scripts.paired_compare import load_dump
+
+    stamped = Path(_stamped_header(tmp_path / "s.jsonl", ruler="R", n=3))
+    late = tmp_path / "late.jsonl"
+    legacy = "\n".join(
+        json.dumps({"fen": f"q{i}", "value": 1.0 + i, "phase": 1}) for i in range(3)
+    )
+    body = stamped.read_text(encoding="utf-8")
+    late.write_text(
+        legacy + "\n" + body.replace('"rows": 3', '"rows": 6', 1), encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="after 3 data rows"):
+        load_dump(str(late))
+
+
+def test_a_core_stamp_key_missing_from_one_side_is_refused(tmp_path) -> None:
+    """⚑ B3: half the one-sided-key hole, closed with a criterion that checks out.
+
+    `audit_cache_stamp` writes `policy_map_version` and `audit_ruler_version`
+    into EVERY stamped cache any writer has produced, so one side lacking one
+    cannot be explained by writer skew — the warn path's whole justification.
+    It is a stamp that did not come from the writer.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b_path = Path(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0))
+    kept = []
+    for line in b_path.read_text(encoding="utf-8").splitlines():
+        rec = json.loads(line)
+        rec.pop("policy_map_version", None)
+        kept.append(json.dumps(rec))
+    b_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    b = load_dump(str(b_path))
+    assert "policy_map_version" not in b.stamp, "fixture did not remove the key"
+    with pytest.raises(SystemExit, match="declares no 'policy_map_version'"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_one_sided_EXTRA_key_still_only_warns(tmp_path, capsys) -> None:
+    """The other half stays a warning, and B3's replacement rationale needs it.
+
+    `scripts/monitor_fen.sh` joins a BANKED baseline against a fresh dump every
+    deep cycle. A banked dump is written by an older build by definition, so the
+    day a stamp field is added every baseline goes one-sided on it. Refusing
+    there invalidates every baseline to catch a case the warning names.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"history_fill": "repeat"}))
+    require_same_stamp(a, b, label_a="A", label_b="B")   # must NOT raise
+    assert "history_fill" in capsys.readouterr().out
+
+
+def test_the_compared_NET_is_not_treated_as_ruler_identity(tmp_path, capsys) -> None:
+    """Codex inline finding on `foreign_net_audit`: `net` names the SUBJECT.
+
+    `foreign_net_audit.py` stamps the net it scored. Two such caches are exactly
+    what `paired_compare --join-key key --field exp_regret` is for, and their
+    `net` values necessarily differ — so treating it as ruler identity refuses
+    the comparison on the one field guaranteed to disagree. The subject of a
+    measurement is not its ruler.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                                  extra={"net": "bt4.onnx", "topk": 5}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"net": "ours_ckpt443.pt", "topk": 5}))
+    require_same_stamp(a, b, label_a="A", label_b="B")   # must NOT raise
+    assert "net" not in capsys.readouterr().out.replace("net a", "")
+
+
+def test_topk_beside_net_is_still_ruler_identity(tmp_path) -> None:
+    """The negative control for the exclusion above: only `net` was excluded.
+
+    `topk` is a foreign-net SCORING parameter — how many policy moves were
+    cached — so two caches that disagree on it are not comparable. If the fix
+    for "the gate cannot pass" had been to exclude foreign-net keys wholesale,
+    this test is what would have caught it.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                                  extra={"net": "bt4.onnx", "topk": 5}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"net": "ours.pt", "topk": 20}))
+    with pytest.raises(SystemExit, match="disagree on stamp key 'topk'"):
+        require_same_stamp(a, b, label_a="A", label_b="B")

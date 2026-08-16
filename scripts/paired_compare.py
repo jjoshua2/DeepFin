@@ -55,9 +55,11 @@ import numpy as np
 # `scripts/monitor_fen.sh` runs it against the live training box.
 from chess_anti_engine.utils.audit_cache_format import (
     AUDIT_CACHE_FORMAT,
+    CORE_STAMP_KEYS,
     ROW_COUNT_KEY,
     STAMP_FORMAT_KEY,
     STAMP_NON_IDENTITY_KEYS,
+    is_stamp_record,
 )
 
 PHASE_NAMES = ("endgame", "middlegame", "opening")
@@ -162,7 +164,7 @@ def load_dump(
             # Skipping on the SENTINEL rather than special-casing
             # `input_encoding` is deliberate: it stays correct for every stamp
             # key added later, and no data row can carry the sentinel.
-            if STAMP_FORMAT_KEY in r:
+            if is_stamp_record(r):
                 # ⚑ CAPTURED, not merely skipped. Skipping was right for the
                 # ROW loop — the stamp's `input_encoding` is a scalar where
                 # rows hold a per-candidate dict, so folding it into
@@ -187,6 +189,24 @@ def load_dump(
                         "line-1 stamp cannot describe — and the first header's "
                         "provenance would be silently discarded. Split them, or "
                         "re-dump."
+                    )
+                if n_data_lines:
+                    # ⚑ A HEADER THAT FOLLOWS ROWS DOES NOT DESCRIBE THEM.
+                    # Without this, an unstamped dump with a stamped one
+                    # appended reads as a single stamped file: the sole header
+                    # is accepted as line-1 provenance, and if its declared
+                    # `rows` happens to cover the whole body the count guard
+                    # passes too — certifying rows written before the stamp
+                    # existed. `write_audit_cache` always emits the header
+                    # first and `read_audit_cache_stamp` reads only line 1, so
+                    # a later header is not a shape any writer produces.
+                    raise SystemExit(
+                        f"{path}: the provenance header is on line {lineno}, "
+                        f"after {n_data_lines} data rows. A stamp certifies the "
+                        "body that FOLLOWS it — rows above it were written "
+                        "before it existed and are not covered by it. This "
+                        "looks like an unstamped dump with a stamped one "
+                        "appended. Split them, or re-dump."
                     )
                 stamp = dict(r)
                 declared_format = r.get(STAMP_FORMAT_KEY)
@@ -345,14 +365,33 @@ def require_same_stamp(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
     refused. So the exclude set buys automatic coverage from the day BOTH
     writers emit the field, not from the day the first one does.
 
-    That behaviour is deliberate and is NOT a hole to be closed by refusing
-    one-sided keys. The writers legitimately stamp different `extra` sets —
-    `audit_targets.py` records `producer`/`input_encoding`, `foreign_net_audit.py`
-    records `net`/`topk` — and `scripts/audit_compare_buckets.py` exists to join
-    exactly that cross-producer pair. Refusing on one-sided absence would refuse
-    a comparison the pipeline is built around, in order to catch a case the
-    warning already names. `test_a_stamp_key_only_one_side_declares_is_reported`
-    pins it.
+    ⚑⚑ THE RATIONALE THAT USED TO SIT HERE NAMED A TOOL THAT DOES NOT GO
+    THROUGH THIS FUNCTION. It said one-sided keys must be permitted because
+    "`scripts/audit_compare_buckets.py` exists to join exactly that
+    cross-producer pair". `audit_compare_buckets.py` never calls
+    `require_same_stamp` — it validates through `read_audit_cache_stamp` +
+    `require_same_audit_set`, which this could not affect. Outside `tests/`
+    there is exactly ONE call site, `main` below. A justification for a hole
+    that names a comparison which does not pass through the hole is the same
+    defect as a stamp that is read and then ignored, one level up
+    (#442 review B3). The hole is now half closed and the remaining half has a
+    reason that survives checking:
+
+      - a one-sided **CORE** key (`CORE_STAMP_KEYS`: the format, the policy-map
+        version, the ruler version) is REFUSED. `audit_cache_stamp` writes all
+        three into every stamped cache any writer has ever produced, so their
+        absence on one side cannot be writer skew — it is a hand-made or
+        mangled stamp, and the identity comparison over it is not sound.
+      - a one-sided **extra** key still warns. This is the real case, and it is
+        a real `paired_compare` invocation: `scripts/monitor_fen.sh` joins a
+        BANKED baseline against a fresh dump every deep cycle, and a banked
+        dump is by definition written by an older build than the fresh one. Add
+        a stamp field today (`foreign_net_audit`'s input contract, say) and
+        every banked baseline becomes one-sided on it. Refusing there would
+        invalidate every baseline on the day a field is added, to catch a case
+        the warning names — and per the #442 review B2 that warning is now
+        distinguishable on the monitor line (`PARTIAL`), which it was not when
+        this argument was first made.
 
     An ABSENT stamp is warned about, not refused: dumps predating stamping are
     legitimately unstamped, and `require_same_ruler` already refuses the
@@ -374,6 +413,15 @@ def require_same_stamp(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
             continue
         if key not in a.stamp or key not in b.stamp:
             absent = label_a if key not in a.stamp else label_b
+            if key in CORE_STAMP_KEYS:
+                raise SystemExit(
+                    f"{absent} declares no '{key}' in its provenance stamp, but "
+                    f"the other side does. Every stamp `audit_cache_stamp` has "
+                    "ever written carries it, so this is not two writer builds "
+                    "disagreeing — it is a stamp that was not produced by the "
+                    "writer, and its remaining identity fields cannot be "
+                    "trusted to mean what they say. Re-dump."
+                )
             print(
                 f"[paired-compare] WARNING: stamp key '{key}' is declared by "
                 f"only one side ({absent} lacks it) — the two dumps were "

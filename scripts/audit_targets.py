@@ -1471,6 +1471,10 @@ def main() -> None:
 
     encoding = normalize_input_encoding(args.input_encoding)
     positions = load_audit_set(args.audit_set)
+    # Digested beside the READ, not at write time: the SF labelling pass below
+    # runs for up to an hour, and a digest taken afterwards describes whatever
+    # is on disk then rather than what was scored. (Codex inline review, #442.)
+    set_provenance = audit_set_provenance(args.audit_set)
     if args.max_positions > 0:
         positions = positions[: args.max_positions]
 
@@ -1724,7 +1728,7 @@ def main() -> None:
             args.dump_per_position, per_pos_dump, force=True,
             extra={"producer": "audit_targets.py --dump-per-position",
                    "input_encoding": encoding,
-                   **audit_set_provenance(args.audit_set)},
+                   **set_provenance},
         )
         print(f"[audit] per-position dump → {args.dump_per_position} "
               f"({len(per_pos_dump)} rows) [{stamp_summary(stamp)}]")

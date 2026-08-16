@@ -95,23 +95,41 @@ from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 from chess_anti_engine.utils import sha256_file
 from chess_anti_engine.utils.audit_cache_format import (
     AUDIT_CACHE_FORMAT,
+    AUDIT_RULER_VERSION_KEY,
     AUDIT_SET_DIGEST_KEY,
     AUDIT_SET_KEY,
+    CORE_STAMP_KEYS,
+    MATCHED_ROWS_DIGEST_KEY,
+    MATCHED_ROWS_KEY,
+    NET_KEY,
+    POLICY_MAP_VERSION_KEY,
     ROW_COUNT_KEY,
     STAMP_FORMAT_KEY,
+    STAMP_NON_IDENTITY_KEYS,
+    is_stamp_record,
+    iter_data_rows,
 )
 
 __all__ = [
     "AUDIT_CACHE_FORMAT",
+    "AUDIT_RULER_VERSION_KEY",
     "AUDIT_SET_DIGEST_KEY",
     "AUDIT_SET_KEY",
+    "CORE_STAMP_KEYS",
+    "MATCHED_ROWS_DIGEST_KEY",
+    "MATCHED_ROWS_KEY",
+    "NET_KEY",
+    "POLICY_MAP_VERSION_KEY",
     "ROW_COUNT_KEY",
     "STAMP_FORMAT_KEY",
+    "STAMP_NON_IDENTITY_KEYS",
     "AuditCacheError",
     "audit_cache_stamp",
     "audit_ruler_version",
     "audit_set_provenance",
     "ensure_cache_writable",
+    "is_stamp_record",
+    "iter_data_rows",
     "policy_map_version",
     "read_audit_cache",
     "read_audit_cache_by_key",
@@ -322,8 +340,8 @@ def audit_cache_stamp(**extra: Any) -> dict[str, Any]:
     """The header record written as line 1 of every audit cache."""
     return {
         STAMP_FORMAT_KEY: AUDIT_CACHE_FORMAT,
-        "policy_map_version": policy_map_version(),
-        "audit_ruler_version": audit_ruler_version(),
+        POLICY_MAP_VERSION_KEY: policy_map_version(),
+        AUDIT_RULER_VERSION_KEY: audit_ruler_version(),
         **extra,
     }
 
@@ -360,9 +378,27 @@ def write_audit_cache(
     `rows` is recorded by the WRITER, after `**extra`, so a caller cannot
     supply a count that disagrees with what was actually written. The reader
     enforces it — see `read_audit_cache`.
+
+    ⚑ A DATA ROW MAY NOT CARRY `STAMP_FORMAT_KEY`. Every reader — this module's
+    `read_audit_cache`, `scripts/paired_compare.load_dump`,
+    `utils.audit_cache_format.iter_data_rows`, and any `grep`/`jq` one-liner an
+    operator writes — separates header from body on that one key. That is only
+    sound if the writer cannot emit a row that answers to it, so the writer
+    refuses instead of documenting a convention. Enforced here rather than in
+    the reader because a reader can only guess which of the two records is the
+    real header, and by then the file is already banked.
     """
     ensure_cache_writable(path, force=force)
     materialised = list(rows)
+    for i, row in enumerate(materialised):
+        if STAMP_FORMAT_KEY in row:
+            raise AuditCacheError(
+                f"{path}: data row {i} carries the header sentinel "
+                f"'{STAMP_FORMAT_KEY}'. Every reader tells the provenance "
+                "header from the body by that key alone, so a row holding it "
+                "would be read as a second header (or the body as one row "
+                "short). Rename the field."
+            )
     stamp = audit_cache_stamp(**dict(extra or {}))
     stamp[ROW_COUNT_KEY] = len(materialised)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -466,7 +502,7 @@ def read_audit_cache(path: Path) -> list[dict[str, Any]]:
                 raise _reject(path, f"line {lineno} is not JSON ({exc})") from exc
             if not isinstance(row, dict):
                 raise _reject(path, f"line {lineno} is not a JSON object")
-            if STAMP_FORMAT_KEY in row:
+            if is_stamp_record(row):
                 raise _reject(
                     path,
                     f"line {lineno} is a second provenance header — this looks "
