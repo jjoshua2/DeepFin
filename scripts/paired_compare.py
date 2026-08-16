@@ -49,6 +49,12 @@ from typing import NamedTuple
 
 import numpy as np
 
+# ⚑ The LEAF, not `eval.audit_cache`: that package's __init__ imports
+# `.puzzles` -> torch, which costs ~4.0 s and ~750 MB for one string
+# constant. This module is deliberately stdlib+numpy and
+# `scripts/monitor_fen.sh` runs it against the live training box.
+from chess_anti_engine.utils.audit_cache_format import STAMP_FORMAT_KEY
+
 PHASE_NAMES = ("endgame", "middlegame", "opening")
 
 
@@ -129,6 +135,23 @@ def load_dump(
     with open(path, encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
+            # ⚑ The provenance HEADER is not a data row. `audit_targets
+            # --dump-per-position` writes its dump through
+            # `chess_anti_engine.eval.audit_cache`, whose stamp occupies line 1
+            # and legitimately carries keys that also exist on data rows —
+            # `input_encoding` among them, as a SCALAR where the rows hold a
+            # per-candidate DICT. Counting it here made a single-ruler dump look
+            # like two, and `require_same_ruler` refused it with a diagnosis
+            # ("this dump mixes two rulers within itself") that named the wrong
+            # culprit entirely. It also inflated `unusable` by one, breaking the
+            # `rows = unusable + indexed` arithmetic this module's own docstring
+            # tells operators to check before trusting a verdict.
+            #
+            # Skipping on the SENTINEL rather than special-casing
+            # `input_encoding` is deliberate: it stays correct for every stamp
+            # key added later, and no data row can carry the sentinel.
+            if STAMP_FORMAT_KEY in r:
+                continue
             for pf in RULER_FIELDS:
                 if pf in r:
                     # json.dumps so a dict-valued stamp (audit_targets records
