@@ -163,6 +163,14 @@ def test_promotion_suffix_is_accepted() -> None:
         "0000",        # the null move: "restrict to nothing" is not a thing
         "e2e4 d2d4",   # two moves in one token
         "e2e4\nstop",  # newline injection into the go line
+        # ⚑ TRAILING newline, the case `$` misses. Python's `$` also matches
+        # immediately before a final newline, so this passed the gate while
+        # "e2e4\nstop" (above) was correctly rejected — the suite looked like it
+        # covered newline injection when it only covered the loud half. Requires
+        # `\Z`. `_send` appends its own newline, so this would split the `go`
+        # line in two and desync the engine.
+        "e2e4\n",
+        "e2e4\r\n",    # the CRLF form of the same hole
         "",            # empty token
     ],
 )

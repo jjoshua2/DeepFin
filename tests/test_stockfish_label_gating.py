@@ -74,7 +74,7 @@ class _FakePool(StockfishPool):
             "fresh": fresh, "searchmoves": None if searchmoves is None else list(searchmoves),
         })
         fut: Future = Future()
-        best = list(searchmoves)[0] if searchmoves else "a2a3"
+        best = next(iter(searchmoves)) if searchmoves else "a2a3"
         fut.set_result(StockfishResult(
             bestmove_uci=best, wdl=np.array([0.0, 1.0, 0.0]), pvs=[],
         ))

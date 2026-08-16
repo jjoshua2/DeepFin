@@ -311,7 +311,13 @@ class _SearchInfoAccumulator:
 #: move — so a caller feeding one search's bestmove into the next search's
 #: ``searchmoves`` would otherwise turn a missing move into a silent
 #: full-width search.
-_UCI_MOVE_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbn]?$")
+# ⚑ `\Z`, NOT `$`. In Python `$` also matches immediately BEFORE a trailing
+# newline, so `"e2e4\n"` would pass this gate and reach `_send` — which appends
+# its own newline, splitting one command into two and desyncing the engine. That
+# raise happens INSIDE `_protocol_section`, which poisons the process and makes
+# StockfishPool throw it away: exactly the restart this validation exists to
+# prevent. `\Z` matches only at the true end of the string.
+_UCI_MOVE_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbn]?\Z")
 
 
 def _validated_searchmoves(fen: str, searchmoves: Sequence[str]) -> list[str]:

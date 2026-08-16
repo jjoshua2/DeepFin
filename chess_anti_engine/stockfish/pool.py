@@ -149,16 +149,17 @@ class StockfishPool:
     ) -> StockfishResult:
         engine: StockfishUCI = self._worker_state.engine
         try:
-            # Both optional arguments are forwarded ONLY when set, so the call
-            # the production label path makes stays byte-identical to the one
-            # it made before either existed.
-            extra: dict[str, object] = {}
-            if fresh:
-                extra["fresh"] = True
-            if searchmoves:
-                extra["searchmoves"] = searchmoves
+            # ⚑ Spelled out rather than built as a **kwargs dict. A dict costs
+            # the ONLY static check that covers this call: CI installs no
+            # Stockfish, so every real-engine test here is skipped, and a
+            # one-character kwarg typo behind `**extra` type-checks clean and
+            # passes the whole SF-free suite while raising TypeError on the
+            # first restricted query in production. `fresh=False` /
+            # `searchmoves=None` are the parameter defaults, so this emits the
+            # byte-identical `go` line the label path has always sent.
             return engine.search(
-                fen, nodes=nodes, syzygy_path=syzygy_path, **extra,  # pyright: ignore[reportArgumentType]
+                fen, nodes=nodes, syzygy_path=syzygy_path,
+                fresh=fresh, searchmoves=searchmoves,
             )
         except BaseException:
             # The ORIGINAL raise must reach the caller — it is the one that
