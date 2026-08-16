@@ -13,13 +13,31 @@ only a targeted `searchmoves` query can price it, which is exactly what the
 plumbing buys. Either answer is decision-relevant, which is why this runs
 BEFORE any loss design and before the query path is even merged.
 
-⚑ POPULATION CAVEAT, stated up front. This runs on the wide MultiPV-40 era
-shards with ranks > k HIDDEN to simulate production's narrow width. That is a
-deliberate choice, not a shortcut: on real MultiPV-6 shards the hidden moves
-have no scores at all, so "what would the query have bought" is unanswerable.
-Here we can measure both the RATE (how often a query is needed) and its VALUE
-(what the answer would have been), because the wide era already paid for it.
-The rate transfers structurally; the era is not production's.
+⚑⚑ THIS IS A CHEAP AVAILABILITY *PROXY* SCREEN, NOT A ΔQ DATASET MEASUREMENT.
+Three separate gaps sit between its number and the live question, and none of
+them is closed by more rows:
+
+1. **NOT SAME-MODEL.** The live question pairs `a_P = argmax π_θ(s)` against
+   `a_M = MCTS_θ(s)` for ONE θ. Here `a_P` comes from re-running a chosen
+   checkpoint over historical positions while `a_M` is the move the ORIGINAL
+   net played when the game was generated. Different networks. The replay
+   schema does not persist the generating prior — `_NetRecord.policy_probs`
+   never reaches a shard, only the improved `policy_target` does — so the
+   same-model pairing is NOT recoverable offline at all. It needs a
+   prospective run.
+2. **SIMULATED WIDTH IS NOT REAL WIDTH.** Ranks > k are hidden from MultiPV-40
+   labels. PR #428 measured that changing MultiPV width at a fixed node budget
+   changes the search itself (median depth 12 → 9 at width 6 → 64), so a
+   truncated MPV40 block is NOT what a real MPV6 search would have produced.
+   Do not claim the rate "transfers structurally".
+3. **SELECTION.** ~75% of rows drop out because their child ply is not stored.
+   The screen now reports pre-recovery observables for kept vs dropped rows;
+   read that table before trusting the headline.
+
+What it IS good for, and this is genuinely useful: establishing that a large
+fraction of the candidate pairs are ALREADY COVERED by banked labels, so
+"check what we hold before querying" is worth building. Treat the percentage as
+an order of magnitude, not a calibration.
 
 ⚑ This is an OBSERVATIONAL screen. It changes nothing and trains nothing.
 """
@@ -30,6 +48,7 @@ import argparse
 import itertools
 import json
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -45,16 +64,19 @@ from scripts.tail_censor_screen import (
 )
 
 
-def classify(rows: list[Row]) -> dict[str, Any]:
-    """Split disagreement rows by whether the net's move is already scored."""
+def coverage_of_prior_move(rows: list[Row]) -> dict[str, Any]:
+    """PRIOR vs SF-BEST coverage. ⚑ A DIFFERENT POPULATION from the ΔQ pool.
+
+    Deliberately named and typed apart from `PairObservation`, and it emits NO
+    confidence curve: SF's best is rank 1 by construction, so "both surfaced"
+    degenerates here into "is the prior's move surfaced". Binning this one and
+    labelling it "P(needs a query)" is the exact bug this split prevents.
+    """
     n_total = 0
     n_agree = 0
     free: list[float] = []      # ΔQ available from stored labels
     buyable: list[float] = []   # ΔQ obtainable only by a targeted query
     unscorable = 0              # SF never scored it even at width 40
-    free_conf: list[float] = []
-    buy_conf: list[float] = []
-
     for row in rows:
         if row.prior is None:
             continue
@@ -62,7 +84,6 @@ def classify(rows: list[Row]) -> dict[str, Any]:
         j = int(np.argmax(row.prior))
         a = int(row.legal[j])            # the move the NET wants
         b = int(row.surfaced[0])         # the move STOCKFISH wants (rank 1)
-        conf = float(row.prior[j])
 
         if a == b:
             n_agree += 1
@@ -72,10 +93,8 @@ def classify(rows: list[Row]) -> dict[str, Any]:
         # ΔQ between the two candidates IS the net-move's regret.
         if a in row.surfaced:
             free.append(row.regret[a])
-            free_conf.append(conf)
         elif a in row.regret:
             buyable.append(row.regret[a])
-            buy_conf.append(conf)
         else:
             unscorable += 1
 
@@ -89,8 +108,6 @@ def classify(rows: list[Row]) -> dict[str, Any]:
         "unscorable": unscorable,
         "free_regret": free,
         "buyable_regret": buyable,
-        "free_conf": free_conf,
-        "buy_conf": buy_conf,
     }
 
 
@@ -151,30 +168,132 @@ def recover_search_moves(
     return out, stats
 
 
-def classify_pairs(
+@dataclass(frozen=True)
+class PairObservation:
+    """ONE ΔQ candidate pair: the prior's move vs the move SEARCH played.
+
+    ⚑ THIS TYPE EXISTS BECAUSE THE POPULATION WAS THE BUG. An earlier revision
+    computed the headline split from the (prior, search) pairing while a
+    downstream confidence table was still binning a DIFFERENT function's
+    (prior, SF-best) rows. Both printed as "P(needs a query | confidence)" and
+    were visually indistinguishable. Making the population a value that every
+    diagnostic must be handed means a consumer cannot silently stay on the old
+    framing -- it would have to be wired to a different type by name.
+
+    The prior-vs-SF-best analysis still exists, deliberately under a different
+    name and return type (`coverage_of_prior_move`), and it does NOT emit a
+    confidence curve.
+    """
+
+    game_id: int
+    ply: int
+    prior_move: int
+    search_move: int
+    prior_conf: float
+    prior_entropy: float
+    prior_in_sf6: bool
+    search_in_sf6: bool
+
+    @property
+    def is_disagreement(self) -> bool:
+        return self.prior_move != self.search_move
+
+    @property
+    def n_outside(self) -> int:
+        return int(not self.prior_in_sf6) + int(not self.search_in_sf6)
+
+    @property
+    def pair_class(self) -> str:
+        if not self.is_disagreement:
+            return "same_move"
+        return ("both_surfaced", "one_outside", "both_outside")[self.n_outside]
+
+
+def build_pair_observations(
     rows: list[Row], search_moves: list[int | None],
-) -> dict[str, int]:
-    """The pre-registered 4-way split on (prior move, SEARCH move)."""
-    out = {
-        "usable": 0, "same_move": 0, "both_surfaced": 0,
-        "one_outside": 0, "both_outside": 0,
-    }
+) -> list[PairObservation]:
+    """The ΔQ population. Every downstream diagnostic derives from this list."""
+    obs: list[PairObservation] = []
     for row, a_m in zip(rows, search_moves):
         if row.prior is None or a_m is None:
             continue
-        out["usable"] += 1
-        a_p = int(row.legal[int(np.argmax(row.prior))])
-        if a_p == a_m:
-            out["same_move"] += 1
+        p = row.prior
+        j = int(np.argmax(p))
+        a_p = int(row.legal[j])
+        obs.append(PairObservation(
+            game_id=row.game_id, ply=row.ply,
+            prior_move=a_p, search_move=int(a_m),
+            prior_conf=float(p[j]),
+            prior_entropy=float(-(p * np.log(np.clip(p, 1e-12, None))).sum()),
+            prior_in_sf6=a_p in row.surfaced,
+            search_in_sf6=int(a_m) in row.surfaced,
+        ))
+    return obs
+
+
+def headline_split(obs: list[PairObservation]) -> dict[str, int]:
+    counts = {
+        "usable": len(obs), "same_move": 0, "both_surfaced": 0,
+        "one_outside": 0, "both_outside": 0,
+    }
+    for o in obs:
+        counts[o.pair_class] += 1
+    return counts
+
+
+def confidence_curves(
+    obs: list[PairObservation],
+) -> list[tuple[str, int, float, float, float]]:
+    """P(any query), P(S×T), P(T×T) vs prior confidence, over DISAGREEMENTS."""
+    pool = [o for o in obs if o.is_disagreement]
+    if not pool:
+        return []
+    conf = np.asarray([o.prior_conf for o in pool], dtype=float)
+    any_ = np.asarray([float(o.n_outside > 0) for o in pool])
+    st = np.asarray([float(o.n_outside == 1) for o in pool])
+    tt = np.asarray([float(o.n_outside == 2) for o in pool])
+    edges = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    out: list[tuple[str, int, float, float, float]] = []
+    for lo, hi in itertools.pairwise(edges):
+        sel = (conf >= lo) & (conf < hi if hi < 1.0 else conf <= 1.0)
+        n = int(sel.sum())
+        if n == 0:
             continue
-        n_out = int(a_p not in row.surfaced) + int(a_m not in row.surfaced)
-        if n_out == 0:
-            out["both_surfaced"] += 1
-        elif n_out == 1:
-            out["one_outside"] += 1
-        else:
-            out["both_outside"] += 1
+        out.append((f"[{lo:.1f}, {hi:.1f})", n, float(any_[sel].mean()),
+                    float(st[sel].mean()), float(tt[sel].mean())))
     return out
+
+
+def attrition_bias(
+    rows: list[Row], search_moves: list[int | None],
+) -> list[tuple[str, float, float]]:
+    """Compare recovered vs non-recovered rows on PRE-recovery observables.
+
+    ⚑ 75% of rows drop out because their child ply is not stored. That is far
+    too much attrition to assume is random, and recoverability is not something
+    the analysis controls. These observables are all computable BEFORE recovery,
+    so a difference here is a selection effect, not an outcome.
+    """
+    keep: dict[str, list[float]] = {}
+    drop: dict[str, list[float]] = {}
+    for row, a_m in zip(rows, search_moves):
+        if row.prior is None:
+            continue
+        bucket = keep if a_m is not None else drop
+        p = row.prior
+        j = int(np.argmax(p))
+        ent = float(-(p * np.log(np.clip(p, 1e-12, None))).sum())
+        bucket.setdefault("prior_top1", []).append(float(p[j]))
+        bucket.setdefault("prior_entropy", []).append(ent)
+        bucket.setdefault("legal_moves", []).append(float(len(row.legal)))
+        bucket.setdefault("top1_in_sf6", []).append(
+            float(int(row.legal[j]) in row.surfaced))
+        bucket.setdefault("r_k", []).append(float(row.r_k))
+        bucket.setdefault("ply", []).append(float(row.ply))
+    return [
+        (name, float(np.mean(keep[name])), float(np.mean(drop[name])))
+        for name in sorted(keep)
+    ]
 
 
 def _q(vals: list[float]) -> dict[str, float]:
@@ -216,7 +335,7 @@ def main() -> int:
     check_invariants(scan, len(rows))
     device = attach_prior(rows, planes, args.checkpoint, args.batch)
 
-    res = classify(rows)
+    res = coverage_of_prior_move(rows)
     n_d = res["disagree"]
     print(f"shards {len(shards)}   analysed {res['rows']} rows   prior on {device}")
     print(f"  simulated production width k={args.k}\n")
@@ -247,24 +366,9 @@ def main() -> int:
               "   forced by the definition and carries no information. Only the\n"
               "   ABSOLUTE scale of the buyable row is a reading.\n")
 
-        fc, bc = res["free_conf"], res["buy_conf"]
-        if fc and bc:
-            print("PRIOR CONFIDENCE on the net's move (a pre-query diagnostic)")
-            print(f"  free    mean {np.mean(fc):.3f}   median {np.median(fc):.3f}")
-            print(f"  buyable mean {np.mean(bc):.3f}   median {np.median(bc):.3f}")
-            print("\nP(NEEDS A QUERY | prior confidence) — the query policy's input.\n"
-                  "  Unlike the magnitude split above, this is NOT forced: nothing\n"
-                  "  ties the net's confidence to SF's ranking of its move.")
-            allc = np.concatenate([np.asarray(fc), np.asarray(bc)])
-            need = np.concatenate([np.zeros(len(fc)), np.ones(len(bc))])
-            edges = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
-            print(f"    {'confidence':<14}{'n':>7}{'P(query)':>11}")
-            for lo, hi in itertools.pairwise(edges):
-                sel = (allc >= lo) & (allc < hi if hi < 1.0 else allc <= 1.0)
-                if int(sel.sum()) == 0:
-                    continue
-                print(f"    [{lo:.1f}, {hi:.1f})    {int(sel.sum()):>7}"
-                      f"{float(need[sel].mean()):>11.3f}")
+        print("⚑ The prior-vs-SF framing above does NOT get a confidence curve.\n"
+              "  A query is needed when EITHER candidate is outside SF6, so the\n"
+              "  curve belongs to the prior-vs-SEARCH pool below.")
 
     print("\n" + "=" * 68)
     print("THE PRE-REGISTERED PAIRING — prior move vs SEARCH move, SF adjudicates")
@@ -272,7 +376,8 @@ def main() -> int:
     search_moves, rec = recover_search_moves(shards, rows, planes)
     print(f"  played-move recovery: {rec['recovered']} ok, "
           f"{rec['ambiguous']} ambiguous, {rec['no_child']} no stored child")
-    pairs = classify_pairs(rows, search_moves)
+    obs = build_pair_observations(rows, search_moves)
+    pairs = headline_split(obs)
     u = max(pairs["usable"], 1)
     dis = pairs["both_surfaced"] + pairs["one_outside"] + pairs["both_outside"]
     print(f"  usable rows {pairs['usable']}")
@@ -286,7 +391,40 @@ def main() -> int:
               f"   {pairs['one_outside']/dis:.3f}")
         print(f"      both outside (buy both: T×T)           {pairs['both_outside']:6d}"
               f"   {pairs['both_outside']/dis:.3f}")
-        res["pairs"] = pairs
+        print("    ⚑ 'buy both' is ONE root-restricted search, not two:\n"
+              "      `searchmoves a_prior a_search` at MultiPV 2 returns both.\n"
+              "      T×T is informationally harder, NOT 2x the query budget.\n")
+
+        curves = confidence_curves(obs)
+        if curves:
+            # ⚑ The denominator is printed IN the title. The previous revision's
+            # table summed to a different n than the headline split directly
+            # above it, and nobody noticed because neither carried its own
+            # population size.
+            print(f"P(NEEDS A QUERY | prior confidence),  n={dis} "
+                  "ACTUAL prior/search disagreements\n"
+                  "  ⚑ Derived from PairObservation, the same objects the split\n"
+                  "  above is counted from. An earlier revision binned the\n"
+                  "  prior-vs-SF-best rows instead — a different question on a\n"
+                  "  different population, visually indistinguishable here.")
+            print(f"    {'confidence':<14}{'n':>6}{'P(any)':>9}{'P(S×T)':>9}{'P(T×T)':>9}")
+            for label, n, p_any, p_st, p_tt in curves:
+                print(f"    {label:<14}{n:>6}{p_any:>9.3f}{p_st:>9.3f}{p_tt:>9.3f}")
+        res["pairs"] = {k: v for k, v in pairs.items() if not isinstance(v, list)}
+        res["confidence_curves"] = curves
+
+    bias = attrition_bias(rows, search_moves)
+    if bias:
+        print("\n⚑ STORED-CHILD SELECTION BIAS — recovered vs dropped rows.\n"
+              "  All observables are computable BEFORE recovery, so a gap here is\n"
+              "  a selection effect. 75% attrition is too large to assume random.")
+        print(f"    {'observable':<16}{'recovered':>11}{'dropped':>10}{'ratio':>9}")
+        for name, kept, dropped in bias:
+            ratio = kept / dropped if dropped else float("nan")
+            print(f"    {name:<16}{kept:>11.3f}{dropped:>10.3f}{ratio:>9.3f}")
+        res["attrition_bias"] = [
+            {"observable": n, "recovered": k, "dropped": d} for n, k, d in bias
+        ]
 
     if args.json_out:
         out = {k: v for k, v in res.items() if not isinstance(v, list)}

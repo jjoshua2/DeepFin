@@ -758,11 +758,30 @@ the raw-prior top move and `a_M` the Gumbel/MCTS move (recoverable offline via
 | exactly one outside SF6 | **buy it** — this IS the missing S×T relation |
 | both outside SF6 | buy both — the missing T×T relation, the most valuable case |
 
-#### STEP-0 READOUT (2026-08-16) — **WE ALREADY OWN ~60% OF THE ΔQ DATASET**
+#### STEP-0 READOUT (2026-08-16) — a cheap AVAILABILITY PROXY screen, ~60% already covered
+
+⚑⚑ **THIS IS NOT "WE OWN 60% OF THE ΔQ DATASET" — AN EARLIER REVISION OF THIS ENTRY SAID
+THAT AND IT OVERCLAIMED.** Three gaps sit between this number and the live question, and
+none closes with more rows:
+
+1. **NOT SAME-MODEL.** The live pair is `a_P = argmax π_θ(s)` vs `a_M = MCTS_θ(s)` for ONE
+   θ. Here `a_P` is a chosen checkpoint re-run over historical positions while `a_M` is the
+   move the ORIGINAL generating net played. **The replay schema does not persist the
+   generating prior** — `_NetRecord.policy_probs` never reaches a shard, only the improved
+   `policy_target` does (verified against `replay/shard.py`'s field list) — so the
+   same-model pairing is **not recoverable offline at all**. It requires a prospective run.
+2. **SIMULATED WIDTH ≠ REAL WIDTH.** Ranks > k are hidden from MPV-40 labels, but #428
+   measured that changing width at a fixed node budget changes the SEARCH (median depth
+   12 → 9 at width 6 → 64). A truncated MPV40 block is not what a real MPV6 search would
+   have produced. **Do not say the rate "transfers structurally".**
+3. **SELECTION.** ~75% attrition from unstored child plies (table below).
+
+⇒ Read the percentage as an ORDER OF MAGNITUDE establishing that "check what we already
+hold before querying" is worth building — not as a calibration.
 
 `scripts/dq_free_dataset_screen.py`, 18 wide-era shards, k=6 simulated, prior from
-`checkpoint_000218`. This costs nothing and needed no `searchmoves`: it is a re-read of
-banked shards, run BEFORE the query path merged.
+`checkpoint_000218`. Costs nothing and needed no `searchmoves`: a re-read of banked shards,
+run BEFORE the query path merged.
 
 | | n | share |
 |---|---|---|
@@ -773,8 +792,12 @@ banked shards, run BEFORE the query path merged.
 |  ↳ exactly one outside — buy it (S×T) | 163 | 0.309 |
 |  ↳ both outside — buy both (T×T) | 50 | 0.095 |
 
-⇒ **~40% of the disagreements need a query; ~60% are already paid for.** Recovery was
+⇒ **~40% of the disagreements need a query; ~60% are already covered.** Recovery was
 clean: 1177 recovered, **0 ambiguous**.
+
+⚑ **"BOTH OUTSIDE" IS NOT 2× THE QUERY BUDGET.** One root-restricted search —
+`searchmoves a_prior a_search` at MultiPV 2 — returns both candidate evaluations. The T×T
+bucket is informationally harder, not twice as expensive.
 
 ⚑⚑ **A FIRST PASS OF THIS SCREEN MEASURED THE WRONG PAIR AND READ 0.713 FREE.** It compared
 the prior's top move against **SF's own best** instead of against the SEARCH move. SF's best
@@ -791,19 +814,65 @@ row's `r_k` by construction while every free row's is ≤ `r_k`. The split condi
 compared quantity. Only the ABSOLUTE scale is a reading (unpriced moves: median 100 cp, p90
 601 cp — real gaps, not garbage). [[never_condition_a_control_on_its_own_outcome]].
 
-**WHAT IS GENUINELY USABLE: P(needs a query | prior confidence) is MONOTONE**, and nothing
-forces it — the net's confidence is not tied to SF's ranking of its move.
+⚑⚑ **THE CONFIDENCE GATE DOES NOT SURVIVE THE POPULATION FIX — RETRACTED.**
+An earlier revision of this entry reported "P(query | confidence) is MONOTONE, 0.720 →
+0.171, a 4.2× spread ⇒ a usable pre-query gate". **That curve was binned over
+`classify`'s prior-vs-SF-BEST rows while the headline split came from the corrected
+prior-vs-SEARCH pairing** — two different populations printed under one heading, visually
+indistinguishable. A query is needed when EITHER candidate is outside SF6; the old binning
+only ever asked about the prior's move.
 
-| prior confidence | n | P(query) |
-|---|---|---|
-| [0.0, 0.2) | 118 | **0.720** |
-| [0.2, 0.4) | 594 | 0.406 |
-| [0.4, 0.6) | 836 | 0.281 |
-| [0.6, 0.8) | 640 | 0.217 |
-| [0.8, 1.0) | 649 | **0.171** |
+Recomputed on the ACTUAL 528 disagreements (`scratchpad/dq_pairs_refactored.json`):
 
-4.2× spread, monotone in every bin ⇒ a usable pre-query gate, satisfying
-[[proxy_must_be_monotone_in_the_intervention]].
+| prior confidence | n | P(any query) | P(S×T) | P(T×T) |
+|---|---|---|---|---|
+| [0.0, 0.2) | **17** | 0.941 | 0.235 | **0.706** |
+| [0.2, 0.4) | 132 | 0.545 | 0.424 | 0.121 |
+| [0.4, 0.6) | 167 | 0.311 | 0.240 | 0.072 |
+| [0.6, 0.8) | 124 | **0.363** | 0.323 | 0.040 |
+| [0.8, 1.0) | 88 | 0.318 | 0.261 | 0.057 |
+
+**NOT MONOTONE** — it rises again at [0.6, 0.8), and the top three bins are flat within
+noise (0.311 / 0.363 / 0.318). The entire apparent spread rides on the lowest bin at
+**n=17**. ⇒ above confidence 0.4, prior confidence buys **essentially nothing**; the query
+rate is ~1/3 regardless. This FAILS
+[[proxy_must_be_monotone_in_the_intervention]] and no graded gate should be built on it.
+
+**One signal does survive, as a hypothesis:** T×T concentrates at low confidence (0.706 vs
+0.04–0.12 elsewhere) — when the net is unsure, BOTH candidates tend to sit outside SF6.
+n=17, so this is a direction to test prospectively, not a finding.
+
+#### SELECTION CHECK — the 75% attrition is close to RANDOM (good news)
+
+Recovered vs dropped rows on observables computable BEFORE recovery, so any gap is a
+selection effect rather than an outcome:
+
+| observable | recovered | dropped | ratio |
+|---|---|---|---|
+| **top1_in_sf6** | 0.835 | 0.826 | **1.011** |
+| prior_top1 | 0.658 | 0.658 | 1.000 |
+| legal_moves | 29.219 | 29.205 | 1.000 |
+| prior_entropy | 0.987 | 0.989 | 0.998 |
+| ply | 68.659 | 71.419 | 0.961 |
+| r_k | 0.167 | 0.188 | 0.885 |
+
+`top1_in_sf6` — the variable that most directly drives the free fraction — differs by
+**1.1%**, and prior confidence is identical to three decimals. ⇒ **the 59.7% headline is
+much less fragile than 75% attrition suggests.** `r_k` is the only visible gap (11.5%),
+consistent with the small ply difference.
+
+⇒ **NET: the headline survives the selection test; the confidence gate does not survive the
+population fix.**
+
+#### DESIGN FIX — the population is now an object
+
+The bug survived because two datasets existed and downstream code could consume either.
+`PairObservation` (frozen dataclass) is now THE ΔQ population; the headline split, all
+three curves, and every later diagnostic derive from that one collection, and each curve
+prints its denominator in its own title. The prior-vs-SF-best analysis still exists under a
+deliberately different name and return type (`coverage_of_prior_move`) with its confidence
+fields **deleted**, so it cannot be binned by accident. Verified: the refactor reproduces
+`pairs`, `confidence_curves` and `attrition_bias` **byte-identically**.
 
 **Limitations, stated not buried.** (1) 3567 of 4744 rows had **no stored child**, so the
 usable subset is conditioned on both plies being stored — 75% attrition, representativeness
