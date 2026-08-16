@@ -197,6 +197,25 @@ that FAILS its invariant is not a verdict.
 4. **One data-affecting change per readout window.** Unavoidable overlaps go in each
    entry's Confounds line.
 5. **Before running any yardstick**, read the ledger's "Protocol gotchas".
+6. **⚑ FREEZE THE OBSERVATIONS, ITERATE THE ESTIMATOR.** Any expensive run against a
+   DETERMINISTIC teacher or search — Stockfish panels, audit scoring, arena PV dumps,
+   distillation targets — must bank the LOWEST-LEVEL observations it collected, not just
+   the summary statistic. Bank the raw per-move scores/PVs keyed by position and game id,
+   with the arm settings, in a `.json`/`.jsonl` beside the log.
+   - **Why this is a rule and not a nicety:** every later correction — a clustered
+     bootstrap, a new stratification, a different loss metric, a rebased baseline, a
+     re-fit α — then costs seconds instead of a rerun. A rerun is not just expensive, it
+     is *dangerous*: re-running to "reproduce" an analysis silently re-rolls the
+     intervention, and any drift in engine build, node budget, TT state or sampling is
+     then confounded with the method change you were trying to isolate.
+   - **MEASURED 2026-08-16.** The MPV6 tail panel banked its three-arm PVs, so switching a
+     row bootstrap to a game-cluster bootstrap was a re-analysis of the SAME 500 positions:
+     every point estimate came back byte-identical and only the intervals moved — which is
+     itself the proof the fix did what it claimed and nothing else. Without the dump that
+     would have been a fresh 4M-node run and an uninterpretable comparison.
+   - ⚑ A banked dump also has to record the RESAMPLING UNIT's key (here `game_id`). An
+     analysis cannot cluster on something the dump did not keep. See
+     [[bank_the_dump_not_just_the_number]].
 
 ## Evaluation
 
