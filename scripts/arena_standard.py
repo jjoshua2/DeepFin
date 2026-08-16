@@ -81,8 +81,36 @@ IN_TREE_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
 ARENA_SHAPE_DEVIATIONS: dict[str, str] = {
     "simulations": "the arena's own budget (--sims / matched_time), not the yaml's",
     "temperature": "arena move selection, not selfplay's stored-target temperature",
-    "add_noise": "no root Gumbel noise: an arena must be deterministic per seed",
-    "gumbel_scale": "moot with add_noise off",
+  # ⚑ THE REASON THAT USED TO SIT HERE WAS FALSE, and the falsehood was the
+  # load-bearing part: it read "no root Gumbel noise: an arena must be
+  # deterministic per seed" while the CLI passes
+  # `gumbel_add_noise=not args.no_gumbel_noise`, i.e. noise is ON by default.
+  # Worse, the arena's scale is the `GumbelConfig` default 1.0, while
+  # production runs 0.75 selfplay / 0.25 curriculum and DECAYS both to 0 after
+  # move 12 — a per-ply schedule (`network_turn._scheduled_gumbel_scale`)
+  # applied outside `build_selfplay_gumbel_config`, so no field comparison can
+  # express it and this guard cannot see it. An exemption whose reason is
+  # wrong is worse than no exemption: it answers the question a reader would
+  # otherwise ask.
+  #
+  # Kept as an exemption rather than a refusal because the arena genuinely
+  # cannot reproduce a per-ply schedule through a flat override dict, and
+  # refusing would take `--search-shape training` away entirely. What changed
+  # is that `_warn_noise_schedule_deviation` now PRINTS the divergence with
+  # production's actual numbers on every noisy training arena. The JSONL record
+  # already banks `gumbel_add_noise` (`_result_record`), so the artifact carries
+  # which of the two regimes a row was measured in.
+    "add_noise": (
+        "arena-level flag (--no-gumbel-noise), not the yaml's. Production "
+        "selfplay always enables noise and modulates it through the per-ply "
+        "gumbel_scale schedule instead"
+    ),
+    "gumbel_scale": (
+        "production's scale is a per-PLY schedule (0.75 selfplay / 0.25 "
+        "curriculum, decaying to 0 after move 12) that a flat override dict "
+        "cannot express; the arena runs the flat GumbelConfig default. "
+        "Reported by _warn_noise_schedule_deviation rather than hidden here"
+    ),
     "target_max_visit_cap": (
         "TARGET-only knob — shapes the stored policy target, never the played "
         "move, and an arena stores no targets"
@@ -340,7 +368,12 @@ def production_selfplay_search_config(flat: dict | None = None):
 
 
 def _assert_training_shape_is_production(
-    gumbel: dict[str, float], flat: dict, cfg: LiveConfig | None = None,
+    gumbel: dict[str, float],
+    flat: dict,
+    cfg: LiveConfig | None = None,
+    *,
+    vloss_weight: int,
+    target_batch: int,
 ) -> None:
     """Prove `--search-shape training` reproduces production selfplay's search.
 
@@ -363,6 +396,12 @@ def _assert_training_shape_is_production(
     It never asks "is this key present" — presence proved nothing when the
     value was a stale literal.
 
+    ``vloss_weight`` / ``target_batch`` are required keyword arguments rather
+    than optional extras: they reach the C runner as function arguments, they
+    have no ``GumbelConfig`` field, and a guard that compared only the dict
+    would be blind to exactly the pair this arena has always carried and the
+    audit did not. Making them mandatory means a caller cannot half-check.
+
     The failing input is easy to name: set any move-affecting search key in the
     live yaml that this dict does not carry (or leave one stale), and the diff
     is non-empty. ``tests/test_production_shape_guard.py`` produces exactly
@@ -373,9 +412,10 @@ def _assert_training_shape_is_production(
     from chess_anti_engine.eval.production_shape import (
         assert_matches_production,
         format_shape_table,
-        production_selfplay_gumbel_config,
+        production_search_shape,
     )
     from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.selfplay.network_turn import SelfplaySearchShape
 
   # `cfg` is the resolution the CALLER already made, so the header names the
   # file `flat` came out of. Falling back to `production_config()` when a test
@@ -391,10 +431,14 @@ def _assert_training_shape_is_production(
             "arena agrees with THAT file.",
             flush=True,
         )
-    prod = production_selfplay_gumbel_config(
+    prod = production_search_shape(
         flat, simulations=int(GumbelConfig().simulations),
     )
-    realized = _dc.replace(GumbelConfig(), **gumbel)
+    realized = SelfplaySearchShape(
+        cfg=_dc.replace(GumbelConfig(), **gumbel),
+        vloss_weight=int(vloss_weight),
+        target_batch=int(target_batch),
+    )
     print(
         "[shape] --search-shape training: realized vs production selfplay\n"
         + format_shape_table(realized, prod, exempt=ARENA_SHAPE_DEVIATIONS),
@@ -403,6 +447,61 @@ def _assert_training_shape_is_production(
     assert_matches_production(
         realized, prod, exempt=ARENA_SHAPE_DEVIATIONS,
         where="--search-shape training",
+    )
+
+
+def _warn_noise_schedule_deviation(base: SideSearch, *, add_noise: bool) -> None:
+    """Say what a training arena does about production's per-ply noise schedule.
+
+    ⚑ THE ONE THING THE FIELD DIFF STRUCTURALLY CANNOT CHECK. Production's root
+    noise is ``_scheduled_gumbel_scale``: 0.75 for selfplay, 0.25 for
+    curriculum, decaying to ``gumbel_scale_after`` over
+    ``gumbel_scale_decay_moves`` from ``gumbel_scale_decay_start_move``. It is
+    applied as a per-GAME, per-PLY ``per_game_gumbel_scale`` list OUTSIDE
+    ``build_selfplay_gumbel_config``, so ``GumbelConfig.gumbel_scale`` — the
+    only thing a shape diff can see — is the flat literal 1.0 on both sides
+    and the comparison passes while the arena perturbs roots on nearly every
+    move at a scale production only uses before move 12.
+
+    This does not refuse. A flat override dict cannot express a schedule, so
+    refusing would remove ``--search-shape training`` rather than fix it, and
+    ``value_regret.py`` sets the precedent for reporting an unrepresentable
+    divergence instead of pretending it is absent. What it must not do is stay
+    silent, which is what an exemption reason reading "an arena must be
+    deterministic per seed" achieved while noise was on by default.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    if base.shape != "training":
+        return
+    flat, _path, _live = production_config_flat()
+    search = production_selfplay_search_config(flat)
+    if not add_noise:
+        print(
+            "[shape] --search-shape training with --no-gumbel-noise: root "
+            "noise OFF, production runs it ON (selfplay scale "
+            f"{float(search.gumbel_scale)}, curriculum "
+            f"{float(search.curriculum_gumbel_scale)}). DELIBERATE deviation "
+            "— a deterministic-per-seed arena. Not production play behaviour.",
+            flush=True,
+        )
+        return
+    print(
+        "[shape] ⚑ --search-shape training with root noise ON: the arena uses "
+        f"the FLAT GumbelConfig scale {float(GumbelConfig().gumbel_scale)} on "
+        "every ply, while production uses a per-ply SCHEDULE it cannot "
+        f"express — selfplay {float(search.gumbel_scale)} -> "
+        f"{float(search.gumbel_scale_after)} over "
+        f"{int(search.gumbel_scale_decay_moves)} moves from move "
+        f"{int(search.gumbel_scale_decay_start_move)}, curriculum "
+        f"{float(search.curriculum_gumbel_scale)} -> "
+        f"{float(search.curriculum_gumbel_scale_after)}. The shape table above "
+        "CANNOT check this: the schedule is applied outside "
+        "build_selfplay_gumbel_config, so no GumbelConfig field carries it. "
+        "This run's root perturbations differ from production's on nearly "
+        "every move. Pass --no-gumbel-noise for a deterministic arena, or read "
+        "the result as 'the training shape with unscheduled root noise'.",
+        flush=True,
     )
 
 
@@ -455,7 +554,11 @@ def resolve_search_shape(shape: str) -> SideSearch:
             "volatility_fpu": float(search.volatility_fpu),
             "volatility_anchor": float(search.volatility_anchor),
         }
-        _assert_training_shape_is_production(gumbel, flat, cfg)
+        _assert_training_shape_is_production(
+            gumbel, flat, cfg,
+            vloss_weight=int(search.gumbel_vloss_weight),
+            target_batch=int(search.gumbel_target_batch),
+        )
         return SideSearch(
             shape="training",
             source=f"{config_path.name} -> reco -> worker SearchConfig",
@@ -2073,6 +2176,15 @@ def main() -> None:
             base, spec=args.ref_gumbel,
             vloss_weight=args.ref_vloss_weight,
             target_batch=args.ref_target_batch,
+        )
+      # AFTER the overrides, and after the shape is final: the sides are what
+      # will actually be searched with. `describe()` therefore reports the
+      # realized values including every CLI override, which is what makes the
+      # printed record downstream of every override application site.
+        for label, side in (("candidate", side_candidate), ("reference", side_reference)):
+            print(f"[shape] {label}: {side.describe()}", flush=True)
+        _warn_noise_schedule_deviation(
+            base, add_noise=not args.no_gumbel_noise,
         )
     else:
         # matched_time launches UCI subprocesses, which carry their own search.

@@ -284,13 +284,36 @@ Mechanics:
   trend or threshold with a number from after it. The PLAY row (b) and the SF
   soft-target row (c) are unaffected.
 - The training rows are now derived by calling production's own
-  `build_selfplay_gumbel_config` rather than by re-listing its fields, and the
+  `build_selfplay_search_shape` rather than by re-listing its fields, and the
   realized-vs-production table is printed on every run under `[shape]`. A field
   the audit overrides without declaring it in `TRAIN_SHAPE_DEVIATIONS` stops
   the run. `--config` is checked FIELD-COMPLETE against the live yaml — both
-  are pushed through production's builder and every `GumbelConfig` field is
-  diffed — so a search knob added to production later is covered the day it is
-  added rather than when someone remembers to extend a list.
+  are pushed through production's builder and every field is diffed — so a
+  search knob added to production later is covered the day it is added rather
+  than when someone remembers to extend a list.
+- ⚑ **The compared object is the RUNNER's argument set, not `GumbelConfig`.**
+  "Field-complete over `GumbelConfig`" was itself a hand-drawn boundary:
+  `gumbel_vloss_weight` and `gumbel_target_batch` reach the C search as
+  keyword arguments with no `GumbelConfig` field, so a `--config` differing
+  from live on `gumbel_vloss_weight` alone was not refused and was stamped
+  authoritative — while `--vloss-weight`'s CLI default of `0` searched the
+  duplicate-leaf shape against production's `1` on EVERY ordinary invocation.
+  Both now default from the resolved production config and are part of the
+  diff. `--vloss-weight` / `--target-batch` still take an explicit value for
+  the C17 separating arm; an explicit value prints as a DELIBERATE deviation
+  and lands on the ruler stamp.
+  **Not covered, and said so on every run:** the per-ply root-noise schedule
+  (`per_game_add_noise` / `per_game_gumbel_scale`) is a function of the move
+  number and has no field to compare. `--search-shape training` arenas print
+  what they do about it instead of implying coverage.
+- **`config_authority.authoritative` means one checkable thing**, and
+  `covers` on the same stamp says which: every value the script consumes from
+  the config — the complete selfplay runner argument set, plus every key
+  `audit_targets` reads directly (`AUDIT_DIRECT_CONFIG_KEYS`, whose
+  completeness is regenerated from the module's AST by a test) — agreed with
+  the live file by VALUE. It previously covered the `GumbelConfig` fields plus
+  two sim budgets, so a stale `sf_policy_temp` produced a non-live SF soft
+  target for row (c) under a stamp saying the config was proved production's.
 - **Point `$CHESS_ANTI_ENGINE_LIVE_CONFIG` at the live yaml, or the audit
   refuses.** `scripts/train.sh` exports it; see `docs/operations.md` for the
   by-hand form. Without an authoritative reference the script will NOT emit
@@ -299,12 +322,24 @@ Mechanics:
   worktree and printed "matches the live config" while doing it. The escape is
   `--allow-stale-config`, and it stamps `config_authority.authoritative=false`
   onto every row of `--dump-per-position` so the artifact carries the caveat.
-- **`--dump-per-position` rows carry a `search_shape` stamp** (`policy_temp`,
-  `target_max_visit_cap`, `target_untempered_prior`) and
-  `scripts/paired_compare.py` lists it in `RULER_FIELDS`. An unstamped dump
-  predates 2026-08-16 and therefore DECLARES the pre-fix shape
-  (`1.0 / 0 / False`), so a pre-fix-vs-post-fix join is refused rather than
-  reported as a delta. Two pre-fix dumps still compare.
+- **`--dump-per-position` rows carry a `search_shape` stamp** — the COMPLETE
+  realized training-search shape, read off the object the runner was handed
+  (so it includes CLI overrides), and `scripts/paired_compare.py` lists it in
+  `RULER_FIELDS`. Complete rather than "the three fields that were wrong":
+  a three-field stamp only catches the ruler change that already happened, and
+  moving `topk` or the sim budget afterwards would let two dumps pass their own
+  live-config checks while emitting identical stamps. Fields read off the
+  CHECKPOINT (the input/policy encodings) are excluded — `input_encoding` is
+  already its own `RULER_FIELD` and stamping them would refuse legitimate
+  cross-net joins.
+  An unstamped dump predates 2026-08-16 and declares **UNKNOWN**, not a guessed
+  shape: pre-fix, `--policy-temp` was an operator-settable flag that fed the
+  training rows, so a legacy dump made at `--policy-temp 2.2` is not deducible
+  as `1.0`. Unknown compares equal only to another unknown, so pre-fix-vs-
+  post-fix is still refused and two pre-fix dumps still compare.
+  The stamp is checked only for metrics it governs (`cand.train*`); comparing
+  `cand.raw.exp` or `cand.sf_soft.exp` across a legacy and a current dump is
+  not refused over a training-row ruler that cannot touch either number.
 - **Scoring a FOREIGN net (LC0/BT4, Ceres) on the same ruler:** pass `--onnx
   <net>.onnx` instead of `--checkpoint` to either `scripts/audit_targets.py` or
   `scripts/value_regret.py`. The two flags are mutually exclusive and exactly

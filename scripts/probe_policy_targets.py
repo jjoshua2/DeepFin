@@ -171,6 +171,7 @@ def _check_soft_policy_temp(recovered: np.ndarray) -> str:
     """
     from chess_anti_engine.eval.production_shape import (
         CONFIG_ABSENT,
+        LIVE_CONFIG_ENV,
         load_live_config_or_reason,
     )
 
@@ -202,17 +203,35 @@ def _check_soft_policy_temp(recovered: np.ndarray) -> str:
         return (
             f"[shape] soft_policy_temp: shards were written at T~={med:.4f} "
             f"({finite.size} informative rows). NOT CHECKED (key absent from "
-            f"live config {live.path}) — there is nothing to compare against, "
-            "so this is not a pass."
+            f"config {live.path}) — there is nothing to compare against, "
+            f"so this is not a pass.\n{live.header()}"
         )
     want = float(raw)
     ok = abs(med - want) <= 0.05 * max(1.0, want)
     verdict = "MATCHES" if ok else "DOES NOT MATCH"
+  # ⚑ `authoritative`, NOT `live is None`. `load_live_config_or_reason` returns
+  # the IN-TREE fallback with `authoritative=False` when
+  # $CHESS_ANTI_ENGINE_LIVE_CONFIG is unset — which is the default in every
+  # worktree — so branching on None alone printed "live config says ... ->
+  # MATCHES" about a file the resolver had already decided was not live. That
+  # is the exact defect `audit_targets.py` fixed in this same change, left
+  # standing in a sibling instrument. `value_regret.py` prints `live.header()`
+  # (which carries the [NOT-LIVE] mark) and is the in-tree precedent.
+    reference = "live config" if live.authoritative else (
+        "NON-AUTHORITATIVE reference config"
+    )
     line = (
         f"[shape] soft_policy_temp: shards were written at T~={med:.4f} over "
-        f"{finite.size} informative rows; live config says {want} -> {verdict}. "
-        f"({live.path})"
+        f"{finite.size} informative rows; {reference} says {want} -> {verdict}."
+        f"\n{live.header()}"
     )
+    if not live.authoritative:
+        line += (
+            "\n[shape] ⚑ This is NOT a production check. The comparison above "
+            "is against the in-tree config, which is stale by construction "
+            f"outside the live working tree. Export ${LIVE_CONFIG_ENV} to name "
+            "the live yaml if you meant to check production."
+        )
     if not ok:
         line += (
             "\n[shape] ⚑ The stored soft targets do NOT come from the live "

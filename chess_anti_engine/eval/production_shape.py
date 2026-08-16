@@ -15,11 +15,28 @@ The two rules that shape everything here:
 * **A guard must share the criterion's instrument.** These helpers do not
   re-derive production's search shape from a parallel hand-list — that is the
   defect, one level up. They call the SAME function production selfplay calls
-  (``selfplay.network_turn.build_selfplay_gumbel_config``) through the SAME
+  (``selfplay.network_turn.build_selfplay_search_shape``) through the SAME
   config chain (``TrialConfig.from_dict`` ->
   ``trainable_config_ops._play_batch_kwargs``). A field added to that builder
   is therefore picked up automatically; a field an instrument overrides
   without declaring it shows up as a diff and stops the run.
+* **⚑ The compared object is what reaches the CONSUMER, not what one
+  dataclass declares.** The first revision of this module diffed
+  ``GumbelConfig`` field-complete and called that exhaustive. It was not:
+  ``gumbel_vloss_weight`` and ``gumbel_target_batch`` reach the C runner as
+  plain keyword arguments and are not ``GumbelConfig`` fields, so a config
+  differing from live on ``gumbel_vloss_weight`` alone was not refused and was
+  stamped authoritative. "Exhaustive over <schema>" is only ever as complete
+  as <schema>; the fix is to move the boundary to the runner's own argument
+  set (``SelfplaySearchShape``), which production builds and unpacks, and not
+  to pick a roomier dataclass.
+
+What this module still does NOT cover, stated rather than implied: the
+per-ply root-noise schedule (``per_game_add_noise`` /
+``per_game_gumbel_scale``, from ``_scheduled_gumbel_scale``). It is a function
+of the move number, not a scalar, so no field comparison can express it. An
+instrument whose search runs with noise on must say what it does about the
+schedule; ``shape_coverage_note`` is the one line to print.
 
 Which file counts as "production" is deliberately explicit. The in-tree
 ``configs/pbt2_small.yaml`` is stale by construction on every branch except
@@ -41,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.selfplay.network_turn import SelfplaySearchShape
 
 # The live production yaml is named by this variable. It holds an absolute
 # path on the training host; the repo is public, so the path itself must not
@@ -200,13 +218,30 @@ def production_selfplay_gumbel_config(
     broken on both sides — it fails with production instead of diverging
     silently from it.
     """
-    from chess_anti_engine.selfplay.network_turn import build_selfplay_gumbel_config
+    return production_search_shape(flat, simulations=simulations).cfg
+
+
+def production_search_shape(
+    flat: dict[str, Any], *, simulations: int,
+) -> SelfplaySearchShape:
+    """EVERYTHING config-derived that production SELFPLAY hands its runner.
+
+    Same chain as ``production_selfplay_gumbel_config``, one level out:
+    ``build_selfplay_search_shape`` rather than ``build_selfplay_gumbel_config``.
+    That extra level is the whole F1 fix — ``vloss_weight`` and
+    ``target_batch`` live there and nowhere in ``GumbelConfig``.
+
+    This is the object every guard in this module compares. Use it, not the
+    inner ``GumbelConfig``, whenever the question is "is this the search
+    production runs".
+    """
+    from chess_anti_engine.selfplay.network_turn import build_selfplay_search_shape
     from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
     from chess_anti_engine.tune.trial_config import TrialConfig
 
     tc = TrialConfig.from_dict(flat)
     groups = _play_batch_kwargs(tc)
-    return build_selfplay_gumbel_config(
+    return build_selfplay_search_shape(
         search=groups["search"], game=groups["game"], simulations=int(simulations),
     )
 
@@ -238,6 +273,60 @@ class FieldDiff:
         return f"{self.field}: realized {self.realized!r} vs production {self.production!r}"
 
 
+# The runner arguments that are NOT ``GumbelConfig`` fields. Named here so
+# every consumer of this module compares the same surface, and so the two
+# names appear in exactly one place rather than in each instrument.
+#
+# ⚑ This is a hand-list, and it is the ONLY one left — but it is a hand-list
+# over ``SelfplaySearchShape``'s own non-cfg fields, which is checkable:
+# ``tests/test_production_shape_guard.py`` derives the expected set from
+# ``dataclasses.fields(SelfplaySearchShape)`` and fails if a field is added to
+# the shape without landing here. A list that a test regenerates is not the
+# drift mechanism #227 was about.
+RUNNER_ARG_FIELDS: tuple[str, ...] = ("target_batch", "vloss_weight")
+
+# What a clean ``shape_field_diff`` does and does not prove. Printed by
+# instruments beside the affirmative line, because "matches production" with
+# no scope is how a reader concludes more than was checked.
+SHAPE_COVERAGE_NOTE = (
+    "covers every GumbelConfig field plus "
+    f"{list(RUNNER_ARG_FIELDS)} (the complete argument set production's "
+    "selfplay hands its search runner). NOT covered: the per-ply root-noise "
+    "schedule (per_game_add_noise / per_game_gumbel_scale), which is a "
+    "function of the move number and has no field to compare."
+)
+
+
+def shape_coverage_note(prefix: str = "[shape]") -> str:
+    """One line naming exactly what a clean shape comparison proved."""
+    return f"{prefix}   scope: {SHAPE_COVERAGE_NOTE}"
+
+
+def shape_field_diff(
+    realized: SelfplaySearchShape,
+    production: SelfplaySearchShape,
+    *,
+    exempt: dict[str, str],
+) -> list[FieldDiff]:
+    """Every difference across the runner's COMPLETE argument set.
+
+    ``GumbelConfig`` fields plus ``RUNNER_ARG_FIELDS``. The second half is the
+    F1 fix: a config that differs from live only on ``gumbel_vloss_weight``
+    used to produce an empty diff and an affirmative "matches production"
+    line, because the comparison object was the dataclass rather than the
+    consumer.
+    """
+    out = gumbel_field_diff(realized.cfg, production.cfg, exempt=exempt)
+    for name in RUNNER_ARG_FIELDS:
+        if name in exempt:
+            continue
+        got = getattr(realized, name)
+        want = getattr(production, name)
+        if got != want:
+            out.append(FieldDiff(field=name, realized=got, production=want))
+    return out
+
+
 def gumbel_field_diff(
     realized: GumbelConfig,
     production: GumbelConfig,
@@ -245,6 +334,9 @@ def gumbel_field_diff(
     exempt: dict[str, str],
 ) -> list[FieldDiff]:
     """Fields where ``realized`` differs from ``production``, minus ``exempt``.
+
+    ⚑ Not a certification on its own — it sees only ``GumbelConfig``. Callers
+    asking "is this production's search" want ``shape_field_diff``.
 
     ``exempt`` maps field name -> the REASON the instrument deliberately
     deviates. It is a dict rather than a set so that an undocumented deviation
@@ -273,39 +365,49 @@ def gumbel_field_diff(
 
 
 def format_shape_table(
-    realized: GumbelConfig,
-    production: GumbelConfig,
+    realized: SelfplaySearchShape,
+    production: SelfplaySearchShape,
     *,
     exempt: dict[str, str],
     prefix: str = "[shape]",
 ) -> str:
-    """Realized-vs-production for every field, with deviations called out.
+    """Realized-vs-production for every RUNNER ARGUMENT, deviations called out.
 
     Printed unconditionally by callers, including on the success path. A guard
     that only speaks up when it fails cannot be distinguished from a guard that
     is not running — and "not running" is this repo's signature defect.
+
+    Ends with ``shape_coverage_note``: the table is complete over the runner's
+    arguments and silent about the per-ply noise schedule, and a reader who is
+    not told the scope will assume the wider one.
     """
     lines: list[str] = []
-    for f in dataclasses.fields(production):
-        got = getattr(realized, f.name)
-        want = getattr(production, f.name)
-        if f.name in exempt:
+    pairs = [
+        (f.name, getattr(realized.cfg, f.name), getattr(production.cfg, f.name))
+        for f in dataclasses.fields(production.cfg)
+    ] + [
+        (name, getattr(realized, name), getattr(production, name))
+        for name in RUNNER_ARG_FIELDS
+    ]
+    for name, got, want in pairs:
+        if name in exempt:
             if got != want:
                 lines.append(
-                    f"{prefix}   {f.name}: {got!r} (production {want!r}) "
-                    f"— DELIBERATE: {exempt[f.name]}"
+                    f"{prefix}   {name}: {got!r} (production {want!r}) "
+                    f"— DELIBERATE: {exempt[name]}"
                 )
             continue
         if got != want:
-            lines.append(f"{prefix}   {f.name}: {got!r} != production {want!r}  <-- DRIFT")
+            lines.append(f"{prefix}   {name}: {got!r} != production {want!r}  <-- DRIFT")
         else:
-            lines.append(f"{prefix}   {f.name}: {got!r}")
+            lines.append(f"{prefix}   {name}: {got!r}")
+    lines.append(shape_coverage_note(prefix))
     return "\n".join(lines)
 
 
 def assert_matches_production(
-    realized: GumbelConfig,
-    production: GumbelConfig,
+    realized: SelfplaySearchShape,
+    production: SelfplaySearchShape,
     *,
     exempt: dict[str, str],
     where: str,
@@ -315,9 +417,11 @@ def assert_matches_production(
     The failing input is concrete and easy to produce: set any production
     search key in the live yaml that the instrument does not carry, and this
     raises. That is the mutation ``tests/test_production_shape_guard.py``
-    runs.
+    runs — including on ``gumbel_vloss_weight``, which is a runner argument
+    rather than a ``GumbelConfig`` field and which the pre-F1 comparison could
+    not see.
     """
-    diffs = gumbel_field_diff(realized, production, exempt=exempt)
+    diffs = shape_field_diff(realized, production, exempt=exempt)
     if not diffs:
         return
     detail = "\n  ".join(str(d) for d in diffs)

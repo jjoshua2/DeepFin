@@ -21,8 +21,11 @@ random-init one. To abandon the current trial's state, pass `--fresh` or use
 
 **`$CHESS_ANTI_ENGINE_LIVE_CONFIG` — which yaml the offline instruments treat as
 production.** `train.sh` exports it (absolute path to `$TRAIN_CONFIG`, default
-`configs/pbt2_small.yaml`) for every child, so anything started from the live shell
-inherits it. Set it by hand in any OTHER shell that runs
+`configs/pbt2_small.yaml`), and ⚑ **that export reaches training and its observer
+descendants ONLY.** `./scripts/train.sh start` runs the script in a SUBPROCESS, and a
+subprocess cannot modify its parent, so the shell you launched training from still has
+the variable unset. Read that as the normal case, not the exception: set it by hand in
+**every** shell — including the one that started the run — that runs
 `scripts/audit_targets.py`, `scripts/arena_standard.py --search-shape training`,
 `scripts/value_regret.py` or `scripts/probe_policy_targets.py`:
 

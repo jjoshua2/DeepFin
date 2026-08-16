@@ -35,15 +35,18 @@ import yaml
 
 from chess_anti_engine.eval.production_shape import (
     LIVE_CONFIG_ENV,
+    RUNNER_ARG_FIELDS,
     FieldDiff,
     assert_matches_production,
     compare_config_values,
-    gumbel_field_diff,
     load_live_config,
+    production_search_shape,
     production_selfplay_gumbel_config,
     resolve_live_config_path,
+    shape_field_diff,
 )
 from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.selfplay.network_turn import SelfplaySearchShape
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -143,9 +146,11 @@ def test_the_three_keys_are_not_gumbel_defaults() -> None:
 
 
 def test_drifted_field_is_caught() -> None:
-    prod = production_selfplay_gumbel_config(_flat(), simulations=32)
-    realized = dataclasses.replace(prod, target_max_visit_cap=0)
-    diffs = gumbel_field_diff(realized, prod, exempt={})
+    prod = production_search_shape(_flat(), simulations=32)
+    realized = dataclasses.replace(
+        prod, cfg=dataclasses.replace(prod.cfg, target_max_visit_cap=0),
+    )
+    diffs = shape_field_diff(realized, prod, exempt={})
     assert [d.field for d in diffs] == ["target_max_visit_cap"]
     with pytest.raises(SystemExit, match="target_max_visit_cap"):
         assert_matches_production(realized, prod, exempt={}, where="unit")
@@ -153,9 +158,12 @@ def test_drifted_field_is_caught() -> None:
 
 def test_exempting_a_field_suppresses_it_but_only_that_field() -> None:
     """An exemption must be narrow — otherwise it is a gate that cannot fail."""
-    prod = production_selfplay_gumbel_config(_flat(), simulations=32)
-    realized = dataclasses.replace(prod, target_max_visit_cap=0, topk=3)
-    diffs = gumbel_field_diff(
+    prod = production_search_shape(_flat(), simulations=32)
+    realized = dataclasses.replace(
+        prod,
+        cfg=dataclasses.replace(prod.cfg, target_max_visit_cap=0, topk=3),
+    )
+    diffs = shape_field_diff(
         realized, prod, exempt={"target_max_visit_cap": "unit-test reason"},
     )
     assert [d.field for d in diffs] == ["topk"]
@@ -163,8 +171,8 @@ def test_exempting_a_field_suppresses_it_but_only_that_field() -> None:
 
 def test_identical_configs_produce_no_diff() -> None:
     """The guard must be capable of PASSING, or it is noise rather than a check."""
-    prod = production_selfplay_gumbel_config(_flat(), simulations=32)
-    assert gumbel_field_diff(prod, prod, exempt={}) == []
+    prod = production_search_shape(_flat(), simulations=32)
+    assert shape_field_diff(prod, prod, exempt={}) == []
     assert_matches_production(prod, prod, exempt={}, where="unit")
 
 
@@ -325,7 +333,7 @@ def test_audit_accepts_the_live_config(
 
 
 class _BuildKwargs(TypedDict):
-    """Exactly the checkpoint-derived arguments `build_profile_gumbel_config` takes.
+    """Exactly the checkpoint-derived arguments `build_profile_search_shape` takes.
 
     A TypedDict rather than `dict[str, Any]` so that unpacking it at a call site
     keeps each field's type. A plain dict collapses them to the union of the
@@ -367,12 +375,12 @@ def test_built_training_config_is_productions() -> None:
     the floor; that gap is exactly why this builder was lifted out of its
     closure.
     """
-    from scripts.audit_targets import build_profile_gumbel_config, build_search_profiles
+    from scripts.audit_targets import build_profile_search_shape, build_search_profiles
 
     profiles = build_search_profiles(_flat(), play_sims=256, play_topk=None)
-    cfg = build_profile_gumbel_config(
+    cfg = build_profile_search_shape(
         "train", profiles["train"], **_build_kwargs(),
-    )
+    ).cfg
     assert cfg.policy_temp == pytest.approx(1.5)
     assert cfg.target_max_visit_cap == 5
     assert cfg.target_untempered_prior is True
@@ -384,7 +392,7 @@ def test_build_actually_compares_the_non_exempt_fields(
 ) -> None:
     """MUTANT: shrink the exempt map and watch a real deviation surface.
 
-    ``build_profile_gumbel_config`` sets ``add_noise=False`` against
+    ``build_profile_search_shape`` sets ``add_noise=False`` against
     production's ``True``. That deviation is silent only because "add_noise" is
     in ``TRAIN_SHAPE_DEVIATIONS``; removing the entry must make the guard fire.
     This is the test that proves the guard is CALLED and that it is the exempt
@@ -400,21 +408,21 @@ def test_build_actually_compares_the_non_exempt_fields(
 
     profiles = at.build_search_profiles(_flat(), play_sims=256, play_topk=None)
     # Sanity: with the real map it passes.
-    at.build_profile_gumbel_config("train", profiles["train"], **_build_kwargs())
+    at.build_profile_search_shape("train", profiles["train"], **_build_kwargs())
     trimmed = {k: v for k, v in at.TRAIN_SHAPE_DEVIATIONS.items() if k != "add_noise"}
     monkeypatch.setattr(at, "TRAIN_SHAPE_DEVIATIONS", trimmed)
     with pytest.raises(SystemExit, match="add_noise"):
-        at.build_profile_gumbel_config("train", profiles["train"], **_build_kwargs())
+        at.build_profile_search_shape("train", profiles["train"], **_build_kwargs())
 
 
 def test_build_play_row_still_honours_policy_temp_flag() -> None:
     """--policy-temp must keep working on the PLAY row after the split."""
-    from scripts.audit_targets import build_profile_gumbel_config, build_search_profiles
+    from scripts.audit_targets import build_profile_search_shape, build_search_profiles
 
     profiles = build_search_profiles(_flat(), play_sims=256, play_topk=None)
-    cfg = build_profile_gumbel_config(
+    cfg = build_profile_search_shape(
         "search", profiles["search"], **_build_kwargs(play_policy_temp=2.2),
-    )
+    ).cfg
     assert cfg.policy_temp == pytest.approx(2.2)
 
 
@@ -424,12 +432,12 @@ def test_policy_temp_flag_does_not_reach_the_training_rows() -> None:
     Scoring the "production training target" at an operator's --policy-temp is
     the mislabeling this whole change is about, in miniature.
     """
-    from scripts.audit_targets import build_profile_gumbel_config, build_search_profiles
+    from scripts.audit_targets import build_profile_search_shape, build_search_profiles
 
     profiles = build_search_profiles(_flat(), play_sims=256, play_topk=None)
-    cfg = build_profile_gumbel_config(
+    cfg = build_profile_search_shape(
         "train", profiles["train"], **_build_kwargs(play_policy_temp=2.2),
-    )
+    ).cfg
     assert cfg.policy_temp == pytest.approx(1.5)
 
 
@@ -510,6 +518,7 @@ def test_allow_stale_config_is_still_a_supported_escape(
     Refusing everywhere would be its own regression — the point is that the
     escape is EXPLICIT and lands on the artifact, not that it is unavailable.
     """
+    import scripts.audit_targets as at
     from scripts.audit_targets import _assert_config_is_production
 
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(tmp_path / "does-not-exist.yaml"))
@@ -522,6 +531,12 @@ def test_allow_stale_config_is_still_a_supported_escape(
         "authoritative": False,
         "reference": "<none>",
         "reason": authority.reason,
+      # ⚑ The SCOPE of the boolean, banked beside it. A flag whose coverage is
+      # not stated is read at the coverage the reader needs.
+        "covers": {
+            "search_shape": "complete selfplay runner argument set",
+            "config_keys": list(at.AUDIT_DIRECT_CONFIG_KEYS),
+        },
     }
     assert "does not exist" in authority.reason
 
@@ -734,17 +749,22 @@ def test_arena_training_shape_carries_move_affecting_knobs(
     live = _write_config(tmp_path, {"gumbel_policy_temp": 1.9})
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
     flat = dict(flatten_run_config_defaults(load_yaml_file(str(live))))
-    prod = production_selfplay_gumbel_config(flat, simulations=1)
+    prod = production_search_shape(flat, simulations=1)
     # The shape the arena would build if it had NOT been updated: stale temp.
-    with pytest.raises(SystemExit, match="policy_temp"):
+    # Every OTHER field is production's, so the refusal names policy_temp and
+    # only policy_temp — a test that let several fields diverge would pass on
+    # any one of them and could not tell which guard fired.
+    with pytest.raises(SystemExit, match="policy_temp") as excinfo:
         _assert_training_shape_is_production({
-            "c_scale": float(prod.c_scale),
-            "topk": int(prod.topk),
+            "c_scale": float(prod.cfg.c_scale),
+            "topk": int(prod.cfg.topk),
             "policy_temp": 1.0,
-            "volatility_q_scale": float(prod.volatility_q_scale),
-            "volatility_fpu": float(prod.volatility_fpu),
-            "volatility_anchor": float(prod.volatility_anchor),
-        }, flat)
+            "volatility_q_scale": float(prod.cfg.volatility_q_scale),
+            "volatility_fpu": float(prod.cfg.volatility_fpu),
+            "volatility_anchor": float(prod.cfg.volatility_anchor),
+        }, flat, vloss_weight=int(prod.vloss_weight),
+           target_batch=int(prod.target_batch))
+    assert "vloss_weight" not in str(excinfo.value)
 
 
 def test_arena_returns_the_dict_it_checked(
@@ -818,13 +838,14 @@ def test_arena_guard_fires_on_a_key_omitted_entirely(
     live = _write_config(tmp_path, {"gumbel_c_scale": 0.0375})
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
     flat = dict(flatten_run_config_defaults(load_yaml_file(str(live))))
-    prod = production_selfplay_gumbel_config(flat, simulations=1)
-    assert prod.c_scale == pytest.approx(0.0375), "the mutation did not take"
+    prod = production_search_shape(flat, simulations=1)
+    assert prod.cfg.c_scale == pytest.approx(0.0375), "the mutation did not take"
     with pytest.raises(SystemExit, match="c_scale"):
         _assert_training_shape_is_production({
-            "topk": int(prod.topk),
-            "policy_temp": float(prod.policy_temp),
-        }, flat)
+            "topk": int(prod.cfg.topk),
+            "policy_temp": float(prod.cfg.policy_temp),
+        }, flat, vloss_weight=int(prod.vloss_weight),
+           target_batch=int(prod.target_batch))
 
 
 def test_arena_training_shape_passes_when_it_matches(
@@ -835,15 +856,56 @@ def test_arena_training_shape_passes_when_it_matches(
     live = _write_config(tmp_path, {"gumbel_policy_temp": 1.9})
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
     flat = dict(flatten_run_config_defaults(load_yaml_file(str(live))))
-    prod = production_selfplay_gumbel_config(flat, simulations=1)
+    prod = production_search_shape(flat, simulations=1)
     _assert_training_shape_is_production({
-        "c_scale": float(prod.c_scale),
-        "topk": int(prod.topk),
-        "policy_temp": float(prod.policy_temp),
-        "volatility_q_scale": float(prod.volatility_q_scale),
-        "volatility_fpu": float(prod.volatility_fpu),
-        "volatility_anchor": float(prod.volatility_anchor),
-    }, flat)
+        "c_scale": float(prod.cfg.c_scale),
+        "topk": int(prod.cfg.topk),
+        "policy_temp": float(prod.cfg.policy_temp),
+        "volatility_q_scale": float(prod.cfg.volatility_q_scale),
+        "volatility_fpu": float(prod.cfg.volatility_fpu),
+        "volatility_anchor": float(prod.cfg.volatility_anchor),
+    }, flat, vloss_weight=int(prod.vloss_weight),
+       target_batch=int(prod.target_batch))
+
+
+def test_arena_guard_sees_a_runner_argument_no_GumbelConfig_FIELD_CARRIES(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MUTANT (F1): the arena passes the WRONG `vloss_weight`.
+
+    THE case the pre-fix guard could not fail on. `gumbel_vloss_weight` reaches
+    the C runner as a keyword argument and has no `GumbelConfig` field, so a
+    comparison that iterated `dataclasses.fields(GumbelConfig)` returned an
+    empty diff for it BY CONSTRUCTION and printed the affirmative line. Both
+    branches are exercised: production's value passes, one off it refuses.
+    """
+    from scripts.arena_standard import _assert_training_shape_is_production
+
+    live = _write_config(tmp_path, {"gumbel_vloss_weight": 1})
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
+    flat = dict(flatten_run_config_defaults(load_yaml_file(str(live))))
+    prod = production_search_shape(flat, simulations=1)
+    assert prod.vloss_weight == 1, "the mutation did not take"
+    assert not any(
+        f.name == "vloss_weight" for f in dataclasses.fields(GumbelConfig)
+    ), "vloss_weight became a GumbelConfig field; this test no longer proves anything"
+    shape = {
+        "c_scale": float(prod.cfg.c_scale),
+        "topk": int(prod.cfg.topk),
+        "policy_temp": float(prod.cfg.policy_temp),
+        "volatility_q_scale": float(prod.cfg.volatility_q_scale),
+        "volatility_fpu": float(prod.cfg.volatility_fpu),
+        "volatility_anchor": float(prod.cfg.volatility_anchor),
+    }
+    # PASSES on production's value...
+    _assert_training_shape_is_production(
+        shape, flat, vloss_weight=1, target_batch=int(prod.target_batch),
+    )
+    # ...and REFUSES one off it.
+    with pytest.raises(SystemExit, match="vloss_weight"):
+        _assert_training_shape_is_production(
+            shape, flat, vloss_weight=0, target_batch=int(prod.target_batch),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -866,7 +928,104 @@ def test_the_config_key_hand_list_is_gone() -> None:
     # reads straight from the flat instead of through production's builder.
     assert set(at.CONFIG_COMPARE_EXEMPT) == {"simulations"}
     assert all(r.strip() for r in at.CONFIG_COMPARE_EXEMPT.values())
-    assert at.AUDIT_DIRECT_CONFIG_KEYS == ("mcts_simulations", "fast_simulations")
+    assert set(at.AUDIT_DIRECT_CONFIG_KEYS) >= {
+        "mcts_simulations", "fast_simulations",
+    }
+
+
+def _direct_flat_reads(source: str) -> set[str]:
+    """Every string key read straight off a local named ``flat``.
+
+    ⚑ BOTH ACCESS FORMS. A `.get`-only scan misses `flat["k"]`, and a
+    subscript-only scan misses `flat.get("k", d)`. CLAUDE.md records exactly
+    this asymmetry producing a false negative on the single most consequential
+    key in a `TrialConfig` audit: `from_dict` reads `lr` by SUBSCRIPT, so a
+    `.get`-only scan reported it as unread.
+
+    ``audit_targets`` happens to use only the `.get` form today, which would
+    make the subscript branch unreachable-by-construction and therefore
+    untestable against the real module — the shape of an equivalent mutant.
+    ``test_the_flat_read_scanner_sees_both_access_forms`` drives it against a
+    synthetic source that uses both, so neither branch is dead.
+    """
+    import ast
+
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "flat"
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            found.add(node.slice.value)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "flat"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            found.add(node.args[0].value)
+    return found
+
+
+def test_the_flat_read_scanner_sees_both_access_forms() -> None:
+    """The scanner's own negative control — it is a guard, so it needs one.
+
+    Without this the subscript branch is dead code against the real module
+    (which uses only `.get` today), so deleting it would change nothing and the
+    completeness test below would silently stop covering the form that bit the
+    `TrialConfig` audit.
+    """
+    src = (
+        "def f(flat, other):\n"
+        "    a = flat['by_subscript']\n"
+        "    b = flat.get('by_get', 3)\n"
+        "    c = other.get('not_flat', 1)\n"
+        "    d = other['also_not_flat']\n"
+        "    e = flat.get(dynamic_key, 1)\n"
+        "    return a, b, c, d, e\n"
+    )
+    assert _direct_flat_reads(src) == {"by_subscript", "by_get"}
+
+
+def test_every_direct_config_read_is_checked() -> None:
+    """MUTANT (F4): a `flat[...]` read the authority stamp does not cover.
+
+    ``config_authority.authoritative`` claims "every config value this script
+    consumes was proved equal to the live config's". That claim is only true
+    while ``AUDIT_DIRECT_CONFIG_KEYS`` is COMPLETE, and completeness is exactly
+    the property a hand-list loses first: before this test the list held two
+    keys while the module read fifteen, so a ``--config`` differing from live
+    on ``sf_policy_temp`` was stamped as proved.
+
+    So the list is REGENERATED from the source rather than trusted. Adding a
+    direct read without adding the key fails here, which is the only reason the
+    stamp's scope line can be believed.
+    """
+    import scripts.audit_targets as at
+
+    found = _direct_flat_reads(Path(at.__file__).read_text(encoding="utf-8"))
+    assert found, "the AST scan found no `flat` reads at all — it is vacuous"
+    missing = found - set(at.AUDIT_DIRECT_CONFIG_KEYS)
+    assert not missing, (
+        f"audit_targets reads {sorted(missing)} straight out of the config, but "
+        "AUDIT_DIRECT_CONFIG_KEYS does not list them — so config_authority "
+        "would be stamped True over values that were never compared to the "
+        "live config. Add them to the list, or route the read through "
+        "production's builder."
+    )
+    unused = set(at.AUDIT_DIRECT_CONFIG_KEYS) - found
+    assert not unused, (
+        f"AUDIT_DIRECT_CONFIG_KEYS lists {sorted(unused)}, which this module no "
+        "longer reads directly. A list longer than the reads makes the check "
+        "refuse configs over keys that cannot affect the output."
+    )
 
 
 def test_config_check_catches_a_key_no_name_list_carried(
@@ -994,33 +1153,106 @@ def test_audit_main_default_config_is_the_resolved_production_file(
 # ---------------------------------------------------------------------------
 
 
-def test_train_shape_stamp_tracks_the_profile_it_describes() -> None:
-    """A stamp that did not move with the shape would be worse than none."""
-    from scripts.audit_targets import build_search_profiles, train_shape_stamp
+def test_train_shape_stamp_tracks_the_shape_the_runner_was_handed() -> None:
+    """MUTANT (F2): a stamp read off the PRE-override profile.
+
+    The stamp is a ruler declaration. Reading it off the ``_SearchProfile``
+    made it lie precisely when a ruler difference existed — measured, a run
+    with ``--gumbel-training-rows --gumbel policy_temp=3.0,
+    target_max_visit_cap=99`` banked ``{1.5, 5, True}`` and searched
+    ``3.0 / 99``, so two dumps from a sweep stamped identically and
+    ``require_same_ruler`` joined them.
+
+    BOTH branches, because a stamp that always reports the override would be
+    just as broken: without overrides it must report production's shape.
+    """
+    from scripts.audit_targets import (
+        build_profile_search_shape,
+        build_search_profiles,
+        train_shape_stamp,
+    )
+
+    kw = _build_kwargs()
+    plain = build_search_profiles(_flat(), play_sims=256, play_topk=None)
+    stamp = train_shape_stamp(
+        build_profile_search_shape("train", plain["train"], **kw),
+    )
+    assert stamp["policy_temp"] == pytest.approx(1.5)
+    assert stamp["target_max_visit_cap"] == 5
+    assert stamp["target_untempered_prior"] is True
+
+    swept = build_search_profiles(
+        _flat(), play_sims=256, play_topk=None,
+        gumbel_overrides=(("policy_temp", 3.0), ("target_max_visit_cap", 99.0)),
+        override_training_rows=True,
+    )
+    swept_stamp = train_shape_stamp(
+        build_profile_search_shape("train", swept["train"], **kw),
+    )
+    assert swept_stamp["policy_temp"] == pytest.approx(3.0)
+    assert swept_stamp["target_max_visit_cap"] == 99
+    assert swept_stamp != stamp, (
+        "the stamp did not move with the override — paired_compare would join "
+        "two arms of a sweep as the same ruler"
+    )
+
+
+def test_the_stamp_is_complete_over_the_runner_argument_set() -> None:
+    """MUTANT (Codex P1): stamp only the three fields that were wrong.
+
+    A three-field stamp fixes the ruler change that already happened and
+    nothing after it: move ``topk`` or the sim budget and both dumps pass their
+    own live-config checks while emitting an identical stamp. The stamp's field
+    set is therefore DERIVED from the dataclasses, not written down.
+    """
+    from scripts.audit_targets import (
+        _CHECKPOINT_DERIVED_FIELDS,
+        build_profile_search_shape,
+        build_search_profiles,
+        train_shape_stamp,
+        train_shape_stamp_fields,
+    )
+
+    want = {
+        f.name for f in dataclasses.fields(GumbelConfig)
+    } - set(_CHECKPOINT_DERIVED_FIELDS) | set(RUNNER_ARG_FIELDS)
+    assert set(train_shape_stamp_fields()) == want
+    for name in ("topk", "c_scale", "simulations", "vloss_weight", "target_batch"):
+        assert name in want, f"{name} must be part of the ruler"
+    for name in _CHECKPOINT_DERIVED_FIELDS:
+        assert name not in want, (
+            f"{name} comes off the checkpoint, not the config; stamping it "
+            "would refuse legitimate cross-net joins that `input_encoding` "
+            "already governs"
+        )
 
     profiles = build_search_profiles(_flat(), play_sims=256, play_topk=None)
-    stamp = train_shape_stamp(profiles["train"])
-    assert stamp == {
-        "policy_temp": 1.5,
-        "target_max_visit_cap": 5,
-        "target_untempered_prior": True,
-    }
-    # ...and the PRE-FIX shape, which `paired_compare` infers for an unstamped
-    # dump, is exactly the GumbelConfig defaults the deleted hand-list left in
-    # place. Pinned against the dataclass so the two cannot drift apart.
+    stamp = train_shape_stamp(
+        build_profile_search_shape("train", profiles["train"], **_build_kwargs()),
+    )
+    assert set(stamp) == want
+
+
+def test_an_unstamped_dump_is_unknown_not_a_guessed_policy_temp() -> None:
+    """MUTANT (F5 / Codex P1): infer `policy_temp=1.0` for a legacy dump.
+
+    Pre-fix, `--policy-temp` was an ordinary operator-settable flag that fed
+    EVERY profile including the training rows, so a legacy dump made at
+    `--policy-temp 2.2` is not deducible as 1.0. The sentinel keeps both
+    behaviours the inference was there for — legacy-vs-legacy joins,
+    legacy-vs-post-fix is refused — without the guess.
+    """
     import json
 
-    from scripts.paired_compare import INFERRED_WHEN_ABSENT
+    from scripts.paired_compare import INFERRED_WHEN_ABSENT, UNSTAMPED_LEGACY
 
-    base = GumbelConfig()
-    assert json.loads(INFERRED_WHEN_ABSENT["search_shape"]) == {
-        "policy_temp": float(base.policy_temp),
-        "target_max_visit_cap": int(base.target_max_visit_cap),
-        "target_untempered_prior": bool(base.target_untempered_prior),
-    }
-    assert stamp != json.loads(INFERRED_WHEN_ABSENT["search_shape"]), (
-        "the stamp and the pre-fix inference must differ, or the gate is inert"
+    assert INFERRED_WHEN_ABSENT["search_shape"] == UNSTAMPED_LEGACY
+    decoded = json.loads(UNSTAMPED_LEGACY)
+    assert isinstance(decoded, str), (
+        "the legacy value must not be a shape dict — any dict is a guess about "
+        "what the legacy run searched with"
     )
+    assert "unstamped" in decoded
 
 
 def test_dump_row_carries_both_stamps() -> None:
@@ -1035,7 +1267,7 @@ def test_dump_row_carries_both_stamps() -> None:
     import scripts.audit_targets as at
 
     src = Path(at.__file__).read_text(encoding="utf-8")
-    assert '"search_shape": train_shape_stamp(profiles["train"]),' in src
+    assert '"search_shape": train_shape_stamp(realized_shapes["train"]),' in src
     assert '"config_authority": config_authority.stamp(),' in src
 
 
@@ -1143,8 +1375,62 @@ def test_absent_soft_policy_temp_is_NOT_CHECKED_not_a_silent_2_point_0(
     p = rng.dirichlet(np.ones(12) * 0.4, size=64).astype(np.float32)
     q = np.stack([apply_policy_temperature(r, 2.0) for r in p]).astype(np.float32)
     line = probe._check_soft_policy_temp(probe._recover_soft_policy_temp(p, q))
-    assert "NOT CHECKED (key absent from live config" in line
+    assert "NOT CHECKED (key absent from config" in line
     assert "MATCHES" not in line
+
+
+def test_probe_marks_a_NON_AUTHORITATIVE_reference_as_such(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """MUTANT (F3): branch on `live is None` and never read `live.authoritative`.
+
+    ``load_live_config_or_reason`` returns the IN-TREE fallback with
+    ``authoritative=False`` — NOT ``None`` — when
+    ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` is unset, which is the default in every
+    worktree. Branching on ``None`` alone therefore printed "live config says
+    2.0 -> MATCHES" about a file the resolver had already decided was not
+    live. Same defect ``audit_targets`` fixed in the same change, left standing
+    in a sibling instrument.
+
+    BOTH branches are asserted: the authoritative case must still say "live
+    config" and must NOT carry the warning, or the fix would be a gate that
+    cannot pass.
+    """
+    import scripts.probe_policy_targets as probe
+    from chess_anti_engine.eval.production_shape import LiveConfig
+    from chess_anti_engine.selfplay.temperature import apply_policy_temperature
+
+    rng = np.random.default_rng(5)
+    p = rng.dirichlet(np.ones(12) * 0.4, size=64).astype(np.float32)
+    q = np.stack([apply_policy_temperature(r, 2.0) for r in p]).astype(np.float32)
+    recovered = probe._recover_soft_policy_temp(p, q)
+
+    def _stub(authoritative: bool) -> None:
+        cfg = LiveConfig(
+            path=tmp_path / "pbt2_small.yaml", flat={"soft_policy_temp": 2.0},
+            sha256="0" * 64,
+            provenance="stub" if authoritative else "in-tree fallback",
+            authoritative=authoritative,
+        )
+        monkeypatch.setattr(
+            "chess_anti_engine.eval.production_shape.load_live_config_or_reason",
+            lambda: (cfg, ""),
+        )
+
+    _stub(False)
+    stale = probe._check_soft_policy_temp(recovered)
+    assert "NOT-LIVE" in stale, "the [NOT-LIVE] provenance mark never printed"
+    assert "NOT a production check" in stale
+    assert "live config says" not in stale, (
+        "the probe called a non-authoritative reference the live config"
+    )
+    assert "MATCHES" in stale  # the numeric verdict is still reported
+
+    _stub(True)
+    live = probe._check_soft_policy_temp(recovered)
+    assert "[LIVE]" in live
+    assert "live config says 2.0 -> MATCHES" in live
+    assert "NOT a production check" not in live
 
 
 def test_the_schema_default_is_why_that_fallback_never_fired() -> None:
@@ -1250,7 +1536,7 @@ def test_audit_net_candidates_builds_its_configs_through_the_guarded_builder(
 ) -> None:
     """MUTANT: `_net_candidates` assembles a GumbelConfig itself.
 
-    `build_profile_gumbel_config` carries the training rows'
+    `build_profile_search_shape` carries the training rows'
     `assert_matches_production` call. Building the config any other way inside
     `_net_candidates` would leave the guard intact, tested, and unreachable.
     """
@@ -1260,9 +1546,9 @@ def test_audit_net_candidates_builds_its_configs_through_the_guarded_builder(
 
     def _tripwire(*args: Any, **kwargs: Any):
         del args, kwargs
-        raise SystemExit("TRIPWIRE: build_profile_gumbel_config was reached")
+        raise SystemExit("TRIPWIRE: build_profile_search_shape was reached")
 
-    monkeypatch.setattr(at, "build_profile_gumbel_config", _tripwire)
+    monkeypatch.setattr(at, "build_profile_search_shape", _tripwire)
     profiles = at.build_search_profiles(_flat(), play_sims=8, play_topk=None)
     with pytest.raises(SystemExit, match="TRIPWIRE"):
         at._net_candidates(
@@ -1328,3 +1614,114 @@ def test_probe_main_runs_the_temperature_check(
     )
     with pytest.raises(SystemExit, match="TRIPWIRE"):
         probe.main()
+
+
+# ---------------------------------------------------------------------------
+# F1: the compared object is the CONSUMER's argument set, not a dataclass
+# ---------------------------------------------------------------------------
+
+
+def test_the_shape_is_exactly_what_the_C_runner_is_handed() -> None:
+    """MUTANT (F1): a config-derived runner argument added BESIDE the shape.
+
+    "Field-complete over <schema>" is only as complete as <schema>. The
+    previous revision diffed ``GumbelConfig`` and called that exhaustive while
+    ``gumbel_vloss_weight`` / ``gumbel_target_batch`` reached the C runner as
+    keyword arguments with no such field. Widening to a roomier dataclass would
+    have been the same defect with a later expiry date, so the boundary is the
+    runner's own argument set — and this test is what keeps that true.
+
+    It parses production's call site and asserts that EVERY config-derived
+    keyword there comes from ``SelfplaySearchShape.runner_kwargs()``. Adding
+    ``vloss_weight=int(search.gumbel_vloss_weight)`` back beside the unpack
+    fails here.
+    """
+    import ast
+    import inspect
+
+    from chess_anti_engine.selfplay import network_turn
+
+    src = inspect.getsource(network_turn)
+    tree = ast.parse(src)
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "gumbel_c_fn"
+    ]
+    assert len(calls) == 1, (
+        f"expected exactly one C-runner call site, found {len(calls)}; a second "
+        "one is a second place for a config-derived argument to hide"
+    )
+    call = calls[0]
+    unpacked = [kw for kw in call.keywords if kw.arg is None]
+    assert len(unpacked) == 1, "the shape is no longer unpacked at the call site"
+    assert ast.unparse(unpacked[0].value) == "search_shape.runner_kwargs()"
+
+  # No keyword at that call site may read a `search.gumbel_*` / `game.*` config
+  # value directly — that is the bypass. `state.*` is runtime state (model,
+  # device, trees, per-game sim/noise lists), not config.
+    for kw in call.keywords:
+        if kw.arg is None:
+            continue
+        text = ast.unparse(kw.value)
+        assert not text.startswith("search."), (
+            f"{kw.arg}={text} reads the selfplay SearchConfig directly at the "
+            "runner call site, bypassing SelfplaySearchShape — so no "
+            "instrument that compares shapes can see it. Put it on the shape."
+        )
+
+
+def test_runner_kwargs_covers_every_non_cfg_field_of_the_shape() -> None:
+    """The one remaining hand-list is regenerated from the dataclass.
+
+    ``RUNNER_ARG_FIELDS`` names the shape's non-``cfg`` fields. Adding a field
+    to ``SelfplaySearchShape`` without adding it here would leave it out of
+    every diff, every printed table and the ruler stamp — the drift mechanism
+    #227 was about, in the one place a list survives.
+    """
+    declared = {
+        f.name for f in dataclasses.fields(SelfplaySearchShape) if f.name != "cfg"
+    }
+    assert declared == set(RUNNER_ARG_FIELDS)
+    shape = production_search_shape(_flat(), simulations=8)
+    assert set(shape.runner_kwargs()) == {"cfg"} | declared
+
+
+def test_audit_defaults_the_runner_args_to_production_not_to_zero() -> None:
+    """MUTANT (F1, the unconditional half): CLI default 0 vs production's 1.
+
+    The reviewer's sharper case: even with ``--config`` EQUAL to the live yaml,
+    ``_net_candidates`` received ``vloss_weight=0`` from the CLI while
+    production runs 1, so rows (d)/(e) were certified and printed under
+    "production training target" while searching the duplicate-leaf shape.
+
+    BOTH branches: unset follows production, and an explicit value is carried
+    AND declared as a deviation (so the shape table prints it rather than
+    refusing or hiding it).
+    """
+    import scripts.audit_targets as at
+
+    flat = _flat()
+    flat["gumbel_vloss_weight"] = 1
+    prod = production_search_shape(flat, simulations=8)
+    assert prod.vloss_weight == 1, "the fixture is not exercising the case"
+
+    default = at.build_search_profiles(flat, play_sims=64, play_topk=None)
+    assert default["train"].vloss_weight == 1
+    assert default["train_fast"].vloss_weight == 1
+    assert at.profile_shape_deviations(default["train"]).get("vloss_weight") is None
+
+    explicit = at.build_search_profiles(
+        flat, play_sims=64, play_topk=None, vloss_weight=0,
+    )
+    assert explicit["train"].vloss_weight == 0
+    reason = at.profile_shape_deviations(explicit["train"])["vloss_weight"]
+    assert "--vloss-weight" in reason
+    assert "production runs 1" in reason
+  # ...and the declared deviation is what lets the build SUCCEED rather than
+  # refuse: an operator arm must stay runnable, just not called production's.
+    shape = at.build_profile_search_shape(
+        "train", explicit["train"], **_build_kwargs(),
+    )
+    assert shape.vloss_weight == 0

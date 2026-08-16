@@ -60,8 +60,16 @@ export PYTORCH_NVML_BASED_CUDA_CHECK="${PYTORCH_NVML_BASED_CUDA_CHECK:-1}"
 # Exported HERE because a guard that has to be armed by hand is disarmed by
 # default, and the default is the case that produced the #227 finding: run from
 # a worktree with this unset, `audit_targets.py` scored the wrong shape and
-# printed a line saying the config matched "live". It now REFUSES instead, so
-# this export is what keeps the authoritative case the ordinary one.
+# printed a line saying the config matched "live". It now REFUSES instead.
+#
+# ⚑ ITS REACH IS TRAINING AND ITS DESCENDANTS, AND NOTHING ELSE. The documented
+# invocation is `./scripts/train.sh start`, i.e. this script runs in a
+# SUBPROCESS and cannot modify the shell that launched it. So an operator who
+# starts training and then runs `audit_targets.py` from that SAME terminal
+# still has the variable unset and hits the refusal — which is fail-closed and
+# therefore safe, but it means this export does NOT make the authoritative case
+# the ordinary one for offline instruments. Only a `source`d line in the
+# operator's shell profile does; docs/operations.md says so.
 #
 # `${VAR:-}` so an operator pointing it at another file (a historical config,
 # a second trial) still wins. Set after the `cd` above, so `$PWD` is the repo

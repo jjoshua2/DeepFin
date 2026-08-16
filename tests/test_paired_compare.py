@@ -660,11 +660,20 @@ def test_two_pre_fix_dumps_still_compare(tmp_path) -> None:
     require_same_ruler(a, b, label_a="A", label_b="B")
 
 
-def test_an_explicit_pre_fix_stamp_matches_an_inferred_one(tmp_path) -> None:
-    """The INFERENCE must equal what a pre-fix build would have written.
+def test_an_absent_stamp_is_UNKNOWN_not_a_guessed_shape(tmp_path) -> None:
+    """MUTANT (F5 / Codex P1): re-infer a concrete legacy shape from absence.
 
-    Otherwise absence and an explicit legacy stamp would disagree, and the
-    inference would be a guess rather than a deduction.
+    An earlier revision inferred ``{policy_temp: 1.0, target_max_visit_cap: 0,
+    target_untempered_prior: False}`` and called all three a DEDUCTION. Two are;
+    ``policy_temp`` is not — pre-fix, the operator-settable ``--policy-temp``
+    fed every profile including the training rows, so a legacy dump made at 2.2
+    was inferred as 1.0. That accepts a legacy-2.2 vs current-1.0 join (the
+    exact failure this gate exists to stop) and refuses a legitimate 2.2-vs-2.2
+    one.
+
+    So absence is its own value. It cannot equal ANY concrete stamp — including
+    one that happens to hold the GumbelConfig defaults, because such a dump was
+    written by a build that DID stamp and therefore is not the legacy case.
     """
     from scripts.paired_compare import load_dump, require_same_ruler
 
@@ -676,7 +685,44 @@ def test_an_explicit_pre_fix_stamp_matches_an_inferred_one(tmp_path) -> None:
                  search_shape=_PRE_FIX_SHAPE),
     ]))
 
-    require_same_ruler(absent, explicit, label_a="ABSENT", label_b="EXPLICIT")
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(absent, explicit, label_a="ABSENT", label_b="EXPLICIT")
+
+
+def test_search_shape_is_skipped_for_a_metric_it_cannot_govern(tmp_path) -> None:
+    """MUTANT (Codex P2): check the training-row ruler on a non-training metric.
+
+    `search_shape` describes rows (d)/(e) only — the change that introduced it
+    says "rows (b) and (c) are unaffected" — so refusing a `cand.raw.exp` or
+    `cand.sf_soft.exp` comparison over it refuses a join it does not govern.
+    BOTH branches: skipped for `cand.raw.exp`, still enforced for
+    `cand.train.exp`, and still enforced when no metric is named.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler, ruler_fields_for
+
+    assert "search_shape" not in ruler_fields_for("cand.raw.exp")
+    assert "search_shape" not in ruler_fields_for("cand.sf_soft.exp")
+    assert "search_shape" in ruler_fields_for("cand.train.exp")
+    assert "search_shape" in ruler_fields_for("cand.train_fast.exp")
+    assert "search_shape" in ruler_fields_for(None)
+    # ...and `input_encoding` is never skipped: it governs every row.
+    assert "input_encoding" in ruler_fields_for("cand.raw.exp")
+
+    legacy = load_dump(_write_jsonl(tmp_path / "legacy.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    fresh = load_dump(_write_jsonl(tmp_path / "fresh.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+    ]))
+    require_same_ruler(
+        legacy, fresh, label_a="LEGACY", label_b="NEW", metric="cand.raw.exp",
+    )
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(
+            legacy, fresh, label_a="LEGACY", label_b="NEW",
+            metric="cand.train.exp",
+        )
 
 
 def test_two_post_fix_dumps_compare(tmp_path) -> None:
