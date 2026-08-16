@@ -245,6 +245,7 @@ _MODEL_PASSTHROUGH = (
     "categorical_head_coupled",
     "policy_embedding_mode",
     "enable_policy_sf_head",
+    "aux_policy_head_dim",
 )
 
 # train section: all 1:1 passthrough.
