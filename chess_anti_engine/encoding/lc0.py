@@ -601,19 +601,45 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_s
     # the same defect. Reusing python-chess's own predicate here keeps the two
     # paths on one ruler and makes that ruler the correct one.
 
-    def _state_has_legal_ep(s) -> bool:
-        """has_legal_en_passant() for a stack entry, which is not a Board.
+    # One reusable probe board, built lazily. A stack entry is a _BoardState,
+    # not a Board, so python-chess cannot be asked the legality question about
+    # it directly -- it has to be restored into a Board first.
+    #
+    # ⚑ Both the laziness and the reuse are load-bearing, not tidiness.
+    # ``Board.copy()`` is far more expensive than the key build, and ~9% of
+    # stack entries carry an ep square in real games, so copying per entry cost
+    # 36% of encode_position throughput on the production encoding
+    # (5253/s -> 3342/s). ``restore`` overwrites the whole position, so one
+    # probe serves every entry, and boards with no ep square anywhere never
+    # allocate it at all.
+    probe: list[chess.Board] = []
 
-        Restoring into a throwaway copy is the only way to ask python-chess the
-        legality question about a historical state, and it is why this is gated
-        on ``s.ep_square`` first: the restore is far more expensive than the key
-        build, and ep_square is unset in the overwhelming majority of positions.
-        """
+    def _state_has_legal_ep(s) -> bool:
         if s.ep_square is None:
             return False
-        probe = board.copy(stack=False)
-        s.restore(probe)
-        return probe.has_legal_en_passant()
+        # Cheap pseudo-legal pre-filter, mirroring the C path's early-out and
+        # built from python-chess's OWN tables (the body of
+        # generate_pseudo_legal_ep) rather than hand-rolled file masks. An ep
+        # square is set on ~9% of stack entries but a pawn actually attacks it
+        # on far fewer, so this keeps the restore off almost every entry.
+        #
+        # It is only ever a filter: it can reject, never accept. Anything that
+        # survives it is answered by python-chess itself below, so a
+        # conservative pre-filter cannot make the verdict wrong.
+        if chess.BB_SQUARES[s.ep_square] & s.occupied:
+            return False
+        our_occ = s.occupied_w if s.turn else s.occupied_b
+        capturers = (
+            s.pawns & our_occ
+            & chess.BB_PAWN_ATTACKS[not s.turn][s.ep_square]
+            & chess.BB_RANKS[4 if s.turn else 3]
+        )
+        if not capturers:
+            return False
+        if not probe:
+            probe.append(board.copy(stack=False))
+        s.restore(probe[0])
+        return probe[0].has_legal_en_passant()
 
     def _skey(s):
         return (s.pawns, s.knights, s.bishops, s.rooks, s.queens, s.kings,
