@@ -52,6 +52,8 @@ from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.selfplay import match as match_mod
 from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
 from scripts.arena_standard import (
+    ARENA_OWNED_GUMBEL_FIELDS,
+    CHECKPOINT_OWNED_GUMBEL_FIELDS,
     SEARCH_SHAPES,
     SideSearch,
     add_common_args,
@@ -59,16 +61,18 @@ from scripts.arena_standard import (
     build_result_record,
     pentanomial_counts,
     play_paired_games_matched_sims,
+    production_selfplay_gumbel_config,
     production_selfplay_search_config,
     resolve_search_shape,
     run_arena,
     summarize_pentanomial,
+    training_shape_carried_fields,
 )
 
 # GumbelConfig fields the ARENA owns rather than the training config: the sim
 # budget and the move-selection/noise policy come from arena flags. Everything
 # else production sets from config has to be carried by the training shape.
-_ARENA_OWNED_GUMBEL_FIELDS = {"simulations", "temperature", "add_noise", "gumbel_scale"}
+_ARENA_OWNED_GUMBEL_FIELDS = set(ARENA_OWNED_GUMBEL_FIELDS)
 
 # Sentinel values handed to the production SearchConfig -> GumbelConfig mapping.
 # Every GumbelConfig default is <= 99 apart from cpuct_base (38739), so nothing
@@ -618,6 +622,17 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
         f"build_selfplay_gumbel_config names {sorted(mentioned)} but only "
         f"{sorted(set(config_driven.values()))} reach the returned GumbelConfig"
     )
+    # ⚑ HONEST NOTE ON THIS LAST CLAUSE. Since the training shape became the
+    # DERIVED complement, `pinned` covers every carried field by construction, so
+    # `live_and_unpinned` can no longer be non-empty and this clause is a
+    # tautology. It is kept because its FIRST half (the `config_driven` set
+    # equality above) still discriminates -- it is what proves each knob is
+    # OBSERVED to flow through the real mapping -- and because deleting the
+    # clause would delete the message that finally named the defect. Do NOT
+    # read a green here as evidence that the arena carries production's shape:
+    # `test_the_training_shape_equals_productions_gumbel_config_field_by_field`
+    # and `test_the_three_ownership_sets_partition_gumbelconfig` are the checks
+    # that can actually fail, and the mutation test above proves they do.
     search = production_selfplay_search_config()
     pinned = set(resolve_search_shape("training").gumbel) | _ARENA_OWNED_GUMBEL_FIELDS
     live_and_unpinned = {
@@ -631,6 +646,349 @@ def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> No
         "does not carry it -- --search-shape training would measure a search "
         "production does not run"
     )
+
+
+# ---------------------------------------------------------------------------
+# Defect 3: the training shape is DERIVED from production, not restated
+#
+# `c62eb8ff2` (2026-08-10 23:28) promoted `gumbel_target_max_visit_cap: 5` and
+# `gumbel_target_untempered_prior: true` into the production yaml. The training
+# shape restated three knobs by hand, the hand-written list did not grow, and
+# `--search-shape training` kept announcing itself as production's search while
+# building a GumbelConfig production does not build. The guard above detected it
+# immediately and the failure went unread for five days.
+#
+# The fix is structural: the carried set is now the COMPLEMENT of two justified
+# exclusion sets, so a promoted knob needs no edit. What is left to test is that
+# the complement really PARTITIONS the dataclass (a new field cannot fall
+# between the sets), that the derived shape really equals production's config
+# field by field, and — the part that keeps this from being a gate that cannot
+# fail — that dropping any single live knob makes the equality FAIL.
+# ---------------------------------------------------------------------------
+
+
+# The exact carried set, pinned BY NAME. A `len(...)` floor would let one knob be
+# dropped as long as another arrived; that is the failure mode the guard above
+# already documents. A new GumbelConfig field fails this line by name, which is
+# the intended forcing function: classify it as arena-owned, checkpoint-owned, or
+# carried, and say which in the PR.
+_EXPECTED_CARRIED_FIELDS = {
+    "topk",
+    "policy_temp",
+    "c_visit",
+    "c_scale",
+    "c_puct",
+    "cpuct_factor",
+    "cpuct_base",
+    "fpu_reduction",
+    "q_visit_exp",
+    "q_global_scale",
+    "q_visit_floor",
+    "target_max_visit_cap",
+    "target_untempered_prior",
+    "halving_div",
+    "c_visit_root",
+    "c_scale_root",
+    "q_visit_exp_root",
+    "full_tree",
+    "volatility_q_scale",
+    "volatility_fpu",
+    "volatility_anchor",
+    "volatility_factor_clip",
+}
+
+
+def test_the_three_ownership_sets_partition_gumbelconfig() -> None:
+    """Every GumbelConfig field is arena-owned, checkpoint-owned, or carried.
+
+    ⚑ This is the acceptance bar in one line. A NEW field lands in `carried` by
+    construction (it is the complement), so the arena starts carrying it with no
+    edit — and this test fails by name so the addition is still looked at rather
+    than absorbed silently. A field can never fall between the sets, which is how
+    `target_max_visit_cap` fell between them before.
+    """
+    all_fields = {f.name for f in dataclasses.fields(GumbelConfig)}
+    carried = set(training_shape_carried_fields())
+
+    # ⚑ All THREE sets are pinned by name, not just `carried`. `carried` is the
+    # complement, so widening an exclusion set silently narrows it: dropping a
+    # newly promoted knob into ARENA_OWNED would restore exactly the drift this
+    # fix removes, and would leave `carried` looking untouched. Pinning the
+    # exclusions is what makes the misclassification escape hatch fail too.
+    assert set(ARENA_OWNED_GUMBEL_FIELDS) == {
+        "simulations", "temperature", "add_noise", "gumbel_scale",
+    }, (
+        "a GumbelConfig field was declared ARENA-owned. That EXCLUDES it from "
+        "production-parity, so it must be a property of the MATCH (budget, "
+        "move-selection, root noise) and not of the training config. Justify it "
+        "in the PR before updating this pin."
+    )
+    assert set(CHECKPOINT_OWNED_GUMBEL_FIELDS) == {
+        "input_history_encoding", "input_extra_features",
+        "policy_encoding", "compute_relations",
+    }, (
+        "a GumbelConfig field was declared CHECKPOINT-owned. That EXCLUDES it "
+        "from production-parity, so it must be something `pick_moves_for_boards` "
+        "genuinely reads off the loaded model. Justify it in the PR."
+    )
+    assert carried == _EXPECTED_CARRIED_FIELDS, (
+        "GumbelConfig's field set moved. The training shape carries the "
+        "complement of ARENA_OWNED_GUMBEL_FIELDS | CHECKPOINT_OWNED_GUMBEL_FIELDS, "
+        "so a new field is carried automatically -- confirm that is right for it "
+        "(is it a MATCH property? a CHECKPOINT property?) and update this pin."
+    )
+    # Disjoint, and together exhaustive.
+    assert not (ARENA_OWNED_GUMBEL_FIELDS & CHECKPOINT_OWNED_GUMBEL_FIELDS)
+    assert not (carried & ARENA_OWNED_GUMBEL_FIELDS)
+    assert not (carried & CHECKPOINT_OWNED_GUMBEL_FIELDS)
+    assert (
+        carried | set(ARENA_OWNED_GUMBEL_FIELDS) | set(CHECKPOINT_OWNED_GUMBEL_FIELDS)
+    ) == all_fields
+    # Not a gate that cannot fail: it examines a real, non-trivial number of
+    # fields, and the exclusions are a small minority of them.
+    assert len(carried) >= 20
+    assert len(carried) > len(ARENA_OWNED_GUMBEL_FIELDS | CHECKPOINT_OWNED_GUMBEL_FIELDS)
+
+
+def _arena_training_gumbel_config() -> GumbelConfig:
+    """The GumbelConfig an arena move ACTUALLY searches with, training shape.
+
+    Rebuilt the way ``selfplay/match.pick_moves_for_boards`` builds it — base
+    dataclass, then ``dataclasses.replace`` with the shape's dict — rather than
+    inspecting the dict directly. A knob present in the dict but rejected by
+    ``replace`` would pass a dict-only check and still never reach the search.
+    """
+    side = resolve_search_shape("training")
+    return dataclasses.replace(GumbelConfig(), **side.gumbel)
+
+
+def test_the_training_shape_equals_productions_gumbel_config_field_by_field() -> None:
+    """Exhaustive, not three knobs: every carried field, compared by value."""
+    prod = production_selfplay_gumbel_config()
+    arena = _arena_training_gumbel_config()
+
+    mismatched = {
+        name: (getattr(prod, name), getattr(arena, name))
+        for name in training_shape_carried_fields()
+        if getattr(prod, name) != getattr(arena, name)
+    }
+    assert not mismatched, (
+        f"the arena's training shape differs from production selfplay on "
+        f"{sorted(mismatched)} (production, arena) = {mismatched}; "
+        "--search-shape training would measure a search production does not run"
+    )
+
+
+def _fields_where_production_differs_from_the_dataclass_default() -> list[str]:
+    """Carried fields whose production value is NOT the GumbelConfig default.
+
+    These are the only fields on which the equality test above can discriminate:
+    for a field sitting at its default, dropping it from the carried set changes
+    nothing and the test would pass either way. Naming them explicitly is what
+    turns "the test passes" into "the test could have failed".
+    """
+    prod = production_selfplay_gumbel_config()
+    base = GumbelConfig()
+    return [
+        name
+        for name in training_shape_carried_fields()
+        if getattr(prod, name) != getattr(base, name)
+    ]
+
+
+def test_the_equality_check_is_not_vacuous_and_catches_a_dropped_knob() -> None:
+    """MUTATION, in-suite: drop each live knob and watch the equality go RED.
+
+    ⚑ Without this the test above is satisfied by a training shape that carries
+    NOTHING on any day production happens to sit at every dataclass default. The
+    repo's standing rule is that a new test is vacuous until mutated, and the
+    fixture — not the assertion — is usually what fails to discriminate. So:
+    enumerate the fields that actually discriminate today, assert the list is
+    non-empty and contains the two knobs whose drift motivated this, and then
+    prove that removing ANY ONE of them from the carried dict makes the
+    comparison fail.
+    """
+    live = _fields_where_production_differs_from_the_dataclass_default()
+
+    assert live, (
+        "production sits at the GumbelConfig default on EVERY carried field, so "
+        "the equality test cannot discriminate a carried shape from an empty "
+        "one. This is a gate that cannot fail -- do not read it as a pass."
+    )
+    # The two knobs this whole fix exists for. Pinned so that a yaml revert
+    # turns this into a visible decision rather than silently defusing the test.
+    assert {"target_max_visit_cap", "target_untempered_prior"} <= set(live), (
+        f"production no longer sets the two knobs the drift was found on; live "
+        f"discriminating fields are {live}. If the yaml genuinely reverted them, "
+        "update this pin -- but re-check that some other knob still discriminates."
+    )
+
+    prod = production_selfplay_gumbel_config()
+    full = dict(resolve_search_shape("training").gumbel)
+    for name in live:
+        dropped = {k: v for k, v in full.items() if k != name}
+        mutated = dataclasses.replace(GumbelConfig(), **dropped)
+        assert getattr(mutated, name) != getattr(prod, name), (
+            f"dropping {name!r} from the training shape left the arena config "
+            "unchanged, so the equality test cannot see that knob at all"
+        )
+
+
+def test_a_newly_promoted_knob_is_carried_without_editing_the_arena(
+    monkeypatch: Any, tmp_path: Any,
+) -> None:
+    """The structural claim, exercised: promote a knob, the arena follows.
+
+    Uses a knob the production yaml leaves at its default today, so the value
+    that arrives cannot be the one that was already there. This is the property
+    the old hand-written three-knob list did not have and could not have.
+    """
+    import yaml as _yaml
+
+    from chess_anti_engine.utils.config_yaml import load_yaml_file
+    from scripts import arena_standard as arena_mod
+
+    assert production_selfplay_gumbel_config().target_max_visit_cap == 5
+    before = resolve_search_shape("training").gumbel["target_max_visit_cap"]
+    assert before == 5
+
+    raw = load_yaml_file(str(arena_mod.PRODUCTION_CONFIG))
+    raw["selfplay"]["gumbel_target_max_visit_cap"] = 11
+    patched = tmp_path / "promoted.yaml"
+    patched.write_text(_yaml.safe_dump(raw), encoding="utf-8")
+    monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)
+
+    side = arena_mod.resolve_search_shape("training")
+    assert side.gumbel["target_max_visit_cap"] == 11
+    # ...and it survives the `dataclasses.replace` the real search path uses.
+    assert dataclasses.replace(GumbelConfig(), **side.gumbel).target_max_visit_cap == 11
+    assert GumbelConfig().target_max_visit_cap != 11
+
+
+def test_the_runtime_check_refuses_a_training_shape_that_drifted(
+    monkeypatch: Any,
+) -> None:
+    """The live-tree gate: `resolve_search_shape` refuses to hand back a lie.
+
+    CI reads the COMMITTED yaml; an arena reads whichever yaml is in its tree,
+    and the live one is edited in place and lags. So the check that matters runs
+    at arena start-up, not only in pytest. Mutated here by making the derivation
+    drop a knob — the same shape as the hand-written list that caused this.
+    """
+    from scripts import arena_standard as arena_mod
+
+    full = tuple(arena_mod.training_shape_carried_fields())
+    assert "target_max_visit_cap" in full
+    monkeypatch.setattr(
+        arena_mod,
+        "training_shape_carried_fields",
+        lambda: tuple(f for f in full if f != "target_max_visit_cap"),
+    )
+
+    with pytest.raises(SystemExit, match="target_max_visit_cap"):
+        arena_mod.resolve_search_shape("training")
+
+
+def test_the_runtime_check_is_silent_when_the_shape_is_right() -> None:
+    """Negative control: the refusal above must not fire on every call."""
+    assert resolve_search_shape("training").shape == "training"
+
+
+def test_an_explicit_volatility_request_survives_the_training_shape() -> None:
+    """REGRESSION (caught in review of this PR, not by me).
+
+    Making the training shape exhaustive made it carry `volatility_q_scale` /
+    `volatility_fpu` / `volatility_anchor` at production's values (0.0 today).
+    `pick_moves_for_boards` applies `gumbel_overrides` AFTER the dedicated
+    volatility arguments, so the shape silently reset an explicit
+    `--volatility-q-scale` back to zero, kept the run on the C path, and would
+    have reported a volatility arena that ran no volatility search -- the exact
+    accepted-then-ignored defect this module exists to stop, reintroduced by the
+    fix for another instance of it.
+
+    ⚑ Asserted on the MERGED dict the search actually receives, not on the flags,
+    because the flags were always correct; it was the precedence that was not.
+    """
+    from scripts.arena_standard import overrides_with_volatility
+
+    side = resolve_search_shape("training")
+    # The shape genuinely carries these -- otherwise this test guards nothing.
+    assert side.gumbel["volatility_q_scale"] == 0.0
+    assert side.gumbel["volatility_fpu"] == 0.0
+
+    merged = overrides_with_volatility(
+        side, {"volatility_q_scale": 0.5, "volatility_fpu": 0.25,
+               "volatility_anchor": 0.07},
+    )
+    assert merged["volatility_q_scale"] == 0.5, "the shape clobbered the request"
+    assert merged["volatility_fpu"] == 0.25
+    assert merged["volatility_anchor"] == 0.07
+    # ...and it does not quietly drop the rest of the shape while doing so.
+    assert merged["target_max_visit_cap"] == side.gumbel["target_max_visit_cap"]
+    assert merged["c_scale"] == side.gumbel["c_scale"]
+
+    # No request => the shape's own values, unchanged.
+    assert overrides_with_volatility(side, None) == side.gumbel
+    assert overrides_with_volatility(side, {}) == side.gumbel
+
+
+def test_volatility_reaches_the_search_through_the_merged_overrides(
+    monkeypatch: Any,
+) -> None:
+    """End of the wire, not the helper: what does the SEARCH receive?
+
+    `overrides_with_volatility` returning the right dict proves nothing if a
+    play loop still passes `side.gumbel` straight down. This drives the real
+    matched_sims loop and reads the config off the search entry point.
+    """
+    seen = _capture_c_search(monkeypatch)
+    captured: list[Any] = []
+
+    real = match_mod.pick_moves_for_boards
+
+    def spy(*args: Any, **kwargs: Any):
+        captured.append(dict(kwargs.get("gumbel_overrides") or {}))
+        return real(*args, **kwargs)
+
+    # The play loop imports it from `selfplay.match` at CALL time, so patching
+    # the module attribute is what the loop will actually pick up.
+    monkeypatch.setattr(match_mod, "pick_moves_for_boards", spy)
+    from scripts import arena_standard as arena_mod
+
+    model = _DummyModel().eval()
+    board = chess.Board()
+    board.push_uci("e2e4")
+    side = _side(gumbel={"c_scale": 0.1, "volatility_q_scale": 0.0})
+    arena_mod.play_paired_games_matched_sims(
+        model, model, [board],
+        device="cpu", rng=np.random.default_rng(0),
+        sims_candidate=2, sims_reference=2,
+        max_plies=2, temperature=0.0, gumbel_add_noise=False,
+        search_candidate=side, search_reference=side,
+        volatility_candidate={"volatility_q_scale": 0.5},
+    )
+
+    assert seen, "the search was never invoked"
+    assert captured, "pick_moves_for_boards was never called"
+    # The CANDIDATE side must carry the request; at least one call has it.
+    assert any(c.get("volatility_q_scale") == 0.5 for c in captured), (
+        f"no call carried the explicit volatility request; saw {captured}"
+    )
+
+
+def test_the_record_shows_the_target_only_knobs_it_ran() -> None:
+    """A banked row must be re-readable as to WHICH regime it measured.
+
+    The six rows banked between 2026-08-10 and this fix cannot be: their
+    ``gumbel`` dict lists seven knobs and neither target-side one is among them,
+    so nothing in the record distinguishes production's shape from the arena's.
+    """
+    realized = resolve_search_shape("training").realized_gumbel()
+
+    assert "target_max_visit_cap" in realized
+    assert "target_untempered_prior" in realized
+    assert realized["target_max_visit_cap"] == 5
+    assert realized["target_untempered_prior"] is True
 
 
 def test_an_override_layers_on_top_of_the_shape_and_is_recorded() -> None:
@@ -701,11 +1059,19 @@ def test_the_realized_view_is_not_just_the_override_dict() -> None:
     """A sparse override dict is what made the old runs unreadable."""
     side = resolve_search_shape("training")
 
-    assert set(side.gumbel) == {"c_scale", "topk", "policy_temp"}
+    # The training shape carries the DERIVED complement, so this is the full
+    # carried set rather than the three knobs it used to restate by hand.
+    assert set(side.gumbel) == set(training_shape_carried_fields())
     assert set(side.realized_gumbel()) >= set(PLAY_SEARCH_DEFAULTS)
-    # A knob the training shape never overrode still resolves to its realized
-    # value (the GumbelConfig default), which is the point of the view.
-    assert side.realized_gumbel()["c_visit"] == GumbelConfig().c_visit
+    # A knob the shape never overrode still resolves to its realized value (the
+    # GumbelConfig default), which is the point of the view. Both real shapes now
+    # set every PLAY_SEARCH_DEFAULTS key explicitly — `play` from that dict,
+    # `training` from the derived complement — so the fallback branch has to be
+    # exercised on a shape that omits one, or this clause asserts nothing.
+    sparse = _side(gumbel={"c_scale": 0.05})
+    assert "c_visit" not in sparse.gumbel
+    assert sparse.realized_gumbel()["c_visit"] == GumbelConfig().c_visit
+    assert sparse.realized_gumbel()["c_scale"] == 0.05
 
 
 # --- F1: cold-vs-warm tree, play-path audit 2026-08-03 --------------------

@@ -107,9 +107,65 @@ PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
 # shape). The shape is now an explicit REQUIRED choice, realized values are
 # printed at startup and stored in the JSONL record, and there is no default.
 
+# The training shape used to RESTATE three knobs by hand (`c_scale`, `topk`,
+# `policy_temp`). Restating is why it drifted: `c62eb8ff2` (2026-08-10 23:28)
+# promoted `gumbel_target_max_visit_cap: 5` and
+# `gumbel_target_untempered_prior: true` into the production yaml, the hand-written
+# list did not grow, and `--search-shape training` went on announcing itself as
+# production's search while running a GumbelConfig production does not build.
+# The designed guard
+# (`tests/test_arena_search_shape_plumbing.py::test_every_config_driven_knob_...`)
+# detected it on the first run after the promotion and nobody read the failure.
+#
+# So the training shape is no longer a list of knobs to remember. It is the
+# COMPLEMENT of two small, explicitly justified sets: every GumbelConfig field
+# that is not owned by the arena and not owned by the checkpoint is read straight
+# off the GumbelConfig `build_selfplay_gumbel_config` — the production mapping
+# itself — returns. A newly promoted knob is therefore carried with no edit here,
+# and a new GumbelConfig FIELD fails the partition pin in the test by name until
+# somebody classifies it.
+
+# Fields the ARENA sets from its own flags. The sim budget, the move-selection
+# temperature and the root-noise policy are properties of the MATCH, not of the
+# training config: an arena at production's `mcts_simulations` and
+# `add_noise=True` would be measuring selfplay's exploration, not playing strength.
+ARENA_OWNED_GUMBEL_FIELDS: frozenset[str] = frozenset(
+    {"simulations", "temperature", "add_noise", "gumbel_scale"}
+)
+
+# Fields the CHECKPOINT owns. `selfplay/match.pick_moves_for_boards` reads all
+# four off the loaded model (`model.input_history_encoding` etc.), because an
+# older checkpoint may genuinely need `v1` planes or a different policy encoding.
+# Forcing production's value here would mis-encode the very cross-era arenas the
+# script exists for, so these are excluded ON PURPOSE and not by omission.
+CHECKPOINT_OWNED_GUMBEL_FIELDS: frozenset[str] = frozenset(
+    {
+        "input_history_encoding",
+        "input_extra_features",
+        "policy_encoding",
+        "compute_relations",
+    }
+)
+
 SEARCH_SHAPES = ("play", "training")
 
 _GUMBEL_INT_KEYS = {"topk", "halving_div", "simulations"}
+
+
+def training_shape_carried_fields() -> tuple[str, ...]:
+    """GumbelConfig fields the ``training`` shape must carry from production.
+
+    The complement, computed — never a hand-maintained list. A field added to
+    ``GumbelConfig`` lands here automatically, so the arena cannot silently fail
+    to carry it; the test pins this tuple by NAME so the addition still has to be
+    looked at.
+    """
+    import dataclasses as _dc
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    excluded = ARENA_OWNED_GUMBEL_FIELDS | CHECKPOINT_OWNED_GUMBEL_FIELDS
+    return tuple(f.name for f in _dc.fields(GumbelConfig) if f.name not in excluded)
 
 
 @dataclass(frozen=True)
@@ -177,7 +233,12 @@ class SideSearch:
             if not isinstance(value, (int, float)):
                 raise SystemExit(
                     f"gumbel knob {key!r} is not a numeric GumbelConfig field "
-                    f"(got {value!r}); --*-gumbel keys must be replaceable fields"
+                    f"(got {value!r}); --*-gumbel keys must be replaceable fields. "
+                    "If this is a NEW GumbelConfig field, the training shape "
+                    "carries it by default (the complement rule) and a "
+                    "non-numeric one has to be classified into "
+                    "CHECKPOINT_OWNED_GUMBEL_FIELDS or ARENA_OWNED_GUMBEL_FIELDS "
+                    "first. Refusing rather than dropping it is deliberate."
                 )
             out[key] = value
         return out
@@ -201,8 +262,8 @@ class SideSearch:
         )
 
 
-def production_selfplay_search_config():
-    """The selfplay ``SearchConfig`` a distributed worker actually builds.
+def production_selfplay_configs() -> dict:
+    """The selfplay config bundle a distributed worker actually builds.
 
     Runs the whole real channel — yaml -> live-yaml validator ->
     ``build_recommended_worker`` (the ONLY way a knob reaches a worker) ->
@@ -250,7 +311,34 @@ def production_selfplay_search_config():
     session.opening_fen_list_path = None
     session._dole_lock = threading.Lock()
     cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, reco)
-    return cfgs["search"]
+    return cfgs
+
+
+def production_selfplay_search_config():
+    """The selfplay ``SearchConfig`` half of :func:`production_selfplay_configs`."""
+    return production_selfplay_configs()["search"]
+
+
+def production_selfplay_gumbel_config(cfgs: dict | None = None):
+    """The ``GumbelConfig`` production selfplay actually searches with.
+
+    Built by ``selfplay.network_turn.build_selfplay_gumbel_config`` — THE
+    mapping the production path calls, not a re-implementation of it. This is
+    the whole structural fix: the arena's training shape is now read off this
+    object, so "which knobs does production set" stopped being a question the
+    arena answers from memory. ``simulations`` is arena-owned and passed here
+    only because the mapping requires it; it is excluded from what is carried.
+
+    ``cfgs`` lets a caller that already built the bundle pass it in rather than
+    re-running the yaml -> reco -> worker channel, which is not cheap.
+    """
+    from chess_anti_engine.selfplay.network_turn import build_selfplay_gumbel_config
+
+    if cfgs is None:
+        cfgs = production_selfplay_configs()
+    return build_selfplay_gumbel_config(
+        search=cfgs["search"], game=cfgs["game"], simulations=1,
+    )
 
 
 def resolve_search_shape(shape: str) -> SideSearch:
@@ -273,28 +361,104 @@ def resolve_search_shape(shape: str) -> SideSearch:
             target_batch=int(PLAY_SEARCH_TARGET_BATCH),
         )
     if shape == "training":
-        search = production_selfplay_search_config()
-        # Only the knobs production actually sets from config. Everything else
-        # is left at the GumbelConfig default, which IS the selfplay shape —
-        # seeding from PLAY_SEARCH_DEFAULTS here is the original defect.
-        return SideSearch(
+        # ONE trip through yaml -> reco -> worker, shared by both views of it.
+        cfgs = production_selfplay_configs()
+        search = cfgs["search"]
+        prod = production_selfplay_gumbel_config(cfgs)
+        # DERIVED, never restated. Every GumbelConfig field that is neither
+        # arena-owned nor checkpoint-owned is copied from the config production
+        # itself builds, so a knob promoted into the yaml reaches the arena with
+        # no edit here. Restating three knobs by hand is exactly what let
+        # `target_max_visit_cap` / `target_untempered_prior` drift for five days.
+        side = SideSearch(
             shape="training",
-            source=f"{PRODUCTION_CONFIG.name} -> reco -> worker SearchConfig",
+            source=f"{PRODUCTION_CONFIG.name} -> reco -> worker -> GumbelConfig",
             gumbel={
-                "c_scale": float(search.gumbel_c_scale),
-                "topk": int(search.gumbel_topk),
-                # Carried even while production runs the 1.0 no-op: the moment
-                # the yaml raises it, `--search-shape training` would otherwise
-                # keep searching at T=1.0 and every arena — the Cheese-tail
-                # yardstick included — would measure a prior sharper than the
-                # one the live run trains on. `match.py` applies this dict via
-                # `dataclasses.replace`, so it reaches the arena search directly.
-                "policy_temp": float(search.gumbel_policy_temp),
+                name: getattr(prod, name) for name in training_shape_carried_fields()
             },
             vloss_weight=int(search.gumbel_vloss_weight),
             target_batch=int(search.gumbel_target_batch),
         )
+        _assert_training_shape_matches_production(side, prod)
+        return side
     raise SystemExit(f"--search-shape must be one of {SEARCH_SHAPES}, got {shape!r}")
+
+
+def _assert_training_shape_matches_production(side: SideSearch, prod) -> None:
+    """Refuse to run a `training` arena that is not production's search.
+
+    ⚑ WHAT IT CATCHES, stated narrowly on purpose: a reintroduced hand-written
+    knob list, failing loudly at the top of an arena rather than in a CI log
+    nobody reads — the shape of the original defect (the guard existed, the
+    failure went unread for five days).
+
+    ⚑⚑ WHAT IT CANNOT CATCH. It is YAML-SYMMETRIC: both `prod` and `side.gumbel`
+    are derived from ONE snapshot of the same file, so any yaml VALUE change
+    moves them together and this stays silent. An earlier version of this
+    docstring claimed the gate closed the "CI reads the committed yaml while the
+    arena reads the live one" gap; it structurally cannot, and the PR's own
+    `test_a_newly_promoted_knob_is_carried_without_editing_the_arena` proves it
+    (patch the yaml to 11, the derivation returns 11, no `SystemExit`). It is
+    equally blind to a knob MISCLASSIFIED into one of the two ownership sets.
+    The partition pin in `tests/test_arena_search_shape_plumbing.py` is what
+    covers both of those.
+
+    Shipping a comment that claims more than the code does is the very defect
+    this PR exists to remove, so the scope above is deliberately smaller than
+    the guard's reach feels.
+
+    ⚑ The field list is recomputed HERE from ``dataclasses.fields`` and the two
+    ownership sets rather than taken from ``training_shape_carried_fields()``.
+    Sharing that helper with the builder is what would make this vacuous: a knob
+    dropped from the helper would vanish from the constructed dict AND from the
+    comparison, and the check would pass on a shape that lost it. A guard whose
+    field list comes from the thing it is guarding cannot see that thing narrow.
+    """
+    import dataclasses as _dc
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    excluded = ARENA_OWNED_GUMBEL_FIELDS | CHECKPOINT_OWNED_GUMBEL_FIELDS
+    # Exactly how `selfplay/match.pick_moves_for_boards` applies the dict.
+    applied = _dc.replace(GumbelConfig(), **side.gumbel)
+    drift = {
+        f.name: (getattr(prod, f.name), getattr(applied, f.name))
+        for f in _dc.fields(GumbelConfig)
+        if f.name not in excluded
+        and getattr(prod, f.name) != getattr(applied, f.name)
+    }
+    if drift:
+        raise SystemExit(
+            "--search-shape training does not reproduce production selfplay's "
+            f"GumbelConfig. Drifted (production, arena): {drift}. Running this "
+            "arena would measure a search production does not run and would "
+            "label the result 'training'. Fix the shape derivation in "
+            f"{Path(__file__).name}; do NOT relax this check."
+        )
+
+
+def overrides_with_volatility(
+    side: SideSearch, vol: dict[str, float] | None,
+) -> dict[str, float]:
+    """The shape's knobs with an EXPLICIT ``--volatility-*`` request layered ON TOP.
+
+    ⚑ Precedence, and it is not academic. ``pick_moves_for_boards`` builds its
+    ``GumbelConfig`` from the dedicated volatility ARGUMENTS first and applies
+    ``gumbel_overrides`` afterwards via ``dataclasses.replace``, so the override
+    dict WINS. While the training shape carried three knobs that was harmless.
+    The moment it became exhaustive it started carrying
+    ``volatility_q_scale`` / ``volatility_fpu`` / ``volatility_anchor`` at
+    production's values (0.0 today), which would silently reset an explicit
+    ``--volatility-q-scale 0.5`` back to zero, keep the run on the C path, and
+    report a volatility arena that never ran a volatility search.
+
+    That is the accepted-then-ignored defect this file exists to prevent,
+    reintroduced by the fix for a different instance of it. So the two are merged
+    in ONE place, explicit request last, and both play loops call this rather
+    than passing the shape and the flags down separate parameters where only
+    their arrival order decides the winner.
+    """
+    return {**side.gumbel, **(vol or {})}
 
 
 def apply_search_overrides(
@@ -782,10 +946,9 @@ def play_paired_games_matched_sims(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
-                gumbel_overrides=side.gumbel,
+                gumbel_overrides=overrides_with_volatility(side, extra),
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
-                **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
 
@@ -1021,10 +1184,9 @@ def play_paired_games_matched_sims_rolling(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
-                gumbel_overrides=side.gumbel,
+                gumbel_overrides=overrides_with_volatility(side, extra),
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
-                **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
         for i in active:
