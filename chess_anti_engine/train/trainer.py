@@ -943,6 +943,24 @@ class TrainMetrics:
   # sum it with the policy rate; they count the same rows.
     sf_wdl_degenerate_frac: float = 0.0
     sf_wdl_orphaned_frac: float = 0.0
+  # ⚑ THE VALUE-BLEND LEAK, MADE VISIBLE. `compute_loss` builds the SF
+  # component as `sf_effective * sf_wdl_probs + (1 - sf_effective) * game_oh`
+  # and `_get_mask` defaults an absent `has_sf_wdl` to 0.0, so an UNLABELLED
+  # row silently puts the whole `sf_wdl_frac` share onto the raw one-hot game
+  # outcome — no error, no warning, and until now no column whose name said
+  # so. This is the denominator that makes it computable:
+  #
+  #     leaked_to_outcome = sf_wdl_frac * (1 - sf_wdl_labelled_frac)
+  #
+  # Production reads ~1.0 here (712/713 live shards carry the label), which is
+  # exactly why the condition needs a column rather than a raise — a fatal
+  # path in the iteration loop (which has `finally:` and zero `except`) for a
+  # state production cannot reach is a new way to lose a trial. It is LOG-ONLY
+  # by design: see `chess_anti_engine/train/value_blend_guard.py` for the
+  # asserting form, used by the offline lc0 driver where the state is normal.
+  # Had this column existed in 2026-05 the realized `sf_wdl_frac 0.45` episode
+  # referenced above would have been visible in TB rather than reconstructed.
+    sf_wdl_labelled_frac: float = 0.0
     sf_eval_pv_orphan_frac: float = 0.0
     sf_eval_pv_checked_frac: float = 0.0
   # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the
@@ -1178,6 +1196,11 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
   # zero checked rows is unmeasured rather than clean.
     "sf_wdl_degenerate_frac": ("sf_wdl_degenerate_rows", "sf_wdl_rows"),
     "sf_wdl_orphaned_frac": ("sf_wdl_orphaned_rows", "sf_wdl_rows"),
+  # ⚑ Denominator is ALL batch rows, unlike the two above, because the question
+  # is "what share of the trained value target fell through the SF fallback" —
+  # `sf_wdl_rows` is the numerator of exactly that, so dividing by it would
+  # publish a constant 1.0.
+    "sf_wdl_labelled_frac": ("sf_wdl_rows", "batch_rows"),
     "sf_eval_pv_orphan_frac": ("sf_eval_pv_orphan_rows", "sf_eval_pv_checked_rows"),
     "sf_eval_pv_checked_frac": ("sf_eval_pv_checked_rows", "batch_rows"),
   # Terminal-proximal outcome transfer. Row-weighted like the pairs above: the
@@ -2348,6 +2371,29 @@ class Trainer:
 
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0
+
+  # ⚑ LOG-ONLY, deliberately. See `sf_wdl_labelled_frac`'s field comment: a
+  # raise here would be a new fatal path in an iteration loop that has
+  # `finally:` and zero `except`, for a state production (712/713 labelled
+  # shards) cannot reach. The bar is not 0 for the same reason — a single
+  # partially-labelled shard would otherwise warn every iteration forever.
+    _VALUE_BLEND_LEAK_WARN = 0.01
+
+    def _warn_if_value_blend_leaks_to_outcome(self, metrics: TrainMetrics) -> None:
+        """Say so when the SF share of the value blend lands on the raw outcome."""
+        sf_frac = float(getattr(self, "sf_wdl_frac", 0.0) or 0.0)
+        if sf_frac <= 0.0:
+            return
+        leaked = sf_frac * (1.0 - float(metrics.sf_wdl_labelled_frac))
+        if leaked <= self._VALUE_BLEND_LEAK_WARN:
+            return
+        logging.getLogger(__name__).warning(
+            "value blend: %.4f of the WDL target fell from the SF component "
+            "onto the RAW GAME OUTCOME this iteration (sf_wdl_frac=%.4f, only "
+            "%.4f of rows carry has_sf_wdl). losses.py does this silently; "
+            "see train/value_blend_guard.py.",
+            leaked, sf_frac, float(metrics.sf_wdl_labelled_frac),
+        )
 
     def _warn_if_grad_norm_median_past_watch(self, metrics: TrainMetrics) -> None:
         """Fire the pre-committed I11 watch when the hard cap stops being a tail guard."""
@@ -3762,6 +3808,7 @@ class Trainer:
             **getattr(self.opt, "last_polar_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
+        self._warn_if_value_blend_leaks_to_outcome(metrics)
         self._log_metrics(metrics, "train_avg")
 
   # Compile probe: report once after the first batch of train steps that

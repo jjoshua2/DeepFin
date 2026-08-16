@@ -97,8 +97,19 @@ def _decompose(target: torch.Tensor, batch: dict[str, torch.Tensor]) -> dict[str
     silently assumes the components still sum to 1, which is exactly the
     property a broken blend stops having. So the coefficients are solved for
     directly (least squares over the three WDL coordinates against the actual
-    component vectors) and `total` is returned alongside, un-normalised, so a
-    blend that loses mass reads as lost mass instead of as an outcome share.
+    component vectors) and `total` is asserted here, before any share is
+    returned, so a blend that loses mass reads as lost mass instead of as an
+    outcome share.
+
+    ⚑ THE ORDER IS THE POINT, AND IT IS A CORRECTION. PR #438's write-up
+    credited the `sums to 1.0` line with killing the `sf_component ->
+    zeros_like` mutant. It did not: the caller's `shares["outcome"] ==
+    0.80` assertion fired first and the mass check was never reached. Nor is
+    the mass check redundant with `residual < 1e-5` — dropping the SF
+    component leaves the target exactly in the span of the remaining
+    components (`0.30*one_hot + 0.20*search`), so the residual is ~0 while the
+    mass is 0.5. Checking mass FIRST makes each assertion own a defect the
+    other cannot see.
     """
     import numpy as np
 
@@ -111,11 +122,18 @@ def _decompose(target: torch.Tensor, batch: dict[str, torch.Tensor]) -> dict[str
     names.append("search")
     columns.append(batch["search_wdl"][0].numpy().astype(np.float64))
     basis = np.stack(columns, axis=1)
+    total = float(target[0].sum().item())
+    assert total == pytest.approx(1.0, abs=1e-5), (
+        f"the value target lost mass: it sums to {total}, not 1.0. A component "
+        "that vanished and a component that MOVED are indistinguishable through "
+        "the shares alone, and the residual cannot see it either — the "
+        "remaining components still span the result."
+    )
     coeffs, *_ = np.linalg.lstsq(basis, target[0].numpy().astype(np.float64), rcond=None)
     shares = dict(zip(names, (float(c) for c in coeffs), strict=True))
     residual = float(np.abs(basis @ coeffs - target[0].numpy()).max())
     assert residual < 1e-5, f"target is not a combination of its components ({residual})"
-    shares["total"] = float(target[0].sum().item())
+    shares["total"] = total
     return shares
 
 

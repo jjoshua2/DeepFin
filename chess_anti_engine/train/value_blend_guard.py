@@ -124,10 +124,56 @@ def value_blend_readout(
     )
 
 
-def assert_no_silent_outcome_fallback(
-    readout: ValueBlendReadout, *, max_leak: float = 0.0, context: str = "",
+# Production's `game_frac` = 1 - sf_wdl_frac(0.50) - search_wdl_frac(0.20).
+# The control holds it at exactly this by construction, so it is the bar the
+# TOTAL outcome share is judged against rather than a number picked here.
+PRODUCTION_GAME_FRAC = 0.30
+
+
+def assert_outcome_is_not_the_whole_target(
+    readout: ValueBlendReadout,
+    *,
+    max_outcome_borne: float = PRODUCTION_GAME_FRAC,
+    context: str = "",
 ) -> None:
-    """Raise unless the SF-to-outcome leak is at or below ``max_leak``.
+    """Raise when too much of the value target is the RAW ONE-HOT OUTCOME.
+
+    ⚑ THIS IS A SECOND DOOR TO THE SAME ROOM, AND ``leaked_to_outcome`` CANNOT
+    SEE IT. The leak is ``sf_wdl_frac x (1 - sf_labelled_frac)``, so it is 0
+    whenever ``sf_wdl_frac`` is 0 — including the configuration
+    ``sf_wdl_frac: 0.0`` / ``search_wdl_frac: 0.0``, which trains **100% of the
+    value target on the raw game outcome** with a leak of exactly 0.00. PR
+    #438's review reached that state through all three of the old guards.
+
+    ``outcome_borne_frac`` is the number that answers "how much of the value
+    target is the raw outcome", intended or leaked, and it is the one to gate
+    on. The default bar is production's own ``game_frac``: the control's whole
+    justification for moving the SF share to search is that this number does
+    not move.
+    """
+    if readout.outcome_borne_frac <= max_outcome_borne + 1e-9:
+        return
+    where = f" [{context}]" if context else ""
+    raise ValueBlendMisconfigured(
+        f"the value target puts {readout.outcome_borne_frac:.4f} of its mass on "
+        f"the RAW GAME OUTCOME{where}, above the bar of {max_outcome_borne:.4f} "
+        f"(production's game_frac). Realized fracs: sf={readout.sf_wdl_frac:.4f} "
+        f"search={readout.search_wdl_frac:.4f} game={readout.game_frac:.4f}, "
+        f"leaked={readout.leaked_to_outcome:.4f}, with "
+        f"{readout.sf_wdl_rows:.0f}/{readout.batch_rows:.0f} rows SF-labelled. "
+        "⚑ A leak of 0.00 does not clear this: sf_wdl_frac 0 with "
+        "search_wdl_frac 0 leaks nothing and trains everything on the outcome."
+    )
+
+
+def assert_no_silent_outcome_fallback(
+    readout: ValueBlendReadout,
+    *,
+    max_leak: float = 0.0,
+    max_outcome_borne: float = PRODUCTION_GAME_FRAC,
+    context: str = "",
+) -> None:
+    """Raise on either an SF-to-outcome leak or an all-outcome value target.
 
     ``max_leak`` defaults to 0.0 — an exact bar, because on lc0 shards the
     quantity is exactly ``sf_wdl_frac`` and on production shards it is exactly
@@ -135,8 +181,14 @@ def assert_no_silent_outcome_fallback(
     caller running against a corpus with known partial labelling should raise
     the bar deliberately and say why, rather than have the guard pick a
     tolerance nobody chose.
+
+    Both bars are checked, in that order, because they fail on disjoint
+    configurations — see ``assert_outcome_is_not_the_whole_target``.
     """
     if readout.leaked_to_outcome <= max_leak:
+        assert_outcome_is_not_the_whole_target(
+            readout, max_outcome_borne=max_outcome_borne, context=context,
+        )
         return
     where = f" [{context}]" if context else ""
     raise ValueBlendMisconfigured(

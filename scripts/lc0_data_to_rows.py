@@ -1327,34 +1327,72 @@ VALUE_BLEND_KEYS = ("sf_wdl_frac", "sf_wdl_frac_floor")
 def run_config_problems(
     config: Mapping[str, object], *, shards_have_sf_wdl: bool,
 ) -> list[str]:
-    """Reasons this config must not be pointed at lc0-derived shards."""
-    if shards_have_sf_wdl:
-        return []
-    problems = [
-        f"{key}={value!r} but the shards carry NO Stockfish label, so losses.py "
-        f"silently redirects that share onto the raw game outcome; set {key}: 0.0"
-        for key in VALUE_BLEND_KEYS
-        if isinstance(value := config.get(key), (int, float)) and float(value) > 0.0
-    ]
+    """Reasons this config must not be pointed at lc0-derived shards.
+
+    ⚑ The collapse check is NOT short-circuited by ``shards_have_sf_wdl``.
+    Returning ``[]`` on the first line whenever any SF label exists left a door
+    open that PR #438's review walked through: ``sf_wdl_frac: 0`` with
+    ``search_wdl_frac: 0`` and one SF-labelled shard in the list passes every
+    guard and trains 100% of the value target on the raw one-hot outcome. The
+    SF-label problems are label-dependent; "nothing but the outcome carries
+    value weight" is not.
+    """
+    problems: list[str] = []
+    if not shards_have_sf_wdl:
+        problems += [
+            f"{key}={value!r} but the shards carry NO Stockfish label, so losses.py "
+            f"silently redirects that share onto the raw game outcome; set {key}: 0.0"
+            for key in VALUE_BLEND_KEYS
+            if isinstance(value := config.get(key), (int, float)) and float(value) > 0.0
+        ]
+    sf = config.get("sf_wdl_frac")
     search = config.get("search_wdl_frac")
-    if not isinstance(search, (int, float)) or float(search) <= 0.0:
+    effective_sf = (
+        float(sf) if shards_have_sf_wdl and isinstance(sf, (int, float)) else 0.0
+    )
+    effective_search = float(search) if isinstance(search, (int, float)) else 0.0
+    if effective_sf <= 0.0 and effective_search <= 0.0:
         problems.append(
-            "search_wdl_frac is 0/absent, so nothing carries lc0's best_q/best_d and "
-            "the whole value target collapses onto the game outcome",
+            "search_wdl_frac is 0/absent and no SF share survives on these shards, "
+            "so nothing carries a searched value and the whole value target "
+            "collapses onto the raw game outcome",
         )
     return problems
 
 
-def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
-    """Whether ANY shard under ``shard_dir`` carries a Stockfish value label."""
+def shard_dir_sf_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
+    """``(labelled_rows, total_rows)`` for the Stockfish value label.
+
+    ⚑ A FRACTION, not a boolean. ``any()`` over a mixed corpus reports "these
+    shards carry an SF label" from a single labelled row out of millions, and
+    every downstream decision then reasons about a corpus that does not exist.
+    Reads ``has_sf_wdl`` through the LAZY shard loader so the 175-plane inputs
+    are never decoded.
+    """
     from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
 
+    labelled = 0
+    rows = 0
     for path in iter_shard_paths(shard_dir):
-        arrs, _meta = load_shard_arrays(path)
+        arrs, _meta = load_shard_arrays(path, lazy=True)
         flags = arrs.get("has_sf_wdl")
-        if flags is not None and int(np.asarray(flags).sum()) > 0:
-            return True
-    return False
+        if flags is None:
+  # ⚑ Row count off the INPUT array, not off `meta["positions"]`. That key is
+  # optional and reads None on shards written without it, and an unlabelled
+  # shard that contributed 0 to the denominator would make a mixed corpus read
+  # as fully labelled — the exact failure this function replaces.
+            rows += int(np.asarray(arrs["x"].shape[0]))
+            continue
+        values = np.asarray(flags)
+        rows += int(values.shape[0])
+        labelled += int((values > 0).sum())
+    return labelled, rows
+
+
+def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
+    """Whether ANY shard under ``shard_dir`` carries a Stockfish value label."""
+    labelled, _rows = shard_dir_sf_wdl_coverage(shard_dir)
+    return labelled > 0
 
 
 # ── policy-shape statistics ────────────────────────────────────────────────────

@@ -10,6 +10,14 @@ absolute numbers. A pinned constant goes stale the moment production moves and
 gets "fixed" by copying the new number across, which is how the two silently
 diverge. A diff cannot be fixed that way: if production changes its
 architecture, this test fails until someone decides whether the arm follows.
+
+⚑⚑ AND IT IS STILL BLIND, WHICH IS WHY IT IS NOT THE ONLY INSTRUMENT.
+`configs/pbt2_small.yaml` *in this tree* is not the file the live run reads —
+that one lives in the live working tree, on the live branch, and moved to the
+bt4heads bundle on 2026-08-15 while this branch did not. Everything here can
+pass with a control that trains an architecture production no longer runs.
+`tests/test_lc0_control_arch.py` owns that question and judges against the
+LIVE file; read the two together.
 """
 from __future__ import annotations
 

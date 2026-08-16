@@ -878,7 +878,13 @@ def test_run_config_gate_refuses_a_target_with_nothing_but_the_outcome() -> None
         "sf_wdl_frac": 0.0, "sf_wdl_frac_floor": 0.0, "search_wdl_frac": 0.0,
     }
     problems = run_config_problems(collapsed, shards_have_sf_wdl=False)
-    assert any("collapses onto the game outcome" in p for p in problems)
+    assert any("collapses onto the raw game outcome" in p for p in problems)
+  # ⚑ AND THE SAME COLLAPSE WITH SF LABELS PRESENT. The gate used to
+  # short-circuit on `shards_have_sf_wdl` and return [] before reaching this,
+  # so one SF-labelled shard in a mixed --shards list waved through a config
+  # that trains 100% of the value target on the raw outcome (PR #438 review F6).
+    still_collapsed = run_config_problems(collapsed, shards_have_sf_wdl=True)
+    assert any("collapses onto the raw game outcome" in p for p in still_collapsed)
 
 
 def test_run_config_gate_stays_out_of_the_way_when_shards_DO_carry_sf() -> None:

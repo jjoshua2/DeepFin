@@ -15,6 +15,25 @@
 # model configs differ in any field, or if any trainer kwarg differs outside
 # the explicitly-listed set below.
 #
+# ⚑⚑ AND THAT TEST IS STRUCTURALLY BLIND, SO IT IS NOT THE ONLY INSTRUMENT.
+# It diffs against `configs/pbt2_small.yaml` IN THIS TREE. The live run reads
+# the copy in the LIVE working tree, on the live branch, and on 2026-08-15 that
+# file moved to the bt4heads bundle (`aux_policy_head_dim: 128`,
+# `categorical_head_coupled: true`, `policy_embedding_mode: linear`;
+# 61,444,448 trainable params against this branch's 63,084,128). Two of those
+# three keys touch the POLICY HEAD, which is this arm's only yardstick, and
+# `aux_policy_head_dim` is not in this branch's schema at all — so this branch
+# CANNOT BUILD the live network, and the in-tree diff above passes anyway.
+#
+# ⇒ `chess_anti_engine/eval/lc0_control_arch.py` judges against the LIVE FILE
+# (`$CHESS_LIVE_PRODUCTION_CONFIG`) or a recorded pin, and
+# `scripts/lc0_control_train.py` REFUSES TO LAUNCH on a drift.
+# ⚑⚑ AS OF 2026-08-16 IT REFUSES THIS FILE. The arm cannot be launched, and no
+# number from it may be quoted as "our stack", until the bt4heads promotion
+# reaches this branch and this config is re-pointed at the live `model:`
+# section. `--allow-arch-drift` exists for PLUMBING SMOKE RUNS ONLY and stamps
+# `valid_control: false` into the run's summary.json.
+#
 # This file is a SELF-CONTAINED COPY rather than an overlay on the production
 # yaml. Deliberate: `configs/pbt2_small.yaml` is the LIVE file, re-read every
 # training iteration and edited during operations, so an overlay would make

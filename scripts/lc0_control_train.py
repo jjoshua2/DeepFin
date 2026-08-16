@@ -16,23 +16,39 @@ error, no warning, no metric named for it. At the production `sf_wdl_frac:
 outcome instead of the 0.30 on paper, and every number it produced would be
 about an experiment nobody chose.
 
-Three checks, at three different levels, because the first two can be
-satisfied by a config that still does the wrong thing:
+Four checks, at four different levels, because each can be satisfied by a run
+that still does the wrong thing:
 
+  0. LAUNCH, architecture. `assert_control_matches_live_architecture` — the
+     arm's premise is "test THE STACK WE RUN", and the in-tree
+     `configs/pbt2_small.yaml` is not the file the live run reads. This one
+     judges against the LIVE yaml when `$CHESS_LIVE_PRODUCTION_CONFIG` names
+     it, and against a recorded pin otherwise.
   1. LAUNCH, config-level. `assert_pid_cannot_reassert_sf_wdl` — an override
      the difficulty controller can undo is not an override.
   2. LAUNCH, corpus-level. The converter's own `run_config_problems` is REUSED
-     (not restated) against the actual shard directory, so the "do these
-     shards carry an SF label" question is answered by reading the shards.
+     (not restated) against the actual shard directories, driven by the
+     MEASURED SF-label coverage of every directory rather than `any()`.
   3. ⚑ REALIZED, per-step. `compute_loss` is wrapped for the duration of the
      run and the fracs it is ACTUALLY CALLED WITH — together with the batch's
      own `sf_wdl_rows` count — are fed to `value_blend_guard`. A configured
-     value is not an applied value; this is the only one of the three that
+     value is not an applied value; this is the only one of the four that
      measures the applied one.
 
-Check 3 fails loudly (non-zero exit, no checkpoint written). `--allow-leak`
-exists so the failure can be demonstrated deliberately, and prints a banner
-saying the run is not a valid control.
+Check 3 fails loudly (non-zero exit, no checkpoint written).
+
+⚑ `--allow-leak` DOWNGRADES ONLY THE LAUNCH GUARDS (1 and 2). It used to skip
+check 3 as well, which made check 3 — the headline of this script —
+UNREACHABLE: guard 1 refuses every `sf_wdl_frac > 0` config outright, nothing
+downstream can raise the frac, and the only way past guard 1 also skipped the
+assert. So `--allow-leak` on a production-blend config now runs the steps,
+prints the realized leak, and then EXITS 1 WITHOUT A CHECKPOINT. That is the
+demonstration; `scratchpad/lc0_positive_control/RIG_VERIFICATION_20260816.md`
+records it.
+
+`--allow-arch-drift` does the same for check 0, and exists because the arm's
+plumbing has to be smoke-testable on a branch whose code cannot yet build the
+live architecture. Both flags stamp `valid_control: false` into summary.json.
 
 Usage
 -----
@@ -54,6 +70,11 @@ from typing import Any, cast
 import numpy as np
 import torch
 
+from chess_anti_engine.eval.lc0_control_arch import (
+    ControlArchitectureDrift,
+    assert_control_matches_live_architecture,
+    unique_storage_param_count,
+)
 from chess_anti_engine.model import build_model, model_config_from_flat_config
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
@@ -72,7 +93,7 @@ from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 # Reused, not restated: the converter owns the "these shards have no SF label"
 # question and already ships the config check for it.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts.lc0_data_to_rows import run_config_problems, shard_dir_has_sf_wdl
+from scripts.lc0_data_to_rows import run_config_problems, shard_dir_sf_wdl_coverage
 
 
 class _LossCapture:
@@ -185,12 +206,12 @@ def stage_shards(shard_dirs: list[Path], staging: Path) -> int:
 
 
 def preflight(cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool) -> None:
-    """Both LAUNCH-level guards.
+    """The two LAUNCH-level value-blend guards.
 
     ``allow_leak`` downgrades them to a banner instead of skipping them. The
     point of the flag is to let the run REACH the realized (per-step) check so
-    the leak can be observed as a number, which is the only way to demonstrate
-    that the guard is measuring something rather than restating the config.
+    the leak can be observed as a number — and, since that check now also
+    runs under the flag, so it can be observed RAISING.
     """
     def fail(message: str) -> None:
         if allow_leak:
@@ -209,13 +230,47 @@ def preflight(cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool) 
     else:
         print("[preflight] PID sf_wdl ramp disabled at source (sf_wdl_frac <= 0)")
 
-    have_sf = any(shard_dir_has_sf_wdl(Path(d)) for d in shard_dirs)
-    print(f"[preflight] shards carry an sf_wdl label: {have_sf}")
+  # ⚑ COVERAGE, not `any()`. A single SF-labelled row anywhere in a mixed
+  # --shards list used to set have_sf=True, which made `run_config_problems`
+  # return [] and waved the whole corpus through (Codex #2). The question the
+  # gate needs answered is "do ALL these rows carry a label", so measure it.
+    labelled = rows = 0
+    for shard_dir in shard_dirs:
+        dir_labelled, dir_rows = shard_dir_sf_wdl_coverage(Path(shard_dir))
+        labelled += dir_labelled
+        rows += dir_rows
+        print(f"[preflight] {Path(shard_dir).name}: sf_wdl label coverage "
+              f"{dir_labelled}/{dir_rows}")
+    have_sf = rows > 0 and labelled == rows
+    print(f"[preflight] sf_wdl coverage over all shards: {labelled}/{rows} -> "
+          f"treating the corpus as SF-labelled: {have_sf}")
+    if 0 < labelled < rows:
+        fail(
+            f"the corpus is PARTIALLY SF-labelled ({labelled}/{rows} rows). "
+            "Every value-blend decision downstream assumes one regime or the "
+            "other; split the run rather than averaging two corpora.",
+        )
     problems = run_config_problems(cfg, shards_have_sf_wdl=have_sf)
     if problems:
         fail("the config is wrong for these shards:\n  " + "\n  ".join(problems))
     else:
         print("[preflight] converter run-config gate: no problems")
+
+
+def preflight_architecture(config_path: Path, *, allow_drift: bool) -> str:
+    """LAUNCH guard 0 — the arm must build the architecture PRODUCTION RUNS."""
+    raw = load_yaml_file(str(config_path))
+    try:
+        provenance = assert_control_matches_live_architecture(
+            raw, context="lc0 control launch",
+        )
+    except ControlArchitectureDrift as exc:
+        if not allow_drift:
+            raise SystemExit(f"REFUSING TO LAUNCH — {exc}") from exc
+        print(f"⚑⚑ --allow-arch-drift: THIS IS NOT A VALID POSITIVE CONTROL — {exc}")
+        return "DRIFTED (--allow-arch-drift)"
+    print(f"[preflight] architecture matches {provenance}")
+    return provenance
 
 
 def _metric_fields(metrics: Any, predicate: Any) -> list[tuple[str, Any]]:
@@ -268,11 +323,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--allow-leak", action="store_true",
-        help="⚑ proceed even if the SF share is landing on the game outcome. "
-             "For demonstrating the guard. The run is NOT a valid control.",
+        help="⚑ downgrade the LAUNCH guards to a banner so the run reaches the "
+             "REALIZED per-step guard and that guard can be observed raising. "
+             "It does NOT skip the realized guard. The run is NOT a valid control.",
+    )
+    parser.add_argument(
+        "--allow-arch-drift", action="store_true",
+        help="⚑⚑ proceed even though the config does not build production's "
+             "live architecture. PLUMBING SMOKE RUNS ONLY — no number from such "
+             "a run may be quoted as 'our stack'.",
     )
     args = parser.parse_args(argv)
 
+    arch_provenance = preflight_architecture(
+        Path(args.config), allow_drift=bool(args.allow_arch_drift),
+    )
     cfg = flatten_run_config_defaults(load_yaml_file(str(args.config)))
     shard_dirs = [Path(d) for d in args.shards]
     preflight(cfg, shard_dirs, allow_leak=bool(args.allow_leak))
@@ -296,9 +361,9 @@ def main(argv: list[str] | None = None) -> int:
   # encoding from it, and without it `select_input_history_arrays` refuses
   # every LC0-root row in the corpus. Same construction as tune/trainable.py.
     trainer = Trainer(model, model_config=model_cfg, **kwargs)
-    params = sum(
-        p.numel() for p in {id(p): p for p in model.parameters() if p.requires_grad}.values()
-    )
+  # ⚑ Unique STORAGE, not sum(numel) over the state_dict: the 16
+  # `layer_smolgens.N.gen_weight.weight` keys are one shared tensor (CLAUDE.md).
+    params = unique_storage_param_count(model)
     print(f"[model] {params} trainable params on {kwargs['device']}")
 
     buf = DiskReplayBuffer(
@@ -337,12 +402,18 @@ def main(argv: list[str] | None = None) -> int:
     print_realized(capture, metrics)
 
     readout = capture.worst
-    if args.allow_leak:
-        print("\n⚑⚑ --allow-leak: the value-blend guard is BYPASSED. This run "
-              "is not a valid positive control.")
-    else:
+  # ⚑ NOT gated on --allow-leak. Guard 1 refuses every sf_wdl_frac > 0 config
+  # and nothing on this call graph can raise the frac afterward, so skipping
+  # the assert here left it with no reachable input that could fire it. The
+  # flag opens the LAUNCH gate; this one still closes.
+    try:
         assert_no_silent_outcome_fallback(readout, context="realized training step")
-        print("\n[guard] PASS: zero SF-to-outcome leak on every observed step")
+    except ValueBlendMisconfigured as exc:
+        raise SystemExit(
+            f"REALIZED VALUE-BLEND GUARD FAILED — no checkpoint written.\n{exc}",
+        ) from exc
+    print("\n[guard] PASS: no SF-to-outcome leak and no all-outcome value "
+          "target on any observed step")
 
     ckpt = out_dir / "checkpoint.pt"
     trainer.save(ckpt)
@@ -350,6 +421,8 @@ def main(argv: list[str] | None = None) -> int:
         "steps": int(args.steps),
         "batch_size": batch_size,
         "trainable_params": params,
+        "architecture_judged_against": arch_provenance,
+        "valid_control": not (args.allow_leak or args.allow_arch_drift),
         "compute_loss_calls": capture.calls,
         "realized": dict(readout.as_table()),
         "metrics": {
