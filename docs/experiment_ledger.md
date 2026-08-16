@@ -50852,3 +50852,77 @@ AFTER #436 merges** (it was run against code without the fix; a live yaml key th
 define is FATAL at launch) → `salvage-export --top-n 1 --metric training_iteration` revert point →
 rebuild with `python3 scripts/build_production_extensions.py` (NOT `pip install -e .`) → restart
 from `data/salvage/bt4heads_iter100_20260815` (`global_iter` 991).
+
+## 2026-08-16 — ⚑⚑ SAME-SESSION PAIRED RULER: the policy "gain" is MASS CONCENTRATION, 13.6 of 13.9 cp
+
+**Not a cross-era comparison.** Both checkpoints scored in ONE session, same `audit_set_v1.jsonl`
+(n=4000 policy / 3723 value), same ruler config, same production training shape
+(`--sims 100 --gumbel-topk 16 --gumbel-training-rows`, c_scale 0.1, linear root), same seed 42.
+Run while training was stopped, on idle GPU. Raw output: `scratchpad/audit_targets_resume_ckpt.out`,
+`scratchpad/rulers_anchor_20260727.out`, `scratchpad/value_regret_resume_ckpt.out`.
+
+- **A** = `data/salvage/ANCHOR_20260727_preC17_step65475_lr3e-5` — the designated long-baseline anchor.
+- **B** = `data/salvage/bt4heads_iter100_20260815` — the checkpoint the next restart resumes from.
+
+### The decomposition
+
+| net raw policy (row a) | A (07-27) | B (08-15) | Δ |
+|---|---|---|---|
+| **E[regret]** (mass-weighted by the net's OWN prior) | 67.4 cp | 53.5 cp | **−13.9** |
+| **top-1 regret** (the argmax move) | 49.5 cp | 49.2 cp | **−0.3** |
+| entropy (nats) | 1.4628 | 0.8215 | −0.641 |
+| mean top-1 mass | 0.5065 | 0.7071 | +0.201 |
+| effective support | 5.214 | 2.747 | −2.467 |
+| frac top-1 >= 0.99 | 0.015 | 0.096 | 6.4x |
+| **E − top1 GAP** | **17.9** | **4.3** | **−13.6** |
+
+`E[regret] = Σ_i p_i · regret_i` under the net's own policy. As `p` concentrates, `E` is dragged
+toward `regret_1` **whether or not the argmax improves**. ⇒ **13.6 of the 13.9 cp is the gap
+collapsing. 0.3 cp is move quality.** The two numbers are not independent readings of "the policy
+got better"; one is mostly a restatement of the sharpening.
+
+⇒ **NEVER quote `E[regret]` as a policy-quality delta without the paired top-1 and the support.**
+A sharpening net improves `E[regret]` for free. This is the same failure family as
+[[ruler_proxy_shape_beats_sim_count]] ("the policy gain was confidence inflation"), now measured
+on the FROZEN audit set with an explicit decomposition rather than inferred.
+
+### The TARGET shows it too, and worse
+
+| production training target (row d) | A | B | Δ |
+|---|---|---|---|
+| E[regret] | 45.4 cp | 41.5 cp | −3.9 |
+| **top-1 regret** | **37.8 cp** | **38.7 cp** | **+0.9 (WORSE)** |
+| entropy | 0.8110 | 0.5373 | −0.274 |
+| mean top-1 mass | 0.7134 | 0.8026 | +0.089 |
+| effective support | 2.695 | 1.977 | −0.718 |
+
+**The target the policy head trains on got SHARPER and its best move got slightly WORSE.** That is
+a coherent explanation for the net's own sharpening — the student is tracking the teacher, which
+[[the_policy_target_is_sharp_and_wrong]] Phase 2 established it does faithfully (91.5% inheritance
+on the bad tail, generalised not memorised).
+
+### ⚑ WHAT THIS IS **NOT** — confounds, stated not discovered
+
+1. **NOT "19 days of training bought 0.3 cp".** A and B are different LINEAGES and the interval
+   contains many deliberate changes: C17 virtual loss, `mcts_simulations` 32→100, `gumbel_c_scale`
+   0.025→0.1, the bt4heads head promotion, and more. **No single cause is attributable.**
+2. **⚑⚑ TWO OF THOSE CHANGES SHARPEN THE TARGET BY CONSTRUCTION, DELIBERATELY.**
+   `gumbel_target_untempered_prior: true` undoes `policy_temp` on the stored target's prior term,
+   and `gumbel_target_max_visit_cap: 5` shrinks sigma on the Q term — both promoted 2026-08-10
+   (tasks #175/#176). **So the target's sharpening is INTENDED, not drift**, and must not be
+   reported as pathology. The finding is not "it sharpened"; it is **"it sharpened and the top-1
+   did not improve"**.
+3. The audit set is **FEN-only, no history/castling** [[audit_set_has_no_history_or_castling]],
+   and row (c) is scored against a deeper version of itself — same-material comparisons only.
+4. Value moved the other way and independently: `value_regret` **58.7 → 53.4 cp (−5.3)**, TB-excluded,
+   >=8-man, n=3723. That ruler is a RANKING measure over the value head and does not carry the
+   concentration artifact, so the value improvement is not explained away by this finding.
+
+### What it licenses
+
+- A **falsifiable prediction** for the deciding instrument: if the E[regret] gains were mass
+  concentration, an arena between A and B should read far below what a −13.9 cp policy improvement
+  would imply. Cheap to test and **not yet run**.
+- `gumbel_target_untempered_prior` was justified BY target quality on this exact ruler. Its
+  post-promotion top-1 is **+0.9 cp worse** here — **confounded, so NOT a verdict on the knob**, but
+  it is the first paired reading on the ruler the knob was sold against, and it does not corroborate.
