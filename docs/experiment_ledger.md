@@ -53719,3 +53719,70 @@ script — never of `go nodes N`.**
 Tooling fixes: keep. Prereg: **BLOCKED** until the PASS branch is re-derived against the
 measured ~36-position tail (and the resolution actually computed), and the command is changed
 to a per-engine cache copy. Task #213 stays open.
+
+---
+
+## 2026-08-16 — #441 APPROVE-WITH-CHANGES, #442 REQUEST-CHANGES (independent review)
+
+Reviewer != author for both. Neither merged.
+
+### #441 `hygiene/scrub-absolute-paths` — APPROVE-WITH-CHANGES
+pull/441#issuecomment-5308918277
+
+**Verified by execution:** 18 e2e tests genuinely RUN in a worktree (18 dots, no skip section,
+55 real asserts); 19 new tests pass; whole-repo lint green; an independent `git ls-files` byte
+census reproduces the claimed 162 / 0 / 17-in-18-files exactly.
+
+- **P1 (MEDIUM) — A REAL LEAK WAS SMUGGLED PAST THE GUARD.** The `worker_username` regex opens
+  its character class immediately after the whitespace, so a **QUOTED** YAML scalar never
+  matches. The reviewer added a tracked `configs/exp_smuggle_probe.yaml` containing
+  `distributed_worker_username: "<real username>"` and the sweep went **GREEN, 5 passed**;
+  unquoted, the same file goes red. ⇒ **falsifies the PR body's claim that "a new config cannot
+  land with a fresh leak and stay green".** Another guard that cannot fail, inside a PR whose
+  purpose is a guard.
+- **P2 (LOW)** — `session_scratch` is anchored on a leading `/`, so the bare flattened token
+  passes green.
+- **⚑⚑ P3 (RECORD) — THE HEADLINE FINDING WAS SELF-INFLICTED.** "18 silent skips" was NOT a
+  pre-existing defect this PR discovered. Measured: `origin/main`'s `find_stockfish()` resolves
+  fine from a worktree; **this PR's own first commit `d0d8b60ab` is what returned `None`**, and
+  `85200a854` fixed it. The test docstrings say so honestly; the PR narrative does not — and I
+  repeated the PR's framing upstream before it was checked. **Value attribution corrected: the
+  discovery credit is void; the hardened multi-root discovery is still a genuine improvement.**
+- **P4 (INFO)** — the title overstates: **162 `/home/<user>` paths + 17 usernames REMAIN tracked
+  in a public repo**, and 16 of the 17 allowlist reasons ("research config, default off") argue
+  *unimportance*, not *infeasibility*. ⚑ And the exposure is permanent in git history regardless
+  of the scrub — task #224 should not be closed by this PR.
+
+### #442 `fix/paired-compare-validates-the-stamp` — REQUEST-CHANGES
+pull/442#issuecomment-5308918341
+
+**Verified by execution:** all seven stamp behaviours behave as claimed (format 99 / `rows:
+9999` / second header / disagreeing digest -> exit 1; unstamped or one-sided -> warn, exit 0;
+identical -> exit 0); 100 tests pass; lint green; two reviewer mutants killed.
+
+- **B1 (BLOCKER) — CI `test` IS RED, reproduced locally.** `tests/test_onnx_net_source.py:789`
+  `assert len(rows) == 2` reads 3, because F1's new stamp header is counted as a data row.
+  ⇒ **`--dump-per-position` CHANGED ITS WIRE FORMAT**, so every ad-hoc `wc -l` / `jq` consumer
+  is now off by one **and nothing announces it**. A format change shipped inside a provenance
+  fix.
+- **B2 (MEDIUM) — `prov:ok` is currently UNREACHABLE.** `_prov` greps the whole log for
+  `"WARNING"`, which also matches `require_same_ruler`'s ROW-level warnings. Verified against
+  the **real live** `paired_200_vs_boot.log`: `_prov` with status 0 yields `UNVERIFIED` today
+  for a reason unrelated to the stamp. Three states collapse into one token. Same family as
+  every other finding this week: a status that cannot report success.
+- **B3 (MEDIUM) — THE RATIONALE FOR THE HOLE NAMES THE WRONG CONSUMER.** F3 keeps one-sided
+  `extra` keys permitted because "`audit_compare_buckets.py` joins across them" — but that
+  script **never calls `require_same_stamp`** (one non-test call site exists,
+  `paired_compare.py:533`). ⚑ The justification cites a comparison that does not go through the
+  code being justified. (This is exactly the check the review brief asked for: judge F3 on the
+  merits rather than accepting the stated reason.)
+- **B4 (MEDIUM)** — all three banked baselines are unstamped, so on the PRODUCTION path the gate
+  still only warns; no re-dump step, no ledger entry. One re-dump closes B2 and B4 together.
+- **B5 (LOW)** — PR body is stale against its own head.
+
+### Tally for the day
+
+Independent review of 4 PRs: **1 APPROVE-WITH-CHANGES, 3 REQUEST-CHANGES, 5 blocking findings.**
+Every one of the four PRs was authored to FIX an instance of "a value accepted and then silently
+ignored", and every one shipped a fresh instance of the same class. The authors' suites and both
+lint gates were green in all four cases.
