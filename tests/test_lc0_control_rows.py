@@ -11,6 +11,7 @@ Every test here is written to be KILLABLE by the mistake it guards against:
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -19,9 +20,15 @@ import pytest
 from chess_anti_engine.eval.lc0_control_rows import (
     ROW_ID_VERSION,
     EmptyTrainCorpus,
+    _digest_pair,
+    build_train_id_index,
     chance_level,
     collect_split_ids,
+    corpus_fingerprint,
+    exposed_rows,
+    frozen_minus_exposed,
     frozen_row_set,
+    input_ids,
     legal_counts_for_ids,
     load_frozen,
     purity_against_train,
@@ -32,6 +39,7 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay.sample import ReplaySample
 from chess_anti_engine.replay.shard import (
     ShardMeta,
+    load_shard_arrays,
     samples_to_arrays,
     save_local_shard_arrays,
 )
@@ -320,3 +328,258 @@ def test_frozen_payload_carries_one_exposure_id_per_row(tmp_path: Path) -> None:
     payload = frozen_row_set(dirs, sample=9, seed=1)
     assert len(payload["input_ids"]) == len(payload["row_ids"]) == 9
     assert payload["pool_unique_inputs"] <= payload["pool_rows"]
+
+
+# ── the two-id fast path ──────────────────────────────────────────────────────
+
+
+def test_digest_pair_matches_the_generic_content_id(tmp_path: Path) -> None:
+    """⚑ The scan's speed must not come from a DIFFERENT id.
+
+    ``_digest_pair`` hashes ``x`` once and forks the blake2b state, so it is
+    only equal to hashing ``x`` and ``x || policy_target`` separately while the
+    input fields are a prefix of the record fields. Equality is asserted here
+    against the generic implementation rather than argued in a comment.
+    """
+    shard = _write(tmp_path / "a", [1, 2, 3, 4])
+    arrs, _meta = load_shard_arrays(shard / "shard_000000.zarr")
+    record, inputs = _digest_pair(arrs)
+    assert [value.decode("ascii") for value in record.tolist()] == row_ids(arrs)
+    assert [value.decode("ascii") for value in inputs.tolist()] == input_ids(arrs)
+
+
+def test_digest_pair_rejects_a_ragged_shard() -> None:
+    arrs = {
+        "x": np.zeros((3, PLANES, 8, 8), dtype=np.float16),
+        "policy_target": np.zeros((2, COMPACT_POLICY_SIZE), dtype=np.float16),
+    }
+    with pytest.raises(ValueError, match="rows, expected"):
+        _digest_pair(arrs)
+
+
+# ── the train id cache: the honest re-check has to be cheap ───────────────────
+#
+# ⚑ The 2026-08-16 scan read 42.2 GB over 2h40m to rebuild a set that is a pure
+# function of a fixed corpus. A gate that costs 2h40m to re-run is the gate that
+# gets skipped under time pressure. But a cache that always hits is a gate that
+# CANNOT fail, so every test below is paired: one that it is reused, one that it
+# is REJECTED the moment the corpus is not byte-identical.
+
+
+def test_train_id_index_counts_match_the_scan(tmp_path: Path) -> None:
+    train = _write(tmp_path / "train", [1, 2, 3])
+    index = build_train_id_index([train])
+    assert index.rows == 3
+    assert index.record_ids.size == 3
+    assert index.input_ids.size == 3
+    assert not index.from_cache
+
+
+def test_train_id_index_is_identical_in_parallel(tmp_path: Path) -> None:
+    """The parallel scan must not be a different measurement."""
+    dirs = [_write(tmp_path / f"d{i}", list(range(i * 5, i * 5 + 5))) for i in range(4)]
+    serial = build_train_id_index(dirs, workers=1)
+    parallel = build_train_id_index(dirs, workers=3)
+    assert serial.rows == parallel.rows
+    assert np.array_equal(serial.record_ids, parallel.record_ids)
+    assert np.array_equal(serial.input_ids, parallel.input_ids)
+
+
+def test_train_id_cache_is_reused_on_an_unchanged_corpus(tmp_path: Path) -> None:
+    train = _write(tmp_path / "train", [1, 2, 3])
+    cache = tmp_path / "cache"
+    first = build_train_id_index([train], cache_dir=cache)
+    assert not first.from_cache
+    second = build_train_id_index([train], cache_dir=cache)
+    assert second.from_cache, "the second call re-scanned a byte-identical corpus"
+    assert second.rows == first.rows
+    assert np.array_equal(second.record_ids, first.record_ids)
+    assert np.array_equal(second.input_ids, first.input_ids)
+
+
+def test_train_id_cache_is_rejected_when_a_shard_is_added(tmp_path: Path) -> None:
+    """⚑⚑ THE MUTATION-CRITICAL ONE. A cache that always hits cannot fail.
+
+    Growing the corpus must produce a fresh scan AND a bigger id set. A key
+    that ignored file contents — directory names only, say — would return the
+    3-row index here and clear a corpus it never read.
+    """
+    train = _write(tmp_path / "train", [1, 2, 3])
+    cache = tmp_path / "cache"
+    first = build_train_id_index([train], cache_dir=cache)
+    _write(tmp_path / "train2", [4, 5, 6])
+    grown = build_train_id_index([train, tmp_path / "train2"], cache_dir=cache)
+    assert not grown.from_cache
+    assert grown.rows == 6
+    assert grown.record_ids.size == first.record_ids.size + 3
+
+
+def test_train_id_cache_is_rejected_when_a_shard_is_rewritten(tmp_path: Path) -> None:
+    """Same directory list, same shard count, DIFFERENT rows."""
+    train = tmp_path / "train"
+    _write(train, [1, 2, 3])
+    cache = tmp_path / "cache"
+    before = build_train_id_index([train], cache_dir=cache)
+    shutil.rmtree(train)
+    _write(train, [7, 8, 9])
+    after = build_train_id_index([train], cache_dir=cache)
+    assert not after.from_cache, "a rewritten corpus reused its predecessor's ids"
+    assert not np.array_equal(before.record_ids, after.record_ids)
+
+
+def test_corpus_fingerprint_changes_when_one_byte_changes(tmp_path: Path) -> None:
+    """The key must be content-sensitive, not name-sensitive."""
+    train = _write(tmp_path / "train", [1, 2, 3])
+    before = corpus_fingerprint([train])
+    chunk = next(
+        path for path in sorted((train / "shard_000000.zarr" / "x").iterdir())
+        if path.is_file() and not path.name.startswith(".")
+    )
+    chunk.write_bytes(chunk.read_bytes() + b"\0")
+    after = corpus_fingerprint([train])
+    assert before.key != after.key
+    assert before.files == after.files, "the file LIST is unchanged; the size is not"
+
+
+def test_corpus_fingerprint_is_stable_across_calls(tmp_path: Path) -> None:
+    train = _write(tmp_path / "train", [1, 2, 3])
+    assert corpus_fingerprint([train]).key == corpus_fingerprint([train]).key
+
+
+def test_a_cache_whose_stored_key_disagrees_with_its_name_is_ignored(
+    tmp_path: Path,
+) -> None:
+    """The file NAME is a hint; the key INSIDE it is the check.
+
+    Without this the name-vs-content branch in ``load_train_id_index`` could
+    not be reached by any test, i.e. it would be a guard nobody had ever seen
+    fire — which is how a cache silently starts answering for another corpus
+    after someone copies a cache file.
+    """
+    train = _write(tmp_path / "train", [1, 2, 3])
+    cache = tmp_path / "cache"
+    build_train_id_index([train], cache_dir=cache)
+    banked = next(iter(cache.glob("train_ids_*.npz")))
+    with np.load(banked, allow_pickle=False) as blob:
+        payload = {name: blob[name] for name in blob.files}
+    payload["key"] = np.array("f" * 64)
+    np.savez(banked.with_suffix(""), **payload)
+    assert not build_train_id_index([train], cache_dir=cache).from_cache
+
+
+def test_a_cache_from_another_corpus_is_not_loaded(tmp_path: Path) -> None:
+    """Two corpora sharing one cache dir must not read each other's index."""
+    left = _write(tmp_path / "left", [1, 2, 3])
+    right = _write(tmp_path / "right", [4, 5, 6, 7])
+    cache = tmp_path / "cache"
+    build_train_id_index([left], cache_dir=cache)
+    other = build_train_id_index([right], cache_dir=cache)
+    assert not other.from_cache
+    assert other.rows == 4
+
+
+# ── the exposed set is an OPERAND, not a count ────────────────────────────────
+
+
+def test_purity_banks_the_exposed_ids_themselves(tmp_path: Path) -> None:
+    """⚑ The blocker of 2026-08-16: 5,065 was banked, the 5,065 ids were not."""
+    heldout = _write_samples(
+        tmp_path / "held",
+        [_sample_with_target(s, target_seed=1) for s in (1, 2, 3)] + [_sample(9)],
+    )
+    train = _write_samples(
+        tmp_path / "train", [_sample_with_target(s, target_seed=2) for s in (1, 2)],
+    )
+    frozen = frozen_row_set([heldout], sample=4, seed=0)
+    result = purity_against_train(
+        frozen["row_ids"], [train], frozen_input_ids=frozen["input_ids"],
+    )
+    assert result.exposed_inputs == 2
+    assert len(result.exposed_input_ids) == result.exposed_inputs
+    exposed_side = {
+        input_id
+        for row_id, input_id in zip(frozen["row_ids"], frozen["input_ids"], strict=True)
+        if row_id in set(collect_split_ids([train]).ids) or input_id in set(
+            collect_split_ids([train]).inputs,
+        )
+    }
+    assert set(result.exposed_input_ids) == exposed_side
+
+
+def test_exposed_rows_round_trip_the_ids_that_build_the_clean_set(
+    tmp_path: Path,
+) -> None:
+    """⚑ The dump must name ROWS, not only inputs.
+
+    Rows share inputs (100,000 frozen rows over 96,853 distinct positions), so
+    an input-hash list alone does not say what to drop. This asserts the two
+    views agree: the rows the dump names are exactly the rows the subtraction
+    removes.
+    """
+    duplicated = [_sample_with_target(1, target_seed=i) for i in range(3)]
+    heldout = _write_samples(
+        tmp_path / "held", [*duplicated, _sample(9), _sample(10)],
+    )
+    train = _write_samples(tmp_path / "train", [_sample_with_target(1, target_seed=99)])
+    frozen = frozen_row_set([heldout], sample=5, seed=0)
+    result = purity_against_train(
+        frozen["row_ids"], [train], frozen_input_ids=frozen["input_ids"],
+    )
+    assert result.exposed_inputs == 1, "one POSITION, carried by three rows"
+    named = exposed_rows(frozen, result.exposed_input_ids)
+    assert len(named) == 3
+    trimmed = frozen_minus_exposed(frozen, result.exposed_input_ids)
+    assert {row["row_id"] for row in named} == (
+        set(frozen["row_ids"]) - set(trimmed["row_ids"])
+    )
+
+
+def test_frozen_minus_exposed_preserves_order_and_recounts(tmp_path: Path) -> None:
+    heldout = _write(tmp_path / "held", list(range(20, 32)))
+    frozen = frozen_row_set([heldout], sample=12, seed=0)
+    drop = {frozen["input_ids"][3], frozen["input_ids"][7]}
+    trimmed = frozen_minus_exposed(frozen, sorted(drop))
+    assert trimmed["frozen_rows"] == 10
+    assert trimmed["frozen_unique_inputs"] == 10
+    assert trimmed["removed_rows"] == 2
+    assert trimmed["row_ids"] == [
+        row_id
+        for row_id, input_id in zip(frozen["row_ids"], frozen["input_ids"], strict=True)
+        if input_id not in drop
+    ]
+  # The surviving rows keep their POSITION relative to one another, which is
+  # what lets the banked per-row score arrays be masked rather than re-scored.
+    assert trimmed["row_ids"] == [
+        row_id for row_id in frozen["row_ids"] if row_id in set(trimmed["row_ids"])
+    ]
+
+
+def test_the_trimmed_set_is_pure_against_the_corpus_that_failed(
+    tmp_path: Path,
+) -> None:
+    """The repair, end to end: FAIL, subtract, PASS — on the same train dirs.
+
+    ⚑ Clean BY CONSTRUCTION is exactly why it is verified rather than assumed.
+    """
+    heldout = _write_samples(
+        tmp_path / "held",
+        [_sample_with_target(s, target_seed=1) for s in (1, 2, 3)]
+        + [_sample(40), _sample(41)],
+    )
+    train = _write_samples(
+        tmp_path / "train",
+        [_sample_with_target(s, target_seed=2) for s in (1, 2, 3)] + [_sample(77)],
+    )
+    frozen = frozen_row_set([heldout], sample=5, seed=0)
+    failed = purity_against_train(
+        frozen["row_ids"], [train], frozen_input_ids=frozen["input_ids"],
+    )
+    assert not failed.is_pure
+    trimmed = frozen_minus_exposed(frozen, failed.exposed_input_ids)
+    assert trimmed["frozen_rows"] == 2
+    passed = purity_against_train(
+        trimmed["row_ids"], [train], frozen_input_ids=trimmed["input_ids"],
+    )
+    assert passed.is_pure
+    assert passed.exposed_inputs == 0
+    assert passed.intersecting_ids == 0

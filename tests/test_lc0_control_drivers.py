@@ -841,6 +841,199 @@ def test_purity_exits_zero_on_a_genuinely_disjoint_split(tmp_path: Path) -> None
     ]) == 0
 
 
+# ── the repair path: dump the exposure, subtract it, re-verify ────────────────
+
+
+def _exposed_split(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A held-out set of 6 rows, 2 of whose INPUTS are already in train.
+
+    The two shared rows carry DIFFERENT policy targets on each side, so the
+    record-id count stays 0 and only the input-level gate sees them — the
+    2026-08-16 failure in miniature.
+    """
+    held = tmp_path / "held"
+    train = tmp_path / "train"
+    for target_seed, where, seeds in (
+        (1, held, [0, 1, 2, 3, 4, 5]), (2, train, [0, 1, 90, 91]),
+    ):
+        where.mkdir(parents=True, exist_ok=True)
+        samples = []
+        for seed in seeds:
+            sample = _lc0_like_sample(seed, with_sf_wdl=False)
+            rng = np.random.default_rng(9_000 + target_seed + seed)
+            policy = rng.random(COMPACT_POLICY_SIZE).astype(np.float32)
+            sample.policy_target = policy / policy.sum()
+            samples.append(sample)
+        save_local_shard_arrays(
+            where / "shard_000000.zarr", arrs=samples_to_arrays(samples),
+            meta=ShardMeta(positions=len(samples)),
+        )
+    _rc, frozen = _freeze(tmp_path, held, sample=6)
+    return held, train, frozen
+
+
+def test_purity_dumps_the_exposed_ids_and_subtract_makes_the_set_pure(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE REPAIR, END TO END, AT THE ENTRY POINTS.
+
+    The 2026-08-16 gate banked ``exposed_inputs: 5065`` and five example
+    hashes; rebuilding the split then needed a second 2h40m scan to recover an
+    operand the first scan had already computed. This asserts the three steps
+    are actually connected: FAIL writes the ids, ``subtract`` consumes them,
+    and the resulting set PASSES against the same corpus.
+    """
+    _held, train, frozen = _exposed_split(tmp_path)
+    dump = tmp_path / "exposed.json"
+    assert lc0_control_heldout.main([
+        "purity", "--frozen", str(frozen), "--train-shards", str(train),
+        "--exposed-out", str(dump),
+    ]) == 1
+    banked = json.loads(dump.read_text(encoding="utf-8"))
+    assert banked["exposed_inputs"] == 2
+    assert len(banked["exposed_input_ids"]) == 2
+    assert banked["intersecting_ids"] == 0, "record ids must still read clean"
+    assert [row["row_id"] for row in banked["rows"]], "the dump must name ROWS"
+    assert {row["input_id"] for row in banked["rows"]} == set(
+        banked["exposed_input_ids"],
+    )
+
+    clean = tmp_path / "frozen_clean.json"
+    assert lc0_control_heldout.main([
+        "subtract", "--frozen", str(frozen), "--exposed", str(dump),
+        "--out", str(clean),
+    ]) == 0
+    trimmed = json.loads(clean.read_text(encoding="utf-8"))
+    assert trimmed["frozen_rows"] == 4
+    assert trimmed["removed_rows"] == 2
+    assert trimmed["derived_from_sha256"] == banked["frozen_sha256"]
+  # ⚑ Clean BY CONSTRUCTION is exactly why it is re-verified: a subtraction
+  # that removed the wrong rows would still produce a plausible artifact.
+    receipt = tmp_path / "clean_receipt.json"
+    assert lc0_control_heldout.main([
+        "purity", "--frozen", str(clean), "--train-shards", str(train),
+        "--receipt", str(receipt),
+    ]) == 0
+    assert json.loads(receipt.read_text(encoding="utf-8"))["pure"] is True
+
+
+def test_the_exposed_dump_is_written_on_a_clean_split_too(tmp_path: Path) -> None:
+    """"No file" must not be ambiguous between clean and flag-forgotten."""
+    held = _write_shards(tmp_path / "held", list(range(6)))
+    train = _write_shards(tmp_path / "train", list(range(100, 106)))
+    _rc, frozen = _freeze(tmp_path, held, sample=6)
+    dump = tmp_path / "exposed.json"
+    assert lc0_control_heldout.main([
+        "purity", "--frozen", str(frozen), "--train-shards", str(train),
+        "--exposed-out", str(dump),
+    ]) == 0
+    banked = json.loads(dump.read_text(encoding="utf-8"))
+    assert banked["exposed_input_ids"] == []
+    assert banked["rows"] == []
+
+
+def test_subtract_refuses_an_exposed_dump_from_another_frozen_set(
+    tmp_path: Path,
+) -> None:
+    """⚑ Two free-floating CLI paths with nothing tying them together is the
+    exact shape the purity receipt exists to stop; the same applies here."""
+    _held, train, frozen = _exposed_split(tmp_path)
+    dump = tmp_path / "exposed.json"
+    assert lc0_control_heldout.main([
+        "purity", "--frozen", str(frozen), "--train-shards", str(train),
+        "--exposed-out", str(dump),
+    ]) == 1
+    banked = json.loads(dump.read_text(encoding="utf-8"))
+    banked["frozen_sha256"] = "0" * 64
+    dump.write_text(json.dumps(banked), encoding="utf-8")
+    assert lc0_control_heldout.main([
+        "subtract", "--frozen", str(frozen), "--exposed", str(dump),
+        "--out", str(tmp_path / "clean.json"),
+    ]) == 1
+    assert not (tmp_path / "clean.json").exists()
+  # ⚑ And a dump with NO sha at all is refused too, rather than satisfying the
+  # check by absence.
+    banked.pop("frozen_sha256")
+    dump.write_text(json.dumps(banked), encoding="utf-8")
+    assert lc0_control_heldout.main([
+        "subtract", "--frozen", str(frozen), "--exposed", str(dump),
+        "--out", str(tmp_path / "clean.json"),
+    ]) == 1
+
+
+def test_subtract_refuses_to_overwrite_the_set_a_result_is_recorded_against(
+    tmp_path: Path,
+) -> None:
+    """`frozen_full.json` is the artifact the FAILED run is recorded against."""
+    _held, train, frozen = _exposed_split(tmp_path)
+    dump = tmp_path / "exposed.json"
+    lc0_control_heldout.main([
+        "purity", "--frozen", str(frozen), "--train-shards", str(train),
+        "--exposed-out", str(dump),
+    ])
+    before = frozen.read_bytes()
+    assert lc0_control_heldout.main([
+        "subtract", "--frozen", str(frozen), "--exposed", str(dump),
+        "--out", str(frozen),
+    ]) == 1
+    assert frozen.read_bytes() == before
+
+
+def test_subtract_refuses_a_dump_whose_inputs_are_not_in_this_set(
+    tmp_path: Path,
+) -> None:
+    """The distinct-input count is EXACTLY determined by the subtraction.
+
+    Predicting it and asserting the actual is the standing rule here; a dump
+    naming an input this set does not carry would otherwise trim fewer rows
+    than it claims and report a clean set built from the wrong population.
+    """
+    _held, train, frozen = _exposed_split(tmp_path)
+    dump = tmp_path / "exposed.json"
+    lc0_control_heldout.main([
+        "purity", "--frozen", str(frozen), "--train-shards", str(train),
+        "--exposed-out", str(dump),
+    ])
+    banked = json.loads(dump.read_text(encoding="utf-8"))
+    banked["exposed_input_ids"].append("f" * 32)
+    dump.write_text(json.dumps(banked), encoding="utf-8")
+    assert lc0_control_heldout.main([
+        "subtract", "--frozen", str(frozen), "--exposed", str(dump),
+        "--out", str(tmp_path / "clean.json"),
+    ]) == 1
+
+
+def test_the_purity_cache_is_reused_and_is_keyed_to_the_corpus(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ A cache that always hits is a gate that cannot fail.
+
+    Both directions at the entry point: an unchanged corpus is CACHED, and a
+    corpus that grew is rescanned and reports the larger row count.
+    """
+    held = _write_shards(tmp_path / "held", list(range(6)))
+    train = _write_shards(tmp_path / "train", list(range(100, 106)))
+    _rc, frozen = _freeze(tmp_path, held, sample=6)
+    cache = tmp_path / "cache"
+    args = [
+        "purity", "--frozen", str(frozen), "--train-shards", str(train),
+        "--cache-dir", str(cache),
+    ]
+    assert lc0_control_heldout.main(args) == 0
+    assert "train index          rebuilt by scanning" in capsys.readouterr().out
+    assert lc0_control_heldout.main(args) == 0
+    assert "train index          CACHED" in capsys.readouterr().out
+
+    grown = _write_shards(tmp_path / "train2", list(range(200, 210)))
+    assert lc0_control_heldout.main([
+        "purity", "--frozen", str(frozen),
+        "--train-shards", str(train), str(grown), "--cache-dir", str(cache),
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "train index          rebuilt by scanning" in out
+    assert "train rows scanned   16 " in out
+
+
 def test_chance_prints_the_jensen_pair(
     tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:

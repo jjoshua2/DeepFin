@@ -7,12 +7,22 @@ Three subcommands, in the order they must be run:
           Builds the explicit row-id list and prints its sha256.
 
   purity  --frozen <frozen.json> --train-shards <train dirs> [--receipt <f>]
+          [--exposed-out <f>] [--cache-dir <d>] [--workers N]
           Asserts ZERO EXPOSURE — no held-out INPUT (`x` alone) occurs
           anywhere in train — and reports the record-id intersection
           alongside it. Exit 1 on any overlap, and exit 1 when the train side
           turns out to hold no rows at all. `--receipt` banks WHICH
           directories were scanned and the frozen artifact's sha256, so the
           training driver can refuse a corpus this check never saw.
+          `--exposed-out` banks the exposed ids THEMSELVES — see `subtract`.
+          `--cache-dir` banks the train id index, keyed by a fingerprint of
+          every file in the corpus, so a re-check costs seconds.
+
+  subtract --frozen <frozen.json> --exposed <exposed.json> --out <clean.json>
+          Rebuilds the frozen set as the rows whose INPUT is not exposed,
+          preserving order and schema. The banked per-row score files are
+          keyed by `row_id`, so restricting them to the clean set is masking,
+          not re-scoring: the same nets, no GPU, strictly more comparable.
 
   chance  --frozen <frozen.json> --shards <the same 6 dirs>
           Computes E[1/n_legal] on exactly the frozen rows — the negative
@@ -37,6 +47,8 @@ from pathlib import Path
 from chess_anti_engine.eval.lc0_control_rows import (
     EmptyTrainCorpus,
     chance_level,
+    exposed_rows,
+    frozen_minus_exposed,
     frozen_row_set,
     legal_counts_for_ids,
     load_frozen,
@@ -110,11 +122,49 @@ def _write_purity_receipt(
         "frozen_rows": int(getattr(result, "frozen_rows", 0)),
         "exposed_inputs": int(getattr(result, "exposed_inputs", 0)),
         "intersecting_ids": int(getattr(result, "intersecting_ids", 0)),
+        "train_index_cached": bool(getattr(result, "train_index_cached", False)),
         "pure": bool(pure),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
     return str(receipt["frozen_sha256"])
+
+
+def _write_exposed_dump(
+    path: Path, *, frozen: Path, payload: dict[str, object],
+    train_shards: list[Path], result: object,
+) -> int:
+    """Bank the exposed ids THEMSELVES, and the held-out rows carrying them.
+
+    ⚑ THE BLOCKER THIS CLOSES. The 2026-08-16 scan read 42.2 GB over 2h40m,
+    found 5,065 exposed inputs, and banked the NUMBER 5065 plus five example
+    hashes. Repairing the split is then a subtraction whose operand no longer
+    exists, so the only way to rebuild it was to repeat the scan. A count is a
+    lossy summary of a set; the gate's job is not finished when it has decided
+    PASS/FAIL, because the FAIL branch has a next step.
+    """
+    exposed_ids = list(getattr(result, "exposed_input_ids", ()))
+    rows = exposed_rows(payload, exposed_ids)
+    dump = {
+        "frozen": str(Path(frozen).resolve()),
+        "frozen_sha256": hashlib.sha256(Path(frozen).read_bytes()).hexdigest(),
+        "row_id_version": payload.get("row_id_version"),
+        "train_shards": sorted(str(Path(d).resolve()) for d in train_shards),
+        "exposed_inputs": int(getattr(result, "exposed_inputs", 0)),
+        "intersecting_ids": int(getattr(result, "intersecting_ids", 0)),
+        "exposed_rows": len(rows),
+        "exposed_input_ids": sorted(exposed_ids),
+        "intersecting_row_ids": sorted(getattr(result, "intersecting_row_ids", ())),
+        "rows": rows,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dump, indent=2, sort_keys=True), encoding="utf-8")
+    return len(rows)
+
+
+def _progress(done: int, total: int, rows: int) -> None:
+    if done % 200 == 0 or done == total:
+        print(f"  scanned {done}/{total} shards, {rows} rows", flush=True)
 
 
 def cmd_purity(args: argparse.Namespace) -> int:
@@ -123,10 +173,15 @@ def cmd_purity(args: argparse.Namespace) -> int:
         result = purity_against_train(
             payload["row_ids"], args.train_shards,
             frozen_input_ids=payload["input_ids"],
+            cache_dir=Path(args.cache_dir) if args.cache_dir else None,
+            workers=int(args.workers),
+            progress=_progress,
         )
     except EmptyTrainCorpus as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
+    print(f"train index          "
+          f"{'CACHED' if result.train_index_cached else 'rebuilt by scanning'}")
     print(f"frozen held-out rows {result.frozen_rows}")
     print(f"frozen distinct x    {result.frozen_inputs}")
     print(f"train rows scanned   {result.train_rows} "
@@ -136,6 +191,16 @@ def cmd_purity(args: argparse.Namespace) -> int:
           "<-- RECORD level; under-reports exposure")
     print(f"EXPOSED inputs       {result.exposed_inputs}   "
           f"({result.exposed_input_frac * 100:.4f}% of held-out x)   <-- THE GATE")
+    if args.exposed_out is not None:
+  # ⚑ Written on PASS too, where the lists are empty. A dump that only
+  # exists on failure makes "no file" ambiguous between "the set was clean"
+  # and "the flag was forgotten".
+        rows = _write_exposed_dump(
+            Path(args.exposed_out), frozen=Path(args.frozen), payload=payload,
+            train_shards=list(args.train_shards), result=result,
+        )
+        print(f"exposed dump         {args.exposed_out}  "
+              f"({result.exposed_inputs} inputs on {rows} held-out rows)")
     if args.receipt is not None:
   # ⚑ Written on FAIL too, and it records `pure: false`. A receipt that only
   # exists when the news is good is an artifact you can produce by re-running
@@ -157,6 +222,76 @@ def cmd_purity(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 1
+
+
+def cmd_subtract(args: argparse.Namespace) -> int:
+    """Rebuild the frozen set as the rows whose INPUT is not exposed."""
+    payload = load_frozen(Path(args.frozen))
+    dump = json.loads(Path(args.exposed).read_text(encoding="utf-8"))
+    if dump.get("row_id_version") != payload.get("row_id_version"):
+        print(
+            f"FAIL: the exposed dump was built under row id version "
+            f"{dump.get('row_id_version')!r} and the frozen set under "
+            f"{payload.get('row_id_version')!r}. Subtracting one from the other "
+            "would remove nothing and report a clean set.",
+            file=sys.stderr,
+        )
+        return 1
+    digest = hashlib.sha256(Path(args.frozen).read_bytes()).hexdigest()
+    if dump.get("frozen_sha256") != digest:
+  # ⚑ The dump names the artifact it was computed against. Subtracting a
+  # different run's exposure list is the same class of error the purity
+  # receipt exists to stop: two free-floating CLI paths with nothing tying
+  # them together. A MISSING sha is refused rather than waved through — a
+  # check that an absent field satisfies is a check that cannot fail.
+        print(
+            f"FAIL: the exposed dump was computed against frozen sha256 "
+            f"{dump.get('frozen_sha256')}, but --frozen has sha256 {digest}.",
+            file=sys.stderr,
+        )
+        return 1
+    exposed = list(dump.get("exposed_input_ids", ()))
+    predicted_inputs = int(payload["frozen_unique_inputs"]) - len(exposed)
+    trimmed = frozen_minus_exposed(payload, exposed)
+    print(f"source rows          {payload['frozen_rows']} "
+          f"(distinct x {payload['frozen_unique_inputs']})")
+    print(f"exposed inputs       {len(exposed)}")
+    print(f"predicted distinct x {predicted_inputs}   <-- stated BEFORE the build")
+    print(f"surviving rows       {trimmed['frozen_rows']} "
+          f"(distinct x {trimmed['frozen_unique_inputs']})")
+    print(f"removed rows         {trimmed['removed_rows']}")
+    if trimmed["frozen_unique_inputs"] != predicted_inputs:
+  # Not a formality. The distinct-input count is exactly determined by the
+  # subtraction, so a mismatch means the dump and the frozen set are not
+  # describing the same population and nothing downstream is trustworthy.
+        print(
+            f"FAIL: expected {predicted_inputs} distinct inputs to survive "
+            f"({payload['frozen_unique_inputs']} - {len(exposed)}) but got "
+            f"{trimmed['frozen_unique_inputs']}. Some exposed input is not in "
+            "this frozen set, or the two artifacts disagree.",
+            file=sys.stderr,
+        )
+        return 1
+    if trimmed["frozen_rows"] != trimmed["frozen_unique_ids"]:
+        print("FAIL: the trimmed set contains duplicate row ids", file=sys.stderr)
+        return 1
+    if trimmed["frozen_rows"] == 0:
+        print("FAIL: every row was exposed; there is no held-out set left",
+              file=sys.stderr)
+        return 1
+    out = Path(args.out)
+    if out.exists() and not args.force:
+        print(f"FAIL: {out} already exists. The frozen set a result is recorded "
+              "against must never be overwritten in place; pass a new path.",
+              file=sys.stderr)
+        return 1
+    trimmed["derived_from"] = str(Path(args.frozen).resolve())
+    trimmed["derived_from_sha256"] = digest
+    trimmed["exposed_dump"] = str(Path(args.exposed).resolve())
+    written = write_frozen(trimmed, out)
+    print(f"written              {out}")
+    print(f"sha256               {written}")
+    return 0
 
 
 def cmd_chance(args: argparse.Namespace) -> int:
@@ -197,7 +332,34 @@ def build_parser() -> argparse.ArgumentParser:
              "--purity-receipt` refuses to launch on a corpus it does not "
              "cover — without one, nothing ties the trained rows to this check.",
     )
+    purity.add_argument(
+        "--exposed-out", type=Path, default=None,
+        help="write the exposed INPUT ids and the held-out row_ids carrying "
+             "them. Without it the gate banks a count and the repair needs a "
+             "second full scan to recover the operand it already computed.",
+    )
+    purity.add_argument(
+        "--cache-dir", type=Path, default=None,
+        help="reuse/bank the train id index here, keyed by a fingerprint of "
+             "every file in the corpus. A mismatch rescans; there is no "
+             "'probably fine' branch.",
+    )
+    purity.add_argument(
+        "--workers", type=int, default=1,
+        help="parallel shard scanners (spawned). The result is a pair of sets "
+             "and a row count, so it does not depend on completion order.",
+    )
     purity.set_defaults(handler=cmd_purity)
+
+    subtract = sub.add_parser("subtract")
+    subtract.add_argument("--frozen", type=Path, required=True)
+    subtract.add_argument("--exposed", type=Path, required=True)
+    subtract.add_argument("--out", type=Path, required=True)
+    subtract.add_argument(
+        "--force", action="store_true",
+        help="allow --out to overwrite an existing file",
+    )
+    subtract.set_defaults(handler=cmd_subtract)
 
     chance = sub.add_parser("chance")
     chance.add_argument("--frozen", type=Path, required=True)
