@@ -51566,3 +51566,40 @@ characterisation no longer describes the repetition path.
 plateau. Measured incidence ~5.4e-6 per search — orders of magnitude below what a 1600-game
 paired arena resolves. It is a correctness fix and must never be promoted into a causal story
 about why the loop is flat.
+
+### ⚑ REAL-DATA SIGNAL, found by an EXTERNAL oracle: a repetition divergence that is NOT the known EP-alias
+
+While converting the lc0 T91 corpus, **1 tar of 88 was refused by the bit-exact plane gate**, on a
+**repetition plane**, and the row did **not** match `known_repetition_ep_alias`:
+
+```
+tar   training-run2-test91-20260813-1117.tar    game training.222367284.gz, ply 158
+FEN   8/1K6/2Bk4/pP4R1/1r4P1/2n5/8/8 w - - 4 80
+      RuntimeError: refusing to write rows while a verification gate is failing ... planes [12] differ
+```
+
+**The gate did the right thing** — it refused to publish rather than emit unverified rows, and
+the other 87 tars (40 GB) published clean. But the classification matters more than the failure.
+`known_repetition_ep_alias` excuses a row only when ALL of: every differing plane is a repetition
+plane; **ours=1 and lc0=0** (a false POSITIVE); and python-chess independently agrees with lc0.
+Condition 1 holds here. So condition 2 or 3 failed ⇒ this is either a **false NEGATIVE (a MISSED
+repetition, key-SPLITTING)** or a case where python-chess sides with us — and the classifier's own
+docstring says a false negative "is a different bug".
+
+⇒ **The converter's documented claim that this gate fires "always" for the EP-blind key, at ~15
+rows in 345,231, does not cover this instance.** Attribution by a single named mechanism is
+exactly the kind of claim that goes stale when a second mechanism exists, and today produced three
+divergence classes: the original EP-blindness, the author's fuzz-found **missing capturer-rank
+mask**, and the reviewer's **kingless-board MERGE** case. This real-data row may be one of those
+or a fourth.
+
+**⚑ The cheapest discriminator is already set up and costs nothing to run later.** The conversion
+ran from a `main`-based worktree that does **not** contain PR #436's fix. So: after #436 merges and
+the extensions are rebuilt, **re-run this one tar**. Converts clean ⇒ it was the EP key and the
+classifier was merely too narrow. Still fails ⇒ **there is a repetition defect #436 does not fix**,
+and the EP entry's "hygiene, ~5.4e-6" framing is incomplete. Recorded as task #228 with the full
+reproducer; the tar and the unpublished partial output dir are both retained.
+
+⚑ Method note worth keeping: this was found by lc0's own planes, an **external** implementation.
+Our Python and C repetition paths agree with each other and would never have surfaced it —
+[[internal_equivalence_cannot_find_a_shared_wrong_rule]], now with a second real-data instance.
