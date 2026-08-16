@@ -22466,7 +22466,7 @@ job holds 13.8 GB (5.1 s/step vs 0.75 s/step) — the deviation is identical in 
 ### THE ONE DECIDING MEASUREMENT (exact command)
 
 ```
-SC=/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/capsize
+SC=<session-scratch>/capsize
 PYTHONPATH=. nice -n 19 .venv/bin/python -u $SC/slope.py \
   --corpus $SC/corpus --arm {L,M,S} --seed {0,1} \
   --batch-size 256 --chunk-steps 176 --chunks 48 --eval-every 2 \
@@ -23057,7 +23057,7 @@ excluded from the wide train corpus by construction.
 ### ONE deciding yardstick (exact command)
 
 ```
-PYTHONPATH=. nice -n 19 .venv/bin/python /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/analyze_rp.py
+PYTHONPATH=. nice -n 19 .venv/bin/python <session-scratch>/rowsparam/analyze_rp.py
 ```
 
 Deciding statistic **B** = mean over seeds {0,1} of
@@ -24429,7 +24429,7 @@ Confounds: as pre-registered (6.11x more optimizer steps at fixed chunk_steps=17
 the LR sawtooth is preserved; level comparability rests on the byte-identical held set;
 exposure recency identical across arms by construction — all arms train only on the
 same-era wide/sibling corpora and the held set is game-disjoint by the mix64 split).
-Artifacts: /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/
+Artifacts: <session-scratch>/rowsparam/
 (runs run_LW_s0, run_LW_s1, run_LWSHUF_s0; analyzer analyze_rp.py; corpus_wide).
 
 
@@ -26578,7 +26578,7 @@ SHOWN not to reach the loss — otherwise F measures a field artefact, not rehea
 
 ```
 PYTHONPATH=~/projects/chess nice -n 19 python3 \
-  /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/absorb_20260802/f_unblock/f_diff.py
+  <session-scratch>/absorb_20260802/f_unblock/f_diff.py
 ```
 Output `f_unblock/f_diff_report.json`; trace + verdict `f_unblock/F_UNBLOCK.md`.
 
@@ -27046,7 +27046,7 @@ the position actually had when generated, which is what training saw, but it is
 not "iter477-era history". (iii) Repetition-plane reconstruction for children
 is exact to 99.986%, not 100%.
 
-**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+**Bank:** `<session-scratch>/audit_historyfill_20260802/`
 (`match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`, `matched_rows.npz`,
 `match_report.json`, `child_transform_verify.json`).
 
@@ -27161,7 +27161,7 @@ capability was lost, and whether that onset tracks the forgetting-hinge
 window-exit story. ~4 min/checkpoint on the banked rig at
 `--gpu-mem-fraction 0.15`. Not run: the offline rig owns the card.
 
-**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+**Bank:** `<session-scratch>/audit_historyfill_20260802/`
 (`README.md`, `match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`,
 `analyze.py`, `matched_rows.npz`, `score_{boot512,iter477}_vb256.json`,
 `analysis.json`, `match_report.json`, `child_transform_verify.json`).

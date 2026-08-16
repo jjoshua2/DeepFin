@@ -39,7 +39,7 @@ that could not fail; read it accordingly.
 
 - net: `~/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx`
 - net sha256: `1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0`
-- matched set: `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/lc0data/matched60.npz`
+- matched set: `<session-scratch>/lc0data/matched60.npz`
 - search: 32 sims, gumbel_scale 0.75, seed 20260806 (re-seeded per position, so configs are paired)
 
 - ONNX session up in 1.8s (CPU provider)

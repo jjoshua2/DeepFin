@@ -18,9 +18,15 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# Still a GLOB, not a path: `*` is literal inside double quotes, and line ~29
-# relies on it being expanded there (unquoted) rather than here.
-TUNE_GLOB="$REPO_ROOT/runs/pbt2_small/tune/train_trial_*"
+# ⚑ The DIRECTORY, not a glob string. Holding the pattern in a variable forces
+# the loop below to expand it UNQUOTED, which also word-splits on IFS and applies
+# pathname expansion to the whole path -- so a checkout under a directory with a
+# space or a glob metachar in its name silently iterates over fragments. Keeping
+# the prefix quoted at the point of use and letting only the trailing `*` glob
+# has neither problem, and matches what the inner `checkpoint_0*` loop already
+# does. (Before the path scrub the root was a hardcoded literal, so this could
+# not bite; deriving it from the checkout is exactly what arms it.)
+TUNE_DIR="$REPO_ROOT/runs/pbt2_small/tune"
 DST="$REPO_ROOT/data/salvage/rolling"
 EVERY=${EVERY:-5}        # keep checkpoints whose index is a multiple of this
 KEEP=${KEEP:-24}         # cap on retained dirs (~656M each)
@@ -29,7 +35,7 @@ SLEEP=${SLEEP:-900}
 mkdir -p "$DST"
 
 while :; do
-    for trial in $TUNE_GLOB; do
+    for trial in "$TUNE_DIR"/train_trial_*; do
         [ -d "$trial" ] || continue
         for ck in "$trial"/checkpoint_0*; do
             [ -d "$ck" ] || continue
