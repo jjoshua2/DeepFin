@@ -814,6 +814,20 @@ static inline int bitboards_have_legal_ep(const uint64_t bb[6],
     if (!us_kings) return 0;                 /* malformed: no king to expose */
 
     uint64_t ep_bit = 1ULL << ep_square;
+    /* The ep TARGET must be empty, mirroring python-chess's own guard in
+     * generate_pseudo_legal_ep:
+     *
+     *     if BB_SQUARES[self.ep_square] & self.occupied:
+     *         return
+     *
+     * Unreachable from a real double push, but from_raw / from_board accept a
+     * caller-supplied ep_square: python-chess keeps Board.ep_square set on a
+     * hand-written FEN whose target is occupied (its fen() prints "-" while the
+     * attribute stays 43), so from_board reads it straight through. Without
+     * this the simulated occupancy below would also be wrong — the occupying
+     * piece stays in `all`, so the capturer would "land on" it while it still
+     * blocks rays for the king-safety test. */
+    if ((occ[0] | occ[1]) & ep_bit) return 0;
     uint64_t attackers;
     int captured_sq;
     if (us == WHITE_C) {

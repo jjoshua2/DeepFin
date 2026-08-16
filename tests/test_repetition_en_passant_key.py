@@ -153,6 +153,39 @@ def test_ep_legality_decides_the_repetition_key(
     assert _plane103(cb) is repeats, label
 
 
+def test_occupied_ep_target_is_not_a_legal_en_passant() -> None:
+    """An ep square that is OCCUPIED cannot be captured onto.
+
+    python-chess guards this in ``generate_pseudo_legal_ep``::
+
+        if BB_SQUARES[self.ep_square] & self.occupied:
+            return
+
+    Unreachable from a real double push, but reachable through ``from_raw`` and
+    ``from_board``: python-chess keeps ``Board.ep_square`` set on a hand-written
+    FEN whose target is occupied — ``fen()`` prints ``-`` while the attribute
+    stays 43 — so ``from_board`` reads it straight through. Found by review.
+    """
+    fen = "7k/8/3n4/3pP3/8/8/8/4K3 w - d6 0 1"
+    board = chess.Board(fen)
+    # The fixture only bites while python-chess still exposes the ep square.
+    assert board.ep_square == chess.D6
+    assert board.piece_at(chess.D6) is not None, "ep target must be occupied"
+    assert board.has_legal_en_passant() is False
+    assert list(board.generate_pseudo_legal_ep()) == []
+
+    assert CBoard.from_board(board).has_legal_en_passant() is False
+
+    # ...and through from_raw, where the ep square is supplied directly.
+    raw = CBoard.from_raw(
+        board.pawns, board.knights, board.bishops, board.rooks,
+        board.queens, board.kings,
+        int(board.occupied_co[chess.WHITE]), int(board.occupied_co[chess.BLACK]),
+        int(board.turn), 0, chess.D6, 0,
+    )
+    assert raw.has_legal_en_passant() is False
+
+
 def test_pinned_and_legal_fixtures_differ_only_by_the_rook() -> None:
     """Guard the (b)/(c) pair: one added rook is the whole difference.
 
