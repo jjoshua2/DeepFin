@@ -13,8 +13,15 @@ The mutants used, and what each stands for:
   the stale-in-tree-config case, which a presence check cannot see;
 * a soft target built at a temperature other than the live one — shards
   outliving a config edit;
-* a missing live config — the degradation path, which must stay loud and
-  non-fatal.
+* a missing live config — which must FAIL CLOSED. This bullet used to read
+  "the degradation path, which must stay loud and non-fatal", and that was the
+  hole: ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` is unset by default, so the
+  degradation path was the DEFAULT path, and on it the audit reproduced the
+  very defect it fixes while printing that the config matched "live".
+  ``--allow-stale-config`` is the deliberate escape, and it stamps the dump.
+* a guard whose call site is deleted while the guard itself is left intact —
+  the mutant that survived 35/35 tests, because every case drove the guard
+  directly.
 """
 from __future__ import annotations
 
@@ -256,11 +263,15 @@ def test_audit_load_config_checks_as_well_as_loads(
     live = _write_config(tmp_path, {"gumbel_c_scale": 0.1}, name="live.yaml")
     stale = _write_config(tmp_path, {"gumbel_c_scale": 0.025}, name="stale.yaml")
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
-    with pytest.raises(SystemExit, match="gumbel_c_scale"):
+    with pytest.raises(SystemExit, match="c_scale"):
         load_audit_config(str(stale), allow_stale=False)
-    # And it really does return a usable config on the happy path.
-    flat = load_audit_config(str(live), allow_stale=False)
+    # And it really does return a usable config, and its VERDICT, on the happy
+    # path. The verdict is returned rather than only printed because it has to
+    # reach the dump: `--allow-stale-config` stamps every row.
+    flat, authority = load_audit_config(str(live), allow_stale=False)
     assert flat["gumbel_c_scale"] == pytest.approx(0.1)
+    assert authority.authoritative is True
+    assert authority.stamp()["authoritative"] is True
 
 
 def test_audit_play_row_is_deliberately_not_the_training_shape(tmp_path: Path) -> None:
@@ -288,11 +299,14 @@ def test_audit_refuses_a_config_that_is_not_the_live_one(
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
     stale_path = _write_config(tmp_path, {"gumbel_c_scale": 0.025}, name="stale.yaml")
     stale = dict(flatten_run_config_defaults(load_yaml_file(str(stale_path))))
-    with pytest.raises(SystemExit, match="gumbel_c_scale"):
+    with pytest.raises(SystemExit, match="c_scale"):
         _assert_config_is_production("mutant", stale, allow_stale=False)
-    # ...and the escape hatch must NOT be silent.
-    _assert_config_is_production("mutant", stale, allow_stale=True)
+    # ...and the escape hatch must NOT be silent, and must stamp the dump.
+    authority = _assert_config_is_production("mutant", stale, allow_stale=True)
     assert "WARNING (--allow-stale-config)" in capsys.readouterr().out
+    assert authority.authoritative is False
+    assert authority.stamp()["authoritative"] is False
+    assert "c_scale" in str(authority.stamp()["reason"])
 
 
 def test_audit_accepts_the_live_config(
@@ -303,10 +317,11 @@ def test_audit_accepts_the_live_config(
     live = _write_config(tmp_path, {"gumbel_c_scale": 0.1})
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
     flat = dict(flatten_run_config_defaults(load_yaml_file(str(live))))
-    _assert_config_is_production(str(live), flat, allow_stale=False)
+    authority = _assert_config_is_production(str(live), flat, allow_stale=False)
     out = capsys.readouterr().out
-    assert "production search keys match the live config by VALUE" in out
+    assert "matches the LIVE config" in out
     assert "[LIVE]" in out
+    assert authority.authoritative is True
 
 
 class _BuildKwargs(TypedDict):
@@ -423,17 +438,92 @@ def test_policy_temp_flag_does_not_reach_the_training_rows() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_live_config_degrades_loudly_not_fatally(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+def test_missing_live_config_REFUSES_rather_than_degrading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    """⚑ THE FAIL-CLOSED CASE, and the one that shipped disarmed.
+
+    The first revision of this guard WARNED here and carried on comparing
+    ``--config`` against the in-tree fallback. On this machine
+    ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` is unset and exported nowhere in the
+    repo, and ``origin/main``'s ``configs/pbt2_small.yaml`` carries 0 of the 3
+    keys the finding is about — so from the worktree CLAUDE.md mandates for
+    branch work, the FIXED script reproduced the exact defect it fixes and
+    printed "all 10 production search keys match the live config by VALUE".
+
+    A guard disarmed by its own default environment is not a guard, so the
+    contract is now: no authoritative reference, no training-target row.
+    """
     from scripts.audit_targets import _assert_config_is_production
 
     monkeypatch.setenv(LIVE_CONFIG_ENV, str(tmp_path / "does-not-exist.yaml"))
     assert load_live_config() is None
-    _assert_config_is_production("whatever", _flat(), allow_stale=False)
+    with pytest.raises(SystemExit, match="REFUSING to score a production"):
+        _assert_config_is_production("whatever", _flat(), allow_stale=False)
+
+
+def test_unset_env_REFUSES_even_though_the_in_tree_config_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worktree case: a config resolves, it is just not the LIVE one.
+
+    Distinct from the test above because the failure mode is the opposite of a
+    crash — everything loads, everything compares, and the comparison is
+    against a file that is stale by construction.
+    """
+    from scripts.audit_targets import _assert_config_is_production
+
+    monkeypatch.delenv(LIVE_CONFIG_ENV, raising=False)
+    assert load_live_config() is not None, "the in-tree fallback should load"
+    with pytest.raises(SystemExit, match="REFUSING to score a production"):
+        _assert_config_is_production(str(_IN_TREE_CONFIG), _flat(), allow_stale=False)
+
+
+def test_no_live_config_never_says_LIVE_in_the_affirmative(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The reassuring line a reader greps for must not be printable here.
+
+    The shipped wording was "all 10 production search keys match the live
+    config by VALUE" on a branch where the code had ALREADY decided the
+    reference was not live. Grepping for a phrase is how these reports are
+    read, so the phrase itself has to be unreachable on this path.
+    """
+    from scripts.audit_targets import _assert_config_is_production
+
+    monkeypatch.delenv(LIVE_CONFIG_ENV, raising=False)
+    authority = _assert_config_is_production(
+        str(_IN_TREE_CONFIG), _flat(), allow_stale=True,
+    )
     out = capsys.readouterr().out
-    assert "WARNING" in out
-    assert "has NOT been shown to match" in out
+    assert "WARNING (--allow-stale-config)" in out
+    assert "match" not in out.lower().replace("mismatch", "")
+    assert "LIVE config" not in out
+    assert authority.authoritative is False
+
+
+def test_allow_stale_config_is_still_a_supported_escape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Off-host use (foreign nets, historical configs) must remain possible.
+
+    Refusing everywhere would be its own regression — the point is that the
+    escape is EXPLICIT and lands on the artifact, not that it is unavailable.
+    """
+    from scripts.audit_targets import _assert_config_is_production
+
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(tmp_path / "does-not-exist.yaml"))
+    authority = _assert_config_is_production(
+        "whatever", _flat(), allow_stale=True,
+    )
+    assert "WARNING (--allow-stale-config)" in capsys.readouterr().out
+    assert authority.authoritative is False
+    assert authority.stamp() == {
+        "authoritative": False,
+        "reference": "<none>",
+        "reason": authority.reason,
+    }
+    assert "does not exist" in authority.reason
 
 
 def test_unset_env_falls_back_but_reports_non_authoritative(
@@ -687,6 +777,23 @@ def test_arena_returns_the_dict_it_checked(
     assert side.gumbel["topk"] == 24
     assert side.gumbel["c_scale"] == pytest.approx(0.0375)
 
+  # ⚑ AND THE GUARD IS ACTUALLY CALLED FROM HERE. Every other case in this
+  # file drives `_assert_training_shape_is_production` directly, so replacing
+  # its call site in `resolve_search_shape` with `pass` — the guard function
+  # left fully intact — kept 35/35 tests green. A guard whose INVOCATION no
+  # test covers is indistinguishable from a deleted one, which is this
+  # codebase's signature defect applied to its own safety net.
+  #
+  # Emptying the deviation map makes the guard's verdict change (the arena
+  # legitimately differs from selfplay on `temperature`, `add_noise` and the
+  # two target-only knobs), so a wired guard MUST raise and an unwired one
+  # cannot. Nothing else in `resolve_search_shape` reads this map.
+    import scripts.arena_standard as arena_mod
+
+    monkeypatch.setattr(arena_mod, "ARENA_SHAPE_DEVIATIONS", {})
+    with pytest.raises(SystemExit, match="NOT the search production runs"):
+        resolve_search_shape("training")
+
 
 def test_arena_guard_fires_on_a_key_omitted_entirely(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -737,3 +844,487 @@ def test_arena_training_shape_passes_when_it_matches(
         "volatility_fpu": float(prod.volatility_fpu),
         "volatility_anchor": float(prod.volatility_anchor),
     }, flat)
+
+
+# ---------------------------------------------------------------------------
+# The --config check is FIELD-COMPLETE, not another hand-list
+# ---------------------------------------------------------------------------
+
+
+def test_the_config_key_hand_list_is_gone() -> None:
+    """`PRODUCTION_SEARCH_KEYS` was #227 one level up. It must not come back.
+
+    A list of ten key NAMES cannot see a knob added to production later, and
+    the two guards downstream of it are both built from the SAME stale flat, so
+    they agree with each other and certify nothing. Pinned as a NAME check
+    because that is what a reintroduction would look like.
+    """
+    import scripts.audit_targets as at
+
+    assert not hasattr(at, "PRODUCTION_SEARCH_KEYS")
+    # What replaced it: an exempt map with reasons, and the two keys the audit
+    # reads straight from the flat instead of through production's builder.
+    assert set(at.CONFIG_COMPARE_EXEMPT) == {"simulations"}
+    assert all(r.strip() for r in at.CONFIG_COMPARE_EXEMPT.values())
+    assert at.AUDIT_DIRECT_CONFIG_KEYS == ("mcts_simulations", "fast_simulations")
+
+
+def test_config_check_catches_a_key_no_name_list_carried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MUTANT: a production key the deleted hand-list had no entry for.
+
+    ``input_extra_features`` reaches the search through
+    ``build_selfplay_gumbel_config``'s ``game`` half, and it is REACHABLE
+    rather than hypothetical — production migrated v1 (146 planes) ->
+    v2_threats (175 planes). ``PRODUCTION_SEARCH_KEYS`` listed ten
+    ``gumbel_*``/``volatility_*``/sim names and none of the game ones, so this
+    exact disagreement between the audited config and the live one used to pass
+    every guard and print "production training target" over the result.
+    """
+    from scripts.audit_targets import _assert_config_is_production
+
+    live = _write_config(tmp_path, {}, name="live.yaml")
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
+    stale_path = _write_config(
+        tmp_path, {"input_extra_features": "v1"}, name="stale.yaml",
+    )
+    stale = dict(flatten_run_config_defaults(load_yaml_file(str(stale_path))))
+    live_flat = dict(flatten_run_config_defaults(load_yaml_file(str(live))))
+    assert live_flat["input_extra_features"] != stale["input_extra_features"], (
+        "the mutation did not take — this test would be vacuous"
+    )
+    with pytest.raises(SystemExit, match="input_extra_features"):
+        _assert_config_is_production("mutant", stale, allow_stale=False)
+
+
+def test_config_check_still_value_checks_the_sim_budgets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two keys a field-complete GumbelConfig diff structurally cannot see.
+
+    ``simulations`` is pinned to 1 on both sides of that diff so the SHAPE is
+    compared independently of the budget, which means `mcts_simulations` and
+    `fast_simulations` — which the audit reads straight out of the flat — need
+    their own value check. Without it the exempt entry would be a hole rather
+    than a documented deviation.
+    """
+    from scripts.audit_targets import _assert_config_is_production
+
+    live = _write_config(tmp_path, {"mcts_simulations": 256}, name="live.yaml")
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
+    stale_path = _write_config(
+        tmp_path, {"mcts_simulations": 64}, name="stale.yaml",
+    )
+    stale = dict(flatten_run_config_defaults(load_yaml_file(str(stale_path))))
+    with pytest.raises(SystemExit, match="mcts_simulations"):
+        _assert_config_is_production("mutant", stale, allow_stale=False)
+
+
+# ---------------------------------------------------------------------------
+# The guards' INVOCATIONS, not just the guards
+# ---------------------------------------------------------------------------
+
+
+def test_audit_main_loads_its_config_through_the_checking_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MUTANT: `main()` calls `flatten_run_config_defaults` directly.
+
+    ``load_audit_config`` fuses the load with the check so the check cannot be
+    deleted on its own — but nothing proved ``main()`` calls THAT loader rather
+    than flattening the yaml itself, which is the same "guard exists, guard is
+    not wired" gap one level up. This drives the real ``main()`` with the
+    loader replaced by a tripwire; the run dies at the tripwire or the mutant
+    is live.
+    """
+    import scripts.audit_targets as at
+
+    called: list[str] = []
+
+    def _tripwire(config_path: str, *, allow_stale: bool):
+        del allow_stale
+        called.append(str(config_path))
+        raise SystemExit("TRIPWIRE: load_audit_config was reached")
+
+    monkeypatch.setattr(at, "load_audit_config", _tripwire)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["audit_targets.py", "--checkpoint", str(tmp_path / "nonexistent.pt"),
+         "--device", "cpu", "--audit-set", str(tmp_path / "nonexistent.jsonl")],
+    )
+    with pytest.raises(SystemExit, match="TRIPWIRE"):
+        at.main()
+    assert called, "main() never reached the checking loader"
+
+
+def test_audit_main_default_config_is_the_resolved_production_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--config`'s default must be the file it is CHECKED against.
+
+    It used to default to the CWD-relative literal `configs/pbt2_small.yaml`
+    while the reference is resolved module-relative, so running from any
+    directory but the repo root audited one file and named another.
+    """
+    import scripts.audit_targets as at
+
+    live = _write_config(tmp_path, {}, name="live.yaml")
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
+    seen: list[str] = []
+
+    def _tripwire(config_path: str, *, allow_stale: bool):
+        del allow_stale
+        seen.append(str(config_path))
+        raise SystemExit("TRIPWIRE")
+
+    monkeypatch.setattr(at, "load_audit_config", _tripwire)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["audit_targets.py", "--checkpoint", str(tmp_path / "nonexistent.pt"),
+         "--device", "cpu"],
+    )
+    with pytest.raises(SystemExit, match="TRIPWIRE"):
+        at.main()
+    assert seen == [str(live)]
+
+
+# ---------------------------------------------------------------------------
+# The dump's ruler stamp (rows (d)/(e) MOVED)
+# ---------------------------------------------------------------------------
+
+
+def test_train_shape_stamp_tracks_the_profile_it_describes() -> None:
+    """A stamp that did not move with the shape would be worse than none."""
+    from scripts.audit_targets import build_search_profiles, train_shape_stamp
+
+    profiles = build_search_profiles(_flat(), play_sims=256, play_topk=None)
+    stamp = train_shape_stamp(profiles["train"])
+    assert stamp == {
+        "policy_temp": 1.5,
+        "target_max_visit_cap": 5,
+        "target_untempered_prior": True,
+    }
+    # ...and the PRE-FIX shape, which `paired_compare` infers for an unstamped
+    # dump, is exactly the GumbelConfig defaults the deleted hand-list left in
+    # place. Pinned against the dataclass so the two cannot drift apart.
+    import json
+
+    from scripts.paired_compare import INFERRED_WHEN_ABSENT
+
+    base = GumbelConfig()
+    assert json.loads(INFERRED_WHEN_ABSENT["search_shape"]) == {
+        "policy_temp": float(base.policy_temp),
+        "target_max_visit_cap": int(base.target_max_visit_cap),
+        "target_untempered_prior": bool(base.target_untempered_prior),
+    }
+    assert stamp != json.loads(INFERRED_WHEN_ABSENT["search_shape"]), (
+        "the stamp and the pre-fix inference must differ, or the gate is inert"
+    )
+
+
+def test_dump_row_carries_both_stamps() -> None:
+    """The dump row itself, not just the helpers, must carry them.
+
+    A source-level pin rather than an end-to-end run: reaching the dump needs a
+    checkpoint, an audit set and an hour of Stockfish. It is deliberately paired
+    with `test_train_shape_stamp_tracks_the_profile_it_describes` (the VALUE is
+    right) and `tests/test_paired_compare.py` (the gate READS it), so no single
+    one of the three is load-bearing on its own.
+    """
+    import scripts.audit_targets as at
+
+    src = Path(at.__file__).read_text(encoding="utf-8")
+    assert '"search_shape": train_shape_stamp(profiles["train"]),' in src
+    assert '"config_authority": config_authority.stamp(),' in src
+
+
+# ---------------------------------------------------------------------------
+# probe_policy_targets: the `den` floor is NOT an equivalent mutant
+# ---------------------------------------------------------------------------
+
+
+def _fp16_near_tie_row(ulps: int, temp: float) -> tuple[np.ndarray, np.ndarray]:
+    """A two-entry row whose top moves differ by `ulps` fp16 steps near 0.5.
+
+    Both arrays round-trip through float16 because that is how they are stored
+    (``replay/buffer.py:199`` writes ``policy_target`` as float16), which is
+    what makes a near-tie the common case rather than a contrived one.
+    """
+    top = np.float16(0.5)
+    second = top
+    for _ in range(ulps):
+        second = np.nextafter(second, np.float16(0.0))
+    p16 = np.zeros((1, 8), dtype=np.float16)
+    p16[0, 0] = top
+    p16[0, 1] = second
+    p = p16.astype(np.float32)
+    pn = p / p.sum(axis=1, keepdims=True)
+    q = pn ** (1.0 / temp)
+    q = q / q.sum(axis=1, keepdims=True)
+    return p, q.astype(np.float16).astype(np.float32)
+
+
+def test_fp16_near_tie_needs_the_den_floor() -> None:
+    """MUTANT: `den > 0.0` instead of `den > 1e-6`. It is NOT equivalent.
+
+    ⚑ This mutant was RECORDED AS EQUIVALENT by the commit under review, on the
+    argument that "the mask already drops every entry below 1e-6, so any
+    surviving off-reference entry contributes a LARGE log-ratio". The argument
+    is about the wrong quantity: ``den`` accumulates squared log-RATIOS to the
+    reference entry, so two entries that both clear the mask and are nearly
+    EQUAL give a near-zero contribution, not a large one.
+
+    Measured, on the row below (3 fp16 ulps below 0.5, written at T = 2.0):
+    ``den = 2.385350e-07``, and with the floor removed the row reports
+    ``T_hat = 3.0015``. The floor is load-bearing in the OPPOSITE direction to
+    the claim — it filters fp16 near-ties, not degenerate zeros.
+
+    Practical impact on the reported statistic is nil (4000-row Monte-Carlo:
+    median 2.0000 in both fp32 and fp16), so BEHAVIOUR IS UNCHANGED; only the
+    comment was wrong. This test exists so the mutant is no longer recorded as
+    equivalent.
+    """
+    from scripts.probe_policy_targets import _recover_soft_policy_temp
+
+    p, q = _fp16_near_tie_row(ulps=3, temp=2.0)
+    # The construction is what it claims: one off-reference entry, a single
+    # fp16 step apart after the temperature was applied and re-rounded.
+    assert q[0, 0] != q[0, 1], "q collapsed to an exact tie; wrong ulp count"
+    assert abs(float(q[0, 0]) - float(q[0, 1])) < 1e-3
+
+    got = _recover_soft_policy_temp(p, q)
+    assert np.isnan(got[0]), (
+        "a row whose soft entries are one fp16 ulp apart carries no recoverable "
+        "temperature; without the floor it reports T~=3.0 for a T=2.0 shard"
+    )
+
+    # And the floor is not simply rejecting everything: widen the gap and the
+    # same machinery recovers a temperature again. Without this the test would
+    # pass against `ok = False`.
+    p_wide, q_wide = _fp16_near_tie_row(ulps=32, temp=2.0)
+    wide = _recover_soft_policy_temp(p_wide, q_wide)
+    assert np.isfinite(wide[0])
+    assert wide[0] == pytest.approx(2.0, abs=0.05)
+
+
+def test_absent_soft_policy_temp_is_NOT_CHECKED_not_a_silent_2_point_0(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """MUTANT: `live.flat.get("soft_policy_temp", 2.0)`.
+
+    This whole check exists because a hard-coded `3.0` in the module docstring
+    went stale. A hard-coded `2.0` in the comparison is the same bug with a
+    fresher number: against a config that does not carry the key it would print
+    MATCHES, which is an affirmative verdict about a value nothing set.
+
+    ⚑ REACHABILITY, stated rather than assumed — the reviewer's premise was
+    right in form and wrong about the state.
+    `test_the_schema_default_is_why_that_fallback_never_fired` measures that a
+    flattened production config ALWAYS carries the key, so this branch is a
+    backstop against a schema change (retiring the key, renaming it), not a
+    path any config takes today. It is driven here with a stubbed config
+    because that is the only way to reach it — which is exactly why the
+    fallback survived review.
+    """
+    import scripts.probe_policy_targets as probe
+    from chess_anti_engine.eval.production_shape import LiveConfig
+    from chess_anti_engine.selfplay.temperature import apply_policy_temperature
+
+    stub = LiveConfig(
+        path=tmp_path / "live.yaml", flat={}, sha256="0" * 64,
+        provenance="stub", authoritative=True,
+    )
+    monkeypatch.setattr(
+        "chess_anti_engine.eval.production_shape.load_live_config_or_reason",
+        lambda: (stub, ""),
+    )
+    rng = np.random.default_rng(5)
+    p = rng.dirichlet(np.ones(12) * 0.4, size=64).astype(np.float32)
+    q = np.stack([apply_policy_temperature(r, 2.0) for r in p]).astype(np.float32)
+    line = probe._check_soft_policy_temp(probe._recover_soft_policy_temp(p, q))
+    assert "NOT CHECKED (key absent from live config" in line
+    assert "MATCHES" not in line
+
+
+def test_the_schema_default_is_why_that_fallback_never_fired() -> None:
+    """The measurement behind the reachability note above.
+
+    ``flatten_run_config_defaults`` fills every schema key, so `.get(key, 2.0)`
+    could not fire on any config that flattens at all. Pinned so that if
+    ``soft_policy_temp`` is ever retired from the schema the NOT-CHECKED branch
+    becomes live and this test says why.
+    """
+    flat = dict(flatten_run_config_defaults(load_yaml_file(str(_IN_TREE_CONFIG))))
+    assert "soft_policy_temp" in flat
+
+
+# ---------------------------------------------------------------------------
+# The three states a bare `None` used to collapse into
+# ---------------------------------------------------------------------------
+
+
+def test_unavailable_live_config_names_which_of_three_states_it_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """MUTANT: `except Exception: return None`, discarding the exception text.
+
+    Unset, missing-file and fails-to-flatten call for three different operator
+    actions — export the variable, fix the path, rebase onto the branch whose
+    schema defines the live yaml's new key. A message announcing the union of
+    them sends the reader to the wrong one two times out of three.
+    """
+    from chess_anti_engine.eval.production_shape import load_live_config_or_reason
+
+    missing = tmp_path / "nope.yaml"
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(missing))
+    cfg, reason = load_live_config_or_reason()
+    assert cfg is None
+    assert "does not exist" in reason
+    assert str(missing) in reason
+
+    unflattenable = tmp_path / "bad.yaml"
+    unflattenable.write_text(
+        yaml.safe_dump({"selfplay": {"a_key_no_schema_defines": 1}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(unflattenable))
+    cfg, reason = load_live_config_or_reason()
+    assert cfg is None
+    assert "does not flatten" in reason
+    # The exception's own TYPE and TEXT, which is what names the offending key.
+    assert "a_key_no_schema_defines" in reason
+
+    # ...and the success path carries no reason at all, so a caller cannot
+    # print a diagnosis for a config that loaded.
+    good = _write_config(tmp_path, {}, name="good.yaml")
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(good))
+    cfg, reason = load_live_config_or_reason()
+    assert cfg is not None
+    assert reason == ""
+
+
+# ---------------------------------------------------------------------------
+# The remaining INVOCATION gaps, closed with tripwires
+# ---------------------------------------------------------------------------
+#
+# ⚑ Each of these replaces a real guard with a function that raises, drives the
+# production entry point, and asserts the run dies at the tripwire. That is the
+# only construction that distinguishes "the guard exists" from "the guard is
+# called" — an AST test cannot, and every other case in this file drives the
+# guard directly, which is exactly how the 35/35-green mutant survived.
+
+
+def _stub_net(monkeypatch: pytest.MonkeyPatch):
+    """A REAL `NetSource` whose `load` returns a model-shaped namespace.
+
+    A real one rather than a duck-typed stand-in so the call sites below are
+    still type-checked against the signature they are exercising — a stub that
+    only happens to satisfy the runtime is how a test stops noticing that the
+    function it drives changed shape.
+
+    Enough for the two rulers to reach their guard: both call `net.load(...)`
+    and then read the encoding attributes off the result before doing any
+    inference. Nothing here touches torch beyond `LocalModelEvaluator`'s
+    attribute-only `__init__`.
+    """
+    import types
+
+    from scripts.net_source import NetSource
+
+    def _load(self: NetSource, **kwargs: Any) -> Any:
+        del self, kwargs
+        return types.SimpleNamespace(
+            input_history_encoding="lc0_root_legacy_meta",
+            input_extra_features="v2_threats",
+            policy_encoding="lc0_1858",
+            use_dynamic_relations=False,
+        )
+
+    monkeypatch.setattr(NetSource, "load", _load)
+    return NetSource(checkpoint="stub-net.pt")
+
+
+def test_audit_net_candidates_builds_its_configs_through_the_guarded_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MUTANT: `_net_candidates` assembles a GumbelConfig itself.
+
+    `build_profile_gumbel_config` carries the training rows'
+    `assert_matches_production` call. Building the config any other way inside
+    `_net_candidates` would leave the guard intact, tested, and unreachable.
+    """
+    import chess
+
+    import scripts.audit_targets as at
+
+    def _tripwire(*args: Any, **kwargs: Any):
+        del args, kwargs
+        raise SystemExit("TRIPWIRE: build_profile_gumbel_config was reached")
+
+    monkeypatch.setattr(at, "build_profile_gumbel_config", _tripwire)
+    profiles = at.build_search_profiles(_flat(), play_sims=8, play_topk=None)
+    with pytest.raises(SystemExit, match="TRIPWIRE"):
+        at._net_candidates(
+            [chess.Board()], net=_stub_net(monkeypatch), device="cpu",
+            batch_size=1, seed=0,
+            profiles=profiles, requested_gumbel_overrides=(),
+        )
+
+
+def test_value_regret_reports_the_input_layout_before_it_scores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MUTANT: the layout report is defined and never called.
+
+    `value_regret` WARNS rather than refuses (foreign nets are a supported
+    use), which makes the invocation the whole guard: an uncalled warning is
+    indistinguishable from no warning, and the cp figure then sits in a table
+    with production-layout readings under nothing at all.
+    """
+    import scripts.value_regret as vr
+
+    def _tripwire(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise SystemExit("TRIPWIRE: _report_encoding_vs_production was reached")
+
+    monkeypatch.setattr(vr, "_report_encoding_vs_production", _tripwire)
+    with pytest.raises(SystemExit, match="TRIPWIRE"):
+        vr.value_1ply_regret(
+            net=_stub_net(monkeypatch), positions=[], device="cpu",
+            batch_size=1, pos_chunk=1,
+        )
+
+
+def test_probe_main_runs_the_temperature_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """MUTANT: `main()` prints the table without the temperature line.
+
+    The line decides whether the table below it describes the live setting or a
+    superseded one, so a `main()` that stops calling it turns every number in
+    the report into an unattributed one.
+    """
+    import scripts.probe_policy_targets as probe
+
+    n = 4
+    fake = {
+        "tv": np.zeros(n), "kl_pq": np.zeros(n), "kl_qp": np.zeros(n),
+        "argmax_agree": np.ones(n), "source": np.zeros(n, dtype=np.int64),
+        "phase": np.zeros(n, dtype=np.int64), "temp_hat": np.full(n, 2.0),
+        "_used_shards": np.array(1),
+    }
+    monkeypatch.setattr(probe, "_collect", lambda *a, **k: fake)
+
+    def _tripwire(*args: Any, **kwargs: Any) -> str:
+        del args, kwargs
+        raise SystemExit("TRIPWIRE: _check_soft_policy_temp was reached")
+
+    monkeypatch.setattr(probe, "_check_soft_policy_temp", _tripwire)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["probe_policy_targets.py", "--replay-dir", str(tmp_path),
+         "--out", str(tmp_path / "out.json")],
+    )
+    with pytest.raises(SystemExit, match="TRIPWIRE"):
+        probe.main()

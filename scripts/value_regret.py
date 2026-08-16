@@ -121,16 +121,18 @@ def _report_encoding_vs_production(
     beside a production one without anything marking it.
     """
     from chess_anti_engine.eval.production_shape import (
-        LIVE_CONFIG_ENV,
-        load_live_config,
+        load_live_config_or_reason,
         production_input_encoding,
     )
 
-    live = load_live_config()
+    live, reason = load_live_config_or_reason()
     if live is None:
         print(
+          # The REASON, not "unset or unreadable": three states, three operator
+          # actions (export the var / fix the path / rebase onto the branch
+          # whose schema defines the live yaml's new key).
             f"[shape] checkpoint declares {enc_kwargs}; NOT compared against "
-            f"production (${LIVE_CONFIG_ENV} unset or unreadable).",
+            f"production — {reason}.",
             flush=True,
         )
         return

@@ -51,6 +51,13 @@ LIVE_CONFIG_ENV = "CHESS_ANTI_ENGINE_LIVE_CONFIG"
 # from the live working tree; everywhere else this file is a stale snapshot.
 DEFAULT_RELATIVE_CONFIG = Path("configs") / "pbt2_small.yaml"
 
+# "The config does not have this key at all." A shared SENTINEL rather than a
+# per-caller `.get(key, <some plausible default>)`, because a plausible default
+# is how a probe reports MATCHES against a config that never mentions the key —
+# the same shape as the stale hard-coded `3.0` that started all of this. Every
+# caller must branch on it; none may treat it as a value.
+CONFIG_ABSENT = "<absent>"
+
 
 def repo_root() -> Path:
     """The checkout this module was imported from."""
@@ -99,6 +106,57 @@ def resolve_live_config_path() -> tuple[Path, str, bool]:
     )
 
 
+def load_config_file(
+    path: Path, *, provenance: str, authoritative: bool,
+) -> tuple[LiveConfig | None, str]:
+    """``(config, reason it is unavailable)`` for one explicit path.
+
+    Exactly one of the two is meaningful: on success the reason is ``""``, on
+    failure the config is ``None`` and the reason NAMES the failure.
+
+    ⚑ The reason string is not decoration. Three different states used to
+    collapse into a bare ``None`` — the variable is unset, the file it names
+    does not exist, and the file exists but will not flatten — and they call
+    for three different operator actions (export it / fix the path / rebase
+    onto the branch whose schema defines the live yaml's new key). A caller
+    that prints "unset or unreadable" for all three sends the reader to the
+    wrong one two times out of three.
+    """
+    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+
+    if not path.is_file():
+        return None, f"{path} does not exist ({provenance})"
+    raw_bytes = path.read_bytes()
+    try:
+        flat = flatten_run_config_defaults(load_yaml_file(str(path)))
+    except Exception as exc:
+      # Broad on purpose: yaml syntax, an unknown key rejected by the schema,
+      # a bad value. They are NOT interchangeable to the reader, so the
+      # exception's own text is carried out rather than swallowed — an unknown
+      # key in particular means this checkout's schema predates the running
+      # config, and the fix is to rebase, never to delete the key from the
+      # live file.
+        return None, f"{path} does not flatten: {type(exc).__name__}: {exc}"
+    return LiveConfig(
+        path=path,
+        flat=dict(flat),
+        sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        provenance=provenance,
+        authoritative=authoritative,
+    ), ""
+
+
+def load_live_config_or_reason() -> tuple[LiveConfig | None, str]:
+    """``load_live_config()``, plus WHY it is unavailable when it is.
+
+    Callers that print a degradation warning should use this one, so the
+    warning distinguishes the three failure states instead of announcing the
+    union of them.
+    """
+    path, provenance, authoritative = resolve_live_config_path()
+    return load_config_file(path, provenance=provenance, authoritative=authoritative)
+
+
 def load_live_config() -> LiveConfig | None:
     """Load and flatten the production config, or ``None`` if it is unreadable.
 
@@ -110,34 +168,14 @@ def load_live_config() -> LiveConfig | None:
 
     ⚑ There is deliberately no ``required=True`` mode. One was written and
     removed unused: a flag whose only branch nothing takes is untested code
-    that reads as a safety property.
+    that reads as a safety property. What a caller that *cannot* proceed on a
+    stale config does instead is refuse on ``authoritative`` being False —
+    see ``scripts/audit_targets.py``.
 
-    A yaml that does not FLATTEN is treated the same way, and it usually means
-    something specific: the live yaml carries a key this checkout's schema does
-    not define, i.e. the instrument's code predates the running config. The fix
-    is to rebase onto the branch that defines the key, never to delete the key
-    from the live file.
+    Use ``load_live_config_or_reason`` when the ``None`` is going to be
+    reported to a human: this wrapper drops the diagnosis.
     """
-    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
-
-    path, provenance, authoritative = resolve_live_config_path()
-    if not path.is_file():
-        return None
-    raw_bytes = path.read_bytes()
-    try:
-        flat = flatten_run_config_defaults(load_yaml_file(str(path)))
-    except Exception:
-      # Broad on purpose: yaml syntax, an unknown key rejected by the schema,
-      # a bad value — every one of them means "this file cannot tell us what
-      # production runs", and the caller's response is identical.
-        return None
-    return LiveConfig(
-        path=path,
-        flat=dict(flat),
-        sha256=hashlib.sha256(raw_bytes).hexdigest(),
-        provenance=provenance,
-        authoritative=authoritative,
-    )
+    return load_live_config_or_reason()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -309,11 +347,10 @@ def compare_config_values(
     with a ``<absent>`` sentinel rather than skipped. This is the "a presence
     check is not a value read" rule in its most literal form.
     """
-    absent = "<absent>"
     out: list[FieldDiff] = []
     for key in keys:
-        got = realized.get(key, absent)
-        want = production.get(key, absent)
+        got = realized.get(key, CONFIG_ABSENT)
+        want = production.get(key, CONFIG_ABSENT)
         if isinstance(want, float) and isinstance(got, (int, float)):
             if abs(float(got) - float(want)) <= 1e-9 * max(1.0, abs(float(want))):
                 continue

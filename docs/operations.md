@@ -19,6 +19,27 @@ Without that, restarting after a stop silently drops the running trial and spawn
 random-init one. To abandon the current trial's state, pass `--fresh` or use
 `salvage-restart` from a good pool; never `rm` the tune dir while a run is live.
 
+**`$CHESS_ANTI_ENGINE_LIVE_CONFIG` — which yaml the offline instruments treat as
+production.** `train.sh` exports it (absolute path to `$TRAIN_CONFIG`, default
+`configs/pbt2_small.yaml`) for every child, so anything started from the live shell
+inherits it. Set it by hand in any OTHER shell that runs
+`scripts/audit_targets.py`, `scripts/arena_standard.py --search-shape training`,
+`scripts/value_regret.py` or `scripts/probe_policy_targets.py`:
+
+```bash
+export CHESS_ANTI_ENGINE_LIVE_CONFIG=/abs/path/to/live/tree/configs/pbt2_small.yaml
+```
+
+⚑ This is not optional hygiene. CLAUDE.md mandates a `git worktree` for branch work,
+and a worktree's in-tree `configs/pbt2_small.yaml` is stale by construction — the live
+tree is the only writer and its edits are routinely uncommitted (`origin/main` carries
+none of `gumbel_policy_temp` / `gumbel_target_max_visit_cap` /
+`gumbel_target_untempered_prior`, which the live yaml sets). With the variable unset,
+`audit_targets.py` now **refuses** to emit rows (d)/(e) rather than score the wrong
+search under the heading "production training target"; pass `--allow-stale-config`
+only when you deliberately mean a non-production config, and note that it stamps the
+per-position dump `config_authority.authoritative = false`.
+
 **Graceful pause before killing PBT**: `python3 scripts/graceful_restart.py` creates
 `pause.txt` in the tune dir; active trials finish the current iteration, hold, then the
 script restarts cleanly. Use it before a restart that would otherwise orphan a

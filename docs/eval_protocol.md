@@ -287,10 +287,24 @@ Mechanics:
   `build_selfplay_gumbel_config` rather than by re-listing its fields, and the
   realized-vs-production table is printed on every run under `[shape]`. A field
   the audit overrides without declaring it in `TRAIN_SHAPE_DEVIATIONS` stops
-  the run. Point `$CHESS_ANTI_ENGINE_LIVE_CONFIG` at the live yaml so `--config`
-  is value-checked against the running trial; without it the audit falls back
-  to the in-tree copy and says so, because the in-tree copy is stale by
-  construction on every branch but the live one.
+  the run. `--config` is checked FIELD-COMPLETE against the live yaml — both
+  are pushed through production's builder and every `GumbelConfig` field is
+  diffed — so a search knob added to production later is covered the day it is
+  added rather than when someone remembers to extend a list.
+- **Point `$CHESS_ANTI_ENGINE_LIVE_CONFIG` at the live yaml, or the audit
+  refuses.** `scripts/train.sh` exports it; see `docs/operations.md` for the
+  by-hand form. Without an authoritative reference the script will NOT emit
+  rows (d)/(e), because the fallback it used to take — compare against the
+  in-tree copy, warn, continue — reproduced the exact defect above from any
+  worktree and printed "matches the live config" while doing it. The escape is
+  `--allow-stale-config`, and it stamps `config_authority.authoritative=false`
+  onto every row of `--dump-per-position` so the artifact carries the caveat.
+- **`--dump-per-position` rows carry a `search_shape` stamp** (`policy_temp`,
+  `target_max_visit_cap`, `target_untempered_prior`) and
+  `scripts/paired_compare.py` lists it in `RULER_FIELDS`. An unstamped dump
+  predates 2026-08-16 and therefore DECLARES the pre-fix shape
+  (`1.0 / 0 / False`), so a pre-fix-vs-post-fix join is refused rather than
+  reported as a delta. Two pre-fix dumps still compare.
 - **Scoring a FOREIGN net (LC0/BT4, Ceres) on the same ruler:** pass `--onnx
   <net>.onnx` instead of `--checkpoint` to either `scripts/audit_targets.py` or
   `scripts/value_regret.py`. The two flags are mutually exclusive and exactly

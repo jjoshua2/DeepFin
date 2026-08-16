@@ -163,11 +163,15 @@ from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from chess_anti_engine.eval.production_shape import (
     LIVE_CONFIG_ENV,
+    FieldDiff,
     assert_matches_production,
     compare_config_values,
     format_shape_table,
+    gumbel_field_diff,
     load_live_config,
+    load_live_config_or_reason,
     production_selfplay_gumbel_config,
+    resolve_live_config_path,
 )
 from scripts.net_source import (
     NetSource,
@@ -278,22 +282,100 @@ TRAIN_SHAPE_DEVIATIONS: dict[str, str] = {
     "compute_relations": "read off the loaded checkpoint, not the yaml",
 }
 
-# Production search keys whose VALUE the audit's --config must agree with the
-# live yaml on. Deliberately the keys `build_selfplay_gumbel_config` consumes:
-# a guard must share the criterion's instrument, so this is the set that
-# actually reaches the search, not every key whose name starts with `gumbel_`.
-PRODUCTION_SEARCH_KEYS: tuple[str, ...] = (
+# ⚑ THE HAND-LIST IS GONE FROM HERE TOO. What used to sit at this line was
+# `PRODUCTION_SEARCH_KEYS`, ten key NAMES the audit's `--config` had to agree
+# with the live yaml on. That is #227 one level up, and it defeats even the
+# correctly-configured path: let production gain
+# `gumbel_target_min_visit_frac` (a `SearchConfig` field
+# `build_selfplay_gumbel_config` consumes and the live yaml sets) and every
+# guard passes. `production_base` is built from the audit's stale flat, so it
+# picks the field DEFAULT; `assert_matches_production` compares two objects
+# built from that SAME stale flat and finds nothing; and a name list that does
+# not contain the new name cannot see it either. The report is still headed
+# "production training target".
+#
+# So the comparison is FIELD-COMPLETE instead: build production's own
+# `GumbelConfig` from the audit's config and from the live config and diff
+# every field. A knob added to the production mapping is covered the day it is
+# added, with no list to update — exactly like the training-row guard.
+CONFIG_COMPARE_EXEMPT: dict[str, str] = {
+    "simulations": (
+        "pinned to 1 on BOTH sides of this comparison so the shape is compared "
+        "independently of the budget; the real budgets are value-compared "
+        "through AUDIT_DIRECT_CONFIG_KEYS below"
+    ),
+}
+
+# The keys the AUDIT reads STRAIGHT out of the flat config rather than through
+# production's builder, so a field-complete `GumbelConfig` diff cannot see
+# them. `build_search_profiles` passes both of these to the builder as an
+# explicit `simulations=`, which is why they have to be checked by value here.
+# ⚑ Anything added to this list is a NEW direct read that bypassed the builder
+# — prefer routing it through the builder over lengthening the list.
+AUDIT_DIRECT_CONFIG_KEYS: tuple[str, ...] = (
     "mcts_simulations",
     "fast_simulations",
-    "gumbel_topk",
-    "gumbel_policy_temp",
-    "gumbel_c_scale",
-    "gumbel_target_max_visit_cap",
-    "gumbel_target_untempered_prior",
-    "volatility_q_scale",
-    "volatility_fpu",
-    "volatility_anchor",
 )
+
+
+@dataclasses.dataclass(frozen=True)
+class ConfigAuthority:
+    """Was the audited ``--config`` PROVED to be the live production config?
+
+    Carried out of ``load_audit_config`` rather than left as a printed line,
+    because a warning that only reaches stdout is not a mitigation: the
+    artifact this script leaves behind is a JSONL dump that outlives the
+    terminal, gets joined to other dumps months later, and is read by tools
+    that never saw the warning. ``stamp()`` is what goes into it.
+    """
+
+    authoritative: bool
+    # The file the audited config was compared against, or why there was none.
+    reference: str
+    # Whether the operator asked for a deliberately non-production reading.
+    allow_stale: bool
+    # Empty exactly when `authoritative` is True.
+    reason: str
+
+    def stamp(self) -> dict[str, object]:
+        """The dump's record of whether its target rows describe production."""
+        return {
+            "authoritative": bool(self.authoritative),
+            "reference": self.reference,
+            "reason": self.reason,
+        }
+
+
+# The training rows' shape, as banked on every dump row. ⚑ THIS IS A RULER
+# STAMP, not documentation: `scripts/paired_compare.py` lists it in
+# `RULER_FIELDS` and refuses a join whose two sides disagree.
+#
+# Rows (d)/(e) MOVED on 2026-08-16 — before the fix the audit scored the PLAY
+# distribution under the "production training target" heading — so a dump
+# banked before that date and one banked after report a paired delta with a
+# tight CI that is entirely the ruler change. A doc note cannot stop a tool.
+#
+# Exactly these three fields, and no more, because these are the ones whose
+# PRE-FIX value is known BY CONSTRUCTION rather than guessed: the hand-list
+# carried none of them, so all three sat at their `GumbelConfig` defaults on
+# every dump ever written. `topk`/`c_scale` were read from the yaml even
+# before the fix, so their old values are not deducible from absence and
+# inferring one would be the guess `INFERRED_WHEN_ABSENT` refuses to make for
+# `batch_size`.
+TRAIN_SHAPE_STAMP_FIELDS: tuple[str, ...] = (
+    "policy_temp",
+    "target_max_visit_cap",
+    "target_untempered_prior",
+)
+
+
+def train_shape_stamp(profile: _SearchProfile) -> dict[str, object]:
+    """The ruler stamp for the training rows this run scored."""
+    return {
+        "policy_temp": float(profile.policy_temp),
+        "target_max_visit_cap": int(profile.target_max_visit_cap),
+        "target_untempered_prior": bool(profile.target_untempered_prior),
+    }
 
 
 def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], ...]:
@@ -731,87 +813,154 @@ def build_profile_gumbel_config(
     return cfg
 
 
-def load_audit_config(config_path: str, *, allow_stale: bool) -> dict[str, Any]:
+def load_audit_config(
+    config_path: str, *, allow_stale: bool,
+) -> tuple[dict[str, Any], ConfigAuthority]:
     """Load ``--config`` AND prove it is production's. One function, on purpose.
 
     These were two statements in ``main()`` until the mutation run: deleting the
     check line left the load intact, the audit ran, and no test noticed —
     "a value that is accepted and then silently ignored", applied to the guard
     itself. Fusing them means the only way to skip the check is to stop calling
-    the loader, which is a visible edit rather than a deleted line.
+    the loader, which is a visible edit rather than a deleted line — and
+    ``tests/test_production_shape_guard.py`` now drives ``main()`` with this
+    function stubbed to prove the call site is there.
 
-    The residual gap is real and worth stating: nothing proves ``main()`` calls
-    THIS function rather than ``flatten_run_config_defaults`` directly. That
-    regress ends only at an end-to-end run, which needs a GPU and an hour of
-    Stockfish.
+    Returns the flattened config AND the authority verdict, because the verdict
+    has to reach the DUMP. A guard whose only output is a line on stdout stops
+    existing the moment the operator redirects stdout, which every batch run
+    does.
     """
     flat = dict(flatten_run_config_defaults(load_yaml_file(config_path)))
-    _assert_config_is_production(config_path, flat, allow_stale=allow_stale)
-    return flat
+    authority = _assert_config_is_production(
+        config_path, flat, allow_stale=allow_stale,
+    )
+    return flat, authority
+
+
+def _production_shape_diff(
+    flat: dict[str, object], live_flat: dict[str, object],
+) -> list[FieldDiff]:
+    """Every ``GumbelConfig`` field on which two configs' SELFPLAY shapes differ.
+
+    Field-complete on purpose — see ``CONFIG_COMPARE_EXEMPT``. Both sides go
+    through ``production_selfplay_gumbel_config``, i.e. production's own
+    builder, so a knob that stops reaching the search in production stops
+    reaching both sides here and this cannot certify a wiring broken on both.
+    """
+    got = production_selfplay_gumbel_config(flat, simulations=1)
+    want = production_selfplay_gumbel_config(live_flat, simulations=1)
+    return gumbel_field_diff(got, want, exempt=CONFIG_COMPARE_EXEMPT)
 
 
 def _assert_config_is_production(
     config_path: str, flat: dict[str, object], *, allow_stale: bool,
-) -> None:
-    """Refuse to audit a config whose search keys disagree with the LIVE yaml.
+) -> ConfigAuthority:
+    """Refuse to audit a config that is not, provably, the LIVE production one.
 
     The reference is the live file named by ``$CHESS_ANTI_ENGINE_LIVE_CONFIG``,
     NOT the in-tree ``configs/pbt2_small.yaml`` — the in-tree copy is stale by
     construction on every branch except the live one, because the live working
-    tree is its only writer and its edits are routinely uncommitted. An audit
-    run against the in-tree copy from a worktree is the exact failure this
-    check exists for, and it is silent today.
+    tree is its only writer and its edits are routinely uncommitted.
 
-    Two ways this DEGRADES rather than crashes, both loudly:
-      * the live config cannot be resolved (running off the training host) —
-        say so and continue, because an instrument that only works on one
-        machine is a regression;
-      * ``--allow-stale-config`` — an operator deliberately auditing a
-        historical or experimental config. Printed as a warning, never silent.
+    ⚑ FAIL-CLOSED, and this is the second half of the #227 fix. The first
+    revision only WARNED when the live config could not be resolved, and then
+    compared ``--config`` against the in-tree fallback and printed "all 10
+    production search keys match the live config by VALUE". On this machine
+    ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` was unset, is exported nowhere in the
+    repo, and ``origin/main:configs/pbt2_small.yaml`` carries 0 of the 3 keys
+    the finding is about — so run from the worktree that CLAUDE.md mandates for
+    branch work, the fixed script reproduced the exact defect it fixes and said
+    the word "live" while doing it. A guard that is disarmed by its own default
+    environment is not a guard.
+
+    So: no authoritative reference, or a reference the audited config disagrees
+    with, REFUSES. ``--allow-stale-config`` is the deliberate escape for
+    foreign nets and offline experiments, and it is not free — it stamps the
+    per-position dump as non-authoritative, so the artifact carries the caveat
+    even when nobody read stdout.
     """
     live = load_live_config()
-    if live is None:
-        print(
-            "[shape] WARNING: no live production config resolved "
-            f"(${LIVE_CONFIG_ENV} unset or unreadable). The search shape below "
-            f"is whatever {config_path} says; it has NOT been shown to match "
-            "the running trial.",
-            flush=True,
+    if live is None or not live.authoritative:
+        _, reason = load_live_config_or_reason()
+        if live is not None:
+            reason = (
+                f"the only config that resolved is {live.path} "
+                f"({live.provenance}) — the in-tree copy, not the live file"
+            )
+        return _refuse_or_degrade(
+            config_path,
+            reference=str(live.path) if live is not None else "<none>",
+            reason=f"no authoritative live config: {reason}",
+            allow_stale=allow_stale,
         )
-        return
     print(live.header(), flush=True)
-    if not live.authoritative:
-        print(
-            f"[shape] WARNING: the reference above is the IN-TREE config, which "
-            f"is stale by construction unless this checkout is the live tree. "
-            f"Set ${LIVE_CONFIG_ENV} for an authoritative comparison.",
-            flush=True,
+    try:
+        diffs = _production_shape_diff(flat, live.flat)
+    except Exception as exc:
+      # The audited config does not even build a production search. That is a
+      # real answer to "is this production's shape", and the answer is no.
+        return _refuse_or_degrade(
+            config_path,
+            reference=str(live.path),
+            reason=(
+                f"{config_path} does not build a production selfplay search: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            allow_stale=allow_stale,
         )
-    diffs = compare_config_values(flat, live.flat, PRODUCTION_SEARCH_KEYS)
+    diffs = diffs + compare_config_values(flat, live.flat, AUDIT_DIRECT_CONFIG_KEYS)
     if not diffs:
         print(
-            f"[shape] --config {config_path}: all {len(PRODUCTION_SEARCH_KEYS)} "
-            "production search keys match the live config by VALUE",
+            f"[shape] --config {config_path}: every GumbelConfig field "
+            "production's builder derives from it, plus "
+            f"{list(AUDIT_DIRECT_CONFIG_KEYS)}, matches the LIVE config "
+            f"({live.path}) by VALUE",
             flush=True,
         )
-        return
+        return ConfigAuthority(
+            authoritative=True, reference=str(live.path),
+            allow_stale=allow_stale, reason="",
+        )
     detail = "\n  ".join(str(d) for d in diffs)
-    if allow_stale:
-        print(
-            f"[shape] WARNING (--allow-stale-config): {config_path} disagrees "
-            f"with the live config on:\n  {detail}\n"
-            "  These numbers describe the config named above, NOT the running "
-            "trial. Do not put them in a table with live-config readings.",
-            flush=True,
+    return _refuse_or_degrade(
+        config_path,
+        reference=str(live.path),
+        reason=f"{config_path} is not the live production search shape:\n  {detail}",
+        allow_stale=allow_stale,
+    )
+
+
+def _refuse_or_degrade(
+    config_path: str, *, reference: str, reason: str, allow_stale: bool,
+) -> ConfigAuthority:
+    """Stop, or proceed under an explicit non-authoritative stamp.
+
+    ⚑ The affirmative wording lives in the CALLER, and only on the branch that
+    actually proved authority. Nothing on this path may say "live": the whole
+    finding is that the reassuring line a reader greps for was printed about a
+    reference the code had already decided was not live.
+    """
+    if not allow_stale:
+        raise SystemExit(
+            f"[shape] REFUSING to score a production training target: {reason}\n"
+            f"  Rows (d)/(e) are headed 'production training target' and would "
+            f"not be one. Export ${LIVE_CONFIG_ENV} to name the "
+            f"live yaml (scripts/train.sh does this; see docs/operations.md), "
+            f"or pass --allow-stale-config if you deliberately mean to score a "
+            f"different configuration — that flag stamps the dump "
+            f"non-authoritative so the artifact carries the caveat."
         )
-        return
-    raise SystemExit(
-        f"[shape] --config {config_path} is not the production search shape:\n"
-        f"  {detail}\n"
-        f"  The live config is {live.path}. Audit that file, or pass "
-        "--allow-stale-config if you deliberately mean to score a different "
-        "configuration. Refusing to run — the report header would name a "
-        "production target this config does not produce."
+    print(
+        f"[shape] WARNING (--allow-stale-config): {reason}\n"
+        f"  These numbers describe {config_path}, NOT the running trial, and "
+        f"the per-position dump is stamped non-authoritative. Do not put them "
+        f"in a table with production readings.",
+        flush=True,
+    )
+    return ConfigAuthority(
+        authoritative=False, reference=reference,
+        allow_stale=allow_stale, reason=reason,
     )
 
 
@@ -1521,8 +1670,15 @@ def main() -> None:
         checkpoint_help="one of ours: trainer.pt or checkpoint dir. Mutually "
         "exclusive with --onnx; exactly one is required.",
     )
-    ap.add_argument("--config", type=Path, default=Path("configs/pbt2_small.yaml"),
-                    help="production config for target-construction params")
+    ap.add_argument("--config", type=Path, default=None,
+                    help="production config for target-construction params. "
+                         "Default: the SAME file the shape guard resolves as "
+                         f"production (${LIVE_CONFIG_ENV}, else the in-tree "
+                         "configs/pbt2_small.yaml). ⚑ The old default was the "
+                         "CWD-relative literal 'configs/pbt2_small.yaml' while "
+                         "the reference it is checked against is module-"
+                         "relative, so running from anywhere but the repo root "
+                         "audited one file and named another.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--batch-size", type=int, default=256,
                     help="net forward batch. Raw policy regret is BATCH-SIZE "
@@ -1719,7 +1875,14 @@ def main() -> None:
         tag="audit",
     )
 
-    flat = load_audit_config(args.config, allow_stale=bool(args.allow_stale_config))
+  # Resolved here rather than in `add_argument`, so the default is the file the
+  # guard below will compare against instead of a CWD-relative literal that
+  # only coincides with it when the operator happens to be at the repo root.
+    if args.config is None:
+        args.config = resolve_live_config_path()[0]
+    flat, config_authority = load_audit_config(
+        str(args.config), allow_stale=bool(args.allow_stale_config),
+    )
     sf_params = _sf_soft_params_from_flat(flat)
     train_temp = float(flat.get("temperature", 1.0))
     sf_wdl_frac = float(flat.get("sf_wdl_frac", 0.0))
@@ -1920,6 +2083,15 @@ def main() -> None:
                     for c in cands
                 },
                 "batch_size": int(args.batch_size),
+                # ⚑ RULER STAMP for rows (d)/(e). See TRAIN_SHAPE_STAMP_FIELDS:
+                # these three moved on 2026-08-16, so a dump from either side
+                # of that change is a different ruler and paired_compare
+                # refuses the join rather than reporting the ruler as a delta.
+                "search_shape": train_shape_stamp(profiles["train"]),
+                # Whether the config those rows were built from was PROVED to
+                # be the live one. `--allow-stale-config` lands False here, so
+                # the caveat rides on the artifact and not only on stdout.
+                "config_authority": config_authority.stamp(),
                 # null (not inf -> non-standard JSON "Infinity") for <2-move positions
                 "gap_cp": float(gap) if np.isfinite(gap) else None,
                 "n_legal": len(legal_ucis),

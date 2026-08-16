@@ -163,7 +163,16 @@ def load_dump(
 # and raw-policy regret rulers are batch-size dependent (0.66 cp between 128
 # and 256 for value, ~0.8 cp between 64 and 256 for policy) and a paired delta
 # of that size is one this tool is routinely asked to adjudicate.
-RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
+# `search_shape` is the training rows' Gumbel shape (audit_targets
+# `TRAIN_SHAPE_STAMP_FIELDS`). Rows (d)/(e) MOVED on 2026-08-16: until then the
+# audit built its "production training target" without
+# `gumbel_policy_temp`/`gumbel_target_max_visit_cap`/
+# `gumbel_target_untempered_prior`, and with the last two at their defaults
+# `mcts/gumbel.py` takes the `imp_store = imp_all` branch — so those rows were
+# the PLAY distribution, not the stored target. A pre-fix dump joins cleanly
+# against a post-fix one and reports a tight-CI delta that is entirely the
+# ruler. That is what this entry stops.
+RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size", "search_shape")
 
 # ⚑ ABSENCE IS INFORMATIVE FOR `input_encoding`, AND ONLY FOR IT.
 # Every dump written before the audit-v2 flag existed is `fen_only` BY
@@ -177,7 +186,30 @@ RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
 # standing VALUE yardstick pins --batch-size 128 while the CLI default is 256),
 # so inferring one would be a guess rather than a deduction, and a wrong guess
 # here refuses a legitimate comparison.
-INFERRED_WHEN_ABSENT: dict[str, str] = {"input_encoding": json.dumps("fen_only")}
+#
+# `search_shape` gets the same treatment, and for the same KIND of reason: an
+# unstamped dump was written by a build whose training rows carried none of
+# these three knobs, so all three sat at their `GumbelConfig` defaults. That is
+# a DEDUCTION from the code that wrote the file, not a guess about it. Treating
+# an unstamped dump as "unknown" would let the single join this entry exists to
+# stop — a pre-2026-08-16 dump against a post-fix one — take the warn path and
+# exit 0, which is the join an operator is most likely to attempt.
+#
+# ⚑ The three field names are duplicated here rather than imported from
+# `scripts.audit_targets`: that module pulls in torch, and this one is
+# deliberately stdlib+numpy because `scripts/monitor_fen.sh` runs it on the
+# live training box. `tests/test_paired_compare.py` pins the two lists equal.
+INFERRED_WHEN_ABSENT: dict[str, str] = {
+    "input_encoding": json.dumps("fen_only"),
+    "search_shape": json.dumps(
+        {
+            "policy_temp": 1.0,
+            "target_max_visit_cap": 0,
+            "target_untempered_prior": False,
+        },
+        sort_keys=True,
+    ),
+}
 
 
 def _declared(dump: Dump, field: str) -> tuple[set[str], bool]:

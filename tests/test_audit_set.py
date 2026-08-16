@@ -328,13 +328,29 @@ def test_audit_targets_smoke(tmp_path, monkeypatch):
     }, ckpt)
 
     out_dir = tmp_path / "runs"
-    monkeypatch.setattr(
-        "sys.argv",
-        ["audit_targets.py", "--audit-set", str(audit), "--checkpoint", str(ckpt),
-         "--device", "cpu", "--sims", "4", "--batch-size", "2",
-         "--sf-soft-nodes", "500", "--sf-soft-multipv", "4",
-         "--out-dir", str(out_dir)],
+    argv = [
+        "audit_targets.py", "--audit-set", str(audit), "--checkpoint", str(ckpt),
+        "--device", "cpu", "--sims", "4", "--batch-size", "2",
+        "--sf-soft-nodes", "500", "--sf-soft-multipv", "4",
+        "--out-dir", str(out_dir),
+    ]
+
+  # ⚑ END-TO-END proof of the fail-closed rule, in the one test that drives the
+  # whole `main()`. CI has no live production yaml, so without
+  # `--allow-stale-config` this run has no authoritative reference for rows
+  # (d)/(e) and must REFUSE rather than emit them — the exact state that made
+  # the #227 defect reproducible from any worktree.
+    monkeypatch.delenv("CHESS_ANTI_ENGINE_LIVE_CONFIG", raising=False)
+    monkeypatch.setattr("sys.argv", list(argv))
+    with pytest.raises(SystemExit, match="REFUSING to score a production"):
+        at.main()
+    assert not list(out_dir.glob("target_audit_*.md")), (
+        "a refused run must leave no report behind"
     )
+
+  # With the deliberate escape, the run proceeds — and this is why the escape
+  # exists: scoring off the training host is a supported use.
+    monkeypatch.setattr("sys.argv", [*argv, "--allow-stale-config"])
     at.main()
     reports = list(out_dir.glob("target_audit_*.md"))
     assert len(reports) == 1

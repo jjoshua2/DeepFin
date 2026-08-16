@@ -427,18 +427,41 @@ def test_batch_size_is_never_inferred() -> None:
     assert INFERRED_WHEN_ABSENT["input_encoding"] == json.dumps("fen_only")
 
 
-def test_value_regret_dump_carries_its_ruler() -> None:
-    """The stamp the gate reads is the one the scorer actually writes.
+def test_every_ruler_field_is_written_by_some_scorer() -> None:
+    """The stamp the gate reads is one a scorer actually writes.
 
-    A gate reading a field no scorer emits would pass everything forever, so
-    the field NAMES are pinned against the producer rather than assumed.
+    A gate reading a field NO scorer emits would pass everything forever, so
+    the field NAMES are pinned against the producers rather than assumed.
+
+    ⚑ At least one producer, not every producer. This asserted "every field
+    appears in value_regret.py" until `search_shape` was added, and that is a
+    stronger claim than the anti-vacuity property it was after — `value_regret`
+    runs NO search, so it has no search shape to declare. Stamping one there
+    anyway would have been worse than useless: an old value_regret dump
+    (`search_shape` absent, hence INFERRED to the pre-fix shape) against a fresh
+    one (declaring `null`) would be REFUSED, breaking the standing VALUE
+    yardstick's own paired comparison. Cross-producer joins are not a real
+    workflow to begin with — `value_regret` dumps carry `value` and
+    `audit_targets` dumps carry `cand`, so no `--field` names both.
     """
+    import scripts.audit_targets as at
     import scripts.paired_compare as pc
     import scripts.value_regret as vr
 
-    src = (Path(vr.__file__).read_text(encoding="utf-8"))
+    producers = {
+        "value_regret.py": Path(vr.__file__).read_text(encoding="utf-8"),
+        "audit_targets.py": Path(at.__file__).read_text(encoding="utf-8"),
+    }
     for field in pc.RULER_FIELDS:
-        assert f'"{field}": ' in src, field
+        writers = [n for n, src in producers.items() if f'"{field}": ' in src]
+        assert writers, f"{field} is read by the gate and written by nobody"
+    # And the split is the one documented above, pinned so a field silently
+    # migrating between producers is visible.
+    vr_src = producers["value_regret.py"]
+    assert '"input_encoding": ' in vr_src
+    assert '"batch_size": ' in vr_src
+    assert '"search_shape": ' not in vr_src
+    assert '"search_shape": ' in producers["audit_targets.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -580,3 +603,110 @@ def test_match_stamp_shape_preserves_null_candidates() -> None:
     assert got["sf_soft"] is None
     assert got["raw"] == "fen_only"
     assert got == _audit_targets_stamp("fen_only")
+
+
+# ---------------------------------------------------------------------------
+# `search_shape`: rows (d)/(e) MOVED on 2026-08-16
+# ---------------------------------------------------------------------------
+#
+# Until then `audit_targets.py` built its "production training target" without
+# `gumbel_policy_temp` / `gumbel_target_max_visit_cap` /
+# `gumbel_target_untempered_prior`, and with the last two at their defaults
+# `mcts/gumbel.py` takes the `imp_store = imp_all` branch — so those rows were
+# the PLAY distribution. A pre-fix dump and a post-fix one join cleanly on key
+# and report a tight-CI delta that is entirely the ruler change. The eval
+# protocol note that records this cannot stop a tool; these can.
+
+_POST_FIX_SHAPE = {
+    "policy_temp": 1.5, "target_max_visit_cap": 5, "target_untempered_prior": True,
+}
+_PRE_FIX_SHAPE = {
+    "policy_temp": 1.0, "target_max_visit_cap": 0, "target_untempered_prior": False,
+}
+
+
+def test_pre_fix_dump_against_post_fix_dump_is_refused(tmp_path) -> None:
+    """The join this entry exists to stop: unstamped vs stamped."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    legacy = load_dump(_write_jsonl(tmp_path / "legacy.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    fresh = load_dump(_write_jsonl(tmp_path / "fresh.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+    ]))
+
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(legacy, fresh, label_a="LEGACY", label_b="NEW")
+
+
+def test_two_pre_fix_dumps_still_compare(tmp_path) -> None:
+    """Legacy-vs-legacy is the same ruler and must NOT be refused.
+
+    103 banked unstamped dumps exist under `scratchpad/`; an inference that
+    refused them against each other would break every historical readout to
+    stop a join that is not happening.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 11.0, input_encoding="fen_only", batch_size=256),
+    ]))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_an_explicit_pre_fix_stamp_matches_an_inferred_one(tmp_path) -> None:
+    """The INFERENCE must equal what a pre-fix build would have written.
+
+    Otherwise absence and an explicit legacy stamp would disagree, and the
+    inference would be a guess rather than a deduction.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    absent = load_dump(_write_jsonl(tmp_path / "absent.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    explicit = load_dump(_write_jsonl(tmp_path / "explicit.jsonl", [
+        _stamped("p", 11.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_PRE_FIX_SHAPE),
+    ]))
+
+    require_same_ruler(absent, explicit, label_a="ABSENT", label_b="EXPLICIT")
+
+
+def test_two_post_fix_dumps_compare(tmp_path) -> None:
+    """And the gate must be capable of PASSING on the current ruler."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    rows_a = [_stamped("p", 1.0, input_encoding="fen_only", batch_size=256,
+                       search_shape=_POST_FIX_SHAPE)]
+    rows_b = [_stamped("p", 2.0, input_encoding="fen_only", batch_size=256,
+                       search_shape=_POST_FIX_SHAPE)]
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", rows_a))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", rows_b))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_a_dump_that_mixes_two_search_shapes_is_refused(tmp_path) -> None:
+    """Within-dump disagreement means the file is not one reading."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    mixed = load_dump(_write_jsonl(tmp_path / "mixed.jsonl", [
+        _stamped("p", 1.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+        _stamped("q", 2.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_PRE_FIX_SHAPE),
+    ]))
+    ok = load_dump(_write_jsonl(tmp_path / "ok.jsonl", [
+        _stamped("p", 1.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+    ]))
+
+    with pytest.raises(SystemExit, match="mixes two rulers"):
+        require_same_ruler(mixed, ok, label_a="MIXED", label_b="OK")

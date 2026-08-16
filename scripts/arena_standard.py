@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import hashlib
 import json
 import math
 import shlex
@@ -43,9 +42,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import chess
 import numpy as np
+
+if TYPE_CHECKING:
+    from chess_anti_engine.eval.production_shape import LiveConfig
 
 from chess_anti_engine.eval.arena_pgn import (
     ArenaGame,
@@ -61,34 +64,11 @@ PgnSink = Callable[..., None]
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _resolve_production_config() -> tuple[Path, str, bool]:
-    """The config this arena treats as production, and whether it is the LIVE one.
-
-    This used to be an unconditional ``REPO_ROOT / "configs" / "pbt2_small.yaml"``.
-    That is right only when the arena runs from the live working tree: the
-    in-tree copy is stale by construction everywhere else, because the live
-    tree is its only writer and its edits are routinely uncommitted. Running
-    `--search-shape training` from a worktree therefore measured a search the
-    live trial does not run, and said "read from pbt2_small.yaml at run time"
-    while doing it.
-
-    ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` names the live file. The in-tree copy
-    remains the fallback so the script still works off the training host, but
-    the fallback is reported rather than assumed.
-    """
-    from chess_anti_engine.eval.production_shape import resolve_live_config_path
-
-    path, provenance, authoritative = resolve_live_config_path()
-    if path.is_file():
-        return path, provenance, authoritative
-    return REPO_ROOT / "configs" / "pbt2_small.yaml", "in-tree fallback", False
-
-
-# Only the PATH is kept as a module constant, for the openings default and the
-# config digest. Provenance and liveness are deliberately NOT cached here:
-# `production_config_flat()` re-resolves them at call time, and a cached copy
-# would be a second source of truth that agrees with the first only by luck.
-PRODUCTION_CONFIG = _resolve_production_config()[0]
+# The FALLBACK file, not the answer. `production_config()` below is the single
+# resolution; this is only what it lands on when the live config cannot be
+# resolved. Named for what it is so no caller mistakes it for "the production
+# config" and reads it directly — that mistake is the whole finding.
+IN_TREE_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
 
 # GumbelConfig fields on which an ARENA legitimately differs from production
 # selfplay. Reasons, not just names — an undocumented deviation has nowhere to
@@ -141,7 +121,7 @@ PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
 #             (c_scale_root 7 / q_visit_exp_root -1), vloss_weight 3. These are
 #             constants in mcts/gumbel.py, so they are safe to quote here.
 #   training  what production selfplay actually runs. NOT quoted here on
-#             purpose: every value is READ FROM `PRODUCTION_CONFIG` at call
+#             purpose: every value is READ FROM `production_config()` at call
 #             time (see `resolve_search_shape`), so it tracks the yaml. Fixed
 #             is the LINEAR root — the training shape leaves the root-transform
 #             sentinels at their GumbelConfig defaults and never takes play's
@@ -257,27 +237,57 @@ class SideSearch:
         )
 
 
-def production_config_flat() -> tuple[dict, Path, bool]:
-    """``(flat config, path it came from, is it the LIVE file)``.
+def production_config() -> LiveConfig:
+    """THE resolution. Every consumer in this file goes through it.
 
-    ⚑ Resolved at CALL time, not import time. ``PRODUCTION_CONFIG`` is a
-    module-level constant, so a guard that resolved the live config separately
-    could compare against a different file than the arena actually read — two
-    sources of truth that agree only by luck. That is the same defect this
-    change exists to remove, so there is exactly one resolution and everything
-    downstream takes its result.
+    ⚑ There used to be two: a module constant ``PRODUCTION_CONFIG`` resolved at
+    IMPORT time, which backed the openings default, the banked config digest
+    and every provenance string, and a separate call-time
+    ``load_live_config()`` that backed the search shape. The commit that
+    introduced the second one claimed it had removed the first. It had not, and
+    a divergence between them is not cosmetic: the arena would have banked a
+    digest of file A into a result record describing a search built from file
+    B, and the record is the artifact every later reading is joined against.
+
+    So the constant is gone. What remains is this function, resolved at CALL
+    time from ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` with the in-tree copy as a
+    reported, NON-authoritative fallback. Call time rather than import time
+    because the env var is the mechanism production actually uses (see
+    ``scripts/train.sh``) and an import-time read is decided by whichever
+    module happened to import first. It is deliberately NOT memoized either:
+    a cache is a second source of truth with extra steps, and the resolution
+    is a `stat` plus a yaml parse.
     """
-    from chess_anti_engine.eval.production_shape import load_live_config
-    from chess_anti_engine.utils.config_yaml import (
-        flatten_run_config_defaults,
-        load_yaml_file,
+    from chess_anti_engine.eval.production_shape import (
+        load_config_file,
+        load_live_config_or_reason,
     )
 
-    live = load_live_config()
+    live, reason = load_live_config_or_reason()
     if live is not None:
-        return live.flat, live.path, live.authoritative
-    flat = dict(flatten_run_config_defaults(load_yaml_file(str(PRODUCTION_CONFIG))))
-    return flat, PRODUCTION_CONFIG, False
+        return live
+    fallback, fallback_reason = load_config_file(
+        IN_TREE_CONFIG,
+        provenance=f"in-tree fallback; the live config is unavailable ({reason})",
+        authoritative=False,
+    )
+    if fallback is None:
+        raise SystemExit(
+            f"[shape] no production config could be read: {reason}; "
+            f"{fallback_reason}"
+        )
+    return fallback
+
+
+def production_config_path() -> Path:
+    """The file ``production_config()`` resolved. Same resolution, path only."""
+    return production_config().path
+
+
+def production_config_flat() -> tuple[dict, Path, bool]:
+    """``(flat config, path it came from, is it the LIVE file)``."""
+    cfg = production_config()
+    return cfg.flat, cfg.path, cfg.authoritative
 
 
 def production_selfplay_search_config(flat: dict | None = None):
@@ -330,7 +340,7 @@ def production_selfplay_search_config(flat: dict | None = None):
 
 
 def _assert_training_shape_is_production(
-    gumbel: dict[str, float], flat: dict,
+    gumbel: dict[str, float], flat: dict, cfg: LiveConfig | None = None,
 ) -> None:
     """Prove `--search-shape training` reproduces production selfplay's search.
 
@@ -363,19 +373,22 @@ def _assert_training_shape_is_production(
     from chess_anti_engine.eval.production_shape import (
         assert_matches_production,
         format_shape_table,
-        load_live_config,
         production_selfplay_gumbel_config,
     )
     from chess_anti_engine.mcts.gumbel import GumbelConfig
 
-    live = load_live_config()
-    if live is not None:
-        print(live.header(), flush=True)
-    else:
+  # `cfg` is the resolution the CALLER already made, so the header names the
+  # file `flat` came out of. Falling back to `production_config()` when a test
+  # drives the guard directly is safe for the same reason the constant was not:
+  # it is the same resolver, so it cannot land on a different file.
+    resolved = cfg if cfg is not None else production_config()
+    print(resolved.header(), flush=True)
+    if not resolved.authoritative:
         print(
-            "[shape] WARNING: no LIVE production config resolved; the shape "
-            f"below was read from {PRODUCTION_CONFIG}, which is stale by "
-            "construction outside the live working tree.",
+            "[shape] WARNING: the config above is NOT the live one "
+            f"({resolved.provenance}); it is stale by construction outside the "
+            "live working tree, so the comparison below proves only that this "
+            "arena agrees with THAT file.",
             flush=True,
         )
     prod = production_selfplay_gumbel_config(
@@ -414,7 +427,8 @@ def resolve_search_shape(shape: str) -> SideSearch:
         )
     if shape == "training":
       # ONE resolution, shared by the shape and by the guard that checks it.
-        flat, config_path, _is_live = production_config_flat()
+        cfg = production_config()
+        flat, config_path = cfg.flat, cfg.path
         search = production_selfplay_search_config(flat)
         # The knobs below are the ones that change which MOVE gets played.
         # Everything else is left at the GumbelConfig default, which IS the
@@ -441,7 +455,7 @@ def resolve_search_shape(shape: str) -> SideSearch:
             "volatility_fpu": float(search.volatility_fpu),
             "volatility_anchor": float(search.volatility_anchor),
         }
-        _assert_training_shape_is_production(gumbel, flat)
+        _assert_training_shape_is_production(gumbel, flat, cfg)
         return SideSearch(
             shape="training",
             source=f"{config_path.name} -> reco -> worker SearchConfig",
@@ -621,12 +635,13 @@ def default_openings_path() -> Path:
     """The 8-move UHO book from the production config (opening_book_path_2)."""
     import yaml
 
-    cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+    path = production_config_path()
+    cfg = yaml.safe_load(path.read_text())
     selfplay = cfg.get("selfplay", {}) if isinstance(cfg, dict) else {}
     book = selfplay.get("opening_book_path_2") or selfplay.get("opening_book_path")
     if not book:
         raise SystemExit(
-            f"no opening_book_path(_2) in {PRODUCTION_CONFIG}; pass --openings"
+            f"no opening_book_path(_2) in {path}; pass --openings"
         )
     return Path(str(book))
 
@@ -661,7 +676,7 @@ def default_compile_cache_dir() -> Path:
     try:
         import yaml
 
-        cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+        cfg = yaml.safe_load(production_config_path().read_text())
     except (OSError, ValueError):
         return fallback
     explicit = _find_nested(cfg, "distributed_worker_shared_cache_dir")
@@ -1305,11 +1320,30 @@ def git_sha() -> str:
         return "unknown"
 
 
-def production_config_hash() -> str:
+def production_config_record() -> dict:
+    """The banked IDENTITY of the config this run's search shape came from.
+
+    One resolution, three fields, written together. A bare digest was enough
+    while the config was a fixed in-tree path; it is not now that the file can
+    be either the live yaml or the in-tree fallback, because a reader joining
+    two rows cannot tell an unrecognised digest ("a config I have not seen")
+    from a non-authoritative one ("a config that was never production's").
+    ``config_authoritative`` is the field that answers the second question, and
+    it is the one that decides whether the row belongs in a table at all.
+    """
     try:
-        return hashlib.sha256(PRODUCTION_CONFIG.read_bytes()).hexdigest()[:12]
-    except OSError:
-        return "unknown"
+        cfg = production_config()
+    except (OSError, SystemExit):
+        return {
+            "config_hash": "unknown",
+            "config_name": "unknown",
+            "config_authoritative": False,
+        }
+    return {
+        "config_hash": cfg.sha256[:12],
+        "config_name": cfg.path.name,
+        "config_authoritative": bool(cfg.authoritative),
+    }
 
 
 def build_result_record(
@@ -1347,7 +1381,7 @@ def build_result_record(
         "search_reference": None if search_reference is None else search_reference.as_record(),
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "git_sha": git_sha(),
-        "config_hash": production_config_hash(),
+        **production_config_record(),
         "mode": mode,
         "label": label,
         "volatility_candidate": volatility_candidate,
@@ -1476,7 +1510,7 @@ def run_arena(
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
             f"{{{'|'.join(SEARCH_SHAPES)}}}. 'training' is what production selfplay "
-            f"runs, read from {PRODUCTION_CONFIG.name} at run time (linear root; "
+            f"runs, read from {production_config_path().name} at run time (linear root; "
             "c_scale/topk/vloss_weight/target_batch all come from that yaml, so "
             "they are not quoted here); 'play' is the tuned UCI/match shape "
             "(c_scale 0.025, topk 32, log root, vloss_weight 3). There is no "
@@ -1529,7 +1563,7 @@ def run_arena(
         cand_search = no_shape if search_candidate is None else search_candidate.describe()
         ref_search = no_shape if search_reference is None else search_reference.describe()
         base_tags = {
-            "ConfigHash": production_config_hash(),
+            "ConfigHash": production_config_record()["config_hash"],
             "GitSha": git_sha(),
             "ArenaMode": mode,
         }
@@ -1790,7 +1824,7 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                    help="REQUIRED for matched_sims: which search to measure. "
                         "'training' = what production selfplay runs: linear root, "
                         "with c_scale/topk/vloss_weight/target_batch read from "
-                        f"{PRODUCTION_CONFIG.name} at run time (deliberately not "
+                        f"{production_config_path().name} at run time (deliberately not "
                         "quoted here — they change with the config; the realized "
                         "values are printed at startup and stored in the result "
                         "record). 'play' = the tuned UCI/match shape (c_scale "

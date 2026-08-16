@@ -133,14 +133,26 @@ def _recover_soft_policy_temp(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     num = (a * b).sum(axis=1)
     den = (b * b).sum(axis=1)
     out = np.full(p64.shape[0], np.nan, dtype=np.float64)
-  # The floor is division-by-zero protection and nothing more — MEASURED, after
-  # an earlier revision of this comment claimed it was load-bearing against
-  # near-degenerate rows. It is not: the `mask` above already drops every entry
-  # below 1e-6, so any surviving off-reference entry contributes a LARGE
-  # log-ratio. On near-one-hot rows (entries 1e-3 down to 1e-9) `den` measures
-  # 130.8, 364.5, 0.0, 0.0 — never small-but-positive. So `den > 0.0` and
-  # `den > 1e-6` select identically, and no test can distinguish them. Recorded
-  # rather than deleted because "this guard is inert" is worth knowing.
+  # ⚑ THE FLOOR IS LOAD-BEARING, and in the OPPOSITE direction to what an
+  # earlier revision of this comment claimed. That revision recorded
+  # `den > 0.0` as an EQUIVALENT mutant on the argument that "the mask already
+  # drops every entry below 1e-6, so any surviving entry contributes a LARGE
+  # log-ratio". The argument is wrong about what `den` accumulates: `b` holds
+  # log-RATIOS to the reference, not log-probabilities, so two entries that
+  # both clear the mask and are nearly EQUAL contribute a near-zero `b` and
+  # hence a tiny `den`.
+  #
+  # `policy_target` is stored float16 (`replay/buffer.py:199`), which makes
+  # near-ties the common case rather than a contrived one: a 1-ulp fp16 tie at
+  # p ~= 0.5 gives den = 2.385e-07, under the floor. Without it that row's
+  # slope is num/den over two quantities that are both rounding noise, and the
+  # estimate comes back T ~= 3.0 for a row written at T = 2.0.
+  #
+  # Behaviour is UNCHANGED — the floor was always right, only its rationale was
+  # wrong — and the practical effect on the reported median is nil (4000-row
+  # Monte-Carlo, fp32 and fp16 both median 2.0000), because such rows are a
+  # small minority of a median. `test_fp16_near_tie_needs_the_den_floor` is the
+  # killing test, so `den > 0.0` is no longer recorded as equivalent.
     ok = den > 1e-6
     out[ok] = num[ok] / den[ok]
     return out
@@ -157,7 +169,10 @@ def _check_soft_policy_temp(recovered: np.ndarray) -> str:
     docstring was in before 2026-08-16, claiming "T = 3.0 in production" while
     the live yaml said 2.0.
     """
-    from chess_anti_engine.eval.production_shape import LIVE_CONFIG_ENV, load_live_config
+    from chess_anti_engine.eval.production_shape import (
+        CONFIG_ABSENT,
+        load_live_config_or_reason,
+    )
 
     finite = recovered[np.isfinite(recovered)]
     if finite.size == 0:
@@ -166,14 +181,31 @@ def _check_soft_policy_temp(recovered: np.ndarray) -> str:
             "(near-)one-hot, so no temperature is recoverable from the data."
         )
     med = float(np.median(finite))
-    live = load_live_config()
+    live, reason = load_live_config_or_reason()
     if live is None:
         return (
             f"[shape] soft_policy_temp: shards were written at T~={med:.4f} "
             f"({finite.size} informative rows). NOT compared against production "
-            f"— ${LIVE_CONFIG_ENV} is unset or unreadable."
+          # ⚑ The reason, not "unset or unreadable": unset, missing file and
+          # fails-to-flatten are three states with three different operator
+          # actions, and the union of them sends the reader to the wrong one.
+            f"— {reason}."
         )
-    want = float(live.flat.get("soft_policy_temp", 2.0))
+  # ⚑ NO `.get(..., 2.0)` FALLBACK. This function exists because a hard-coded
+  # 3.0 in the module docstring went stale; a hard-coded 2.0 here is the same
+  # bug with a fresher number, and it would report "MATCHES" for a config that
+  # does not mention `soft_policy_temp` at all. The `<absent>` sentinel from
+  # `compare_config_values` is the existing way to say "the key is not there",
+  # and absence is a NOT-CHECKED, never a pass.
+    raw = live.flat.get("soft_policy_temp", CONFIG_ABSENT)
+    if raw is CONFIG_ABSENT:
+        return (
+            f"[shape] soft_policy_temp: shards were written at T~={med:.4f} "
+            f"({finite.size} informative rows). NOT CHECKED (key absent from "
+            f"live config {live.path}) — there is nothing to compare against, "
+            "so this is not a pass."
+        )
+    want = float(raw)
     ok = abs(med - want) <= 0.05 * max(1.0, want)
     verdict = "MATCHES" if ok else "DOES NOT MATCH"
     line = (
