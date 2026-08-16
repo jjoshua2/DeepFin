@@ -29,6 +29,7 @@ from chess_anti_engine.mcts.search_options import (
     realized_rows,
 )
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
+from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 
 from .protocol import (
@@ -96,56 +97,6 @@ def _attach_log_file(path: str) -> None:
     ))
     root.addHandler(fh)
     _println(f"info string LogFile attached: {path!r}")
-
-
-def _unsearchable_king_reason(board: chess.Board) -> str | None:
-    """Why ``board``'s kings make it unsearchable, or None if they are fine.
-
-    ``chess.Board(fen)`` is a STRUCTURAL parse: it raises only on a malformed
-    FEN string, never on an impossible position. ``4k3/8/8/8/8/8/8/8 w - - 0 1``
-    parses happily, and until this guard existed it was stored and searched.
-
-    The condition checked is deliberately narrow: **python-chess's
-    ``Board.king(color)`` and the C ``lsb64(bb[KING] & occ[color])`` must
-    provably designate the same square.** Every king-safety answer on either
-    side of the Python/C boundary is computed relative to that square, so when
-    the two disagree — or when one of them does not exist — the two
-    implementations are answering about different positions. Measured on this
-    branch, all three ways of breaking it diverge, and all three in the
-    key-MERGING direction (we drop an en-passant term python-chess keeps, which
-    invents a repetition):
-
-      * no king             ``4k3/8/8/3pP3/8/8/8/8 w - d6``   — ``king()`` is
-        None, so python-chess's ``is_into_check`` short-circuits to False and
-        calls every ep capture legal, while ``bitboards_have_legal_ep`` returns
-        0 on ``!us_kings``;
-      * king marked promoted ``4k3/8/8/K~2pP2r/8/8/8/8 w - d6`` — ``Board.king``
-        masks with ``~promoted`` and returns None, while the C reads the raw
-        king bitboard;
-      * two kings of a colour ``4k3/8/7K/r2pP3/8/8/8/K7 w - d6`` — ``Board.king``
-        takes ``msb``, the C takes ``lsb``, and they pick different squares.
-
-    ⚑ This is NOT ``board.status() == Status.VALID`` and must not become it.
-    The comment on the caller's rejection path exists because EPD, puzzle and
-    blind-spot drivers feed arbitrary FENs, and those are routinely
-    weird-but-legal: pawns in odd files, lopsided material, the side not to move
-    already in check, an ep square that no double push could have produced.
-    ``VALID`` rejects all of those and would gut the very callers the fall-back
-    message was written for. This predicate says nothing about any of them.
-    ``selfplay/opening.py`` DOES use the full ``is_valid()`` — correctly, since a
-    training seed is supposed to be a real position — which is why the training
-    path never had this hole.
-    """
-    for color, name in ((chess.WHITE, "white"), (chess.BLACK, "black")):
-        king_bb = board.kings & board.occupied_co[color]
-        n_kings = chess.popcount(king_bb)
-        if n_kings != 1:
-            return f"{name} has {n_kings} kings, need exactly 1"
-        if board.king(color) is None:
-  # popcount is 1, so the square exists but carries a '~' promoted marker and
-  # Board.king()'s `& ~promoted` drops it. The C reads the raw king bitboard.
-            return f"{name}'s only king is marked promoted, so python-chess sees none"
-    return None
 
 
 def emit_handshake(options: EngineOptions) -> None:
@@ -542,16 +493,18 @@ class Engine:
         else:
   # Two rejection causes, one rejection path: a FEN that will not parse, and a
   # FEN that parses into a position whose kings the Python and C halves of the
-  # engine would disagree about (_unsearchable_king_reason). Both fall back to
+  # engine would disagree about (unsearchable_king_reason). Both fall back to
   # the start position with the same operator-visible message, so a driver only
   # has to recognise one failure shape.
+  # ⚑ This covers the FEN ONLY. The `moves` loop below can reach the same state
+  # from a legal FEN, and is guarded separately — see there.
             reason: str | None
             try:
                 start = chess.Board(cmd.fen)
             except ValueError as exc:
                 start, reason = chess.Board(), str(exc)
             else:
-                reason = _unsearchable_king_reason(start)
+                reason = unsearchable_king_reason(start)
             if reason is not None:
   # Falling back to the start position is a silent wrong-position answer: the
   # engine then returns a confidently-scored move for a board the caller never
@@ -584,6 +537,27 @@ class Engine:
                 )
                 break
             new_board.push(mv)
+  # ⚑ LEGAL IS NOT ENOUGH. python-chess's legal_moves includes CAPTURING THE
+  # ENEMY KING whenever the side not to move is already in check — and such a
+  # position is one we deliberately ACCEPT above, because EPD/puzzle drivers
+  # send them. So `position fen <opposite-check FEN> moves <...>`, the ordinary
+  # GUI idiom, walks a legal FEN into a kingless board one push at a time and
+  # the FEN guard never sees it. Measured end to end:
+  #   4k2r/8/8/8/3p4/8/2P5/4R1K1 w - - 0 1  moves e1e8 h8h7 c2c4
+  #   -> 4R3/7r/8/8/2Pp4/8/8/6K1 b - c3 0 2, which python-chess says has a
+  #      legal ep and bitboards_have_legal_ep says does not: the key-MERGING
+  #      divergence _cboard_impl.h's precondition (i) is about.
+  # Checked AFTER the push, against the same predicate, so any future way of
+  # breaking the precondition is caught by the one rule rather than by a
+  # hand-enumerated list of move shapes.
+            post_reason = unsearchable_king_reason(new_board)
+            if post_reason is not None:
+                new_board.pop()
+                self._warn_moves_truncated(
+                    cmd.moves, parsed, uci,
+                    f"leaves an unsearchable position ({post_reason})",
+                )
+                break
             parsed.append(mv)
         self._board = new_board
   # Record intent; the tree is advanced in _handle_go so ponder mode

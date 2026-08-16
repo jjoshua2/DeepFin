@@ -911,9 +911,9 @@ def test_board_fen_parse_does_not_reject_a_kingless_position() -> None:
      ("opponent kingless", _OPPONENT_KINGLESS_FEN)],
 )
 def test_uci_king_guard_rejects_every_disagreeing_board(label: str, fen: str) -> None:
-    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+    from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
-    reason = _unsearchable_king_reason(chess.Board(fen))
+    reason = unsearchable_king_reason(chess.Board(fen))
     assert reason is not None, (
         f"{label}: guard accepted a board whose kings the C and Python halves "
         f"disagree about -- see bitboards_have_legal_ep's precondition (i)"
@@ -931,7 +931,7 @@ def test_uci_king_guard_is_symmetric_because_search_flips_the_mover() -> None:
     early-out inside the tree. A mover-only guard would leave the hole open one
     node deeper, which is why this is not over-reach.
     """
-    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+    from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
     root = chess.Board(_OPPONENT_KINGLESS_FEN)
     assert root.king(chess.WHITE) is not None
@@ -946,7 +946,7 @@ def test_uci_king_guard_is_symmetric_because_search_flips_the_mover() -> None:
     assert kingless_mover.has_legal_en_passant() is True
     assert CBoard.from_board(kingless_mover).has_legal_en_passant() is False
 
-    reason = _unsearchable_king_reason(root)
+    reason = unsearchable_king_reason(root)
     assert reason is not None, (
         "guard is one-sided; a black-kingless root reaches search and its "
         "children put the kingless side on move"
@@ -961,7 +961,7 @@ def test_uci_king_guard_is_not_status_valid() -> None:
     which feed weird-but-legal FENs. Every board here is status-INVALID and must
     still be ACCEPTED; a future tightening to ``is_valid()`` fails this.
     """
-    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+    from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
     weird_but_searchable = [
         ("opposite check", "4k3/8/8/8/8/8/8/3KR3 w - - 0 1"),
@@ -973,18 +973,18 @@ def test_uci_king_guard_is_not_status_valid() -> None:
         assert board.status() != chess.STATUS_VALID, (
             f"{label}: fixture stopped being status-invalid, pick another"
         )
-        assert _unsearchable_king_reason(board) is None, (
+        assert unsearchable_king_reason(board) is None, (
             f"{label}: the king guard has been widened into is_valid(), which "
             f"rejects the EPD/puzzle callers the fall-back path exists for"
         )
 
 
 def test_uci_king_guard_accepts_normal_positions() -> None:
-    from chess_anti_engine.uci.engine import _unsearchable_king_reason
+    from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
-    assert _unsearchable_king_reason(chess.Board()) is None
-    assert _unsearchable_king_reason(chess.Board(_REPRO_FEN)) is None
-    assert _unsearchable_king_reason(chess.Board(_BOTH_KINGS_FEN)) is None
+    assert unsearchable_king_reason(chess.Board()) is None
+    assert unsearchable_king_reason(chess.Board(_REPRO_FEN)) is None
+    assert unsearchable_king_reason(chess.Board(_BOTH_KINGS_FEN)) is None
 
 
 @pytest.mark.parametrize(
@@ -1041,3 +1041,188 @@ def test_handle_position_still_accepts_a_weird_but_legal_fen(capsys) -> None:
     out = capsys.readouterr().out
     assert "rejected FEN" not in out, out
     assert engine._board == chess.Board(fen)
+
+
+# ---------------------------------------------------------------------------
+# Review round 5, P1: the FEN guard is not enough.
+#
+# python-chess's legal_moves includes CAPTURING THE ENEMY KING whenever the side
+# not to move is already in check -- and that position class is one the guard
+# deliberately ACCEPTS, because EPD/puzzle drivers send it. So `position fen <X>
+# moves <...>`, the ordinary UCI GUI idiom (tests/test_uci_smoke.py uses it),
+# walks a legal FEN into a kingless searched board one legal push at a time,
+# and the FEN-only guard never sees it. _handle_go takes self._board verbatim.
+#
+# ⚑ Every wiring test above passes moves=(), so all of them stay green against a
+# guard that skips the check whenever cmd.moves is non-empty (mutant MG6). These
+# are the tests that constrain the path which actually produces the bad board.
+# ---------------------------------------------------------------------------
+
+# Black is in check from Re1 down the e-file, so Rxe8 -- capturing the king --
+# is in white's legal_moves. Then h8h7 and the double push c2c4 create the ep.
+_KING_CAPTURE_FEN = "4k2r/8/8/8/3p4/8/2P5/4R1K1 w - - 0 1"
+_KING_CAPTURE_MOVES = ("e1e8", "h8h7", "c2c4")
+
+
+def test_the_root_of_the_king_capture_line_is_deliberately_accepted() -> None:
+    """The premise: the FEN guard must NOT reject this root.
+
+    If it did, the move-loop guard would be untested for the reason that
+    matters -- the position would never get past the FEN check in the first
+    place -- and this whole class would be closed by over-rejection instead.
+    """
+    from chess_anti_engine.utils.bitboards import unsearchable_king_reason
+
+    root = chess.Board(_KING_CAPTURE_FEN)
+    assert root.status() == chess.STATUS_OPPOSITE_CHECK
+    assert unsearchable_king_reason(root) is None, (
+        "the FEN guard now rejects the weird-but-legal root, which means the "
+        "predicate has been widened -- see test_uci_king_guard_is_not_status_valid"
+    )
+    assert chess.Move.from_uci("e1e8") in root.legal_moves, (
+        "python-chess stopped generating the king capture; if so this whole "
+        "class is gone and the move-loop guard can be reconsidered"
+    )
+
+
+def test_move_loop_truncates_before_a_king_capture_reaches_the_board(capsys) -> None:
+    """THE ROUND-5 FIX. Drive the real handler with a NON-EMPTY moves list.
+
+    This is the test that kills MG6 (``... if not cmd.moves else None``): every
+    other wiring test passes ``moves=()`` and cannot.
+    """
+    from unittest.mock import MagicMock
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import CmdPosition
+    from chess_anti_engine.utils.bitboards import unsearchable_king_reason
+
+    engine = Engine(worker=MagicMock())
+    engine._handle_position(
+        CmdPosition(fen=_KING_CAPTURE_FEN, moves=_KING_CAPTURE_MOVES),
+    )
+
+    out = capsys.readouterr().out
+    # The FEN itself was accepted -- the truncation path fired, not the fall-back.
+    assert "rejected FEN" not in out, out
+    assert "ignored" in out, f"move loop did not truncate: {out!r}"
+    assert "unsearchable" in out, (
+        f"truncated for the wrong reason -- 'illegal in ...' is imprecise for "
+        f"this cause and would also fire on an ordinary bad move: {out!r}"
+    )
+
+    stored = engine._board
+    assert unsearchable_king_reason(stored) is None, (
+        f"a board the C and Python halves disagree about reached self._board, "
+        f"which _handle_go passes to search verbatim: {stored.fen()}"
+    )
+    # Truncated at the offending push, keeping everything before it.
+    assert engine._pending_moves == [], engine._pending_moves
+    assert stored == chess.Board(_KING_CAPTURE_FEN)
+
+
+def test_the_king_capture_line_really_would_have_merged_keys() -> None:
+    """Without the guard this exact line produces the MERGE, not a near miss.
+
+    Rebuilt by hand from the same moves so the test states the consequence
+    rather than trusting the handler to have prevented it.
+    """
+    board = chess.Board(_KING_CAPTURE_FEN)
+    for uci in _KING_CAPTURE_MOVES:
+        board.push(chess.Move.from_uci(uci))
+
+    assert board.king(chess.BLACK) is None
+    assert board.ep_square == chess.C3
+    assert board.has_legal_en_passant() is True
+    assert CBoard.from_board(board).has_legal_en_passant() is False
+
+    without_ep = chess.Board(board.fen().replace(" c3 ", " - "))
+    assert board._transposition_key() != without_ep._transposition_key()
+    assert int(CBoard.from_board(board).zobrist_hash) == int(
+        CBoard.from_board(without_ep).zobrist_hash,
+    )
+    assert (
+        CBoard.from_board(board).has_legal_en_passant()
+        == CBoard.from_board(without_ep).has_legal_en_passant()
+    ), "expected the C repetition keys to be equal (the merge)"
+
+
+def test_move_loop_guard_does_not_disturb_an_ordinary_game(capsys) -> None:
+    """Negative control: a normal `position fen ... moves ...` is untouched."""
+    from unittest.mock import MagicMock
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import CmdPosition
+
+    engine = Engine(worker=MagicMock())
+    moves = ("e2e4", "e7e5", "g1f3", "b8c6")
+    engine._handle_position(CmdPosition(fen=chess.STARTING_FEN, moves=moves))
+
+    out = capsys.readouterr().out
+    assert "rejected FEN" not in out, out
+    assert "ignored" not in out, out
+    expected = chess.Board()
+    for uci in moves:
+        expected.push(chess.Move.from_uci(uci))
+    assert engine._board == expected
+    assert len(engine._pending_moves) == 4
+
+
+def test_rejection_path_clears_the_applied_tree_state() -> None:
+    """MG7: the rejection path's ``_applied_*`` reset was uncovered.
+
+    Benign today because ``_pending_fen = None`` forces a ``reset_tree()``, but
+    an uncovered reset is one refactor away from leaving the engine advancing a
+    tree built for a different position.
+    """
+    from unittest.mock import MagicMock
+
+    from chess_anti_engine.uci.engine import Engine
+    from chess_anti_engine.uci.protocol import CmdPosition
+
+    engine = Engine(worker=MagicMock())
+    engine._applied_fen = "some/earlier w - - 0 1"
+    engine._applied_moves = (chess.Move.from_uci("e2e4"),)
+    engine._handle_position(CmdPosition(fen="4k3/8/8/8/8/8/8/8 w - - 0 1", moves=()))
+
+    assert engine._applied_fen is None
+    assert engine._applied_moves == ()
+    assert engine._pending_fen is None
+    assert engine._pending_moves == []
+
+
+# --- eval/puzzles.py: the same predicate, the same two shapes ---------------
+
+
+def test_load_epd_skips_a_king_anomalous_position(tmp_path) -> None:
+    """Skipping conforms to load_epd's existing policy for unusable lines."""
+    from chess_anti_engine.eval.puzzles import load_epd
+
+    epd = tmp_path / "t.epd"
+    epd.write_text(
+        '8/8/8/3pP3/8/8/8/8 w - d6 bm e5d6; id "kingless";\n'
+        '4k3/8/8/3pP3/8/8/8/4K3 w - d6 bm e5d6; id "fine";\n',
+    )
+    loaded = load_epd(str(epd))
+    ids = [p.puzzle_id for p in loaded.puzzles]
+    assert ids == ["fine"], ids
+
+
+def test_parse_setup_and_best_rejects_a_king_capturing_setup_move() -> None:
+    """The _parse_setup_and_best twin of the UCI move-loop hole.
+
+    It validated the FEN, then pushed the setup move after only a legal_moves
+    check -- and the setup move can be the king capture.
+    """
+    from chess_anti_engine.eval.puzzles import _parse_setup_and_best
+
+    # Rxe8 captures the black king; d7d5 would then be the "best" reply.
+    assert _parse_setup_and_best(_KING_CAPTURE_FEN, ["e1e8", "h8h7"]) is None
+    # ...while an ordinary puzzle still parses.
+    ok = _parse_setup_and_best(chess.STARTING_FEN, ["e2e4", "e7e5"])
+    assert ok is not None
+    board, best = ok
+    assert best == chess.Move.from_uci("e7e5")
+    expected = chess.Board()
+    expected.push(chess.Move.from_uci("e2e4"))
+    assert board == expected, "the setup move must still be applied"

@@ -27,6 +27,7 @@ from chess_anti_engine.encoding import encode_position_for_model
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.moves.encode import index_to_move, move_to_index_for_encoding
+from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
 # Default rating buckets for Lichess-style evaluation, matching the LC0 blog
 # (https://lczero.org/blog/2024/02/...) coarse buckets.
@@ -139,6 +140,17 @@ def load_epd(path: str | Path) -> PuzzleSuite:
             board = chess.Board(fen)
         except ValueError:
             continue
+  # chess.Board() is a structural parse -- it accepts positions the C board and
+  # python-chess would answer king-safety questions about differently (see
+  # unsearchable_king_reason). Skipping conforms to this loop's established
+  # policy for every other unusable line ("except ValueError: continue",
+  # "if not best_moves: continue"), so it invents no new behaviour.
+  # ⚑ NOT an offline-only path: load_epd is imported by tune/trainable.py and
+  # run_puzzle_eval by tune/trainable_phases.py, called from
+  # _run_puzzle_eval_if_due INSIDE the training loop. It is inert by CONFIG
+  # (puzzle_epd: null, puzzle_interval: 0), which is a different claim.
+        if unsearchable_king_reason(board) is not None:
+            continue
 
   # Parse best moves: everything up to the first ";" that's followed by
   # another opcode (e.g. "id") or end of line.
@@ -205,7 +217,16 @@ def _parse_setup_and_best(
         return None
     if setup not in board.legal_moves:
         return None
+    if unsearchable_king_reason(board) is not None:
+        return None
     board.push(setup)
+    post_setup_reason = unsearchable_king_reason(board)
+  # ⚑ SAME SHAPE AS THE UCI MOVE LOOP: legal is not enough. python-chess's
+  # legal_moves includes capturing the enemy king when the side not to move is
+  # in check, so a setup move can walk an accepted FEN into a board whose kings
+  # the two halves disagree about. Checked after the push, not before.
+    if post_setup_reason is not None:
+        return None
     try:
         best = chess.Move.from_uci(move_tokens[1])
     except (ValueError, chess.InvalidMoveError):

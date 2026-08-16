@@ -860,38 +860,51 @@ static inline uint64_t cboard_transposition_key(const CBoard *b) {
  *     oracle KEEPS, so "8/8/8/3pP3/8/8/8/8 w - d6 0 1" and the same board with
  *     no ep right share our repetition key while python-chess separates them.
  *     That is the invent-a-repetition direction this whole key exists to remove,
- *     and it is accepted ONLY because no searched board can be in that state.
- *     It is NOT accepted on the grounds of being rare.
+     and it is NOT accepted on the grounds of being rare.
  *
- *     ⚑ THAT PRECONDITION IS ENFORCED, NOT ASSUMED — and it is written this way
- *     because the previous revision of this paragraph asserted it instead, said
- *     "cannot arise from play_batch, selfplay, MCTS or UCI parsing — every one of
- *     those starts from a legal position", and was WRONG on the fourth of its
- *     four paths. chess.Board(fen) is a STRUCTURAL parse: it raises only on a
- *     malformed FEN string, so "4k3/8/8/8/8/8/8/8 w - - 0 1" parsed, passed
- *     _handle_position's only filter (`except ValueError`), and was searched;
- *     nothing under uci/ looked at status(). Enumerating paths is not checking
- *     them. The two boundaries that now make it true, by name:
- *       - selfplay/arena seeds — selfplay/opening.py::_fen_reject_reason rejects
- *         on the full board.is_valid(), so a seed list cannot carry one. This is
- *         why the TRAINING path never had the hole;
- *       - UCI — uci/engine.py::_unsearchable_king_reason, called from
- *         _handle_position, rejects onto the same "rejected FEN ...; using the
- *         start position" path a malformed FEN takes. It checks ONLY that each
- *         side has exactly one king that python-chess also sees as one —
- *         deliberately NOT status()==VALID, which would reject the
- *         weird-but-legal positions the EPD/puzzle/blind-spot drivers named on
- *         that fall-back path actually send.
- *     ⚑ The guard is symmetric (both colours) even though precondition (i) is
- *     about the MOVER: search pushes moves, so a root whose OPPONENT lacks a
- *     king produces children whose MOVER lacks one. Root-level agreement does
- *     not survive a ply.
- *     ⚑ The guarantee is at those ENTRY POINTS, not in this type. from_raw and
- *     from_board still build a kingless board on request, and eval/puzzles.py
- *     parses EPD FENs with no such check — an offline eval driver, off the
- *     training path, recorded as a follow-up rather than fixed here. A NEW path
- *     that turns an externally-supplied FEN into a searched CBoard needs the
- *     same guard, or this paragraph goes stale the way its predecessor did.
+ *     ⚑ WHAT IS AND IS NOT GUARANTEED — stated as coverage of named entry
+ *     points, NOT as a property of every board that could reach here. Two
+ *     earlier revisions of this paragraph claimed the latter and both were
+ *     falsified by a reviewer executing the case they asserted:
+ *       rev 1  "cannot arise from play_batch, selfplay, MCTS or UCI parsing".
+ *              WRONG on the fourth: chess.Board(fen) is a STRUCTURAL parse, so
+ *              "4k3/8/8/8/8/8/8/8 w - - 0 1" passed _handle_position's only
+ *              filter (`except ValueError`) and was searched.
+ *       rev 2  guarded that FEN, then said "no searched board can be in that
+ *              state". WRONG for the SAME reason one level down: the `moves`
+ *              loop walked past the guard. python-chess's legal_moves includes
+ *              CAPTURING THE ENEMY KING when the side not to move is in check
+ *              — exactly the weird-but-legal class the guard deliberately
+ *              ACCEPTS — so "4k2r/8/8/8/3p4/8/2P5/4R1K1 w - - 0 1 moves e1e8
+ *              h8h7 c2c4" reached a kingless searched board through legal
+ *              pushes only.
+ *     Enumerating paths is not checking them; each rev's enumeration is what
+ *     failed, not its predicate.
+ *
+ *     GUARDED, by name — FEN *and* every subsequent push, against the one
+ *     shared predicate utils/bitboards.py::unsearchable_king_reason:
+ *       - UCI: uci/engine.py::_handle_position, on the parsed FEN and after each
+ *         `moves` push (truncating via _warn_moves_truncated);
+ *       - puzzles: eval/puzzles.py::load_epd and ::_parse_setup_and_best, the
+ *         latter also after its setup push. ⚑ NOT an offline-only path —
+ *         load_epd is imported by tune/trainable.py and run_puzzle_eval by
+ *         tune/trainable_phases.py::_run_puzzle_eval_if_due, INSIDE the training
+ *         loop. It is inert by CONFIG (puzzle_epd: null, puzzle_interval: 0),
+ *         which is a materially weaker claim than "off the training path";
+ *       - selfplay/arena seeds: selfplay/opening.py::_fen_reject_reason, on the
+ *         full board.is_valid() — stricter, and appropriate for a seed list.
+ *     The UCI/puzzle predicate is deliberately NOT status()==VALID, which would
+ *     reject the weird-but-legal positions those drivers actually send; it fires
+ *     on 0 of 5.9M real FENs (blindspot, audit, wac.epd, lichess puzzles). Both
+ *     colours are checked though precondition (i) is about the MOVER, because a
+ *     push makes the opponent the mover.
+ *
+ *     NOT GUARDED: everything else. CBoard.from_raw / from_board build such a
+ *     board on request, and ~a dozen scripts/ drivers construct
+ *     chess.Board(<arbitrary fen>) and feed MCTS directly. That list is NOT
+ *     reproduced here — an unchecked enumeration is what failed twice above.
+ *     A NEW path from an externally-supplied FEN to a searched CBoard needs the
+ *     shared predicate; nothing in this type will stop it.
  *
  *     Note this also re-opens the C-vs-Python split: _check_repetitions asks
  *     python-chess and answers True on the same board.
@@ -939,9 +952,11 @@ static inline int bitboards_have_legal_ep(const uint64_t bb[6],
      * (i). python-chess's is_into_check() returns False when there is no king,
      * making the ep capture LEGAL to it; we have nothing to test for exposure and
      * answer 0. That is the key-MERGING direction, accepted only because the
-     * entry points ENFORCE a king (selfplay/opening.py's is_valid(); uci/
-     * engine.py::_unsearchable_king_reason) — not because it is rare, and not
-     * on the say-so of an enumeration of callers. Moving this to `return 1` would
+     * guarded entry points ENFORCE a king on the FEN *and* on every push
+     * (utils/bitboards.py::unsearchable_king_reason, used by uci/engine.py and
+     * eval/puzzles.py; selfplay/opening.py uses the stricter is_valid()) — not
+     * because it is rare, and not for every caller: see the header's
+     * GUARDED/NOT GUARDED split. Moving this to `return 1` would
      * match the oracle and is a defensible alternative — but do it deliberately,
      * and update test_kingless_board_is_a_known_accepted_divergence, which asserts
      * today's answer BY NAME so the boundary cannot move silently. */
