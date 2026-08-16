@@ -52254,3 +52254,71 @@ output are retained as the reproducer.
 A minimal failing test exists at `scratchpad/rep2_20260816/test_rep2_lc0_pseudo_legal_ep_repetition.py`
 (FEN + 5 moves, no data dependency; two passing controls plus one that fails on current code). It is
 **not** promoted into `tests/` — promoting it would assert the tolerance this entry just declined.
+
+---
+
+## 2026-08-16 — lc0 control AMENDMENT 3: **guard 2's random-init BAND, MEASURED. AND IT HAS NOT CONVERGED AT n=8.**
+
+Discharges the prereg's outstanding pre-launch obligation ("the band must be measured and appended
+as AMENDMENT 3 BEFORE the primary readout"). Measured on the **FULL** held-out conversion (all 6
+frozen tars, 3,943,343 pool rows → 100,000 frozen, seed 0, sha256
+`f05b393db8df9d752f43fd8741813128cac74f6dc1c5d9d0d192f6318ae22986`), scoring a **random-init**
+model (`lc0_control_eval.py score` with `--checkpoint` omitted, `--seed` pinning `build_model`).
+
+| seed | top-1 agreement |
+|---|---|
+| 0 | 7.8800% |
+| 1 | 5.9250% |
+| 2 | 6.3570% |
+| 3 | 5.8230% |
+| 4 | 7.8440% |
+| 5 | 5.6640% |
+| 6 | 8.2890% |
+| 7 | **9.5390%** |
+
+**n=8 · min 5.6640% · max 9.5390% · SPREAD 3.875 pp · mean 7.1651% · sd 1.4201 pp.**
+The spread is **9.9× the 0.392 pp material bar**, confirming the prereg's decision to replace
+"it sits at chance" with a band — that phrasing was never testable.
+
+### ⚑⚑ THE RESULT THAT MATTERS IS NOT THE BAND, IT IS THAT THE BAND IS STILL GROWING
+
+**Predicted before running** (from the prereg's four unseeded draws, 0.0588–0.0806): a band of
+roughly **0.058–0.083, ~2.5 pp**. **Observed 0.0566–0.0954, 3.875 pp — the prediction was WRONG on
+the high side.** And the widening is not noise around a fixed value:
+
+| seeds | min | max | spread |
+|---|---|---|---|
+| first 7 | 5.6640% | 8.2890% | **2.625 pp** |
+| all 8 | 5.6640% | **9.5390%** | **3.875 pp** |
+
+**One additional draw moved the ceiling by 1.25 pp — 3.2× the material bar, on its own.**
+
+⇒ **A MAX OVER k DRAWS IS AN ORDER STATISTIC, AND IT GROWS WITH k.** A "random-init floor" quoted
+as `max(observed seeds)` therefore **understates the true ceiling by an unknown amount**, and the
+understatement is worst exactly when few seeds were run — which is when people quote it. A gate of
+the form "the trained net must beat the random-init band" is, under that definition, **a gate whose
+bar moves whenever anyone runs another seed** — [[a_gate_that_cannot_fail]] inverted: not a gate
+that cannot fail, but a gate that cannot hold still.
+
+⇒ **PRE-COMMITTED, so it cannot be chosen after seeing the trained number:** the floor for this arm
+is the **DISTRIBUTION**, not the observed max —
+**`mean + 3·sd = 7.1651 + 3 × 1.4201 = 11.43%`**. A trained checkpoint must exceed **11.43% top-1**
+on the frozen held-out set to be distinguishable from random initialisation at all. Reporting the
+raw range alongside it is fine; **using `max` as the bar is not.**
+
+⚑ This does NOT change the arm's deciding yardstick, which is a **SLOPE** (Δ held-out top-1,
+mid-budget vs last) and is unaffected by where the floor sits. The band gates a different
+question — "is this net doing anything at all" — and a trained net that fails it makes the slope
+uninterpretable regardless of its sign.
+
+### Method note worth keeping
+
+The prereg said guard 2 "needs a trained checkpoint and none exists". **That was wrong about the
+instrument:** `lc0_control_eval.py score` takes `--checkpoint` as OPTIONAL and scores a random-init
+model when it is omitted, which is exactly the floor. The obligation was dischargeable at any time
+and sat open because the flag's optionality was never checked. Cf.
+[[reachability_cannot_be_grepped_by_source_name]] — read the interface, not the summary of it.
+
+Shuffled-target floor observed alongside, for reference: ~0.0024–0.0030
+(`Σ_m p_pred(m)·p_tgt(m)`), consistent with the prereg's 0.003283 and ~19× below the
+`E[1/n_legal]` = 0.063622 uniform-mover reference the prereg corrected.
