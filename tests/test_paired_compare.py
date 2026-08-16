@@ -585,10 +585,19 @@ def test_match_stamp_shape_preserves_null_candidates() -> None:
 
 def _stamped_header(path: Path, *, ruler: str, n: int = 6, off: float = 0.0,
              extra: dict | None = None) -> str:
-    """A dump with a provenance HEADER on line 1, like `audit_cache` writes."""
+    """A dump with a provenance HEADER on line 1, like `audit_cache` writes.
+
+    ⚑ It must emit EVERY field `audit_cache_stamp` emits, `policy_map_version`
+    included. While that key was missing here, adding it to
+    `STAMP_NON_IDENTITY_KEYS` — i.e. silently retiring a real identity check —
+    broke no test: `audit_ruler_version` and `audit_set_digest` each have a
+    refuse-test, and this one had none. A fixture that under-declares turns the
+    exclude set into an unpinned constant.
+    """
     head = {"audit_cache_format": 1, "rows": n,
             "audit_set": "data/audit_set_v1.jsonl",
             "audit_set_digest": "deadbeef", "audit_ruler_version": ruler,
+            "policy_map_version": "PMV-000",
             **(extra or {})}
     lines = [json.dumps(head)]
     lines += [json.dumps({"fen": f"p{i}", "value": 10.0 + off + i, "phase": 1})
@@ -740,3 +749,155 @@ def test_a_stamp_key_only_one_side_declares_is_reported(tmp_path, capsys) -> Non
     out = capsys.readouterr().out
     assert "only_on_a" in out
     assert "only one side" in out
+
+
+# ---------------------------------------------------------------------------
+# #442 review — the stamp is now READ, not merely present
+# ---------------------------------------------------------------------------
+
+
+def test_a_differing_policy_map_version_is_refused(tmp_path) -> None:
+    """⚑ F5: this check existed but was not BEHAVIOURALLY PINNED.
+
+    `audit_cache_stamp` emits three identity fields. Two of them
+    (`audit_ruler_version`, `audit_set_digest`) had a refuse-test; the third
+    did not, and the test fixture did not even emit it — so moving
+    `policy_map_version` into `STAMP_NON_IDENTITY_KEYS` and thereby retiring a
+    real guard would have passed the whole suite. A guard with no test that
+    fails when it is removed is a guard nobody is holding.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"policy_map_version": "PMV-999"}))
+    with pytest.raises(SystemExit, match="policy_map_version"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_stamp_format_this_tool_does_not_understand_is_refused(tmp_path) -> None:
+    """⚑ F2: `if STAMP_FORMAT_KEY in r` is a PRESENCE test.
+
+    `STAMP_FORMAT_KEY` was excluded from the identity comparison on the grounds
+    that it is "equal by construction on any pair a reader accepts" — true of
+    `read_audit_cache_stamp`, which RAISES on a mismatch, and FALSE of
+    `load_dump`, which never read the value. MEASURED before the fix: format 1
+    vs format 99, everything else identical, exit 0 with a verdict printed.
+    """
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "b.jsonl", ruler="R",
+                           extra={"audit_cache_format": 99})
+    with pytest.raises(SystemExit, match="audit_cache_format"):
+        load_dump(path)
+
+
+def test_the_format_key_is_not_excluded_from_identity() -> None:
+    """Belt and braces: the exclude set must no longer carry the format key.
+
+    `load_dump`'s range check and `require_same_stamp`'s comparison are
+    independent — the first catches a format neither side understands, the
+    second catches a disagreeing pair — and a rationale that was false for one
+    reader must not be left standing for the next one.
+    """
+    from chess_anti_engine.utils.audit_cache_format import (
+        STAMP_FORMAT_KEY,
+        STAMP_NON_IDENTITY_KEYS,
+    )
+
+    assert STAMP_FORMAT_KEY not in STAMP_NON_IDENTITY_KEYS
+
+
+def test_a_stamp_declaring_the_wrong_row_count_is_refused(tmp_path) -> None:
+    """⚑ F4: the stamp binds to line 1 only.
+
+    `audit_cache_format.ROW_COUNT_KEY`'s own docstring says it exists to stop
+    "a truncated file, or two caches concatenated", and `read_audit_cache`
+    enforces it. `paired_compare` did not: MEASURED, a stamp declaring 9999
+    rows over an 8-row body exited 0 with a verdict.
+    """
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    Path(path).write_text(
+        Path(path).read_text(encoding="utf-8").replace('"rows": 6', '"rows": 9999', 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="9999 rows but the file holds 6"):
+        load_dump(path)
+
+
+def test_a_truncated_body_is_refused(tmp_path) -> None:
+    """The same guard from the other direction: rows removed, stamp untouched."""
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    Path(path).write_text("\n".join(lines[:4]) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="6 rows but the file holds 3"):
+        load_dump(path)
+
+
+def test_a_stamp_with_no_row_count_is_refused(tmp_path) -> None:
+    """A header that cannot vouch for its body is not provenance."""
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    Path(path).write_text(
+        Path(path).read_text(encoding="utf-8").replace('"rows": 6, ', "", 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="no integer 'rows' count"):
+        load_dump(path)
+
+
+def test_a_correct_row_count_still_loads(tmp_path) -> None:
+    """The control. A guard that refuses every file is not a guard."""
+    from scripts.paired_compare import load_dump
+
+    d = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R", n=6))
+    assert len(d.rows) == 6
+
+
+def test_a_second_provenance_header_is_refused(tmp_path) -> None:
+    """⚑ F4: `stamp = dict(r)` was LAST-WINS.
+
+    Two dumps concatenated kept only the final header and silently discarded
+    the first — including a disagreeing `audit_ruler_version`. MEASURED before
+    the fix: a file whose FIRST header declared `audit_ruler_version: R_EVIL`
+    exited 0, the evil header having been overwritten by the second.
+    `read_audit_cache` already refuses this exact shape.
+    """
+    from scripts.paired_compare import load_dump
+
+    a = Path(_stamped_header(tmp_path / "a.jsonl", ruler="R_EVIL", n=3))
+    b = Path(_stamped_header(tmp_path / "b.jsonl", ruler="R", n=3, off=1.0))
+    merged = tmp_path / "merged.jsonl"
+    merged.write_text(
+        a.read_text(encoding="utf-8") + b.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="SECOND provenance header"):
+        load_dump(str(merged))
+
+
+def test_the_row_count_guard_is_wired_into_the_command_line_path(
+    tmp_path, monkeypatch,
+) -> None:
+    """The lesson of this file's own surviving mutant: reach it through `main`.
+
+    Every assertion above calls `load_dump` directly, so a guard that is
+    correct and unreachable from the entry point would leave them all green.
+    """
+    from scripts.paired_compare import main
+
+    a = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    b = Path(_stamped_header(tmp_path / "b.jsonl", ruler="R", n=6, off=-5.0))
+    b.write_text(
+        b.read_text(encoding="utf-8").replace('"rows": 6', '"rows": 9999', 1),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["paired_compare.py", a, str(b)])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "9999 rows" in str(exc.value)

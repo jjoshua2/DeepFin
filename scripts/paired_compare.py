@@ -54,6 +54,8 @@ import numpy as np
 # constant. This module is deliberately stdlib+numpy and
 # `scripts/monitor_fen.sh` runs it against the live training box.
 from chess_anti_engine.utils.audit_cache_format import (
+    AUDIT_CACHE_FORMAT,
+    ROW_COUNT_KEY,
     STAMP_FORMAT_KEY,
     STAMP_NON_IDENTITY_KEYS,
 )
@@ -139,8 +141,11 @@ def load_dump(
     unusable = 0
     stamp: dict[str, Any] = {}
     provenance: dict[str, set[str]] = {f: set() for f in RULER_FIELDS}
+    n_data_lines = 0
     with open(path, encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
             r = json.loads(line)
             # ⚑ The provenance HEADER is not a data row. `audit_targets
             # --dump-per-position` writes its dump through
@@ -158,16 +163,49 @@ def load_dump(
             # `input_encoding` is deliberate: it stays correct for every stamp
             # key added later, and no data row can carry the sentinel.
             if STAMP_FORMAT_KEY in r:
-  # ⚑ CAPTURED, not merely skipped. Skipping was right for the ROW loop —
-  # the stamp's `input_encoding` is a scalar where rows hold a per-candidate
-  # dict, so folding it into `provenance` is what made a single-ruler dump
-  # look like two. But "not a data row" is not "not evidence": until this
-  # was captured, `paired_compare` RECOGNISED the stamp and then discarded
-  # it, so two dumps declaring DIFFERENT `audit_ruler_version` joined to
-  # exit 0 and printed a verdict under a banner that reads as a provenance
-  # certificate. Reviewer-confirmed by execution on PR #423.
+                # ⚑ CAPTURED, not merely skipped. Skipping was right for the
+                # ROW loop — the stamp's `input_encoding` is a scalar where
+                # rows hold a per-candidate dict, so folding it into
+                # `provenance` is what made a single-ruler dump look like two.
+                # But "not a data row" is not "not evidence": until this was
+                # captured, `paired_compare` RECOGNISED the stamp and then
+                # discarded it, so two dumps declaring DIFFERENT
+                # `audit_ruler_version` joined to exit 0 and printed a verdict
+                # under a banner that reads as a provenance certificate.
+                # Reviewer-confirmed by execution on PR #423.
+                if stamp:
+                    # ⚑ A SECOND header, not an overwrite. `stamp = dict(r)`
+                    # was last-wins, so a file made of two caches concatenated
+                    # kept only the LAST header and silently discarded the
+                    # first — including a disagreeing `audit_ruler_version`.
+                    # `read_audit_cache` already refuses this exact shape; the
+                    # comparison tool has no business being laxer than the
+                    # reader whose files it consumes.
+                    raise SystemExit(
+                        f"{path}: line {lineno} is a SECOND provenance header. "
+                        "This looks like two dumps concatenated, which the "
+                        "line-1 stamp cannot describe — and the first header's "
+                        "provenance would be silently discarded. Split them, or "
+                        "re-dump."
+                    )
                 stamp = dict(r)
+                declared_format = r.get(STAMP_FORMAT_KEY)
+                if declared_format != AUDIT_CACHE_FORMAT:
+                    # ⚑ The value, not merely the key. `if STAMP_FORMAT_KEY in r`
+                    # is a PRESENCE test, and presence was the whole check: two
+                    # dumps at formats 1 and 99 compared clean and exited 0
+                    # (measured). A format this reader does not know is a stamp
+                    # it cannot interpret, so every downstream identity check
+                    # over it is unsound.
+                    raise SystemExit(
+                        f"{path}: provenance stamp declares "
+                        f"{STAMP_FORMAT_KEY}={declared_format!r}, but this tool "
+                        f"understands {AUDIT_CACHE_FORMAT}. The stamp's layout "
+                        "is not the one these checks assume, so its identity "
+                        "fields cannot be compared. Update the tool, or re-dump."
+                    )
                 continue
+            n_data_lines += 1
             for pf in RULER_FIELDS:
                 if pf in r:
                     # json.dumps so a dict-valued stamp (audit_targets records
@@ -183,6 +221,27 @@ def load_dump(
                 duplicates.append(key)
                 continue
             rows[key] = (float(v), phase_label(r.get("phase", "?")))
+    if stamp:
+        # ⚑ THE STAMP BINDS TO LINE 1 ONLY, so without this a header lifted
+        # from a good dump certifies a TRUNCATED body — `read_audit_cache`
+        # enforces the count for exactly that reason and `paired_compare` did
+        # not, so a stamp declaring 9999 rows over an 8-row file exited 0 with
+        # a verdict (measured). A short dump is not a small sample here: it is
+        # a file that is not what its provenance says it is.
+        declared_rows = stamp.get(ROW_COUNT_KEY)
+        if not isinstance(declared_rows, int) or isinstance(declared_rows, bool):
+            raise SystemExit(
+                f"{path}: provenance stamp carries no integer "
+                f"'{ROW_COUNT_KEY}' count (found {declared_rows!r}), so the "
+                "header cannot vouch for the body it is stamped onto."
+            )
+        if declared_rows != n_data_lines:
+            raise SystemExit(
+                f"{path}: stamp declares {declared_rows} rows but the file "
+                f"holds {n_data_lines} — TRUNCATED, appended to, or carrying a "
+                "stamp lifted from another dump. Refusing to read a verdict off "
+                "a body its own provenance does not describe."
+            )
     if duplicates:
         unique_dupes = sorted(set(duplicates))
         raise SystemExit(
@@ -274,10 +333,26 @@ def require_same_stamp(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
     different `audit_ruler_version` values.
 
     **EXCLUDE, not include.** Every stamp key is ruler identity unless
-    `STAMP_NON_IDENTITY_KEYS` says otherwise, so a version field added to the
-    stamp later is guarded the day it appears. An include list would have to be
+    `STAMP_NON_IDENTITY_KEYS` says otherwise. An include list would have to be
     edited in lockstep with the writer and would fail silently when it was not —
     which is the defect class the stamp exists to prevent, one level up.
+
+    ⚑ WHAT THAT DOES AND DOES NOT BUY — the earlier wording ("a version field
+    added to the stamp later is guarded the day it appears") OVERCLAIMED, and
+    the day it appears is exactly the day it is NOT guarded. A key present on
+    one side and absent on the other takes the WARNING + `continue` path below
+    and exits 0; only a key present on BOTH sides with different values is
+    refused. So the exclude set buys automatic coverage from the day BOTH
+    writers emit the field, not from the day the first one does.
+
+    That behaviour is deliberate and is NOT a hole to be closed by refusing
+    one-sided keys. The writers legitimately stamp different `extra` sets —
+    `audit_targets.py` records `producer`/`input_encoding`, `foreign_net_audit.py`
+    records `net`/`topk` — and `scripts/audit_compare_buckets.py` exists to join
+    exactly that cross-producer pair. Refusing on one-sided absence would refuse
+    a comparison the pipeline is built around, in order to catch a case the
+    warning already names. `test_a_stamp_key_only_one_side_declares_is_reported`
+    pins it.
 
     An ABSENT stamp is warned about, not refused: dumps predating stamping are
     legitimately unstamped, and `require_same_ruler` already refuses the

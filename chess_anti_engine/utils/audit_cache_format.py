@@ -46,20 +46,40 @@ AUDIT_SET_DIGEST_KEY = "audit_set_digest"
 
 #: Stamp keys that may legitimately DIFFER between two dumps being compared.
 #: Everything else in a stamp is ruler identity and must match, so this is
-#: expressed as an EXCLUDE set rather than an include list: a version field
-#: added to the stamp later is then guarded automatically, whereas an include
-#: list would silently fail to cover it. Same reasoning as
-#: `scripts/paired_compare.py` skipping on the SENTINEL rather than
-#: special-casing one key.
+#: expressed as an EXCLUDE set rather than an include list: an include list
+#: would have to be edited in lockstep with the writer and would fail silently
+#: when it was not. Same reasoning as `scripts/paired_compare.py` skipping on
+#: the SENTINEL rather than special-casing one key.
 #:
-#:   - `STAMP_FORMAT_KEY` is equal by construction on any pair a reader accepts.
+#: ⚑ NOT "guarded the day it appears" — that claim was here and it was wrong.
+#: A new stamp field is guarded from the day BOTH writers emit it. On the day
+#: only one does, the key is one-sided, and `require_same_stamp` WARNS and
+#: continues (exit 0) rather than refusing. That is deliberate: the writers
+#: legitimately carry different `extra` sets and `scripts/audit_compare_buckets.py`
+#: joins across them. See `require_same_stamp` for the full argument.
+#:
+#: ⚑⚑ `STAMP_FORMAT_KEY` IS NOT EXCLUDED, AND THE RATIONALE THAT EXCLUDED IT
+#: WAS FALSE FOR THE READER THAT MATTERS. It used to say the key is "equal by
+#: construction on any pair a reader accepts" — true of `read_audit_cache_stamp`,
+#: which RAISES on a format mismatch, and false of `scripts/paired_compare.py`,
+#: whose `load_dump` tested only key PRESENCE (`if STAMP_FORMAT_KEY in r`) and
+#: never read the value. MEASURED: dump A at format 1 vs dump B at format 99,
+#: everything else identical → exit 0, verdict printed. A justification that
+#: names one reader's invariant and is applied to another reader is the same
+#: defect as the stamp being recognised and then ignored, one level up. It is
+#: latent while the constant is 1 and live the day it is bumped, which is
+#: precisely when a stale reader is most dangerous. `load_dump` now also
+#: range-checks the declared format, so the two guards are independent.
+#:
 #:   - `ROW_COUNT_KEY` differs whenever two dumps cover different position
-#:     counts, which a paired join handles by intersecting.
+#:     counts, which a paired join handles by intersecting. ⚑ It is excluded
+#:     only from the CROSS-DUMP comparison; each dump's count is still binding
+#:     on its own body, and every reader must enforce that (see
+#:     `read_audit_cache`, and `load_dump` since the #442 review).
 #:   - `AUDIT_SET_KEY` is a human-readable PATH, and this module's own comment on
 #:     `AUDIT_SET_DIGEST_KEY` says why a path is not a provenance value. The
 #:     digest is the field that must agree, and it is deliberately not excluded.
 STAMP_NON_IDENTITY_KEYS: frozenset[str] = frozenset({
-    STAMP_FORMAT_KEY,
     ROW_COUNT_KEY,
     AUDIT_SET_KEY,
 })
