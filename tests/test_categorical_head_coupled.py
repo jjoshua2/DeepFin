@@ -249,28 +249,48 @@ def _trainer(model: ChessNet, log_dir: Path) -> Trainer:
     )
 
 
-def test_enabling_the_flag_warm_starts_weights_but_RESETS_the_optimizer(
+def test_enabling_the_flag_warm_starts_weights_AND_keeps_the_donor_moments(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """⚑ EXPERIMENT-VALIDITY PIN, not a fix: switching topology on an existing
-    checkpoint keeps the WEIGHTS and throws away every optimizer moment.
+    """⚑ EXPERIMENT-VALIDITY, and it used to be a PIN ON THE DEFECT.
 
-    `_remap_optimizer_state_for_new_params` can only SPLICE fresh slots in, and
-    only when the donor is SHORTER. Here the donor is LONGER (the standalone
-    `ValueHead`'s six tensors leave, two arrive), so no splice is possible --
-    and it could not be made positional anyway, since optimizer state is indexed
-    by position with no parameter names to realign on.
+    Until `_remap_optimizer_state_by_param_name` this test asserted the opposite:
+    switching topology kept the WEIGHTS and threw away EVERY optimizer moment.
+    `_remap_optimizer_state_for_new_params` splices by POSITION, so it is defined
+    only when the donor is SHORTER, and `Trainer.load` only called it then. Here
+    the donor is LONGER (the standalone `ValueHead`'s six tensors leave, two
+    arrive), so `Optimizer.load_state_dict` raised on the group size and the
+    handler installed a fresh optimizer.
 
     ⇒ Both arms of the coupled-head experiment must be warm-started the SAME
-    way. Comparing a flag-flip against a run that kept its moments measures the
-    optimizer reset, not the head. Asserted rather than fixed, and asserted to be
-    LOUD: a silent moment reset is exactly this codebase's signature defect.
+    way, and "both reset" was only ever the cheap way to get there — it made the
+    flag-flip arm pay a full optimizer reset the control did not need. Now the
+    six removed tensors' state is dropped, the two new ones start fresh, and
+    every OTHER parameter carries its donor moment across unchanged.
+
+    Assertions are per (name, state key) against the donor's own tensors, never
+    on the count or the log line: a positional remap would leave a fully
+    populated state in which parameters hold each other's moments.
+    `tests/test_optimizer_state_param_decrease.py` is the dedicated coverage.
     """
     std, cpl = _build(coupled=False), _build(coupled=True)
     src = _trainer(std, tmp_path / "src")
     src.model(_planes())["wdl"].pow(2).sum().backward()
+  # `wdl` alone leaves the standalone `value_categorical` head without a
+  # gradient, so it would bank no moments and "its state was dropped" would be
+  # vacuously true of a head that never had any. Fill the rest.
+    for param in src.model.parameters():
+        if param.requires_grad and param.grad is None:
+            param.grad = torch.randn_like(param)
     src.opt.step()
     assert any(bool(s) for s in src.opt.state.values()), "donor must carry real moments"
+    src_by_id = {id(p): n for n, p in src.model.named_parameters()}
+    banked = {
+        (src_by_id[id(param)], key): value.clone()
+        for param, state in src.opt.state.items()
+        for key, value in state.items()
+        if torch.is_tensor(value) and value.is_floating_point()
+    }
     ckpt = tmp_path / "standalone.pt"
     src.save(ckpt)
 
@@ -278,9 +298,27 @@ def test_enabling_the_flag_warm_starts_weights_but_RESETS_the_optimizer(
     with caplog.at_level(logging.WARNING):
         dst.load(ckpt)
 
-    assert not any(bool(s) for s in dst.opt.state.values()), "moments must be gone"
-    assert any("reinitialising optimizer" in r.message for r in caplog.records)
-    with torch.no_grad():  # ...while the weights themselves DID warm-start
+    assert not any("reinitialising optimizer" in r.message for r in caplog.records)
+    dst_by_id = {id(p): n for n, p in dst.model.named_parameters()}
+    seen = {
+        (dst_by_id[id(param)], key): value
+        for param, state in dst.opt.state.items()
+        for key, value in state.items()
+        if torch.is_tensor(value) and value.is_floating_point()
+    }
+    assert any(name.startswith("value_categorical.") for name, _ in banked)
+    assert not any(name.startswith("value_categorical.") for name, _ in seen), (
+        "the removed standalone head left orphaned optimizer state behind"
+    )
+    assert not any(name.startswith("value_categorical_coupled") for name, _ in seen), (
+        "the NEW coupled head inherited a donor moment"
+    )
+    survivors = {k for k in banked if not k[0].startswith("value_categorical.")}
+    assert survivors == set(seen), sorted(survivors ^ set(seen))
+    for key, value in seen.items():
+        assert torch.equal(value, banked[key]), f"{key} carries a different moment"
+
+    with torch.no_grad():  # ...and the weights themselves still warm-start
         assert torch.equal(std(_planes())["wdl"], cpl(_planes())["wdl"])
 
 

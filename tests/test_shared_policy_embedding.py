@@ -1034,5 +1034,12 @@ def test_the_launcher_returns_a_handle_that_can_actually_be_reaped(
 
 def test_arch_schema_version_was_bumped_for_these_fields() -> None:
     """Defaulting either field builds a different architecture, which is exactly
-    what the constant documents itself for."""
-    assert ARCH_SCHEMA_VERSION == 19
+    what the constant documents itself for.
+
+    These two arrived at v19. The constant has since moved on (v20,
+    `aux_policy_head_dim`), so the bound here is `>=`: the EXACT pin — the gate
+    that makes the next new field bump the version — lives with the newest
+    field, in `tests/test_aux_policy_head_dim.py`, so that exactly one test has
+    to be edited per bump rather than every historical one.
+    """
+    assert ARCH_SCHEMA_VERSION >= 19

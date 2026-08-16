@@ -6,7 +6,7 @@ import logging
 import math
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,6 +101,79 @@ from .muon import MuonWithAuxAdam
 from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
+
+
+class UnsupportedWarmStartError(Exception):
+    """This optimizer layout cannot be warm-started across a parameter change.
+
+    ⚑ NOT a subclass of ``ValueError``/``RuntimeError``, deliberately: the
+    generic handler in ``Trainer.load`` catches those and reports
+    *"Optimizer state incompatible with new model layout"*, which is a
+    MISATTRIBUTION here. The layout is fine; the warm-start machinery does not
+    cover it. A dedicated type gets a dedicated message naming the exact config
+    combination, so an operator is told the combination is unsupported instead
+    of hunting a layout bug that does not exist.
+
+    Two combinations raise it, both found by independent review of PR #439 and
+    both **unreachable from production**, which runs ``optimizer: aurora`` +
+    ``matrix_optimizer_scope: mlp_out`` with no ``weight_decay_mode`` key:
+
+    * ``weight_decay_mode: soda`` reaching the NAME-based re-key. The re-key
+      reconstructs ``{state, param_groups}`` and nothing else, so
+      ``SODAWeightDecayWrapper``'s top-level ``soda_anchors`` is dropped; its
+      ``load_state_dict`` then finds an anchor missing for every marked
+      parameter and raises, and the whole optimizer cold-starts.
+    * ``optimizer: soap`` with a non-default matrix scope, which builds a
+      ``_ChainedOptimizer`` whose state lives in its CHILDREN while the outer
+      ``state`` stays empty. ``reset_mismatched_optimizer_state`` sweeps the
+      outer view, finds nothing, and leaves donor-shaped moments under resized
+      tensors -- silent until the first child ``opt.step()``.
+
+    ⚑ PR #439 does not create either defect; the ``_ChainedOptimizer`` nesting
+    is documented at its construction site. What #439 changes is WHO CAN REACH
+    them: before it, ``aux_policy_head_dim`` did not exist on ``main``, so no
+    ``main``-based warm start could resize the auxiliary heads. Widening
+    reachability without widening the guard is this repo's signature defect, so
+    the combinations are refused here rather than filed. Refusing means the
+    donor state is discarded and the run cold-starts -- loud and bounded --
+    instead of training on moments that belong to other tensors.
+
+    The real fix (carry wrapper keys through the re-key; recurse the sweep into
+    child optimizers) is optimizer-state surgery on warm-start code and belongs
+    in its own reviewed PR, not in a forward-port bridge.
+    """
+
+
+class UntrustedOptimizerStateError(ValueError):
+    """The donor optimizer state could not be re-keyed by NAME, and its INDEX
+    order must not be trusted either.
+
+    ⚑ This type exists because "cannot remap" splits into two cases that need
+    OPPOSITE handling, and conflating them silently corrupts a warm start:
+
+    * **Not applicable** — an ordinary resume where the live and donor names are
+      identical, or a checkpoint whose manifest is unreadable. Nothing needs
+      re-keying; the positional ``load_state_dict`` below is exactly right, and
+      declining silently is correct. Those paths still ``return None``.
+    * **Untrusted** — a donor name that resolves to nothing, a moment tensor
+      whose shape disagrees with the parameter it claims to belong to, or
+      duplicate slot ids. Here the name mapping is KNOWN to be unreliable, and
+      optimizer state is keyed by an integer index into the flattened
+      ``param_groups`` order, so falling back to a positional load hands every
+      parameter some OTHER parameter's moments.
+
+    Measured by independent review 2026-08-14, on both live optimizer layouts:
+    with the counts equal, that fallback installed state that is non-empty,
+    correctly shaped, steppable, **wrong, and silent** — no warning, and
+    ``optimizer_state_loaded`` left True so the scheduler and zclip were
+    restored on top of it. ``reset_mismatched_optimizer_state`` cannot catch it,
+    because the shapes match by construction.
+
+    So an untrusted mapping REFUSES the positional load and cold-starts instead.
+    That costs the donor moments and biases the first iterations, which is a real
+    price — but absent moments are loud and bounded, while wrong moments are
+    undetectable by every instrument downstream.
+    """
 
 
 class _TrainBatchIterator:
@@ -581,6 +654,75 @@ class _ChainedOptimizer(torch.optim.Optimizer):
         ]
 
 
+def _unwrap_optimizer(opt: torch.optim.Optimizer) -> torch.optim.Optimizer:
+    """The innermost optimizer behind any ``.base`` wrapper chain.
+
+    ``SODAWeightDecayWrapper`` wraps whatever the optimizer branch built, so an
+    ``isinstance`` test on ``self.opt`` alone misses a ``_ChainedOptimizer``
+    sitting one layer down -- and SOAP + SODA is precisely the combination that
+    produces both. Bounded by identity so a wrapper that returns itself as its
+    own ``base`` cannot spin.
+    """
+    seen: set[int] = set()
+    while id(opt) not in seen:
+        seen.add(id(opt))
+        base = getattr(opt, "base", None)
+        if not isinstance(base, torch.optim.Optimizer):
+            break
+        opt = base
+    return opt
+
+
+@dataclass(frozen=True)
+class _DecayGroupLayout:
+    """How the four decay buckets were laid out across the optimizer's groups.
+
+    Recorded at construction, next to the code that builds the groups, so
+    ``Trainer._donor_optimizer_param_names`` can replay the assignment over a
+    checkpoint instead of guessing it. ``bucket_to_group[i]`` is the index of
+    the ``optimizer.param_groups`` entry that received decay bucket ``i``, or
+    ``-1`` when that bucket has no group (the plain two-group AdamW layout has
+    no hidden buckets, and ``hidden_filter`` is then None so they stay empty).
+
+    Absent (None on the Trainer) for the layouts this cannot describe — the
+    ``global_board_*`` branch groups, SOAP's chained/flattened forms — in which
+    case the name-based optimizer remap declines and the caller keeps its
+    existing behaviour.
+    """
+
+    hidden_filter: Callable[[str, Any], bool] | None
+    bucket_to_group: tuple[int, int, int, int]
+
+
+def decay_bucket_index(
+    name: str,
+    param: Any,
+    hidden_filter: Callable[[str, Any], bool] | None,
+) -> int:
+    """Which of (hidden_decay, hidden_no_decay, aux_decay, aux_no_decay) *param* lands in.
+
+    The SINGLE definition of the bucketing rule. ``_split_decay_groups`` applies
+    it to a live model; ``Trainer._donor_optimizer_param_names`` replays it over
+    a CHECKPOINT's tensors to recover which optimizer slot each donor parameter
+    occupied. Two copies of this rule would let the replay drift away from the
+    construction it is supposed to mirror, and the failure that produces —
+    donor moments re-associated with the wrong parameter — is silent.
+
+    Only ``name``, ``param.ndim`` and the filter are consulted, which is exactly
+    what makes the replay possible: every input is recoverable from a saved
+    ``state_dict`` entry.
+    """
+    is_no_decay = param.ndim <= 1 or name.endswith(".bias")
+    is_hidden = bool(hidden_filter(name, param)) if hidden_filter else False
+    if is_hidden and not is_no_decay:
+        return 0
+    if is_hidden:
+        return 1
+    if is_no_decay:
+        return 3
+    return 2
+
+
 def _split_decay_groups(
     model: torch.nn.Module,
     *,
@@ -593,23 +735,12 @@ def _split_decay_groups(
     from the rest (aux_*); without it, hidden_* are empty and all params go
     into aux_*.
     """
-    hidden_decay: list = []
-    hidden_no_decay: list = []
-    aux_decay: list = []
-    aux_no_decay: list = []
+    buckets: tuple[list, list, list, list] = ([], [], [], [])
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        is_no_decay = param.ndim <= 1 or name.endswith(".bias")
-        is_hidden = bool(hidden_filter(name, param)) if hidden_filter else False
-        if is_hidden and not is_no_decay:
-            hidden_decay.append(param)
-        elif is_hidden:
-            hidden_no_decay.append(param)
-        elif is_no_decay:
-            aux_no_decay.append(param)
-        else:
-            aux_decay.append(param)
+        buckets[decay_bucket_index(name, param, hidden_filter)].append(param)
+    hidden_decay, hidden_no_decay, aux_decay, aux_no_decay = buckets
     return hidden_decay, hidden_no_decay, aux_decay, aux_no_decay
 
 
@@ -1463,6 +1594,27 @@ def state_dict_digest(sd: Mapping[str, Any]) -> str:
     return digest.hexdigest()[:16]
 
 
+def strip_compile_prefix_from_name(name: str) -> str:
+    """Drop ``torch.compile``'s ``_orig_mod.`` wrapper segment from ONE name.
+
+    ⚑⚑ THE PROJECT'S SINGLE DEFINITION OF THIS RULE. ``strip_compile_prefix``
+    (keys of a mapping) and ``Trainer._wrap_agnostic_name`` (a single
+    ``named_parameters()`` name) both delegate here, so the two cannot drift
+    apart. They previously carried the rule TWICE, and independent review of
+    PR #439 mutated the second copy to ``removeprefix`` and watched the whole
+    suite pass — the only survivor of 20 mutations.
+
+    ⚑ ``replace(..., 1)``, NEVER ``removeprefix``: the segment is not always
+    leading. ``AveragedModel`` (SWA) nests the compiled module, so its keys read
+    ``module._orig_mod.embed.weight`` and ``removeprefix`` leaves them untouched.
+    That is not hypothetical — it is PR #267's J9 defect verbatim, which shipped
+    because its own tests only inspected output where the prefix happened to be
+    leading. No real submodule is named ``_orig_mod``, so removing the first
+    occurrence anywhere is safe.
+    """
+    return name.replace("_orig_mod.", "", 1)
+
+
 def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
     """Drop ``torch.compile``'s ``_orig_mod.`` wrapper segment from state_dict keys.
 
@@ -1474,14 +1626,11 @@ def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
     then reports every key as unexpected and leaves a fresh-init model behind
     with no error — the failure mode that destroyed the model on 2026-04-27.
 
-    ``replace(..., 1)`` rather than ``removeprefix`` because the segment is not
-    always leading: ``AveragedModel`` (SWA) nests the compiled module, so its
-    keys read ``module._orig_mod.embed.weight``. ``removeprefix`` left those
-    untouched, so ``save()``'s ``swa_model`` entry was never actually made
-    wrap-agnostic despite the comment claiming it was. No real submodule is
-    named ``_orig_mod``, so removing the first occurrence anywhere is safe.
+    The rule itself lives in ``strip_compile_prefix_from_name`` -- including why
+    it is ``replace(..., 1)`` and never ``removeprefix`` -- so that this and
+    ``Trainer._wrap_agnostic_name`` cannot disagree.
     """
-    return {k.replace("_orig_mod.", "", 1): v for k, v in sd.items()}
+    return {strip_compile_prefix_from_name(k): v for k, v in sd.items()}
 
 
 def align_compile_prefix(
@@ -1881,6 +2030,9 @@ class Trainer:
                     )
             return marked
 
+  # Set by whichever branch below builds the groups; stays None for the
+  # layouts `_DecayGroupLayout` cannot describe. See `_donor_optimizer_param_names`.
+        self._decay_group_layout: _DecayGroupLayout | None = None
         if optimizer in ("muon", "aurora"):
             if optimizer == "muon":
                 hidden_filter = _matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=True)
@@ -1899,6 +2051,15 @@ class Trainer:
                 (hd, hnd, ad, and_),
                 self.model,
                 lambda name, _param: name.startswith("global_board_adapter."),
+            )
+  # Groups 0-3 are [hd, hnd, ad, and_] on both the muon and the aurora
+  # branch below. Any `global_board_*` branch group re-homes parameters
+  # OUT of those four by name, which `decay_bucket_index` alone cannot
+  # reproduce, so the layout is withheld and the name-based remap declines.
+            self._decay_group_layout = (
+                None
+                if (global_board_preprocess_params or global_board_adapter_params)
+                else _DecayGroupLayout(hidden_filter=hidden_filter, bucket_to_group=(0, 1, 2, 3))
             )
   # Muon/Aurora trunk gets a larger LR than the AdamW fallback for heads/norms.
   # Keep one Tune-search LR and derive trunk LR so search stays simple.
@@ -1964,12 +2125,13 @@ class Trainer:
         else:
   # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
             if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
+                soda_hidden_filter = _matrix_optimizer_filter(
+                    matrix_optimizer_scope,
+                    include_embed_default=False,
+                )
                 hd, hnd, ad, and_ = _split_decay_groups(
                     self.model,
-                    hidden_filter=_matrix_optimizer_filter(
-                        matrix_optimizer_scope,
-                        include_embed_default=False,
-                    ),
+                    hidden_filter=soda_hidden_filter,
                 )
                 param_groups = [
                     {"params": hd, "weight_decay": 0.0},
@@ -1977,6 +2139,9 @@ class Trainer:
                     {"params": ad, "weight_decay": 0.0},
                     {"params": and_, "weight_decay": 0.0},
                 ]
+                self._decay_group_layout = _DecayGroupLayout(
+                    hidden_filter=soda_hidden_filter, bucket_to_group=(0, 1, 2, 3),
+                )
                 use_soda_weight_decay = _mark_soda(param_groups)
             else:
                 _, _, decay_params, no_decay_params = _split_decay_groups(self.model)
@@ -1984,6 +2149,11 @@ class Trainer:
                     {"params": decay_params, "weight_decay": 1e-4},
                     {"params": no_decay_params, "weight_decay": 0.0},
                 ]
+  # No hidden_filter above, so buckets 0/1 are provably empty and only
+  # aux_decay/aux_no_decay (2/3) map onto the two groups.
+                self._decay_group_layout = _DecayGroupLayout(
+                    hidden_filter=None, bucket_to_group=(-1, -1, 0, 1),
+                )
                 use_soda_weight_decay = _mark_soda(param_groups)
 
         if optimizer == "nadamw":
@@ -2037,6 +2207,8 @@ class Trainer:
                         exc, len(param_groups),
                     )
                     self.opt = SOAP(self.model.parameters(), lr=lr)
+  # One flat group in model order, not the four this layout describes.
+                    self._decay_group_layout = None
             else:
                 hd, hnd, ad, and_ = _split_decay_groups(
                     self.model,
@@ -2062,6 +2234,9 @@ class Trainer:
                     soap_soda = _mark_soda(soap_groups)
                     adam_soda = _mark_soda(adam_groups, hidden_group_indices=())
                     use_soda_weight_decay = soap_soda or adam_soda
+  # `_ChainedOptimizer.state_dict` nests one state dict per sub-optimizer
+  # instead of the flat {state, param_groups} the remap operates on.
+                self._decay_group_layout = None
                 self.opt = _ChainedOptimizer(
                     [
                         SOAP(soap_groups, lr=lr, weight_decay=0.0),
@@ -3905,6 +4080,25 @@ class Trainer:
   # regime and then re-converges the EMA from wherever warmup put it.
             "zclip": self.zclip_state_dict(),
         }
+  # ⚑ The NAMES behind `opt`'s integer indices. `Optimizer.state_dict()` keys
+  # its `state` by position in the flattened `param_groups` order and records
+  # nothing about WHICH parameter each slot belongs to, so a resume into a model
+  # with a different parameter set has no way to tell a surviving parameter from
+  # a shifted one. Recording the names makes the correspondence a stored fact
+  # rather than an inference; `_donor_optimizer_param_names` reconstructs it from
+  # `model` for checkpoints written before this key existed.
+  # Record the name->slot assignment rather than leaving the loader to infer it.
+  # ⚑ For `_ChainedOptimizer` this is written and can never be READ back: it
+  # exposes `param_groups`, so the names here are correct, but its `state_dict()`
+  # omits `param_groups`, so `_donor_optimizer_param_names` declines at its first
+  # check. KEPT DELIBERATELY (2026-08-14) rather than suppressed -- the entry is
+  # accurate, costs a list of strings, and the thing that makes it unusable is
+  # that optimizer's state_dict shape, not this manifest. Suppressing it would
+  # trade a true-but-unused record for a special case, and would silently start
+  # lying the moment `_ChainedOptimizer.state_dict` learns to emit groups.
+        opt_param_names = self._optimizer_param_names()
+        if opt_param_names is not None:
+            state["opt_param_names"] = opt_param_names
         if self._model_config is not None:
             state["arch"] = {
                 "_schema_version": ARCH_SCHEMA_VERSION,
@@ -3921,14 +4115,412 @@ class Trainer:
     # policy adapter falls into the reinit path, which resets every moment AND the
     # scheduler AND skips `load_zclip_state` -- forcing the control arm to absorb an
     # identical boot shock just to stay comparable. Spliced, the embedding-ON arm
-    # keeps its donor moments. (Removing `policy_sf` deletes params and cannot be
-    # spliced -- that direction still resets.)
+    # keeps its donor moments.
+    #
+    # This list is now the FALLBACK, not the primary path: `load` tries
+    # `_remap_optimizer_state_by_param_name` first, which needs no allowlist and
+    # also covers REMOVED parameters (dropping `policy_sf` or the standalone
+    # `value_categorical` head) and add+remove in the same load. The positional
+    # splice stays for donors whose slot names cannot be recovered -- no
+    # `opt_param_names` manifest, no `model` payload, or a param-group layout
+    # `_DecayGroupLayout` does not describe.
+    #
+    # ⚑ DECIDED, not overlooked (2026-08-14): this list is therefore UNREACHABLE
+    # whenever names are recoverable, which on production is always. The name
+    # path warm-starts ANY added parameter, not just these four. That is a real
+    # behaviour change and it is the one we want -- measured base vs branch on a
+    # non-allowlisted addition (`enable_policy_sf_head` off->on, 79 -> 86 slots):
+    # the old code reinitialised the WHOLE optimizer at WARNING, losing all 79
+    # donor moments to warm-start 7 new ones; the new code keeps the 79 and
+    # leaves the 7 state-less. Keeping the list is not dead weight -- it still
+    # governs the positional splice, which is the only path left for a donor
+    # whose names cannot be recovered -- but it is no longer the gate on which
+    # additions are permitted, and nothing should be added to it expecting it to
+    # act as one.
     _FRESH_PARAM_NAME_SUFFIXES = (
         "dynamic_relation_weight",
         "policy_relation_weight",
         "policy_embedding.weight",
         "policy_embedding.bias",
     )
+
+    @staticmethod
+    def _wrap_agnostic_name(name: str) -> str:
+        """The parameter's name with ``torch.compile``'s wrapper segment removed.
+
+        Checkpoints are written wrap-agnostic, while a compiled trainer's
+        ``named_parameters()`` reports ``_orig_mod.``-prefixed names for the very
+        same parameter objects the optimizer holds — so every name-based path
+        here has to normalise before it compares.
+
+        ⚑ DELEGATES to ``strip_compile_prefix_from_name`` rather than restating
+        the rule. It used to carry its own ``replace(..., 1)``, which made this
+        the project's SECOND copy: independent review of PR #439 mutated it to
+        ``removeprefix`` and the entire suite still passed, the only survivor of
+        20 mutations. Equivalent in this function's actual domain today (these
+        names are never nested), but that is a fact about today's inputs, and the
+        divergence of exactly these two spellings is PR #267's J9 defect.
+        """
+        return strip_compile_prefix_from_name(name)
+
+    def _optimizer_param_names(self) -> list[str] | None:
+        """Wrap-agnostic parameter names in the optimizer's flattened order.
+
+        Index ``i`` of the result names the parameter that
+        ``self.opt.state_dict()["state"]`` keys under ``i``. None when a
+        parameter in the optimizer is not one of the model's (nothing to name it
+        with), which makes every name-based path decline rather than guess.
+        """
+        names = {
+            id(param): self._wrap_agnostic_name(name)
+            for name, param in self.model.named_parameters()
+        }
+        flat: list[str] = []
+        for group in getattr(self.opt, "param_groups", []):
+            for param in group["params"]:
+                name = names.get(id(param))
+                if name is None:
+                    return None
+                flat.append(name)
+        return flat
+
+    def _donor_optimizer_param_names(self, ckpt: Mapping[str, Any]) -> list[str] | None:
+        """Recover the donor's per-optimizer-slot parameter names, or None.
+
+        Prefers the ``opt_param_names`` manifest ``save`` now writes. For older
+        checkpoints it RECONSTRUCTS the mapping from ``ckpt["model"]``:
+
+        * ``state_dict()`` emits parameters in ``named_parameters()`` order
+          (both walk modules in registration order), so the checkpoint's key
+          order IS the donor's model order -- measured on the production config:
+          496 keys, 481 trainable parameters, 34 (all non-persistent) buffers,
+          the parameter subsequence equal to ``named_parameters()`` exactly.
+        * Tied weights appear once per NAME in ``state_dict`` but once per
+          TENSOR in ``named_parameters()`` (production ties one
+          ``layer_smolgens.*.gen_weight.weight`` storage across 16 keys, which
+          is why the parameter count is 63.08M and not 78.81M). Storage
+          identity, not the name, decides which of them the optimizer holds.
+        * ``decay_bucket_index`` then replays the very rule that BUILT the
+          groups, using ``self._decay_group_layout`` recorded at construction.
+
+        Every step above is an assumption about the donor, so the RECONSTRUCTED
+        result is CHECKED before it is trusted: the replayed per-group counts
+        must equal the donor's own. A mismatch -- a frozen parameter, a
+        persistent buffer, a layout this cannot describe -- returns None, and the
+        caller keeps its previous behaviour. A wrong mapping is worse than no
+        mapping, so it must not be reachable by guessing.
+
+        ⚑ Two limits of that check, both MEASURED (independent review
+        2026-08-14), because an earlier version of this docstring overstated it:
+
+        * **The manifest path never reaches the count check at all** -- it
+          returns as soon as ``opt_param_names`` is present and the right length.
+          That is correct (a recorded mapping is not an inference) but it means
+          the guarantees below are about the RECONSTRUCTION only. A donor saved
+          under ``matrix_optimizer_scope: mlp_out`` re-keys successfully onto an
+          arm running ``block_all``; verified by execution.
+        * A count check is not an identity check. It rejects a different
+          ``matrix_optimizer_scope`` on THIS model only because the per-group
+          counts happen to differ for all six supported scopes -- enumerated, and
+          the only equal-count pairs are also equal-MEMBERSHIP pairs, so the
+          rejection is incidental to the model, not structural. The load-bearing
+          guard against a wrong mapping is the shape/name check in
+          ``_remap_optimizer_state_by_param_name``, not this count.
+        """
+        opt_state = ckpt.get("opt")
+        if not isinstance(opt_state, Mapping):
+            return None
+        donor_groups = opt_state.get("param_groups")
+        if not isinstance(donor_groups, list) or not donor_groups:
+            return None
+        donor_sizes = [len(group.get("params", ())) for group in donor_groups]
+        recorded = ckpt.get("opt_param_names")
+        if (
+            isinstance(recorded, list)
+            and len(recorded) == sum(donor_sizes)
+            and all(isinstance(name, str) for name in recorded)
+        ):
+            return [self._wrap_agnostic_name(name) for name in recorded]
+
+        layout = self._decay_group_layout
+        model_state = ckpt.get("model")
+        if layout is None or not isinstance(model_state, Mapping) or not model_state:
+            return None
+        if len(donor_sizes) != len(self.opt.param_groups):
+            return None
+        buffer_names = {
+            self._wrap_agnostic_name(name) for name, _ in self.model.named_buffers()
+        }
+        seen_storage: set[tuple[Any, ...]] = set()
+        by_group: list[list[str]] = [[] for _ in donor_sizes]
+        for raw_name, tensor in model_state.items():
+            name = self._wrap_agnostic_name(str(raw_name))
+            if not torch.is_tensor(tensor) or name in buffer_names:
+                continue
+            if tensor.numel():
+  # Empty tensors can share a null data_ptr without being tied, so
+  # they skip the dedup rather than collapse onto each other.
+                identity = (
+                    tensor.untyped_storage().data_ptr(),
+                    tensor.storage_offset(),
+                    tuple(tensor.shape),
+                    tuple(tensor.stride()),
+                )
+                if identity in seen_storage:
+                    continue
+                seen_storage.add(identity)
+            group_index = layout.bucket_to_group[
+                decay_bucket_index(name, tensor, layout.hidden_filter)
+            ]
+            if not 0 <= group_index < len(by_group):
+                return None
+            by_group[group_index].append(name)
+        if [len(names) for names in by_group] != donor_sizes:
+            return None
+        return [name for group_names in by_group for name in group_names]
+
+    def _remap_optimizer_state_by_param_name(
+        self,
+        ckpt_opt: Mapping[str, Any],
+        donor_names: Sequence[str],
+        donor_model_state: Mapping[str, Any] | None,
+    ) -> tuple[dict, str, int, int] | None:
+        """Re-key a donor optimizer state dict onto THIS model's parameters, by name.
+
+        Handles added, removed and simultaneously added-and-removed parameters
+        in one load, which is the case ``_remap_optimizer_state_for_new_params``
+        cannot express: it splices fresh slots in by POSITION, so it is defined
+        only when the donor is shorter, and ``Trainer.load`` only ever called it
+        then. A parameter REMOVED from the middle shifts every later index, so
+        the untouched path would either raise (different count -> whole optimizer
+        reinitialised, every donor moment lost) or -- at equal count -- silently
+        hand one parameter's moments to another.
+
+        Returns ``(state_dict, report, kept, changed)`` where ``changed`` is
+        dropped + fresh, so the caller can WARN on a mass turnover instead of
+        printing a line that differs from a healthy one only in its digits.
+        ⚑⚑ THE TWO DECLINE KINDS ARE NOT INTERCHANGEABLE, AND CONFUSING THEM IS
+        EXACTLY HOW THE POSITIONAL-FALLBACK DEFECT COMES BACK. ``None`` means
+        "not applicable, the caller's positional load is CORRECT here"; the
+        exception means "the mapping is WRONG, and loading by position would
+        install some other parameter's moments". Anything moved from the second
+        list to the first re-opens that defect silently -- the load would
+        succeed, be correctly shaped, step, and be wrong.
+
+        **Returns None** -- no re-keying is called for, positional is safe:
+
+        * the group count differs, or the live name list is unavailable or
+          disagrees in length with the live parameter count;
+        * a name occurs twice on either side, or the donor's slot-id count
+          disagrees with its name count (nothing to key on);
+        * the donor's ``state`` is not a mapping;
+        * the mapping is the identity, i.e. an ordinary resume. Declining there
+          keeps the common path byte-identical to before this method existed.
+
+        **Raises** :class:`UntrustedOptimizerStateError` -- the recovered
+        mapping is untrustworthy, so the INDEX order must not be trusted either:
+
+        * a donor slot id occurs twice, so the slot -> name correspondence is
+          not one-to-one and would collapse under ``dict(zip(...))``;
+        * a recovered name is not a key of the donor's own model payload --
+          the names are supposed to BE those keys, so a miss is proof the
+          mapping is wrong, NOT a slot to skip. Skipping was how a stale
+          manifest installed an EMPTY optimizer state successfully;
+        * a donor moment's shape disagrees with the donor tensor the name maps
+          to, which means the recovered mapping is WRONG -- the one outcome that
+          must never be acted on. Only 0-dim tensors (step counters) are exempt;
+          an ndim disagreement is evidence, not an exemption.
+
+        Removed parameters' state is dropped whole; added parameters get no
+        entry at all, so the optimizer initialises them on their first step.
+        Partial entries are never produced: ``AuroraWithAuxAdam`` decides whether
+        to initialise by probing ONE key per group (``momentum_buffer`` for the
+        Aurora matrix group, ``exp_avg`` for the AdamW aux groups), so a
+        half-populated entry is worse than an absent one.
+        """
+        groups_ckpt = ckpt_opt.get("param_groups", [])
+        groups_new = self.opt.param_groups
+        if not isinstance(groups_ckpt, list) or len(groups_ckpt) != len(groups_new):
+            return None
+        live_names = self._optimizer_param_names()
+        if live_names is None or len(live_names) != sum(len(g["params"]) for g in groups_new):
+            return None
+  # ⚑ TWO DIFFERENT FAILURES, and they are deliberately NOT merged. Reviewed and
+  # decided 2026-08-16 (independent review of PR #439, F5).
+  #
+  # LIVE names duplicated -> `return None`, and that is right: the LIVE model is
+  # this process's own `named_parameters()`, so a repeat means two parameters
+  # genuinely share a name and no name-keyed mapping can address them. The donor
+  # file is not implicated, its index order is as good as it ever was, and the
+  # positional load the caller falls back to is the correct behaviour.
+  #
+  # DONOR names duplicated -> a CORRUPT MANIFEST, the same category the duplicate
+  # slot-id check below RAISES on. By this method's own argument a corrupt donor
+  # cannot establish that its index order is trustworthy.
+        if len(set(live_names)) != len(live_names):
+            return None
+        if len(set(donor_names)) != len(donor_names):
+            raise UntrustedOptimizerStateError(
+                f"donor optimizer manifest repeats a parameter name "
+                f"({len(donor_names)} names, {len(set(donor_names))} distinct); "
+                "the name -> slot mapping is not one-to-one and the donor's own "
+                "index order cannot be trusted either"
+            )
+        donor_slot_ids: list[Any] = []
+        for group in groups_ckpt:
+            donor_slot_ids.extend(group.get("params", ()))
+        if len(donor_slot_ids) != len(donor_names):
+            return None
+  # Duplicate slot ids would collapse under `dict(zip(...))`, silently mapping
+  # one id to whichever name came last. `strict=True` cannot see it -- the two
+  # sequences are the same LENGTH -- so check distinctness explicitly.
+        if len(set(donor_slot_ids)) != len(donor_slot_ids):
+            raise UntrustedOptimizerStateError(
+                f"donor param_groups repeat a slot id ({len(donor_slot_ids)} slots, "
+                f"{len(set(donor_slot_ids))} distinct); the slot -> name mapping is "
+                "not one-to-one"
+            )
+  # NOT a distrust decline: the live and donor names agree, so this is an
+  # ordinary resume with nothing to re-key, and the positional load the caller
+  # falls back to is the CORRECT behaviour rather than a hazard.
+        if list(live_names) == list(donor_names):
+            return None
+        name_of_slot = dict(zip(donor_slot_ids, donor_names, strict=True))
+        donor_state = ckpt_opt.get("state", {})
+        if not isinstance(donor_state, Mapping):
+            return None
+  # ⚑ The mapping is an inference until this passes. Every moment tensor a
+  # donor slot carries must fit the DONOR tensor its recovered name points
+  # at; an off-by-N slot walk fails here instead of installing a
+  # plausible-looking, non-empty, wrong optimizer state.
+        if donor_model_state:
+            for slot_id, entry in donor_state.items():
+                name = name_of_slot.get(slot_id)
+  # ⚑⚑ A recovered name that is NOT a key of the donor's own model payload is
+  # PROOF the mapping is wrong -- the names are supposed to BE those keys.
+  # Skipping the slot instead (the original `continue`) turned a whole-mapping
+  # failure into a silent one: a stale `opt_param_names` manifest, e.g. after a
+  # module rename, misses on EVERY slot, `state_remap` comes out empty, and an
+  # EMPTY optimizer state installs successfully -- "0 kept, N dropped, N fresh"
+  # with no warning, while `optimizer_state_loaded` stays True so the scheduler
+  # and zclip are restored on top of a wiped optimizer. That is precisely the
+  # wipe this method exists to prevent, relocated from a WARNING into the quiet
+  # channel. Found by independent review 2026-08-14.
+  #
+  # ⚑ WHAT CAN ACTUALLY TRIP THIS -- and the answer is "nothing in the tree
+  # today", which is the state we worked to reach, NOT evidence it is useless.
+  # BOTH operands of the predicate below are read out of the SAME checkpoint:
+  # the name comes from that file's `opt_param_names`, the membership test is
+  # against that file's `model` payload. The LIVE model appears nowhere in it.
+  # So a rename BETWEEN save and load cannot fire it -- one `save` wrote both
+  # sides, both carry the OLD name, they still agree with each other, and the
+  # renamed parameter simply falls out of `new_index_of_name` as an ordinary
+  # `dropped`. (Two earlier revisions of this comment got this wrong in two
+  # different directions; the third was falsified BY EXECUTION in independent
+  # review, arm "rename in manifest AND payload" -> accepted, `85 kept, 1
+  # dropped, 1 fresh`, no raise. Only "manifest renamed alone" raises.)
+  #
+  # The trigger is therefore ONE shape and only one: a checkpoint whose manifest
+  # and payload were written by DIFFERENT code -- an external tool that rewrites
+  # one side and leaves the other. `Trainer.save` is the sole in-tree writer of
+  # `opt_param_names`, and TWO scripts rewrote the payload while leaving the
+  # manifest: `scripts/reinit_value_heads.py` (fixed in PR #427) and
+  # `scripts/shrink_ffn_checkpoint.py` (fixed here -- independent review of
+  # #439 found this comment claimed the first was "the last tool", which was
+  # false the moment it was written). ⇒ **this guard is defence in depth against
+  # a FUTURE such tool. Do not delete it on finding that nothing produces its
+  # input today** -- the class has now produced two instances, and both were
+  # harmless only because a separate caller-side accident (no `opt` in the file
+  # ⇒ the manifest is never read) stopped them short. That is a property of the
+  # caller, not of the producers.
+  #
+  # Not the reason a self-consistent save is safe, though it reads like one:
+  # `save` putting both sides through the identical `.replace("_orig_mod.",
+  # "", 1)` shows only that the NORMALISATION introduces no discrepancy. The
+  # property actually required is that the optimizer-held `named_parameters()`
+  # names are a SUBSET of the `state_dict()` keys -- which holds because nothing
+  # in the package overrides `state_dict`/`_save_to_state_dict` on an
+  # `nn.Module` and `save` writes the payload unfiltered. Measured on the live
+  # arm-B donor: 479 manifest names, 0 misses against 494 payload keys.
+                if name is None or name not in donor_model_state:
+                    raise UntrustedOptimizerStateError(
+                        f"donor optimizer slot {slot_id!r} resolves to "
+                        f"{name!r}, which is not a tensor in the donor model "
+                        "payload; the recovered name mapping is unreliable"
+                    )
+                donor_tensor = donor_model_state[name]
+                if not torch.is_tensor(donor_tensor) or not isinstance(entry, Mapping):
+                    continue
+                for value in entry.values():
+  # 0-dim tensors are step counters, which carry no shape relationship to the
+  # parameter. EVERY other tensor in an entry is per-element, so compare shapes
+  # outright: an ndim DISAGREEMENT is the strongest evidence the mapping is
+  # wrong, and the previous `value.dim() == donor_tensor.dim()` guard waved
+  # exactly that case through.
+                    if (
+                        torch.is_tensor(value)
+                        and value.dim() != 0
+                        and tuple(value.shape) != tuple(donor_tensor.shape)
+                    ):
+                        raise UntrustedOptimizerStateError(
+                            f"donor optimizer slot {slot_id!r} claims to be "
+                            f"{name!r}, but carries a moment tensor of shape "
+                            f"{tuple(value.shape)} against that parameter's "
+                            f"{tuple(donor_tensor.shape)}; the slot walk is "
+                            "off and the mapping cannot be trusted"
+                        )
+
+  # ⚑ THE RECONSTRUCTION BELOW EMITS EXACTLY {state, param_groups}. Any other
+  # top-level key the donor carries is therefore DROPPED, silently, and the only
+  # signal is whatever the consumer does when it finds it missing. Today that is
+  # `SODAWeightDecayWrapper`'s `soda_anchors`: losing it makes its
+  # `load_state_dict` raise for every marked parameter, and the generic handler
+  # then cold-starts the WHOLE optimizer and skips the donor scheduler/ZClip
+  # while blaming the model layout.
+  #
+  # Checked STRUCTURALLY rather than by testing `weight_decay_mode == "soda"`:
+  # the hazard is "this re-key cannot carry that key", which is true of the next
+  # wrapper too, and a mode-name test would not see it. Reached only after the
+  # identical-names early return above, so an ORDINARY resume -- SODA included --
+  # never comes here and keeps carrying its anchors through the positional load.
+        unsupported = sorted(set(ckpt_opt) - {"state", "param_groups"})
+        if unsupported:
+            raise UnsupportedWarmStartError(
+                f"the donor optimizer state carries top-level key(s) {unsupported} "
+                "that the name-based re-key cannot reconstruct, and this warm "
+                "start changes parameter names so the re-key is required. Most "
+                "likely `weight_decay_mode: soda` (SODAWeightDecayWrapper adds "
+                "`soda_anchors`). That combination is NOT supported by the "
+                "warm-start path -- see UnsupportedWarmStartError. Production "
+                "(`aurora` + `mlp_out`, no `weight_decay_mode`) never reaches this"
+            )
+        new_index_of_name = {name: index for index, name in enumerate(live_names)}
+        state_remap = {
+            slot_id: new_index_of_name[name]
+            for slot_id, name in name_of_slot.items()
+            if name in new_index_of_name
+        }
+        out_groups: list[dict] = []
+        next_index = 0
+        for g_new, g_ckpt in zip(groups_new, groups_ckpt, strict=True):
+            out_group = {k: v for k, v in g_ckpt.items() if k != "params"}
+            out_group["params"] = list(range(next_index, next_index + len(g_new["params"])))
+            next_index += len(g_new["params"])
+            out_groups.append(out_group)
+        remapped = {
+            "state": {
+                state_remap[slot_id]: entry
+                for slot_id, entry in donor_state.items()
+                if slot_id in state_remap
+            },
+            "param_groups": out_groups,
+        }
+        donor_set, live_set = set(donor_names), set(live_names)
+        kept = len(donor_set & live_set)
+        dropped = len(donor_set - live_set)
+        fresh = len(live_set - donor_set)
+        report = f"{kept} kept, {dropped} dropped, {fresh} fresh"
+        return remapped, report, kept, dropped + fresh
 
     def _remap_optimizer_state_for_new_params(self, ckpt_opt: dict) -> dict | None:
         """Remap a donor optimizer state dict around newly added parameters.
@@ -4048,6 +4640,7 @@ class Trainer:
         from chess_anti_engine.model import (
             load_state_dict_tolerant,
             migrate_optimizer_input_plane_state,
+            reset_mismatched_optimizer_state,
         )
 
         # Trainer checkpoints include optimizer/scheduler/RNG pickles, so resume needs the
@@ -4061,7 +4654,79 @@ class Trainer:
             opt_state = ckpt["opt"]
             n_ckpt_params = sum(len(g.get("params", ())) for g in opt_state.get("param_groups", []))
             n_model_params = sum(len(g["params"]) for g in self.opt.param_groups)
-            if n_ckpt_params < n_model_params:
+  # ⚑ NAME-based first, and NOT gated on the direction of the count change.
+  # `n_ckpt_params < n_model_params` only ever admitted parameter ADDITIONS;
+  # a warm start that also REMOVES parameters (arm B: policy_embedding +2,
+  # value_categorical -6, value_categorical_coupled +2, 481 -> 479) made the
+  # test false, so the splice never ran, `load_state_dict` raised on the group
+  # size, and the handler below threw away EVERY donor moment at WARNING level
+  # inside a Ray actor. A removal also shifts every later index, so an
+  # equal-count relayout (+2/-2) would have been accepted and silently
+  # mis-associated -- which is why this runs on every resume, not just on a
+  # count mismatch. It declines on an ordinary resume, leaving that path
+  # untouched.
+            by_name = None
+            donor_names = self._donor_optimizer_param_names(ckpt)
+            if donor_names is not None:
+                by_name = self._remap_optimizer_state_by_param_name(
+                    opt_state, donor_names, ckpt.get("model"),
+                )
+            if by_name is not None:
+                opt_state, remap_report, kept, changed = by_name
+  # print, not logging.info: the Ray actor has no logging handler, so INFO is
+  # dropped (measured 2026-08-12: zero INFO records in arm A's 2,494-line log)
+  # and a successful re-key would be silent while only the WARNINGs below are
+  # loud. Same channel as the tolerant-load report. ⚑ Rationale inlined rather
+  # than cross-referenced: it used to say "see the splice message below", and
+  # that message is a `logging.info` on this branch, so the pointer contradicted
+  # itself. Don't reintroduce the cross-reference — the two call sites are free
+  # to disagree, and this note has to stand on its own.
+                print(
+                    "[resume] Re-keyed the donor optimizer state onto this "
+                    f"model's parameters by name ({remap_report})"
+                )
+  # ⚑ A healthy warm start moves a handful of parameters: arm B was
+  # "475 kept, 6 dropped, 4 fresh". A mass turnover is the signature of a
+  # mapping that is wrong in a way the shape guard could not see, and on the
+  # `print` channel alone it reads exactly like the healthy line -- same words,
+  # different digits, and nobody diffs digits in a log. Anything past a tenth of
+  # the live slots is louder than INFO so it survives the Ray actor's handler-
+  # less logger, which drops INFO outright
+  # (see `server_info_logs_are_discarded_by_uvicorn` for the same failure mode).
+  # ⚑ "changed" is `dropped + fresh`, and those count DIFFERENT SIDES: dropped is
+  # donor-side (names the live model no longer has), fresh is live-side (names the
+  # donor never had). Their sum is therefore NOT a subset of the live parameters
+  # and can legitimately EXCEED `n_model_params` -- a donor and a live model that
+  # share no names at all give `changed == len(donor) + len(live)`. The old
+  # wording, "changed %d of %d parameters" against the live-only denominator,
+  # could print "changed 958 of 479", which reads as a corrupted counter and
+  # invites the reader to distrust the instrument instead of the load. Report it
+  # as a turnover COUNT against the live size, never as a fraction of it.
+                if changed > max(1, n_model_params // 10):
+                    logging.getLogger(__name__).warning(
+                        "[resume] name-based optimizer remap turned over %d slot(s) "
+                        "(%s) against %d live parameters, keeping only %d donor "
+                        "moment set(s). A warm start normally touches a few; this "
+                        "many means the recovered name mapping may be wrong. Verify "
+                        "the donor's parameter names before trusting the restored "
+                        "moments.",
+                        changed, remap_report, n_model_params, kept,
+                    )
+  # ⚑ There is deliberately NO `elif kept == 0:` companion here, and it is not
+  # an oversight -- it was written, and it was UNREACHABLE. `kept == 0` forces
+  # `dropped == len(donor)` and `fresh == len(live)`, hence
+  # `changed >= n_model_params`, which always exceeds `n_model_params // 10`, so
+  # the branch above already fired. Brute-forced over
+  # n_model in [0,599] x n_donor in [0,599]: THREE reachable cases --
+  # (0,0), (0,1) and (1,0). An earlier revision of this comment claimed exactly
+  # one, (1,0); that scan started at n_model=1 and so could not see the two
+  # n_model=0 cases. All three need a model with at most one optimizer slot, and
+  # production carries 481. Corrected by independent review 2026-08-14, which
+  # re-ran the enumeration over the full domain instead of trusting the note.
+  # Found by independent
+  # review 2026-08-14 -- a guard that cannot fire, added in a change about
+  # guards that cannot fire.
+            elif n_ckpt_params < n_model_params:
                 remapped = self._remap_optimizer_state_for_new_params(opt_state)
                 if remapped is not None:
                     logging.getLogger(__name__).info(
@@ -4080,6 +4745,112 @@ class Trainer:
                     "Zero-padded %d optimizer state tensor(s) for the "
                     "v1 -> v2_threats input-plane migration", migrated,
                 )
+  # ⚑ THE GENERAL CASE, and it must run AFTER the v1-plane pad above (which
+  # REPAIRS a mismatch this sweep would otherwise discard). The param-count
+  # check on the way in cannot see a warm start that changes a SHAPE without
+  # changing the count -- e.g. aux_policy_head_dim re-widening
+  # policy_soft/policy_sf q/k -- so load_state_dict "succeeds" and the first
+  # opt.step() crashes OUTSIDE this try. Drop what no longer fits, loudly.
+  # ⚑ ...but the sweep reads the FLAT `{state, param_groups}` view, and
+  # `_ChainedOptimizer` does not have one: its state lives in its children while
+  # the outer `state` stays empty (documented at its construction site, which is
+  # also why `_decay_group_layout` is None there). The sweep would report zero
+  # drops and leave donor-shaped moments under the resized q/k -- exactly the
+  # `aux_policy_head_dim` case above -- until the first CHILD step crashes.
+  # Refuse instead of sweeping a view that cannot see the state.
+  #
+  # ⚑⚑ GATED ON AN ACTUAL SHAPE CHANGE, NOT ON THE OPTIMIZER TYPE. An earlier
+  # revision tested only `isinstance(..., _ChainedOptimizer)`, which turned every
+  # ORDINARY chained resume -- identical config, nothing resized, 172/172 donor
+  # moments restored correctly -- into a full cold start that also skipped the
+  # donor scheduler and ZClip. That is a regression against working behaviour,
+  # and the message was FALSE in the case it fired on: it asserted moments sat
+  # "under tensors this warm start resized" when nothing had been. Found by
+  # delta review of `051210c08`.
+  #
+  # ⚑ The reason it survived my own tests is worth keeping: the production
+  # negative control ran `aurora`/`mlp_out`, which is the right control FOR
+  # PRODUCTION and structurally blind to this guard, whose entire domain is
+  # `soap`. A negative control has to run in the GUARD's domain or it cannot
+  # reach the guard at all and passes for the wrong reason. The tell was already
+  # in the suite: the SODA test had an ordinary-resume control and this one did
+  # not. That asymmetry WAS the defect.
+  #
+  # Compared donor-side, because it is the donor's stored shapes the child
+  # optimizers' moments were built against; an ADDED parameter is absent from
+  # the payload, is not a resize, and is the splice path's business, not this
+  # sweep's.
+            donor_model = ckpt.get("model") or {}
+            resized = [
+                name
+                for name, param in self.model.named_parameters()
+                if torch.is_tensor(
+                    donor := donor_model.get(self._wrap_agnostic_name(name))
+                )
+                and tuple(donor.shape) != tuple(param.shape)
+            ]
+            if resized and isinstance(_unwrap_optimizer(self.opt), _ChainedOptimizer):
+                raise UnsupportedWarmStartError(
+                    "this run's optimizer is a _ChainedOptimizer (`optimizer: "
+                    "soap` with a non-default `matrix_optimizer_scope`), whose "
+                    "state lives in its child optimizers, and this warm start "
+                    f"resizes {len(resized)} parameter(s) ({', '.join(resized[:4])}"
+                    f"{', ...' if len(resized) > 4 else ''}). "
+                    "reset_mismatched_optimizer_state sweeps the outer flat view "
+                    "and would report NOTHING while leaving donor-shaped moments "
+                    "under those tensors, crashing at the first CHILD step. That "
+                    "combination is NOT supported by the warm-start path -- see "
+                    "UnsupportedWarmStartError. An ordinary chained resume, which "
+                    "resizes nothing, is unaffected. Production (`aurora` + "
+                    "`mlp_out`) never reaches this"
+                )
+            reset = reset_mismatched_optimizer_state(
+                self.opt,
+                param_names={id(p): n for n, p in self.model.named_parameters()},
+            )
+            if reset:
+                logging.getLogger(__name__).warning(
+                    "Dropped donor optimizer state for %d parameter(s) whose "
+                    "shape changed in this warm start; they restart at zero "
+                    "moments / step 0: %s", len(reset), "; ".join(reset),
+                )
+        except UnsupportedWarmStartError as exc:
+  # ⚑ Its own handler, above the generic one, so the message names the CONFIG
+  # COMBINATION instead of the generic "incompatible with new model layout",
+  # which is a misattribution: the layout is fine, the warm-start path does not
+  # cover this optimizer. End state is the same cold start -- the point is that
+  # the operator is told which knob to change, and that removing the guard is a
+  # visible change rather than a silent return to wrong moments.
+            optimizer_state_loaded = False
+            logging.getLogger(__name__).warning(
+                "REFUSING to warm-start this optimizer: %s. The optimizer "
+                "cold-starts at zero moments and the donor scheduler/ZClip state "
+                "is NOT restored. This is deliberate: the alternative is an "
+                "optimizer holding moments that belong to other tensors, which "
+                "no downstream instrument can detect.",
+                exc,
+            )
+            self.opt.load_state_dict(fresh_opt_state)
+            self._scheduler.load_state_dict(fresh_scheduler_state)
+            self.reset_optimizer_reference_weights()
+        except UntrustedOptimizerStateError as exc:
+  # ⚑ REFUSE the positional fallback rather than take it. Reaching the generic
+  # handler below would be enough to cold-start, but this branch exists so the
+  # message says WHY, and so that deleting it is a visible change rather than a
+  # silent reversion to `self.opt.load_state_dict(opt_state)` by index.
+            optimizer_state_loaded = False
+            logging.getLogger(__name__).warning(
+                "REFUSING to load the donor optimizer state by position: %s. "
+                "The optimizer cold-starts at zero moments. This is deliberate: "
+                "optimizer state is keyed by index into the flattened "
+                "param_groups order, so a positional load under an untrusted "
+                "name mapping gives each parameter ANOTHER parameter's moments "
+                "-- non-empty, correctly shaped, and undetectable downstream.",
+                exc,
+            )
+            self.opt.load_state_dict(fresh_opt_state)
+            self._scheduler.load_state_dict(fresh_scheduler_state)
+            self.reset_optimizer_reference_weights()
         except (ValueError, KeyError, RuntimeError) as exc:
             optimizer_state_loaded = False
             logging.getLogger(__name__).warning(
