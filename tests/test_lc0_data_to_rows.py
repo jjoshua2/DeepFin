@@ -13,6 +13,7 @@ without the (uncommitted) corpus.
 """
 from __future__ import annotations
 
+import gzip
 import struct
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 from chess_anti_engine.moves.leela_index import leela_index_for_move
 from scripts.lc0_data_to_rows import (
     CHESS960_MIN_GAMES,
+    EP_ALIAS_DROP_REASON,
     LEELA_POLICY_SIZE,
     V6_HISTORY_PLANES,
     V6_RECORD_BYTES,
@@ -225,7 +227,11 @@ def _ep_alias_game() -> bytes:
     ``encoding/lc0.py::_check_repetitions`` keys without ``ep_square``, so OUR
     encoder calls that a repetition; lc0 and python-chess do not.
     """
-    start = chess.Board("5R2/8/6k1/3p1p2/2bNp1p1/4P1P1/6KP/1r6 w - - 0 46")
+    # ⚑ No black pawn on the 5th rank: the first record must not trip
+    # `first_record_en_passant_risk`, which refuses a first position where the
+    # side that just moved could have double-pushed. The d5/f5 pawns played no
+    # part in the alias and did trip it.
+    start = chess.Board("5R2/8/6k1/8/2bNp1p1/4P1P1/6KP/1r6 w - - 0 46")
     return make_game(["h2h4", "c4b5", "f8f7", "b5c4", "f7f8"], start=start)
 
 
@@ -428,10 +434,11 @@ def test_played_promotions_are_counted_only_once_confirmed() -> None:
 def test_policy_target_lands_on_our_compact_slot_for_every_legal_move() -> None:
     # FEN-built: a single-record game has no history, so the record's frames
     # 1..7 must be empty for the bit-exact gate to be comparing like with like.
-    board = chess.Board("rnbqkbnr/pp2pppp/3p4/2p5/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 4")
+    # No WHITE pawn on the 4th rank, for the same reason as `_ep_alias_game`.
+    board = chess.Board("rnbqkbnr/pp2pppp/3p4/2p5/8/4PN2/PPPP1PPP/RNBQKB1R b KQkq - 0 4")
     weights = {move.uci(): 1.0 for move in board.legal_moves}
-    weights["c5d4"] = 97.0
-    rec = parse_v6_record(make_v6_record(board, probabilities=weights, played_uci="c5d4"))
+    weights["c5c4"] = 97.0
+    rec = parse_v6_record(make_v6_record(board, probabilities=weights, played_uci="c5c4"))
     stats = VerifyStats()
     rows = convert_game("t", [rec], stats, _options(), game_id=0, collect=True)
     assert stats.ok
@@ -440,7 +447,7 @@ def test_policy_target_lands_on_our_compact_slot_for_every_legal_move() -> None:
     assert int(row.legal_mask.sum()) == board.legal_moves.count()
     from chess_anti_engine.moves.leela_index import compact_index_for_move
 
-    top = compact_index_for_move(board, chess.Move.from_uci("c5d4"))
+    top = compact_index_for_move(board, chess.Move.from_uci("c5c4"))
     assert int(np.argmax(row.policy_target)) == top
     assert row.policy_target[~row.legal_mask.astype(bool)].sum() == 0.0
     assert float(row.policy_target.sum()) == pytest.approx(1.0, abs=1e-5)
@@ -533,6 +540,46 @@ def test_move_from_leela_slot_decodes_without_consulting_legal_moves() -> None:
     assert decoded is not None
     assert decoded == chess.Move.from_uci("a1a8")
     assert not empty.is_legal(decoded)
+
+
+def test_the_decoder_REFUSES_the_two_alias_families() -> None:
+    """⚑ Both families decode an ILLEGAL slot into a LEGAL move, which is the one
+    outcome that blunts the argmax-legality gate without failing anything.
+
+    Family (i): the plain two-square king slot `e1g1`. Leela spells castling
+    king-takes-rook, so `e1g1` is an ordinary slide in its space and is never
+    O-O; letting python-chess reinterpret it as castling makes the slot legal.
+    Family (ii): a promotion-suffixed slot whose from-square holds a non-pawn.
+    Leela can never populate it, and decoding it as the plain move hands back a
+    legal move. Measured together at 234 of 456,833 illegal slots before the
+    refusals; 0 after.
+    """
+    castle = chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+    assert castle.is_castling(chess.Move.from_uci("e1g1"))       # premise
+    assert move_from_leela_slot(castle, LC0_1858_UCI_TO_IDX["e1g1"]) is None
+    # ...and it is refused with the rights gone too: a king cannot slide two
+    # files, so the slot is unpopulatable either way. ⚑ `board.is_castling` does
+    # NOT narrow this — it answers True for any king move of more than one file,
+    # rights or not — so the refusal is deliberately unconditional.
+    slide = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
+    assert slide.is_castling(chess.Move.from_uci("e1g1"))         # premise
+    assert move_from_leela_slot(slide, LC0_1858_UCI_TO_IDX["e1g1"]) is None
+    # The same slot decodes normally when the from-square is not a king.
+    rook = chess.Board("4k3/8/8/8/8/8/8/4K2R w - - 0 1")
+    rook.remove_piece_at(chess.E1)
+    rook.set_piece_at(chess.E1, chess.Piece(chess.ROOK, chess.WHITE))
+    rook.set_piece_at(chess.A1, chess.Piece(chess.KING, chess.WHITE))
+    assert move_from_leela_slot(rook, LC0_1858_UCI_TO_IDX["e1g1"]) == (
+        chess.Move.from_uci("e1g1")
+    )
+    queen = chess.Board("4k3/2Q5/8/8/8/8/8/4K3 w - - 0 1")
+    assert queen.is_legal(chess.Move.from_uci("c7b8"))           # premise
+    assert move_from_leela_slot(queen, LC0_1858_UCI_TO_IDX["c7b8q"]) is None
+    # The same slot on a board where a PAWN stands there is a real promotion.
+    pawn = chess.Board("4k3/2P5/8/8/8/8/8/4K3 w - - 0 1")
+    assert move_from_leela_slot(pawn, LC0_1858_UCI_TO_IDX["c7b8q"]) == (
+        chess.Move.from_uci("c7b8q")
+    )
 
 
 def test_first_position_support_mismatch_is_named_separately() -> None:
@@ -899,3 +946,175 @@ def test_at_most_one_en_passant_witness_is_REACHABLE() -> None:
         assert matches == [truth.ep_square], f"{fen}: witnesses {matches}"
         exercised += 1
     assert exercised >= 5, "fixtures stopped reaching the branch this proves"
+
+
+# ── residual 1: a pre-gate drop must be able to fail the run ───────────────────
+
+def test_an_unsupported_record_version_FAILS_the_run() -> None:
+    """⚑ The 'gate that cannot fail', one level out from the verdict. Pre-gate
+    drops set no mismatch counter, so a crafted `version=7` game vanished into
+    the ledger and the corpus still reported PASS with exit 0."""
+    good = make_game(["e2e4", "e7e5"])
+    bad = struct.pack("<I", 7) + good[4:]
+    stats = VerifyStats()
+    convert_game("good", parse_v6_stream(good), stats, _options(), game_id=0, collect=False)
+    # Not a FAIL yet (it abstains on chess960 at this sample size, exit 2)...
+    assert stats.overall_verdict()[1] != 1
+    assert stats.ok
+    convert_game("bad", parse_v6_stream(bad), stats, _options(), game_id=1, collect=False)
+    assert stats.drop_reasons.get("version=7/input_format=1") == 1
+    assert stats.integrity_drops() == {"version=7/input_format=1": 1}
+    assert not stats.ok
+    verdict, code = stats.overall_verdict()
+    assert code == 1
+    assert "integrity drops" in verdict
+
+
+def test_benign_drop_classes_do_NOT_fail_the_run() -> None:
+    """The complement: chess960 and the e.p.-alias class are counted, expected
+    and explicitly benign, so a run carrying only those still passes."""
+    stats = VerifyStats(games=CHESS960_MIN_GAMES, attempts=10, rows=10)
+    stats.drop_reasons["chess960"] = 15
+    stats.games_dropped = 15
+    stats.drop_reasons[EP_ALIAS_DROP_REASON] = 3
+    assert stats.integrity_drops() == {}
+    assert stats.overall_verdict() == ("PASS", 0)
+
+
+def test_a_new_drop_reason_is_failing_by_default() -> None:
+    """⚑ Membership is by explicit enumeration, so adding a drop reason without
+    thinking about it FAILS rather than silently joining the benign set."""
+    stats = VerifyStats(games=CHESS960_MIN_GAMES, attempts=10, rows=10)
+    stats.note("some future reason nobody classified")
+    stats.games_dropped = 1
+    assert stats.integrity_drops() == {"some future reason nobody classified": 1}
+    assert stats.overall_verdict()[1] == 1
+
+
+# ── residual 2: publish only on PASS ───────────────────────────────────────────
+
+def test_convert_does_not_publish_when_the_verdict_is_not_PASS(tmp_path: Path) -> None:
+    """⚑ A 30-game convert used to write `shard_000000.zarr` and then print
+    INCONCLUSIVE. Rows whose provenance check declined to answer must not
+    become training data."""
+    from scripts.lc0_data_to_rows import REJECTED_DIR_NAME, build_parser, cmd_convert
+
+    blob = make_game(["e2e4", "e7e5", "g1f3"])
+    game = tmp_path / "training.000001.gz"
+    game.write_bytes(gzip.compress(blob))
+    out = tmp_path / "rows"
+    args = build_parser().parse_args([
+        "convert", "--data", str(game), "--out", str(out), "--rows-per-shard", "2",
+    ])
+    assert cmd_convert(args) == 2  # INCONCLUSIVE: too few games to judge chess960
+    assert not list(out.glob("shard_*.zarr"))
+    assert not (out / "lc0_rows_manifest.json").exists()
+    # ...and not silently discarded either.
+    assert list((out / REJECTED_DIR_NAME).glob("shard_*.zarr"))
+
+
+def test_publish_refuses_to_mix_into_a_populated_output_dir(tmp_path: Path) -> None:
+    from scripts.lc0_data_to_rows import STAGING_DIR_NAME, _publish
+
+    out = tmp_path / "rows"
+    staging = out / STAGING_DIR_NAME
+    staging.mkdir(parents=True)
+    (staging / "shard_000000.zarr").mkdir()
+    (out / "shard_000000.zarr").mkdir()
+    with pytest.raises(FileExistsError, match="refusing to mix this run's rows"):
+        _publish(staging, out)
+
+
+# ── residual 3: the first-record en-passant premise ────────────────────────────
+
+def test_first_record_en_passant_risk_is_refused_by_name() -> None:
+    """⚑ 94.5% of positions carrying an ep_square have NO legal e.p. capture, so
+    the marker is silently dropped and production planes 110 and 141 are both
+    wrong. `_production_aux_consistent` compares plane 110 against the
+    reconstructed board's OWN ep_square, so it is self-consistent and blind —
+    the same failure class as the `_check_repetitions` finding. This guards the
+    premise instead."""
+    from scripts.lc0_data_to_rows import first_record_en_passant_risk
+
+    # Black just double-pushed d7-d5; no white pawn can take, so no witness exists.
+    risky = chess.Board("rnbqkbnr/ppp1pppp/8/3p4/6P1/8/PPPPPP1P/RNBQKBNR w KQkq - 0 2")
+    assert first_record_en_passant_risk(risky) is not None
+
+    stats = VerifyStats()
+    convert_game("t", [parse_v6_record(make_v6_record(risky))], stats, _options(),
+                 game_id=0, collect=False)
+    assert stats.rows == 0
+    assert any("unexpressible en-passant" in reason for reason in stats.drop_reasons)
+    assert stats.overall_verdict()[1] == 1, "an unguarded premise must not PASS"
+
+
+def test_first_record_en_passant_risk_is_silent_on_a_game_start() -> None:
+    """The T91 corpus property, now ASSERTED rather than assumed: every game
+    starts from the initial position, where no e.p. square can exist."""
+    from scripts.lc0_data_to_rows import first_record_en_passant_risk
+
+    assert first_record_en_passant_risk(chess.Board()) is None
+    board = chess.Board()
+    board.push_uci("g1f3")
+    assert first_record_en_passant_risk(board) is None
+
+
+def test_first_record_en_passant_risk_is_silent_when_a_witness_recovered_it() -> None:
+    """When an e.p. capture IS legal the support set names the square, the
+    repair recovers it, and there is nothing left to refuse."""
+    from scripts.lc0_data_to_rows import first_record_en_passant_risk
+
+    board = chess.Board("rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3")
+    rec = parse_v6_record(make_v6_record(board))
+    repaired = repair_en_passant(board_from_record(rec), rec)
+    assert repaired is not None
+    assert repaired.ep_square == chess.F6
+    assert first_record_en_passant_risk(repaired) is None
+
+
+# ── value fields ───────────────────────────────────────────────────────────────
+
+def test_out_of_range_value_scalars_are_REJECTED_not_clipped() -> None:
+    """⚑ `_wdl_from_q_d` clipped whatever it was handed, so a corrupt q/d became
+    a plausible distribution instead of an error."""
+    from scripts.lc0_data_to_rows import value_field_problem
+
+    clean = make_v6_record(chess.Board(), result_q=0.0, result_d=1.0)
+    assert value_field_problem(parse_v6_record(clean)) is None
+
+    # ⚑ `d = -0.5` is the case only the RANGE half can see: it is finite, and
+    # |q| + d = -0.5 passes the sum invariant. Without it the range check is
+    # fully subsumed by the sum check and could be deleted unnoticed.
+    for label, q, d in (
+        ("range-q", 3.0, 0.0), ("range-d-negative", 0.0, -0.5),
+        ("nan", float("nan"), 0.0), ("sum", 0.9, 0.9),
+    ):
+        broken = make_v6_record(chess.Board(), result_q=q, result_d=d)
+        problem = value_field_problem(parse_v6_record(broken))
+        assert problem is not None, label
+        stats = VerifyStats()
+        convert_game("t", parse_v6_stream(broken), stats, _options(), game_id=0, collect=False)
+        assert stats.value_range_mismatch == 1, label
+        assert stats.overall_verdict()[1] == 1, label
+    # A NaN is DETECTED by the range comparison too (every comparison with NaN is
+    # False), so detection alone cannot tell the two halves apart. Pin the
+    # diagnostic instead: reporting NaN as "out of range" misnames the fault.
+    nan_problem = value_field_problem(parse_v6_record(
+        make_v6_record(chess.Board(), result_q=float("nan"), result_d=0.0)
+    ))
+    assert nan_problem is not None
+    assert "not finite" in nan_problem
+
+
+def test_row_scoped_tuple_DRIVES_the_snapshot() -> None:
+    """⚑ `ROW_SCOPED` was declared, never read, and disagreed with the snapshot
+    beside it. Adding a name to it must now change behaviour."""
+    stats = VerifyStats()
+    assert set(VerifyStats.ROW_SCOPED) == set(stats.row_scoped_snapshot())
+    assert "played_promotions" in VerifyStats.ROW_SCOPED
+    snapshot = stats.row_scoped_snapshot()
+    stats.rows = 9
+    stats.best_idx_is_argmax = 9
+    stats.note_promotion("q")
+    stats.restore_row_scoped(snapshot)
+    assert (stats.rows, stats.best_idx_is_argmax, stats.played_promotions) == (0, 0, {})

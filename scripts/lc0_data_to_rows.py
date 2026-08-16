@@ -158,6 +158,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import shutil
 import struct
 import sys
 import tarfile
@@ -529,6 +530,71 @@ def repair_en_passant(board: chess.Board, rec: V6Record) -> chess.Board | None:
     return matches[0] if matches else None
 
 
+def first_record_en_passant_risk(board: chess.Board) -> str | None:
+    """Why this game's FIRST position may carry an e.p. square we cannot see.
+
+    ⚑ THE GAP THIS CLOSES, AND WHY NO EXISTING GATE COULD SEE IT.
+    lc0's classical 112-plane format cannot express en passant at all, so the
+    first position of a game is reconstructed without it and
+    :func:`repair_en_passant` recovers the marker only when an e.p. CAPTURE is
+    legal — the support set is the only witness. Measured over 60,000 random
+    positions by an independent reviewer: **94.5% of positions carrying an
+    ``ep_square`` have no legal e.p. capture**, so the early return fires and
+    the marker is silently dropped. Production planes 110 and 141 are then both
+    wrong for that row.
+
+    ⚑⚑ AND `_production_aux_consistent` CANNOT CATCH IT, BY CONSTRUCTION: it
+    compares plane 110 against *the reconstructed board's own* ``ep_square``, so
+    it is self-consistent with the very reconstruction that lost the marker —
+    and plane 141 sits in the extra-features block, outside the 112 planes it
+    walks. This is the SAME failure class as the ``_check_repetitions`` finding
+    this whole PR started from: **a check that compares our output against our
+    own reconstruction can only ever find transcription errors, never a wrong
+    rule.** Only an external referee, or a guard on the premise, can.
+
+    So this guards the PREMISE instead. An e.p. square can exist only if the
+    side that just moved double-pushed a pawn, which puts that pawn on one
+    specific rank; with no such pawn present, no marker can have been lost and
+    the reconstruction is provably exact. Every T91 game starts from the initial
+    position, so the check is free there — but that is a property of THIS corpus
+    that nothing asserted, and a resumed/adjudicated/book-started corpus is one
+    step away from getting a wrong e.p. plane on row 0 of every game with no
+    gate able to object. Now it fails loudly instead.
+    """
+    if board.ep_square is not None:
+        return None  # recovered by the unique-witness repair; nothing was lost
+    mover = not board.turn
+    pawn_rank = 3 if mover == chess.WHITE else 4
+    at_risk = board.pawns & board.occupied_co[mover] & chess.BB_RANKS[pawn_rank]
+    if not at_risk:
+        return None
+    return (
+        "first record may carry an unexpressible en-passant square "
+        "(see first_record_en_passant_risk)"
+    )
+
+
+def value_field_problem(rec: V6Record) -> str | None:
+    """Why this record's value scalars cannot be trusted, or None.
+
+    ⚑ ``_wdl_from_q_d`` used to CLIP whatever it was handed, so a corrupt or
+    out-of-range ``q``/``d`` became a plausible distribution instead of an
+    error — the "accepted and silently ignored" shape. lc0's own invariants are
+    ``q in [-1, 1]``, ``d in [0, 1]`` and ``|q| + d <= 1``; a record violating
+    them is unreadable, not roundable.
+    """
+    for label, q, d in (("result", rec.result_q, rec.result_d), ("best", rec.best_q, rec.best_d)):
+        if not (np.isfinite(q) and np.isfinite(d)):
+            return f"{label}_q/{label}_d not finite ({q}, {d})"
+        if not -1.0001 <= q <= 1.0001 or not -0.0001 <= d <= 1.0001:
+            return f"{label}_q/{label}_d out of range ({q}, {d})"
+        if abs(q) + d > 1.0001:
+            return f"|{label}_q| + {label}_d = {abs(q) + d:.4f} exceeds 1"
+    if not np.isfinite(rec.plies_left) or rec.plies_left < 0.0:
+        return f"plies_left is not a non-negative finite number ({rec.plies_left})"
+    return None
+
+
 # ── record -> targets ──────────────────────────────────────────────────────────
 
 _LEELA_SUFFIX_TO_PIECE: dict[str, int] = {
@@ -561,18 +627,32 @@ def move_from_leela_slot(board: chess.Board, slot: int) -> chess.Move | None:
     from_square = unorient(chess.parse_square(uci[0:2]))
     to_square = unorient(chess.parse_square(uci[2:4]))
     mover = board.piece_at(from_square)
+    suffix = uci[4:]
     promotion: int | None = None
-    if (
-        mover is not None
-        and mover.piece_type == chess.PAWN
-        and chess.square_rank(to_square) in (0, 7)
-    ):
-        promotion = _LEELA_SUFFIX_TO_PIECE.get(uci[4:], chess.KNIGHT)
+    if mover is not None and mover.piece_type == chess.PAWN and chess.square_rank(to_square) in (0, 7):
+        promotion = _LEELA_SUFFIX_TO_PIECE.get(suffix, chess.KNIGHT)
+    elif suffix:
+        # ⚑ ALIAS BAND, family (ii): a promotion-suffixed slot whose from-square
+        # does not hold a pawn is a slot Leela can never populate. Decoding it as
+        # the plain move (``c7b8q`` with a QUEEN on c7 -> ``c7b8``) hands back a
+        # legal move for an illegal slot and blunts the gate. Measured at 222 of
+        # 234 alias cases over 456,833 illegal slots; refusing them is exact.
+        return None
     elif mover is not None and mover.piece_type == chess.KING:
         target = board.piece_at(to_square)
         if target is not None and target.color == mover.color and target.piece_type == chess.ROOK:
             kingside = chess.square_file(to_square) > chess.square_file(from_square)
             to_square = chess.square(6 if kingside else 2, chess.square_rank(from_square))
+        elif abs(chess.square_file(to_square) - chess.square_file(from_square)) == 2:
+            # ⚑ ALIAS BAND, family (i): Leela spells castling king-takes-rook, so
+            # the plain two-square king slot (``e1g1``) is an ordinary SLIDE in
+            # its space and is never the castling move. Letting python-chess
+            # reinterpret it as castling makes an illegal slot decode legal.
+            # Unconditional: a king cannot slide two files, so with a king on the
+            # from-square this slot is one Leela can never populate — and
+            # ``board.is_castling`` would NOT narrow it, since it answers True for
+            # any king move of more than one file regardless of rights.
+            return None
     return chess.Move(from_square, to_square, promotion=promotion)
 
 
@@ -665,11 +745,36 @@ class VerifyStats:
     best_idx_is_argmax: int = 0
     production_aux_matches: int = 0
     production_aux_mismatch: int = 0
+    value_range_mismatch: int = 0
     first_divergence: str | None = None
     drop_reasons: dict[str, int] = field(default_factory=dict)
     # Played promotions whose decode was CONFIRMED by the next record's planes,
     # keyed by python-chess piece symbol ("q", "n", "r", "b").
     played_promotions: dict[str, int] = field(default_factory=dict)
+
+    # ⚑ The ONLY drop classes a PASS may contain. Everything else is an
+    # integrity failure — see `integrity_drops`. Membership is by explicit
+    # enumeration, so a NEW drop reason is failing-by-default rather than
+    # silently benign, which is the direction that cannot rot.
+    BENIGN_DROP_REASONS: ClassVar[frozenset[str]] = frozenset({"chess960"})
+
+    def integrity_drops(self) -> dict[str, int]:
+        """Dropped games a successful run must NOT contain.
+
+        ⚑ This is the "gate that cannot fail" one level out from the verdict.
+        Pre-gate drops — an unsupported record version, an empty game, a
+        first-position legal set that does not match, a played_idx that is not
+        legal — set no mismatch counter, so `ok` stayed True and a run that had
+        silently discarded an INCOMPATIBLE game still printed PASS with exit 0.
+        Measured: one crafted `version=7` game alongside 449 real ones produced
+        `drop reasons {'version=7/...': 1}` and `VERDICT: PASS`. In a tool whose
+        whole purpose is certifying data, a record it could not read must not
+        vanish into the ledger.
+        """
+        return {
+            reason: count for reason, count in self.drop_reasons.items()
+            if reason not in self.BENIGN_DROP_REASONS and reason != EP_ALIAS_DROP_REASON
+        }
 
     @property
     def ok(self) -> bool:
@@ -680,6 +785,8 @@ class VerifyStats:
             and self.gather_disagrees == 0
             and self.argmax_illegal == 0
             and self.production_aux_mismatch == 0
+            and self.value_range_mismatch == 0
+            and not self.integrity_drops()
         )
 
     # ⚑ THE TWO COUNTER SCOPES, declared rather than assumed. Everything else
@@ -688,15 +795,29 @@ class VerifyStats:
     # were EMITTED, so an abandoned game must give them back. A numerator from
     # one scope over a denominator from the other is exactly how a rate of
     # 110.4651% got reported.
-    ROW_SCOPED: ClassVar[tuple[str, ...]] = ("rows", "best_idx_is_argmax")
+    ROW_SCOPED: ClassVar[tuple[str, ...]] = ("rows", "best_idx_is_argmax", "played_promotions")
 
-    def row_scoped_snapshot(self) -> tuple[int, int, dict[str, int]]:
-        return self.rows, self.best_idx_is_argmax, dict(self.played_promotions)
+    def row_scoped_snapshot(self) -> dict[str, int | dict[str, int]]:
+        """⚑ DRIVEN by ``ROW_SCOPED``, not merely documented by it. The tuple
+        used to be declared and never read, and it disagreed with the hand-rolled
+        snapshot beside it (which also restored ``played_promotions``) — a
+        decorative constant next to the comment explaining why the scopes matter
+        is precisely the shape this file exists to avoid. Adding a field to the
+        tuple now changes the behaviour."""
+        snapshot: dict[str, int | dict[str, int]] = {}
+        for name in self.ROW_SCOPED:
+            value = getattr(self, name)
+            snapshot[name] = dict(value) if isinstance(value, dict) else int(value)
+        return snapshot
 
-    def restore_row_scoped(self, snapshot: tuple[int, int, dict[str, int]]) -> None:
-        self.rows, self.best_idx_is_argmax, promotions = snapshot
-        self.played_promotions.clear()
-        self.played_promotions.update(promotions)
+    def restore_row_scoped(self, snapshot: dict[str, int | dict[str, int]]) -> None:
+        for name, value in snapshot.items():
+            current = getattr(self, name)
+            if isinstance(current, dict) and isinstance(value, dict):
+                current.clear()
+                current.update(value)
+            else:
+                setattr(self, name, value)
 
     def consistency_problems(self) -> list[str]:
         """Internal-arithmetic violations. ⚑ Closes the CLASS, not the instance.
@@ -788,6 +909,9 @@ class VerifyStats:
         problems = self.consistency_problems()
         if problems:
             return f"FAIL (counter arithmetic: {problems[0]})", 1
+        drops = self.integrity_drops()
+        if drops:
+            return f"FAIL (integrity drops: {drops})", 1
         if not self.ok:
             return "FAIL", 1
         abstained = [
@@ -830,6 +954,9 @@ class VerifyStats:
             f"played promotions {self.played_promotions or '{}'} "
             "[each confirmed bit-exact by the NEXT record's planes]",
             f"drop reasons      {self.drop_reasons or '{}'}",
+            f"integrity drops   {self.integrity_drops() or 'none'}"
+            f"  [a PASS may carry only {sorted(self.BENIGN_DROP_REASONS)}"
+            " plus the benign e.p.-alias class]",
             f"chess960 rate     {self.chess960_status()}",
             f"first divergence  {self.first_divergence or 'none'}",
             "⚑ The rates above are ONE NESTED measurement, not independent gates: the",
@@ -957,6 +1084,11 @@ def convert_game(
         return []
     if repaired.ep_square is not None:
         stats.games_ep_repaired += 1
+    ep_risk = first_record_en_passant_risk(repaired)
+    if ep_risk is not None:
+        stats.games_dropped += 1
+        stats.note(ep_risk)
+        return []
     board = repaired
     samples: list[ReplaySample] = []
     # An abandoned game emits NOTHING, so every ROW-SCOPED counter has to come
@@ -1034,6 +1166,11 @@ def _gate_position(
         stats.divergence(f"{name} ply {ply}: {detail}")
         stats.note(f"gate failure: {gate}")
         return GatedPosition("fail")
+
+    value_problem = value_field_problem(rec)
+    if value_problem is not None:
+        stats.value_range_mismatch += 1
+        return fail("value_fields_in_range", value_problem)
 
     planes_lc0_root = encode_position(
         board, add_features=False, input_history_encoding=LC0_HISTORY_ROOT,
@@ -1442,6 +1579,7 @@ def _first_failing_gate(stats: VerifyStats) -> str | None:
         ("gather_matches_reference", stats.gather_disagrees),
         ("argmax_is_legal", stats.argmax_illegal),
         ("production_aux_planes", stats.production_aux_mismatch),
+        ("value_fields_in_range", stats.value_range_mismatch),
     ):
         if count:
             return name
@@ -1614,9 +1752,25 @@ def cmd_corrupt_check(args: argparse.Namespace) -> int:
               f"{probe['leela_spelling']!r} -> rewritten {probe['rewritten_as']!r}: "
               f"caught_by={probe['caught_by']}")
     missed = [p for p in probes[:args.promotion_probes] if p["caught_by"] is None]
-    print(f"  promotion positions tested {min(len(probes), args.promotion_probes)} "
-          f"over {scanned} games scanned; undetected {len(missed)}")
-    return 0 if not undetected_hard(results) and not missed else 1
+    tested = min(len(probes), args.promotion_probes)
+    print(f"  promotion positions tested {tested} over {scanned} games scanned; "
+          f"undetected {len(missed)}")
+    # ⚑ Each of these is a way the harness could report success while having
+    # measured nothing, so each is its own failure rather than an implicit pass:
+    # a clean control that itself trips a gate makes every "caught" reading
+    # meaningless, and ZERO promotion probes found is an unrun test, not a
+    # passed one.
+    problems: list[str] = []
+    if not bool(results["clean"]["ok"]) or results["clean"]["caught_by"] is not None:
+        problems.append(f"clean control did not pass cleanly: {results['clean']}")
+    if tested == 0:
+        problems.append(f"no promotion probes found in {scanned} games — nothing was tested")
+    problems.extend(f"undetected corruption: {label}" for label in undetected_hard(results))
+    problems.extend(f"undetected promotion respelling at ply {p['ply']}" for p in missed)
+    for problem in problems:
+        print(f"  PROBLEM: {problem}")
+    print("VERDICT:", "PASS" if not problems else "FAIL")
+    return 0 if not problems else 1
 
 
 def undetected_hard(results: dict[str, dict[str, object]]) -> list[str]:
@@ -1649,36 +1803,91 @@ def cmd_check_run_config(args: argparse.Namespace) -> int:
     return 0 if not problems else 1
 
 
+STAGING_DIR_NAME = "_staging"
+REJECTED_DIR_NAME = "_rejected"
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
+    """Convert to a STAGING dir, and publish only on a PASS.
+
+    ⚑ Shards used to be written straight into ``--out`` inside the loop while
+    the verdict was computed afterwards, so a 30-game run published
+    ``shard_000000.zarr`` and then printed ``INCONCLUSIVE`` (exit 2). Writing
+    the artifact while declaring the run inconclusive is the wrong pairing, and
+    of the two ways to fix it — publish anyway, or don't publish — only one is
+    defensible for a positive control: **rows whose provenance check declined
+    to answer must not become training data.** An INCONCLUSIVE run is a smoke
+    test, not a data-production run.
+
+    Nothing is silently lost either: on a non-PASS the staged shards are moved
+    to ``<out>/_rejected`` and named in the output, so a long run is not thrown
+    away and cannot be mistaken for a published one. This also closes the
+    partial-publish hole (a mid-run gate failure used to leave already-written
+    shards in ``--out`` with no manifest).
+    """
     options = _options(args)
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+    staging = out / STAGING_DIR_NAME
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
     stats = VerifyStats()
     pending: list[ReplaySample] = []
     shard_index = 0
     written = 0
     for index, (name, records) in enumerate(_games(args.data, args.limit_games)):
         pending.extend(convert_game(name, records, stats, options, game_id=index))
+        if args.max_rows:
+            keep = max(0, args.max_rows - written)
+            if len(pending) > keep:
+                del pending[keep:]
         while len(pending) >= args.rows_per_shard:
-            _write_shard(out, shard_index, pending[:args.rows_per_shard], options, stats)
+            _write_shard(staging, shard_index, pending[:args.rows_per_shard], options, stats)
             written += args.rows_per_shard
-            pending = pending[args.rows_per_shard:]
+            del pending[:args.rows_per_shard]
             shard_index += 1
         if args.max_rows and written + len(pending) >= args.max_rows:
             break
     if pending:
-        _write_shard(out, shard_index, pending, options, stats)
+        _write_shard(staging, shard_index, pending, options, stats)
         written += len(pending)
         shard_index += 1
     _print(stats.rate_lines())
-    print(f"wrote {written} rows into {shard_index} shard(s) under {out}")
-    if args.emit_manifest:
-        (out / "lc0_rows_manifest.json").write_text(
-            json.dumps(_manifest(options, stats), indent=2), encoding="utf-8",
-        )
     verdict, code = stats.overall_verdict()
+    if code == 0:
+        published = _publish(staging, out)
+        print(f"published {written} rows in {published} shard(s) under {out}")
+        if args.emit_manifest:
+            (out / "lc0_rows_manifest.json").write_text(
+                json.dumps(_manifest(options, stats), indent=2), encoding="utf-8",
+            )
+    else:
+        rejected = out / REJECTED_DIR_NAME
+        if rejected.exists():
+            shutil.rmtree(rejected)
+        staging.rename(rejected)
+        print(
+            f"NOT PUBLISHED: {written} rows in {shard_index} shard(s) held at {rejected} "
+            "— a run that did not PASS does not produce training data",
+        )
     print("VERDICT:", verdict)
     return code
+
+
+def _publish(staging: Path, out: Path) -> int:
+    """Move staged shards into ``out``. Refuses to overwrite an existing shard."""
+    moved = 0
+    for path in sorted(staging.iterdir()):
+        destination = out / path.name
+        if destination.exists():
+            raise FileExistsError(
+                f"{destination} already exists; refusing to mix this run's rows into a "
+                "populated output directory",
+            )
+        path.rename(destination)
+        moved += 1
+    staging.rmdir()
+    return moved
 
 
 def _write_shard(
