@@ -50621,3 +50621,60 @@ up to **4.25x** the wall-clock. The production-shape arm is what decides.
 **The 6 banked post-deploy reports** that cannot be audited for which search they scored:
 `1051cc734`, `26cbfcef9`, `86d3b7358`, `a44a75199`, `df704b45b`, `ed9de8ee9` — **0 of 6 mention
 vloss at all**. PR #434 is the hygiene fix for the recording half.
+
+## 2026-08-15 — C16 VERDICT: **BOUNDED NULL**. `gumbel_target_batch` is not worth changing. CLOSED.
+
+Deciding arm at the PRODUCTION shape (boards-per-search-call **1**, `vloss_weight: 1`,
+sims 100 / topk 16), n=2000, paired, 20000 bootstrap. Judged by the twice-amended rule
+(`b513c601a`, `ef01a0219`) — **both amendments written while the arm was still running and its
+number was not on disk.**
+
+    deciding field `exp` (cand row = train), b1_tb1 - b1_tb0:
+        paired delta  -1.1867 cp   95% CI [-3.3008, +1.0976]   1921/2000 rows differ
+
+    realized halfwidth h            2.1992 cp
+    PREDICTED h                     1.84 cp  ->  +19.5%, inside the +/-30% band  ==> HIT
+    MATERIAL bound (2h)             +/-4.3984 cp
+    CI wholly inside +/-2h?         YES
+    CI excludes 0?                  NO
+
+⇒ **BOUNDED NULL by the pre-committed rule.** This is a real bound, not "no evidence": at
+production shape the effect of `target_batch` on target quality is **smaller than 4.40 cp**.
+The pre-registered variance prediction HIT, so the B=1 regime does not have a materially
+different per-row variance — no separate finding owed there.
+
+**Cost: 2.23x wall-clock** (b1_tb0 1505.4 s vs b1_tb1 3354.8 s). ⇒ a bounded-null quality
+change at 2.23x the cost. **`gumbel_target_batch` stays at its production value. C16 is CLOSED.**
+
+⚑ Recall the interpretation fact from `a674ac329`: the contrast is effectively **512 vs 1**, not
+1024 vs 1, because `enc_capacity` (512 at production shape) binds before `GSS_GPU_BATCH` (1024).
+The null is about 512-vs-1, which is the comparison that matters since 512 is what production
+actually does.
+
+**⚑ NOT THE VERDICT — a hypothesis-generating observation, labelled as such.** The pre-committed
+deciding field was `exp`, and switching fields after a readout is precisely the failure the
+protocol bans. But three TAIL metrics moved with CIs excluding zero:
+
+    blunder100    -0.0091  [-0.0144, -0.0038]
+    blunder50     -0.0103  [-0.0169, -0.0037]
+    out_of_top10  -0.0112  [-0.0197, -0.0028]
+
+and the target came out slightly FLATTER (entropy +0.0104 [-0.0023, +0.0227], top-1 mass
+-0.0039 [-0.0102, +0.0024]), which is the direction the 2026-08-06 lc0 comparison says we want
+(our targets are ~2.4x sharper than lc0's).
+
+⚑⚑ **This is NOT a verdict and must not be cited as one.** It is three of nine reported fields,
+none pre-committed, with no multiplicity correction. It is noted ONLY because it coincides with
+an INDEPENDENTLY derived finding from the same day — the BT4 phase-1/phase-2 result that the
+target's defect is a **TAIL, not a mean**, and that repairs must be priced against the tail
+because 68% of disagreements are already fine (`1946346d1`, `2c419fff2`). Two instruments
+pointing at the tail from different directions is a reason to PRE-REGISTER a tail-metric arm,
+not a reason to re-read this one. **If that arm is ever run, `exp` remains a reported field and
+the tail metric must be named as the decider IN ADVANCE, with its own resolution computed
+first.**
+
+**Protocol note worth keeping.** C16's original bar was 2.0 cp against a halfwidth that turned
+out to be 2.20 cp at the deciding arm's own n — the bar was inside the noise, twice over (first
+against the wrong n, then against the control arms' n). The rule that finally decided it was
+stated in halfwidths and required the halfwidth to be READ OFF THE DECIDING ARM. That is the
+generalisable form: **a halfwidth is a property of a measurement, not of an instrument.**
