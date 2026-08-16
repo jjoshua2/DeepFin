@@ -797,8 +797,43 @@ static inline uint64_t cboard_transposition_key(const CBoard *b) {
  * REPETITION it is wrong in the other direction: it would split the key for a
  * position whose ep cannot legally be played, so a genuine repetition of that
  * position would go UNDETECTED (false negative — a real draw missed). We are
- * not trading one unsound answer for another; this predicate matches
- * python-chess exactly.
+ * not trading one unsound answer for another.
+ *
+ * ⚑ The pseudo-legal half is a LITERAL transcription of python-chess's
+ * generate_pseudo_legal_ep — target square empty, capturers taken from
+ * BB_PAWN_ATTACKS[them][ep_square] AND restricted to BB_RANKS[4 if turn else 3]
+ * — and deliberately nothing more. In particular it does NOT require the
+ * captured pawn to be present, because python-chess does not either. Both
+ * halves are load-bearing on caller-supplied (from_raw / from_board) ep
+ * squares, which need not be consistent with the pieces:
+ *
+ *   - requiring the captured pawn made "4k3/8/8/4P3/8/8/8/4K3 w - d6 0 1"
+ *     answer 0 where python-chess answers 1;
+ *   - omitting the rank mask made "Nr1n4/3N4/6P1/k3P3/8/8/1PpnR1RK/8 w - c3"
+ *     answer 1 (a b2 pawn "capturing" on c3) where python-chess answers 0.
+ *
+ * Both were real: each is a repetition-key divergence from the oracle this
+ * whole key exists to mirror, and the first also made the C and Python paths
+ * disagree with each other. test_c_matches_python_chess_on_inconsistent_ep_fens
+ * pins the pair by name and
+ * test_ep_predicate_oracle_sweep_over_inconsistent_ep_fields sweeps the class,
+ * so this comment's "matches python-chess" cannot go stale silently.
+ *
+ * ⚑ It is NOT "matches python-chess exactly", and the old comment's version of
+ * that sentence is what let the original defect live for months. The exact
+ * claim, measured over 240,000 random inconsistent-ep positions (three seeds,
+ * ZERO mismatches), is: we agree with python-chess whenever the ep field is
+ * PAWN-CONSISTENT — captured square empty, or holding an enemy pawn — which
+ * covers every position reachable from a legal double push. When a NON-PAWN
+ * stands on the captured square (a position illegal by the rules of chess: the
+ * ep square asserts a pawn just double-pushed onto an occupied square) we
+ * answer exact legality while python-chess answers its own approximation
+ * (pin_mask + _ep_skewered, both sound only when a pawn is there); ~1 in 3,000
+ * such positions differs. Chasing it would mean transcribing those
+ * approximations into C — replacing a correct test with an incorrect one for
+ * positions that cannot occur. The sweep asserts the residual stays in that
+ * class AND in the key-SPLITTING direction, so the error there can only MISS a
+ * repetition, never invent one.
  *
  * Cost is paid only when ep_square is set (rare), hence the early-out. The
  * occupancy is simulated fully — capturer removed from its origin, captured
@@ -840,23 +875,45 @@ static inline int bitboards_have_legal_ep(const uint64_t bb[6],
                   | ((ep_bit << 9) & 0xFEFEFEFEFEFEFEFEULL);
         captured_sq = ep_square + 8;
     }
-    uint64_t candidates = (bb[PAWN] & occ[us]) & attackers;
+    /* python-chess's capturer rank mask, BB_RANKS[4 if self.turn else 3]:
+     * White captures en passant only from rank 5, Black only from rank 4.
+     * `attackers` alone constrains the capturer to the rank below/above
+     * ep_square, which is NOT the same thing when ep_square itself is
+     * inconsistent — without this, ep_square c3 with White to move let a b2
+     * pawn "capture" on c3. */
+    uint64_t capturer_rank = (us == WHITE_C) ? 0x000000FF00000000ULL   /* rank 5 */
+                                             : 0x00000000FF000000ULL;  /* rank 4 */
+    uint64_t candidates = (bb[PAWN] & occ[us]) & attackers & capturer_rank;
     if (!candidates) return 0;
     if (captured_sq < 0 || captured_sq >= 64) return 0;
 
+    /* NOT checked: that a pawn actually stands on captured_sq. python-chess's
+     * generate_pseudo_legal_ep does not check it, so neither may we (see the
+     * header comment). The simulated occupancy below tolerates an empty or
+     * differently-occupied square by construction — `& ~cap_bit` is a no-op on
+     * an empty one — and mirrors _ep_skewered, which clears last_double the
+     * same way regardless of what is on it. */
     uint64_t cap_bit = 1ULL << captured_sq;
-    /* The pawn to be captured must really be there. A caller-supplied ep_square
-     * (from_raw / from_board on a hand-written FEN) need not be consistent. */
-    if (!(bb[PAWN] & occ[them] & cap_bit)) return 0;
 
     int king_sq = lsb64(us_kings);
     uint64_t all = occ[0] | occ[1];
-    uint64_t them_pawns_after = (bb[PAWN] & occ[them]) & ~cap_bit;
-    uint64_t them_knights = bb[KNIGHT] & occ[them];
-    uint64_t them_bishops = bb[BISHOP] & occ[them];
-    uint64_t them_rooks   = bb[ROOK]   & occ[them];
-    uint64_t them_queens  = bb[QUEEN]  & occ[them];
-    uint64_t them_kings   = bb[KING]   & occ[them];
+    /* Every enemy piece set is cleared of cap_bit, not just the pawns. The
+     * captured square is removed from occ_after below, so leaving a piece there
+     * in the ATTACKER sets would make this simulation disagree with its own
+     * occupancy: a knight/rook/king on captured_sq would be gone as a blocker
+     * yet still radiate attacks. Reachable positions always hold the
+     * just-double-pushed PAWN there, so this is a no-op in play; it matters only
+     * for caller-supplied ep squares, where it is the difference between
+     * matching python-chess (which reaches such an ep through
+     * _generate_evasions' "capture the checking piece en passant" branch) and
+     * calling a legal ep illegal. */
+    uint64_t them_after = occ[them] & ~cap_bit;
+    uint64_t them_pawns_after = bb[PAWN]   & them_after;
+    uint64_t them_knights     = bb[KNIGHT] & them_after;
+    uint64_t them_bishops     = bb[BISHOP] & them_after;
+    uint64_t them_rooks       = bb[ROOK]   & them_after;
+    uint64_t them_queens      = bb[QUEEN]  & them_after;
+    uint64_t them_kings       = bb[KING]   & them_after;
 
     int from_sq;
     FOR_EACH_BIT(candidates, from_sq) {

@@ -364,3 +364,315 @@ def test_external_oracle_sweep_over_a_corpus_that_contains_the_event() -> None:
     assert pseudo_only_ep > 0, "corpus contains no pinned/in-check ep positions"
     assert true_reps > 0, "corpus contains no genuine repetitions"
     assert not mismatches, mismatches[:10]
+
+
+# ---------------------------------------------------------------------------
+# The hist_ep plumbing.
+#
+# Review finding B2: the whole hist_ep path -- the CBoard field, the reset
+# helper, py_read_ep_square, cboard_hist_hash's ep parameter and its call sites
+# -- could be deleted with every existing test still green, while 21 measured
+# false positives came back. Everything above drives the C board with
+# push_index() from an EMPTY history, and cboard_push records hist_hash from
+# cboard_repetition_key directly; it never reaches cboard_hist_hash, which is
+# the only consumer of hist_ep.
+#
+# cboard_hist_hash is reached by:
+#   - CBoard.from_board(), which rebuilds hash_stack, hist_hash and (with the
+#     rep fix on) the per-slot hist_was_rep flags from python-chess _BoardState
+#     snapshots -- and production builds boards this way;
+#   - cboard_fill_lc0_112_root's default branch, which reconstructs each history
+#     slot's key from b->hist_ep[idx].
+#
+# Both are covered below. A CBoard's repetition planes are compared against
+# python-chess's own key over the same game, slot by slot, so what is asserted
+# is WHICH slot changed -- not merely that a number moved.
+# ---------------------------------------------------------------------------
+
+# 12 = the current-position repetition plane of the lc0-root layout;
+# (hi+1) * 13 + 12 = history frame hi's, newest first (cboard_set_hist_rep_plane).
+_LC0_ROOT_HIST_FRAMES = 7
+
+
+@pytest.fixture
+def restore_rep_fix():
+    """history_rep_fix is a process-global in the C extension."""
+    from chess_anti_engine.encoding import _lc0_ext
+
+    yield _lc0_ext.set_history_rep_fix
+    _lc0_ext.set_history_rep_fix(False)
+
+
+def _lc0_root_rep_planes(cb: CBoard) -> list[bool]:
+    """[current, frame 0, ... frame 6] repetition flags, production encoding."""
+    planes = np.asarray(cb.encode_full(2, 63)).reshape(-1, 8, 8)
+    return [bool(planes[12].any())] + [
+        bool(planes[(hi + 1) * 13 + 12].any()) for hi in range(_LC0_ROOT_HIST_FRAMES)
+    ]
+
+
+def _pychess_rep_flags(fen: str, ucis: Sequence[str]) -> list[bool]:
+    """The same vector, from python-chess's OWN Board._transposition_key().
+
+    Newest first: element i is "the position i plies back had already occurred
+    earlier in this game".
+    """
+    board = chess.Board(fen)
+    keys = [board._transposition_key()]  # the oracle's OWN key
+    for uci in ucis:
+        board.push(chess.Move.from_uci(uci))
+        keys.append(board._transposition_key())
+    flags = [key in keys[:i] for i, key in enumerate(keys)]
+    return list(reversed(flags))[: _LC0_ROOT_HIST_FRAMES + 1]
+
+
+# e2e4 gives black a LEGAL ep (d4xe3), so the position 4 plies later -- same
+# pieces, turn and castling, no ep -- is NOT a repetition of it. Each further
+# knight cycle repeats what came before, which is what puts a True on either
+# side of the discriminating False and stops an always-clear (or always-set)
+# plane from passing.
+_EP_HISTORY_UCIS = ["e2e4", "g8f6", "g1f3", "f6g8", "f3g1", "g8f6", "g1f3", "f6g8"]
+
+
+@pytest.mark.parametrize("n_plies", [7, 8])
+@pytest.mark.parametrize("rep_fix", [False, True])
+@pytest.mark.parametrize("construction", ["push", "from_board"])
+def test_history_slot_repetition_planes_match_python_chess(
+    restore_rep_fix, construction: str, rep_fix: bool, n_plies: int,
+) -> None:
+    """Every history slot's repetition flag, against python-chess, slot by slot.
+
+    ``from_board`` is the case that pins hist_ep: it rebuilds each slot's key
+    from a _BoardState, and a _BoardState's bitboards do not say whether an ep
+    capture was legal -- only its ep_square does. ``push`` + rep-fix-off pins the
+    other consumer, cboard_fill_lc0_112_root's reconstruction from
+    ``b->hist_ep[idx]``.
+    """
+    restore_rep_fix(rep_fix)
+    ucis = _EP_HISTORY_UCIS[:n_plies]
+    expected = _pychess_rep_flags(_REPRO_FEN, ucis)
+
+    # The fixture must actually discriminate: a True adjacent to the False, and
+    # the False must be the ep case. Without this the assertion below could be
+    # satisfied by a plane that is never set.
+    assert expected[0] is True, expected
+    assert True in expected, expected
+    assert False in expected, expected
+
+    ep_ply = chess.Board(_REPRO_FEN)
+    ep_ply.push(chess.Move.from_uci(ucis[0]))
+    assert ep_ply.has_legal_en_passant(), "fixture no longer creates a legal ep"
+
+    board = chess.Board(_REPRO_FEN)
+    if construction == "push":
+        cb = CBoard.from_board(board)
+        for uci in ucis:
+            move = chess.Move.from_uci(uci)
+            cb.push_index(move_to_index(move, board))
+            board.push(move)
+    else:
+        for uci in ucis:
+            board.push(chess.Move.from_uci(uci))
+        cb = CBoard.from_board(board)
+
+    got = _lc0_root_rep_planes(cb)
+    assert got == expected, (
+        f"{construction} rep_fix={rep_fix} n_plies={n_plies}: "
+        f"got {got}, python-chess says {expected}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "ucis", "expected"),
+    [
+        ("legal ep must not repeat", ["e2e4", "g8f6", "g1f3", "f6g8", "f3g1"], False),
+        ("control non-repetition", ["b1c3", "g8f6", "c3b1", "f6g8", "g1f3"], False),
+        ("control genuine repetition", ["b1c3", "g8f6", "c3b1", "f6g8"], True),
+    ],
+)
+def test_from_board_rebuilds_the_hash_stack_on_the_ep_aware_key(
+    label: str, ucis: Sequence[str], expected: bool,
+) -> None:
+    """The same reproduction, but constructing the CBoard AFTER the moves.
+
+    ``_play`` builds the CBoard first and pushes into it, so its hash_stack comes
+    from cboard_push. Constructing from a board that already has a move stack
+    routes every entry through cboard_hist_hash + py_read_ep_square instead --
+    the path selfplay and MCTS take whenever a CBoard is made from a live
+    python-chess board.
+    """
+    board = chess.Board(_REPRO_FEN)
+    for uci in ucis:
+        move = chess.Move.from_uci(uci)
+        assert move in board.legal_moves, f"{uci} illegal in {board.fen()}"
+        board.push(move)
+
+    cb = CBoard.from_board(board)
+    assert board.is_repetition(2) is expected, f"oracle disagrees on {label!r}"
+    assert cb.is_repetition() is expected, label
+    assert _plane103(cb) is expected, label
+
+
+# ---------------------------------------------------------------------------
+# Review finding B1: the pseudo-legal half of cboard_has_legal_ep must be a
+# LITERAL transcription of python-chess's generate_pseudo_legal_ep, because a
+# caller-supplied ep square (from_raw / from_board on a hand-written FEN) need
+# not be consistent with the pieces.
+#
+# Two divergences were found and fixed. Both are named below, because a comment
+# claiming "matches python-chess" is worth nothing without a test that fails
+# when it stops being true.
+# ---------------------------------------------------------------------------
+
+_INCONSISTENT_EP_FENS = [
+    # Missing captured pawn. python-chess does NOT require it -- and this one
+    # survives a fen() round-trip (fen() prints "d6", because python-chess reads
+    # the ep as legal), so a FEN file can carry it. We required it and answered
+    # False where the oracle answers True.
+    ("no pawn to capture", "4k3/8/8/4P3/8/8/8/4K3 w - d6 0 1", chess.D6, True),
+    # No capturer-rank mask. python-chess restricts capturers to
+    # BB_RANKS[4 if turn else 3]; without it a b2 pawn "captured" on c3.
+    ("capturer off the ep rank", "Nr1n4/3N4/6P1/k3P3/8/8/1PpnR1RK/8 w - c3 0 1",
+     chess.C3, False),
+    # Codex's P2, kept here so all three inconsistent-ep cases read together.
+    ("occupied ep target", "7k/8/3n4/3pP3/8/8/8/4K3 w - d6 0 1", chess.D6, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "fen", "ep_square", "oracle"),
+    [(lab, fen, ep, ora) for lab, fen, ep, ora in _INCONSISTENT_EP_FENS],
+)
+def test_c_matches_python_chess_on_inconsistent_ep_fens(
+    label: str, fen: str, ep_square: int, oracle: bool,
+) -> None:
+    board = chess.Board(fen)
+    # The fixture only bites while python-chess still exposes the ep square.
+    assert board.ep_square == ep_square, f"{label}: python-chess dropped the ep"
+    assert board.has_legal_en_passant() is oracle, (
+        f"{label}: the ORACLE moved, not us -- re-derive the C rule before "
+        f"changing this expectation"
+    )
+
+    # from_board reads Board.ep_square straight through...
+    assert CBoard.from_board(board).has_legal_en_passant() is oracle, label
+    # ...and from_raw takes it as an argument.
+    raw = CBoard.from_raw(
+        board.pawns, board.knights, board.bishops, board.rooks,
+        board.queens, board.kings,
+        int(board.occupied_co[chess.WHITE]), int(board.occupied_co[chess.BLACK]),
+        int(board.turn), 0, ep_square, 0,
+    )
+    assert raw.has_legal_en_passant() is oracle, f"{label} (from_raw)"
+
+
+def _random_sparse_board(rng: random.Random) -> chess.Board:
+    board = chess.Board.empty()
+    squares = list(chess.SQUARES)
+    rng.shuffle(squares)
+    board.set_piece_at(squares.pop(), chess.Piece(chess.KING, chess.WHITE))
+    board.set_piece_at(squares.pop(), chess.Piece(chess.KING, chess.BLACK))
+    for _ in range(rng.randint(2, 12)):
+        square = squares.pop()
+        piece_type = rng.choice([chess.PAWN, chess.PAWN, chess.PAWN, chess.KNIGHT,
+                                 chess.BISHOP, chess.ROOK, chess.QUEEN])
+        if piece_type == chess.PAWN and chess.square_rank(square) in (0, 7):
+            piece_type = chess.KNIGHT
+        board.set_piece_at(square, chess.Piece(
+            piece_type, rng.choice([chess.WHITE, chess.BLACK])))
+    board.turn = rng.choice([chess.WHITE, chess.BLACK])
+    board.castling_rights = 0
+    return board
+
+
+def test_ep_predicate_oracle_sweep_over_inconsistent_ep_fields() -> None:
+    """Sweep the class B1 lives in: ep squares that contradict the pieces.
+
+    The claim being pinned is exact agreement with python-chess wherever the ep
+    field is PAWN-CONSISTENT -- the captured square empty, or holding an enemy
+    pawn. That domain covers every position reachable from a legal double push
+    plus every hand-written FEN whose ep square merely lacks its pawn (finding
+    B1's own case).
+
+    Outside it -- a non-pawn standing on the captured square, which asserts a
+    pawn double-pushed onto a square another piece occupies -- we answer exact
+    chess legality of the ep capture while python-chess answers its own
+    approximation (pin_mask + _ep_skewered, both valid only when a pawn is
+    there). The residual is asserted to stay in that class AND to stay in the
+    key-SPLITTING direction: we can miss a repetition there, never invent one,
+    which is the direction this whole fix exists to remove.
+    """
+    rng = random.Random(20260816)
+    n = consistent = pawn_consistent_mismatch = 0
+    residual_split = residual_merge = 0
+    pop_legal_ep = pop_cap_empty = pop_cap_pawn = pop_cap_nonpawn = 0
+    examples: list[str] = []
+
+    while n < 30_000:
+        board = _random_sparse_board(rng)
+        roll = rng.random()
+        if roll < 0.6:
+            ep = chess.square(rng.randrange(8), 5 if board.turn == chess.WHITE else 2)
+        elif roll < 0.85:
+            ep = chess.square(rng.randrange(8), 2 if board.turn == chess.WHITE else 5)
+        else:
+            ep = rng.randrange(64)
+        n += 1
+
+        captured = ep - 8 if board.turn == chess.WHITE else ep + 8
+        in_board = 0 <= captured < 64
+        cap_pawn = in_board and bool(
+            chess.BB_SQUARES[captured] & board.pawns
+            & board.occupied_co[not board.turn])
+        cap_empty = in_board and not (chess.BB_SQUARES[captured] & board.occupied)
+        pop_cap_pawn += cap_pawn
+        pop_cap_empty += cap_empty
+        pop_cap_nonpawn += in_board and not cap_pawn and not cap_empty
+
+        probe = board.copy(stack=False)
+        probe.ep_square = ep
+        oracle = probe.has_legal_en_passant()
+        pop_legal_ep += oracle
+
+        ours = CBoard.from_raw(
+            board.pawns, board.knights, board.bishops, board.rooks,
+            board.queens, board.kings,
+            int(board.occupied_co[chess.WHITE]), int(board.occupied_co[chess.BLACK]),
+            int(board.turn), 0, ep, 0,
+        ).has_legal_en_passant()
+
+        if (not in_board) or cap_pawn or cap_empty:
+            consistent += 1
+            if ours is not oracle:
+                pawn_consistent_mismatch += 1
+                if len(examples) < 8:
+                    examples.append(
+                        f"{probe.board_fen()} "
+                        f"{'w' if board.turn else 'b'} ep={chess.SQUARE_NAMES[ep]} "
+                        f"ours={ours} python-chess={oracle}")
+        elif ours is not oracle:
+            if ours:
+                residual_split += 1
+            else:
+                residual_merge += 1
+                if len(examples) < 8:
+                    examples.append(
+                        f"MERGE-DIRECTION {probe.board_fen()} "
+                        f"{'w' if board.turn else 'b'} ep={chess.SQUARE_NAMES[ep]}")
+
+    # The corpus must contain each discriminating population, or the zeros below
+    # are vacuous.
+    assert consistent > 20_000, consistent
+    assert pop_legal_ep > 100, f"too few legal-ep positions: {pop_legal_ep}"
+    assert pop_cap_empty > 1_000, f"too few missing-pawn ep fields: {pop_cap_empty}"
+    assert pop_cap_pawn > 20, f"too few consistent ep fields: {pop_cap_pawn}"
+    assert pop_cap_nonpawn > 1_000, f"too few non-pawn captured squares: {pop_cap_nonpawn}"
+
+    assert pawn_consistent_mismatch == 0, examples
+    assert residual_merge == 0, (
+        "a divergence in the key-MERGING direction -- we would invent a "
+        "repetition python-chess does not see", examples)
+    # residual_split is allowed and documented in bitboards_have_legal_ep; it is
+    # deliberately NOT asserted to be zero, and deliberately NOT left unbounded.
+    assert residual_split < 0.01 * pop_cap_nonpawn, (
+        f"residual grew: {residual_split} of {pop_cap_nonpawn} non-pawn cases")
