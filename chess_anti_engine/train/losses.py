@@ -600,15 +600,37 @@ def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
     """The smallest tau that GUARANTEES a root-candidate slot: ``1 / topk``.
 
     The production root sampler (`mcts/gumbel._select_top_m_with_gumbel`) keeps
-    the top ``m = min(topk, n_legal, (sims+1)//2)`` of
-    ``gumbel_scale * Gumbel + log(prior)``. At the production
-    ``gumbel_c_scale = 0.1`` the noise is ~0.13 in log-prob units, so that is
-    very nearly a deterministic top-k by prior -- which makes the floor a RANK
-    criterion with an exact answer. If ``p_i >= tau`` then at most
-    ``floor(1/tau) - 1`` other moves can exceed it (they are disjoint and sum to
-    <= 1), so ``tau >= 1/topk`` puts move ``i`` inside the top-``topk``.
+    the top ``m`` of ``gumbel_scale * Gumbel + log(prior)``, where
+
+        m = 1                                            if sims <= 1
+        m = max(2, min(topk, n_legal, max(2, (sims+1)//2)))  otherwise
+
+    At the production ``gumbel_c_scale = 0.1`` the noise is ~0.13 in log-prob
+    units, so that is very nearly a deterministic top-k by prior -- which makes
+    the floor a RANK criterion with an exact answer. If ``p_i >= tau`` then at
+    most ``floor(1/tau) - 1`` other moves can exceed it (they are disjoint and
+    sum to <= 1), so ``tau >= 1/topk`` puts move ``i`` inside the top-``topk``.
     Measured on 3000 production rows: MIN (not mean) P(searched) is exactly
     1.0000 at prior >= 1/16, and 0.1042 at prior >= 0.02.
+
+    ⚑ WHEN THE SIM BUDGET CAN BITE, AND WHY IT DOES NOT HERE. ``1/topk`` buys a
+    slot in the top-``topk``; what the search keeps is the top-``m``. The two
+    differ only when ``m < topk`` AND ``n_legal > m``, and each half is worth
+    stating because a review of this branch got both backwards:
+
+    * ``n_legal <= m``: EVERY legal move is a candidate, so inclusion is
+      trivially guaranteed and ``tau`` is irrelevant. The narrow case is the
+      SAFE one, not the broken one.
+    * ``m < topk`` needs ``(sims+1)//2 < topk``, i.e. ``sims < 2*topk - 1 = 31``
+      at ``gumbel_topk: 16``. PRODUCTION NEVER GETS THERE. `configs/pbt2_small.yaml`
+      runs ``mcts_simulations: 256`` (ramped down to 100 by `progressive_mcts`,
+      still >= 31) and ``fast_simulations: 32``, so a FAST ply gives
+      ``m = min(16, n_legal, 16) = 16`` -- the guarantee holds on fast plies
+      exactly as on full ones, which is the case the review claimed was broken.
+
+    So the guarantee is exact at every sim budget production runs. It would
+    weaken only under a deliberate sub-31-sim configuration, and then the honest
+    floor is ``1/m``, not ``1/topk``.
 
     ⚑ THE FLOOR IS ON THE RAW PROBABILITY; THE SEARCH SELECTS ON THE TEMPERED
     ONE (``logits / gumbel_policy_temp``, production 1.5). The two bars coincide
@@ -622,11 +644,12 @@ def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
 
 
 def warn_if_below_search_inclusion(
-    *, tau: float, tau_played: float, gumbel_topk: object, context: str,
+    *, tau: float, tau_top1: float, tau_played: float,
+    gumbel_topk: object, context: str,
 ) -> float:
     """Warn for each floor that has quietly stopped guaranteeing root inclusion.
 
-    ⚑ IT CHECKS BOTH, AND `tau_played` IS THE ONE THAT MATTERS. The first
+    ⚑ IT CHECKS ALL THREE, AND `tau_played` IS THE ONE THAT MATTERS. The first
     version of this guard checked `tau` only -- the RANKING knob, default 0.15,
     which is 2.4x the production guarantee and therefore essentially never trips
     -- while `tau_played`, the one parameter whose documented sole job IS the
@@ -635,9 +658,24 @@ def warn_if_below_search_inclusion(
     parameter that cannot lose the property, and blind on the parameter that
     can, is the "gate that cannot fail" shape: present, green, and inert.
 
+    ⚑ `tau_top1` JOINED IT for the same reason one level down. It is the floor
+    SF's top-1 gets on the rows where our argmax already IS that move -- the
+    strict `regret < our_r` clause keeps a move out of its own comparison, so
+    `adaptive` is empty there and `max(tau, tau_top1)` reduces to `tau_top1`
+    alone. Those are the rows invariant 1 calls the whole mechanism, and a
+    sub-guarantee `tau_top1` revokes the root slot on exactly them. Nothing
+    makes our own argmax safe: at the realized mean of 27.3 legal moves a
+    flat-ish policy can put its top move under `1/16`. The reporting line in
+    `Trainer` used to print `guarantees_inclusion=True` beside
+    `tau_top1=0.001`; the mechanism was right and the BOOLEAN was lying,
+    because it took a min over the two thresholds this guard happened to check.
+    Guard and printed claim now read the same three.
+
     ``tau_played == 0.0`` stays SILENT: that is the documented collar-ablation
     arm, a deliberate off switch rather than a floor that has stopped working.
-    Hence ``0 < tau_played < guarantee``, not ``tau_played < guarantee``.
+    Hence ``0 < tau_played < guarantee``, not ``tau_played < guarantee``. There
+    is no equivalent for `tau_top1`: zero there is not an ablation, it is SF's
+    best move losing its unconditional floor on the rows above.
 
     Returns the guarantee so callers can report it without re-deriving it.
     """
@@ -645,6 +683,7 @@ def warn_if_below_search_inclusion(
     topk = normalize_gumbel_topk(gumbel_topk)
     for name, value, silent_at_zero in (
         ("sf_policy_floor_tau", float(tau), False),
+        ("sf_policy_floor_tau_top1", float(tau_top1), False),
         ("sf_policy_floor_tau_played", float(tau_played), True),
     ):
         if value >= guarantee or (silent_at_zero and value == 0.0):
@@ -766,7 +805,7 @@ class SfPolicyFloorParams:
   # warning emitted first would put "your tau is below the guarantee" on the log
   # ahead of the error that actually explains the failure.
         warn_if_below_search_inclusion(
-            tau=params.tau, tau_played=params.tau_played,
+            tau=params.tau, tau_top1=params.tau_top1, tau_played=params.tau_played,
             gumbel_topk=gumbel_topk, context="at config load",
         )
         return params

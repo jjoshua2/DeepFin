@@ -1099,6 +1099,193 @@ pricing built on it is withdrawn. The probe also reads the trailing shard window
 MOVES while the run writes, so any re-run lands on a different population; the shard set
 must be pinned in the output before a number off it is quoted.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-17) — the SF-approved-move probability floor (`w_sf_policy_floor`), PR #448, and the ruler defect it exposed
+
+**Status: code written, PR open, NOT merged and NOT deployed. No yaml edit, no weight
+raised.** The mechanism ships at `w_sf_policy_floor: 0.0` and is inert there by
+execution, not by argument (`test_total_is_bit_identical_at_the_default_weight` asserts
+`float.hex()` equality of `total` against a call with the term's parameter absent). This
+entry exists for the two things that ARE consequences of merging: a ruler-id move that
+forces a best-model handover, and an always-on cost paid at weight zero.
+
+### What the mechanism is (one paragraph; the PR carries the derivation)
+
+A one-sided probability FLOOR on a small membership set inside the `policy_own` loss:
+`F = {SF's top-1} u {m : regret_m <= delta_cp/CAP AND regret_m < regret_ours}`, plus a
+COLLAR on the move search actually played, one `relu` per move at the MAX of its
+thresholds. It reuses `sf_p0_regret_t`, which is already written, already ingested and
+currently multiplied by zero — **no new shard field and no new Stockfish call**. Its
+purpose is SEARCH ROUTING, not policy correction: a move at ~0 prior is never expanded,
+so the net never learns why SF's move beats its own. It is NOT the magnitude arm —
+`sf_own_regret` is that arm, it scored at chance on all three populations tested, and
+`w_sf_own_regret` keeps its 0.0 default here.
+
+### CONSEQUENCE 1 — the holdout ruler id MOVES, so an operator sees ONE best-model handover
+
+`compute_loss` and `Trainer._loss_kwargs` are both covered frames of
+`eval_ruler_id_for`'s derived closure, and the N1 fix below adds a descriptor field, so
+the id moves twice on this branch:
+
+```
+full_pass  73ff47d368fbe10e -> 30cfec0c574e03da   (the floor term)
+                            -> ba74408d1e9e98fa   (the N1 fix's `active_terms` field)
+sampled    f41625e40b98e987 -> 733b900bc45f524f
+                            -> cceec01bb2efc6d9
+```
+
+Both pins are at the test file's `NO_TERMS` weight map (every weight 0.0) — deliberately,
+so a live yaml weight edit cannot turn CI red. Under the production weights in
+`configs/pbt2_small.yaml` the deployed full-pass id is **`v1:full_pass:455a85f6ca8d6f23`**.
+
+⇒ at the next restart onto this code, `_maybe_bump_generation_on_ruler_change` bumps
+`holdout_generation` and `_update_best_model` takes its ADOPT branch once: the best-model
+record is HANDED OVER, not compared. **That is the mechanism working, not a fault.** The
+move is source-hash-only in the measurement sense — `test_loss` and every per-head loss
+are numerically unchanged at the shipped default, which is what the bit-identity test
+proves — so records stay comparable across the handover.
+
+### CONSEQUENCE 2 — ~0.9 ms/step, paid at `w = 0`
+
+RTX 5090, batch 512 x 1858, 200 iters after 50 warmup, `cuda.synchronize`, GPU verified
+idle. `sf_policy_floor` **fwd+bwd 0.93 ms**; forward-only median 0.68 ms over 5 repeats.
+At ~88 microbatches on a ~300 s iteration that is ~80 ms, **~0.03% of wall time**. It is
+paid even at weight zero, and that is the deliberate trade: the diagnostic columns are
+live at `w = 0`, so the term's reach is measurable BEFORE anyone proposes raising it.
+⚑ The sub-0.1 ms comparison terms in the PR's table swing **3.4x between repeats on an
+idle card** — launch-overhead-bound, below the instrument's resolution. Do not read
+those ratios; the 0.93 ms figure is well above the noise floor and is the one that
+carries the conclusion.
+
+### ⚑⚑ N1 — THE DEFECT THIS PR EXPOSED, AND IT IS PRE-EXISTING
+
+**Flipping a loss weight live silently FROZE the best-model record.** Two facts, both
+verified in the tree:
+
+1. `Trainer._eval_loss_kwargs` returns `{**self._loss_kwargs, "policy_target_temp": 1.0}`
+   — only the target SHAPE knob is pinned. Loss WEIGHTS ride into the holdout eval as
+   configured, which is correct (`total` must match the trained objective).
+2. `eval_ruler_id` hashed `mode`, `batch_size`, `steps`, `mirror_prob` and a source
+   digest — **and no weights**.
+
+⇒ push a weight live (`_apply_lr_gamma_weights`, every iteration, over
+`TRAINER_WEIGHT_KEYS`) → eval `total` changes → the ruler id does NOT → no
+`holdout_generation` bump → `_update_best_model` takes its "same ruler, ordinary
+improvement test" branch → **the new objective's `test_loss` is compared against a record
+made under the old one.** For a term that is non-negative and was OFF —
+`sf_policy_floor` is a sum of `relu`, `sf_own_regret` is `sum p*r` — `test_loss` steps
+strictly UP and there is no route back down, so the best model freezes at the pre-flip
+checkpoint for the rest of the run.
+
+**Root cause is a sentence, and the sentence was half true.** `_eval_loss_kwargs`'
+docstring justified letting weights through with *"they scale a term without redefining
+it"*. True of 0.3 → 0.6. Silently FALSE of 0.0 → anything: `compute_loss` adds these
+terms under an `if`, not by multiplying, so at zero the term is not in `total` at all.
+Nothing re-checked the sentence when such a weight was added.
+
+**⚑ NOT a #448 bug.** `w_sf_own_regret` has been in `TRAINER_WEIGHT_KEYS` throughout and
+carries the identical hazard. #448 only makes it two keys instead of one.
+
+**THE FIX: `eval_ruler_id` now hashes the SET of non-zero loss weights** — `active_terms`
+in the descriptor, computed by `eval_ruler.active_loss_terms`, from the map
+`Trainer._ruler_loss_weights()` builds by reading `TRAINER_WEIGHT_KEYS` off the instance
+at EVALUATION time. So a membership flip moves the id, bumps the generation, and hands
+the record over cleanly instead of freezing it.
+
+**Two design decisions, and the second is the one to argue with:**
+
+* **The key set is DERIVED from `TRAINER_WEIGHT_KEYS`, not hand-copied.** That tuple IS
+  the every-iteration live-push list (`_apply_lr_gamma_weights` does
+  `setattr(trainer, key, float(...))` over it), so it is exactly the hazard surface, and
+  a weight added there is covered on the day it is added. This module has lost its
+  boundary to a hand-written list TWICE already (`call_closure` exists because of it).
+  ⚑ It reads the trainer's ATTRIBUTES, not `_eval_loss_kwargs`' keys: `w_sf_policy_floor`
+  — the key the defect was found on — does not appear in that dict under its own name at
+  all (it is folded into the `sf_policy_floor` params object), so a key-intersection
+  would have omitted the motivating key while looking derived.
+  Pinned by `test_every_live_pushable_weight_reaches_the_ruler_id`, parametrized over
+  `TRAINER_WEIGHT_KEYS` itself, so a hand-copied subset fails on the key it omitted.
+* **MEMBERSHIP is hashed; MAGNITUDE deliberately is not.** Hashing the VALUES would be a
+  REGRESSION, not extra safety. `sf_wdl_frac` is in `TRAINER_WEIGHT_KEYS` and the
+  difficulty controller recomputes it every iteration from the realized `wdl_regret`
+  (`_dynamic_sf_wdl_weight`). Audit L15 measured the bump rate a value hash would
+  produce: **>= 15.3% of iterations**. That does not merely over-fire the handover —
+  `_update_best_model` would ADOPT rather than compare on one iteration in seven, and the
+  best-model comparison would stop existing. A defect that freezes the record is bad; a
+  fix that abolishes the comparison is worse.
+  The membership boundary sits at exactly 0.0, which the production band
+  (`sf_wdl_frac: 0.50`, `sf_wdl_frac_floor: 0.45`) never reaches, so the PID leg moves
+  the new field **0%** of the time — executed, not argued, by
+  `test_the_pid_driven_weight_cannot_move_the_ruler_across_its_whole_band`, which drives
+  `_dynamic_sf_wdl_weight` across the production band and requires ONE id.
+
+**⚑ WHAT THIS DOES NOT CLOSE.** A weight MAGNITUDE change in the yaml (the 2026-07-02
+`sf_wdl_frac_floor` 0.35 -> 0.45 step, 131 rows of history) still does not move the id.
+That is **G16's band-hashing instrument** — hash the CONFIGURED band rather than the
+controller's position in it — and it is still unbuilt. #448 must not be read as closing
+it. The "what this does NOT cover" list of the 2026-07-27 ruler-identity entry is
+amended in place with the same split.
+
+### THE ONE DECIDING YARDSTICK (exact commands — EXECUTED)
+
+The failure to exclude is this repo's signature defect, so the yardstick asserts on the
+id a REAL `Trainer` produces across a push through the REAL per-iteration path, never on
+a re-derivation of the expected id in the test body (which would agree with an
+implementation that had the rule wrong in both places).
+
+```
+PYTHONPATH=. python3 -m pytest \
+  "tests/test_holdout_ruler_identity.py::test_switching_a_loss_term_on_live_moves_the_ruler_id" \
+  "tests/test_holdout_ruler_identity.py::test_switching_a_loss_term_off_live_also_moves_the_ruler_id" \
+  "tests/test_holdout_ruler_identity.py::test_a_no_op_weight_push_leaves_the_ruler_id_alone" \
+  "tests/test_holdout_ruler_identity.py::test_the_pid_driven_weight_cannot_move_the_ruler_across_its_whole_band" \
+  "tests/test_holdout_ruler_identity.py::test_a_magnitude_change_on_an_active_term_does_not_move_the_ruler_id" \
+  "tests/test_holdout_ruler_identity.py::test_every_live_pushable_weight_reaches_the_ruler_id" -q
+```
+
+**PASS — 26 passed** (21 of them the parametrized per-weight case). Pre-committed rule:
+
+* **KILL** if a live flip of `w_sf_policy_floor` leaves the id unchanged ⇒ the fix is
+  inert and the record still freezes.
+* **KILL** if the PID's own `sf_wdl_frac` band produces more than ONE id ⇒ the rule bumps
+  on controller motion and abolishes the comparison. This is the failure mode that would
+  be worse than the defect, so it is a kill and not a caveat.
+* **KILL** if a no-op re-push moves the id ⇒ same, one level down.
+
+### OBSERVATION THAT PROVES IT TOOK EFFECT ON THE RUN (after the first restart onto this code)
+
+The deploy check in the 2026-07-27 ruler entry, amended there to pass the live weights.
+Two additional rows to read once, on the first post-restart iteration:
+
+* `trial_meta.json` `holdout_ruler` equals the id recomputed from the DEPLOYED tree with
+  the DEPLOYED yaml's weights (expected `v1:full_pass:455a85f6ca8d6f23` at the weights in
+  `configs/pbt2_small.yaml` as of 2026-08-17);
+* `holdout_generation` bumps by **exactly one** and then holds. **Climbing every
+  iteration is a KILL** — it would mean something in the new descriptor field is not
+  stable across calls, and the revert is to drop `active_terms` from the descriptor,
+  which restores the previous id exactly.
+
+### CONFOUNDS
+
+* Merges alongside nothing else data-affecting; the term is off and the ruler move is
+  source/descriptor-only. The handover is the single operator-visible effect.
+* The four `sf_policy_floor_*` SHAPE keys are startup-only (`_STARTUP_ONLY_TRIAL_KEYS`)
+  and are NOT in the ruler. A shape edit needs a restart, and a restart re-reads the
+  code, so it cannot silently redefine `total` mid-window the way a weight flip could —
+  but it also will not announce itself. Noted, not fixed.
+* `sf_policy_floor_binds_frac` is the SELECTION column, not the take-effect column: it is
+  invariant to `w` within a step, as this branch's own
+  `test_a_positive_weight_moves_total_and_the_columns_report_it` asserts. The column
+  `total` multiplies by `w` is `m_sf_policy_floor`. Two comments claiming otherwise are
+  corrected in this PR.
+
+### REVERT POINT
+
+The mechanism is default-off, so reverting is a code revert, not a config one. If the
+N1 fix alone needs backing out, removing the `active_terms` field from
+`eval_ruler_id`'s descriptor restores `v1:full_pass:30cfec0c574e03da` byte-for-byte and
+costs one further handover. No salvage snapshot is owed: no weight moves and no data is
+affected by merging.
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-16) — persist `prior_top1_index` / `prior_top1_prob` at selfplay time (issue #425, ΔQ dataset)
 
 **Status: code written, PR open, NOT merged and NOT deployed. No yaml edit.** This is a
@@ -4426,8 +4613,22 @@ best = json.load(open(newest('runs/pbt2_small/tune/train_trial_*/best.json')))
 # covered set. An earlier draft of this command assembled a stand-in object
 # from a hand-written name list, which is the same hazard the mechanism exists
 # to remove: the list can go stale while the command still prints MATCH.
+# ⚑ AMENDED 2026-08-17 (PR #448 N1): the id now also keys on the SET of
+# non-zero loss weights, so the recompute has to be handed the weights the
+# trial is running. They come from the live yaml through the same
+# `trainer_kwargs_from_config` the Trainer is built with -- NOT from a
+# hand-typed dict, which would agree with a trial that ignored the yaml.
+import yaml
+from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+_kw = trainer_kwargs_from_config(
+    flatten_run_config_defaults(
+        yaml.safe_load(open('configs/pbt2_small.yaml', encoding='utf-8'))),
+    log_dir='/tmp')
 expect = Trainer.eval_ruler_id_for(
-    batch_size=512, steps=0, mirror_prob=0.0, full_pass=True)
+    batch_size=512, steps=0, mirror_prob=0.0, full_pass=True,
+    loss_weights={k: float(_kw[k]) for k in TRAINER_WEIGHT_KEYS})
 got = meta.get('holdout_ruler', '')   # .get, so an absent field reports MISMATCH
 print('checkpoint', os.path.basename(d), repr(got), 'gen', meta.get('holdout_generation'))
 print('best.json ', best.get('holdout_ruler'), 'gen', best.get('holdout_generation'))
@@ -4539,6 +4740,30 @@ move `test_loss` on a frozen holdout without moving the id:
    iteration". Measured: false — see L15. The corrected argument is the one
    above, and it turns on the bump RATE rather than on an effect size nobody
    has converted into nats.)*
+   **⚑ AMENDED 2026-08-17 (PR #448, N1) — HALF OF THIS IS NOW CLOSED, AND THE
+   HALF THAT IS NOT IS STILL G16.** The gap above conflates two events that
+   behave nothing alike, and only the first was ever the unbounded one:
+   * **MEMBERSHIP — now covered.** `compute_loss` adds these terms under an
+     `if`, so weight 0.0 means the term is not in `total` at all. Flipping one
+     live (`w_sf_policy_floor`, `w_sf_own_regret`) makes `total` gain a whole
+     non-negative term, `test_loss` steps strictly UP with no route back, and
+     the best model FREEZES at the pre-flip checkpoint. `eval_ruler_id` now
+     hashes the SET of non-zero weights, derived from `TRAINER_WEIGHT_KEYS`
+     (`eval_ruler.active_loss_terms`), so a flip moves the id and hands the
+     record over.
+   * **MAGNITUDE — still uncovered, still G16.** `sf_wdl_frac_floor`
+     0.35 → 0.45 does not change which terms exist, so it does not move the
+     id, exactly as before. The band-hashing instrument this entry proposes is
+     still the right answer for it and is still unbuilt. Nothing in #448
+     changes that, and it must not be read as closed.
+     The membership rule was chosen over a value hash precisely because of the
+     bump-rate argument above: a value hash bumps on ≥15.3% of iterations,
+     which does not merely over-fire the handover — `_update_best_model` would
+     take its ADOPT branch that often and the comparison would stop existing.
+     The membership boundary sits at exactly 0.0, which production's
+     `sf_wdl_frac: 0.50` / `sf_wdl_frac_floor: 0.45` band never touches, so
+     the PID leg moves it 0% of the time (executed, not argued:
+     `test_the_pid_driven_weight_cannot_move_the_ruler_across_its_whole_band`).
 3. **module-level CONSTANTS referenced by covered frames.** `_RAW_SUM_LOSS_KEYS`
    (`trainer.py:941`) decides which loss keys are row-summed rather than
    row-meaned; adding `'loss'` to it took `test_loss` 10.196 → 0.0205 with the
