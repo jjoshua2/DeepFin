@@ -62,6 +62,13 @@ import torch
 from chess_anti_engine.encoding import model_encoding_kwargs
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.eval.audit import PHASE_NAMES, load_audit_set, move_regrets
+from chess_anti_engine.eval.audit_cache import (
+    MATCHED_ROWS_DIGEST_KEY,
+    MATCHED_ROWS_KEY,
+    audit_set_provenance,
+    stamp_summary,
+    write_audit_cache,
+)
 from chess_anti_engine.eval.audit_history import (
     INPUT_ENCODINGS,
     INPUT_ENCODING_DEFAULT,
@@ -75,6 +82,7 @@ from chess_anti_engine.eval.value_optimism import (
     sf_eval_bucket,
 )
 from chess_anti_engine.inference import LocalModelEvaluator
+from chess_anti_engine.utils import sha256_file
 from scripts.net_source import (
     NetSource,
     add_net_source_args,
@@ -364,6 +372,12 @@ def main() -> None:
     tag = f"[enc={encoding} b={args.batch_size}]"
 
     positions = load_audit_set(args.audit_set)
+    # ⚑ DIGEST THE SET NOW, NOT AT WRITE TIME. The scoring pass below takes
+    # minutes; digesting after it describes whatever is on disk THEN, so
+    # replacing the audit set mid-run stamps rows scored against the OLD
+    # positions with the NEW file's digest and a later reader accepts them as
+    # belonging to a set they never saw. (Codex inline review, #442.)
+    set_provenance = audit_set_provenance(Path(args.audit_set))
     # Slice the canonical max_positions subset (e.g. v1-2k = first 2000) FIRST,
     # then drop TB-range — so --min-pieces filters WITHIN the standard subset
     # (2000 -> 1723) rather than pulling later strata forward from the full set.
@@ -376,10 +390,22 @@ def main() -> None:
               f"{n_before - len(positions)} TB-range positions ({len(positions)} kept)")
 
     matched: MatchedAuditRows | None = None
+    # ⚑ IN `stored` MODE THE SCORES DEPEND ON THIS ARTIFACT, so the stamp has to
+    # name it. Without it two runs over different matched-row snapshots carry
+    # identical stamps, pass both provenance gates, and `paired_compare`
+    # attributes an INPUT-HISTORY difference to the checkpoints. The PATH goes in
+    # for the human and is excluded from identity (`STAMP_NON_IDENTITY_KEYS`,
+    # same argument as `audit_set`); the DIGEST is the value compared.
+    # (Codex inline review, #442.)
+    matched_provenance: dict[str, str] = {}
     if encoding == "stored":
         matched = MatchedAuditRows(
             args.matched_rows or default_matched_rows_path(args.audit_set)
         )
+        matched_provenance = {
+            MATCHED_ROWS_KEY: str(matched.path),
+            MATCHED_ROWS_DIGEST_KEY: sha256_file(Path(matched.path))[:16],
+        }
         n_before = len(positions)
         positions = [p for p in positions if p.key in matched]
         print(f"[value-regret] input-encoding=stored: {matched.path} covers "
@@ -399,10 +425,22 @@ def main() -> None:
         gpu_mem_fraction=args.gpu_mem_fraction,
     )
     if args.dump_per_position:
-        import json
-        with open(args.dump_per_position, "w", encoding="utf-8") as f:
-            for pos, r in zip(positions, per_position, strict=True):
-                f.write(json.dumps({
+        # ⚑ STAMPED, via `write_audit_cache` rather than a bare `json.dumps`
+        # loop. `paired_compare.require_same_stamp` short-circuits on
+        # `if not a.stamp or not b.stamp`, so an UNSTAMPED dump takes the warn
+        # path and the gate never fires — and `scripts/monitor_fen.sh` is the
+        # only automated caller of `paired_compare`, feeding it exactly this
+        # dump. The gate was therefore inert on the one production path it has.
+        # A guard that cannot fire where it is actually invoked is this
+        # codebase's signature defect, so the writer stamps.
+        #
+        # force=True for the same reason `audit_targets` uses it: this option
+        # has no default path, so the operator always names the target and
+        # there is no silent-default clobber to guard against.
+        stamp = write_audit_cache(
+            Path(args.dump_per_position),
+            (
+                {
                     "fen": pos.fen, "phase": int(pos.phase),
                     "value": None if np.isnan(r) else float(r),
                     # A dump is a report: it must carry the ruler it was made
@@ -413,8 +451,16 @@ def main() -> None:
                     # a paired compare that joins two dumps must be able to see
                     # that one of them is a foreign ONNX net.
                     "net": net.label,
-                }) + "\n")
-        print(f"[value-regret] {tag} per-position dump -> {args.dump_per_position}")
+                }
+                for pos, r in zip(positions, per_position, strict=True)
+            ),
+            force=True,
+            extra={"producer": "value_regret.py --dump-per-position",
+                   "input_encoding": encoding, **matched_provenance,
+                   **set_provenance},
+        )
+        print(f"[value-regret] {tag} per-position dump -> "
+              f"{args.dump_per_position} [{stamp_summary(stamp)}]")
 
     ruler = "TB-excluded" if args.min_pieces > 0 else "FULL-SET (incl. TB)"
     print(f"\n=== value-head 1-ply deep-SF regret @ {net.label} "

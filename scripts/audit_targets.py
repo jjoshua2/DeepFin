@@ -140,6 +140,11 @@ from chess_anti_engine.eval.audit import (
     wdl_brier,
     wdl_ece,
 )
+from chess_anti_engine.eval.audit_cache import (
+    audit_set_provenance,
+    stamp_summary,
+    write_audit_cache,
+)
 from chess_anti_engine.eval.audit_history import (
     INPUT_ENCODINGS,
     INPUT_ENCODING_DEFAULT,
@@ -2145,6 +2150,10 @@ def main() -> None:
 
     encoding = normalize_input_encoding(args.input_encoding)
     positions = load_audit_set(args.audit_set)
+    # Digested beside the READ, not at write time: the SF labelling pass below
+    # runs for up to an hour, and a digest taken afterwards describes whatever
+    # is on disk then rather than what was scored. (Codex inline review, #442.)
+    set_provenance = audit_set_provenance(args.audit_set)
     if args.max_positions > 0:
         positions = positions[: args.max_positions]
 
@@ -2428,12 +2437,26 @@ def main() -> None:
             outcome_idx.append(len(deep_wdls) - 1)
 
     if args.dump_per_position is not None:
-        args.dump_per_position.parent.mkdir(parents=True, exist_ok=True)
-        with args.dump_per_position.open("w") as fh:
-            for rec in per_pos_dump:
-                fh.write(json.dumps(rec) + "\n")
+        # Provenance-stamped, because this dump is a DERIVED cache in exactly
+        # the sense `bt4_audit_cache.jsonl` was: its `gap_cp` and every
+        # per-candidate regret come out of eval/audit.py's ruler, and none of
+        # that is recoverable from the numbers. `audit_compare_buckets.py`
+        # joins it against a BT4 cache and takes the criticality BUCKET for
+        # every row from here, so an unstamped one silently sets the row
+        # labelling for the other file's numbers too.
+        #
+        # force=True, unlike foreign_net_audit's --cache-out: this option has
+        # no default path, so the operator always names the target explicitly
+        # and there is no silent-default clobber to guard against. The hazard
+        # that guard exists for is a DEFAULT pointing at a banked file.
+        stamp = write_audit_cache(
+            args.dump_per_position, per_pos_dump, force=True,
+            extra={"producer": "audit_targets.py --dump-per-position",
+                   "input_encoding": encoding,
+                   **set_provenance},
+        )
         print(f"[audit] per-position dump → {args.dump_per_position} "
-              f"({len(per_pos_dump)} rows)")
+              f"({len(per_pos_dump)} rows) [{stamp_summary(stamp)}]")
 
     agg = _aggregate(policy_rows, "cand")
     cand_labels = candidate_labels(encoding)
