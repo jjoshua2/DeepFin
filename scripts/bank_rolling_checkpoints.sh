@@ -18,14 +18,6 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# ⚑ The DIRECTORY, not a glob string. Holding the pattern in a variable forces
-# the loop below to expand it UNQUOTED, which also word-splits on IFS and applies
-# pathname expansion to the whole path -- so a checkout under a directory with a
-# space or a glob metachar in its name silently iterates over fragments. Keeping
-# the prefix quoted at the point of use and letting only the trailing `*` glob
-# has neither problem, and matches what the inner `checkpoint_0*` loop already
-# does. (Before the path scrub the root was a hardcoded literal, so this could
-# not bite; deriving it from the checkout is exactly what arms it.)
 DST="$REPO_ROOT/data/salvage/rolling"
 EVERY=${EVERY:-5}        # keep checkpoints whose index is a multiple of this
 KEEP=${KEEP:-24}         # cap on retained dirs (~656M each)
@@ -55,6 +47,15 @@ ONCE=${ONCE:-0}
 # `scripts/feed_bootstrap_shards.py` already handles the identical case the
 # right way (`ERROR: ... not found` on stderr, exit 2); this is that shape.
 # `TUNE_DIR` stays overridable for a test fixture and for a non-default layout.
+#
+# ⚑ And it is the DIRECTORY, not a glob string. Holding the pattern in a variable
+# forces the loop below to expand it UNQUOTED, which also word-splits on IFS and
+# applies pathname expansion to the whole path -- so a checkout under a directory
+# with a space or a glob metachar in its name silently iterates over fragments.
+# Keeping the prefix quoted at the point of use and letting only the trailing `*`
+# glob has neither problem, and matches what the inner `checkpoint_0*` loop
+# already does. (Before the path scrub the root was a hardcoded literal, so this
+# could not bite; deriving it from the checkout is exactly what arms it.)
 TUNE_DIR=${TUNE_DIR:-"$REPO_ROOT/runs/pbt2_small/tune"}
 if [ ! -d "$TUNE_DIR" ]; then
     echo "[bank] ERROR: no tune dir at $TUNE_DIR — nothing to bank." >&2
