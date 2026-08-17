@@ -18,6 +18,8 @@ mutant.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 import torch
 
@@ -447,6 +449,138 @@ def test_listed_mass_is_normalized_over_the_LEGAL_support() -> None:
         "listed_mass is being read as a raw sum"
     )
     assert float(gated[0]) == 0.0
+
+
+def test_a_row_whose_max_sits_AT_THE_CAP_is_never_gated() -> None:
+    """⚑ Normalized regret is capped at 1.0, so a REAL regret that hit the cap is
+    numerically INDISTINGUISHABLE from the fill, and `reg < row_max` then counts
+    those capped real moves as tail. An independent review MEASURED the cost: a
+    cap-plateau row discarded 0.1771 of gradient, **2x the gate's intended-target
+    row (0.0880)**. Ties at the max are STRUCTURAL here, not rare -- the earlier
+    docstring called them rare and that was wrong."""
+    reg = torch.zeros((POLICY_SIZE,), dtype=torch.float32)
+    reg[0], reg[1] = 0.0, 0.2
+    reg[2:N_LEGAL] = 1.0          # two capped REAL moves + the fill, all at 1.0
+    scale, gated = sf_regret_gate_scale(
+        reg.unsqueeze(0), _onehot(3).unsqueeze(0), _legal().unsqueeze(0),
+        listed_mass_min=0.5, unlisted_scale=0.0,
+    )
+    assert float(scale[0]) == 1.0, "gated a row whose max is the cap"
+    assert float(gated[0]) == 0.0
+
+
+def test_the_plateau_boundary_is_TWO_not_three() -> None:
+    """Kills the boundary mutant `>= 2` -> `>= 3`, which the previous reviewer's
+    own mutation run found SURVIVING. At `sf_multipv: 6` an 8-legal row has a
+    two-move tail, so a 3-multiplicity bar would silently stop gating it."""
+    reg = torch.zeros((POLICY_SIZE,), dtype=torch.float32)
+    for i, v in enumerate(REAL_REGRETS):
+        reg[i] = v
+    reg[6], reg[7] = ALPHA, ALPHA   # exactly TWO tail moves
+    scale, gated = sf_regret_gate_scale(
+        reg.unsqueeze(0), _onehot(6).unsqueeze(0), _legal(8).unsqueeze(0),
+        listed_mass_min=0.5, unlisted_scale=0.0,
+    )
+    assert float(scale[0]) == 0.0, "a two-move tail must still be gated"
+    assert float(gated[0]) == 1.0
+
+
+@pytest.mark.parametrize("bad", [float("nan"), -1.0, 10.0, 1e9])
+def test_a_NON_FINITE_or_out_of_range_key_cannot_poison_the_loss(bad: float) -> None:
+    """⚑⚑ NaN is handled EXPLICITLY, not by the clamp: Python's `min`/`max`
+    PROPAGATE NaN (every comparison with NaN is False, so the first argument wins).
+    A NaN scale took `total` to NaN **even at `w_sf_own_regret: 0.0`** while
+    `sf_own_regret_gated_frac` read 0.0 -- production dies and the instrument says
+    nothing happened. Both keys are category (c): schema-accepted, unvalidated,
+    delivered raw."""
+  # ⚑ Inlined rather than splatted from a dict: pyright widens a mixed dict to
+  # `dict[str, float]` and then reports every unrelated `compute_loss` parameter as
+  # a type error. Cost me a red lint run once already.
+    out, batch = _outputs(4), _batch((0, 3, 20, 27))
+    for weight in (0.0, 0.7):
+        bad_min = compute_loss(
+            out, batch, w_sf_own_regret=weight,
+            sf_own_regret_listed_mass_min=bad, sf_own_regret_unlisted_scale=0.0,
+        )
+        bad_scale = compute_loss(
+            out, batch, w_sf_own_regret=weight,
+            sf_own_regret_listed_mass_min=0.5, sf_own_regret_unlisted_scale=bad,
+        )
+        for got, which in ((bad_min, "listed_mass_min"), (bad_scale, "unlisted_scale")):
+            assert torch.isfinite(got["total"]), f"total NaN: {which}={bad} w={weight}"
+            assert torch.isfinite(got["sf_own_regret"]), f"{which}={bad} w={weight}"
+            assert torch.isfinite(got["sf_own_regret_gated_rows"])
+
+
+def test_an_out_of_range_listed_mass_min_cannot_gate_EVERY_row() -> None:
+    """⚑ The finiteness test above cannot see this one, and that is the point of
+    having both: an unclamped `listed_mass_min` is not a NaN hazard, it is a
+    BEHAVIOURAL one. `listed_mass` is a fraction in [0, 1], so `listed_mass_min: 10`
+    makes `mass < 10` true on EVERY row -- the gate stops selecting the fabricated
+    tail and downweights the whole term, including rows whose target sits entirely
+    inside SF's surfaced set. Clamping to <= 1.0 with a strict `<` makes a
+    fully-listed row (mass exactly 1.0) unreachable.
+
+    Verified by mutation: deleting the clamp left the finiteness test green.
+    """
+    reg = _constant_tail_row().unsqueeze(0)
+    legal = _legal().unsqueeze(0)
+    fully_listed = _onehot(0).unsqueeze(0)   # all mass on a SURFACED move
+    for absurd in (10.0, 1e9, 2.0):
+        scale, gated = sf_regret_gate_scale(
+            reg, fully_listed, legal,
+            listed_mass_min=absurd, unlisted_scale=0.0,
+        )
+        assert float(scale[0]) == 1.0, (
+            f"listed_mass_min={absurd} gated a fully-listed row -- the clamp is gone"
+        )
+        assert float(gated[0]) == 0.0
+
+
+def test_the_gate_is_PINNED_OFF_on_the_eval_path() -> None:
+    """⚑⚑ THE RULER MUST NOT MOVE WITH THE ARM. The gate LOOKS like a weight
+    (`sf_own_regret * scale`) but applies PER ROW on a data-dependent predicate, so
+    it changes WHICH rows the column is measured over -- it REDEFINES the column
+    rather than scaling it. A reviewer measured an unchanged model reading
+    `sf_own_regret` 0.4174 -> 0.2112, a 2x move from a training knob. Unpinned,
+    arming the arm would read as the eval loss improving with zero model change.
+
+    This is also why `eval_ruler_id`'s source-digest blind spot on
+    `sf_regret_gate_scale` does not matter: the helper cannot reach the eval
+    measurement at all.
+    """
+    from chess_anti_engine.train.trainer import Trainer
+
+    getter = Trainer._eval_loss_kwargs.fget
+    assert getter is not None
+    src = inspect.getsource(getter)
+    for key, off in (
+        ("sf_own_regret_listed_mass_min", "0.0"),
+        ("sf_own_regret_unlisted_scale", "1.0"),
+    ):
+        assert f'"{key}": {off}' in src, f"{key} is not pinned off in _eval_loss_kwargs"
+
+
+def test_both_keys_reach_the_TRAINERS_OWN_loss_kwargs() -> None:
+    """⚑⚑ THE MUTANT THAT SURVIVED THE PREVIOUS REVIEW AT 295 TESTS GREEN: deleting
+    both keys from `Trainer._loss_kwargs` broke nothing, because nothing in this PR
+    constructed a `Trainer` or called `train_steps`. Every other test here calls
+    `compute_loss` DIRECTLY, so the whole config -> trainer -> loss leg was
+    unverified -- a knob accepted and then never delivered, this repo's signature
+    defect, sitting inside the change meant to guard against it.
+
+    Reading the property's source rather than building a Trainer keeps this a unit
+    test (a real `Trainer` needs a model, an optimizer and a device), and it is the
+    argument-level check the `_loss_kwargs` -> `compute_loss` seam actually needs.
+    """
+    from chess_anti_engine.train.trainer import Trainer
+
+    getter = Trainer._loss_kwargs.fget
+    assert getter is not None
+    src = inspect.getsource(getter)
+    for key in GATE_KEYS:
+        assert f'"{key}"' in src, f"{key} never reaches Trainer._loss_kwargs"
+        assert f"self.{key}" in src, f"{key} is not read from the trainer's own state"
 
 
 # ── plumbing: the knobs must actually be reachable ───────────────────

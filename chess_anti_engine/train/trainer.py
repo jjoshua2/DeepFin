@@ -2729,8 +2729,31 @@ class Trainer:
         they scale a term without redefining it, so they leave the per-term
         columns (`policy_ce`, `wdl_ce`, ...) comparable, and pinning them would
         make `total` stop matching the trained objective.
+
+        ⚑⚑ THE FABRICATED-TAIL GATE IS PINNED OFF FOR THE SAME REASON, and it is
+        pinned by that criterion rather than by category. It LOOKS like a weight —
+        `sf_own_regret * scale` — but it is applied PER ROW on a data-dependent
+        predicate, so it changes WHICH rows the term is measured over. That
+        REDEFINES the column instead of scaling it: an unchanged model reads a
+        different `sf_own_regret`, measured 0.4174 -> 0.2112 on one identical
+        model/batch, a 2x move from a training knob. Left unpinned, arming the arm
+        would look like the eval loss improving with zero model change — the
+        false-positive class this project is repeatedly burned by — and every
+        arm-vs-baseline comparison of that column would compare two rulers.
+
+        ⚑ This also closes the ID's blind spot at the root rather than by widening
+        a digest closure. `eval_ruler_id` hashes the SOURCE of the covered frames,
+        so it moves when `compute_loss` is edited but is blind to
+        `sf_regret_gate_scale`, the helper that actually decides the number. With
+        the gate pinned off in eval, the helper cannot affect the eval measurement
+        at all, so there is nothing for the closure to have to see.
         """
-        return {**self._loss_kwargs, "policy_target_temp": 1.0}
+        return {
+            **self._loss_kwargs,
+            "policy_target_temp": 1.0,
+            "sf_own_regret_listed_mass_min": 0.0,
+            "sf_own_regret_unlisted_scale": 1.0,
+        }
 
     def _amp_context(self):
         # Pinned to bf16: training has no GradScaler, so an FP16 fallback

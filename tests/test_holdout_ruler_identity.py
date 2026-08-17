@@ -595,9 +595,26 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 #   full_pass  78aaaf430abf66f1 -> (#373) a76f440cdb36b72f
 #                               -> (#375) 079f56e31e6b9501
 #                               -> MERGED 73ff47d368fbe10e
+#                               -> (#447) c51de0073e92a007
 #   sampled    afbf4cc1de454249 -> (#373) 20696c6766732998
 #                               -> (#375) 4ca17596e4a59a90
 #                               -> MERGED f41625e40b98e987
+#                               -> (#447) 4c56e2de95c7a82f
+#
+# ⚑ (#447) THE FABRICATED-TAIL GATE. Source-hash-only, and it moved for a change
+# that is a BIT-EXACT identity at its defaults -- `compute_loss` is a covered frame,
+# so ANY edit to it moves the id whether or not the number moves. Per this file's
+# own maintenance contract that is the mechanism working, not a false alarm: an
+# operator WILL see one `holdout_generation` bump and one best-model handover at the
+# next restart. Ledgered.
+#
+# ⚑⚑ The gate itself is PINNED OFF in `_eval_loss_kwargs`, so the eval MEASUREMENT
+# cannot move when the arm is armed. That is deliberate and it is what keeps this a
+# one-time bump rather than a per-arm one: without the pin, arming the gate would
+# change `sf_own_regret` on an UNCHANGED model (measured 0.4174 -> 0.2112, a 2x move)
+# while leaving this id STILL, because `eval_ruler_id` hashes the covered frames and
+# is blind to the helper `sf_regret_gate_scale` that decides the number. Pinning
+# closes that blind spot at the root instead of widening the digest closure.
 # ⚑ The sampled id is computed at steps=5, the pre-PR-277 ruler's own budget,
 # which is `sampled`'s own default -- NOT at steps=0. steps is hashed into the
 # id, so a steps=0 sampled pin is simply a different measurement; a previous PR
@@ -605,7 +622,7 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # tree `sampled(steps=0)` is e0f28fe544f1cbac, and the pin below is not it.
 # Nothing the best-model comparison reads (`test_loss` and the per-head losses)
 # changed on either side, so records stay comparable across the handover.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:c51de0073e92a007"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -616,7 +633,7 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
   # it hashes a slightly different frame set (it covers
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
-PRE_PR277_SAMPLED_RULER = "v1:sampled:f41625e40b98e987"
+PRE_PR277_SAMPLED_RULER = "v1:sampled:4c56e2de95c7a82f"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

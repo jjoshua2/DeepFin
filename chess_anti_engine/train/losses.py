@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import torch
@@ -842,7 +843,20 @@ def sf_regret_gate_scale(
     masked = torch.where(legal, reg_vec, torch.full_like(reg_vec, neg_inf))
     row_max = masked.amax(dim=-1, keepdim=True)
     at_max = legal & (reg_vec == row_max)
-    has_tail = at_max.to(torch.int64).sum(-1) >= 2
+  # ⚑⚑ A ROW WHOSE MAX SITS AT THE CAP IS NEVER GATED. Normalized regret is capped
+  # at 1.0, so a REAL regret that hit the cap is numerically INDISTINGUISHABLE from
+  # the fill -- and then `reg < row_max` classifies those capped REAL moves as tail,
+  # understating the surfaced set. An independent review measured the cost: a
+  # cap-plateau row discarded 0.1771 of gradient, **2x the gate's intended-target
+  # row (0.0880)**, so this is not a rounding concern. Ties at the max are
+  # STRUCTURAL here rather than rare, which is why the "two bit-equal real regrets"
+  # caveat an earlier revision called rare was wrong.
+  #
+  # Refusing to gate at the cap costs coverage on the ~3.75% of live legal entries
+  # that are exactly 1.0, and buys back never discarding real supervision on a
+  # capped row. Under-firing is the safe direction for a term whose whole purpose
+  # is to stop trusting fabricated magnitudes.
+    has_tail = (at_max.to(torch.int64).sum(-1) >= 2) & (row_max.squeeze(-1) < 1.0)
   # ⚑ Normalise over the LEGAL support. `policy_t` is stored fp16 and is not
   # guaranteed to sum to 1.0 after alignment, so an unnormalised sum makes the
   # threshold mean subtly different things on different rows. Rows with no mass
@@ -854,15 +868,34 @@ def sf_regret_gate_scale(
         total > 0.0,
         (probs * surfaced.to(torch.float32)).sum(-1) / total.clamp_min(1e-12),
       # No stored target mass on this row => no evidence of tail exposure, so do
-      # not gate it. `1.0` is above every reachable `listed_mass_min`.
+      # not gate it. ⚑ `1.0` is not-gated only because `mass_min` is CLAMPED to
+      # <= 1.0 below and the comparison is strict `<`. An earlier revision claimed
+      # "above every reachable `listed_mass_min`" with NO clamp in place, which was
+      # simply false -- `listed_mass_min: 10` reached the comparison and gated every
+      # row including these. The guarantee lives in the clamp, not in this constant.
         torch.ones_like(total),
     )
-    matches = (listed_mass < float(listed_mass_min)) & has_tail
-  # The scale a gated row receives, clamped to a sane range: a NEGATIVE scale
-  # would make the optimizer MAXIMISE SF regret on exactly the rows the gate was
-  # built to protect, and neither key is range-validated by `TrialConfig`
-  # (CLAUDE.md category (c)), so a decimal typo lands here silently.
-    eff_scale = min(max(float(unlisted_scale), 0.0), 1.0)
+  # ⚑⚑ BOTH keys are clamped, and NaN is handled EXPLICITLY rather than by the
+  # clamp. Neither key is range-validated by `TrialConfig` (CLAUDE.md category
+  # (c)): the schema accepts it, nothing range-checks it, and the consumer gets it
+  # raw, so a decimal typo lands silently. Three concrete escapes, all measured:
+  #   * `unlisted_scale: -5` gave `scale = -5.0`, making the optimizer MAXIMISE SF
+  #     regret on exactly the rows the gate exists to protect;
+  #   * `listed_mass_min: 10` gates 100% of rows (mass is a fraction, so 1.0 is the
+  #     ceiling), and `-1` silently never fires;
+  #   * ⚑ `listed_mass_min: .nan` or `unlisted_scale: .nan` SURVIVES a `min`/`max`
+  #     clamp -- Python's `min`/`max` PROPAGATE NaN rather than rejecting it (every
+  #     comparison with NaN is False, so the first argument wins) -- and a NaN
+  #     scale takes `total` to NaN **even at `w_sf_own_regret: 0.0`**, while
+  #     `sf_own_regret_gated_frac` still reads 0.0. That is the worst shape
+  #     available: production dies and the instrument says nothing happened.
+  # `math.isnan` first, then clamp. Non-finite falls back to the OFF value, so a
+  # typo degrades to "gate disabled" rather than to a poisoned run.
+    mass_min = float(listed_mass_min)
+    mass_min = 0.0 if math.isnan(mass_min) else min(max(mass_min, 0.0), 1.0)
+    raw_scale = float(unlisted_scale)
+    eff_scale = 1.0 if math.isnan(raw_scale) else min(max(raw_scale, 0.0), 1.0)
+    matches = (listed_mass < mass_min) & has_tail
     scale = torch.where(matches, torch.full_like(listed_mass, eff_scale),
                         torch.ones_like(listed_mass))
   # Rows actually SCALED -- empty whenever `eff_scale` is 1.0, by construction.
