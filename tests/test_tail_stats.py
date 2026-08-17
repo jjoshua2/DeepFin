@@ -21,7 +21,18 @@ from pathlib import Path
 
 import pytest
 
-from scripts.tail_stats import load, report, resolve_field, resolve_field_arg
+from chess_anti_engine.utils.audit_cache_format import (
+    AUDIT_CACHE_FORMAT,
+    ROW_COUNT_KEY,
+    STAMP_FORMAT_KEY,
+)
+from scripts.tail_stats import (
+    DEFAULT_FIELD,
+    load,
+    report,
+    resolve_field,
+    resolve_field_arg,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -161,3 +172,102 @@ def test_booleans_are_not_scored_as_numbers(tmp_path: Path) -> None:
     ])
     with pytest.raises(SystemExit):
         load(str(p), "cand.raw.top1_agree")
+
+
+# --------------------------------------------------------------------------
+# The provenance-stamped path. Every fixture above is UNSTAMPED, which made
+# the header-skipping guard untestable by them: PR #440 review B2 showed a
+# mutant that calls `iter_data_rows`, discards it, and restores a per-line
+# `json.loads` SURVIVES all 142 tests in the four most relevant files while
+# genuinely scoring the stamp as a position. `tests/test_paired_compare_gate_
+# is_wired.py` asserts the CALL through the AST, which cannot see that.
+# These tests exercise the behaviour on a real stamped dump instead.
+# --------------------------------------------------------------------------
+
+
+def _stamp(rows: int) -> dict:
+    """A provenance header of the shape `write_audit_cache` emits."""
+    return {
+        STAMP_FORMAT_KEY: AUDIT_CACHE_FORMAT,
+        "policy_map_version": "pmv",
+        "audit_ruler_version": "arv",
+        "audit_set": "s",
+        "audit_set_digest": "d",
+        ROW_COUNT_KEY: rows,
+    }
+
+
+def _write_stamped(path: Path, rows: list[dict]) -> Path:
+    lines = [json.dumps(_stamp(len(rows)), sort_keys=True)]
+    lines += [json.dumps(r) for r in rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_the_stamp_is_not_scored_as_a_position(tmp_path: Path) -> None:
+    """⚑ A stamped dump must yield the DATA rows only, COUNTED.
+
+    A reader that parses every line scores the header too, so `n` is one too
+    high and every statistic is contaminated by a row that is not a position.
+
+    ⚑⚑ THE FIELD HERE IS DELIBERATELY ONE THE STAMP AND THE ROWS BOTH CARRY,
+    and that is the whole design of this test. Asserted against
+    `cand.raw.top1` it would be VACUOUS: the stamp has no `cand`, so a
+    header-scoring reader drops the header on the numeric test anyway and
+    returns the same 3 rows — the "immune by accident" property #442 named.
+    A test that passes for both the right and the wrong reader pins nothing.
+    Giving the data rows a key the stamp also has makes the two readers
+    disagree (3 vs 4) and the assertion load-bearing.
+    """
+    rows = [_row(f"k{i}", 0, raw=100.0 * i, sf_soft=100.0 * i) for i in range(3)]
+    for i, r in enumerate(rows):
+        r[ROW_COUNT_KEY] = float(i)  # collides with the stamp's own `rows`
+    got = load(str(_write_stamped(tmp_path / "stamped.jsonl", rows)), ROW_COUNT_KEY)
+    assert len(got) == 3, f"expected the 3 data rows, got {len(got)}: {sorted(got)}"
+    assert set(got) == {"k0", "k1", "k2"}
+
+
+def test_a_field_that_resolves_only_on_the_stamp_is_refused(tmp_path: Path) -> None:
+    """⚑ `--field` ENDS the "immune by accident" property #442 relied on.
+
+    The old reader survived the header because the stamp carries no `value` and
+    no `cand`. An arbitrary dotted path has no such luck: the stamp carries
+    `rows`, an int. Scoring it would report a clean n=1 readout whose entire
+    population is the provenance header.
+    """
+    rows = [_row(f"k{i}", 0, raw=100.0 * i, sf_soft=100.0 * i) for i in range(3)]
+    path = str(_write_stamped(tmp_path / "stamped.jsonl", rows))
+    with pytest.raises(SystemExit) as exc:
+        load(path, ROW_COUNT_KEY)
+    assert "0 of 3 rows" in str(exc.value), str(exc.value)
+
+
+def test_a_dump_with_no_data_rows_is_refused_not_reported_as_zero(
+    tmp_path: Path,
+) -> None:
+    """⚑ PR #440 review B1 — the regression this pins.
+
+    The guard was `if n_rows and not rows`. Once `n_rows` counts DATA rows the
+    header no longer pads it, so a header-only/empty/truncated dump drove the
+    count to 0 and short-circuited the refusal: `net +0 blowups` at exit 0,
+    which is indistinguishable from a real null. `write_audit_cache(path, [])`
+    produces exactly this file. Guard on the OUTPUT, never on a count the
+    reader's own skipping can zero.
+    """
+    header_only = str(_write_stamped(tmp_path / "hdr.jsonl", []))
+    with pytest.raises(SystemExit) as exc:
+        load(header_only, DEFAULT_FIELD)
+    assert "0 data rows" in str(exc.value), str(exc.value)
+
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        load(str(empty), DEFAULT_FIELD)
+    assert "0 data rows" in str(exc.value), str(exc.value)
+
+
+def test_an_unstamped_dump_still_loads(tmp_path: Path) -> None:
+    """Back-compat: dumps banked before the stamp existed must still read."""
+    rows = [_row(f"k{i}", 0, raw=100.0 * i, sf_soft=100.0 * i) for i in range(3)]
+    got = load(str(_write(tmp_path / "bare.jsonl", rows)), "cand.raw.top1")
+    assert len(got) == 3

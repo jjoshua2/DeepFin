@@ -55,11 +55,25 @@ def resolve_field(row: dict, field: str) -> Any:
 def load(path: str, field: str = DEFAULT_FIELD) -> dict[str, tuple[float, str]]:
     """Load ``field`` per row, keyed by fen/key, with the row's phase name.
 
-    ⚑ Raises if a non-empty dump yields ZERO numeric values for ``field``.
+    ⚑ Raises if the dump yields ZERO usable values, for EITHER reason —
+    the field never resolved, or there were no data rows to resolve it on.
     Silently returning {} is how a mis-addressed readout reports "no
     difference" instead of "I did not measure the thing you named": the paired
     flip count over an empty join is 0, which is indistinguishable from a real
     null. This is the defect this script had, so it fails loudly instead.
+
+    ⚑⚑ THE ROW-COUNT MUST NOT GATE THE REFUSAL, AND THAT IS NOT HYPOTHETICAL.
+    An earlier form of this guard read ``if n_rows and not rows``. Once
+    ``n_rows`` counts DATA rows (the header being skipped, below), a dump with
+    zero data rows makes the guard short-circuit and the refusal never fires:
+    header-only, empty, and truncated dumps all printed ``net +0 blowups`` at
+    exit 0. `write_audit_cache(path, [])` produces exactly that file, so it is
+    reachable — and pairing a real arm against a truncated one is precisely
+    when a silent zero is most expensive. Measured on the merge of #440 (review
+    B1): the same input exits 1 before the change and 0 after, i.e. the
+    row-count gate was a strict REGRESSION. Guard on the OUTPUT (`not rows`),
+    never on a count that the reader's own skipping can drive to zero.
+    [[a_gate_that_cannot_fail]]
 
     ⚑ `iter_data_rows`, not a bare per-line `json.loads`. Since these dumps
     became provenance-stamped their line 1 is a HEADER, not a position, and the
@@ -84,7 +98,13 @@ def load(path: str, field: str = DEFAULT_FIELD) -> dict[str, tuple[float, str]]:
             else str(phase)
         )
         rows[str(r.get("fen") or r.get("key"))] = (float(v), name)
-    if n_rows and not rows:
+    if not rows:
+        if not n_rows:
+            raise SystemExit(
+                f"{path}: 0 data rows. The file is empty, header-only, or truncated; "
+                "a paired readout over it reports 'no difference' for every statistic, "
+                "which is indistinguishable from a real null."
+            )
         raise SystemExit(
             f"{path}: field {field!r} resolved to a number on 0 of {n_rows} rows. "
             "Check the field path against the dump (audit_targets writes "
