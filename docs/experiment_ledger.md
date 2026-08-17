@@ -56808,3 +56808,62 @@ it needs either a genuinely different family or adjudication by the anti-SF obje
 What SURVIVES from `d32973423`: every 1-node strength number (Ceres 18.6 / BT4 20.1 / ours 46.9 top-1),
 the 1.9× headline, the search ladder, and the C17 conclusion. Only the "independent third ruler"
 inference is withdrawn.
+
+## 2026-08-17 ⚑⚑ SEARCH SCALES BACKWARDS ACROSS STRENGTH — AND BT4's RAW POLICY IS FLATTER *AND* RIGHTER THAN OURS
+
+Josh: *"do a bit of search on the fast one to 32 and 100 nodes to see how it scales compared to ours."*
+Run on BT4 (Ceres cannot: `audit_targets.py` has no `--input-format`, so its `--onnx` path is lc0-planes
+only — task #200's gap, and BT4 stands for the family at r = +0.82). Same ruler, same n = 4,000.
+Rows (d)/(e) share the RL gumbel shape on both nets, so they are the like-for-like ladder.
+
+| | nodes | BT4 E / **top-1** | ours E / **top-1** |
+|---|---|---|---|
+| a) raw policy | 1 | 50.9 / **20.1** | 52.6 / **46.9** |
+| e) RL shape | 32 | 30.7 / **20.0** | 42.3 / **37.9** |
+| d) RL shape | 100 | 28.8 / **19.8** | 39.1 / **36.4** |
+| b) PLAY shape | 32 (BT4) / 100 (ours) | 23.7 / **21.2** | 37.3 / **36.1** |
+
+### ⚑ BT4's search buys 0.3 cp of top-1. Ours buys 10.5.
+
+BT4 top-1: 20.1 → 20.0 → 19.8 across **100× the compute**. Ours: 46.9 → 37.9 → 36.4.
+⇒ **the WEAK net gains a lot from search and the STRONG net gains almost nothing** — the opposite of
+"more nodes will close the gap". BT4's raw policy is already at its search's fixed point on top-1;
+100 sims of its own value head does not change which move is on top.
+
+Search is not idle for BT4 though — its **E[regret] falls 50.9 → 28.8**, and entropy 1.6440 → 0.8264,
+effective support 6.70 → 3.06. So search SHARPENS BT4 onto a move it already had right. That is what
+search is for in a strong net, and it is why the top-1 column barely moves.
+
+### ⚑⚑ THE FINDING THAT MATTERS: THE STRONG NET IS *FLATTER* THAN US, AND MORE ACCURATE
+
+| raw policy (1 node) | entropy (nats) | eff. support | mean top-1 prob | **top-1 regret** |
+|---|---|---|---|---|
+| **BT4** | **1.6440** | **6.70** | 0.4956 | **20.1** |
+| **ours** | **0.7804** | **2.585** | 0.7177 | **46.9** |
+
+BT4 spreads mass over **6.70** moves where we spread it over **2.59**, is **half** as confident in its
+top move — and is **2.3× more accurate**. ⇒ our prior is **sharp on the wrong move set**, and BT4 is
+the existence proof that the flatter policy is the better one at this strength.
+
+**This is the THIRD independent instrument to say it today**, which is why it is recorded as a finding:
+1. the arm calibration's N2 control (pure flattening, zero information) scored **+0.61 / +0.68**, the
+   highest raw cosine of any direction;
+2. arm C, the only survivor, is ≈ N2 on the raw metric;
+3. and now BT4's raw policy is measurably flatter and righter than ours.
+All three say the same thing and it confirms [[we_are_sharp_and_wrong_not_flat]] quantitatively.
+⇒ **the temperature/entropy control (task #255) is promoted from a gate on arm C to a first-class
+candidate in its own right.** It is the cheapest lever on the board and three instruments point at it.
+
+### Consequence for the arm calibration's ruler — Josh's third point, and it is right
+
+> *"then maybe it would be good enough to use to tune how we can use stockfish to improve our policy."*
+
+Yes, with a precise caveat. Searching BT4 does NOT upgrade it much on **top-1** (20.1 → 19.8). But the
+arm-calibration cosine reads the WHOLE distribution `p_bt4`, and there searched BT4 is far better:
+**E[regret] 50.9 → 28.8, a 43% reduction.** ⇒ re-running the arm contrast with BT4's **searched**
+distribution instead of its raw policy is a genuine ruler upgrade on exactly the axis the metric uses,
+and it costs one audit run. Recorded as the next step.
+
+⚑ And the ruler stays legitimate for this purpose despite BT4 agreeing with deep-SF on only 57.3% of
+best moves — that DISAGREEMENT is the reason to keep it, per the decorrelation rule in the retraction
+above. What is illegitimate is stacking Ceres on top: it is r = +0.82 with BT4 and adds no opinion.
