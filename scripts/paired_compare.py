@@ -119,17 +119,34 @@ def exact_binomial_two_sided(k: int, n: int) -> float:
     discordant pairs there is no evidence in either direction, which is the
     honest reading and NOT a pass.
 
-    ⚑ THE DENOMINATOR IS AN INT, AND THAT IS NOT STYLE. ``2.0**n`` raises
-    OverflowError above n=1023, which at n=4000 paired positions is an ordinary
-    discordant count, not a corner case — the gate would die on exactly the run
-    it was built for. ``(1 << n)`` keeps the division in Python's exact integer
-    arithmetic and lets the final quotient (always <= 1) be the only float.
+    ⚑ NEITHER ``2.0**n`` NOR ``math.comb`` SURVIVES THE SIZES THIS IS FOR, and
+    both failures were found by running it rather than by reading it:
+
+    * ``2.0**n`` raises OverflowError above n=1023 — at n=4000 paired positions
+      an ordinary discordant count, not a corner case, so the float denominator
+      would have crashed the gate on exactly the run it was built for.
+    * exact big-int ``math.comb`` sums fix that and are O(n^2) in the discordant
+      count: **1.2 s at n=4000, 17.6 s at n=10000, ~4 min at n=20000** (measured,
+      PR #446 review). Harmless at the registered n and indistinguishable from a
+      hang on a 50k-row ``value_regret`` dump.
+
+    So the tail is summed in LOG space, which is O(k) and flat in n. "Exact"
+    here means the exact binomial TEST rather than the chi-square approximation
+    to it; the arithmetic is float, and `tests/test_paired_compare_mcnemar.py`
+    pins it against `scipy.stats.binomtest` over a random sweep so the claim is
+    checked rather than asserted. Underflow to 0.0 for extreme tables is the
+    correct reading, not an error.
     """
     if n <= 0:
         return 1.0
     k = min(k, n - k)
-    tail = sum(math.comb(n, i) for i in range(k + 1))
-    return min(1.0, 2 * tail / (1 << n))
+    log_half_n = -n * math.log(2.0)
+    log_fact_n = math.lgamma(n + 1)
+    tail = math.fsum(
+        math.exp(log_fact_n - math.lgamma(i + 1) - math.lgamma(n - i + 1) + log_half_n)
+        for i in range(k + 1)
+    )
+    return min(1.0, 2.0 * tail)
 
 
 def mcnemar(
@@ -144,8 +161,22 @@ def mcnemar(
 
     ⚑ ``half_width`` is the quantity the prereg's step 2 owes and could not
     compute: ``1.96*sqrt(d_obs/n)`` on the MEASURED discordance rather than an
-    assumed one. Report it BEFORE choosing an effect size, never after.
+    assumed one. Report it BEFORE choosing an effect size, never after. It is
+    the NULL-CASE (diff = 0) form, so it is an upper bound on the Wald CI
+    printed beside it — the two agree to 3 dp at the registered n=4000 / 38
+    discordant and the null form is 1.12x wider at b=20, c=0, n=100. Both are
+    printed and labelled; do not try to reconcile them into one number.
     """
+    if math.isnan(at):
+        # Every comparison against NaN is False, so the predicate selects
+        # nothing and the table is all-`neither` -> VOID. That is the SAME
+        # output a served cache produces, which makes a typo'd threshold
+        # indistinguishable from the defect this gate exists to catch.
+        raise SystemExit(
+            "--mcnemar-at nan: the predicate `value <= nan` is False for every "
+            "row, so the table would print VOID for a reason that has nothing "
+            "to do with the data. Pass a real threshold (0 for top1_match)."
+        )
     ha = va <= at
     hb = vb <= at
     n = int(ha.shape[0])
@@ -182,10 +213,18 @@ def report_mcnemar(m: McNemar, *, at: float, label_a: str, label_b: str) -> None
     se = math.sqrt(max(var, 0.0))
     print(f"  discordant {m.b + m.c}  (d_obs {m.discordance:.4f})   "
           f"exact two-sided p = {m.p_two_sided:.4g}")
+    # ⚑ THE SIGN CONVENTION HERE IS THE OPPOSITE OF THE PAIRED DELTA'S, ONE
+    # SCREEN UP, AND BOTH ARE LABELLED "(A-B)". The delta is over a regret in
+    # cp, where LOWER is better, so negative = A better. This is over a rate of
+    # SATISFYING the predicate, where HIGHER is better, so positive = A better.
+    # Neither is wrong; adjacent and unannotated they invite one to be read
+    # with the other's rule.
     print(f"  paired rate diff (A-B) {diff:+.4f} "
-          f"[95% CI {diff - 1.96 * se:+.4f} .. {diff + 1.96 * se:+.4f}]")
-    print(f"  measured half-width at this n: ±{m.half_width:.4f} "
-          f"(±{100 * m.half_width:.2f}pp) — 1.96*sqrt(d_obs/n)")
+          f"[95% CI {diff - 1.96 * se:+.4f} .. {diff + 1.96 * se:+.4f}]"
+          f"   (higher = A better — OPPOSITE of the cp delta above)")
+    print(f"  null-case half-width at this n: ±{m.half_width:.4f} "
+          f"(±{100 * m.half_width:.2f}pp) — 1.96*sqrt(d_obs/n), the diff=0 form, "
+          f"so an upper bound on the CI above")
     # b == c > 0 is discordance with NO direction: the arms disagree on b+c
     # positions and split them evenly. Naming a winner there invents one.
     where = (
@@ -352,6 +391,28 @@ def load_dump(
                     provenance[pf].add(json.dumps(r[pf], sort_keys=True))
             k = r.get(join_key)
             v = get_field(r, field)
+            if isinstance(v, bool):
+                # ⚑⚑ A BOOLEAN --field SILENTLY INVERTS THE McNEMAR VERDICT, and
+                # it is not a hypothetical field: `audit_targets` writes
+                # `top1_agree` and `out_of_top10` expressly so this tool can
+                # difference them, and `top1_agree` IS the #440 prereg's
+                # `top1_match`. Scored as a number under the documented
+                # `--mcnemar-at 0`, the predicate `agree <= 0` selects
+                # DISagreement — so the same two dumps produce the same n, the
+                # same d_obs and the same p, with the WINNER SWAPPED and nothing
+                # in the output looking wrong (measured on the #440 arms:
+                # `favours arm_old` vs `favours arm_new`, p = 0.000472 both
+                # ways). Refuse rather than pick a direction: this file already
+                # knows bool-is-int one guard down, on `ROW_COUNT_KEY`.
+                raise SystemExit(
+                    f"{path}: --field {field!r} is a BOOLEAN. A threshold gate "
+                    "over a bool inverts: with `--mcnemar-at 0` the predicate "
+                    "`value <= 0` selects False, i.e. the OPPOSITE of the "
+                    "agreement the name promises, and every other number in "
+                    "the readout is identical. Point --field at the underlying "
+                    "cp quantity (e.g. cand.sf_soft.top1, whose zero IS "
+                    "top1_agree) rather than at the boolean."
+                )
             if k is None or not isinstance(v, (int, float)) or not math.isfinite(v):
                 unusable += 1
                 continue

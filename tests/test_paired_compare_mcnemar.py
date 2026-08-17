@@ -21,6 +21,7 @@ implementation would fail:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -248,3 +249,190 @@ def test_an_even_split_names_no_winner(capsys: pytest.CaptureFixture[str]) -> No
     assert "exactly tied" in out
     assert "favours" not in out
     assert "VOID" not in out
+
+
+# --------------------------------------------------------------------------
+# PR #446 independent review. Every test below closes a mutant that SURVIVED
+# the first suite, and each survivor had the same shape: the production code
+# was correct and the number it produced was pinned by nothing. On a gate that
+# decides a launch that is the same exposure as a wrong implementation.
+# --------------------------------------------------------------------------
+
+
+def test_the_p_value_conditions_on_the_DISCORDANT_pairs_not_on_n() -> None:
+    """⚑⚑ M19: `exact_binomial_two_sided(b, b + c)` -> `(b, n)` passed everything.
+
+    Conditioning on the discordant pairs IS McNemar's test; the paired n is the
+    wrong denominator and it manufactures significance. Measured at the
+    registered n=4000: b=25/c=20 is p=0.551 (n.s.) correctly and p=0 under the
+    mutant, and b=c=19 is p=1.0 correctly and p=0 under the mutant — a genuine
+    null printed as `significant at 95%`.
+
+    Nothing asserted `mcnemar(...).p_two_sided` at all before this: the
+    function was tested in isolation and its ONE call site was not.
+    """
+    # b=6, c=1 -> 7 discordant, lower tail at 1: 2*(C(7,0)+C(7,1))/2^7 = 16/128
+    va = np.r_[np.zeros(6), np.full(1, 9.0), np.zeros(50)]
+    vb = np.r_[np.full(6, 9.0), np.zeros(1), np.zeros(50)]
+    m = mcnemar(va, vb, at=0.0)
+    assert (m.b, m.c, m.n) == (6, 1, 57)
+    assert m.p_two_sided == pytest.approx(0.125)
+    assert m.p_two_sided != pytest.approx(exact_binomial_two_sided(m.b, m.n))
+
+
+def test_a_balanced_discordant_table_is_not_significant_at_the_registered_n() -> None:
+    """The mutant's headline failure, stated as its own case."""
+    va = np.r_[np.zeros(19), np.full(19, 9.0), np.zeros(3962)]
+    vb = np.r_[np.full(19, 9.0), np.zeros(19), np.zeros(3962)]
+    m = mcnemar(va, vb, at=0.0)
+    assert (m.b, m.c, m.n) == (19, 19, 4000)
+    assert m.p_two_sided == pytest.approx(1.0)
+
+
+def test_discordance_counts_BOTH_directions(capsys: pytest.CaptureFixture[str]) -> None:
+    """⚑ M17: `d = b / n` passed every test, because every fixture had c = 0.
+
+    `d_obs` and the half-width derived from it are the two numbers the prereg
+    must publish BEFORE choosing an effect size, so understating them is the
+    same defect as the assumed d=0.30 this file was written to prevent — one
+    level down. At b=19/c=19 the mutant understates the half-width by 1.41x.
+    """
+    va = np.r_[np.zeros(30), np.full(8, 9.0), np.zeros(3962)]
+    vb = np.r_[np.full(30, 9.0), np.zeros(8), np.zeros(3962)]
+    m = mcnemar(va, vb, at=0.0)
+    assert (m.b, m.c) == (30, 8)
+    assert m.discordance == pytest.approx(38 / 4000)
+    assert m.half_width == pytest.approx(1.96 * (38 / 4000 / 4000) ** 0.5)
+    report_mcnemar(m, at=0.0, label_a="A", label_b="B")
+    assert "d_obs 0.0095" in capsys.readouterr().out
+
+
+def test_the_wald_ci_keeps_its_correlation_correction(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ M16, AND MY FIRST VERSION OF THIS TEST WAS VACUOUS.
+
+    Dropping `-(b-c)**2/n` from the variance survived the whole suite. My first
+    attempt to close it computed BOTH formulas inside the test and asserted
+    that one was smaller than the other — true arithmetic, touching no
+    production code, passing with the mutant in. That is the failure this repo
+    names "a new test is vacuous until mutated", committed inside the fix for
+    a mutant. So this reads the CI the tool actually PRINTS.
+
+    The correction is what makes the interval PAIRED; without it the interval
+    is too wide. ⚑ THE TABLE HERE IS CHOSEN SO THE DIFFERENCE IS VISIBLE AT THE
+    PRINTED PRECISION, and that is not a detail: at the registered n=4000 with
+    38 discordant, corrected and uncorrected agree to 4 decimals (0.0048 vs
+    0.0048), so a test written on the realistic table CANNOT see the mutant
+    however it is asserted. The correction scales with (b-c)^2/n, so it only
+    bites when the table is lopsided relative to n.
+    """
+    b, c, n = 60, 0, 100
+    va = np.zeros(n)
+    vb = np.zeros(n)
+    vb[:b] = 9.0
+    m = mcnemar(va, vb, at=0.0)
+    assert (m.b, m.c, m.n) == (b, c, n)
+
+    diff = (b - c) / n
+    se_corrected = ((b + c - (b - c) ** 2 / n) / n**2) ** 0.5
+    se_uncorrected = ((b + c) / n**2) ** 0.5
+    assert se_corrected < se_uncorrected          # the mutant widens it
+
+    report_mcnemar(m, at=0.0, label_a="A", label_b="B")
+    line = next(
+        ln for ln in capsys.readouterr().out.splitlines() if "paired rate diff" in ln
+    )
+    lo, hi = (float(x) for x in re.findall(r"[-+]\d+\.\d+", line)[1:3])
+    assert lo == pytest.approx(diff - 1.96 * se_corrected, abs=5e-5), line
+    assert hi == pytest.approx(diff + 1.96 * se_corrected, abs=5e-5), line
+    assert lo != pytest.approx(diff - 1.96 * se_uncorrected, abs=5e-5)
+
+
+def test_the_winner_line_names_the_arm_with_more_matches(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ M27: swapping label_a/label_b in the verdict line passed 89 tests.
+
+    This is the sentence the ledger quotes. `b` is A-only on a lower-is-better
+    predicate, so more A-only matches must read as A. The 2x2 above it was
+    asserted; the conclusion drawn from it was not.
+    """
+    va = np.r_[np.zeros(20), np.zeros(80)]
+    vb = np.r_[np.full(20, 9.0), np.zeros(80)]
+    report_mcnemar(mcnemar(va, vb, at=0.0), at=0.0, label_a="ARM_OLD", label_b="ARM_NEW")
+    out = capsys.readouterr().out
+    assert "A-only 20   B-only 0" in out
+    assert "favours ARM_OLD" in out, out
+    assert "favours ARM_NEW" not in out
+
+
+def test_the_exact_p_matches_scipy_across_a_random_sweep() -> None:
+    """⚑ The arithmetic changed from big-int to log-space; pin it to a REFERENCE.
+
+    The int form was exact and O(n^2) — 17.6 s at n=10000 and ~4 min at
+    n=20000, i.e. indistinguishable from a hang on a large dump. The log-space
+    form is O(k) and flat in n, and "exact" now means the exact binomial TEST
+    computed in floats. That is a claim about accuracy, so it is checked
+    against scipy rather than asserted in a comment.
+    """
+    scipy_stats = pytest.importorskip("scipy.stats")
+    rng = np.random.default_rng(11)
+    worst = 0.0
+    for _ in range(300):
+        n = int(rng.integers(1, 600))
+        k = int(rng.integers(0, n + 1))
+        ref = scipy_stats.binomtest(k, n, 0.5, alternative="two-sided").pvalue
+        worst = max(worst, abs(exact_binomial_two_sided(k, n) - ref) / max(ref, 1e-300))
+    assert worst < 1e-9, worst
+
+
+def test_the_p_value_is_fast_at_a_size_that_used_to_hang() -> None:
+    """n=10000 took 17.6 s under the big-int form. Pin the regime, not the clock."""
+    import time
+
+    t0 = time.monotonic()
+    p = exact_binomial_two_sided(4500, 10000)
+    assert 0.0 < p < 1.0
+    assert time.monotonic() - t0 < 2.0
+
+
+def test_a_nan_threshold_is_refused_rather_than_printed_as_VOID() -> None:
+    """⚑ `value <= nan` is False everywhere, so a typo reads as the served-cache
+    shape — the one output this gate exists to make unmistakable."""
+    with pytest.raises(SystemExit, match="nan"):
+        mcnemar(np.zeros(4), np.zeros(4), at=float("nan"))
+
+
+def test_a_boolean_field_is_refused_because_it_inverts_the_verdict(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ `audit_targets` writes `top1_agree` EXPRESSLY for this tool to join.
+
+    Scored as a number under the documented `--mcnemar-at 0`, `agree <= 0`
+    selects DISagreement: same n, same d_obs, same p, winner swapped, and
+    nothing in the output looks wrong. Measured on the #440 arms as
+    `favours arm_old` vs `favours arm_new` at p = 0.000472 both ways.
+    """
+    from scripts.paired_compare import load_dump
+
+    p = _dump(tmp_path / "b.jsonl", [
+        {"key": "k0", "phase": 1, "cand": {"sf_soft": {"top1_agree": True}}},
+        {"key": "k1", "phase": 1, "cand": {"sf_soft": {"top1_agree": False}}},
+    ])
+    with pytest.raises(SystemExit, match="BOOLEAN"):
+        load_dump(p, join_key="key", field="cand.sf_soft.top1_agree")
+
+
+def test_the_two_sign_conventions_are_annotated_where_they_collide(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A cp delta (lower better) and a rate diff (higher better) print adjacent,
+    both labelled `(A-B)`. Neither is wrong; unannotated they are a trap."""
+    va = np.r_[np.zeros(20), np.zeros(80)]
+    vb = np.r_[np.full(20, 9.0), np.zeros(80)]
+    report_mcnemar(mcnemar(va, vb, at=0.0), at=0.0, label_a="A", label_b="B")
+    out = capsys.readouterr().out
+    assert "higher = A better" in out
+    assert "null-case half-width" in out
+    assert "upper bound on the CI above" in out

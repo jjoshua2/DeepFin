@@ -28,8 +28,11 @@ from scripts.audit_targets import (
     UNRECORDED_SF_ID,
     _shallow_sf_records,
     engine_identity,
+    refuse_if_not_a_shallow_sf_cache,
     resolve_sf_cache_path,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 NODES, MULTIPV = 500_000, 40
 
@@ -361,6 +364,72 @@ def test_the_labeling_pass_announces_the_path_it_actually_uses(
     assert f"[sf-soft] cache in use {cache}" in capsys.readouterr().out
 
 
+def _one_row_audit_set(tmp_path: Path) -> Path:
+    """The smallest thing `load_audit_set` accepts — one scored position."""
+    p = tmp_path / "set.jsonl"
+    p.write_text(json.dumps({
+        "key": "k0",
+        "fen": "8/8/8/8/8/8/8/K6k w - - 0 1",
+        "phase": 0, "source": 0,
+        "multipv": [{"move": "a1b1", "cp": 0}],
+        "wdl": [0, 1000, 0],
+        "nodes": 1000000, "depth": 40,
+    }) + "\n", encoding="utf-8")
+    return p
+
+
+def test_main_hands_the_RESOLVED_path_to_the_labelling_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ THE WIRING CHECK, EXECUTED THROUGH `main()` — this is the one that counts.
+
+    It replaces a source-level "the resolver is called exactly once" assertion
+    that I wrote, recorded as adequate, and that was WRONG: the independent
+    review of PR #446 defeated it with one token, using the constant this same
+    change introduced —
+
+        cache_path=args.audit_set.with_suffix(
+            args.audit_set.suffix + SHALLOW_SF_CACHE_SUFFIX)
+
+    `resolve_sf_cache_path(` still appears exactly once and the literal
+    `shallow_sf.jsonl` is in the constant rather than in `main`'s source, so
+    both string guards pass while the run announces the override and labels
+    into the DEFAULT. 16 tests green with the mutant in.
+
+    ⚑ And the reason I gave for settling — "reaching the labelling call needs a
+    real checkpoint and an hour of Stockfish" — was FALSE, which is the part
+    worth remembering. `net_source_from_args` only RECORDS `--checkpoint`; the
+    model loads long after `_shallow_sf_records`. So `main()` reaches the
+    labelling call in-process with a bogus checkpoint and a one-row audit set,
+    in ~15 s, with no Stockfish, no torch load and no GPU. A limit assumed
+    rather than measured turned a closable gap into a documented one.
+    [[predict_the_exact_count_before_running]]
+    """
+    from scripts import audit_targets
+
+    seen: dict[str, object] = {}
+
+    def _capture(*_a: object, **kw: object) -> None:
+        seen.update(kw)
+        raise SystemExit("captured")
+
+    monkeypatch.setattr(audit_targets, "_shallow_sf_records", _capture)
+    override = tmp_path / "repeat2.shallow_sf.jsonl"
+    monkeypatch.setattr(sys, "argv", [
+        "audit_targets.py",
+        "--checkpoint", str(tmp_path / "nope.pt"),
+        "--audit-set", str(_one_row_audit_set(tmp_path)),
+        "--sf-cache", str(override),
+        # Repo-relative: this file's own location, never an absolute home path.
+        "--config", str(REPO_ROOT / "configs/pbt2_small.yaml"),
+        "--allow-stale-config",
+        "--device", "cpu",
+    ])
+    with pytest.raises(SystemExit):
+        audit_targets.main()
+    assert seen.get("cache_path") == override, seen
+
+
 def test_main_resolves_the_cache_path_exactly_once() -> None:
     """⚑ A STRUCTURAL check, and its limit is stated rather than implied.
 
@@ -388,3 +457,110 @@ def test_main_resolves_the_cache_path_exactly_once() -> None:
     assert "shallow_sf.jsonl" not in src.replace(
         '"<audit-set>.shallow_sf.jsonl. ⚑ REQUIRED for a repeat "', ""
     ), "main derives a cache path by hand instead of calling the resolver"
+
+
+# --------------------------------------------------------------------------
+# The APPEND-collision guard. `_shallow_sf_records` opens the cache in mode
+# "a", so a mis-pointed --sf-cache does not fail -- it silently grows another
+# file. PR #446's review showed an identity check on the audit set named on
+# THIS command line is not enough, and gave three routes past it.
+# --------------------------------------------------------------------------
+
+
+def _audit_row(key: str) -> dict:
+    """An audit-set record: `multipv` is a LIST of PV dicts."""
+    return {
+        "key": key, "fen": "8/8/8/8/8/8/8/K6k w - - 0 1", "phase": 0, "source": 0,
+        "multipv": [{"move": "a1b1", "cp": 0}], "wdl": [0, 1000, 0],
+        "nodes": 1000000, "depth": 40,
+    }
+
+
+def test_the_resolver_refuses_an_override_that_aliases_the_audit_set(
+    tmp_path: Path,
+) -> None:
+    aset = tmp_path / "set.jsonl"
+    aset.write_text(json.dumps(_audit_row("k0")) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="audit set itself"):
+        resolve_sf_cache_path(aset, aset)
+    # ...including through a directory-traversal spelling of the same file.
+    with pytest.raises(SystemExit, match="audit set itself"):
+        resolve_sf_cache_path(aset, tmp_path / "sub" / ".." / "set.jsonl")
+
+
+def test_the_resolver_lets_a_genuinely_new_path_through(tmp_path: Path) -> None:
+    """The guard must not simply refuse overrides."""
+    aset = tmp_path / "set.jsonl"
+    got = resolve_sf_cache_path(aset, tmp_path / "repeat2.jsonl")
+    assert got == tmp_path / "repeat2.jsonl"
+    assert resolve_sf_cache_path(aset, None) == tmp_path / "set.jsonl.shallow_sf.jsonl"
+
+
+def test_a_HARDLINK_to_the_audit_set_is_refused_at_the_append(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ The route the resolver structurally CANNOT close.
+
+    `os.link` gives the frozen set a second name; `Path.resolve()` compares
+    paths and cannot see inodes, so the alias passes the resolver. The content
+    check at the append-open catches it, which is the reason that check lives
+    beside the `open(..., "a")` and not only in the resolver.
+    """
+    aset = tmp_path / "set.jsonl"
+    aset.write_text(json.dumps(_audit_row("k0")) + "\n", encoding="utf-8")
+    hard = tmp_path / "hard.jsonl"
+    os.link(aset, hard)
+    assert resolve_sf_cache_path(aset, hard) == hard      # resolver passes it
+    with pytest.raises(SystemExit, match="NOT a shallow-SF cache"):
+        refuse_if_not_a_shallow_sf_cache(hard)
+    # and the frozen set is untouched
+    assert aset.read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_a_DIFFERENT_frozen_audit_set_is_refused(tmp_path: Path) -> None:
+    """`--sf-cache data/audit_set_v2.jsonl` — a set this run never names."""
+    other = tmp_path / "v2.jsonl"
+    other.write_text(json.dumps(_audit_row("k0")) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="NOT a shallow-SF cache"):
+        refuse_if_not_a_shallow_sf_cache(other)
+
+
+def test_a_per_position_DUMP_is_refused(tmp_path: Path) -> None:
+    """Arguably the likelier typo: the dump path, two flags away on the line."""
+    dump = tmp_path / "arm.jsonl"
+    dump.write_text(
+        json.dumps({"key": "k0", "phase": 0, "cand": {"raw": {"top1": 12.0}}}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="NOT a shallow-SF cache"):
+        refuse_if_not_a_shallow_sf_cache(dump)
+
+
+def test_a_real_shallow_sf_cache_and_a_fresh_path_both_pass(tmp_path: Path) -> None:
+    """⚑ The guard must not refuse the two cases the flag exists for."""
+    refuse_if_not_a_shallow_sf_cache(tmp_path / "does_not_exist.jsonl")
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    refuse_if_not_a_shallow_sf_cache(empty)
+    good = _write_cache(tmp_path / "good.jsonl", [_cache_row("k0", "SF OLD")])
+    refuse_if_not_a_shallow_sf_cache(good)
+
+
+def test_the_labelling_pass_runs_the_guard_not_just_the_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Wired, not merely defined: the check must fire from inside the pass.
+
+    A guard function nothing calls is this codebase's signature defect, and the
+    resolver cannot stand in for it — the hardlink above proves the two see
+    different things.
+    """
+    aset = tmp_path / "set.jsonl"
+    aset.write_text(json.dumps(_audit_row("k0")) + "\n", encoding="utf-8")
+    _no_labeling(monkeypatch)
+    monkeypatch.setattr("scripts.audit_targets.engine_identity", lambda p, **k: "SF X")
+    with pytest.raises(SystemExit, match="NOT a shallow-SF cache"):
+        _shallow_sf_records(
+            [_pos("k0")], cache_path=aset, stockfish="/fake/x",
+            nodes=NODES, multipv=MULTIPV, workers=1, nice=15,
+        )

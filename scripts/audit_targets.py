@@ -1719,10 +1719,86 @@ def resolve_sf_cache_path(audit_set: Path, override: Path | None) -> Path:
     share an `sf_id`, run 2 matches every row, and Stockfish is never launched:
     the measured run-to-run variance is 0 by CONSTRUCTION. Point the repeat at
     a fresh path and it labels for real.
+
+    ⚑⚑ AN OVERRIDE THAT ALIASES THE AUDIT SET IS REFUSED, AND THE DAMAGE IT
+    PREVENTS IS PERMANENT. `_shallow_sf_records` opens the cache in APPEND mode,
+    so `--sf-cache data/audit_set_v1.jsonl` would write label records into the
+    FROZEN scoring set — which by protocol never changes after generation, and
+    whose digest every stamped dump carries. Every later audit would score a
+    silently different population, and there is no undo. The default can never
+    collide (it adds a suffix); only an explicit override can, which is exactly
+    the flag a hurried operator types a second path into. Compared by
+    `realpath`, so a symlink cannot route around it. (Codex review, PR #446 P2.)
     """
-    return override if override is not None else audit_set.with_suffix(
+    resolved = override if override is not None else audit_set.with_suffix(
         audit_set.suffix + SHALLOW_SF_CACHE_SUFFIX
     )
+    if Path(resolved).resolve() == Path(audit_set).resolve():
+        raise SystemExit(
+            f"--sf-cache {resolved} resolves to the audit set itself "
+            f"({audit_set}). The shallow-SF cache is opened in APPEND mode, so "
+            "this would write label rows into the frozen scoring set and "
+            "permanently change what every later audit scores. Point --sf-cache "
+            "at a NEW file (a repeat control wants one per repeat)."
+        )
+    return resolved
+
+
+def refuse_if_not_a_shallow_sf_cache(cache_path: Path) -> None:
+    """Refuse to APPEND to an existing file that is not a shallow-SF cache.
+
+    ⚑⚑ THE DAMAGE IS PERMANENT AND SILENT, WHICH IS WHY THIS SITS BESIDE THE
+    APPEND-OPEN RATHER THAN ONLY IN THE RESOLVER. `_shallow_sf_records` opens
+    `cache_path` in mode ``"a"``. Point `--sf-cache` at the frozen audit set and
+    it gains label rows; the set FREEZES after generation by protocol, its
+    digest rides in every stamped dump, and there is no undo. Point it at a
+    `--dump-per-position` output and that dump is corrupted instead.
+
+    An identity check on the audit set NAMED ON THIS COMMAND LINE is not
+    enough, and the review of PR #446 demonstrated all three ways past it:
+
+    * ``os.link(audit_set, alias)`` — a HARDLINK. `realpath` compares paths and
+      cannot see inodes, so the alias is accepted and appended to.
+    * ``--sf-cache data/audit_set_v2.jsonl`` — a DIFFERENT frozen set, which the
+      run never mentions and so cannot compare against.
+    * ``--sf-cache <the dump path>`` — arguably the likelier typo than aliasing
+      the file you just typed two flags earlier.
+
+    So the test is on the CONTENT, which all three share: a shallow-SF row
+    carries an integer ``multipv`` (the width the labeller requested), while an
+    audit record's ``multipv`` is a LIST of PV dicts and a dump row has no
+    ``multipv`` at all. One line is enough — the file is append-only and
+    homogeneous.
+
+    A missing file is fine (that is the normal fresh-cache case), and so is an
+    empty one.
+    """
+    if not cache_path.is_file() or cache_path.stat().st_size == 0:
+        return
+    with open(cache_path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                first = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(
+                    f"{cache_path}: exists but line 1 is not JSON ({exc}). "
+                    "Refusing to append shallow-SF rows to it."
+                ) from exc
+            break
+        else:
+            return
+    if not isinstance(first, dict) or not isinstance(first.get("multipv"), int):
+        raise SystemExit(
+            f"{cache_path}: exists and is NOT a shallow-SF cache (line 1 has no "
+            f"integer 'multipv'; found {type(first.get('multipv') if isinstance(first, dict) else first).__name__}). "
+            "This file is opened in APPEND mode, so continuing would write label "
+            "rows into it — if it is the frozen audit set, that permanently "
+            "changes what every later audit scores; if it is a dump, it "
+            "corrupts the dump. Point --sf-cache at a new or existing "
+            "shallow-SF cache."
+        )
 
 
 def _shallow_sf_records(
@@ -1749,6 +1825,7 @@ def _shallow_sf_records(
     # --sf-cache fails cheaply, but an early print describes an INTENTION: the
     # only line that cannot disagree with the labelling pass is this one.
     print(f"[sf-soft] cache in use {cache_path}")
+    refuse_if_not_a_shallow_sf_cache(cache_path)
     sf_id = engine_identity(str(stockfish)) if stockfish is not None else None
     cache: dict[str, dict] = {}
     other_node_counts: set[int] = set()

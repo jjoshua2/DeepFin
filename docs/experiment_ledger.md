@@ -42488,13 +42488,80 @@ Pinned by execution, not by prose — `tests/test_audit_shallow_sf_cache_provena
   check, and it is the one that matters: a resolver nothing calls is this codebase's signature
   defect.
 
-⚑ **A mutant SURVIVED the first version of that suite and is worth recording.** Making `main`
-print the override and then hand `resolve_sf_cache_path(args.audit_set, None)` to the labelling
-pass passes every executing test here, because reaching the labelling call needs a real
-checkpoint and an hour of SF. Two changes close it: the labelling pass now announces the path it
-actually uses (it prints its own parameter, so that line cannot disagree with itself), and
-`test_main_resolves_the_cache_path_exactly_once` refuses a second derivation in `main`. The
-second is a source-level check and is labelled as one — the limit is stated in the test.
+⚑ **A mutant SURVIVED the first version of that suite, and then survived my first FIX for it.**
+Making `main` print the override and then hand `resolve_sf_cache_path(args.audit_set, None)` to
+the labelling pass passes every executing test here. My first close was
+`test_main_resolves_the_cache_path_exactly_once`, a source-level check that `main` derives the
+path once — and the independent reviewer of PR #446 defeated it with ONE token
+(`SHALLOW_SF_CACHE_SUFFIX` spelled out at the second call site) and, worse, showed that my stated
+reason for reaching for a source check at all was FALSE: reaching the labelling call does NOT
+need a real checkpoint, because `net_source_from_args` only records `--checkpoint`.
+[[announce_from_the_consumers_own_parameter]]
+
+What closes it is EXECUTION, in two places. `_shallow_sf_records` announces `cache_path` — the
+same parameter it opens and appends to, so that line is structurally incapable of disagreeing
+with the work (`test_the_labeling_pass_announces_the_path_it_actually_uses`). And
+`test_main_hands_the_RESOLVED_path_to_the_labelling_pass` drives the real `main()` in-process
+against a one-row audit set and a bogus checkpoint, captures the `cache_path` the labelling pass
+actually received, and asserts it is the override — ~15 s, no Stockfish, no torch, no GPU. The
+source-level once-only check is kept as a cheap second net, but it is no longer load-bearing and
+must not be cited as the closure: **a source grep that is the only thing standing between a
+mutant and the run is theatre, and this one was measured to be.**
+
+### ⚑⚑ THE REPEAT ARM'S TWO COMMANDS, WRITTEN OUT — the flag is not the fix
+
+Codex review of PR #446 (P1) caught the shape this whole entry keeps repeating: the section above
+introduces `--sf-cache` and then gives only the `paired_compare` command. The only complete
+`audit_targets.py` invocation recorded anywhere in this ledger omits `--sf-cache`, so an operator
+following the canonical command twice reuses the DEFAULT cache, reads the known zero-discordance
+`VOID`, and stops the experiment this entry just declared unblocked — the exact false stop B5
+describes, re-armed by a documentation gap rather than by code.
+[[an_exact_command_means_it_was_run]]
+
+**Repeat control (OLD vs OLD, referee A). Two runs, two DISTINCT cache paths, same binary:**
+
+```bash
+# run 1
+PYTHONPATH=. python3 scripts/audit_targets.py \
+  --checkpoint <CKPT> --audit-set data/audit_set_v1.jsonl \
+  --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-cache scratchpad/sf440/repeat_A1.shallow_sf.jsonl \
+  --dump-per-position scratchpad/sf440/repeat_A1.jsonl
+
+# run 2 — ONLY --sf-cache and the dump differ
+PYTHONPATH=. python3 scripts/audit_targets.py \
+  --checkpoint <CKPT> --audit-set data/audit_set_v1.jsonl \
+  --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-cache scratchpad/sf440/repeat_A2.shallow_sf.jsonl \
+  --dump-per-position scratchpad/sf440/repeat_A2.jsonl
+```
+
+**Positive control that the repeat actually re-labelled — check BEFORE reading `d_obs`:** each run
+must print `[sf-soft] labeling 4000 positions` (`data/audit_set_v1.jsonl` is exactly 4000 lines,
+measured 2026-08-17) and `[sf-soft] cache in use <the path you passed>`. A run that prints no
+`labeling` line was served from cache and its `d_obs` means nothing. Both cache files must exist
+and be non-empty afterwards.
+
+⚑ This is not hypothetical: `data/audit_set_v1.jsonl.shallow_sf.jsonl` already holds 22 MB of
+rows on this machine, so BOTH runs of a default-cache repeat are served in full and neither
+launches Stockfish. The failure is armed right now, on disk.
+
+**Then the statistic:**
+
+```bash
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  scratchpad/sf440/repeat_A1.jsonl scratchpad/sf440/repeat_A2.jsonl \
+  --join-key key --field cand.sf_soft.top1 --mcnemar-at 0 --require-n 4000
+```
+
+Publish `d_obs` and the printed half-width from THIS run before choosing the effect size for
+arm NEW. ⚑ `d_obs = 0` is still a stop — but now it is a statement about the pipeline rather than
+about the cache, which is the entire point of the fix.
+
+⚑ `--sf-cache` REFUSES a path that resolves to the audit set itself (`Path.resolve()`, so a
+symlink cannot route around it): the cache is opened in APPEND mode, and writing label rows into
+the frozen scoring set would permanently change what every later audit scores. Codex review of
+PR #446 (P2).
 
 ### B4 — McNemar now EXISTS, in the validating paired reader
 
