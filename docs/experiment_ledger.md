@@ -54687,3 +54687,114 @@ unchanged at 2026-07-31 12:46. Nothing pre-existing was touched.
 ⚑ The instructive part is not the write, it is the CAUSE: the agent reasoned about the script's
 behaviour from the PR's source while executing the LIVE tree's copy of it. Same file name, two
 different files. [[diff_the_file_you_measured_against_production]]
+
+## 2026-08-17 — BT4 CASCADE GATE: verdict **REDUNDANT** on gate 2, and the banked confidence pattern **REVERSES** inside the not-listed rows
+
+Josh's design, and it is a better shape than either arm I had been weighing: a **cascade**,
+not a blanket screen. gate 1 (free, stored) `tgt_listed` → gate 2 (free, stored) `top1_mass`
+→ **BT4 forward pass only on what survives** → downweight where BT4 corroborates SF, **KEEP**
+where BT4 prefers our move. BT4 is SF-agnostic, so unlike a bare "drop everything outside SF's
+top 6" this does not train toward agreement with Stockfish.
+
+**Nothing launched. Zero GPU, zero Stockfish, no live change.** Pure re-analysis of banked
+`scratchpad/target_vs_bt4/` artifacts. Predictions committed in
+`scratchpad/bt4cascade/PREDICTIONS_bt4cascade.md` BEFORE the rig ran; rig
+`scratchpad/bt4cascade/xtab.py`, results `xtab_results.json`.
+
+**QUESTION, and only this one:** the banked C=0.7815 is the `tgt_listed=False` cut; the banked
+confidence table is over ALL disagreement rows. **Two different populations, never crossed.**
+Does gate 2 add anything INSIDE the not-listed rows, or is it redundant with gate 1?
+
+### Controls first — the rig reproduces the banked numbers EXACTLY
+
+    C = P(BT4 prefers SF's move) = mean(Q_tgt - Q_sf < 0), BT4 winner head
+
+    not-listed   n=325   C 0.7815 [.7354, .8246]    banked 0.7815   EXACT
+    listed       n=833   C 0.5342 [.5006, .5678]    banked 0.534    EXACT
+    top1 [0,0.5)     n=366  0.7022   banked 0.702   |  [0.5,0.9)  n=543  0.5783  banked 0.578
+    top1 [0.9,0.99)  n=170  0.5765   banked 0.577   |  [0.99,1.01) n=79  0.3797  banked 0.380
+
+⚑ **THE TIE CLAUSE FIRED AND THEN CLEARED, AND THE FIRST READING WAS MY OWN POPULATION ERROR.**
+The prereg said "if ties exceed 2% the definition is ambiguous". Over all finite rows the tie
+rate is **0.4210** — 21x the bar. It is entirely the AGREE rows, whose tie rate is **1.0000 by
+construction** (same move ⇒ identical Q). On the deciding population the tie rate is
+**exactly 0.0000** (n=1158 disagreements, n=325 not-listed). Definition unambiguous.
+⇒ a threshold clause is only as good as the population it is evaluated on.
+[[same_name_different_population]]
+
+### ⚑⚑ THE CROSS-TAB, and it REVERSES the banked pattern where it matters
+
+PRIMARY population: disagreement AND `trained = ~postckpt_mask` AND finite Q (n=1007).
+
+| target `top1_mass` | not-listed n | **C** | listed n | C |
+|---|---|---|---|---|
+| [0, 0.5) | 155 | 0.8323 | 160 | 0.5875 |
+| [0.5, 0.9) | 94 | 0.7128 | 380 | 0.5474 |
+| [0.9, 0.99) | **25** | **0.9600** | 125 | 0.5040 |
+| [0.99, 1.01) | **8** | 0.2500 | 60 | 0.4000 |
+
+The banked finding was "C falls monotonically with our own confidence; on the most confident
+rows BT4 prefers the TARGET." **That is a LISTED-row phenomenon plus the n=79 saturated bin.
+Inside the not-listed rows it does not hold** — [0.9,0.99) reads **C 0.96**, the highest cell
+in the entire table, and it is a high-confidence cell.
+
+### VERDICT: **REDUNDANT** by the pre-committed rule
+
+    dC = C(not-listed & top1<0.5) - C(not-listed & top1>=0.9)
+       = 0.0444,  95% CI [-0.0981, +0.2068]   <- contains 0
+    n_low 155, n_high 33, smaller cell 33 (floor 30, PASSES)
+
+CI contains 0 ⇒ **REDUNDANT: gate 1 already captures it; do NOT add the second knob.** This
+*simplifies* the cascade to one free gate. P6 predicted [+0.10, +0.30] / "gate 2 earns its
+place" — **a clean MISS, recorded as one.**
+
+⚑⚑ **AND MY OWN DECIDING STATISTIC POOLED A SIGN FLIP.** The `top1>=0.9` cell pools
+[0.9,0.99) **C 0.96, n=25** with [0.99,1.01) **C 0.25, n=8** to ~0.79 — so dC reads ~0 from two
+halves pointing OPPOSITE ways. Neither half resolves at this n. The verdict stands as written
+(the rule was pre-committed and the floor passed), but "REDUNDANT" here means *unresolved at
+n=33*, not *established equal*. The follow-up is a WIDER BANKED SAMPLE, exactly as P5's clause
+required — not a softer bar. [[a_statistic_over_a_padded_array_measures_the_padding]] in spirit:
+an aggregate over a heterogeneous cell measures the mixture.
+
+### The cascade's CORE claim is CONFIRMED — this is the part that justifies it over a blanket drop
+
+Signed split on the not-listed rows (primary population):
+
+| | n | mean dQ | 95% CI |
+|---|---|---|---|
+| BT4 prefers **OUR** move — the KEEP set | 60 | **+0.0303** | **[+0.0120, +0.0569]** |
+| BT4 prefers SF's move — the DOWNWEIGHT set | 222 | −0.0647 | [−0.0887, −0.0444] |
+
+**The keep set's dQ is positive with a CI excluding zero.** A blanket "drop everything outside
+SF's top 6" destroys 60 rows that are measurably BETTER by an SF-agnostic judge. The cascade
+keeps them. ⇒ **the reason to prefer Josh's design over the cheap filter is measured, not
+argued.**
+
+Share of all rows (n=1744) the cascade would downweight: **12.73%**, against **16.17%** for the
+blanket drop. Predicted 11-14% — HIT.
+
+### Prediction scorecard: **7 of 8 hit, and the MISS is the deciding one**
+
+P1 EXACT · P2 EXACT · P3 325/282 vs predicted 326±15 / 284±20 HIT · P4 median `top1_mass`
+0.4311 not-listed vs 0.7206 listed HIT · P5 the small cell landed n=33, predicted 15-45, HIT
+(and it is why the statistic cannot resolve) · **P6 MISS** · P7 HIT · P8 HIT.
+
+### What this does NOT establish
+
+- **Not Elo, not even target quality.** It sizes a gate on a banked ruler. Whether the gate
+  helps needs a training arm + paired arena — a separate, GPU-gated entry that does not exist.
+- **⚑⚑ BT4 IS THE FILTER HERE, SO BT4 CAN NEVER JUDGE THE RESULT.** Readout must be a
+  different non-SF net (the C1 ladder; C1-640-34 vs BT4 is a measured top-1 NULL, +0.0067
+  [−0.0028, +0.0170]) plus a paired arena. **Never Stockfish at any budget** or the instrument
+  reverts to an agreement-with-SF ruler and reads anti-SF loss as gain.
+- **One checkpoint era.** These are iter100/218-era shards and knob effects reverse sign
+  between checkpoints here [[knob_effects_reverse_sign_between_checkpoints]]. A re-measure on
+  current shards is owed before any threshold ships.
+- **The 30.2% counter-fact still applies:** within the |dQ| >= 0.10 tail carrying 97% of the
+  deficit, it is SF's move that is worse 30.2% of the time ⇒ the intervention stays a
+  DOWNWEIGHT with 1.0 as the control, never a hard drop.
+
+⇒ **NET: build the cascade with ONE free gate (`not_listed`) triggering the BT4 call, and a
+downweight that keeps the BT4-endorsed rows. Do not add the `top1_mass` gate. The
+high-confidence not-listed sub-cell (C 0.96, n=25) is the open question and needs a wider
+banked sample before it becomes a rule.**
