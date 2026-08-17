@@ -55960,3 +55960,82 @@ randomization via the 25%-full / 75%-fast split with fast plies untrained, auxil
 global-pooling analogue in smolgen, node ramping). **Compare against the recipe we implement,
 not the one we cite.** And the defect that WAS real surfaced only when I checked whether we do
 what KataGo does — the check Josh's remark prompted.
+
+## 2026-08-17 ⚑⚑ POLICY SL: THE OWN-MOVE SF TEACHER IS **FREE** AND ITS COVERAGE LEVER IS `playout_cap_fraction`, NOT SF COMPUTE
+
+Josh's framing: *"we get all our strength still from SL from stockfish, except we aren't doing it
+for policy just value, so that is why we are focusing on policy SL now."* **Confirmed by
+measurement, and harder than stated.** Then the mechanism behind the coverage limit was traced end
+to end. Population: 63,359 selfplay rows / 40 production shards of `bt4heads_iter112_20260817`.
+
+### THE ASYMMETRY IS TOTAL
+| signal | coverage | weight | what it teaches |
+|---|---|---|---|
+| `sf_wdl` | **99.9%** selfplay AND curriculum | load-bearing (zeroing crashed winrate 0.64 -> 0.40) | VALUE |
+| `sf_p0_regret` | **24.6%** selfplay, **0.0%** curriculum | **`w_sf_own_regret: 0.0`** | **OWN MOVE** |
+| `sf_policy_target` | high | live | the OPPONENT's reply at t+1 — *not a move-teacher* |
+| `sf_move_index` | 99.8% | — | **the OPPONENT's best reply.** NOT usable for us (below) |
+
+⇒ **Value is fully SF-supervised. Own-move policy has NO SF teacher: the only move-teacher covers
+a quarter of rows and is weighted ZERO.** The policy head learns only from our own 100-sim Gumbel
+search, which is weak because the net is weak — a closed loop with no external policy signal, and
+a complete account of a flat run. It also explains why 100->256 sims read NULL (**+3.5
+[-26.5, +33.5]**, task #192): search amplifies a weak prior weakly. **Per Josh: we are in the WEAK
+regime, so search is not a lever until we are near teacher strength — even 800 nodes would be far
+below SF.** Search work is therefore MEASUREMENT INTEGRITY only (see the sim-ramp entry above), not
+a strength axis.
+
+### ⚑ `sf_move_index` IS NOT A FREE FULL-COVERAGE TEACHER — I proposed this and it is wrong
+`sf_move_index` is legal under `sf_legal_mask` on **100.00%** of rows and under our `legal_mask` on
+**7.36%**; the two masks share only **3.00 of ~26** moves (Jaccard 0.051). Four hypotheses tested
+and ALL refuted at 0.00%: same-ply re-encoding, mirrored same-ply, strict parent ply, mirrored
+strict parent. The answer is in `trainer.py:3409`: **"`sf_legal_mask` at t+1 opp-POV"** —
+`sf_legal_mask` is the CHILD position with the OPPONENT to move, POV-flipped. So `sf_move_index` is
+SF's best move *for the opponent's reply*, and every test read 0.00% because **the t+1 position is
+never stored** (every stored row is `is_network_turn`). ⇒ **Indexing `policy_target` with
+`sf_move_index` trains toward the opponent's move.** Same class as `policy_sf`'s documented trap.
+
+### ⚑⚑ THE OWN-MOVE TEACHER COSTS NOTHING EXTRA, AND THE CEILING IS STRUCTURAL
+`finalize.py:1029`: `prev_idx = ply_to_index.get(int(rec.ply_index) - 1)`, then
+`prepare_multipv(prev_idx)`. **SF's search at ply t (for its own move) IS the MultiPV of ply t+1's
+position from our POV**, so reading the PREVIOUS record's MultiPV yields an own-move teacher out of
+a search already paid for. Strictly ply-adjacent — **no alignment bug** (an earlier 15.9%
+"non-adjacent" reading was my own shard-local artifact; games span shards while `records` is the
+whole game in memory). Corroborated independently: **100.00% of 43,549 surfaced entries, and
+7,970/7,970 rows, have their whole surfaced set inside our `legal_mask`.**
+
+**MEASURED, zero exceptions in 63,359 selfplay rows:**
+- `P(has sf_p0_regret | ply-adjacent predecessor stored)` = **100.00%**
+- rows with an adjacent predecessor but NO teacher: **0**
+- the 47,662 rows without a teacher ALL lack a stored ply-adjacent predecessor
+
+**The two conditions, both structural:**
+1. `is_selfplay_slot` — only in SELFPLAY is ply t-1 also a NET ply carrying its own MultiPV. In
+   curriculum games t-1 is SF's move ⇒ **0.0% coverage, exactly as measured.**
+2. `records[prev_idx].has_policy` — **the previous ply must be a FULL ply.**
+   P(previous ply full) ~= **`playout_cap_fraction: 0.25`** — and measured coverage is **24.6%**.
+
+### ⇒ `playout_cap_fraction` IS THE COVERAGE LEVER FOR POLICY SL. Priced:
+sims/game ~= 63 net plies x (f x `mcts_simulations` + (1-f) x `fast_simulations`), f = cap fraction:
+
+| `playout_cap_fraction` | own-move teacher coverage | sims/game | sims cost |
+|---|---|---|---|
+| 0.25 (live) | ~24.6% | ~3,087 | 1.00x |
+| 0.50 | ~50% | ~4,158 | **1.35x** |
+| 0.75 | ~75% | ~5,229 | 1.69x |
+
+⇒ **~2x the policy-SL coverage for ~1.35x sims, and ZERO extra SF cost.** That is a far better
+trade than any label-side lever priced to date (MultiPV 40 costs 7x; raising `sf_label_nodes` costs
+rows). ⚑ NOT a free lunch and NOT pre-judged: it also raises the trained-row rate, which changes
+views/window turnover, and it interacts with the throughput rebalance that `e650bb85f` was for.
+Needs a prereg. It is also the FIRST lever found this session that raises volume AND quality
+together *inside* the loop, which the previous entry argued was impossible — that argument was
+about SF LABEL cost and is unaffected, but the qualifier "every data lever is zero-sum" is now
+**too strong** and is narrowed to label-side levers.
+
+### THE POLICY-SL PROGRAM, ordered by cost
+1. **Turn the weight on.** `w_sf_own_regret` is 0.0. Today's probe gives the band: top-2 floor 0.10
+   binds on **23.0%** of rows; **25.15%** of rows put <1% of target mass on SF's best surfaced move.
+2. **Raise `playout_cap_fraction`** for coverage — the table above, prereg owed.
+3. **Screen the fabricated tail** — OOF AUC 0.737, ~49% of deficit at 1.27x vs 2.76x blanket. A
+   PRECONDITION, not a parallel track: the net inherits **91.5%** of the target's bad tail.
