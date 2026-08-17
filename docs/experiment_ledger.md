@@ -56488,3 +56488,62 @@ is the direct, parameter-free repair of it. It also removes the arbitrary `SF_OW
 ### Cost
 
 Zero additional SF compute. Arm D is a numpy expression over bytes already in every shard.
+
+## 2026-08-17 14:11 — RUN STOPPED (user-authorised early stop at iter 190)
+
+Josh: *"i think we're close enough to the 200 iter to end early, we have more promising fixes."*
+Trial `dea5e_00000` (bt4heads arm-B lineage), stopped at **iter 190** after 84,527s (~23.5h).
+Independently justified by VERDICT #244 (`2435d5b56`): waiting for iter 200 would have added 9 clean
+iterations to an instrument that needs ~394 to resolve the question, so the remaining window had no
+purchasing power.
+
+### Order of operations (each step verified before the next)
+
+1. **#244 readout taken FIRST**, at n=190, so the window was not wasted. FLAT, z=+0.69.
+2. **Revert point banked while training still ran** — `data/salvage/pre_stop_iter190_20260817`,
+   iter 190, 786 shards, ~2.9G. Guard verified two independent ways (exporter line + bit-exact
+   `ema_winrate`); row added to the Revert points table (`2b7462d69`).
+3. **Stop via `./scripts/train.sh stop`** — the graceful path from PR #291, which drains selfplay
+   BEFORE killing the driver and kills that driver by explicit PID from the PIDFILE.
+
+### ⚑ THE DRAIN WORKED, AND THE SCRIPT'S OWN VERIFIER COULD NOT SAY SO
+
+`train.sh stop` reported:
+
+```
+Draining selfplay workers (grace 90s): 30512 30514 30516 30518
+  all workers exited within 72s
+  worker 305xx: COULD NOT VERIFY (log disappeared during teardown: ...)
+WARNING: COULD NOT VERIFY worker(s); a clean drain and lost in-flight games look identical here.
+```
+
+That warning is honest and correct — its evidence source (the worker logs under `/tmp/ray/session_*`)
+is destroyed by the same teardown it is trying to observe. **So the verification was done against a
+different artefact, the one the drain actually writes:**
+
+| worker | suspended games | written during this stop |
+|---|---|---|
+| worker_00 | 759 | 759 |
+| worker_01 | 759 | 759 |
+| worker_02 | 765 | 765 |
+| worker_03 | 760 | 760 |
+| **TOTAL** | **3,043** | **3,043** (~199M) |
+
+under `runs/pbt2_small/server/trials/dea5e_00000/workers/*/selfplay_resume/`, all timestamped
+14:09–14:10, i.e. inside the drain window. **3,043 in-flight games preserved, 0 discarded.**
+
+⇒ **task #77 CLOSED by evidence** (`resumed_inflight_games > 0` was owed at the next teardown since
+2026-07-30), and the C14b/#63/#78 fix is confirmed end-to-end on a real teardown for the first time.
+⚑ Method note worth keeping: *"COULD NOT VERIFY" is not "failed" and it is not "fine"* — it is a
+statement that the chosen instrument is destroyed by the event. The fix is to name a second artefact
+that the event CREATES rather than destroys. [[bank_the_dump_not_just_the_number]]
+
+### Post-stop state
+
+`./scripts/train.sh status` → `Not running`. GPU **0% util, 3,466 MiB / 32,607 MiB**, i.e. free for
+the arm-calibration work. Training log frozen at 14:10:46.
+
+⚑ **The 3,043 suspended games are a live asset with a shelf life.** They are keyed to worker
+work_dirs under this trial; a `--fresh` restart or a different trial id will not pick them up. If the
+next run is a fresh lineage, they are lost — that is acceptable and expected, but it should be a
+DECISION rather than a discovery.
