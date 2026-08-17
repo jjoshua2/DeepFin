@@ -55775,3 +55775,92 @@ preserves. The docstring conflated two differently-flagged fields:
 `sf_p0_regret`/`has_sf_p0_regret` (preserved, deliberately). **The rig can run both arms in
 either rebuild mode** -- I nearly concluded it could run neither and built a redundant rig.
 Same shape as Finding 1 one level up: same name, different population.
+
+## 2026-08-17 ⚑⚑ CORRECTION + STRATEGIC SYNTHESIS — "the cheap axis is `keep_prob`" IS WRONG ON BOTH HALVES, and inside the loop VOLUME AND QUALITY ARE THE SAME BUDGET
+
+Josh: *"it will be hard to get large gains from arch changes while we have bad data, but if we can
+improve our data we can improve rapidly."* He is right, and verifying the cheapest data lever
+falsified the note I was about to recommend it from.
+
+### THE CORRECTION (I nearly repeated this to Josh as the top recommendation)
+`scale_rows_not_parameters` claimed: *"We discard **76.5% of plies at zero selfplay cost** ... ⇒
+THE CHEAP AXIS IS `keep_prob`."* **BOTH HALVES ARE FALSE.**
+
+1. **`keep_prob` is not what discards them.** The only `keep_prob` in the codebase is
+   `diff_focus_keep_prob` (`keep_prob = clamp(difficulty * slope, min_keep, 1.0)`), and the live
+   yaml records its realized mean at **0.80-0.958**. It trims a few percent, not 76.5%.
+2. **The discarded plies are NOT free.** The real chain, from the source:
+   - ~half of a ~126-ply game is SF's turn ⇒ ~63 net plies;
+   - of those, **~75% are FAST plies** (`fast_simulations: 32` vs `mcts_simulations: 100`) and
+     `_sf_node_budget_for_slot`'s own docstring states *"SF labels only attach to full plies
+     (`has_policy` <=> `is_full` <=> `last_net_full`) ... The scale only makes the opponent play
+     cheaply on the ~75% of fast plies that are not training targets"*;
+   - fast plies are then **dropped entirely** at `finalize.py:912`
+     (`if not row_has_policy and not keep_fast_plies: continue`), because
+     `record_fast_ply_value: false`;
+   - the surviving ~25% pass `sample_weight` then `keep_prob`.
+   ⇒ landing at the observed **29.6 rows / ~126 plies**. Confirmed on a production shard:
+   `has_policy` 823/823 and `is_network_turn` 823/823 — every stored row is a full-sim net ply.
+   ⇒ **Recovering one discarded ply costs a full 100-sim search AND a full-node MultiPV SF
+   label** — ~3x sims and ~4x SF nodes each. Not "zero cost".
+
+**And the experiment already ran.** `record_fast_ply_value: true` stores exactly those fast plies
+with their weak 32-sim targets and no SF label; it was **TRIED AND REVERTED FOR TRUNK DILUTION**.
+That is the direct empirical proof of the point below, not an argument for it.
+
+### THE SYNTHESIS: inside the loop, volume and quality are ONE budget, so every data lever is zero-sum
+One GPU (31.4/32.6 GB committed) and one CPU budget, and every marginal row is paid for in sims
+OR SF nodes:
+
+| lever | what it buys | what it costs | status |
+|---|---|---|---|
+| store fast plies | ~4x rows | 32-sim targets, no SF label | **REVERTED, trunk dilution** |
+| more games | more rows | selfplay is network-bound (~97% net) ⇒ 2x params ≈ half rows/h | measured |
+| more SF nodes/label | better labels | fewer rows/h | measured |
+| wider MultiPV | less fabricated tail | **MultiPV 40 costs 7x** | measured |
+| `keep_prob` ↑ | a few % more rows | correlated within-game rows | already 0.80-0.958 |
+
+⇒ **This is why months of target / loss-weight / architecture work produced a FLAT run.** The
+ideas were not bad; every one of them was a REALLOCATION INSIDE A SATURATED BUDGET. It also
+explains the shape of our failures: absorption 11.6x in-window and **−2.4% held-out**; policy
+stopped generalising ~iter 249; Tier-13 all three contrasts NULL.
+
+**A supervised corpus is the only candidate that BREAKS the trade instead of re-balancing it.**
+lc0 T80/T81 (or BT4 as an inference-only labeler at 2.9-10.8M labeled pos/GPU-hour) supplies
+**17-64x the rows AND labels from a ~3600-Elo teacher**, at zero marginal cost to our GPU/CPU.
+Volume and quality rise TOGETHER, which cannot happen inside the loop by construction.
+
+Corroborating, and independent of any throughput argument: **a Ceres net with HALF our parameters
+beats us by +11.4pp top-1** (0.5415 vs 0.4273) and less than half our regret (22.66 vs 47.40 cp);
+C1-512-15 at our exact size and shape sits **84.8%** of the way from us to BT4. An 8x parameter
+scale-up across the whole Ceres ladder buys **+3.4pp**. ⇒ not capacity, not head topology, not
+targets — **what we train ON**.
+
+### ⇒ THE ORDERING THIS IMPLIES (nothing launched; all of it needs a prereg and Josh's go)
+1. **Pretrain screen — 2-4 GPU-hours.** Distill BT4 into our EXISTING 61.44M arch on 5-10M
+   labeled positions; paired arena vs the current net. ≫22 Elo (the instrument's 80%-power
+   point) ⇒ the bottleneck is data/teacher and a weeks-scale pretrain is validated cheaply.
+   Not ⇒ the bottleneck is the objective, learned for four GPU-hours.
+   **Screen with the RE-POINTED gate, never audit-first as written** — the audit ruler scores
+   AGREEMENT WITH DEEP SF and our thesis is to EXPLOIT SF, so it ranks general policy quality
+   (which we are plainly losing) and NOT the anti-engine axis.
+2. **The label-time bad-tail screen** — OOF AUC 0.737, ~49% of the deficit at 1.27x cost vs
+   2.76x blanket. ⚑ This is a PRECONDITION for post-training, not a parallel track: the net
+   inherits **91.5%** of the target's bad tail, so post-training on unscreened RL data
+   re-injects the defect we already measured.
+3. **The value head.** vs Cheese at 30+10 our net read **+557** while Cheese read **−308** —
+   opposite signs, ~860 cp apart, Cheese correct the whole game; our eval then crashed ~840 cp
+   when search caught up. A wrong-SIGN value head in a live middlegame is worth hundreds of Elo.
+4. **Play-time search.** `gumbel_c_scale` 0.025→0.1 was **+239.5 Elo [+205.9, +277.5] with
+   identical weights**; the play optimum ~0.2 is deliberately not run because it costs TARGET
+   quality — a trade that changes once a pretrain supplies target quality from elsewhere.
+5. Everything else, **including the top-k floor selected earlier today** — a 10-40 Elo
+   post-training refinement, correctly ordered BEHIND a net worth specializing.
+
+### Gap calibration (Josh estimated ~2500 Elo total; measured says ~half that)
+- rofChade 3.1 ≈ **3380 CCRL**, we lost **0/200** at 60+1s ⇒ gap **>~727 Elo** (95%, rule of
+  three) ⇒ we are below ~2650.
+- Cheese at `UCI_Elo` 2400 we score **0.6875** ⇒ **+137 Elo** ⇒ ~2537.
+Two engines, two methods, agreeing at **~2500-2650**; vs SF ~3700 that is **~1100-1200 Elo**,
+not ~2500. ⚑ Handicapped `UCI_Elo` is non-linear so 2537 is SOFT; the 0/200 is the hard number.
+⇒ 400 Elo is **a third of the whole distance**, which makes the pretrain bet proportionate.
