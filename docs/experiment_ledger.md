@@ -57848,3 +57848,74 @@ on data made under the old objective.** Reading earlier measures a mixture. Cost
   (positive, or overlapping zero) is NOT a verdict and the run continues to 491.
 - This asymmetry is deliberate: early looks inflate false POSITIVES, so the early look may
   only ever stop the run, never declare it a win.
+
+#### CALIBRATION + WEIGHTS SET (2026-08-17, still pre-launch)
+
+Measured on the **LIVE replay window** (785 shards, ~1.57M rows, last write 14:10 today —
+the distribution the next training step would actually see), 30 x batch-512 draws through
+the real `compute_loss` with the iter-190 net. Raw: `scratchpad/sfcal/`.
+
+**⚑ MY BRIEF HAD THE NORMALISATION BACKWARDS, and it is a 4.55x error.** I asked for
+per-batch vs per-covered-row as if per-batch were production. It is not: arm A is
+`masked_mean(sf_own_regret, sf_p0_regret_base)` (`losses.py:1141`) and divides by the
+COVERED-row count, as does the branch's `m_sf_policy_floor`. **Per-covered-row IS
+production**; the two differ by exactly `cov` (rel err 1.5e-5). Coverage
+`has_sf_p0_regret & is_network_turn` = **21.98% [21.39, 22.61]**, so pricing off the
+per-batch column would have overweighted both arms by **1/0.2198 = 4.55x**.
+
+Gradient-norm ratio at w=1, all 61.44M trainable params, per covered row:
+
+| arm | r = ‖g_arm‖/‖g_base‖ | 95% CI | w@10% share |
+|---|---|---|---|
+| A `sf_own_regret` | 0.1757 | [0.1623, 0.1889] | 0.632 [0.588, 0.684] |
+| F `sf_policy_floor` | 0.1363 | [0.1246, 0.1476] | 0.815 [0.752, 0.891] |
+
+⚑ **SCOPE MOVES THIS 4x.** On the `policy_own` head alone (0.53M params — where both arms
+actually act) r_A = **0.710**, r_F = **0.619**. At w_A=0.7 the head takes **32.6%** of its
+gradient from arm A. Quote the scope with the number or it means nothing.
+
+**DECISION: `w_sf_own_regret: 0.7`, `w_sf_policy_floor: 0.8` — EQUAL ~10% gradient share
+each, joint ~21%.**
+
+Rationale, stated so it can be falsified later:
+- The A:F ratio is **unmeasured** (both prior sweeps were tautological). Given that, equal
+  share is the least-arbitrary allocation — it asserts no ordering. 1:1, not 2:1.
+- 0.7 prices at **10.90%**, and is independently the value that was **LIVE 2026-07-27 →
+  2026-08-06** (`3b4ca4737` → `67191f995`), zeroed at `ed9de8ee9` as bundle collateral
+  rather than on a verdict. Verified by `git log -G`. So it is calibrated AND a revert.
+- ⚑⚑ **BUT DO NOT READ "IT IS A REVERT" AS "IT IS SAFE PROGRESS."** Arm A sat at 0.7 for ten
+  days and the run over that window was FLAT. Restoring 0.7 has, in effect, already been
+  tried and did not produce +50 Elo. **The genuinely new content in this arm is F**, which
+  has never been live — which is why F gets equal billing rather than the 0.40 ("deliberately
+  modest") its own docstring proposes. If this arm wins, F is the more likely reason; if it
+  is flat, "we restored A" is not a defence.
+
+**TASK-2 NEGATIVE, banked before spending the GPU: a SHORT arm cannot settle A-vs-F.**
+Instrument (`scripts/search_gain_probe.py --sims 100`, all controls passing, shuffled
+control 0.37 [-7.6, 8.4]) has paired sd **51.2 cp**, so 5 cp needs n=824 and the 4000-row
+audit set has 3.6x margin — the instrument is fine and costs **100 s per arm**. The EFFECT is
+what is missing: **one production iteration of ordinary training moves played-move regret by
+−0.36 ± 1.59 cp**, the loop's own progress is ≤1.6 cp/iteration, and the arms differ by ~10%
+of the gradient. Accumulating a ≥5 cp SEPARATION over 10-20 iterations is not arithmetically
+plausible. ⇒ **#258 can only be settled by long arms, not by a cheap offline read.** Fewer
+arms for longer, not more arms briefly.
+
+**AMENDS GATE 2: pin the same seed on both sides.** Root Gumbel noise DOMINATES this
+comparison — same model / different seed gives σ_d = **81 cp**, different model / same seed
+**57 cp**. An unpinned comparison throws away ~40% of its power for free.
+
+**Other measured facts worth keeping:**
+- Both arms are nearly ORTHOGONAL to the existing objective: cos(g_arm, g_base) = **+0.018**.
+  They add a direction rather than reweighting one.
+- ⚑ On the `policy_own` head the two arms partially OPPOSE: **cos(g_A, g_F) = −0.206**
+  (trunk: +0.09). Adding F at 0.40 on top of A at 0.7 raised the head's joint share only
+  32.6% → 33.4%. They are not simply additive where they act.
+- The collar is nearly free: `tau_played=1/16` costs **+0.4%** gradient norm and +0.23pp
+  binding. Cost is not a reason to ablate it.
+- **Zero `policy_own` params are in the Aurora scale-invariant group** (29.35% of the net is),
+  so on the head a norm share IS an update-magnitude share; on that 29% it is not.
+- Arm F binds on 50.8% of covered rows = **11.2% of all rows**.
+- Cross-check: the branch's `sf_policy_floor_deficit` at `tau_played=0` reproduces the
+  8-mutant-verified reference `arm_f_loss` to **1.5e-8**, and production arm A matches
+  `arm_a_loss` to 1.5e-8 — extracted via `git show`, no branch switch.
+- w_F is **tau-dependent** and was calibrated only at the shipped `tau: 0.15`.
