@@ -15,6 +15,7 @@ explosion.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any, cast
 
 import chess
@@ -321,6 +322,90 @@ def build_selfplay_gumbel_config(
         volatility_q_scale=float(search.volatility_q_scale),
         volatility_fpu=float(search.volatility_fpu),
         volatility_anchor=float(search.volatility_anchor),
+    )
+
+
+@dataclass(frozen=True)
+class SelfplaySearchShape:
+    """EVERY config-derived argument the selfplay search runner is handed.
+
+    ⚑ ``GumbelConfig`` is not that set, and believing it was is a measured
+    defect. ``gumbel_vloss_weight`` and ``gumbel_target_batch`` are read off
+    the selfplay ``SearchConfig`` and passed to the C runner as ordinary
+    keyword arguments — there are no such ``GumbelConfig`` fields — so an
+    instrument that certifies itself "field-complete over ``GumbelConfig``"
+    is blind to two knobs that change the search, and therefore the stored
+    target, by construction. (``chess_anti_engine/uci/search.py`` records the
+    same class: every arena before 2026-07-28 silently ran ``vloss_weight=0``
+    while production ran 1.)
+
+    So the certifiable boundary is this object, not the dataclass one level
+    inside it, and production selfplay builds the runner's arguments FROM it
+    (``runner_kwargs`` below) rather than assembling them beside it, which is
+    what makes "field-complete over ``SelfplaySearchShape``" a claim about the
+    consumer instead of a claim about a hand-drawn dataclass.
+
+    ⚑ WHAT IS PINNED, EXACTLY — because an earlier revision of this docstring
+    claimed "a knob has to pass through here to reach production at all" and
+    the test behind it did not enforce that. It enforced only that no argument
+    was spelled ``search.*``, which a config value routed through ``state.game``
+    walks straight past (measured: ``allow_terminal_root_shortcuts=
+    bool(state.game.syzygy_in_search)`` survived 120 tests). The claim is now
+    true because ``tests/test_production_shape_guard.py`` pins the call site's
+    NON-shape arguments as an exhaustive whitelist with a reason each: a new
+    argument fails until someone decides whether it is config or runtime.
+
+    What is deliberately NOT here, and is therefore on that whitelist:
+
+    * ``per_game_add_noise`` / ``per_game_gumbel_scale`` — per-PLY schedules
+      (``_scheduled_gumbel_scale``), not scalars. A single value cannot
+      represent them, so an instrument that wants to match production's root
+      noise has to say what it does about the schedule rather than compare a
+      field.
+    * the ``tb_probe`` gate. The prober is a runtime object, but the gate
+      ``game.syzygy_in_search`` IS config and reaches the runner beside this
+      object. It is value-compared by a different instrument
+      (``audit_targets.AUDIT_DIRECT_CONFIG_KEYS``) rather than left uncovered.
+
+    ``chess_anti_engine/eval/production_shape.py`` names both gaps explicitly
+    in ``SHAPE_COVERAGE_NOTE`` instead of implying coverage it does not have.
+    """
+
+    cfg: GumbelConfig
+    target_batch: int
+    vloss_weight: int
+
+    def runner_kwargs(self) -> dict[str, Any]:
+        """The config-derived keyword arguments for ``run_gumbel_root_many_c``.
+
+        Production unpacks this. That is the whole mechanism: a new
+        config-derived runner argument added beside the unpack instead of
+        inside this shape is caught by
+        ``tests/test_production_shape_guard.py``'s call-site pin, because the
+        call site is then no longer sourced entirely from one object.
+        """
+        return {
+            "cfg": self.cfg,
+            "target_batch": int(self.target_batch),
+            "vloss_weight": int(self.vloss_weight),
+        }
+
+
+def build_selfplay_search_shape(
+    *, search: SearchConfig, game: GameConfig, simulations: int,
+) -> SelfplaySearchShape:
+    """The complete search shape production selfplay hands its runner.
+
+    Thin by design: it is the one place the ``GumbelConfig`` half and the
+    two runner-argument knobs are assembled together, so "what production
+    searches with" has a single addressable answer.
+    """
+    return SelfplaySearchShape(
+        cfg=build_selfplay_gumbel_config(
+            search=search, game=game, simulations=int(simulations),
+        ),
+        target_batch=int(search.gumbel_target_batch),
+        vloss_weight=int(search.gumbel_vloss_weight),
     )
 
 
@@ -1073,9 +1158,17 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 float(per_game_gumbel_scale[j])
                 for j in group
             ] if per_game_gumbel_scale is not None else [float(search.gumbel_scale) for _ in group]
-            gumbel_cfg = build_selfplay_gumbel_config(
+          # ⚑ ONE object supplies EVERY config-derived argument the C runner
+          # gets. `cfg=`, `target_batch=` and `vloss_weight=` used to be three
+          # independent expressions here, and the two that were not
+          # `GumbelConfig` fields were invisible to every instrument that
+          # certified itself "field-complete over GumbelConfig". Sourcing them
+          # from one shape is what makes that certification a claim about this
+          # call site.
+            search_shape = build_selfplay_search_shape(
                 search=search, game=state.game, simulations=int(sim_count),
             )
+            gumbel_cfg = search_shape.cfg
             if volatility_search_enabled(gumbel_cfg):
                 warn_volatility_python_path()
             used_gumbel_c = _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg)
@@ -1088,7 +1181,6 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     sub_cboards,
                     device=state.device,
                     rng=rng,
-                    cfg=gumbel_cfg,
                     evaluator=eval_impl,
                     pre_pol_logits=sub_pol,
                     pre_wdl_logits=sub_wdl,
@@ -1101,8 +1193,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
                     allow_terminal_root_shortcuts=True,
                     return_diagnostics=True,
-                    target_batch=int(search.gumbel_target_batch),
-                    vloss_weight=int(search.gumbel_vloss_weight),
+                    **search_shape.runner_kwargs(),
                 )
             else:
                 sub_boards = [state.replay_board(net_idxs[j]) for j in group]
@@ -1232,4 +1323,9 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         )
 
 
-__all__ = ["build_selfplay_gumbel_config", "run_network_turn"]
+__all__ = [
+    "SelfplaySearchShape",
+    "build_selfplay_gumbel_config",
+    "build_selfplay_search_shape",
+    "run_network_turn",
+]

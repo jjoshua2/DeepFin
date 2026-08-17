@@ -281,7 +281,41 @@ def load_dump(
 # and raw-policy regret rulers are batch-size dependent (0.66 cp between 128
 # and 256 for value, ~0.8 cp between 64 and 256 for policy) and a paired delta
 # of that size is one this tool is routinely asked to adjudicate.
-RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
+# `search_shape` is the training rows' COMPLETE realized search shape
+# (audit_targets `train_shape_stamp_fields()` — every GumbelConfig field bar
+# the checkpoint-derived ones, plus the two runner arguments that are not
+# GumbelConfig fields). It is complete rather than "the three that were wrong"
+# because a three-field stamp only catches the ruler change that already
+# happened: move `topk` or the sim budget after both dumps use the current
+# code and each run passes its own live-config check while emitting an
+# identical stamp. Rows (d)/(e) MOVED on 2026-08-16: until then the
+# audit built its "production training target" without
+# `gumbel_policy_temp`/`gumbel_target_max_visit_cap`/
+# `gumbel_target_untempered_prior`, and with the last two at their defaults
+# `mcts/gumbel.py` takes the `imp_store = imp_all` branch — so those rows were
+# the PLAY distribution, not the stored target. A pre-fix dump joins cleanly
+# against a post-fix one and reports a tight-CI delta that is entirely the
+# ruler. That is what this entry stops.
+#
+# ⚑ `search_shape` IS KEYED BY TRAINING ROW (`{"train": {...}, "train_fast":
+# {...}}`), because the two rows are separately realized. It banked only the
+# full-sims row until 2026-08-16, so a change to `fast_simulations` alone left
+# the stamp byte-identical while `cand.train_fast.*` came from a different
+# search budget — the same failure this field exists to stop, on the row that
+# was not being stamped.
+#
+# `target_config` is the second half of the ruler, and it closes a hole
+# `config_authority` structurally cannot: that flag is a SAME-RUN verdict, so
+# two audits made weeks apart under different `sf_policy_temp` each stamp
+# themselves authoritative and their row-(c) numbers still are not comparable.
+# Banking the audit's realized `AUDIT_DIRECT_CONFIG_KEYS` VALUES (never their
+# names — the names are identical in both dumps by construction) is what makes
+# that visible. `config_authority` itself is deliberately NOT a ruler field: it
+# carries an absolute reference PATH and free-text reason, so joining on it
+# would refuse legitimate comparisons for reasons that are not ruler changes.
+RULER_FIELDS: tuple[str, ...] = (
+    "input_encoding", "batch_size", "search_shape", "target_config",
+)
 
 # ⚑ ABSENCE IS INFORMATIVE FOR `input_encoding`, AND ONLY FOR IT.
 # Every dump written before the audit-v2 flag existed is `fen_only` BY
@@ -295,7 +329,30 @@ RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
 # standing VALUE yardstick pins --batch-size 128 while the CLI default is 256),
 # so inferring one would be a guess rather than a deduction, and a wrong guess
 # here refuses a legitimate comparison.
-INFERRED_WHEN_ABSENT: dict[str, str] = {"input_encoding": json.dumps("fen_only")}
+#
+# ⚑ `search_shape` GETS NO INFERENCE, AND THAT IS A CORRECTION.
+# A previous revision inferred `{policy_temp: 1.0, target_max_visit_cap: 0,
+# target_untempered_prior: False}` for an unstamped dump and called all three a
+# DEDUCTION. Two of the three are. `policy_temp` is not: pre-fix,
+# `_net_candidates(policy_temp=...)` fed the operator-settable `--policy-temp`
+# to EVERY profile including the training rows, so a legacy dump made with
+# `--policy-temp 2.2` was inferred as 1.0. That both accepts a legacy-2.2 vs
+# current-1.0 join (attributing the ruler change to the checkpoints, the exact
+# failure this gate exists to stop) and refuses a legitimate legacy-2.2 vs
+# current-2.2 one. Same shape as the `batch_size` argument above, which is why
+# `batch_size` was correctly refused an inference.
+#
+# So an unstamped dump declares UNSTAMPED_LEGACY — a value of its own, not a
+# guess at what it held. It compares EQUAL to another unstamped dump (legacy vs
+# legacy still joins, as before) and UNEQUAL to any real stamp (legacy vs
+# post-fix is still REFUSED, which is the join this entry exists to stop). The
+# refusal is kept without the guess; nothing that used to work stops working.
+UNSTAMPED_LEGACY = json.dumps("<unstamped: pre-2026-08-16 audit_targets build>")
+
+INFERRED_WHEN_ABSENT: dict[str, str] = {
+    "input_encoding": json.dumps("fen_only"),
+    "search_shape": UNSTAMPED_LEGACY,
+}
 
 
 def _declared(dump: Dump, field: str) -> tuple[set[str], bool]:
@@ -435,7 +492,60 @@ def require_same_stamp(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
         )
 
 
-def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
+def ruler_fields_for(metric: str | None) -> tuple[str, ...]:
+    """Which ruler stamps actually govern a comparison of ``metric``.
+
+    ⚑ `search_shape` describes the rows that RAN A SEARCH, and nothing else.
+    It was checked globally at first, so comparing `cand.raw.exp` or
+    `cand.sf_soft.exp` across a legacy and a current dump was refused over a
+    stamp that cannot touch either number — neither row runs a search. A gate
+    that refuses comparisons it does not govern trains operators to route
+    around it, which is the failure mode after "a gate that cannot fail".
+
+    ⚑ ...AND THAT IS `cand.search` TOO, NOT ONLY THE TRAINING ROWS. The stamp
+    is read off `realized_shapes`, which `_net_candidates` returns for EVERY
+    profile it built — the PLAY row (b) included. Scoping the gate to
+    `cand.train*` while the artifact carries row (b)'s shape is a value banked
+    and then ignored, and it is not a hypothetical gap: row (b)'s `policy_temp`
+    is the operator-settable `--policy-temp`, which is exactly the field whose
+    legacy value could not be inferred (see `UNSTAMPED_LEGACY` above). So a
+    `cand.search.exp` join now checks the shape it was measured with.
+
+    Unknown/None metric: every stamp applies. Defaulting the other way would
+    make a typo'd `--field` silently skip the ruler check.
+
+    ⚑ `target_config` is scoped BY PRODUCER, not by row, and the distinction is
+    load-bearing. Within an `audit_targets` dump it governs every candidate:
+    its keys span row (c) (`sf_policy_*`), rows (d)/(e) (`temperature`,
+    `playout_cap_fraction`, the sim budgets) and value row (iii) (`sf_wdl_*`,
+    `search_wdl_frac`), and inventing an approximate per-row partition would be
+    a gate that looks scoped and is wrong at the edges. But `value_regret.py`
+    does not build its rows from those keys and never stamps the field, so
+    checking it on a `--field value` comparison can only ever produce the
+    "not declared by either side" warning — which is #442 review B2 verbatim: a
+    warning about something the run is not verifying made `prov:ok` UNREACHABLE
+    on `monitor_fen.sh`'s line for months, and it is exactly what a fresh
+    unscoped ruler field would have done again.
+    `tests/test_paired_compare_gate_is_wired.py` is what caught it.
+    """
+    if metric is None:
+        return RULER_FIELDS
+    text = str(metric)
+    governs_a_search_row = text.startswith(
+        ("cand.train", "train", "cand.search", "search"),
+    )
+    is_audit_targets_metric = text.startswith("cand.")
+    skip = set()
+    if not governs_a_search_row:
+        skip.add("search_shape")
+    if not is_audit_targets_metric:
+        skip.add("target_config")
+    return tuple(f for f in RULER_FIELDS if f not in skip)
+
+
+def require_same_ruler(
+    a: Dump, b: Dump, *, label_a: str, label_b: str, metric: str | None = None,
+) -> None:
     """Refuse to join two dumps made with different rulers.
 
     Carrying the ruler on every record is only half the rule — a stamp nothing
@@ -443,10 +553,17 @@ def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
 
     For `input_encoding`, a dump with no stamp is read as `fen_only` (see
     INFERRED_WHEN_ABSENT), so legacy-vs-legacy still compares and
-    legacy-vs-`stored` is REFUSED. For `batch_size`, an unstamped dump is
-    genuinely unknown and is warned about rather than refused.
+    legacy-vs-`stored` is REFUSED. For `search_shape`, an unstamped dump
+    declares `UNSTAMPED_LEGACY`, so legacy-vs-legacy compares and
+    legacy-vs-post-fix is REFUSED without guessing what the legacy shape was.
+    For `batch_size`, an unstamped dump is genuinely unknown and is warned
+    about rather than refused.
+
+    ``metric`` is the value being compared; stamps that cannot govern it are
+    skipped (``ruler_fields_for``). Defaulting to ``None`` — check everything —
+    keeps every existing caller strict.
     """
-    for field in RULER_FIELDS:
+    for field in ruler_fields_for(metric):
         for name, dump in ((label_a, a), (label_b, b)):
             if len(dump.provenance.get(field, set())) > 1:
                 raise SystemExit(
@@ -457,11 +574,18 @@ def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
         va, a_inferred = _declared(a, field)
         vb, b_inferred = _declared(b, field)
         # An inferred stamp has to be compared in the SHAPE the other side
-        # actually writes, or the two producers can never agree.
-        if a_inferred:
-            va = _match_stamp_shape(va, vb)
-        if b_inferred:
-            vb = _match_stamp_shape(vb, va)
+        # actually writes, or the two producers can never agree. ⚑ Scoped to
+        # `input_encoding`, which is what it was written for and the only field
+        # with two producers stamping different shapes. Left unscoped it would
+        # also fire on the `search_shape` UNSTAMPED_LEGACY sentinel, expanding a
+        # deliberate "we do not know" into a per-key dict of that sentinel — the
+        # refusal survives either way, but the message would describe a stamp
+        # nothing ever wrote.
+        if field == "input_encoding":
+            if a_inferred:
+                va = _match_stamp_shape(va, vb)
+            if b_inferred:
+                vb = _match_stamp_shape(vb, va)
         if not va or not vb:
             print(
                 f"[paired-compare] WARNING: '{field}' not declared by "
@@ -577,7 +701,9 @@ def main() -> None:
     dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field)
     label_a = args.label_a or args.dump_a
     label_b = args.label_b or args.dump_b
-    require_same_ruler(dump_a, dump_b, label_a=label_a, label_b=label_b)
+    require_same_ruler(
+        dump_a, dump_b, label_a=label_a, label_b=label_b, metric=args.field,
+    )
     require_same_stamp(dump_a, dump_b, label_a=label_a, label_b=label_b)
     report(dump_a, dump_b, label_a=label_a, label_b=label_b, n_boot=args.n_boot)
 
