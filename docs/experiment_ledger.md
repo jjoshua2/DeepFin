@@ -54266,3 +54266,114 @@ sufficient — the throughput cost is a separate decision.
 
 **Status: #440 still BLOCKED.** Open before launch: the repeat-arm-first sequencing above, and
 the two `tail_stats.py` / engine-resolution defects already filed on 2026-08-16.
+
+## 2026-08-17 PREREG — targeted deep re-label of the policy target's bad tail (task #239)
+
+Unblocks the target-repair arm that the 2026-08-15 phase-2 entry parked on COST. The cost
+objection died with the label-time screen (`594f4564f`, OOF AUC **0.7371** [0.6971, 0.7770],
+shuffled-label control 0.4793): **~48.6% of the tail's dQ deficit for 1.265x loop cost**, vs
+2.764x for a blanket re-label — ~3.2x more efficient per unit repaired.
+
+**Nothing is launched by this entry. No GPU, no live change.** It defines the arm and its gate.
+
+### ⚑ POPULATIONS, named first, because two of our own numbers disagree until you do
+
+Measured today from the banked `scratchpad/target_vs_bt4/tb4_q_q.npz` + `tb4_rows.npz`
+(n=2000, `dQ = Q_target - Q_sf` under BT4, read-only):
+
+| population | n | `|dQ|>=0.10` | `dQ<=-0.10` | mean dQ |
+|---|---|---|---|---|
+| ALL rows | 2000 | **12.9%** | 8.8% | −0.0158 |
+| **DISAGREEMENT rows only** (target != sf) | 1158 | **22.3%** | **15.2%** | −0.0274 |
+
+⇒ the banked "**22.6% tail**" is the **DISAGREEMENT** population, not all rows, and the screen's
+`base_rate 0.1519` is the *negative* tail on that same population (measured 15.2% — they agree).
+Quoting 22.6% against an all-rows denominator overstates the tail by ~1.7x
+[[same_name_different_population]]. Bad-tail mean dQ = **−0.2751**, sd **0.2105**, n=176.
+
+### ⚑⚑ THE TRAP THIS DESIGN EXISTS TO AVOID: regression to the mean
+
+The obvious gate — "re-label the rows with `dQ <= -0.10` and show their dQ improves" — is
+**invalid by construction**. Those rows are selected ON the noisy quantity the gate then
+re-measures, so they regress upward even if the deep re-label changes nothing
+[[never_condition_a_control_on_its_own_outcome]]. Any positive result would be unattributable.
+
+**The screen is what makes the arm testable.** It selects on FOUR ALREADY-STORED FEATURES
+(`log_n_legal`, `log_sf_regret`, `top1_mass`, `not_listed`) and never looks at dQ, so selection
+is independent of the measurement noise in dQ. Selection must be by SCREEN SCORE, never by dQ.
+
+### Arms (offline, CPU-only, on banked rows — no live pipeline change)
+
+| arm | rows re-labelled at full-width deep SF | purpose |
+|---|---|---|
+| **S** (screened) | top **15%** by screen score | the intervention |
+| **R** (random control) | a random **15%**, same n, same depth | separates "the screen picked well" from "deep labels help anything" |
+| **none** | — | the existing labels are the paired baseline |
+
+R is not optional. Without it, a PASS cannot distinguish the screen from the re-label.
+
+### DECIDING YARDSTICK — one statistic, pre-committed
+
+**`ratio = deficit_repaired(S) / deficit_repaired(R)`**, where `deficit_repaired(X)` is the
+paired mean improvement in dQ over arm X's selected rows (post-label minus pre-label, same rows).
+
+Dimensionless, so it is immune to the absolute scale of "how much deep labels help", and it is
+exactly the quantity the screen curve predicts: **deficit captured 0.4864 (screened) vs 0.15
+(random) => predicted ratio ~3.24**.
+
+### ⚑ RESOLUTION COMPUTED BEFORE THE THRESHOLD (the rule #440 broke twice)
+
+At select_frac 0.15 the screen population (n=1007 with features) gives **n_sel ~= 151 rows/arm**.
+WORST CASE — assuming ZERO pairing correlation, i.e. the paired-difference sd equals the
+cross-sectional sd of the bad tail (0.2105):
+
+    half = 1.96 * 0.2105 / sqrt(151) = +/-0.0336 Q
+
+Real pairing correlation is high (same positions, same engine family), so this is an upper bound
+on the half-width; the pilot measures the true one. Mean dQ over the screened 15% is ~−0.096
+(≈56 bad rows at −0.275 plus ~95 near-zero), so the predicted repair is ~+0.048 Q against a
+worst-case ±0.0336 — a margin of only **~1.4x**, which is the honest reason for the pilot below
+rather than a claim of comfortable power.
+
+### PRE-COMMITTED VERDICTS — and they TILE, which my last prereg's did not
+
+The screen prereg (`594f4564f`) stated two clauses on two DIFFERENT statistics and the result
+landed in the gap between them, UNCLASSIFIED. Every outcome here maps to exactly one verdict of
+the same statistic:
+
+| observed `ratio` (95% CI on the ratio, bootstrap over rows) | verdict |
+|---|---|
+| CI lower bound **> 2.0** | **PASS** — the screen earns its 1.265x. Proceed to the training arm. |
+| CI contains 2.0 but lower bound **> 1.0** | **WEAK** — real but below the efficiency that justified it. Do not deploy; re-screen at a different `select_frac` first. |
+| CI contains **1.0** | **NULL** — the screen is not beating random selection. Arm dies. |
+| CI upper bound **< 1.0** | **INVERTED** — the screen is anti-predictive. Arm dies AND the screen's AUC needs re-deriving. |
+
+2.0 is chosen against the ±0.0336 worst-case resolution and the 3.24 prediction: it sits between
+"indistinguishable from random" and the predicted value, so **both PASS and NULL are reachable
+inside the statistic's plausible range**. That reachability check is the one #440 lacked.
+
+**PILOT FIRST, mandatory.** Re-label 40 rows per arm, measure the ACTUAL paired-difference sd,
+recompute the half-width, and publish it BEFORE the full run. If the measured half-width exceeds
+**±0.05 Q**, n_sel is too small and the arm does not launch at this n — that is a stop, not a
+prompt to lower the bar.
+
+### What a PASS does NOT establish
+
+- **Not Elo.** [[audit_first_cannot_judge_a_non_sf_teacher]] and the banked NULL that absorption
+  works in-window but does not generalise. A PASS says the target got better by BT4's reckoning;
+  **whether the net converts that into strength needs a training arm plus a paired arena**, which
+  is a SEPARATE, GPU-gated entry that does not exist yet and must not be launched off this one.
+- **Not the anti-engine thesis.** No static evaluator can decide "objectively worse but better
+  against a handicapped SF". BT4 is a referee, not ground truth — its own top-1 differs from the
+  shard SF on 45% of rows.
+- **Not a live deploy.** This runs on banked rows. Changing production labelling is a further
+  decision with its own throughput cost.
+
+### Confounds
+
+Deep re-labelling changes label DEPTH and WIDTH together; this arm does not separate them. The
+`>300cp`-tail fabrication ([[multipv6_regret_tail_is_fabricated]]) means `log_sf_regret`, one of
+the screen's four features, is itself ~74% invented on the 16.3% of rows whose argmax is outside
+MultiPV-6 — so the screen may partly be selecting "rows where our regret feature is fabricated".
+⚑ That is a real alternative explanation for a PASS and the readout must report the ratio split
+by `not_listed` to expose it.
