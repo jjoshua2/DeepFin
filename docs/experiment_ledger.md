@@ -55347,3 +55347,150 @@ is the thing that decides *d* — never a restore-to-a-number. [[compute_instrum
 Probe ran on 6 of 32 CPU threads for ~13 min during iters ~159-162 of `dea5e`. Task #244's re-read
 at n>=200 should treat that window as agent-CPU-loaded, consistent with the existing marker for
 iters 22+.
+
+## 2026-08-17 DESIGN + MEASUREMENTS — `w_sf_own_regret` as a SCHEDULE, not a dose. Josh's steer, and what the data says about each half of it
+
+Josh's steer, recorded because it retracts a framing of mine from earlier the same day:
+
+> *"I don't think the initial 0.7 sf own regret was well calibrated, we weren't sure it was working
+> so we turned it off same time as several other things to get closer to alphazero ... it's probably
+> a slider that we start off high and as we get closer to SF and start exploiting it more often we
+> can turn down."*
+
+### ⚑⚑ RETRACTION: "0.7 is ~3x too high" WAS ANCHORED ON AN ARBITRARY NUMBER
+
+Amendment 4 above concluded `d ~= 0.25` by asking what dose reproduces the historical **~7% gradient
+share**. Josh is right that that share was never a calibration — this ledger's own entry says 0.7 was
+chosen for statistical POWER ("on par with `w_sf_own`, a decisive test rather than a timid one"), and
+it was switched off in a BUNDLE with several other changes, so it never had a verdict either.
+⇒ **"0.7 delivers 3x the intended dose" is really "3x an arbitrary number" and is NOT an argument for
+lowering it.** What survives from Amendment 4 is the MEASUREMENT (30.5% share per unit weight on
+ckpt158/dea5e, CI [0.123, 0.486]) and its per-checkpoint caveat. The DIRECTION now has to come from
+the theory, and the theory Josh states is a schedule.
+
+### ⚑ THE SCHEDULE MAKES THE TAIL GATE LOAD-BEARING RATHER THAN MARGINAL
+
+At `w 0.7` the term is **21.3%** of the policy-CE gradient. Linear in the weight, so a "start high"
+dose near 2.0 puts it near **60%** — the SF-regret term DOMINATING the policy gradient. And ~74% of
+those magnitudes are invented at MultiPV 6, with ONE fitted constant repeated over every unsurfaced
+move. ⇒ **at a high starting dose the policy is pushed hardest by the fabricated part.** PR #447 is
+therefore a PRECONDITION of the schedule, not a parallel nicety.
+
+### ⚑⚑ THE PID ERASES THE SIGNAL THE SLIDER WANTS TO READ
+
+"As we get closer to SF, turn it down" needs a measure of closeness. The controller's job is to hold
+curriculum winrate at `sf_pid_target_winrate` 0.5, converting strength gains into difficulty, so
+**every curriculum-side closeness signal is held flat by construction** — and a continuously
+improving net never settles at setpoint anyway ([[wdl_regret_measures_agent_not_net]]).
+`wdl_regret` is worse than flat: it measures the AGENT (net + search), so scheduling on it couples
+two controllers to one variable and injects a step on every search change.
+⇒ **the schedule must be driven by a FIXED step/iteration ramp or by an EXTERNAL frozen ruler**
+(`scripts/value_regret.py`, the deep-SF audit set) — never by regret, winrate, or any PID input.
+
+### Josh's second idea: adjudicate disagreements by the GAME OUTCOME
+
+> *"once regret is close to zero the winner of the game was right, so if we lost we want to bump the
+> SF policy moves more and if we won we just need to make sure that it isn't completely ignoring the
+> main SF move or two."*
+
+**The asymmetry is the valuable part**: push on losses, only a FLOOR on wins. That is the mechanism
+that lets the net diverge from SF exactly where divergence PAYS, which is the anti-engine thesis
+rather than a compromise with it — a blanket high weight corrects our wins too. ⚑ And the "don't
+ignore SF's top one or two" floor has a property worth stating: **top-1/top-2 are always genuinely
+surfaced** (inside MultiPV 6, never the fill), so a RANK-based floor uses only the real part of the
+label and sidesteps the fabricated tail entirely.
+
+**MEASURED — the adjudicator is noisier than Josh's "regret close to zero" but far better than I
+first argued.** 8 shards of the running trial, rows carrying `sf_played_rank` (n=1495):
+
+| | |
+|---|---|
+| SF played its OWN best move | **76.12%** |
+| SF played a NON-best move | **23.88%** (rank 2: 170, 3: 82, 4: 48, 5: 36, 6: 21) |
+| `sf_played_regret` | mean **0.00225** (~2.25cp), median 0, p95 **0.0178** |
+
+⇒ SF deviates OFTEN but TINILY. ~2.25cp mean over ~10 deviations per game is ~20cp of accumulated
+handicap — well under one real blunder. **I claimed the outcome would be a corrupted adjudicator;
+that was too strong. It is usable-but-noisy at today's regret 0.0293.** ⚑ Resolution caveat: only
+1495 of 16000 rows carry `sf_played_rank` (9.3%), and those are the positions that got a MultiPV
+label — precise (+-1.1%) but representativeness NOT established.
+
+### Josh's third idea: search SF's PV to >= 3 ply, because the failure may be the VALUE head
+
+> *"it's possible we would have the first ply or two policy correct and the value head is just wrong
+> so it doesn't get searched so we can't always assume a loss is due to one head or the other."*
+
+⚑⚑ **This changes what the fix should be, not just how we measure it.** If policy already puts mass
+on SF's move and the VALUE head misevaluates the resulting position so search abandons it, then
+raising `w_sf_own_regret` pushes the head that is not broken — it would look like it was doing
+something while the real defect sat elsewhere. This project has independent reason to suspect value
+([[value_head_cannot_fit_the_label_it_has]], [[value_head_frozen_since_iter8]]).
+
+Two hard constraints on the PV-expansion half:
+* ⚑ It is a **search-config change ⇒ it VOIDS the `wdl_regret` series** and needs a fresh baseline.
+  Frozen since 2026-08-09 20:58 precisely because a search change injects a step arithmetically
+  indistinguishable from the net improving (+239.5 Elo of search gain once read as a 38% regret drop
+  while the net degraded 51.6 Elo).
+* Forced PV visits spend sims budget, so at 100 sims it trades breadth for a guaranteed 3-ply read.
+
+**BLOCKED, and the blocker is an ops defect: the head-attribution split needs the RAW PRIOR, and
+production does not record it.** `prior_top1_index` / `prior_top1_prob` (PR #445, `0fd31c9db`) exist
+**only on `origin/main`**: `ops/live-20260725` does not contain that commit, there are **zero
+occurrences of `prior_top1` in the live tree**, and the fields are absent from production shards.
+Task #240 recorded #445 as done. [[live_branch_lacks_merged_code]] — reopened.
+⇒ Offline workaround needing NO restart: `x` IS stored, so recompute the prior from a banked
+checkpoint over stored rows. Task #249.
+
+### Josh's fourth point: SF's per-ply scores are stored, so the collapse is locally detectable
+
+Correct, and it **dissolves my whole-game-credit objection.** `game_id` AND `ply_index` are both
+stored per row, so plies can be grouped and ordered offline — I had said the buffer shuffle prevented
+this and that was wrong. Only the TRAINING-TIME use needs a precomputed per-row field (the
+[[uncommitted_live_yaml_edits_lose_proven_wins]]-adjacent pattern PR #445 used).
+`sf_multipv_raw` is `(rows, 48, 5)` int16, rows in RANK order, columns
+`(action_index, cp, mate, win_permille, draw_permille)`.
+
+**⚑⚑ COVERAGE IS NOT ONE NUMBER — three "label coverage" figures, three populations:**
+
+| field | rows carrying it |
+|---|---|
+| `sf_played_rank` | **9.3%** |
+| `has_sf_p0_regret` (the gate's eligible set) | **~19-22%** |
+| `sf_multipv_raw` best-move cp, mate-free, \|cp\|<=3000 | **87.5%** |
+
+[[same_name_different_population]]. The collapse signal is available on 87.5% of rows, at a median
+gap of **4 plies** between consecutive labelled plies (37.1% within 2, 59.7% within 4); 1437 of 1445
+games have >= 2 labelled plies.
+
+**⚑⚑ MY FIRST READ OF THIS WAS INVERTED, AND THE CAUSE IS A TRAP IN MY OWN NOTES.** Won games came
+out at net **-602cp** and lost games at **+670cp**. Per-row check settled it: on the SAME row,
+`wdl_target == 0` (win) has mean cp **-177** and `wdl_target == 2` (loss) **+230**. The cause is
+[[p0_alignment_is_the_previous_ply]] — **`sf_multipv_raw` is the PREVIOUS ply's read**, i.e. the
+opponent's position, so its `cp` is the OPPONENT's POV. Negating it makes the negative control pass:
+
+| outcome | NET first->last | worst single drop | total drops | **worst-drop SHARE** |
+|---|---|---|---|---|
+| Win | **+607.5cp** | 754.5cp | 1837.5cp | **0.376** |
+| Draw | -32.0cp | 254.5cp | 630.0cp | **0.381** |
+| Loss | **-670.0cp** | **1015.0cp** | **2550.0cp** | **0.379** |
+
+* **MAGNITUDE discriminates outcome**: a loss carries ~1.4x the worst drop and ~1.4x the total drops
+  of a win. ⇒ a per-position dQ signal IS informative, which supports the LOCAL adjudicator over the
+  game-level one.
+* **CONCENTRATION does not**: the worst-drop share is **0.38 in all three outcome classes**.
+* ⚑ **BUT THAT IS NOT YET A FINDING, because the instrument cannot resolve it.** At a median 4-ply
+  gap a single blunder and a 4-ply slide are indistinguishable, and gap-blurring can only
+  UNDERSTATE concentration ⇒ **0.38 is a LOWER BOUND**. Answering "is a loss one collapse" needs the
+  gap<=2 subset or denser labels. [[compute_instrument_resolution_before_the_threshold]]
+* ⚑ This does NOT contradict [[cheese_loss_blunder_profile]]'s "80% = ONE collapse": that was
+  measured on **Cheese** games, a different opponent and regime.
+
+### What is pre-committed OUT of this session
+
+1. **No arm launches on any of these ideas yet.** #447 must merge first (it is the schedule's
+   precondition), and every design above still owes a prereg with a deciding yardstick.
+2. **The schedule's control variable may not be a PID input.** Fixed ramp or external frozen ruler.
+3. **The floor on wins is RANK-based** (SF top-1/top-2), never magnitude-based, so it never consumes
+   a fabricated number.
+4. **No `w_sf_own_regret` value is justified by matching the historical 7% share.** The dose ladder
+   this ledger already owes is what decides it.
