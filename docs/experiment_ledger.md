@@ -42460,3 +42460,197 @@ named in it does not. Quote **cp, clipped at 1000**, never "rank".
 **#440 remains BLOCKED, now on three counts**: the cache-bypass fix for the repeat control (B5),
 the retirement of the `>300cp` gate in favour of McNemar on `top1_match` (B4), and the two
 `tail_stats.py` / engine-resolution defects filed 2026-08-16. No arm has run; no config changed.
+
+---
+
+## 2026-08-17 — #440 UNBLOCKED: all three launch blockers CLOSED, with exact commands
+
+The three counts in the Status line above are now closed by code, not by argument. Each one is
+stated here as the command a run will actually type, because the standing failure on this entry
+has been thresholds and gates written as prose that turned out to have no implementation behind
+them. [[an_exact_command_means_it_was_run]]
+
+### B5 — the repeat control's cache bypass: `--sf-cache`
+
+`scripts/audit_targets.py` gained `--sf-cache PATH`, resolved by `resolve_sf_cache_path()` and
+printed BEFORE the checkpoint loads. Engine identity was never going to fix this: a repeat runs
+the SAME binary twice on purpose, so both runs share an `sf_id`, run 2 matches every cached row,
+and Stockfish is never launched.
+
+Pinned by execution, not by prose — `tests/test_audit_shallow_sf_cache_provenance.py`:
+
+- `test_a_repeat_on_the_SHARED_cache_never_relabels` drives a stub engine that returns a
+  DIFFERENT cp on every call and asserts the engine ran **once**. The two runs agree because the
+  cache was served; there is no determinism story left that can explain it away.
+- `test_a_repeat_on_a_FRESH_cache_does_relabel` asserts 2 calls and cp 100 vs 200.
+- `test_the_cli_resolves_the_override_before_anything_expensive_loads` drives the real `main()`
+  with an unloadable checkpoint and asserts the override was announced. ⚑ It is the wiring
+  check, and it is the one that matters: a resolver nothing calls is this codebase's signature
+  defect.
+
+⚑ **A mutant SURVIVED the first version of that suite, and then survived my first FIX for it.**
+Making `main` print the override and then hand `resolve_sf_cache_path(args.audit_set, None)` to
+the labelling pass passes every executing test here. My first close was
+`test_main_resolves_the_cache_path_exactly_once`, a source-level check that `main` derives the
+path once — and the independent reviewer of PR #446 defeated it with ONE token
+(`SHALLOW_SF_CACHE_SUFFIX` spelled out at the second call site) and, worse, showed that my stated
+reason for reaching for a source check at all was FALSE: reaching the labelling call does NOT
+need a real checkpoint, because `net_source_from_args` only records `--checkpoint`.
+[[announce_from_the_consumers_own_parameter]]
+
+What closes it is EXECUTION, in two places. `_shallow_sf_records` announces `cache_path` — the
+same parameter it opens and appends to, so that line is structurally incapable of disagreeing
+with the work (`test_the_labeling_pass_announces_the_path_it_actually_uses`). And
+`test_main_hands_the_RESOLVED_path_to_the_labelling_pass` drives the real `main()` in-process
+against a one-row audit set and a bogus checkpoint, captures the `cache_path` the labelling pass
+actually received, and asserts it is the override — ~15 s, no Stockfish, no torch, no GPU. The
+source-level once-only check is kept as a cheap second net, but it is no longer load-bearing and
+must not be cited as the closure: **a source grep that is the only thing standing between a
+mutant and the run is theatre, and this one was measured to be.**
+
+### ⚑⚑ THE REPEAT ARM'S TWO COMMANDS, WRITTEN OUT — the flag is not the fix
+
+Codex review of PR #446 (P1) caught the shape this whole entry keeps repeating: the section above
+introduces `--sf-cache` and then gives only the `paired_compare` command. The only complete
+`audit_targets.py` invocation recorded anywhere in this ledger omits `--sf-cache`, so an operator
+following the canonical command twice reuses the DEFAULT cache, reads the known zero-discordance
+`VOID`, and stops the experiment this entry just declared unblocked — the exact false stop B5
+describes, re-armed by a documentation gap rather than by code.
+[[an_exact_command_means_it_was_run]]
+
+**Repeat control (OLD vs OLD, referee A). Two runs, two DISTINCT cache paths, same binary:**
+
+⚑⚑ **EVERY FLAG BELOW THAT IS NOT `--sf-cache` / `--dump-per-position` / `--out-dir` IS COPIED
+VERBATIM FROM THE REGISTERED ARMS ABOVE, AND THAT IS THE POINT OF A REPEAT.** The first draft of
+this block carried only the flags the fix was about and inherited CLI DEFAULTS for the rest —
+most consequentially `--sf-workers`, which defaults to **4** while the registered OLD/NEW arms
+run **8**. `_shallow_sf_records` runs one stateful Stockfish process per worker and distributes
+positions among them dynamically, so the worker count changes each process's TT and search
+history and therefore the very relabelling noise this control exists to measure. A null
+calibrated at 4 workers does not bound a comparison run at 8. Same for `--max-positions 4000`,
+`--seed 0`, `--config` and the pinned checkpoint: a repeat control differs from the arms it
+calibrates in NOTHING except the cache it may read. (Codex review of PR #446, P1.)
+
+```bash
+# run 1
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set data/audit_set_v1.jsonl --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
+  --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
+  --sf-cache scratchpad/sf440/repeat_A1.shallow_sf.jsonl \
+  --dump-per-position scratchpad/sf440/repeat_A1.jsonl \
+  --out-dir scratchpad/sf440/report_A1
+
+# run 2 — ONLY --sf-cache, the dump and the report dir differ
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set data/audit_set_v1.jsonl --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
+  --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
+  --sf-cache scratchpad/sf440/repeat_A2.shallow_sf.jsonl \
+  --dump-per-position scratchpad/sf440/repeat_A2.jsonl \
+  --out-dir scratchpad/sf440/report_A2
+```
+
+⚑ `--out-dir` is not cosmetic either: the report is named `target_audit_<git-sha>.md` from the
+SHA alone, and a repeat control runs the same commit BY DEFINITION — so with the default
+`--out-dir runs` run 2 silently overwrites run 1's report and only one arm's readout survives
+alongside two caches and two dumps. (Codex review of PR #446, P2.)
+
+**Positive control that the repeat actually re-labelled — check BEFORE reading `d_obs`:** each run
+must print `[sf-soft] labeling 4000 positions` (`data/audit_set_v1.jsonl` is exactly 4000 lines,
+measured 2026-08-17) and `[sf-soft] cache in use <the path you passed>`. A run that prints no
+`labeling` line was served from cache and its `d_obs` means nothing. Both cache files must exist
+and be non-empty afterwards.
+
+⚑ This is not hypothetical: `data/audit_set_v1.jsonl.shallow_sf.jsonl` already holds 22 MB of
+rows on this machine (10,000 rows over 4,000 distinct keys), so a default-cache repeat produces
+the B5 false stop. **The failure is armed right now, on disk.**
+
+⚑⚑ **BUT THE MECHANISM IS THE OPPOSITE OF THE ONE THIS ENTRY FIRST RECORDED, AND THE REAL SHAPE
+IS STEALTHIER.** I wrote "both runs are served in full and neither launches Stockfish"; the
+independent review of PR #446 measured it and I re-measured it: **0 of those 10,000 rows carry an
+`sf_id` field.** The repeat command above passes `--stockfish`, so `_shallow_sf_records` computes
+`sf_id = engine_identity(...)`, every cached row reads as `UNRECORDED_SF_ID`, all 4,000 are
+counted `foreign`, and **run 1 relabels all of them** — measured `(served 0, foreign 4000,
+todo 4000)` with `--stockfish` versus `(4000, 0, 0)` without it. Run 1 then APPENDS rows carrying
+the real `sf_id`, and **run 2** matches those and is served in full.
+
+⇒ the false stop still happens, but **run 1 looks perfectly healthy**: it prints
+`labeling 4000 positions`, takes its hour, and grows the cache. Only run 2 betrays it. An
+operator who reads "neither launches Stockfish" as the tell would be reassured by exactly the run
+that proves nothing. The positive control above still fires — but on RUN 2, and for a reason the
+sentence it replaces misdescribed. [[a_counter_is_not_the_mechanism_behind_it]]
+
+⚑ Consequence worth knowing before it surprises someone: after such a run 1 the default cache
+holds two engine identities at (500k, 40), so any LATER audit run **without** `--stockfish` hits
+the `len(accepted_ids) > 1` mixed-provenance `SystemExit`. Pre-existing behaviour, not a new
+hazard — but it is downstream of the scenario this section describes.
+
+**Then the statistic:**
+
+```bash
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  scratchpad/sf440/repeat_A1.jsonl scratchpad/sf440/repeat_A2.jsonl \
+  --join-key key --field cand.sf_soft.top1 --mcnemar-at 0 --require-n 4000
+```
+
+Publish `d_obs` and the printed half-width from THIS run before choosing the effect size for
+arm NEW. ⚑ `d_obs = 0` is still a stop — but now it is a statement about the pipeline rather than
+about the cache, which is the entire point of the fix.
+
+⚑ `--sf-cache` REFUSES a path that resolves to the audit set itself (`Path.resolve()`, so a
+symlink cannot route around it): the cache is opened in APPEND mode, and writing label rows into
+the frozen scoring set would permanently change what every later audit scores. Codex review of
+PR #446 (P2).
+
+### B4 — McNemar now EXISTS, in the validating paired reader
+
+`grep -rniE mcnemar` returned zero hits when the decision section named it as the primary gate.
+It now lives in `scripts/paired_compare.py` — deliberately there and not in `tail_stats.py`,
+because `paired_compare` is the reader that already refuses a ruler mismatch, enforces each
+dump's row count against its stamp, and accounts for unmatched rows per side. The deciding
+yardstick belongs on the validating instrument, not the descriptive one.
+
+```bash
+# the #440 primary, once both arms' dumps exist:
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  <ARM_OLD>.jsonl <ARM_NEW>.jsonl \
+  --join-key key --field cand.sf_soft.top1 \
+  --mcnemar-at 0 --require-n 4000
+```
+
+`--mcnemar-at 0` IS `top1_match := (cand.sf_soft.top1 == 0)` for a non-negative regret field —
+the binarisation the decision section pre-committed, spelled as a threshold the tool reads.
+It prints the 2x2, the exact two-sided binomial p (exact, not chi-square: the discordant
+population here is expected to be ~tens, the regime where the approximation manufactures
+significance), the paired rate difference with a CI, and:
+
+- **`d_obs`, MEASURED** — the input the amendment ASSUMED at 0.30, an assumption worth a 3.2x
+  spread in the half-width. `test_half_width_tracks_the_measured_discordance` fails any
+  implementation that quotes a constant.
+- **the half-width `1.96*sqrt(d_obs/n)`**, which is step 2 of the mandated sequencing. Publish it
+  before choosing the effect size, per that step.
+
+⚑⚑ **Zero discordant pairs prints `VOID`, never "NOT significant".** That is the served-cache
+shape, and a gate that returns a clean null there certifies an experiment whose second arm was
+never measured. `test_zero_discordance_is_reported_VOID_and_never_as_agreement` asserts the word
+`significant` does not appear.
+
+### The join guard — `--require-n`
+
+Every threshold on this entry is written at n=4000, and the join silently delivers whatever the
+two files happen to share: a dump truncated to 500 rows still loads, still joins, and still
+prints a quotable verdict at 2.8x the registered half-width. `--require-n N` refuses, with a
+non-zero exit, BEFORE any statistic is printed. It is opt-in — exploratory runs have no
+pre-committed n — and it is mandatory on every arm of this experiment.
+
+### Status
+
+**#440's three launch blockers are CLOSED. The experiment is still NOT launched** and nothing
+about its cost has changed: the upgrade remains a measured +16.1% wallclock per label with SF
+already holding 18.3/32 cores, so a PASS is necessary and not sufficient. The mandated order is
+unchanged and is now runnable: repeat arm with `--sf-cache` first, publish `d_obs` and the
+half-width, choose the effect size against the MEASURED resolution, demonstrate that PASS and
+KILL both land inside the statistic's observed range, and only then run arm NEW.

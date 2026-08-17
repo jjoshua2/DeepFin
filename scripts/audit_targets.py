@@ -112,6 +112,12 @@ teacher change (MEASURED 2026-08-16: two arms, two different Stockfish
 binaries, identical `cand.sf_soft`, and Stockfish never launched for the
 second). Rows now carry `sf_id` (`id name`) and a run that names an engine
 reuses only that engine's rows.
+⚑⚑ ENGINE IDENTITY DOES NOT RESCUE A *REPEAT* CONTROL — the two runs share an
+`sf_id` BY DESIGN there, so run 2 is served run 1's rows and the measured
+run-to-run variance is 0 whatever the engine does (demonstrated with a stub
+that returned a different cp on every call: run 2 never launched it). A repeat
+must pass `--sf-cache <fresh path>`. Reading `d_obs = 0` off a shared cache
+establishes nothing about the pipeline's noise.
 GPU use is the batched forwards + search only; --max-positions and
 --batch-size bound the run (5k positions / 256 sims fits in <1h on a 5090).
 
@@ -1695,6 +1701,132 @@ def engine_identity(path: str, *, timeout_s: float = 60.0) -> str:
     return name
 
 
+#: The default shallow-SF cache's suffix, derived in exactly one place
+#: (`resolve_sf_cache_path`). A second site that re-derives the default is how
+#: an override silently stops applying on one of the two paths — which is why
+#: `tests/test_audit_shallow_sf_cache_provenance.py` proves the override
+#: through `main()` by EXECUTION rather than by reading the source.
+SHALLOW_SF_CACHE_SUFFIX = ".shallow_sf.jsonl"
+
+
+def resolve_sf_cache_path(
+    audit_set: Path, override: Path | None, dump_per_position: Path | None = None,
+) -> Path:
+    """Where this run reads and writes shallow-SF labels.
+
+    ⚑ The override exists for the REPEAT control and nothing else is a
+    substitute for it. Engine identity keys the cache by WHICH engine wrote a
+    row, which fixes the OLD-vs-NEW arm — two binaries, two `sf_id`s, forced
+    re-labelling. A repeat runs the SAME binary twice on purpose, so both runs
+    share an `sf_id`, run 2 matches every row, and Stockfish is never launched:
+    the measured run-to-run variance is 0 by CONSTRUCTION. Point the repeat at
+    a fresh path and it labels for real.
+
+    ⚑⚑ AN OVERRIDE THAT ALIASES THE AUDIT SET IS REFUSED, AND THE DAMAGE IT
+    PREVENTS IS PERMANENT. `_shallow_sf_records` opens the cache in APPEND mode,
+    so `--sf-cache data/audit_set_v1.jsonl` would write label records into the
+    FROZEN scoring set — which by protocol never changes after generation, and
+    whose digest every stamped dump carries. Every later audit would score a
+    silently different population, and there is no undo. The default can never
+    collide (it adds a suffix); only an explicit override can, which is exactly
+    the flag a hurried operator types a second path into. Compared by
+    `realpath`, so a symlink cannot route around it. (Codex review, PR #446 P2.)
+    """
+    resolved = override if override is not None else audit_set.with_suffix(
+        audit_set.suffix + SHALLOW_SF_CACHE_SUFFIX
+    )
+    if Path(resolved).resolve() == Path(audit_set).resolve():
+        raise SystemExit(
+            f"--sf-cache {resolved} resolves to the audit set itself "
+            f"({audit_set}). The shallow-SF cache is opened in APPEND mode, so "
+            "this would write label rows into the frozen scoring set and "
+            "permanently change what every later audit scores. Point --sf-cache "
+            "at a NEW file (a repeat control wants one per repeat)."
+        )
+  # ⚑⚑ AND THE COLLISION THE OTHER TWO GUARDS STRUCTURALLY CANNOT SEE: both
+  # `--sf-cache` and `--dump-per-position` pointed at the SAME path that does
+  # not exist yet. `refuse_if_not_a_shallow_sf_cache` inspects CONTENT and
+  # returns early on a missing file, and the audit-set alias check above
+  # compares against a different path -- so a fresh collision passes both. The
+  # labelling pass then banks an hour of shallow-SF rows there, and
+  # `write_audit_cache(..., force=True)` TRUNCATES that same file at the end of
+  # the run and replaces it with the per-position dump. The expensive
+  # observations are destroyed by the run that made them, with no error.
+  # Compared by resolved path so a symlink or a `./` spelling cannot route
+  # around it, and checked HERE because at parse time neither file exists yet,
+  # which is precisely the case content inspection cannot reach.
+  # (Codex review, PR #446 P2.)
+    if dump_per_position is not None and (
+        Path(resolved).resolve() == Path(dump_per_position).resolve()
+    ):
+        raise SystemExit(
+            f"--sf-cache {resolved} and --dump-per-position "
+            f"{dump_per_position} resolve to the SAME path. The cache is "
+            "appended to during labelling and the dump is written with "
+            "force=True at the end, so this run would spend an hour producing "
+            "shallow-SF rows and then truncate them away. Give them separate "
+            "paths."
+        )
+    return resolved
+
+
+def refuse_if_not_a_shallow_sf_cache(cache_path: Path) -> None:
+    """Refuse to APPEND to an existing file that is not a shallow-SF cache.
+
+    ⚑⚑ THE DAMAGE IS PERMANENT AND SILENT, WHICH IS WHY THIS SITS BESIDE THE
+    APPEND-OPEN RATHER THAN ONLY IN THE RESOLVER. `_shallow_sf_records` opens
+    `cache_path` in mode ``"a"``. Point `--sf-cache` at the frozen audit set and
+    it gains label rows; the set FREEZES after generation by protocol, its
+    digest rides in every stamped dump, and there is no undo. Point it at a
+    `--dump-per-position` output and that dump is corrupted instead.
+
+    An identity check on the audit set NAMED ON THIS COMMAND LINE is not
+    enough, and the review of PR #446 demonstrated all three ways past it:
+
+    * ``os.link(audit_set, alias)`` — a HARDLINK. `realpath` compares paths and
+      cannot see inodes, so the alias is accepted and appended to.
+    * ``--sf-cache data/audit_set_v2.jsonl`` — a DIFFERENT frozen set, which the
+      run never mentions and so cannot compare against.
+    * ``--sf-cache <the dump path>`` — arguably the likelier typo than aliasing
+      the file you just typed two flags earlier.
+
+    So the test is on the CONTENT, which all three share: a shallow-SF row
+    carries an integer ``multipv`` (the width the labeller requested), while an
+    audit record's ``multipv`` is a LIST of PV dicts and a dump row has no
+    ``multipv`` at all. One line is enough — the file is append-only and
+    homogeneous.
+
+    A missing file is fine (that is the normal fresh-cache case), and so is an
+    empty one.
+    """
+    if not cache_path.is_file() or cache_path.stat().st_size == 0:
+        return
+    with open(cache_path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                first = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(
+                    f"{cache_path}: exists but line 1 is not JSON ({exc}). "
+                    "Refusing to append shallow-SF rows to it."
+                ) from exc
+            break
+        else:
+            return
+    if not isinstance(first, dict) or not isinstance(first.get("multipv"), int):
+        raise SystemExit(
+            f"{cache_path}: exists and is NOT a shallow-SF cache (line 1 has no "
+            f"integer 'multipv'; found {type(first.get('multipv') if isinstance(first, dict) else first).__name__}). "
+            "This file is opened in APPEND mode, so continuing would write label "
+            "rows into it — if it is the frozen audit set, that permanently "
+            "changes what every later audit scores; if it is a dump, it "
+            "corrupts the dump. Point --sf-cache at a new or existing "
+            "shallow-SF cache."
+        )
+
+
 def _shallow_sf_records(
     positions: list[AuditPosition],
     *,
@@ -1714,6 +1846,12 @@ def _shallow_sf_records(
     these settings is refused rather than silently averaged: that is a mixed
     ruler, and a mixed ruler is not a ruler.
     """
+    # ⚑ Announced by the function that USES it, from the same parameter it
+    # reads and writes. `main` prints its resolution early so a mistyped
+    # --sf-cache fails cheaply, but an early print describes an INTENTION: the
+    # only line that cannot disagree with the labelling pass is this one.
+    print(f"[sf-soft] cache in use {cache_path}")
+    refuse_if_not_a_shallow_sf_cache(cache_path)
     sf_id = engine_identity(str(stockfish)) if stockfish is not None else None
     cache: dict[str, dict] = {}
     other_node_counts: set[int] = set()
@@ -1770,6 +1908,16 @@ def _shallow_sf_records(
         return cache
 
     print(f"[sf-soft] labeling {len(todo)} positions at {nodes} nodes, multipv {multipv}")
+  # ⚑ CREATE THE PARENT BEFORE AN HOUR OF STOCKFISH, NOT AFTER. `open(..., "a")`
+  # does NOT create directories, and the default cache lives beside the audit
+  # set so its parent always exists -- but an explicit `--sf-cache` names a path
+  # the operator chose, and the repeat control's recommended layout
+  # (`scratchpad/sf440/...`) is a directory no fresh checkout has. Without this
+  # the run raises FileNotFoundError HERE, after the config, the checkpoint, the
+  # audit set and the engine pool have all loaded. Fixed in the writer rather
+  # than as a `mkdir -p` line in the ledger, because the ledger cannot be the
+  # thing that makes a command runnable. Codex review of PR #446 (P1).
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
     engines = [
         StockfishUCI(str(stockfish), nodes=nodes, multipv=multipv, nice=nice)
         for _ in range(max(1, workers))
@@ -2210,6 +2358,13 @@ def main() -> None:
                          "The 50k default was retired once production moved to 500k nodes. NOTE: "
                          "the cache is keyed by node count, so switching tiers needs --stockfish to "
                          "(re)label at the new count.")
+    ap.add_argument("--sf-cache", type=Path, default=None,
+                    help="write/read the shallow-SF label cache HERE instead of "
+                         "<audit-set>.shallow_sf.jsonl. ⚑ REQUIRED for a repeat "
+                         "control: two runs of the same engine against the "
+                         "shared cache do not re-label at all — run 2 is served "
+                         "run 1's rows verbatim, so the measured run-to-run "
+                         "variance is 0 by construction, not by determinism.")
     ap.add_argument("--sf-soft-multipv", type=int, default=40)
     ap.add_argument("--sf-workers", type=int, default=4)
     ap.add_argument("--nice", type=int, default=15)
@@ -2279,6 +2434,17 @@ def main() -> None:
                          "already emitted.")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
+  # Resolved and PRINTED here, before the checkpoint loads, for the same reason
+  # the flag checks below are: the operator of a repeat control needs to see
+  # WHICH cache this run will use while there is still time to stop it. Printing
+  # it next to the labelling pass would be an hour too late, and printing the
+  # flag rather than the resolved path is how a defaulted override reads as an
+  # applied one.
+    sf_cache_path = resolve_sf_cache_path(
+        args.audit_set, args.sf_cache, args.dump_per_position,
+    )
+    print(f"[sf-soft] cache {sf_cache_path}"
+          f"{' (--sf-cache override)' if args.sf_cache else ''}")
   # Same fail-fast reasoning as the flags below, and the most expensive one to
   # get wrong: exactly one of --checkpoint/--onnx, and for --onnx the graph's
   # tensor names, resolved and printed HERE -- before the audit set loads and
@@ -2386,7 +2552,7 @@ def main() -> None:
 
     shallow = _shallow_sf_records(
         positions,
-        cache_path=args.audit_set.with_suffix(args.audit_set.suffix + ".shallow_sf.jsonl"),
+        cache_path=sf_cache_path,
         stockfish=args.stockfish, nodes=int(args.sf_soft_nodes),
         multipv=int(args.sf_soft_multipv), workers=int(args.sf_workers),
         nice=int(args.nice),
