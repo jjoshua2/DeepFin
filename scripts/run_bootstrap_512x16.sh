@@ -27,7 +27,7 @@
 # value_regret + audit_targets (2000 pos, paired CIs) within +2cp of the
 # then-current live net, panels not worse. Below parity = extend/kill.
 set -euo pipefail
-cd /home/josh/projects/chess
+cd "$(dirname "$0")/.."
 OUT=runs/scaleup_512x16_bootstrap
 CAND=aurora_mlp_out
 POOL=data/scaleup_pool_512x16/replay_shards

@@ -40,6 +40,9 @@ import time
 from pathlib import Path
 
 _TMP_PREFIX = "._tmp_feed_"
+# Every default path below lives INSIDE the checkout, so they are derived from
+# this file rather than written absolute (an absolute default names one machine).
+_REPO = Path(__file__).resolve().parents[1]
 # The trial whose shards entered the pool as BARE names before per-trial
 # tagging existed (the seed window + the 2026-07-08 feeds all came from it).
 _LEGACY_PRETAG_TRIAL = "train_trial_5fac4_00000_0_lr=0.0003_2026-06-17_22-42-40"
@@ -57,7 +60,7 @@ def _discover_live_dir() -> Path | None:
     before any shard lands; ranking by mtime alone would select it and feed
     nothing while the active trial's shards are ignored.
     """
-    root = Path("/home/josh/projects/chess/runs/pbt2_small/replay")
+    root = _REPO / "runs/pbt2_small/replay"
     best: tuple[float, Path] | None = None
     for d in root.glob("train_trial_*/replay_shards"):
         if not d.is_dir():
@@ -120,12 +123,12 @@ def main() -> int:
     ap.add_argument(
         "--boot-dir",
         type=Path,
-        default=Path("/home/josh/projects/chess/data/scaleup_pool_512x16/replay_shards"),
+        default=_REPO / "data/scaleup_pool_512x16/replay_shards",
     )
     ap.add_argument(
         "--holdout-dir",
         type=Path,
-        default=Path("/home/josh/projects/chess/data/scaleup_pool_512x16/holdout_shards"),
+        default=_REPO / "data/scaleup_pool_512x16/holdout_shards",
         help="Quarantined shards, never fed into --boot-dir, for live-follow eval "
              "(offline_replay_epoch.py --eval-replay-dir). Auto-created if missing.",
     )

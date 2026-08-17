@@ -1,8 +1,8 @@
 # PREREG DRAFT — Tier-14 arm (a): `search_wdl_draw_mode: parametric_q`
 
 **Status: DRAFT, NOT LAUNCHED, NOT A LEDGER ENTRY.** This file is the text to paste into
-`docs/experiment_ledger.md` when Josh decides to launch. Nothing here is a verdict, and no
-GPU compute has been spent on it. Ships alongside the PR
+`docs/experiment_ledger.md` when the maintainer decides to launch. Nothing here is a
+verdict, and no GPU compute has been spent on it. Ships alongside the PR
 "selfplay: build search_wdl's draw channel from the searched q (Tier-14 arm (a), default off)".
 
 ## Hypothesis

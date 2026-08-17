@@ -31,6 +31,7 @@ from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.state import CompletedGameBatch
 from chess_anti_engine.stockfish import StockfishPool
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from chess_anti_engine.utils.engine_discovery import ENV_VAR, stockfish_candidates
 
 _LOG_DIR = Path("runs/bench_vs_sf")
 _DEFAULT_MAX_PLIES = 450  # match configs/pbt2_small.yaml max_plies
@@ -49,17 +50,26 @@ def _git_hash() -> str | None:
 
 
 def _resolve_stockfish_path(path_arg: str | None) -> str:
-    repo_root = Path(__file__).resolve().parents[1]
+    """Explicit arg, then `$STOCKFISH_PATH`, then the SHARED discovery.
+
+    ⚑ This file used to carry its own candidate list — including its own
+    `e2e_server/publish/stockfish` literal — which is the copy that PR #441's
+    consolidation was supposed to remove and did not. Every distinct place that
+    list named (`PATH`, `/usr/games`, `/usr/local/bin`, the published engine) is
+    now in `engine_discovery.stockfish_candidates()`, plus the main-checkout
+    lookup this copy never had, so deleting it lost nothing and gained the
+    worktree case. `$STOCKFISH_PATH` is kept because it is this script's
+    documented seam and predates `$CAE_STOCKFISH`.
+
+    Unlike `default_stockfish()` this RAISES rather than returning a path that
+    does not exist: the caller is about to start an engine, not print a help
+    line.
+    """
     candidates = [path_arg] if path_arg else []
     env = os.environ.get("STOCKFISH_PATH")
     if env:
         candidates.append(env)
-    candidates += [
-        "stockfish",
-        "/usr/games/stockfish",
-        "/usr/local/bin/stockfish",
-        str(repo_root / "e2e_server" / "publish" / "stockfish"),
-    ]
+    candidates += stockfish_candidates()
     seen: set[str] = set()
     for raw in candidates:
         if not raw or raw in seen:
@@ -73,7 +83,8 @@ def _resolve_stockfish_path(path_arg: str | None) -> str:
             return str(p)
     raise FileNotFoundError(
         "Stockfish binary not found. Install stockfish, add to PATH, "
-        "set STOCKFISH_PATH, or pass --stockfish-path."
+        f"set STOCKFISH_PATH or ${ENV_VAR}, or pass --stockfish-path. "
+        f"Tried: {candidates}"
     )
 
 

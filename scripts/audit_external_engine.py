@@ -11,7 +11,7 @@ so the regret numbers are directly comparable.
 
 Usage:
   PYTHONPATH=. python3 scripts/audit_external_engine.py \\
-    --engine "bash -c 'cd /home/josh/local_engines/cheese && exec ./cheese-321-linux-pext'" \\
+    --engine "bash -c 'cd ~/local_engines/cheese && exec ./cheese-321-linux-pext'" \\
     --nodes 1000000,5000000 --max-positions 250
 """
 from __future__ import annotations

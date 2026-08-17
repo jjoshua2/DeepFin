@@ -17,13 +17,26 @@ from chess_anti_engine.server.app import (
 
 from .test_server_upload_security import _build_client, _seed_user
 
+#: ⚑ A NEUTRAL FIXTURE HOSTNAME, and only ONE copy of it.
+#:
+#: This file used to carry the maintainer's REAL machine name here and then
+#: repeat it as a bare string literal in four assertions. A real hostname in a
+#: tracked file of a PUBLIC repo is a disclosure exactly like the fleet login
+#: `tests/test_worker_secret_sources.py` carried -- and it is the shape that
+#: walked past PR #441's first guard, because a bare hostname is neither a
+#: `/home/<user>` path nor a `distributed_worker_username:` scalar. Every
+#: assertion below now references THIS name, so there is one place to get it
+#: wrong instead of five. `tests/test_no_absolute_home_paths.py` has a
+#: `hostname` shape and a local-identity sweep that keep it that way.
+_FIXTURE_HOSTNAME = "fleetbox-01"
+
 _STATS = {
     "NVIDIA GeForce RTX 5090": {
         "gpu_model": "NVIDIA GeForce RTX 5090",
         "positions": 12345,
         "games": 678,
         "positions_per_s": 91.2,
-        "last_hostname": "josh-desktop",
+        "last_hostname": _FIXTURE_HOSTNAME,
         "last_cpu_count": 32,
     },
 }
@@ -110,7 +123,7 @@ def test_route_redacts_for_an_anonymous_caller(tmp_path) -> None:
     r = client.get("/v1/worker_throughput")
     assert r.status_code == 200, r.text
     text = r.text
-    assert "josh-desktop" not in text, f"hostname served to an anonymous caller: {text}"
+    assert _FIXTURE_HOSTNAME not in text, f"hostname served to an anonymous caller: {text}"
     assert "last_cpu_count" not in text
     # Still useful without a credential.
     assert "positions" in text
@@ -125,7 +138,7 @@ def test_route_serves_full_telemetry_to_an_authenticated_caller(tmp_path) -> Non
 
     r = client.get("/v1/worker_throughput", auth=("u", "p"))
     assert r.status_code == 200, r.text
-    assert "josh-desktop" in r.text
+    assert _FIXTURE_HOSTNAME in r.text
 
 
 def test_a_bad_credential_is_not_an_error_but_is_not_trusted(tmp_path) -> None:
@@ -140,7 +153,7 @@ def test_a_bad_credential_is_not_an_error_but_is_not_trusted(tmp_path) -> None:
 
     r = client.get("/v1/worker_throughput", auth=("u", "wrong-password"))
     assert r.status_code == 200, r.text
-    assert "josh-desktop" not in r.text
+    assert _FIXTURE_HOSTNAME not in r.text
 
 
 def test_telemetry_get_never_registers_an_account(tmp_path) -> None:
@@ -178,7 +191,7 @@ def test_telemetry_get_never_registers_an_account(tmp_path) -> None:
     assert r.status_code == 200, r.text
     after = set(json.loads(users.read_text()))
     assert after == before, f"a telemetry GET created account(s): {sorted(after - before)}"
-    assert "josh-desktop" not in r.text, "an invented account was served host telemetry"
+    assert _FIXTURE_HOSTNAME not in r.text, "an invented account was served host telemetry"
 
 
 def test_positive_control_self_registration_really_is_enabled(tmp_path) -> None:

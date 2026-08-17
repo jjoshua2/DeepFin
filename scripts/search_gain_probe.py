@@ -69,7 +69,7 @@ live is [[same_name_different_population]]. To measure TODAY's shape, point
     PYTHONPATH=. python3 scripts/search_gain_probe.py \\
         --checkpoint data/ruler_reads_20260808/trainer.pt \\
         --shape live_selfplay_20260809 \\
-        --shape-yaml /home/josh/projects/chess/configs/pbt2_small.yaml \\
+        --shape-yaml ~/projects/chess/configs/pbt2_small.yaml \\
         --sims 1,8,32,64,128,256 --positions 512 --out scratchpad/probe.jsonl
 
 Usage (a dated snapshot, when reproducing a banked number rather than measuring

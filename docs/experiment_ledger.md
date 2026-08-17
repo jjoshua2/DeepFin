@@ -4414,7 +4414,7 @@ change and would teach the operator to ignore the handover line.
 **OBSERVATION THAT PROVES IT TOOK EFFECT (run after the first restart onto
 this code; no GPU, no arena):**
 ```
-cd /home/josh/projects/chess && PYTHONPATH=. python3 - <<'PY'
+cd ~/projects/chess && PYTHONPATH=. python3 - <<'PY'
 import json, glob, os
 from chess_anti_engine.train.trainer import Trainer
 newest = lambda pat: max(glob.glob(pat), key=os.path.getmtime)
@@ -11002,7 +11002,7 @@ result`. Cause: **PR #277's ragged tail batch.** `_iter_full_pass_batches`
 2000/512 gives shapes **512 and 464**, so a fresh process must compile BOTH before
 its first result. That exceeds the 120s budget. The extra graph was anticipated;
 its collision with the timeout on a cold process was not. Ruled out: cold inductor
-cache (`TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_josh` persists).
+cache (`TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_$USER` persists).
 **Self-healing** — Python cannot kill the thread, so the abandoned eval keeps
 compiling and warms the cache. **Standing cost: exactly 2 holdout readings per
 restart.** Fix ranked in the task list; pre-warming both shapes at init is the
@@ -12432,7 +12432,7 @@ UCI, preserves thread affinity while forwarding pinned buffers and async
 launches, removing an input copy and the irrelevant batch merge/slice path.
 ONE deciding yardstick: three alternating legacy/owner process rounds, each
 running `PYTHONPATH=. python3 scripts/bench_uci_engine.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --device cuda --nodes 8192 --repeats 3 --chunk-sims 512 --topk 32
 --max-batch 1024 --compile-mode max-autotune --compile-cache-dir
 /tmp/cae-uci-bf16-cache --timeout-s 300`, with
@@ -12841,7 +12841,7 @@ Hypothesis: rebuilding the identical source release with Stockfish's supported
 without changing deterministic search results. Build in an isolated `/tmp`
 copy; do not replace the live binary during this experiment. ONE deciding
 yardstick: `PYTHONPATH=. python3 scripts/bench_stockfish_build.py --baseline
-/home/josh/local_stockfish/extract/usr/games/stockfish --candidate
+~/local_stockfish/extract/usr/games/stockfish --candidate
 /tmp/stockfish-native/src/stockfish --rounds 5 --cpu 15 --hash-mb 16 --threads
 1 --depth 13`. The harness warms both binaries, alternates order, and uses
 Stockfish's 51-position bench. Pre-committed SUCCESS: candidate median nodes/s
@@ -13344,9 +13344,9 @@ the RTX 5090 is available after the driver reset, so close the queued GPU
 re-profile before changing kernels, streams, or batching. Hypothesis: the
 production 512x16 v2 checkpoint still exposes actionable batch-size or launch
 headroom in the compiled forward path. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/profile_worker_inference.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --batches 16,32,64,96,128,256,384,512,768,1024 --warmup 6 --iters 40
 --mode reduce-overhead --amp-dtype bf16 --out
 /tmp/cae_gpu_inference_20260718.json`. REOPEN the GPU/batching surface if median
@@ -13372,10 +13372,10 @@ before requesting a nominally non-blocking H2D transfer. Hypothesis: make the
 NumPy staging view alias a persistent pinned float32 tensor, removing the dead
 bf16 allocation and enabling real asynchronous DMA without changing the GPU
 conversion or model inputs. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_input_staging.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: pinned/pageable median end-to-end wall
 <=0.99x, identical policy/WDL checksum, focused AOT tests and lint pass. KILL:
 ratio >1.01 or any output/lifetime failure; otherwise MIXED and retain only if
@@ -13398,12 +13398,12 @@ main thread before yielding the batch. Hypothesis: have the existing single
 prefetch worker complete collation/H2D as well, so CPU pinning and transfer
 setup for batch N+1 overlap GPU compute for batch N without adding another
 queue or thread. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_training_batch_staging.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-package /home/josh/projects/chess/data/aot_models_512/chess_b512.pt2
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-package ~/projects/chess/data/aot_models_512/chess_b512.pt2
 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batch 512 --steps 30 --rounds 7`. SUCCESS: prefetched/reference median wall
 <=0.95x with exact final-output checksum, deterministic tests cover ordering,
 retry extension, CUDA-error cleanup, focused trainer/collation tests and lint
@@ -13430,10 +13430,10 @@ defeating the C-walk/GPU overlap that consumes its event. Hypothesis: add
 persistent pinned float32 policy/WDL output buffers and enqueue `copy_` into
 them before recording the event, matching `DirectGPUEvaluator` semantics. ONE
 deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_output_staging.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: pinned/pageable median end-to-end wall
 <=0.98x, pinned median submission latency <=0.50x pageable, identical output
 checksum, async lifetime tests and lint pass. KILL: end-to-end ratio >1.01,
@@ -13459,10 +13459,10 @@ then converts to bf16 on GPU even though its packages are statically bf16.
 Hypothesis: give AOT a persistent pinned bf16 buffer, accept the existing
 uint16 bit representation, and transfer it directly while retaining the
 float32 compatibility path. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_bf16_input.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: bf16/f32 median end-to-end wall <=0.97x,
 exact policy/WDL checksum, tests prove uint16 bits take the bf16 buffer while
 float32 callers retain their path, focused Gumbel/AOT tests and lint pass.
@@ -13488,11 +13488,11 @@ evaluators already expose a tested legal-BF16 contract consumed natively by
 head ids, gather only those logits on GPU, and return pinned bf16 bits plus WDL
 without materializing/transferring the dense 4,672 policy. ONE deciding
 yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_legal_policy.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --shard
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batch 384 --iterations 40 --rounds 7`. SUCCESS: compact/dense median
 end-to-end wall <=0.75x, exact gathered-policy-bit and WDL checksum parity,
 randomized full-to-compact/legal-count tests, focused Gumbel/AOT tests and lint
@@ -13518,10 +13518,10 @@ the native compact tensor from AOT, transfer 60% fewer policy bytes, and let
 the existing CPU mapper expand once, deleting the redundant GPU allocation
 and scatter without changing an API or search semantics. ONE deciding
 yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_compact_policy.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: native/dense median end-to-end wall
 <=0.98x after including the CPU compact-to-full expansion, exact full-policy
 and WDL checksum, focused AOT/Gumbel tests and lint pass. KILL: ratio >1.00 or
@@ -13546,11 +13546,11 @@ on GPU and immediately gathers legal logits back out. Hypothesis: remap the
 already-present legal columns to compact ids and gather directly from the AOT
 head, deleting the dense allocation/scatter with no transport or MCTS change.
 ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_broker_compact_gather.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --shard
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batches 32,96,384 --iterations 80 --rounds 7`. SUCCESS: compact/dense
 geometric-mean ratio <=0.98 and no individual bucket regresses, with exact
 legal-policy-bit/WDL checksums, randomized remap tests, focused broker tests,
@@ -13573,11 +13573,11 @@ training thread immediately before its H2D copies. Hypothesis: pin the next
 numeric array dict in the existing one-item host prefetch thread, let
 `_to_tensor` reuse already-pinned storage, and keep all CUDA submission/dtype
 conversion on the training thread. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_training_pin_prefetch.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --shard
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batch 512 --iterations 40 --rounds 7`. SUCCESS: prefetched/reference median
 wall <=0.97x, exact collated-tensor and AOT output checksums, tests prove
 already-pinned arrays are not copied/re-pinned, focused trainer/replay tests,
@@ -13602,10 +13602,10 @@ copy/H2D payload. Hypothesis: allocate the pipeline's existing NumPy buffers
 as uint16 whenever `supports_input_bf16_bits` is true; the C tree already
 supports this representation and AOT already consumes it. ONE deciding
 yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_gumbel_bf16.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --games 96
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --games 96
 --simulations 32 --iterations 5 --rounds 7`. SUCCESS: bf16/f32 median complete
 search wall <=0.97x, exact actions/policies/values/root-Q checksum, tests prove
 pipeline buffer dtype routing, focused Gumbel/AOT tests, and lint pass. KILL:
@@ -13629,10 +13629,10 @@ evaluator already exposes two pinned in-place slots that C can encode into
 directly. Hypothesis: give AOT the same two-slot input interface, retaining
 its existing output allocations, to remove one full host copy per root/leaf
 batch while preserving group lifetime isolation. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_gumbel_inplace.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --games 96
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --games 96
 --simulations 32 --iterations 5 --rounds 7`. SUCCESS: inplace/staged median
 complete-search wall <=0.97x, exact actions/policies/values/root-Q checksum,
 slot-isolation tests, focused Gumbel/AOT tests, and lint pass. KILL: ratio
@@ -15229,7 +15229,7 @@ without changing the current value. Hypothesis: 32/64/128 MB reduces TT
 collisions enough to improve fixed-node label wall time despite the larger CPU
 cache footprint. ONE deciding yardstick: `PYTHONPATH=. nice -n 19 taskset -c 15
 python3 scripts/bench_stockfish_hash.py --stockfish
-/home/josh/projects/chess/e2e_server/publish/stockfish --nodes 700000 --multipv
+~/projects/chess/e2e_server/publish/stockfish --nodes 700000 --multipv
 40 --positions 16 --rounds 7`. Arms rotate order and each starts a fresh engine;
 all searches within an arm retain the TT like production. SUCCESS: one larger
 hash has median wall <=0.97x the 16 MB baseline and first-round best-move
@@ -15533,7 +15533,7 @@ already queued whenever a broker lane becomes available, without a timed
 coalescing sleep.  Four independent submission lanes preserve concurrency;
 CUDA and cudagraph ownership remain exclusively in the broker process.
 YARDSTICK (deciding, exact command):
-`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,hierarchical --threads 32 --slots 4 --repeats 5`.
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir ~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir ~/projects/chess/data/aot_models_512 --modes direct,hierarchical --threads 32 --slots 4 --repeats 5`.
 SUCCESS: hierarchical median Gumbel positions/s is at least 5% above direct
 and p95 request latency regresses by no more than 10%.  KILL: throughput gain
 below 5%, latency guard fails, any output mismatch, deadlock, CUDA graph
@@ -15577,8 +15577,8 @@ YARDSTICK (deciding): broker-backed 4-worker x 32-thread Gumbel A/B, five
 repeats, unlimited baseline versus targets 512/680/1020, using
 `for target in 0 512 680 1020; do PYTHONPATH=. python3
 scripts/bench_production_sf_workers.py --publish-dir
-/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
---aot-dir /home/josh/projects/chess/data/aot_models_512 --orders 8,8,8,8,8
+~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir ~/projects/chess/data/aot_models_512 --orders 8,8,8,8,8
 --workers 4 --threads 32 --games-per-thread 1 --slots 4 --max-plies 10
 --target-batch "$target"; done`, judged on actual positions/s and p95 request
 latency.  SUCCESS: >=5% positions/s with no p95
@@ -15602,8 +15602,8 @@ broker/GPU-sensitive while retaining 4 worker processes x 32 concurrent
 Gumbel producers x 4 shared slots. ONE deciding yardstick:
 `for target in 0 512 680 1020; do PYTHONPATH=. python3
 scripts/bench_broker_gumbel_target.py --publish-dir
-/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
---aot-dir /home/josh/projects/chess/data/aot_models_512 --target-batch
+~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir ~/projects/chess/data/aot_models_512 --target-batch
 "$target" --workers 4 --threads 32 --slots 4 --boards-per-thread 4
 --simulations 50 --iterations 3 --repeats 5; done`. SUCCESS: any target gives
 at least 5% median inference positions/s with no p95 request-latency regression,
@@ -15634,7 +15634,7 @@ protocol should remove most root policy D2H and shared-memory output traffic
 without changing model inputs, logits, WDL, batching, or search semantics.
 YARDSTICK (deciding): production-shaped broker-backed Gumbel A/B at 4 workers x
 32 threads x 4 slots, five repeats per mode, using
-`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,direct-compact-root --threads 32 --slots 4 --repeats 5`.
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir ~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir ~/projects/chess/data/aot_models_512 --modes direct,direct-compact-root --threads 32 --slots 4 --repeats 5`.
 SUCCESS: compact-root median positions/s is at least 3% above dense-root with
 no more than 5% p95 request-latency regression. KILL: throughput gain below
 3%, numerical policy/WDL mismatch outside existing BF16 tolerances, illegal
@@ -15664,10 +15664,10 @@ asynchronous after submission. Hypothesis: while one production-sized compact
 forward completes on CUDA, copying the next BF16 input group into the second
 pinned slot can hide a meaningful part of host packing and justify a two-stage
 broker pipeline. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_pack_overlap.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 340
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 340
 --iterations 40 --rounds 7`. SUCCESS: overlap/reference median wall <=0.95,
 at least 25% of the separately measured second-pack time is hidden, exact
 compact-policy/WDL checksums, and no CUDA/event/lifetime error. KILL: either
@@ -15698,7 +15698,7 @@ GPU result becomes ready, or the deadline expires. This should form fuller next
 batches without inserting idle GPU time. ONE deciding yardstick: three
 counterbalanced legacy/target process pairs on the production checkpoint using
 `PYTHONPATH=. python3 scripts/bench_dispatcher_gumbel.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
 50 --topk 16 --iters 3 --warmup-iters 2 --compile-mode reduce-overhead
 --dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
@@ -15736,7 +15736,7 @@ unnecessary. Hypothesis: `batch_wait_ms=0` preserves useful throughput while
 removing the last fixed gather delay from the local threaded path. ONE deciding
 yardstick: two counterbalanced 5/0 ms process pairs using `PYTHONPATH=. python3
 scripts/bench_dispatcher_gumbel.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
 50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
 --dispatcher-target-batch 680 --dispatcher-batch-wait-ms {5|0}`, alternating
@@ -15768,7 +15768,7 @@ rows without changing queue draining, wait policy, request ordering, search, or
 outputs. ONE deciding yardstick: two counterbalanced clean process pairs using
 `CAE_DISPATCH_FINE_BUCKETS=0/1 PYTHONPATH=. python3
 scripts/bench_dispatcher_gumbel.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
 50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
 --dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
@@ -16028,7 +16028,7 @@ deciding yardstick: `PYTHONPATH=. python3 scripts/arena_standard.py --candidate
 scratchpad/live_read/monitor/ck_176_manual.pt --reference
 scratchpad/live_read/monitor/ck_163_manual.pt --mode matched_sims --sims 32
 --games 512 --max-concurrent-games 16 --syzygy
-/home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
+~/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
 --syzygy-max-pieces 6 --seed 0 --label ck176_vs_ck163_s32_20260724`. SUCCESS:
 candidate pentanomial Elo 95% CI is wholly above 0. FAIL: wholly below 0. NULL:
 CI includes 0. Mechanism secondary: pentanomial counts, score, decisive-game
@@ -23519,8 +23519,9 @@ job holds 13.8 GB (5.1 s/step vs 0.75 s/step) — the deviation is identical in 
 ### THE ONE DECIDING MEASUREMENT (exact command)
 
 ```
-SC=/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/capsize
-PYTHONPATH=. nice -n 19 .venv/bin/python -u $SC/slope.py \
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+SC="$SCRATCH/capsize"
+PYTHONPATH=. nice -n 19 .venv/bin/python -u "$SC/slope.py" \
   --corpus $SC/corpus --arm {L,M,S} --seed {0,1} \
   --batch-size 256 --chunk-steps 176 --chunks 48 --eval-every 2 \
   --out $SC/run_{arm}_s{seed}
@@ -24110,7 +24111,8 @@ excluded from the wide train corpus by construction.
 ### ONE deciding yardstick (exact command)
 
 ```
-PYTHONPATH=. nice -n 19 .venv/bin/python /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/analyze_rp.py
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+PYTHONPATH=. nice -n 19 .venv/bin/python "$SCRATCH/rowsparam/analyze_rp.py"
 ```
 
 Deciding statistic **B** = mean over seeds {0,1} of
@@ -25482,7 +25484,7 @@ Confounds: as pre-registered (6.11x more optimizer steps at fixed chunk_steps=17
 the LR sawtooth is preserved; level comparability rests on the byte-identical held set;
 exposure recency identical across arms by construction — all arms train only on the
 same-era wide/sibling corpora and the held set is game-disjoint by the mix64 split).
-Artifacts: /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/
+Artifacts: <session-scratch>/rowsparam/
 (runs run_LW_s0, run_LW_s1, run_LWSHUF_s0; analyzer analyze_rp.py; corpus_wide).
 
 
@@ -27630,8 +27632,9 @@ SHOWN not to reach the loss — otherwise F measures a field artefact, not rehea
 **Instrument** (banked, CPU-only, no GPU, ~40 s at `nice -n 19`, recomputes from scratch):
 
 ```
-PYTHONPATH=/home/josh/projects/chess nice -n 19 python3 \
-  /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/absorb_20260802/f_unblock/f_diff.py
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+PYTHONPATH=~/projects/chess nice -n 19 python3 \
+  "$SCRATCH/absorb_20260802/f_unblock/f_diff.py"
 ```
 Output `f_unblock/f_diff_report.json`; trace + verdict `f_unblock/F_UNBLOCK.md`.
 
@@ -28099,7 +28102,7 @@ the position actually had when generated, which is what training saw, but it is
 not "iter477-era history". (iii) Repetition-plane reconstruction for children
 is exact to 99.986%, not 100%.
 
-**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+**Bank:** `<session-scratch>/audit_historyfill_20260802/`
 (`match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`, `matched_rows.npz`,
 `match_report.json`, `child_transform_verify.json`).
 
@@ -28214,7 +28217,7 @@ capability was lost, and whether that onset tracks the forgetting-hinge
 window-exit story. ~4 min/checkpoint on the banked rig at
 `--gpu-mem-fraction 0.15`. Not run: the offline rig owns the card.
 
-**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+**Bank:** `<session-scratch>/audit_historyfill_20260802/`
 (`README.md`, `match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`,
 `analyze.py`, `matched_rows.npz`, `score_{boot512,iter477}_vb256.json`,
 `analysis.json`, `match_report.json`, `child_transform_verify.json`).
@@ -31217,7 +31220,7 @@ reproduced and adopted verbatim below.
 #### Code provenance — the rig runs DIFFERENT code from every prior wave
 
 Every earlier wave imported `chess_anti_engine` from the live tree
-(`/home/josh/projects/chess`, currently `ba0656728`), which predates PR #327 and has
+(`~/projects/chess`, currently `ba0656728`), which predates PR #327 and has
 no polar instrument. This wave runs a dedicated worktree at
 `.../scratchpad/wt-a8v2`, **SHA `0333932cf`** — the #327 merge itself. The live tree
 was never checked out or modified; `git worktree add --detach` only creates a new
@@ -31227,7 +31230,7 @@ directory. C extensions were rebuilt in the worktree
 
 **⚑ A defect found while wiring this, worth its own note.** `PYTHONPATH` pointing at
 the worktree was **silently ignored**: `sys.path[0]` is the process CWD, and every
-driver in this rig does `cd /home/josh/projects/chess`, so the live tree won every
+driver in this rig does `cd ~/projects/chess`, so the live tree won every
 import. The first import test I ran "passed" while resolving to the WRONG tree — the
 signature defect exactly (a value accepted, then discarded). The fix is an explicit
 `ABSORB_REPO` env var consumed before the imports, and the run header now banks
@@ -36278,7 +36281,7 @@ separate reviewer follows.
   all.
 - DECIDING YARDSTICK (pre-committed): bank the iter-21 checkpoint
   (`data/ratchet/snapshots/ck_<date>_iter21.pt`), then
-  `PYTHONPATH=. python3 scripts/arena_standard.py --candidate data/ratchet/snapshots/ck_<date>_iter21.pt --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt --mode matched_sims --sims 32 --search-shape training --games 200 --seed 42 --label rerun_iter21_vs_boot512`
+  `PYTHONPATH=. python3 scripts/arena_standard.py --candidate data/ratchet/snapshots/ck_<date>_iter21.pt --reference ~/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt --mode matched_sims --sims 32 --search-shape training --games 200 --seed 42 --label rerun_iter21_vs_boot512`
   — identical shape to the 08-04 retro arenas (their JSONL rows in
   runs/arena_results.jsonl are the authoritative flag record). Baseline to beat:
   Elo(iter21_0f888 − boot512) = −96.2 [−141.5, −53.9].
@@ -36586,7 +36589,7 @@ separate reviewer follows.
   iter-21 checkpoint (checkpoint_000020/trainer.pt per label lag) and run
   the SAME arena as the baselines:
   PYTHONPATH=. python3 scripts/arena_standard.py --candidate <iter21 bank>
-  --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --reference ~/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
   --mode matched_sims --sims 32 --search-shape training --games 200
   --seed 42 --label cp_target_iter21_vs_boot512
   SUCCESS: CI excludes −96.2 on the favorable side (upper bound > −56.7 is
@@ -39947,7 +39950,7 @@ becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read
 
 ### AMENDMENT 7 (2026-08-09) — REVERSING AMENDMENT 6: deploy BOTH knobs after all
 
-**Amendment 6's unbundling decision is WITHDRAWN.** Josh's objection is correct and it defeats
+**Amendment 6's unbundling decision is WITHDRAWN.** The maintainer's objection is correct and it defeats
 the reasoning I used:
 
 > *"if it hurts us or does not much we won't learn much since it doesn't have softening yet"*
@@ -40269,7 +40272,7 @@ the production path".
 
 ## TRAINING STOPPED 2026-08-09 20:03 — iteration 735, trial 379f6 (user decision)
 
-Stopped at Josh's instruction ("I think training isn't helping"), to price a rollback before
+Stopped at the maintainer's instruction ("I think training isn't helping"), to price a rollback before
 resuming. Clean teardown: `train.sh stop` exit 0, watchdog stopped FIRST (it auto-recovers on
 STALLED and would have relaunched training mid-teardown), **2304 in-flight games SUSPENDED**
 across 4 workers rather than discarded — so no resume point pays the drain-transient bias.
@@ -41468,7 +41471,7 @@ but not for the *arm-size* or *score-sd* statistics measured; the two trials agr
 
 ## 2026-08-12 — PREREG Tier-13: the shared policy adapter, A/B/C (`policy_embedding_mode`) — **NOT LAUNCHED**
 
-**Status: PRE-REGISTERED, awaiting Josh's go-ahead + a GPU pause. Do not launch from this
+**Status: PRE-REGISTERED, awaiting the maintainer's go-ahead + a GPU pause. Do not launch from this
 entry alone.** Code is PR #398 (`feat/shared-policy-embedding`).
 
 ### Hypothesis
