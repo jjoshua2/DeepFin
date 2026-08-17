@@ -55664,3 +55664,114 @@ hard-clip rate too and make its text name whichever clip actually bound -- see t
 (ii) range-validate `matrix_lr_multiplier` (and check its siblings `matrix_weight_decay`,
 `aux_weight_decay` for the same shape). **NOT actioned: nothing about the Aurora clip scope. It is
 correct as built and this measurement is the evidence.**
+
+## 2026-08-17 — SF-FOR-POLICY ARM SELECTION: the top-k floor PASSES its precondition (23.0% of rows), and ⚑⚑ THERE ARE TWO 1858-WIDE MOVE FRAMES IN THE SHARD
+
+Josh asked to compare the top two candidates and take the better one. Instrument:
+`scratchpad/sfpolicy_compare/probe_topk_floor_binds.py`. Population: 398 readable shards of
+`data/salvage/bt4heads_iter112_20260817` (400 listed, **2 UNREADABLE** -- `JSONDecodeError`
+from `zarr.open`, a shard still being written when the salvage export ran; 0.5%, under the
+probe's own 5% abort bar, and COUNTED rather than skipped). **n = 728,101 rows.** CPU only,
+zero GPU -- production held the card at 31.4/32.6 GB throughout.
+
+### ⚑⚑ FINDING 1 (incidental, and the more important of the two): `legal_mask` and `sf_legal_mask` ARE DIFFERENT MOVE FRAMES
+
+| check | rate |
+|---|---|
+| `sf_move_index` legal under `sf_legal_mask` | **1.0000** (728,101 rows) |
+| `sf_move_index` legal under `legal_mask` | **0.0750** |
+| `sf_p0_regret` SURFACED entries legal under `legal_mask` | **1.0000** (43,549 entries) |
+| ... and ROWS whose whole surfaced set is inside `legal_mask` | **7,970 / 7,970 = 100.00%** |
+| `sf_p0_regret` SURFACED entries legal under `sf_legal_mask` | **0.1001** |
+| rows where `legal_mask == sf_legal_mask` exactly | **0.00%** (popcounts 26.74 vs 26.22) |
+
+⇒ **`sf_p0_regret` is in the NET's frame; `sf_move_index` is in SF's frame.** Two 1858-wide
+uint8 masks of nearly equal popcount and zero identical rows -- so nothing downstream
+notices, and a presence check cannot see it. Only a cross-frame legality test can.
+
+**GOOD NEWS FOR PRODUCTION:** the live `sf_own_regret` term is
+`(po_probs * reg_vec).sum(-1)`, an elementwise product against the net's own policy, and
+`reg_vec` is `sf_p0_regret` -- the NET-frame field. **So the production term and PR #447's
+gate are correctly indexed.** This was not assumed; it is the 100.00% row above.
+
+**⚑ THE HAZARD, and I walked into it:** the first version of this probe indexed
+`policy_target` with `sf_move_index` and read *"the target puts 0.0038 mass on SF's best
+move, and its argmax agrees on 0.39% of rows"* -- a fabricated crisis, and a plausible one.
+Indexing across the frames returns a REAL PROBABILITY FOR THE WRONG MOVE on ~93% of rows.
+**Any top-k floor built on `sf_move_index` needs an explicit remap; one built on
+`sf_p0_regret`'s surfaced ranking needs none.** The probe's own cross-source check is what
+caught it, so it is retained as a permanent REGRESSION check (expected SF ~1.00 / NET ~0.07;
+CONVERGENCE is the anomaly) and is never read as a mass. [[same_name_different_population]]
+
+### FINDING 2 (the deciding one): the floor BINDS, on the TAIL, with a real operating band
+
+Masses are the STORED `policy_target`'s -- what the policy loss already trains toward. That
+is the quantity that decides REDUNDANCY: if the target already concentrates on SF's top
+moves, an SF floor teaches nothing the existing loss does not.
+
+| | mean | p10 | p25 | p50 | p75 | p90 |
+|---|---|---|---|---|---|---|
+| target mass on surfaced top-1 | 0.3981 | 0.0003 | 0.0097 | 0.2180 | 0.8629 | 0.9943 |
+| target mass on surfaced top-2 | 0.5789 | 0.0075 | 0.1270 | 0.7077 | 0.9845 | 0.9998 |
+| target's own top-1 mass | 0.7402 | 0.3852 | 0.5483 | 0.7955 | 0.9697 | 0.9987 |
+| legal moves | 27.14 | 6 | 18 | 29 | 37 | 43 |
+| surfaced entries | 5.60 | 4 | 6 | 6 | 6 | 6 |
+
+**Bind rate = share of rows whose target mass falls BELOW the floor:**
+
+| floor | top-1 | top-2 |
+|---|---|---|
+| 0.01 | 25.15% | **11.03%** |
+| 0.02 | 29.47% | 13.72% |
+| 0.05 | 36.09% | 18.34% |
+| 0.10 | 42.09% | **23.02%** |
+| 0.20 | 49.01% | 29.30% |
+| 0.50 | 61.05% | 41.81% |
+
+**⇒ PRECONDITION PASSES, and the shape is the one a floor should have.** Median top-2 mass
+0.708 means the TYPICAL row already agrees with SF, so the floor bites the tail rather than
+rewriting the target. **Operating band: top-2 floor in [0.05, 0.20] ⇒ 18.3-29.3% of rows;
+recommended start 0.10 ⇒ 23.0%.** Contrast PR #447's `listed_mass_min: 0.10`, which gated
+**ZERO** rows and would have bought a guaranteed-null day-plus window -- this is the same
+precondition, run before any compute, and this time it clears.
+
+**AND IT QUANTIFIES JOSH'S OWN CRITERION.** He asked to "make sure it isn't completely
+ignoring the main SF move or two". **25.15% of rows put under 1% of the target's mass on
+SF's single best SURFACED move.** A quarter of rows. The intuition was right and the size
+was unknown until now.
+
+### WHAT THIS DOES NOT SHOW -- stated because the number invites the wrong reading
+It measures the **TARGET**, not the **NET**. The floor acts on the net's output; the net may
+be failing to fit a target that does concentrate, or fitting one that does not. That residual
+(Stage 0b) needs a forward pass and therefore the GPU. Reporting the above as "the net
+ignores SF" would be exactly the population swap this ledger keeps catching.
+
+### VERDICT vs the second candidate (CAST / ΔQ)
+**Arm A (top-k floor) takes the first slot.** Not because ΔQ looks bad -- because A now has
+a MEASURED precondition pass on 728k production rows, needs ZERO new SF labelling (the
+surfaced set is already stored), needs no shard-format change and therefore no restart, and
+is the arm all three independent evidence lines already pointed at (set membership carries
+70% of the constant tail's fidelity; the tail MAGNITUDES are ~74% fabricated at MultiPV 6;
+the net inherits 91.5% of the target's bad tail). **ΔQ stays the second bet, unchanged:** its
+positive offline evidence stands and the relational-SF6 null strengthens it, but its 4.2x
+confidence gate is RETRACTED (wrong population), it is not same-model, and ~40% of its pairs
+need new SF compute. It has NOT been given the equivalent precondition run in this session,
+and that is a gap in the comparison rather than a mark against it -- **A wins on a passing
+precondition and zero labelling cost, not on a head-to-head.**
+
+**⇒ NEXT, and none of it is armed:** (1) the loss term + config key on #447's surfaced-mask
+seam, once #447 merges; (2) Stage 0b, the NET's mass on the surfaced top-2, which decides the
+floor's exact value; (3) the paired offline retrain via
+`retarget_retrain.py --no-rebuild-sf-targets` -- see the rig correction below.
+
+### ⚑ RIG CORRECTION: `retarget_retrain.py`'s docstring understates its own capability
+Its docstring says *"the `w_sf_own` own-move-teacher leg is absent from ALL arms of a rebuilt
+sweep, and the sweep therefore says nothing about that leg."* **That is FALSE.**
+`CROSS_PLY_SF_FLAGS = ("has_sf_p0", "has_sf_volatility")`, and `mask_cross_ply_sf_targets`'s
+own docstring states *"`sf_p0_regret` is deliberately NOT masked ... it stays valid under any
+rebuild."* `w_sf_own_regret` reads `sf_p0_regret` / `has_sf_p0_regret`, which the mask
+preserves. The docstring conflated two differently-flagged fields:
+`sf_p0_policy_target`/`has_sf_p0` (masked, correctly) with
+`sf_p0_regret`/`has_sf_p0_regret` (preserved, deliberately). **The rig can run both arms in
+either rebuild mode** -- I nearly concluded it could run neither and built a redundant rig.
+Same shape as Finding 1 one level up: same name, different population.

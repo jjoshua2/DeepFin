@@ -1,0 +1,93 @@
+{
+  "shards_listed": 400,
+  "shards_read": 398,
+  "shards_unreadable": 2,
+  "unreadable_detail": [
+    "shard_006457.zarr: JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
+    "shard_006458.zarr: JSONDecodeError: Expecting value: line 1 column 1 (char 0)"
+  ],
+  "shard_dir": "data/salvage/bt4heads_iter112_20260817/seeds/slot_000/replay_shards",
+  "rows_policy_leg": 728101,
+  "frame_check": {
+    "sf_move_index_legal_under_net_mask": 0.0749799832701683,
+    "sf_move_index_legal_under_sf_mask": 1.0,
+    "n": 728101
+  },
+  "reg_top1_equals_sf_move_index_expected_low": 0.0037523694336414337,
+  "mass_on_regret_top1": {
+    "mean": 0.3980681300163269,
+    "n": 154569,
+    "p10": 0.00034601457882672555,
+    "p25": 0.009728413075208664,
+    "p50": 0.21802783012390137,
+    "p75": 0.8628537654876709,
+    "p90": 0.9943264484405517
+  },
+  "mass_on_regret_top2": {
+    "mean": 0.5788835883140564,
+    "n": 154569,
+    "p10": 0.007483829464763404,
+    "p25": 0.12695279717445374,
+    "p50": 0.707720935344696,
+    "p75": 0.9845420122146606,
+    "p90": 0.9998126149177551
+  },
+  "target_top1_mass": {
+    "mean": 0.740235447883606,
+    "n": 728101,
+    "p10": 0.38522520661354065,
+    "p25": 0.5483366847038269,
+    "p50": 0.7954926490783691,
+    "p75": 0.9696723222732544,
+    "p90": 0.9986621141433716
+  },
+  "legal_count": {
+    "mean": 27.14483070373535,
+    "n": 728101,
+    "p10": 6.0,
+    "p25": 18.0,
+    "p50": 29.0,
+    "p75": 37.0,
+    "p90": 43.0
+  },
+  "surfaced_count": {
+    "mean": 5.599370002746582,
+    "n": 154569,
+    "p10": 4.0,
+    "p25": 6.0,
+    "p50": 6.0,
+    "p75": 6.0,
+    "p90": 6.0
+  },
+  "bind_rate_by_floor": {
+    "0.01": {
+      "regret_top1": 0.25153814801156765,
+      "regret_top2": 0.11029378465280877
+    },
+    "0.02": {
+      "regret_top1": 0.29470333637404655,
+      "regret_top2": 0.1371814529433457
+    },
+    "0.05": {
+      "regret_top1": 0.3609003098939632,
+      "regret_top2": 0.1834067633225291
+    },
+    "0.10": {
+      "regret_top1": 0.4208541169315969,
+      "regret_top2": 0.23024668594608233
+    },
+    "0.20": {
+      "regret_top1": 0.49014356048107965,
+      "regret_top2": 0.2930147701026726
+    },
+    "0.30": {
+      "regret_top1": 0.5370481791303561,
+      "regret_top2": 0.33979646630307503
+    },
+    "0.50": {
+      "regret_top1": 0.6105234555441259,
+      "regret_top2": 0.41805924862035726
+    }
+  },
+  "bind_population": "rows carrying sf_p0_regret with >=2 SURFACED legal entries; masses are the stored policy_target's, NOT the net's output"
+}
