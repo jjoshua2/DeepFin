@@ -54031,3 +54031,82 @@ regression.** Same failure recorded at `d5687700f` (iters 151-162 of the prior r
 Steady-state baseline for this trial is the iters 16-21 band, **~248-266s**.
 ⇒ **Do not open a throughput readout while agents are running**, and do not compare an
 iteration from this window against a clean baseline.
+
+### 2026-08-16 — OUTAGE: WSL2 VM reboot killed the run for 1h48m (iters 54-56 are NOT readable)
+
+**Cause is external to our code, established by measurement rather than inference.**
+`uptime -s` = `2026-08-16 17:57:44`, and `dmesg` line 1 is a fresh
+`Linux version 6.18.33.2-microsoft-standard-WSL2` boot banner at 17:57:43 with only 525
+lines in the buffer — the pre-crash kernel log died with the old VM. Training's last log
+write was **17:51:13** (~6.5 min of VM hang before the reboot); last publish 17:49:13.
+
+**There was NO application traceback of any kind.** A crash leaves one; this left nothing,
+which is the signature of the process being *taken away* rather than failing. Ruled out by
+execution, not assumption: **not OOM** (zero `oom-kill` / `Killed process` entries, 98 GiB
+total, 1.4 GiB in use after reboot), **not disk** (61% used, 1.2 T free). No watchdog was
+running, so nothing auto-recovered.
+
+**Collateral, same minute:** four **zero-length loose objects** appeared in `.git/objects`
+at 17:51 and two replay shards were truncated mid-write (below). One event, three victims.
+
+**Restart 19:39 (user-authorized):** `./scripts/train.sh start` (auto-appends `--resume`),
+PID 27847. Restored `experiment_state-2026-08-16_12-38-11.json` from `checkpoint_000052` of
+trial `dea5e_00000`; full trainer state + PID state restored; `selfplay_resume_inflight_games`
+True; scheduler bounds unchanged; **no reinit warnings**.
+⚑ `salvage_restore_pid_state: True` is CORRECT here and does **not** re-inject the search-gain
+step. That hazard is for salvage restarts from a **donor** pool calibrated under a *different*
+search config; this restored the run's OWN PID state with `gumbel_c_scale` unchanged (frozen
+since 2026-08-09 20:58), so the regret series stays valid.
+
+**Pre-restart verification — reuse this as the template.** `checkpoint_000052` loaded on CPU:
+494 tensors; optimizer with 4 param groups; **unique-storage params 61,444,448** (matches the
+pinned production count — `sum(numel())` = 77,173,088 is the documented weight-tying
+double-count, do not quote it); **zero tensors with NaN/Inf**; `step=99631` matching the last
+published model exactly; `pid_state.json` and `trial_meta.json` parse (`global_iter` 1044).
+`trainer.pt` was byte-size identical to ckpt 51 and written 17:49 — two minutes *before* the
+freeze.
+
+**Replay buffer verified clean at init** (it was mid-`enforce_window` shard deletion when the
+VM died, which was the open risk):
+`buffer init: startup_source=checkpoint seeded=True len(buf)=1496155 capacity=1500000
+tracked_shards=810 total_pos=1496155` — 810 shards vs pre-crash `tracked=810`, and the
+~3k-row deficit is exactly the shards `enforce_window` had already removed. Holdout restored
+2000 rows frozen `generation=2` ruler `v1:full_pass:73ff47d368fbe10e`; era probe 2048/2048 and
+`inwindow_20260816.npz` 2048/2048 both loaded; opponent-strength EMA 344.5759 from checkpoint.
+
+**BUT TWO SHARDS ARE TRUNCATED, AND INIT COULD NOT SEE IT.** `shard_006457.zarr` and
+`shard_006458.zarr` — both written at 17:51 — have **zero-length `.zgroup` and `.zattrs`**
+plus zero-length chunk files. Everything written up to 17:50 (`006449`-`006456`) is intact, so
+the blast radius is exactly the two writes in flight. They surface only on a **shuffle refresh
+draw**, never at init, as
+`WARNING: shuffle refresh failed to load a TRACKED shard ... JSONDecodeError` — the
+task-#11 fix working (counted and reported, not silently dropped).
+⚑ **Measured rate ~1 failure per iteration** (failed=3 across iters 54-56), NOT the "~0.5% of
+draws" first estimated: the sampler is recency-weighted (`recency_exponent=1.0`, newest decile
+0.1899 vs oldest 0.0101) and these are the two **newest** shards, so they are drawn nearly
+every refresh and will age out slowest — ~a day, ~300 warnings. Quarantine by **move-aside**
+(never delete) is recommended; the buffer's own `vanished=` counter shows a disappeared shard
+is an expected category.
+
+**⚑⚑ CONTAMINATION MARKER — iters 54-56 carry NO throughput or PID verdict.**
+`time_this_iter_s`: iter 54 = **1507.0**, iter 55 = **620.4**, against a 248-266s steady-state
+band. Iter 54 spans compile warmup, worker boot and cold selfplay generation, and Ray measures
+from process start. Steps/iter swing the other way for the same reason — views-targeting scales
+steps with ingest, so iter 54 was *starved* at 49 steps (nothing ingested during the outage)
+and iters 55-56 *drained the backlog* at 271 and 223 against a ~88 baseline. Both directions
+are the transient, not a regression.
+Likewise the PID: post-restart winrate runs ~+0.110 high from sampling bias
+([[winrate_spike_restart_sampling_bias]]), so regret 0.0305 -> 0.0309 -> 0.0313 -> 0.0306
+across iters 52-55 carries no verdict. `sf_nodes` pinned at 75000 throughout, so difficulty's
+second axis did not move.
+
+**⚑ PROCESS FAILURE WORTH MORE THAN THE OUTAGE.** For ~1 hour the outage went undetected
+because health was being read off `runs/bt4heads_armB/.../progress.csv` — a **39-hour-stale**
+trial picked by *directory* mtime with no check of the *file's*. Reported "healthy, iter 101,
+244-253 s/iter" while the live trial (`runs/pbt2_small`, `dea5e_00000`) sat dead at iter 53.
+`find runs -name progress.csv -newermt '-2 hours'` was actually run, returned **empty** — the
+whole answer — and was read past. Iter 101 was also reported *twice, 40 minutes apart*, and the
+unchanged number read as stability rather than as a wedge. Detection delayed ~50 min.
+⇒ **Print a progress file's age beside its numbers, identify the live trial by FILE recency
+(`find -printf '%T@ %p' | sort -rn`) never directory order, and treat an unchanged iteration
+count across two checks as a wedge hypothesis to exclude, not a plateau.**
