@@ -97,6 +97,7 @@ from .losses import (
     policy_target_temp_active,
     retemper_main_policy_target,
     search_inclusion_guarantee_tau,
+    warn_if_below_search_inclusion,
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
@@ -2296,13 +2297,18 @@ class Trainer:
   # step, and `replace` re-runs `__post_init__`, so a live `w_sf_policy_floor`
   # edit is validated too instead of arriving raw at the consumer.
         self.w_sf_policy_floor = float(w_sf_policy_floor)
+        self.sf_policy_floor_gumbel_topk = normalize_gumbel_topk(sf_policy_floor_gumbel_topk)
+  # Whether `tau_played` is DERIVED from the search width or PINNED by the yaml.
+  # `sync_search_width` re-derives only the former; a number an operator typed is
+  # theirs to keep, and silently moving it would be a config edit nobody made.
+        self._sf_policy_floor_tau_played_derived = sf_policy_floor_tau_played is None
         self.sf_policy_floor_params = SfPolicyFloorParams.resolve(
             w=self.w_sf_policy_floor,
             delta_cp=sf_policy_floor_delta_cp,
             tau=sf_policy_floor_tau,
             tau_top1=sf_policy_floor_tau_top1,
             tau_played=sf_policy_floor_tau_played,
-            gumbel_topk=sf_policy_floor_gumbel_topk,
+            gumbel_topk=self.sf_policy_floor_gumbel_topk,
         )
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
@@ -2447,13 +2453,54 @@ class Trainer:
   # tau actually installed, so the comparison the guard makes is on the record
   # even in the (normal) case where it does not fire.
         floor = self._loss_kwargs["sf_policy_floor"]
-        guarantee = search_inclusion_guarantee_tau(sf_policy_floor_gumbel_topk)
+        guarantee = search_inclusion_guarantee_tau(self.sf_policy_floor_gumbel_topk)
         print(
             f"[trainer] sf_policy_floor w={floor.w!r} delta_cp={floor.delta_cp!r} "
             f"tau={floor.tau!r} tau_top1={floor.tau_top1!r} "
-            f"gumbel_topk={sf_policy_floor_gumbel_topk!r} "
+            f"tau_played={floor.tau_played!r} "
+            f"gumbel_topk={self.sf_policy_floor_gumbel_topk!r} "
             f"search_inclusion_tau={guarantee!r} "
-            f"guarantees_inclusion={floor.tau >= guarantee}",
+            f"guarantees_inclusion={min(floor.tau, floor.tau_played or 1.0) >= guarantee}",
+            flush=True,
+        )
+
+    def sync_search_width(self, gumbel_topk: object) -> None:
+        """Re-point the SF-policy floor at the LIVE root width.
+
+        ⚑ `gumbel_topk` IS LIVE AND THE FLOOR'S DERIVED `tau_played` WAS NOT.
+        `gumbel_topk` is deliberately NOT in `_STARTUP_ONLY_TRIAL_KEYS` -- the
+        loop re-reads it off `tc` every iteration and it reaches selfplay
+        immediately -- while `tau_played = 1/topk` was resolved ONCE, at
+        construction. A live width edit therefore moved the search and left the
+        collar guaranteeing inclusion in a top-k that no longer exists, and the
+        startup-only machinery structurally could not warn, because the key
+        genuinely IS live for its other consumer. That is this repo's signature
+        defect wearing the opposite mask: not a knob that never arrives, but a
+        DERIVED value that stops tracking the thing it was derived from.
+
+        Called from `trainable_config_ops._sync_trainer_weights`, beside the
+        other per-iteration pushes, so it runs on the same cadence as the edit
+        it is reacting to. A PINNED `tau_played` is never moved -- it is
+        re-CHECKED instead, through the same `warn_if_below_search_inclusion`
+        the config loader uses, so the guard and the criterion cannot drift.
+        """
+        topk = normalize_gumbel_topk(gumbel_topk)
+        if topk == self.sf_policy_floor_gumbel_topk:
+            return
+        previous = self.sf_policy_floor_gumbel_topk
+        self.sf_policy_floor_gumbel_topk = topk
+        floor = self.sf_policy_floor_params
+        if self._sf_policy_floor_tau_played_derived:
+            floor = replace(floor, tau_played=search_inclusion_guarantee_tau(topk))
+            self.sf_policy_floor_params = floor
+        warn_if_below_search_inclusion(
+            tau=floor.tau, tau_played=floor.tau_played, gumbel_topk=topk,
+            context=f"live gumbel_topk edit {previous} -> {topk}",
+        )
+        print(
+            f"[trainer] sf_policy_floor gumbel_topk {previous} -> {topk}: "
+            f"tau_played={self._loss_kwargs['sf_policy_floor'].tau_played!r} "
+            f"(derived={self._sf_policy_floor_tau_played_derived})",
             flush=True,
         )
 

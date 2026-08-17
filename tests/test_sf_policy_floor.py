@@ -255,6 +255,45 @@ def test_top1_can_carry_its_own_floor() -> None:
     assert loss == pytest.approx(expected, abs=1e-6)
 
 
+def test_tau_top1_below_tau_floors_sfs_best_LOWER_when_we_already_picked_it() -> None:
+    """⚑ F5. The MAX rule's asymmetry, executed rather than argued.
+
+    SF's top-1 enters `adaptive` only when our argmax is something ELSE (the
+    strict `regret < our_r` clause excludes a move from beating itself). So with
+    `tau_top1` BELOW `tau`, SF's best move is floored:
+
+    * at `tau_top1` alone when our argmax IS it -- the rows invariant 1 calls
+      the whole mechanism;
+    * at `max(tau, tau_top1)` when our argmax is wrong.
+
+    An earlier docstring claimed `tau_top1 < tau` "cannot pull SF's best move
+    under the floor its F-membership already earns it", which is circular and
+    backwards. Inert at the shipped default (`tau_top1: null -> tau`), so this
+    pins a documented property, not a behaviour anyone currently runs.
+    """
+    tau, tau_top1 = 0.50, 0.10
+
+    # (a) our argmax IS SF's best (index 0), and sits below both thresholds.
+    ours_right = torch.tensor([[0.30, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    p_right = torch.softmax(ours_right, dim=-1)[0]
+    assert int(p_right.argmax()) == 0
+    loss_right, _, _ = floor_loss(_REG, ours_right, tau=tau, tau_top1=tau_top1)
+    # Index 0's threshold is tau_top1 alone; move 1 (10cp) is NOT better than
+    # ours (0cp), so `adaptive` is empty and contributes nothing.
+    assert loss_right == pytest.approx(float(torch.relu(tau_top1 - p_right[0])), abs=1e-6)
+
+    # (b) our argmax is move 2 (30cp, outside the window) -> index 0 joins the
+    # adaptive set and its threshold rises to max(tau, tau_top1).
+    ours_wrong = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]])
+    p_wrong = torch.softmax(ours_wrong, dim=-1)[0]
+    loss_wrong, _, _ = floor_loss(_REG, ours_wrong, tau=tau, tau_top1=tau_top1)
+    expected = float(torch.relu(tau - p_wrong[0]) + torch.relu(tau - p_wrong[1]))
+    assert loss_wrong == pytest.approx(expected, abs=1e-6)
+    # The asymmetry itself, as one comparison: SF's best is floored HIGHER on
+    # the row where we got it wrong.
+    assert max(tau, tau_top1) > tau_top1
+
+
 def test_binding_rate_is_a_row_rate_not_a_move_rate() -> None:
     """Two covered rows, one binding -> 0.5, whatever the per-row move count."""
     regret = _REG.repeat(2, 1)
@@ -426,6 +465,41 @@ def test_the_guard_warns_when_tau_falls_below_the_inclusion_guarantee() -> None:
         SfPolicyFloorParams.resolve(tau=0.02, gumbel_topk=16)
 
 
+def test_the_guard_fires_on_tau_played_the_parameter_it_exists_for() -> None:
+    """⚑ F2. The first version of this guard checked `tau` ONLY.
+
+    `tau` is the RANKING knob at 0.15 -- 2.4x the production guarantee, so it
+    essentially never trips -- while `tau_played`, whose documented sole job IS
+    the inclusion guarantee, was never looked at. `resolve(tau=0.15,
+    tau_played=0.001, gumbel_topk=16)` returned in silence: a guard aimed at the
+    parameter that cannot lose the property and blind on the one that can.
+
+    The realistic trigger is the collar-strength arm: someone sets
+    `sf_policy_floor_tau_played: 0.03` and the collar quietly stops guaranteeing
+    the played move a root-candidate slot.
+    """
+    with pytest.warns(RuntimeWarning, match="sf_policy_floor_tau_played"):
+        SfPolicyFloorParams.resolve(w=1.0, tau=0.15, tau_played=0.001, gumbel_topk=16)
+    with pytest.warns(RuntimeWarning, match="sf_policy_floor_tau_played"):
+        _round_trip({"sf_policy_floor_tau_played": 0.03})
+
+
+def test_the_collar_ablation_is_silent_because_zero_is_an_off_switch() -> None:
+    """`tau_played: 0.0` is the documented ablation arm, not a broken floor.
+
+    ⚑ THE NEGATIVE CONTROL THAT SHAPES THE PREDICATE. Without it the natural
+    `tau_played < guarantee` check would warn on every run of the ablation arm,
+    and a guard that cries on its own control gets filtered out -- which is how
+    a guard stops being read at all. Hence `0 < tau_played < guarantee`.
+    """
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", RuntimeWarning)
+        got = SfPolicyFloorParams.resolve(w=1.0, tau=0.15, tau_played=0.0, gumbel_topk=16)
+    assert got.tau_played == 0.0
+
+
 def test_the_guard_is_silent_while_the_default_tau_still_guarantees_inclusion() -> None:
     """The negative control on the guard: topk 8 and 16 must NOT warn at tau 0.15."""
     import warnings as _warnings
@@ -433,7 +507,11 @@ def test_the_guard_is_silent_while_the_default_tau_still_guarantees_inclusion() 
     for topk in (8, 16):
         with _warnings.catch_warnings():
             _warnings.simplefilter("error", RuntimeWarning)
-            assert SfPolicyFloorParams.resolve(gumbel_topk=topk).tau == 0.15
+            got = SfPolicyFloorParams.resolve(gumbel_topk=topk)
+        assert got.tau == 0.15
+        # ...and the DERIVED collar sits exactly at the guarantee, so it is
+        # never the thing that trips its own guard.
+        assert got.tau_played == pytest.approx(1.0 / topk)
 
 
 # --------------------------------------------------------------------------
@@ -505,61 +583,256 @@ def _round_trip(overrides: dict, *, section: str = "train") -> object:
     return TrialConfig.from_dict(_flat(overrides, section=section))
 
 
-def test_the_config_keys_survive_the_yaml_flatten_and_reach_the_trainer() -> None:
-    """Schema -> flat config -> the object `compute_loss` is actually called with.
+class _TinyModel(torch.nn.Module):
+    """Smallest model a `Trainer` will build an optimizer over.
 
-    Deliberately checked at `trainer_kwargs_from_config`, the CONSUMER's own
-    entry point, rather than at `TrialConfig`: `TrialConfig.from_dict` validates
-    these keys and stores nothing, so asserting there would prove the schema
-    accepts them and say nothing about whether they reach the loss.
+    Same shape as `tests/test_wdl_terminal_outcome.py`'s, which is the in-repo
+    template for a config -> Trainer -> `_loss_kwargs` wiring test.
     """
-    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
 
-    flat = _flat({
+    def __init__(self) -> None:
+        super().__init__()
+        self.head = torch.nn.Linear(4, 4, bias=False)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        del x
+        return {
+            "policy": self.head.weight[:1],
+            "wdl": torch.zeros((1, 3), dtype=torch.float32),
+        }
+
+
+# The core keys every `Trainer` needs, kept OUT of the section under test so a
+# `selfplay:` override cannot smuggle `lr` into the selfplay allowlist.
+_TRAINER_CORE = {"device": "cpu", "lr": 1e-3, "no_amp": True}
+
+
+def _trainer_flat(overrides: dict, *, section: str = "train") -> dict:
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    cfg: dict = {"train": dict(_TRAINER_CORE)}
+    cfg.setdefault(section, {}).update(overrides)
+    return flatten_run_config_defaults(cfg)
+
+
+def _trainer(overrides: dict, tmp_path, *, section: str = "train"):
+    from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
+
+    ctor = trainer_kwargs_from_config(
+        _trainer_flat(overrides, section=section), log_dir=tmp_path,
+    )
+    return Trainer(_TinyModel(), prefetch_batches=False, **ctor)
+
+
+# ⚑ THE TEST THIS SECTION REPLACED WAS THE HAZARD ITS OWN SUBJECT WARNS ABOUT.
+# It stopped at `trainer_kwargs_from_config` and then called
+# `SfPolicyFloorParams.resolve(...)` in the test body -- "resolve, then re-derive
+# at the call site", reproduced inside the test written to prevent it. Its name
+# said "reach the trainer" and it never constructed one, so an independent
+# reviewer's mutants that made `Trainer.__init__` ignore the configured `tau`,
+# `delta_cp` or `tau_played`, that deleted the `_loss_kwargs` key outright, and
+# that swallowed the live weight push ALL SURVIVED. Everything below asserts on
+# the object `compute_loss` is actually handed, against LITERAL expected values.
+
+
+def test_the_yaml_keys_reach_the_loss_call(tmp_path) -> None:
+    """config -> Trainer -> `_loss_kwargs` -> `compute_loss`, end to end.
+
+    `_loss_kwargs` is the dict the training step splats into `compute_loss`
+    (both call sites), so the object under that key IS what the loss receives.
+    Compared against a literal `SfPolicyFloorParams`, never against a second
+    call to `resolve`: a re-derivation in the test body agrees with a trainer
+    that ignored the config entirely.
+    """
+    trainer = _trainer({
         "w_sf_policy_floor": 0.41,
         "sf_policy_floor_delta_cp": 35.0,
-        "sf_policy_floor_tau": 0.08,
-        "sf_policy_floor_tau_top1": 0.2,
-        "sf_policy_floor_tau_played": 0.05,
-    })
-    kw = trainer_kwargs_from_config(flat)
-    assert kw["w_sf_policy_floor"] == 0.41
-    assert kw["sf_policy_floor_delta_cp"] == 35.0
-    assert kw["sf_policy_floor_tau"] == 0.08
-    assert kw["sf_policy_floor_tau_top1"] == 0.2
-    assert kw["sf_policy_floor_tau_played"] == 0.05
-    resolved = SfPolicyFloorParams.resolve(
-        w=kw["w_sf_policy_floor"],
-        delta_cp=kw["sf_policy_floor_delta_cp"],
-        tau=kw["sf_policy_floor_tau"],
-        tau_top1=kw["sf_policy_floor_tau_top1"],
-        tau_played=kw["sf_policy_floor_tau_played"],
-        gumbel_topk=kw["sf_policy_floor_gumbel_topk"],
+        "sf_policy_floor_tau": 0.31,
+        "sf_policy_floor_tau_top1": 0.22,
+        "sf_policy_floor_tau_played": 0.09,
+    }, tmp_path)
+
+    assert trainer._loss_kwargs["sf_policy_floor"] == SfPolicyFloorParams(
+        w=0.41, delta_cp=35.0, tau=0.31, tau_top1=0.22, tau_played=0.09,
     )
-    assert (resolved.tau, resolved.tau_top1, resolved.tau_played) == (0.08, 0.2, 0.05)
 
-
-def test_the_trainer_reads_the_trials_own_gumbel_topk() -> None:
-    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
-
-    kw = trainer_kwargs_from_config(_flat({"gumbel_topk": 8}, section="selfplay"))
-    assert kw["sf_policy_floor_gumbel_topk"] == 8
-
-
-def test_the_defaults_are_off_and_the_collar_is_at_the_guarantee() -> None:
-    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
-
-    kw = trainer_kwargs_from_config(_flat({}))
-    assert kw["w_sf_policy_floor"] == 0.0
-    resolved = SfPolicyFloorParams.resolve(
-        w=kw["w_sf_policy_floor"],
-        tau=kw["sf_policy_floor_tau"],
-        tau_played=kw["sf_policy_floor_tau_played"],
-        gumbel_topk=kw["sf_policy_floor_gumbel_topk"],
+    # And the dict as a whole is accepted by the function it is splatted into
+    # AND the configured SHAPE reaches the arithmetic. Presence of the key would
+    # be satisfied by a trainer that forwarded an all-defaults object, which is
+    # exactly reviewer mutant R4; the inequality below is not.
+    outputs, batch = _tiny_batch()
+    got = compute_loss(outputs, batch, **trainer._loss_kwargs)
+    # Built as a plain copy rather than a `{**kw, "k": v}` literal: the literal
+    # widens every value's inferred type to a union and basedpyright then
+    # rejects the splat against `compute_loss`'s real signature.
+    default_kwargs = dict(trainer._loss_kwargs)
+    default_kwargs["sf_policy_floor"] = SfPolicyFloorParams()
+    defaults = compute_loss(outputs, batch, **default_kwargs)
+    assert float(got["sf_policy_floor_sum"].detach()) != float(
+        defaults["sf_policy_floor_sum"].detach()
     )
-    assert resolved.w == 0.0
-    assert resolved.tau == pytest.approx(SF_POLICY_FLOOR_TAU_DEFAULT)
-    assert resolved.tau_played == pytest.approx(search_inclusion_guarantee_tau(16))
+    assert float(got["total"].detach()) != float(defaults["total"].detach())
+
+
+def test_the_defaults_reach_the_loss_call_and_are_off(tmp_path) -> None:
+    """An empty config must not enable the floor on the production path."""
+    floor = _trainer({}, tmp_path)._loss_kwargs["sf_policy_floor"]
+    assert floor == SfPolicyFloorParams(
+        w=0.0,
+        delta_cp=20.0,
+        tau=SF_POLICY_FLOOR_TAU_DEFAULT,
+        tau_top1=SF_POLICY_FLOOR_TAU_DEFAULT,
+        tau_played=search_inclusion_guarantee_tau(DEFAULT_GUMBEL_TOPK),
+    )
+
+
+def test_the_collar_default_follows_the_trials_own_gumbel_topk(tmp_path) -> None:
+    """`tau_played: null` resolves against the SEARCH's width, through the Trainer."""
+    floor = _trainer({"gumbel_topk": 8}, tmp_path, section="selfplay")._loss_kwargs[
+        "sf_policy_floor"
+    ]
+    assert floor.tau_played == pytest.approx(0.125)
+
+
+def test_a_live_weight_push_reaches_the_loss_kwargs(tmp_path) -> None:
+    """`w_sf_policy_floor` rides `TRAINER_WEIGHT_KEYS`; the SHAPE must not move.
+
+    `_apply_lr_gamma_weights` pushes by `setattr`, and `_loss_kwargs` re-stamps
+    the attribute onto the frozen params with `replace`. Asserted at
+    `_loss_kwargs`, not at the attribute: a trainer that accepts the push and
+    never forwards it is exactly the defect this PR is about, and reading back
+    `trainer.w_sf_policy_floor` cannot see it.
+    """
+    from chess_anti_engine.tune.trainable_config_ops import _apply_lr_gamma_weights
+
+    trainer = _trainer({"sf_policy_floor_tau": 0.31}, tmp_path)
+    assert trainer._loss_kwargs["sf_policy_floor"].w == 0.0
+
+    _apply_lr_gamma_weights(trainer, {"w_sf_policy_floor": 0.77}, rescale_current_lr=True)
+    pushed = trainer._loss_kwargs["sf_policy_floor"]
+    assert pushed.w == 0.77
+    # The shape is startup-only and must survive the weight push untouched.
+    assert pushed.tau == 0.31
+
+
+def test_a_live_weight_push_is_range_validated(tmp_path) -> None:
+    """The `setattr` path has no validator; `replace` in `_loss_kwargs` is it."""
+    from chess_anti_engine.tune.trainable_config_ops import _apply_lr_gamma_weights
+
+    trainer = _trainer({}, tmp_path)
+    _apply_lr_gamma_weights(trainer, {"w_sf_policy_floor": -1.0}, rescale_current_lr=True)
+    with pytest.raises(ValueError, match="w_sf_policy_floor"):
+        _ = trainer._loss_kwargs
+
+
+def test_a_live_gumbel_topk_edit_re_points_the_derived_collar(tmp_path) -> None:
+    """F3: `gumbel_topk` is LIVE and `tau_played = 1/topk` was frozen at launch.
+
+    The derived collar must follow the search width, or it goes on guaranteeing
+    inclusion in a top-k that no longer exists -- silently, because the key is
+    genuinely live for selfplay and the startup-only machinery cannot flag it.
+    """
+    trainer = _trainer({"gumbel_topk": 16}, tmp_path, section="selfplay")
+    assert trainer._loss_kwargs["sf_policy_floor"].tau_played == pytest.approx(0.0625)
+
+    # Narrowing to 4 also puts the (undERIVED) ranking tau under the new
+    # guarantee, so the guard fires on THAT key -- asserted, not leaked.
+    with pytest.warns(RuntimeWarning, match="sf_policy_floor_tau="):
+        trainer.sync_search_width(4)
+    assert trainer._loss_kwargs["sf_policy_floor"].tau_played == pytest.approx(0.25)
+    # The ranking knob is NOT derived and must not move with the width.
+    assert trainer._loss_kwargs["sf_policy_floor"].tau == pytest.approx(
+        SF_POLICY_FLOOR_TAU_DEFAULT,
+    )
+
+
+def test_a_pinned_tau_played_is_re_checked_not_re_pointed(tmp_path) -> None:
+    """A number an operator typed is theirs to keep -- but it gets a warning.
+
+    Narrowing the search raises the guarantee past a pinned collar. Moving the
+    operator's value would be a config edit nobody made; staying silent would be
+    a floor that has quietly stopped guaranteeing anything. So: keep, and warn.
+    """
+    trainer = _trainer({
+        "sf_policy_floor_tau_played": 0.07,
+    }, tmp_path)
+    assert trainer._loss_kwargs["sf_policy_floor"].tau_played == pytest.approx(0.07)
+
+    # topk 8 -> guarantee 0.125, which is ABOVE the pinned 0.07 and BELOW the
+    # default tau of 0.15, so exactly one key trips and the assertion cannot be
+    # satisfied by the wrong warning.
+    with pytest.warns(RuntimeWarning, match="sf_policy_floor_tau_played") as caught:
+        trainer.sync_search_width(8)
+    assert len(caught) == 1
+    assert trainer._loss_kwargs["sf_policy_floor"].tau_played == pytest.approx(0.07)
+
+
+def test_the_live_sync_calls_the_width_hook(tmp_path) -> None:
+    """⚑ THE HOOK MUST BE ON THE PER-ITERATION PATH, not merely callable.
+
+    `sync_search_width` existing and being right proves nothing if nothing calls
+    it every iteration -- the shape of every dead knob in this codebase. This
+    drives `_sync_trainer_weights`, the real per-iteration entry point.
+    """
+    from chess_anti_engine.tune.trainable_config_ops import _sync_trainer_weights
+    from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
+
+    trainer = _trainer({"gumbel_topk": 16}, tmp_path, section="selfplay")
+    assert trainer._loss_kwargs["sf_policy_floor"].tau_played == pytest.approx(0.0625)
+
+    flat = _trainer_flat({"gumbel_topk": 8}, section="selfplay")
+    _sync_trainer_weights(
+        trainer, flat, TrialConfig.from_dict(flat),
+        DifficultyState(wdl_regret=0.05, sf_nodes=75000),
+    )
+    assert trainer._loss_kwargs["sf_policy_floor"].tau_played == pytest.approx(0.125)
+
+
+_REQUIRED_METRICS = dict.fromkeys(
+    ("loss", "policy_loss", "soft_policy_loss", "future_policy_loss", "wdl_loss",
+     "sf_move_loss", "sf_move_acc", "sf_eval_loss", "categorical_loss",
+     "volatility_loss", "sf_volatility_loss", "moves_left_loss"), 0.0,
+)
+
+
+def test_the_two_columns_reach_train_metrics() -> None:
+    """The declared take-effect observation must survive to `TrainMetrics`.
+
+    ⚑ RATIOS OF SUMS, so they travel by a different path from the per-batch
+    means and can be half-wired without any loss test noticing. The numerator
+    and denominator here are DIFFERENT numbers (3, 2, 4) so a mutant that
+    divides by the wrong count, or that pairs the wrong sum with the wrong
+    column, cannot land on the right answer by symmetry.
+    """
+    from chess_anti_engine.train.trainer import Trainer
+
+    # `sf_move_acc` is computed by `_build_metrics` from `acc_sums`, not read
+    # from `sums`, so passing it here would collide with its own keyword.
+    loss_sums = {k: v for k, v in _REQUIRED_METRICS.items() if k != "sf_move_acc"}
+    metrics = Trainer._build_metrics(
+        {**loss_sums,
+         "sf_policy_floor_sum": 3.0,
+         "sf_policy_floor_binds_sum": 2.0,
+         "sf_own_regret_rows": 4.0},
+        {}, 1.0,
+    )
+    assert metrics.m_sf_policy_floor == pytest.approx(0.75)
+    assert metrics.sf_policy_floor_binds_frac == pytest.approx(0.5)
+
+
+def test_the_two_columns_reach_the_result_row() -> None:
+    """...and out of `TrainMetrics` into the row an operator actually reads."""
+    from dataclasses import replace as _replace
+
+    from chess_anti_engine.train.trainer import TrainMetrics
+    from chess_anti_engine.tune.trainable_report import _train_metrics_dict
+
+    row = _train_metrics_dict(_replace(
+        TrainMetrics(**_REQUIRED_METRICS),
+        m_sf_policy_floor=0.75, sf_policy_floor_binds_frac=0.5,
+    ))
+    assert row["m_sf_policy_floor"] == pytest.approx(0.75)
+    assert row["sf_policy_floor_binds_frac"] == pytest.approx(0.5)
 
 
 def test_the_round_trip_checks_the_guarantee_against_the_trials_own_topk() -> None:

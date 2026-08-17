@@ -1387,6 +1387,14 @@ def _sync_trainer_weights(
     """
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
 
+    # The SF-policy floor's `tau_played` is DERIVED from `gumbel_topk`, which is
+    # a LIVE selfplay key. Pushed here rather than left to the startup-only
+    # machinery, which structurally cannot warn about it: `gumbel_topk` really is
+    # live for its other consumer, so nothing would have flagged the floor's copy
+    # going stale. `tc.gumbel_topk` is the loop's own re-read of the key, so this
+    # is the same value the search itself will use this iteration.
+    trainer.sync_search_width(tc.gumbel_topk)
+
     # SF target rebuild: construction-time on the Trainer, so it needs an
     # explicit push or a live yaml edit silently waits for the next restart.
     # This is what lets an SfTargetParams change hit the SF-labelled rows
