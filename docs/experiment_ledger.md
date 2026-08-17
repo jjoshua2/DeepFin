@@ -57529,3 +57529,72 @@ pay. This is a COST AVOIDED, measured before the build — the discipline #244 l
 what makes it safe, and safety caps size. Our teacher is wrong on 28.4% of rows and **no
 weighting scheme fixes a wrong label**. A materially bigger policy fix requires a BETTER
 TEACHER (deep re-label, #239/#253), not a cleverer application of the current one.
+
+### 2026-08-17 — ⚑⚑⚑ RETRACTION: THE ARM ORDERING INVERTS ON CENTIPAWNS. ARM A IS BEST BY 3x.
+
+**I retired arms A/B/D three times today on ARGMAX PULL and told the owner to "stop
+proposing regret-proportional policy nudges" (`0e77b0d52`). That was wrong.** The owner
+pushed back: our SF teacher is so much stronger than us that we must HANDICAP it to hold
+winrate at 0.5, so "we need a better teacher" cannot be the blocker; and a teacher right
+even 60% of the time should gain on average when blended with our prior.
+
+He is right, and the error was in MY INSTRUMENT, not in the framing.
+
+**⚑⚑ ARGMAX PULL SCORES TOP-1 IDENTITY AND GIVES ZERO CREDIT FOR PROMOTING A MOVE 5cp FROM
+BEST.** It therefore structurally cannot see the value of any arm that shifts mass without
+flipping the argmax — which is exactly what a regret-weighted arm does. And it penalises
+following a teacher whose disagreements are NEAR-MISSES. Ours are not near-misses: banked
+audit `b04d77eee`, top-1 deep-SF regret, **SF soft target 12.4 cp vs our raw policy 46.9 cp**.
+The teacher is ~3.8x better than us on this exact axis. "The label disagrees with a deep
+ruler on 28.4% of rows" is a TOP-1 IDENTITY statement, NOT a quality statement, and I used
+it as one.
+
+**NEW METRIC — dE[deep cp loss] per unit logit step**, with partial credit. For a step
+`logits + eps*d`: `dE[r]/deps = sum(p*r*d) - (sum p*r)(sum p*d)`, reported negated so higher
+= reduces expected cp. Ruler = the frozen audit set's DEEP MultiPV cp (>=1M nodes,
+MultiPV>=10); unlisted legal moves take the worst-listed regret as a floor (audit convention).
+
+| arm | cp/step | vs C_RANDOM (paired) | frac>0 |
+|---|---|---|---|
+| **A_prod_cp_fill** | **+11.361** | **+13.221** [+12.008,+14.514] *** | **81.4%** |
+| **G_sf_own_ce** | **+7.655** | +9.393 [+8.354,+10.481] *** | 66.0% |
+| B_gated_cp | +4.718 | +6.023 *** | 64.0% |
+| F_adapt100_t0.35 | +4.509 | +3.681 *** | 53.7% |
+| D_wdl_space | +4.153 | +4.951 *** | 65.9% |
+| F_adapt20_t0.35 | +3.865 | +3.024 *** | 53.5% |
+| F_adapt20_t0.15 | +1.239 | +1.067 *** | 49.0% |
+| C_top2_floor | -1.073 | +0.592 *** | 35.0% |
+| E_membership_all | -2.208 | **-0.261** *** | 31.2% |
+| C_RANDOM_ctl | -2.047 | — | 30.7% |
+| N1_shuffled | -3.863 | -2.349 *** | 38.7% |
+| N2_antiprior | -4.253 | -2.685 *** | 32.6% |
+
+**The controls are NEGATIVE** (C_RANDOM -2.05, N1 -3.86, N2 -4.25), so the metric
+discriminates rather than flattering every arm. Arm E (membership-only) is BELOW the random
+control here too — consistent with its other verdicts.
+
+⇒ **ARM A IS THE BEST ARM BY 3x ON CENTIPAWNS, AND IT IS ALREADY IMPLEMENTED**
+(`train/losses.py:890`, weight `w_sf_own_regret: 0.0`). Task #252's original plan — turn it
+on — was better supported than the floor programme I replaced it with.
+
+**TWO CAVEATS, in opposite directions, stated so this is not over-corrected:**
+1. **AGAINST A: it shares a functional form with the ruler.** A's direction is essentially
+   the gradient of "expected cp regret" and the metric is the change in expected cp regret.
+   NOT circular — A uses the SHALLOW label, the ruler is DEEP, and they disagree on 28.4% of
+   top-1s, so A winning MEANS shallow cp is a good proxy for deep cp (the owner's claim).
+   But an arm shaped like the ruler has a structural edge over one shaped differently, and
+   any A-vs-F comparison must carry this caveat.
+2. **FOR THE FLOOR: the two metrics answer different questions and BOTH matter.** Expected-cp
+   is the right lens for a prior that ALLOCATES MCTS SEARCH. Top-1 identity is the right lens
+   for which move is actually played at low sim counts. They disagree, and the disagreement
+   is the finding — neither is fake.
+
+**STATUS CHANGES:**
+- `0e77b0d52`'s "magnitude arms are dead on every population" — **RETRACTED.** True on
+  argmax pull, false on centipawns.
+- `e142810c4`'s "more extreme policy SL is the wrong direction" — **RETRACTED.** G is second
+  best on cp.
+- `1dc29111b`'s negative trust-gate ceiling was computed on ARGMAX PULL and must be
+  **RE-DERIVED on the cp metric before it is cited.** Do not quote it as-is.
+- The floor + collar (#256) is unaffected as a LOW-RISK, GUARANTEED, ~free ply-1 fix; it is
+  no longer the candidate for the BIGGEST fix.
