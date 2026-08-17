@@ -54167,3 +54167,102 @@ unchanged number read as stability rather than as a wedge. Detection delayed ~50
 ⇒ **Print a progress file's age beside its numbers, identify the live trial by FILE recency
 (`find -printf '%T@ %p' | sort -rn`) never directory order, and treat an unchanged iteration
 count across two checks as a wedge hypothesis to exclude, not a plateau.**
+
+## 2026-08-17 — #440 DECISION (Josh): option (c), with (a) as a PRE-COMMITTED follow-up
+
+Answering the open decision from the 2026-08-16 amendment. **Chosen: (c) now — gate on the
+full paired distribution at n=4000 — with (a) (buy ~3.2x the audit set) held as a follow-up
+that fires only on a rule written down BEFORE the arms run, below.** Still nothing launched;
+#440 stays BLOCKED until the two defects below are closed.
+
+Rejected for now: **(b)** lowering the cp cut, because ">300cp" was chosen to mean "where the
+teacher is badly wrong" and a wider cut measures a different question that must not inherit
+this entry's hypothesis [[same_name_different_population]].
+
+### ⚑⚑ DEFECT 1, in my OWN amendment: the 1.7pp resolution was ASSUMED, not measured
+
+The 2026-08-16 amendment computed `half = 1.96*sqrt(d/n)` and quoted **1.7pp** at n=4000. That
+number carries a hidden input: **d = 0.30, the DISCORDANCE rate between the two arms**, which
+was never measured. It cannot be measured from one arm. Recomputed across the plausible range:
+
+| discordance d | half-width at n=4000 |
+|---|---|
+| 0.05 | **±0.69pp** |
+| 0.10 | ±0.98pp |
+| 0.20 | ±1.39pp |
+| 0.30 | ±1.70pp  ← what the amendment quoted |
+| 0.50 | **±2.19pp** |
+
+**A 3.2x spread.** So "the paired half-width is 1.7pp" is not a measured resolution, it is a
+resolution conditional on an unverified assumption — which is the *same* defect the amendment
+was written to correct ("compute the instrument's resolution before setting the threshold").
+I recorded that rule against myself yesterday and then broke it inside the correction.
+Recording it again, in the same place, judged by the same rule.
+
+**Fix, and it costs nothing extra:** the prereg **already runs arm OLD twice** against referee A
+as its reproducibility control. That repeat arm measures **d directly**. Sequencing is therefore
+mandatory and is now part of the gate:
+
+1. Run the repeat arm (OLD vs OLD, referee A). Read the observed discordance `d_obs` and the
+   paired-difference spread.
+2. Compute `half = 1.96*sqrt(d_obs/4000)` from `d_obs`. **Publish it before step 3.**
+3. Choose the pre-committed effect size against that measured half-width, and demonstrate BOTH
+   PASS and KILL land inside the statistic's observed range.
+4. Only then run arm NEW.
+
+A repeat arm that returns `d_obs = 0` means the statistic is degenerate under the null and the
+gate is void — that is a stop, not a green light. (`go nodes N` is deterministic per binary at
+fixed threads, so `d_obs = 0` on OLD-vs-OLD is a live possibility, and it would mean the
+statistic has no null variance to test against on identical binaries.)
+
+### ⚑ DEFECT 2: `cand.sf_soft.top1` is a RANK, not a boolean
+
+Measured on the banked 2000-position dump `data/ruler_ckpt119_20260807/audit_targets_ckpt119_dump.jsonl`:
+
+```
+cand.sf_soft.top1 distinct values: 137, range 0 .. 1000
+   rank 0  n=1291  64.55%      rank 3  n=36   1.80%
+   rank 1  n=31     1.55%      rank 4  n=29   1.45%
+   rank 2  n=29     1.45%      rank 5  n=23   1.15%
+binarised (rank == 0): match rate 0.6455  (1291/2000)
+```
+
+Any McNemar/proportion gate on "top1" is therefore **undefined until the binarisation is
+stated**. The gate now names it explicitly: **`top1_match := (cand.sf_soft.top1 == 0)`**, base
+rate **0.6455**. Writing "top1" alone in a threshold would be the same-name-different-measurement
+failure this ledger keeps logging.
+
+### The (c) statistic, stated exactly
+
+- **Primary:** paired McNemar on `top1_match := (cand.sf_soft.top1 == 0)` over all n=4000,
+  run over the same 2x2 of {referee A adversarial, referee B home} x {arm OLD, arm NEW}, verdict
+  read **only where both referees agree**, INCONCLUSIVE retained as a distinct non-shipping
+  outcome. Effect size set in step 3 above, against the MEASURED half-width.
+- **Secondary, descriptive, explicitly labelled uninformative at this n:** the `>300cp` tail flip
+  count. Its rate is **independently reproduced here at 0.90% (18/2000)**, matching the
+  amendment, so at n=4000 it is ~36 positions and ±17.9pp. Its CI is reported; it decides nothing.
+- **Also reported, not gating:** paired mean `cand.sf_soft.exp` (banked: mean **22.94cp**,
+  sd 69.88, p50 8.8, p95 75.4, p99 262.9). Its resolution needs the paired-difference sd, which
+  the repeat arm also supplies.
+
+### The (a) escalation trigger — pre-committed, written BEFORE any arm runs
+
+Spend the ~3.2x audit-set expansion **iff all three hold**:
+
+1. the full-set primary reads **NULL** (its CI contains 0 at the measured half-width), **and**
+2. the descriptive tail's point estimate favours **NEW**, **and**
+3. that tail direction is **consistent across BOTH referees** (a direction agreed by an
+   adversarial and a home-biased referee is not a single-referee artifact).
+
+Any other combination does **not** buy the resolution. Condition 3 is the load-bearing one: it is
+what stops "the tail hinted at something" from becoming an open-ended compute request, and it is
+cheap because both referees are already in the 2x2. ⚑ **(a) may be spent at most once on this
+question** — if the expanded set is also null, the answer is null and the teacher upgrade is not
+deployed for label quality.
+
+⚑ Deployment remains gated on more than this readout: the upgrade costs a measured **+16.1%
+wallclock per label** with SF already holding 18.3/32 cores, so a PASS is necessary and not
+sufficient — the throughput cost is a separate decision.
+
+**Status: #440 still BLOCKED.** Open before launch: the repeat-arm-first sequencing above, and
+the two `tail_stats.py` / engine-resolution defects already filed on 2026-08-16.
