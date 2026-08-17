@@ -884,6 +884,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # fractions. The fractions are the outage detector (see TrainMetrics).
     "m_sf_own": 0.0, "m_sf_own_regret": 0.0,
     "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
+  # SF-approved-move floor. Read `sf_policy_floor_binds_frac` FIRST: it is the
+  # only one of the pair that separates "the term selected nothing" from "the
+  # net already clears the floor", and it is live at `w_sf_policy_floor: 0.0`.
+    "m_sf_policy_floor": 0.0, "sf_policy_floor_binds_frac": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
   # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
@@ -998,6 +1002,12 @@ def _train_metrics_dict(metrics) -> dict:
         "m_sf_own_regret": float(metrics.m_sf_own_regret),
         "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
         "has_sf_p0_regret_frac": float(metrics.has_sf_p0_regret_frac),
+        # SF-approved-move floor, over the same eligible rows as `m_sf_own_regret`.
+        # `sf_policy_floor_binds_frac` is the take-effect observation: a weight
+        # that reaches the loss and never binds reads exactly like a dead knob on
+        # `m_sf_policy_floor` alone.
+        "m_sf_policy_floor": float(metrics.m_sf_policy_floor),
+        "sf_policy_floor_binds_frac": float(metrics.sf_policy_floor_binds_frac),
         # Desync alarm over the rows training actually consumed. Unlike the
         # sf_rebuild_* pair below it is computed unconditionally, from the
         # batch's own presence flags, so it is readable on every iteration

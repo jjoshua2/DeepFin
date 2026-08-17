@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+import warnings
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import torch
@@ -12,7 +15,13 @@ if TYPE_CHECKING:
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
-from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE, future_regret_field_names
+from chess_anti_engine.train.constants import (
+    DEFAULT_GUMBEL_TOPK,
+    REGRET_TO_Q_SCALE,
+    SF_OWN_REGRET_CAP_CP,
+    future_regret_field_names,
+    normalize_gumbel_topk,
+)
 
 # Game-phase buckets for per-phase loss reporting, by PIECE COUNT — the same
 # definition and the same constant as `eval/audit.py`'s per-phase deep-SF
@@ -554,6 +563,280 @@ def _get_mask(batch: dict[str, torch.Tensor], key: str, *, default: float = 0.0)
     return torch.full((batch["x"].shape[0],), default, device=batch["x"].device)
 
 
+def policy_legal_bool(batch: dict[str, torch.Tensor], *, width: int) -> torch.Tensor | None:
+    """The boolean legal-move support of ``apply_policy_mask_to_logits``.
+
+    Returns ``None`` when the batch carries no ``legal_mask`` at all, which is
+    the same case in which that function returns the logits untouched — every
+    action is then in the softmax's support and the caller must treat every
+    action as legal.
+
+    ⚑ THE `has_legal_mask` CONVENTION IS NOT `_get_mask`'s. A batch WITHOUT the
+    ``has_`` vector is fully masked (``active = 1.0``), while ``_get_mask``
+    would default it to 0.0 and call every action legal. Reading the flag the
+    convenient way would hand this term a support the softmax does not have --
+    illegal moves with a real regret entry could then be floored, which is the
+    one thing the ``regret <= delta_cp/CAP`` window is relied on to prevent.
+    ``tests/test_sf_policy_floor.py`` pins this function against the logit
+    masker's own output rather than against a second reading of the rule.
+    """
+    mask = batch.get("legal_mask")
+    if mask is None:
+        return None
+    aligned = align_policy_mask(mask, width) > 0.5
+    has = batch.get("has_legal_mask")
+    if has is None:
+        return aligned
+    return aligned | (has.unsqueeze(-1) <= 0.5)
+
+
+# Default floor for the SF-approved set. Calibrated, not a round number: see
+# `SfPolicyFloorParams.resolve` for the two separable roles of tau and why this
+# sits ABOVE the search-inclusion guarantee rather than at it.
+SF_POLICY_FLOOR_TAU_DEFAULT = 0.15
+
+
+def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
+    """The smallest tau that GUARANTEES a root-candidate slot: ``1 / topk``.
+
+    The production root sampler (`mcts/gumbel._select_top_m_with_gumbel`) keeps
+    the top ``m = min(topk, n_legal, (sims+1)//2)`` of
+    ``gumbel_scale * Gumbel + log(prior)``. At the production
+    ``gumbel_c_scale = 0.1`` the noise is ~0.13 in log-prob units, so that is
+    very nearly a deterministic top-k by prior -- which makes the floor a RANK
+    criterion with an exact answer. If ``p_i >= tau`` then at most
+    ``floor(1/tau) - 1`` other moves can exceed it (they are disjoint and sum to
+    <= 1), so ``tau >= 1/topk`` puts move ``i`` inside the top-``topk``.
+    Measured on 3000 production rows: MIN (not mean) P(searched) is exactly
+    1.0000 at prior >= 1/16, and 0.1042 at prior >= 0.02.
+
+    ⚑ THE FLOOR IS ON THE RAW PROBABILITY; THE SEARCH SELECTS ON THE TEMPERED
+    ONE (``logits / gumbel_policy_temp``, production 1.5). The two bars coincide
+    at the realized legal-move count (mean 27.3) -- raw ``1/16`` is the smallest
+    raw floor whose whole measured population clears the tempered ``1/16`` bar --
+    but that is a COINCIDENCE OF THIS OPERATING POINT, not an identity.
+    Re-derive it if ``gumbel_policy_temp``, ``gumbel_topk`` or the policy
+    encoding changes.
+    """
+    return 1.0 / float(normalize_gumbel_topk(gumbel_topk))
+
+
+@dataclass(frozen=True)
+class SfPolicyFloorParams:
+    """Resolved, validated parameters of the SF-approved-move probability floor.
+
+    ONE object, resolved once, and the same object the loss consumes -- so the
+    value that gets logged cannot be a second derivation of the value that gets
+    used. (`docs/rl_loop_audit.md`: "announce from the consumer's own
+    parameter". A resolve-and-print that re-derives the default at the call site
+    passes every wiring test we have and is still wrong.)
+
+    ``w`` 0.0 (the default) means the term contributes NOTHING to ``total`` --
+    not "multiplied by zero", see ``compute_loss``. The diagnostic columns are
+    still computed, which is the point: the binding rate is readable before the
+    weight is ever raised.
+    """
+
+    w: float = 0.0
+    delta_cp: float = 20.0
+    tau: float = SF_POLICY_FLOOR_TAU_DEFAULT
+    tau_top1: float = SF_POLICY_FLOOR_TAU_DEFAULT
+    tau_played: float = 1.0 / DEFAULT_GUMBEL_TOPK
+
+    def __post_init__(self) -> None:
+        for name, value, hi in (
+            ("w_sf_policy_floor", self.w, None),
+            ("sf_policy_floor_delta_cp", self.delta_cp, None),
+            ("sf_policy_floor_tau", self.tau, 1.0),
+            ("sf_policy_floor_tau_top1", self.tau_top1, 1.0),
+            ("sf_policy_floor_tau_played", self.tau_played, 1.0),
+        ):
+            val = float(value)
+            bad = not math.isfinite(val) or val < 0.0 or (hi is not None and val > hi)
+            if bad:
+                band = "[0, 1]" if hi is not None else ">= 0"
+                raise ValueError(f"{name} must be finite and {band}, got {value!r}")
+
+    @classmethod
+    def resolve(
+        cls,
+        *,
+        w: float | None = None,
+        delta_cp: float | None = None,
+        tau: float | None = None,
+        tau_top1: float | None = None,
+        tau_played: float | None = None,
+        gumbel_topk: int = DEFAULT_GUMBEL_TOPK,
+    ) -> SfPolicyFloorParams:
+        """Fill the ``None`` defaults, validate, and check the search guarantee.
+
+        ⚑ TAU HAS TWO SEPARABLE ROLES, AND THE DEFAULT SERVES THE SECOND ONE.
+        Partitioning the arm contrast by whether the floor is already inert for
+        SEARCH purposes (rows where our prior on deep-SF's best move already
+        clears ``1/topk``) splits them cleanly:
+
+        * ``tau = 1/gumbel_topk`` (0.0625 at the production topk of 16) is the
+          SEARCH-INCLUSION GUARANTEE -- see ``search_inclusion_guarantee_tau``.
+          BELOW it the guarantee is simply lost.
+        * tau ABOVE that buys RANKING on the rows where inclusion is already
+          satisfied: +0.278 [+0.237, +0.322] against the random-floor control at
+          tau 0.15, +0.548 at 0.35, and 0.0% harmful rows at both -- it costs
+          nothing where we are already right.
+
+        So the default is **0.15**, comfortably above the 0.0625 guarantee, and
+        the derivation survives as a GUARD rather than as the default: a
+        resolved tau BELOW ``1/topk`` warns loudly, naming both numbers. It
+        warns rather than raises because a deliberate sub-guarantee tau is a
+        legitimate experiment -- but a tau that has quietly stopped guaranteeing
+        anything is the "accepted, then silently meaningless" defect this
+        codebase is full of, and it does not get to be silent.
+
+        ⚑ `tau_played` -- THE COLLAR -- DEFAULTS TO THAT GUARANTEE, `1/topk`,
+        because it is doing the opposite job. The floor's mass comes out of every
+        non-member proportionally, and the biggest absolute loser is our own top
+        move; if the move SEARCH ACTUALLY PLAYED lands under `1/topk` it drops out
+        of the root candidate set entirely. Measured on 3072 production rows, the
+        share of rows whose played move is squeezed below the bar by an
+        UNCOLLARED floor: 0.26% at tau 0.10, **2.67% at tau 0.15**, 12.17% at
+        0.35 -- against the 4.03% of rows the floor exists to fix. It would hand
+        back most of its own win. With the collar the squeeze is 0.00% at every
+        tau, and the collar itself fires on 0.81%-12.73% of rows.
+
+        ``gumbel_topk`` is the width the trial ACTUALLY runs with, so callers
+        must pass their own rather than let it default.
+        """
+        resolved_tau = SF_POLICY_FLOOR_TAU_DEFAULT if tau is None else float(tau)
+        guarantee = search_inclusion_guarantee_tau(gumbel_topk)
+        params = cls(
+            w=0.0 if w is None else float(w),
+            delta_cp=20.0 if delta_cp is None else float(delta_cp),
+            tau=resolved_tau,
+            # Falls back to the RESOLVED `tau`, not to the dataclass default, so
+            # `tau_top1: null` tracks an explicit `tau` instead of silently
+            # flooring SF's own best move at a different bar than the rest of F.
+            tau_top1=resolved_tau if tau_top1 is None else float(tau_top1),
+            # The collar's job is exactly "stay a root candidate", so its default
+            # IS the inclusion guarantee -- not `tau`, which is calibrated for a
+            # different job (ranking). 0.0 disables the collar; that is the
+            # ablation arm and it is a clean no-op, not a special case.
+            tau_played=guarantee if tau_played is None else float(tau_played),
+        )
+  # AFTER the range check, deliberately: an out-of-range tau must RAISE, and a
+  # warning emitted first would put "your tau is below the guarantee" on the log
+  # ahead of the error that actually explains the failure.
+        if params.tau < guarantee:
+            warnings.warn(
+                f"sf_policy_floor_tau={resolved_tau!r} is BELOW the root-search "
+                f"inclusion guarantee 1/gumbel_topk={guarantee!r} "
+                f"(gumbel_topk={normalize_gumbel_topk(gumbel_topk)}): a floored move "
+                "is no longer guaranteed a root-candidate slot, so the term stops "
+                "buying the search routing it exists for and becomes a ranking "
+                "nudge only. Raise the tau or lower gumbel_topk if that was not "
+                "the intent.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return params
+
+
+def sf_policy_floor_deficit(
+    probs: torch.Tensor,
+    regret: torch.Tensor,
+    legal: torch.Tensor | None,
+    played_target: torch.Tensor | None = None,
+    *,
+    params: SfPolicyFloorParams,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """One-sided probability floor on SF-approved moves. Returns (deficit, binds).
+
+    ``deficit`` is per-row ``sum_{m in F} relu(tau_m - p_m)``; ``binds`` is the
+    per-row 0/1 indicator that at least one move in ``F`` was actually below its
+    floor. NEITHER is masked to the covered rows -- the caller applies its own
+    row mask, exactly as the other per-sample losses here do.
+
+    The set, recovered from ``sf_p0_regret`` alone (no new shard field):
+
+        top1 = argmin over LEGAL moves of regret          # SF's best
+        F    = {top1} u {m : regret_m <= delta_cp/CAP AND regret_m < regret_ours}
+
+    with ``ours = argmax p``. Three properties, each pinned by a test:
+
+    1. ``top1`` IS IN F UNCONDITIONALLY. That is the whole mechanism: MCTS never
+       expands a move at ~0 prior, so the net never learns why SF's move beats
+       its own. Guaranteeing a small prior gets the move SEARCHED and refutable.
+    2. THE `regret_m < regret_ours` CLAUSE, STRICT. When our argmax already IS
+       SF's best the second set is EMPTY, so ``F = {our own move}`` and the term
+       is either silent (p >= tau) or pushes mass ONTO the move we got right --
+       it can never drag mass off a correct pick. Strict ``<`` because cp scores
+       are integer-quantised and ties are common; ``<=`` would floor a move
+       merely EQUAL to ours.
+    3. ``regret <= delta_cp/CAP`` ALONE EXCLUDES UNSURFACED AND ILLEGAL MOVES.
+       `_build_sf_p0_regret_vector` fills both with ``(worst_surfaced + 1) / 2``,
+       which is ``>= 0.5`` always, against ``delta_cp/CAP = 0.02`` at 20cp. The
+       legality term in ``adaptive`` below is therefore belt-and-braces at the
+       production delta, and load-bearing only if someone sets
+       ``delta_cp >= 500`` -- which is why the test that isolates it does.
+
+    A FOURTH member, the COLLAR, is added when ``played_target`` is given: the
+    argmax of the SEARCH's own policy target, floored at ``tau_played``. It is
+    not part of F -- it is the counterweight. The mass the floor adds comes out
+    of every non-member proportionally and the biggest absolute loser is our own
+    top move, so an uncollared floor squeezes the move search actually PLAYED out
+    of the root candidate set on 2.67% of production rows at ``tau = 0.15``,
+    against the 4.03% it exists to fix. See ``SfPolicyFloorParams.resolve``.
+
+    ⚑ IT IS THE `policy_target` ARGMAX, NOT THE NET'S. The net's argmax is by
+    construction the highest-probability move and essentially cannot be squeezed
+    out; the PLAYED move can, and precisely when search chose something the raw
+    net ranked lower. The two differ often -- the played move matches SF's label
+    best on only 43.0% of rows.
+
+    ⚑ A MOVE IN TWO ROLES GETS ONE FLOOR, AT THE MAX OF ITS THRESHOLDS. The
+    played move can also be SF's top-1, or sit inside the window and beat our
+    pick; summing the thresholds would floor it at their sum, and letting the
+    first one win would silently drop the higher bar. So the per-move threshold
+    is a running MAX and there is exactly one ``relu`` per move. A consequence
+    worth stating: ``tau_top1`` BELOW ``tau`` cannot pull SF's best move under
+    the floor its membership in F already earns it -- a floor is a lower bound,
+    and the binding one is the highest that applies.
+
+    ``legal=None`` means the batch had no legal mask and every action is in the
+    softmax's support (see ``policy_legal_bool``).
+    """
+    if legal is None:
+        legal = torch.ones_like(regret, dtype=torch.bool)
+    thr = params.delta_cp / SF_OWN_REGRET_CAP_CP
+    # Illegal moves are pushed above every real regret (which is in [0, 1]) so
+    # the argmin cannot land on one, and so `our_r` for a row whose argmax is
+    # somehow illegal admits nothing rather than everything.
+    ranked = torch.where(legal, regret, torch.full_like(regret, 2.0))
+    top1 = ranked.argmin(dim=-1, keepdim=True)
+    our_r = ranked.gather(-1, probs.argmax(dim=-1, keepdim=True))
+
+  # The per-move THRESHOLD carries the membership: it is 0.0 for a non-member,
+  # and `relu(0 - p) == 0` for every probability, so no separate selection mask
+  # is needed and a threshold of 0.0 (`tau_played: 0.0`, the collar ablation) is
+  # a clean no-op rather than a branch.
+    adaptive = (regret <= thr) & legal & (regret < our_r)
+    floors = torch.where(adaptive, torch.full_like(probs, float(params.tau)), 0.0)
+    floors = floors.scatter_reduce(
+        -1, top1, torch.full_like(top1, float(params.tau_top1), dtype=probs.dtype),
+        reduce="amax", include_self=True,
+    )
+    if played_target is not None:
+        played = played_target.argmax(dim=-1, keepdim=True)
+  # A row whose policy target carries no mass has no played move to protect
+  # (an absent or masked-out target argmaxes to index 0), so its collar
+  # threshold is 0.0 -- the same no-op the ablation uses.
+        has_target = (played_target.sum(-1, keepdim=True) > 0).to(probs.dtype)
+        floors = floors.scatter_reduce(
+            -1, played, has_target * float(params.tau_played),
+            reduce="amax", include_self=True,
+        )
+    deficit = torch.relu(floors - probs)
+    return deficit.sum(-1), (deficit > 0).any(-1).to(probs.dtype)
+
+
 def terminal_outcome_transfer_taper(
     batch: dict[str, torch.Tensor],
     *,
@@ -773,6 +1056,7 @@ def compute_loss(
     soft_policy_min_tv: float = 0.0,
     policy_target_temp: float = 1.0,
     sf_sparse_params: SfTargetParams | None = None,
+    sf_policy_floor: SfPolicyFloorParams | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute multi-head training loss.
 
@@ -794,6 +1078,12 @@ def compute_loss(
     ADDITIONALLY take, on the same taper. It exists for the offline screen's
     aggressive arm; the SF component is load-bearing supervision, so raising it
     is a training-target experiment in its own right.
+
+    ``sf_policy_floor`` is the SF-approved-move probability floor (see
+    ``SfPolicyFloorParams`` / ``sf_policy_floor_deficit``). ``None`` is the same
+    as the all-default object: weight 0.0, so ``total`` is bit-identical to a
+    build without the term, while ``sf_policy_floor`` / ``sf_policy_floor_binds``
+    are still reported.
 
     ``sf_sparse_params`` switches the ``policy_sf`` loss to sparse CE over
     gathered log-probs (train/sparse_sf_ce.py) for rows carrying sparse
@@ -820,8 +1110,18 @@ def compute_loss(
     # recomputing it per term wastes work every training step.
     masked_base = _apply_legal_mask(base_policy_logits)
 
-    pol_target = align_policy_target(batch["policy_t"], int(base_policy_logits.shape[-1]))
-    pol_target = retemper_main_policy_target(pol_target, temp=float(policy_target_temp))
+    aligned_pol_target = align_policy_target(
+        batch["policy_t"], int(base_policy_logits.shape[-1]),
+    )
+  # Kept UNRETEMPERED for the floor's collar, which needs only the argmax -- the
+  # move search actually played. Retempering is monotone so the argmax is the
+  # same today, but reading the pre-reshape target means the collar cannot start
+  # protecting a different move because someone moved `policy_target_temp`, and
+  # `policy_target_temp` is pinned OFF in eval (see `_eval_loss_kwargs`), which
+  # would otherwise make the collar a different member in train and in eval.
+    pol_target = retemper_main_policy_target(
+        aligned_pol_target, temp=float(policy_target_temp),
+    )
     pol_ce = soft_cross_entropy(masked_base, pol_target)
     zero_loss = torch.zeros_like(pol_ce)
     has_policy = _get_mask(batch, "has_policy", default=1.0)
@@ -882,14 +1182,38 @@ def compute_loss(
     # toward low-regret moves; auto-weighted by how much each position matters
     # (flat positions have tiny regrets -> tiny gradient). Same legal-masked
     # policy_own head as sf_p0_ce, masked to eligible selfplay rows.
+    #
+    # ⚑⚑ THIS IS THE MAGNITUDE ARM, AND IT IS DEAD ON ALL THREE POPULATIONS
+    # TESTED: `sum_m p_m * r_m` scored AT CHANCE, and significantly worse than a
+    # RANDOM floor. `w_sf_own_regret` stays 0.0; do not wire it to anything, do
+    # not change that default, and do not model a new term on its shape. The
+    # floor below is structurally different on purpose -- a one-sided floor on a
+    # MEMBERSHIP set, not a regret-weighted expectation over the whole
+    # distribution, which is what let a confident wrong argmax pay for this
+    # term out of its tail.
     has_sf_p0_regret = _get_mask(batch, "has_sf_p0_regret")
     sf_p0_regret_t = batch.get("sf_p0_regret_t")
+  # One-sided probability FLOOR on the SF-approved moves, on the same head and
+  # the same rows. Complementary to the term above rather than a variant of it:
+  # `sf_own_regret` is a whole-distribution pull that a confident wrong argmax
+  # can pay for out of the tail, while this one only ever ADDS mass, and only to
+  # moves SF ranks at or above the one we picked. Deliberately modest -- it buys
+  # SF's move a SEARCH SLOT so it can be refuted, it is not a policy correction.
+    floor_params = sf_policy_floor if sf_policy_floor is not None else SfPolicyFloorParams()
     if sf_p0_regret_t is not None:
         po_probs = torch.softmax(masked_base, dim=-1)
         reg_vec = align_action_values(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
         sf_own_regret = (po_probs * reg_vec).sum(-1)
+        sf_floor, sf_floor_binds = sf_policy_floor_deficit(
+            po_probs, reg_vec,
+            policy_legal_bool(batch, width=int(base_policy_logits.shape[-1])),
+            aligned_pol_target * has_policy.unsqueeze(-1),
+            params=floor_params,
+        )
     else:
         sf_own_regret = zero_loss
+        sf_floor = zero_loss
+        sf_floor_binds = zero_loss
 
   # DIAGNOSTIC ONLY — hard one-hot CE against the recorded game result. The
   # optimizer never sees this term (see ``blended_wdl_ce`` below, which is the
@@ -1143,6 +1467,15 @@ def compute_loss(
     sf_own_regret_sum, sf_own_regret_rows = masked_sum_and_count(
         sf_own_regret, sf_p0_regret_base,
     )
+    m_sf_policy_floor = masked_mean(sf_floor, sf_p0_regret_base)
+  # BINDING RATE, the observation that separates "the weight reached the loss"
+  # from "the term did something". A floor that never binds is a weight
+  # multiplied into a structural zero -- accepted, threaded, and silently
+  # inert, which is this repo's signature defect. Both columns divide by
+  # `sf_own_regret_rows`, the SAME count, because they are masked by the SAME
+  # tensor; a second count derived here could disagree with it.
+    sf_policy_floor_sum, _ = masked_sum_and_count(sf_floor, sf_p0_regret_base)
+    sf_policy_floor_binds_sum, _ = masked_sum_and_count(sf_floor_binds, sf_p0_regret_base)
     net_rows = net_mask.to(torch.float32).sum()
     sf_no_multipv_rows, sf_multipv_checked_rows = sf_multipv_presence_counts(
         batch, has_sf_wdl=has_sf_wdl,
@@ -1208,6 +1541,19 @@ def compute_loss(
         + float(w_moves_left) * m_ml
     )
 
+  # ⚑ ADDED ONLY WHEN THE WEIGHT IS NON-ZERO, unlike every term above, and that
+  # is deliberate on two counts. (1) INERTNESS IS EXACT: at the default 0.0 the
+  # expression for `total` is the one that existed before this term, so the
+  # objective is bit-identical rather than identical-up-to-a-`+ 0.0`. (2) `0.0 *
+  # x` IS NOT ZERO FOR EVERY `x`: a NaN or inf leaking out of the floor would
+  # poison `total` through a weight that is supposed to mean "off" -- the same
+  # shape as "a clamp is not a validator", where min/max quietly propagate NaN
+  # while the guard's own counter reads healthy. The diagnostic columns below
+  # are computed either way, so switching the weight on cannot be the first time
+  # anyone sees what the term does.
+    if float(floor_params.w) != 0.0:
+        total = total + float(floor_params.w) * m_sf_policy_floor
+
   # Reported value-loss names (docs/rl_loop_audit.md I7):
   #   wdl_ce / blended_wdl_ce -> the SAME tensor, the loss the optimizer sees.
   #     `wdl_ce` is the name people reach for (it becomes the `wdl_loss`
@@ -1235,6 +1581,15 @@ def compute_loss(
   # Mapped to the m_sf_own / has_sf_p0_frac columns in train/trainer.py.
         "sf_own_ce_sum": sf_own_ce_sum,
         "sf_own_rows": sf_own_rows,
+  # SF-approved-move floor. `sf_policy_floor` is the per-batch masked mean (the
+  # column that is comparable to `sf_own_regret`); the two SUMS below feed the
+  # row-weighted `m_sf_policy_floor` / `sf_policy_floor_binds_frac` columns, over
+  # the SAME `sf_own_regret_rows` denominator. Read the BINDING RATE first: the
+  # mean can fall either because the net learned to clear the floor or because
+  # the term stopped selecting anything, and only the rate tells those apart.
+        "sf_policy_floor": m_sf_policy_floor,
+        "sf_policy_floor_sum": sf_policy_floor_sum,
+        "sf_policy_floor_binds_sum": sf_policy_floor_binds_sum,
         "sf_own_regret_sum": sf_own_regret_sum,
         "sf_own_regret_rows": sf_own_regret_rows,
         "net_rows": net_rows,

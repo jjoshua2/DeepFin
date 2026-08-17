@@ -583,6 +583,16 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "sf_pid_enabled",
     "pause_file",
     "policy_target_temp",
+  # SF-policy-floor SHAPE. Same class as `policy_target_temp` and for a stronger
+  # reason: the three are resolved into ONE frozen, validated
+  # `SfPolicyFloorParams` in the Trainer constructor, so a live edit provably
+  # cannot reach the loss. Listing them turns that silence into a
+  # restart-required warning on the iteration the edit lands. The WEIGHT
+  # `w_sf_policy_floor` is NOT here -- it is live-pushed every iteration.
+    "sf_policy_floor_delta_cp",
+    "sf_policy_floor_tau",
+    "sf_policy_floor_tau_top1",
+    "sf_policy_floor_tau_played",
 })
 
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
