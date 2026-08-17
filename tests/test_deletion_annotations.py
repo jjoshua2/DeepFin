@@ -335,9 +335,9 @@ _LITERAL_SOURCE_GLOBS = (
 # must not make the live production config the file unrelated PRs have to edit":
 # a PR that adds a consumer edits this file, never `configs/pbt2_small.yaml`.
 KEY_LITERAL_SURFACES: dict[str, tuple[str, ...]] = {
-    "adjusted_wdl_regret_cap": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
-    "adjusted_wdl_regret_scale": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
-    "adjusted_wdl_regret_source": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
+    "adjusted_wdl_regret_cap": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
+    "adjusted_wdl_regret_scale": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
+    "adjusted_wdl_regret_source": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
     "bootstrap_dir": ("chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
     "bootstrap_max_positions": ("chess_anti_engine/utils/config_yaml.py",),
     "bootstrap_train_steps": ("chess_anti_engine/utils/config_yaml.py",),
@@ -347,19 +347,19 @@ KEY_LITERAL_SURFACES: dict[str, tuple[str, ...]] = {
     "gpbt_quantile_fraction": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
     "gpbt_resample_probability": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
     "gpbt_winner_weight": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
-    "lr_T0": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
-    "lr_T_mult": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
+    "lr_T0": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
+    "lr_T_mult": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
     "min_replay_size": ("chess_anti_engine/utils/config_yaml.py",),
     "no_amp": ("chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
     "opening_fen_prob": ("chess_anti_engine/tune/distributed_runtime.py", "chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py", "chess_anti_engine/worker.py", "scripts/loop_health.py"),
     "pb2_perturbation_interval": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
     "replay_sf_gap_priority_weight": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
-    "resid_channel_balance_weight": ("chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
-    "resid_channel_dropout": ("chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
+    "resid_channel_balance_weight": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
+    "resid_channel_dropout": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
     "search_optimizer_choices": ("chess_anti_engine/run.py", "chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
-    "sf_search_dampen_sf_high": ("chess_anti_engine/config_keys.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
-    "sf_search_dampen_sf_low": ("chess_anti_engine/config_keys.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
-    "sf_wdl_temperature": ("chess_anti_engine/config_keys.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_report.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
+    "sf_search_dampen_sf_high": ("chess_anti_engine/config_keys.py", "chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
+    "sf_search_dampen_sf_low": ("chess_anti_engine/config_keys.py", "chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
+    "sf_wdl_temperature": ("chess_anti_engine/config_keys.py", "chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_report.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
     "shared_shards_dir": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
     "use_nla": ("chess_anti_engine/arena.py", "chess_anti_engine/model/__init__.py", "chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
 }
@@ -395,6 +395,21 @@ MODULE_LEVEL_KEY_COLLECTIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("chess_anti_engine/run.py", "_TUNE_CONFIG_DENYLIST"): ("search_optimizer_choices",),
     ("chess_anti_engine/tune/trainable_config_ops.py", "_DRIVER_LAUNCH_FIXED_KEYS"): ("gpbt_inertia_weight", "gpbt_quantile_fraction", "gpbt_resample_probability", "gpbt_winner_weight", "pb2_perturbation_interval", "search_optimizer_choices"),
     ("scripts/audit_realized_config.py", "_RECO_SERVER_RESOLVED"): ("games_per_iter_start",),
+  # The RECORDED OUTPUT of `trainer_kwargs_from_config`, not a set of yaml reads.
+  # Every member is a resolved trainer kwarg, and the resolver supplies each one
+  # from its own default when the yaml omits it — which is why the pin names keys
+  # this config does not set. Absence cannot change what the consumer does, so it
+  # is NOT presence-requiring.
+  # ⚑ MEASURED 2026-08-16, not argued: the module docstring asserting this is
+  # exactly the kind of prose this file exists to distrust. Re-resolved the live
+  # `configs/pbt2_small.yaml` with these 10 keys deleted — all 10 at once AND one
+  # at a time, so a cancelling pair could not hide — and diffed the full kwargs
+  # dict against the unmodified resolution: no raise, drift NONE, in all 11 runs.
+  # 6 of the 10 are already absent from the live flattened config today; the 2
+  # that are present (`sf_search_dampen_sf_*`) resolve to the same 0.0 either
+  # way, and are RETAINED for `scripts/value_optimism.py` — a different consumer
+  # that genuinely does require presence, which is why they sit in both places.
+    ("chess_anti_engine/eval/lc0_control_trainer.py", "LIVE_TRAINER_PIN"): ("adjusted_wdl_regret_cap", "adjusted_wdl_regret_scale", "adjusted_wdl_regret_source", "lr_T0", "lr_T_mult", "resid_channel_balance_weight", "resid_channel_dropout", "sf_search_dampen_sf_high", "sf_search_dampen_sf_low", "sf_wdl_temperature"),
   # Read off progress.csv / compared against an already-resolved dict, never off
   # the yaml flat dict — so `sf_wdl_temperature` can be deleted despite sitting
   # in both of these.
