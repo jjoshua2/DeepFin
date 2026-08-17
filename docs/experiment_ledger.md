@@ -54798,3 +54798,112 @@ P1 EXACT · P2 EXACT · P3 325/282 vs predicted 326±15 / 284±20 HIT · P4 medi
 downweight that keeps the BT4-endorsed rows. Do not add the `top1_mass` gate. The
 high-confidence not-listed sub-cell (C 0.96, n=25) is the open question and needs a wider
 banked sample before it becomes a rule.**
+
+## 2026-08-17 — `w_sf_own_regret` IS JOSH'S PROPOSAL, IT IS **IMPLEMENTED**, AND ITS ZERO IS **COLLATERAL, NOT A VERDICT**
+
+Prompted by Josh proposing "give a policy boost in training to all moves SF has Q above the one
+we played, with some weight based on how much." **That loss term exists and has existed since
+June.** `train/losses.py:890`:
+
+    sf_own_regret = (po_probs * reg_vec).sum(-1)          # = E_p[SF regret]
+
+Minimising it shifts `policy_own` mass toward every move SF ranks better, weighted **linearly by
+how much** better. It is a SUPERSET of the proposal (it pushes toward SF's best, not merely past
+the played move). **Nothing was changed by this entry. No GPU, no yaml edit, no restart.**
+
+### The state, measured on the live trial (dea5e, iters 131-133)
+
+| | |
+|---|---|
+| `record_sf_p0_regret` | **true** — the signal is recorded |
+| `has_sf_p0_regret_frac` | **0.217** — 21.7% of rows carry it |
+| `m_sf_own_regret` | **0.153** — computed and logged EVERY iteration |
+| `w_sf_own_regret` | **0.0** — and multiplied by zero |
+
+⇒ the term is fully wired, the data is present, the metric is reported, and the weight is zero.
+It is in `TRAINER_WEIGHT_KEYS`, so restoring it is a **live yaml edit with no restart** (the
+08-04 config comment says so explicitly: *"the KILL is a yaml edit to 0.0 with no restart"*).
+
+### ⚑⚑ WHY IT IS ZERO — and it is NOT a verdict on this term
+
+`ed9de8ee9` (2026-08-06, "reduced-SF relaunch bundle") zeroed **FIVE weights in one commit**:
+
+    w_sf_move 0.02->0.0   w_sf_own 0.1->0.0   w_sf_own_regret 0.7->0.0
+    w_sf_eval 0.1->0.0    w_categorical 0.3->0.0
+
+By this project's own **one data-affecting change per readout window** rule, **none of the five
+has an individual reading.** The only arm that ever tested this leg was `R3_ANCHOR3X`
+(`w_sf_own` 0.1→0.3 **and** `w_sf_own_regret` 0.7→2.1), verdict *"held-out no better, which
+kills the anchor lever"* — that kills **RAISING** it from a running 0.7. **Nothing ever tested
+0.7 against 0.0.** [[invalid_verdicts_from_unwired_features]] in its mirror form: a verdict about
+a *dose increase* was inherited as a verdict about the *term*.
+
+### ⚑ TASK #38's BLOCKER HAS CLEARED
+
+The 08-04 config comment set the precondition in so many words: *"RECALIBRATE once coverage
+>= 20% (task #38)."* Coverage is **21.7%**. #38 is now runnable.
+
+### ⚑⚑ CORRECTION TO MY OWN ARITHMETIC, SAME SESSION, BEFORE IT WAS ACTED ON
+
+I told Josh that 0.7 was calibrated at `m_sf_own_regret ~= 0.079` and now reads 0.153, so 0.7
+buys ~1.94x the intended share. **That is the wrong instrument and the conclusion does not
+follow.** The 07-28 pre-registration calibrates on the **realized GRADIENT SHARE**, measured by
+an actual forward/backward:
+
+| | 46M (ckpt233) | 63M (ckpt161) |
+|---|---|---|
+| unweighted share of policy-CE gradient | 9.7% | **5.9%** |
+| weighted share at `w_sf_own_regret 0.7` | ~7% | **4.1%** |
+
+Weighted share is linear in the weight ⇒ the arithmetic answer was `0.07/0.059` ~= **1.2**, i.e.
+the recalibration pointed **UP, not down.** `m_sf_own_regret` is the LOSS VALUE; the gradient is
+`p_i (r_i - E_p[r])` and its norm relative to the policy-CE gradient is not a linear function of
+`E_p[r]`. ⇒ **the recalibration cannot be computed from `m` at all** — it needs a fresh
+forward/backward on the current checkpoint (n~240 rows sufficed last time, CPU, minutes).
+[[a_counter_is_not_the_mechanism_behind_it]]: a reported metric became an argument for setting a
+weight; the branch that actually determines the weight is a different measurement.
+
+### THREE CAVEATS THAT SURVIVE THE RECALIBRATION — carried forward verbatim, they are load-bearing
+
+1. **The ~7% target was never validated as optimal, even on the 46M net.** It was a dose chosen
+   for statistical POWER ("on par with `w_sf_own`, a decisive test rather than a timid one"). **No
+   dose ladder has ever been run on either architecture** ⇒ no point on this curve is known to
+   beat any other. The right shape is a LADDER, not a restore-to-a-number.
+2. **The June win it inherits from was a BUNDLE** — 56.7 -> 49.6 cp (PR #78) moved the sf_p0 CE
+   teacher and the regret teacher TOGETHER. The regret leg's own contribution at any dose has
+   never been isolated.
+3. **"Match the 46M intent" is an assumption imported from a different architecture** and has
+   never been tested on this one.
+
+### ⚑⚑ THE BLOCKER THAT MUST BE FIXED BEFORE THE WEIGHT GOES ABOVE ZERO
+
+`reg_vec` is the **constant-tail** construction: SF's six real regrets plus ONE fitted alpha for
+every other legal move. On the **16.3% of rows whose argmax is outside SF's MultiPV-6 the regret
+values are ~74% INVENTED** [[multipv6_regret_tail_is_fabricated]]. This term puts gradient
+proportional to `r_i` ⇒ **switching it on pushes policy mass by fabricated magnitudes on 16.3% of
+rows.** That is not a tuning concern, it is a correctness one.
+
+⇒ **AND THIS IS EXACTLY WHAT TODAY'S CASCADE SCREENS** (`71e716df7`). The two proposals compose:
+gate the `sf_own_regret` term by `tgt_listed` — full weight where the move is inside SF's six
+(regrets real), downweighted or BT4-adjudicated where it is not (regrets fabricated). That makes
+the term safe to arm AND gives the cascade a concrete consumer instead of an abstract data filter.
+
+### ⚑ AND THE INSTRUMENT NOTE THAT TIES THE WHOLE DAY TOGETHER
+
+The relational-SF6 screen's "reference gradient" `dL/dz_i = p_i (r_i - E_p[r])` **IS the gradient
+of this term.** So the entire 0.9158-cosine analysis — including the verdict that relational
+supervision loses to the constant tail — was measuring fidelity to a loss that is **currently
+switched off.** [[relational_sf6_loses_to_the_constant_tail]]
+
+### Owed before anything is armed, in order
+
+1. Measure the realized gradient share on the CURRENT checkpoint (CPU, ~240 rows). The m-based
+   shortcut is invalid; see the correction above.
+2. Decide the ARM as a dose ladder, not a single value — caveat 1 says no dose is known good.
+3. Gate by `tgt_listed` so the fabricated tail cannot drive gradient.
+4. Readout by a NON-SF judge (C1 ladder) plus a paired arena. ⚑ This term pushes policy toward
+   Stockfish's preferences on 21.7% of rows — the anti-engine ratchet in its strongest form,
+   because it is an active push and not a passive filter. An SF-referenced ruler would score the
+   loss as a gain.
+5. Restart-gated with a revert point. This is a live training-path change; it does not go in
+   mid-run.
