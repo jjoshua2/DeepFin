@@ -57656,3 +57656,73 @@ of the arms. F is kept not for average cp but for the two properties A cannot ha
 ⚑ OPEN: `J_min`/`J_soft` are BOUNDS, not the realized objective. A direct measurement would
 run the actual 100-sim search and read the played move's deep regret. That is the honest
 version of this ruler and it is not yet built.
+
+### 2026-08-17 — ⚑⚑⚑ BOTH ALPHA SWEEPS WERE TAUTOLOGICAL. `a ~ 0.5-0.75` IS RETRACTED.
+
+The owner asked to optimise the A+F mix toward the AVERAGE of BT4-100 and deep SF rather
+than deep SF alone. Built (agent, 8,000-16,000 production rows, BT4-it332 via
+`audit_targets --onnx --sims 100 --dump-per-position --dump-distributions`, realized header
+read not assumed). The experiment answered its own question and then invalidated the prior
+one.
+
+**1. THE RULER IS NOT THE DISPUTED VARIABLE — the consensus idea, properly tested, is a NULL
+with real value.** Deep-alone / BT4-alone / consensus, across 4 scalings, 2 etas and both BT4
+search configs, differ by **<10% in ΔJ and NEVER disagree about the argmax**. ⇒ do not
+re-pick `a` off a consensus ruler; it cannot move the answer.
+
+BT4-100 <-> deep SF Spearman **+0.504 / +0.523** (both-resolve subset) vs the anchors
+BT4<->Ceres +0.821 (retracted as non-independent) and ours<->deep-SF **+0.500**.
+⚑ **BT4's whole-list agreement with deep SF is barely above our OWN net's (+0.52 vs +0.500).**
+It is a strong TOP-1 ruler (top-1 == deep best **64.0-66.4%** vs our **46.0%**; top-1 regret
+**27.9cp** vs our **55.6cp**) and only a mediocre RANKING ruler. The "all legal" correlation
+is inflated: deep SF resolves 7.1 moves and BT4 visits 8.1 of a mean 26.5 legal, so
+everything outside is tied-at-worst and agrees for free.
+
+**2. ⚑⚑⚑ THE FUNCTIONAL, NOT THE RULER, DECIDES — AND EACH ARM WINS UNDER ITS OWN LOSS.**
+
+| functional | optimal `a` | shape |
+|---|---|---|
+| `J_soft` (move drawn ~ prior over the candidate set) | **0.75-1.00** | monotone INCREASING |
+| `J_min` (perfect search within the candidate set) | **0.00** | monotone DECREASING |
+
+Both tight, both clear the random control. Consensus/eta=3 `J_soft`: a=0.00 +0.0133,
+a=0.75 +0.0583, a=1.00 +0.0589, random -0.0025. Same row `J_min`: a=0.00 +0.00274,
+a=1.00 +0.00135, random +0.00015.
+
+**Arm A's loss IS `sum_m p_m r_m`, and `J_soft` is that same expectation restricted to the
+candidate set — so arm A is (to instrument noise) the exact steepest-descent direction of
+J_soft's objective. Symmetrically arm F floors `p_m` to force candidate INCLUSION, which is
+precisely what `J_min` rewards.** Each arm is the gradient of the functional it wins under.
+
+⇒ **NEITHER SWEEP IS EVIDENCE ABOUT WHICH ARM IS BETTER.** `6dd2aff0e`'s `a ~ 0.5-0.75` is
+**RETRACTED**: it is an implicit compromise weight between two self-serving functionals, not
+a measured optimum. ⚑ I flagged this exact shared-form hazard for arm A vs the cp metric in
+`acdae6fa8` and then BUILT `J_soft` WITH THE SAME DEFECT AND DID NOT NOTICE — the same error
+twice in one session. Settling `a` needs an instrument **neither arm is the gradient of**:
+a real 100-sim search after a real training step, or a trained-outcome held-out read. Not a
+directional projection.
+
+**3. ⚑⚑ THE MAIN POLICY TARGET BUYS ~NOTHING, AND THE MECHANISM IS NAMED.**
+The policy-CE step toward `policy_target` alone scores **+0.00004 [-0.00000, +0.00009]** —
+against arm A's marginal +0.00467 at 1/4 the weight. The obvious explanation is REFUTED: the
+direction is NOT exhausted (‖grad‖ **0.201, 4.6x arm A's**; mean L1 |p_ours - policy_target|
+**0.35**), and `policy_target` IS better than our net (top-1 vs deep SF **50.4% vs 46.2%**,
+**48.1cp vs 55.6cp**). It buys nothing because it mostly **SHARPENS toward the move we
+already pick** (80.8% top-1 agreement) — and that move is deep-SF-best only **46%** of the
+time, so gains and losses cancel. Independent mechanistic confirmation of
+`we_are_sharp_and_wrong_not_flat` and of why absorption does not buy Elo.
+
+**4. REDUNDANCY — and it cuts AGAINST arm A.** Cosine with the policy-CE-toward-target
+direction: **arm A +0.374 mean / +0.651 median** (substantially redundant with what
+`w_policy: 1.0` already trains); **arm F +0.037 / -0.000** (essentially ORTHOGONAL — genuinely
+new information). Marginal sweep (arm share 0.25 on top of the policy-CE step) keeps the same
+optimum at 8-12% of standalone magnitude, so the arms ARE additive in effect.
+
+**RIG INTEGRITY (passed):** arm directions taken by autograd through the 8-mutant-verified
+`armF_cost_and_w.py` references, equal to the inline versions to **4.4e-16**, with a mutation
+negative control that correctly fails. BT4 probability mass lands ENTIRELY inside our
+`legal_mask` on all 16,000 rows — the check that would have caught a castling-remap defect.
+16,000/16,000 joined, zero drops.
+**NOT USABLE from that run:** row (c) and the value table are self-graded (the SF cache was
+populated from the same deep labels) — tautological output (top-1 regret 0.0, Brier 0.0000),
+correctly discarded by the agent and NOT reported.
