@@ -24,12 +24,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 
 import chess
 import numpy as np
 import torch
 
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
+from chess_anti_engine.eval.audit_cache import (
+    audit_set_provenance,
+    stamp_summary,
+    write_audit_cache,
+)
 from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -132,10 +138,20 @@ def main() -> None:
           f"P90 {np.percentile(sev, 90):+.3f}  (lower=better)")
 
     if args.dump_per_position:
-        with open(args.dump_per_position, "w", encoding="utf-8") as fout:
-            for rec in dump_recs:
-                fout.write(json.dumps(rec) + "\n")
-        print(f"per-position dump -> {args.dump_per_position}")
+        # ⚑ STAMPED. `paired_compare.require_same_stamp` short-circuits on
+        # `if not a.stamp or not b.stamp`, so an unstamped dump makes the
+        # provenance gate inert — and `scripts/monitor_fen.sh` feeds exactly
+        # this dump to `paired_compare` on every deep cycle. The scoring set
+        # here is the PANEL, so that is what the digest binds to: two panel
+        # dumps built from different panels must not be paired, and the digest
+        # is the only field that can say so (a path string cannot).
+        stamp = write_audit_cache(
+            Path(args.dump_per_position), dump_recs, force=True,
+            extra={"producer": "blindspot_panel.py --dump-per-position",
+                   **audit_set_provenance(Path(args.panel))},
+        )
+        print(f"per-position dump -> {args.dump_per_position} "
+              f"[{stamp_summary(stamp)}]")
 
 
 if __name__ == "__main__":

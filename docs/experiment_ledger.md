@@ -263,6 +263,1059 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## READOUT (2026-08-14) — the MultiPV-6 censored tail is worth **207 cp**, not the 565 cp we assign (α = 0.17)
+
+**⚑ TERMINOLOGY: this is WITHHELD WIDE-SF TRUTH, not ground truth.** Ranks 7–40 are genuinely
+withheld observations, but they are the output of the historical MultiPV-40 search — not deep-SF
+truth and not mathematics. Combined with the MPV40≠MPV6 caveat below, keep the wording precise.
+
+**This is the answer the CAST pricing was withdrawn for.** No CAST, no played-move
+proxy, no calibration inversion: take the wide-MultiPV era's own labels, hide everything below
+rank 6, and score the candidate tail representations against the values that were hidden.
+Instrument: `scratchpad/tail_screen.py` (to be productionised as
+`scripts/tail_censor_screen.py`). Population: `d2003` / `cdb96` / `0f888`, last 10 shards each,
+**n = 8,246 rows** carrying an exact P0-adjacent wide label.
+
+**Policy-weighted hidden-tail regret** — the quantity the loss actually integrates,
+`sum_{a in tail} p(a)·r(a)`:
+
+| representation | value | bias vs truth |
+|---|---|---|
+| **TRUE (revealed ranks 7–40)** | **206.6 cp** | — |
+| `r_6` censor (α = 0, the audit ruler's rule) | 131.0 cp | **−75.7 cp** |
+| **current midpoint (α = 1, `finalize`'s rule)** | **565.5 cp** | **+358.8 cp** |
+| maximal (α = 2) | 1000 cp | — |
+
+⇒ **FITTED α = 0.174** (per-position median 0.145, IQR [0.046, 0.365]; 339 degenerate
+`1−r_6 < 0.05` rows suppressed). **The current midpoint overstates the censored tail by
+2.74×**, and both conventions are biased in OPPOSITE directions with the midpoint ~4.7× the
+larger error. The pre-registered `[0, 2]` range mattered: α landed at 0.17, but the fit had to
+be free to exceed 1 for that to carry information.
+
+**The rank curve is why a flat imputation cannot work** — regret rises smoothly with rank while
+policy mass collapses:
+
+| rank | mean regret | mean policy mass |
+|---|---|---|
+| 7 | 186 cp | **0.0277** |
+| 10 | 237 cp | 0.0146 |
+| 15 | 311 cp | 0.0057 |
+| 31 | 524 cp | 0.0008 |
+| 40 | 635 cp | **0.00006** |
+
+The assigned 565 cp is roughly correct for rank ~34 — a rank that essentially never carries
+probability. ⚑ **The rank>40 coverage limit is empirically nil:** policy mass on legal moves the
+wide label never scored is **1.1e-4**, because MultiPV 40 covered **98.3% of legal moves**
+(median 100%). This screen therefore sees essentially the whole tail, not a near slice.
+
+**⚑ METHOD FAILURE CAUGHT BY ITS OWN DIAGNOSTIC — the first run of this screen was WRONG.**
+It weighted row *t*'s policy by row *t*'s OWN `sf_multipv_raw`, which describes the position
+AFTER row *t*'s move. Symptoms: a coverage fraction of **1.04** (structurally impossible) and
+**90.6%** of policy mass on "unscored" moves. Corrected by the P0 shift — SF's read of THIS
+position is the PREVIOUS ply's block — after which coverage reads 0.983 and unscored mass
+1.1e-4. The pre-fix numbers (TRUE 295 cp, α = 0.37) are VOID. Report an impossible-valued
+diagnostic next to every headline; this one caught a wrong result before it was banked.
+
+### ⚑⚑ RE-RUN UNDER THE NET'S OWN PRIOR — the training-relevant weighting. VERDICT: REAL DEFECT.
+
+`w_sf_own_regret` is **`sum(softmax(legal-masked policy_own) * r)`** (`train/losses.py:888-890`)
+— the net's OWN prior, **not** the stored `policy_target`. The first pass above weighted by
+`policy_target`, which is the search-target answer, not the one the auxiliary experiences.
+Re-run with `data/tail_screen_20260814/checkpoint_000218` (`5ce02`, Aug 12), n = 5,193:
+
+| representation | value | bias |
+|---|---|---|
+| TRUE (withheld wide-SF) | **206.4 cp** | — |
+| `r_6` censor (α = 0) | 129.9 cp | −76.5 cp |
+| current midpoint (α = 1) | 564.9 cp | **+358.5 cp** |
+
+**α = 0.1759 under the prior against 0.1741 under the MCTS target** — the answer is essentially
+INSENSITIVE to which distribution weights it. That is a robustness result worth having: the
+2.74× is not an artifact of the weighting choice.
+
+**GRADIENT FIDELITY.** Matching a scalar mean does not mean inducing the right gradient. For
+`L = p·r` the logit gradient is `dL/dz = p ⊙ (r − E_p[r])`, so with wide labels a
+full-information reference is computable and each censor can be scored against it:
+
+| variant | cos sim | rel L2 (pooled) | rel L2 (median) | tail pressure | vs TRUE |
+|---|---|---|---|---|---|
+| TRUE | 1.0000 | 0 | 0 | 0.010638 | 1.00× |
+| `r_6` censor | 0.8681 | 0.5288 | 0.1988 | 0.005270 | 0.50× |
+| **midpoint (live rule)** | **0.8552** | **1.2681** | **1.5390** | 0.041118 | **3.87×** |
+| fitted α | **0.9023** | **0.4940** | 0.2697 | 0.011575 | 1.09× |
+
+⇒ **The live midpoint's error is LARGER THAN THE GRADIENT ITSELF (pooled rel L2 = 1.27)** and it
+applies **3.87× the true pressure** pushing mass off the censored tail. `r_6` errs the other way
+at 0.50×. Fitted α lands at 1.09× with less than half the midpoint's L2.
+
+**⚑ TWO DIFFERENT α's, AND THEY NEARLY COINCIDE.** `α = 0.1759` above was fitted to match the
+policy-weighted E[regret]. That is not the same objective as matching the GRADIENT, so the
+gradient-optimal α was fitted separately — and it is closed form, because `g(α)` is LINEAR in α:
+with `u = 1_hidden · (1−r_6)/2`, `r(α) = r_0 + αu` (r_0 = tail filled at `r_6`), hence
+`g(α) = g_0 + α·d` with `d = p ⊙ (u − p·u)`, and the pooled least-squares optimum is
+`α_grad = Σ⟨d, g_true − g_0⟩ / Σ⟨d, d⟩`. No search.
+
+| α | value | cos sim | rel L2 (pooled) | tail pressure vs TRUE |
+|---|---|---|---|---|
+| `α_value` (matches E[regret]) | 0.1759 | 0.9023 | 0.4940 | 1.09× |
+| `α_grad` (least-squares on the gradient) | **0.1408** | 0.9054 | 0.4919 | **0.97×** |
+
+Unclipped, so the `[0,2]` bound never bound. **Optimising directly for the gradient buys almost
+nothing** — cosine 0.9023 → 0.9054, pooled L2 0.4940 → 0.4919. ⇒ **one scalar α in ~0.14–0.18
+serves both objectives**, and the distinction is not worth carrying in the design. (`α_grad` is
+the smaller of the two because the least-squares weighting emphasises rows with more hidden
+mass.) Both are ~6× below the live midpoint's α = 1.
+
+⚑ **AND THE CEILING IS IRREDUCIBLE, WHICH IS THE ACTIONABLE PART.** Even at the
+gradient-OPTIMAL α, cosine tops out at **0.905**. The residual ~0.095 is not a mis-fitted α —
+it is what a CONSTANT tail costs, because one number cannot separate rank 7 (186 cp) from rank
+40 (635 cp). ⇒ **Do not tune α further.** A better constant is not the answer.
+
+⚑⚑ **BUT DO NOT READ THE RANK CURVE AS "IMPLEMENT RANK-DECAYING REGRET FOR RANKS 7+".**
+**Hidden SF rank does not exist at live MultiPV 6.** The historical MPV40 data knows an omitted
+move was rank 7 rather than rank 30; production MPV6 knows only that the move was not surfaced.
+The rank curve DIAGNOSES why a constant fails — it is not a usable target. Anyone proposing a
+rank-shaped tail must first say where the rank comes from at label time. The implementable
+candidates are:
+- a **prior-aware / residual** tail, where unseen moves keep the NETWORK's own ordering
+  (`p_teacher(a) ∝ p_base(a)·exp(−β r)` with one shared censored value, so the tail's relative
+  order is the student's and is never attributed to Stockfish);
+- an **adaptive common α** driven by observable ROOT features (`r_6`, legal count, entropy,
+  phase) — only if the real-MPV6 panel shows it beats a fixed α;
+- **buying the information**: targeted `searchmoves` / ΔQ queries on student-important moves,
+  which is the only option that actually creates the missing rank knowledge.
+
+(An earlier revision of this section closed with "the answer is a rank-decaying tail". That
+line is **retracted** by the paragraph above: it named a target that cannot be built from
+production labels. What survives it is the measurement — fitting α buys the aggregate pressure,
+not the per-action direction, with cosine capped at 0.855–0.902 for all three constants.)
+
+⚑ **The pooled statistic is the reportable one.** The per-row mean relative L2 read **4557** for
+the midpoint: rows where `‖g_true‖ ≈ 0` divide by near-zero and one dominated the average.
+Pooled `sqrt(Σ‖Δ‖² / Σ‖g_true‖²)` and the median are both reported.
+
+**What this does NOT establish.**
+1. The pinned net is **Aug 12**, two days stale, because the live trial had no checkpoint and
+   `runs/pbt2_small/best_model.pt` is from
+   **2026-04-14** and must not be used as "current" [[best_model_ruler_mixing]]. The checkpoint
+   was copied OUT of the tune dir because Ray prunes.
+2. **MultiPV 40 truncated to 6 is not a real MultiPV 6 search.** Width changes root-search
+   allocation, so this answers "given a top-6 cutoff, how should the unknown be represented"
+   and NOT "what does today's MPV6 fail to surface". The calibration panel for that is a few
+   hundred current positions run at production-shaped ~200k MPV6 against a wide search.
+3. Positions are the wide-label era's distribution.
+
+### ⚑⚑ SUPERSEDED 2026-08-16 — the 08-15 panel numbers below are VOID (baseline-mixing confound)
+
+An independent review (reviewer ≠ author) found that `build_rows(substitute=True)` mixed two
+regret BASELINES: `r_k` came from PROD's own best while the substituted tail came from
+MATCHED's/DEEP's. `to_regret` measures each arm against ITS OWN best, so a uniform level shift
+between arms **cancels out of every regret difference** — `cross_arm_check` reads exactly
+1.000 — while landing **entirely on the substituted tail**, the one quantity being measured.
+The falsifier's domain (the top-6 moves both arms surfaced) and the confound's domain (the
+absolute level) are disjoint. A test now pins the leak at exactly 20 cp under a 20 cp shift
+while the ratio stays 1.000.
+
+Fixed by REMOVING the dependence, not checking for it: `rebase_offset()` maps the truth arm's
+raw scores into PROD's frame per row before any regret is taken. Re-run:
+
+| panel | 08-15 (confounded) | 08-16 (rebased) | shift |
+|---|---|---|---|
+| (A) MATCHED-substituted — PRIMARY | 0.1986 [0.092, 0.302] | **0.2719 [0.1838, 0.3751]** | **+0.073** |
+| (A) tablebase-free | 0.2252 [0.142, 0.321] | 0.2096 [0.1342, 0.3093] | −0.016 |
+| (B) DEEP-substituted | 0.0979 [0.015, 0.177] | **0.1976 [0.1252, 0.2781]** | **+0.100** |
+| (B′) ALL-DEEP | −0.0002 [−0.073, 0.066] | 0.0567 [−0.0242, 0.1514] | +0.057 |
+
+**α was biased LOW**, so the old numbers OVERSTATED how wrong the midpoint is: the overstatement
+ratio is **2.11×–2.87×**, not the 2.54×–3.15× banked on 08-15. Three other review findings also
+landed (`alpha_grad` fitted on a superset of the population whose L2 it claimed to minimise;
+never-scored moves entering the reference with a fabricated `r_k`; no `is_selfplay` filter) —
+see the 08-16 screen re-run below, where they moved α by <0.002 combined.
+
+### READOUT (2026-08-16) — the midpoint verdict is ROBUST; "the historical α transfers" is NOT
+
+**Judged by the rule pre-committed 2026-08-14 18:37.** Falsifier first: PROD vs MATCHED
+**1.066**, inside the pre-registered [0.90, 1.111]. Primary is (A), all positions,
+**α_value = 0.2719 [0.1838, 0.3751]**.
+
+| clause | fires? | consequence |
+|---|---|---|
+| CI excludes 1.0 from below | **YES** (upper bound 0.375) | **the live midpoint IS too harsh on production labels** |
+| CI covers 0.1759 | **NO** (lower bound 0.1838) | the historical screen does **not** transfer on the primary |
+
+⇒ By the letter of the pre-committed table this reads as the FOURTH row ("a THIRD number").
+**⚑⚑ THAT VERDICT IS WITHDRAWN — TWICE OVER, AND BOTH REASONS ARE METHOD FAULTS OF MINE:**
+1. **The margin was manufactured by the wrong resampling unit.** The lower bound 0.1838 excluded
+   0.1759 by **0.008** while the CI resampled ROWS. Adjacent plies of one game are not independent
+   replicas, so that interval was too narrow. Fixed to a GAME-CLUSTER bootstrap.
+2. **The primary instrument is invalid** (see the retraction below). A pre-registered criterion
+   evaluated on an instrument that does not measure a well-defined quantity is not a verdict.
+
+#### The GAME-CLUSTER rerun landed (2026-08-16, `scratchpad/panel_clustered.json`, seed 1)
+
+Same seed and same 500 positions, so **every point estimate is byte-identical** to the row-bootstrap
+run — the correct signature, since the resampling unit changes the interval and not the estimate.
+
+| arm | n_games/n_rows | α_value | ROW CI | GAME-CLUSTER CI | width | covers 0.1779 |
+|---|---|---|---|---|---|---|
+| (B) **PRIMARY** deep_substituted | 395/498 | 0.1976 | [0.1252, 0.2781] | **[0.1249, 0.2780]** | 1.00× | **YES** |
+| (A) MATCHED — diagnostic only | 395/498 | 0.2719 | [0.1838, 0.3751] | [0.1805, 0.3846] | 1.07× | no, **by 0.0026** |
+| (A) MATCHED, TB-free | 370/453 | 0.2096 | [0.1342, 0.3093] | [0.1198, 0.3190] | 1.14× | **YES** |
+| (B') ALL-DEEP | 394/496 | 0.0567 | [−0.0242, 0.1514] | [−0.0389, 0.1444] | 1.04× | no, by 0.0335 |
+
+⚑ **Clustering barely moved the panel, and the reason is structural: the panel's sampler already
+draws ~ONE position per game (1.26 rows/game).** So its row bootstrap was already close to a game
+bootstrap by construction, and there was almost no within-game correlation left to absorb. This
+does NOT generalise to the truncation screen, which runs **5.4 rows/game** (925 games / 5028 rows)
+— that is where the clustering fix genuinely bites. ⇒ *the same method fix has very different
+force on two instruments; check the rows-per-cluster ratio before claiming a clustered CI
+changed (or did not change) anything.*
+
+⇒ **MATCHED's exclusion of the historical α collapsed from 0.008 to 0.0026** — a coin flip, not a
+regime shift. Combined with its ill-posed estimand, nothing rests on it. The PRIMARY (B) **covers**
+0.1779. **All four arms exclude α = 1.0 on BOTH α_value and α_grad** (α_grad upper bounds 0.1247–0.2288).
+
+⚑ The banked `scratchpad/panel_clustered.log` carries **stale LABELS** — it prints "(A)
+SELF-CONSISTENCY — PRIMARY" and "row bootstrap draws" because the interpreter had already loaded
+the pre-edit file when the relabel was written ([[running_scripts_keep_the_old_file]]). The
+NUMBERS are the clustered ones (`n_games` is banked in the JSON, which is only computed under
+clustering). Trust `panel_clustered.json`; the current script prints the corrected labels.
+
+**The honest statement is:** the historical point estimate does not reproduce *exactly* on the
+production panel, and the evidence does not establish a genuine regime shift. Across every
+credible instrument α is **O(0.1–0.25)**, while **α = 1 is decisively wrong**.
+
+**What survives, and it is the load-bearing half:** every arm, every population, both
+instruments, and both the confounded and corrected fits put α far below 1.0 and the
+overstatement at **2.1×–2.9×**. The live midpoint being much too harsh is not in question.
+What is no longer supported is the sharper claim that the wide-era α = 0.176 carries over
+unchanged — the honest range on production labels is now **α ≈ 0.06–0.37 depending on the arm**,
+and the arms disagree more than any one of their CIs suggests.
+
+⚑⚑ **RETRACTED: "(A) IS AN UPPER BOUND" WAS NEVER ESTABLISHED.** I wrote that on 08-15 from
+"a weaker search sees bigger gaps", supported by (A) TRUE 224.4 cp sitting above (B)'s 181.0.
+**That is an observation, not a monotonicity argument.** Widening MultiPV at a fixed budget both
+weakens and widens the search: it can miss refutations (scoring bad moves too generously, biasing
+α DOWN) as easily as it can inflate gaps. Nothing here fixes the sign, and one paired comparison
+does not fix it either. Codex raised this as a P1 and is right.
+
+⇒ **(A) IS NOT A VALID INSTRUMENT FOR THIS QUESTION, AND THAT DEMOTES THE PRE-REGISTRATION'S OWN
+PRIMARY.** The deeper problem is that (A)'s target quantity may not exist: "what would the label's
+own search have said about the moves it did not surface" presumes a counterfactual that a fixed
+node budget cannot realise, because you cannot vary width while holding search strength. So the
+08-14 pre-registration named a primary that turned out not to measure a well-defined thing.
+**Honouring a pre-registration does not mean treating a later-invalidated instrument as truth** —
+it means saying so rather than quietly switching to the arm that agrees. The valid arms are (B)
+and (A)-tablebase-free, and they DO cover 0.1759; (B′) answers a different question.
+
+**A matched-STRENGTH wide arm is the missing instrument** — full width at whatever node budget
+restores PROD's median depth 12 — and until it exists the transfer question is open, not answered
+in either direction.
+
+⚑ **α_value and α_grad NO LONGER COINCIDE on the panel** — (A) reads 0.2719 vs 0.1018. The
+ledger's earlier "one scalar in ~0.14–0.18 serves both objectives" was a SCREEN-population
+statement and does not hold here. Do not carry it across populations.
+
+### SUPERSEDED READOUT (2026-08-15) — retained for the audit trail; numbers VOID, see above
+
+Judged by the rule pre-committed below at 18:37 on 2026-08-14, before the run reported.
+`scripts/mpv6_tail_panel.py`, 500 positions from the live MPV6 era, banked to
+`scratchpad/mpv6_tail_panel_spread_20260815.json`.
+
+| panel | α_value (95% CI, 1000 row draws) | vs 1.0 | vs 0.1759 | midpoint / TRUE |
+|---|---|---|---|---|
+| **(A) MATCHED-substituted — PRIMARY** | **0.1986 [0.0922, 0.3022]** | **excludes** | **covers** | 569.4 / 224.4 = **2.54×** |
+| (A) tablebase-free (n=458) | 0.2252 [0.1416, 0.3213] | excludes | covers | 558.1 / 215.8 = 2.59× |
+| (B) DEEP-substituted | 0.0979 [0.0147, 0.1766] | excludes | covers (edge) | 569.4 / 181.0 = **3.15×** |
+| (B′) ALL-DEEP | −0.0002 [−0.0729, 0.0663] | excludes | EXCLUDES | 590.5 / 181.0 = 3.26× |
+
+⇒ **BOTH pre-committed clauses fire: the CI excludes 1.0 from below AND covers 0.1759.** The
+live midpoint IS too harsh on production labels, and the MultiPV-40 truncation screen's answer
+TRANSFERS — it was not an artifact of truncating a wide label. The historical screen read
+564.9 / 206.4 = **2.74×**; the panel reads **2.54×** (A) and **3.15×** (B) on real MPV6 data
+from a different era, a different net-weighting population, and a different instrument.
+
+⚑ **The pre-registered negative branch did NOT fire.** It was written down precisely so it
+could: "if the CI covers 1.0, α = 0.1759 was an MPV-40 truncation artifact." The n=6 smoke had
+pointed at 0.92, i.e. AT 1.0. It did not survive n=500.
+
+⚑⚑ **(B′) IS THE SHARPEST STATEMENT AND IT IS NOT THE SAME CLAIM.** Under one uniformly-deep
+ruler scoring EVERY move, α = **−0.0002 [−0.073, 0.066]** and the `r_6` censor's bias is
+**+0.1 cp** — the censored tail is worth *the worst surfaced move*, full stop. That is
+`eval/audit.py::move_regrets`'s optimistic floor being exactly right and
+`finalize._build_sf_p0_regret_vector`'s midpoint being 3.26× too high. It is a DIFFERENT claim
+from (A)/(B) because it also re-scores the surfaced moves (its `r_6` is 181.1 cp against
+production's actual 138.9), so it does not tell production what to do with the `r_6` it has.
+
+**⚑ MY OWN FALSIFIER WAS TOO GENEROUS, AND THE SAME RUN SAYS SO.** PROD vs MATCHED read
+**1.102** against a pre-registered band of [0.90, 1.111] — a pass by 0.009. But two other
+printed diagnostics show the arm is compromised anyway: MATCHED's median depth is **9** against
+PROD's **12**, and their bestmove agreement is **0.574**. **At a fixed node budget you cannot
+widen MultiPV without weakening the search**, so the (A) counterfactual — "what would the
+label's own search have said" — has no clean instrument, and a ratio band was the wrong
+falsifier for it. The correct one is DEPTH PARITY, which (A) structurally cannot meet.
+⇒ **(A)'s α is an UPPER BOUND, not a clean read**, and the data agrees: a weaker search sees
+bigger gaps, so (A)'s withheld truth is 224.4 cp against (B)'s 181.0. Record the lesson as
+[[guard_must_share_the_criterion_instrument]]: the band tested the ratio, the assumption lived
+in the depth.
+
+**Population correction, caught before banking.** The first run (`..._20260814.json`) drew all
+500 positions from ONE shard — one worker's upload batch, a few dozen correlated games —
+because `sample_positions` filled from the front. Fixed to a per-shard quota. Point estimates
+moved ≤0.07 and every CI **widened 7-47%** (deep_all +47%), which is exactly the direction a
+correlated population biases them. Both populations give the same verdict; only the first one's
+confidence was unearned.
+
+**What this does NOT establish.**
+1. **No training change is licensed by this entry.** Moving the imputation from `(worst+1)/2`
+   to `worst + α(1−worst)/2` with α ≈ 0.15 is the obvious candidate and it is training-affecting,
+   so it needs its OWN entry with a pre-committed yardstick and kill rule before launch. The
+   number here is an input to that entry, not a substitute for it.
+2. Cosine tops out at **0.81** for every constant, worse than the historical screen's 0.905.
+   A constant tail still cannot reproduce the within-tail gradient, and hidden SF rank still
+   does not exist at MPV 6 — see the retraction above.
+3. The CI is over ROWS. It does not cover Stockfish's own per-position noise, and PROD/MATCHED
+   carry the 3-4-5 tablebases while DEEP carries the pair (the TB-free split is reported).
+4. One net (`checkpoint_000218`, Aug 12), one era, `lc0_1858`. The prior weighting is the
+   training-relevant one (`train/losses.py:888-890`), not `policy_target`.
+
+### PRE-REGISTERED 2026-08-14 18:37, JUDGED ABOVE — the real MultiPV-6 calibration panel
+
+⚑ **Registered BEFORE the run finished, because the whole point is not to choose the reading
+after seeing it.** `scripts/mpv6_tail_panel.py`, 500 positions from the LIVE (MultiPV-6) era.
+
+**Why the screen above cannot answer this.** A node budget is spent ACROSS PVs, so MultiPV 6
+at 150k nodes and MultiPV 40 at 150k nodes do not give rank 6 the same search. The screen's
+`r_6` is a rank-6 regret from a **40-wide** search; production's comes from a **6-wide** one.
+α = 0.1759 is a fact about the wide-label era, and whether it transfers is exactly what is
+unmeasured.
+
+**Three arms, on the same positions** (all production values MEASURED, not read off the
+config's face): PROD = MultiPV 6 / **150,000 nodes** (the realized median of
+`sf_label_meta[:,0]`, pinned at `sf_label_nodes_floor` — the 200k **cap** is not what runs) /
+Hash 17MB / `stockfish_syzygy_path`, which is the **3-4-5 directory ALONE**. MATCHED =
+identical except full width. DEEP = full width, 4M nodes, Hash 512MB, the full syzygy pair.
+DEEP's budget is measured too: at MultiPV 64 it needs ~4M nodes to out-depth PROD (median 16
+vs 12); at 200k it reads depth **10**, i.e. SHALLOWER than what it grades.
+
+**PRIMARY:** arm (A) = MATCHED-substituted `α_value` with a 1000-draw row bootstrap. Surfaced
+moves keep PROD's own regrets, so only the CENSORING varies.
+
+**FALSIFIER, stated first:** PROD vs MATCHED cross-arm regret ratio must lie in
+**[0.90, 1.111]**. These differ only in width at an identical budget; outside that band,
+widening the search changed the surfaced scores too and the primary is VOID, not merely noisy.
+(Smoke read 1.009.)
+
+**PRE-COMMITTED READING RULE** — on the primary's 95% CI:
+
+| the CI... | verdict |
+|---|---|
+| excludes 1.0 from below | the live midpoint IS too harsh on production labels, by the measured factor |
+| covers 1.0 | ⚑ **the live midpoint is NOT shown to be wrong**, and α = 0.1759 does NOT transfer — it was an artifact of MPV-40 truncation |
+| covers 0.1759 | the historical screen transfers to production |
+| excludes BOTH 0.1759 and 1.0 | a THIRD number; neither the historical result nor the live rule stands, and the tail needs re-deriving from this panel alone |
+
+⚑ **"Covers 1.0" is a real possible outcome and is a NEGATIVE result for the whole tail
+thesis.** It is written here so it cannot later be reported as "inconclusive". The smoke run
+(n=6, useless for inference but not for direction) read α ≈ 0.92 — i.e. it pointed AT 1.0, not
+at 0.176. If the full run holds that, the finding is that the MultiPV-40 truncation screen
+answered a question production does not ask.
+
+**Reported alongside, not instead:** the same fit on the tablebase-free subset (PROD/MATCHED
+carry the 3-4-5 set, DEEP carries the pair, so TB positions are where the arms differ by
+construction), and arms (B)/(B') from the DEEP ruler, which re-score the SURFACED moves too and
+therefore indict the whole label rather than its tail — a separate question, not a better
+answer to this one.
+
+### READOUT (2026-08-16) — ⚑⚑ RELATIONAL SF6 SUPERVISION **LOSES**, and the top-6-only half is GEOMETRICALLY FORBIDDEN
+
+**Question** (from the CAST/MDT solver-structure framing): if you know only Stockfish's six
+scored candidates, does a RELATIONAL loss — pairwise order, margins, indifference bands, with NO
+fabricated values for unobserved moves — recover more of the full-information policy gradient
+than the best constant-tail rule? **Answer: no.** `scripts/relational_sf6_screen.py`
+(branch `relational/sf6-screen`), 5059 rows of the wide-MPV40 era, held-out split by `game_id`.
+
+**Best relational 0.9049 vs the constant tail 0.9158 on the SAME held-out rows: −0.0110.**
+⚑ The hurdle was RE-MEASURED on the held-out rows rather than compared against the published
+0.9054 — using the published figure would have silently gifted the relational side ~0.01.
+
+⚑⚑ **THE ANSWER IS STRUCTURAL, NOT EMPIRICAL — AND IT IS ONE LINE OF ALGEBRA.**
+
+    dL/dz_i = p_i (r_i − E_p[r]) = Σ_j p_i p_j (r_i − r_j)
+
+Verified exactly (max abs diff 2.8e-17). **The reference gradient IS a pairwise object, and its
+pair term is the regret DIFFERENCE.** So:
+- **surfaced × surfaced**: the difference is OBSERVED ⇒ that block is recoverable exactly (pinned
+  to machine precision by a test).
+- **surfaced × tail**: needs a tail **MAGNITUDE** — precisely what relational supervision declines
+  to supply and what a fitted α does supply.
+- **tail × tail**: also unobserved, and a CONSTANT tail zeroes it by construction (all tail
+  regrets equal ⇒ every `r_i − r_j` inside T is 0) while `g_true`'s is not. **MEASURED, not
+  asserted** (n=1908 wide-era rows, pooled): `‖g_TT‖ / ‖g_true‖` = **0.2137**, and
+  `‖g_ST‖ / ‖g_true‖` = **0.7769**. So a constant tail *mis-scales* 78% of the reference and
+  *deletes* 21% of it outright. That is a ceiling no choice of α can lift, and it is why cosine
+  caps near 0.905 however α is fitted.
+
+  ⚑ **I predicted 5–15% for the T×T share and measured 21.4% — outside my band, so the
+  explanation is owed.** I reasoned only from the per-pair weight (`p_i p_j`, a product of two
+  small numbers) and ignored two things that dominate it: **count** — ~21 tail moves give ~420
+  tail×tail pairs against ~126 surfaced×tail — and **spread**, since tail regrets range from
+  ~186 cp at rank 7 to ~635 cp at rank 40, so the `r_i − r_j` factors inside T are large. Weight
+  per pair is small; the block is not.
+
+⇒ **fifteen pairwise labels from six SF values are not fifteen new pieces of supervision.** They
+are the same information re-expressed; the regret gradient already IS their aggregate. The
+bottleneck is not extracting more algebra from observed values, it is ACQUIRING the missing
+cross-boundary comparisons.
+
+Relational supervision is not a different *kind* of information here. It is the same object with
+one block deleted.
+
+**CEILING 1 — top-6-only support is forbidden before any loss design.** A loss over only the six
+surfaced logits has a gradient supported on six coordinates, so its cosine is bounded by the
+fraction of ‖g_true‖ living there:
+
+| measure | agent (pre-review-fix estimator) | independent recompute (post-fix) |
+|---|---|---|
+| mean / row | **0.8432** | **0.8794** |
+| pooled | 0.8276 | 0.7894 |
+| median | 0.9076 | 0.9672 |
+| p10 | 0.6051 | 0.6700 |
+
+Both below the 0.9054 hurdle on both measures ⇒ **the top-6-only half is answered by geometry.**
+Cause: the net's prior puts real mass outside SF's six (mean 15–20%, **p90 ≈ 0.64**), so the
+censored tail carries ~21–29% of the reference gradient's energy.
+
+**CEILING 2 — the escape exists and then collapses.** "Move X was not surfaced" IS an observation
+(`r_X ≥ r_6`), so an UNMARGINED surfaced-over-tail constraint may legitimately place gradient on
+the tail. Ceiling **0.9934**. But its `t→∞` limit is `−p_i·mass(T)` / `+p_j·mass(S)` — gradient
+proportional to the prior with ONE global magnitude, i.e. **the shape of a constant tail with its
+fitted scale playing α's role.** ⇒ **the order constraint does not escape the constant tail; it
+BECOMES one.**
+
+**Secondary readings.**
+- **Indifference weighting helps** (`w_ij = min(1, |Q_i−Q_j|/τ)`): **+0.0249** (0.8831 vs 0.8582),
+  isolated by a single-knob ablation. ⚑ Read it narrowly: it says SF's tiny WITHIN-top-6 score
+  differences carry enough noise/irrelevant sharpening that treating near-ties as equivalent
+  improves use of the OBSERVED block. **It does not touch censoring.** Worth keeping as an add-on
+  for any future SF-ranking or regret auxiliary, not as an answer to the tail.
+- **Listwise CE is ANTI-correlated (−0.133)**, not broken: matching a sharpened SF distribution
+  opposes a gradient that wants mass shifted by *current prior* weight. It also invents a
+  temperature, so it never belonged in the "no fabricated values" class.
+- **Pure pairwise within the six reads 0.6531**; hinge/Borda-limit variants 0.4024.
+
+⚑ **SIDE FINDING THAT REFRAMES THE INCUMBENT: much of the constant tail's direction comes from
+SET MEMBERSHIP, not the six VALUES.** Permuting SF's scores within a row and refitting leaves the
+constant tail at cos **0.6445** against 0.9159 with true scores. (A different permutation scheme
+read 0.4349; the schemes differ — mine permutes across all scored moves and recomputes `r_6` — so
+quote the MECHANISM, not a decimal.)
+
+⚑ **Say "the cosine retains ~70% of its magnitude", NOT "70% of the information survives".**
+Cosine is not linear in information: a ratio of two cosines is not a fraction of gradient content
+explained, and an earlier draft of this entry said so. The defensible claim is the qualitative
+one — destroying SF's score ordering entirely still leaves a surprisingly large cosine, because
+surfaced-set membership plus the prior's own geometry already fixes most of the direction. That
+is consistent with the algebra: what the target mostly encodes is *which moves SF looked at*,
+plus one magnitude.
+
+**What this does NOT establish.**
+1. **ΔQ is untouched, and this SHARPENS it.** The screen bounds what is extractable from SF's
+   EXISTING six; it says nothing about *buying* the missing S×T / T×T comparisons. ⇒ the negative
+   **strengthens** ΔQ by naming what has to be purchased. And the missing block is not generically
+   "surfaced × tail" — it is specifically *comparisons involving high-prior, student-important
+   moves that SF6 did not evaluate*, which is a far cheaper query policy than "every disagreement".
+2. **Branch/counterfactual solver structure is NOT falsified by this.** The screen tested one
+   reading of the CAST/MDT idea — richer supervision from the SAME root solver output — and that
+   loses for the algebraic reason above. The other reading, how solver decisions change ACROSS
+   states (`Q(s,a_A) − Q(s,a_B)` versus the same contrast at `s'`), carries information no single
+   root's six scalars contain. Not pursued now because ΔQ is cheaper and closer to the
+   demonstrated hole, but it is untested, not refuted.
+3. **Era.** MultiPV-**40** wide-label data. Real MPV-6 constant-tail cosines top out ~0.81–0.87
+   (2026-08-16 panel), so the exact numbers are era-specific; the ceiling argument is geometric
+   and should transfer, but that is an argument, not a measurement.
+4. The screen ran on the estimator BEFORE the 08-16 review fixes (n=5059, α 0.1759 vs the
+   corrected n=5028, α 0.1779). The shift is <0.002 and the ceiling is geometric, so the verdict
+   is unaffected — but the exact cosines are on the older pipeline.
+5. Four losing variants remain edge-pinned; closed analytically (every pure-order variant
+   converges to the Borda limit, and the pinned hinge and the closed-form limit agree to 4 dp)
+   rather than by widening the search again.
+
+### PRE-REGISTERED (2026-08-16) — ΔQ as an INFORMATION-VALUE experiment, not a loss
+
+⚑ **Registered before any code.** The relational-SF6 negative above says exactly where the hole
+is (the S×T / T×T blocks), so ΔQ is now the cheapest instrument aimed at it. **Phase 1 measures
+whether the missing comparison is worth buying. It does NOT add a loss, a target, or a config
+key** — that decision needs its own entry after this one reads out.
+
+**Query policy — buy only the comparisons that are actually missing.** For each row let `a_P` be
+the raw-prior top move and `a_M` the Gumbel/MCTS move (recoverable offline via
+`cast_probe.recover_played_move`, 1380/1380). Then:
+
+| case | action |
+|---|---|
+| `a_P == a_M` | nothing to adjudicate — no query |
+| both already in SF6 | **ΔQ is free**, already banked in `sf_multipv_raw` |
+| exactly one outside SF6 | **buy it** — this IS the missing S×T relation |
+| both outside SF6 | buy both — the missing T×T relation, the most valuable case |
+
+#### STEP-0 READOUT (2026-08-16) — a cheap AVAILABILITY PROXY screen, ~60% already covered
+
+⚑⚑ **THIS IS NOT "WE OWN 60% OF THE ΔQ DATASET" — AN EARLIER REVISION OF THIS ENTRY SAID
+THAT AND IT OVERCLAIMED.** Three gaps sit between this number and the live question, and
+none closes with more rows:
+
+1. **NOT SAME-MODEL.** The live pair is `a_P = argmax π_θ(s)` vs `a_M = MCTS_θ(s)` for ONE
+   θ. Here `a_P` is a chosen checkpoint re-run over historical positions while `a_M` is the
+   move the ORIGINAL generating net played. **The replay schema does not persist the
+   generating prior** — `_NetRecord.policy_probs` never reaches a shard, only the improved
+   `policy_target` does (verified against `replay/shard.py`'s field list) — so the
+   same-model pairing is **not recoverable offline at all**. It requires a prospective run.
+2. **SIMULATED WIDTH ≠ REAL WIDTH.** Ranks > k are hidden from MPV-40 labels, but #428
+   measured that changing width at a fixed node budget changes the SEARCH (median depth
+   12 → 9 at width 6 → 64). A truncated MPV40 block is not what a real MPV6 search would
+   have produced. **Do not say the rate "transfers structurally".**
+3. **SELECTION.** ~75% attrition from unstored child plies (table below).
+
+⇒ Read the percentage as an ORDER OF MAGNITUDE establishing that "check what we already
+hold before querying" is worth building — not as a calibration.
+
+`scripts/dq_free_dataset_screen.py`, 18 wide-era shards, k=6 simulated, prior from
+`checkpoint_000218`. Costs nothing and needed no `searchmoves`: a re-read of banked shards,
+run BEFORE the query path merged.
+
+| | n | share |
+|---|---|---|
+| usable rows (played move recovered) | 1177 | — |
+| prior == search — nothing to adjudicate | 649 | 0.551 |
+| **DISAGREE — the ΔQ pool** | **528** | **0.449** |
+|  ↳ both already in SF6 — **ΔQ IS FREE** | 315 | **0.597** |
+|  ↳ exactly one outside — buy it (S×T) | 163 | 0.309 |
+|  ↳ both outside — buy both (T×T) | 50 | 0.095 |
+
+⇒ **~40% of the disagreements need a query; ~60% are already covered.** Recovery was
+clean: 1177 recovered, **0 ambiguous**.
+
+⚑ **"BOTH OUTSIDE" IS NOT 2× THE QUERY BUDGET.** One root-restricted search —
+`searchmoves a_prior a_search` at MultiPV 2 — returns both candidate evaluations. The T×T
+bucket is informationally harder, not twice as expensive.
+
+⚑⚑ **A FIRST PASS OF THIS SCREEN MEASURED THE WRONG PAIR AND READ 0.713 FREE.** It compared
+the prior's top move against **SF's own best** instead of against the SEARCH move. SF's best
+is rank 1 BY CONSTRUCTION, so "both candidates surfaced" silently degenerates into "is the
+net's move surfaced" and the free fraction comes out too high. The corrected pairing reads
+**0.597**. ⇒ the pre-registered 4-way split REQUIRES the played move
+(`cast_probe.recover_played_move`), and `argmax(policy_target)` is not it.
+[[same_name_different_population]].
+
+⚑ **THE ΔQ-MAGNITUDE SPLIT IS A TAUTOLOGY — DO NOT QUOTE IT.** The screen also reports
+"free" rows at median 21 cp vs "buyable" at 100 cp, which reads as *queries buy the big ΔQ*.
+It is forced: "buyable" MEANS SF ranked the net's move 7th or worse, so its regret is ≥ that
+row's `r_k` by construction while every free row's is ≤ `r_k`. The split conditions on the
+compared quantity. Only the ABSOLUTE scale is a reading (unpriced moves: median 100 cp, p90
+601 cp — real gaps, not garbage). [[never_condition_a_control_on_its_own_outcome]].
+
+⚑⚑ **THE CONFIDENCE GATE DOES NOT SURVIVE THE POPULATION FIX — RETRACTED.**
+An earlier revision of this entry reported "P(query | confidence) is MONOTONE, 0.720 →
+0.171, a 4.2× spread ⇒ a usable pre-query gate". **That curve was binned over
+`classify`'s prior-vs-SF-BEST rows while the headline split came from the corrected
+prior-vs-SEARCH pairing** — two different populations printed under one heading, visually
+indistinguishable. A query is needed when EITHER candidate is outside SF6; the old binning
+only ever asked about the prior's move.
+
+Recomputed on the ACTUAL 528 disagreements (`scratchpad/dq_pairs_refactored.json`):
+
+| prior confidence | n | P(any query) | P(S×T) | P(T×T) |
+|---|---|---|---|---|
+| [0.0, 0.2) | **17** | 0.941 | 0.235 | **0.706** |
+| [0.2, 0.4) | 132 | 0.545 | 0.424 | 0.121 |
+| [0.4, 0.6) | 167 | 0.311 | 0.240 | 0.072 |
+| [0.6, 0.8) | 124 | **0.363** | 0.323 | 0.040 |
+| [0.8, 1.0) | 88 | 0.318 | 0.261 | 0.057 |
+
+**NOT MONOTONE** — it rises again at [0.6, 0.8), and the top three bins are flat within
+noise (0.311 / 0.363 / 0.318). The entire apparent spread rides on the lowest bin at
+**n=17**. ⇒ above confidence 0.4, prior confidence buys **essentially nothing**; the query
+rate is ~1/3 regardless. This FAILS
+[[proxy_must_be_monotone_in_the_intervention]] and no graded gate should be built on it.
+
+**One signal does survive, as a hypothesis:** T×T concentrates at low confidence (0.706 vs
+0.04–0.12 elsewhere) — when the net is unsure, BOTH candidates tend to sit outside SF6.
+n=17, so this is a direction to test prospectively, not a finding.
+
+#### SELECTION CHECK — no material bias DETECTED on measured observables
+
+Recovered vs dropped rows on observables computable BEFORE recovery, so any gap is a
+selection effect rather than an outcome:
+
+| observable | recovered | dropped | ratio |
+|---|---|---|---|
+| **top1_in_sf6** | 0.835 | 0.826 | **1.011** |
+| prior_top1 | 0.658 | 0.658 | 1.000 |
+| legal_moves | 29.219 | 29.205 | 1.000 |
+| prior_entropy | 0.987 | 0.989 | 0.998 |
+| ply | 68.659 | 71.419 | 0.961 |
+| r_k | 0.167 | 0.188 | 0.885 |
+
+`top1_in_sf6` — the variable that most directly drives the free fraction — differs by
+**1.1%**, and prior confidence is identical to three decimals. ⇒ **the 59.7% headline is
+much less fragile than 75% attrition suggests.** ⚑ State this as *no material selection
+bias was DETECTED on the measured pre-recovery observables* — NOT as "missingness is
+random". Six observables agreeing bounds the bias we looked for; it cannot establish
+ignorability against an unmeasured cause of a ply not being stored. `r_k` is the only visible gap (11.5%),
+consistent with the small ply difference.
+
+⇒ **NET: the headline survives the selection test; the confidence gate does not survive the
+population fix.**
+
+#### DESIGN FIX — the population is now an object
+
+The bug survived because two datasets existed and downstream code could consume either.
+`PairObservation` (frozen dataclass) is now THE ΔQ population; the headline split, all
+three curves, and every later diagnostic derive from that one collection, and each curve
+prints its denominator in its own title. The prior-vs-SF-best analysis still exists under a
+deliberately different name and return type (`coverage_of_prior_move`) with its confidence
+fields **deleted**, so it cannot be binned by accident. Verified: the refactor reproduces
+`pairs`, `confidence_curves` and `attrition_bias` **byte-identically**.
+
+**Limitations, stated not buried.** (1) 3567 of 4744 rows had **no stored child**, so the
+usable subset is conditioned on both plies being stored — 75% attrition, representativeness
+unverified. (2) MultiPV-**40**-era data with simulated truncation; the rate transfers
+structurally, the era is not production's. (3) One checkpoint (iter 218), and
+[[knob_effects_reverse_sign_between_checkpoints]] applies — run a second before concluding.
+
+⇒ the SF spend is a small fraction of "one targeted comparison per disagreement", and the split
+across those four cases is itself the first readout.
+
+**MEASURE (phase 1, no training change):** disagreement rate `a_P ≠ a_M`; the four-way case
+split; SF verdict flip rate; **rescue** (search materially better than prior) vs **corruption**
+(prior materially better) rates and magnitudes; the margin distribution and what noise threshold
+it must clear; and **SF CPU per useful verdict**.
+
+**H3 GETS ITS REAL TARGET FROM THIS, and it is not "is this position hard":**
+
+    P(buying the missing candidate evaluation CHANGES the training decision | pre-query diagnostics)
+
+That is a value-of-information question, answerable from the phase-1 dataset by holding out the
+purchased verdict and predicting it from what was observable before the query.
+
+**PRE-COMMITTED KILL RULE.** If, on ≥300 disagreement rows, the verdict flips the
+prior-vs-search ordering with a margin clearing the noise threshold on **<10%** of rows, ΔQ is
+not worth wiring into training and phase 2 is dropped. Recorded now so a thin positive cannot
+be re-read as encouraging later.
+
+⚑ **PREREQUISITE, AND IT IS NOT DONE.** `searchmoves` now exists on `StockfishUCI` (built
+2026-08-16, legality-validated, 7/7 mutations) but **`StockfishPool` does not forward it** —
+`pool.py::_search`/`submit` have a fixed `(fen, nodes, syzygy_path, fresh)` signature. A caller
+reaching for it through the pool finds it silently unavailable, which is this repo's signature
+defect shape. Close that, with an independent review, before phase 1 runs.
+
+⚑ **This does NOT explain the current run.** `w_sf_own_regret` is **0.0** live (audit A7), so
+none of the tail work — and none of this — is acting on the network today. It is about how not to
+turn that channel back on, and what to buy instead.
+
+### PRE-REGISTERED FOLLOW-UP — targeted prior-vs-search adjudication (`ΔQ`), NOT a dense SF target
+
+The rank curve above is the empirical case for it: **relevant tail mass is concentrated in the
+first few omitted moves** (rank 7 carries 2.8%, rank 40 carries 0.006%), so paying SF to
+characterise dozens of moves is waste. Ask SF only about the moves the student actually cares
+about.
+
+At a root where the raw prior and the search disagree, with `a_prior = argmax(raw prior)` and
+`a_search` = the actual Gumbel choice, measure
+
+```
+ΔQ = Q_SF(a_search) − Q_SF(a_prior)
+```
+
+`ΔQ > 0` search improved the prior ⇒ raise imitation weight; `ΔQ < 0` search damaged a better
+prior ⇒ lower it. **Separate the two questions and buy only the one you need:**
+**(A) did search improve the net?** needs only the two candidates. **(B) is either move
+actually good?** additionally needs SF's global best. **A is the cheaper and the more novel
+one, and SF's global best is not required for it.**
+
+⚑ **MEASURE BOTH CANDIDATES IN ONE RESTRICTED ROOT SEARCH** (MultiPV 2 over exactly those two
+moves), never as two separate full-budget `searchmoves` searches: giving each candidate an
+entire budget in isolation makes part of the difference a budget artifact rather than a move
+difference.
+
+⚑ **PREREQUISITE, MEASURED: `searchmoves` IS NOT WIRED.** `stockfish/uci.py:585` sends a bare
+`go nodes {n}`; there is no root-move restriction anywhere in `chess_anti_engine/stockfish/`.
+This needs a new, tested surface on `StockfishUCI.search` before any of the above can run.
+Budget it as real work, not a flag.
+
+**Confounds to pre-register now, before the data exists.**
+- **Sharpness, not search error.** Rows where prior and search disagree are systematically
+  sharper. `ΔQ` is signed, which helps, but the gate must still be shown to add predictive
+  power for `ΔR_search` OVER volatility, `|q|`, phase, KL and q-delta — nested models
+  M0/M1/M2, scored on held-out **GAMES**, never rows (adjacent plies are near-duplicates).
+- **Argmax is not the target.** `ΔQ` compares two single moves while the imitation loss trains
+  a whole distribution. The leap is small here — realized `max(policy_target)` has median
+  ~0.99 — but it is a leap, and the fraction of the target's expected regret carried by its
+  argmax should be reported alongside.
+- **Same-root comparison is the design's real advantage** over literal CAST: no parent/child
+  adjacency, no action recovery, no fabricated tail, and cp instead of a saturating WDL.
+- Benchmark at **equal SF nodes** against current MPV6 and against the tail treatment above.
+  Pairs naturally with H3: pay for the comparison only where pre-query diagnostics say it is
+  informative.
+
+## READOUT (2026-08-14) — CAST is a coverage NULL; the MultiPV-6 tail is proven INVENTED, its magnitude is NOT (issue #425)
+
+**⚑⚑ RETRACTION, same session, before merge.** An earlier revision of this entry priced
+the imputed tail at a **~5x overstatement [4.1–5.5]**. **That number is WITHDRAWN.** Codex
+review on PR #428 (P1) established that the probe's calibration population is contaminated:
+in production Gumbel at final temperature 0 the played action is the **sequential-halving
+survivor**, explicitly NOT `argmax(policy_target)` (`network_turn.py:188`), and audit C9
+(`rl_loop_audit.md:418`) measured those agreeing only **0.7455** on moves 1–11 and **0.9122**
+at moves 15+. So `A_CAST` graded the real move while `regret_played`/`in_multipv` graded a
+different one, and the `pmax` stratification does not observe that equality — it cannot
+expose or correct it. Two further defects compound it: `monotone_prefix` did not stop at the
+first saturation fold (it skipped the folded bucket and resumed, splicing both branches), and
+the quoted CI varied only the outside-set mean while treating every calibration knot as exact.
+**What is established is INVENTED PRECISION, not overstatement.** The direction is unknown
+until the withheld-ground-truth screen runs; the hidden tail could genuinely deserve 570 cp.
+
+**Verdict: CAST-style solver credit = NULL on COVERAGE (its headline claim) and MIXED on
+label economics. The by-product — the MultiPV-6 imputed tail — is REAL and is the
+finding.** Instrument: `scripts/cast_probe.py`, read-only, 24 live shards (47,356 rows)
+off `train_trial_1d175`. Banked JSON + exact command in the PR.
+
+⚑ The economics half survives but does NOT mean what the issue assumes. SF really is the
+dominant CPU consumer (18.3 of 32 cores), so a cheaper label really would free real
+capacity — but **`sf_wdl` is already on 99.8% of rows, so that capacity cannot buy
+coverage.** It buys *throughput* (more games per iteration), which is a different and much
+smaller claim than "supervise 3–5× as many states". Any Phase-1 allocator work must be
+justified on label QUALITY at fixed volume, or on games/s, and never on supervision
+density.
+
+`A_CAST(t) = q_t + q_(t-1)` where `q = W − L` off the record-POV `sf_wdl`. The terms ADD
+because each label is already in its own record's mover POV, so `V_T(s_t) = −q_(t−1)`.
+
+**The three claims that motivated it, measured:**
+
+| claim | measured | verdict |
+|---|---|---|
+| "SF CPU is the bottleneck, cheap scalar labels buy more supervision" | **stockfish = 18.3 of 32 cores (57%)** by direct per-PID accounting over 240s; whole machine 29.3/32 (92%) over a clean 480s window | **TRUE, and it UPDATES [[loop_is_gpu_bound_cpu_two_thirds_idle]]** — that note's "SF 11.1 of 32 cores, CPU 2/3 idle" was measured at sims 256 and is now stale |
+| "scalar labels reach states MultiPV cannot" | CAST pairs **18.4%** of rows vs `sf_p0_regret` **21.0%** | **FALSE** — both are gated by "is the previous ply also a stored row", not MultiPV width |
+| "CAST grades the move the learner actually made" | the played move is **not in the shard** (`sf_move_index`/`sf_played_move_index` are STOCKFISH's moves) | **~~BLOCKED~~ SUPERSEDED 2026-08-14** — recoverable offline after all: `cast_probe.recover_played_move` reconstructs it from consecutive positions via `decode_board_from_planes`, **1380/1380, 0 ambiguous**. Only a TRAINING-TIME CAST loss still needs a format change. ⚑ The argmax-proxy statements in the rest of THIS subsection describe the probe as it was BEFORE that commit and are historical |
+
+**Signal quality.** `A_CAST` is real but noisy: corr with the exactly-known covered-move
+regret **+0.168** (+0.442 on unsaturated roots), collapsing to **0.007** under an
+across-row shuffle (control PASSES). But `P(A > 0) = 0.219` where a consistent teacher
+owes zero, mean |A| is **0.034 on the impossible-sign half vs 0.079 on the rest**, and on
+saturated roots (25.8% of rows, `|q_parent| > 0.8`) the signal drops to −0.014 against a
+0.065 sd — near pure noise. Parent/child search drift is NOT the problem: on the tightest
+proxy stratum it bounds to **−0.0029 ± 0.0022**, and it shrinks monotonically as the proxy
+sharpens, which identifies it as proxy error rather than drift.
+
+**⚑⚑ THE ACTUAL FINDING — `finalize._build_sf_p0_regret_vector`'s imputed tail.** Every
+legal move SF did not surface gets `(worst_surfaced + 1) / 2`. At MultiPV 40 that was
+marginal. At the live MultiPV 6:
+
+- **68.3% of legal moves** carry a fabricated regret (27.5 legal, 5.8 covered).
+- The fabricated value is **586 cp** against a worst move SF *actually surfaced* of
+  **191 cp mean / 92 cp median**.
+- It supplies **74.5% of `E_pi[regret]`**, and dominates (>50%) on **49.6% of rows**.
+- The CAST-based *pricing* of that fabricated value is **WITHDRAWN** (see the retraction
+  above). No number is currently claimed for what the censored moves are truly worth, in
+  either direction.
+- Control: a WITHIN-POSITION permutation collapses the tail share to **0.169** (the
+  regret-weighted permutation expectation, `sum(mass_imp_i * mean_r_i) / sum(mean_r_i)`)
+  against an observed **0.757**. ⚑ The probe originally compared against the UNWEIGHTED
+  mean imputed mass (0.162) — Codex P2, correct; recomputed properly the control still
+  PASSES and the gap is far too large to be a mass effect. This control uses NO played-move
+  proxy, so it survives the retraction: **the objective is dominated by the VALUES assigned
+  to censored moves, not by how much probability sits on them.**
+
+**⚑ AND THE TWO SITES IMPUTE IN OPPOSITE DIRECTIONS.** `finalize._build_sf_p0_regret_vector`
+gives unlisted moves `(worst + 1) / 2` — PESSIMISTIC, over-penalising a broad policy. But
+`eval/audit.py::move_regrets:252-271` gives them `worst` as an explicit optimistic FLOOR —
+under-penalising a broad policy. So the training target and the E[regret] RULER disagree by
+construction on ~68% of moves, and the audit's expected-regret number is not on the same
+scale as the training-time one. ⚑ Say this precisely: the issue's "censored r6" arm is
+already **IMPLEMENTED, and used by the evaluation ruler**. It has **never been trained on**.
+Do not let this be read as "we already tested r6 censoring as a training objective" — we
+have only ever used it to SCORE.
+
+⇒ **Consequence for the tail screen:** the audit E[regret] ruler cannot be treated as
+unbiased ground truth for a tail-treatment bake-off. It assigns every rank >10 the
+optimistic `r_10` floor, so it has a structural preference for BROAD targets whenever their
+extra mass lands on moves the audit never valued. That is an argument for the wide-MultiPV
+screen carrying the magnitude question.
+
+**Why this matters even though `w_sf_own_regret` is 0.0 today.** The vector is still
+RECORDED (`record_sf_p0_regret: true`), so the defect is banked into every shard and is
+latent, not absent. Re-enabling the weight unchanged would train `policy_own` to push mass
+off ~68% of legal moves toward SF's top 6 on the strength of values that were never
+measured — a sharpening pressure, on a net already measured **3.7× narrower than BT4 and
+14.1pp less accurate**. This also **re-opens the old `w_sf_own_regret` 0.7 verdict**: that experiment
+ran at MultiPV 40 where the tail was marginal, so its result does not transfer to 6.
+
+**Pre-committed next step (NOT a live change).** Screen the tail treatments offline
+before any weight moves, on HISTORICAL WIDE labels (`train_trial_d2003` 569 shards at
+median 37 PVs, `cdb96` 353 at 35, `0f888` 812 at 28) truncated to top-6, with the hidden
+ranks as ground truth: (1) current midpoint = control, (2) censored `r_6` bound,
+(3) covered-only, (4) residual tilt `p_base · exp(−β r)` with one shared censored tail
+value. Report POLICY-WEIGHTED tail regret `E_pos[ sum_{a not in top6} p(a) r_wide(a) ]`
+under the CURRENT prior re-run on those positions — not the historical net's — plus
+`P_current(rank > 40)` as the coverage limit. The two existing conventions bracket the
+answer, so fit the interpolation and report where α actually lands rather than staging a
+two-way bake-off:
+
+```
+r_tail(α) = r_6 + α·(r_midpoint − r_6) = r_6 + (α/2)·(1 − r_6)
+```
+
+⚑⚑ **PRE-REGISTERED RANGE: 0 ≤ α ≤ 2, NOT [0,1].** Regret is normalized to best=0 and
+>=1000cp=1.0, and `r_midpoint = (r_6 + 1)/2`, so α=0 is the audit ruler's optimistic `r_6`,
+**α=1 is the current midpoint, and α=2 is a maximally bad tail at regret 1.0.** Capping α
+at 1 would bake "the midpoint is too pessimistic" into the very experiment designed to test
+whether it is — the hypothesis this entry just RETRACTED. The truth may land at α>1.
+- On the wide-MultiPV screen (ranks 7+ ordered below rank 6 by the SAME search), α ≥ 0 is
+  justified and [0,2] is the range.
+- On the later real-MPV6-vs-independent-deep-truth panel, do NOT force α ≥ 0: finite-search
+  error means an omitted move can genuinely be BETTER than the surfaced sixth.
+- ⚑ Fit the policy-weighted regret GLOBALLY. Do not average per-position α: the implied
+  denominator `(1 − r_6)/2` goes to zero as `r_6 → 1`, so positions where the two endpoints
+  nearly coincide must be flagged or suppressed rather than allowed to dominate a mean. Kill rule: nothing goes live unless it beats the midpoint control on broad
+`value_regret` + raw-policy top-1 at matched budget, per rule 6 above. **Do not read a
+CAST loss as the deliverable** — its unique contribution is the ~12% of P0 rows where the
+played move fell outside the MultiPV set, i.e. ~2.5% of all rows.
+
+**⚑ METHOD NOTE, recorded because it nearly produced the opposite verdict.** A first
+**5-second** `/proc/stat` sample read 45.4% busy and would have shipped "the CPU is idle,
+the cheap-label rationale is dead". The loop alternates a selfplay-heavy and a
+training-heavy phase; **anything shorter than a full iteration is a phase reading, not a
+utilisation reading.** The clean 480s window reads 29.3/32. Two further traps in the same
+measurement: agent-side work (lint, pytest, the probe itself) and OTHER sessions' pytest
+runs land on the same 32 cores — a concurrent suite from another worktree was measured at
+~3.2 cores — so machine-wide utilisation is an upper bound on the run's own. Per-PID
+attribution is the instrument that survives all three, and it is what the 18.3-core
+stockfish figure comes from. [[check_the_resource_is_binding]]
+
+**Confounds.** No training change was made; the run was live and untouched throughout.
+The played-move proxy is the one real limitation and is why every played-move number is
+reported stratified rather than as a single figure — and, per the retraction, why the
+pricing built on it is withdrawn. The probe also reads the trailing shard window, which
+MOVES while the run writes, so any re-run lands on a different population; the shard set
+must be pinned in the output before a number off it is quoted.
+
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-16) — persist `prior_top1_index` / `prior_top1_prob` at selfplay time (issue #425, ΔQ dataset)
+
+**Status: code written, PR open, NOT merged and NOT deployed. No yaml edit.** This is a
+DATA-AFFECTING change (it adds two persisted per-row fields), so it needs this entry
+before it can go live. It is a PLUMBING experiment: the yardstick below judges whether
+the value reaches storage correctly, not whether it buys Elo. Nothing here claims an
+Elo effect and no Elo readout is owed.
+
+### The constraint that forces the design
+
+The ΔQ experiment needs, for ONE model θ, the pair `a_P = argmax π_θ(s)` (the raw
+prior's top move) against `a_M = MCTS_θ(s)` (the move search chose). Offline we can
+only pair a CURRENT checkpoint's prior against a HISTORICAL net's played move — a
+different-model pair, which is not the question being asked.
+
+⚑ **This is not fixable with better historical data.** The replay schema never
+persisted the generating prior: `_NetRecord.policy_probs` is the SEARCH-IMPROVED
+target and exists only in selfplay memory, and it is the only policy that reaches a
+shard. No amount of re-reading old shards recovers a prior that was never written.
+
+⇒ Persist the prior's top-1 at selfplay time. There the prior and the MCTS move come
+from the same θ **by construction**, so every future shard yields same-model pairs on
+every future checkpoint, with no dedicated GPU run and no re-generation.
+
+### HYPOTHESIS
+
+Capturing the root prior's argmax + its probability at the ply that produced the row
+costs **8 bytes/row** (int32 index + float16 prob + two uint8 presence flags; ~12 MB
+over a 1.5M-row window) and makes the (prior top-1, MCTS choice) pair available on
+every subsequently generated row, for any checkpoint, forever.
+
+⚑ **`prior_top1_prob` is at T = 1.0 and is NOT the mass the search used.** Search
+divides root logits by `gumbel_policy_temp` (live **1.5**), so the tree was seeded with
+a FLATTER prior than this number reports; at T > 1 the stored value is systematically
+the higher of the two. The **index is unaffected** — argmax is invariant under division
+by a positive scalar — so `a_P`, the half the ΔQ pair actually needs, is identical
+either way. T = 1.0 is chosen deliberately: `π_θ` is a property of θ, whereas
+`gumbel_policy_temp` is a search knob, and a stored column defined against it would
+silently change meaning the day the knob moves while old and new rows sit in the same
+replay window under the same name. The schema already takes this side —
+`gumbel_target_untempered_prior` (production **true**) exists to undo the same
+temperature on the stored target's log-prior term. ⇒ read this field as "the net's
+confidence in its own top move", never as "the mass search gave that move"; a consumer
+wanting the latter must apply the era's `gumbel_policy_temp` itself, and must first
+establish what it was for those rows. Rationale in
+`selfplay/network_turn._prior_top1`.
+
+### WHAT IT DOES NOT CLAIM
+
+- No claim of any training effect. The fields are NOT trained on, are not in the
+  dataset tensor path, and no loss reads them.
+- No claim about EXISTING shards. The replay window carries nothing for ~a day+ after
+  deploy; the dataset accumulates only forward.
+- No claim that ΔQ itself will work. This entry buys the dataset, not the finding.
+- ⚑ **No claim that `a_M = argmax(policy_target)` is search's judgment on a
+  TB-rescored row.** The decision NOT to persist the MCTS-selected action separately
+  rests on `a_M` being recoverable as `argmax(policy_target)`, and that holds because
+  `policy_target` is `eff_probs`, the raw visit distribution (`finalize.py:1074`;
+  `soft_policy_temp` goes to the separate `soft` target at `:955`). But `eff_probs` is
+  `tb_policy_overrides.get(t, ...)` (`finalize.py:945`), and with
+  **`syzygy_rescore_policy: true`** the tablebase policy REPLACES the visit
+  distribution on TB rows — `argmax` there is the TABLEBASE's judgment, not search's.
+  It reads `false` in `configs/pbt2_small.yaml` (repo copy `:548`) AND in the live yaml
+  the run actually re-reads (`:335` there — the two files differ by 55 keys, so both were
+  checked), so this is a caveat, not a defect. ⇒ if that flag is ever turned on, `a_M` is
+  unusable on TB-rescored rows and the decision to skip persisting the selected action
+  must be re-opened.
+
+### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, output below)
+
+The failure this must exclude is this repo's signature defect: a value accepted and
+then silently ignored. So the yardstick asserts on what a shard WRITTEN TO DISK AND
+READ BACK contains — not on an in-memory object — and it judges the gating flag by the
+DIFFERENCE it makes to those bytes.
+
+```
+PYTHONPATH=. python3 -m pytest \
+  "tests/test_prior_top1_capture.py::test_prior_top1_reaches_a_written_shard_and_decodes_to_a_legal_move" \
+  "tests/test_prior_top1_capture.py::test_the_flag_changes_what_lands_in_a_written_shard" -q
+```
+
+Real output, run 2026-08-16 on the PR branch:
+
+```
+..                                                                       [100%]
+torch threads: capped at 2 (realized 2) to leave CPU for live training
+EXIT CODE: 0
+```
+
+Those two tests drive the REAL C ply path → REAL `_build_replay_samples` → REAL
+production zarr writer (`save_local_shard_arrays`) → `load_shard_arrays` (which runs
+`validate_arrays`, range-checking every `POLICY_INDEX_FIELDS` entry against the shard's
+policy width). The coverage they assert, measured on the same chain:
+
+```
+record_prior_top1=True  rows= 22 covered= 22 (100.00%)  decode-to-legal=22/22 (100.00%)
+record_prior_top1=False rows= 22 covered=  0 (  0.00%)  decode-to-legal=0/0 (nan%)
+PASS
+```
+
+### PRE-COMMITTED THRESHOLD
+
+- **PASS** requires ALL of: with the flag ON, **100%** of rows written to the shard
+  carry `has_prior_top1`, and **100%** of those decode to a move that is set in that
+  same row's `legal_mask`; with the flag OFF, **0** rows carry it.
+- **KILL** on any breach of the above, or on a measured selfplay throughput
+  regression > 2% attributable to the capture (it is one masked argmax over ~35 legal
+  moves per net ply, in Python, on a path that already does a full masked softmax).
+- Anything less than 100% coverage with the flag ON is a KILL, not a MIXED: partial
+  coverage on a field whose entire purpose is pairing means the pair population is
+  silently selected, and a selected population is exactly what the ΔQ measurement
+  cannot tolerate.
+
+#### ⚑ AMENDMENT 1 (2026-08-16) — one named exemption to the 100%-ON clause
+
+**This is an AMENDMENT to a pre-committed threshold, not a reading of it.** The bullet
+above stands exactly as written and is not deleted; what follows narrows it, and it is
+recorded here rather than left to be discovered at readout time, because a kill line
+that is quietly relaxed after the fact is a protocol violation.
+
+**What is exempted.** Rows from games that were **in flight across an OFF→ON flip of
+`record_prior_top1`** (i.e. across the selfplay-session restart that flip forces). Those
+records were captured by a session that had capture OFF, so their prior is unrecoverable
+by construction — it needs the ply's logits, which are gone by finalize. `finalize.py`
+writes them with `has_prior_top1 = 0` rather than inventing a value.
+
+**Why it is accepted.** The clause was written to ban a *silently selected* pair
+population. This exemption is not silent and not a selection on anything the ΔQ
+measurement reads: it is a **one-shot boundary effect of a single flip**, bounded by the
+in-flight games alive at that instant (≤ one session's slots, once), it is
+**row-identifiable** rather than inferred, and the alternative — dropping those games'
+records entirely, or making the key resume-incompatible — costs real training data to buy
+nothing the `has_prior_top1` column does not already give. The other direction (ON→OFF)
+is NOT exempted: it is repairable at finalize and is repaired, so the kill switch remains
+absolute at 0% (`finalize.py:1059`).
+
+**How a reader tells the two apart, mechanically.** The exemption applies only to rows
+with `has_prior_top1 == 0` whose game **spans the restart** that carried the flip. Any
+uncovered row in a shard produced wholly inside one ON session is NOT exempt and reads
+KILL. Operationally: coverage measured over shards uploaded from the second full session
+after the flip onward must be 100%; only the flip-boundary session may read below it.
+
+**Falsifier for the exemption itself.** If a post-flip session ever reads below 100% with
+no game spanning the flip, the exemption is wrong and the original bullet applies
+unamended.
+
+### THE TRAP THIS CHANGE IS MOST LIKELY TO DIE ON (and the proof it did not)
+
+`prior_top1_index` is a **MOVE INDEX**. Under board mirroring
+(`replay/augment.py`) it MUST be remapped through the mirror permutation, not
+copied. A copied index raises nothing, changes no shape, and leaves a plausible
+in-range value — it is simply the wrong move on every mirrored row.
+
+Handled by registering it in `replay/shard.POLICY_INDEX_FIELDS` and driving BOTH
+mirror paths (`mirror_sample` and `maybe_mirror_batch_arrays`) off that one registry
+instead of two hand-written tuples. Mutation-verified: reverting either path to a copy
+fails `tests/test_mirror_augmentation.py` (mutant M1 killed 7 tests, M2 killed 2).
+
+⚑ **The completeness guard did not guard completeness.** The registry-walking test
+claimed "add a new index field to the schema and forget the mirror, and this fails",
+but it iterates `POLICY_INDEX_FIELDS` — so it structurally cannot see the forgettable
+step, which is REGISTERING. Proven: a `foo_move_index` added to `_OPTIONAL_FIELD_SPECS`
++ `_SCALAR_FIELDS` + `ReplaySample` and omitted from the registry left **seven suites
+green** (135 tests). Replaced by a partition guard that walks
+`_OPTIONAL_FIELD_SPECS` — the place a field is actually added — and requires every
+scalar integer spec to be classified exactly once, either registered as a move index or
+listed in the test's `_NOT_A_MOVE_INDEX` with a reason. The exemption list is
+TEST-SIDE on purpose: `POLICY_INDEX_FIELDS` is unchanged, so no production consumer of
+that registry (`validate_arrays`' range check, the two mirror paths) sees a widened
+set. Both branches demonstrated by execution — the `foo_move_index` case RED, the
+current tree GREEN.
+
+### NEGATIVE CONTROL
+
+`test_prior_disagrees_with_search_in_the_fixture` asserts the test fixture actually
+separates the prior's argmax from both the improved policy's argmax and the played
+action. Without it every other assertion would pass while the code read the SEARCH
+policy — the one substitution that would make the whole field meaningless. Confirmed by
+mutant M3 (capture reads `c_probs` instead of the prior): killed, 5 tests.
+
+### CONFOUNDS / OPS
+
+- **None on training.** No loss, no head, no sampling weight reads these fields.
+- **Deploy ordering is load-bearing.** The code must be merged and deployed BEFORE any
+  yaml key naming `record_prior_top1` exists. An unknown yaml key is survivable mid-run
+  (the reload is rejected, trial survives) but **FATAL at launch** — `run.py` calls
+  `flatten_run_config_defaults` before the arg parser is built and outside any `try`.
+  ⇒ no yaml edit in this change; the key becomes usable only as a kill switch after
+  the deploy that defines it.
+- **Flag defaults ON** (`record_prior_top1: bool = True`) at every hop. Deliberate: the
+  field only pays off if it accumulates passively from the deploy, and a default-off
+  knob would need a yaml key to do anything — which is the "wired but never enabled"
+  failure this field exists to route around.
+- **Resume format bumped 1 → 2.** Four new per-record columns. ⚑ CORRECTED: the bump
+  is NOT load-bearing against a crash — forcing the gate to accept a v1 file yields a
+  graceful `reasons={'unreadable': N}`, not an uncaught `KeyError` (measured by the
+  independent review). The bump is still right, for a weaker and honest reason:
+  `version_mismatch` names the actual cause where `unreadable` would misattribute it.
+  Costs at most one session's suspended in-flight games, once.
+- **The round-trip the bump pays for is now asserted.** It was not: deleting both
+  `_rebuild_record` restore lines left every suite green (review mutant M9). The fields
+  are captured from the ply's logits and — unlike `x` / `relations` — cannot be
+  recomputed from the replayed board, so `tests/test_selfplay_resume.py` now carries
+  `test_prior_top1_survives_suspend_and_resume` (distinct dyadic values per record plus
+  one deliberately-absent row) and the two fields are in `_assert_record_identical`,
+  behind a non-vacuity assertion that the session captured any at all.
+- `record_prior_top1` is a RESTART key (baked into the frozen `GameConfig` at session
+  start) and is `_RESUME_COMPAT_EXEMPT` (a game spanning a flip yields fewer covered
+  rows, never a wrong one).
+
+### REVERT POINT
+
+Code-only revert: revert the PR. No yaml key exists to unset, no salvage snapshot is
+required — the change adds columns and reads none of them, so a revert leaves earlier
+shards readable (every consumer is presence-flag gated) and simply stops new coverage.
+
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-12) — authenticated seed claim, side-effect-free manifest (finding [6], DoS half)
 
 **Status: NOT WRITTEN YET. This entry gates the work, not the merge.** Training is
@@ -40666,3 +41719,149 @@ SEARCH, and this arena holds search fixed on both sides by construction
   trap that once faked 70 Elo [[no_rollback_target_the_run_is_a_plateau]].
 - iter218 was copied OUT of the live tune dir before use (Ray prunes live checkpoints).
 - 200 pairs, so the pentanomial CI is the paired one, not a trinomial understatement.
+
+## 2026-08-16 — FOLLOW-ON (PR #427, `fix/optremap-review-residuals`) — the guard against re-keying by position had, as its failure mode, re-keying by position
+
+Merged-pending. Not a training-target change; it changes what `Trainer.load` does on a
+checkpoint whose recovered name mapping is UNTRUSTWORTHY. Entered here because it converts
+loads that previously SUCCEEDED into refusals, and a refusal also resets the LR scheduler to
+warmup — so it is restart-affecting even though no loss, weight or config key moves.
+
+**The defect the fix closes.** The identity-based re-key returns `None` when it declines.
+`load` treated `None` uniformly as "not applicable" and fell through to
+`self.opt.load_state_dict(...)`, which is keyed by INTEGER INDEX into flattened
+`param_groups` order. With donor and live counts equal — the ordinary case — every parameter
+then received some OTHER parameter's moments: non-empty, correctly shaped, steppable,
+**wrong**, and completely unlogged, with `optimizer_state_loaded` left True so the scheduler
+and zclip were restored on top. `reset_mismatched_optimizer_state` cannot catch it because the
+shapes match by construction. ⇒ the guard against positional re-keying fell back to positional
+re-keying. `UntrustedOptimizerStateError` now separates "not applicable, positional is CORRECT"
+from "the mapping is WRONG", and only the first still returns `None`.
+
+**Production-path evidence (independent review, replayed against the LIVE arm-B
+`checkpoint_000031`):** 479 manifest names, 479 distinct slot ids, **0 name misses**, 910
+moment tensors, **0 shape disagreements**. ⇒ **nothing that loads today newly refuses.** The
+widened `value.dim() != 0` exemption inspects exactly the same 910 tensors (Aurora stores
+`step` as a python int, so the 0-dim branch is never taken on the real donor) — strictly wider
+with zero new false positives.
+
+**⚑ PRE-COMMITTED VERIFICATION, owed at the NEXT restart** (this is the whole point of the
+entry — the fix is a refusal that must never fire on a healthy resume):
+
+```bash
+# The load-path lines go to the Ray WORKER log, never to /tmp/chess_training.log.
+LOG=$(ls -t /tmp/ray/session_*/logs/worker-*.out | head -1)
+grep -c "REFUSING to load the donor optimizer state by position" "$LOG"   # MUST be 0
+grep -c "reinitialising optimizer"                                "$LOG"   # MUST be 0
+grep -n  "name-based optimizer remap"                             "$LOG"   # MUST show ~475 kept
+```
+
+**Kill rule, decided now:** any non-zero `REFUSING` count on a resume from a checkpoint this
+same code wrote is a REGRESSION, not a catch — revert `fix/optremap-review-residuals` and
+resume from the pre-#427 commit. A `REFUSING` on a checkpoint written by OTHER code (a rename,
+or a payload rewritten in place by `scripts/reinit_value_heads.py`, which leaves
+`opt_param_names` stale) is the guard WORKING and must be read as such.
+⚑ Show the instrument fires before reading a 0 as a pass — the same false-negative that bit
+this entry twice above. [[server_info_logs_are_discarded_by_uvicorn]]
+
+**Revert point:** `4adafe91a` is the last commit before the review-residual fixes;
+`ed3a8737c` is the last before the `UntrustedOptimizerStateError` behaviour change itself;
+`449879b6d` is the should-fix pass that reworded the mass-turnover WARNING.
+
+⚑⚑ **ALL THREE OF THOSE SHAs ARE UNREACHABLE FROM BOTH `main` AND `ops/live-20260725`.**
+Verified 2026-08-16 (`git branch -r --contains`): they exist only on the unmerged
+`origin/fix/optremap-review-residuals` (and its sibling `origin/fix/optremap-n1-positional-fallback`),
+because PR #427 was SQUASH-merged into the live branch as `45da6ba79` and forward-ported to
+`main` as a cherry-pick with a different SHA again (PR #439). ⇒ **`git show <sha>` on either
+long-lived branch fails, and deleting those remote branches destroys these revert points
+outright.** To revert this change use the squash/cherry-pick commit on the branch you are
+actually on, not the SHAs above. Recorded here rather than in the PR description because a
+PR body does not survive into the file a future operator reads.
+
+**Coverage note.** The mass-turnover WARNING was, until `449879b6d`, the one change in this
+area that **nothing could detect** — the reviewer mutated it to `if False:` and the whole file
+still passed, exit 0, because every test asserted on optimizer STATE after the load and none on
+the warning. Now pinned by payload (count, live denominator, kept/dropped/fresh breakdown), and
+that mutant exits 1. Its arithmetic was also wrong: `changed` is `dropped + fresh`, counted on
+opposite sides, so it can exceed the live parameter count and must not be rendered as a
+fraction of it. [[a_gate_that_cannot_fail]]
+
+---
+
+## OWED: re-dump the three banked monitor baselines so the provenance gate can FIRE (#442)
+
+**Status: OPEN, blocking nothing, owed at the next maintenance window.** Recorded here
+rather than in PR #442's description because a PR body does not survive into the file a
+future operator reads. [[uncommitted_live_yaml_edits_lose_proven_wins]]
+
+**What #442 shipped.** `scripts/paired_compare.py` now VALIDATES the provenance stamp it
+had been recognising and discarding, and `value_regret.py` / `blindspot_panel.py` now
+stamp their `--dump-per-position` output — previously only `audit_targets.py` did, so the
+gate was inert on every automated comparison.
+
+**Why it still cannot REFUSE on the production path.** `require_same_stamp` opens with
+`if not a.stamp or not b.stamp: warn; return`. Every automated comparison in
+`scripts/monitor_fen.sh` puts an UNSTAMPED legacy baseline on side A:
+
+```
+scratchpad/canary_512_iter20/vdump_boot_swaptime.jsonl   # value_regret, boot512
+scratchpad/canary_512_iter20/panel_v1_live.jsonl         # blindspot_panel v1
+scratchpad/canary_512_iter20/panel_v2_live.jsonl         # blindspot_panel v2
+```
+
+Verified 2026-08-16 by reading line 1 of each: all three begin with a bare data row.
+⇒ **on the live monitor the gate warns and can never refuse.** "Warn forever" is the state
+this repo's rules class as a gate that cannot fail, so this entry is the bounded exit.
+
+**Why it WAITS rather than shipping in the PR.** The re-dump is a GPU read of a 61.44M net
+over 2000 audit positions plus two blindspot panels, and training is live; the standing
+rule is no concurrent GPU work outside a pause window. [[batch_gpu_work_into_pause_windows]]
+The boot512 checkpoint is banked (`scratchpad/canary_512_iter20/live_ckpt19_trainer.pt`,
+685 MB), so nothing expires and nothing is lost by waiting.
+
+**⚑ A RE-STAMP UTILITY WAS CONSIDERED AND REJECTED.** Stamping a legacy dump in place would
+write `policy_map_version` / `audit_ruler_version` values that were never recorded when the
+numbers were produced — asserting a provenance nobody measured. That converts *unverified*
+into *verified false*, which is strictly worse than the warning, and it is the exact defect
+class (a value accepted and then trusted) the stamp exists to stop. **Re-dump or warn; do
+not re-stamp.**
+
+**The exact commands, in a pause window** (one per baseline; `--force` is deliberate — these
+are replacements, and the numbers must be IDENTICAL because the checkpoint and ruler are
+unchanged):
+
+```bash
+BASE=scratchpad/canary_512_iter20
+CK=$BASE/live_ckpt19_trainer.pt
+PYTHONPATH=. python3 scripts/value_regret.py --checkpoint "$CK" \
+    --max-positions 2000 --gpu-mem-fraction 0.15 \
+    --dump-per-position "$BASE/vdump_boot_swaptime.jsonl"
+for P in v1 v2; do
+  PYTHONPATH=. python3 scripts/blindspot_panel.py --checkpoint "$CK" \
+      --panel "data/blindspot_panel_$P.jsonl" \
+      --dump-per-position "$BASE/panel_${P}_live.jsonl"
+done
+```
+
+**⚑ PRE-COMMITTED READOUT — the value the re-dump has to move, and the value it must NOT.**
+
+```bash
+# 1. MUST move: the monitor's provenance token, on the next deep cycle.
+grep -o "prov:[^|]*" scratchpad/live_read/monitor/monitor.log | tail -3
+#    before: "vs_boot:UNVERIFIED(RULER)"  (the batch_size row-field warning)
+#    after : "prov:ok"                    (stamped both sides, batch_size on both)
+# 2. MUST NOT move: the yardstick itself. Same checkpoint, same ruler.
+grep "paired delta" scratchpad/live_read/monitor/paired_*_vs_boot.log | tail -2
+```
+
+**Kill rule, decided now.** If the re-dumped `vdump_boot_swaptime.jsonl` moves the banked
+`paired delta` by more than the CI half-width of the cycle it is read against, the re-dump
+did NOT reproduce the baseline — restore the old file from backup and treat the difference
+as a RULER CHANGE to be diagnosed, not as a new baseline. A baseline that silently moved is
+worse than one that cannot be provenance-checked. [[a_ruler_change_must_invalidate_its_records]]
+
+**⚑ Do not read `prov:ok` as "the gate fired".** It means both sides are stamped and the
+stamps agree — the passing branch. The refusing branch is exercised by
+`tests/test_paired_compare_gate_is_wired.py::test_prov_names_each_outcome_of_a_real_paired_compare[refused]`,
+which drives the real script; on the production path it stays unexercised until two genuinely
+different rulers are compared, which is the point. [[a_gate_that_cannot_fail]]

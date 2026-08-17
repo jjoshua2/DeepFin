@@ -16,6 +16,7 @@ from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
 from chess_anti_engine.utils.architecture import (
     DEFAULT_PHASE_PIECE_THRESHOLDS,
+    normalize_aux_policy_head_dim,
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
@@ -193,6 +194,11 @@ class TrialConfig:
     categorical_head_coupled: bool = False
     policy_embedding_mode: str = "off"
     enable_policy_sf_head: bool = True
+  # Projection width of the AUXILIARY policy heads (policy_soft / policy_sf)
+  # only. None = trunk width = today's exact behaviour. policy_own (the search
+  # prior) and policy_future are never narrowed -- see
+  # model/transformer.AUX_POLICY_HEAD_DIM_HEADS.
+    aux_policy_head_dim: int | None = None
 
   # --- Training ---
     lr: float = 0.0003
@@ -331,6 +337,7 @@ class TrialConfig:
     record_lc0_root_input: bool = False
     history_rep_fix: bool = False
     record_dense_sf_policy: bool = True
+    record_prior_top1: bool = True
     record_sf_p0_policy: bool = False
     record_sf_p0_regret: bool = False
     record_fast_ply_value: bool = False
@@ -617,6 +624,9 @@ class TrialConfig:
             categorical_head_coupled=bool(config.get("categorical_head_coupled", False)),
             policy_embedding_mode=str(config.get("policy_embedding_mode", "off")),
             enable_policy_sf_head=bool(config.get("enable_policy_sf_head", True)),
+            aux_policy_head_dim=normalize_aux_policy_head_dim(
+                config.get("aux_policy_head_dim")
+            ),
 
   # --- Training ---
             lr=float(config["lr"]) if "lr" in config else 0.0003,
@@ -807,6 +817,7 @@ class TrialConfig:
             record_lc0_root_input=bool(config.get("record_lc0_root_input", False)),
             history_rep_fix=bool(config.get("history_rep_fix", False)),
             record_dense_sf_policy=bool(config.get("record_dense_sf_policy", True)),
+            record_prior_top1=bool(config.get("record_prior_top1", True)),
             record_sf_p0_policy=bool(config.get("record_sf_p0_policy", False)),
             record_sf_p0_regret=bool(config.get("record_sf_p0_regret", False)),
             record_fast_ply_value=bool(config.get("record_fast_ply_value", False)),

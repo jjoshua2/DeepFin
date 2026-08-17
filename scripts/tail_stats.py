@@ -13,21 +13,26 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 
 import numpy as np
 
 from chess_anti_engine.eval.audit import PHASE_NAMES
+from chess_anti_engine.utils.audit_cache_format import iter_data_rows
 
 
 def load(path: str, raw_top1: bool) -> dict[str, tuple[float, str]]:
+    # ⚑ `iter_data_rows`, not a bare per-line `json.loads`. Since these dumps
+    # became provenance-stamped their line 1 is a HEADER, not a position, and
+    # this reader was immune only by accident — the header has no `value` and
+    # no `cand`, so the numeric test happened to drop it. Add any field to the
+    # stamp that a row also carries and the accident ends, with the header
+    # counted as a scored position and `r["phase"]` raising KeyError. Skipping
+    # on the sentinel is immunity by construction (#442 review B1).
     rows: dict[str, tuple[float, str]] = {}
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            r = json.loads(line)
-            v = r.get("cand", {}).get("raw", {}).get("top1") if raw_top1 else r.get("value")
-            if isinstance(v, (int, float)):
-                rows[r.get("fen") or r.get("key")] = (float(v), PHASE_NAMES[r["phase"]])
+    for r in iter_data_rows(path):
+        v = r.get("cand", {}).get("raw", {}).get("top1") if raw_top1 else r.get("value")
+        if isinstance(v, (int, float)):
+            rows[str(r.get("fen") or r.get("key"))] = (float(v), PHASE_NAMES[r["phase"]])
     return rows
 
 

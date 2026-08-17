@@ -152,6 +152,14 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("sf_played_move_index", "has_sf_played_move",    (),            _I32_DT),
     _OptFieldSpec("sf_played_rank",       "has_sf_played_rank",    (),            _I32_DT),
     _OptFieldSpec("sf_played_regret",     "has_sf_played_regret",  (),            _F16),
+    # Generating net's raw root prior top-1 (see ReplaySample). The index is a
+    # MOVE INDEX in this shard's policy encoding -> it is registered in
+    # POLICY_INDEX_FIELDS below, which is what makes mirror augmentation remap
+    # rather than copy it. The prob is a plain scalar and is mirror-invariant,
+    # and is the net's T=1.0 mass, NOT the search's tempered prior -- see
+    # selfplay/network_turn._prior_top1 before reading a confidence off it.
+    _OptFieldSpec("prior_top1_index",     "has_prior_top1",        (),            _I32_DT),
+    _OptFieldSpec("prior_top1_prob",      "has_prior_top1_prob",   (),            _F16),
     _OptFieldSpec("future_sf_regret_sum", "has_future_sf_regret_sum", (),         _F16),
     _OptFieldSpec("future_sf_regret_d95", "has_future_sf_regret_d95", (),         _F16),
     _OptFieldSpec("future_sf_regret_d98", "has_future_sf_regret_d98", (),         _F16),
@@ -277,9 +285,17 @@ POLICY_SPACE_FIELDS = ("policy_target", "sf_policy_target", "policy_soft_target"
 # (allocation) and lives in move space (mirror augmentation).
 POLICY_DENSE_VALUE_FIELDS = ("sf_p0_regret",)
 POLICY_SIZED_FIELDS = frozenset((*POLICY_SPACE_FIELDS, *POLICY_DENSE_VALUE_FIELDS, *LEGAL_MASK_FIELDS))
+# Scalar fields holding a single MOVE INDEX in policy space. Two consumers
+# depend on this being the COMPLETE list, and both fail silently if it is not:
+# `validate_arrays` range-checks against the shard's policy width, and
+# replay/augment.py remaps these under the mirror permutation. A move index
+# that is merely COPIED through a mirror is wrong on every mirrored row with no
+# exception, no shape change and no failing test -- so a new index-valued field
+# belongs here, not in a second hand-written tuple.
 POLICY_INDEX_FIELDS: tuple[tuple[str, str], ...] = (
     ("sf_move_index", "has_sf_move"),
     ("sf_played_move_index", "has_sf_played_move"),
+    ("prior_top1_index", "has_prior_top1"),
 )
 
 
@@ -1024,6 +1040,11 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str, object], ...] = (
         "sf_played_regret", "sf_played_regret", "has_sf_played_regret",
         lambda v: np.float16(float(v)),
     ),
+    ("prior_top1_index",  "prior_top1_index",   "has_prior_top1",        int),
+    (
+        "prior_top1_prob", "prior_top1_prob", "has_prior_top1_prob",
+        lambda v: np.float16(float(v)),
+    ),
     (
         "future_sf_regret_sum", "future_sf_regret_sum", "has_future_sf_regret_sum",
         lambda v: np.float16(float(v)),
@@ -1665,6 +1686,10 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             s.sf_played_rank = int(opt["sf_played_rank"][i])
         if opt["has_sf_played_regret"][i]:
             s.sf_played_regret = float(opt["sf_played_regret"][i])
+        if opt["has_prior_top1"][i]:
+            s.prior_top1_index = int(opt["prior_top1_index"][i])
+        if opt["has_prior_top1_prob"][i]:
+            s.prior_top1_prob = float(opt["prior_top1_prob"][i])
         if opt["has_future_sf_regret_sum"][i]:
             s.future_sf_regret_sum = float(opt["future_sf_regret_sum"][i])
         if opt["has_future_sf_regret_d95"][i]:

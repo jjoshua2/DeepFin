@@ -196,6 +196,7 @@ _SELFPLAY_KEYS = (
     "history_rep_fix",
     "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     "record_relations",
+    "record_prior_top1",
     "record_dense_sf_policy",
     "record_sf_p0_policy",
     "record_sf_p0_regret",
@@ -245,6 +246,7 @@ _MODEL_PASSTHROUGH = (
     "categorical_head_coupled",
     "policy_embedding_mode",
     "enable_policy_sf_head",
+    "aux_policy_head_dim",
 )
 
 # train section: all 1:1 passthrough.
