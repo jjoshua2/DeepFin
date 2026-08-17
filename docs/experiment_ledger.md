@@ -54454,3 +54454,70 @@ ramp is noise, and the ramp without the offset is the controller chasing, not th
 the verdict in the same session as the readout, and because "flat" is the outcome this project
 keeps re-discovering late [[no_rollback_target_the_run_is_a_plateau]]
 [[regret_does_not_track_strength_run_regressed]].
+
+---
+
+## 2026-08-17 — DESIGN NOTE — **DO #235 AND #239 REPAIR THE SAME ROWS? — DIFFERENT HEADS, OVERLAP UNMEASURED, AND BOUNDED BY COUNT**
+
+Task #235 (targeted re-label of the SF-unconverged slice) and task #239 (targeted deep
+re-label of the screened bad tail, prereg `2239f7b70`) both propose spending extra SF nodes
+on a *selected* minority of rows. Before either runs, the obvious question is whether one
+subsumes the other. Recorded here so the question is answered once, in the file, rather than
+re-argued.
+
+### They are selected by statistics about DIFFERENT HEADS
+
+| | #235 | #239 |
+|---|---|---|
+| statistic | `\|Δ sq\| >= 0.20` between SF at 150k and at 500k nodes | `dQ = Q_target − Q_sf <= −0.10` under BT4 |
+| what it is about | SF's **position evaluation** — the VALUE label | which **move** the target picks — the POLICY label |
+| population measured on | `data/audit_set_v1.jsonl`, n=1200 ordinary rows | `scratchpad/target_vs_bt4/`, n=2000 live SF-labelled rows |
+| rate | **2.92%** of rows [2.04%, 4.03%] | **8.80%** of rows (176/2000); 15.20% of the 1158 disagreement rows |
+
+⇒ **On the evidence that exists, these are different defects on different heads, and neither
+arm subsumes the other.** #235 buys value-label fidelity; #239 buys policy-target fidelity.
+
+### ⚑ BUT THE OVERLAP IS UNMEASURED, AND THE MEASUREMENT THAT WOULD SETTLE IT WAS NEVER RUN
+
+The value/policy split above is *not* a proof of disjointness. An unconverged evaluation can
+also reorder SF's MultiPV, which would move the policy target too — and something adjacent is
+already on the record: on the shallow-SF label path, reversing only the visit ORDER changed
+**4/4 labels and 2/4 top-1 moves** ([[sf_teacher_is_unconverged_on_3pct_of_labels]]). That
+was TT carryover, a different instability source from budget, so it does not transfer. **What
+has never been measured is whether raising the LABEL budget 150k→500k changes SF's top-1
+move**, which is exactly the quantity that decides whether these two slices intersect.
+
+### A COUNT bound, stated with its two failure modes
+
+Even under **total containment** (every SF-unconverged row is also a bad-tail row):
+
+    2.92% / 8.80% = 33.2% of the bad tail at most
+
+⇒ at least **two thirds of the bad tail is not explained by label-budget instability**, so
+#239 cannot be retired in favour of #235 under any overlap assumption.
+
+⚑ Two reasons not to quote that as a result:
+- **It divides rates measured on two different populations** — 1200 `audit_set_v1` rows
+  against 2000 live target-vs-BT4 rows. Transferring a base rate across populations is the
+  hazard in [[same_name_different_population]]; the bound is indicative, not exact.
+- **It is a bound on COUNT, not on DEFICIT.** The bad tail's damage is concentrated
+  (`dQ<=-0.10` carries ~97% of the mean deficit), and nothing rules out the unconverged rows
+  being the *heaviest* members of the tail. "≤33% of the rows" does **not** give "≤33% of the
+  harm", and a repair arm is judged on harm. [[a_statistic_over_a_padded_array_measures_the_padding]]
+
+### What would settle it — cheap, CPU-only, no new instrument
+
+Score the **#239 screen population itself** on the same 3-budget ladder
+(`scripts/blindspot_deepsf_scaling.py`, 75k/150k/500k, cold TT per budget, production Syzygy
+pair) and cross-tabulate `\|Δ sq\| >= 0.20` against `dQ <= -0.10` on the SAME rows. That is one
+2×2 table and it replaces the whole argument above with a measurement. Record BOTH the count
+overlap and the share of the tail's **deficit** that the unconverged rows carry — the second is
+the number the bound above cannot reach.
+
+⚑ Do this BEFORE #235 gets its own prereg. If the 2×2 shows containment with heavy deficit
+share, #235 collapses into #239's screen as one extra feature and should not be a separate arm.
+
+### Status
+
+No arm launched, no config touched, no GPU used. #235 stays PENDING and now carries a
+precondition; #239's prereg (`2239f7b70`) is unaffected and unblocked by this note.
