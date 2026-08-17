@@ -55026,3 +55026,49 @@ below it. If a future `sf_multipv` change or label-builder change breaks that sh
 silently stops selecting the right rows. ⚑ `sf_p0_regret_raw` cannot substitute: it is the
 **previous ply's** read (`p0_alignment_is_the_previous_ply`) and the replay buffer shuffles rows
 independently.
+
+## 2026-08-17 AMENDMENT — the **lc0-control arm (#199 / PR #438) is UN-LAUNCHABLE** until four rig defects land
+
+A fresh independent review of PR #438 at head `231b2f733`
+(https://github.com/jjoshua2/DeepFin/pull/438#issuecomment-5315213080) returned
+**REQUEST-CHANGES**. Seven of the eight prior findings are confirmed closed by execution. The arm
+is nevertheless **NOT LAUNCHABLE**, and this amendment is the pre-commitment: **all four items
+below must land before any day-long leg is started.** Every one of them is cheap now and expensive
+or unrecoverable after the run.
+
+1. **The mid-fraction guard refuses ODD `--steps`, unwaivably.** Exact `!=` on the realized
+   `int(0.5*steps)/steps`: `--steps 20001` → 0.499975 → `valid_control: false`. **A day of GPU
+   would be unquotable over a 0.0025% discrepancy.** ⚑ Introduced by the PREVIOUS review round's
+   own fix — a predicate tightened to be exact for the tested case made a neighbouring case
+   impossible. Same shape as `fixing_a_defect_class_reintroduces_it`, now 3/3.
+2. **A failed rerun into a populated `--out-dir` irreversibly DELETES the previous completed run's
+   `checkpoint_mid.pt`** while that run's `summary.json` still banks its path + sha256 and its
+   `checkpoint.pt` still verifies as `role: last`. The directory then reads as a scorable success
+   with a banked, sha-pinned artifact missing, and the emitted "no checkpoint written" is FALSE
+   about the directory. Must become a refusal or a move-aside; **no new delete path.**
+3. **Cadence / LR: MID and LAST are not comparable.** MID sits in a flat-LR stretch, LAST follows a
+   full one-off anneal, so the MID→LAST slope contains an anneal production never has. Either make
+   them comparable or state in the artifact that the slope is **not a production cadence** and is
+   not quotable as one. ⚑ This is the item that interacts with the design the last fix wave
+   touched.
+4. **`game_id` is not banked.** It IS present in the shards; the module's stated reason for
+   rejecting it answers a different question. Banking is **free now and unrecoverable after the
+   freeze** — that asymmetry is the entire argument, independent of whether the game-clustered
+   uncertainty estimator ships in the same wave.
+
+**Independently upheld, so it does NOT block:** the previous round's "finding 4" retitle. Re-measured
+rather than accepted — `0.69 + 0.31 == 1.0` is True, `normalize_value_blend_fracs(0.69, 0.31)` is the
+identity, and `_dynamic_sf_wdl_weight(start=floor=0.69)` returns 0.69 at every regret including the
+0.10 knee. The `blend_sum > 1.0` branch is unreachable on the live config, so **no live TB series
+carries that error.** It IS reachable via one unvalidated live edit (`search_wdl_frac` is in
+`TRAINER_WEIGHT_KEYS`, `setattr` every iteration, no validator — CLAUDE.md category (c)), which is
+why the guard is correct to exist. Latent guard, correct fix, accurate docstring. The blend is
+untouched and stays untouched.
+
+⚑ **CI on #438 is GREEN AND NOT MEANINGFUL:** the base advanced **22 commits**
+(`025c8ffbb` → `6d9d9161`) with no re-run, and `strict: false`
+(`ci_never_tests_the_merge_result`). The reviewer separately ran `main`'s new repo-wide
+`test_no_absolute_home_paths.py` gate scoped to the PR's 28 files: zero hits.
+
+**Nothing here risks production.** The only production-path change in the PR is a correct, latent
+log-line fix. This is "do not launch the arm on this rig yet", not "revert anything".
