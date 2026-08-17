@@ -1,0 +1,723 @@
+"""The SF-approved-move probability floor: its SET, its wiring, and its inertness.
+
+The eight semantic cases below are ports of the hand-built checks that pinned
+the offline reference implementation. They are written against the SET the term
+selects, not against a golden loss value, because the set is the design: every
+one of them fails for a different single-clause mutation of
+
+    top1 = argmin over LEGAL moves of regret
+    F    = {top1} u {m : regret_m <= delta_cp/CAP AND regret_m < regret_ours}
+
+⚑ A NEW TEST FILE PLUS A GREEN LINT HAS CERTIFIED A CRASH HERE BEFORE. These
+cases were mutation-tested clause by clause -- drop the unconditional `top1`,
+relax `<` to `<=`, drop the `better_than_ours` gate, drop the cp window, divide
+by 1 instead of the cap, drop the `have` mask, drop the legality restriction on
+the argmin, floor `top1` at `tau` instead of `tau_top1` -- and each mutant is
+killed by at least one assertion here. The mutant table is in the PR.
+"""
+from __future__ import annotations
+
+import math
+
+import pytest
+import torch
+
+from chess_anti_engine.selfplay import finalize
+from chess_anti_engine.train.constants import (
+    DEFAULT_GUMBEL_TOPK,
+    SF_OWN_REGRET_CAP_CP,
+    normalize_gumbel_topk,
+)
+from chess_anti_engine.train.losses import (
+    SF_POLICY_FLOOR_TAU_DEFAULT,
+    SfPolicyFloorParams,
+    apply_policy_mask_to_logits,
+    compute_loss,
+    policy_legal_bool,
+    search_inclusion_guarantee_tau,
+    sf_policy_floor_deficit,
+)
+
+CAP = SF_OWN_REGRET_CAP_CP
+
+
+def R(cp: float) -> float:
+    """A cp regret in the units `sf_p0_regret` is stored in."""
+    return cp / CAP
+
+
+def floor_loss(
+    regret: torch.Tensor,
+    logits: torch.Tensor,
+    *,
+    delta_cp: float = 20.0,
+    tau: float = 0.15,
+    tau_top1: float | None = None,
+    tau_played: float | None = 0.0,
+    played_target: torch.Tensor | None = None,
+    legal: torch.Tensor | None = None,
+    have: torch.Tensor | None = None,
+) -> tuple[float, torch.Tensor, float]:
+    """(loss over covered rows, grad wrt logits, binding rate) -- the rig's shape.
+
+    Mirrors `compute_loss`'s own reduction: mean over covered rows of the
+    per-row deficit, with the row mask applied to the per-row tensors rather
+    than to the selection.
+
+    ``tau_played`` defaults to 0.0 here -- COLLAR OFF -- so the eight semantic
+    cases below exercise the SF set alone; the collar has its own cases, and
+    folding it into every fixture would make each of them test two things.
+    """
+    lg = logits.clone().requires_grad_(True)
+    probs = torch.softmax(lg if legal is None else lg.masked_fill(~legal, -1e9), dim=-1)
+    params = SfPolicyFloorParams.resolve(
+        delta_cp=delta_cp, tau=tau, tau_top1=tau_top1, tau_played=tau_played,
+    )
+    deficit, binds = sf_policy_floor_deficit(
+        probs, regret, legal, played_target, params=params,
+    )
+    mask = torch.ones(regret.shape[0]) if have is None else have.to(torch.float32)
+    denom = mask.sum().clamp_min(1.0)
+    loss = (deficit * mask).sum() / denom
+    (grad,) = torch.autograd.grad(loss, [lg])
+    return float(loss.detach()), grad, float(((binds * mask).sum() / denom).detach())
+
+
+# --------------------------------------------------------------------------
+# The eight semantic cases.
+# --------------------------------------------------------------------------
+
+# regret layout shared by several cases: move 0 is SF's best, 1 is 10cp worse,
+# 2 is 30cp worse (OUTSIDE a 20cp window), 3 is 500cp worse, 4/5 are unsurfaced.
+_REG = torch.tensor([[R(0), R(10), R(30), R(500), 0.55, 0.55]])
+
+
+def test_case1_our_argmax_is_sfs_best_and_above_tau_is_exactly_silent() -> None:
+    """Our pick IS SF's best and clears tau -> loss EXACTLY 0, grad EXACTLY 0.
+
+    Not `< 1e-6`: the term is one-sided, so on a correct confident row it must
+    contribute no gradient AT ALL. An `approx` here would pass for a term that
+    quietly nudges every row.
+    """
+    logits = torch.tensor([[5.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    loss, grad, binds = floor_loss(_REG, logits)
+    assert loss == 0.0
+    assert float(grad.abs().sum()) == 0.0
+    assert binds == 0.0
+
+
+def test_case2_set_is_top1_union_within_window_and_better() -> None:
+    """Our argmax is move 2 (30cp, outside the window). F = {0, 1}, exactly."""
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]])
+    loss, _, binds = floor_loss(_REG, logits)
+    p = torch.softmax(logits, dim=-1)[0]
+    expected = float(torch.relu(0.15 - p[0]) + torch.relu(0.15 - p[1]))
+    assert loss == pytest.approx(expected, abs=1e-6)
+    # Move 3 (500cp) is better than ours and would enter without the window.
+    assert float(torch.relu(0.15 - p[3])) > 0.0
+    assert binds == 1.0
+
+
+def test_case3_better_than_ours_gate_excludes_our_own_pick() -> None:
+    """Our argmax is move 1 (10cp, inside the window). F = {top1} only.
+
+    Move 1 is not strictly better than itself, so the adaptive set is empty and
+    the term reduces to the unconditional top-1 floor.
+    """
+    logits = torch.tensor([[0.0, 5.0, 0.0, 0.0, 0.0, 0.0]])
+    loss, _, _ = floor_loss(_REG, logits)
+    p = torch.softmax(logits, dim=-1)[0]
+    assert loss == pytest.approx(float(torch.relu(0.15 - p[0])), abs=1e-6)
+
+
+def test_case4_default_regret_moves_can_never_enter_the_set() -> None:
+    """Unsurfaced / illegal entries carry `(worst + 1)/2 >= 0.5` and stay out.
+
+    This is the property that lets the cp window alone do the exclusion, so it
+    is asserted against `_build_sf_p0_regret_vector`'s actual fill rule below
+    (`test_the_default_regret_fill_is_above_every_realistic_window`) rather than
+    only against a hand-written 0.5.
+    """
+    regret = torch.tensor([[R(0), 0.5, 0.5, 0.5, 0.5, 0.5]])
+    logits = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 5.0]])  # ours is unsurfaced
+    loss, _, _ = floor_loss(regret, logits)
+    p = torch.softmax(logits, dim=-1)[0]
+    assert loss == pytest.approx(float(torch.relu(0.15 - p[0])), abs=1e-6)
+
+
+def test_case5_uncovered_rows_contribute_nothing() -> None:
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]])
+    loss, grad, binds = floor_loss(_REG, logits, have=torch.zeros(1, dtype=torch.bool))
+    assert loss == 0.0
+    assert float(grad.abs().sum()) == 0.0
+    assert binds == 0.0
+
+
+def test_case6_top1_is_unconditional_and_binds_onto_our_own_correct_move() -> None:
+    """Our argmax IS top1 but sits BELOW tau -> the floor binds onto it.
+
+    This is the case that proves `top1` enters F unconditionally: without the
+    scatter, F is empty here and the loss is 0. Correct behaviour is to push
+    mass ONTO the move we already got right, never off it.
+    """
+    logits = torch.tensor([[0.30, 0.0, 0.0, 0.0, 0.0, 0.0]])
+    loss, _, binds = floor_loss(_REG, logits, tau=0.25)
+    p = torch.softmax(logits, dim=-1)[0]
+    assert int(p.argmax()) == 0, "setup: our argmax must be SF's best"
+    expected = float(torch.relu(0.25 - p[0]))
+    assert expected > 0.0, "setup: the floor must actually bind"
+    assert loss == pytest.approx(expected, abs=1e-6)
+    assert binds == 1.0
+
+
+def test_case7_a_move_tied_with_our_pick_inside_the_window_is_excluded() -> None:
+    """`<`, not `<=`. cp scores are integer-quantised, so ties are common.
+
+    ⚑ THE TIE MUST SIT INSIDE THE cp WINDOW. Put it outside and the window
+    rejects it first, the tie clause is never exercised, and the test is
+    vacuous -- which is exactly how `<=` survived a first round of review.
+    """
+    regret = torch.tensor([[R(0), R(10), R(10), R(900), 0.95, 0.95]])
+    logits = torch.tensor([[0.0, 3.0, -3.0, 0.0, 0.0, 0.0]])  # ours = 1, move 2 tied
+    loss, _, _ = floor_loss(regret, logits)
+    p = torch.softmax(logits, dim=-1)[0]
+    assert float(torch.relu(0.15 - p[2])) > 0.0, "setup: the tied move must be below tau"
+    assert regret[0, 2] <= 20.0 / CAP, "setup: the tied move must be INSIDE the window"
+    assert loss == pytest.approx(float(torch.relu(0.15 - p[0])), abs=1e-6)
+
+
+def test_case8_the_window_is_in_cp_over_the_cap_not_raw_cp() -> None:
+    """A move 100cp better than ours is still outside a 20cp window."""
+    regret = torch.tensor([[R(0), R(100), R(200), R(900), 0.95, 0.95]])
+    logits = torch.tensor([[0.0, -3.0, 3.0, 0.0, 0.0, 0.0]])  # ours = move 2 (200cp)
+    loss, _, _ = floor_loss(regret, logits)
+    p = torch.softmax(logits, dim=-1)[0]
+    assert float(torch.relu(0.15 - p[1])) > 0.0, "setup: the far move must be below tau"
+    assert loss == pytest.approx(float(torch.relu(0.15 - p[0])), abs=1e-6)
+
+
+# --------------------------------------------------------------------------
+# The properties the eight cases rest on.
+# --------------------------------------------------------------------------
+
+
+def test_the_default_regret_fill_is_above_every_realistic_window() -> None:
+    """Case 4's premise, read off the WRITER instead of assumed.
+
+    `_build_sf_p0_regret_vector` fills unsurfaced and illegal indices with
+    `(worst_surfaced + 1) / 2`, so the floor of that fill is 0.5 -- 25x the
+    `delta_cp/CAP = 0.02` window at the default 20cp. If that rule ever changes,
+    the cp window stops excluding illegal moves on its own and this test says so
+    before the loss does.
+    """
+    import numpy as np
+
+    # One surfaced move at regret 0 -> the smallest possible default fill.
+    rows = np.array([[0, 0, 0, 0, 0]], dtype=np.int16)
+    vec = finalize._build_sf_p0_regret_vector(rows, policy_encoding="lc0_1858")
+    assert vec is not None
+    assert float(vec.min()) == 0.0
+    unsurfaced = float(np.sort(np.unique(vec))[1])
+    assert unsurfaced >= 0.5
+    assert unsurfaced > 20.0 / CAP
+
+
+def test_illegal_moves_are_excluded_even_at_an_absurd_delta() -> None:
+    """The legality clause, isolated with the cp window switched OFF.
+
+    At `delta_cp = CAP` the window admits everything, so this is the only test
+    in which the `& legal` term in `within` is load-bearing -- and it is also
+    the only one that can see the argmin landing on an illegal move.
+    """
+    regret = torch.tensor([[R(300), R(0), R(10), R(20), R(30), R(40)]])
+    legal = torch.tensor([[True, False, False, True, True, True]])
+    logits = torch.zeros(1, 6)
+    loss, _, _ = floor_loss(regret, logits, delta_cp=CAP, legal=legal, tau=0.5)
+    # Moves 1 and 2 carry the two LOWEST regrets in the row (0cp and 10cp) and
+    # are illegal, so they are the ones an unguarded argmin or an unguarded
+    # window would seize on -- and they sit at p == 0, so admitting either shows
+    # up as a whole extra `tau` of deficit.
+    p = torch.softmax(logits.masked_fill(~legal, -1e9), dim=-1)[0]
+    assert float(p[1]) == 0.0
+    assert float(p[2]) == 0.0
+    # legal = {0, 3, 4, 5} at p = 0.25 each; ours = 0 (300cp); top1 = 3 (20cp);
+    # the window is wide open, so F = {3, 4, 5} -- all three better than ours.
+    assert loss == pytest.approx(3 * float(torch.relu(0.5 - p[3])), abs=1e-6)
+    assert loss == pytest.approx(0.75, abs=1e-6)
+
+
+def test_top1_can_carry_its_own_floor() -> None:
+    """`tau_top1` is independently settable and applies to SF's best move only."""
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]])
+    p = torch.softmax(logits, dim=-1)[0]
+    loss, _, _ = floor_loss(_REG, logits, tau=0.15, tau_top1=0.40)
+    expected = float(torch.relu(0.40 - p[0]) + torch.relu(0.15 - p[1]))
+    assert loss == pytest.approx(expected, abs=1e-6)
+
+
+def test_binding_rate_is_a_row_rate_not_a_move_rate() -> None:
+    """Two covered rows, one binding -> 0.5, whatever the per-row move count."""
+    regret = _REG.repeat(2, 1)
+    logits = torch.tensor([
+        [5.0, 0.0, 0.0, 0.0, 0.0, 0.0],   # ours is SF's best and clears tau
+        [0.0, 0.0, 5.0, 0.0, 0.0, 0.0],   # two moves below tau
+    ])
+    _, _, binds = floor_loss(regret, logits)
+    assert binds == pytest.approx(0.5)
+
+
+# --------------------------------------------------------------------------
+# The COLLAR: the played move keeps its root-candidate slot.
+# --------------------------------------------------------------------------
+
+
+def _one_hot(index: int, width: int = 6) -> torch.Tensor:
+    out = torch.zeros(1, width)
+    out[0, index] = 1.0
+    return out
+
+
+def test_case9_the_collar_floors_the_move_search_actually_played() -> None:
+    """The played move is protected even though it is in neither F nor our argmax.
+
+    Move 4 is unsurfaced (default regret), so the SF set can never contain it;
+    without the collar the term is free to squeeze it, and squeezing it below
+    `1/topk` drops it out of the root candidate set on 2.67% of production rows.
+    """
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, -2.0, 0.0]])
+    p = torch.softmax(logits, dim=-1)[0]
+    assert float(p[4]) < 0.0625, "setup: the played move must be under the collar"
+    without, _, _ = floor_loss(_REG, logits)
+    with_collar, _, _ = floor_loss(
+        _REG, logits, tau_played=0.0625, played_target=_one_hot(4),
+    )
+    assert with_collar == pytest.approx(
+        without + float(torch.relu(0.0625 - p[4])), abs=1e-6,
+    )
+
+
+def test_case10_tau_played_zero_disables_the_collar_exactly() -> None:
+    """The ablation arm is a clean no-op, not a special case."""
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, -2.0, 0.0]])
+    without, grad_without, _ = floor_loss(_REG, logits)
+    ablated, grad_ablated, _ = floor_loss(
+        _REG, logits, tau_played=0.0, played_target=_one_hot(4),
+    )
+    assert ablated == without
+    assert torch.equal(grad_ablated, grad_without)
+
+
+def test_case11_a_played_move_that_is_also_in_f_is_floored_once_at_the_max() -> None:
+    """⚑ NO DOUBLE COUNT. One relu per move, at the MAX of its thresholds.
+
+    The played move here is SF's top-1 AND our own argmax is elsewhere, so the
+    move carries the F threshold (tau) and the collar threshold (tau_played) at
+    once. Summing them would floor it at 0.2125; letting the first one win would
+    floor it at whichever the implementation happened to apply last. The exact
+    expected value below distinguishes all three.
+    """
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]])  # ours = move 2
+    p = torch.softmax(logits, dim=-1)[0]
+    tau, tau_played = 0.15, 0.0625
+    loss, _, _ = floor_loss(
+        _REG, logits, tau=tau, tau_played=tau_played, played_target=_one_hot(0),
+    )
+    # F = {0, 1} as in case 2; move 0 is ALSO the played move.
+    expected = float(torch.relu(max(tau, tau_played) - p[0]) + torch.relu(tau - p[1]))
+    assert loss == pytest.approx(expected, abs=1e-6)
+    # The two mutants this exists to kill, stated as numbers:
+    summed = float(torch.relu(tau + tau_played - p[0]) + torch.relu(tau - p[1]))
+    collar_wins = float(torch.relu(tau_played - p[0]) + torch.relu(tau - p[1]))
+    assert loss != pytest.approx(summed, abs=1e-6)
+    assert loss != pytest.approx(collar_wins, abs=1e-6)
+
+
+def test_case12_the_collar_is_silent_above_its_threshold() -> None:
+    """A comfortably-ranked played move adds nothing."""
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]])
+    p = torch.softmax(logits, dim=-1)[0]
+    assert float(p[2]) > 0.0625, "setup: the played move must clear the collar"
+    without, _, _ = floor_loss(_REG, logits)
+    collared, _, _ = floor_loss(
+        _REG, logits, tau_played=0.0625, played_target=_one_hot(2),
+    )
+    assert collared == without
+
+
+def test_a_row_with_no_policy_target_gets_no_collar() -> None:
+    """An absent or masked-out target argmaxes to index 0; it must not be collared.
+
+    This is the difference between "the played move" and "index 0 of a zero
+    vector", and without the mass check they are the same tensor.
+    """
+    logits = torch.tensor([[-4.0, 0.0, 5.0, 0.0, 0.0, 0.0]])
+    p = torch.softmax(logits, dim=-1)[0]
+    assert float(p[0]) < 0.0625
+    without, _, _ = floor_loss(_REG, logits)
+    zeroed, _, _ = floor_loss(
+        _REG, logits, tau_played=0.5, played_target=torch.zeros(1, 6),
+    )
+    assert zeroed == without
+
+
+def test_the_collar_reads_the_policy_target_not_the_nets_argmax() -> None:
+    """⚑ THE MEMBER IS THE PLAYED MOVE. The net's argmax cannot be squeezed out.
+
+    Same row, two different `played_target`s; if the implementation quietly used
+    the net's own argmax instead, both calls would return the same number.
+    """
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, -2.0, -2.0]])
+    a, _, _ = floor_loss(_REG, logits, tau_played=0.0625, played_target=_one_hot(4))
+    b, _, _ = floor_loss(_REG, logits, tau_played=0.0625, played_target=_one_hot(2))
+    assert a > b
+
+
+# --------------------------------------------------------------------------
+# tau's derivation from the search width.
+# --------------------------------------------------------------------------
+
+
+def test_tau_defaults_to_the_ranking_calibrated_value() -> None:
+    """0.15, above the guarantee -- tau's second role, and it is topk-independent."""
+    assert SF_POLICY_FLOOR_TAU_DEFAULT == 0.15
+    for topk in (8, 16, 32):
+        params = SfPolicyFloorParams.resolve(gumbel_topk=topk)
+        assert params.tau == pytest.approx(SF_POLICY_FLOOR_TAU_DEFAULT)
+        assert params.tau_top1 == pytest.approx(SF_POLICY_FLOOR_TAU_DEFAULT)
+
+
+def test_an_explicit_tau_overrides_the_default() -> None:
+    params = SfPolicyFloorParams.resolve(tau=0.2)
+    assert params.tau == pytest.approx(0.2)
+    # `tau_top1: null` follows the RESOLVED tau, not the dataclass default.
+    assert params.tau_top1 == pytest.approx(0.2)
+    assert SfPolicyFloorParams.resolve(tau=0.2, tau_top1=0.5).tau_top1 == pytest.approx(0.5)
+
+
+def test_the_search_inclusion_guarantee_is_one_over_topk() -> None:
+    """The rank argument, exercised as arithmetic rather than asserted.
+
+    If `p_i >= 1/topk` then fewer than `topk` moves can strictly exceed it (they
+    would be disjoint and sum past 1), so move `i` is inside the top-`topk` by
+    prior. That is what makes it a GUARANTEE rather than a heuristic.
+    """
+    for topk in (4, 8, 16):
+        tau = search_inclusion_guarantee_tau(topk)
+        assert tau == pytest.approx(1.0 / topk)
+        assert math.floor(1.0 / tau) - 1 <= topk - 1
+    # Normalized exactly like the search's own width, including the >= 1 clamp.
+    assert search_inclusion_guarantee_tau(0) == pytest.approx(1.0)
+    assert search_inclusion_guarantee_tau(DEFAULT_GUMBEL_TOPK) == pytest.approx(0.0625)
+
+
+def test_the_guard_warns_when_tau_falls_below_the_inclusion_guarantee() -> None:
+    """⚑ THE GUARD MUST BE REACHABLE. A guard that cannot fire is worse than none.
+
+    Reached here by NARROWING `gumbel_topk` (which RAISES the guarantee
+    `1/topk`) rather than by lowering tau, because that is the way it fires
+    WITHOUT anyone editing the floor's own keys -- a search-width change
+    silently revoking the guarantee is the whole failure this warns about.
+    topk 4 -> guarantee 0.25, above the default tau of 0.15.
+    """
+    with pytest.warns(RuntimeWarning, match="BELOW the root-search inclusion guarantee"):
+        SfPolicyFloorParams.resolve(gumbel_topk=4)
+    # And the direct route: an explicit sub-guarantee tau at the production width.
+    with pytest.warns(RuntimeWarning, match="gumbel_topk=16"):
+        SfPolicyFloorParams.resolve(tau=0.02, gumbel_topk=16)
+
+
+def test_the_guard_is_silent_while_the_default_tau_still_guarantees_inclusion() -> None:
+    """The negative control on the guard: topk 8 and 16 must NOT warn at tau 0.15."""
+    import warnings as _warnings
+
+    for topk in (8, 16):
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", RuntimeWarning)
+            assert SfPolicyFloorParams.resolve(gumbel_topk=topk).tau == 0.15
+
+
+# --------------------------------------------------------------------------
+# Validation: every one of the four keys is range-checked.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "key"),
+    [
+        ({"w": -1.0}, "w_sf_policy_floor"),
+        ({"w": float("nan")}, "w_sf_policy_floor"),
+        ({"delta_cp": -1.0}, "sf_policy_floor_delta_cp"),
+        ({"delta_cp": float("inf")}, "sf_policy_floor_delta_cp"),
+        ({"tau": -0.01}, "sf_policy_floor_tau"),
+        ({"tau": 1.01}, "sf_policy_floor_tau"),
+        ({"tau": float("nan")}, "sf_policy_floor_tau"),
+        ({"tau_top1": 2.0}, "sf_policy_floor_tau_top1"),
+        ({"tau_top1": -0.5}, "sf_policy_floor_tau_top1"),
+        ({"tau_played": 1.5}, "sf_policy_floor_tau_played"),
+        ({"tau_played": -0.1}, "sf_policy_floor_tau_played"),
+        ({"tau_played": float("nan")}, "sf_policy_floor_tau_played"),
+    ],
+)
+def test_out_of_range_values_are_rejected_by_name(kwargs: dict, key: str) -> None:
+    with pytest.raises(ValueError, match=key):
+        SfPolicyFloorParams.resolve(**kwargs)
+
+
+def test_the_range_check_accepts_the_endpoints() -> None:
+    """A band that rejected 0.0 or 1.0 would be a different band than documented."""
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore", RuntimeWarning)  # tau 0.0 trips the guard
+        assert SfPolicyFloorParams.resolve(
+            w=0.0, delta_cp=0.0, tau=0.0, tau_top1=1.0, tau_played=0.0,
+        )
+
+
+def test_a_live_weight_push_is_validated_by_replace() -> None:
+    """The live path re-runs the validator, so a bad `w` cannot arrive raw.
+
+    `_apply_lr_gamma_weights` pushes `w_sf_policy_floor` by `setattr`, which no
+    validator sees; `_loss_kwargs` re-stamps it with `dataclasses.replace`,
+    which does re-run `__post_init__`. If that ever stops being true this fails.
+    """
+    from dataclasses import replace
+
+    params = SfPolicyFloorParams.resolve()
+    with pytest.raises(ValueError, match="w_sf_policy_floor"):
+        replace(params, w=-1.0)
+
+
+# --------------------------------------------------------------------------
+# Wiring: the config round-trip, and inertness at the default.
+# --------------------------------------------------------------------------
+
+
+def _flat(overrides: dict, *, section: str = "train") -> dict:
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    return flatten_run_config_defaults({section: overrides})
+
+
+def _round_trip(overrides: dict, *, section: str = "train") -> object:
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    return TrialConfig.from_dict(_flat(overrides, section=section))
+
+
+def test_the_config_keys_survive_the_yaml_flatten_and_reach_the_trainer() -> None:
+    """Schema -> flat config -> the object `compute_loss` is actually called with.
+
+    Deliberately checked at `trainer_kwargs_from_config`, the CONSUMER's own
+    entry point, rather than at `TrialConfig`: `TrialConfig.from_dict` validates
+    these keys and stores nothing, so asserting there would prove the schema
+    accepts them and say nothing about whether they reach the loss.
+    """
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+
+    flat = _flat({
+        "w_sf_policy_floor": 0.41,
+        "sf_policy_floor_delta_cp": 35.0,
+        "sf_policy_floor_tau": 0.08,
+        "sf_policy_floor_tau_top1": 0.2,
+        "sf_policy_floor_tau_played": 0.05,
+    })
+    kw = trainer_kwargs_from_config(flat)
+    assert kw["w_sf_policy_floor"] == 0.41
+    assert kw["sf_policy_floor_delta_cp"] == 35.0
+    assert kw["sf_policy_floor_tau"] == 0.08
+    assert kw["sf_policy_floor_tau_top1"] == 0.2
+    assert kw["sf_policy_floor_tau_played"] == 0.05
+    resolved = SfPolicyFloorParams.resolve(
+        w=kw["w_sf_policy_floor"],
+        delta_cp=kw["sf_policy_floor_delta_cp"],
+        tau=kw["sf_policy_floor_tau"],
+        tau_top1=kw["sf_policy_floor_tau_top1"],
+        tau_played=kw["sf_policy_floor_tau_played"],
+        gumbel_topk=kw["sf_policy_floor_gumbel_topk"],
+    )
+    assert (resolved.tau, resolved.tau_top1, resolved.tau_played) == (0.08, 0.2, 0.05)
+
+
+def test_the_trainer_reads_the_trials_own_gumbel_topk() -> None:
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+
+    kw = trainer_kwargs_from_config(_flat({"gumbel_topk": 8}, section="selfplay"))
+    assert kw["sf_policy_floor_gumbel_topk"] == 8
+
+
+def test_the_defaults_are_off_and_the_collar_is_at_the_guarantee() -> None:
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+
+    kw = trainer_kwargs_from_config(_flat({}))
+    assert kw["w_sf_policy_floor"] == 0.0
+    resolved = SfPolicyFloorParams.resolve(
+        w=kw["w_sf_policy_floor"],
+        tau=kw["sf_policy_floor_tau"],
+        tau_played=kw["sf_policy_floor_tau_played"],
+        gumbel_topk=kw["sf_policy_floor_gumbel_topk"],
+    )
+    assert resolved.w == 0.0
+    assert resolved.tau == pytest.approx(SF_POLICY_FLOOR_TAU_DEFAULT)
+    assert resolved.tau_played == pytest.approx(search_inclusion_guarantee_tau(16))
+
+
+def test_the_round_trip_checks_the_guarantee_against_the_trials_own_topk() -> None:
+    """The guard fires from `from_dict`, on the width the trial actually runs.
+
+    This is the only test that proves the guard is REACHABLE from a yaml, which
+    is the path it exists for -- `resolve` being able to warn says nothing about
+    whether the config loader passes it the trial's real search width.
+    """
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    flat = _flat({"gumbel_topk": 4}, section="selfplay")
+    assert normalize_gumbel_topk(flat["gumbel_topk"]) == 4
+    with pytest.warns(RuntimeWarning, match="gumbel_topk=4"):
+        TrialConfig.from_dict(flat)
+
+
+def test_an_out_of_range_live_value_is_rejected_at_config_load() -> None:
+    """CLAUDE.md category (b): the trial dies loudly, naming the key.
+
+    ⚑ THIS IS WHY `from_dict` VALIDATES A KEY IT DOES NOT STORE. The loop
+    rebuilds `tc` every iteration from the reloaded yaml, so a typo in a live
+    edit raises here instead of reaching the trainer as a raw float.
+    """
+    with pytest.raises(ValueError, match="sf_policy_floor_tau"):
+        _round_trip({"sf_policy_floor_tau": 5.0})
+    with pytest.raises(ValueError, match="sf_policy_floor_tau_played"):
+        _round_trip({"sf_policy_floor_tau_played": -1.0})
+    with pytest.raises(ValueError, match="w_sf_policy_floor"):
+        _round_trip({"w_sf_policy_floor": -0.5})
+
+
+# --------------------------------------------------------------------------
+# `policy_legal_bool` must agree with the logit masker, not with a re-reading
+# of the same rule.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("with_has", [True, False])
+def test_policy_legal_bool_matches_the_logit_maskers_support(with_has: bool) -> None:
+    torch.manual_seed(0)
+    width = 12
+    mask = (torch.rand(3, width) < 0.4).to(torch.float32)
+    mask[:, 0] = 1.0
+    batch: dict[str, torch.Tensor] = {"x": torch.zeros(3, 1), "legal_mask": mask}
+    if with_has:
+        batch["has_legal_mask"] = torch.tensor([1.0, 0.0, 1.0])
+    logits = torch.randn(3, width)
+    masked = apply_policy_mask_to_logits(logits, batch, "legal_mask", "has_legal_mask")
+    # A move is in the softmax's support iff the masker left its logit alone.
+    support = masked == logits
+    legal = policy_legal_bool(batch, width=width)
+    assert legal is not None
+    assert torch.equal(legal, support)
+
+
+def test_policy_legal_bool_is_none_without_a_mask() -> None:
+    assert policy_legal_bool({"x": torch.zeros(2, 1)}, width=4) is None
+
+
+# --------------------------------------------------------------------------
+# INERTNESS, by execution: at the default weight `total` is bit-identical.
+# --------------------------------------------------------------------------
+
+
+def _tiny_batch(width: int = 32, rows: int = 8) -> tuple[dict, dict]:
+    torch.manual_seed(20260817)
+    legal = (torch.rand(rows, width) < 0.5).to(torch.float32)
+    legal[:, 0] = 1.0
+    target = torch.softmax(torch.randn(rows, width), dim=-1) * legal
+    target = target / target.sum(-1, keepdim=True)
+    outputs = {
+        "policy": torch.randn(rows, width, requires_grad=True),
+        "wdl": torch.randn(rows, 3),
+    }
+    batch = {
+        "x": torch.zeros(rows, 175, 8, 8),
+        "legal_mask": legal,
+        "has_legal_mask": torch.ones(rows),
+        "policy_t": target,
+        "wdl_t": torch.randint(0, 3, (rows,)),
+        "sf_p0_regret_t": torch.rand(rows, width),
+        "has_sf_p0_regret": (torch.rand(rows) < 0.5).to(torch.float32),
+    }
+    return outputs, batch
+
+
+def test_total_is_bit_identical_at_the_default_weight() -> None:
+    """Not `approx`: `0.0 * x` is only zero for finite x, so the term is added
+    to `total` under an `if` rather than multiplied by its weight. This asserts
+    the consequence -- an exact float equality against the same call with the
+    term's parameter absent altogether."""
+    outputs, batch = _tiny_batch()
+    without = compute_loss(outputs, batch)
+    with_default = compute_loss(outputs, batch, sf_policy_floor=SfPolicyFloorParams())
+    a = float(with_default["total"].detach().item())
+    b = float(without["total"].detach().item())
+    assert a == b
+    assert a.hex() == b.hex()
+
+
+def test_a_nan_in_the_term_cannot_reach_total_at_weight_zero() -> None:
+    """The reason inertness is an `if` and not a `* 0.0`.
+
+    A NaN reaching `total` through a weight that means "off" is the shape of
+    "a clamp is not a validator": the guard reads healthy while the loss is NaN.
+    The NaN is injected by defeating the validator with `object.__setattr__`
+    (nothing a config can reach) precisely so the COMPOSITION rule is what is
+    under test here, not the range check.
+    """
+    outputs, batch = _tiny_batch()
+    poisoned = SfPolicyFloorParams()
+    object.__setattr__(poisoned, "tau", float("nan"))
+    losses = compute_loss(outputs, batch, sf_policy_floor=poisoned)
+    assert math.isnan(float(losses["sf_policy_floor"].detach())), "setup: term NaN"
+    assert not math.isnan(float(losses["total"].detach()))
+
+
+def test_a_positive_weight_moves_total_and_the_columns_report_it() -> None:
+    """The other half of inertness: the term is not inert when switched on.
+
+    An inertness test alone passes for a term that is wired to nothing at all.
+    """
+    outputs, batch = _tiny_batch()
+    off = compute_loss(
+        outputs, batch,
+        sf_policy_floor=SfPolicyFloorParams.resolve(w=0.0, tau=0.5, delta_cp=20.0),
+    )
+    on = compute_loss(
+        outputs, batch,
+        sf_policy_floor=SfPolicyFloorParams.resolve(w=1.0, tau=0.5, delta_cp=20.0),
+    )
+    assert float(on["total"].detach()) > float(off["total"].detach())
+    assert float(on["sf_policy_floor_binds_sum"]) > 0.0
+    assert float(on["sf_policy_floor_sum"].detach()) > 0.0
+    # SAME SHAPE, ONLY THE WEIGHT DIFFERING: the diagnostic columns are live at
+    # weight zero, which is what makes the binding rate readable BEFORE the
+    # weight is ever raised.
+    assert float(off["sf_policy_floor_binds_sum"]) == float(on["sf_policy_floor_binds_sum"])
+    assert float(off["sf_policy_floor_sum"].detach()) == float(
+        on["sf_policy_floor_sum"].detach()
+    )
+
+
+def test_the_floor_gradient_only_ever_pushes_floored_moves_up() -> None:
+    """One-sided, on a fixture whose set F is known exactly.
+
+    Case 2's row: ours is move 2 (30cp, outside the window), F = {0, 1}. Descent
+    must RAISE both members' logits (negative gradient) and take the mass off
+    our own wrong pick (positive gradient on move 2). A term that dragged mass
+    off a floored move -- the failure the `better_than_ours` clause exists for --
+    would show the opposite sign on 0 or 1.
+    """
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]])
+    _, grad, _ = floor_loss(_REG, logits)
+    assert float(grad[0, 0]) < 0.0
+    assert float(grad[0, 1]) < 0.0
+    assert float(grad[0, 2]) > 0.0
+    # Non-members outside F are pushed down too -- the mass has to come from
+    # somewhere -- but never a member.
+    assert float(grad[0, 3]) > 0.0

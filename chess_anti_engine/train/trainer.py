@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -88,12 +88,15 @@ from chess_anti_engine.replay.shard import (
 
 from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
+from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
+    SfPolicyFloorParams,
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
     policy_target_temp_active,
     retemper_main_policy_target,
+    search_inclusion_guarantee_tau,
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
@@ -1004,6 +1007,18 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # SF-approved-move probability floor (`w_sf_policy_floor`). `m_sf_policy_floor`
+  # is the masked mean deficit; `sf_policy_floor_binds_frac` is the share of the
+  # SAME eligible rows on which the floor actually bound on at least one move.
+  # ⚑ THE BINDING RATE IS THE ONE THAT ANSWERS "DID IT TAKE EFFECT". A weight
+  # that reaches the loss and never binds is indistinguishable from a dead knob
+  # by the mean alone -- both read 0.0 -- and it is readable at
+  # `w_sf_policy_floor: 0.0`, so the term's reach is measurable BEFORE it is
+  # switched on. Denominator is `has_sf_p0_regret_frac`'s numerator, the same
+  # eligible-row count, so the three columns cannot disagree about the
+  # population.
+    m_sf_policy_floor: float = 0.0
+    sf_policy_floor_binds_frac: float = 0.0
   # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
   # is the share of the iteration's SF-LABELLED rows that carry no
   # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value
@@ -1294,6 +1309,12 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
+  # The floor's two columns, over the sf_p0-regret eligible rows -- literally
+  # `sf_own_regret_rows`, because both terms are masked by the same tensor. A
+  # separately-emitted count for the floor would be the same quantity twice and
+  # could drift; one quantity cannot.
+    "m_sf_policy_floor": ("sf_policy_floor_sum", "sf_own_regret_rows"),
+    "sf_policy_floor_binds_frac": ("sf_policy_floor_binds_sum", "sf_own_regret_rows"),
   # Contamination detector. Row-weighted for the same reason: the SF-labelled
   # count varies batch to batch, so a mean of per-batch rates is the wrong
   # estimator. `sf_multipv_checked_rows` is BOTH the rate's denominator and the
@@ -1804,6 +1825,23 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
+        "w_sf_policy_floor": _f("w_sf_policy_floor", 0.0),
+  # Literal `config.get` for the same reason `policy_target_temp` is one: these
+  # four are Trainer-construction-only and `tests/test_startup_only_config_keys.py`
+  # derives that class from LITERAL config reads. Routed through `_f` they would
+  # be invisible to it, and the classification in `_STARTUP_ONLY_TRIAL_KEYS`
+  # would be a hand assertion the instrument cannot check.
+  #
+  # `gumbel_topk` is read here as the tau DEFAULT's input, not as a training
+  # knob -- see `SfPolicyFloorParams.resolve`. It is a live selfplay key, so it
+  # is NOT startup-only; only the value the floor was resolved against is.
+        "sf_policy_floor_delta_cp": config.get("sf_policy_floor_delta_cp"),
+        "sf_policy_floor_tau": config.get("sf_policy_floor_tau"),
+        "sf_policy_floor_tau_top1": config.get("sf_policy_floor_tau_top1"),
+        "sf_policy_floor_tau_played": config.get("sf_policy_floor_tau_played"),
+        "sf_policy_floor_gumbel_topk": normalize_gumbel_topk(
+            config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
+        ),
         "w_wdl": _f("w_wdl", 1.0),
         "w_sf_move": _f("w_sf_move", 0.15),
         "w_sf_eval": _f("w_sf_eval", 0.15),
@@ -1905,6 +1943,12 @@ class Trainer:
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
+        w_sf_policy_floor: float = 0.0,
+        sf_policy_floor_delta_cp: float | None = None,
+        sf_policy_floor_tau: float | None = None,
+        sf_policy_floor_tau_top1: float | None = None,
+        sf_policy_floor_tau_played: float | None = None,
+        sf_policy_floor_gumbel_topk: int = DEFAULT_GUMBEL_TOPK,
         w_wdl: float = 1.0,
         w_sf_move: float = 0.15,
         w_sf_eval: float = 0.15,
@@ -2323,6 +2367,21 @@ class Trainer:
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
+  # SF-approved-move floor. The WEIGHT is a plain live-pushable attribute like
+  # every other `w_*` (`TRAINER_WEIGHT_KEYS`); the SHAPE is resolved ONCE, here,
+  # and validated at construction so a bad tau kills startup rather than the
+  # first step. `_loss_kwargs` re-stamps the live weight onto this object each
+  # step, and `replace` re-runs `__post_init__`, so a live `w_sf_policy_floor`
+  # edit is validated too instead of arriving raw at the consumer.
+        self.w_sf_policy_floor = float(w_sf_policy_floor)
+        self.sf_policy_floor_params = SfPolicyFloorParams.resolve(
+            w=self.w_sf_policy_floor,
+            delta_cp=sf_policy_floor_delta_cp,
+            tau=sf_policy_floor_tau,
+            tau_top1=sf_policy_floor_tau_top1,
+            tau_played=sf_policy_floor_tau_played,
+            gumbel_topk=sf_policy_floor_gumbel_topk,
+        )
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
         self.w_sf_eval = float(w_sf_eval)
@@ -2453,6 +2512,26 @@ class Trainer:
             f"[trainer] policy_target_temp={self.policy_target_temp!r} "
             f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
             f"eval_pinned_temp={self._eval_loss_kwargs['policy_target_temp']!r}",
+            flush=True,
+        )
+
+  # ⚑ ANNOUNCED OFF `_loss_kwargs`, THE DICT `compute_loss` IS ACTUALLY CALLED
+  # WITH -- not off `self.sf_policy_floor_params`, and emphatically not by
+  # re-deriving `1 / topk` here. "Resolve and print in one place, re-derive the
+  # default at the call site" is a mutant that survives every executing wiring
+  # test we have, because both halves are individually right. Reading the
+  # consumer's own parameter is the only phrasing that cannot express it.
+  # The root-search inclusion guarantee `1/gumbel_topk` is printed NEXT TO the
+  # tau actually installed, so the comparison the guard makes is on the record
+  # even in the (normal) case where it does not fire.
+        floor = self._loss_kwargs["sf_policy_floor"]
+        guarantee = search_inclusion_guarantee_tau(sf_policy_floor_gumbel_topk)
+        print(
+            f"[trainer] sf_policy_floor w={floor.w!r} delta_cp={floor.delta_cp!r} "
+            f"tau={floor.tau!r} tau_top1={floor.tau_top1!r} "
+            f"gumbel_topk={sf_policy_floor_gumbel_topk!r} "
+            f"search_inclusion_tau={guarantee!r} "
+            f"guarantees_inclusion={floor.tau >= guarantee}",
             flush=True,
         )
 
@@ -2762,6 +2841,15 @@ class Trainer:
             "wdl_terminal_outcome_sf_frac": self.wdl_terminal_outcome_sf_frac,
             "moves_left_max_plies": self.moves_left_max_plies,
             "sf_sparse_params": self.sf_target_params if self.sf_policy_sparse_ce else None,
+  # `replace`, not the stored object: `w_sf_policy_floor` is live-pushed by
+  # `_apply_lr_gamma_weights` (it is in `TRAINER_WEIGHT_KEYS`), and a frozen
+  # object captured at construction would swallow that edit -- a knob that is
+  # accepted, echoed back correct in the result row, and never reaches the
+  # consumer. The SHAPE fields stay as resolved at construction; they are
+  # classified restart-required in `_STARTUP_ONLY_TRIAL_KEYS`.
+            "sf_policy_floor": replace(
+                self.sf_policy_floor_params, w=float(self.w_sf_policy_floor),
+            ),
         }
 
     @property

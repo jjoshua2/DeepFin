@@ -605,7 +605,22 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # tree `sampled(steps=0)` is e0f28fe544f1cbac, and the pin below is not it.
 # Nothing the best-model comparison reads (`test_loss` and the per-head losses)
 # changed on either side, so records stay comparable across the handover.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
+# ⚑ MOVED AGAIN by the `sf_policy_floor` term (this PR): `compute_loss` and
+# `Trainer._loss_kwargs` are both covered frames, and the term adds a parameter,
+# a computation and two reported scalars to the first plus one key to the second.
+#
+# THE MEASUREMENT IS SOURCE-HASH-ONLY, AND HERE THAT CLAIM IS EXECUTED RATHER
+# THAN ARGUED: at the shipped default `w_sf_policy_floor: 0.0` the term is not
+# added to `total` at all (an `if`, not a `* 0.0`), and
+# `tests/test_sf_policy_floor.py::test_total_is_bit_identical_at_the_default_weight`
+# asserts BIT equality of `total` against a call with the term's parameter
+# absent. So `test_loss` and every per-head loss the best-model comparison reads
+# are numerically unchanged and records stay comparable across the handover --
+# but the id moved, so an operator WILL see a `holdout_generation` bump and a
+# best-model handover at the next restart. That is the mechanism working.
+#   full_pass  73ff47d368fbe10e -> 30cfec0c574e03da
+#   sampled    f41625e40b98e987 -> 733b900bc45f524f
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:30cfec0c574e03da"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -616,7 +631,7 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
   # it hashes a slightly different frame set (it covers
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
-PRE_PR277_SAMPLED_RULER = "v1:sampled:f41625e40b98e987"
+PRE_PR277_SAMPLED_RULER = "v1:sampled:733b900bc45f524f"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

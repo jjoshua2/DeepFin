@@ -9,6 +9,14 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "w_future",
     "w_sf_own",
     "w_sf_own_regret",
+  # SF-approved-move probability floor. The WEIGHT only: the four
+  # `sf_policy_floor_*` SHAPE keys are deliberately NOT here. This list is the
+  # every-iteration live-push AND the salvage-donor overlay, and it pushes by
+  # `setattr(trainer, key, float(...))` -- which the shape keys cannot ride,
+  # because they are folded into one resolved, validated object at construction.
+  # They are classified restart-required instead (`_STARTUP_ONLY_TRIAL_KEYS`),
+  # so a live edit warns rather than no-ops.
+    "w_sf_policy_floor",
     "w_wdl",
     "w_sf_move",
     "w_sf_eval",

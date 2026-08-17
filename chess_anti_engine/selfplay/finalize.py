@@ -57,6 +57,7 @@ from chess_anti_engine.tablebase import (
     probe_best_move,
     rescore_game_samples,
 )
+from chess_anti_engine.train.constants import SF_OWN_REGRET_CAP_CP
 from chess_anti_engine.train.targets import categorical_target_value, hlgauss_target
 
 if TYPE_CHECKING:
@@ -65,10 +66,12 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger("chess_anti_engine.selfplay")
 
-# Max cp-regret used to normalize the per-move SF regret vector (sf_p0_regret).
-# A move 1000+ cp worse than SF's best becomes 1.0 (maximally bad); the best
-# move is 0.0. Legal moves absent from the MultiPV default to 1.0.
-SF_OWN_REGRET_CAP_CP = 1000.0
+# `SF_OWN_REGRET_CAP_CP` -- the cp cap the per-move SF regret vector below is
+# normalized by -- is IMPORTED, not defined here, since `train/losses.py` reads
+# it too and must not import the selfplay package (C extension). The name stays
+# bound in this module (and is used below), so every existing
+# `finalize.SF_OWN_REGRET_CAP_CP` reader is unaffected; the definition and the
+# reasoning live in train/constants.py.
 
 
 @lru_cache(maxsize=24)
