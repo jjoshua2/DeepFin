@@ -55520,3 +55520,43 @@ drops per game, 32 shards):
   concentration is outcome-independent, the game OUTCOME adds little beyond what the local drop
   already carries — which strengthens the per-position adjudicator over Josh's outcome-conditioned
   version, on the outcome-conditioned version's own terms.
+
+## 2026-08-17 LIVE CONDITION — the zclip hard cap has bound on **100% of steps for the entire run** (I11 re-fired)
+
+Noticed during a routine health check, not sought. `dea5e`, iters 1-176:
+
+    grad-norm median 10.888 over 197 step(s) is past the pre-committed watch threshold
+    4.75 with zclip_max_norm=6.50 (clip rate 100.0%, hard-clip rate 0.0%)
+
+**124 of 124 recorded windows report `clip rate 100.0%`**, grad-norm median 10.6-11.4 against a hard
+cap of 6.50 ⇒ **every step's gradient is scaled to ~0.60x its norm**, and the scale FLOATS
+(6.5/||g||), so larger gradients are shrunk more.
+
+**Root cause is already on record and is a restart artifact:** `hard-clip rate 0.0%` means the
+ADAPTIVE zclip never fires, only the fixed cap — and zclip's adaptive EMA **is not checkpointed**
+(task #94), so every restart lands in a hard-cap-only regime and stays there. This run restarted
+2026-08-16 12:38 and has never left it.
+
+### ⚑ How much this matters — both sides, because the honest answer is "uncertain"
+
+* **Probably NOT the flatness.** Direction-only GD was screened on the offline rig and **REFUTED as a
+  generalization factor** (task #112), so clipping-to-direction is unlikely to be why the loop is
+  flat.
+* **But it DOES invalidate treating `lr` as the realized step size.** The configured `lr` is 3e-05;
+  the realized update is ~0.6x that and gradient-norm-dependent. ⚑ And
+  [[gradient_scaling_is_not_an_lr_change_under_aurora]] — under Aurora this is NOT equivalent to an LR
+  change, so it cannot be folded into one number.
+* ⚑⚑ **DIRECT CONSEQUENCE FOR THE `w_sf_own_regret` SCHEDULE.** A schedule that raises the SF term's
+  gradient share by design would be **partly absorbed by the cap rather than reaching the weights**:
+  at 100% clip the total gradient norm is pinned at 6.5 regardless of the weight, so raising `w`
+  re-allocates the direction WITHIN a fixed-norm update instead of increasing the step. That is not a
+  reason to abandon the schedule — arguably it makes the term's share the only thing the weight
+  controls, which is cleaner — but **any prereg that predicts an effect size from the weight must
+  state whether it assumes the cap binds.** Adding this as a required line in that prereg.
+
+### NOT ACTED ON — this is a live-training decision, not an agent call
+
+No yaml edit, no restart. Re-setting `zclip_max_norm` is a training-affecting change that needs its
+own prereg and a revert point, and the cap has been in this regime for the whole run so it is not an
+emergency. Recorded so that (a) it is not rediscovered a fourth time, and (b) no future readout
+quotes `lr` as the realized step size for this era.
