@@ -56173,3 +56173,67 @@ was added only because this session had already produced one INVERTED collapse m
 stopped a null field being reported as a signal. **Keep it: any probe over a look-ahead field must
 first show the field is monotone in the outcome it claims to summarise.**
 [[shuffle_the_labels_negative_control]]
+
+## 2026-08-17 SIZING (Josh: "fit to BT4 ... cheaply to calibrate the different arms"): THE RIG ALREADY EXISTS AND IS BETTER THAN THE PRODUCTION-ROW ROUTE
+
+Sized before building anything. **The frozen audit set already carries a SHALLOW-SF cache**, and it
+turns Josh's two proposals ("agrees with deep SF best" and "fit to BT4") into ONE run on a set that
+needs no matched-rows build and suffers no coverage loss.
+
+### WHAT IS ON DISK
+`data/audit_set_v1.jsonl.shallow_sf.jsonl` — **10,000 lines over 4,000 distinct keys**, i.e. ~2.5
+entries per position, at **THREE node tiers, all MultiPV 40**:
+
+| nodes | multipv | rows |
+|---|---|---|
+| 50,000 | 40 | 4,000 |
+| 100,000 | 40 | 2,000 |
+| 500,000 | 40 | 4,000 |
+
+plus the frozen **deep** label (>=1M nodes, MultiPV >=10) on the same 4,000. **Tiers per position:
+3 on 2,000 positions, 2 on the other 2,000.** ⇒ **four label depths per position**, which is a
+built-in label-DEPTH LADDER nobody has to pay for.
+
+**INTERSECTION: 4,000 / 4,000.** Every audit position has both a deep label and a shallow MultiPV-40
+label. PVs actually returned on the intersection: **mean 27.18, min 2, max 40**.
+
+### ⚑⚑ WHY THIS BEATS THE PRODUCTION-ROW ROUTE
+1. **NO COVERAGE LOSS.** Production rows carry the own-move teacher on only **24.6%**; here it is
+   computable on **100%** of 4,000. The matched-rows index (`scripts/match_audit_rows.py`, 4000/4000
+   matched in 24 s over 1463 shards, snapshot `current_live_20260602_202037` **verified present**) is
+   therefore needed only to give OUR NET real history, not to make the arms computable.
+2. **⚑ THE FABRICATION ERROR BECOMES DIRECTLY MEASURABLE, not inferred.** Production runs MultiPV 6
+   and fabricates every rank beyond it with a single fitted constant. This cache holds the REAL
+   ranks 7-40, and **91.2% of positions (3,649/4,000) returned >=7 PVs** (73.6% returned >=20). ⇒ we
+   can truncate to 6, apply `_build_sf_p0_regret_vector`'s fill rule to reproduce production's label
+   EXACTLY, and then score the fill against the ground truth it replaced. Every prior statement
+   about the fabricated tail (74% invented on 16.3% of rows, 91.5% inherited) has been an INFERENCE;
+   this measures it.
+3. **BT4 is on the audit set's own path** (`scripts/foreign_net_audit.py --onnx --input-format
+   lc0_planes`), so ruler 2 is a GPU forward pass of minutes. ⚑ `data/lc0/bt4_audit_cache.jsonl` is
+   NOT currently on disk (only `BT4-it332.pb.gz`, `BT4-tf13tune.pb.gz`, `onnx/`), so that pass needs
+   rebuilding — and the card is at 31.4/32.6 GB, so it needs `--gpu-mem-gb` or a pause window.
+
+### THE METRIC, sharper than "which target looks most like BT4"
+The arms are LOSS TERMS, not targets, so the question is DIRECTIONAL: per row,
+`d_arm = -d(arm)/d(logits)` versus `d_bt4 ∝ (p_bt4 - p_ours)`, scored by **cosine**. Positive ⇒ the
+arm corrects our policy toward a stronger one; **<= 0 retires the arm outright**, which is the
+cheapest possible verdict and the thing Josh asked for ("maybe find one of the arms is not worth
+running").
+
+### ⚑ THE CAVEAT, and it has a SHELF LIFE — write it into the prereg
+**BT4 is a strong GENERAL engine, not an anti-SF one**, so "moves our policy toward BT4" measures
+general policy quality and NOT our objective [[audit_first_cannot_judge_a_non_sf_teacher]]. That is
+fatal NEAR THE FRONTIER and near-harmless NOW: we are ~2500-2650 against BT4's ~3400+, and per
+Josh we are in the WEAK regime, where almost any move toward BT4 is gain. **This ruler is legitimate
+today and becomes illegitimate as we close.** Do not let it become the default by inertia.
+
+### TWO PRECONDITIONS BEFORE ANY VERDICT
+1. **PURITY.** The audit positions were sampled from a replay snapshot, so our net may have TRAINED
+   on them; `p_ours` enters the cosine directly. #199's purity gate already failed at 5.23% exposed
+   inputs. Score from a checkpoint predating their entry, or measure and report exposure.
+2. **THE SHALLOW CACHE IS NOT PRODUCTION'S LABEL.** It is 50k/100k/500k at MultiPV **40**;
+   production is `sf_label_nodes` (~150-200k) at MultiPV **6**. Truncating 40 -> 6 gives the *deep*
+   top-6, which is BETTER than production's shallow top-6, so the reconstruction UNDERSTATES
+   production's noise. State it; do not quietly treat the two as the same population
+   [[same_name_different_population]].
