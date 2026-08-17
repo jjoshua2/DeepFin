@@ -57376,3 +57376,59 @@ change cannot silently drop it below the guarantee.
 variance. For RISK CONTROL, lowering `w` strictly dominates. Gating only earns its variance
 if the goal is to DECORRELATE the term from pushing the same rows the same way every epoch
 — a different objective, and UNMEASURED. Not adopted; recorded as an option.
+
+### 2026-08-17 — ⚑ THE FLOOR SQUEEZES OUR OWN PLAYED MOVE OUT OF SEARCH; THE COLLAR FIXES IT
+
+Owner: "if we make sure that the move we played doesn't get penalized to go below the 6%
+where it will disappear from search then we can reward the SF move more up until it starts
+getting dangerous." Correct, unpriced by me until now, and it changes the tau decision.
+
+Mechanism: the floor raises members of F to `tau`; that mass comes out of every NON-member
+proportionally, so the largest absolute loser is our own top move. If it lands below
+`1/gumbel_topk = 0.0625` it VANISHES from the root candidate set (`ae2ea797b`).
+
+Rig: `scratchpad/sfpolicy_compare/armF_collar.py`, 3072 covered production rows, iter-190
+net, priors in TEMPERED (search) space. "Our played move" = argmax of the stored
+`policy_target` (the move search actually chose). Closed-form equilibrium of a one-sided
+floor: `kept = sum_F max(p,tau)`, `orig = sum_F p`, non-members rescale by
+`(1-kept)/(1-orig)`.
+
+Baseline: played move == SF label best on **43.0%** of rows; prior on our played move mean
+**0.5646**; **0.68%** are already below the bar before any floor.
+
+| tau | our played move pushed BELOW the bar | with the COLLAR | collar fires |
+|---|---|---|---|
+| 0.10 | 0.26% | 0.00% | 0.81% |
+| **0.15** | **2.67%** | **0.00%** | 3.22% |
+| 0.20 | 5.47% | 0.00% | 6.02% |
+| 0.25 | 7.85% | 0.00% | 8.40% |
+| **0.35** | **12.17%** | **0.00%** | 12.73% |
+| 0.50 | 22.01% | 0.00% | 22.56% |
+
+⇒ **AT tau = 0.15 THE UNCOLLARED TERM DESTROYS 2.67% OF ROWS' SEARCH ACCESS while fixing
+4.03%** (`ae2ea797b`). It hands back most of its own win. At tau=0.35 (12.17%) it is
+plausibly NET NEGATIVE. **The tau=0.15 decision in `0e77b0d52` was made without this axis
+and is superseded.**
+
+⇒ **THE COLLAR UNLOCKS THE HIGHER tau.** Protecting the played move at the same 0.0625
+zeroes the squeeze at every tau, so tau=0.35 — worth **+0.548** ranking pull vs +0.278 at
+0.15 (`0e77b0d52`) — becomes safe on this axis. Roughly double the SF benefit at no
+search-access cost.
+
+**THREE CAVEATS, stated because the table alone over-claims:**
+1. **This is an UPPER BOUND, not a prediction.** It is the static equilibrium of the floor
+   acting ALONE. In training the policy CE simultaneously pulls toward the target, which
+   puts mass on the played move and DEFENDS it. True squeeze should be smaller.
+2. At tau=0.35 the collar fires on 12.73% of rows, i.e. **two floors push against each
+   other** on those rows. That equilibrium is UNCHARACTERISED. Screen it before adopting
+   0.35.
+3. The risk is entirely CREATED by the term (0.68% baseline), which is also why the collar
+   removes it completely.
+
+**DESIGN: protect the `policy_target` argmax, not the net's argmax.** The net's argmax is
+by construction the highest-probability move and essentially cannot be squeezed out; the
+PLAYED move can, precisely when search chose something the raw net ranked lower — and they
+differ often (played == SF best only 43.0%). Both are available at loss time.
+
+**REVISED: tau = 0.15 WITH the collar as the ship default** (squeeze 0.00%, pull +0.278),
+with tau=0.35 as a screened upgrade worth ~2x the nudge, gated on caveat 2.
