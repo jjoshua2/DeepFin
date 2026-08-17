@@ -265,6 +265,145 @@ def assert_package_has_updatable_constants(
     return fqns
 
 
+# A relative scale + an absolute shift, so the probe moves a constant whatever
+# its magnitude — including one that is exactly 0.0, where a pure multiply is a
+# no-op and the probe would report an output-affecting constant as inert.
+_REBIND_PROBE_SCALE = 1.5
+_REBIND_PROBE_SHIFT = 0.125
+
+
+def unrebindable_output_constants(
+    model: torch.nn.Module,
+    constant_fqns: Sequence[str],
+    *,
+    probe: torch.Tensor,
+) -> list[str]:
+    """Model constants that MOVE the compared outputs but the package cannot rebind.
+
+    ⚑⚑ WHY THIS EXISTS — MEASURED 2026-08-16 ON THE REAL PACKAGES, and it is the
+    mechanism behind the one reading the #432 verify run could not explain.
+
+    ``load_constants`` can only write the FQNs the package DECLARES. Everything
+    else AOTInductor folded into the compiled graph at build time, and it stays
+    at the checkpoint the package was compiled from **forever** — every publish,
+    every iteration. Nothing checked for that: :func:`build_aot_constants` fails
+    loud when an FQN is missing from the checkpoint (``fqns`` not ⊆
+    ``state_dict``) and :func:`assert_package_has_updatable_constants` requires
+    half the FQNs to match, but **neither direction covers a model constant that
+    is absent from ``fqns`` altogether** — the payload is built FROM ``fqns``, so
+    it covers them by construction and even ``check_full_update=True`` cannot
+    fire. A folded constant is not an unfilled constant; it is not a constant at
+    all any more.
+
+    Measured on ``data/aot_models_512/chess_b16.pt2`` (455 declared FQNs) and on
+    ``data/aot_models_512_bt4heads/chess_b1190.pt2`` (457), against their own
+    configs: **71-75 model constants are undeclared, and two of them are on the
+    production inference path** —
+
+        policy_own.log_temp      folded into the policy logit scale
+        value_wdl.net.2.bias     folded into the WDL output bias
+
+    (the rest are the tied ``layer_smolgens.*.gen_weight`` aliases, which share
+    ONE storage with a declared FQN and are therefore rebound, and the auxiliary
+    heads the inference graph never traces).
+
+    Consequence, and it is the whole of the "1.0 -> 2.3" step: run the July
+    packages on July weights and the folded values are the right ones, so the
+    gate reads x1.0. Run the SAME files on August weights and the package applies
+    a stale policy temperature and a stale WDL bias. ``policy_own.log_temp``
+    moved -0.3282 -> -0.2772 between those two vintages and
+    ``value_wdl.net.2.bias`` moved [0.0088, -0.0321, -0.0013] ->
+    [-0.0023, -0.0141, 0.0023]; swapping ONLY those two values back on the
+    August model reproduces mean row TV **0.0297 (policy) / 0.0031 (wdl)**
+    against a **0.00006 / 0.00001** null on the July model — a step, then flat
+    across aug10/aug11/aug12 exactly as the ratio arms read, with argmax
+    agreement 1.0000 throughout (a temperature rescale cannot reorder a row).
+
+    ⇒ **the ratio arm's weight-dependence is a TRUE POSITIVE about the packages,
+    not the gate re-acquiring the defect it was written to remove.** This
+    function is what makes that legible instead of "UNDIAGNOSED".
+
+    Method. Reachability is MEASURED, not listed: perturb the undeclared
+    constants and see whether the two arrays the gate actually compares
+    (``_policy_output_full`` and ``wdl``) move. An allowlist of "auxiliary head"
+    prefixes would be a source-grep guard that goes stale the first time a head
+    is renamed.
+
+    Two exclusions, both exact rather than heuristic:
+
+    * **Tied storages.** An undeclared FQN whose ``untyped_storage`` is the SAME
+      object as a declared one IS rebound, under the other name. The 16
+      ``layer_smolgens.*.gen_weight.weight`` keys are one tensor and the package
+      declares it as layer 15's; flagging the other 15 would be a guaranteed
+      false failure on every package this repo builds.
+    * **Non-floating-point constants.** Index/mask tables (``to_sq``,
+      ``compact_to_full``, ``promo_from``) are TOPOLOGY, identical for every
+      checkpoint of a given architecture, so a folded one cannot go stale — and
+      perturbing an index buffer would index out of bounds rather than measure
+      anything. They are skipped, which is a stated blind spot, not a claim.
+
+    The probe restores every tensor it touched. Returns the offending FQNs
+    sorted, or ``[]``.
+
+    ⚑ WHY THIS FAILS THE BUCKET RATHER THAN WARNING, AND WHAT THE FIX IS.
+    Rebuilding does NOT clear it — the same folding happens again, so a WARN
+    would be a permanent one. The likely repair is one line of
+    :func:`build_inductor_configs`: ``aot_inductor.use_runtime_constant_folding``
+    is set ``False`` there, and torch documents that flag as *"whether to create
+    a submodule for constant graph"* — i.e. ``True`` recomputes folded constants
+    at load time from the updatable originals, which is exactly what
+    ``exp(log_temp)`` and the final WDL bias-add need. ⚑ That is a HYPOTHESIS,
+    not a measurement: flipping it needs a GPU rebuild, which nothing here has
+    done. **The observation that confirms it** is one bucket rebuilt with the
+    flag ``True``, then ``get_constant_fqns()`` containing ``policy_own.log_temp``
+    and ``value_wdl.net.2.bias`` — at which point this function returns ``[]``
+    and the bucket passes. Until that runs, a FAIL is the honest verdict: these
+    packages cannot track the net, and the ratio arms are blind to it on exactly
+    the vintage anyone would test them against.
+    """
+    src = model_constant_source(model)
+    declared = {str(f) for f in constant_fqns}
+    covered_storages = {
+        src[f].untyped_storage().data_ptr() for f in declared if f in src
+    }
+    candidates = [
+        k
+        for k in sorted(src)
+        if k not in declared
+        and src[k].is_floating_point()
+        and src[k].numel() > 0
+        and src[k].untyped_storage().data_ptr() not in covered_storages
+    ]
+    if not candidates:
+        return []
+
+    def _compared(out: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        return _policy_output_full(out).detach().clone(), out["wdl"].detach().clone()
+
+    def _moves(names: Sequence[str], base: tuple[torch.Tensor, torch.Tensor]) -> bool:
+        saved = {n: src[n].detach().clone() for n in names}
+        try:
+            with torch.no_grad():
+                for n in names:
+                    src[n].mul_(_REBIND_PROBE_SCALE).add_(_REBIND_PROBE_SHIFT)
+                got = _compared(model(probe))
+        finally:
+            with torch.no_grad():
+                for n in names:
+                    src[n].copy_(saved[n])
+        return not (
+            torch.equal(got[0], base[0]) and torch.equal(got[1], base[1])
+        )
+
+    with torch.no_grad():
+        baseline = _compared(model(probe))
+    # Cheap path first: one probe over ALL candidates. A healthy package pays two
+    # forwards; only a package that is actually folding pays the attribution pass.
+    if not _moves(candidates, baseline):
+        return []
+    return sorted(n for n in candidates if _moves([n], baseline))
+
+
 # ---------------------------------------------------------------------------
 # Model / checkpoint loading
 # ---------------------------------------------------------------------------
@@ -691,14 +830,29 @@ def _compare_bucket(
     by ~1e6, dwarfing every real difference.
 
     ⚑⚑ WHY THIS IS A RATIO AND NOT AN ABSOLUTE TOLERANCE. The previous gate was
-    ``max |p_aot - p_ref| <= 0.02`` over ``N x 1858`` probabilities. It broke on
-    2026-08-15, and it broke on the **WEIGHTS, not the packages**: the identical
-    month-deployed ``data/aot_models_512`` files read 0.0015-0.0052 (PASS) on
-    July weights and up to **0.175** (FAIL) on August weights. The max always
-    landed on a row's top-1 entry, and the net's top-1 probability had grown
-    4.4x (max 0.221 -> 0.980) as the policy concentrated. **An absolute
-    probability tolerance is pinned to a sharpness regime and expires when the
-    net sharpens.**
+    ``max |p_aot - p_ref| <= 0.02`` over ``N x 1858`` probabilities, and it broke
+    on 2026-08-15. **An absolute probability tolerance is pinned to a sharpness
+    regime and expires when the net sharpens**: the max always lands on a row's
+    top-1 entry, and the net's top-1 probability grew 4.4x (max 0.221 -> 0.980)
+    over the window.
+
+    ⚑⚑ BUT THE HEADLINE EVIDENCE THIS DOCSTRING USED TO LEAD WITH IS CONFOUNDED,
+    AND IT IS CORRECTED HERE (2026-08-16). It read: *"it broke on the WEIGHTS,
+    not the packages — the identical month-deployed ``data/aot_models_512`` files
+    read 0.0015-0.0052 (PASS) on July weights and up to 0.175 (FAIL) on August
+    weights."* The files are identical; **their effective constants are not.**
+    ``policy_own.log_temp`` and ``value_wdl.net.2.bias`` are constant-folded into
+    every one of those packages and ``load_constants`` cannot write them (see
+    :func:`unrebindable_output_constants`), so on August weights those files
+    really do apply a July policy temperature and a July WDL bias. The
+    two-vintage comparison therefore changed the weights AND the package's
+    behaviour at the same time; it cannot separate "the gate read the weights"
+    from "the packages were stale". It is not evidence for either.
+
+    What DOES establish the old gate's defect with no confound is the **28/29
+    failure on packages freshly built from, and verified against, THEIR OWN
+    checkpoint** — no staleness is possible there — plus the two structural
+    arguments below, which are arithmetic rather than measurement.
 
     Two further defects in that design, both structural:
 
@@ -1068,6 +1222,11 @@ def verify_packages(
 
     n_pass = 0
     n_fail = len(missing)
+    # Keyed on the declared FQN set, not on the bucket: the answer is a property
+    # of the exported graph, and `assert_uniform_constant_fqns` already refuses a
+    # package set that does not share one. A dir that somehow mixes two graphs
+    # gets two probes rather than one silently reused.
+    folded_cache: dict[frozenset[str], list[str]] = {}
 
     for bucket in present:
         b = int(bucket)
@@ -1084,7 +1243,6 @@ def verify_packages(
                 build_aot_constants(weight_source, fqns, device=device),
                 check_full_update=False,
             )
-
             all_ok = True
             details: list[str] = []
             argmax_matches = 0
@@ -1097,6 +1255,29 @@ def verify_packages(
                     seed=int(seed) + trial,
                 )
                 xt = torch.from_numpy(x).to(device=device, dtype=torch.bfloat16)
+                # ⚑ The rebind above covers exactly the FQNs the package
+                # DECLARES. Anything the graph folded is not in that list and is
+                # not written by it — see `unrebindable_output_constants`. This
+                # is the only check in the file that looks in that direction.
+                # It reuses trial 0's rows rather than encoding its own, so it
+                # costs no extra encode and probes the deployment distribution.
+                key = frozenset(fqns)
+                if trial == 0 and key not in folded_cache:
+                    folded_cache[key] = unrebindable_output_constants(
+                        model, fqns, probe=xt[:2]
+                    )
+                folded = folded_cache[key]
+                if trial == 0 and folded:
+                    # FAIL, not WARN. The ratio arms cannot see this at all on
+                    # the vintage the package was built from — that is precisely
+                    # when they read x1.0 — so a package that only fails HERE is
+                    # the case the rest of the gate is blind to.
+                    all_ok = False
+                    details.append(
+                        f"⚑UNREBINDABLE={len(folded)} {folded[:4]} "
+                        "(constant-folded into the package; load_constants "
+                        "cannot write them, so it drifts as the net trains)"
+                    )
                 with torch.no_grad():
                     out_aot = pkg(xt)
                     out_ref = model(xt)

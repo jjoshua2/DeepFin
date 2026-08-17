@@ -1797,3 +1797,264 @@ def test_a_NEAR_degenerate_shape_control_does_not_fail_a_healthy_package() -> No
     )
     assert "FLOOR-DIVERGENCE" not in detail, detail
     assert ok, detail
+
+
+# --------------------------------------------------------------------------
+# ⚑⚑ THE REBIND HOLE — the constants the package cannot be handed at all
+#
+# `build_aot_constants` fails loud when a DECLARED fqn is absent from the
+# checkpoint. Nothing looked the other way: a model constant that is absent from
+# `get_constant_fqns()` was folded into the compiled graph, `load_constants` can
+# never write it, and the payload — being built FROM the fqn list — covers every
+# name it contains by construction, so even `check_full_update=True` cannot fire.
+#
+# Measured 2026-08-16 on both real package dirs (455 and 457 declared fqns):
+# `policy_own.log_temp` and `value_wdl.net.2.bias` are folded, and they are the
+# mechanism behind the verify run's unexplained x1.0 -> x2.3 step between weight
+# vintages. See `unrebindable_output_constants`.
+# --------------------------------------------------------------------------
+
+
+class _FoldModel(torch.nn.Module):
+    """A stub with the four constant geometries the probe must tell apart.
+
+    * ``proj`` — declared, on the output path (the ordinary case).
+    * ``log_temp`` / ``wdl_bias`` — on the output path, models the two real
+      folded constants.
+    * ``tied_b`` — a SECOND name for ``tied_a``'s tensor. One storage, two
+      state_dict keys: the 16 ``layer_smolgens.*.gen_weight.weight`` geometry.
+    * ``off_path`` — a parameter ``forward`` never reads (an auxiliary head).
+    * ``lut`` — an integer buffer (an index table).
+    """
+
+    input_extra_features = "v2_threats"
+    input_history_encoding = "lc0_root"
+    policy_output_format = "lc0_1858"
+    def __init__(self, *, zero_temp: bool = False) -> None:
+        super().__init__()
+        g = torch.Generator().manual_seed(11)
+        self.proj = torch.nn.Parameter(torch.randn(64, LIVE_LOGITS, generator=g))
+        self.wdl_proj = torch.nn.Parameter(torch.randn(64, 3, generator=g))
+        # ⚑ zero, on purpose, in one variant: a probe that only MULTIPLIES is a
+        # no-op here and would report a live constant as inert.
+        self.log_temp = torch.nn.Parameter(
+            torch.zeros(1) if zero_temp else torch.full((1,), 0.3)
+        )
+        self.wdl_bias = torch.nn.Parameter(torch.full((3,), 0.05))
+        tied = torch.nn.Parameter(torch.randn(64, 3, generator=g) * 0.01)
+        self.tied_a = tied
+        self.tied_b = tied
+        self.off_path = torch.nn.Parameter(torch.randn(7, 5, generator=g))
+        self.register_buffer("lut", torch.arange(3, dtype=torch.long))
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        feat = x.reshape(int(x.shape[0]), -1)[:, :64].float()
+        pol = (feat @ self.proj) * torch.exp(self.log_temp)
+        wdl = feat @ (self.wdl_proj + self.tied_a) + self.wdl_bias
+        # `get_buffer` is typed `Tensor`; attribute access on a registered
+        # buffer types as `Tensor | Module` and needs a cast at every use.
+        return {"policy": pol, "wdl": wdl.index_select(-1, self.get_buffer("lut"))}
+
+
+# A healthy package's declared set: every constant the graph really externalizes.
+# ⚑ `tied_b`, `off_path` and `lut` are deliberately absent — they are the three
+# undeclared-but-harmless geometries the guard has to let through.
+_DECLARED_HEALTHY = ["proj", "wdl_proj", "log_temp", "wdl_bias", "tied_a"]
+
+
+def _fold_probe(n: int = 2) -> torch.Tensor:
+    g = torch.Generator().manual_seed(5)
+    return torch.randn(n, 175, 8, 8, generator=g)
+
+
+def test_the_tied_alias_and_the_off_path_constant_are_NOT_flagged() -> None:
+    """The negative control, and it is the one that decides the guard is usable.
+
+    ``tied_b`` is undeclared but shares ONE storage with the declared ``tied_a``,
+    so ``load_constants`` DOES write it — under the other name. ``off_path`` is
+    undeclared and never read. ``lut`` is undeclared and non-float. All three are
+    undeclared; none is a defect. A guard that flagged them would fail every
+    package this repo has ever built (the real model carries fifteen tied
+    ``gen_weight`` aliases and fifty-six auxiliary-head constants).
+    """
+    model = _FoldModel().eval()
+    src = MOD.model_constant_source(model)
+    # Premise: the exclusions really are undeclared, so the assertion below is
+    # about the guard's reasoning and not about an empty candidate set.
+    assert {"tied_b", "off_path", "lut"} <= set(src) - set(_DECLARED_HEALTHY)
+    # Premise: tied_a and tied_b really are one storage.
+    assert (
+        src["tied_a"].untyped_storage().data_ptr()
+        == src["tied_b"].untyped_storage().data_ptr()
+    )
+    assert MOD.unrebindable_output_constants(
+        model, _DECLARED_HEALTHY, probe=_fold_probe()
+    ) == []
+
+
+@pytest.mark.parametrize("folded", ["log_temp", "wdl_bias"])
+def test_a_folded_OUTPUT_constant_is_caught(folded: str) -> None:
+    """Both real folded constants, one per head, by their real geometry.
+
+    ``log_temp`` scales the policy logits; ``wdl_bias`` offsets the WDL logits.
+    Parametrized so a guard that only ever looks at the policy array cannot pass.
+    """
+    model = _FoldModel().eval()
+    declared = [f for f in _DECLARED_HEALTHY if f != folded]
+    assert MOD.unrebindable_output_constants(
+        model, declared, probe=_fold_probe()
+    ) == [folded]
+
+
+def test_a_folded_constant_that_is_EXACTLY_ZERO_is_still_caught() -> None:
+    """⚑ Kills a multiply-only probe.
+
+    ``log_temp`` initialises to 0.0 in plenty of checkpoints, and ``x * 1.5`` is
+    then the identity. The probe must also SHIFT, or a live constant at zero
+    reads as inert — the same "a gate that cannot fail" shape the whole file is
+    about.
+    """
+    model = _FoldModel(zero_temp=True).eval()
+    assert float(model.log_temp.detach()) == 0.0
+    declared = [f for f in _DECLARED_HEALTHY if f != "log_temp"]
+    assert MOD.unrebindable_output_constants(
+        model, declared, probe=_fold_probe()
+    ) == ["log_temp"]
+
+
+def test_the_probe_RESTORES_every_constant_it_touched() -> None:
+    """It mutates a LIVE model in place. If it leaks, every later bucket is wrong.
+
+    Checked on both paths: the clean one (early return after the all-at-once
+    probe) and the attribution one (a second pass, one constant at a time).
+    """
+    for declared in (_DECLARED_HEALTHY, [f for f in _DECLARED_HEALTHY if f != "log_temp"]):
+        model = _FoldModel().eval()
+        before = {k: v.detach().clone() for k, v in MOD.model_constant_source(model).items()}
+        MOD.unrebindable_output_constants(model, declared, probe=_fold_probe())
+        after = MOD.model_constant_source(model)
+        for k, v in before.items():
+            assert torch.equal(after[k], v), f"{k} not restored (declared={declared})"
+
+
+def test_a_NON_FLOAT_undeclared_constant_is_a_STATED_blind_spot() -> None:
+    """Pins the exclusion so it cannot become invisible.
+
+    ``lut`` is an integer index table. It is undeclared and it demonstrably
+    changes the output (the assertion below proves that), and the guard still
+    does not flag it — index tables are TOPOLOGY, identical across every
+    checkpoint of an architecture, so a folded one cannot go stale. That is an
+    argument, not a proof, so it is written down as a test rather than left in a
+    comment where a later change could silently widen it.
+    """
+    model = _FoldModel().eval()
+    probe = _fold_probe()
+    with torch.no_grad():
+        base = model(probe)["wdl"].clone()
+        model.get_buffer("lut").copy_(torch.tensor([2, 1, 0]))
+        moved = model(probe)["wdl"]
+    assert not torch.equal(base, moved), "premise: lut must affect the output"
+    with torch.no_grad():
+        model.get_buffer("lut").copy_(torch.tensor([0, 1, 2]))
+    assert MOD.unrebindable_output_constants(
+        model, list(_DECLARED_HEALTHY), probe=probe
+    ) == []
+
+
+def test_end_to_end_an_unrebindable_constant_FAILS_the_bucket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """⚑ THE ACTUATOR TEST. The finding must reach the verdict, not just a list.
+
+    The package here is otherwise PERFECT — it is the eager model itself, so
+    every ratio arm reads x0.00 and pooled argmax is 1.0000. That is deliberate:
+    on the vintage a package was built from, the folded constants hold the RIGHT
+    values and the ratio arms are structurally blind to them. If this row passes,
+    the guard is computed and discarded.
+    """
+
+    class _EchoPackage:
+        def __init__(self, fqns: list[str]) -> None:
+            self._fqns = fqns
+
+        def __call__(self, xt: torch.Tensor) -> dict[str, torch.Tensor]:
+            return model(xt)
+
+        def load_constants(self, *_a: object, **_k: object) -> None:
+            return None
+
+        def get_constant_fqns(self) -> list[str]:
+            return list(self._fqns)
+
+    model = _FoldModel().eval()
+    monkeypatch.setattr(MOD, "build_aot_constants", lambda *a, **k: {})
+    monkeypatch.setattr(MOD, "_real_position_batch", lambda n, **k: _fold_probe(n).numpy())
+    (tmp_path / "chess_b8.pt2").write_bytes(b"x")
+
+    def _verify(fqns: list[str]):
+        monkeypatch.setattr(MOD, "_aoti_load_package", lambda p: _EchoPackage(fqns))
+        return MOD.verify_packages(
+            out_dir=tmp_path, model=model, buckets=[8], max_batch=8,
+            input_planes=175, tv_ratio_max=2.0, verify_n=1, argmax_min=0.90, seed=3,
+        )
+
+    n_pass, n_fail, rows = _verify(_DECLARED_HEALTHY)
+    assert (n_pass, n_fail) == (1, 0), rows
+    # Premise for the FAIL below: with log_temp undeclared the package is still
+    # byte-identical to eager, so nothing else in the gate has anything to fire on.
+    n_pass, n_fail, rows = _verify([f for f in _DECLARED_HEALTHY if f != "log_temp"])
+    assert (n_pass, n_fail) == (0, 1), rows
+    assert "⚑UNREBINDABLE=1" in rows[0][2], rows
+    assert "log_temp" in rows[0][2], rows
+    assert "pol_mean=x0.00" in rows[0][2], rows
+    assert "pooled_argmax=8/8=1.0000" in rows[0][2], rows
+
+
+def test_the_folded_probe_is_cached_PER_FQN_SET_not_per_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """⚑ The probe is memoized. A memo keyed on the RUN answers the wrong package.
+
+    Two buckets in one directory whose packages declare different constant sets —
+    the exact output of a partial rebuild, which `load_aot_packages` accepts
+    silently (audit I4). One is healthy, one folds `log_temp`. A cache that
+    stores a single answer for the whole call reports the first bucket's verdict
+    for both, in whichever direction the ladder happens to be ordered.
+    """
+
+    class _EchoPackage:
+        def __init__(self, fqns: list[str]) -> None:
+            self._fqns = fqns
+
+        def __call__(self, xt: torch.Tensor) -> dict[str, torch.Tensor]:
+            return model(xt)
+
+        def load_constants(self, *_a: object, **_k: object) -> None:
+            return None
+
+        def get_constant_fqns(self) -> list[str]:
+            return list(self._fqns)
+
+    model = _FoldModel().eval()
+    per_bucket = {
+        "chess_b8.pt2": list(_DECLARED_HEALTHY),
+        "chess_b16.pt2": [f for f in _DECLARED_HEALTHY if f != "log_temp"],
+    }
+    monkeypatch.setattr(MOD, "build_aot_constants", lambda *a, **k: {})
+    monkeypatch.setattr(MOD, "_real_position_batch", lambda n, **k: _fold_probe(n).numpy())
+    monkeypatch.setattr(
+        MOD, "_aoti_load_package", lambda p: _EchoPackage(per_bucket[Path(p).name])
+    )
+    for name in per_bucket:
+        (tmp_path / name).write_bytes(b"x")
+
+    n_pass, n_fail, rows = MOD.verify_packages(
+        out_dir=tmp_path, model=model, buckets=[8, 16], max_batch=16,
+        input_planes=175, tv_ratio_max=2.0, verify_n=1, argmax_min=0.90, seed=3,
+    )
+    assert (n_pass, n_fail) == (1, 1), rows
+    by_bucket = {b: (s, d) for b, s, d in rows}
+    assert by_bucket[8][0] == "PASS", rows
+    assert by_bucket[16][0] == "FAIL", rows
+    assert "UNREBINDABLE" not in by_bucket[8][1], rows
+    assert "⚑UNREBINDABLE=1" in by_bucket[16][1], rows
