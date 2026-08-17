@@ -56420,3 +56420,70 @@ production fabricates.
 One forward pass per position on 4,000 positions, both nets. `data/lc0/bt4_audit_cache.jsonl` is
 **NOT on disk** and must be rebuilt first (GPU; runs in the post-stop window, no contention).
 No yaml change, no training compute, nothing live.
+
+## 2026-08-17 AMENDMENT to the arm-calibration prereg — ⚑⚑ ARM D WAS UNBUILDABLE, AND THE REPAIR IS BETTER THAN THE ORIGINAL
+
+Caught before any compute, by reading the field that sets the value instead of trusting its name
+[[a_counter_is_not_the_mechanism_behind_it]].
+
+### The defect: `priority_q_delta` is neither per-move nor SF
+
+The prereg named arm D "ΔQ via `priority_q_delta`, 99.94% real coverage". Both halves of that are
+useless for this experiment:
+
+1. **It is a SCALAR.** `replay/shard.py:143` declares it `_OptFieldSpec("priority_q_delta",
+   "has_priority_q_delta", (), _F16)` — shape `()`. One number per position. It **cannot** yield a
+   per-move gradient direction, which is the only thing this rig scores.
+2. **It contains ZERO SF information.** `selfplay/network_turn.py:791` sets `q_delta = best_q -
+   orig_q` — our OWN search's disagreement with our OWN net, consumed by `_raw_difficulty` for
+   replay prioritisation (`diff_focus`). No Stockfish anywhere in it.
+
+⇒ arm D as written would have measured our search against itself, at shape `()`. The "99.94% real
+coverage" I quoted was true and entirely beside the point — the field is well-populated and wrong.
+Same shape as [[same_name_different_population]]: the number was right about a different question.
+
+### The repair — and it is FREE, because we already store the data and throw it away
+
+`sf_multipv_raw` rows are `(K, 5) = [move_idx, cp, mate, w, d]`. **Columns 3 and 4 are Stockfish's
+own WDL** for each surfaced move. `_build_sf_p0_regret_vector` (`finalize.py:1281`) reads only `cp`
+and `mate` via `_sf_move_score` and **discards `w` and `d` entirely**.
+
+**MEASURED on 6 production shards from the iter-190 bank, 59,543 valid PV entries:**
+
+- `w + d > 1000`: **0 entries (0.000%)** — the per-mille invariant holds everywhere.
+- `w == 0 and d == 0`: 17,393 (29.21%). ⚑ These are **not missing**: their cp is median **-522**,
+  **max 0**, and 22.8% carry a mate score. Every one is a genuinely dead-lost position where
+  `l = 1000` is the correct value. Checked explicitly because "70.75% nonzero" would otherwise have
+  been reported as a coverage figure — it is not one.
+- implied `Q = w + d/2`: min 0, median 493, max 1000, full range exercised.
+
+⇒ **SF's own win probability is present and valid on 100% of surfaced PV entries.**
+
+### ARM D, REDEFINED — WDL-space regret
+
+`r_wdl[m] = (Q_best - Q_m) / 1000`, with `Q = w + d/2` read straight from columns 3/4. No cp-logistic
+fit, no new label, no extra SF compute — a different reduction of bytes already on disk.
+
+**Why this is the strongest arm on the board, not merely a replacement.** Production's regret is
+`clamp(best_cp - cp, 0, 1000) / 1000` — **linear in centipawns**. In a +900cp position a move that
+drops 300cp scores **0.30**, a large penalty, while SF's own WDL rates both moves ~99% wins so the
+true regret is ~**0.00**. That is precisely the saturation defect already on the books
+([[wdl_regret_filter_leaks_huge_cp]], task #69, "SF TARGET SATURATES IN WON POSITIONS"), and arm D
+is the direct, parameter-free repair of it. It also removes the arbitrary `SF_OWN_REGRET_CAP_CP =
+1000.0` constant from the target entirely.
+
+### Consequences for the prereg
+
+- Arm D's row is replaced as above. Arms A/B/C, both negative controls, both rulers, the population
+  and all five decision rules are UNCHANGED.
+- **New paired contrast, and it is the one to watch: A vs D on the same rows** — identical MultiPV
+  input, identical support, differing ONLY in cp-space vs WDL-space reduction. If D beats A, the
+  finding is that our policy target has been mis-scaled since it was written, independently of the
+  fabricated-tail question that PR #447 addresses. Those are two separate defects in one vector and
+  this rig separates them.
+- ⚑ Arm D is buildable on the AUDIT population too: the shallow MultiPV-40 cache carries SF's WDL
+  per PV, so no shard/audit population split is needed after all.
+
+### Cost
+
+Zero additional SF compute. Arm D is a numpy expression over bytes already in every shard.
