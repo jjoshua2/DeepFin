@@ -740,10 +740,29 @@ def _phase_split_masks(
     )
 
 
+# The smallest value the constant tail can take, and it is ARITHMETIC rather than
+# empirical: `selfplay/finalize.py` sets the fill to `(worst_surfaced + 1.0) / 2.0` with
+# `worst_surfaced` in [0, 1], so the fill lies in [0.5, 1.0] for every row ever built.
+# ⇒ a row whose max is below this PROVABLY carries no fill. Exactly representable in
+# float16/32/64 alike, so comparing against it needs no tolerance — which is the point:
+# `sf_p0_regret` is stored **float16** and any tolerance-based test here would carry a
+# constant that silently rots if that dtype ever changes.
+_SF_REGRET_MIN_FILL = 0.5
+
+
 def sf_regret_surfaced_mask(
     reg_vec: torch.Tensor, legal_mask: torch.Tensor,
 ) -> torch.Tensor:
     """Per-move mask of the moves SF ACTUALLY SURFACED, from the regret vector alone.
+
+    ⚑ NOT EXACT ON A CAP ROW, and the name oversells it there. When a surfaced line is
+    >= 1000cp worse than best, `alpha == 1.0` and a REAL capped regret is numerically
+    identical to the fill, so `reg < row_max` drops genuinely-surfaced moves: measured
+    on live shards this returns 1 surfaced move on rows where 4 were really read, and
+    **7.32% of eligible rows have `row_max >= 1.0`**. No current caller is harmed
+    because `sf_regret_gate_scale` refuses those rows outright, but this function is
+    module-public and a future caller that trusts the name would be wrong. Stated here
+    rather than only at the call site.
 
     ``sf_p0_regret`` is a **constant-tail** construction, not a per-move
     measurement: up to ``sf_multipv`` real normalized cp-regrets, then ONE fitted
@@ -805,16 +824,26 @@ def sf_regret_gate_scale(
     False on every row and the scale is all-ones. ``tests/`` asserts that with
     ``torch.equal`` against an ungated run rather than a tolerance.
 
-    ⚑⚑ A ROW WITH NO FABRICATED TAIL IS NEVER GATED, even if its listed mass is
-    low. The gate's whole justification is that the tail's magnitudes are invented,
-    so on a row where SF surfaced EVERY legal move there is nothing to distrust and
-    scaling the term down would discard real supervision. Three such shapes exist
-    and an independent review found all three mis-scored by the first version:
-    a row with <= ``sf_multipv`` legal moves (fully covered), a forced move (one
-    legal), and a row where a *surfaced* move sits at the cp cap so the row max is
-    a real regret rather than the fill. ⚑ The 2350-row plateau validation could not
-    see the first two: it was restricted to rows with >= 8 legal moves, so it
-    excluded them BY CONSTRUCTION. Guard on ``has_tail`` instead of assuming.
+    ⚑⚑ A ROW WITH NO FABRICATED TAIL IS **ALMOST** NEVER GATED — and the weasel word
+    is load-bearing, because an earlier revision of this line said "NEVER" and that
+    was FALSE on **22.2% of the gate's own firings**. The gate's justification is
+    that the tail's magnitudes are invented, so on a row where SF surfaced EVERY
+    legal move there is nothing to distrust and scaling the term down discards real
+    supervision. Three such shapes exist and an independent review found all three
+    mis-scored by the first version: a row with <= ``sf_multipv`` legal moves (fully
+    covered), a forced move (one legal), and a row where a *surfaced* move sits at
+    the cp cap so the row max is a real regret rather than the fill.
+
+    ⚑ The 2350-row plateau validation could not see the first two: it was restricted
+    to rows with >= 8 legal moves, so it excluded them BY CONSTRUCTION. A second
+    review then showed the PLATEAU test alone does not exclude them either — two real
+    regrets tying at the max of a fully-covered row read as a tail. What excludes
+    them is the arithmetic range of the fill (see ``_SF_REGRET_MIN_FILL``).
+
+    ⚑ MEASURED RESIDUAL, not a guarantee: over 2,931 plateau rows on 8 live shards,
+    ~150 carried no fill and the range test rejects **149 of them**. The survivor is a
+    fully-covered row whose tied real max is itself >= 0.5. So the honest claim is
+    "provably no fill below 0.5", NOT "no false positive" — roughly 1 row in 2,931.
 
     ⚑ ``gated`` is the rows actually SCALED, not the rows MATCHING the predicate.
     At ``unlisted_scale`` 1.0 the predicate can match while the scale stays 1.0 and
@@ -852,11 +881,55 @@ def sf_regret_gate_scale(
   # STRUCTURAL here rather than rare, which is why the "two bit-equal real regrets"
   # caveat an earlier revision called rare was wrong.
   #
-  # Refusing to gate at the cap costs coverage on the ~3.75% of live legal entries
-  # that are exactly 1.0, and buys back never discarding real supervision on a
-  # capped row. Under-firing is the safe direction for a term whose whole purpose
-  # is to stop trusting fabricated magnitudes.
+  # ⚑ THE COST OF THE CAP GUARD, AT ROW LEVEL — an earlier revision sized it with an
+  # ENTRY count (~3.75% of legal entries are exactly 1.0), which is the wrong
+  # population for a row-level, gradient-weighted cost. Measured on 3,703 eligible
+  # live rows / 98,507 legal entries: **7.32% of ROWS** have `row_max >= 1.0` and are
+  # refused, and the plateau-carried term on them averages **0.41366 vs 0.08308 on
+  # non-cap rows — 5.0x** — so **28.2% of the total plateau-borne term sits on rows
+  # the gate structurally cannot touch**, and its ceiling is ~48.6% of that term at
+  # `listed_mass_min 0.5`. The mechanism: `alpha = (worst_surfaced + 1) / 2`, so
+  # `alpha == 1.0` exactly when a surfaced line is >= 1000cp worse — a mate or a lost
+  # line in the top 6, precisely the rows whose fill is 1.0 on EVERY unsurfaced move.
+  # ⇒ **the gate's coverage is anti-correlated with the harm it removes.** Stated
+  # because the arm's expected effect is sized off this number.
+  # ⚑ On a cap row the surfaced/tail split is UNIDENTIFIABLE, so 0.41366 is an upper
+  # bound that includes real capped regrets — which is exactly why refusing is right.
     has_tail = (at_max.to(torch.int64).sum(-1) >= 2) & (row_max.squeeze(-1) < 1.0)
+  # ⚑⚑ A FULLY-COVERED ROW CANNOT CARRY THE FILL, AND THE PLATEAU TEST ALONE DOES NOT
+  # KNOW THAT. When every legal move was really scored, the row max is a REAL regret;
+  # two real regrets tying there (routine, since regrets are integer cp / 1000) make
+  # the plateau test fire on a row with no tail at all. An independent review measured
+  # it at **22.2% of the gate's firings** at `listed_mass_min 0.5` — and gating
+  # ENRICHES for these rows, because excluding the tied max drives `listed_mass` down.
+  #
+  # The fix is arithmetic, not a heuristic. The builder
+  # (`selfplay/finalize.py::_build_sf_p0_regret_vector`) sets
+  # `default_regret = (worst_surfaced + 1.0) / 2.0` with `worst_surfaced` in [0, 1],
+  # so **the fill always lands in [0.5, 1.0]** ⇒ a row whose max is below 0.5
+  # PROVABLY contains no fill. 0.5 is exactly representable in every float dtype, so
+  # this needs no tolerance.
+  #
+  # ⚑ WHY NOT the two alternatives, both of which were measured rather than argued:
+  #   * `legal_count > sf_multipv` is exact, but `sf_multipv` is a LABEL-BUILDER
+  #     property and the replay window holds ~a day of rows built under whatever
+  #     width was live THEN. Reading today's 6 from config would silently mis-judge
+  #     older rows. Both tests here read the ROW, so they cannot go stale.
+  #   * the algebraic fingerprint `2*row_max - 1 == worst_surfaced` is exact in BOTH
+  #     directions, but needs a dtype-dependent tolerance: `sf_p0_regret` is stored
+  #     **float16**, whose eps at 0.5 is 4.88e-4, so the residual on genuinely filled
+  #     rows runs to ~5e-4 while non-filled rows sit at >= 0.80 — a clean 1600x
+  #     separation, but one whose tolerance constant silently rots if the stored dtype
+  #     ever changes. Measured on 2,931 plateau rows across 8 live shards, the
+  #     fingerprint and the `>= 0.5` test agree to **149 of 150** false positives, so
+  #     the exact-but-fragile version buys ~1 row in 2,931.
+  # ⇒ take the provable, dtype-exact one.
+  #
+  # ⚑ RESIDUAL, stated as a measurement and NOT as "never": a fully-covered row whose
+  # tied real max is itself >= 0.5 (SF's 6th-best >= 500cp worse than best, and tied)
+  # still reads as a tail. **~1 row in 2,931 plateau rows** on live data. The
+  # guarantee is "provably no fill below 0.5", not "no false positive".
+    has_tail = has_tail & (row_max.squeeze(-1) >= _SF_REGRET_MIN_FILL)
   # ⚑ Normalise over the LEGAL support. `policy_t` is stored fp16 and is not
   # guaranteed to sum to 1.0 after alignment, so an unnormalised sum makes the
   # threshold mean subtly different things on different rows. Rows with no mass
@@ -883,12 +956,21 @@ def sf_regret_gate_scale(
   #     regret on exactly the rows the gate exists to protect;
   #   * `listed_mass_min: 10` gates 100% of rows (mass is a fraction, so 1.0 is the
   #     ceiling), and `-1` silently never fires;
-  #   * ⚑ `listed_mass_min: .nan` or `unlisted_scale: .nan` SURVIVES a `min`/`max`
-  #     clamp -- Python's `min`/`max` PROPAGATE NaN rather than rejecting it (every
-  #     comparison with NaN is False, so the first argument wins) -- and a NaN
-  #     scale takes `total` to NaN **even at `w_sf_own_regret: 0.0`**, while
-  #     `sf_own_regret_gated_frac` still reads 0.0. That is the worst shape
-  #     available: production dies and the instrument says nothing happened.
+  #   * ⚑ NaN SURVIVES a `min`/`max` clamp for BOTH keys -- Python's `min`/`max`
+  #     PROPAGATE NaN rather than rejecting it (every comparison with NaN is False, so
+  #     the first argument wins), so a clamp is a RANGE guard and never a finiteness
+  #     guard. ⚑ But the CONSEQUENCE differs between the two keys and only one is a
+  #     poisoning hazard, so they must not be quoted together:
+  #       - `unlisted_scale: .nan` takes `total` to NaN **even at
+  #         `w_sf_own_regret: 0.0`** (because `0.0 * nan == nan`), while
+  #         `sf_own_regret_gated_frac` still reads 0.0. Worst shape available:
+  #         production dies and the instrument says nothing happened.
+  #       - `listed_mass_min: .nan` CANNOT poison anything: `mass < nan` is False on
+  #         every row, so the gate simply never fires. Its guard is therefore
+  #         DEFENSIVE-ONLY and no observation can distinguish it from the unguarded
+  #         path -- a mutation that deletes it is an EQUIVALENT mutant, not a test
+  #         gap. Kept because a future edit could make the value reachable elsewhere;
+  #         labelled so nobody hunts for the test that would kill that mutant.
   # `math.isnan` first, then clamp. Non-finite falls back to the OFF value, so a
   # typo degrades to "gate disabled" rather than to a poisoned run.
     mass_min = float(listed_mass_min)
@@ -1072,6 +1154,17 @@ def compute_loss(
       # NOT FIRE rather than guessing. ⚑ Do not "fix" this with `ones_like`: that
       # marks all 1858 padding slots legal, making the row max the padding fill
       # and the gate silently never fire on any row.
+      # ⚑ `has_legal_mask` is deliberately NOT conjoined here, unlike `masked_base`
+      # above, which routes through `apply_policy_mask_to_logits(..., "legal_mask",
+      # "has_legal_mask")` and multiplies the mask by the row's flag. Reasons, in order:
+      # the failure direction is SAFE (a row whose flag is clear but whose mask is
+      # all-zero yields `legal` all-False => no plateau => `has_tail` False => never
+      # gated, so it degrades to the identity, never to a wrong scale); the live
+      # incidence is **0 of 3,426 eligible rows** across 8 shards of the running trial;
+      # and `eval/era_probe.py` documents that `has_sf_p0_regret` set with
+      # `has_legal_mask` clear did occur HISTORICALLY, so the rows can exist in an old
+      # window. If a future change makes an unflagged mask non-zero rather than absent,
+      # conjoin the flag -- the guard here is the all-zero shape, not the flag.
         legal_for_gate = batch.get("legal_mask")
         target_for_gate = batch.get("policy_t")
         if legal_for_gate is not None and target_for_gate is not None:

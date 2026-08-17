@@ -377,6 +377,72 @@ def test_a_row_with_NO_fabricated_tail_is_never_gated(n_legal: int) -> None:
     assert float(gated[0]) == 0.0
 
 
+@pytest.mark.parametrize(
+    ("regrets", "why"),
+    [
+        # The reviewer's exact reproduction: cps 10,5,0,-30,-30,-30 -> three real
+        # regrets TIED at the worst. Plateau multiplicity 3, max 0.04, no cap.
+        ((0.0, 0.005, 0.01, 0.04, 0.04, 0.04), "three real regrets tied at the max"),
+        # Two legal moves, both equal -- the surfaced set is EMPTY, so listed_mass is
+        # 0.0 and the row looks maximally tail-exposed while having no tail at all.
+        ((0.0, 0.0), "every legal move equal, so the surfaced set is empty"),
+        # ⚑ The residual the `>= 0.5` range test CANNOT catch, pinned so the docstring's
+        # "~1 row in 2,931" claim is a tested statement and not a hope: a fully-covered
+        # row whose tied real max is itself >= 0.5 DOES still gate. Asserted as the
+        # known limit below, not as a pass.
+        ((0.0, 0.2, 0.62, 0.62), "tied real max at/above the fill's floor -- KNOWN LIMIT"),
+    ],
+)
+def test_TIED_REAL_REGRETS_on_a_fully_covered_row(
+    regrets: tuple[float, ...], why: str,
+) -> None:
+    """⚑⚑ THE PLATEAU TEST ALONE DOES NOT EXCLUDE A FULLY-COVERED ROW, and an earlier
+    revision's `⚑⚑ ... IS NEVER GATED` docstring was FALSE on **22.2% of the gate's own
+    firings** because of it.
+
+    Real regrets are integer cp / 1000, so two of them tying at the row max is routine
+    -- and then multiplicity >= 2 fires on a row where SF surfaced EVERY legal move and
+    nothing is invented. Gating ENRICHES for these rows, because `reg < row_max`
+    excludes the tied max and drives `listed_mass` down.
+
+    ⚑ My own guard test could not see this BY CONSTRUCTION: `REAL_REGRETS` are all
+    DISTINCT and `n_legal` was only ever {1, 3, 6}. Same population-exclusion error as
+    the >= 8-legal-move validation, one level down. That is why this case is
+    parametrized over the shapes rather than over a count.
+
+    The discriminator is arithmetic: the builder's fill is `(worst_surfaced + 1) / 2`
+    with `worst_surfaced` in [0, 1], so **the fill is always >= 0.5** and a row whose max
+    is below that provably carries none. Measured on 2,931 live plateau rows, that test
+    rejects 149 of the ~150 non-filled rows.
+    """
+    n_legal = len(regrets)
+    reg = torch.zeros((POLICY_SIZE,), dtype=torch.float32)
+    for i, r in enumerate(regrets):
+        reg[i] = r
+    legal = _legal(n_legal)
+    target = _onehot(n_legal - 1).unsqueeze(0)
+
+    row_max = max(regrets)
+    # Non-degeneracy: this row MUST look like a plateau, or the test proves nothing
+    # about the discriminator that follows it.
+    assert sum(1 for r in regrets if r == row_max) >= 2, "fixture is not a plateau"
+    assert row_max < 1.0, "fixture hits the cap, which a different guard handles"
+
+    scale, gated = sf_regret_gate_scale(
+        reg.unsqueeze(0), target, legal.unsqueeze(0),
+        listed_mass_min=0.5, unlisted_scale=0.0,
+    )
+    if row_max >= 0.5:
+        # KNOWN LIMIT, asserted so it cannot regress silently into a claim of "never".
+        assert float(scale[0]) == 0.0, (
+            "the known limit changed -- if this row is now ungated the docstring's "
+            "'~1 row in 2,931' residual is stale and must be re-measured"
+        )
+    else:
+        assert float(scale[0]) == 1.0, f"gated a fully-covered row: {why}"
+        assert float(gated[0]) == 0.0
+
+
 def test_a_negative_unlisted_scale_cannot_INVERT_the_term() -> None:
     """⚑ Neither key is range-validated by `TrialConfig` -- CLAUDE.md category (c),
     so the schema accepts it, nothing range-checks it, and the consumer gets it raw.
@@ -581,6 +647,79 @@ def test_both_keys_reach_the_TRAINERS_OWN_loss_kwargs() -> None:
     for key in GATE_KEYS:
         assert f'"{key}"' in src, f"{key} never reaches Trainer._loss_kwargs"
         assert f"self.{key}" in src, f"{key} is not read from the trainer's own state"
+
+
+@pytest.mark.parametrize(
+    ("mass_min", "scale"), [(0.8, 0.25), (0.5, 0.0), (1.0, 0.9)],
+)
+def test_a_YAML_VALUE_SURVIVES_THE_WHOLE_CONFIG_TO_TRAINER_KWARGS_SEAM(
+    mass_min: float, scale: float,
+) -> None:
+    """⚑⚑ THE MUTANT THAT SURVIVED THE THIRD REVIEW AT 446 TESTS GREEN: deleting both
+    keys from `trainer_kwargs_from_config` broke nothing.
+
+    The test above covers `Trainer._loss_kwargs -> compute_loss`. It does NOT cover
+    `config -> trainer_kwargs_from_config -> Trainer`, which is one leg further
+    upstream and is where an operator's yaml value actually enters. With those two
+    lines absent the failure is fully silent: the schema still accepts the key,
+    `flatten_run_config_defaults` still carries it, `params.json` and the
+    realized-config report still echo the operator's value -- and the `Trainer` is
+    built with the CODE DEFAULT. A day-plus paired arena would run with the gate OFF
+    while every artifact says it was on, and `sf_own_regret_gated_frac` reading 0.0
+    would be indistinguishable from "armed but nothing matched".
+
+    ⚑ BEHAVIOURAL ON PURPOSE. A source-text assertion (`inspect.getsource`) would not
+    have killed that mutant either -- it would only have moved the vacuity one level.
+    This drives the real function with a real flattened config and reads the value out.
+    """
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+    from chess_anti_engine.utils import flatten_run_config_defaults
+
+    cfg = flatten_run_config_defaults({
+        "train": {
+            "sf_own_regret_listed_mass_min": mass_min,
+            "sf_own_regret_unlisted_scale": scale,
+        },
+    })
+    kwargs = trainer_kwargs_from_config(cfg)
+    assert kwargs["sf_own_regret_listed_mass_min"] == pytest.approx(mass_min)
+    assert kwargs["sf_own_regret_unlisted_scale"] == pytest.approx(scale)
+    # ⚑ And the DEFAULT must be the identity, not merely "some float": an omitted key
+    # has to leave the gate off, or merging arms it for everyone.
+    bare = trainer_kwargs_from_config(flatten_run_config_defaults({}))
+    assert bare["sf_own_regret_listed_mass_min"] == 0.0
+    assert bare["sf_own_regret_unlisted_scale"] == 1.0
+
+
+@pytest.mark.parametrize("key", [
+    "sf_own_regret_listed_mass_min", "sf_own_regret_unlisted_scale",
+])
+def test_the_startup_only_KEYS_ARE_READ_LITERALLY_SO_THE_DERIVER_CAN_SEE_THEM(
+    key: str,
+) -> None:
+    """⚑⚑ Read via the `_f(...)` helper these keys are INVISIBLE to two instruments,
+    and the comment forbidding that sat two lines above where they were added.
+
+    `tests/test_startup_only_config_keys.py` derives the startup-only set from LITERAL
+    config reads; `tests/test_construction_only_config_keys.py` matches only
+    `.get("k"`, `["k"]`, `tc.k`. Under `_f` the first went RED (the key is in neither
+    read-set, so it reported a declared-startup-only key with a live consumer) and the
+    second went GREEN **VACUOUSLY** -- a reviewer's mutant repointing the declaration at
+    `worker.py`, which never reads the key, still passed. One spelling closed both.
+
+    Pinned here so a future refactor to `_f` for tidiness fails loudly rather than
+    quietly hollowing out a guard.
+    """
+    import inspect
+
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+
+    src = inspect.getsource(trainer_kwargs_from_config)
+    assert f'config.get("{key}"' in src, (
+        f"{key} must be read as a literal config.get -- via _f(...) the startup-only "
+        "deriver cannot see it and the construction-only guard passes vacuously"
+    )
+    assert f'_f("{key}"' not in src, f"{key} is read through the _f helper again"
 
 
 # ── plumbing: the knobs must actually be reachable ───────────────────

@@ -1731,17 +1731,35 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_policy": _f("w_policy", 1.0),
         "w_soft": _f("w_soft", 0.5),
         "soft_policy_min_tv": _f("soft_policy_min_tv", 0.0),
-  # Spelled as a literal `config.get` rather than `_f(...)` DELIBERATELY:
-  # tests/test_startup_only_config_keys.py derives the startup-only set from
-  # literal config reads, and a key read through the `_f` helper is invisible
-  # to it. Declaring this one startup-only while the instrument cannot see it
-  # would be exactly the hand-override that file's docstring forbids.
+  # ⚑ EVERY STARTUP-ONLY KEY BELOW IS SPELLED AS A LITERAL `config.get` RATHER THAN
+  # `_f(...)`, DELIBERATELY: tests/test_startup_only_config_keys.py derives the
+  # startup-only set from literal config reads, and a key read through the `_f`
+  # helper is INVISIBLE to it. Declaring one startup-only while the instrument
+  # cannot see it would be exactly the hand-override that file's docstring forbids.
+  #
+  # ⚑⚑ THIS COMMENT WAS ALREADY HERE AND THE TWO GATE KEYS WERE ADDED THROUGH `_f`
+  # ANYWAY, two lines below it. Two independent consequences, both real:
+  #   * `test_the_hand_maintained_startup_only_set_is_derivable` went RED -- the keys
+  #     appear in neither the startup nor the loop read-set, so the deriver reported
+  #     them as "declared startup-only but the source shows a live consumer";
+  #   * `test_construction_only_keys_have_no_live_consumer` went GREEN **VACUOUSLY**.
+  #     Its `_config_read_pattern` matches only `.get("k"`, `["k"]`, `tc.k`, so with
+  #     an `_f` read it can see NO read anywhere -- it could neither confirm the
+  #     declared reader file nor find an undeclared one. A reviewer's mutant that
+  #     pointed the declaration at `worker.py`, a file which never reads the key,
+  #     still passed. **A green from that test carried zero information.**
+  # ⇒ keeping these three together, under one comment, so the next key added here
+  #   inherits the rule instead of the trap.
         "policy_target_temp": float(config.get("policy_target_temp", 1.0)),
+        "sf_own_regret_listed_mass_min": float(
+            config.get("sf_own_regret_listed_mass_min", 0.0),
+        ),
+        "sf_own_regret_unlisted_scale": float(
+            config.get("sf_own_regret_unlisted_scale", 1.0),
+        ),
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
-        "sf_own_regret_listed_mass_min": _f("sf_own_regret_listed_mass_min", 0.0),
-        "sf_own_regret_unlisted_scale": _f("sf_own_regret_unlisted_scale", 1.0),
         "w_wdl": _f("w_wdl", 1.0),
         "w_sf_move": _f("w_sf_move", 0.15),
         "w_sf_eval": _f("w_sf_eval", 0.15),
