@@ -15,6 +15,7 @@ own the "is it the right net" question.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -320,6 +321,109 @@ def test_the_trainer_publishes_the_effective_label_mass_and_warns_on_a_leak(
     assert warned, "the production-path warning did not fire on a real leak"
     assert "0.6900 of the WDL target" in warned[0]
     assert "sf_wdl_frac leaked 0.6900" in warned[0]
+
+
+def _cpu_trainer(config_path: Path) -> Any:
+    """The real ``Trainer``, at toy width, on the CPU — no steps run."""
+    from chess_anti_engine.model import build_model, model_config_from_flat_config
+    from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
+
+    cfg = flatten_run_config_defaults(load_yaml_file(str(config_path)))
+    kwargs = trainer_kwargs_from_config(cfg)
+    kwargs["device"] = "cpu"
+    kwargs["use_compile"] = False
+    model_cfg = model_config_from_flat_config(cfg)
+    return Trainer(build_model(model_cfg), model_config=model_cfg, **kwargs)
+
+
+def _train_metrics(**overrides: Any) -> Any:
+    from chess_anti_engine.train.trainer import TrainMetrics
+
+    required = {
+        field.name: 0.0 for field in dataclasses.fields(TrainMetrics)
+        if field.default is dataclasses.MISSING
+        and field.default_factory is dataclasses.MISSING
+    }
+    return TrainMetrics(**required, **overrides)
+
+
+def test_the_leak_warning_reports_the_normalized_weight_not_the_raw_frac(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑⚑ Codex 3794881264 — PRODUCTION CODE, and the reviewer's own example.
+
+    ``compute_loss`` puts both fracs through ``normalize_value_blend_fracs``, so
+    when they sum above 1 the APPLIED weights are smaller than the trainer
+    attributes — and ``_warn_if_value_blend_leaks_to_outcome`` multiplied the
+    label shortfall by the RAW attributes. With ``sf_wdl_frac 0.8`` +
+    ``search_wdl_frac 0.8`` and 50% effective SF coverage the objective realizes a
+    **0.25** leak and the warning reported **0.40** — 1.6x, enough to cross the
+    0.01 incident bar on a leak the trained objective never had.
+
+    The NUMBER is asserted, in both directions: 0.2500 present and 0.4000 absent.
+    Asserting only "the helper was called" would pass on a version that
+    normalized and then reported the raw product anyway.
+    """
+    trainer = _cpu_trainer(_tiny_config(tmp_path))
+  # Exactly how production sets them: `_sync_trainer_weights` does
+  # `setattr(trainer, wk, ...)` every iteration, which is also why the check
+  # cannot live at construction time.
+    trainer.sf_wdl_frac = 0.8
+    trainer.search_wdl_frac = 0.8
+    metrics = _train_metrics(
+        train_steps_done=1, sf_wdl_effective_frac=0.5,
+        search_wdl_effective_frac=1.0,
+    )
+    with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"):
+        trainer._warn_if_value_blend_leaks_to_outcome(metrics)
+    warned = [r.getMessage() for r in caplog.records
+              if "RAW GAME OUTCOME" in r.getMessage()]
+    assert len(warned) == 1, "the leak is 0.25, well above the 0.01 bar"
+    assert "0.2500 of the WDL target" in warned[0], warned[0]
+    assert "sf_wdl_frac leaked 0.2500" in warned[0], warned[0]
+    assert "0.4000" not in warned[0], (
+        "0.40 is the RAW product sf_wdl_frac * (1 - coverage); the objective "
+        "applies 0.25"
+    )
+
+  # And the number is the LOSS's arithmetic, not a second copy of it.
+    from chess_anti_engine.train.losses import normalize_value_blend_fracs
+
+    sf_frac, search_frac, _game = normalize_value_blend_fracs(0.8, 0.8)
+    assert sf_frac * (1.0 - 0.5) + search_frac * (1.0 - 1.0) == pytest.approx(0.25)
+
+
+def test_the_normalized_leak_warning_fires_through_the_real_training_step(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The same fix on the WIRED path, at a leak size the two versions disagree
+    about: an over-subscribed 0.8/0.8 blend on rows with no ``sf_wdl`` realizes
+    0.50 (the renormalised SF share) and the raw arithmetic reports 0.80.
+
+    Deterministic regardless of batch composition, because SF coverage is 0 and
+    search coverage is 1 for EVERY row in this corpus — no reliance on which
+    rows the buffer happened to draw.
+    """
+    shards = _write_shards(tmp_path / "lc0_rows", list(range(16)))
+    config = _tiny_config(
+        tmp_path, train={"sf_wdl_frac": 0.8, "search_wdl_frac": 0.8},
+    )
+    with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"), \
+            pytest.raises(SystemExit):
+        lc0_control_train.main([
+            "--config", str(config), "--shards", str(shards),
+            "--out-dir", str(tmp_path / "oversubscribed"), "--steps", "1",
+            "--batch-size", "4", "--device", "cpu", "--no-compile",
+            "--allow-arch-drift", "--allow-leak",
+        ])
+    warned = [r.getMessage() for r in caplog.records
+              if "RAW GAME OUTCOME" in r.getMessage()]
+    assert warned, "the production-path warning did not fire on a real leak"
+    assert "0.5000 of the WDL target" in warned[0], warned[0]
+    assert "0.8000" not in warned[0], (
+        "0.80 is the raw sum of the two attributes; compute_loss renormalises "
+        "them to 0.5/0.5 before applying them"
+    )
 
 
 def test_launch_refuses_a_production_blend_without_allow_leak(tmp_path: Path) -> None:
@@ -917,16 +1021,138 @@ def test_a_failed_realized_guard_leaves_no_mid_checkpoint_either(
     assert not (out / "checkpoint_mid.pt").exists()
 
 
+def _run(tmp_path: Path, out: Path, shards: Path, *extra: str) -> int:
+    """A clean 4-step control run, for the tests that vary ONE argument."""
+    return lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift", *extra,
+    ])
+
+
+def test_a_mid_checkpoint_at_a_custom_fraction_is_not_the_preregistered_one(
+    tmp_path: Path,
+) -> None:
+    """⚑ Codex 3794881260. ANY positive fraction is clamped to an interior step,
+    so ``--mid-checkpoint-frac 0.99`` wrote a checkpoint, satisfied the
+    "no mid-budget checkpoint" entry, and left the run reading VALID — while the
+    LAST-vs-99%-budget contrast it supports measures the final 1% of training and
+    would be presented as the prereg's LAST vs MID-BUDGET slope.
+
+    ⚑ THE OTHER GATE IS OFF ON PURPOSE. A mid checkpoint IS written here (step 3
+    of 4), so the pre-existing "no mid-budget checkpoint" problem cannot fire and
+    cannot make this test pass with the new clause reverted — asserted, not
+    assumed, by requiring that entry's ABSENCE.
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "late_mid"
+    assert _run(tmp_path, out, shards, "--mid-checkpoint-frac", "0.99") == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["mid_checkpoint"]["step"] == 3
+    problems = summary["validity_problems"]
+    assert not [p for p in problems if "no mid-budget checkpoint" in p], (
+        "the backstop must be silent here, or this test cannot see its own fix"
+    )
+    assert [p for p in problems if "--mid-checkpoint-frac 0.99 is not the "
+            "preregistered 0.5" in p], problems
+
+    baseline = tmp_path / "prereg_mid"
+    assert _run(tmp_path, baseline, shards) == 0
+    prereg = json.loads((baseline / "summary.json").read_text(encoding="utf-8"))
+    assert prereg["mid_checkpoint"]["step"] == 2
+    assert not [p for p in prereg["validity_problems"]
+                if "mid-checkpoint-frac" in p], (
+        "the preregistered 0.5 must NOT be recorded as a deviation"
+    )
+
+
+def test_a_non_production_batch_size_is_recorded_as_a_validity_problem(
+    tmp_path: Path,
+) -> None:
+    """⚑ Codex 3794881253. ``--batch-size`` is assigned after every preflight and
+    ``batch_size`` is not a trainer kwarg, so guard 0c is structurally blind to
+    it: a run at batch 2 against the configured 4 changed the examples per step —
+    the gradient-noise regime — and still stamped ``valid_control: true``.
+
+    Both directions, because only the pair kills the mutant: the deviating run
+    records it AND the matching run does not.
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    deviating = tmp_path / "small_batch"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(deviating), "--steps", "4", "--batch-size", "2",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+    ]) == 0
+    summary = json.loads((deviating / "summary.json").read_text(encoding="utf-8"))
+    assert summary["batch_size"] == 2
+    assert summary["configured_batch_size"] == 4
+    assert [p for p in summary["validity_problems"]
+            if "--batch-size 2 is not the configured 4" in p], (
+        summary["validity_problems"]
+    )
+
+    matching = tmp_path / "config_batch"
+    assert _run(tmp_path, matching, shards) == 0
+    clean = json.loads((matching / "summary.json").read_text(encoding="utf-8"))
+    assert clean["batch_size"] == clean["configured_batch_size"] == 4
+    assert not [p for p in clean["validity_problems"] if "--batch-size" in p]
+
+
+def test_a_shard_directory_named_twice_is_refused_before_anything_is_staged(
+    tmp_path: Path,
+) -> None:
+    """⚑ Codex 3794881271. Each occurrence was staged under its own
+    ``shard_NNNNNN.zarr`` symlink, so the buffer drew that hour twice as often —
+    and nothing downstream could see it: the coverage preflight SUMS over the
+    list (its ratios stay right) and ``purity_receipt_problems`` compares SETS.
+
+    ⚑ RESOLVED paths, so a second spelling of the same directory is caught too,
+    and BEFORE staging — the assertion on the staging directory is what fails if
+    the check is moved below it.
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "dup"
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path)), "--shards",
+            str(shards), f"{shards}/.",
+            "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        ])
+    message = str(excinfo.value)
+    assert "named more than once" in message
+    assert str(shards.resolve()) in message
+    assert not (out / "staged_shards").exists(), (
+        "the refusal must precede staging, or the oversampled farm already exists"
+    )
+
+  # ...and the same corpus named ONCE runs, so this is about the duplicate and
+  # not about the directory.
+    assert _run(tmp_path, tmp_path / "single", shards) == 0
+
+
 # ── lc0_control_heldout ───────────────────────────────────────────────────────
 
 
-def _freeze(tmp_path: Path, shards: Path, *, sample: int) -> tuple[int, Path]:
+def _freeze(
+    tmp_path: Path, shards: Path, *, sample: int, sources: list[Path] | None = None,
+    allow_source_selection: bool = True,
+) -> tuple[int, Path]:
+    """⚑ ``--allow-source-selection`` by default, and that is a statement.
+
+    The prereg's held-out population is the LAST SIX hourly tars, and `freeze`
+    now refuses any other number of source directories unless the deviation is
+    declared. Every fixture here builds ONE synthetic hour, so every fixture is
+    declaring it; the tests that are ABOUT the six-source gate pass
+    ``allow_source_selection=False`` or their own ``sources`` list.
+    """
     out = tmp_path / "frozen.json"
-    rc = lc0_control_heldout.main([
-        "freeze", "--shards", str(shards), "--out", str(out),
-        "--sample", str(sample), "--seed", "0",
-    ])
-    return rc, out
+    argv = ["freeze", "--out", str(out), "--sample", str(sample), "--seed", "0",
+            "--shards", *[str(s) for s in (sources or [shards])]]
+    if allow_source_selection:
+        argv.append("--allow-source-selection")
+    return lc0_control_heldout.main(argv), out
 
 
 def test_freeze_refuses_a_pool_smaller_than_the_requested_sample(
@@ -948,6 +1174,65 @@ def test_freeze_writes_the_artifact_when_the_pool_is_large_enough(
     assert rc == 0
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert len(payload["row_ids"]) == len(payload["input_ids"]) == 10
+
+
+def test_freeze_refuses_a_source_selection_that_is_not_the_preregistered_six(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ Codex 3794881273. The prereg's held-out population is "the LAST 6 hourly
+    tars by wall-clock"; ``freeze`` gated the row COUNT at 100,000 and accepted
+    any number of source directories, so a set built from one hour — different
+    temporal correlation, one net generation of a correlated stream — wrote a
+    successful artifact and flowed through purity, scoring and comparison with no
+    marker at all.
+
+    ⚑ The row-count gate is SATISFIED here (10 rows requested, 10 supplied), so
+    the pre-existing refusal cannot be what fails this run: the two gates are
+    tested one at a time.
+    """
+    shards = _write_shards(tmp_path / "held", list(range(10)))
+    rc, out = _freeze(tmp_path, shards, sample=10, allow_source_selection=False)
+    assert rc == 1
+    assert not out.exists(), (
+        "an artifact from a non-preregistered population must not exist "
+        "unstamped on disk"
+    )
+    err = capsys.readouterr().err
+    assert "1 source directory" in err
+    assert "preregistered 6 hourly tars" in err
+
+
+def test_freeze_accepts_the_preregistered_six_sources_unflagged(
+    tmp_path: Path,
+) -> None:
+    """The other direction, or the gate above is a constant: SIX hours pass with
+    no flag and the artifact says so."""
+    sources = [
+        _write_shards(tmp_path / f"hour{i}", list(range(i * 10, i * 10 + 4)))
+        for i in range(6)
+    ]
+    rc, out = _freeze(
+        tmp_path, sources[0], sample=24, sources=sources,
+        allow_source_selection=False,
+    )
+    assert rc == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert len(payload["sources"]) == 6
+    assert payload["preregistered_source_selection"] is True
+    assert payload["source_selection_problems"] == []
+
+
+def test_a_flagged_freeze_stamps_the_population_into_the_artifact(
+    tmp_path: Path,
+) -> None:
+    """The declared deviation is carried, not merely permitted — `score` reads it
+    back and `compare` refuses on it."""
+    shards = _write_shards(tmp_path / "held", list(range(10)))
+    rc, out = _freeze(tmp_path, shards, sample=10)
+    assert rc == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["preregistered_source_selection"] is False
+    assert payload["source_selection_problems"], "the stamp must name the reason"
 
 
 def test_purity_exits_one_on_an_empty_train_directory(tmp_path: Path) -> None:
@@ -1330,7 +1615,10 @@ def test_chance_prints_the_jensen_pair(
 # ── lc0_control_eval ──────────────────────────────────────────────────────────
 
 
-def _scores(path: Path, hits: np.ndarray, *, checkpoint: str | None = None) -> Path:
+def _scores(
+    path: Path, hits: np.ndarray, *, checkpoint: str | None = None,
+    role: str = "mid",
+) -> Path:
     np.savez_compressed(
         path,
         row_ids=np.array([f"id{i:04d}" for i in range(hits.size)], dtype="U32"),
@@ -1338,9 +1626,13 @@ def _scores(path: Path, hits: np.ndarray, *, checkpoint: str | None = None) -> P
   # `valid_control: True` for the same reason as in `_paired_scores`: these
   # fixtures exercise the ARITHMETIC and the resolution bar, so the validity
   # refusal must not stand in front of them. Its own gate is pinned separately.
+  # ⚑ Same reasoning for `run_id`/`checkpoint_role`: `compare` refuses a pair
+  # with no trajectory identity, correctly and with its own test, so these carry
+  # ONE run id and the prereg's {mid, last} roles.
         meta=np.array([json.dumps({
             "checkpoint": checkpoint, "rows": int(hits.size),
-            "valid_control": True,
+            "valid_control": True, "run_id": "trajectory-0",
+            "checkpoint_role": role,
         })], dtype=object),
         allow_pickle=True,
     )
@@ -1357,7 +1649,7 @@ def test_compare_refuses_a_slope_it_cannot_resolve(
     b = (rng.random(5_000) < 0.33).astype(np.uint8)
     rc = lc0_control_eval.main([
         "compare", "--a", str(_scores(tmp_path / "a.npz", a)),
-        "--b", str(_scores(tmp_path / "b.npz", b)),
+        "--b", str(_scores(tmp_path / "b.npz", b, role="last")),
     ])
     assert rc == 1
     assert "exceeds the pre-committed bar" in capsys.readouterr().err
@@ -1374,7 +1666,7 @@ def test_compare_reports_when_the_halfwidth_clears_the_bar(
     b[flip] = 1 - b[flip]
     rc = lc0_control_eval.main([
         "compare", "--a", str(_scores(tmp_path / "a.npz", a)),
-        "--b", str(_scores(tmp_path / "b.npz", b)),
+        "--b", str(_scores(tmp_path / "b.npz", b, role="last")),
     ])
     assert rc == 0
     assert "halfwidth" in capsys.readouterr().out
@@ -1396,7 +1688,7 @@ def test_compare_mcnemar_arithmetic_is_pinned(
     hit_b[both + b_cells:both + b_cells + c_cells] = 1
     lc0_control_eval.main([
         "compare", "--a", str(_scores(tmp_path / "a.npz", hit_a)),
-        "--b", str(_scores(tmp_path / "b.npz", hit_b)),
+        "--b", str(_scores(tmp_path / "b.npz", hit_b, role="last")),
         "--max-halfwidth-pp", "10.0",
     ])
     out = capsys.readouterr().out
@@ -1423,8 +1715,10 @@ def test_compare_refuses_unpaired_score_files(
   # `valid_control` so the validity refusal — which runs first, correctly, and
   # would otherwise mask this one — does not stand in front of the row-pairing
   # message this test is about.
-        meta=np.array([json.dumps({"checkpoint": None, "valid_control": True})],
-                      dtype=object),
+        meta=np.array([json.dumps({
+            "checkpoint": None, "valid_control": True,
+            "run_id": "trajectory-0", "checkpoint_role": "last",
+        })], dtype=object),
         allow_pickle=True,
     )
     assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
@@ -1578,8 +1872,14 @@ def _paired_scores(
   # the wrong reason and a regression in the provenance gate would be invisible
   # behind an unrelated green. Callers that mean to test the validity gate
   # override it explicitly.
-    meta_a = {"valid_control": True, **meta_a}
-    meta_b = {"valid_control": True, **meta_b}
+  # ⚑ And ONE trajectory with the prereg's {mid, last} roles, for the same
+  # reason: `compare` refuses a pair with no `run_id`/`checkpoint_role`, which is
+  # correct and has its own test, but if that refusal fired in every fixture the
+  # tests below would pass for the wrong reason.
+    meta_a = {"valid_control": True, "run_id": "trajectory-0",
+              "checkpoint_role": "mid", **meta_a}
+    meta_b = {"valid_control": True, "run_id": "trajectory-0",
+              "checkpoint_role": "last", **meta_b}
 
     def write(path: Path, hits: np.ndarray, meta: dict[str, Any]) -> Path:
         np.savez_compressed(
@@ -1828,7 +2128,7 @@ def test_compare_refuses_a_zero_discordance_comparison(
     ANY n, including a file compared against itself."""
     hits = (np.arange(50) % 3 == 0).astype(np.uint8)
     a = _scores(tmp_path / "a.npz", hits)
-    b = _scores(tmp_path / "b.npz", hits.copy())
+    b = _scores(tmp_path / "b.npz", hits.copy(), role="last")
     assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
     err = capsys.readouterr().err
     assert "discordant on ZERO" in err
@@ -1844,6 +2144,211 @@ def test_the_shuffled_target_control_permutes_targets_not_hits() -> None:
     permuted = target[np.random.default_rng(0).permutation(target.size)]
     assert (predicted == target).mean() == 1.0
     assert (predicted == permuted).mean() < 0.2
+
+
+# ── compare: WHICH checkpoint, and from WHICH trajectory ──────────────────────
+
+
+def test_the_summary_binds_its_verdict_to_the_checkpoints_it_wrote(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ Codex 3794881256. ``valid_control`` is a verdict about a RUN and the
+    artifact named no FILE, so ``--summary <valid run>/summary.json --checkpoint
+    <other run>/checkpoint.pt`` banked ``valid_control: true`` for a checkpoint
+    that summary had never seen — including one from a disqualified run.
+
+    Writer AND reader, on artifacts the real driver wrote: per AMENDMENT 5's
+    first finding, a field checked only against a hand-built dict is a field
+    whose writer is untested.
+
+    ⚑ The second run uses a different ``--seed``, deliberately. The run id is a
+    digest OVER THE CHECKPOINT BYTES, so two runs with the same seed, config and
+    corpus are bit-identical and share it — which is correct (they are the same
+    trajectory) and would make this test about nothing.
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "run"
+    assert _run(tmp_path, out, shards) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    banked = {record["role"]: record for record in summary["checkpoints"]}
+    assert set(banked) == {"mid", "last"}
+    assert summary["run_id"]
+    import hashlib
+
+    assert banked["last"]["sha256"] == hashlib.sha256(
+        (out / "checkpoint.pt").read_bytes(),
+    ).hexdigest(), "the banked digest must be of the FILE, not of a description"
+
+    for role, path in (("mid", out / "checkpoint_mid.pt"),
+                       ("last", out / "checkpoint.pt")):
+        read = lc0_control_eval.read_training_validity(out / "summary.json", path)
+        assert read["checkpoint_role"] == role
+        assert read["run_id"] == summary["run_id"]
+        assert "verified" in str(read["checkpoint_identity"])
+
+    other = tmp_path / "run2"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(other), "--steps", "4", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift", "--seed", "1",
+    ]) == 0
+    foreign = json.loads((other / "summary.json").read_text(encoding="utf-8"))
+    assert foreign["run_id"] != summary["run_id"], (
+        "two trajectories must not share a run id, or the compare gate is a "
+        "constant"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_eval.read_training_validity(
+            out / "summary.json", other / "checkpoint.pt",
+        )
+    assert "does not describe" in str(excinfo.value)
+
+
+def test_score_banks_the_trajectory_identity_and_the_heldout_population(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The WRITER side of both new gates, on an artifact the real ``cmd_score``
+    wrote — ``_score_rows`` is stubbed because a real 100k score needs a GPU,
+    everything downstream of it is the real path.
+
+    Renaming either key on the writer alone is exactly the mutant AMENDMENT 5's
+    first finding describes: the compare-side tests below would stay green while
+    every real artifact read back ``None``.
+    """
+    rows = 12
+    shards = _write_shards(tmp_path / "held", list(range(rows)))
+    rc, frozen = _freeze(tmp_path, shards, sample=rows)
+    assert rc == 0
+    out = tmp_path / "run"
+    assert _run(tmp_path, out, shards) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+
+    def _rigged(*_args: Any, **_kwargs: Any) -> tuple[Any, int, Any, Any]:
+        moves = np.arange(rows, dtype=np.int64) % 3
+        return np.ones(rows, dtype=np.uint8), 0, moves, moves
+
+    monkeypatch.setattr(lc0_control_eval, "_score_rows", _rigged)
+    assert lc0_control_eval.main([
+        "score", "--config", str(_tiny_config(tmp_path)), "--frozen", str(frozen),
+        "--shards", str(shards), "--checkpoint", str(out / "checkpoint_mid.pt"),
+        "--summary", str(out / "summary.json"),
+        "--out", str(tmp_path / "s.npz"), "--device", "cpu",
+    ]) == 0
+    meta = json.loads(str(np.load(tmp_path / "s.npz", allow_pickle=True)["meta"][0]))
+    assert meta["run_id"] == summary["run_id"]
+    assert meta["checkpoint_role"] == "mid"
+    assert meta["checkpoint_sha256"] == next(
+        r["sha256"] for r in summary["checkpoints"] if r["role"] == "mid"
+    )
+  # ⚑ And the HELD-OUT population, recomputed from the frozen artifact's own
+  # `sources` rather than trusted from its stamp: this frozen set is one hour,
+  # not the preregistered six.
+    assert meta["heldout_source_selection_problems"], meta
+    assert "not the preregistered 6 hourly tars" in \
+        meta["heldout_source_selection_problems"][0]
+
+
+def test_compare_refuses_two_checkpoints_from_different_trajectories(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ The second half of Codex 3794881256: two INDIVIDUALLY VALID checkpoints
+    are not the prereg's pair. Without a run id, ``compare`` would difference two
+    runs' LAST checkpoints — which differ by their whole initialisation and data
+    order — and report it as LAST vs MID-BUDGET.
+
+    NOT waivable, and asserted with every waiver passed at once: a mismatch is a
+    MEASUREMENT, not an absence, and ``--allow-unverified-trajectory`` covers
+    only the absence.
+    """
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "run1/checkpoint_mid.pt", "run_id": "trajectory-1"},
+        meta_b={"checkpoint": "run2/checkpoint.pt", "run_id": "trajectory-2"},
+    )
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b),
+        "--allow-unverified-trajectory", "--allow-unrecorded-validity",
+        "--allow-shuffled-contrast", "--allow-non-prereg-heldout",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert "DIFFERENT TRAJECTORIES" in captured.err
+    assert "delta" not in captured.out, (
+        "the slope must not be printed for a pair that is refused"
+    )
+
+
+def test_compare_refuses_a_pair_that_is_not_mid_and_last(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """One trajectory is not enough: the deciding statistic is the slope between
+    the MID-BUDGET and the FINAL checkpoint, so two LASTs — or a random-init
+    floor against a LAST — is a different reading wearing its name."""
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "checkpoint.pt", "checkpoint_role": "last"},
+        meta_b={"checkpoint": "checkpoint.pt", "checkpoint_role": "last"},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
+    captured = capsys.readouterr()
+    assert "not the prereg's MID/LAST pair" in captured.err
+    assert "delta" not in captured.out
+
+
+def test_compare_refuses_an_unidentified_pair_but_that_waiver_is_its_own(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Absent is not clean here either — and no OTHER flag clears it.
+
+    ⚑ The one refusal in play is the identity one: the fixtures carry
+    ``valid_control: True`` and real targets, so a green run under
+    ``--allow-unverified-trajectory`` cannot be some other gate passing.
+    """
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a", "run_id": None},
+        meta_b={"checkpoint": "b"},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
+    assert "NO trajectory identity" in capsys.readouterr().err
+    for unrelated in ("--allow-shuffled-contrast", "--allow-unrecorded-validity",
+                      "--allow-non-prereg-heldout"):
+        assert lc0_control_eval.main([
+            "compare", "--a", str(a), "--b", str(b), unrelated,
+        ]) == 1, f"{unrelated} must not clear a refusal it does not name"
+        capsys.readouterr()
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-unverified-trajectory",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "--allow-unverified-trajectory:" in out
+    assert "delta" in out, "the waived path must still report the comparison"
+
+
+def test_compare_refuses_a_non_preregistered_heldout_population(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ Codex 3794881273's reader side. The stamp is not decoration: a score
+    over a held-out set that is not the preregistered six hours is refused, and
+    the waiver is its own flag so declaring the population does not also clear an
+    unrecorded validity or a shuffled contrast."""
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a"},
+        meta_b={"checkpoint": "b", "heldout_source_selection_problems": [
+            "the frozen set was built from 1 source directory (hour0), not the "
+            "preregistered 6 hourly tars.",
+        ]},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
+    err = capsys.readouterr().err
+    assert "NON-PREREGISTERED held-out population" in err
+    assert "1 source directory" in err, "the recorded reason must survive"
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-shuffled-contrast",
+    ]) == 1, "an unrelated waiver must not clear it"
+    capsys.readouterr()
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-non-prereg-heldout",
+    ]) == 0
+    assert "--allow-non-prereg-heldout:" in capsys.readouterr().out
 
 
 # ── the eval scorer's checkpoint load ─────────────────────────────────────────

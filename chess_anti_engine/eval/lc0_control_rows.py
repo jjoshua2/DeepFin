@@ -63,7 +63,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from multiprocessing import get_context
@@ -264,6 +264,40 @@ def _stratified_sample(
         picked.extend(chunk[int(i)] for i in sorted(take))
         remaining -= want
     return picked
+
+
+# ⚑ THE PREREGISTERED HELD-OUT POPULATION, as a number the code can check.
+# `docs/lc0_positive_control_prereg.md`: "the LAST 6 hourly tars by wall-clock,
+# time-disjoint and never trained on". `freeze` gated the row COUNT (100,000)
+# and not the POPULATION, so one hour — or five, or eleven — produced an
+# artifact indistinguishable from the preregistered one. `_stratified_sample`
+# above states the reason the number matters: a single hour is one net
+# generation's worth of a correlated stream.
+PREREG_HELDOUT_SOURCES = 6
+
+
+def source_selection_problems(payload: Mapping[str, Any]) -> list[str]:
+    """Every way this frozen set's SOURCES are not the preregistered ones.
+
+    ⚑ A function of the ARTIFACT, so both the writer (`lc0_control_heldout
+    freeze`) and the reader (`lc0_control_eval score`) answer it from the same
+    `sources` list rather than one of them trusting a boolean the other stamped.
+    A stamp can be absent — every frozen set built before it existed has none —
+    and "absent" would then read as "preregistered", which is the direction that
+    hides the deviation.
+    """
+    sources = list(payload.get("sources") or ())
+    if len(sources) == PREREG_HELDOUT_SOURCES:
+        return []
+    return [
+        f"the frozen set was built from {len(sources)} source director"
+        f"{'y' if len(sources) == 1 else 'ies'} "
+        f"({', '.join(str(s) for s in sources) or '<none>'}), not the "
+        f"preregistered {PREREG_HELDOUT_SOURCES} hourly tars. The prereg names "
+        "the LAST 6 hourly tars by wall-clock; a different number of hours "
+        "carries different temporal correlation, and 100,000 rows drawn from it "
+        "clear every other gate in this rig.",
+    ]
 
 
 def frozen_row_set(

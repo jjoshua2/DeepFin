@@ -511,6 +511,67 @@ says is how a gate becomes a decoration.
 lines and must not have needed `--allow-unrecorded-validity`. A readout carrying that
 banner is not a verdict.
 
+## ⚑⚑ AMENDMENT 6 (2026-08-17, written BEFORE any training step): SIX SETTINGS THE RIG ACCEPTED AND DID NOT RECORD
+
+**Still no arm has run and no number from this arm exists.** ⚑ **NO THRESHOLD MOVES IN
+THIS AMENDMENT** — the ±0.392 pp bar, the +2.0 pp effect size, the n=100,000 resolution
+point, the four guards and the outcome table are exactly as originally written. It
+changes only what the rig RECORDS and REFUSES.
+
+Found by a second independent review of PR #438. All six are one shape: **a value is
+accepted, it deviates from the preregistered or production one, and the run still stamps
+`valid_control: true`.** Five are cured by the machinery Amendments 4 and 5 built —
+`validity_problems`, banked into the score artifact, refused before the arithmetic — and
+the sixth is a real production-code arithmetic error.
+
+1. **`--batch-size`** was assigned after every preflight, and `batch_size` is not a
+   trainer kwarg, so guard 0c is structurally blind to it: a run at 32 against
+   production's configured 512 changed the examples per step, i.e. the gradient-noise
+   regime, and read VALID. ⇒ recorded in `validity_problems`.
+2. **`--mid-checkpoint-frac`** clamps ANY positive value to an interior step, so `0.99`
+   wrote a checkpoint, satisfied the "no mid-budget checkpoint" entry Amendment 4 added,
+   and presented a LAST-vs-99%-budget contrast — the final 1% of training — as the
+   preregistered LAST vs MID-BUDGET slope. ⇒ any fraction other than **0.5** is recorded.
+3. **A `--shards` directory named twice** was staged twice under distinct
+   `shard_NNNNNN.zarr` symlinks, so the buffer oversampled that hour — invisible to the
+   coverage preflight (which SUMS over the list) and to the purity receipt (which
+   compares SETS). ⇒ **REFUSED** at launch on resolved paths; de-duplicating silently
+   would train on a corpus other than the one named.
+4. **`summary.json` vouched for any checkpoint.** `valid_control` is a verdict about a
+   RUN and the artifact named no FILE, so `score --summary <valid run>/summary.json
+   --checkpoint <other run>/checkpoint.pt` banked `valid_control: true` for a checkpoint
+   that summary had never seen — including a disqualified one — and `compare` could pair
+   two trajectories' LAST checkpoints. ⇒ the run banks a content-derived `run_id` and a
+   sha256 + role per checkpoint; `score` hashes the `--checkpoint` and REFUSES a summary
+   that does not name it; `compare` requires one `run_id` with roles {mid, last}
+   (unwaivable), and refuses an artifact with no identity at all (waivable by
+   `--allow-unverified-trajectory`).
+5. **The held-out POPULATION was ungated.** This document names it as "the LAST 6 hourly
+   tars by wall-clock"; `freeze` gated the row COUNT at 100,000 and accepted any number
+   of source directories, and a different number of hours carries different temporal
+   correlation. ⇒ `freeze` REFUSES unless there are exactly six, or
+   `--allow-source-selection` stamps the artifact; `score` RECOMPUTES the source count
+   from the frozen artifact (not from the stamp — a set predating the stamp would
+   otherwise read as preregistered) and `compare` refuses it, waivable by
+   `--allow-non-prereg-heldout`.
+6. **PRODUCTION CODE.** `Trainer._warn_if_value_blend_leaks_to_outcome` multiplied the
+   label shortfall by the RAW `sf_wdl_frac`/`search_wdl_frac` attributes while
+   `compute_loss` renormalises them through `normalize_value_blend_fracs`. With
+   `0.8`/`0.8` and 50% effective SF coverage the objective realizes a **0.25** leak and
+   the warning reported **0.40** — 1.6×, enough to fire the 0.01 incident bar on a leak
+   the trained objective never had. ⇒ the same helper, before the arithmetic.
+
+Every waiver above is its OWN flag, and each refusal now carries the name of the one flag
+that clears it as a FIELD (`ProvenanceProblem.waiver`) rather than as a substring of its
+message — Amendment 5's `--allow-unrecorded-validity` scoped itself by matching prose,
+which makes a waiver's reach a property of wording.
+
+⇒ **Operational consequence for this arm:** the deciding `compare` must be run on
+artifacts whose `run_id` matches and whose roles are `mid` and `last`, from a `freeze`
+that needed no `--allow-source-selection`, at the config's own `batch_size`, with
+`--mid-checkpoint-frac` left at its default. Any of the four new banners in the output
+means the readout is not the preregistered yardstick.
+
 ## What each outcome licenses — pre-committed
 
 - **PASS** ⇒ the training stack and architecture can learn. Effort routes to targets

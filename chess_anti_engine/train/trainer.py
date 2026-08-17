@@ -92,6 +92,7 @@ from .losses import (
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    normalize_value_blend_fracs,
     policy_target_temp_active,
     retemper_main_policy_target,
     wdl_brier_ece_from_stats,
@@ -2584,15 +2585,28 @@ class Trainer:
         target became the game outcome on an ingest-drought iteration where
         nothing was trained at all. An absent measurement is not a measurement
         of zero.
+
+        ⚑⚑ AND THE WEIGHTS ARE THE NORMALIZED ONES, NOT THE RAW ATTRIBUTES.
+        `compute_loss` puts both fracs through `normalize_value_blend_fracs`, so
+        when they sum above 1 the APPLIED weights are smaller than the
+        attributes — and this warning multiplied the shortfall by the raw ones.
+        Measured: `sf_wdl_frac 0.8` + `search_wdl_frac 0.8` with 50% effective SF
+        coverage realizes a 0.25 leak and this reported 0.40, i.e. 1.6x, so the
+        0.01 incident bar could fire on a leak the objective never had. The same
+        helper the loss uses, per its own docstring: one implementation, two
+        callers.
         """
         if metrics.train_steps_done <= 0:
             return
+        sf_frac, search_frac, _game_frac = normalize_value_blend_fracs(
+            float(getattr(self, "sf_wdl_frac", 0.0) or 0.0),
+            float(getattr(self, "search_wdl_frac", 0.0) or 0.0),
+        )
         leaks = [
             (name, frac * (1.0 - effective))
             for name, frac, effective in (
-                ("sf_wdl_frac", float(getattr(self, "sf_wdl_frac", 0.0) or 0.0),
-                 float(metrics.sf_wdl_effective_frac)),
-                ("search_wdl_frac", float(getattr(self, "search_wdl_frac", 0.0) or 0.0),
+                ("sf_wdl_frac", sf_frac, float(metrics.sf_wdl_effective_frac)),
+                ("search_wdl_frac", search_frac,
                  float(metrics.search_wdl_effective_frac)),
             )
             if frac > 0.0

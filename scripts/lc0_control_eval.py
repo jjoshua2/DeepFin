@@ -53,14 +53,30 @@ the arithmetic so the number never reaches the screen to be quoted:
     receipt, no mid checkpoint, `--steps` under `warmup_steps`) -> refuse, NOT
     waivable;
   * either artifact carries NO validity record at all -> refuse, waivable by
-    `--allow-unrecorded-validity`. Absent is not clean.
+    `--allow-unrecorded-validity`. Absent is not clean;
+  * the two artifacts' `run_id` DIFFER, or their `checkpoint_role` pair is not
+    {mid, last} -> refuse, NOT waivable. `valid_control: true` is a verdict about
+    a RUN and said nothing about WHICH checkpoint: until 2026-08-17 a summary had
+    no file hash and no run identity, so a valid run's summary could vouch for an
+    unrelated (or disqualified) checkpoint, and two independently initialised
+    trajectories' LAST checkpoints could be paired and reported as the prereg's
+    LAST vs MID-BUDGET slope. `score` now hashes the `--checkpoint` it was given
+    and REFUSES a summary that does not name it;
+  * either artifact carries no `run_id`/`checkpoint_role` at all -> refuse,
+    waivable by `--allow-unverified-trajectory`;
+  * either artifact's frozen set was not built from the preregistered SIX hourly
+    tars -> refuse, waivable by `--allow-non-prereg-heldout`. `freeze` gated the
+    row COUNT at 100,000 and not the POPULATION, and `score` recomputes the
+    source count from the artifact rather than trusting a stamp.
 
 `--allow-shuffled-contrast` waives the first two, for the one case that wants
 them: deliberately reading the shuffled contrast. It does not waive the failed
 control, because "I meant to compare the shuffled control" is a statement about
 intent and a failed control is a statement about the RIG. And it does not waive
-an unrecorded validity either — that has its own flag, so no waiver here clears
-more than its name says.
+an unrecorded validity, an unverified trajectory or a non-preregistered held-out
+population either — each has its own flag, so no waiver here clears more than
+its name says. Every refusal carries the name of the ONE flag that clears it
+(`ProvenanceProblem.waiver`), rather than a flag matching on the message text.
 
 ⚑⚑ THE NEGATIVE CONTROL'S FLOOR IS **NOT** `E[1/n_legal]`, AND IT IS NOT A
 CONSTANT. `--shuffle-targets` scores each prediction against ANOTHER ROW'S REAL
@@ -113,6 +129,8 @@ rows. Both use this script; only the `--frozen`/`--shards` inputs differ.
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import hashlib
 import json
 import sys
 from collections.abc import Mapping
@@ -122,7 +140,12 @@ from typing import Any
 import numpy as np
 import torch
 
-from chess_anti_engine.eval.lc0_control_rows import iter_shard_arrays, load_frozen, row_ids
+from chess_anti_engine.eval.lc0_control_rows import (
+    iter_shard_arrays,
+    load_frozen,
+    row_ids,
+    source_selection_problems,
+)
 from chess_anti_engine.replay.dataset import collate_arrays
 from chess_anti_engine.train.losses import apply_policy_mask_to_logits
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
@@ -267,6 +290,83 @@ def _failed_negative_control(meta: Mapping[str, Any]) -> tuple[bool, float, floa
     return float(z) > bar, float(z), bar
 
 
+def _file_sha256(path: Path) -> str:
+    """sha256 of a file's bytes, streamed — checkpoints are ~2 GB in production."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+# The waiver flags, as constants: `ProvenanceProblem.waiver` names one of these
+# and `cmd_compare` looks each up on the parsed args, so a refusal and the flag
+# that clears it cannot drift apart in prose. ⚑ ONE FLAG PER REASON — a waiver
+# that clears more than its name says is how a gate becomes a decoration.
+SHUFFLED_CONTRAST_WAIVER = "--allow-shuffled-contrast"
+UNRECORDED_VALIDITY_WAIVER = "--allow-unrecorded-validity"
+UNVERIFIED_IDENTITY_WAIVER = "--allow-unverified-trajectory"
+NON_PREREG_HELDOUT_WAIVER = "--allow-non-prereg-heldout"
+
+
+def checkpoint_identity(
+    data: Mapping[str, Any], checkpoint: Path | None, summary_path: Path,
+) -> dict[str, Any]:
+    """Tie THIS ``--checkpoint`` to the summary that is about to vouch for it.
+
+    ⚑⚑ THE SUMMARY HAD NO IDEA WHICH FILE IT DESCRIBED. ``valid_control`` is a
+    verdict about a RUN and the artifact carried nothing naming a FILE, so
+    ``--summary <valid run>/summary.json --checkpoint <other run>/checkpoint.pt``
+    banked ``valid_control: true`` for a checkpoint that summary had never seen —
+    including one from a run the driver disqualified. A hash mismatch is a HARD
+    ERROR here rather than a recorded problem, because there is no reading of it
+    under which the operator got what they asked for.
+
+    ``role`` and ``run_id`` come from the matched record: ``compare`` needs them
+    to require MID and LAST **of one trajectory** instead of two runs' LASTs.
+    """
+    banked = list(data.get("checkpoints") or ())
+    if checkpoint is None:
+        return {
+            "checkpoint_sha256": None, "checkpoint_role": None, "run_id": None,
+            "checkpoint_identity": (
+                "no --checkpoint: a random-init floor has no trajectory identity"
+            ),
+        }
+    digest = _file_sha256(Path(checkpoint))
+    if not banked:
+        return {
+            "checkpoint_sha256": digest, "checkpoint_role": None, "run_id": None,
+            "checkpoint_identity": (
+                f"{summary_path} banks no `checkpoints`, so it cannot say "
+                "whether it describes this file (written before the field "
+                "existed)"
+            ),
+        }
+    for record in banked:
+        if str(record.get("sha256")) == digest:
+            return {
+                "checkpoint_sha256": digest,
+                "checkpoint_role": str(record.get("role")),
+                "run_id": data.get("run_id"),
+                "checkpoint_identity": (
+                    f"verified: role {record.get('role')!r}, sha256 "
+                    f"{digest[:16]}, named by {summary_path}"
+                ),
+            }
+    raise SystemExit(
+        f"{summary_path} does not describe {checkpoint}: that file's sha256 is "
+        f"{digest}, and the summary banks "
+        + ", ".join(
+            f"{record.get('role')}={str(record.get('sha256'))[:16]}"
+            for record in banked
+        )
+        + ". A summary's `valid_control` is a verdict about the run that wrote "
+        "THESE checkpoints; banking it against another file would let a valid "
+        "run vouch for an unrelated — or disqualified — checkpoint.",
+    )
+
+
 def read_training_validity(
     summary: Path | None, checkpoint: Path | None,
 ) -> dict[str, Any]:
@@ -282,6 +382,10 @@ def read_training_validity(
     ``lc0_control_train.py`` writes ``summary.json`` beside the checkpoints it
     produces. A miss returns ``valid_control: None``, which ``compare`` refuses
     unless ``--allow-unrecorded-validity`` is passed.
+
+    ⚑ AND IT VERIFIES THE BINDING — see ``checkpoint_identity``. Until
+    2026-08-17 the ``--summary``/``--checkpoint`` pair was two free-floating CLI
+    paths, exactly the shape the purity receipt exists to stop one file over.
     """
     path: Path | None = None
     if summary is not None:
@@ -299,6 +403,11 @@ def read_training_validity(
         return {
             "valid_control": None, "validity_problems": None,
             "source": "no summary.json found",
+            "checkpoint_sha256": (
+                None if checkpoint is None else _file_sha256(Path(checkpoint))
+            ),
+            "checkpoint_role": None, "run_id": None,
+            "checkpoint_identity": "no summary.json found",
         }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -314,6 +423,7 @@ def read_training_validity(
         "valid_control": bool(data["valid_control"]),
         "validity_problems": list(data.get("validity_problems") or []),
         "source": str(path),
+        **checkpoint_identity(data, checkpoint, path),
     }
 
 
@@ -334,10 +444,26 @@ def _negative_control_readout(meta: Mapping[str, Any]) -> str:
     return f"z={float(z):+.2f} vs bar {bar:g}"
 
 
+@dataclasses.dataclass(frozen=True)
+class ProvenanceProblem:
+    """One reason a pair is refused, and the ONE flag that clears it.
+
+    ⚑ The waiver is a FIELD, not a substring of the message. The first version
+    of the ``--allow-unrecorded-validity`` waiver filtered
+    ``unwaivable`` by matching ``"carries NO validity record" in p``, which makes
+    a waiver's scope a property of prose: reword the message and the flag either
+    stops working or starts clearing a neighbouring refusal. ``waiver=None`` is
+    unwaivable and no flag in this file can reach it.
+    """
+
+    message: str
+    waiver: str | None = None
+
+
 def score_provenance_problems(
     meta_a: Mapping[str, Any], meta_b: Mapping[str, Any],
-) -> tuple[list[str], list[str]]:
-    """``(waivable, unwaivable)`` reasons these two artifacts cannot be paired.
+) -> list[ProvenanceProblem]:
+    """Every reason these two artifacts cannot be paired, each with its waiver.
 
     ⚑⚑ THE ONE THING THIS FUNCTION MUST NOT DO IS RETURN AN EMPTY LIST FOR A
     SHUFFLED ARTIFACT. `--shuffle-targets` permutes the targets across rows, so
@@ -353,28 +479,33 @@ def score_provenance_problems(
     """
     label_a, seed_a = target_provenance(meta_a)
     label_b, seed_b = target_provenance(meta_b)
-    waivable: list[str] = []
-    unwaivable: list[str] = []
+    problems: list[ProvenanceProblem] = []
+
+    def refuse(message: str, *, waiver: str | None = None) -> None:
+        problems.append(ProvenanceProblem(message, waiver))
+
     if seed_a != seed_b:
-        waivable.append(
+        refuse(
             "the two score files did not score the SAME TARGETS: field "
             f"`shuffled_targets_seed` reads {seed_a!r} in --a ({label_a}) and "
             f"{seed_b!r} in --b ({label_b}). A permuted-target run measures the "
             "marginal collision rate, so differencing it against a real-target "
             "run reports a NEGATIVE CONTROL in the units of the primary "
             "yardstick.",
+            waiver=SHUFFLED_CONTRAST_WAIVER,
         )
     elif seed_a is not None:
-        waivable.append(
+        refuse(
             "BOTH score files are negative controls: field "
             f"`shuffled_targets_seed` reads {seed_a!r} in --a and {seed_b!r} in "
             "--b. Their paired difference is a difference of two collision "
             "rates and says nothing about the arm.",
+            waiver=SHUFFLED_CONTRAST_WAIVER,
         )
     for label, meta in (("--a", meta_a), ("--b", meta_b)):
         failed, z, bar = _failed_negative_control(meta)
         if failed:
-            unwaivable.append(
+            refuse(
                 f"{label} FAILED its own negative-control gate: field "
                 f"`negative_control_z` reads {z:+.2f} against the "
                 f"`negative_control_max_z` bar {bar:.1f} that run was gated at. "
@@ -399,7 +530,7 @@ def score_provenance_problems(
             continue
         bar = float(meta.get("negative_control_max_z", NEGATIVE_CONTROL_Z))
         if bar > NEGATIVE_CONTROL_Z:
-            unwaivable.append(
+            refuse(
                 f"{label} was gated MORE LENIENTLY than this module's floor: "
                 f"field `negative_control_max_z` reads {bar:g} against "
                 f"NEGATIVE_CONTROL_Z {NEGATIVE_CONTROL_Z:g}. The bar is banked "
@@ -421,25 +552,79 @@ def score_provenance_problems(
     for label, meta in (("--a", meta_a), ("--b", meta_b)):
         valid = meta.get("valid_control")
         if valid is False:
-            problems = meta.get("validity_problems") or ["<not recorded>"]
-            unwaivable.append(
+            recorded = meta.get("validity_problems") or ["<not recorded>"]
+            refuse(
                 f"{label} was produced by a run THE DRIVER DISQUALIFIED: field "
                 f"`valid_control` reads false. Recorded reason(s): "
-                + "; ".join(str(p) for p in problems)
+                + "; ".join(str(p) for p in recorded)
                 + ". A run that is not a valid control cannot supply either "
                 "side of the arm's primary comparison.",
             )
         elif valid is None:
-            unwaivable.append(
+            refuse(
                 f"{label} carries NO validity record: field `valid_control` is "
                 "absent, so this readout cannot tell a clean run from one "
                 "launched with --allow-arch-drift, --allow-leak, no purity "
                 "receipt, or too few steps. Re-score with --summary pointing "
                 "at the training run's summary.json, or pass "
-                "--allow-unrecorded-validity to state that you know it is "
+                f"{UNRECORDED_VALIDITY_WAIVER} to state that you know it is "
                 "unrecorded.",
+                waiver=UNRECORDED_VALIDITY_WAIVER,
             )
-    return waivable, unwaivable
+  # ⚑⚑ AND `valid_control: true` SAID NOTHING ABOUT *WHICH* CHECKPOINT. The
+  # summary banks a content-derived `run_id` and one sha256 per checkpoint, and
+  # `read_training_validity` refuses a summary that does not name the scored
+  # file — but a pair of individually-verified artifacts can still be two
+  # LASTs from two independently initialised trajectories, which is not the
+  # prereg's statistic. The prereg reads the arm as two slopes "both measured
+  # LAST vs MID-BUDGET" ON ONE TRAJECTORY, so that is what is required here:
+  # one run id, and the roles {mid, last}.
+    run_a, role_a = meta_a.get("run_id"), meta_a.get("checkpoint_role")
+    run_b, role_b = meta_b.get("run_id"), meta_b.get("checkpoint_role")
+    unidentified = [
+        label for label, run, role in (("--a", run_a, role_a), ("--b", run_b, role_b))
+        if run is None or role is None
+    ]
+    if unidentified:
+        refuse(
+            f"{' and '.join(unidentified)} carr"
+            f"{'y' if len(unidentified) > 1 else 'ies'} NO trajectory identity: "
+            "fields `run_id`/`checkpoint_role` are absent, so this readout "
+            "cannot tell MID-vs-LAST on one trajectory from two unrelated "
+            "checkpoints — the prereg's primary yardstick is the former. "
+            "Re-score with --summary pointing at the training run's "
+            f"summary.json, or pass {UNVERIFIED_IDENTITY_WAIVER}.",
+            waiver=UNVERIFIED_IDENTITY_WAIVER,
+        )
+    elif run_a != run_b:
+        refuse(
+            "the two score files come from DIFFERENT TRAJECTORIES: field "
+            f"`run_id` reads {str(run_a)[:16]} in --a and {str(run_b)[:16]} in "
+            "--b. The prereg's primary yardstick is LAST vs MID-BUDGET on ONE "
+            "trajectory; two runs' checkpoints differ by their whole "
+            "initialisation and data order as well as by budget.",
+        )
+    elif {str(role_a), str(role_b)} != {"mid", "last"}:
+        refuse(
+            "the two score files are not the prereg's MID/LAST pair: field "
+            f"`checkpoint_role` reads {role_a!r} in --a and {role_b!r} in --b. "
+            "The deciding statistic is the slope between the mid-budget and the "
+            "final checkpoint of one trajectory.",
+        )
+  # ⚑ AND THE HELD-OUT POPULATION. `freeze` gated the row COUNT at 100,000 and
+  # not the SOURCES, so a frozen set built from one hour cleared every gate in
+  # this rig. Recomputed by `cmd_score` from the artifact's own `sources` list
+  # rather than trusted from a stamp, so a frozen set predating the stamp is
+  # judged too.
+    for label, meta in (("--a", meta_a), ("--b", meta_b)):
+        heldout = list(meta.get("heldout_source_selection_problems") or ())
+        if heldout:
+            refuse(
+                f"{label} scored a NON-PREREGISTERED held-out population: "
+                + "; ".join(str(p) for p in heldout),
+                waiver=NON_PREREG_HELDOUT_WAIVER,
+            )
+    return problems
 
 
 def _policy_logits(outputs: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -614,6 +799,17 @@ def cmd_score(args: argparse.Namespace) -> int:
     validity = read_training_validity(args.summary, args.checkpoint)
     print(f"[score] valid_control {validity.get('valid_control')!r} "
           f"(from {validity.get('source')})")
+  # ⚑ PRINTED, like every other gate in this file: "verified" and "the summary
+  # banks no checkpoints" are different states and a reader must be able to see
+  # which one this score is standing on.
+    print(f"[score] checkpoint identity: {validity.get('checkpoint_identity')}")
+  # ⚑ RECOMPUTED from the frozen artifact's own `sources`, not read off a stamp
+  # the freezer wrote: a frozen set built before the stamp existed has none, and
+  # "absent" would then read as "preregistered".
+    heldout_problems = source_selection_problems(payload)
+    if heldout_problems:
+        print("⚑⚑ [score] NON-PREREGISTERED HELD-OUT POPULATION — "
+              + " | ".join(heldout_problems))
     hits, tied, predicted, target = _score_rows(
         trainer, args.shards, wanted, batch_size=int(args.batch_size),
         shuffle_targets_seed=shuffle_seed,
@@ -646,6 +842,17 @@ def cmd_score(args: argparse.Namespace) -> int:
             "valid_control": validity.get("valid_control"),
             "validity_problems": validity.get("validity_problems"),
             "validity_source": validity.get("source"),
+  # ⚑ WHICH CHECKPOINT, AND FROM WHICH TRAJECTORY. `valid_control` is a verdict
+  # about a RUN, and without these three fields nothing tied it to the file
+  # scored here: a valid run's summary could vouch for an unrelated checkpoint,
+  # and `compare` could pair two runs' LAST checkpoints as LAST-vs-MID-BUDGET.
+            "checkpoint_sha256": validity.get("checkpoint_sha256"),
+            "checkpoint_role": validity.get("checkpoint_role"),
+            "run_id": validity.get("run_id"),
+            "checkpoint_identity": validity.get("checkpoint_identity"),
+  # ⚑ The HELD-OUT population, recomputed from the frozen artifact rather than
+  # trusted from its stamp. `freeze` gated n and not the sources.
+            "heldout_source_selection_problems": heldout_problems,
             "rows": int(hits.size),
             "top1_agreement": rate,
             "tied_argmax_rows": int(tied),
@@ -698,28 +905,33 @@ def cmd_compare(args: argparse.Namespace) -> int:
   # afterwards still puts a quotable number on the screen, and the failure this
   # closes is precisely a number being read off a comparison that had no
   # business producing one. Nothing below this block runs on a refused pair.
-    waivable, unwaivable = score_provenance_problems(meta_a, meta_b)
-    if args.allow_shuffled_contrast and waivable:
-        print("⚑⚑ --allow-shuffled-contrast: " + " | ".join(waivable))
-        waivable = []
-  # ⚑ Scoped to the UNRECORDED case by matching the message this flag names.
-  # `valid_control: false` -- a run the driver disqualified -- stays in
-  # `unwaivable` and no flag in this file clears it.
-    if args.allow_unrecorded_validity:
-        unrecorded = [p for p in unwaivable if "carries NO validity record" in p]
-        if unrecorded:
-            print("⚑⚑ --allow-unrecorded-validity: " + " | ".join(unrecorded))
-            unwaivable = [p for p in unwaivable if p not in unrecorded]
-    refusals = unwaivable + waivable
+  # ⚑ Each problem names the ONE flag that clears it (`ProvenanceProblem.waiver`)
+  # and that flag is looked up here. Scoping a waiver by matching its message —
+  # what the first `--allow-unrecorded-validity` did — makes the waiver's reach a
+  # property of prose, and `valid_control: false` (a run the driver disqualified)
+  # must stay unreachable by every flag in this file.
+    provenance = score_provenance_problems(meta_a, meta_b)
+    passed = {
+        SHUFFLED_CONTRAST_WAIVER: bool(args.allow_shuffled_contrast),
+        UNRECORDED_VALIDITY_WAIVER: bool(args.allow_unrecorded_validity),
+        UNVERIFIED_IDENTITY_WAIVER: bool(args.allow_unverified_trajectory),
+        NON_PREREG_HELDOUT_WAIVER: bool(args.allow_non_prereg_heldout),
+    }
+    waived = [p for p in provenance if p.waiver is not None and passed[p.waiver]]
+    for flag in sorted({p.waiver for p in waived if p.waiver is not None}):
+        print(f"⚑⚑ {flag}: "
+              + " | ".join(p.message for p in waived if p.waiver == flag))
+    refusals = [p for p in provenance if p not in waived]
     if refusals:
+        offered = sorted({p.waiver for p in refusals if p.waiver is not None})
         print(
             "FAIL: these two score files are not a valid pair. "
-            + " | ".join(refusals)
+            + " | ".join(p.message for p in refusals)
             + (
-                ""
-                if unwaivable
-                else " Pass --allow-shuffled-contrast if reading the shuffled "
-                     "contrast IS the comparison you intend."
+                f" Waivable by: {', '.join(offered)} — if that IS the comparison "
+                "you intend."
+                if offered and len(offered) == len(refusals)
+                else ""
             ),
             file=sys.stderr,
         )
@@ -878,14 +1090,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare.add_argument("--allow-underpowered", action="store_true")
     compare.add_argument(
-        "--allow-unrecorded-validity", action="store_true",
+        UNVERIFIED_IDENTITY_WAIVER, action="store_true",
+        help="proceed when a score file carries no `run_id`/`checkpoint_role`. "
+             "⚑ Without them a pair of individually-valid checkpoints can be "
+             "two LASTs from two independently initialised trajectories, "
+             "reported as the prereg's LAST vs MID-BUDGET slope. It does NOT "
+             "waive a run_id MISMATCH or a role pair that is not {mid, last} — "
+             "those are measurements, not absences.")
+    compare.add_argument(
+        NON_PREREG_HELDOUT_WAIVER, action="store_true",
+        help="proceed when a score file's frozen set was not built from the "
+             "preregistered six hourly tars. Its own flag, so declaring a "
+             "different held-out population does not also clear an unrecorded "
+             "validity or a shuffled contrast.")
+    compare.add_argument(
+        UNRECORDED_VALIDITY_WAIVER, action="store_true",
         help="proceed when a score file carries no `valid_control` field. ⚑ It "
              "does NOT waive `valid_control: false` -- a run the driver "
              "disqualified stays refused. Its own flag rather than a clause of "
              "--allow-shuffled-contrast, so no waiver waives more than its "
              "name says.")
     compare.add_argument(
-        "--allow-shuffled-contrast", action="store_true",
+        SHUFFLED_CONTRAST_WAIVER, action="store_true",
         help="⚑⚑ compare artifacts whose `shuffled_targets_seed` differ, or "
              "which are BOTH negative controls. Without it such a pair is "
              "REFUSED, because a permuted-target score differenced against a "

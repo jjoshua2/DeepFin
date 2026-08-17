@@ -4,7 +4,11 @@
 Three subcommands, in the order they must be run:
 
   freeze  --shards <the 6 newest hourly dirs> --out <frozen.json>
-          Builds the explicit row-id list and prints its sha256.
+          Builds the explicit row-id list and prints its sha256. ⚑ EXACTLY the
+          preregistered six sources, or `--allow-source-selection` and the
+          artifact is stamped as a non-preregistered population — the prereg
+          names "the LAST 6 hourly tars by wall-clock", and until 2026-08-17 the
+          ROW COUNT was gated while the POPULATION was not.
 
   purity  --frozen <frozen.json> --train-shards <train dirs> [--receipt <f>]
           [--exposed-out <f>] [--cache-dir <d>] [--workers N]
@@ -45,6 +49,7 @@ import sys
 from pathlib import Path
 
 from chess_anti_engine.eval.lc0_control_rows import (
+    PREREG_HELDOUT_SOURCES,
     EmptyTrainCorpus,
     chance_level,
     exposed_rows,
@@ -53,6 +58,7 @@ from chess_anti_engine.eval.lc0_control_rows import (
     legal_counts_for_ids,
     load_frozen,
     purity_against_train,
+    source_selection_problems,
     write_frozen,
 )
 
@@ -92,6 +98,30 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     if payload["frozen_rows"] != payload["frozen_unique_ids"]:
         print("FAIL: the frozen set contains duplicate row ids", file=sys.stderr)
         return 1
+
+  # ⚑ REQUIRE THE PREREGISTERED SIX, OR STAMP THE ARTIFACT. Refusing by default
+  # is the half that matters: an unstamped artifact from a non-preregistered
+  # source selection could not exist, so nothing downstream has to guess. The
+  # stamp is not decoration either — `lc0_control_eval score` banks it and
+  # `compare` refuses it unless `--allow-non-prereg-heldout` says the operator
+  # meant it. Same shape as `--allow-arch-drift`: the deviation is possible,
+  # declared, and carried in every artifact derived from it.
+    selection_problems = source_selection_problems(payload)
+    if selection_problems and not args.allow_source_selection:
+        print(
+            "FAIL: " + " | ".join(selection_problems)
+            + " Point --shards at the preregistered six hours, or pass "
+            "--allow-source-selection to stamp this artifact as a "
+            "non-preregistered population (every score and comparison derived "
+            "from it then carries that stamp).",
+            file=sys.stderr,
+        )
+        return 1
+    payload["source_selection_problems"] = selection_problems
+    payload["preregistered_source_selection"] = not selection_problems
+    if selection_problems:
+        print("⚑⚑ --allow-source-selection: NOT THE PREREGISTERED HELD-OUT "
+              "POPULATION — " + " | ".join(selection_problems))
 
     digest = write_frozen(payload, Path(args.out))
     print(f"written                {args.out}")
@@ -320,6 +350,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="prereg resolution point: 100k paired resolves ~0.2 pp",
     )
     freeze.add_argument("--seed", type=int, default=0)
+    freeze.add_argument(
+        "--allow-source-selection", action="store_true",
+        help=f"⚑⚑ build the frozen set from a number of source directories "
+             f"other than the preregistered {PREREG_HELDOUT_SOURCES} hourly "
+             "tars. The artifact is STAMPED, `lc0_control_eval score` banks the "
+             "stamp, and `compare` refuses it unless "
+             "--allow-non-prereg-heldout. Without this flag such a set is "
+             "refused and no file is written.",
+    )
     freeze.set_defaults(handler=cmd_freeze)
 
     purity = sub.add_parser("purity")

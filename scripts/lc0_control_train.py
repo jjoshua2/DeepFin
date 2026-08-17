@@ -99,7 +99,27 @@ could not produce the deciding statistic at all. `--mid-checkpoint-frac`
 (default 0.5) writes `checkpoint_mid.pt` from INSIDE the single `train_steps`
 call, because two calls of N/2 would run the `sqrt_release` ramp twice and put
 MID and LAST on different LR trajectories. A run with no mid checkpoint records
-that in `validity_problems` and is not a valid control.
+that in `validity_problems` and is not a valid control — and so does one whose
+`--mid-checkpoint-frac` is not the preregistered 0.5, because a
+LAST-vs-99%-budget contrast is a different statistic wearing the deciding
+statistic's name.
+
+⚑ TWO MORE THINGS ARE RECORDED AND ONE IS REFUSED (independent review of #438,
+2026-08-17), all of them the same shape as the guards above — a value accepted
+after every preflight, deviating from the production one, with the run still
+stamped `valid_control: true`:
+
+  * `--batch-size` differing from the config's changes the examples per step and
+    the gradient-noise regime. `batch_size` is not a trainer kwarg, so guard 0c
+    is structurally blind to it -> `validity_problems`.
+  * a `--shards` directory named TWICE is staged twice under distinct symlink
+    names, so the buffer oversamples that hour; the coverage preflight sums over
+    the list and `purity_receipt_problems` compares SETS, so neither could see
+    it. That one is REFUSED at launch rather than recorded: de-duplicating
+    silently would train on a corpus other than the one named.
+  * the run banks a content-derived `run_id` and a per-checkpoint sha256/role,
+    so `summary.json` can no longer vouch for a checkpoint it never saw and
+    `compare` cannot pair two trajectories' LAST checkpoints as LAST-vs-MID.
 
 Usage
 -----
@@ -112,6 +132,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -163,6 +184,82 @@ from scripts.lc0_data_to_rows import (
     shard_dir_search_wdl_coverage,
     shard_dir_sf_wdl_coverage,
 )
+
+
+# ⚑ THE PREREG'S OWN FRACTION, NAMED. `docs/lc0_positive_control_prereg.md`
+# AMENDMENT 4 reads the primary yardstick as two slopes "both measured LAST vs
+# MID-BUDGET", and `--mid-checkpoint-frac` is what places the MID point. Any
+# other value produces a LAST-vs-something contrast, which is a different
+# statistic wearing the deciding statistic's name — so the number lives here,
+# next to the check that reads it, rather than only in the argparse default a
+# caller can override without leaving a trace.
+PREREG_MID_CHECKPOINT_FRAC = 0.5
+
+
+def _sha256_file(path: Path) -> str:
+    """sha256 of a file's bytes, streamed (checkpoints are ~2 GB in production)."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def checkpoint_identities(
+    *, last: Path, mid: Path | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """``(run_id, [{role, path, sha256}])`` — THIS trajectory's identity.
+
+    ⚑⚑ WITHOUT THIS, `summary.json` VOUCHED FOR ANY CHECKPOINT. `valid_control`
+    is a statement about a RUN, and the artifact carried nothing that tied it to
+    a FILE, so `lc0_control_eval score --summary <valid run>/summary.json
+    --checkpoint <some other run>/checkpoint.pt` banked `valid_control: true`
+    for a checkpoint the summary had never seen — including one from a run the
+    driver disqualified. And with no run identity, `compare` could pair two
+    LAST checkpoints from two independently initialised trajectories and report
+    it as the prereg's LAST-vs-MID-BUDGET slope.
+
+    ⚑ The run id is CONTENT-DERIVED, not a uuid: it is a digest over the
+    checkpoint hashes themselves, so it is exactly "which trajectory are these
+    weights from" and cannot drift from the files it names. MID and LAST of one
+    run therefore share it by construction, and two runs — even two with
+    identical arguments — do not, because their weights differ.
+    """
+    entries = [{"role": "last", "path": str(Path(last).resolve()),
+                "sha256": _sha256_file(last)}]
+    if mid is not None:
+        entries.insert(0, {"role": "mid", "path": str(Path(mid).resolve()),
+                           "sha256": _sha256_file(mid)})
+    fingerprint = "|".join(
+        f"{entry['role']}:{entry['sha256']}"
+        for entry in sorted(entries, key=lambda e: str(e["role"]))
+    )
+    run_id = hashlib.sha256(
+        f"lc0-control-trajectory|{fingerprint}".encode(),
+    ).hexdigest()
+    return run_id, entries
+
+
+def duplicate_shard_dirs(shard_dirs: list[Path]) -> list[str]:
+    """The resolved ``--shards`` directories named more than once.
+
+    ⚑ RESOLVED, not as typed: ``a``, ``a/``, ``./a`` and a symlink to ``a`` are
+    the same corpus and would each be staged again under a fresh
+    ``shard_NNNNNN.zarr`` name, so the replay buffer treats one hour's rows as
+    two shards and OVERSAMPLES it. Nothing downstream could see it: the coverage
+    preflight sums over the list (so its ratios stay right), and
+    ``purity_receipt_problems`` collapses the list into a ``set()`` to compare
+    against the receipt — so a duplicated corpus was stamped
+    ``valid_control: true``.
+    """
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for shard_dir in shard_dirs:
+        resolved = str(Path(shard_dir).resolve())
+        if resolved in seen and resolved not in duplicates:
+            duplicates.append(resolved)
+        seen.add(resolved)
+    return duplicates
 
 
 class _LossCapture:
@@ -669,7 +766,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--shards", type=Path, nargs="+", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--steps", type=int, required=True)
-    parser.add_argument("--batch-size", type=int, default=0, help="0 = config batch_size")
+    parser.add_argument(
+        "--batch-size", type=int, default=0,
+        help="0 = config batch_size. ⚑ Any other value changes the examples per "
+             "step and the gradient-noise regime, and is recorded in "
+             "`validity_problems`: the run is then not a valid control.",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -690,12 +792,15 @@ def main(argv: list[str] | None = None) -> int:
              "a run may be quoted as 'our stack'.",
     )
     parser.add_argument(
-        "--mid-checkpoint-frac", type=float, default=0.5,
+        "--mid-checkpoint-frac", type=float, default=PREREG_MID_CHECKPOINT_FRAC,
         help="⚑ where in the budget to write `checkpoint_mid.pt`. The prereg's "
              "PRIMARY yardstick is two slopes 'both measured LAST vs "
              "MID-BUDGET', so a run that emits one checkpoint cannot produce "
              "the deciding statistic at all. 0 disables it; the run then "
-             "records that it cannot answer the prereg.",
+             f"records that it cannot answer the prereg. Any value other than "
+             f"the preregistered {PREREG_MID_CHECKPOINT_FRAC} is likewise "
+             "recorded in `validity_problems` — a LAST-vs-99%%-budget contrast "
+             "is not the deciding statistic.",
     )
     parser.add_argument(
         "--purity-receipt", type=Path, default=None,
@@ -714,6 +819,23 @@ def main(argv: list[str] | None = None) -> int:
     trainer_provenance = preflight_trainer(cfg, allow_leak=bool(args.allow_leak))
     replay_provenance = preflight_replay(cfg, allow_leak=bool(args.allow_leak))
     shard_dirs = [Path(d) for d in args.shards]
+  # ⚑ BEFORE the coverage preflight and before staging, and a REFUSAL rather
+  # than a silent de-duplication: a de-dupe would train on a corpus different
+  # from the one the operator named, which is the same "accepted and then
+  # quietly altered" shape as the finding itself. There is no reading of
+  # `--shards a a` under which the duplicate is wanted — the buffer would draw
+  # that hour twice as often — so the run stops and says which directory.
+    duplicates = duplicate_shard_dirs(shard_dirs)
+    if duplicates:
+        raise SystemExit(
+            "REFUSING TO LAUNCH — these --shards directories are named more "
+            "than once (resolved): " + ", ".join(duplicates)
+            + ". Each occurrence is staged under its own shard_NNNNNN.zarr "
+            "symlink, so the replay buffer would OVERSAMPLE that source, and "
+            "neither the coverage preflight (which sums over the list) nor the "
+            "purity receipt (which compares sets) can see it. Name each "
+            "directory once.",
+        )
     coverage = preflight(cfg, shard_dirs, allow_leak=bool(args.allow_leak))
 
     receipt: dict[str, Any] | None = None
@@ -744,7 +866,8 @@ def main(argv: list[str] | None = None) -> int:
         kwargs["device"] = args.device
     if args.no_compile:
         kwargs["use_compile"] = False
-    batch_size = int(args.batch_size) or int(cfg.get("batch_size", 512))
+    configured_batch_size = int(cfg.get("batch_size", 512))
+    batch_size = int(args.batch_size) or configured_batch_size
 
     model_cfg = model_config_from_flat_config(cfg)
     model = build_model(model_cfg)
@@ -851,6 +974,14 @@ def main(argv: list[str] | None = None) -> int:
 
     ckpt = out_dir / "checkpoint.pt"
     trainer.save(ckpt)
+  # ⚑ AFTER both saves, because the identity IS the file bytes. See
+  # `checkpoint_identities`: `valid_control` was a verdict about a RUN with
+  # nothing tying it to a FILE, so `lc0_control_eval score` could bank a valid
+  # run's summary against an unrelated checkpoint, and `compare` could pair two
+  # LAST checkpoints from different trajectories as LAST-vs-MID-BUDGET.
+    run_id, checkpoint_records = checkpoint_identities(
+        last=ckpt, mid=mid_ckpt if mid.saved_at_step is not None else None,
+    )
   # ⚑ EVERY reason the run is not a valid control, NAMED. A bare
   # `valid_control: false` says a run is disqualified without saying what for,
   # which is the same "a flag instead of a measurement" shape as the rest of
@@ -883,6 +1014,34 @@ def main(argv: list[str] | None = None) -> int:
              f"{float(args.mid_checkpoint_frac)}, --steps {int(args.steps)}): "
              "the prereg's primary yardstick is LAST vs MID-BUDGET on ONE "
              "trajectory, and this run emitted only LAST"),
+  # ⚑ AND A MID CHECKPOINT AT THE WRONG PLACE IS NOT THE MID-BUDGET ONE. Any
+  # positive fraction is clamped to an interior step, so `--mid-checkpoint-frac
+  # 0.99` (or 5.0) wrote a checkpoint, satisfied the entry above, and left the
+  # run reading VALID — while `compare` would present a LAST-vs-99%-budget
+  # contrast, which measures the final 1% of training, as the preregistered
+  # LAST-vs-MID-BUDGET slope. Recorded rather than refused, because a short
+  # smoke run may legitimately want the mid point elsewhere; what must not
+  # happen is such a run being quoted as the arm.
+            (mid.saved_at_step is not None
+             and float(args.mid_checkpoint_frac) != PREREG_MID_CHECKPOINT_FRAC,
+             f"--mid-checkpoint-frac {float(args.mid_checkpoint_frac)} is not "
+             f"the preregistered {PREREG_MID_CHECKPOINT_FRAC}: the mid "
+             f"checkpoint was taken at step {mid.saved_at_step} of "
+             f"{int(args.steps)}, so the LAST-vs-MID slope this run supports is "
+             "not the prereg's LAST vs MID-BUDGET"),
+  # ⚑ THE GRADIENT-NOISE REGIME IS A TRAINING SETTING, AND `--batch-size` SAT
+  # AFTER EVERY PREFLIGHT. Guard 0c certifies the trainer recipe against live's,
+  # but `batch_size` is not a trainer kwarg — it is an argument to
+  # `train_steps` — so a `--batch-size 32` run against production's configured
+  # 512 changed the examples per step, and therefore the gradient noise, with
+  # every guard still passing and `valid_control` still true. Recorded rather
+  # than refused for the same reason as `--no-compile`: every plumbing smoke
+  # here runs at batch 4 by design.
+            (batch_size != configured_batch_size,
+             f"--batch-size {batch_size} is not the configured "
+             f"{configured_batch_size}: the examples per step and hence the "
+             "gradient-noise regime are not production's, so no slope from this "
+             "run describes the production training stack"),
   # ⚑ REVIEW F2. Judging the arm's WHOLE PREMISE — "production's net and
   # production's trainer" — against a committed pin is strictly weaker
   # evidence than judging it against the live file, because the pin is a
@@ -902,7 +1061,14 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "steps": int(args.steps),
         "batch_size": batch_size,
+        "configured_batch_size": configured_batch_size,
         "warmup_steps": int(kwargs["warmup_steps"]),
+  # ⚑ THE TRAJECTORY IDENTITY, so `valid_control` is a statement about THESE
+  # FILES and not about "a run". `lc0_control_eval` hashes the --checkpoint it
+  # was given and refuses a summary that does not name it, and `compare`
+  # requires one run id with the roles {mid, last}.
+        "run_id": run_id,
+        "checkpoints": checkpoint_records,
         "trainable_params": params,
         "architecture_judged_against": arch_provenance,
         "trainer_judged_against": trainer_provenance,
