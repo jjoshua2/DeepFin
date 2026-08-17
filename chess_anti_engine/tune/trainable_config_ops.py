@@ -576,6 +576,13 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 #                      the replay window. Pushing it live would move the training
 #                      target mid-window with no restart boundary to mark where a
 #                      readout's data changed shape.
+#   sf_own_regret_listed_mass_min / sf_own_regret_unlisted_scale -- the
+#                      fabricated-tail gate on `sf_own_regret`. Same reason as
+#                      `policy_target_temp`: these are not loss WEIGHTS, they
+#                      select WHICH ROWS the term applies to, so a live edit
+#                      changes the term's population mid-window with no restart
+#                      boundary to mark it. The arm's readout is a day-plus paired
+#                      arena, which is exactly the window that must not move.
 _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "iterations",
     "puzzle_epd",
@@ -583,6 +590,8 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "sf_pid_enabled",
     "pause_file",
     "policy_target_temp",
+    "sf_own_regret_listed_mass_min",
+    "sf_own_regret_unlisted_scale",
 })
 
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is

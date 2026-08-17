@@ -944,6 +944,16 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # Share of the rows `sf_own_regret` acted on that the fabricated-tail gate
+  # scaled DOWN. ⚑ A `_RATIO_METRIC_FIELDS` entry without a field here is not a
+  # missing metric, it is a CRASH: `_ratio_metric_kwargs` emits its keys
+  # UNFILTERED (unlike the loss-key loop, which filters on
+  # `_TRAIN_METRICS_FIELDS`), so `_build_metrics` splats an unknown name into
+  # `TrainMetrics(**...)` and raises `TypeError` on iteration 1 -- on both the
+  # train and EVAL paths, inside a `try:` that has a `finally:` and zero
+  # `except`. Measured: the trial dies mid-iteration. Every entry in that table
+  # needs a field here.
+    sf_own_regret_gated_frac: float = 0.0
   # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
   # is the share of the iteration's SF-LABELLED rows that carry no
   # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value

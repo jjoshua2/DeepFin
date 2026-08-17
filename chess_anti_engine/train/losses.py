@@ -803,11 +803,70 @@ def sf_regret_gate_scale(
     ``unlisted_scale`` 1.0): policy mass is non-negative, so ``mass < 0.0`` is
     False on every row and the scale is all-ones. ``tests/`` asserts that with
     ``torch.equal`` against an ungated run rather than a tolerance.
+
+    ⚑⚑ A ROW WITH NO FABRICATED TAIL IS NEVER GATED, even if its listed mass is
+    low. The gate's whole justification is that the tail's magnitudes are invented,
+    so on a row where SF surfaced EVERY legal move there is nothing to distrust and
+    scaling the term down would discard real supervision. Three such shapes exist
+    and an independent review found all three mis-scored by the first version:
+    a row with <= ``sf_multipv`` legal moves (fully covered), a forced move (one
+    legal), and a row where a *surfaced* move sits at the cp cap so the row max is
+    a real regret rather than the fill. ⚑ The 2350-row plateau validation could not
+    see the first two: it was restricted to rows with >= 8 legal moves, so it
+    excluded them BY CONSTRUCTION. Guard on ``has_tail`` instead of assuming.
+
+    ⚑ ``gated`` is the rows actually SCALED, not the rows MATCHING the predicate.
+    At ``unlisted_scale`` 1.0 the predicate can match while the scale stays 1.0 and
+    nothing is downweighted; reporting those as gated would make the metric read
+    non-zero on a run where the gate provably did nothing -- a counter that is not
+    the mechanism behind it.
     """
+    legal = legal_mask.to(torch.bool)
     surfaced = sf_regret_surfaced_mask(reg_vec, legal_mask)
-    listed_mass = (target_probs.to(torch.float32) * surfaced.to(torch.float32)).sum(-1)
-    gated = (listed_mass < float(listed_mass_min)).to(torch.float32)
-    scale = 1.0 - gated * (1.0 - float(unlisted_scale))
+  # ⚑ A FABRICATED TAIL IS A PLATEAU AT THE ROW MAX, not merely "some move was not
+  # surfaced". `reg < row_max` excludes the argmax by construction, so
+  # `surfaced_count < legal_count` is True on EVERY row with distinct values and
+  # would classify a fully-covered row as having a tail -- measured: it gated all
+  # three no-tail shapes. The fill covers MANY moves with ONE value, so multiplicity
+  # >= 2 at the max is the discriminator, and it is the property actually validated
+  # on live data (2350/2350 rows plateaued, median multiplicity 26).
+  #
+  # ⚑ TWO KNOWN LIMITS, both in the SAFE direction (the gate under-fires):
+  #   * a tail of exactly ONE move has multiplicity 1 and is indistinguishable from
+  #     a real argmax, so such rows are never gated;
+  #   * two REAL regrets that are bit-equal at the max would read as a plateau. The
+  #     cost is gating one row that had real supervision -- the same cost the
+  #     unguarded version paid on every distinct-valued row, now rare instead of
+  #     universal.
+    neg_inf = torch.finfo(reg_vec.dtype).min
+    masked = torch.where(legal, reg_vec, torch.full_like(reg_vec, neg_inf))
+    row_max = masked.amax(dim=-1, keepdim=True)
+    at_max = legal & (reg_vec == row_max)
+    has_tail = at_max.to(torch.int64).sum(-1) >= 2
+  # ⚑ Normalise over the LEGAL support. `policy_t` is stored fp16 and is not
+  # guaranteed to sum to 1.0 after alignment, so an unnormalised sum makes the
+  # threshold mean subtly different things on different rows. Rows with no mass
+  # at all (`has_policy == 0`) get mass 0.0 and are excluded via `has_tail` only
+  # if they genuinely have a tail -- so they are handled explicitly below.
+    probs = (target_probs.to(torch.float32) * legal.to(torch.float32)).clamp_min(0.0)
+    total = probs.sum(-1)
+    listed_mass = torch.where(
+        total > 0.0,
+        (probs * surfaced.to(torch.float32)).sum(-1) / total.clamp_min(1e-12),
+      # No stored target mass on this row => no evidence of tail exposure, so do
+      # not gate it. `1.0` is above every reachable `listed_mass_min`.
+        torch.ones_like(total),
+    )
+    matches = (listed_mass < float(listed_mass_min)) & has_tail
+  # The scale a gated row receives, clamped to a sane range: a NEGATIVE scale
+  # would make the optimizer MAXIMISE SF regret on exactly the rows the gate was
+  # built to protect, and neither key is range-validated by `TrialConfig`
+  # (CLAUDE.md category (c)), so a decimal typo lands here silently.
+    eff_scale = min(max(float(unlisted_scale), 0.0), 1.0)
+    scale = torch.where(matches, torch.full_like(listed_mass, eff_scale),
+                        torch.ones_like(listed_mass))
+  # Rows actually SCALED -- empty whenever `eff_scale` is 1.0, by construction.
+    gated = (matches & (scale < 1.0)).to(torch.float32)
     return scale, gated
 
 
@@ -970,14 +1029,29 @@ def compute_loss(
       # (`batch["policy_t"]`) — NOT `pol_target`, which has already been through
       # `retemper_main_policy_target`. The gate must describe the DATA, so a
       # training knob must not be able to move which rows it selects.
-        sf_own_regret_scale, sf_own_regret_gated = sf_regret_gate_scale(
-            reg_vec,
-            align_policy_target(batch["policy_t"], int(base_policy_logits.shape[-1])),
-            align_policy_mask(batch["legal_mask"], int(base_policy_logits.shape[-1])),
-            listed_mass_min=sf_own_regret_listed_mass_min,
-            unlisted_scale=sf_own_regret_unlisted_scale,
-        )
-        sf_own_regret = sf_own_regret * sf_own_regret_scale
+      #
+      # ⚑⚑ BOTH INPUTS ARE FETCHED WITH `.get`, NOT BY SUBSCRIPT. `legal_mask` and
+      # `policy_t` are OPTIONAL everywhere else in this function — every other
+      # consumer goes through `_get_mask`/`apply_policy_mask_to_logits`/`.get` —
+      # and subscripting them here raised `KeyError` on 5 tests in
+      # `test_sf_p0_teacher_metrics.py` plus 3 in `test_phase_loss_buckets.py`.
+      # Without legality the surfaced set is not identifiable, so the gate DOES
+      # NOT FIRE rather than guessing. ⚑ Do not "fix" this with `ones_like`: that
+      # marks all 1858 padding slots legal, making the row max the padding fill
+      # and the gate silently never fire on any row.
+        legal_for_gate = batch.get("legal_mask")
+        target_for_gate = batch.get("policy_t")
+        if legal_for_gate is not None and target_for_gate is not None:
+            sf_own_regret_scale, sf_own_regret_gated = sf_regret_gate_scale(
+                reg_vec,
+                align_policy_target(target_for_gate, int(base_policy_logits.shape[-1])),
+                align_policy_mask(legal_for_gate, int(base_policy_logits.shape[-1])),
+                listed_mass_min=sf_own_regret_listed_mass_min,
+                unlisted_scale=sf_own_regret_unlisted_scale,
+            )
+            sf_own_regret = sf_own_regret * sf_own_regret_scale
+        else:
+            sf_own_regret_gated = torch.zeros_like(sf_own_regret)
     else:
         sf_own_regret = zero_loss
         sf_own_regret_gated = torch.zeros_like(zero_loss)

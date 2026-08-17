@@ -330,15 +330,200 @@ def test_the_gated_row_COUNT_excludes_rows_with_no_sf_p0_regret() -> None:
     ), "gated rows exceed the term's own eligible rows -- the fraction can exceed 1.0"
 
 
+def test_the_metric_counts_rows_SCALED_not_rows_MATCHING_the_predicate() -> None:
+    """⚑ The converse of the break the PR asked reviewers to attempt, and it was
+    REAL: with `listed_mass_min: 0.5` and `unlisted_scale` left at its default 1.0,
+    every returned tensor is bit-identical to ungated -- the gate provably did
+    nothing -- while the metric read 0.5. A counter is not the mechanism behind it,
+    so `gated` is the rows actually downweighted."""
+    out, batch = _outputs(4), _batch((0, 3, 20, 27))
+    base = compute_loss(out, batch, w_sf_own_regret=0.7)
+    matched_but_unscaled = compute_loss(
+        out, batch, w_sf_own_regret=0.7,
+        sf_own_regret_listed_mass_min=0.5, sf_own_regret_unlisted_scale=1.0,
+    )
+    for k in base:
+        assert torch.equal(base[k], matched_but_unscaled[k]), f"{k} moved"
+    assert float(matched_but_unscaled["sf_own_regret_gated_rows"]) == 0.0, (
+        "reported gated rows on a run where nothing was scaled"
+    )
+
+
+@pytest.mark.parametrize("n_legal", [1, 3, len(REAL_REGRETS)])
+def test_a_row_with_NO_fabricated_tail_is_never_gated(n_legal: int) -> None:
+    """⚑ The gate's justification is that the tail's magnitudes are INVENTED. Where
+    SF surfaced every legal move there is no tail, nothing is invented, and scaling
+    the term down would discard real supervision.
+
+    These shapes were mis-scored by the first version, and the 2350-row plateau
+    validation could not have caught them: it required >= 8 legal moves, so it
+    excluded fully-covered and forced-move rows BY CONSTRUCTION. Measuring on a
+    population that excludes the failure case is not evidence about it.
+    """
+    reg = torch.zeros((POLICY_SIZE,), dtype=torch.float32)
+    for i in range(n_legal):
+        reg[i] = REAL_REGRETS[i]
+    legal = _legal(n_legal)
+    # Target sits on the LAST legal move, i.e. the row max -- the shape that looks
+    # like tail exposure and is not.
+    target = _onehot(n_legal - 1).unsqueeze(0)
+    scale, gated = sf_regret_gate_scale(
+        reg.unsqueeze(0), target, legal.unsqueeze(0),
+        listed_mass_min=0.5, unlisted_scale=0.0,
+    )
+    assert float(scale[0]) == 1.0, "gated a row with no fabricated tail"
+    assert float(gated[0]) == 0.0
+
+
+def test_a_negative_unlisted_scale_cannot_INVERT_the_term() -> None:
+    """⚑ Neither key is range-validated by `TrialConfig` -- CLAUDE.md category (c),
+    so the schema accepts it, nothing range-checks it, and the consumer gets it raw.
+    `unlisted_scale: -5` is a plausible typo and would make the optimizer MAXIMISE
+    SF regret on exactly the rows the gate exists to protect: silent wrongness, the
+    slowest failure of the three to notice. Clamped at the consumer."""
+    reg = _constant_tail_row().unsqueeze(0)
+    for bad in (-5.0, -1e-9, 7.0):
+        scale, _ = sf_regret_gate_scale(
+            reg, _onehot(20).unsqueeze(0), _legal().unsqueeze(0),
+            listed_mass_min=0.5, unlisted_scale=bad,
+        )
+        assert 0.0 <= float(scale[0]) <= 1.0, f"unlisted_scale={bad} escaped the clamp"
+
+
+def test_the_gate_does_not_fire_when_legality_is_absent() -> None:
+    """⚑ `legal_mask` is OPTIONAL in `compute_loss` — every other consumer reaches
+    it through `_get_mask`/`apply_policy_mask_to_logits`. Subscripting it raised
+    `KeyError` on 5 tests in `test_sf_p0_teacher_metrics.py` and 3 in
+    `test_phase_loss_buckets.py`. Without legality the surfaced set is not
+    identifiable, so the gate must SKIP rather than guess.
+
+    ⚑ `ones_like` is the WRONG fallback: it marks all 1858 padding slots legal, so
+    the row max becomes the padding fill and the gate silently never fires on any
+    row — a knob accepted and then ignored, this repo's signature defect.
+
+    ⚑ `policy_t` is deliberately NOT tested here: `losses.py:942` already
+    subscripts it on the BASE branch to build `pol_target`, so it is required
+    upstream of this gate and claiming otherwise would be a false guarantee. The
+    `.get` on it is defensive only.
+    """
+    out = _outputs(2)
+    batch = _batch((20, 27))
+    del batch["legal_mask"]
+    armed = compute_loss(
+        out, batch, w_sf_own_regret=0.7,
+        sf_own_regret_listed_mass_min=0.5, sf_own_regret_unlisted_scale=0.0,
+    )
+    assert torch.isfinite(armed["total"])
+    assert float(armed["sf_own_regret_gated_rows"]) == 0.0
+
+
+def test_listed_mass_is_normalized_over_the_LEGAL_support() -> None:
+    """`policy_t` is stored fp16 and is not guaranteed to sum to 1.0 after
+    alignment, so an unnormalised sum makes `listed_mass_min` mean subtly different
+    things on different rows.
+
+    ⚑ The fixture must straddle the threshold under exactly one of the two
+    readings, or the test cannot fail under its own mutant -- my first attempt
+    scaled a full distribution, which keeps both readings on the SAME side and let
+    the mutant survive with 76/76 green. Here total mass is 0.20 with 0.03 on the
+    surfaced set: normalised that is 0.15 (ABOVE a 0.1 threshold, so not gated),
+    unnormalised it is 0.03 (BELOW it, so gated).
+    """
+    reg = _constant_tail_row().unsqueeze(0)
+    legal = _legal().unsqueeze(0)
+    n_surfaced = len(REAL_REGRETS)
+    target = torch.zeros((POLICY_SIZE,), dtype=torch.float32)
+    target[:n_surfaced] = 0.03 / n_surfaced
+    target[n_surfaced:N_LEGAL] = 0.17 / (N_LEGAL - n_surfaced)
+    target = target.unsqueeze(0)
+
+    assert float(target.sum()) == pytest.approx(0.20)
+    assert float(target[0, :n_surfaced].sum()) == pytest.approx(0.03)
+
+    scale, gated = sf_regret_gate_scale(
+        reg, target, legal, listed_mass_min=0.1, unlisted_scale=0.0)
+    assert float(scale[0]) == 1.0, (
+        "gated a row whose NORMALIZED listed mass (0.15) is above the threshold -- "
+        "listed_mass is being read as a raw sum"
+    )
+    assert float(gated[0]) == 0.0
+
+
 # ── plumbing: the knobs must actually be reachable ───────────────────
 
 
-def test_both_keys_are_live_pushable_and_therefore_schema_accepted() -> None:
-    """`TRAINER_WEIGHT_KEYS` is BOTH the every-iteration live-push set and the YAML
-    allowlist, so membership is what makes a live `sf_own_regret_*` key legal. A key
-    the schema rejects is FATAL at launch, not a silent revert."""
-    assert "sf_own_regret_listed_mass_min" in TRAINER_WEIGHT_KEYS
-    assert "sf_own_regret_unlisted_scale" in TRAINER_WEIGHT_KEYS
+GATE_KEYS = ("sf_own_regret_listed_mass_min", "sf_own_regret_unlisted_scale")
+
+
+def test_both_keys_are_schema_accepted_but_STARTUP_ONLY() -> None:
+    """Schema acceptance and live-pushability are DIFFERENT properties, and these
+    keys need the first without the second.
+
+    Schema acceptance is mandatory: `flatten_run_config_defaults` runs outside any
+    `try` in `run.py`, so a live-yaml key the running schema does not know prevents
+    the process from BOOTING -- it is not a silent revert.
+
+    Live-pushability is the part they must NOT have. `TRAINER_WEIGHT_KEYS` is the
+    every-iteration live-push set AND the salvage-donor overlay, and by that
+    tuple's own documented criterion it is for loss WEIGHTS. These select WHICH
+    ROWS the term applies to, so a mid-run edit re-shapes the term's population
+    with no restart boundary to mark where a readout's data changed -- the same
+    reason `policy_target_temp` is excluded. The arm's readout is a day-plus
+    paired arena, i.e. exactly the window that must not move under it.
+    """
+    from chess_anti_engine.tune.trainable_config_ops import _STARTUP_ONLY_TRIAL_KEYS
+    from chess_anti_engine.utils.config_yaml import _TRAIN_KEYS
+
+    for key in GATE_KEYS:
+        assert key in _TRAIN_KEYS, f"{key} would be fatal at launch"
+        assert key not in TRAINER_WEIGHT_KEYS, f"{key} must not be live-pushable"
+        assert key in _STARTUP_ONLY_TRIAL_KEYS, f"{key} must warn on a mid-run edit"
+
+
+def test_the_gated_frac_reaches_the_RAY_RESULT_ROW_not_only_tensorboard() -> None:
+    """⚑ The metric is the ONLY observation that proves the gate fired, so it has to
+    land in the Ray result row. `_train_metrics_dict` enumerates columns BY NAME
+    (there is no `asdict` pass-through) and TensorBoard event files rotate per Ray
+    session -- a field added to `TrainMetrics` and not here is computed every step
+    and read by nobody. That is this repo's signature defect applied to the very
+    instrument meant to rule it out."""
+    import dataclasses
+
+    from chess_anti_engine.train.trainer import TrainMetrics
+    from chess_anti_engine.tune.trainable_report import (
+        _TRAIN_METRIC_DEFAULTS,
+        _train_metrics_dict,
+    )
+
+    names = {f.name for f in dataclasses.fields(TrainMetrics)}
+    assert "sf_own_regret_gated_frac" in names, "a ratio entry with no field CRASHES"
+    assert "sf_own_regret_gated_frac" in _TRAIN_METRIC_DEFAULTS
+    metrics = TrainMetrics(
+        loss=0.0, policy_loss=0.0, soft_policy_loss=0.0, future_policy_loss=0.0,
+        wdl_loss=0.0, sf_move_loss=0.0, sf_move_acc=0.0, sf_eval_loss=0.0,
+        categorical_loss=0.0, volatility_loss=0.0, sf_volatility_loss=0.0,
+        moves_left_loss=0.0, sf_own_regret_gated_frac=0.25,
+    )
+    row = _train_metrics_dict(metrics)
+    # ⚑ Not a membership check: a column wired to a literal 0.0 passes any
+    # `in` test and reads as a healthy run. Assert the VALUE arrives.
+    assert row["sf_own_regret_gated_frac"] == 0.25
+
+
+def test_every_ratio_metric_has_a_TrainMetrics_field() -> None:
+    """The general form of the crash above. `_ratio_metric_kwargs` emits its keys
+    UNFILTERED, unlike the loss-key loop which filters on `_TRAIN_METRICS_FIELDS`,
+    so `_build_metrics` splats them straight into `TrainMetrics(**...)`. One entry
+    without a field raises `TypeError` on iteration 1 inside a `try:` that has a
+    `finally:` and zero `except` -- the trial dies mid-iteration. Guard the whole
+    table, not just the key this PR added."""
+    import dataclasses
+
+    from chess_anti_engine.train.trainer import _RATIO_METRIC_FIELDS, TrainMetrics
+
+    names = {f.name for f in dataclasses.fields(TrainMetrics)}
+    missing = sorted(set(_RATIO_METRIC_FIELDS) - names)
+    assert not missing, f"ratio metrics with no TrainMetrics field (will crash): {missing}"
 
 
 def test_the_ratio_table_registers_the_gated_frac_against_the_terms_own_rows() -> None:

@@ -9,13 +9,15 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "w_future",
     "w_sf_own",
     "w_sf_own_regret",
-  # Fabricated-tail gate on the sf_own_regret term. Listed HERE rather than in a
-  # bespoke list because this tuple is BOTH the every-iteration live-push set and
-  # the YAML allowlist (`utils/config_yaml.py`), so one entry buys schema
-  # acceptance and live reload together -- and a key the schema rejects is FATAL
-  # at launch, not a silent revert.
-    "sf_own_regret_listed_mass_min",
-    "sf_own_regret_unlisted_scale",
+  # ⚑ The fabricated-tail gate keys (`sf_own_regret_listed_mass_min`,
+  # `sf_own_regret_unlisted_scale`) are deliberately NOT here. They are not loss
+  # WEIGHTS: they select WHICH ROWS the term applies to, i.e. they re-interpret
+  # rows already in the replay window -- the same reason `policy_target_temp` is
+  # excluded. Being in this tuple would make them every-iteration live-pushable
+  # AND part of the salvage-donor overlay, so a mid-run edit would silently
+  # re-shape the term's population under a half-finished readout window, and the
+  # arm's readout is a day-plus paired arena. They live in the startup-only group
+  # in `utils/config_yaml.py`, which warns on a mid-run edit instead.
     "w_wdl",
     "w_sf_move",
     "w_sf_eval",
