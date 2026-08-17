@@ -7,8 +7,22 @@
 # it caused a reviewer to block PR #380 on the belief that main was being handed an
 # undeployed proposal. Verified at correction time: the live process is
 # `chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune --resume` (pid
-# 3191137) and the trial's params.json carries this file's gumbel_c_scale 0.025 /
-# gumbel_topk 32 / mcts_simulations 256 / selfplay_fraction 0.8.
+# 3191137) and the trial's params.json carried this file's search settings.
+#
+# ⚑⚑ THE FOUR SEARCH VALUES THIS PARAGRAPH USED TO QUOTE WERE STALE, AND A CAREFUL
+# REVIEWER WAS MISLED BY THEM (2026-08-17, PR #448 review F3: the reviewer built a
+# real hazard argument on "the production yaml's own header records gumbel_topk: 32
+# as a used setting"). They were a 2026-08-09 SNAPSHOT — accurate that day — and
+# three of the four moved afterwards. Measured 2026-08-17 against BOTH this file's
+# own keys and the launch params.json of the current trial (runs/pbt2_small/tune/
+# train_trial_dea5e_.../params.json), which agree: gumbel_c_scale 0.1 (not 0.025),
+# gumbel_topk 16 (not 32), mcts_simulations 100 (not 256), selfplay_fraction 0.8.
+#
+# ⇒ NO VALUE LIST IN THIS HEADER. A restated value is a second source of truth that
+# drifts silently the moment someone edits the key it copies, and this header sits
+# 250 lines above the keys it was describing. Read the keys — `gumbel_c_scale`,
+# `gumbel_topk`, `mcts_simulations`, `selfplay_fraction` — or, for what the RUNNING
+# process actually launched with (not what this file says today), params.json.
 #
 # Original 08-04 provenance, still accurate as history:
 # Written 2026-08-04 (restart package). Living context: scratchpad/restart_brief_20260802.md
