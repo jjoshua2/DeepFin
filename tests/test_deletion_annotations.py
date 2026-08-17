@@ -126,6 +126,13 @@ Stated so the coverage is not overread:
   weights resolve at 1.0) is not.
 * claims phrased without the literal token ``DEAD KEY`` still skip the
   raw-text completeness scan; they get the literal-surface pin instead.
+* ⚑ a presence-requiring reader at FUNCTION scope, inside a module whose
+  module-level collection is already registered. ``MODULE_LEVEL_KEY_COLLECTIONS``
+  enumerates module-level constants from the AST, so a ``raise``/``SystemExit``
+  on an absent key written inside a function body is invisible to both guards —
+  demonstrated with a surviving mutant during the review of
+  ``LIVE_TRAINER_PIN``. Registering a module here therefore certifies its
+  module-level collections and nothing else about that file.
 * ``.c``/``.h``/``.pyx``/``.toml``/``.json`` and ``.sh`` outside ``scripts/``,
   for both scans. Verified moot for all 27 keys annotated today.
 """
@@ -395,20 +402,33 @@ MODULE_LEVEL_KEY_COLLECTIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("chess_anti_engine/run.py", "_TUNE_CONFIG_DENYLIST"): ("search_optimizer_choices",),
     ("chess_anti_engine/tune/trainable_config_ops.py", "_DRIVER_LAUNCH_FIXED_KEYS"): ("gpbt_inertia_weight", "gpbt_quantile_fraction", "gpbt_resample_probability", "gpbt_winner_weight", "pb2_perturbation_interval", "search_optimizer_choices"),
     ("scripts/audit_realized_config.py", "_RECO_SERVER_RESOLVED"): ("games_per_iter_start",),
-  # The RECORDED OUTPUT of `trainer_kwargs_from_config`, not a set of yaml reads.
-  # Every member is a resolved trainer kwarg, and the resolver supplies each one
-  # from its own default when the yaml omits it — which is why the pin names keys
-  # this config does not set. Absence cannot change what the consumer does, so it
-  # is NOT presence-requiring.
-  # ⚑ MEASURED 2026-08-16, not argued: the module docstring asserting this is
-  # exactly the kind of prose this file exists to distrust. Re-resolved the live
-  # `configs/pbt2_small.yaml` with these 10 keys deleted — all 10 at once AND one
-  # at a time, so a cancelling pair could not hide — and diffed the full kwargs
-  # dict against the unmodified resolution: no raise, drift NONE, in all 11 runs.
-  # 6 of the 10 are already absent from the live flattened config today; the 2
-  # that are present (`sf_search_dampen_sf_*`) resolve to the same 0.0 either
-  # way, and are RETAINED for `scripts/value_optimism.py` — a different consumer
-  # that genuinely does require presence, which is why they sit in both places.
+  # A FROZEN LITERAL. `LIVE_TRAINER_PIN` is a recorded snapshot of
+  # `trainer_kwargs_from_config`'s output; it reads no config at any point, so no
+  # yaml key's absence can change what IT does. That — not "the resolver has a
+  # default" — is why it is not presence-requiring.
+  #
+  # ⚑ THE DEFAULT ARGUMENT IS A NON-SEQUITUR AND AN EARLIER REVISION OF THIS
+  # COMMENT MADE IT. "The resolver supplies a default when the yaml omits the
+  # key" does not give "absence cannot change what the consumer does": absence
+  # SUBSTITUTES the default for the shipped value. It only coincides when the two
+  # are equal, which is a fact about today's config, not a property of the code.
+  # Measured on THIS tree's `configs/pbt2_small.yaml`: deleting `lr_T0` moves the
+  # resolved kwarg 999999 -> 5000 and `lr_T_mult` moves 1 -> 2. Absence is not
+  # inert for those two.
+  #
+  # ⚑ AND THE EARLIER MEASUREMENT READ THE WRONG FILE. It resolved the LIVE
+  # WORKING TREE's `configs/pbt2_small.yaml` — a different branch's file of the
+  # same name — and reported "6 absent / 2 present, drift NONE in 11 runs". That
+  # is 8 keys, not 10, and it describes no single config.
+  # Re-derived here against the file this guard actually reads:
+  #     6 absent / 4 present (`lr_T0`, `lr_T_mult`, `sf_search_dampen_sf_high/low`)
+  #     2 of 10 DRIFT when deleted one at a time; 0 of 10 RAISE
+  # The classification is unchanged because the criterion is RAISES, not DRIFTS:
+  # all ten are read as `.get(key, default)` — none by subscript — so nothing here
+  # can make `from_dict` throw. `sf_search_dampen_sf_*` are RETAINED for
+  # `scripts/value_optimism.py`, a different consumer that genuinely does require
+  # presence; listing them here does not shadow that (mutation-verified: flipping
+  # one to DELETED still fires the `_CROSSCHECK_YAML_VS_PARAMS` violation).
     ("chess_anti_engine/eval/lc0_control_trainer.py", "LIVE_TRAINER_PIN"): ("adjusted_wdl_regret_cap", "adjusted_wdl_regret_scale", "adjusted_wdl_regret_source", "lr_T0", "lr_T_mult", "resid_channel_balance_weight", "resid_channel_dropout", "sf_search_dampen_sf_high", "sf_search_dampen_sf_low", "sf_wdl_temperature"),
   # Read off progress.csv / compared against an already-resolved dict, never off
   # the yaml flat dict — so `sf_wdl_temperature` can be deleted despite sitting
