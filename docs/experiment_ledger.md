@@ -57478,3 +57478,54 @@ Escalate to a paired arena ONLY if the mechanism moves.
 result, not a disappointment — it says policy top-1 quality is not the binding constraint on
 strength, which redirects the program to value or to search depth. Pre-committing this stops
 it being read post-hoc as a failure of the arm.
+
+### 2026-08-17 — ⚑⚑ A "WHEN TO TRUST SF" GATE HAS A *NEGATIVE* ORACLE CEILING FOR THE FLOOR
+
+Owner asked whether we need the dQ / future-regret program to decide when to trust our own
+prior vs SF's, so we can "shift more of the data the right direction and do a bigger fix."
+Answered by computing the ORACLE CEILING before building any predictor — split the pull
+population by whether the SHALLOW label's top-1 equals the DEEP ruler's best (agree 71.6%),
+and compare "all rows" against "perfect gate, disagree rows contribute exactly 0".
+
+| arm | agree | disagree | ALL | GATED | **ceiling** |
+|---|---|---|---|---|---|
+| A_prod_cp_fill | +0.3710 | **-0.2080** | +0.0296 | +0.1522 | **+0.1226** |
+| G_sf_own_ce | +1.3623 | -0.0206 | +0.5492 | +0.5613 | **+0.0121** |
+| C_top2_floor | +1.0269 | +0.6601 | +0.8041 | +0.4033 | **-0.4008** |
+| C_tau0.35 | +1.1611 | +0.7152 | +0.8987 | +0.4776 | **-0.4210** |
+| **F_adapt20_t0.15** | +1.1808 | **+0.6282** | +0.8806 | +0.5393 | **-0.3413** |
+| **F_adapt20_t0.35** | +1.2468 | **+0.6470** | +0.9390 | +0.6069 | **-0.3321** |
+| C_RANDOM_ctl | +0.6437 | +0.6051 | +0.6206 | +0.2587 | -0.3619 |
+
+⇒ **A PERFECT TRUST SIGNAL WOULD MAKE THE FLOOR WORSE.** The ceiling is NEGATIVE because
+the floor still pulls strongly (+0.647) on rows where the shallow label is WRONG. Gating
+them out discards real value.
+
+**MECHANISM — the same property that beat the unbounded CE.** The floor is BOUNDED and
+MULTI-MOVE: when the label's top-1 is wrong, the set still contains the within-window moves
+that beat our current pick, and one of those is frequently the deep best. A wrong label
+still routes search somewhere useful. The CE commits to one move with nothing to fall back
+on, which is why ITS oracle ceiling is only **+0.0121** — a perfect gate barely rescues it.
+Note arm A is the ONLY arm with a materially positive ceiling (+0.1226), and even perfectly
+gated (+0.152) it is far below F ungated (+0.939). A is not resurrected by this.
+
+**THE OTHER DIRECTION IS ALSO SMALL.** A trust signal could raise `tau` where the label is
+trustworthy instead of gating. Bounded by the agree-row gap between taus: +1.2468 (0.35) vs
++1.1808 (0.15) = **+0.066**. Not a program.
+
+⇒ **DECISION: do NOT build dQ / future-regret machinery to weight THIS loss term.** Two
+independent reads (gating ceiling negative, asymmetric-tau ceiling +0.066) say it does not
+pay. This is a COST AVOIDED, measured before the build — the discipline #244 lacked.
+
+**THREE LIMITS on the conclusion, stated so it is not over-read:**
+1. This scores GRADIENT DIRECTION AT ONE STEP, not a training outcome. Cumulative drift
+   toward a wrong teacher across epochs is invisible to it.
+2. Ground truth is the AUDIT SET's deep SF; production-row confirmation is in flight.
+3. It says trust-weighting does not help THE FLOOR. It says nothing about dQ as a way to
+   improve THE TARGET ITSELF (#239, screen OOF AUC 0.7371, ~49% of the deficit at 1.265x
+   cost) — a different use of the same idea, and still the best-supported one.
+
+**⇒ WHERE A BIGGER FIX MUST COME FROM.** The floor's ceiling is STRUCTURAL: boundedness is
+what makes it safe, and safety caps size. Our teacher is wrong on 28.4% of rows and **no
+weighting scheme fixes a wrong label**. A materially bigger policy fix requires a BETTER
+TEACHER (deep re-label, #239/#253), not a cleverer application of the current one.
