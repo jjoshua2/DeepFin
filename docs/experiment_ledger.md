@@ -42398,7 +42398,7 @@ and must not be read as "the readout is noise-free". [[an_exact_command_means_it
 
 Independently reproduced off a banked dump
 (`data/ruler_ckpt119_20260807/audit_targets_ckpt119_dump.jsonl`, n=2000): the `>300cp` rate is
-**18/2000 = 0.90%**. Scaled to the prereg's n=4000 that is **~36 positions in the tail on each
+**19/2000 = 0.95%**. Scaled to the prereg's n=4000 that is **~38 positions in the tail on each
 side**. A PASS requires a net movement of **≥40**, which exceeds the entire tail.
 
 ⇒ **The gate is one-sided by arithmetic.** KILL (net ≥ +40 blowups) is reachable because the NEW
@@ -42411,9 +42411,39 @@ instrument's resolution — see the withdrawn "±40 ≈ 2× the repeat noise" cl
 the instrument's resolution and its ATTAINABLE RANGE before writing the number.**
 [[compute_instrument_resolution_before_the_threshold]]
 
-⇒ The `>300cp` gate is **RETIRED** as this experiment's deciding yardstick. The decision section
-above already supersedes it with McNemar on `top1_match`; that supersession is now load-bearing
-rather than an upgrade, and the `>300cp` line survives only as a reported secondary.
+⚑⚑ **THE FIRST VERSION OF THIS PARAGRAPH CITED THE WRONG FILE — inside the amendment written to
+police exactly that.** It reported `18/2000 = 0.90%` against
+`data/ruler_ckpt119_20260807/…`. Re-measured, that file reads **19/2000 = 0.95%**; the 0.90% is
+`scratchpad/canary_512_iter20/adump_ckpt751.jsonl`, a DIFFERENT checkpoint's dump. The two got
+crossed while writing. The conclusion is unchanged (~38 < 40, still one-sided) and the decision
+section's 0.6455 base rate genuinely is ckpt119 — but a number that survives its own correction
+is not thereby verified, and this is the third citation defect on this entry.
+[[diff_the_file_you_measured_against_production]] [[same_name_different_population]]
+
+⇒ The `>300cp` gate is **RETIRED** as this experiment's deciding yardstick.
+
+### ⚑⚑ BUT ITS REPLACEMENT IS NOT YET A YARDSTICK — TWO REASONS, BOTH BLOCKING LAUNCH
+
+The decision section supersedes `>300cp` with McNemar on `top1_match`. **Do not read that as
+resolving B5, and do not read it as runnable.**
+
+1. **McNemar INHERITS the cache defect exactly.** B5 is a defect in the INPUTS, not in the
+   statistic: run 2 is served verbatim from run 1's rows, so McNemar's discordant cells `b` and
+   `c` are both 0 for precisely the reason the paired flip count is 0. The cache bypass mandated
+   in B5 is the ONLY thing that fixes either. (The OLD-vs-NEW arm comparison is unaffected — a
+   different `sf_id` forces re-labelling.)
+2. **It has no implementation.** `grep -rniE "mcnemar"` over `scripts/`, `chess_anti_engine/` and
+   `tests/` returns **zero hits**. ⇒ **Retiring a gate that cannot PASS in favour of a gate that
+   has no command is not progress — it moves "cannot fire" from arithmetic to absence.**
+   [[an_exact_command_means_it_was_run]] [[a_gate_that_cannot_fail]]
+
+   It is close, not far: `--tail-cp 0` already yields exactly McNemar's discordant cells
+   (verified by hand, b=2 / c=1, against the tool's `new-in-B 2, fixed-in-B 1`). What is missing
+   is the statistic itself and a ledger line naming it as an exact command. ⚑ That also RAISES
+   the stakes on `--tail-cp`, which is currently **the one flag in this script with no test** —
+   it would become the deciding flag.
+
+The `>300cp` line survives only as a reported secondary.
 
 ### ⚑ N7 — a unit error in my own amendment, corrected
 

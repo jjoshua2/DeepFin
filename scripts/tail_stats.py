@@ -101,7 +101,10 @@ def load(path: str, field: str = DEFAULT_FIELD) -> dict[str, tuple[float, str]]:
     if not rows:
         if not n_rows:
             raise SystemExit(
-                f"{path}: 0 data rows. The file is empty, header-only, or truncated; "
+                f"{path}: 0 data rows. The file is empty, header-only, or truncated to\n"
+                "nothing. ⚑ This does NOT catch PARTIAL truncation: a dump cut to 500 of\n"
+                "4000 rows still loads, and the paired line is then computed over 500 pairs\n"
+                "while every threshold is specified at 4000. Check n against what you ran.\n"
                 "a paired readout over it reports 'no difference' for every statistic, "
                 "which is indistinguishable from a real null."
             )
