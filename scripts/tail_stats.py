@@ -28,16 +28,15 @@ value_regret dump shape). ``--raw-top1`` is a documented alias for
 from __future__ import annotations
 
 import argparse
-import json
 from typing import Any
 
 import numpy as np
 
 from chess_anti_engine.eval.audit import PHASE_NAMES
+from chess_anti_engine.utils.audit_cache_format import iter_data_rows
 
 DEFAULT_FIELD = "value"
 RAW_TOP1_FIELD = "cand.raw.top1"
-
 
 def resolve_field(row: dict, field: str) -> Any:
     """Walk a dotted path into ``row``; return None if any hop is missing.
@@ -61,25 +60,30 @@ def load(path: str, field: str = DEFAULT_FIELD) -> dict[str, tuple[float, str]]:
     difference" instead of "I did not measure the thing you named": the paired
     flip count over an empty join is 0, which is indistinguishable from a real
     null. This is the defect this script had, so it fails loudly instead.
+
+    ⚑ `iter_data_rows`, not a bare per-line `json.loads`. Since these dumps
+    became provenance-stamped their line 1 is a HEADER, not a position, and the
+    old reader was immune only by accident — the header has no `value` and no
+    `cand`, so the numeric test happened to drop it. Add any field to the stamp
+    that a row also carries and the accident ends, with the header counted as a
+    scored position. Skipping on the sentinel is immunity by construction
+    (#442 review B1). It also matters MORE under `--field`: an arbitrary dotted
+    path is far likelier to resolve on a stamp than the two hard-coded ones were.
     """
     rows: dict[str, tuple[float, str]] = {}
     n_rows = 0
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            r = json.loads(line)
-            n_rows += 1
-            v = resolve_field(r, field)
-            if isinstance(v, bool) or not isinstance(v, (int, float)):
-                continue
-            phase = r.get("phase")
-            name = (
-                PHASE_NAMES[phase]
-                if isinstance(phase, int) and 0 <= phase < len(PHASE_NAMES)
-                else str(phase)
-            )
-            rows[r.get("fen") or r.get("key")] = (float(v), name)
+    for r in iter_data_rows(path):
+        n_rows += 1
+        v = resolve_field(r, field)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        phase = r.get("phase")
+        name = (
+            PHASE_NAMES[phase]
+            if isinstance(phase, int) and 0 <= phase < len(PHASE_NAMES)
+            else str(phase)
+        )
+        rows[str(r.get("fen") or r.get("key"))] = (float(v), name)
     if n_rows and not rows:
         raise SystemExit(
             f"{path}: field {field!r} resolved to a number on 0 of {n_rows} rows. "

@@ -7,6 +7,10 @@ and a checkpoint mode. The cache schema and the report layout are unchanged and
 reads; only ``--out`` moved off the old ``runs/bt4_audit.md`` name, so pass it
 explicitly to keep writing there.
 
+Caches are written through :mod:`chess_anti_engine.eval.audit_cache`, so they
+carry a policy-map + audit-ruler provenance stamp and an EXISTING ``--cache-out``
+is refused before any forward pass unless ``--force-cache-out`` is given.
+
 ⚑ This script gathers the 1858 policy DIRECTLY (``_leela_idxs``), it does NOT go
 through :class:`chess_anti_engine.onnx.load.OnnxChessNet`. That is deliberate —
 it keeps the BT4 numbers on the code path that produced the banked cache — but it
@@ -62,7 +66,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +85,12 @@ from chess_anti_engine.eval.audit import (
     legal_full_indices,
     move_regrets,
     parse_audit_record,
+)
+from chess_anti_engine.eval.audit_cache import (
+    audit_set_provenance,
+    ensure_cache_writable,
+    stamp_summary,
+    write_audit_cache,
 )
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, POLICY_SIZE, move_to_index
 from chess_anti_engine.moves.leela_index import leela_index_for_move
@@ -165,8 +174,15 @@ def _to_wdl_probs(raw: np.ndarray) -> np.ndarray:
 
 def _score_onnx(
     boards: list[chess.Board], args: argparse.Namespace,
-) -> tuple[np.ndarray, np.ndarray]:
-    """(policy in LEELA 1858 order, WDL probabilities) for an ONNX net."""
+) -> tuple[np.ndarray, np.ndarray, dict[str, str]]:
+    """(policy in LEELA 1858 order, WDL probabilities, RESOLVED head names).
+
+    ⚑ The heads are returned, not just printed. `--policy-output` /
+    `--wdl-output` default to None and the real choice is made here by width,
+    so stamping the ARGUMENTS would record `null` for two runs that resolved to
+    different tensors — a provenance field that is accepted and then means
+    nothing. The caller stamps what was actually read.
+    """
     sess, in_name, in_dtype = _session(
         args.onnx, args.gpu_mem_gb,
         input_format=args.input_format, ort_threads=int(args.ort_threads),
@@ -226,7 +242,8 @@ def _score_onnx(
         wdl[s:s + bs] = _to_wdl_probs(out[wdl_idx])
         if s % (bs * 8) == 0:
             print(f"[audit] {s + min(bs, len(boards) - s)}/{len(boards)}", flush=True)
-    return pol, wdl
+    return pol, wdl, {"policy_output": out_names[pol_idx],
+                      "wdl_output": out_names[wdl_idx]}
 
 
 def _score_checkpoint(
@@ -297,6 +314,11 @@ def main() -> None:
                          "is not faulted; 0 forces CPU")
     ap.add_argument("--topk", type=int, default=5, help="policy moves cached per position")
     ap.add_argument("--cache-out", type=Path, default=Path("data/lc0/bt4_audit_cache.jsonl"))
+    ap.add_argument("--force-cache-out", action="store_true",
+                    help="allow --cache-out to overwrite an EXISTING cache. "
+                         "Without it an existing file is refused before any "
+                         "forward pass: every banked cache is a measurement "
+                         "something else joins against.")
     ap.add_argument("--out", type=Path, default=Path("runs/foreign_net_audit.md"))
     ap.add_argument("--max-positions", type=int, default=0)
     ap.add_argument("--input-format", choices=ONNX_INPUT_FORMATS,
@@ -320,8 +342,20 @@ def main() -> None:
     ap.add_argument("--device", default="cpu", help="torch device for --checkpoint")
     args = ap.parse_args()
 
+    # BEFORE the audit set is parsed, before the ONNX session exists, and long
+    # before the forward pass: an unwanted clobber must cost zero compute.
+    ensure_cache_writable(args.cache_out, force=args.force_cache_out)
+
     positions = [parse_audit_record(ln) for ln in
                  args.audit_set.read_text().splitlines() if ln.strip()]
+    # ⚑ DIGEST THE SET NOW, NOT AT WRITE TIME. The scoring pass below is minutes
+    # to hours; digesting afterwards describes whatever is on disk THEN. Replace
+    # or edit the audit set during the pass and the rows — derived from the
+    # positions held in memory here — get stamped with the new file's digest, and
+    # a later reader accepts them as belonging to a set they were never scored
+    # against. Capturing it beside the read binds the stamp to what was actually
+    # loaded. (Codex inline review, #442.)
+    set_provenance = audit_set_provenance(args.audit_set)
     if args.max_positions > 0:
         positions = positions[: args.max_positions]
     print(f"[audit] {len(positions)} positions from {args.audit_set}")
@@ -333,10 +367,21 @@ def main() -> None:
             boards, args.checkpoint, device=args.device, batch_size=int(args.batch_size),
         )
         pol = None
+        # Our own net has one policy head and one WDL head, read off the model —
+        # there is nothing to select, so there is nothing to record. An empty
+        # dict says that; a null-valued key would claim a choice was made.
+        input_contract: dict[str, str] = {"input_format": "checkpoint"}
     else:
         net_label = f"{args.onnx} [{args.input_format}]"
-        pol, wdl = _score_onnx(boards, args)
+        pol, wdl, heads = _score_onnx(boards, args)
         pol_full = None
+        input_contract = {"input_format": str(args.input_format), **heads}
+        if args.input_format == INPUT_FORMAT_LC0_PLANES:
+            # Recorded only where they take effect: the Ceres TPG record carries
+            # its own history slots, so --history/--history-fill are inert there
+            # and stamping them would record a setting that changed nothing.
+            input_contract["history"] = str(args.history)
+            input_contract["history_fill"] = str(args.history_fill)
 
     # Aggregate by group; also keep per-criticality-bucket regret (shared edges).
     bucket_names = list(CRITICALITY_BUCKET_NAMES)
@@ -386,11 +431,26 @@ def main() -> None:
             "topk": [[legal_ucis[int(o)], round(float(p[int(o)]), 4)] for o in order],
         })
 
-    args.cache_out.parent.mkdir(parents=True, exist_ok=True)
-    with args.cache_out.open("w") as fh:
-        for r in cache_rows:
-            fh.write(json.dumps(r) + "\n")
-    print(f"[audit] cache → {args.cache_out} ({len(cache_rows)} rows)")
+    stamp = write_audit_cache(
+        args.cache_out, cache_rows, force=args.force_cache_out,
+        # No "rows" here on purpose: `write_audit_cache` records the true
+        # count itself, and a caller-supplied one would read as though the
+        # caller were the authority on it — the exact thing the row binding
+        # exists to deny.
+        # ⚑ THE INPUT CONTRACT IS PART OF THE RULER. `--history-fill zero` vs
+        # `repeat` and `--history` change the TENSORS the net is fed — `zero` is
+        # documented as breaking BT4's WDL outright — and the output heads
+        # select which numbers are read back. Two caches produced from the SAME
+        # ONNX file under different preprocessing used to carry indistinguishable
+        # stamps, so a reader accepted one as current provenance for the other.
+        # `net` is deliberately NOT one of these: it names the SUBJECT of the
+        # measurement, and `STAMP_NON_IDENTITY_KEYS` excludes it so two
+        # foreign-net caches can still be paired. (Codex inline review, #442.)
+        extra={"net": net_label, "topk": int(args.topk),
+               **input_contract, **set_provenance},
+    )
+    print(f"[audit] cache → {args.cache_out} ({len(cache_rows)} rows) "
+          f"[{stamp_summary(stamp)}]")
 
     groups = (["overall", *PHASE_NAMES, *SOURCE_NAMES, *bucket_names])
     encoding_note = (
@@ -404,6 +464,7 @@ def main() -> None:
     lines = [f"# Frozen-audit-set policy regret @ {net_label}", "",
              f"- audit set: {args.audit_set} ({len(cache_rows)} scored)",
              f"- {encoding_note}",
+             f"- provenance: {stamp_summary(stamp)}",
              "", "| group | E[regret] cp | top-1 cp | n |", "|---|---|---|---|"]
     for g in groups:
         if g not in cnts:

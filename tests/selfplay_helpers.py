@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import chess
 import numpy as np
 import torch
@@ -32,10 +34,18 @@ class FakeStockfish(StockfishUCI):
         nodes: int | None = None,
         syzygy_path: str | None = None,
         fresh: bool = False,
+        searchmoves: Sequence[str] | None = None,
     ) -> StockfishResult:
         del syzygy_path
         del nodes
         del fresh
         board = chess.Board(fen)
-        move = next(iter(board.legal_moves), chess.Move.null())
+        # `searchmoves` is HONOURED, not `del`'d like the rest: a double that
+        # ignored a root restriction would happily answer with a move the
+        # caller excluded, and no test using it could ever notice.
+        allowed = {str(m) for m in searchmoves or ()}
+        move = next(
+            (m for m in board.legal_moves if not allowed or m.uci() in allowed),
+            chess.Move.null(),
+        )
         return StockfishResult(bestmove_uci=move.uci(), wdl=self._wdl, pvs=[])
