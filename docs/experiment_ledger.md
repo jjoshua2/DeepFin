@@ -56921,3 +56921,66 @@ ranking is load-bearing. The policy-SL arms must be scored by **whether they mov
 better move**: for each arm direction `d`, read `d[sf_best] − d[our_argmax]` — positive means the arm
 raises mass on the deep-SF best move faster than on the move we currently pick. Argmax-invariant
 interventions score exactly 0 by construction, which is the correct answer for them.
+
+## 2026-08-17 CALIBRATION — argmax pull. ⚑ A MOVES US TOWARD SF'S BEST MOVE ON 43.4% OF THE ROWS THAT MATTER
+
+Metric per RETRACTION #2: `d[sf_best] − d[our_argmax]`, |d|-normalised, restricted to rows where SF's
+deep best move is NOT already our argmax (n ≈ 1,500–2,300 of 4,000 depending on arm definedness).
+Positive = the arm raises mass on SF's best faster than on the move we currently pick.
+
+| arm | n | mean pull | 95% CI | **frac > 0** |
+|---|---|---|---|---|
+| A production cp + fill | 2274 | +0.0296 | [−0.0056, +0.0662] | **43.4%** |
+| B #447 gate | 2259 | +0.0294 | [−0.0073, +0.0690] | **46.5%** |
+| **C top-1/top-2 floor** | 1818 | **+0.8041** | [+0.7829, +0.8258] | **99.9%** |
+| D WDL-space | 1477 | +0.0316 | [−0.0183, +0.0789] | **46.0%** |
+| N1 shuffled | 2266 | −0.0873 | [−0.1294, −0.0487] | 45.3% |
+| N2 anti-prior | 2293 | +1.0371 | [+1.0269, +1.0470] | 99.9% |
+
+### ⚑ THE NEW METRIC IS CONFOUNDED THE SAME WAY THE COSINE WAS — and the same control caught it
+
+N2 tops this table too (+1.0371). It must: on rows where SF's best ≠ our argmax, SF's best is **by
+construction a move we under-weight**, so ANY "prefer under-weighted moves" direction scores high
+without knowing anything about chess. ⇒ **N2 is a ceiling artefact here, not a competitor**, and
+`arm − N2` is NOT a valid test on this metric. Third time today a headline number has been a property
+of the instrument; the controls are earning their cost. [[shuffle_the_labels_negative_control]]
+
+**The valid contrast is `arm − N1`**, because N1 is the *p-matched* control: identical support
+structure, identical magnitude distribution, only the assignment permuted. It isolates "does this
+arm know WHICH move is good" from "does it prefer improbable moves".
+
+| contrast | value |
+|---|---|
+| **C − N1** | **+0.9098** [+0.8651, +0.9568] *** |
+| D − N1 | +0.1315 [+0.0733, +0.1934] *** |
+| A − N1 | +0.1171 [+0.0555, +0.1787] *** |
+| D − A | +0.0221 [−0.0383, +0.0834] n.s. |
+| B − A | +0.0009 [−0.0474, +0.0492] n.s. |
+
+⇒ **C is ~7× more argmax-informative than any magnitude arm**, and A/B/D are statistically
+indistinguishable from each other on the axis that carries our entire deficit. Note this is where
+arm D's advantage EVAPORATES: D beat B on the cosine at both tiers and both rulers, but on argmax pull
+D − A and B − A are both null. **The WDL repair improves the distribution and does nothing for the
+ranking** — and ranking is the whole gap.
+
+### ⚑⚑ THE NUMBER THAT NEEDS NO NORMALISATION
+
+`frac > 0` is scale-free and immune to the |d| confound: **on rows where SF's best move is not the one
+we already pick, production's formulation (A) moves us toward SF's move only 43.4% of the time.**
+B 46.5%, D 46.0% — all three BELOW a coin flip. C: **99.9%**.
+
+Three arms that consume SF's regret magnitudes fail to point at SF's own best move more often than
+chance. That is the same conclusion the cosine reached ("A loses to a shuffle on the SF-native ruler")
+arriving by a completely different and simpler route, and it closes the question the prereg asked.
+
+### VERDICT — the policy-SL program is now one arm, and it is a RANK term
+
+Everything converges: the deficit is top-1 ranking (RETRACTION #2); the label ranks correctly at 12.4 cp
+while we produce 46.9 (a LEARNING failure); the only formulation that moves the argmax is the one that
+reads **rank membership** rather than magnitude; and the magnitude arms are at or below chance on it.
+⇒ **build C — a one-sided floor on SF's top-1/top-2 — and drop A, B and D.** [[relational_sf6_loses_to_the_constant_tail]]
+
+**Still owed before it ships**, unchanged: (1) task #255's control, now purely to show C's advantage is
+not an artefact of the p-confound — the `frac>0` gap (99.9% vs 43.4%) is strong evidence it is not, but
+the control makes it decisive; (2) the exposed/unexposed purity split (#199 failed at 5.23%); (3) the
+floor threshold τ (0.10 here, binds 23.02% of production rows) is UNTUNED and needs a ladder.

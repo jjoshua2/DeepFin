@@ -212,6 +212,8 @@ def main() -> None:
     # rows, so unpaired means compare different populations.
     cos: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
     ocos: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
+    # argmax pull is ruler-free: the deep-SF best move IS the target
+    pull: dict[str, dict[str, float]] = defaultdict(dict)
     skipped = defaultdict(int)
 
     for key in keys:
@@ -285,6 +287,23 @@ def main() -> None:
                 if co is not None:
                     ocos[ruler][name][key] = co
 
+        # ⚑⚑ ARGMAX PULL — the metric that matches where our deficit actually is.
+        # Our top-1 regret is 46.9 cp against BT4's 20.1 while our TAIL is BETTER
+        # than theirs (67.1 vs 81.2), so the entire gap is WHICH MOVE IS #1.
+        # Cosine scores calibration and ranking together; this scores ranking only.
+        # d[sf_best] - d[our_argmax] > 0 means the arm raises mass on the deep-SF
+        # best move faster than on the move we currently pick. Argmax-invariant
+        # interventions (e.g. temperature) score exactly 0, which is correct.
+        sf_best_uci = str(rec_deep.get("bestmove", ""))
+        i_sf = idx_of.get(sf_best_uci)
+        i_ours = int(np.argmax(p_ours))
+        if i_sf is not None and i_sf != i_ours:
+            # normalise by |d| so arms with different natural scales compare
+            for name, d in dirs.items():
+                nrm = float(np.linalg.norm(d))
+                if nrm > 0.0:
+                    pull[name][key] = float(d[i_sf] - d[i_ours]) / nrm
+
     print(f"[rig] skipped: {dict(skipped)}")
     print()
 
@@ -338,6 +357,39 @@ def main() -> None:
             rows["_contrasts"] = cc
             report["views"].setdefault(label, {})[ruler] = rows
             print()
+
+    print("═══ ARGMAX PULL — d[sf_best] - d[our_argmax], |d|-normalised ═══")
+    print("  (rows where SF's best != our argmax; >0 = arm moves us toward SF's move)")
+    print(f"{'arm':<18} {'n':>6} {'mean pull':>11} {'95% CI':>24} {'frac>0':>8}")
+    prow: dict = {}
+    for name in order:
+        d = pull.get(name) or {}
+        if not d:
+            continue
+        v = list(d.values())
+        lo, hi = _paired_bootstrap(v, args.bootstrap, boot)
+        fp = float(np.mean([x > 0 for x in v]))
+        print(f"{name:<18} {len(v):>6} {np.mean(v):>+11.5f}   "
+              f"[{lo:>+9.5f}, {hi:>+9.5f}] {100*fp:>6.1f}%")
+        prow[name] = {"n": len(v), "mean": float(np.mean(v)), "ci": [lo, hi], "frac_pos": fp}
+    print()
+    print("  paired contrasts:")
+    pc: dict = {}
+    for a, b in contrasts:
+        da, db = pull.get(a) or {}, pull.get(b) or {}
+        shared = sorted(set(da) & set(db))
+        if len(shared) < 30:
+            continue
+        diff = np.array([da[k] - db[k] for k in shared])
+        lo, hi = _paired_bootstrap(list(diff), args.bootstrap, boot)
+        sig = "" if (lo <= 0.0 <= hi) else "  ***"
+        print(f"    {a:<16} - {b:<16} n={len(shared):>5} {diff.mean():>+10.5f}  "
+              f"[{lo:>+9.5f}, {hi:>+9.5f}]{sig}")
+        pc[f"{a}-{b}"] = {"n": len(shared), "mean": float(diff.mean()), "ci": [lo, hi],
+                          "significant": not (lo <= 0.0 <= hi)}
+    prow["_contrasts"] = pc
+    report["argmax_pull"] = prow
+    print()
 
     if args.out:
         args.out.write_text(json.dumps(report, indent=2))
