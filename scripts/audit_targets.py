@@ -561,12 +561,18 @@ def dump_ruler_stamps(
     for a stamp built from the wrong object. With this addressable the test
     RUNS it and compares the stamps two different rulers produce.
 
-    ⚑ BOTH TRAINING ROWS. ``realized_shapes`` is keyed by row (``train`` /
-    ``train_fast``) and every one of them is stamped. Banking only ``train``
-    left ``cand.train_fast.*`` unprovenanced: change ``fast_simulations`` alone
-    and two dumps carry byte-identical stamps over rows produced by different
-    search budgets, so ``paired_compare`` joins them and charges the ruler
-    change to the checkpoints.
+    ⚑ EVERY REALIZED ROW, keyed by row name. ``realized_shapes`` is what
+    ``_net_candidates`` returns, so it covers every profile that ran a search:
+    ``search`` (the PLAY row) as well as ``train`` and ``train_fast``.
+
+    Banking only ``train`` — which is what this did — left ``cand.train_fast.*``
+    unprovenanced: change ``fast_simulations`` alone and two dumps carry
+    byte-identical stamps over rows produced by different search budgets, so
+    ``paired_compare`` joins them and charges the ruler change to the
+    checkpoints. The PLAY row had the same hole with a different knob: its
+    ``policy_temp`` is the operator-settable ``--policy-temp``.
+    ``paired_compare.ruler_fields_for`` checks this stamp for every ``cand.``
+    row that ran a search, so nothing banked here is banked and then ignored.
     """
     return {
         "search_shape": {

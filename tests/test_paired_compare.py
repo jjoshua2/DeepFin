@@ -703,6 +703,12 @@ def test_search_shape_is_skipped_for_a_metric_it_cannot_govern(tmp_path) -> None
 
     assert "search_shape" not in ruler_fields_for("cand.raw.exp")
     assert "search_shape" not in ruler_fields_for("cand.sf_soft.exp")
+  # ⚑ The PLAY row RAN A SEARCH and its shape IS banked (`_net_candidates`
+  # returns one per profile), so skipping it here would bank a ruler and then
+  # ignore it — and row (b)'s `policy_temp` is the operator-settable
+  # `--policy-temp`, the one field `UNSTAMPED_LEGACY` exists because we cannot
+  # infer.
+    assert "search_shape" in ruler_fields_for("cand.search.exp")
     assert "search_shape" in ruler_fields_for("cand.train.exp")
     assert "search_shape" in ruler_fields_for("cand.train_fast.exp")
     assert "search_shape" in ruler_fields_for(None)

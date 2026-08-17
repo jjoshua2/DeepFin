@@ -495,13 +495,21 @@ def require_same_stamp(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
 def ruler_fields_for(metric: str | None) -> tuple[str, ...]:
     """Which ruler stamps actually govern a comparison of ``metric``.
 
-    ⚑ `search_shape` describes the TRAINING rows' search and nothing else. The
-    PR that introduced it says so in as many words — "rows (b) and (c) are
-    unaffected" — and then checked the stamp globally, so comparing
-    `cand.raw.exp` or `cand.sf_soft.exp` across a legacy and a current dump was
-    refused over a training-row stamp that cannot touch either number. A gate
+    ⚑ `search_shape` describes the rows that RAN A SEARCH, and nothing else.
+    It was checked globally at first, so comparing `cand.raw.exp` or
+    `cand.sf_soft.exp` across a legacy and a current dump was refused over a
+    stamp that cannot touch either number — neither row runs a search. A gate
     that refuses comparisons it does not govern trains operators to route
     around it, which is the failure mode after "a gate that cannot fail".
+
+    ⚑ ...AND THAT IS `cand.search` TOO, NOT ONLY THE TRAINING ROWS. The stamp
+    is read off `realized_shapes`, which `_net_candidates` returns for EVERY
+    profile it built — the PLAY row (b) included. Scoping the gate to
+    `cand.train*` while the artifact carries row (b)'s shape is a value banked
+    and then ignored, and it is not a hypothetical gap: row (b)'s `policy_temp`
+    is the operator-settable `--policy-temp`, which is exactly the field whose
+    legacy value could not be inferred (see `UNSTAMPED_LEGACY` above). So a
+    `cand.search.exp` join now checks the shape it was measured with.
 
     Unknown/None metric: every stamp applies. Defaulting the other way would
     make a typo'd `--field` silently skip the ruler check.
@@ -523,10 +531,12 @@ def ruler_fields_for(metric: str | None) -> tuple[str, ...]:
     if metric is None:
         return RULER_FIELDS
     text = str(metric)
-    governs_training_rows = text.startswith(("cand.train", "train"))
+    governs_a_search_row = text.startswith(
+        ("cand.train", "train", "cand.search", "search"),
+    )
     is_audit_targets_metric = text.startswith("cand.")
     skip = set()
-    if not governs_training_rows:
+    if not governs_a_search_row:
         skip.add("search_shape")
     if not is_audit_targets_metric:
         skip.add("target_config")

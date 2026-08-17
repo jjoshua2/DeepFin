@@ -1467,13 +1467,22 @@ def test_an_unstamped_dump_is_unknown_not_a_guessed_policy_temp() -> None:
 
 
 def _realized_shapes_fixture(*, fast_sims: int = 32) -> dict[str, Any]:
-    """The ``{row: SelfplaySearchShape}`` map ``main()`` builds, in miniature."""
-    from chess_anti_engine.eval.production_shape import production_search_shape
+    """The ``{row: SelfplaySearchShape}`` map ``_net_candidates`` returns.
 
-    flat = _flat()
+    Built through the REAL profile builder rather than hand-listing two rows,
+    because the key set is load-bearing: ``_net_candidates`` returns a shape
+    for every profile it built, the PLAY row included, and a fixture that
+    quietly covered only the training rows would make the stamp tests describe
+    a dump shape production never writes.
+    """
+    import scripts.audit_targets as at
+
+    flat = dict(_flat())
+    flat["fast_simulations"] = int(fast_sims)
+    profiles = at.build_search_profiles(flat, play_sims=64, play_topk=None)
     return {
-        "train": production_search_shape(flat, simulations=256),
-        "train_fast": production_search_shape(flat, simulations=fast_sims),
+        name: at.build_profile_search_shape(name, p, **_build_kwargs())
+        for name, p in profiles.items()
     }
 
 
@@ -1502,7 +1511,11 @@ def test_the_dump_stamps_track_BOTH_training_rows() -> None:
 
     shape_before = cast("dict[str, Any]", before["search_shape"])
     shape_after = cast("dict[str, Any]", after["search_shape"])
-    assert set(shape_before) == {"train", "train_fast"}
+  # ⚑ EVERY row `_net_candidates` realizes, not a hand-picked pair — the PLAY
+  # row runs a search too, and its `policy_temp` is operator-settable.
+    assert set(shape_before) == set(at.build_search_profiles(
+        _flat(), play_sims=64, play_topk=None,
+    ))
     assert shape_before["train"] == shape_after["train"], (
         "the full-sims row did not move — the fixture is not isolating "
         "fast_simulations"
