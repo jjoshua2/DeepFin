@@ -57919,3 +57919,45 @@ comparison — same model / different seed gives σ_d = **81 cp**, different mod
   8-mutant-verified reference `arm_f_loss` to **1.5e-8**, and production arm A matches
   `arm_a_loss` to 1.5e-8 — extracted via `git show`, no branch switch.
 - w_F is **tau-dependent** and was calibrated only at the shipped `tau: 0.15`.
+
+#### N1 FIX LANDED — a live loss-weight flip now MOVES the holdout ruler
+
+Closes the launch blocker recorded above. `eval_ruler_id` gained a required `loss_weights`
+keyword and hashes a new `active_terms` field = **the SET of non-zero loss weights**, built by
+`Trainer._ruler_loss_weights()` reading `TRAINER_WEIGHT_KEYS` **off the instance at evaluation
+time**. So flipping `w_sf_own_regret` 0.0 → 0.7 and `w_sf_policy_floor` 0.0 → 0.8 moves the id,
+bumps `holdout_generation`, and hands the best-model record over instead of freezing it.
+
+⚑ The key set is derived from `TRAINER_WEIGHT_KEYS` and read off the trainer's ATTRIBUTES, not
+from `_eval_loss_kwargs`' keys: `w_sf_policy_floor` does not appear in that dict under its own
+name (it is folded into the `sf_policy_floor` params object), so a key-intersection would have
+omitted **the motivating key while looking derived**. The mutant for exactly that was run and
+died.
+
+**MEMBERSHIP is hashed; MAGNITUDE deliberately is NOT**, and this is the call most worth
+arguing with. Hashing values would move the id on **≥15.3%** of iterations (audit L15, the PID
+recomputes `sf_wdl_frac` every iteration), which would make `_update_best_model` take its ADOPT
+branch ~1 iteration in 7 and **abolish the comparison** — a worse failure than the freeze. The
+membership boundary is exactly `0.0`; the production band (`sf_wdl_frac: 0.50`,
+`sf_wdl_frac_floor: 0.45`) never reaches it.
+
+⚑⚑ **CONSEQUENCE FOR THIS EXPERIMENT: do NOT retune 0.7 or 0.8 mid-run.** A weight MAGNITUDE
+change still does not move the ruler, so a mid-run retune re-opens the freeze on the magnitude
+axis. Any weight change during the arm requires a restart. G16's magnitude half stays OPEN.
+
+Also closed in the same wave: `guarantees_inclusion` now mins over `tau`/`tau_top1`/`tau_played`
+(the boolean was lying, not the floor); mutant M13 (the collar's `has_policy` guard) killed;
+`binds_frac` re-documented as the SELECTION column, NOT "the take-effect observation" — it is
+invariant to `w` by construction, and the column that moves with `w` is `m_sf_policy_floor`.
+
+⚑ A reviewer's claim that the `tau = 1/topk` guarantee breaks at `fast_simulations: 8` and at
+`n_legal < 16` is **FALSE** and was corrected in the docstring rather than implemented. Real
+rule `m = max(2, min(topk, n_legal, max(2, (sims+1)//2)))`: the budget binds only below 31 sims
+and production runs **32 fast / 100 full** (verified in the live yaml AND the trial's
+`params.json`), and at `n_legal < topk` every legal move is selected so tau is irrelevant.
+
+Ported to the live branch by **cherry-pick, NOT by merging main** — main is 78 commits ahead of
+`ops/live-20260725` and those touch 25 files under `chess_anti_engine/` including
+`selfplay/finalize.py`, `replay/sample.py`, `model/transformer.py` and `stockfish/uci.py`.
+Merging them would have made a +50 Elo reading unattributable. All three commits cherry-picked
+with ZERO code conflicts; the only conflict was this file.

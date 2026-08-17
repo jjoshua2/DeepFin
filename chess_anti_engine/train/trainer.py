@@ -61,6 +61,7 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_history,
     uses_lc0_root_legacy_meta,
 )
+from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
 from chess_anti_engine.train.eval_ruler import call_closure, eval_ruler_id
 from chess_anti_engine.train.target_builder import (
@@ -951,11 +952,24 @@ class TrainMetrics:
   # SF-approved-move probability floor (`w_sf_policy_floor`). `m_sf_policy_floor`
   # is the masked mean deficit; `sf_policy_floor_binds_frac` is the share of the
   # SAME eligible rows on which the floor actually bound on at least one move.
-  # ⚑ THE BINDING RATE IS THE ONE THAT ANSWERS "DID IT TAKE EFFECT". A weight
-  # that reaches the loss and never binds is indistinguishable from a dead knob
-  # by the mean alone -- both read 0.0 -- and it is readable at
-  # `w_sf_policy_floor: 0.0`, so the term's reach is measurable BEFORE it is
-  # switched on. Denominator is `has_sf_p0_regret_frac`'s numerator, the same
+  # ⚑ NEITHER IS A FUNCTION OF `w`, AND EACH ANSWERS A DIFFERENT QUESTION. Both
+  # are computed from the deficit tensor BEFORE the weight is applied -- which is
+  # deliberate, it is what makes the term's reach readable at
+  # `w_sf_policy_floor: 0.0`, before it is ever switched on -- and
+  # `test_a_positive_weight_moves_total_and_the_columns_report_it` asserts that
+  # both are bit-equal at w=0.0 and w=1.0 on one batch. So:
+  #   * "does the term SELECT anything on this data?" -> binds_frac. At 0.0 the
+  #     term cannot contribute at ANY weight: the set is empty or the net already
+  #     clears every floor. This is the one that separates "reaches the loss and
+  #     never binds" from "dead knob", which the mean alone cannot (both read 0).
+  #   * "is the term IN the objective, and is it working?" -> m_sf_policy_floor,
+  #     because `total` gains exactly `w * m_sf_policy_floor` (losses.py). Once
+  #     `w > 0` it is the column whose TRAJECTORY over a training window reads
+  #     the effect, and the column to read against the weight.
+  # An earlier version of this comment called binds_frac "the one that answers
+  # 'did it take effect'" full stop; it answers the selection half only, and the
+  # take-effect question does not have a single-column answer within one step.
+  # Denominator is `has_sf_p0_regret_frac`'s numerator, the same
   # eligible-row count, so the three columns cannot disagree about the
   # population.
     m_sf_policy_floor: float = 0.0
@@ -2452,15 +2466,26 @@ class Trainer:
   # The root-search inclusion guarantee `1/gumbel_topk` is printed NEXT TO the
   # tau actually installed, so the comparison the guard makes is on the record
   # even in the (normal) case where it does not fire.
+  #
+  # ⚑ `guarantees_inclusion` TOOK ITS MIN OVER TWO OF THE THREE THRESHOLDS AND
+  # PRINTED A CLAIM ABOUT ALL OF THEM. `tau_top1` was omitted, so the line read
+  # `guarantees_inclusion=True` next to `tau_top1=0.001` -- and that is the one
+  # threshold SF's best move gets ALONE, on the rows where our argmax already is
+  # it (`adaptive` is empty there, so the running max reduces to `tau_top1`).
+  # The floor was behaving correctly; the boolean was lying, which is the worse
+  # of the two because it is the half an operator reads. It now takes the min
+  # over the same three keys `warn_if_below_search_inclusion` checks, so the
+  # printed claim and the guard cannot disagree.
         floor = self._loss_kwargs["sf_policy_floor"]
         guarantee = search_inclusion_guarantee_tau(self.sf_policy_floor_gumbel_topk)
+        floored = min(floor.tau, floor.tau_top1, floor.tau_played or 1.0)
         print(
             f"[trainer] sf_policy_floor w={floor.w!r} delta_cp={floor.delta_cp!r} "
             f"tau={floor.tau!r} tau_top1={floor.tau_top1!r} "
             f"tau_played={floor.tau_played!r} "
             f"gumbel_topk={self.sf_policy_floor_gumbel_topk!r} "
             f"search_inclusion_tau={guarantee!r} "
-            f"guarantees_inclusion={min(floor.tau, floor.tau_played or 1.0) >= guarantee}",
+            f"guarantees_inclusion={floored >= guarantee}",
             flush=True,
         )
 
@@ -2494,7 +2519,8 @@ class Trainer:
             floor = replace(floor, tau_played=search_inclusion_guarantee_tau(topk))
             self.sf_policy_floor_params = floor
         warn_if_below_search_inclusion(
-            tau=floor.tau, tau_played=floor.tau_played, gumbel_topk=topk,
+            tau=floor.tau, tau_top1=floor.tau_top1, tau_played=floor.tau_played,
+            gumbel_topk=topk,
             context=f"live gumbel_topk edit {previous} -> {topk}",
         )
         print(
@@ -2838,12 +2864,51 @@ class Trainer:
         invalidate its records". Eval scores the model against the target the
         shards ACTUALLY carry, identically in every arm.
 
-        Only the target-SHAPE knob is pinned. Loss WEIGHTS stay as configured:
-        they scale a term without redefining it, so they leave the per-term
-        columns (`policy_ce`, `wdl_ce`, ...) comparable, and pinning them would
-        make `total` stop matching the trained objective.
+        Only the target-SHAPE knob is pinned. Loss WEIGHTS stay as configured,
+        so that `total` keeps matching the trained objective and the per-term
+        columns (`policy_ce`, `wdl_ce`, ...) stay comparable.
+
+        ⚑⚑ THE REASON THAT USED TO BE GIVEN FOR IT WAS HALF FALSE, AND THE
+        FALSE HALF COST A FROZEN BEST-MODEL RECORD. It read "they scale a term
+        without redefining it", which is true of a weight moving 0.3 -> 0.6 and
+        silently FALSE of a weight moving 0.0 -> anything: `compute_loss` adds
+        these terms under an `if`, not by multiplying, so a zero weight means
+        the term is NOT IN `total`. Flip one live and `total` gains a whole
+        term -- and for a non-negative term (`sf_policy_floor` is a sum of
+        `relu`; `sf_own_regret` is `sum p*r`) it steps strictly UP and can
+        never come back, so `_update_best_model` compares the new objective
+        against a record made under the old one and never promotes again.
+        Nothing re-checked this sentence when such a weight was added, which is
+        why the guarantee now lives in code: `eval_ruler_id_for` hashes the SET
+        of non-zero weights (`eval_ruler.active_loss_terms`), so a membership
+        flip moves the ruler id, bumps `holdout_generation` and HANDS THE
+        RECORD OVER instead of freezing it. Weight MAGNITUDES are still
+        excluded, deliberately -- see `active_loss_terms` for why hashing them
+        would abolish the comparison rather than tighten it.
         """
         return {**self._loss_kwargs, "policy_target_temp": 1.0}
+
+    def _ruler_loss_weights(self) -> dict[str, float]:
+        """The loss weights the holdout ruler's identity is keyed on.
+
+        ⚑ DERIVED FROM `TRAINER_WEIGHT_KEYS`, WHICH IS THE ONE SOURCE OF TRUTH
+        FOR "WHICH ATTRIBUTE CAN A LIVE YAML EDIT MOVE". That tuple IS the
+        per-iteration live-push list -- `_apply_lr_gamma_weights` walks it and
+        does `setattr(trainer, key, float(config[key]))` -- so reading the same
+        tuple back off `self` covers exactly the surface the hazard has, and a
+        weight added there is covered by the ruler on the day it is added. A
+        second, hand-copied list of weight names would have to be re-drawn at
+        every addition, and this repo has already lost a ruler boundary twice
+        to exactly that (see `eval_ruler.call_closure`).
+
+        ⚑ AND IT MUST BE THE TRAINER'S ATTRIBUTES, NOT `_eval_loss_kwargs`'
+        KEYS. `w_sf_policy_floor` -- the weight this defect was found on --
+        does not appear in that dict under its own name at all: it is folded
+        into the `sf_policy_floor` params object by `_loss_kwargs`. An
+        intersection with the kwargs keys would therefore have silently omitted
+        the one key that motivated the fix, while looking derived.
+        """
+        return {key: float(getattr(self, key)) for key in TRAINER_WEIGHT_KEYS}
 
     def _amp_context(self):
         # Pinned to bf16: training has no GradScaler, so an FP16 fallback
@@ -3216,11 +3281,12 @@ class Trainer:
     @classmethod
     def eval_ruler_id_for(
         cls, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
+        loss_weights: Mapping[str, float],
     ) -> str:
         """Identity of the measurement `_compute_metrics` performs.
 
         A CLASSMETHOD, and that is load-bearing rather than tidiness: the id
-        depends on nothing but code and the four arguments, so an operator's
+        depends on nothing but code and its arguments, so an operator's
         deploy check (and every test here) can ask for it without building a
         Trainer, a model or a device. The earlier instance form forced callers
         to assemble a stand-in object whose attributes had to be kept in step
@@ -3248,11 +3314,18 @@ class Trainer:
         because the ones on this path include `_TRAIN_METRICS_FIELDS`, derived
         from the `TrainMetrics` dataclass -- hashing it would bump the ruler
         every time an unrelated diagnostic FIELD is added, which provably
-        cannot change `loss`. And the loss WEIGHTS are excluded for the reason
-        in docs/rl_loop_audit.md L15: `_loss_kwargs` carries the PID's
-        realized `sf_wdl_frac`, so hashing it cannot tell a 0.006 controller
-        excursion from a 0.10 config step. All of these are named in the
-        ledger's not-covered list; none of them is implied to be covered here.
+        cannot change `loss`.
+
+        **Loss weights: MEMBERSHIP covered, MAGNITUDE not.** `_loss_kwargs` is
+        on the call graph but only its SOURCE is hashed, so until 2026-08-17 a
+        weight could switch a term on live and the id sat still -- see
+        `_eval_loss_kwargs` for what that cost. `loss_weights` closes it: the
+        SET of non-zero names (`eval_ruler.active_loss_terms`) is in the
+        descriptor. The VALUES stay out, for the reason docs/rl_loop_audit.md
+        L15 gives -- the PID recomputes `sf_wdl_frac` every iteration, so a
+        value hash could not tell a 0.006 controller excursion from a 0.10
+        config step, and would move the id on every iteration of a production
+        run. Named in the ledger's not-covered list, like the rest.
 
         Two arguments are PINNED in the full-pass branch rather than passed
         through, because neither reaches that measurement: ``steps`` is a
@@ -3275,10 +3348,12 @@ class Trainer:
             return eval_ruler_id(
                 mode="full_pass", batch_size=int(batch_size), steps=0,
                 mirror_prob=0.0, measured_by=measured_by,
+                loss_weights=loss_weights,
             )
         return eval_ruler_id(
             mode="sampled", batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_prob), measured_by=measured_by,
+            loss_weights=loss_weights,
         )
 
     def reset_optimizer_reference_weights(self) -> None:
@@ -3684,6 +3759,10 @@ class Trainer:
         ruler = type(self).eval_ruler_id_for(
             batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_p), full_pass=bool(full_pass),
+  # Read HERE, per evaluation, not captured at construction: the weights are
+  # live-pushed every iteration, and a snapshot taken at build time would make
+  # the ruler blind to exactly the edit it exists to catch.
+            loss_weights=self._ruler_loss_weights(),
         )
         for batch in batches:
             n_rows = int(batch["x"].shape[0])

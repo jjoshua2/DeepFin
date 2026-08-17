@@ -885,8 +885,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "m_sf_own": 0.0, "m_sf_own_regret": 0.0,
     "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
   # SF-approved-move floor. Read `sf_policy_floor_binds_frac` FIRST: it is the
-  # only one of the pair that separates "the term selected nothing" from "the
-  # net already clears the floor", and it is live at `w_sf_policy_floor: 0.0`.
+  # SELECTION column -- 0.0 means the term contributes nothing at ANY weight --
+  # and it is live at `w_sf_policy_floor: 0.0`. `m_sf_policy_floor` is the one
+  # `total` multiplies by `w`, so it is what to read against the weight once the
+  # term is on. Neither moves with `w` within a single step; see TrainMetrics.
     "m_sf_policy_floor": 0.0, "sf_policy_floor_binds_frac": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
@@ -1003,9 +1005,12 @@ def _train_metrics_dict(metrics) -> dict:
         "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
         "has_sf_p0_regret_frac": float(metrics.has_sf_p0_regret_frac),
         # SF-approved-move floor, over the same eligible rows as `m_sf_own_regret`.
-        # `sf_policy_floor_binds_frac` is the take-effect observation: a weight
-        # that reaches the loss and never binds reads exactly like a dead knob on
-        # `m_sf_policy_floor` alone.
+        # `sf_policy_floor_binds_frac` answers "did the term SELECT anything" --
+        # a weight that reaches the loss and never binds reads exactly like a dead
+        # knob on `m_sf_policy_floor` alone. It is NOT the take-effect column: it
+        # is provably invariant to `w` within a step (both columns are computed
+        # before the weight is applied). `total` gains `w * m_sf_policy_floor`, so
+        # that is the column to read against the weight.
         "m_sf_policy_floor": float(metrics.m_sf_policy_floor),
         "sf_policy_floor_binds_frac": float(metrics.sf_policy_floor_binds_frac),
         # Desync alarm over the rows training actually consumed. Unlike the

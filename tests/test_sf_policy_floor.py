@@ -18,6 +18,7 @@ killed by at least one assertion here. The mutant table is in the PR.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 import torch
@@ -994,3 +995,208 @@ def test_the_floor_gradient_only_ever_pushes_floored_moves_up() -> None:
     # Non-members outside F are pushed down too -- the mass has to come from
     # somewhere -- but never a member.
     assert float(grad[0, 3]) > 0.0
+
+
+# --------------------------------------------------------------------------
+# M13: the collar's `has_policy` guard at the `compute_loss` call site.
+# --------------------------------------------------------------------------
+
+
+def test_a_row_without_a_policy_target_is_not_collared_through_compute_loss() -> None:
+    """⚑ MUTANT M13. `aligned_pol_target * has_policy.unsqueeze(-1)` -> bare.
+
+    `sf_policy_floor_deficit` decides "this row has a played move to protect"
+    by asking whether the target it was handed carries any MASS. That is the
+    right question only if the caller has already zeroed the rows whose policy
+    target is not real. `has_policy` is 0 on exactly those rows -- most
+    concretely the fast plies `selfplay.record_fast_ply_value` records, whose
+    `policy_t` is written but is not a search distribution -- and dropping the
+    multiply hands the deficit a target the row is not entitled to, so the
+    collar floors a move that was never played and the term pays gradient for
+    it.
+
+    Unreachable in production TODAY only because `record_fast_ply_value` is OFF
+    (CLAUDE.md: tried and REVERTED for trunk dilution). "Off in production" is
+    not a guard, so the mutant is killed here rather than argued away.
+
+    The row is built so the two answers cannot coincide: move 5 carries the
+    whole (bogus) target and sits far below `tau_played`, while `has_policy`
+    says the row has no policy target at all.
+    """
+    width = 6
+    legal = torch.ones(1, width)
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, -6.0]])
+    # `has_policy = 0`, but `policy_t` is non-empty -- the exact shape a fast
+    # ply produces, and the shape a `.sum() > 0` test alone cannot tell from a
+    # real search distribution.
+    batch = {
+        "x": torch.zeros(1, 175, 8, 8),
+        "legal_mask": legal,
+        "has_legal_mask": torch.ones(1),
+        "policy_t": _one_hot(5, width),
+        "has_policy": torch.zeros(1),
+        "wdl_t": torch.zeros(1, dtype=torch.long),
+        "sf_p0_regret_t": _REG.clone(),
+        "has_sf_p0_regret": torch.ones(1),
+    }
+    outputs = {"policy": logits, "wdl": torch.zeros(1, 3)}
+    params = SfPolicyFloorParams.resolve(w=1.0, tau=0.15, tau_played=0.5)
+
+    p = torch.softmax(logits, dim=-1)[0]
+    assert float(p[5]) < 0.5, "setup: the bogus played move must be under the collar"
+
+    got = compute_loss(outputs, batch, sf_policy_floor=params)
+    # The same row with the target genuinely absent -- what a correctly guarded
+    # call site is equivalent to.
+    honest = dict(batch)
+    honest["policy_t"] = torch.zeros(1, width)
+    expect = compute_loss(outputs, honest, sf_policy_floor=params)
+
+    assert float(got["sf_policy_floor_sum"].detach()) == pytest.approx(
+        float(expect["sf_policy_floor_sum"].detach()), abs=1e-6,
+    )
+    # ...and the mutant's answer is a DIFFERENT number, so the equality above is
+    # not satisfied by both branches collapsing to zero.
+    collared = compute_loss(
+        outputs, {**batch, "has_policy": torch.ones(1)}, sf_policy_floor=params,
+    )
+    assert float(collared["sf_policy_floor_sum"].detach()) > float(
+        got["sf_policy_floor_sum"].detach()
+    ) + 1e-6
+
+
+def test_the_collar_still_fires_on_a_row_that_does_have_a_policy_target() -> None:
+    """The negative control for the test above.
+
+    A guard test that passes because the collar never fires at all is vacuous.
+    Same fixture, `has_policy = 1`, and the collar must ADD the deficit.
+    """
+    width = 6
+    logits = torch.tensor([[0.0, 0.0, 5.0, 0.0, 0.0, -6.0]])
+    batch = {
+        "x": torch.zeros(1, 175, 8, 8),
+        "legal_mask": torch.ones(1, width),
+        "has_legal_mask": torch.ones(1),
+        "policy_t": _one_hot(5, width),
+        "has_policy": torch.ones(1),
+        "wdl_t": torch.zeros(1, dtype=torch.long),
+        "sf_p0_regret_t": _REG.clone(),
+        "has_sf_p0_regret": torch.ones(1),
+    }
+    outputs = {"policy": logits, "wdl": torch.zeros(1, 3)}
+    p = torch.softmax(logits, dim=-1)[0]
+
+    on = compute_loss(
+        outputs, batch,
+        sf_policy_floor=SfPolicyFloorParams.resolve(w=1.0, tau=0.15, tau_played=0.5),
+    )
+    off = compute_loss(
+        outputs, batch,
+        sf_policy_floor=SfPolicyFloorParams.resolve(w=1.0, tau=0.15, tau_played=0.0),
+    )
+
+    assert float(on["sf_policy_floor_sum"].detach()) == pytest.approx(
+        float(off["sf_policy_floor_sum"].detach()) + float(torch.relu(0.5 - p[5])),
+        abs=1e-6,
+    )
+
+
+# --------------------------------------------------------------------------
+# The reported inclusion claim must cover every threshold it claims about.
+# --------------------------------------------------------------------------
+
+
+def test_the_guard_fires_on_tau_top1_as_well() -> None:
+    """⚑ `tau_top1` WAS THE THIRD BLIND SPOT, one level below `tau_played`'s.
+
+    SF's top-1 gets `tau_top1` ALONE on the rows where our argmax already is
+    that move -- `adaptive` is empty there, so the running max has nothing else
+    to take. Those are the rows invariant 1 calls the whole mechanism, and a
+    sub-guarantee `tau_top1` revokes their root slot in silence.
+    """
+    with pytest.warns(RuntimeWarning, match="sf_policy_floor_tau_top1"):
+        SfPolicyFloorParams.resolve(w=1.0, tau=0.15, tau_top1=0.001, gumbel_topk=16)
+
+
+def test_the_reported_inclusion_claim_covers_tau_top1(tmp_path, capsys) -> None:
+    """⚑ THE BOOLEAN WAS LYING, NOT THE FLOOR.
+
+    The startup line printed `guarantees_inclusion=True` beside
+    `tau_top1=0.001`, because the min it took ran over `tau` and `tau_played`
+    only. The floor itself is fine -- with `tau_top1 < tau` SF's top-1 joins
+    the adaptive set on the rows where our pick is wrong and still gets
+    `max(tau, tau_top1)`, and the measured deficit is identical at 0.15 and
+    0.001 -- so what needed fixing was the claim.
+
+    Asserted on the PRINTED LINE, which is the artefact an operator reads, not
+    on a re-derivation of the same min in the test body.
+    """
+    with pytest.warns(RuntimeWarning, match="sf_policy_floor_tau_top1"):
+        _trainer({"sf_policy_floor_tau_top1": 0.001}, tmp_path)
+    line = [
+        ln for ln in capsys.readouterr().out.splitlines()
+        if ln.startswith("[trainer] sf_policy_floor w=")
+    ]
+    assert len(line) == 1
+    assert "tau_top1=0.001" in line[0]
+    assert "guarantees_inclusion=False" in line[0]
+
+
+def test_the_reported_inclusion_claim_is_true_at_the_shipped_defaults(
+    tmp_path, capsys,
+) -> None:
+    """The negative control. A claim that is always False is not a claim."""
+    _trainer({}, tmp_path)
+    line = [
+        ln for ln in capsys.readouterr().out.splitlines()
+        if ln.startswith("[trainer] sf_policy_floor w=")
+    ]
+    assert len(line) == 1
+    assert "guarantees_inclusion=True" in line[0]
+
+
+def test_the_inclusion_guarantee_holds_at_the_production_fast_ply_budget() -> None:
+    """⚑ CORRECTING A FALSE REVIEW FINDING, and pinning why it is false.
+
+    The claim under review was that `tau = 1/topk` stops guaranteeing inclusion
+    at `fast_simulations: 8` and at `n_legal < 16`. Both are wrong:
+
+    * the search keeps the top `m = max(2, min(topk, n_legal, max(2, (sims+1)//2)))`,
+      so the sim budget can only bind when `(sims+1)//2 < topk`, i.e.
+      `sims < 31` at `gumbel_topk: 16`. Production runs `mcts_simulations: 256`
+      (ramped to 100, still >= 31) and `fast_simulations: 32`, which gives
+      `m = 16` on fast plies exactly as on full ones;
+    * when `n_legal < topk` the top-`m` IS every legal move, so inclusion is
+      trivially guaranteed and tau is irrelevant. The narrow case is the safe
+      one, and the reviewer's `1/m > tau` arithmetic is inverted for it.
+
+    Read off the production yaml and the search's own selector rather than
+    restated, so a config change to a binding budget fails here.
+    """
+    import yaml as _yaml
+
+    from chess_anti_engine.mcts.gumbel import _select_top_m_with_gumbel
+
+    cfg = _yaml.safe_load(
+        Path("configs/pbt2_small.yaml").read_text(encoding="utf-8"),
+    )
+    topk = int(cfg["selfplay"]["gumbel_topk"])
+    budgets = (int(cfg["selfplay"]["mcts_simulations"]), int(cfg["selfplay"]["fast_simulations"]))
+    assert topk == 16
+    assert budgets == (256, 32)
+
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    for sims in (*budgets, 100):  # 100 = the progressive_mcts ramp floor
+        for n_legal in (4, 16, 30):
+            legal = np.arange(n_legal)
+            pri = np.full(n_legal, 1.0 / n_legal)
+            cands, _ = _select_top_m_with_gumbel(
+                legal=legal, pri=pri, sim_budget=sims, topk=topk,
+                add_noise=False, gumbel_scale=0.0, rng=rng,
+            )
+            # Every move at or above the guarantee is inside the candidate set:
+            # either the whole legal set is kept (n_legal <= m) or m == topk.
+            assert len(cands) == min(topk, n_legal), (sims, n_legal, len(cands))
+    assert search_inclusion_guarantee_tau(topk) == pytest.approx(1.0 / topk)

@@ -26,6 +26,11 @@ different kinds of evidence, because the two failure modes are different:
     change, a re-introduced augmentation, a different pooling denominator, a
     switch back to sampling). A descriptor alone cannot see that, because a
     descriptor is a claim about the code and this is the code.
+  * the **set of loss terms the objective contains** (``active_loss_terms``).
+    This catches the third shape, which neither of the other two can see: the
+    call site and every line of code are identical and a WEIGHT in the live
+    yaml switched a term on. See ``active_loss_terms`` for why it is the term
+    SET and deliberately not the weight values.
 
 **The covered set is DERIVED, not enumerated** (``call_closure``). Hashing one
 function does not hash what it calls, so a hand-written list of frames is a
@@ -76,7 +81,7 @@ import io
 import json
 import sys
 import tokenize
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 # Bump when the descriptor's own shape changes in a way that should be read as
@@ -379,6 +384,65 @@ def call_closure(
     return out
 
 
+def active_loss_terms(loss_weights: Mapping[str, float]) -> tuple[str, ...]:
+    """The names of the loss weights that are not zero, sorted.
+
+    ⚑ THE RULE IS TERM MEMBERSHIP, NOT WEIGHT MAGNITUDE, AND THE ASYMMETRY IS
+    THE WHOLE DESIGN. The two cases a loss weight can be in are not the same
+    kind of event:
+
+    * **magnitude** -- ``w`` moves 0.3 -> 0.6 on a term that was already in
+      ``total``. The objective is REWEIGHTED. Every per-term column stays
+      comparable and ``total`` moves by a bounded, signed amount.
+    * **membership** -- ``w`` moves 0.0 -> anything, or back. The objective
+      gains or loses a TERM. ``compute_loss`` adds these terms under an ``if``
+      rather than multiplying by the weight (see ``losses.compute_loss``), so
+      at 0.0 the term is not in ``total`` at all. For a term that is
+      non-negative by construction -- ``sf_policy_floor`` is a sum of
+      ``relu``, ``sf_own_regret`` is ``sum p*r`` -- switching it on steps
+      ``test_loss`` strictly UP, with no bound and no way back down. The
+      best-model record then freezes at the pre-flip checkpoint FOREVER,
+      because every later measurement carries the new term's floor.
+
+    Only the second is hashed, and hashing the first as well would be a
+    REGRESSION rather than extra safety. ``sf_wdl_frac`` is a loss weight
+    (`config_keys.TRAINER_WEIGHT_KEYS`) that the difficulty controller
+    RECOMPUTES EVERY ITERATION from the realized ``wdl_regret``
+    (`tune/trainable_metrics._dynamic_sf_wdl_weight`), so a value hash would
+    move the ruler id on essentially every iteration of a production run. That
+    does not merely fire the handover too often: `_update_best_model` would
+    take its ADOPT branch every single iteration and the best-model comparison
+    would stop existing. A defect that freezes the record is bad; a fix that
+    abolishes the comparison is worse. `docs/rl_loop_audit.md` L15 already
+    records the magnitude half as accepted definitional drift for exactly this
+    reason, and this function keeps that decision while closing the other half.
+
+    ⚑ THE RESIDUAL, STATED RATHER THAN IMPLIED: the boundary is at exactly
+    0.0, so a controller that drove a weight THROUGH zero would move the id on
+    every crossing. ``sf_wdl_frac`` cannot: `_dynamic_sf_wdl_weight`
+    interpolates within ``[sf_wdl_frac_floor, sf_wdl_frac]`` and returns None
+    (leaving the trainer's value alone) when the start value is <= 0, and
+    production runs ``sf_wdl_frac: 0.50`` with ``sf_wdl_frac_floor: 0.45``. A
+    future controller configured with a zero floor would need this
+    reconsidered, which is why the floor is named here.
+
+    Never raises and never silently drops a key: a value that will not convert
+    to a float counts as ACTIVE, because this module's declared direction of
+    error is toward announcing a new ruler (a false positive costs one
+    best-model handover; a false negative is a promotion across two
+    objectives).
+    """
+    names: list[str] = []
+    for name in sorted(loss_weights):
+        try:
+            off = float(loss_weights[name]) == 0.0
+        except (TypeError, ValueError):
+            off = False
+        if not off:
+            names.append(str(name))
+    return tuple(names)
+
+
 def eval_ruler_id(
     *,
     mode: str,
@@ -386,6 +450,7 @@ def eval_ruler_id(
     steps: int,
     mirror_prob: float,
     measured_by: Sequence[Callable[..., Any]],
+    loss_weights: Mapping[str, float],
 ) -> str:
     """The identity of one holdout measurement, e.g. ``v1:full_pass:a1b2c3d4``.
 
@@ -403,6 +468,12 @@ def eval_ruler_id(
     with that function unhashed the denominator could be changed with the id
     sitting still. The fix is to hash the function, not to name it -- so
     pooling is covered by ``measured_by`` now, and asserted nowhere.
+
+    ``loss_weights`` is the whole live-pushable weight map, of which only the
+    SET of non-zero names reaches the descriptor -- see ``active_loss_terms``
+    for why the VALUES deliberately do not. Pass the map rather than a
+    pre-filtered set: the rule for what counts as active then lives in exactly
+    one function, so a caller cannot apply a second version of it.
     """
     descriptor = {
         "schema": int(EVAL_RULER_SCHEMA),
@@ -411,6 +482,7 @@ def eval_ruler_id(
         "steps": int(steps),
         "mirror_prob": float(mirror_prob),
         "measured_by": [semantic_source_digest(fn) for fn in measured_by],
+        "active_terms": list(active_loss_terms(loss_weights)),
     }
     payload = json.dumps(descriptor, sort_keys=True, separators=(",", ":"))
     return f"v{EVAL_RULER_SCHEMA}:{mode}:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
