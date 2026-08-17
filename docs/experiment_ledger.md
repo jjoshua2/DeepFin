@@ -41791,6 +41791,399 @@ fraction of it. [[a_gate_that_cannot_fail]]
 
 ---
 
+## 2026-08-16 — PREREG — **STOCKFISH TEACHER UPGRADE, dev-20260420-ed651aab → dev-20260810-5062aee5 (STAGED, NOT DEPLOYED)**
+
+Task #213. Binary is built and verified; **nothing production reads has been touched**, the live
+yaml is unedited, and no training was restarted. This entry is the launch record required by
+protocol rule 1 and must be read before anyone points `stockfish_path` at the new build.
+
+### Provenance of the CURRENT teacher — established by resolution, not by filename
+
+`configs/pbt2_small.yaml:91` sets `stockfish_path` to `<repo>/e2e_server/publish/stockfish`.
+That is a **two-hop symlink**, and the intermediate name is misleading, so the chain is recorded
+in full rather than the final answer alone:
+
+```
+<repo>/e2e_server/publish/stockfish
+  -> ~/local_stockfish/extract/usr/games/stockfish
+  -> ~/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
+```
+
+Version read off the binary's own `uci` / `compiler` response, not off any path component:
+
+| | value |
+|---|---|
+| id name | `Stockfish dev-20260420-ed651aab` |
+| upstream commit | `ed651aab544a330a9c8ae0dc2d8d51d5d48a8112` (2026-04-20, "Replacing std::clamp with std::min") |
+| build | g++ 11.4.0, `x86-64-bmi2`, 64bit BMI2 AVX2 SSE41 SSSE3 SSE2 POPCNT |
+| nets | `EvalFile nn-f68ec79f0fe3.nnue` + `EvalFileSmall nn-47fc8b7fff06.nnue` (dual net) |
+
+⚑ **`e2e_server/publish/` is the SERVER'S PUBLISH DIRECTORY, and it contains exactly this one
+symlink.** So the two ways a selfplay worker can obtain Stockfish converge on the same file:
+`--stockfish-path` reads it directly, and `--stockfish-from-server` (`worker.py:3617`) downloads
+the sha256-pinned copy the server serves *from that same path*. Repointing the symlink therefore
+changes the teacher for **both** paths at once, including for remote workers, and it does so
+without any yaml edit. That is a deployment hazard, not a convenience — see Deployment below.
+
+### Target
+
+`5062aee519a1ba262d472d8ab139851ced56573e` (2026-08-10, "Place continuation history on large
+pages"), upstream `HEAD` at time of writing. `git rev-list --count ed651aab..HEAD` = **175**
+commits, confirming the "~175 commits / ~4 months" framing exactly.
+
+### Compatibility — MEASURED, source diff AND binary diff AND our own parser
+
+This is the part that matters, because our signature defect is a value that is accepted and then
+silently ignored, and a renamed UCI option is precisely that shape.
+
+**Every option we set, checked against the running binaries** (`uci` output of both, sorted,
+diffed). The complete diff of the option surface is **two lines**:
+
+```
+< option name EvalFile      type string default nn-f68ec79f0fe3.nnue
+< option name EvalFileSmall type string default nn-47fc8b7fff06.nnue
+---
+> option name EvalFile      type string default nn-ab28990d4ea3.nnue
+```
+
+| option | we set it at | old | new | verdict |
+|---|---|---|---|---|
+| `UCI_ShowWDL` | `stockfish/uci.py:404` | check, default false | identical | **unchanged** |
+| `Threads` | `uci.py:405` | spin 1..MaxThreads | identical | **unchanged** |
+| `Hash` | `uci.py:407` | spin 1..MaxHashMB | identical | **unchanged** |
+| `SyzygyPath` | `uci.py:409`, `:510` | string | identical | **unchanged** |
+| `MultiPV` | `uci.py:411` | spin 1..MAX_MOVES | identical | **unchanged** |
+| `UCI_Elo` | `match_vs_uci.py --option-*` | spin 1320..3190 | identical (`Skill::LowestElo/HighestElo` unchanged) | **unchanged** |
+| `EvalFileSmall` | **never set by us** | present | **REMOVED** | **no impact on us** |
+
+**Every field we parse** (`stockfish/uci.py:_parse_info_fields`, and the second parser in
+`scripts/blunder_check_cp.py:93`): `multipv`, `nodes`, `depth`, `score cp`, `score mate`, `wdl`,
+`pv`. `UCIEngine::on_update_full` and `UCIEngine::format_score` are **byte-identical** between the
+two commits — same fields, same order, same `cp`/`mate`/TB_CP=20000 encoding.
+
+⚑ **The cp ruler did NOT silently rescale.** `win_rate_model`, `win_rate_params` (the `as[]`/`bs[]`
+polynomials) and the internal→cp map `round(100 * v / a)` are byte-identical. This was the single
+highest-risk silent failure available — a retuned normalisation would have kept the field name
+`score cp` while changing what a centipawn means, invalidating `sf_eval`, the cp-logistic blend and
+every banked cp number at once. It did not happen. **Same ruler.**
+
+⚑ **`SyzygyPath` parsing was REFACTORED** (`std::string Paths` split on `SepChar` →
+`std::vector<std::filesystem::path> Paths`) — and this one deserved the check, because production
+Syzygy is the **colon-separated pair** and a separator regression would have silently dropped the
+6-man DTZ half with no error. It still splits on `':'` on Linux (`tbprobe.cpp:1406`), and this is
+confirmed empirically, not just by reading: driving the new binary through our own `StockfishUCI`
+with the full production pair returns `cp 19997` (= TB_CP − plies) on a 5-man position, i.e. the
+probe fires. **No impact.**
+
+**End-to-end parse check** — the new binary driven through our own `StockfishUCI` at production
+label settings (MultiPV 6, 75k nodes, production Syzygy pair), 4 positions covering the cp, mate
+and tablebase score paths: every retained field present, MultiPV rank count 6/6, WDL vectors
+normalise. Script banked at `scratchpad/sf213_parse_check.py`.
+
+⇒ **No UCI option and no parse field changed. The integration is compatible.** What changed is the
+EVAL, and that is the whole point of the upgrade — and the whole risk.
+
+### ⚑ The NNUE architecture changed, so the LABELS MOVE even though the ENCODING does not
+
+The dual big+small net collapsed to a **single net** `nn-ab28990d4ea3.nnue`, with a new feature set
+(`nnue/features/pp_3wide.cpp`) alongside `half_ka_v2_hm` and `full_threats`. Measured on the same
+positions, same 75k nodes, same MultiPV 6:
+
+| position | old cp | new cp | old wdl (W,D,L) | new wdl |
+|---|---|---|---|---|
+| startpos | 34 | **22** | 0.074 / 0.920 / 0.006 | 0.049 / **0.942** / 0.009 |
+| middlegame | 195 | **179** | 0.975 / 0.025 / 0.000 | 0.953 / **0.047** / 0.000 |
+
+The new teacher is **systematically less extreme and more drawish**, and the MultiPV spread
+compresses (old PV cps `34…−15`, new `22…−3`). `sf_eval` and the SF half of the WDL blend consume
+these numbers directly, so **the value target's distribution shifts on day one** while every
+field name, range and unit stays put. This is a distribution shift, not a bug, and it is exactly
+why no cross-era comparison of an SF-derived metric survives the upgrade.
+
+### Cost — measured, and it is NOT free
+
+| | old | new | delta |
+|---|---|---|---|
+| `bench` (MultiPV 1, 1 thread) | 1,217,135 nps | 1,124,739 nps | **−7.6%** |
+| production label (MultiPV 6, 75k nodes, n=40) | 116.1 ms/label | 134.8 ms/label | **+16.1% wallclock** |
+
+Labels are node-budgeted (`go nodes N`), so a slower engine buys nothing at fixed `sf_nodes` — it
+is a pure cost. And SF is already **18.3 of 32 cores** [[loop_is_gpu_bound_cpu_two_thirds_idle]],
+so +16% on the label path is a curriculum-throughput hit, not spare capacity. ⚑ The MultiPV-1
+bench number **understates it by half**; quote the +16.1%, not the −7.6%. (Caveat: old is the
+official g++ 11.4 release build, new is our g++ 15.3 PGO build, so a few points of this are
+toolchain, not engine.)
+
+### Hypothesis
+
+Our net matches its policy target's bad tail at 91.5% — it learns the target faithfully, so **our
+ceiling is the target's ceiling** [[the_policy_target_is_sharp_and_wrong]]. A teacher 175 commits
+stronger should produce a label set with a **smaller bad tail** at the same node budget. If it does
+not, the upgrade is a pure cost (+16.1%) plus a curriculum perturbation, and must not ship.
+
+### ⚑⚑ WHY THE OBVIOUS INSTRUMENTS ARE ALL VOID HERE — read this before proposing a yardstick
+
+- **`wdl_regret` is VOID.** It measures the AGENT (net + search) against the curriculum, and the PID
+  drives it to hold winrate at setpoint [[wdl_regret_measures_agent_not_net]]. An SF upgrade makes
+  the curriculum opponent stronger at fixed settings, which injects a STEP into the regret series
+  arithmetically indistinguishable from the net changing — the identical failure that made the
+  `gumbel_c_scale` change read as +239.5 Elo of progress while the net measurably degraded 51.6
+  Elo. The series is frozen-search-only, and this change unfreezes the curriculum. **A regret move
+  after this deploy is not evidence of anything.** A fresh baseline is required and the old series
+  does not continue across the boundary.
+- **Arena Elo of our net is void as a TEACHER readout.** Swapping SF changes no weights, so a
+  same-day arena reads ~0 by construction. It measures nothing about label quality.
+- **Training loss is void** — losses are decoupled from strength here
+  [[losses_are_decoupled_from_strength]].
+
+### ⚑⚑ DOES THE UPGRADE INVALIDATE THE FROZEN AUDIT SET? — answered, not left implicit
+
+**Partly, and the two halves must be separated.**
+
+- Its **POSITIONS** (`data/audit_set_v1.jsonl.manifest.jsonl`) are just positions. They are
+  **fully valid** and are reused unchanged.
+- Its **LABELS** are `Stockfish dev-20260420-ed651aab` at ≥1M nodes / MultiPV ≥10. They are that
+  engine's opinion. So the frozen set **cannot be a neutral judge of its own successor**: scoring a
+  new-SF label set against an old-SF referee is biased toward the old arm by construction. Using it
+  alone would reproduce [[audit_first_cannot_judge_a_non_sf_teacher]] one level up.
+
+⇒ The set is **not discarded and not treated as neutral. It is repurposed as the ADVERSARIAL
+referee**, and a second, home-biased referee is built over the *same manifest* so the two biases
+bracket the answer. A referee does not need to be unbiased in absolute terms — it needs to be
+unbiased **between the arms**, and since no single SF can be, two opposed ones are used and the
+verdict is only read where they agree.
+
+⚑ The audit set does NOT need regenerating for any other purpose: it is the model-scoring ruler,
+and re-labelling it would invalidate every banked model score at once
+[[a_ruler_change_must_invalidate_its_records]]. The second referee below is a NEW FILE at a NEW
+path. `data/audit_set_v1.jsonl` is not touched, appended to, or re-labelled.
+
+### ⚑⚑ THE FIRST VERSION OF THIS YARDSTICK COULD NOT FIRE — TWO INDEPENDENT REASONS, BOTH MEASURED
+
+Recorded here because both are the house defect (a value accepted and then silently ignored)
+sitting **in the instrument**, and because the entry originally shipped commands that had never
+been executed. Fixed 2026-08-16, and every command below has now been RUN — output pasted.
+
+**(1) The readout addressed the wrong candidate.** The gate is on candidate **(c) `sf_soft`**,
+but the command read `tail_stats.py --raw-top1`, and `tail_stats.py:28` was
+`r.get("cand", {}).get("raw", {}).get("top1")` — candidate **(a)**, the net's own policy, read off
+the checkpoint (`audit_targets.py` `"raw": raw_probs[i]`) with **zero dependence on
+`--stockfish`**. The script's whole argument surface was `(dump_a, dump_b, --raw-top1, --tail-cp)`;
+`cand.sf_soft` was not addressable at all. Two arms differing only in the SF binary give
+byte-identical (a), so the statistic is identically 0, `|net| = 0 < 40`, and **INCONCLUSIVE was
+pre-committed for any teacher** — after four 4000-position `audit_targets` runs plus a
+4000-position 1M-node `build_audit_set`. FIX: `tail_stats.py` takes `--field <dotted.path>`;
+`--raw-top1` is kept as a documented alias for `--field cand.raw.top1`. It also now REFUSES a
+field that resolves on zero rows, because returning `{}` reads as "no difference".
+
+**(2) ⚑⚑ THE SHALLOW-SF LABEL CACHE HAD NO ENGINE IDENTITY, SO ARM NEW READ ARM OLD'S LABELS.**
+`<audit-set>.shallow_sf.jsonl` matched on `(nodes_requested, multipv)` **alone**. Candidate (c) is
+built from that cache, and `data/audit_set_v1.jsonl.shallow_sf.jsonl` **already holds 4000 rows at
+exactly `(500000, 40)`** — the settings below — none of which record which engine wrote them
+(measured: `Counter({(50000, 40, None): 4000, (500000, 40, None): 4000, (100000, 40, None): 2000})`).
+⇒ Referee A's 2×2 would have reused those rows for BOTH arms and **never launched Stockfish**.
+
+MEASURED, not argued (4 positions, both binaries, `--sf-effort low --sf-soft-multipv 40`):
+
+```
+$ python3 scripts/tail_stats.py mini_old.jsonl mini_new.jsonl --field cand.sf_soft.top1
+>300cp tail, paired (n=4): both 0, new-in-B 0, fixed-in-B 0  (net +0 blowups)
+cand.sf_soft identical on 4/4 positions        # and no `[sf-soft] labeling` line in either arm
+```
+
+FIX: rows carry `sf_id` (the engine's own `id name`, read from the ENGINE — the path is a
+misleading two-hop symlink); a run naming `--stockfish` reuses only that engine's rows; a
+cache-only run holding two engines' rows at one setting is REFUSED as a mixed ruler. After the fix,
+the same two arms:
+
+```
+$ ... --stockfish <OLD>   ->  [sf-soft] engine `Stockfish dev-20260420-ed651aab`
+                              [sf-soft] ⚑ ignoring 4 cached rows ... ({'<unrecorded>': 4})
+                              [sf-soft] labeling 4 positions at 500000 nodes, multipv 40
+$ ... --stockfish <NEW>   ->  [sf-soft] engine `Stockfish dev-20260810-5062aee5`
+                              [sf-soft] ⚑ ignoring 8 cached rows ...
+                              [sf-soft] labeling 4 positions at 500000 nodes, multipv 40
+$ python3 scripts/tail_stats.py fix_old.jsonl fix_new.jsonl --field cand.sf_soft.top1
+fix_old.jsonl  all  n=4 mean=  28.5 med= 7.0 P90= 74.2
+fix_new.jsonl  all  n=4 mean=  37.2 med=24.5 P90= 78.7
+cand.sf_soft identical on 2/4 positions (was 4/4)
+```
+
+⚑ **COST CONSEQUENCE FOR THE REAL RUN: the banked 4000 rows at (500k, 40) are `<unrecorded>` and
+will be RE-LABELLED by whichever binary an arm names.** That is the honest price of a cache that
+never recorded its own provenance; budget arm OLD as a full labeling run, not a cache hit.
+
+### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, see below)
+
+Expected **deep-SF regret (cp) of the SF MultiPV soft target** — candidate (c) of
+`scripts/audit_targets.py`, which is the actual policy label the pipeline stores — with the SF
+binary as the ONLY thing that differs between arms:
+
+```
+# arm OLD (baseline) and arm NEW — identical but for --stockfish.
+# ⚑ The checkpoint is pinned by PATH AND STEP and must be the SAME in all four cells:
+#   data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt  (step 93744)
+# It does not enter candidate (c) at all, but audit_targets requires exactly one of
+# --checkpoint/--onnx, and an unpinned net makes rows (a)/(b)/(d)/(e) uninterpretable.
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set <REFEREE> --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
+  --stockfish <BINARY> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
+  --dump-per-position runs/sf213/<referee>_<arm>.jsonl
+
+# the readout, paired by position key. ⚑ --field, NOT --raw-top1: the gate is on
+# candidate (c), and --raw-top1 reads candidate (a), which cannot move with --stockfish.
+PYTHONPATH=. python3 scripts/tail_stats.py \
+  runs/sf213/<referee>_old.jsonl runs/sf213/<referee>_new.jsonl \
+  --field cand.sf_soft.top1
+```
+
+run over the **2×2** of {referee A, referee B} × {arm OLD, arm NEW}:
+
+- **Referee A (adversarial, biased toward OLD)** = `data/audit_set_v1.jsonl`, unchanged.
+- **Referee B (home, biased toward NEW)** = same positions, new-SF deep labels:
+  ```
+  mkdir -p runs/sf213 && cp data/audit_set_v1.jsonl.manifest.jsonl \
+      runs/sf213/audit_set_sf5062aee5.jsonl.manifest.jsonl
+  PYTHONPATH=. nice -n 15 python3 scripts/build_audit_set.py \
+      --out runs/sf213/audit_set_sf5062aee5.jsonl \
+      --stockfish <NEW> --nodes 1000000 --multipv 10 --sf-workers 8
+  ```
+  ⚑ The `cp` of the manifest is load-bearing and is why this is cheap and valid:
+  `build_audit_set.py` **reuses an existing manifest instead of re-sampling**, so referee B is
+  the identical position set with a different labeller — not a new sample. A new sample would make
+  the two referees incomparable [[same_name_different_population]]. ⚑ It writes to `runs/`, never
+  to `data/`.
+  ⚑ `--replay-dir` is deliberately ABSENT and the command above is the executed one. It used to be
+  `required=True` and this command exited 2 (`error: the following arguments are required:
+  --replay-dir`) even though the manifest-reuse path never reads it. It is now **conditionally
+  required** — demanded only when a manifest has to be SAMPLED — rather than satisfied with a
+  decorative value the run ignores, which is the defect class this whole entry keeps tripping over.
+  The README it writes records `replay dirs: [] (manifest reused; not re-sampled)`.
+
+### Pre-committed thresholds — the verdict is only read WHERE THE TWO REFEREES AGREE
+
+Primary quantity: **paired `>300cp` tail flip count** (`new-in-B` minus `fixed-in-B` from
+`tail_stats.py`), which is the readout that tracks the Cheese single-collapse failure mode
+[[cheese_loss_blunder_profile]]. Secondary, reported but not deciding: P90 and mean.
+
+| referee A (adversarial) | referee B (home) | verdict |
+|---|---|---|
+| NEW has fewer tail blowups, net ≤ −40 | NEW fewer, net ≤ −40 | **PASS — deploy.** Won on a referee biased against it. |
+| NEW has more, net ≥ +40 | NEW more, net ≥ +40 | **KILL — do not deploy.** Lost on its OWN home referee; unambiguous. |
+| any split, or either \|net\| < 40 | " | **INCONCLUSIVE — do not deploy for label quality.** Not a pass. |
+
+**±40 IS PROVISIONAL AND UNMEASURED — stated plainly rather than dressed up.** An earlier revision
+of this line said it was "chosen as ~2× the paired flip noise this readout has shown on repeat runs
+of an unchanged pipeline". That cited no run and no number, and it **cannot have been measured on
+this readout**: until 2026-08-16 the readout could not address candidate (c) at all (see above), so
+no repeat-run flip count for this quantity exists. The claim is WITHDRAWN. ±40 of 4000 paired
+positions = 1.0pp and is a judgement call, not a calibration — it is stated as a FALSIFIER, not as
+a number to quote. [[compute_instrument_resolution_before_the_threshold]]
+
+⚑ **What would measure it, and it must be done BEFORE the verdict is read** (it is cheap relative
+to the 2×2 — one extra arm, no new referee): run arm OLD **twice** against referee A with the same
+binary and the same pinned checkpoint, into two different dump paths, and read the paired flip
+count between them with `--field cand.sf_soft.top1`. That is the null distribution of this exact
+statistic. Note `go nodes N` is deterministic per binary at fixed threads, so the honest prior is
+that the repeat reads **exactly 0** and the threshold is bounded by the RE-LABELLING variance
+between two `--sf-workers 8` runs rather than by search noise. If the repeat reads 0, ±40 is
+strictly conservative and should be revised DOWN, in a ledger edit made before the arms are read.
+
+⚑ Pre-committing INCONCLUSIVE as a distinct, non-shipping
+outcome is deliberate: a split is the EXPECTED reading if the two teachers simply differ without
+either being better, and "we could not tell" must not be laundered into "no reason not to ship"
+when shipping costs a measured +16.1%.
+
+### ⚑ THE COMMANDS ABOVE WERE EXECUTED (2026-08-16) — exit codes, not careful writing
+
+The lesson of this entry is that "an exact command" means one that was RUN. Each was executed on a
+4-position mini referee (`--max-positions 4`, reduced `--sims`, `--device cpu` to leave the GPU
+alone); the reduction changes rows (b)/(d)/(e) and **not** candidate (c), which is the deciding row.
+
+| command | exit | note |
+|---|---|---|
+| `audit_targets ... --dump-jsonl ...` (as originally written) | **2** | `error: unrecognized arguments: --dump-jsonl` — the flag is `--dump-per-position` |
+| same, corrected flag, no net pinned | **1** | `pass exactly one of --checkpoint (one of ours) or --onnx; neither was given` |
+| `build_audit_set ... ` (as originally written, no `--replay-dir`) | **2** | `error: the following arguments are required: --replay-dir` |
+| `audit_targets` corrected, arm OLD, referee A | **0** | `[sf-soft] engine \`Stockfish dev-20260420-ed651aab\`` |
+| `audit_targets` corrected, arm NEW, referee A | **0** | `[sf-soft] engine \`Stockfish dev-20260810-5062aee5\`` |
+| `build_audit_set` corrected (referee B, manifest reuse) | **0** | `[manifest] reusing ... (4 positions)`, `[label] finished 4 positions` |
+| `audit_targets` corrected, arms OLD/NEW, referee B | **0**/**0** | full 2×2 completed |
+| `tail_stats --field cand.sf_soft.top1` on each pair | **0** | referee A: mean 28.5 → 37.2; referee B: 269.0 → 259.2 |
+
+⇒ the 2×2 now runs end to end and the deciding statistic MOVES between arms. Before the two fixes
+it was 0 on all four cells by construction. Nothing about the teacher's quality is claimed here —
+this establishes only that the instrument can fire.
+
+### What a PASS does NOT establish — stated now, not discovered later
+
+- **Not an Elo claim, and not a ceiling claim.** It says the new teacher's stored policy label has a
+  smaller bad tail on 4000 audit positions. Whether the net converts that into strength is a
+  day-plus paired-CI question and is NOT this readout [[most_experiments_here_are_unfalsifiable]].
+- **Not a value-target verdict.** The yardstick is the POLICY label. `sf_eval` and the WDL blend
+  shift too (measured above) and are not scored here; `scripts/value_regret.py` is the value ruler
+  and would need its own referee-pair treatment.
+- **Nothing about the exploit surface.** We train to exploit SF's weaknesses. A stronger SF has
+  *different* weaknesses, so a better label set may still make the anti-engine objective harder.
+  This readout cannot see that, and a PASS must not be quoted as if it could.
+
+### Confounds — named before launch
+
+1. **Toolchain differs** (g++ 11.4 official release vs our g++ 15.3 PGO static build). Affects the
+   cost numbers; does not affect move choice, which is deterministic per binary at fixed nodes.
+2. **One data-affecting change per readout window** (protocol rule 4). This upgrade must NOT share
+   a window with any target-knob, search or loss change. The search config has been frozen since
+   2026-08-09 20:58 and must stay frozen across this readout.
+3. **Node budget is not a strength budget.** The new engine reaches different depth at the same
+   `go nodes` (measured: 9→10, 11→11, 12→13 on three positions, and 17→**12** on the TB position).
+   "Matched nodes" is matched COST, not matched strength, in both directions.
+4. **TB-saturated positions have arbitrary MultiPV order.** On the 5-man probe both engines scored
+   all six PVs at exactly 19997 and picked different moves (`h1f1` vs `e1g1`). That is a tie-break
+   difference, not a strength difference [[wdl_regret_filter_leaks_huge_cp]] — the readout must not
+   count it as a tail flip. Positions where the referee's top-1 is TB-saturated are excluded.
+5. **`_set_options` silently drops unknown options** (see below). Any arm that configures SF via
+   `scripts/match_vs_uci.py` is exposed to it.
+
+### ⚑ Defect found while checking, NOT introduced by this task
+
+`scripts/match_vs_uci.py:343` `_set_options`:
+
+```python
+for k, v in opts.items():
+    if k in eng.options:      # <- no else. unknown option: dropped, SILENTLY
+```
+
+The `try/except` below it warns only for options that DO exist and fail to set. An option the
+engine does not recognise produces **no warning and no error** — it is accepted from the caller and
+never reaches the engine. That is this codebase's signature defect in its purest form, and this
+upgrade is exactly the event that arms it: `EvalFileSmall` is now an unknown option, so
+`--option-b EvalFileSmall=...` would have configured the old engine and silently no-op the new one,
+with the run reporting success either way. Not fixed here (this branch is prereg-only, and a code
+change would violate one-change-per-window); **filed as follow-up, and the fix is an `else:` that
+raises rather than warns.**
+
+### Deployment (NOT PERFORMED — the user's decision)
+
+Staged binary: `~/sf213_build/staged/stockfish-dev-20260810-5062aee5-bmi2`, statically linked
+against libstdc++/libgcc **deliberately** — the system libstdc++ is GCC 11 and lacks
+`GLIBCXX_3.4.32`, so a dynamically linked g++ 15 build does not run here at all, and workers
+fetch this binary over the network via `--stockfish-from-server` onto hosts we do not control.
+Verified: `uci`, `compiler`, `bench`, and the full production label path.
+
+⚑ **Deploy is NOT a yaml edit.** `stockfish_path` points at a symlink chain; repointing it swaps
+the teacher for direct-path AND from-server workers simultaneously, with no config-diff to review
+and no ledger trace. Whatever is done, do it by **replacing the symlink target**, record the old
+target in the Revert points table first, and remember that a symlink swap is invisible to
+`params_json`/config auditing [[uncommitted_live_yaml_edits_lose_proven_wins]]. Do NOT delete the
+existing binary — revert must be a one-line symlink restore.
+
+**Revert point owed before deploy**: a salvage snapshot per protocol rule 2, because the replay
+window will hold ~a day of labels made by the OLD teacher and a symlink revert does not undo them.
+
+---
+
 ## OWED: re-dump the three banked monitor baselines so the provenance gate can FIRE (#442)
 
 **Status: OPEN, blocking nothing, owed at the next maintenance window.** Recorded here
@@ -41868,3 +42261,202 @@ stamps agree — the passing branch. The refusing branch is exercised by
 `tests/test_paired_compare_gate_is_wired.py::test_prov_names_each_outcome_of_a_real_paired_compare[refused]`,
 which drives the real script; on the production path it stays unexercised until two genuinely
 different rulers are compared, which is the point. [[a_gate_that_cannot_fail]]
+
+---
+
+## 2026-08-17 — #440 DECISION (the maintainer): option (c), with (a) as a PRE-COMMITTED follow-up
+
+Answering the open decision from the 2026-08-16 amendment. **Chosen: (c) now — gate on the
+full paired distribution at n=4000 — with (a) (buy ~3.2x the audit set) held as a follow-up
+that fires only on a rule written down BEFORE the arms run, below.** Still nothing launched;
+#440 stays BLOCKED until the two defects below are closed.
+
+Rejected for now: **(b)** lowering the cp cut, because ">300cp" was chosen to mean "where the
+teacher is badly wrong" and a wider cut measures a different question that must not inherit
+this entry's hypothesis [[same_name_different_population]].
+
+### ⚑⚑ DEFECT 1, in my OWN amendment: the 1.7pp resolution was ASSUMED, not measured
+
+The 2026-08-16 amendment computed `half = 1.96*sqrt(d/n)` and quoted **1.7pp** at n=4000. That
+number carries a hidden input: **d = 0.30, the DISCORDANCE rate between the two arms**, which
+was never measured. It cannot be measured from one arm. Recomputed across the plausible range:
+
+| discordance d | half-width at n=4000 |
+|---|---|
+| 0.05 | **±0.69pp** |
+| 0.10 | ±0.98pp |
+| 0.20 | ±1.39pp |
+| 0.30 | ±1.70pp  ← what the amendment quoted |
+| 0.50 | **±2.19pp** |
+
+**A 3.2x spread.** So "the paired half-width is 1.7pp" is not a measured resolution, it is a
+resolution conditional on an unverified assumption — which is the *same* defect the amendment
+was written to correct ("compute the instrument's resolution before setting the threshold").
+I recorded that rule against myself yesterday and then broke it inside the correction.
+Recording it again, in the same place, judged by the same rule.
+
+**Fix, and it costs nothing extra:** the prereg **already runs arm OLD twice** against referee A
+as its reproducibility control. That repeat arm measures **d directly**. Sequencing is therefore
+mandatory and is now part of the gate:
+
+1. Run the repeat arm (OLD vs OLD, referee A). Read the observed discordance `d_obs` and the
+   paired-difference spread.
+2. Compute `half = 1.96*sqrt(d_obs/4000)` from `d_obs`. **Publish it before step 3.**
+3. Choose the pre-committed effect size against that measured half-width, and demonstrate BOTH
+   PASS and KILL land inside the statistic's observed range.
+4. Only then run arm NEW.
+
+A repeat arm that returns `d_obs = 0` means the statistic is degenerate under the null and the
+gate is void — that is a stop, not a green light. (`go nodes N` is deterministic per binary at
+fixed threads, so `d_obs = 0` on OLD-vs-OLD is a live possibility, and it would mean the
+statistic has no null variance to test against on identical binaries.)
+
+### ⚑ DEFECT 2: `cand.sf_soft.top1` is a RANK, not a boolean
+
+Measured on the banked 2000-position dump `data/ruler_ckpt119_20260807/audit_targets_ckpt119_dump.jsonl`:
+
+```
+cand.sf_soft.top1 distinct values: 137, range 0 .. 1000
+   rank 0  n=1291  64.55%      rank 3  n=36   1.80%
+   rank 1  n=31     1.55%      rank 4  n=29   1.45%
+   rank 2  n=29     1.45%      rank 5  n=23   1.15%
+binarised (rank == 0): match rate 0.6455  (1291/2000)
+```
+
+Any McNemar/proportion gate on "top1" is therefore **undefined until the binarisation is
+stated**. The gate now names it explicitly: **`top1_match := (cand.sf_soft.top1 == 0)`**, base
+rate **0.6455**. Writing "top1" alone in a threshold would be the same-name-different-measurement
+failure this ledger keeps logging.
+
+### The (c) statistic, stated exactly
+
+- **Primary:** paired McNemar on `top1_match := (cand.sf_soft.top1 == 0)` over all n=4000,
+  run over the same 2x2 of {referee A adversarial, referee B home} x {arm OLD, arm NEW}, verdict
+  read **only where both referees agree**, INCONCLUSIVE retained as a distinct non-shipping
+  outcome. Effect size set in step 3 above, against the MEASURED half-width.
+- **Secondary, descriptive, explicitly labelled uninformative at this n:** the `>300cp` tail flip
+  count. Its rate is **independently reproduced here at 0.90% (18/2000)**, matching the
+  amendment, so at n=4000 it is ~36 positions and ±17.9pp. Its CI is reported; it decides nothing.
+- **Also reported, not gating:** paired mean `cand.sf_soft.exp` (banked: mean **22.94cp**,
+  sd 69.88, p50 8.8, p95 75.4, p99 262.9). Its resolution needs the paired-difference sd, which
+  the repeat arm also supplies.
+
+### The (a) escalation trigger — pre-committed, written BEFORE any arm runs
+
+Spend the ~3.2x audit-set expansion **iff all three hold**:
+
+1. the full-set primary reads **NULL** (its CI contains 0 at the measured half-width), **and**
+2. the descriptive tail's point estimate favours **NEW**, **and**
+3. that tail direction is **consistent across BOTH referees** (a direction agreed by an
+   adversarial and a home-biased referee is not a single-referee artifact).
+
+Any other combination does **not** buy the resolution. Condition 3 is the load-bearing one: it is
+what stops "the tail hinted at something" from becoming an open-ended compute request, and it is
+cheap because both referees are already in the 2x2. ⚑ **(a) may be spent at most once on this
+question** — if the expanded set is also null, the answer is null and the teacher upgrade is not
+deployed for label quality.
+
+⚑ Deployment remains gated on more than this readout: the upgrade costs a measured **+16.1%
+wallclock per label** with SF already holding 18.3/32 cores, so a PASS is necessary and not
+sufficient — the throughput cost is a separate decision.
+
+**Status: #440 still BLOCKED.** Open before launch: the repeat-arm-first sequencing above, and
+the two `tail_stats.py` / engine-resolution defects already filed on 2026-08-16.
+
+---
+
+## 2026-08-17 — #440 AMENDMENT — **THE MANDATED REPEAT CONTROL READS 0 BY CACHE CONSTRUCTION, AND THE >300cp GATE CANNOT PASS**
+
+Two findings from the independent review of PR #440
+(https://github.com/jjoshua2/DeepFin/pull/440#issuecomment-5312139897), both demonstrated by
+execution, both of which change what this experiment may conclude. Recorded here because the
+prereg above still mandates the step they invalidate.
+
+### ⚑⚑ B5 — the repeat-arm control is guaranteed to read 0, for the WRONG reason
+
+The decision section above makes "run arm OLD **twice** and read the paired flip count between
+the two dumps" a MANDATORY first step, and pre-commits `d_obs = 0` as a stop. The entry
+attributes an expected 0 to `go nodes N` being deterministic per binary at fixed threads.
+
+**That attribution is wrong, and the control is inert.** The reviewer drove `audit_targets.py`
+with a stub engine returning a DIFFERENT cp on every single call: run 2 **never launched the
+engine at all** and returned run 1's rows verbatim, flip count 0. The shallow-SF cache serves
+the second run from the first run's rows. So the control reads 0 whether or not the pipeline is
+deterministic, whether or not the teacher changed, and whether or not the engine is even
+functional.
+
+⇒ **A control that returns the same constant under an engine engineered to disagree with itself
+on every call is measuring the cache, not the variance.** It is the same shape as
+[[a_gate_that_cannot_fail]] and [[never_condition_a_control_on_its_own_outcome]]: the number is
+clean, plausible, and produced by construction. And because `d_obs = 0` is pre-committed as a
+STOP, **the amended prereg's mandatory step 1 is structurally guaranteed to halt the
+experiment** — a false stop rather than a false pass, but still a verdict the instrument could
+not have failed to produce.
+
+**Before this control can run, the repeat MUST bypass the cache** (distinct cache path per
+repeat, or a cache key that includes a run nonce). Until then, `d_obs = 0` establishes NOTHING
+and must not be read as "the readout is noise-free". [[an_exact_command_means_it_was_run]]
+
+### ⚑ B4 — the ±40 gate can KILL but cannot PASS
+
+Independently reproduced off a banked dump
+(`data/ruler_ckpt119_20260807/audit_targets_ckpt119_dump.jsonl`, n=2000): the `>300cp` rate is
+**19/2000 = 0.95%**. Scaled to the prereg's n=4000 that is **~38 positions in the tail on each
+side**. A PASS requires a net movement of **≥40**, which exceeds the entire tail.
+
+⇒ **The gate is one-sided by arithmetic.** KILL (net ≥ +40 blowups) is reachable because the NEW
+arm can add tail positions without bound; PASS (net ≤ −40) requires removing more blowups than
+exist. Any run of this gate as written can only return KILL or INCONCLUSIVE.
+
+This is the third time on this entry that a threshold was set without first measuring the
+instrument's resolution — see the withdrawn "±40 ≈ 2× the repeat noise" claim and the withdrawn
+"±1.7pp paired half-width" above. **The rule is not "be careful with thresholds", it is: compute
+the instrument's resolution and its ATTAINABLE RANGE before writing the number.**
+[[compute_instrument_resolution_before_the_threshold]]
+
+⚑⚑ **THE FIRST VERSION OF THIS PARAGRAPH CITED THE WRONG FILE — inside the amendment written to
+police exactly that.** It reported `18/2000 = 0.90%` against
+`data/ruler_ckpt119_20260807/…`. Re-measured, that file reads **19/2000 = 0.95%**; the 0.90% is
+`scratchpad/canary_512_iter20/adump_ckpt751.jsonl`, a DIFFERENT checkpoint's dump. The two got
+crossed while writing. The conclusion is unchanged (~38 < 40, still one-sided) and the decision
+section's 0.6455 base rate genuinely is ckpt119 — but a number that survives its own correction
+is not thereby verified, and this is the third citation defect on this entry.
+[[diff_the_file_you_measured_against_production]] [[same_name_different_population]]
+
+⇒ The `>300cp` gate is **RETIRED** as this experiment's deciding yardstick.
+
+### ⚑⚑ BUT ITS REPLACEMENT IS NOT YET A YARDSTICK — TWO REASONS, BOTH BLOCKING LAUNCH
+
+The decision section supersedes `>300cp` with McNemar on `top1_match`. **Do not read that as
+resolving B5, and do not read it as runnable.**
+
+1. **McNemar INHERITS the cache defect exactly.** B5 is a defect in the INPUTS, not in the
+   statistic: run 2 is served verbatim from run 1's rows, so McNemar's discordant cells `b` and
+   `c` are both 0 for precisely the reason the paired flip count is 0. The cache bypass mandated
+   in B5 is the ONLY thing that fixes either. (The OLD-vs-NEW arm comparison is unaffected — a
+   different `sf_id` forces re-labelling.)
+2. **It has no implementation.** `grep -rniE "mcnemar"` over `scripts/`, `chess_anti_engine/` and
+   `tests/` returns **zero hits**. ⇒ **Retiring a gate that cannot PASS in favour of a gate that
+   has no command is not progress — it moves "cannot fire" from arithmetic to absence.**
+   [[an_exact_command_means_it_was_run]] [[a_gate_that_cannot_fail]]
+
+   It is close, not far: `--tail-cp 0` already yields exactly McNemar's discordant cells
+   (verified by hand, b=2 / c=1, against the tool's `new-in-B 2, fixed-in-B 1`). What is missing
+   is the statistic itself and a ledger line naming it as an exact command. ⚑ That also RAISES
+   the stakes on `--tail-cp`, which is currently **the one flag in this script with no test** —
+   it would become the deciding flag.
+
+The `>300cp` line survives only as a reported secondary.
+
+### ⚑ N7 — a unit error in my own amendment, corrected
+
+The decision section calls `cand.sf_soft.top1` a RANK. **It is not.** It is deep-SF regret **in
+centipawns**, clipped at `AUDIT_REGRET_CAP_CP = 1000.0`. The correction that motivated that
+sentence (it is not a boolean, so a "match rate" over it is meaningless) still stands; the unit
+named in it does not. Quote **cp, clipped at 1000**, never "rank".
+
+### Status
+
+**#440 remains BLOCKED, now on three counts**: the cache-bypass fix for the repeat control (B5),
+the retirement of the `>300cp` gate in favour of McNemar on `top1_match` (B4), and the two
+`tail_stats.py` / engine-resolution defects filed 2026-08-16. No arm has run; no config changed.
