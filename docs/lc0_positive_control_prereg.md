@@ -456,6 +456,61 @@ No threshold moves. The ±0.392 pp bar, the +2.0 pp effect size, the n=100,000
 resolution point, the four guards and the outcome table are all as originally
 written. This amendment changes only what the rig is able to measure.
 
+## ⚑⚑ AMENDMENT 5 (2026-08-17, written BEFORE any training step): THREE GATES THIS RIG CARRIED BUT COULD NOT ENFORCE
+
+**Still no arm has run and no number from this arm exists.** ⚑ **NO THRESHOLD MOVES
+IN THIS AMENDMENT** — the ±0.392 pp bar, the +2.0 pp effect size, the n=100,000
+resolution point, the four guards and the outcome table are exactly as originally
+written. It changes only what the rig REFUSES.
+
+Found by an independent review of PR #438's own fix commits. Amendment 4 closed the
+blocking defect (a permuted-target negative control read as the primary slope at exit
+0) and the review confirmed that by execution — refusal before the arithmetic, empty
+stdout on a refused pair, a named test that kills the sophisticated mutant. The gap it
+then found is one level up and it is the same gap three times: **the fixes were
+guarded and the fields the fixes depend on were not.**
+
+### 1. THE FIELD THE WHOLE GATE KEYS ON HAD NO WRITER→READER TEST
+Every provenance test hand-banked its own meta dict, so the reader was tested in
+complete isolation from the writer. Renaming the banked key on the WRITER side only
+(`shuffled_target_seed`) left all 61 tests green while every real
+`score --shuffle-targets` artifact read back `None` → labelled "real lc0 targets" →
+zero provenance problems → **the negative control prints the slope at exit 0.** The
+defect Amendment 4 closed, reopened by one token, with a green suite. Closed by
+asserting the field on an artifact the real `cmd_score` wrote.
+
+### 2. THE "NOT WAIVABLE" REFUSAL WAS WAIVABLE FROM THE SCORE SIDE
+`compare` reads the negative-control bar off the artifact, which is right — re-judging
+a banked z against whatever the module constant is at read time answers a question
+nobody asked. But `--negative-control-z` had no ceiling and `score` banked whatever it
+was handed, so `score --shuffle-targets --negative-control-z 1e9` writes an artifact
+whose control sits **41.7σ above the floor** and is recorded as PASSING; `compare`
+then prints the pre-fix slope at exit 0. Measured end-to-end by the reviewer.
+**A bar banked by the run under test is a CLAIM, not a measurement**, so a run gated
+more leniently than `NEGATIVE_CONTROL_Z` is now its own refusal. And the passing
+readout now PRINTS the z and the bar, per this rig's own standard: a gate that
+stopped running looks identical to a gate that ran and passed.
+
+### 3. `valid_control: false` NEVER REACHED THE SCORE ARTIFACT
+`lc0_control_train.py` disqualifies a run launched with `--allow-arch-drift` ("this is
+NOT production's architecture"), `--allow-leak`, no purity receipt, no mid checkpoint,
+or `--steps` under `warmup_steps` — and stamps `valid_control: false` into
+summary.json. `cmd_score` banked twelve meta keys and that was not one of them, so a
+checkpoint **the driver itself disqualified** scored clean and reported as the primary
+slope at exit 0. Amendment 4 established the pattern (bank the provenance, refuse
+before the arithmetic) and stopped at the field it had just created.
+
+`score --summary <run>/summary.json` now banks it (defaulting to the checkpoint's own
+directory), and `compare` refuses `valid_control: false` unwaivably. **An artifact with
+NO validity record is also refused**, waivable by its own `--allow-unrecorded-validity`
+— not by `--allow-shuffled-contrast`, because a waiver that clears more than its name
+says is how a gate becomes a decoration.
+
+⇒ **Operational consequence for this arm:** every `score` invocation must pass
+`--summary`, and any `compare` whose output is quoted must show `neg-control:` on both
+lines and must not have needed `--allow-unrecorded-validity`. A readout carrying that
+banner is not a verdict.
+
 ## What each outcome licenses — pre-committed
 
 - **PASS** ⇒ the training stack and architecture can learn. Effort routes to targets

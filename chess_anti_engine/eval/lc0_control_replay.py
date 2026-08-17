@@ -58,7 +58,32 @@ from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 # read/write intent. Production and the control differ on all four BY DESIGN
 # (the control opens a fixed corpus read-only through a symlink farm), so they
 # are excluded from the comparison rather than allowed to differ inside it.
-PER_RUN_KWARGS = frozenset({"capacity", "shard_dir", "rng", "read_only"})
+PER_RUN_KWARGS: dict[str, str] = {
+    "capacity": (
+        "The control's window is its whole frozen corpus, sized by --rows on "
+        "the driver, while production's is a rolling 1.5M-row window the PID "
+        "and the ingest rate move every iteration. There is no value both can "
+        "hold, so this is excluded from the comparison rather than allowed to "
+        "differ inside it."
+    ),
+    "shard_dir": (
+        "The control opens a symlink farm over a frozen shard list; production "
+        "opens the live session's selfplay_shards directory, which grows and "
+        "is pruned under it. Comparing the two paths would compare two "
+        "machines' directory layouts, not two configurations."
+    ),
+    "rng": (
+        "Seeded per run from --init-seed so an arm is reproducible. Production "
+        "seeds from the trial. Equality here would mean the control could not "
+        "be re-run, which is the opposite of what a control is for."
+    ),
+    "read_only": (
+        "The control NEVER ingests -- the corpus is frozen and its purity "
+        "receipt is the whole basis of the arm. Production ingests every "
+        "iteration. This is the one asymmetry the rig exists to guarantee, so "
+        "it is a class rather than a deviation."
+    ),
+}
 
 # (2) Read straight off `TrialConfig`, exactly as `tune/trainable_init.py` does.
 # ⚑ Through `TrialConfig`, not off the flat dict: `from_dict`'s defaults are what
@@ -80,15 +105,35 @@ CONFIG_KWARGS: dict[str, str] = {
 }
 
 # (3) Production DERIVES it rather than reading a field of the same name.
-DERIVED_KWARGS = frozenset({"input_planes"})
+DERIVED_KWARGS: dict[str, str] = {
+    "input_planes": (
+        "Production derives it from the encoding version rather than reading a "
+        "field of the same name, so there is no TrialConfig key to map. ⚑ NOT "
+        "cosmetic: _pad_x_planes returns early on None, which also disables "
+        "_upgrade_x_planes, _upgrade_target_version and the `stored > target` "
+        "'refusing to truncate encoded inputs' ValueError -- at None the whole "
+        "plane-width safety is off, so the control must set it explicitly."
+    ),
+}
 
 # (4) Production passes nothing, so the constructor default IS production's
 # realized value. Pinned at that default so the comparison still covers them: a
 # default that moves is a production change, and the control must follow it or
 # declare a deviation.
-PRODUCTION_DEFAULTED_KWARGS = frozenset({
-    "sf_gap_priority_signed", "deterministic_refresh",
-})
+PRODUCTION_DEFAULTED_KWARGS: dict[str, str] = {
+    "sf_gap_priority_signed": (
+        "tune/trainable_init.py passes nothing for it, so DiskReplayBuffer's "
+        "own default IS production's realized value and pinning at that default "
+        "keeps the key inside the comparison. A default that moves is a "
+        "production change the control must follow or declare."
+    ),
+    "deterministic_refresh": (
+        "Same shape: production never passes it, so the constructor default is "
+        "what production runs. Pinned rather than excluded, because 'production "
+        "does not set it' is a statement about today's call site, not a "
+        "permanent property of the knob."
+    ),
+}
 
 
 class ControlReplayDrift(RuntimeError):
@@ -264,16 +309,29 @@ def assert_control_matches_live_replay(
 
     Returns the provenance string of whatever it judged against.
 
-    ⚑ An ALLOWED kwarg that does NOT differ is also a failure, exactly as in
-    ``assert_control_matches_live_trainer``: if production moves onto the
-    control's value the deviation has silently become a non-deviation and the
-    reason recorded for it describes nothing.
+    ⚑⚑ THIS FUNCTION DOES **NOT** IMPLEMENT THE TRAINER GUARD'S SECOND HALF,
+    AND IT MUST NOT. ``assert_control_matches_live_trainer`` additionally fails
+    an ALLOWED key that does not differ, because there a deviation production
+    has since adopted is a stale waiver. Here that check would fail EVERY
+    legitimate run: the deviations are applied by the DRIVER *after* this call,
+    so what is compared is the CONFIG's buffer signature against live's, and
+    the two declared deviations are supposed to read identical at this point —
+    the control config carries production's value for them precisely so the
+    driver's override is visible as an override.
 
-    ⚑ The DEVIATIONS are applied by the DRIVER after this check, so what is
-    compared here is the CONFIG's buffer signature against live's. The two
-    declared deviations therefore show up as "listed but does not differ"
-    unless the control config carries production's value for them — which it
-    must, precisely so the override is visible as an override.
+    ⚑ This paragraph used to claim the opposite ("also a failure, exactly as in
+    assert_control_matches_live_trainer"), directly contradicted by the
+    paragraph beneath it, in a module whose subject is values that are accepted
+    and then silently ignored. Independent review of #438 demonstrated the
+    divergence by execution: the same manipulation passes the replay guard
+    silently and raises in the trainer sibling. The sentence is corrected
+    rather than the code, because the code is right and the asymmetry is real.
+
+    The stale-waiver direction IS covered, one level over and at the right
+    granularity: ``test_the_driver_deviations_are_exactly_the_declared_ones``
+    asserts that the set ``apply_control_deviations`` actually CHANGES equals
+    ``LC0_REPLAY_DEVIATIONS`` exactly — both directions, against the pin, on
+    the post-override signature where "does not differ" is meaningful.
     """
     pinned = dict(pin) if pin is not None else LIVE_REPLAY_PIN
     reference, provenance = _reference_signature(live_config, pinned)

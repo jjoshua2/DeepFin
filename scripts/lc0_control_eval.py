@@ -41,12 +41,26 @@ the arithmetic so the number never reaches the screen to be quoted:
   * either artifact IS a negative control (seed not None) -> refuse;
   * either artifact FAILED its own negative-control gate (`negative_control_z`
     above the `negative_control_max_z` that run was gated at) -> refuse, and
-    this one is NOT waivable.
+    this one is NOT waivable;
+  * either artifact was gated MORE LENIENTLY than `NEGATIVE_CONTROL_Z` -> refuse,
+    NOT waivable. The bar is banked by the run itself and `--negative-control-z`
+    has no ceiling, so `score --shuffle-targets --negative-control-z 1e9` wrote
+    an artifact whose control sat 41.7 sigma above the floor and was recorded as
+    PASSING — which turned the refusal above into a decoration. The bar is a
+    CLAIM, not a measurement;
+  * either artifact came from a run the DRIVER DISQUALIFIED (`valid_control:
+    false` in summary.json: `--allow-arch-drift`, `--allow-leak`, no purity
+    receipt, no mid checkpoint, `--steps` under `warmup_steps`) -> refuse, NOT
+    waivable;
+  * either artifact carries NO validity record at all -> refuse, waivable by
+    `--allow-unrecorded-validity`. Absent is not clean.
 
 `--allow-shuffled-contrast` waives the first two, for the one case that wants
-them: deliberately reading the shuffled contrast. It does not waive the third,
-because "I meant to compare the shuffled control" is a statement about intent
-and a failed control is a statement about the RIG.
+them: deliberately reading the shuffled contrast. It does not waive the failed
+control, because "I meant to compare the shuffled control" is a statement about
+intent and a failed control is a statement about the RIG. And it does not waive
+an unrecorded validity either — that has its own flag, so no waiver here clears
+more than its name says.
 
 ⚑⚑ THE NEGATIVE CONTROL'S FLOOR IS **NOT** `E[1/n_legal]`, AND IT IS NOT A
 CONSTANT. `--shuffle-targets` scores each prediction against ANOTHER ROW'S REAL
@@ -253,6 +267,73 @@ def _failed_negative_control(meta: Mapping[str, Any]) -> tuple[bool, float, floa
     return float(z) > bar, float(z), bar
 
 
+def read_training_validity(
+    summary: Path | None, checkpoint: Path | None,
+) -> dict[str, Any]:
+    """The training run's own ``valid_control`` verdict, for banking.
+
+    ⚑ ANNOUNCED FROM WHAT WAS ACTUALLY READ. ``source`` records the path this
+    returned from, or why it returned nothing — an explicit ``--summary`` that
+    does not exist is a hard error rather than a silent fallback, because the
+    operator naming a path and getting the default instead is the shape this
+    module keeps closing.
+
+    With no ``--summary``, the checkpoint's own directory is tried, since
+    ``lc0_control_train.py`` writes ``summary.json`` beside the checkpoints it
+    produces. A miss returns ``valid_control: None``, which ``compare`` refuses
+    unless ``--allow-unrecorded-validity`` is passed.
+    """
+    path: Path | None = None
+    if summary is not None:
+        path = Path(summary)
+        if not path.is_file():
+            raise SystemExit(
+                f"--summary {path} does not exist. Point it at the training "
+                "run's summary.json, or omit it and accept an unrecorded "
+                "validity (which `compare` will refuse by default).",
+            )
+    elif checkpoint is not None:
+        candidate = Path(checkpoint).resolve().parent / "summary.json"
+        path = candidate if candidate.is_file() else None
+    if path is None:
+        return {
+            "valid_control": None, "validity_problems": None,
+            "source": "no summary.json found",
+        }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"--summary {path} is not readable JSON: {exc}") from exc
+    if "valid_control" not in data:
+        raise SystemExit(
+            f"{path} has no `valid_control` field, so it is not a "
+            "lc0_control_train summary. Banking it would record a validity "
+            "this file never claimed.",
+        )
+    return {
+        "valid_control": bool(data["valid_control"]),
+        "validity_problems": list(data.get("validity_problems") or []),
+        "source": str(path),
+    }
+
+
+def _negative_control_readout(meta: Mapping[str, Any]) -> str:
+    """The z and the bar, for the PASSING path's printout.
+
+    ⚑ This file's own standard, applied to itself: "PRINTED, not merely
+    checked — a gate that stopped running looks identical to a gate that ran
+    and passed." `compare` printed the target-provenance label and then judged
+    the negative control in silence, so a reader of a passing readout could not
+    see that the second gate ran at all, let alone what bar it used. Both
+    numbers, on the line the verdict is read off.
+    """
+    z = meta.get("negative_control_z")
+    if z is None:
+        return "none (real targets)"
+    bar = float(meta.get("negative_control_max_z", NEGATIVE_CONTROL_Z))
+    return f"z={float(z):+.2f} vs bar {bar:g}"
+
+
 def score_provenance_problems(
     meta_a: Mapping[str, Any], meta_b: Mapping[str, Any],
 ) -> tuple[list[str], list[str]]:
@@ -300,6 +381,63 @@ def score_provenance_problems(
                 "A rig that agrees with targets it was not shown manufactures "
                 "agreement, so no verdict off it is a verdict in either "
                 "direction — including this one.",
+            )
+  # ⚑⚑ AND THE BAR ITSELF IS AN INPUT, WHICH MAKES THE "UNWAIVABLE" REFUSAL
+  # WAIVABLE FROM THE SCORE SIDE. Reading the bar off the artifact is right —
+  # re-judging a banked z against whatever this module's constant happens to be
+  # at read time answers a question nobody asked — but `--negative-control-z`
+  # has no ceiling and `cmd_score` banks whatever it is handed. Independent
+  # review of #438 demonstrated it end-to-end: `score --shuffle-targets
+  # --negative-control-z 1e9` writes an artifact whose control sits 41.7 sigma
+  # above this module's floor and is recorded as PASSING, and `compare` then
+  # prints the pre-fix slope at exit 0. The refusal above is doing its job
+  # perfectly; it is just being asked a question whose answer was chosen by the
+  # run under test. A run gated more leniently than NEGATIVE_CONTROL_Z is
+  # therefore its own refusal — the bar is the claim, not the measurement.
+    for label, meta in (("--a", meta_a), ("--b", meta_b)):
+        if meta.get("negative_control_z") is None:
+            continue
+        bar = float(meta.get("negative_control_max_z", NEGATIVE_CONTROL_Z))
+        if bar > NEGATIVE_CONTROL_Z:
+            unwaivable.append(
+                f"{label} was gated MORE LENIENTLY than this module's floor: "
+                f"field `negative_control_max_z` reads {bar:g} against "
+                f"NEGATIVE_CONTROL_Z {NEGATIVE_CONTROL_Z:g}. The bar is banked "
+                "by the run itself, so a loose `--negative-control-z` turns the "
+                "negative-control refusal into a decoration: the control can "
+                "sit arbitrarily far above the floor and still be recorded as "
+                "passing. Re-score with the standard bar.",
+            )
+  # ⚑⚑ THE FIELD THIS PR ITSELF INTRODUCED, ONE FILE SHORT OF THE GATE THAT
+  # NEEDS IT. `lc0_control_train.py` computes `validity_problems` and stamps
+  # `valid_control: false` into summary.json for a run launched with
+  # `--allow-arch-drift` ("this is NOT production's architecture"), `--allow-leak`,
+  # no purity receipt, no mid checkpoint, or `--steps` below `warmup_steps`.
+  # `cmd_score` banked twelve meta keys and none of them was that one, so a
+  # checkpoint from a run THE DRIVER ITSELF DISQUALIFIED scored clean and
+  # reported as the primary slope at exit 0. The pattern is established right
+  # above — bank the provenance, refuse before the arithmetic — and it stopped
+  # at the field it had just created. Independent review of #438.
+    for label, meta in (("--a", meta_a), ("--b", meta_b)):
+        valid = meta.get("valid_control")
+        if valid is False:
+            problems = meta.get("validity_problems") or ["<not recorded>"]
+            unwaivable.append(
+                f"{label} was produced by a run THE DRIVER DISQUALIFIED: field "
+                f"`valid_control` reads false. Recorded reason(s): "
+                + "; ".join(str(p) for p in problems)
+                + ". A run that is not a valid control cannot supply either "
+                "side of the arm's primary comparison.",
+            )
+        elif valid is None:
+            unwaivable.append(
+                f"{label} carries NO validity record: field `valid_control` is "
+                "absent, so this readout cannot tell a clean run from one "
+                "launched with --allow-arch-drift, --allow-leak, no purity "
+                "receipt, or too few steps. Re-score with --summary pointing "
+                "at the training run's summary.json, or pass "
+                "--allow-unrecorded-validity to state that you know it is "
+                "unrecorded.",
             )
     return waivable, unwaivable
 
@@ -473,6 +611,9 @@ def cmd_score(args: argparse.Namespace) -> int:
         Path(args.config), args.checkpoint, args.device, seed=int(args.seed),
     )
     shuffle_seed = int(args.shuffle_seed) if args.shuffle_targets else None
+    validity = read_training_validity(args.summary, args.checkpoint)
+    print(f"[score] valid_control {validity.get('valid_control')!r} "
+          f"(from {validity.get('source')})")
     hits, tied, predicted, target = _score_rows(
         trainer, args.shards, wanted, batch_size=int(args.batch_size),
         shuffle_targets_seed=shuffle_seed,
@@ -498,6 +639,13 @@ def cmd_score(args: argparse.Namespace) -> int:
   # file the random-init floor cannot be reproduced from its own metadata.
             "init_seed": int(args.seed),
             "shuffled_targets_seed": shuffle_seed,
+  # ⚑ The TRAINING run's own verdict on itself, carried into the score so
+  # `compare` can refuse a checkpoint the driver disqualified. `valid_control`
+  # is None when no summary was found, which `compare` treats as a refusal
+  # waivable by `--allow-unrecorded-validity` -- absent is not clean.
+            "valid_control": validity.get("valid_control"),
+            "validity_problems": validity.get("validity_problems"),
+            "validity_source": validity.get("source"),
             "rows": int(hits.size),
             "top1_agreement": rate,
             "tied_argmax_rows": int(tied),
@@ -554,6 +702,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
     if args.allow_shuffled_contrast and waivable:
         print("⚑⚑ --allow-shuffled-contrast: " + " | ".join(waivable))
         waivable = []
+  # ⚑ Scoped to the UNRECORDED case by matching the message this flag names.
+  # `valid_control: false` -- a run the driver disqualified -- stays in
+  # `unwaivable` and no flag in this file clears it.
+    if args.allow_unrecorded_validity:
+        unrecorded = [p for p in unwaivable if "carries NO validity record" in p]
+        if unrecorded:
+            print("⚑⚑ --allow-unrecorded-validity: " + " | ".join(unrecorded))
+            unwaivable = [p for p in unwaivable if p not in unrecorded]
     refusals = unwaivable + waivable
     if refusals:
         print(
@@ -592,9 +748,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
   # observation in the output a reader can point at, otherwise a gate that
   # stopped running looks identical to a gate that ran and passed.
     print(f"A  {meta_a.get('checkpoint')}   top-1 {rate_a:.6f}   "
-          f"targets: {target_provenance(meta_a)[0]}")
+          f"targets: {target_provenance(meta_a)[0]}   "
+          f"neg-control: {_negative_control_readout(meta_a)}")
     print(f"B  {meta_b.get('checkpoint')}   top-1 {rate_b:.6f}   "
-          f"targets: {target_provenance(meta_b)[0]}")
+          f"targets: {target_provenance(meta_b)[0]}   "
+          f"neg-control: {_negative_control_readout(meta_b)}")
     print(f"paired rows          {n}")
     print(f"discordant  b(A only)={b}  c(B only)={c}  "
           f"discordance={(b + c) / n:.4f}")
@@ -671,6 +829,13 @@ def build_parser() -> argparse.ArgumentParser:
     score = sub.add_parser("score")
     score.add_argument("--config", type=Path, default=Path("configs/lc0_positive_control.yaml"))
     score.add_argument("--frozen", type=Path, required=True)
+    score.add_argument(
+        "--summary", type=Path, default=None,
+        help="the TRAINING run's summary.json, whose `valid_control` says "
+             "whether the driver disqualified that run (--allow-arch-drift, "
+             "--allow-leak, no purity receipt, no mid checkpoint, too few "
+             "steps). Banked into the score so `compare` can refuse it. "
+             "Defaults to <checkpoint dir>/summary.json when that exists.")
     score.add_argument("--shards", type=Path, nargs="+", required=True)
     score.add_argument("--checkpoint", type=Path, default=None)
     score.add_argument("--out", type=Path, required=True)
@@ -712,6 +877,13 @@ def build_parser() -> argparse.ArgumentParser:
              "you re-derived the bar at the n you have.",
     )
     compare.add_argument("--allow-underpowered", action="store_true")
+    compare.add_argument(
+        "--allow-unrecorded-validity", action="store_true",
+        help="proceed when a score file carries no `valid_control` field. ⚑ It "
+             "does NOT waive `valid_control: false` -- a run the driver "
+             "disqualified stays refused. Its own flag rather than a clause of "
+             "--allow-shuffled-contrast, so no waiver waives more than its "
+             "name says.")
     compare.add_argument(
         "--allow-shuffled-contrast", action="store_true",
         help="⚑⚑ compare artifacts whose `shuffled_targets_seed` differ, or "

@@ -609,7 +609,19 @@ class SaveMidBudgetCheckpoint:
         _exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
-        self.trainer._run_optimizer_step = self._original
+  # ⚑ DELETE the instance attribute rather than rebinding to the original.
+  # Rebinding leaves a permanent per-instance slot holding a bound method --
+  # a reference cycle, and a trainer that no longer resolves the method through
+  # its CLASS, so a later monkeypatch of the class would not be seen. `del`
+  # restores the object to the state it was in before the wrapper.
+  #
+  # ⚑ `pop`, not `del`: `__enter__` returns EARLY without wrapping when
+  # `at_step <= 0` (the `--mid-checkpoint-frac 0` path that disables the
+  # feature), so the attribute may never have been set. A bare `del` there
+  # raises AttributeError out of `__exit__` and takes down the whole run --
+  # measured: 18 driver tests went red on exactly that. A cleanup path that
+  # can fail on the DISABLED configuration is worse than the cycle it fixes.
+        self.trainer.__dict__.pop("_run_optimizer_step", None)
 
 
 def _metric_fields(metrics: Any, predicate: Any) -> list[tuple[str, Any]]:
@@ -666,7 +678,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--allow-leak", action="store_true",
-        help="⚑ downgrade the LAUNCH guards (0c, 1 and 2) to a banner so the "
+        help="⚑ downgrade the LAUNCH guards (0c, 0d, 1 and 2) to a banner so the "
              "run reaches the REALIZED per-step guard and that guard can be "
              "observed raising. It does NOT skip the realized guard. The run "
              "is NOT a valid control.",

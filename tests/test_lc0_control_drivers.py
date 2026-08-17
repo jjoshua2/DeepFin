@@ -1335,8 +1335,13 @@ def _scores(path: Path, hits: np.ndarray, *, checkpoint: str | None = None) -> P
         path,
         row_ids=np.array([f"id{i:04d}" for i in range(hits.size)], dtype="U32"),
         hit=hits.astype(np.uint8),
-        meta=np.array([json.dumps({"checkpoint": checkpoint, "rows": int(hits.size)})],
-                      dtype=object),
+  # `valid_control: True` for the same reason as in `_paired_scores`: these
+  # fixtures exercise the ARITHMETIC and the resolution bar, so the validity
+  # refusal must not stand in front of them. Its own gate is pinned separately.
+        meta=np.array([json.dumps({
+            "checkpoint": checkpoint, "rows": int(hits.size),
+            "valid_control": True,
+        })], dtype=object),
         allow_pickle=True,
     )
     return path
@@ -1415,7 +1420,11 @@ def test_compare_refuses_unpaired_score_files(
     np.savez_compressed(
         b, row_ids=np.array([f"other{i}" for i in range(10)], dtype="U32"),
         hit=np.ones(10, dtype=np.uint8),
-        meta=np.array([json.dumps({"checkpoint": None})], dtype=object),
+  # `valid_control` so the validity refusal — which runs first, correctly, and
+  # would otherwise mask this one — does not stand in front of the row-pairing
+  # message this test is about.
+        meta=np.array([json.dumps({"checkpoint": None, "valid_control": True})],
+                      dtype=object),
         allow_pickle=True,
     )
     assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
@@ -1531,6 +1540,17 @@ def test_score_exits_one_when_the_negative_control_does_not_collapse(
   # its own gate, and it cannot know which bar this run was gated at unless the
   # run wrote it down.
     assert meta["negative_control_max_z"] == pytest.approx(5.0)
+  # ⚑⚑ THE FIELD THE WHOLE GATE KEYS ON, ASSERTED END-TO-END. Every provenance
+  # test below hand-banks its own meta dict, so the READER was tested in
+  # complete isolation from the WRITER — and an independent review of this PR
+  # measured what that costs: renaming this key on the writer side ONLY
+  # (`shuffled_target_seed`) left all 61 tests green while every real
+  # `score --shuffle-targets` artifact read back None, `target_provenance`
+  # labelled it "real lc0 targets", `score_provenance_problems` returned empty,
+  # and the negative control printed the slope at exit 0. That is finding
+  # 3791327309 reopened, with a green suite. One line closes it, and it has to
+  # live HERE, on an artifact the real `cmd_score` wrote.
+    assert meta["shuffled_targets_seed"] == 0
 
 
 # ── compare: the NEGATIVE-CONTROL metadata it already loads ───────────────────
@@ -1551,6 +1571,15 @@ def _paired_scores(
     b = a.copy()
     b[rng.choice(np.flatnonzero(a == 0), size=120, replace=False)] = 1
     b[rng.choice(np.flatnonzero(a == 1), size=80, replace=False)] = 0
+  # ⚑ `valid_control: True` is the DEFAULT here so each test below isolates the
+  # one refusal it is about. `compare` refuses an artifact with no validity
+  # record at all, which is correct and is pinned by its own test — but if that
+  # refusal fired in every fixture, the shuffled-provenance tests would pass for
+  # the wrong reason and a regression in the provenance gate would be invisible
+  # behind an unrelated green. Callers that mean to test the validity gate
+  # override it explicitly.
+    meta_a = {"valid_control": True, **meta_a}
+    meta_b = {"valid_control": True, **meta_b}
 
     def write(path: Path, hits: np.ndarray, meta: dict[str, Any]) -> Path:
         np.savez_compressed(
@@ -1672,6 +1701,123 @@ def test_an_artifact_predating_the_provenance_field_still_compares(
     still apply to it rather than it being refused outright."""
     a, b = _paired_scores(tmp_path, meta_a={"checkpoint": "a"}, meta_b={"checkpoint": "b"})
     assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 0
+
+
+def test_compare_refuses_a_checkpoint_the_driver_disqualified(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ THE FIELD THIS PR CREATED, ONE FILE SHORT OF THE GATE THAT NEEDS IT.
+
+    `lc0_control_train.py` stamps `valid_control: false` for a run launched with
+    `--allow-arch-drift` ("this is NOT production's architecture"),
+    `--allow-leak`, no purity receipt, no mid checkpoint, or `--steps` under
+    `warmup_steps`. `cmd_score` banked twelve meta keys and that was not one of
+    them, so a checkpoint the driver itself disqualified scored clean and
+    reported as the primary slope at exit 0. Found by independent review of
+    #438: the PR establishes the pattern — bank the provenance, refuse before
+    the arithmetic — and stopped at the field it had just introduced.
+
+    NOT waivable: `--allow-unrecorded-validity` covers "no record", not "the
+    driver said no".
+    """
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "a"},
+        meta_b={"checkpoint": "b", "valid_control": False,
+                "validity_problems": ["--allow-arch-drift: NOT production's net"]},
+    )
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b),
+        "--allow-unrecorded-validity", "--allow-shuffled-contrast",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert "THE DRIVER DISQUALIFIED" in captured.err
+    assert "--allow-arch-drift" in captured.err, "the recorded reason must survive"
+    assert "delta" not in captured.out, (
+        "the slope must not be printed for a disqualified checkpoint"
+    )
+
+
+def test_compare_refuses_an_artifact_with_no_validity_record_but_it_is_waivable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Absent is not clean — and the waiver has its OWN name.
+
+    A score file with no `valid_control` cannot tell a clean run from one
+    launched with `--allow-leak`, so the default is a refusal. It is waivable,
+    because artifacts predating the field exist and reading one is a legitimate
+    (declared) choice; it is NOT waivable by `--allow-shuffled-contrast`,
+    because a waiver that clears more than its name says is how a gate becomes
+    a decoration.
+    """
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a", "valid_control": None},
+        meta_b={"checkpoint": "b"},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
+    assert "carries NO validity record" in capsys.readouterr().err
+    # The unrelated waiver must NOT clear it.
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-shuffled-contrast",
+    ]) == 1
+    capsys.readouterr()
+    # Its own flag does, and says so.
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-unrecorded-validity",
+    ]) == 0
+    assert "--allow-unrecorded-validity:" in capsys.readouterr().out
+
+
+def test_compare_refuses_a_run_gated_more_leniently_than_the_module_floor(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ THE "UNWAIVABLE" REFUSAL WAS WAIVABLE FROM THE SCORE SIDE.
+
+    Reading the bar off the artifact is right — re-judging a banked z against
+    whatever this module's constant is at read time answers a question nobody
+    asked. But `--negative-control-z` had no ceiling and `cmd_score` banked
+    whatever it was handed, so `score --shuffle-targets --negative-control-z
+    1e9` wrote an artifact whose control sat 41.7 sigma above the floor and was
+    recorded as PASSING, and `compare` then printed the pre-fix slope at exit 0.
+    Measured by the independent reviewer of #438, end-to-end.
+
+    The bar is a CLAIM, not a measurement, so a run gated more leniently than
+    `NEGATIVE_CONTROL_Z` is its own refusal.
+    """
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a"},
+        meta_b={"checkpoint": "b", "negative_control_z": 41.7,
+                "negative_control_max_z": 1e9},
+    )
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-shuffled-contrast",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert "MORE LENIENTLY" in captured.err
+    assert "delta" not in captured.out
+
+
+def test_the_passing_readout_shows_the_negative_control_gate_it_judged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """This file's own standard, applied to itself.
+
+    "⚑ PRINTED, not merely checked ... a gate that stopped running looks
+    identical to a gate that ran and passed" — `compare` printed the
+    target-provenance label and then judged the negative control in silence, so
+    a reader of a PASSING readout could not see that the second gate ran, let
+    alone at what bar.
+    """
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "a", "negative_control_z": 1.25,
+                "negative_control_max_z": 5.0},
+        meta_b={"checkpoint": "b"},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 0
+    out = capsys.readouterr().out
+    assert "neg-control: z=+1.25 vs bar 5" in out
+    assert "neg-control: none (real targets)" in out
 
 
 def test_compare_refuses_a_zero_discordance_comparison(

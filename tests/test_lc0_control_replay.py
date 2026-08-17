@@ -33,9 +33,11 @@ from chess_anti_engine.eval.lc0_control_arch import (
 )
 from chess_anti_engine.eval.lc0_control_replay import (
     CONFIG_KWARGS,
+    DERIVED_KWARGS,
     LC0_REPLAY_DEVIATIONS,
     LIVE_REPLAY_PIN,
     PER_RUN_KWARGS,
+    PRODUCTION_DEFAULTED_KWARGS,
     ControlReplayDrift,
     apply_control_deviations,
     assert_buffer_kwargs_are_classified,
@@ -167,7 +169,7 @@ def test_every_disk_replay_buffer_parameter_is_classified() -> None:
     assert_buffer_kwargs_are_classified()
     parameters = set(inspect.signature(DiskReplayBuffer.__init__).parameters) - {"self"}
     assert set(CONFIG_KWARGS) <= parameters
-    assert parameters >= PER_RUN_KWARGS
+    assert parameters >= set(PER_RUN_KWARGS)
 
 
 def test_a_new_buffer_parameter_breaks_the_classification(
@@ -205,6 +207,78 @@ def test_every_declared_deviation_is_a_real_buffer_kwarg() -> None:
     assert set(LC0_REPLAY_DEVIATIONS) <= parameters
     for key, reason in LC0_REPLAY_DEVIATIONS.items():
         assert len(reason) > 80, f"{key}'s recorded reason is a placeholder"
+
+
+def test_EVERY_exclusion_class_costs_a_written_reason_not_just_deviations() -> None:
+    """⚑⚑ THE MODULE'S OWN DOOR, LEFT OPEN. Found by independent review of #438.
+
+    `assert_buffer_kwargs_are_classified` refuses a buffer kwarg that is in no
+    class — but three of the four classes were bare frozensets, so the cheapest
+    way to make that gate green was to type the new knob's name into
+    `PER_RUN_KWARGS` and move on. One word, no justification, and the control
+    then silently takes the constructor default with no pin able to see it:
+    verbatim the defect this module exists to close, restored through the
+    module's own door. The reviewer demonstrated it — a real new
+    `DiskReplayBuffer.__init__` parameter plus its name in `PER_RUN_KWARGS`
+    left the whole suite green.
+
+    Only `LC0_REPLAY_DEVIATIONS` charged a price for an entry. Now all four do.
+    A written reason is not ceremony here: it is the difference between a
+    maintainer DECIDING that a knob is per-run and a maintainer SILENCING a red
+    gate, and those two look identical in a frozenset.
+
+    ⚑ The 80-character floor is not about prose quality — it is the shortest
+    thing that cannot be typed accidentally while clearing a failure.
+    """
+    classes = {
+        "PER_RUN_KWARGS": PER_RUN_KWARGS,
+        "DERIVED_KWARGS": DERIVED_KWARGS,
+        "PRODUCTION_DEFAULTED_KWARGS": PRODUCTION_DEFAULTED_KWARGS,
+        "CONFIG_KWARGS": CONFIG_KWARGS,
+        "LC0_REPLAY_DEVIATIONS": LC0_REPLAY_DEVIATIONS,
+    }
+    for name, mapping in classes.items():
+        assert isinstance(mapping, dict), (
+            f"{name} is not a mapping. A bare set lets a knob be classified "
+            "with one word and no reason, which is how this gate gets silenced "
+            "rather than satisfied."
+        )
+        if name == "CONFIG_KWARGS":
+            # CONFIG_KWARGS maps kwarg -> TrialConfig FIELD NAME, not to prose:
+            # its justification is that the field exists and production reads
+            # it, which `test_the_signature_reads_trialconfig_defaults_not_a_
+            # local_guess` checks by execution. A reason string here would be
+            # decoration; the field name is the stronger claim.
+            continue
+        for key, reason in mapping.items():
+            assert len(reason) > 80, (
+                f"{name}[{key!r}]'s recorded reason is a placeholder "
+                f"({len(reason)} chars). Say why this kwarg is excluded from "
+                "the production comparison, or do not exclude it."
+            )
+
+
+def test_the_classes_are_disjoint() -> None:
+    """A kwarg in two classes is classified by whichever is read first.
+
+    `assert_buffer_kwargs_are_classified` unions them, so a duplicate passes
+    coverage while the two entries can carry contradictory reasons — and the
+    one that governs behaviour depends on `production_buffer_kwargs`' iteration
+    order rather than on anything written down.
+    """
+    classes = {
+        "PER_RUN_KWARGS": set(PER_RUN_KWARGS),
+        "DERIVED_KWARGS": set(DERIVED_KWARGS),
+        "PRODUCTION_DEFAULTED_KWARGS": set(PRODUCTION_DEFAULTED_KWARGS),
+        "CONFIG_KWARGS": set(CONFIG_KWARGS),
+    }
+    seen: dict[str, str] = {}
+    for name, keys in classes.items():
+        for key in keys:
+            assert key not in seen, (
+                f"{key!r} is in both {seen[key]} and {name}"
+            )
+            seen[key] = name
 
 
 def test_the_driver_deviations_are_exactly_the_declared_ones() -> None:
