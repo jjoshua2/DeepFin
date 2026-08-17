@@ -57123,3 +57123,67 @@ the other side, and it is the price of the arm, priced explicitly.
 - ⚑ **The loss weight `w` is still entirely uncalibrated** and the exposed/unexposed
   purity split (#199, 5.23% exposed) is still unmeasured. F's margin is provisional on
   both.
+
+### 2026-08-17 — ARM F production cost + `w` calibration: COST IS ~FREE, `w` = 0.20 @ tau 0.15
+
+Rigs: `scratchpad/sfpolicy_compare/armF_coverage.py` (60 live shards, 116,310 rows),
+`armF_cost_and_w.py` (iter-190 ckpt, live shards), `test_armf_semantics.py` +
+`.mut_armf/run.py` (8 hand-built checks, **8/8 mutants killed**).
+
+**⚑ NO NEW SHARD FIELD, NO NEW SF CALL.** Arm F is recoverable from `sf_p0_regret`
+ALONE, which every batch already carries:
+```
+top1 = argmin regret over legal
+F    = {top1} u {m : regret_m <= delta/CAP  AND  regret_m < regret[argmax p]}
+```
+The `regret <= delta/CAP` test by itself excludes unsurfaced AND illegal moves, because
+`_build_sf_p0_regret_vector` (finalize.py:1281) fills both with
+`default = (worst_surfaced + 1)/2`, which is **>= 0.5 always** while `delta/CAP = 0.02`
+at delta=20cp. Read off the source, not assumed.
+
+**COVERAGE — measured 22.02%** (25,612 of 116,310 rows; matches the banked 21.7%).
+Mean 5.57 surfaced moves per covered row (MultiPV 6). ⇒ **we already compute this label
+on 22% of rows every iteration and multiply it by `w_sf_own_regret: 0.0`.** Arm F at
+current coverage costs ZERO games/day: no extra SF, no extra selfplay, no new field.
+
+**COST — 0.95 ms marginal, on a 1697.8 ms production step = 0.056%.**
+Benched as fwd + bwd-INTO-LOGITS on a standalone leaf at the production batch (512),
+which is the correct marginal: the net's own backward is shared and unchanged whether
+or not F is in the loss. Policy CE on the same bench is 0.51 ms. Production ms/step
+from progress.csv iters 151-190: median 345.5 s train / 203.5 steps.
+
+**`w` — by gradient-norm matching, NOT guessed.** The direction rig scores DIRECTIONS
+and is scale-free by construction, so it cannot set `w`. Instead: `||grad_params(term)||
+/ ||grad_params(policy CE)||` at w=1, on real batches through the real iter-190 net
+(bf16 autocast, grad batch 192, 6 batches).
+
+| term | ratio @ w=1 | w for 5% | w for 10% | w for 20% |
+|---|---|---|---|---|
+| A (existing, retired) | 0.580 | 0.086 | 0.173 | 0.345 |
+| F delta=20 tau=0.05 | 0.200 | 0.250 | 0.500 | 0.999 |
+| F delta=20 tau=0.10 | 0.341 | 0.147 | 0.293 | 0.586 |
+| **F delta=20 tau=0.15** | **0.499** | **0.100** | **0.200** | 0.400 |
+| F delta=20 tau=0.25 | 0.836 | 0.060 | 0.120 | 0.239 |
+| F delta=20 tau=0.35 | 1.024 | 0.049 | 0.098 | 0.195 |
+
+⇒ **SHIP VALUES: delta = 20 cp, tau = 0.15, w = 0.20** (a 10% share of the policy CE
+parameter gradient). The share is vs the policy CE specifically -- the term F competes
+with, both training `policy_own` -- not vs the total loss.
+
+⚑ **tau and w are NOT redundant.** tau sets WHERE the term fires (and therefore the
+do-no-harm profile, 3f1ad5d39); w sets HOW HARD. Choosing tau on do-no-harm and then w
+by norm-matching is the correct decomposition; reading the ratio table alone would pick
+tau to hit a magnitude and silently change which rows are touched.
+
+**MUTATION RESULT — the first 5 checks were VACUOUS for 3 of 8 mutants**, and all three
+gaps were real semantics, not test noise:
+- *drop the unconditional top1* survived because top1 is re-selected by the window
+  whenever our pick differs; it only matters when our pick IS top1 AND `p < tau`.
+- *`<=` instead of `<` on better-than-ours* survived because the tied move sat 50cp from
+  best, so the WINDOW rejected it before the tie clause ran. cp scores are integer-
+  quantised, so in production the tie is INSIDE the window and `<=` would floor a move
+  merely EQUAL to ours -- a direct do-no-harm violation.
+- *raw `delta_cp` instead of `delta_cp/CAP`* survived because the better-than-ours clause
+  happened to filter the same set on those rows.
+Cases 6-8 were added to target each; 8/8 now killed. Same lesson as
+`new_tests_here_are_vacuous_until_mutated`.
