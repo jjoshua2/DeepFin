@@ -55864,3 +55864,99 @@ targets — **what we train ON**.
 Two engines, two methods, agreeing at **~2500-2650**; vs SF ~3700 that is **~1100-1200 Elo**,
 not ~2500. ⚑ Handicapped `UCI_Elo` is non-linear so 2537 is SOFT; the 0/200 is the hard number.
 ⇒ 400 Elo is **a third of the whole distance**, which makes the pretrain bet proportionate.
+
+## 2026-08-17 ⚑⚑ LIVE REGRESSION — THE MCTS SIM RAMP HAS RUN **BACKWARDS** (256 -> 100) SINCE 2026-08-12, AND IT VOIDS THE "SEARCH IS FROZEN" INVARIANT
+
+Found from Josh's domain knowledge, not from an instrument: *"katago ... found a huge improvement
+in speed from alphazero where they started with leela go by using less nodes at beginning and
+scaling up over time."* Checking whether we do that surfaced the opposite.
+
+### THE MECHANISM
+`progressive_mcts` defaults **True** and is NOT settable from yaml (`trial_config.py:233`,
+`run.py:620`). `_resolve_sims` (`trainable_config_ops.py:37`) calls
+`progressive_mcts_simulations(trainer.step, start=mcts_start_simulations,
+max_sims=mcts_simulations, ramp_steps=mcts_ramp_steps, exponent=mcts_ramp_exponent)`, which
+linearly interpolates `s0 + (s1 - s0) * (min(1, step/ramp_steps) ** exponent)`. Neither
+`mcts_ramp_steps` nor `mcts_ramp_exponent` is in the live yaml ⇒ defaults **10_000** and **2.0**.
+
+Live yaml: `mcts_start_simulations: 256`, `mcts_simulations: 100` ⇒
+
+| step | realized sims |
+|---|---|
+| 0 | **256** |
+| 2,500 | 246 |
+| 5,000 | 217 |
+| 7,500 | 168 |
+| >=10,000 | **100** |
+
+At ~118 steps/iter, 10,000 steps ~= **85 iterations**. The function's own docstring says
+*"Progressively ramp the MCTS simulation budget **as training improves**"* with `start` initial
+and `max_sims` final — the design assumes `start < max_sims`. **We have inverted it.**
+
+### THE CAUSE — a one-sided edit that switched on a dormant mechanism
+`git log -G"mcts_simulations: "` on the yaml. **Every prior revision kept the two EQUAL**, with
+the comment `# Full budget from start (KataGo-style: 75% full, 25% fast)`: 64/64 (`88093e934`),
+100/100 (`30d7d4711`), 128/128 (`69e59d8d5`), 256/256 (`6124f6ff5`). Then:
+
+```
+e650bb85f  2026-08-12  "live yaml: sims 256->100, topk 32->16 (throughput rebalance, prereg 486645238)"
+  -  mcts_simulations: 256
+  +  mcts_simulations: 100        <- changed
+     mcts_start_simulations: 256  <- LEFT PINNED
+```
+
+⇒ The ramp was **deliberately inert for the whole project history** because start == end. One
+number moved and **a dormant descending ramp switched on.** And the pin's comment still reads
+**"⚑ PIN. Inert ONLY because it equals `mcts_simulations`."** — false since 2026-08-12.
+Textbook signature defect, in the documentation layer: the comment asserts the state that the
+edit removed. [[a_counter_is_not_the_mechanism_behind_it]] one level over --
+**the comment was the only thing anyone read, and it was describing the pre-edit world.**
+
+### CONSEQUENCES, worst first
+1. **⚑⚑ IT VOIDS THE "SEARCH CONFIG IS FROZEN" INVARIANT.** CLAUDE.md makes `wdl_regret`
+   readable as a NET signal *only while the search config is FROZEN*, "frozen since 2026-08-09",
+   and states that touching `mcts_simulations` VOIDS the series and needs a fresh baseline. But
+   realized sims are a FUNCTION OF `trainer.step` — so for the first 10,000 steps of every fresh
+   start since 08-12, **search changes every iteration**. Every regret reading over such a window
+   carries a search step, which is the exact contamination the ledger documents for
+   `gumbel_c_scale` (+239.5 Elo of search gain read as net progress).
+2. **THE POLICY TARGET DEGRADES ACROSS THE RAMP.** 256-sim targets falling to 100-sim over
+   ~85 iterations — inverted from KataGo, and applied precisely in the phase AZ's published chess
+   curve shows its steepest gain (rapid to ~50k steps, fast to ~200k, flat after).
+3. **TWO RESTARTS OF THE SAME CONFIG ARE DIFFERENT AGENTS.** A resumed restart preserves `step`,
+   lands past the ramp, runs flat at 100. A `--fresh` restart resets `step` and re-runs 256->100.
+   ⇒ cross-restart search comparisons since 08-12 are invalid, and this is a NEW reason (distinct
+   from PID re-injection) that fresh-vs-resumed are not comparable.
+4. **The intended throughput saving was partly not delivered** — early iterations ran up to 256
+   sims, not the 100 the "throughput rebalance" priced.
+5. **CHECK, do not assume: `gumbel_target_max_visit_cap: 5`'s justification may be stale.** Its
+   yaml comment reasons from *"the **256-sim** survivor accrues max_visit 56 (schedule
+   1,3,7,15,30) and a 50-sim search accrues 5"*. That arithmetic was written for 256 sims. NOT
+   verified at 100 — flagged, not claimed.
+
+### THE TWO FIXES ARE DIFFERENT THINGS — do not conflate them
+- **(a) HYGIENE, not an experiment:** `mcts_start_simulations: 100`, restoring the inertness that
+  every revision before 08-12 intended. Stops an undetected 5-day regression and re-arms the
+  frozen-search invariant. Restart-gated. Needs no prereg because it restores documented intent.
+- **(b) THE KATAGO ARM, needs a prereg:** `mcts_start_simulations: 32` for a genuine UPWARD ramp
+  32 -> 100. This is the actual KataGo/Leela speedup Josh described, and Danihelka's Gumbel
+  MuZero results (9x9 Go, n=32 and n=200) show Gumbel getting policy improvement at n=32 — so
+  cheap early nodes are defensible in a way they were not for AZ's 800-sim PUCT.
+  ⚑ (b) must be judged with the frozen-search rule EXPLICITLY suspended for the ramp window; a
+  ramping search means regret is not a net signal there, by our own rule.
+
+### ⚑ CORRECTIONS TO MY OWN REASONING THIS SESSION — three in a row, all fixed by Josh's domain knowledge
+1. **"~26 GPU-years behind AlphaZero"** — WRONG. It priced AZ's TOTAL node evaluations, but AZ
+   chess was FLAT from ~200k of its 700k steps, so ~500k steps bought nothing. At our batch 512
+   and 4.31 views, 150k steps needs **~17.8M unique positions ~= 4.3 days** of current selfplay.
+   We have already banked >100k steps. **We are not compute-starved for AZ's trajectory.**
+2. **"We're at 1/8 of AZ's 800 sims, so our targets are structurally weak"** — WRONG, and Gumbel
+   is exactly why. Gumbel MuZero at n=32 beats plain MuZero at n=32 and holds against n=200.
+3. **"views 4.31 vs AZ's ~0.8 is the smoking gun"** — WRONG. **KataGo trains at ~4x views and it
+   works.** 4.31 -> 4.0 is a rounding nudge, not a lever. RETRACTED as a hypothesis.
+⇒ Pattern worth recording about my own failure mode: I pattern-matched to ALPHAZERO's published
+configuration three times, when the system we actually built is **KataGo-shaped** (playout cap
+randomization via the 25%-full / 75%-fast split with fast plies untrained, auxiliary targets,
+global-pooling analogue in smolgen, node ramping). **Compare against the recipe we implement,
+not the one we cite.** And the defect that WAS real surfaced only when I checked whether we do
+what KataGo does — the check Josh's remark prompted.
