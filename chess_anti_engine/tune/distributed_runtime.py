@@ -427,6 +427,7 @@ def build_recommended_worker(
         "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
         "history_rep_fix": bool(config.get("history_rep_fix", False)),
         "record_dense_sf_policy": bool(config.get("record_dense_sf_policy", True)),
+        "record_prior_top1": bool(config.get("record_prior_top1", True)),
         "record_sf_p0_policy": bool(config.get("record_sf_p0_policy", False)),
         "record_sf_p0_regret": bool(config.get("record_sf_p0_regret", False)),
         "record_fast_ply_value": bool(config.get("record_fast_ply_value", False)),

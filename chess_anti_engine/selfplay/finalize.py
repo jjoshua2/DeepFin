@@ -1038,6 +1038,36 @@ def _build_replay_samples(
 
         sf_multipv_padded, _ = prepare_multipv(t)
 
+        # Raw root prior top-1, translated from the internal full-4672 action id
+        # into the shard's policy encoding (same step sf_move_index takes).
+        # ⚑ compact_policy_index returns -1 for a move outside the compact
+        # vocabulary; storing that would put an out-of-range index in a shard
+        # whose has_ flag says it is valid, and shard.validate_arrays range-checks
+        # exactly this. Drop the row's value instead of writing the sentinel.
+        # ⚑ The flag is re-read HERE, at the boundary the shard is built on, not
+        # only where the value is captured. `record_prior_top1` is resume-exempt,
+        # so a record restored from a session that had it ON arrives carrying a
+        # prior into a session that has it OFF — and a kill switch that leaves
+        # some rows covered is not a kill switch. Gating the WRITE makes the flag
+        # authoritative for the bytes: OFF ⇒ zero covered rows, whatever the
+        # in-memory record holds. (The other direction, OFF→ON, cannot be
+        # repaired here — the prior needs the ply's logits, which are long gone —
+        # so an ON session may still emit a few uncovered rows from in-flight
+        # games. That is coverage below 100%, never a WRONG value, and every row
+        # carries its own has_prior_top1 flag.)
+        prior_top1_index: int | None = None
+        if (
+            bool(state.game.record_prior_top1)
+            and rec.prior_top1_index is not None
+            and rec.prior_top1_prob is not None
+        ):
+            mapped = policy_index_for_encoding(
+                int(rec.prior_top1_index),
+                policy_encoding=state.game.policy_encoding,
+            )
+            if mapped >= 0:
+                prior_top1_index = int(mapped)
+
         out.append(
             ReplaySample(
                 x=rec.x,
@@ -1082,6 +1112,15 @@ def _build_replay_samples(
                         int(rec.sf_played_move_index),
                         policy_encoding=state.game.policy_encoding,
                     )
+                ),
+                prior_top1_index=prior_top1_index,
+                # Dropped together with the index: a probability whose move we
+                # could not name is not a usable half of the (prior, played)
+                # pair, and storing it alone would make has_prior_top1_prob
+                # over-report the pair's coverage.
+                prior_top1_prob=(
+                    None if prior_top1_index is None
+                    else float(cast("float", rec.prior_top1_prob))
                 ),
                 sf_played_rank=(
                     None if rec.sf_played_rank is None else int(rec.sf_played_rank)

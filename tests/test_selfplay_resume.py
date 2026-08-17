@@ -282,6 +282,7 @@ def _assert_record_identical(before: Any, after: Any, where: str) -> None:
                  "priority", "priority_policy_kl", "priority_q_delta",
                  "sample_weight", "keep_prob", "sf_move_index",
                  "sf_played_move_index", "sf_played_rank", "sf_played_regret",
+                 "prior_top1_index", "prior_top1_prob",
                  "gumbel_policy_diag", "is_sf_refute_opp"):
         assert getattr(before, name) == getattr(after, name), f"{where}: {name}"
 
@@ -428,6 +429,14 @@ def test_resume_reencodes_every_inflight_ply_byte_exactly(
             rec.sf_policy_target is not None
             for recs in before.values() for rec in recs
         ), "no SF labels captured — the expensive fields would go untested"
+        # ⚑ NON-VACUITY. `_assert_record_identical` compares prior_top1_* by
+        # equality, and `None == None` passes — so the two fields are in that
+        # list for nothing unless the session actually captured them. Assert on
+        # the SOURCE records before the round-trip, not on what came back.
+        assert any(
+            rec.prior_top1_index is not None
+            for recs in before.values() for rec in recs
+        ), "no prior_top1 captured — the round-trip assertion would be vacuous"
 
         assert _suspend_all(state, out_dir) == len(before)
 
@@ -678,6 +687,60 @@ def _resume_one(path: Path, game: GameConfig) -> Any:
         trial_id=TRIAL_ID,
     )
     return target, report
+
+
+def test_prior_top1_survives_suspend_and_resume(tmp_path: Path) -> None:
+    """The round-trip RESUME_FORMAT_VERSION was bumped 1 -> 2 to buy.
+
+    ⚑ This is the assertion the format bump exists for. `prior_top1_index` /
+    `prior_top1_prob` are captured from the ply's raw policy logits, so — unlike
+    ``x`` / ``relations`` / the legal mask — they CANNOT be recomputed from the
+    replayed board. If they do not survive the npz they are gone, and the PR
+    that bumped the format paid a session of dropped in-flight games for
+    nothing. Deleting the two `_rebuild_record` restore lines used to leave
+    every suite green; it fails here.
+
+    Values are chosen to make the weak passes impossible:
+
+    * distinct per record, so a constant fill or a row permutation cannot pass;
+    * dyadic probabilities, so "equal" means bit-equal through the float64
+      column rather than equal-after-rounding;
+    * one record deliberately carries NO prior, so absence must round-trip as
+      absence — a decoder that dropped the presence flag and restored 0 / 0.0
+      would otherwise look correct on the other rows.
+    """
+    game = _game_config()
+    state = _fresh_state(game, batch_size=2)
+    _fill_slot(state, 0, plies=6)
+    state.done_arr[1] = 1  # keep slot 1 out of the way
+
+    recs = state.samples_per_game[0]
+    assert len(recs) >= 3, "need a row with a prior, a second one, and an absent one"
+    want: list[tuple[int | None, float | None]] = [
+        (101 + 7 * k, 0.125 + 0.0625 * k) for k in range(len(recs))
+    ]
+    want[-1] = (None, None)
+    for rec, (idx, prob) in zip(recs, want, strict=True):
+        rec.prior_top1_index = idx
+        rec.prior_top1_prob = prob
+    present = [idx for idx, _ in want if idx is not None]
+    assert len(present) >= 2
+    assert len(set(present)) == len(present)
+
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(state, out_dir) == 1
+    target, report = _resume_one(_state_files(out_dir)[0], game)
+    assert report.resumed == 1
+    assert report.discarded == 0
+
+    got = [r for i in range(target.batch_size) for r in target.samples_per_game[i]]
+    assert len(got) == len(recs)
+    for k, (rec, (idx, prob)) in enumerate(zip(got, want, strict=True)):
+        assert rec.prior_top1_index == idx, f"record {k}: prior_top1_index"
+        assert rec.prior_top1_prob == prob, f"record {k}: prior_top1_prob"
+    # ...and the restored objects are not the ones we wrote (a resume that
+    # handed back the SOURCE records would pass everything above by identity).
+    assert all(a is not b for a, b in zip(recs, got, strict=True))
 
 
 def test_negative_control_dropped_move_is_rejected(tmp_path: Path) -> None:
