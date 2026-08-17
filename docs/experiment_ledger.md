@@ -56237,3 +56237,91 @@ today and becomes illegitimate as we close.** Do not let it become the default b
    top-6, which is BETTER than production's shallow top-6, so the reconstruction UNDERSTATES
    production's noise. State it; do not quietly treat the two as the same population
    [[same_name_different_population]].
+
+## 2026-08-17 VERDICT #244 — the flat re-read, taken at n=190 and CLOSED. ⚑⚑ The instrument could never have answered the question at n=200
+
+Josh called the run early ("close enough to the 200 iter to end early, we have more promising
+fixes"). Readout taken at **iter 190** of `dea5e` before the stop, judged by the pre-committed
+rule. Verdict: **FLAT — CONFIRMED, and the confirmation is worth less than it looks.**
+
+### The search-freeze boundary, which the original spec did not account for
+
+`mcts_ramp_steps` is **not in the live yaml**, so it takes `TrialConfig`'s default **10,000 steps**
+(`tune/trial_config.py:231`). At ~88 steps/iter the 256 -> 100 ramp (task #251) completes at
+**iter ~114**. ⇒ the run splits into two regimes and only the second is readable:
+
+| window | iters | n | regret | slope/iter | mean EMA winrate |
+|---|---|---|---|---|---|
+| RAMP (search CHANGING) | 0-113 | 113 | 0.03172 -> 0.02983 | +8.28e-06 | 0.5008 |
+| **FROZEN (clean)** | **114-190** | **77** | **0.03011 -> 0.03089** | **+4.11e-07** | **0.5034** |
+
+`sf_nodes` pinned at **75000 for all 190 iterations** (single distinct value), so difficulty is 1-D
+and regret alone measures it [[airbag_fires_on_drain_transient_games]]. The RAMP window is VOID per
+[[wdl_regret_measures_agent_not_net]] — a search change injects a step indistinguishable from net
+movement, and this ramp ran the wrong way.
+
+### The controller was ACTING — flatness is not a frozen-controller artifact
+
+Checked before reading flatness as a verdict, because a deadband-pinned PID produces a flat series
+for free [[a_counter_is_not_the_mechanism_behind_it]]:
+
+- `pid_regret_changed == 1` on **21 of 77** iterations (27.3%); reasons `{deadband: 54, fit: 18,
+  degenerate: 3, not_active: 2}`.
+- **`sum(pid_regret_delta) == sum(pid_regret_raw_delta) == +0.000779`** — every move the controller
+  WANTED was applied. Not clipped, not capped, not frozen.
+- 15 of 77 iterations had `|EMA winrate - 0.5|` exceeding the EMA deadband (0.00798), so the
+  deadband was not swallowing the signal either.
+
+⇒ the flat series is a real reading of a live controller, not an instrument failure.
+
+### RESOLUTION — computed before the threshold, and it kills the pre-committed bar
+
+The 21 steps: **11 positive, 10 negative**, per-step SD **0.000246**. SD of the sum over 21 steps =
+**0.001127**.
+
+- observed sum **+0.000779**, **z = +0.69**, 95% band **[-0.00221, +0.00221]** ⇒ **NULL**.
+- On the ledger's PROVISIONAL 5.4 Elo/0.001 scale (a FALSIFIER, never a calibration): point
+  **-4.2 Elo** over 77 iters, band **+/- 11.9 Elo**.
+
+⚑⚑ **Now the part that matters.** Fold the noise model forward and ask what window this instrument
+needs to SEE a given trajectory (signal grows as n, noise as sqrt(n); nonzero-step rate 0.273):
+
+| target trajectory | Elo/iter | n needed for 95% detection | wall time |
+|---|---|---|---|
+| **400 Elo/month (Josh's target)** | 0.0685 | **394 clean iters** | **2.0 days** |
+| 200 Elo/month | 0.0343 | 1574 | 8.1 days |
+| 100 Elo/month | 0.0171 | 6296 | 32.4 days |
+
+And at the bar task #244 actually pre-committed to:
+
+- at n=77 (what we have): a 400 Elo/month run produces **5.3 Elo** of signal against a **+/-11.9**
+  band — **INVISIBLE**.
+- at n=200: **13.7 Elo** against **+/-19.2** — **STILL INVISIBLE**. ⚑ And worse than it reads,
+  because the clean window starts at 114, so "iter 200" is **86 clean iterations, not 200**.
+
+⇒ **#244's re-read at n>=200 was unfalsifiable as specified.** It could not have distinguished
+"flat" from "improving at Josh's target rate" no matter what the run did. The pre-committed bar was
+set on iteration count without ever computing the instrument's resolution — the exact failure
+[[compute_instrument_resolution_before_the_threshold]] exists to stop, and
+[[most_experiments_here_are_unfalsifiable]] scores another one.
+
+### Verdict, and what it does NOT say
+
+**#244 CLOSED — FLAT at the resolution available (z=+0.69, NULL).** Waiting for iter 200 was
+correctly abandoned: it buys 9 clean iterations and widens nothing that matters.
+
+⚑ What this does NOT license: "the run is flat" is **not** "the net is flat". The band admits
+anything from -16 to +8 Elo over 9.5 hours, i.e. **any trajectory up to roughly +/-700 Elo/month
+is inside the noise**. The correct statement is **the curriculum-side instrument has no resolution
+at this window length**, which is a fact about the ruler, not about the net. Strength claims must
+come from the frozen external rulers (`scripts/value_regret.py`, the deep-SF audit set, paired
+arenas), never from regret at n<400. [[regret_does_not_track_strength_run_regressed]]
+
+### Consequence for the PID as a research instrument
+
+Any future experiment whose deciding yardstick is `wdl_regret` must publish, in the prereg, the
+**n required for its own effect size** using this noise model (per-step SD 0.000246, nonzero rate
+0.273, both from the frozen window of `dea5e`). A prereg that names an iteration count without that
+computation is not falsifiable and should not launch. This also re-prices task #170: the real
+Elo-per-regret calibration is worth more than it looked, because every regret-based bar depends on
+it and it is currently a two-endpoint guess.
