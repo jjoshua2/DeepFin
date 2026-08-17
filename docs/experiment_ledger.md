@@ -54377,3 +54377,80 @@ the screen's four features, is itself ~74% invented on the 16.3% of rows whose a
 MultiPV-6 — so the screen may partly be selecting "rows where our regret feature is fabricated".
 ⚑ That is a real alternative explanation for a PASS and the readout must report the ratio split
 by `not_listed` to expose it.
+
+## 2026-08-17 READOUT — the post-outage run reads FLAT-to-WEAKENING at n=95 (dea5e)
+
+Judged by the criterion CLAUDE.md already pre-commits, not by a rule invented after looking:
+
+> **DYNAMIC EQUILIBRIUM: a continuously improving net NEVER settles at setpoint.** The
+> controller lands a persistent positive winrate OFFSET and regret ramps at the rate that
+> matches. **A winrate sitting exactly at 0.500 with flat regret means the net is FLAT.**
+
+Trial `train_trial_dea5e_...2026-08-16_12-38-11`, iters **1..95**, file age 0 s at read.
+
+### The two instruments
+
+| quantity | this run | 379f6 reference (improving-era) |
+|---|---|---|
+| `pid_ema_winrate` offset vs 0.500, all | **+0.0003** | +0.0035 |
+| `pid_ema_winrate` offset, last 30 | **−0.0016** | +0.0057 (last-200) |
+| `wdl_regret` OLS slope | **+1.49e-05/iter**, 95% CI [+1.16e-05, +1.83e-05] | ramping DOWN |
+
+⚑ **Regret is RISING, significantly.** The PID LOWERS regret to raise difficulty and RAISES it
+as an airbag — so a rising regret trend is the controller *easing* the curriculum, the signature
+of a net that is not gaining.
+
+**The second difficulty axis is clean:** `sf_nodes` is pinned at **75000 for all 95 iterations**
+(1 distinct value), so this is not a regret drop paid for by a node change — difficulty is 2-D
+and the other axis did not move.
+
+### ⚑ A two-point read gives the OPPOSITE sign to the trend
+
+Endpoint delta is **−0.00095** (regret *fell* 0.031720 → 0.030769) while the fitted slope is
+**+0.00142** over the same span. Regret dipped to 0.0288 by iter 9 and has risen since. Anyone
+quoting "regret is lower than when we restarted" would report improvement from the same series
+that shows significant weakening. [[a_step_is_not_a_ramp]] [[window_mean_ci_cannot_detect_a_step]]
+
+### Robustness — the confound I expected to kill this did the opposite
+
+The early dip is plausibly the post-restart transient, which would bias the slope UPWARD. Refit
+dropping increasing prefixes:
+
+| window | n | slope | 95% CI | significant |
+|---|---|---|---|---|
+| all | 95 | +1.49e-05 | [+1.16e-05, +1.83e-05] | YES |
+| >10 | 85 | +1.69e-05 | [+1.45e-05, +1.93e-05] | YES |
+| >15 | 80 | **+1.83e-05** | [+1.59e-05, +2.07e-05] | YES |
+| >20 | 75 | +1.78e-05 | [+1.51e-05, +2.04e-05] | YES |
+| >30 | 65 | +1.59e-05 | [+1.25e-05, +1.93e-05] | YES |
+| >40 | 55 | +1.25e-05 | [+8.03e-06, +1.69e-05] | YES |
+
+Dropping the transient makes the slope **larger**, not smaller. The reading survives its own
+most likely confound in the direction that strengthens it.
+
+### What this is NOT
+
+- **NOT an Elo verdict.** `wdl_regret` measures the AGENT (net + search), never the net
+  [[wdl_regret_measures_agent_not_net]]. It is a net signal only while the search config is
+  frozen — which it is, since 2026-08-09 20:58 — but the conversion to Elo is unmeasured
+  (task #170 still owes the calibration; the provisional ~5.4 Elo per 0.001 regret is a
+  FALSIFIER, not a number to quote).
+- **NOT past the protocol's window.** 95 iterations at ~400 s is **~10.5 h**. The protocol wants
+  day-plus windows and paired CIs for learning-quality reads. This is a strong hint at the edge
+  of the window, not a closed verdict.
+- **NOT free of the restart bias.** Post-restart winrate is documented as running high
+  [[winrate_spike_restart_sampling_bias]]; the early iters read 0.513 and have decayed to
+  ~0.498. That inflates the ALL-window offset, so **the last-30 figure (−0.0016) is the honest
+  one** — and it is the worse one.
+- Iterations in the post-outage span carry the 2026-08-16 contamination marker.
+
+### What would change the read
+
+A winrate offset that turns persistently positive (>= +0.003 over 30+ iterations) WITH a
+falling regret slope whose CI excludes zero. Either alone is not enough: the offset without the
+ramp is noise, and the ramp without the offset is the controller chasing, not the net gaining.
+
+**No action taken. Nothing changed, nothing restarted.** Recorded because the protocol requires
+the verdict in the same session as the readout, and because "flat" is the outcome this project
+keeps re-discovering late [[no_rollback_target_the_run_is_a_plateau]]
+[[regret_does_not_track_strength_run_regressed]].
