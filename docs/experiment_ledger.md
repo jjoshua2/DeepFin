@@ -53192,6 +53192,28 @@ tying CLAUDE.md's param count turns on). Perturbing every parameter x1.02 and re
 the ratio at 1.01. **So: not stale constants, not uniform scaling. UNDIAGNOSED.** Argmax stays
 healthy (0.944-0.971) throughout — the packages keep picking the same moves at ratio 2.4.
 
+> ⚑⚑ **THE PARAGRAPH ABOVE IS WRONG AND THE "UNDIAGNOSED" IS CLOSED — 2026-08-17.** Left in
+> place because a deleted claim teaches nothing. Two corrections, both measured:
+>
+> 1. **"the 71 uncovered constants are EXACTLY the tied `gen_weight` storages" is false.** The
+>    71 decompose as **15 tied `gen_weight` aliases + 12 non-float index tables + 44 others**,
+>    and two of those others — `policy_own.log_temp` and `value_wdl.net.2.bias` — are on the
+>    FORWARD PATH and **cannot be rebound at all**. "All fqns are satisfiable from the model" was
+>    checked in the direction that cannot fail: the payload is BUILT from `fqns`, so
+>    `fqns ⊆ state_dict` is true by construction. Nobody checked `state_dict ⊆ fqns`.
+>    [[a_gate_that_cannot_fail]]
+> 2. **The ratio is therefore NOT undiagnosed.** It tracks Δ(folded constant), not sharpness,
+>    which is exactly why sharpness could rise 2.5× with the ratio flat. And the `×1.02`
+>    perturb-and-rebind that "refuted" the stale-constant mechanism moves `log_temp` by only
+>    **0.0055**, ~10× less than the jul→aug step — so it was never a refutation, it was an
+>    underpowered probe read as one. [[a_counter_is_not_the_mechanism_behind_it]]
+>
+> ⚑ **`37 PASS / 7 FAIL of 44` below is VOIDED by the #432 merge, not merely superseded.** The
+> new `unrebindable_output_constants` guard FAILS on both package dirs, so the same run becomes
+> **0/44**. Do not quote the 37/44 against post-merge numbers — it is a different gate.
+> [[same_name_different_population]] Full diagnosis: the 2026-08-17 AOT entry at the tail of
+> this file.
+
 ### PRIMARY — bt4heads: 37 PASS / 7 FAIL of 44
 
 Ratio arms ~1.0 across the board (pol_mean 0.92-1.32, pol_tail 0.87-1.23, wdl_mean 0.43-1.04)
