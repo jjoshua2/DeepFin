@@ -56659,3 +56659,48 @@ already gives.
 - N1 is not a perfect null: it preserves the surfaced/unsurfaced support structure and only permutes
   magnitudes within it, which is why it scores −0.09 rather than 0.00 against BT4. That makes
   "A loses to N1" a statement about MAGNITUDES specifically, which is the intended comparison.
+
+## 2026-08-17 — stall alarm on the intentional stop: benign, but it sharpens #177
+
+A stall monitor fired ~23 min after the authorised stop (`progress.csv age=1348s`). **Expected, not an
+incident** — we stopped the run. Both session monitors were retired rather than left to re-fire.
+Two things came out of checking it anyway.
+
+### 1. Nothing can auto-restart. Verified, and verified the right way
+
+`scripts/train.sh stop` writes `/tmp/chess_training.intentional_stop` **before** killing, precisely so
+a watchdog does not treat an operator stop as a fault. Marker CONFIRMED PRESENT (0 bytes, 14:09).
+No recovery path is live either — checked by LOG GROWTH, never by process-name matching
+[[wsl2_gpu_vmbus_wedge_signature]], [[pgrep_in_a_wait_loop_cannot_terminate]]:
+
+| artefact | state |
+|---|---|
+| `scratchpad/watchdog_loop.log` | **ABSENT** — the loop has never run in this tree |
+| `scratchpad/recover_stall.log` | last write **2026-08-04**, 13 days stale |
+| `scratchpad/ratchet_loop.log` | last write **2026-08-10** (matches "ratchet is stopped, manual only") |
+| `./scripts/train.sh status` | `Not running` |
+
+### 2. ⚑ `recover_stall.sh` DOES NOT CHECK THE INTENTIONAL-STOP MARKER — the guard is in its CALLER
+
+Established by READING the whole 46-line file, not by grepping for the token and finding nothing.
+Its own header, line 13-15, is explicit:
+
+> *"Invoked by watchdog_loop.sh on a confirmed STALLED verdict (90 min flat, PID alive, no pause.txt,
+> **no intentional-stop marker**), or **by hand**. Idempotent-ish: **safe to run when already down
+> (kills nothing, just restarts)**."*
+
+So the marker test lives in `watchdog_loop.sh`. That is a defensible split — until you take the
+by-hand path the same comment sanctions, which has **no marker check at all** and ends at line 44
+with `./scripts/train.sh start`. ⇒ **running `recover_stall.sh` today would silently UNDO the user's
+deliberate stop**, and line 15's reassurance ("safe when already down") is exactly inverted for the
+state we are now in: down ON PURPOSE is the one state where "just restarts" is the harmful outcome.
+
+This is task #177's hazard, made concrete and worse than its description: the risk is not only a
+stray env var, it is a script whose own docstring invites a hand-invocation that bypasses the guard.
+⚑ It also `pkill -9 -f`s seven process-NAME patterns (lines 26-30), so it is on the never-execute
+list for agents regardless [[pgrep_in_a_wait_loop_cannot_terminate]].
+
+**Fix when #177 is taken up:** move the marker test INTO `recover_stall.sh` (fail closed, with an
+explicit `--force` to override). A guard that only exists in one of two documented entry points is
+the same shape as every other defect in this ledger — it is not that the check is wrong, it is that
+the path that skips it is the one a human will use at 3am.
