@@ -219,7 +219,7 @@ def test_the_real_provisioning_path_refuses_without_a_secret(tmp_path: Path) -> 
     server_root = tmp_path / "server"
     server_root.mkdir()
     config = {
-        "distributed_worker_username": "josh",
+        "distributed_worker_username": "fleetuser",
         "distributed_worker_password": "the-public-yaml-secret",
     }
     with pytest.raises(MissingWorkerSecret):
@@ -247,11 +247,11 @@ def test_the_real_provisioning_path_uses_the_environment_and_writes_0600(
 
     username, password_file = _prepare_distributed_worker_auth(
         server_root=server_root,
-        config={"distributed_worker_username": "josh",
+        config={"distributed_worker_username": "fleetuser",
                 "distributed_worker_password": "the-public-yaml-secret"},
     )
 
-    assert username == "josh"
+    assert username == "fleetuser"
     assert password_file.read_text(encoding="utf-8").strip() == "rotated-secret"
     assert oct(password_file.stat().st_mode & 0o777) == "0o600"
 
@@ -259,7 +259,7 @@ def test_the_real_provisioning_path_uses_the_environment_and_writes_0600(
     raw = (server_root / "users.json").read_text(encoding="utf-8")
     assert "rotated-secret" not in raw
     assert "the-public-yaml-secret" not in raw
-    record = load_users(server_root / "users.json")["josh"]
+    record = load_users(server_root / "users.json")["fleetuser"]
     assert verify_password("rotated-secret", record)
     assert not verify_password("the-public-yaml-secret", record), (
         "the yaml value must never have become the credential"
@@ -342,7 +342,7 @@ def test_the_credential_source_is_announced_and_names_the_explicit_one(
     _prepare_distributed_worker_auth(
         server_root=server_root,
         config={
-            "distributed_worker_username": "josh",
+            "distributed_worker_username": "fleetuser",
             "distributed_worker_password_env": "MY_WORKER_SECRET",
         },
     )
@@ -369,7 +369,7 @@ def test_a_weak_boot_credential_warns_but_still_boots(
     server_root.mkdir()
     _prepare_distributed_worker_auth(
         server_root=server_root,
-        config={"distributed_worker_username": "josh"},
+        config={"distributed_worker_username": "fleetuser"},
     )
     out = capsys.readouterr().out
     assert "WARNING" in out
@@ -397,7 +397,7 @@ def test_users_json_is_0600_regardless_of_the_umask(tmp_path: Path) -> None:
     saved = os.umask(0)
     try:
         db = tmp_path / "users.json"
-        ensure_user(db, username="josh", password="a-good-password")
+        ensure_user(db, username="fleetuser", password="a-good-password")
         mode = stat.S_IMODE(db.stat().st_mode)
     finally:
         os.umask(saved)

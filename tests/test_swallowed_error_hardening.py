@@ -697,7 +697,7 @@ def test_the_real_worker_init_starts_the_corrupt_counter_at_zero(
     from chess_anti_engine import worker as worker_mod
 
     monkeypatch.setattr(
-        worker_mod, "_collect_worker_info", lambda **_kw: {"hostname": "t", "device": "cpu"}
+        worker_mod, "_collect_worker_info", lambda **_kw: {"hostname": "box0", "device": "cpu"}
     )
     args = argparse.Namespace(
         username="u", password="p", server_url="http://localhost:0", trial_id="",

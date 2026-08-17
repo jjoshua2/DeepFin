@@ -22,7 +22,8 @@
 # executed is one whose wiring is pinned only by reading it.
 
 # The repo. Every path in both scripts is relative to it.
-cd "${RATCHET_ROOT:-/home/josh/projects/chess}" || exit 2
+# ${BASH_SOURCE[0]}, not $0: this file is SOURCED, so $0 is the sourcing script.
+cd "${RATCHET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}" || exit 2
 export PYTHONPATH=.
 
 # The run directory whose newest trial is measured. ONE reader of the env var,

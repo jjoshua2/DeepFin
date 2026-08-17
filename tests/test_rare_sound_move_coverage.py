@@ -26,7 +26,7 @@ _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "rare_sound_move_cov
 # `.gitignore` excludes wholesale (`/data/`) as runtime output -- so they had
 # to be force-added, and they sat in a directory the repo treats as
 # uncommittable. Anything a test READS is a fixture, not runtime output.
-# The local absolute paths their provenance carried (`/home/josh/...`, a
+# The local absolute paths their provenance carried (`/home/<user>/...`, a
 # `/tmp/claude-1000/<session-id>/...` scratchpad) were scrubbed to repo-relative
 # form before landing: this repository is PUBLIC.
 _BANK_DIR = Path(__file__).resolve().parent / "data" / "rare_sound_move_coverage"
