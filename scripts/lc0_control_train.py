@@ -141,6 +141,7 @@ import dataclasses
 import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 from typing import Any, cast
@@ -204,6 +205,131 @@ from scripts.lc0_data_to_rows import (
 # next to the check that reads it, rather than only in the argparse default a
 # caller can override without leaving a trace.
 PREREG_MID_CHECKPOINT_FRAC = 0.5
+
+# ⚑⚑ AND THE COMPARISON IS TOLERANT, BECAUSE `int(0.5 * steps)` CANNOT BE EXACT ON
+# AN ODD BUDGET. The first version of this guard used exact `!=` on the realized
+# ratio, which is exact only for EVEN budgets — so every odd `--steps` was
+# recorded invalid, unwaivably (`valid_control: false` has no waiver by design),
+# and a day of GPU at `--steps 20001` became permanently unquotable over a
+# 0.0025% discrepancy. Measured by the independent review; it is the previous
+# round's fix over-correcting into a new failure.
+#
+# ⚑ THE BOUND, AND WHY THIS ONE. Truncation can move the realized fraction by at
+# most `0.5 / steps` (odd `steps = 2k+1` gives `k/(2k+1)`, i.e. exactly
+# `0.5/steps` below 0.5), so:
+#   * 0.01 admits truncation for every budget >= 50 steps, and the arm's budget is
+#     thousands — `--steps 20001` deviates by 0.000025, `1001` by 0.0005, `87` by
+#     0.0058;
+#   * it still catches every deliberate misplacement: `--mid-checkpoint-frac 0.99`
+#     (0.25 off at steps=4), `0.6` (0.1 off), `--steps 3 --frac 0.5` (0.167 off);
+#   * and a budget UNDER 50 steps — the only regime where the bound is tighter
+#     than truncation — is already disqualified by the `warmup_steps` entry
+#     (production's warmup is 1000), so this entry can never be the SOLE reason a
+#     run is refused. That last clause is the one that makes 0.01 safe rather than
+#     merely convenient, and `test_the_tolerance_can_never_be_the_only_reason_a_run_is_invalid`
+#     is what keeps it true.
+MID_CHECKPOINT_FRAC_TOLERANCE = 0.01
+
+# ⚑⚑ PRODUCTION'S TRAIN-WINDOW CADENCE, AND WHY IT IS A NUMBER HERE RATHER THAN A
+# CONFIG KEY. With `lr_schedule: sqrt_release` and `lr_release_cycle_steps: 0` —
+# what this arm and production both run — `train_steps` derives the release cycle
+# from ITS OWN `steps` argument (`effective_cycle_steps = max(1,
+# requested_steps)`) and feeds `local_step = train_steps_done`, which restarts at
+# 0 on every call. Production calls it once per ITERATION at ~88 steps, so
+# production's LR is a SAWTOOTH: flat for `lr_release_start_frac` (0.80) of each
+# window, annealed to `lr_release_min_scale` (0.1x) by the window's last step,
+# then flat again.
+#
+# ⇒ ONE call of N steps is NOT the same trajectory. It holds LR flat for 80% of
+# the entire experiment and anneals ONCE, so a MID checkpoint at 50% of budget
+# sits at FULL base LR while LAST sits at 0.1x after a full anneal — and the
+# deciding MID->LAST slope then contains an anneal that production never places
+# between two of its own checkpoints. An annealed endpoint scores better on
+# held-out top-1 for reasons that are not the trainer learning, in the flattering
+# direction for H_stack. The control config DOCUMENTED this (lines 395-402);
+# documenting a first-order confound in the primary yardstick is not controlling
+# it. Independent review of #438, and Codex's #1 of 2026-08-17.
+#
+# ⚑ 88 is a REALIZED number, not a configured one: step budget comes from
+# views-targeting (`train_views_per_position`), so production's steps/iteration is
+# a function of ingest volume (CLAUDE.md: "~88 steps/iter"). It is therefore a CLI
+# argument with this default, banked in the artifact, and NOT read from the yaml —
+# there is no key to read.
+PRODUCTION_TRAIN_WINDOW_STEPS = 88
+
+def mid_fraction_deviates(*, saved_at_step: int, steps: int) -> bool:
+    """Whether the REALIZED mid point is outside the preregistered tolerance.
+
+    ⚑ A FUNCTION so the test can call THIS and not a copy of it. The first
+    version of the odd-budget test reimplemented `abs(realized - 0.5) > tol` in
+    the test file, which meant the arithmetic table could not see the driver's
+    comparison operator change at all — only the (slow, small-budget) driver test
+    could, and the reviewer's failing budgets are 1001 and 20001 steps. A guard
+    whose test restates its criterion measures the restatement.
+    """
+    if steps <= 0:
+        return False
+    realized = saved_at_step / steps
+    return abs(realized - PREREG_MID_CHECKPOINT_FRAC) > MID_CHECKPOINT_FRAC_TOLERANCE
+
+
+# The artifacts a completed (or half-completed) run leaves behind. `--out-dir`
+# reuse is refused when any of these is present -- see `existing_run_artifacts`.
+RUN_ARTIFACTS = ("checkpoint.pt", "checkpoint_mid.pt", "summary.json")
+
+
+def existing_run_artifacts(out_dir: Path) -> list[str]:
+    """Which of ``RUN_ARTIFACTS`` already exist in ``out_dir``.
+
+    ⚑⚑ THE DEFECT THIS CLOSES DESTROYED DATA. `--out-dir` was created with
+    `mkdir(exist_ok=True)`, so a rerun into a populated directory shared it with
+    the previous run — and when the rerun then FAILED its realized value-blend
+    guard, its cleanup (`mid_ckpt.unlink`, correct in intent and scoped only by
+    "did THIS run save a mid checkpoint", which was true because run 2 had just
+    written over run 1's file) IRREVERSIBLY DELETED THE PREVIOUS COMPLETED RUN'S
+    `checkpoint_mid.pt` — a day of GPU in production — while that run's
+    `summary.json` went on banking the file's path, step and sha256, and its
+    surviving `checkpoint.pt` still verified as `role: last`. The directory was
+    left reading as a scorable success with half the deciding statistic gone, and
+    the emitted message "no checkpoint written (including the mid-budget one)"
+    was FALSE about the directory. Reproduced end-to-end by the independent
+    review.
+
+    ⚑ The remedy is a REFUSAL, and `--move-existing-aside` RENAMES. There is
+    deliberately no `--overwrite`: this file adds no new delete path, and a
+    rename is reversible by hand while a delete is not.
+    """
+    return [name for name in RUN_ARTIFACTS if (Path(out_dir) / name).exists()]
+
+
+def train_window_plan(*, steps: int, window: int) -> tuple[int, int, str | None]:
+    """``(window, n_windows, problem)`` for running ``steps`` at production cadence.
+
+    The budget must divide into an EVEN number of full windows: the MID
+    checkpoint then lands on a window boundary exactly like LAST, so both sit at
+    the BOTTOM of a release cycle — the same LR phase two production checkpoints
+    from different iterations sit at. An odd window count would put MID at a
+    boundary and LAST at a boundary too, but with `steps/2` not a multiple of the
+    window the mid checkpoint falls mid-cycle instead.
+    """
+    window = max(1, int(window))
+    steps = int(steps)
+    if steps <= 0:
+        return window, 0, None
+    if window > steps:
+        return steps, 1, (
+            f"--train-window-steps {window} exceeds --steps {steps}, so the run "
+            "is ONE window and its LR anneals once over the whole budget instead "
+            f"of every {window} steps as production's does"
+        )
+    if steps % (2 * window) != 0:
+        return window, max(1, steps // window), (
+            f"--steps {steps} is not an even number of {window}-step windows "
+            f"({steps / window:.2f} windows), so the MID checkpoint does not land "
+            "on a window boundary and MID/LAST sit at different phases of the LR "
+            "release cycle"
+        )
+    return window, steps // window, None
 
 
 def checkpoint_identities(
@@ -405,6 +531,25 @@ def stage_shards(shard_dirs: list[Path], staging: Path) -> int:
     ORIGINALS, which cost ~3.5 minutes per 400 games to rebuild.
     """
     staging.mkdir(parents=True, exist_ok=True)
+  # ⚑ SYMLINKS are cleared; anything else is REFUSED rather than deleted. A real
+  # `.zarr` copied in by hand, or a partial write, would otherwise survive into
+  # this run's pool — `iter_shard_paths` would read it and the trained corpus
+  # would not be the one `summary.json`'s `corpus.shard_dirs` names. Deleting it
+  # instead is not an option on this path: nothing here removes data it did not
+  # create. (Normally unreachable now, because a populated --out-dir is refused
+  # one frame up; this is the backstop for a staging dir that is populated
+  # without the run artifacts being present.)
+    intruders = sorted(
+        entry.name for entry in staging.iterdir() if not entry.is_symlink()
+    )
+    if intruders:
+        raise ValueError(
+            f"{staging} holds entries that are not symlinks: "
+            + ", ".join(intruders)
+            + ". They would be sampled as part of this run's corpus while "
+            "summary.json named only --shards. Move them aside; this path "
+            "deletes nothing.",
+        )
     for stale in staging.iterdir():
         if stale.is_symlink():
             stale.unlink()
@@ -795,6 +940,24 @@ def main(argv: list[str] | None = None) -> int:
              "`compare` then refuses with no waiver.",
     )
     parser.add_argument(
+        "--move-existing-aside", action="store_true",
+        help="when --out-dir already holds a run's artifacts, RENAME it to "
+             "<out-dir>.superseded_<UTC timestamp> and start clean. ⚑ There is no "
+             "--overwrite: a rerun sharing a directory could delete the previous "
+             "run's mid-budget checkpoint (a day of GPU) while its summary went on "
+             "banking that file's sha256. A rename is reversible; a delete is not.",
+    )
+    parser.add_argument(
+        "--train-window-steps", type=int, default=PRODUCTION_TRAIN_WINDOW_STEPS,
+        help="⚑ run the budget in windows of this many steps, because with "
+             "`lr_release_cycle_steps: 0` the LR release cycle is derived from each "
+             "`train_steps` CALL: production calls it at ~88 steps per iteration, "
+             "so its LR is a sawtooth, while ONE call of --steps holds LR flat for "
+             "80%% of the experiment and anneals once — putting an anneal between "
+             "MID and LAST that production never has. --steps must be an EVEN "
+             "number of windows or the deviation is recorded.",
+    )
+    parser.add_argument(
         "--purity-receipt", type=Path, default=None,
         help="the JSON written by `lc0_control_heldout.py purity --receipt`. "
              "Refuses to launch unless it covers every --shards directory, and "
@@ -849,11 +1012,41 @@ def main(argv: list[str] | None = None) -> int:
 
     torch.manual_seed(int(args.seed))
     out_dir = Path(args.out_dir)
+  # ⚑⚑ BEFORE ANYTHING IS WRITTEN. See `existing_run_artifacts`: sharing an
+  # --out-dir let a FAILING rerun's cleanup irreversibly delete a COMPLETED run's
+  # mid-budget checkpoint while that run's summary went on banking its sha256.
+  # Refused, and the escape RENAMES rather than deletes — nothing on this path may
+  # remove a checkpoint it did not create.
+    existing = existing_run_artifacts(out_dir)
+    if existing and args.move_existing_aside:
+        moved = out_dir.with_name(
+            f"{out_dir.name}.superseded_"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+        )
+        out_dir.rename(moved)
+        print(f"⚑ --move-existing-aside: {out_dir} held {', '.join(existing)}; "
+              f"RENAMED to {moved} (nothing deleted — recover by renaming back)")
+    elif existing:
+        raise SystemExit(
+            f"REFUSING TO LAUNCH — {out_dir} already holds "
+            + ", ".join(existing)
+            + ". Reusing it shares the directory with a previous run: a rerun "
+            "that fails its realized guard deletes the mid-budget checkpoint it "
+            "found there, while the OLD summary.json goes on banking that file's "
+            "path and sha256 and the old checkpoint.pt still verifies as "
+            "role=last — a half-destroyed run that reads as a scorable success. "
+            "Point --out-dir at a new directory, or pass --move-existing-aside "
+            "to RENAME this one (there is deliberately no --overwrite: nothing "
+            "here deletes a checkpoint).",
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
     staged = stage_shards(shard_dirs, out_dir / "staged_shards")
     print(f"[data] staged {staged} shard(s) from {len(shard_dirs)} directory(ies)")
 
     kwargs = trainer_kwargs_from_config(cfg)
+  # ⚑ Read BEFORE the override, or the check below compares the override with
+  # itself -- a gate that cannot fail.
+    configured_device = str(kwargs["device"])
     if args.device:
         kwargs["device"] = args.device
     if args.no_compile:
@@ -920,16 +1113,58 @@ def main(argv: list[str] | None = None) -> int:
     if float(args.mid_checkpoint_frac) > 0.0:
         mid_step = min(max(mid_step, 1), max(int(args.steps) - 1, 0))
     mid_ckpt = out_dir / "checkpoint_mid.pt"
+    window_steps, n_windows, cadence_problem = train_window_plan(
+        steps=int(args.steps), window=int(args.train_window_steps),
+    )
+    print(f"[train] {n_windows} window(s) of {window_steps} step(s) "
+          f"(production cadence ~{PRODUCTION_TRAIN_WINDOW_STEPS}/iteration; the "
+          "LR release cycle is derived from each call's step count)")
+    if cadence_problem is not None:
+        print(f"⚑ CADENCE: {cadence_problem}")
     with CaptureRealizedLosses(
         rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
         categorical_params=kwargs["categorical_target_params"],
     ) as capture, SaveMidBudgetCheckpoint(
         trainer, at_step=mid_step, path=mid_ckpt,
     ) as mid:
-        metrics = trainer.train_steps(
-            _as_replay_buffer(buf), batch_size=batch_size, steps=int(args.steps),
-        )
+  # ⚑⚑ WINDOWED AT PRODUCTION'S CADENCE, NOT ONE MONOLITHIC CALL. See
+  # `PRODUCTION_TRAIN_WINDOW_STEPS`: with `lr_release_cycle_steps: 0` the release
+  # cycle is derived from each CALL's `steps`, so one call of N gave the arm a
+  # single flat-then-anneal trajectory while production runs a ~88-step sawtooth —
+  # and the deciding MID->LAST slope then contained an anneal production never
+  # places between two of its own checkpoints.
+  #
+  # ⚑ AND THIS IS NOT THE SPLIT `SaveMidBudgetCheckpoint`'s DOCSTRING WARNS
+  # ABOUT. That warning is about TWO calls of N/2, which puts MID halfway up one
+  # ramp and LAST at the bottom of another — two different phases. W windows of
+  # `window` steps puts BOTH on a window BOUNDARY, i.e. both at the bottom of a
+  # release cycle, which is exactly where two production checkpoints sit. The mid
+  # checkpoint is still taken from inside the run by the same wrapper (it counts
+  # optimizer steps, not calls), so there is still ONE trajectory.
+  #
+  # ⚑ The LAST window's metrics are the ones reported and banked, as before: they
+  # are the end-of-run reading. `train_windows` in the artifact is what tells a
+  # reader that `metrics` describes the final window rather than the whole budget.
+  # ⚑ Declared before the loop, and a zero-window plan is a REFUSAL rather than a
+  # possibly-unbound `metrics` further down: `--steps 0` would otherwise reach the
+  # summary writer with no training at all having happened.
+        metrics: Any = None
+        for window_index in range(n_windows):
+            metrics = trainer.train_steps(
+                _as_replay_buffer(buf), batch_size=batch_size,
+                steps=int(window_steps),
+            )
+            if n_windows > 1:
+                print(f"[train] window {window_index + 1}/{n_windows} "
+                      f"({window_steps} steps) done, "
+                      f"{(window_index + 1) * window_steps} of {int(args.steps)}")
 
+    if metrics is None:
+        raise SystemExit(
+            f"no training window ran (--steps {int(args.steps)}, "
+            f"--train-window-steps {int(args.train_window_steps)}): the budget "
+            "must be positive.",
+        )
     if capture.calls == 0:
         raise SystemExit("compute_loss was never called — no step ran")
 
@@ -1042,14 +1277,43 @@ def main(argv: list[str] | None = None) -> int:
   # IEEE754), and a knob of 0.5000001 that still lands on the mid step is
   # correctly silent: the trajectory IS the mid-budget one.
             (mid.saved_at_step is not None
-             and mid.saved_at_step / int(args.steps) != PREREG_MID_CHECKPOINT_FRAC,
+             and mid_fraction_deviates(
+                 saved_at_step=mid.saved_at_step, steps=int(args.steps),
+             ),
              f"the mid checkpoint was taken at step {mid.saved_at_step} of "
              f"{int(args.steps)} = "
              f"{(mid.saved_at_step or 0) / max(int(args.steps), 1):.4f} of the "
-             f"budget, not the preregistered {PREREG_MID_CHECKPOINT_FRAC} "
+             f"budget, more than {MID_CHECKPOINT_FRAC_TOLERANCE} from the "
+             f"preregistered {PREREG_MID_CHECKPOINT_FRAC} "
              f"(--mid-checkpoint-frac {float(args.mid_checkpoint_frac)}, "
              "clamped to the interior): the LAST-vs-MID slope this run supports "
              "is not the prereg's LAST vs MID-BUDGET"),
+  # ⚑⚑ THE LR CADENCE — the confound the control config DOCUMENTED and nothing
+  # measured. See `PRODUCTION_TRAIN_WINDOW_STEPS`: a budget that is not an even
+  # number of production-sized windows puts MID and LAST at different phases of
+  # the release cycle, so part of the deciding slope is an LR artifact. Now that
+  # the driver runs windows this is normally EMPTY; it fires for a short smoke
+  # (window > steps) and for an odd window count.
+            (cadence_problem is not None,
+             f"LR cadence: {cadence_problem}. The MID->LAST slope then contains "
+             "an anneal production never places between two of its own "
+             "checkpoints, and an annealed endpoint scores better on held-out "
+             "top-1 for reasons that are not the trainer learning"),
+  # ⚑ `--device` IS DISQUALIFYING, and the comment that used to defer this
+  # ("plausibly objective-neutral", "an entry here would disqualify every smoke")
+  # was measurably wrong on the second clause: a clean 4-step CPU smoke already
+  # banks FOUR entries (--allow-arch-drift, no purity receipt, steps <=
+  # warmup_steps, no live config), so the entry costs nothing and its absence
+  # made `realized_after_guard` a banked-and-unread field — this repo's signature
+  # defect. Guard 0c certifies the recipe with LIVE_TRAINER_PIN's "cuda" and the
+  # driver then overwrites it, so a CPU run has different bf16 kernels and
+  # execution semantics from the stack the arm claims to be testing.
+            (str(kwargs["device"]) != str(configured_device),
+             f"--device {kwargs['device']} is not the configured "
+             f"{configured_device}: guard 0c certified the trainer recipe with "
+             f"device={configured_device!r} and this run then overwrote it, so "
+             "the kernels and execution semantics are not the production "
+             "stack's"),
   # ⚑ THE GRADIENT-NOISE REGIME IS A TRAINING SETTING, AND `--batch-size` SAT
   # AFTER EVERY PREFLIGHT. Guard 0c certifies the trainer recipe against live's,
   # but `batch_size` is not a trainer kwarg — it is an argument to
@@ -1079,6 +1343,18 @@ def main(argv: list[str] | None = None) -> int:
     ]
     summary = {
         "steps": int(args.steps),
+  # ⚑ THE SEED, BANKED. It seeds `torch.manual_seed` before `build_model` AND the
+  # replay buffer's RNG, and it appeared in neither the summary nor the
+  # checkpoint: `run_id` is content-derived, so it IDENTIFIES a trajectory but
+  # cannot REPRODUCE one. The replay deviation `deterministic_refresh: true` is
+  # justified as "a pure function of the seed", which is only auditable if the
+  # seed is in the artifact.
+        "seed": int(args.seed),
+  # ⚑ The realized LR cadence — see PRODUCTION_TRAIN_WINDOW_STEPS. `metrics`
+  # below describes the LAST window, not the whole budget, and this is what says
+  # so.
+        "train_window_steps": int(window_steps),
+        "train_windows": int(n_windows),
         "batch_size": batch_size,
         "configured_batch_size": configured_batch_size,
         "warmup_steps": int(kwargs["warmup_steps"]),
@@ -1109,13 +1385,17 @@ def main(argv: list[str] | None = None) -> int:
   # LIVE_TRAINER_PIN ("cuda" / True), so a run can be certified and then execute
   # a different recipe with nothing in the artifact saying so. `--no-compile` is
   # plausibly objective-neutral, but "plausibly neutral" is an argument, not a
-  # record: a reader needs the REALIZED values to check it. ⚑ These two are
-  # BANKED ONLY — unlike the entries in `validity_problems` they do NOT
-  # disqualify the run, and nothing in `lc0_control_eval` reads this field. The
-  # CPU/no-compile path is how every plumbing smoke runs, so an entry here would
-  # disqualify every smoke; the cost is that a `--device cpu` run is comparable,
-  # which a later review may well decide is wrong.
+  # record: a reader needs the REALIZED values to check it.
+  #
+  # ⚑⚑ `device` IS NOW A `validity_problems` ENTRY (see above) — this field is the
+  # RECORD, not the gate. The previous revision left the gate off and reasoned
+  # that "an entry here would disqualify every smoke"; that was measurably false
+  # (a clean 4-step CPU smoke already banks four entries), which left
+  # `realized_after_guard` banked and unread by every consumer. `use_compile` is
+  # still record-only, deliberately: it changes throughput and kernel fusion, not
+  # the objective, and unlike `device` it does not change numerics.
         "realized_after_guard": {"device": kwargs["device"],
+                                 "configured_device": configured_device,
                                  "use_compile": kwargs["use_compile"]},
         "valid_control": not validity_problems,
         "validity_problems": validity_problems,

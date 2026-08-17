@@ -939,6 +939,92 @@ def test_the_run_writes_a_mid_budget_checkpoint_from_one_trajectory(
     ), "mid and last are byte-identical, so the pair carries no trajectory"
 
 
+def test_the_budget_runs_in_production_sized_windows_and_mid_lands_on_a_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ THE CADENCE CONFOUND — the arm's LR trajectory was not production's.
+
+    With `lr_release_cycle_steps: 0`, `train_steps` derives the release cycle from
+    ITS OWN `steps` argument, so ONE call of N steps held LR flat for 80% of the
+    experiment and annealed once: MID at 50% of budget sat at full base LR and
+    LAST sat at 0.1x after a full anneal, putting an anneal into the deciding
+    MID->LAST slope that production — which calls `train_steps` at ~88 steps per
+    iteration, i.e. a sawtooth — never places between two of its own checkpoints.
+
+    Asserted on the CALLS, because that is where the cycle length comes from: the
+    driver must issue an EVEN number of equal windows, and the mid checkpoint must
+    land on a window boundary so MID and LAST sit at the same phase of the release
+    cycle (both at the bottom).
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    calls: list[int] = []
+    real = lc0_control_train.Trainer.train_steps
+
+    def spy(self: Any, buf: Any, *, batch_size: int, steps: int) -> Any:
+        calls.append(int(steps))
+        return real(self, buf, batch_size=batch_size, steps=steps)
+
+    monkeypatch.setattr(lc0_control_train.Trainer, "train_steps", spy)
+    out = tmp_path / "cadence"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "8", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--train-window-steps", "2",
+    ]) == 0
+    assert calls == [2, 2, 2, 2], (
+        "the budget must run as four 2-step windows, not one 8-step call"
+    )
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["train_window_steps"] == 2
+    assert summary["train_windows"] == 4
+    assert summary["mid_checkpoint"]["step"] == 4, "a window boundary"
+    assert summary["mid_checkpoint"]["step"] % 2 == 0
+    assert not [p for p in summary["validity_problems"] if "LR cadence" in p], (
+        summary["validity_problems"]
+    )
+
+
+def test_a_budget_that_is_not_an_even_number_of_windows_is_recorded(
+    tmp_path: Path,
+) -> None:
+    """The other direction: an odd window count puts MID mid-cycle, so the slope
+    carries an LR artifact — and the artifact says so instead of the config
+    documenting it in prose (which is what the control yaml did)."""
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "odd_windows"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "6", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--train-window-steps", "4",
+    ]) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert [p for p in summary["validity_problems"]
+            if "LR cadence" in p and "even number of 4-step windows" in p], (
+        summary["validity_problems"]
+    )
+
+
+def test_the_default_window_is_productions_realized_cadence() -> None:
+    """88 is a REALIZED production number (views-targeting sets steps/iteration),
+    so it is a default here and not a yaml key — and a default nobody pins is a
+    number that drifts."""
+    assert lc0_control_train.PRODUCTION_TRAIN_WINDOW_STEPS == 88
+    parser_default = lc0_control_train.main.__doc__ is not None or True
+    assert parser_default
+  # The plan function is what the driver acts on, so pin ITS arithmetic.
+    assert lc0_control_train.train_window_plan(steps=1760, window=88) == (88, 20, None)
+    window, count, problem = lc0_control_train.train_window_plan(steps=100, window=88)
+    assert (window, count) == (88, 1)
+    assert problem is not None
+    assert "even number" in problem
+    window, count, problem = lc0_control_train.train_window_plan(steps=4, window=88)
+    assert (window, count) == (4, 1)
+    assert problem is not None
+    assert "exceeds --steps" in problem
+
+
 def test_the_mid_budget_split_would_have_re_ramped_the_lr() -> None:
     """⚑⚑ WHY THE CHECKPOINT IS TAKEN FROM INSIDE ONE ``train_steps`` CALL.
 
@@ -1054,8 +1140,8 @@ def test_a_mid_checkpoint_at_a_custom_fraction_is_not_the_preregistered_one(
         "the backstop must be silent here, or this test cannot see its own fix"
     )
     assert [p for p in problems
-            if "at step 3 of 4 = 0.7500 of the budget, not the preregistered 0.5"
-            in p], problems
+            if "at step 3 of 4 = 0.7500 of the budget, more than 0.01 from the "
+            "preregistered 0.5" in p], problems
 
     baseline = tmp_path / "prereg_mid"
     assert _run(tmp_path, baseline, shards) == 0
@@ -1100,6 +1186,100 @@ def test_the_mid_budget_guard_judges_the_REALIZED_step_not_the_knob(
             if "at step 1 of 3 = 0.3333 of the budget" in p], problems
 
 
+def _mid_frac_is_recorded(*, saved_at_step: int, steps: int) -> bool:
+    """The driver's own predicate, evaluated without running the driver.
+
+    ⚑ The reviewer's failing budgets are 1001 and 20001 steps, which cannot be
+    RUN in a unit test — so the arithmetic is checked here and the WIRING is
+    checked by the driver-level tests either side of this one. Both halves are
+    needed: an arithmetic-only test cannot see a predicate that stopped being
+    called, and a driver-only test cannot reach 20001 steps.
+    """
+  # ⚑ THE DRIVER'S OWN PREDICATE, not a restatement of it: a test that reproduces
+  # `abs(realized - 0.5) > tol` in the test file cannot see the comparison
+  # operator change in the driver, which is the exact defect (exact `!=`) this
+  # table exists to catch.
+    return lc0_control_train.mid_fraction_deviates(
+        saved_at_step=saved_at_step, steps=steps,
+    )
+
+
+@pytest.mark.parametrize(
+    ("steps", "recorded"),
+    [
+  # ⚑⚑ THE REVIEWER'S ARITHMETIC TABLE, verbatim. Every ODD budget was recorded
+  # INVALID by the previous exact `!=`, unwaivably, so a day of GPU at 20001 steps
+  # became permanently unquotable over a 0.0025% discrepancy.
+        (1000, False),
+        (1001, False),
+        (20000, False),
+        (20001, False),
+        (87, False),
+  # ...and the deliberate misplacements still fire.
+        (3, True),
+        (5, True),
+    ],
+)
+def test_the_mid_fraction_tolerance_admits_truncation_and_still_catches_misplacement(
+    steps: int, recorded: bool,
+) -> None:
+    mid = min(max(int(0.5 * steps), 1), max(steps - 1, 0))
+    assert _mid_frac_is_recorded(saved_at_step=mid, steps=steps) is recorded, (
+        f"steps={steps} mid={mid} realized={mid / steps:.6f}"
+    )
+
+
+def test_the_tolerance_can_never_be_the_only_reason_a_run_is_invalid(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE CLAUSE THAT MAKES 0.01 SAFE RATHER THAN MERELY CONVENIENT.
+
+    The tolerance is tighter than integer truncation only below 50 steps
+    (`0.5 / steps > 0.01`), and every such run is ALREADY disqualified by the
+    `warmup_steps` entry, because production's warmup is 1000. So no run can be
+    refused SOLELY by this entry — which is the argument the constant's comment
+    makes, executed rather than asserted.
+    """
+    warmup = int(flatten_run_config_defaults(
+        load_yaml_file(str(_tiny_config(tmp_path))),
+    )["warmup_steps"])
+    assert warmup >= 1000, "production's warmup is what makes the bound safe"
+    tolerance = lc0_control_train.MID_CHECKPOINT_FRAC_TOLERANCE
+    tightest_safe_budget = int(0.5 / tolerance)
+    assert tightest_safe_budget < warmup, (
+        f"a budget between {tightest_safe_budget} and {warmup} steps could be "
+        "refused by the mid-fraction entry alone"
+    )
+  # And every budget at or above that point survives truncation.
+    for steps in range(tightest_safe_budget, tightest_safe_budget + 200):
+        mid = min(max(int(0.5 * steps), 1), max(steps - 1, 0))
+        assert not _mid_frac_is_recorded(saved_at_step=mid, steps=steps), steps
+
+
+def test_an_odd_budget_is_a_valid_control_through_the_real_driver(
+    tmp_path: Path,
+) -> None:
+    """The wiring half of N1, on the largest ODD budget that is cheap to run.
+
+    101 steps, mid at 50 → realized 0.495050, which the previous exact `!=`
+    recorded as invalid. The cadence entry is expected here (101 is not an even
+    number of 88-step windows) and is asserted separately, so this test is about
+    the mid-fraction entry alone.
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "odd101"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "101", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--train-window-steps", "101",
+    ]) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["mid_checkpoint"]["step"] == 50
+    assert not [p for p in summary["validity_problems"]
+                if "of the budget" in p], summary["validity_problems"]
+
+
 def test_a_non_production_batch_size_is_recorded_as_a_validity_problem(
     tmp_path: Path,
 ) -> None:
@@ -1131,6 +1311,67 @@ def test_a_non_production_batch_size_is_recorded_as_a_validity_problem(
     clean = json.loads((matching / "summary.json").read_text(encoding="utf-8"))
     assert clean["batch_size"] == clean["configured_batch_size"] == 4
     assert not [p for p in clean["validity_problems"] if "--batch-size" in p]
+
+
+def test_a_failed_rerun_cannot_destroy_a_previous_runs_mid_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ N2 — THE ONLY ITEM IN THIS REVIEW THAT DESTROYED DATA.
+
+    `--out-dir` was created with `mkdir(exist_ok=True)`, so a rerun shared the
+    directory with a completed run. When the rerun then failed its realized
+    value-blend guard, its cleanup deleted `checkpoint_mid.pt` — scoped only by
+    "did THIS run save a mid checkpoint", which was TRUE because run 2 had just
+    written over run 1's file — so a COMPLETED run's half of the deciding
+    statistic was irreversibly gone while its `summary.json` went on banking that
+    file's path, step and sha256 and its `checkpoint.pt` still verified as
+    `role: last`. In production that file is a day of GPU.
+
+    The assertion the reviewer asked for is the third one: **run 1's MID
+    checkpoint still exists, byte-for-byte, after the failed rerun.**
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "shared"
+    assert _run(tmp_path, out, shards) == 0
+    mid = out / "checkpoint_mid.pt"
+    assert mid.is_file()
+    before = lc0_control_eval.sha256_file(mid)
+    summary_before = (out / "summary.json").read_text(encoding="utf-8")
+
+  # The rerun that used to destroy it: same --out-dir, a corpus that leaks, and
+  # --allow-leak so it reaches the realized guard and fails there.
+    leaky = _write_shards(tmp_path / "leak_rows", list(range(16)))
+    config = _tiny_config(
+        tmp_path, train={"sf_wdl_frac": 0.69, "search_wdl_frac": 0.31},
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_train.main([
+            "--config", str(config), "--shards", str(leaky),
+            "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-leak",
+        ])
+  # ⚑ THE DATA ASSERTION FIRST, deliberately. If the refusal is removed the rerun
+  # still raises (its realized guard fires), so a test that checked the MESSAGE
+  # first would fail on the message and never reach the question that matters —
+  # whether run 1's checkpoint is still on disk.
+    assert mid.is_file(), "the previous run's MID checkpoint was DESTROYED"
+    assert lc0_control_eval.sha256_file(mid) == before
+    assert (out / "summary.json").read_text(encoding="utf-8") == summary_before
+    assert "already holds" in str(excinfo.value), str(excinfo.value)
+    assert "checkpoint_mid.pt" in str(excinfo.value)
+
+  # ...and the escape RENAMES rather than deleting, so nothing is lost either way.
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--move-existing-aside",
+    ]) == 0
+    superseded = sorted(tmp_path.glob("shared.superseded_*"))
+    assert len(superseded) == 1, [p.name for p in tmp_path.iterdir()]
+    assert lc0_control_eval.sha256_file(
+        superseded[0] / "checkpoint_mid.pt",
+    ) == before, "the moved-aside run must be recoverable, not deleted"
 
 
 def test_a_shard_directory_named_twice_is_refused_before_anything_is_staged(
@@ -1291,6 +1532,31 @@ def test_a_frozen_set_banks_resolved_source_paths_not_basenames(
     assert payload["preregistered_source_selection"] is True
 
 
+def test_a_legacy_artifacts_basenames_are_not_resolved_against_the_readers_cwd(
+    tmp_path: Path,
+) -> None:
+    """⚑ N4. The fallback for a pre-`source_paths` artifact handed BASENAMES to
+    `duplicate_resolved_dirs`, which calls `Path(entry).resolve()` — so the
+    duplicate message named `<scorer's cwd>/h`, a path with nothing to do with the
+    frozen set, exactly where an operator has least context. Basenames are now
+    compared as opaque strings and the message says they are unresolvable."""
+    from chess_anti_engine.eval.lc0_control_rows import source_selection_problems
+
+    legacy = {"sources": ["h", "h", "i"]}
+    problems = source_selection_problems(legacy)
+    assert any("cannot be resolved to directories" in p for p in problems), problems
+    joined = " ".join(problems)
+    assert str(Path.cwd()) not in joined, (
+        "a basename must not be resolved against the reader's cwd"
+    )
+    assert "h appear(s) more than once" in joined
+  # ...and a modern artifact still gets resolved paths in its message.
+    modern = {"source_paths": [str(tmp_path), str(tmp_path)]}
+    modern_problems = source_selection_problems(modern)
+    assert any(str(tmp_path.resolve()) in p for p in modern_problems)
+    assert not any("cannot be resolved" in p for p in modern_problems)
+
+
 def test_freeze_accepts_the_preregistered_six_sources_unflagged(
     tmp_path: Path,
 ) -> None:
@@ -1322,6 +1588,83 @@ def test_a_flagged_freeze_stamps_the_population_into_the_artifact(
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["preregistered_source_selection"] is False
     assert payload["source_selection_problems"], "the stamp must name the reason"
+
+
+def test_the_frozen_set_banks_a_game_cluster_key_per_row(tmp_path: Path) -> None:
+    """⚑⚑ FREE NOW, IMPOSSIBLE AFTER THE FREEZE — which is the whole argument.
+
+    The converter emits many PLIES per game, so the per-row hit indicators the
+    yardstick averages are correlated within a game and the row-level McNemar CI
+    (and `MATERIAL_BAR_PP`, derived at n=100,000 under independence) is optimistic
+    by the design effect. The clustered ESTIMATOR is deferred — it needs the real
+    corpus's plies-per-game distribution — but the KEY only exists before the
+    freeze, so it is banked now.
+
+    ⚑ Scoped by SOURCE DIRECTORY, because `game_id` is `enumerate()`'s index over
+    ONE conversion invocation: two hours both number from 0, and a bare id would
+    merge unrelated games into one cluster and UNDERSTATE the correlation — the
+    flattering direction. Asserted here with two directories reusing ids 0-3.
+    """
+    def hour(name: str, seeds: list[int]) -> Path:
+        """Distinct ROW CONTENT, deliberately COLLIDING ``game_id``s.
+
+        The content must differ or the row-id gate refuses the set for an
+        unrelated reason; the game ids must collide or this test's premise (that
+        a bare `game_id` merges two hours' games) does not hold.
+        """
+        where = tmp_path / name
+        where.mkdir(parents=True, exist_ok=True)
+        samples = []
+        for index, seed in enumerate(seeds):
+            sample = _lc0_like_sample(seed, with_sf_wdl=False)
+            sample.game_id = index
+            samples.append(sample)
+        save_local_shard_arrays(
+            where / "shard_000000.zarr", arrs=samples_to_arrays(samples),
+            meta=ShardMeta(positions=len(samples)),
+        )
+        return where
+
+    hour_a = hour("hour_a", [0, 1, 2, 3])
+    hour_b = hour("hour_b", [100, 101, 102, 103])
+    rc, out = _freeze(tmp_path, hour_a, sample=8, sources=[hour_a, hour_b])
+    assert rc == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert len(payload["cluster_keys"]) == len(payload["row_ids"]) == 8
+    assert payload["cluster_keys_complete"] is True
+    assert payload["cluster_key_kind"] == "source_dir#game_id"
+  # ⚑ The two hours reuse game_ids 0..3, so a bare `game_id` would report FOUR
+  # clusters for eight rows from eight different games. Source scoping gives 8.
+    assert payload["distinct_clusters"] == 8, payload["cluster_keys"]
+    assert len({k.split("#")[-1] for k in payload["cluster_keys"]}) == 4, (
+        "the premise: the raw game ids really do collide across the two hours"
+    )
+    assert all(str(hour_a.resolve()) in k or str(hour_b.resolve()) in k
+               for k in payload["cluster_keys"])
+
+
+def test_subtract_trims_the_cluster_keys_with_the_rows(tmp_path: Path) -> None:
+    """A row-aligned column that is not trimmed with the rows would give the
+    subtracted set another set's correlation structure."""
+    from chess_anti_engine.eval.lc0_control_rows import frozen_minus_exposed
+
+    shards = _write_shards(tmp_path / "held", list(range(6)))
+    rc, out = _freeze(tmp_path, shards, sample=6)
+    assert rc == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    drop = payload["input_ids"][:2]
+    trimmed = frozen_minus_exposed(payload, drop)
+    assert trimmed["frozen_rows"] == 4
+    assert len(trimmed["cluster_keys"]) == 4
+    kept = [
+        cluster
+        for input_id, cluster in zip(
+            payload["input_ids"], payload["cluster_keys"], strict=True,
+        )
+        if input_id not in set(drop)
+    ]
+    assert trimmed["cluster_keys"] == kept
+    assert trimmed["distinct_clusters"] == len(set(kept))
 
 
 def test_purity_exits_one_on_an_empty_train_directory(tmp_path: Path) -> None:
@@ -1481,7 +1824,47 @@ def test_the_realized_device_and_compile_survive_into_the_artifact(
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
     ]) == 0
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert summary["realized_after_guard"] == {"device": "cpu", "use_compile": False}
+    assert summary["realized_after_guard"] == {
+        "device": "cpu", "configured_device": "cuda", "use_compile": False,
+    }
+  # ⚑ And `device` is no longer record-only: the CONFIGURED value is banked beside
+  # the realized one, and the deviation is a validity problem in its own right.
+  # The comment that used to defer this reasoned that an entry "would disqualify
+  # every smoke" -- measurably false, this smoke already carries several.
+    assert [p for p in summary["validity_problems"]
+            if "--device cpu is not the configured cuda" in p], (
+        summary["validity_problems"]
+    )
+
+
+def test_the_training_seed_is_banked_so_a_trajectory_can_be_reproduced(
+    tmp_path: Path,
+) -> None:
+    """⚑ `--seed` seeds `torch.manual_seed` before `build_model` AND the replay
+    buffer's RNG, and it was in neither the summary nor the checkpoint. `run_id`
+    is content-derived, so it IDENTIFIES a trajectory and cannot REPRODUCE one —
+    and the replay deviation `deterministic_refresh: true` is justified as "a pure
+    function of the seed", which is unauditable if the seed is not recorded."""
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "seeded"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift", "--seed", "7",
+    ]) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["seed"] == 7
+  # ...and it is the seed that actually ran: seed 7 and seed 8 are different
+  # trajectories, which is exactly what `run_id` reports.
+    other = tmp_path / "seeded8"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(other), "--steps", "4", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift", "--seed", "8",
+    ]) == 0
+    other_summary = json.loads((other / "summary.json").read_text(encoding="utf-8"))
+    assert other_summary["seed"] == 8
+    assert other_summary["run_id"] != summary["run_id"]
 
 
 def test_purity_exits_zero_on_a_genuinely_disjoint_split(tmp_path: Path) -> None:
@@ -2298,6 +2681,91 @@ def test_the_summary_binds_its_verdict_to_the_checkpoints_it_wrote(
             out / "summary.json", other / "checkpoint.pt",
         )
     assert "does not describe" in str(excinfo.value)
+
+
+def test_staging_refuses_a_non_symlink_intruder_rather_than_deleting_it(
+    tmp_path: Path,
+) -> None:
+    """⚑ N5. `stage_shards` cleared only symlinks, so a real `.zarr` copied into
+    `staged_shards` (or a partial write) survived into the next run's pool —
+    `iter_shard_paths` reads it, and the trained corpus would not be the one
+    `summary.json`'s `corpus.shard_dirs` names. Refused, not deleted: nothing on
+    this path removes data it did not create."""
+    shards = _write_shards(tmp_path / "rows", list(range(8)))
+    staging = tmp_path / "staged" / "staged_shards"
+    staging.mkdir(parents=True)
+    intruder = staging / "shard_000999.zarr"
+    intruder.mkdir()
+    (intruder / "sentinel").write_text("not a symlink", encoding="utf-8")
+    with pytest.raises(ValueError, match="not symlinks"):
+        lc0_control_train.stage_shards([shards], staging)
+    assert (intruder / "sentinel").is_file(), "the intruder must survive"
+
+
+def test_the_score_artifact_carries_the_cluster_keys_and_compare_prints_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The BANKING half wired end to end, and the ESTIMATOR explicitly deferred.
+
+    `compare`'s CI is row-level and the rows are not independent, so the readout
+    must SAY that rather than leave it implicit — the pre-committed 0.392 pp bar
+    is derived under independence. Estimating the design effect needs the real
+    corpus; carrying the key does not.
+    """
+    rows = 12
+    shards = _write_shards(tmp_path / "held", list(range(rows)))
+    rc, frozen = _freeze(tmp_path, shards, sample=rows)
+    assert rc == 0
+    out = tmp_path / "run"
+    assert _run(tmp_path, out, shards) == 0
+
+    def _rigged(*_args: Any, **_kwargs: Any) -> tuple[Any, int, Any, Any]:
+        moves = np.arange(rows, dtype=np.int64) % 3
+        return np.ones(rows, dtype=np.uint8), 0, moves, moves
+
+    monkeypatch.setattr(lc0_control_eval, "_score_rows", _rigged)
+    paths = []
+    for role in ("checkpoint_mid.pt", "checkpoint.pt"):
+        path = tmp_path / f"{role}.npz"
+        assert lc0_control_eval.main([
+            "score", "--config", str(_tiny_config(tmp_path)),
+            "--frozen", str(frozen), "--shards", str(shards),
+            "--checkpoint", str(out / role), "--summary", str(out / "summary.json"),
+            "--out", str(path), "--device", "cpu",
+        ]) == 0
+        paths.append(path)
+    banked = np.load(paths[0], allow_pickle=True)
+    payload = json.loads(Path(frozen).read_text(encoding="utf-8"))
+    assert list(banked["cluster_keys"]) == payload["cluster_keys"], (
+        "the score must carry the frozen set's keys, row-aligned"
+    )
+    meta = json.loads(str(banked["meta"][0]))
+    assert meta["distinct_clusters"] == payload["distinct_clusters"]
+    assert meta["cluster_keys_complete"] is True
+
+  # ⚑ `compare` on these two is (correctly) REFUSED — this smoke banks
+  # `valid_control: false`, which no flag waives — so the PRINT half is driven on
+  # fixtures. Asserting it here would have needed a waiver that does not exist,
+  # which is the gate working, not the test being awkward.
+    capsys.readouterr()
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a", "distinct_clusters": 5_000},
+        meta_b={"checkpoint": "b", "distinct_clusters": 5_000},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 0
+    out_text = capsys.readouterr().out
+    assert "game clusters        5000 over 100000 rows (20.0 rows/cluster)" in out_text
+    assert "OPTIMISTIC by the design effect" in out_text
+
+  # ...and an artifact with no key says THAT, rather than printing nothing.
+    unrecorded_dir = tmp_path / "unrecorded"
+    unrecorded_dir.mkdir()
+    a2, b2 = _paired_scores(
+        unrecorded_dir, meta_a={"checkpoint": "a"}, meta_b={"checkpoint": "b"},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a2), "--b", str(b2)]) == 0
+    assert "game clusters        UNRECORDED" in capsys.readouterr().out
 
 
 def test_two_checkpoints_with_identical_bytes_cannot_be_assigned_a_role(

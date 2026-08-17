@@ -904,10 +904,20 @@ def cmd_score(args: argparse.Namespace) -> int:
             observed=rate, expected=collision, rows=int(hits.size),
             max_z=float(args.negative_control_z),
         )
+  # ⚑⚑ THE CLUSTER KEY, CARRIED INTO THE SCORE. The converter emits many plies per
+  # game, so these hit indicators are correlated within a game and the row-level
+  # Wald/McNemar CI below (and `MATERIAL_BAR_PP`, derived under independence) is
+  # optimistic by the design effect. The clustered estimator is DEFERRED; banking
+  # the key is not, because it makes an estimator-only reanalysis possible from the
+  # two npz files alone. Empty strings when the frozen set predates the field.
+    clusters = list(payload.get("cluster_keys") or ())
+    cluster_by_id = dict(zip(payload["row_ids"], clusters, strict=False))
+    row_clusters = [cluster_by_id.get(row_id, "") for row_id in wanted]
     np.savez_compressed(
         Path(args.out),
         row_ids=np.array(wanted, dtype="U32"),
         hit=hits,
+        cluster_keys=np.array(row_clusters, dtype=object),
         meta=np.array([json.dumps({
             "checkpoint": str(args.checkpoint) if args.checkpoint else None,
             "config": str(args.config),
@@ -935,6 +945,10 @@ def cmd_score(args: argparse.Namespace) -> int:
   # ⚑ The HELD-OUT population, recomputed from the frozen artifact rather than
   # trusted from its stamp. `freeze` gated n and not the sources.
             "heldout_source_selection_problems": heldout_problems,
+  # ⚑ The cluster STRUCTURE, next to the CI it makes optimistic. Recorded, not yet
+  # applied — see `cluster_keys` above and `cmd_compare`'s printout.
+            "distinct_clusters": len({c for c in row_clusters if c}),
+            "cluster_keys_complete": bool(row_clusters) and all(row_clusters),
             "rows": int(hits.size),
             "top1_agreement": rate,
             "tied_argmax_rows": int(tied),
@@ -1063,6 +1077,23 @@ def cmd_compare(args: argparse.Namespace) -> int:
     print(f"95% CI               [{(delta - half) * 100:+.4f}, "
           f"{(delta + half) * 100:+.4f}] pp   (halfwidth {half * 100:.4f} pp)")
     print(f"exact McNemar p      {p_exact:.6g}")
+  # ⚑⚑ THE CI ABOVE ASSUMES INDEPENDENT ROWS AND THE ROWS ARE NOT INDEPENDENT.
+  # The converter emits many plies per game, so hits are correlated within a game
+  # and both the halfwidth and `MATERIAL_BAR_PP` (derived at n=100,000 under
+  # independence) are optimistic by the design effect. The clustered estimator is
+  # DEFERRED — it needs the real corpus's plies-per-game distribution — so what
+  # ships is the KEY (banked by `score`, unrecoverable after the freeze) and this
+  # line, which states the assumption instead of leaving it implicit. A readout
+  # quoted against the pre-committed bar has to show it.
+    clusters_a = int(meta_a.get("distinct_clusters") or 0)
+    if clusters_a > 0:
+        print(f"game clusters        {clusters_a} over {n} rows "
+              f"({n / clusters_a:.1f} rows/cluster)   ⚑ the CI above is "
+              "ROW-level and is OPTIMISTIC by the design effect; the clustered "
+              "estimator is not yet implemented")
+    else:
+        print("game clusters        UNRECORDED   ⚑ the CI above is ROW-level and "
+              "cannot be corrected for within-game correlation from this artifact")
   # ⚑ THE PRE-COMMITTED BAR IS A PROPERTY OF n, AND NOTHING WAS ENFORCING n.
   # The prereg's 0.392 pp material bar is derived AT n=100,000. The reviewer's
   # end-to-end demonstration paired 5,000 train-side rows and got a halfwidth

@@ -605,6 +605,85 @@ checkpoint landing on the realized 0.5 of the budget (the knob is clamped to an 
 step, so `--steps 3 --mid-checkpoint-frac 0.5` lands at 33% and is recorded). Any of the
 five new banners in the output means the readout is not the preregistered yardstick.
 
+## ⚑⚑ AMENDMENT 7 (2026-08-17, written BEFORE any training step): THE RIG COULD NOT PRODUCE THE NUMBER IT EXISTS TO PRODUCE
+
+**Still no arm has run and no number from this arm exists.** ⚑ **NO THRESHOLD MOVES IN
+THIS AMENDMENT** — the ±0.392 pp bar, the +2.0 pp effect size, the n=100,000 resolution
+point, the four guards and the outcome table are exactly as originally written. ⚑ Launch
+readiness is recorded separately and is NOT claimed here.
+
+From a second independent review (of Amendment 6's own fix wave) plus five Codex threads.
+Two items are Amendment 6's fixes over-correcting, which is the failure mode
+`fixing_a_defect_class_reintroduces_it` names, and one destroyed data.
+
+1. **The mid-budget guard's `!=` made every ODD budget permanently invalid.** Amendment 6
+   moved the guard from the knob to the realized fraction, correctly, and compared with
+   exact inequality — which `mid_step = int(0.5 × steps)` can only satisfy for EVEN
+   budgets. `--steps 20001` realizes 0.499975, records a validity problem, and — because
+   Amendment 6 deliberately made `valid_control: false` unwaivable — **a day of GPU would
+   have been permanently unquotable over a 0.0025% discrepancy.** ⇒ the comparison is now
+   tolerant, `MID_CHECKPOINT_FRAC_TOLERANCE = 0.01`, chosen so that (a) truncation is
+   admitted for every budget ≥ 50 steps, (b) every deliberate misplacement still fires
+   (`0.99` → 0.75, `--steps 3` → 0.333), and (c) the only regime where the bound is
+   tighter than truncation is under 50 steps, which the `warmup_steps` entry already
+   disqualifies — so **this entry can never be the sole reason a run is refused**, which
+   is a test rather than a claim.
+2. **A failed rerun into a populated `--out-dir` irreversibly deleted the previous
+   completed run's `checkpoint_mid.pt`** — a day of GPU in production — while that run's
+   `summary.json` went on banking the file's path, step and sha256 and its surviving
+   `checkpoint.pt` still verified as `role: last`. The directory was left reading as a
+   scorable success with half the deciding statistic gone, and the message "no checkpoint
+   written (including the mid-budget one)" was FALSE about the directory. ⇒ a populated
+   `--out-dir` is **REFUSED**; the escape (`--move-existing-aside`) **RENAMES** to
+   `<out-dir>.superseded_<UTC>`. There is deliberately **no `--overwrite`** and no new
+   delete path: a rename is reversible by hand, a delete is not.
+3. **The deciding slope contained an LR anneal production never has.** With
+   `lr_schedule: sqrt_release` and `lr_release_cycle_steps: 0`, `train_steps` derives the
+   release cycle from ITS OWN `steps` argument, so the driver's single call held LR flat
+   for `lr_release_start_frac` (0.80) of the **entire experiment** and annealed once: MID
+   at 50% of budget sat at full base LR and LAST at `lr_release_min_scale` (0.1×) after a
+   full anneal. Production calls `train_steps` once per ITERATION at ~88 steps, i.e. a
+   sawtooth, and never places an anneal between two of its own checkpoints. An annealed
+   endpoint scores better on held-out top-1 for reasons that are not the trainer learning
+   — in the flattering direction for H_stack. The control yaml **documented** this;
+   documenting a first-order confound in the primary yardstick is not controlling it. ⇒
+   the driver now runs the budget in **windows of `--train-window-steps` (default 88,
+   production's REALIZED steps/iteration — it is not a yaml key, because views-targeting
+   derives it from ingest volume)**, so MID and LAST both land on a window boundary, i.e.
+   at the same phase of the release cycle. A budget that is not an even number of windows
+   records the deviation. ⚑ This is NOT the split Amendment 4 warned about: two calls of
+   N/2 put MID mid-ramp and LAST at a bottom, while W equal windows put both at a bottom.
+4. **The cluster key is banked; the clustered estimator is NOT.** Many plies share a
+   `game_id`, so the per-row hit indicators are correlated within a game and both the
+   reported CI and `MATERIAL_BAR_PP` (derived at n=100,000 **under independence**) are
+   optimistic by the design effect. Estimating that effect needs the real corpus's
+   plies-per-game distribution and is **deferred**; the KEY is banked NOW — in the frozen
+   artifact and carried into every score npz — because it is free before the freeze and
+   **unrecoverable after it**, and that asymmetry is the whole argument. `compare` prints
+   the cluster count and states that its CI is row-level and optimistic. ⚑ The purity
+   module rejects `game_id` as a CROSS-SPLIT instrument (it is `enumerate()`'s index over
+   one conversion, so cross-split ids are disjoint by construction); as a WITHIN-set
+   cluster key scoped by source directory it is valid, and the scoping matters — unscoped,
+   two hours' game 0 would merge and UNDERSTATE the correlation.
+5. **`--device` is now disqualifying and `--seed` is banked.** The comment deferring the
+   device gate reasoned that "an entry here would disqualify every smoke"; measured, that
+   is false — a clean 4-step CPU smoke already banks four entries — so the gate costs
+   nothing and its absence left `realized_after_guard` banked-and-unread by every
+   consumer. `--seed` seeds `torch.manual_seed` before `build_model` and the replay RNG
+   and appeared in no artifact: `run_id` is content-derived, so it identifies a trajectory
+   but cannot reproduce one, and the replay deviation `deterministic_refresh: true` is
+   justified as "a pure function of the seed".
+6. Two smaller ones: a legacy frozen artifact's BASENAME sources were being resolved
+   against the **reader's** cwd (so a duplicate message named a path unrelated to the
+   set), and `stage_shards` cleared only symlinks, so a non-symlink left in
+   `staged_shards` would join the sampled corpus while `summary.json` named only
+   `--shards`. The latter is now a refusal, not a deletion.
+
+⇒ **Operational consequence for this arm, added to Amendment 6's list:** `--steps` must be
+an even multiple of `--train-window-steps`, `--out-dir` must be fresh, and any quoted
+readout must show the `game clusters` line — whose stated caveat (the CI is row-level) is
+in force until the clustered estimator lands.
+
 ## What each outcome licenses — pre-committed
 
 - **PASS** ⇒ the training stack and architecture can learn. Effort routes to targets

@@ -193,6 +193,20 @@ class SplitIds:
 
     ids: list[str] = field(default_factory=list)
     inputs: list[str] = field(default_factory=list)
+  # ⚑⚑ THE CLUSTER KEY, AND WHY IT IS COLLECTED HERE EVEN THOUGH NOTHING READS IT
+  # YET. The converter emits many PLIES per game, so the per-row hit indicators
+  # the yardstick averages are correlated WITHIN a game: a row-level Wald/McNemar
+  # CI — which is what `lc0_control_eval` computes and what `MATERIAL_BAR_PP` is
+  # derived from — is optimistic by the design effect. Estimating that effect
+  # needs the real corpus and is deferred; BANKING the key is free now and
+  # IMPOSSIBLE after the set is frozen, and that asymmetry is the whole argument.
+  #
+  # ⚑ `game_id` is rejected at the top of this module as a PURITY instrument, and
+  # that rejection is about a DIFFERENT question: it is `enumerate()`'s index
+  # within one conversion invocation, so train and held-out ids are disjoint by
+  # construction and a cross-split check on them cannot fail. As a WITHIN-set
+  # cluster key, scoped to the source directory it came from, it is exactly right.
+    clusters: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     rows: int = 0
 
@@ -227,21 +241,48 @@ class SplitIds:
         return self.rows - self.unique_inputs
 
 
+def game_cluster_keys(
+    arrs: dict[str, np.ndarray], *, source: str, rows: int,
+) -> list[str]:
+    """``"<source>#<game_id>"`` per row — the WITHIN-set correlation unit.
+
+    ⚑ Scoped by SOURCE because `game_id` is `enumerate()`'s index over one
+    conversion invocation: two hours both number their games from 0, so the bare
+    id would merge unrelated games into one cluster and UNDERSTATE the design
+    effect (the flattering direction).
+
+    ⚑ An absent `game_id` column yields ``""`` rather than a fabricated unique
+    key. A fabricated one would make every row its own cluster, i.e. report the
+    independence the estimator is supposed to stop assuming; the empty string is
+    detectable, and `frozen_row_set` banks whether the set is complete.
+    """
+    game_ids = arrs.get("game_id")
+    if game_ids is None:
+        return [""] * rows
+    return [f"{source}#{int(g)}" for g in np.asarray(game_ids).reshape(-1)[:rows]]
+
+
 def collect_split_ids(shard_dirs: Sequence[Path]) -> SplitIds:
-    """Record ids AND exposure (input) ids for every row under ``shard_dirs``."""
+    """Record ids, exposure (input) ids and game cluster keys for every row."""
     split = SplitIds()
     for path, arrs in iter_shard_arrays(shard_dirs):
         ids = row_ids(arrs)
         split.ids.extend(ids)
         split.inputs.extend(input_ids(arrs))
+  # The SHARD's parent directory, not the shard file: a conversion run numbers
+  # its games once across all the shards it writes, so the game is the unit and
+  # the directory is its scope.
+        split.clusters.extend(game_cluster_keys(
+            arrs, source=str(Path(path).parent.resolve()), rows=len(ids),
+        ))
         split.sources.append(str(path.name))
         split.rows += len(ids)
     return split
 
 
 def _stratified_sample(
-    per_source: list[list[tuple[str, str]]], *, sample: int, seed: int,
-) -> list[tuple[str, str]]:
+    per_source: list[list[tuple[str, str, str]]], *, sample: int, seed: int,
+) -> list[tuple[str, str, str]]:
     """Take ``sample`` ids spread proportionally across sources.
 
     ⚑ A flat random draw over the pooled ids would still be *time-disjoint*
@@ -254,7 +295,7 @@ def _stratified_sample(
     if sample >= total:
         return [row for chunk in per_source for row in chunk]
     rng = np.random.default_rng(seed)
-    picked: list[tuple[str, str]] = []
+    picked: list[tuple[str, str, str]] = []
     remaining = sample
     for index, chunk in enumerate(per_source):
         sources_left = len(per_source) - index
@@ -333,13 +374,28 @@ def source_selection_problems(payload: Mapping[str, Any]) -> list[str]:
     called `h` bank `["h"] * 6`, from which nobody can audit the prereg's actual
     claim (the LAST 6 hourly tars BY WALL-CLOCK).
     """
-    entries = [str(s) for s in (
-        payload.get("source_paths") or payload.get("sources") or ()
-    )]
+    resolved = [str(s) for s in (payload.get("source_paths") or ())]
+  # ⚑ THE FALLBACK MUST NOT RESOLVE. `sources` is BASENAMES, and
+  # `duplicate_resolved_dirs` calls `Path(entry).resolve()`, which resolves
+  # against the READER's cwd — so a pre-`source_paths` artifact produced a
+  # duplicate message naming `<scorer's cwd>/h`, a path with nothing to do with
+  # the frozen set, exactly where the operator has least context. Basenames are
+  # compared as OPAQUE STRINGS and the message says they are unresolvable.
+    entries = resolved or [str(s) for s in (payload.get("sources") or ())]
     distinct = list(dict.fromkeys(entries))
     problems: list[str] = []
     if len(distinct) != len(entries):
-        repeated = duplicate_resolved_dirs(entries)
+        repeated = (
+            duplicate_resolved_dirs(entries) if resolved
+            else [e for e in distinct if entries.count(e) > 1]
+        )
+        if not resolved:
+            problems.append(
+                "this frozen set predates `source_paths`, so its sources are "
+                "BASENAMES and cannot be resolved to directories: the names "
+                "below are compared as strings and may or may not be the same "
+                "hour. Re-freeze to get an auditable population.",
+            )
         problems.append(
             f"the frozen set names {len(entries)} sources but only "
             f"{len(distinct)} distinct ones: "
@@ -371,7 +427,7 @@ def frozen_row_set(
     different digest definition, and the per-source row counts so a reader can
     see the six hours are all present without re-reading the shards.
     """
-    per_source: list[list[tuple[str, str]]] = []
+    per_source: list[list[tuple[str, str, str]]] = []
     source_names: list[str] = []
   # ⚑ RESOLVED PATHS, banked alongside the basenames. `sources` is what the
   # printout reads and it cannot identify an hour: six distinct directories all
@@ -384,7 +440,9 @@ def frozen_row_set(
     all_inputs: list[str] = []
     for shard_dir in shard_dirs:
         split = collect_split_ids([shard_dir])
-        per_source.append(list(zip(split.ids, split.inputs, strict=True)))
+        per_source.append(list(zip(
+            split.ids, split.inputs, split.clusters, strict=True,
+        )))
         source_names.append(Path(shard_dir).name)
         source_paths.append(str(Path(shard_dir).resolve()))
         source_rows.append(split.rows)
@@ -392,8 +450,9 @@ def frozen_row_set(
         all_inputs.extend(split.inputs)
     pool = SplitIds(ids=all_ids, inputs=all_inputs, rows=len(all_ids))
     frozen = _stratified_sample(per_source, sample=sample, seed=seed)
-    frozen_ids = [row_id for row_id, _ in frozen]
-    frozen_inputs = [input_id for _, input_id in frozen]
+    frozen_ids = [row_id for row_id, _, _ in frozen]
+    frozen_inputs = [input_id for _, input_id, _ in frozen]
+    frozen_clusters = [cluster for _, _, cluster in frozen]
     return {
         "row_id_version": ROW_ID_VERSION,
         "row_id_fields": list(ROW_ID_FIELDS),
@@ -413,6 +472,16 @@ def frozen_row_set(
         "frozen_unique_inputs": len(set(frozen_inputs)),
         "row_ids": frozen_ids,
         "input_ids": frozen_inputs,
+  # ⚑⚑ BANKED NOW BECAUSE IT IS UNRECOVERABLE LATER. Aligned to `row_ids`, one
+  # `"<source dir>#<game_id>"` per row. Nothing in the rig reads it yet — the
+  # clustered estimator is deferred — but the frozen set is the only place these
+  # keys exist, and after the freeze the artifact IS the population. See
+  # `SplitIds.clusters` and `game_cluster_keys` for why the purity module's
+  # rejection of `game_id` does not apply to this use.
+        "cluster_keys": frozen_clusters,
+        "cluster_key_kind": "source_dir#game_id",
+        "cluster_keys_complete": all(bool(c) for c in frozen_clusters),
+        "distinct_clusters": len({c for c in frozen_clusters if c}),
     }
 
 
@@ -849,18 +918,29 @@ def frozen_minus_exposed(
     constants be applied to a smaller set silently.
     """
     exposed = set(exposed_input_ids)
+  # ⚑ The cluster keys are ROW-ALIGNED, so they must be trimmed with the rows or
+  # a subtracted set would carry another set's correlation structure. A payload
+  # from before the field is padded with "" (incomplete, and recorded as such)
+  # rather than silently dropping the column.
+    clusters = list(payload.get("cluster_keys") or [])
+    if len(clusters) != len(payload["row_ids"]):
+        clusters = [""] * len(payload["row_ids"])
     kept = [
-        (row_id, input_id)
-        for row_id, input_id in zip(
-            payload["row_ids"], payload["input_ids"], strict=True,
+        (row_id, input_id, cluster)
+        for row_id, input_id, cluster in zip(
+            payload["row_ids"], payload["input_ids"], clusters, strict=True,
         )
         if input_id not in exposed
     ]
-    kept_ids = [row_id for row_id, _ in kept]
-    kept_inputs = [input_id for _, input_id in kept]
+    kept_ids = [row_id for row_id, _, _ in kept]
+    kept_inputs = [input_id for _, input_id, _ in kept]
+    kept_clusters = [cluster for _, _, cluster in kept]
     trimmed = dict(payload)
     trimmed["row_ids"] = kept_ids
     trimmed["input_ids"] = kept_inputs
+    trimmed["cluster_keys"] = kept_clusters
+    trimmed["cluster_keys_complete"] = all(bool(c) for c in kept_clusters)
+    trimmed["distinct_clusters"] = len({c for c in kept_clusters if c})
     trimmed["frozen_rows"] = len(kept_ids)
     trimmed["frozen_unique_ids"] = len(set(kept_ids))
     trimmed["frozen_unique_inputs"] = len(set(kept_inputs))
