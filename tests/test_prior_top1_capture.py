@@ -411,11 +411,93 @@ def test_written_index_is_compact_and_not_a_raw_4672_id(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_flag_survives_the_whole_config_route() -> None:
-    """A knob is dead unless every hop carries it. Walks the real hops rather
-    than asserting on any single one of them."""
+def _reco_for(config: dict[str, Any]) -> dict[str, Any]:
+    """The reco the server would publish for a flattened ``config``."""
     from chess_anti_engine.model import ModelConfig
     from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
+
+    return build_recommended_worker(
+        config=config, model_cfg=ModelConfig(), sf_nodes=1000, mcts_simulations=8,
+    )
+
+
+def _game_config_the_worker_builds(reco: dict[str, Any]) -> GameConfig:
+    """The ``GameConfig`` the REAL worker hop builds out of ``reco``.
+
+    ``WorkerSession._build_selfplay_configs`` is the kill switch's ONLY actuator:
+    nothing downstream re-reads the reco, and since this delta that hop gates the
+    shard bytes rather than only the capture. A test that certifies the reco and
+    then constructs a ``GameConfig`` itself observes neither -- replacing the hop
+    with a literal ``True`` left the whole suite green. So assert on what the
+    CONSUMER received.
+
+    The GameConfig is matched by config identity (``cfgs`` is keyed by the
+    ``play_batch`` kwarg name), and the uniqueness assert keeps that key from
+    silently becoming the wrong row if a second GameConfig is ever added.
+    """
+    import logging
+    import threading
+    from types import SimpleNamespace
+
+    from chess_anti_engine.worker import WorkerSession
+
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test.prior_top1_capture")
+    session.args = SimpleNamespace()
+    session.opening_book_path = None
+    session.opening_book_path_2 = None
+    session.opening_fen_list_path = None
+    session._dole_lock = threading.Lock()
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, reco)
+    game_keys = [k for k, v in cfgs.items() if isinstance(v, GameConfig)]
+    assert game_keys == ["game"], f"GameConfig is no longer uniquely keyed: {game_keys}"
+    game = cfgs["game"]
+    assert isinstance(game, GameConfig)
+    return game
+
+
+def test_the_reco_to_gameconfig_hop_actually_reads_the_flag() -> None:
+    """The kill switch's sole actuator, isolated from every hop above it.
+
+    Driven at the reco level only (the yaml/TrialConfig/publisher stages are held
+    at their defaults), and -- decisively -- at the NON-default value: an
+    assertion pinned to ``True`` is invariant to the mutation that matters, which
+    is replacing ``bool(reco.get("record_prior_top1", True))`` with a literal.
+    """
+    base = _reco_for({})
+
+    for want in (True, False):
+        reco = dict(base)
+        reco["record_prior_top1"] = want
+        game = _game_config_the_worker_builds(reco)
+        assert game.record_prior_top1 is want, (
+            f"the reco->GameConfig hop ignored record_prior_top1={want}; "
+            f"the consumer received {game.record_prior_top1!r}"
+        )
+
+    # The OFF case is the one that binds: it must disagree with the dataclass
+    # default, so no hop that ignores the reco entirely can satisfy it.
+    off = dict(base)
+    off["record_prior_top1"] = False
+    assert (
+        _game_config_the_worker_builds(off).record_prior_top1
+        != GameConfig().record_prior_top1
+    )
+
+    # An old server's manifest omits the key; the worker must fall back to the
+    # dataclass default rather than inventing one of its own.
+    absent = {k: v for k, v in base.items() if k != "record_prior_top1"}
+    assert (
+        _game_config_the_worker_builds(absent).record_prior_top1
+        == GameConfig().record_prior_top1
+    )
+
+
+def test_flag_survives_the_whole_config_route() -> None:
+    """A knob is dead unless every hop carries it. Walks the real hops rather
+    than asserting on any single one of them -- including the last one, the
+    worker's reco -> GameConfig hop, which is where the value is consumed."""
     from chess_anti_engine.tune.trial_config import TrialConfig
     from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
@@ -426,11 +508,11 @@ def test_flag_survives_the_whole_config_route() -> None:
         assert flat["record_prior_top1"] is want, "yaml schema dropped the key"
         tc = TrialConfig.from_dict(flat)
         assert tc.record_prior_top1 is want, "TrialConfig.from_dict dropped it"
-        reco = build_recommended_worker(
-            config=flat, model_cfg=ModelConfig(), sf_nodes=1000, mcts_simulations=8,
-        )
+        reco = _reco_for(flat)
         assert bool(reco["record_prior_top1"]) is want, "reco dropped it"
-        assert bool(GameConfig(record_prior_top1=want).record_prior_top1) is want
+        assert _game_config_the_worker_builds(reco).record_prior_top1 is want, (
+            "the worker's reco -> GameConfig hop dropped it"
+        )
 
 
 def test_flag_defaults_on_everywhere_it_is_declared() -> None:

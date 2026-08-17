@@ -62,10 +62,14 @@ _LOG = logging.getLogger("chess_anti_engine.selfplay.resume")
 
 # Bump whenever the on-disk layout or the meaning of a stored field changes.
 # A mismatch is a discard-with-reason, never a best-effort partial decode.
-# v2 (prior_top1_index / prior_top1_prob): four new per-record columns. A v1
-# file lacks them and `opt_scalar` would KeyError on the decode, so the bump is
-# what turns that into the documented discard-with-reason. Costs at most one
-# session's suspended games, once, at the deploy that ships it.
+# v2 (prior_top1_index / prior_top1_prob): four new per-record columns. ⚑ The
+# bump is NOT load-bearing against a crash: forcing the gate to accept a v1 file
+# yields a graceful `unreadable` discard, because `decode_game` is called under
+# the broad `except Exception` below (see the `report.note("unreadable")` arm)
+# and `opt_scalar`'s KeyError lands there. The bump is still right, for the
+# weaker and honest reason that `version_mismatch` names the actual cause where
+# `unreadable` would misattribute it. Costs at most one session's suspended
+# games, once, at the deploy that ships it.
 RESUME_FORMAT_VERSION = 2
 
 # Suffix for a durable per-game state file. One file per game keeps a partial

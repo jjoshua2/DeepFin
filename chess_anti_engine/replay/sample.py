@@ -55,6 +55,25 @@ class ReplaySample:
   # played move. Written only when selfplay.record_prior_top1 is on.
   # index is in the SHARD's policy encoding (compact when policy_encoding is
   # lc0_1858), like sf_move_index -- so it MUST be mirror-remapped, not copied.
+  # ⚑ WRITERS of this field, re-derived rather than assumed (an earlier review
+  # response claimed selfplay/finalize was the ONLY one; it is not, and the one
+  # it missed is the one the mirror correctness argument rests on). Three write
+  # a value, one propagates it:
+  #   1. selfplay/finalize._build_replay_samples -- the selfplay assembler, and
+  #      the only writer on the selfplay -> shard path. This is where the
+  #      record_prior_top1 kill switch is enforced for the bytes.
+  #   2. replay/shard.arrays_to_samples -- reconstitutes it when a shard is read
+  #      back off disk.
+  #   3. replay/augment.mirror_sample -- a DYNAMIC setattr looping over
+  #      POLICY_INDEX_FIELDS, which writes the MIRRORED index. It is invisible
+  #      to a grep for the field name, and this field's correctness under
+  #      mirroring depends on it entirely.
+  #   4. train/trainer -- dataclasses.replace(sample, ...) re-passes every field
+  #      as a kwarg, so it carries an existing value into a new instance. A
+  #      propagating writer, not an originating one.
+  # (finalize._build_sf_refute_opp_sample constructs a ReplaySample and never
+  # sets it; maybe_mirror_batch_arrays remaps the numpy COLUMN, not this class;
+  # selfplay/resume writes _NetRecord.prior_top1_index, a different type.)
     prior_top1_index: int | None = None
   # ⚑ Softmax at T = 1.0 over the legal moves: the NET's mass on that move, NOT
   # the mass the search seeded its tree with (search divides root logits by

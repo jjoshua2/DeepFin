@@ -615,6 +615,24 @@ def test_mirror_batch_leaves_inactive_prior_top1_rows_alone():
 # exception and no shape change. If you are adding a field and are unsure, it
 # belongs in POLICY_INDEX_FIELDS — a remap of a non-index is loud (it will not
 # round-trip in that field's own tests), a copy of an index is silent.
+#
+# ⚑⚑ THE BOUND ON THIS PARTITION — stated because a guard whose limit is not
+# written down reads as if it had none. Measured, not argued:
+#   * FORGETTING to classify a new scalar int field: CAUGHT, by the completeness
+#     test below (a `foo_move_index` in _OPTIONAL_FIELD_SPECS and in neither
+#     bucket fails it).
+#   * MIS-classifying an EXISTING field: CAUGHT — moving `prior_top1_index` here
+#     with a bogus reason fails 4 tests, because that field's own round-trip and
+#     mirror tests contradict the claim.
+#   * MIS-classifying a genuinely NEW field: **NOT CAUGHT.** The exemption is a
+#     prose assertion about semantics the author has just invented, and only
+#     that author's own tests can contradict it. This is inherent, not an
+#     oversight: no mechanical check can validate a claim about what a brand-new
+#     value MEANS, and a name-pattern heuristic ("*_index must be registered")
+#     would flag `ply_index` — already exempt, correctly — and so would need an
+#     exemption list of its own, i.e. this same hole one level down.
+#   ⇒ the residual is accepted deliberately. A new field's mirror behaviour is
+#     established by that field's OWN mirror test, not by its row in this dict.
 _NOT_A_MOVE_INDEX: dict[str, str] = {
     "game_id": "opaque game identifier",
     "ply_index": "ply counter — '_index' in the name, not an index into policy space",

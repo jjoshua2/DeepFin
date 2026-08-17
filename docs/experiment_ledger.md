@@ -1153,6 +1153,17 @@ establish what it was for those rows. Rationale in
 - No claim about EXISTING shards. The replay window carries nothing for ~a day+ after
   deploy; the dataset accumulates only forward.
 - No claim that ΔQ itself will work. This entry buys the dataset, not the finding.
+- ⚑ **No claim that `a_M = argmax(policy_target)` is search's judgment on a
+  TB-rescored row.** The decision NOT to persist the MCTS-selected action separately
+  rests on `a_M` being recoverable as `argmax(policy_target)`, and that holds because
+  `policy_target` is `eff_probs`, the raw visit distribution (`finalize.py:1074`;
+  `soft_policy_temp` goes to the separate `soft` target at `:955`). But `eff_probs` is
+  `tb_policy_overrides.get(t, ...)` (`finalize.py:945`), and with
+  **`syzygy_rescore_policy: true`** the tablebase policy REPLACES the visit
+  distribution on TB rows — `argmax` there is the TABLEBASE's judgment, not search's.
+  Production is `false` (`configs/pbt2_small.yaml:335`), so this is a caveat, not a
+  defect. ⇒ if that flag is ever turned on, `a_M` is unusable on TB-rescored rows and
+  the decision to skip persisting the selected action must be re-opened.
 
 ### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, output below)
 
@@ -1198,6 +1209,39 @@ PASS
   coverage on a field whose entire purpose is pairing means the pair population is
   silently selected, and a selected population is exactly what the ΔQ measurement
   cannot tolerate.
+
+#### ⚑ AMENDMENT 1 (2026-08-16) — one named exemption to the 100%-ON clause
+
+**This is an AMENDMENT to a pre-committed threshold, not a reading of it.** The bullet
+above stands exactly as written and is not deleted; what follows narrows it, and it is
+recorded here rather than left to be discovered at readout time, because a kill line
+that is quietly relaxed after the fact is a protocol violation.
+
+**What is exempted.** Rows from games that were **in flight across an OFF→ON flip of
+`record_prior_top1`** (i.e. across the selfplay-session restart that flip forces). Those
+records were captured by a session that had capture OFF, so their prior is unrecoverable
+by construction — it needs the ply's logits, which are gone by finalize. `finalize.py`
+writes them with `has_prior_top1 = 0` rather than inventing a value.
+
+**Why it is accepted.** The clause was written to ban a *silently selected* pair
+population. This exemption is not silent and not a selection on anything the ΔQ
+measurement reads: it is a **one-shot boundary effect of a single flip**, bounded by the
+in-flight games alive at that instant (≤ one session's slots, once), it is
+**row-identifiable** rather than inferred, and the alternative — dropping those games'
+records entirely, or making the key resume-incompatible — costs real training data to buy
+nothing the `has_prior_top1` column does not already give. The other direction (ON→OFF)
+is NOT exempted: it is repairable at finalize and is repaired, so the kill switch remains
+absolute at 0% (`finalize.py:1059`).
+
+**How a reader tells the two apart, mechanically.** The exemption applies only to rows
+with `has_prior_top1 == 0` whose game **spans the restart** that carried the flip. Any
+uncovered row in a shard produced wholly inside one ON session is NOT exempt and reads
+KILL. Operationally: coverage measured over shards uploaded from the second full session
+after the flip onward must be 100%; only the flip-boundary session may read below it.
+
+**Falsifier for the exemption itself.** If a post-flip session ever reads below 100% with
+no game spanning the flip, the exemption is wrong and the original bullet applies
+unamended.
 
 ### THE TRAP THIS CHANGE IS MOST LIKELY TO DIE ON (and the proof it did not)
 

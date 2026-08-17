@@ -286,6 +286,12 @@ class _NetRecord:
     # target) is the only thing that reaches a shard. None when
     # GameConfig.record_prior_top1 is off, and on rows with no net prior at all
     # (the SF-refute opponent row built in selfplay/stockfish_turn.py).
+    # ⚑ prior_top1_prob is a softmax at T = 1.0 over the legal moves: the NET's
+    # mass on that move, NOT the mass search seeded its tree with (search
+    # divides the root logits by gumbel_policy_temp, production 1.5, so the
+    # search's prior is flatter and this number is the higher of the two). The
+    # INDEX is unaffected -- argmax is temperature-invariant. Rationale for
+    # storing the untempered one: selfplay/network_turn._prior_top1.
     prior_top1_index: int | None
     prior_top1_prob: float | None
     sf_legal_mask: np.ndarray | None
