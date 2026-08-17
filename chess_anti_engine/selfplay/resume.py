@@ -62,7 +62,15 @@ _LOG = logging.getLogger("chess_anti_engine.selfplay.resume")
 
 # Bump whenever the on-disk layout or the meaning of a stored field changes.
 # A mismatch is a discard-with-reason, never a best-effort partial decode.
-RESUME_FORMAT_VERSION = 1
+# v2 (prior_top1_index / prior_top1_prob): four new per-record columns. ⚑ The
+# bump is NOT load-bearing against a crash: forcing the gate to accept a v1 file
+# yields a graceful `unreadable` discard, because `decode_game` is called under
+# the broad `except Exception` below (see the `report.note("unreadable")` arm)
+# and `opt_scalar`'s KeyError lands there. The bump is still right, for the
+# weaker and honest reason that `version_mismatch` names the actual cause where
+# `unreadable` would misattribute it. Costs at most one session's suspended
+# games, once, at the deploy that ships it.
+RESUME_FORMAT_VERSION = 2
 
 # Suffix for a durable per-game state file. One file per game keeps a partial
 # write (worker killed mid-suspend) contained to that single game: the npz
@@ -412,6 +420,10 @@ def _game_payload(state: SelfplayState, i: int) -> dict[str, Any]:
     arrays["sf_played_move_index_present"], arrays["sf_played_move_index"] = pres, vals
     pres, vals = _opt_int([r.sf_played_rank for r in records])
     arrays["sf_played_rank_present"], arrays["sf_played_rank"] = pres, vals
+    pres, vals = _opt_int([r.prior_top1_index for r in records])
+    arrays["prior_top1_index_present"], arrays["prior_top1_index"] = pres, vals
+    pres, vals = _opt_float([r.prior_top1_prob for r in records])
+    arrays["prior_top1_prob_present"], arrays["prior_top1_prob"] = pres, vals
 
     f32 = np.dtype(np.float32)
     for name, rows in (
@@ -733,6 +745,10 @@ def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
     sf_move_index = opt_scalar("sf_move_index", np.dtype(np.int64))
     sf_played_move_index = opt_scalar("sf_played_move_index", np.dtype(np.int64))
     sf_played_rank = opt_scalar("sf_played_rank", np.dtype(np.int64))
+    # Captured from the ply's logits, so unlike x / relations it cannot be
+    # recomputed from the replayed board -- it must round-trip or it is lost.
+    prior_top1_index = opt_scalar("prior_top1_index", np.dtype(np.int64))
+    prior_top1_prob = opt_scalar("prior_top1_prob", np.dtype(np.float64))
 
     out: list[dict[str, Any]] = []
     for r in range(n):
@@ -763,6 +779,8 @@ def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
             "sf_move_index": sf_move_index[r],
             "sf_played_move_index": sf_played_move_index[r],
             "sf_played_rank": sf_played_rank[r],
+            "prior_top1_index": prior_top1_index[r],
+            "prior_top1_prob": prior_top1_prob[r],
         })
     return out
 
@@ -984,6 +1002,8 @@ def _rebuild_record(
     rec.sf_played_move_index = f["sf_played_move_index"]
     rec.sf_played_rank = f["sf_played_rank"]
     rec.sf_played_regret = f["sf_played_regret"]
+    rec.prior_top1_index = f["prior_top1_index"]
+    rec.prior_top1_prob = f["prior_top1_prob"]
     rec.sf_legal_mask = f["sf_legal_mask"]
     rec.is_sf_refute_opp = bool(f["is_sf_refute_opp"])
     return rec

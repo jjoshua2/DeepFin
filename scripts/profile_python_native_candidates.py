@@ -346,6 +346,9 @@ def _bench_finalize(records_n: int, repeats: int) -> dict[str, Any]:
             record_dense_sf_policy=False,
             record_sf_p0_policy=True,
             record_sf_p0_regret=True,
+            # Re-read by _build_replay_samples at the shard boundary; production
+            # default. Omitting it would AttributeError, not silently skip.
+            record_prior_top1=True,
         ),
     ))
     ply_to_index = {int(rec.ply_index): idx for idx, rec in enumerate(records)}

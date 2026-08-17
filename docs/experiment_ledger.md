@@ -1099,6 +1099,223 @@ pricing built on it is withdrawn. The probe also reads the trailing shard window
 MOVES while the run writes, so any re-run lands on a different population; the shard set
 must be pinned in the output before a number off it is quoted.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-16) — persist `prior_top1_index` / `prior_top1_prob` at selfplay time (issue #425, ΔQ dataset)
+
+**Status: code written, PR open, NOT merged and NOT deployed. No yaml edit.** This is a
+DATA-AFFECTING change (it adds two persisted per-row fields), so it needs this entry
+before it can go live. It is a PLUMBING experiment: the yardstick below judges whether
+the value reaches storage correctly, not whether it buys Elo. Nothing here claims an
+Elo effect and no Elo readout is owed.
+
+### The constraint that forces the design
+
+The ΔQ experiment needs, for ONE model θ, the pair `a_P = argmax π_θ(s)` (the raw
+prior's top move) against `a_M = MCTS_θ(s)` (the move search chose). Offline we can
+only pair a CURRENT checkpoint's prior against a HISTORICAL net's played move — a
+different-model pair, which is not the question being asked.
+
+⚑ **This is not fixable with better historical data.** The replay schema never
+persisted the generating prior: `_NetRecord.policy_probs` is the SEARCH-IMPROVED
+target and exists only in selfplay memory, and it is the only policy that reaches a
+shard. No amount of re-reading old shards recovers a prior that was never written.
+
+⇒ Persist the prior's top-1 at selfplay time. There the prior and the MCTS move come
+from the same θ **by construction**, so every future shard yields same-model pairs on
+every future checkpoint, with no dedicated GPU run and no re-generation.
+
+### HYPOTHESIS
+
+Capturing the root prior's argmax + its probability at the ply that produced the row
+costs **8 bytes/row** (int32 index + float16 prob + two uint8 presence flags; ~12 MB
+over a 1.5M-row window) and makes the (prior top-1, MCTS choice) pair available on
+every subsequently generated row, for any checkpoint, forever.
+
+⚑ **`prior_top1_prob` is at T = 1.0 and is NOT the mass the search used.** Search
+divides root logits by `gumbel_policy_temp` (live **1.5**), so the tree was seeded with
+a FLATTER prior than this number reports; at T > 1 the stored value is systematically
+the higher of the two. The **index is unaffected** — argmax is invariant under division
+by a positive scalar — so `a_P`, the half the ΔQ pair actually needs, is identical
+either way. T = 1.0 is chosen deliberately: `π_θ` is a property of θ, whereas
+`gumbel_policy_temp` is a search knob, and a stored column defined against it would
+silently change meaning the day the knob moves while old and new rows sit in the same
+replay window under the same name. The schema already takes this side —
+`gumbel_target_untempered_prior` (production **true**) exists to undo the same
+temperature on the stored target's log-prior term. ⇒ read this field as "the net's
+confidence in its own top move", never as "the mass search gave that move"; a consumer
+wanting the latter must apply the era's `gumbel_policy_temp` itself, and must first
+establish what it was for those rows. Rationale in
+`selfplay/network_turn._prior_top1`.
+
+### WHAT IT DOES NOT CLAIM
+
+- No claim of any training effect. The fields are NOT trained on, are not in the
+  dataset tensor path, and no loss reads them.
+- No claim about EXISTING shards. The replay window carries nothing for ~a day+ after
+  deploy; the dataset accumulates only forward.
+- No claim that ΔQ itself will work. This entry buys the dataset, not the finding.
+- ⚑ **No claim that `a_M = argmax(policy_target)` is search's judgment on a
+  TB-rescored row.** The decision NOT to persist the MCTS-selected action separately
+  rests on `a_M` being recoverable as `argmax(policy_target)`, and that holds because
+  `policy_target` is `eff_probs`, the raw visit distribution (`finalize.py:1074`;
+  `soft_policy_temp` goes to the separate `soft` target at `:955`). But `eff_probs` is
+  `tb_policy_overrides.get(t, ...)` (`finalize.py:945`), and with
+  **`syzygy_rescore_policy: true`** the tablebase policy REPLACES the visit
+  distribution on TB rows — `argmax` there is the TABLEBASE's judgment, not search's.
+  It reads `false` in `configs/pbt2_small.yaml` (repo copy `:548`) AND in the live yaml
+  the run actually re-reads (`:335` there — the two files differ by 55 keys, so both were
+  checked), so this is a caveat, not a defect. ⇒ if that flag is ever turned on, `a_M` is
+  unusable on TB-rescored rows and the decision to skip persisting the selected action
+  must be re-opened.
+
+### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, output below)
+
+The failure this must exclude is this repo's signature defect: a value accepted and
+then silently ignored. So the yardstick asserts on what a shard WRITTEN TO DISK AND
+READ BACK contains — not on an in-memory object — and it judges the gating flag by the
+DIFFERENCE it makes to those bytes.
+
+```
+PYTHONPATH=. python3 -m pytest \
+  "tests/test_prior_top1_capture.py::test_prior_top1_reaches_a_written_shard_and_decodes_to_a_legal_move" \
+  "tests/test_prior_top1_capture.py::test_the_flag_changes_what_lands_in_a_written_shard" -q
+```
+
+Real output, run 2026-08-16 on the PR branch:
+
+```
+..                                                                       [100%]
+torch threads: capped at 2 (realized 2) to leave CPU for live training
+EXIT CODE: 0
+```
+
+Those two tests drive the REAL C ply path → REAL `_build_replay_samples` → REAL
+production zarr writer (`save_local_shard_arrays`) → `load_shard_arrays` (which runs
+`validate_arrays`, range-checking every `POLICY_INDEX_FIELDS` entry against the shard's
+policy width). The coverage they assert, measured on the same chain:
+
+```
+record_prior_top1=True  rows= 22 covered= 22 (100.00%)  decode-to-legal=22/22 (100.00%)
+record_prior_top1=False rows= 22 covered=  0 (  0.00%)  decode-to-legal=0/0 (nan%)
+PASS
+```
+
+### PRE-COMMITTED THRESHOLD
+
+- **PASS** requires ALL of: with the flag ON, **100%** of rows written to the shard
+  carry `has_prior_top1`, and **100%** of those decode to a move that is set in that
+  same row's `legal_mask`; with the flag OFF, **0** rows carry it.
+- **KILL** on any breach of the above, or on a measured selfplay throughput
+  regression > 2% attributable to the capture (it is one masked argmax over ~35 legal
+  moves per net ply, in Python, on a path that already does a full masked softmax).
+- Anything less than 100% coverage with the flag ON is a KILL, not a MIXED: partial
+  coverage on a field whose entire purpose is pairing means the pair population is
+  silently selected, and a selected population is exactly what the ΔQ measurement
+  cannot tolerate.
+
+#### ⚑ AMENDMENT 1 (2026-08-16) — one named exemption to the 100%-ON clause
+
+**This is an AMENDMENT to a pre-committed threshold, not a reading of it.** The bullet
+above stands exactly as written and is not deleted; what follows narrows it, and it is
+recorded here rather than left to be discovered at readout time, because a kill line
+that is quietly relaxed after the fact is a protocol violation.
+
+**What is exempted.** Rows from games that were **in flight across an OFF→ON flip of
+`record_prior_top1`** (i.e. across the selfplay-session restart that flip forces). Those
+records were captured by a session that had capture OFF, so their prior is unrecoverable
+by construction — it needs the ply's logits, which are gone by finalize. `finalize.py`
+writes them with `has_prior_top1 = 0` rather than inventing a value.
+
+**Why it is accepted.** The clause was written to ban a *silently selected* pair
+population. This exemption is not silent and not a selection on anything the ΔQ
+measurement reads: it is a **one-shot boundary effect of a single flip**, bounded by the
+in-flight games alive at that instant (≤ one session's slots, once), it is
+**row-identifiable** rather than inferred, and the alternative — dropping those games'
+records entirely, or making the key resume-incompatible — costs real training data to buy
+nothing the `has_prior_top1` column does not already give. The other direction (ON→OFF)
+is NOT exempted: it is repairable at finalize and is repaired, so the kill switch remains
+absolute at 0% (`finalize.py:1059`).
+
+**How a reader tells the two apart, mechanically.** The exemption applies only to rows
+with `has_prior_top1 == 0` whose game **spans the restart** that carried the flip. Any
+uncovered row in a shard produced wholly inside one ON session is NOT exempt and reads
+KILL. Operationally: coverage measured over shards uploaded from the second full session
+after the flip onward must be 100%; only the flip-boundary session may read below it.
+
+**Falsifier for the exemption itself.** If a post-flip session ever reads below 100% with
+no game spanning the flip, the exemption is wrong and the original bullet applies
+unamended.
+
+### THE TRAP THIS CHANGE IS MOST LIKELY TO DIE ON (and the proof it did not)
+
+`prior_top1_index` is a **MOVE INDEX**. Under board mirroring
+(`replay/augment.py`) it MUST be remapped through the mirror permutation, not
+copied. A copied index raises nothing, changes no shape, and leaves a plausible
+in-range value — it is simply the wrong move on every mirrored row.
+
+Handled by registering it in `replay/shard.POLICY_INDEX_FIELDS` and driving BOTH
+mirror paths (`mirror_sample` and `maybe_mirror_batch_arrays`) off that one registry
+instead of two hand-written tuples. Mutation-verified: reverting either path to a copy
+fails `tests/test_mirror_augmentation.py` (mutant M1 killed 7 tests, M2 killed 2).
+
+⚑ **The completeness guard did not guard completeness.** The registry-walking test
+claimed "add a new index field to the schema and forget the mirror, and this fails",
+but it iterates `POLICY_INDEX_FIELDS` — so it structurally cannot see the forgettable
+step, which is REGISTERING. Proven: a `foo_move_index` added to `_OPTIONAL_FIELD_SPECS`
++ `_SCALAR_FIELDS` + `ReplaySample` and omitted from the registry left **seven suites
+green** (135 tests). Replaced by a partition guard that walks
+`_OPTIONAL_FIELD_SPECS` — the place a field is actually added — and requires every
+scalar integer spec to be classified exactly once, either registered as a move index or
+listed in the test's `_NOT_A_MOVE_INDEX` with a reason. The exemption list is
+TEST-SIDE on purpose: `POLICY_INDEX_FIELDS` is unchanged, so no production consumer of
+that registry (`validate_arrays`' range check, the two mirror paths) sees a widened
+set. Both branches demonstrated by execution — the `foo_move_index` case RED, the
+current tree GREEN.
+
+### NEGATIVE CONTROL
+
+`test_prior_disagrees_with_search_in_the_fixture` asserts the test fixture actually
+separates the prior's argmax from both the improved policy's argmax and the played
+action. Without it every other assertion would pass while the code read the SEARCH
+policy — the one substitution that would make the whole field meaningless. Confirmed by
+mutant M3 (capture reads `c_probs` instead of the prior): killed, 5 tests.
+
+### CONFOUNDS / OPS
+
+- **None on training.** No loss, no head, no sampling weight reads these fields.
+- **Deploy ordering is load-bearing.** The code must be merged and deployed BEFORE any
+  yaml key naming `record_prior_top1` exists. An unknown yaml key is survivable mid-run
+  (the reload is rejected, trial survives) but **FATAL at launch** — `run.py` calls
+  `flatten_run_config_defaults` before the arg parser is built and outside any `try`.
+  ⇒ no yaml edit in this change; the key becomes usable only as a kill switch after
+  the deploy that defines it.
+- **Flag defaults ON** (`record_prior_top1: bool = True`) at every hop. Deliberate: the
+  field only pays off if it accumulates passively from the deploy, and a default-off
+  knob would need a yaml key to do anything — which is the "wired but never enabled"
+  failure this field exists to route around.
+- **Resume format bumped 1 → 2.** Four new per-record columns. ⚑ CORRECTED: the bump
+  is NOT load-bearing against a crash — forcing the gate to accept a v1 file yields a
+  graceful `reasons={'unreadable': N}`, not an uncaught `KeyError` (measured by the
+  independent review). The bump is still right, for a weaker and honest reason:
+  `version_mismatch` names the actual cause where `unreadable` would misattribute it.
+  Costs at most one session's suspended in-flight games, once.
+- **The round-trip the bump pays for is now asserted.** It was not: deleting both
+  `_rebuild_record` restore lines left every suite green (review mutant M9). The fields
+  are captured from the ply's logits and — unlike `x` / `relations` — cannot be
+  recomputed from the replayed board, so `tests/test_selfplay_resume.py` now carries
+  `test_prior_top1_survives_suspend_and_resume` (distinct dyadic values per record plus
+  one deliberately-absent row) and the two fields are in `_assert_record_identical`,
+  behind a non-vacuity assertion that the session captured any at all.
+- `record_prior_top1` is a RESTART key (baked into the frozen `GameConfig` at session
+  start) and is `_RESUME_COMPAT_EXEMPT` (a game spanning a flip yields fewer covered
+  rows, never a wrong one).
+
+### REVERT POINT
+
+Code-only revert: revert the PR. No yaml key exists to unset, no salvage snapshot is
+required — the change adds columns and reads none of them, so a revert leaves earlier
+shards readable (every consumer is presence-flag gated) and simply stops new coverage.
+
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-12) — authenticated seed claim, side-effect-free manifest (finding [6], DoS half)
 
 **Status: NOT WRITTEN YET. This entry gates the work, not the merge.** Training is
