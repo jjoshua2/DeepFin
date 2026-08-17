@@ -57187,3 +57187,70 @@ gaps were real semantics, not test noise:
   happened to filter the same set on those rows.
 Cases 6-8 were added to target each; 8/8 now killed. Same lesson as
 `new_tests_here_are_vacuous_until_mutated`.
+
+### 2026-08-17 — ⚑ tau IS A SEARCH-INCLUSION THRESHOLD, NOT A MAGNITUDE: tau = 1/gumbel_topk
+
+Owner's reframe (2026-08-17): the floor exists for **search routing**, not policy
+correction. "Just knowing it is bad and routing 0% will fail catastrophically, should at
+least route like 1% if SF is going to play it... we want at least that much so it gets
+actually searched instead of ignored." ⇒ the right criterion for `tau` is **the prior at
+which the root search actually expands the move**, and "amplifying label error" is not a
+defect per se — routing search to a move SF likes and REFUTING it is the anti-engine
+thesis working. What matters is the MAGNITUDE of mass moved, not the sign.
+
+Rigs: `scratchpad/sfpolicy_compare/armF_search_inclusion.py`, `armF_tau_space.py`
+(3000 / 3072 covered production rows, iter-190 net, 48 Gumbel trials/row).
+
+**The production root sampler** (`mcts/gumbel.py:_select_top_m_with_gumbel`) is
+`score = gumbel_scale * Gumbel + log(prior)`, keep top-`m`,
+`m = min(topk, n_legal, (sims+1)//2)`. Production: `gumbel_topk 16`,
+`mcts_simulations 100`, `gumbel_c_scale 0.1`, `gumbel_policy_temp 1.5`.
+⚑ At `gumbel_scale = 0.1` the noise sd is ~0.13 in log-prob units, so selection is
+**nearly a deterministic top-16 by prior**. The floor is therefore a RANK criterion.
+
+**PIGEONHOLE BOUND.** If `p_i >= tau`, at most `floor(1/tau) - 1` moves can exceed it
+(they are disjoint and sum to <= 1). For guaranteed membership in the top-16 we need at
+most 15 above ⇒ **`tau >= 1/topk = 0.0625`**. Derived, not tuned.
+
+**CONFIRMED EMPIRICALLY** — `min` over rows, not mean:
+
+| prior on SF's best | n | P(searched) |
+|---|---|---|
+| [0, 0.001) | 117 | 0.4400 |
+| [0.001, 0.005) | 183 | 0.6965 |
+| [0.005, 0.010) | 95 | 0.9243 |
+| [0.010, 0.020) | 151 | 0.9927 |
+| [0.020, 0.0625) | 379 | 0.9957 |
+| **>= 0.0625** | 2075 | **1.0000 (min, not mean)** |
+
+`prior >= 0.02` has min P(searched) **0.1042** — it does NOT guarantee. `>= 0.05` and
+`>= 0.0625` both reach min 1.0000 on this sample, but only 0.0625 is GUARANTEED; 0.05
+clearing is sample-dependent.
+
+⚑ **THE TWO SPACES ARE NOT THE SAME AND I NEARLY SHIPPED THE WRONG NUMBER.** The loss
+floors the RAW policy prob; the search selects on the TEMPERED prob (`logits / 1.5`).
+Tempering raises the prob on SF's best in 53.5% of rows. Measured mapping raw -> tempered:
+raw 0.01 leaves 10.5% of its population below tempered 1/16; raw 0.04 leaves 0.59%. The
+**smallest RAW tau whose entire population clears tempered 1/16 is 0.0625** (min tempered
+0.06379). The two spaces coincide at 1/topk — a coincidence of this legal-move count
+(mean 27.3), not an identity. Re-derive it if `gumbel_topk`, `gumbel_policy_temp` or the
+policy encoding changes.
+
+**⇒ `tau` MUST BE DERIVED FROM `gumbel_topk`, NOT HARD-CODED.** Default it to
+`1 / gumbel_topk`. A hard-coded 0.0625 silently stops guaranteeing anything the moment
+topk moves — exactly this codebase's signature defect.
+
+**HOW BIG IS THE PRIZE? Smaller than the framing suggests, and stated honestly:**
+- SF's best move is **already searched on 95.6% of covered rows** (mean P).
+- **4.03% of rows** have it essentially never searched (P < 0.05) — the catastrophic case
+  the floor exists for. Another ~6% sit at P ~ 0.70.
+- **22.7% of rows** have `m >= n_legal`, i.e. EVERY legal move is searched anyway and the
+  floor is irrelevant there. Any claim about the floor's effect must exclude these.
+
+**`w` at the new tau** (norm-matched, same rig as `d6b31110f`): ratio at tau=0.0625 is
+**0.2426** ⇒ **w = 0.41 for a 10% share** of the policy-CE parameter gradient, 0.21 for 5%.
+Marginal cost re-measured: **1.00 ms** on a 1697.8 ms step.
+
+**REVISED SHIP VALUES: delta = 20 cp, tau = 1/gumbel_topk (= 0.0625), w = 0.41.**
+This supersedes the `tau = 0.15, w = 0.20` of `d6b31110f`, which was set by gradient
+magnitude alone and had no search-side justification.
