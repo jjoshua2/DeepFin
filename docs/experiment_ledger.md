@@ -57323,3 +57323,56 @@ floored rows. That is a real mechanism and an UNMEASURED one.
 
 Task #257 restated: measure the k-ply joint expansion rate under the ACTUAL Gumbel descent
 with the realized per-depth visit budgets. Do not model it as PUCT.
+
+### 2026-08-17 — tau SPLITS INTO TWO ROLES: 1/topk buys SEARCH, tau ABOVE it buys RANKING
+
+Owner's question: the floor only helps ~4% of rows; "could we do a small nudge that helps
+on avg on the other rows?" Answered by partitioning the argmax-pull population on whether
+the floor is inert for SEARCH purposes — `p_ours[deep_sf_best] >= 1/topk = 0.0625` (ledger
+`ae2ea797b`). Rig: `arm_calibration_bt4.py`, audit set, 2000-sample paired bootstrap.
+⚑ Arms emit nonzero directions on different row counts (354-943), so raw means are NOT
+comparable across arms — the paired `vs C_RANDOM` contrast on SHARED rows is the valid read.
+
+**FLOOR-INERT rows (SF's best already searched — the ~96%), paired vs C_RANDOM:**
+
+| arm | mean pull | frac>0 | vs C_RANDOM |
+|---|---|---|---|
+| A_prod_cp_fill | +0.276 | 52.8% | **-0.123** [-0.198,-0.049] *** |
+| B_gated_cp | +0.170 | 51.7% | **-0.303** [-0.386,-0.227] *** |
+| D_wdl_space | +0.153 | 49.5% | **-0.333** [-0.434,-0.240] *** |
+| C_tau0.05 | +0.316 | 99.8% | -0.069 [-0.092,-0.048] *** |
+| **F_adapt20_t0.15** | +0.722 | 99.8% | **+0.278** [+0.237,+0.322] *** |
+| C_tau0.35 | +0.930 | 98.0% | +0.494 [+0.449,+0.536] *** |
+| **F_adapt20_t0.35** | +0.975 | 98.6% | **+0.548** [+0.503,+0.595] *** |
+
+**⇒ THE MAGNITUDE ARMS ARE DEAD ON EVERY POPULATION.** A/B/D sit at chance (frac>0
+49.5-52.8%) and are SIGNIFICANTLY WORSE than a random floor on exactly the rows they were
+the last candidate for. This is the third population they have failed (whole set
+`21e3a3eac`, do-no-harm `3f1ad5d39`, floor-inert here). **CLOSED — stop proposing
+regret-proportional policy nudges.** Note the existing `sf_own_regret` term at
+`train/losses.py:890` IS arm A; `w_sf_own_regret: 0.0` should stay 0.0.
+
+**⇒ THE NUDGE FOR THE OTHER ROWS IS THE SAME TERM AT HIGHER tau.** The two roles separate:
+- `tau = 1/topk = 0.0625` — SEARCH inclusion. Guaranteed, root-ply, low risk.
+- `tau > 1/topk` — RANKING, on rows where inclusion is already satisfied. 0.15 -> 0.35
+  doubles the pull there (+0.278 -> +0.548).
+
+**The cost of the extra tau is smaller than expected.** Per the do-no-harm split
+(`3f1ad5d39`), on rows where our move is right AND the shallow label agrees, F is **0.0%
+harmful at BOTH tau=0.15 and tau=0.35** (100% / 98.9% silent) — the better-than-our-pick
+clause holds independent of tau. The extra harm lands entirely on rows where the label is
+WRONG (80.6% -> 93.4%), which under the owner's search-routing reframe is search being
+routed to a move SF likes so it can be refuted.
+
+**DECISION: single `tau = 0.15`.** 2.4x the search guarantee (ply-1 inclusion holds with
+margin) plus a measured +0.278 ranking pull on the other ~96%, at zero harm where we are
+already right. `tau = 0.35` remains a screened alternative worth ~2x the nudge.
+⚑ This does NOT retract `ae2ea797b`: 1/topk is still the DERIVED floor below which the
+search guarantee is lost, and tau must still be validated against `gumbel_topk` so a topk
+change cannot silently drop it below the guarantee.
+
+**On stochastic gating** (owner: "even if its run 25% of the time"): firing on a random
+25% of rows is in expectation identical to scaling `w` to 0.25w, with ~4x the gradient
+variance. For RISK CONTROL, lowering `w` strictly dominates. Gating only earns its variance
+if the goal is to DECORRELATE the term from pushing the same rows the same way every epoch
+— a different objective, and UNMEASURED. Not adopted; recorded as an option.
