@@ -42543,8 +42543,28 @@ measured 2026-08-17) and `[sf-soft] cache in use <the path you passed>`. A run t
 and be non-empty afterwards.
 
 ⚑ This is not hypothetical: `data/audit_set_v1.jsonl.shallow_sf.jsonl` already holds 22 MB of
-rows on this machine, so BOTH runs of a default-cache repeat are served in full and neither
-launches Stockfish. The failure is armed right now, on disk.
+rows on this machine (10,000 rows over 4,000 distinct keys), so a default-cache repeat produces
+the B5 false stop. **The failure is armed right now, on disk.**
+
+⚑⚑ **BUT THE MECHANISM IS THE OPPOSITE OF THE ONE THIS ENTRY FIRST RECORDED, AND THE REAL SHAPE
+IS STEALTHIER.** I wrote "both runs are served in full and neither launches Stockfish"; the
+independent review of PR #446 measured it and I re-measured it: **0 of those 10,000 rows carry an
+`sf_id` field.** The repeat command above passes `--stockfish`, so `_shallow_sf_records` computes
+`sf_id = engine_identity(...)`, every cached row reads as `UNRECORDED_SF_ID`, all 4,000 are
+counted `foreign`, and **run 1 relabels all of them** — measured `(served 0, foreign 4000,
+todo 4000)` with `--stockfish` versus `(4000, 0, 0)` without it. Run 1 then APPENDS rows carrying
+the real `sf_id`, and **run 2** matches those and is served in full.
+
+⇒ the false stop still happens, but **run 1 looks perfectly healthy**: it prints
+`labeling 4000 positions`, takes its hour, and grows the cache. Only run 2 betrays it. An
+operator who reads "neither launches Stockfish" as the tell would be reassured by exactly the run
+that proves nothing. The positive control above still fires — but on RUN 2, and for a reason the
+sentence it replaces misdescribed. [[a_counter_is_not_the_mechanism_behind_it]]
+
+⚑ Consequence worth knowing before it surprises someone: after such a run 1 the default cache
+holds two engine identities at (500k, 40), so any LATER audit run **without** `--stockfish` hits
+the `len(accepted_ids) > 1` mixed-provenance `SystemExit`. Pre-existing behaviour, not a new
+hazard — but it is downstream of the scenario this section describes.
 
 **Then the statistic:**
 

@@ -219,11 +219,19 @@ def report_mcnemar(m: McNemar, *, at: float, label_a: str, label_b: str) -> None
     # SATISFYING the predicate, where HIGHER is better, so positive = A better.
     # Neither is wrong; adjacent and unannotated they invite one to be read
     # with the other's rule.
-    print(f"  paired rate diff (A-B) {diff:+.4f} "
-          f"[95% CI {diff - 1.96 * se:+.4f} .. {diff + 1.96 * se:+.4f}]"
+    # ⚑ 5 dp AND a pp form, deliberately. At the registered n=4000 the paired
+    # correction ``-(b-c)^2/n`` moves the bound by ~1e-5, so at the 4 dp this
+    # line used to print, a build that DROPPED the correction was byte-identical
+    # to one that kept it. That is not only a testing problem -- it means the
+    # operator could not have seen the difference either, and a half-width of
+    # 0.00305 was being reported as 0.0030, two significant figures on the
+    # number the launch decision is read off.
+    print(f"  paired rate diff (A-B) {diff:+.5f} "
+          f"[95% CI {diff - 1.96 * se:+.5f} .. {diff + 1.96 * se:+.5f}]"
+          f"   ({100 * diff:+.3f}pp)"
           f"   (higher = A better — OPPOSITE of the cp delta above)")
-    print(f"  null-case half-width at this n: ±{m.half_width:.4f} "
-          f"(±{100 * m.half_width:.2f}pp) — 1.96*sqrt(d_obs/n), the diff=0 form, "
+    print(f"  null-case half-width at this n: ±{m.half_width:.5f} "
+          f"(±{100 * m.half_width:.3f}pp) — 1.96*sqrt(d_obs/n), the diff=0 form, "
           f"so an upper bound on the CI above")
     # b == c > 0 is discordance with NO direction: the arms disagree on b+c
     # positions and split them evenly. Naming a winner there invents one.
@@ -272,6 +280,7 @@ class Dump(NamedTuple):
 
 def load_dump(
     path: str, *, join_key: str = "fen", field: str = "value",
+    mcnemar_at: float | None = None,
 ) -> Dump:
     """Index one per-position dump by its join key.
 
@@ -391,7 +400,7 @@ def load_dump(
                     provenance[pf].add(json.dumps(r[pf], sort_keys=True))
             k = r.get(join_key)
             v = get_field(r, field)
-            if isinstance(v, bool):
+            if isinstance(v, bool) and mcnemar_at is not None:
                 # ⚑⚑ A BOOLEAN --field SILENTLY INVERTS THE McNEMAR VERDICT, and
                 # it is not a hypothetical field: `audit_targets` writes
                 # `top1_agree` and `out_of_top10` expressly so this tool can
@@ -404,14 +413,33 @@ def load_dump(
                 # `favours arm_old` vs `favours arm_new`, p = 0.000472 both
                 # ways). Refuse rather than pick a direction: this file already
                 # knows bool-is-int one guard down, on `ROW_COUNT_KEY`.
+                #
+                # ⚑ SCOPED TO THE THRESHOLD GATE, deliberately. The inversion is
+                # a property of `value <= at`, so it cannot occur when no
+                # `--mcnemar-at` was given, and refusing there would break the
+                # use these fields were WRITTEN for: `audit_targets`'
+                # `--dump-per-position` help calls `top1_agree`/`out_of_top10`
+                # "the paired per-position booleans ... for offline slicing and
+                # PAIRED statistics", and the paired bootstrap over a rate is
+                # exactly that. Python's bool is an int, so they flow through
+                # the finite-number guard below as 1.0/0.0 and the bootstrap
+                # differences two RATES, which is well defined and directional
+                # by the field's own name. An unconditional refusal here would
+                # have made `out_of_top10` unreachable by the only tool built
+                # to difference it — a guard that costs more than the hazard.
                 raise SystemExit(
-                    f"{path}: --field {field!r} is a BOOLEAN. A threshold gate "
-                    "over a bool inverts: with `--mcnemar-at 0` the predicate "
-                    "`value <= 0` selects False, i.e. the OPPOSITE of the "
-                    "agreement the name promises, and every other number in "
-                    "the readout is identical. Point --field at the underlying "
-                    "cp quantity (e.g. cand.sf_soft.top1, whose zero IS "
-                    "top1_agree) rather than at the boolean."
+                    f"{path}: --field {field!r} is a BOOLEAN and "
+                    f"--mcnemar-at {mcnemar_at:g} was given. A threshold gate "
+                    "over a bool inverts: `value <= 0` selects False, i.e. the "
+                    "OPPOSITE of the agreement the name promises, and every "
+                    "other number in the readout is identical. Either drop "
+                    "--mcnemar-at and read the paired bootstrap over the rate "
+                    "(bools are scored as 1/0 there), or point --field at an "
+                    "underlying cp quantity whose zero IS the predicate — "
+                    "`cand.sf_soft.top1` is that for `top1_agree`. ⚑ There is "
+                    "no such cp substitute for `out_of_top10` (no dumped cp "
+                    "field means 'outside SF's top-10 set'), so for that one "
+                    "the bootstrap is the route, not a different --field."
                 )
             if k is None or not isinstance(v, (int, float)) or not math.isfinite(v):
                 unusable += 1
@@ -923,8 +951,10 @@ def main() -> None:
                          "positions. Pass it on any readout whose thresholds "
                          "were pre-committed at a stated n.")
     args = ap.parse_args()
-    dump_a = load_dump(args.dump_a, join_key=args.join_key, field=args.field)
-    dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field)
+    dump_a = load_dump(args.dump_a, join_key=args.join_key, field=args.field,
+                       mcnemar_at=args.mcnemar_at)
+    dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field,
+                       mcnemar_at=args.mcnemar_at)
     label_a = args.label_a or args.dump_a
     label_b = args.label_b or args.dump_b
     require_same_ruler(

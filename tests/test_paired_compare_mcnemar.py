@@ -307,6 +307,62 @@ def test_discordance_counts_BOTH_directions(capsys: pytest.CaptureFixture[str]) 
     assert "d_obs 0.0095" in capsys.readouterr().out
 
 
+def test_every_printed_number_in_the_readout_is_pinned(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ FOUR MUTANTS SURVIVED 171 TESTS, AND ALL FOUR WERE PRINT-ONLY.
+
+    An independent review of this file's own delta found that `d_obs` and the
+    CI bounds were pinned and NOTHING ELSE ON THE READOUT WAS. Each of these
+    passed the entire `paired_compare` surface:
+
+      * the half-width line printing `m.discordance` instead of `m.half_width`
+      * the p line printing `m.discordance` instead of `m.p_two_sided`
+      * `100 * m.half_width` -> `m.half_width` (the pp scale silently dropped)
+      * the 2x2 line swapping `both` and `neither`
+
+    The half-width is the worst of the four: it is exactly the quantity the
+    prereg's step 2 owes, this delta RENAMED that line, and the test it added
+    for the rename asserted only the label substrings. One assertion away.
+
+    The standard this file already states for the production code — "the number
+    it produced was pinned by nothing, and on a gate that decides a launch that
+    is the same exposure as a wrong implementation" — applies to the numbers a
+    human reads, not only to the dataclass. So: one fixture, every field
+    hand-computable, asserted as PRINTED STRINGS.
+
+        b=30, c=8, n=4000        (the registered n, a plausible discordance)
+        d_obs      = 38/4000                       = 0.0095
+        p          = 2 * sum_{i<=8} C(38,i) / 2^38 = 0.000472
+        diff       = (30-8)/4000                   = +0.00550  = +0.550pp
+        se         = sqrt((38 - 22^2/4000)/4000^2) = 0.00154...
+        CI         = 0.0055 +/- 1.96*se            = +0.00248 .. +0.00852
+        half-width = 1.96*sqrt(0.0095/4000)        = 0.00302   = 0.302pp
+    """
+    va = np.r_[np.zeros(30), np.full(8, 9.0), np.zeros(3962)]
+    vb = np.r_[np.full(30, 9.0), np.zeros(8), np.zeros(3962)]
+    m = mcnemar(va, vb, at=0.0)
+    report_mcnemar(m, at=0.0, label_a="arm_old", label_b="arm_new")
+    out = capsys.readouterr().out
+
+    # The 2x2 itself. `both` and `neither` are the two cells a swap would move,
+    # and they are the two that say whether the predicate fired at all. This
+    # fixture deliberately makes them UNEQUAL and neither of them zero-and-zero,
+    # so a swap is visible: the concordant mass sits in `both`.
+    assert "both 3962   A-only 30   B-only 8   neither 0" in out
+    # The p-value, from its OWN field — not the discordance printed beside it.
+    assert "discordant 38  (d_obs 0.0095)   exact two-sided p = 0.000472" in out
+    # The rate difference, its CI, and the pp form, at the 5 dp that makes the
+    # paired correction visible at the registered n.
+    assert (
+        "paired rate diff (A-B) +0.00550 "
+        "[95% CI +0.00248 .. +0.00852]   (+0.550pp)"
+    ) in out
+    # The half-width and its pp conversion. 0.00302 vs 0.0095 also distinguishes
+    # it from the discordance one line up, which is what the mutant printed.
+    assert "null-case half-width at this n: ±0.00302 (±0.302pp)" in out
+
+
 def test_the_wald_ci_keeps_its_correlation_correction(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -421,7 +477,57 @@ def test_a_boolean_field_is_refused_because_it_inverts_the_verdict(
         {"key": "k1", "phase": 1, "cand": {"sf_soft": {"top1_agree": False}}},
     ])
     with pytest.raises(SystemExit, match="BOOLEAN"):
-        load_dump(p, join_key="key", field="cand.sf_soft.top1_agree")
+        load_dump(p, join_key="key", field="cand.sf_soft.top1_agree",
+                  mcnemar_at=0.0)
+
+
+def test_a_boolean_field_is_ALLOWED_when_no_threshold_gate_is_in_play(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE GUARD ABOVE COST MORE THAN THE HAZARD UNTIL IT WAS SCOPED.
+
+    Found by review: the refusal fired unconditionally inside `load_dump`,
+    including with no `--mcnemar-at` — a path where no threshold predicate
+    exists, so the inversion it describes cannot occur. That broke the use
+    these fields were WRITTEN for: `audit_targets`' `--dump-per-position` help
+    calls `top1_agree`/`out_of_top10` "the paired per-position booleans ... for
+    offline slicing and PAIRED statistics", and the paired bootstrap over a
+    rate is exactly that.
+
+    ⚑ And the refusal's remedy has NO ANALOGUE for `out_of_top10`: there is no
+    dumped cp field whose zero means "outside SF's top-10 set". So an
+    unconditional refusal made the only tool built to difference that field
+    unreachable, while telling the operator to use a substitute that does not
+    exist. A guard whose escape hatch is fictional is worse than no guard —
+    it looks like the question was answered.
+
+    Python's bool is an int, so both values must survive as 1.0/0.0.
+    """
+    from scripts.paired_compare import load_dump
+
+    p = _dump(tmp_path / "b.jsonl", [
+        {"key": "k0", "phase": 1, "cand": {"sf_soft": {"out_of_top10": True}}},
+        {"key": "k1", "phase": 1, "cand": {"sf_soft": {"out_of_top10": False}}},
+    ])
+    dump = load_dump(p, join_key="key", field="cand.sf_soft.out_of_top10")
+    assert {k: v for k, (v, _) in dump.rows.items()} == {"k0": 1.0, "k1": 0.0}
+    assert dump.unusable == 0, "a bool must not be dropped as a non-number"
+
+
+def test_the_boolean_refusal_names_the_field_with_no_cp_substitute() -> None:
+    """The message must not send an `out_of_top10` operator to a fiction.
+
+    `cand.sf_soft.top1` genuinely is `top1_agree`'s cp form (top1 is the argmax
+    move's regret, so `top1 == 0` IS agreement). Nothing plays that role for
+    `out_of_top10`, and the first version of this message implied one did.
+    """
+    import inspect
+
+    from scripts import paired_compare
+
+    src = inspect.getsource(paired_compare.load_dump)
+    assert "no such cp substitute for `out_of_top10`" in src
+    assert "the bootstrap is the route, not a different --field" in src
 
 
 def test_the_two_sign_conventions_are_annotated_where_they_collide(
