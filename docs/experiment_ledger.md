@@ -57726,3 +57726,89 @@ negative control that correctly fails. BT4 probability mass lands ENTIRELY insid
 **NOT USABLE from that run:** row (c) and the value table are self-graded (the SF cache was
 populated from the same deep labels) — tautological output (top-1 regret 0.0, Brier 0.0000),
 correctly discarded by the agent and NOT reported.
+
+### 2026-08-17 — PREREG: SF policy supervision, arms A+F together (#258/#252/#256)
+
+**STATUS: PREREG, NOT LAUNCHED.** Weights pending the gradient-norm calibration; everything
+else below is committed BEFORE any number is read.
+
+**Context.** Production stopped intentionally at **iteration 191** (last progress row
+14:08:35, 2026-08-17) specifically to work on SF policy supervision. Revert point banked by
+hand at `data/salvage/sfsl_baseline_iter190_20260817/` (checkpoint_000190: weights +
+optimizer + `pid_state.json` + `holdout.npz`, 637M) — NOT a Ray-managed path, so pruning
+cannot take it.
+
+**HYPOTHESIS.** Our primary policy signal is nearly inert: the policy-CE step toward
+`policy_target` scores **+0.00004 [-0.00000, +0.00009]** while being FAR from converged
+(‖grad‖ 0.201, mean L1 0.35), because it agrees with our own top-1 **80.8%** of the time and
+that move is deep-SF-best only **46%** of the time — it sharpens what we already do. SF and
+BT4 are much stronger than us (top-1 vs deep SF: ours **46.2%**, `policy_target` **50.4%**,
+BT4-100 **64.0-66.4%**). Adding supervision that is weighted toward where the strong teacher
+DISAGREES with us should therefore buy what the current target cannot.
+
+Arms, both ON together: **A** = `sf_own_regret` (`Σ p·r`, `losses.py:890`) and **F** = the
+SF-approved-move probability floor with the played-move collar (PR #448).
+
+⚑ **The A:F ratio is NOT measured and this prereg does not claim it is.** Both prior
+functionals were each one arm's own gradient (see the retraction above). Weights are set by
+GRADIENT-NORM SHARE — a mechanical "this much new signal", not an optimum. If the arm wins,
+the ratio remains unmeasured and #258 stays open.
+
+**RESOLUTION, COMPUTED BEFORE THE THRESHOLDS.** Our own banked paired arenas give a 95%
+half-width of **35.8 Elo at n=400** (anchor: +239.5 [+205.9, +277.5]). Scaling 1/√N:
+
+| half-width | games | ~GPU hours |
+|---|---|---|
+| ±25 Elo | 820 | ~3.6 h |
+| ±20 Elo | 1,282 | ~5.6 h |
+| ±15 Elo | 2,278 | ~10.0 h |
+| ±10 Elo | 5,127 | ~22.4 h |
+
+⇒ **a success threshold below ~25 Elo is UNFALSIFIABLE at any affordable game count.** The
+threshold below is set accordingly, rather than picked and rationalised afterwards.
+
+**GATE 1 — MECHANISTIC KILL GATE (fast, high resolution). Exact command:**
+```
+PYTHONPATH=. python3 scripts/audit_targets.py \
+  --checkpoint <arm-ckpt> --audit-set data/audit_set_v1.jsonl \
+  --compare data/salvage/sfsl_baseline_iter190_20260817/checkpoint_000190/trainer.pt \
+  --paired --report-top1 --report-cp-regret
+```
+**KILL if, by iteration 191+40, paired audit-set cp regret has not IMPROVED vs the iter-190
+baseline with a CI excluding 0.** Rationale: if the arm cannot move the ruler that directly
+scores the thing it supervises, it is not doing what it claims and no arena is owed.
+
+⚑⚑ **GATE 1 IS A KILL GATE ONLY, NEVER A SUCCESS GATE.** This loop has repeatedly improved
+offline policy rulers with ZERO Elo (absorption 11.6x in-window, −2.4% held-out; "losses are
+decoupled from strength"). Passing gate 1 buys the right to run gate 2 and nothing else.
+
+**GATE 2 — DECIDING YARDSTICK. Exact command:**
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --engine-a <arm-ckpt> \
+  --engine-b data/salvage/sfsl_baseline_iter190_20260817/checkpoint_000190/trainer.pt \
+  --games 1282 --matched-sims --search-shape production --concurrency 16
+```
+**SUCCESS = paired pentanomial Elo CI strictly ABOVE 0 at n=1282 (±20 Elo).**
+**KILL = CI strictly BELOW 0.** Overlapping 0 = NULL, arm reverted, ratio still unmeasured.
+
+⚑ **n=1282 is BANKED IN ADVANCE and read ONCE.** No rolling reads: optional stopping on a
+rolling arena manufactured +112 Elo here from a true null, and a 380-game rolling read
+overstated a banked 400-game result. The number is not looked at before the count is met.
+
+**CONFOUNDS (protocol #4 — this is deliberately NOT one change).**
+- Both arms move at once. A win does not attribute between them; #258 stays open either way.
+- Restart-vs-steady-state: post-restart winrate reads ~+0.110 too high from sampling bias,
+  and the replay window still holds ~a day of pre-change data. Gate 2 is not read inside the
+  first 40 iterations.
+- `wdl_regret` is NOT a readout here and must not be quoted as one: the MCTS sim ramp has
+  been running backwards 256→100 since 2026-08-12, which voids the frozen-search invariant
+  the regret series depends on.
+- The #448 merge itself moves the holdout ruler id, forcing a `holdout_generation` bump and
+  best-model handover at restart. Expected, not a signal.
+
+**BLOCKER, must be closed before launch.** Flipping any term-ADDING loss weight — which both
+of these are — currently freezes the best-model record: `_eval_loss_kwargs` passes loss
+weights into the holdout eval while `eval_ruler_id` does not hash them, so `test_loss` steps
+up under a ruler id that never moves and `_update_best_model` compares against a record it
+structurally cannot beat. Applies to a RESUME as well as a live flip. Fix in flight.
