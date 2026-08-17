@@ -758,6 +758,112 @@ def test_a_dump_that_mixes_two_search_shapes_is_refused(tmp_path) -> None:
     with pytest.raises(SystemExit, match="mixes two rulers"):
         require_same_ruler(mixed, ok, label_a="MIXED", label_b="OK")
 
+# ---------------------------------------------------------------------------
+# `target_config`: the ruler `config_authority` structurally cannot be
+# ---------------------------------------------------------------------------
+
+
+def test_two_dumps_built_from_different_target_configs_are_refused(tmp_path) -> None:
+    """MUTANT (Codex P1): temporal config drift between two authoritative runs.
+
+    `config_authority.authoritative` is a SAME-RUN verdict — it says this run's
+    `--config` agreed with the live yaml AT THE TIME IT RAN. The live yaml is
+    edited between audits by design, so two dumps made a week apart under
+    different `sf_policy_temp` BOTH stamp `authoritative: true` and their
+    `cand.sf_soft.exp` rows are nonetheless built from different targets.
+    Banking the key NAMES (which is all the stamp used to do) cannot see it:
+    the names are identical in both dumps by construction.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    authority = {"authoritative": True, "reference": "/live.yaml", "reason": ""}
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256,
+                 config_authority=authority,
+                 target_config={"sf_policy_temp": 2.0, "temperature": 1.0}),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 config_authority=authority,
+                 target_config={"sf_policy_temp": 3.0, "temperature": 1.0}),
+    ]))
+
+    with pytest.raises(SystemExit, match="target_config"):
+        require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_two_dumps_with_the_same_target_config_still_compare(tmp_path, capsys) -> None:
+    """The other branch: equal values must JOIN, or the field refuses everything."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    values = {"sf_policy_temp": 2.0, "temperature": 1.0}
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256,
+                 target_config=values),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 target_config=dict(values)),
+    ]))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+    assert "target_config" in capsys.readouterr().out
+
+
+def test_an_unstamped_target_config_warns_rather_than_refusing(tmp_path, capsys) -> None:
+    """Absence is UNKNOWN here, like `batch_size` and unlike `input_encoding`.
+
+    `target_config` is new, so every banked dump lacks it. Inferring a value
+    would be a guess (there is no configuration absence implies), and refusing
+    would break every historical comparison to stop a join that predates the
+    field. So it warns — the same call `batch_size` already makes.
+    """
+    from scripts.paired_compare import (
+        INFERRED_WHEN_ABSENT,
+        load_dump,
+        require_same_ruler,
+    )
+
+    assert "target_config" not in INFERRED_WHEN_ABSENT
+    legacy = load_dump(_write_jsonl(tmp_path / "legacy.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    fresh = load_dump(_write_jsonl(tmp_path / "fresh.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 target_config={"sf_policy_temp": 2.0}),
+    ]))
+
+    require_same_ruler(legacy, fresh, label_a="LEGACY", label_b="NEW")
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "target_config" in out
+
+
+def test_the_per_row_search_shape_stamp_is_refused_on_the_fast_row(tmp_path) -> None:
+    """MUTANT (Codex P1): a `fast_simulations` change with `train` identical.
+
+    The stamp is keyed by TRAINING ROW precisely so this is visible. With only
+    the full-sims row banked the two dicts below are byte-identical and the
+    join is allowed, charging `cand.train_fast.*`'s budget change to the
+    checkpoints.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    full = {"policy_temp": 1.5, "simulations": 256}
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256,
+                 search_shape={"train": full,
+                               "train_fast": {"policy_temp": 1.5, "simulations": 32}}),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 search_shape={"train": full,
+                               "train_fast": {"policy_temp": 1.5, "simulations": 13}}),
+    ]))
+
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(a, b, label_a="A", label_b="B", metric="cand.train_fast.exp")
+
 def _stamped_header(path: Path, *, ruler: str, n: int = 6, off: float = 0.0,
              extra: dict | None = None) -> str:
     """A dump with a provenance HEADER on line 1, like `audit_cache` writes.
@@ -1184,3 +1290,45 @@ def test_topk_beside_net_is_still_ruler_identity(tmp_path) -> None:
                                   extra={"net": "ours.pt", "topk": 20}))
     with pytest.raises(SystemExit, match="disagree on stamp key 'topk'"):
         require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_target_config_is_scoped_to_the_producer_that_stamps_it(tmp_path, capsys) -> None:
+    """MUTANT (#442 review B2, re-introduced by a fresh ruler field).
+
+    `value_regret.py` neither builds its rows from `AUDIT_DIRECT_CONFIG_KEYS`
+    nor stamps `target_config`, so checking the field on its `--field value`
+    comparison can only ever emit "not declared by either side". That warning
+    is not a finding — and `monitor_fen.sh` classifies any ruler warning as
+    UNVERIFIED, so an unscoped new field makes `prov:ok` UNREACHABLE for a
+    reason unrelated to what is being verified. That is the exact defect #442
+    fixed for `batch_size`; adding a ruler field is how it comes back.
+
+    ⚑ BOTH BRANCHES: skipped for `value`, ENFORCED for `cand.sf_soft.exp`.
+    """
+    from scripts.paired_compare import (
+        load_dump,
+        require_same_ruler,
+        ruler_fields_for,
+    )
+
+    assert "target_config" not in ruler_fields_for("value")
+    assert "target_config" in ruler_fields_for("cand.sf_soft.exp")
+    assert "target_config" in ruler_fields_for(None), (
+        "an unknown metric must still check everything, or a typo'd --field "
+        "silently skips the gate"
+    )
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 target_config={"sf_policy_temp": 2.0}),
+    ]))
+    require_same_ruler(a, b, label_a="A", label_b="B", metric="value")
+    assert "target_config" not in capsys.readouterr().out, (
+        "a value_regret comparison warned about a field only audit_targets "
+        "stamps — prov:ok is now unreachable on the monitor line"
+    )
+    require_same_ruler(a, b, label_a="A", label_b="B", metric="cand.sf_soft.exp")
+    assert "target_config" in capsys.readouterr().out

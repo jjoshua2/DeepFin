@@ -296,7 +296,26 @@ def load_dump(
 # the PLAY distribution, not the stored target. A pre-fix dump joins cleanly
 # against a post-fix one and reports a tight-CI delta that is entirely the
 # ruler. That is what this entry stops.
-RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size", "search_shape")
+#
+# ⚑ `search_shape` IS KEYED BY TRAINING ROW (`{"train": {...}, "train_fast":
+# {...}}`), because the two rows are separately realized. It banked only the
+# full-sims row until 2026-08-16, so a change to `fast_simulations` alone left
+# the stamp byte-identical while `cand.train_fast.*` came from a different
+# search budget — the same failure this field exists to stop, on the row that
+# was not being stamped.
+#
+# `target_config` is the second half of the ruler, and it closes a hole
+# `config_authority` structurally cannot: that flag is a SAME-RUN verdict, so
+# two audits made weeks apart under different `sf_policy_temp` each stamp
+# themselves authoritative and their row-(c) numbers still are not comparable.
+# Banking the audit's realized `AUDIT_DIRECT_CONFIG_KEYS` VALUES (never their
+# names — the names are identical in both dumps by construction) is what makes
+# that visible. `config_authority` itself is deliberately NOT a ruler field: it
+# carries an absolute reference PATH and free-text reason, so joining on it
+# would refuse legitimate comparisons for reasons that are not ruler changes.
+RULER_FIELDS: tuple[str, ...] = (
+    "input_encoding", "batch_size", "search_shape", "target_config",
+)
 
 # ⚑ ABSENCE IS INFORMATIVE FOR `input_encoding`, AND ONLY FOR IT.
 # Every dump written before the audit-v2 flag existed is `fen_only` BY
@@ -486,14 +505,32 @@ def ruler_fields_for(metric: str | None) -> tuple[str, ...]:
 
     Unknown/None metric: every stamp applies. Defaulting the other way would
     make a typo'd `--field` silently skip the ruler check.
+
+    ⚑ `target_config` is scoped BY PRODUCER, not by row, and the distinction is
+    load-bearing. Within an `audit_targets` dump it governs every candidate:
+    its keys span row (c) (`sf_policy_*`), rows (d)/(e) (`temperature`,
+    `playout_cap_fraction`, the sim budgets) and value row (iii) (`sf_wdl_*`,
+    `search_wdl_frac`), and inventing an approximate per-row partition would be
+    a gate that looks scoped and is wrong at the edges. But `value_regret.py`
+    does not build its rows from those keys and never stamps the field, so
+    checking it on a `--field value` comparison can only ever produce the
+    "not declared by either side" warning — which is #442 review B2 verbatim: a
+    warning about something the run is not verifying made `prov:ok` UNREACHABLE
+    on `monitor_fen.sh`'s line for months, and it is exactly what a fresh
+    unscoped ruler field would have done again.
+    `tests/test_paired_compare_gate_is_wired.py` is what caught it.
     """
     if metric is None:
         return RULER_FIELDS
-    governs_training_rows = str(metric).startswith(("cand.train", "train"))
-    return tuple(
-        f for f in RULER_FIELDS
-        if f != "search_shape" or governs_training_rows
-    )
+    text = str(metric)
+    governs_training_rows = text.startswith(("cand.train", "train"))
+    is_audit_targets_metric = text.startswith("cand.")
+    skip = set()
+    if not governs_training_rows:
+        skip.add("search_shape")
+    if not is_audit_targets_metric:
+        skip.add("target_config")
+    return tuple(f for f in RULER_FIELDS if f not in skip)
 
 
 def require_same_ruler(

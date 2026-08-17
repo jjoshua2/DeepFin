@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import numpy as np
 import pytest
@@ -415,6 +415,62 @@ def test_build_actually_compares_the_non_exempt_fields(
         at.build_profile_search_shape("train", profiles["train"], **_build_kwargs())
 
 
+def test_the_override_is_applied_BEFORE_the_assertion_and_the_table(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTANT (R3): move the override block back below the assert and print.
+
+    ``build_profile_search_shape``'s docstring says "⚑ ORDER IS THE POINT" and
+    nothing tested it: moving the override block back to where it used to be
+    survived 91 tests. The consequence is not loud — the returned shape carries
+    3.0 either way, because the override still lands before the return — it is
+    that the PRINTED table and (through the caller) the RULER STAMP describe
+    the pre-override object. And the table does not print a wrong value, it
+    prints NOTHING: with `policy_temp` in the exempt map and got == want == 1.5
+    the exempt branch takes its `continue`. So the row that says "this run did
+    not score production's target here" silently disappears, on precisely the
+    run where it is load-bearing.
+
+    ⚑ BOTH BRANCHES, asserted on the OUTPUT rather than on the object: the
+    overridden field prints with the operator's value AND the DELIBERATE
+    reason, and an un-overridden neighbour prints production's value with no
+    such marking.
+    """
+    import scripts.audit_targets as at
+
+    profiles = at.build_search_profiles(
+        _flat(), play_sims=256, play_topk=None,
+        gumbel_overrides=(("policy_temp", 3.0),), override_training_rows=True,
+    )
+    capsys.readouterr()
+    shape = at.build_profile_search_shape(
+        "train", profiles["train"], **_build_kwargs(),
+    )
+    out = capsys.readouterr().out
+
+    assert shape.cfg.policy_temp == pytest.approx(3.0), (
+        "the override never reached the runner — this test would be vacuous"
+    )
+    temp_lines = [ln for ln in out.splitlines() if "policy_temp" in ln]
+    assert temp_lines, (
+        "the shape table printed NO policy_temp row for a run that overrode it. "
+        "The override is being applied AFTER the table is built, so the table "
+        "describes a config this run did not search with and the operator's "
+        "deviation is invisible. ORDER IS THE POINT."
+    )
+    assert any("3.0" in ln and "DELIBERATE" in ln for ln in temp_lines), (
+        f"policy_temp printed as {temp_lines!r}; expected the operator's 3.0 "
+        f"marked DELIBERATE against production's 1.5"
+    )
+    assert any("--gumbel policy_temp=3.0" in ln for ln in temp_lines)
+  # The un-overridden neighbour is the control: it must still print
+  # production's value, unmarked, or the table is marking everything.
+    cap_lines = [ln for ln in out.splitlines() if "target_max_visit_cap" in ln]
+    assert cap_lines, "the table printed no target_max_visit_cap row at all"
+    assert "DELIBERATE" not in cap_lines[0]
+    assert "5" in cap_lines[0]
+
+
 def test_build_play_row_still_honours_policy_temp_flag() -> None:
     """--policy-temp must keep working on the PLAY row after the split."""
     from scripts.audit_targets import build_profile_search_shape, build_search_profiles
@@ -527,17 +583,24 @@ def test_allow_stale_config_is_still_a_supported_escape(
     )
     assert "WARNING (--allow-stale-config)" in capsys.readouterr().out
     assert authority.authoritative is False
-    assert authority.stamp() == {
-        "authoritative": False,
-        "reference": "<none>",
-        "reason": authority.reason,
-      # ⚑ The SCOPE of the boolean, banked beside it. A flag whose coverage is
-      # not stated is read at the coverage the reader needs.
-        "covers": {
-            "search_shape": "complete selfplay runner argument set",
-            "config_keys": list(at.AUDIT_DIRECT_CONFIG_KEYS),
-        },
-    }
+    stamp = authority.stamp()
+    assert stamp["authoritative"] is False
+    assert stamp["reference"] == "<none>"
+    assert stamp["reason"] == authority.reason
+  # ⚑ The SCOPE of the boolean, banked beside it. A flag whose coverage is
+  # not stated is read at the coverage the reader needs — including the LIMIT
+  # of the AST scan that keeps `config_keys` complete.
+    covers = cast("dict[str, Any]", stamp["covers"])
+    assert covers["search_shape"] == "complete selfplay runner argument set"
+    assert covers["config_keys"] == list(at.AUDIT_DIRECT_CONFIG_KEYS)
+    assert "alias" in covers["scan"], (
+        "the stamp must state the scan's limit; a scope claim with no stated "
+        "boundary is read at the boundary the reader needs"
+    )
+  # ⚑ And the VALUES ride even on the degraded path — that is the run most
+  # likely to have been built from a non-production target config, so dropping
+  # them here would leave paired_compare comparing {} to {}, i.e. EQUAL.
+    assert set(authority.config_values()) == set(at.AUDIT_DIRECT_CONFIG_KEYS)
     assert "does not exist" in authority.reason
 
 
@@ -716,6 +779,71 @@ def test_value_regret_confirms_a_matching_layout(
     out = capsys.readouterr().out
     assert "MATCHES production" in out
     assert "WARNING" not in out
+
+
+def test_value_regret_never_says_MATCHES_PRODUCTION_off_the_live_tree(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTANT (R4 / Codex P2): the affirmative line on a NON-AUTHORITATIVE ref.
+
+    ⚑ `authoritative`, NOT `live is None`. With $CHESS_ANTI_ENGINE_LIVE_CONFIG
+    unset — the DEFAULT in every worktree, which is where CLAUDE.md mandates
+    branch work happens — `load_live_config_or_reason` returns the IN-TREE
+    config with `authoritative=False`. Branching on None alone therefore
+    printed "checkpoint input layout MATCHES production" about a file the
+    resolver had already decided was not production. The `[NOT-LIVE]` header
+    does not repair it: the RESULT line is what gets copied into a table, and
+    it travels without its header.
+
+    Same defect the sibling probe fixed in this same change, left standing in
+    `value_regret.py`.
+    """
+    from chess_anti_engine.eval.production_shape import (
+        load_live_config,
+        production_input_encoding,
+    )
+    from scripts.value_regret import _report_encoding_vs_production
+
+    monkeypatch.delenv(LIVE_CONFIG_ENV, raising=False)
+    live = load_live_config()
+    assert live is not None, "the in-tree fallback did not resolve at all"
+    assert not live.authoritative, (
+        "the in-tree fallback resolved as AUTHORITATIVE — this test would be "
+        "vacuous"
+    )
+    _report_encoding_vs_production(
+        production_input_encoding(live.flat), input_encoding="stored",
+    )
+    out = capsys.readouterr().out
+    assert "MATCHES production" not in out, (
+        "value_regret claims a PRODUCTION match against the in-tree config, "
+        "which is stale by construction outside the live working tree"
+    )
+    assert "NON-AUTHORITATIVE" in out
+    assert "NOT a production check" in out
+    assert LIVE_CONFIG_ENV in out
+
+
+def test_value_regret_marks_a_MISMATCH_non_authoritative_too(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The other half: the negative verdict is a claim about production too.
+
+    "This checkpoint's layout is NOT production's" read off the in-tree config
+    is exactly as unfounded as the affirmative, and it is the line that would
+    make someone re-export a net.
+    """
+    from scripts.value_regret import _report_encoding_vs_production
+
+    monkeypatch.delenv(LIVE_CONFIG_ENV, raising=False)
+    _report_encoding_vs_production(
+        {"input_history_encoding": "lc0_root", "input_extra_features": "v1"},
+        input_encoding="fen_only",
+    )
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "NON-AUTHORITATIVE" in out
+    assert "NOT a production check" in out
 
 
 # ---------------------------------------------------------------------------
@@ -933,8 +1061,61 @@ def test_the_config_key_hand_list_is_gone() -> None:
     }
 
 
+def _flat_alias_names(tree: Any) -> set[str]:
+    """``{"flat"}`` plus every local name bound directly from it, transitively.
+
+    ⚑ R2. Without this the completeness scan below is bound to the IDENTIFIER
+    ``flat``, so ``config_authority.covers`` is complete BY CONVENTION rather
+    than by check: measured, a one-line alias
+
+        _cfgmap = flat
+        _cfgmap.get("soft_policy_temp", 2.0)
+
+    survives 91 tests, reads a production value straight out of the config, and
+    is never compared against the live yaml — while the stamp keeps claiming
+    "every config value this script consumes was proved equal to production's".
+    A scanner that a rename defeats is a scanner whose result is a statement
+    about spelling.
+
+    LIMIT, stated because it is real and cannot be closed by an AST walk: this
+    follows NAME BINDINGS only. A dict handed to a helper that names its
+    parameter something other than ``flat`` (``_read(flat)`` where ``_read``
+    takes ``cfg``) is not followed, and neither is a copy through a call
+    (``dict(flat)``). The stamp says so — see ``ConfigAuthority.stamp``'s
+    ``covers.scan`` — so the claim is bounded rather than overstated.
+    """
+    import ast
+
+    aliases = {"flat"}
+    for _ in range(8):  # transitive closure; the depth here is 1 in practice
+        before = len(aliases)
+        for node in ast.walk(tree):
+            pairs: list[tuple[Any, Any]] = []
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Tuple) and isinstance(node.value, ast.Tuple):
+                        pairs.extend(zip(target.elts, node.value.elts, strict=False))
+                    else:
+                        pairs.append((target, node.value))
+            elif (
+                isinstance(node, ast.AnnAssign) and node.value is not None
+            ) or isinstance(node, ast.NamedExpr):
+                assert node.value is not None
+                pairs.append((node.target, node.value))
+            for target, value in pairs:
+                if (
+                    isinstance(target, ast.Name)
+                    and isinstance(value, ast.Name)
+                    and value.id in aliases
+                ):
+                    aliases.add(target.id)
+        if len(aliases) == before:
+            break
+    return aliases
+
+
 def _direct_flat_reads(source: str) -> set[str]:
-    """Every string key read straight off a local named ``flat``.
+    """Every string key read straight off the flattened config.
 
     ⚑ BOTH ACCESS FORMS. A `.get`-only scan misses `flat["k"]`, and a
     subscript-only scan misses `flat.get("k", d)`. CLAUDE.md records exactly
@@ -947,15 +1128,21 @@ def _direct_flat_reads(source: str) -> set[str]:
     untestable against the real module — the shape of an equivalent mutant.
     ``test_the_flat_read_scanner_sees_both_access_forms`` drives it against a
     synthetic source that uses both, so neither branch is dead.
+
+    ⚑ AND EVERY ALIAS OF IT, not only the identifier ``flat`` — see
+    ``_flat_alias_names`` for the mutant that motivated it and for the limit
+    that remains.
     """
     import ast
 
+    tree = ast.parse(source)
+    names = _flat_alias_names(tree)
     found: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.value, ast.Name)
-            and node.value.id == "flat"
+            and node.value.id in names
             and isinstance(node.slice, ast.Constant)
             and isinstance(node.slice.value, str)
         ):
@@ -965,7 +1152,7 @@ def _direct_flat_reads(source: str) -> set[str]:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "get"
             and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "flat"
+            and node.func.value.id in names
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
@@ -992,6 +1179,30 @@ def test_the_flat_read_scanner_sees_both_access_forms() -> None:
         "    return a, b, c, d, e\n"
     )
     assert _direct_flat_reads(src) == {"by_subscript", "by_get"}
+
+
+def test_the_flat_read_scanner_follows_an_alias() -> None:
+    """R2's mutant, as a unit: renaming the local must not empty the scan.
+
+    ⚑ BOTH BRANCHES. The aliased read must be FOUND (or the completeness test
+    it feeds is defeated by one line), and a same-shaped read off an unrelated
+    dict must NOT be found (or the scanner over-reports and the check starts
+    refusing configs over keys nothing consumes).
+    """
+    src = (
+        "def f(flat, other):\n"
+        "    _cfgmap = flat\n"
+        "    _again = _cfgmap\n"
+        "    a = _cfgmap.get('via_alias', 2.0)\n"
+        "    b = _again['via_alias_twice']\n"
+        "    c, d = flat, other\n"
+        "    e = c.get('via_tuple_alias', 1)\n"
+        "    g = d.get('not_flat_at_all', 1)\n"
+        "    return a, b, e, g\n"
+    )
+    assert _direct_flat_reads(src) == {
+        "via_alias", "via_alias_twice", "via_tuple_alias",
+    }
 
 
 def test_every_direct_config_read_is_checked() -> None:
@@ -1255,20 +1466,196 @@ def test_an_unstamped_dump_is_unknown_not_a_guessed_policy_temp() -> None:
     assert "unstamped" in decoded
 
 
-def test_dump_row_carries_both_stamps() -> None:
-    """The dump row itself, not just the helpers, must carry them.
+def _realized_shapes_fixture(*, fast_sims: int = 32) -> dict[str, Any]:
+    """The ``{row: SelfplaySearchShape}`` map ``main()`` builds, in miniature."""
+    from chess_anti_engine.eval.production_shape import production_search_shape
 
-    A source-level pin rather than an end-to-end run: reaching the dump needs a
-    checkpoint, an audit set and an hour of Stockfish. It is deliberately paired
-    with `test_train_shape_stamp_tracks_the_profile_it_describes` (the VALUE is
-    right) and `tests/test_paired_compare.py` (the gate READS it), so no single
-    one of the three is load-bearing on its own.
+    flat = _flat()
+    return {
+        "train": production_search_shape(flat, simulations=256),
+        "train_fast": production_search_shape(flat, simulations=fast_sims),
+    }
+
+
+def test_the_dump_stamps_track_BOTH_training_rows() -> None:
+    """MUTANT (Codex): stamp only the full-sims row.
+
+    ``fast_simulations`` is the playout-capped row's entire budget, and it is a
+    live-editable key. With only ``realized_shapes["train"]`` banked, two dumps
+    made either side of a ``fast_simulations`` edit carry BYTE-IDENTICAL
+    provenance while ``cand.train_fast.*`` came from different searches — so
+    ``paired_compare`` joins them and charges the ruler change to the
+    checkpoints, which is the one failure the stamp exists to stop.
+
+    ⚑ Driven by EXECUTION, not by grepping the source for a line. The grep
+    version of this test went red for a correct refactor and would have stayed
+    green for a stamp built from the wrong object.
     """
     import scripts.audit_targets as at
 
-    src = Path(at.__file__).read_text(encoding="utf-8")
-    assert '"search_shape": train_shape_stamp(realized_shapes["train"]),' in src
-    assert '"config_authority": config_authority.stamp(),' in src
+    authority = at.ConfigAuthority(
+        authoritative=True, reference="x", allow_stale=False, reason="",
+        values={"fast_simulations": 32},
+    )
+    before = at.dump_ruler_stamps(_realized_shapes_fixture(fast_sims=32), authority)
+    after = at.dump_ruler_stamps(_realized_shapes_fixture(fast_sims=13), authority)
+
+    shape_before = cast("dict[str, Any]", before["search_shape"])
+    shape_after = cast("dict[str, Any]", after["search_shape"])
+    assert set(shape_before) == {"train", "train_fast"}
+    assert shape_before["train"] == shape_after["train"], (
+        "the full-sims row did not move — the fixture is not isolating "
+        "fast_simulations"
+    )
+    assert shape_before["train_fast"] != shape_after["train_fast"], (
+        "a fast_simulations change leaves the banked provenance identical, so "
+        "two dumps whose cand.train_fast.* rows came from different search "
+        "budgets are joinable. Stamp every realized row, not just `train`."
+    )
+
+
+def test_the_dump_stamps_carry_config_VALUES_not_only_key_names() -> None:
+    """MUTANT (Codex): the authority stamp banks names, so drift is invisible.
+
+    ``authoritative`` is a SAME-RUN verdict. Two audits weeks apart under
+    different ``sf_policy_temp`` each pass their contemporaneous live check and
+    each stamp ``authoritative: true`` — and their row-(c) numbers are built
+    from different targets. Banking the key NAMES cannot see that: the names
+    are identical in both dumps by construction.
+
+    ⚑ BOTH BRANCHES: equal configs must still produce equal stamps, or the
+    field would refuse every join instead of the wrong ones.
+    """
+    import scripts.audit_targets as at
+
+    shapes = _realized_shapes_fixture()
+    same = at.ConfigAuthority(
+        authoritative=True, reference="x", allow_stale=False, reason="",
+        values={"sf_policy_temp": 2.0},
+    )
+    drifted = at.ConfigAuthority(
+        authoritative=True, reference="x", allow_stale=False, reason="",
+        values={"sf_policy_temp": 3.0},
+    )
+    a = at.dump_ruler_stamps(shapes, same)
+    b = at.dump_ruler_stamps(shapes, drifted)
+    assert a["config_authority"] == b["config_authority"], (
+        "the authority verdict must NOT move on a config value change — if it "
+        "did, this would be a same-run flag masquerading as a ruler"
+    )
+    assert a["target_config"] != b["target_config"], (
+        "the banked target config is identical across a sf_policy_temp change, "
+        "so paired_compare cannot see temporal config drift. Bank the VALUES."
+    )
+    assert at.dump_ruler_stamps(shapes, same)["target_config"] == a["target_config"]
+
+
+def test_the_banked_values_come_from_the_config_that_was_AUDITED(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """MUTANT (Codex, the PRODUCER half): bank the key names, not the values.
+
+    ⚑ THE TEST ABOVE CANNOT CATCH THIS AND THAT IS THE POINT. It constructs a
+    ``ConfigAuthority`` with values it chose itself, so it proves the STAMP
+    formats what it is given — it never runs the code that decides what to
+    give it. Replacing ``_realized_config_values``' body with
+    ``dict.fromkeys(AUDIT_DIRECT_CONFIG_KEYS, "<name-only>")`` survived it, and
+    survived the coverage assertion in
+    ``test_allow_stale_config_is_still_a_supported_escape`` too, because that
+    one compares the KEY SET. Certifying and dispatching are two events; this
+    is the one that watches the producer.
+
+    So drive ``_assert_config_is_production`` for real against two live configs
+    that differ on one target key and assert the banked value FOLLOWS. Both
+    branches: it tracks the change, and it reports the config that was audited
+    rather than a constant.
+    """
+    from scripts.audit_targets import _assert_config_is_production
+
+    def _authority_for(temp: float) -> Any:
+        live = _write_config(
+            tmp_path, {"sf_policy_temp": temp}, name=f"live_{temp}.yaml",
+        )
+        monkeypatch.setenv(LIVE_CONFIG_ENV, str(live))
+        flat = dict(flatten_run_config_defaults(load_yaml_file(str(live))))
+        return _assert_config_is_production(str(live), flat, allow_stale=False)
+
+    low = _authority_for(2.0)
+    high = _authority_for(3.0)
+    assert low.authoritative, "the low fixture did not certify"
+    assert high.authoritative, "the high fixture did not certify"
+    assert low.config_values()["sf_policy_temp"] == pytest.approx(2.0), (
+        "the banked target config does not carry the value the audited config "
+        "actually held — it is a list of key names wearing a value's name, so "
+        "paired_compare cannot see temporal drift with it"
+    )
+    assert high.config_values()["sf_policy_temp"] == pytest.approx(3.0)
+    assert low.config_values() != high.config_values()
+  # ...and the un-mutated neighbours still agree, so the difference above is
+  # the key that moved and not the whole dict being rebuilt.
+    assert low.config_values()["mcts_simulations"] == (
+        high.config_values()["mcts_simulations"]
+    )
+
+
+def test_dump_row_carries_every_ruler_field_paired_compare_reads() -> None:
+    """The dump row itself, not just the helper, must carry the stamps.
+
+    Half AST (the row really does unpack the builder) and half execution (what
+    that builder produces), so neither half can be satisfied by a name. It is
+    deliberately paired with the two tests above (the VALUES are right) and
+    with `tests/test_paired_compare.py` (the gate READS them), so no single one
+    of them is load-bearing on its own.
+
+    ⚑ Closes the loop against `paired_compare.RULER_FIELDS`: a field added to
+    the gate that no producer writes is a check that can never fail, and this
+    repo has shipped exactly that.
+    """
+    import ast
+    import inspect
+
+    import scripts.audit_targets as at
+    from scripts.paired_compare import RULER_FIELDS
+
+    tree = ast.parse(inspect.getsource(at.main))
+    appends = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "append"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "per_pos_dump"
+    ]
+    assert len(appends) == 1, (
+        f"{len(appends)} per_pos_dump.append(...) sites in main(); the dump row "
+        "moved — re-point this test, do not delete it"
+    )
+    row = appends[0].args[0]
+    assert isinstance(row, ast.Dict)
+    literal_keys = {
+        k.value for k in row.keys
+        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+    }
+    unpacks = [
+        ast.unparse(v) for k, v in zip(row.keys, row.values, strict=True) if k is None
+    ]
+    assert "dump_ruler_stamps(realized_shapes, config_authority)" in unpacks, (
+        f"the dump row no longer unpacks the stamp builder (unpacks: {unpacks}); "
+        "the stamps may still be there, but nothing can check them by execution"
+    )
+    produced = set(at.dump_ruler_stamps(
+        _realized_shapes_fixture(),
+        at.ConfigAuthority(
+            authoritative=True, reference="x", allow_stale=False, reason="",
+        ),
+    ))
+    assert "config_authority" in produced
+    missing = set(RULER_FIELDS) - literal_keys - produced
+    assert not missing, (
+        f"paired_compare gates on {sorted(missing)}, which audit_targets' dump "
+        f"row never writes. A ruler field no producer stamps is a gate that "
+        f"cannot fail — every join takes the 'not declared' warn path."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1446,19 +1833,20 @@ def test_the_schema_default_is_why_that_fallback_never_fired() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The three states a bare `None` used to collapse into
+# The four states a bare `None` used to collapse into
 # ---------------------------------------------------------------------------
 
 
-def test_unavailable_live_config_names_which_of_three_states_it_is(
+def test_unavailable_live_config_names_which_of_four_states_it_is(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """MUTANT: `except Exception: return None`, discarding the exception text.
 
-    Unset, missing-file and fails-to-flatten call for three different operator
-    actions — export the variable, fix the path, rebase onto the branch whose
-    schema defines the live yaml's new key. A message announcing the union of
-    them sends the reader to the wrong one two times out of three.
+    Unset, missing-file, unreadable-file and fails-to-flatten call for four
+    different operator actions — export the variable, fix the path, fix the
+    permissions, rebase onto the branch whose schema defines the live yaml's
+    new key. A message announcing the union of them sends the reader to the
+    wrong one most of the time.
     """
     from chess_anti_engine.eval.production_shape import load_live_config_or_reason
 
@@ -1488,6 +1876,44 @@ def test_unavailable_live_config_names_which_of_three_states_it_is(
     cfg, reason = load_live_config_or_reason()
     assert cfg is not None
     assert reason == ""
+
+
+def test_an_unreadable_config_is_REPORTED_not_raised(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """MUTANT (Codex P2): `read_bytes()` outside the try.
+
+    ``load_config_file``'s contract is that it NEVER RAISES — every caller
+    prints a degradation warning and carries on, and these instruments are run
+    off the training host often enough that a hard requirement would be a
+    regression. With the read above the guard, a path that exists but cannot be
+    read (permissions, an I/O error, or removal in the window between
+    ``is_file()`` and the read) killed probe / value-regret / search-shape
+    before any of them could emit the warning the module exists to emit.
+
+    ⚑ BOTH BRANCHES: the unreadable file is reported with its own reason, and
+    the readable one still loads — a "fix" that reported everything as
+    unreadable would be a gate that cannot pass.
+    """
+    import os
+
+    from chess_anti_engine.eval.production_shape import load_live_config_or_reason
+
+    if os.geteuid() == 0:
+        pytest.skip("running as root — chmod 000 is not enforced")
+    unreadable = _write_config(tmp_path, {}, name="unreadable.yaml")
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(unreadable))
+    # Sanity: it loads while it is readable, so the mutation below is what moves it.
+    assert load_live_config_or_reason()[0] is not None
+    unreadable.chmod(0o000)
+    try:
+        cfg, reason = load_live_config_or_reason()
+    finally:
+        unreadable.chmod(0o644)
+    assert cfg is None, "an unreadable config must not be reported as loaded"
+    assert "cannot be read" in reason
+    assert "PermissionError" in reason
+    assert str(unreadable) in reason
 
 
 # ---------------------------------------------------------------------------
@@ -1621,8 +2047,92 @@ def test_probe_main_runs_the_temperature_check(
 # ---------------------------------------------------------------------------
 
 
+# Every argument production's C-runner call site passes OUTSIDE the
+# `**search_shape.runner_kwargs()` unpack, pinned to its exact expression and
+# to the reason it is not a config value the shape should carry.
+#
+# ⚑ A WHITELIST, and that is the fix. The first revision of this pin was a
+# BLACKLIST — it refused any expression starting `search.` — which is a guard
+# that cannot see the bypass it exists to stop. Measured: replacing
+# `allow_terminal_root_shortcuts=True` with
+# `allow_terminal_root_shortcuts=bool(state.game.syzygy_in_search)` routes a
+# CONFIG value to the runner past the shape, and survived 120 tests, because
+# the config arrived through `state.game` rather than through `search.`. The
+# line directly above it (`tb_probe=... if state.game.syzygy_in_search ...`) is
+# the standing precedent for that exact route, so the bypass is not a
+# hypothetical spelling — it is a copy of the neighbouring line.
+#
+# So the assertion is now "this set, exactly": a new argument, a changed
+# expression, or a deleted one all fail and force a decision here. An argument
+# that IS config-derived belongs on `SelfplaySearchShape`; one that genuinely
+# is not gets an entry with the reason.
+_CALL_SITE_ARGS: dict[str, str] = {
+    "<positional 0>=state.model": "the loaded net — runtime object",
+    "<positional 1>=sub_cboards": "the boards being searched — runtime",
+    "device=state.device": "the trainer/worker's device — runtime",
+    "rng=rng": "the selfplay RNG — runtime",
+    "evaluator=eval_impl": "the broker/evaluator handle — runtime",
+    "pre_pol_logits=sub_pol": "already-computed root logits — runtime",
+    "pre_wdl_logits=sub_wdl": "already-computed root WDL — runtime",
+    "per_game_simulations=sub_sims": (
+        "per-game budgets from the playout-cap DRAW; the config half "
+        "(`simulations`) is on the shape as `cfg.simulations`"
+    ),
+    "per_game_add_noise=sub_noise": (
+        "the per-PLY root-noise schedule — a function of the move number, not "
+        "a scalar. This is the coverage gap SHAPE_COVERAGE_NOTE names out loud "
+        "rather than implying away"
+    ),
+    "per_game_gumbel_scale=sub_scale": (
+        "same per-PLY schedule (`_scheduled_gumbel_scale`); see above"
+    ),
+    "cboards=sub_cboards": "the boards being searched — runtime",
+    "tree=state.mcts_tree": "the reused search tree — runtime",
+    "root_node_ids=sub_root_ids": "tree-reuse root ids — runtime",
+    "tb_probe=state.tb_probe if state.game.syzygy_in_search else None": (
+        "⚑ THE ONE CONFIG-GATED ARGUMENT. The prober itself is a runtime "
+        "object, but its GATE (`game.syzygy_in_search`) is a config value that "
+        "reaches the runner without passing through SelfplaySearchShape, so a "
+        "shape diff structurally cannot see it. It is covered by a DIFFERENT "
+        "instrument instead — `audit_targets.AUDIT_DIRECT_CONFIG_KEYS` "
+        "value-compares `syzygy_in_search` and `syzygy_path` against the live "
+        "yaml — and SHAPE_COVERAGE_NOTE says so, so a clean shape table is not "
+        "read as covering it."
+    ),
+    "allow_terminal_root_shortcuts=True": (
+        "a literal: selfplay always allows them. Not config-derived, and it "
+        "must not BECOME config-derived without landing on the shape"
+    ),
+    "return_diagnostics=True": (
+        "a literal: selfplay always wants the per-move diagnostics"
+    ),
+}
+
+
+def _call_site_arg_texts(call: Any) -> dict[str, str]:
+    """``{"name=expr": expr}`` for every non-splat argument of ``call``.
+
+    Positionals are keyed by index, because a config value can arrive
+    positionally just as easily as by keyword and a keyword-only scan would not
+    see it.
+    """
+    import ast
+
+    out: dict[str, str] = {}
+    for i, arg in enumerate(call.args):
+        if isinstance(arg, ast.Starred):
+            out[f"<starred positional {i}>=" + ast.unparse(arg.value)] = ast.unparse(arg)
+            continue
+        out[f"<positional {i}>=" + ast.unparse(arg)] = ast.unparse(arg)
+    for kw in call.keywords:
+        if kw.arg is None:
+            continue
+        out[f"{kw.arg}=" + ast.unparse(kw.value)] = ast.unparse(kw.value)
+    return out
+
+
 def test_the_shape_is_exactly_what_the_C_runner_is_handed() -> None:
-    """MUTANT (F1): a config-derived runner argument added BESIDE the shape.
+    """MUTANT (F1/R1): a config-derived runner argument added BESIDE the shape.
 
     "Field-complete over <schema>" is only as complete as <schema>. The
     previous revision diffed ``GumbelConfig`` and called that exhaustive while
@@ -1631,10 +2141,12 @@ def test_the_shape_is_exactly_what_the_C_runner_is_handed() -> None:
     have been the same defect with a later expiry date, so the boundary is the
     runner's own argument set — and this test is what keeps that true.
 
-    It parses production's call site and asserts that EVERY config-derived
-    keyword there comes from ``SelfplaySearchShape.runner_kwargs()``. Adding
-    ``vloss_weight=int(search.gumbel_vloss_weight)`` back beside the unpack
-    fails here.
+    It parses production's call site and asserts that the config-derived
+    arguments come from ``SelfplaySearchShape.runner_kwargs()`` and that
+    EVERYTHING else at that call site is one of the pinned, reasoned entries in
+    ``_CALL_SITE_ARGS``. Adding ``vloss_weight=int(search.gumbel_vloss_weight)``
+    back beside the unpack fails here — and so does routing a config value in
+    through ``state.game``, which the blacklist this replaced could not see.
     """
     import ast
     import inspect
@@ -1658,18 +2170,24 @@ def test_the_shape_is_exactly_what_the_C_runner_is_handed() -> None:
     assert len(unpacked) == 1, "the shape is no longer unpacked at the call site"
     assert ast.unparse(unpacked[0].value) == "search_shape.runner_kwargs()"
 
-  # No keyword at that call site may read a `search.gumbel_*` / `game.*` config
-  # value directly — that is the bypass. `state.*` is runtime state (model,
-  # device, trees, per-game sim/noise lists), not config.
-    for kw in call.keywords:
-        if kw.arg is None:
-            continue
-        text = ast.unparse(kw.value)
-        assert not text.startswith("search."), (
-            f"{kw.arg}={text} reads the selfplay SearchConfig directly at the "
-            "runner call site, bypassing SelfplaySearchShape — so no "
-            "instrument that compares shapes can see it. Put it on the shape."
-        )
+    found = set(_call_site_arg_texts(call))
+    added = sorted(found - set(_CALL_SITE_ARGS))
+    assert not added, (
+        f"the C-runner call site passes {added} outside "
+        f"**search_shape.runner_kwargs(). If any of them is config-derived it "
+        f"is invisible to every instrument that compares search shapes — put "
+        f"it on SelfplaySearchShape. If it is genuinely runtime state, add it "
+        f"to _CALL_SITE_ARGS with the reason. ⚑ 'It does not start with "
+        f"`search.`' is not a reason: config reaches this call through "
+        f"`state.game` too, one line above."
+    )
+    gone = sorted(set(_CALL_SITE_ARGS) - found)
+    assert not gone, (
+        f"_CALL_SITE_ARGS pins {gone}, which the call site no longer passes (or "
+        f"passes with a changed expression). Re-point the entry — a stale "
+        f"whitelist silently stops covering the argument it names."
+    )
+    assert all(r.strip() for r in _CALL_SITE_ARGS.values())
 
 
 def test_runner_kwargs_covers_every_non_cfg_field_of_the_shape() -> None:

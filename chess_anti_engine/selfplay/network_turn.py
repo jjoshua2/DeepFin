@@ -341,18 +341,34 @@ class SelfplaySearchShape:
 
     So the certifiable boundary is this object, not the dataclass one level
     inside it, and production selfplay builds the runner's arguments FROM it
-    (``runner_kwargs`` below) rather than assembling them beside it. A knob
-    added to the runner has to pass through here to reach production at all,
-    which is what makes "field-complete over ``SelfplaySearchShape``" a claim
-    about the consumer instead of a claim about a hand-drawn dataclass.
+    (``runner_kwargs`` below) rather than assembling them beside it, which is
+    what makes "field-complete over ``SelfplaySearchShape``" a claim about the
+    consumer instead of a claim about a hand-drawn dataclass.
 
-    What is deliberately NOT here: ``per_game_add_noise`` /
-    ``per_game_gumbel_scale``. Those are per-PLY schedules
-    (``_scheduled_gumbel_scale``), not scalars — a single value cannot
-    represent them, so an instrument that wants to match production's root
-    noise has to say what it does about the schedule rather than compare a
-    field. ``chess_anti_engine/eval/production_shape.py`` names that gap
-    explicitly instead of implying coverage it does not have.
+    ⚑ WHAT IS PINNED, EXACTLY — because an earlier revision of this docstring
+    claimed "a knob has to pass through here to reach production at all" and
+    the test behind it did not enforce that. It enforced only that no argument
+    was spelled ``search.*``, which a config value routed through ``state.game``
+    walks straight past (measured: ``allow_terminal_root_shortcuts=
+    bool(state.game.syzygy_in_search)`` survived 120 tests). The claim is now
+    true because ``tests/test_production_shape_guard.py`` pins the call site's
+    NON-shape arguments as an exhaustive whitelist with a reason each: a new
+    argument fails until someone decides whether it is config or runtime.
+
+    What is deliberately NOT here, and is therefore on that whitelist:
+
+    * ``per_game_add_noise`` / ``per_game_gumbel_scale`` — per-PLY schedules
+      (``_scheduled_gumbel_scale``), not scalars. A single value cannot
+      represent them, so an instrument that wants to match production's root
+      noise has to say what it does about the schedule rather than compare a
+      field.
+    * the ``tb_probe`` gate. The prober is a runtime object, but the gate
+      ``game.syzygy_in_search`` IS config and reaches the runner beside this
+      object. It is value-compared by a different instrument
+      (``audit_targets.AUDIT_DIRECT_CONFIG_KEYS``) rather than left uncovered.
+
+    ``chess_anti_engine/eval/production_shape.py`` names both gaps explicitly
+    in ``SHAPE_COVERAGE_NOTE`` instead of implying coverage it does not have.
     """
 
     cfg: GumbelConfig

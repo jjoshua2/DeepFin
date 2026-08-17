@@ -129,6 +129,7 @@ def _report_encoding_vs_production(
     beside a production one without anything marking it.
     """
     from chess_anti_engine.eval.production_shape import (
+        LIVE_CONFIG_ENV,
         load_live_config_or_reason,
         production_input_encoding,
     )
@@ -136,9 +137,9 @@ def _report_encoding_vs_production(
     live, reason = load_live_config_or_reason()
     if live is None:
         print(
-          # The REASON, not "unset or unreadable": three states, three operator
-          # actions (export the var / fix the path / rebase onto the branch
-          # whose schema defines the live yaml's new key).
+          # The REASON, not "unset or unreadable": four states, four operator
+          # actions (export the var / fix the path / fix the permissions /
+          # rebase onto the branch whose schema defines the live yaml's key).
             f"[shape] checkpoint declares {enc_kwargs}; NOT compared against "
             f"production — {reason}.",
             flush=True,
@@ -151,19 +152,36 @@ def _report_encoding_vs_production(
         for k, v in want.items()
         if enc_kwargs.get(k) != v
     ]
+  # ⚑ `authoritative`, NOT `live is None`. `load_live_config_or_reason` returns
+  # the IN-TREE fallback with `authoritative=False` when
+  # $CHESS_ANTI_ENGINE_LIVE_CONFIG is unset — the DEFAULT in every worktree —
+  # so branching on None alone printed the affirmative "MATCHES production"
+  # about a file the resolver had already decided was not the live one. The
+  # `[NOT-LIVE]` header above does not repair that: a result line is what gets
+  # copied into a report, and it travels without its header. Same fix as
+  # `probe_policy_targets.py`, which had the same defect in the same round.
+    reference = "production" if live.authoritative else (
+        "the NON-AUTHORITATIVE reference config"
+    )
+    stale_note = "" if live.authoritative else (
+        "\n[shape] ⚑ This is NOT a production check. The comparison above is "
+        "against the in-tree config, which is stale by construction outside "
+        f"the live working tree. Export ${LIVE_CONFIG_ENV} to name the live "
+        "yaml if you meant to check production."
+    )
     if not diffs:
         print(
-            f"[shape] checkpoint input layout MATCHES production: {want} "
-            f"(scored with --input-encoding {input_encoding})",
+            f"[shape] checkpoint input layout MATCHES {reference}: {want} "
+            f"(scored with --input-encoding {input_encoding}){stale_note}",
             flush=True,
         )
         return
     print(
-        "[shape] ⚑ WARNING: this checkpoint's input layout is NOT production's:\n  "
-        + "\n  ".join(diffs)
+        f"[shape] ⚑ WARNING: this checkpoint's input layout does NOT MATCH "
+        f"{reference}:\n  " + "\n  ".join(diffs)
         + "\n  The cp figure below is a valid reading of THIS net, but it is a "
         "different ruler from a production-layout reading and the two must not "
-        "share a table, trend or threshold.",
+        f"share a table, trend or threshold.{stale_note}",
         flush=True,
     )
 

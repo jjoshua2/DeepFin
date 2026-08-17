@@ -167,6 +167,7 @@ from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from chess_anti_engine.eval.production_shape import (
+    CONFIG_ABSENT,
     LIVE_CONFIG_ENV,
     FieldDiff,
     assert_matches_production,
@@ -414,6 +415,32 @@ class ConfigAuthority:
     allow_stale: bool
     # Empty exactly when `authoritative` is True.
     reason: str
+    # ⚑ The REALIZED VALUE of every `AUDIT_DIRECT_CONFIG_KEYS` key, off the
+    # config this run actually used. Not the names — see `config_values`.
+    values: dict[str, object] = dataclasses.field(default_factory=dict)
+
+    def config_values(self) -> dict[str, object]:
+        """The target-construction values this run's rows were built from.
+
+        ⚑ VALUES, NOT NAMES, AND THIS IS THE FIX FOR A REAL JOIN.
+        ``authoritative`` is a SAME-RUN property: it says this run's config
+        agreed with the live file AT THE TIME IT RAN. It cannot see TEMPORAL
+        drift, and temporal drift is the normal case here — the live yaml is
+        edited between audits by design. Two dumps a week apart, one made under
+        ``sf_policy_temp: 2.0`` and one under ``3.0``, each pass their own
+        contemporaneous check, each stamp ``authoritative: true``, and
+        ``cand.sf_soft.exp`` then joins across two different row-(c) rulers with
+        a tight CI that is entirely the ruler change. Banking the key NAMES
+        (which is all this stamp used to do) cannot detect that: the names are
+        identical in both dumps by construction.
+
+        So the values ride on the dump as their own field and
+        ``paired_compare.RULER_FIELDS`` refuses a join whose two sides
+        disagree — the same treatment ``search_shape`` gets, for the same
+        reason, over the half of the target that the search shape does not
+        describe.
+        """
+        return dict(self.values)
 
     def stamp(self) -> dict[str, object]:
         """The dump's record of whether its target rows describe production."""
@@ -428,6 +455,24 @@ class ConfigAuthority:
             "covers": {
                 "search_shape": "complete selfplay runner argument set",
                 "config_keys": list(AUDIT_DIRECT_CONFIG_KEYS),
+              # ⚑ The residual limit of the completeness check behind
+              # `config_keys`, banked so the scope claim is bounded rather
+              # than overstated. `test_every_direct_config_read_is_checked`
+              # regenerates that list by walking this module's AST for reads
+              # off `flat` AND off any local bound from it. It does NOT follow
+              # a config dict into a helper that renames the parameter, nor
+              # through a copy (`dict(flat)`) — route a new read through
+              # production's builder rather than testing that boundary.
+                "scan": (
+                    "AUDIT_DIRECT_CONFIG_KEYS is regenerated from this "
+                    "module's AST (reads off `flat` and its name-aliases); "
+                    "a dict copied or renamed through a call is not followed"
+                ),
+              # And the values themselves are a SEPARATE dump field, not part
+              # of this stamp, because they are a RULER and this is a
+              # provenance verdict. Joining on `reference` (an absolute path)
+              # or on `reason` (free text) would refuse legitimate comparisons.
+                "config_values": "banked separately as the `target_config` field",
             },
         }
 
@@ -501,6 +546,36 @@ def train_shape_stamp(shape: SelfplaySearchShape) -> dict[str, object]:
         else:
             values[name] = raw
     return values
+
+
+def dump_ruler_stamps(
+    realized_shapes: dict[str, SelfplaySearchShape], authority: ConfigAuthority,
+) -> dict[str, object]:
+    """Every ruler / provenance stamp a per-position dump row carries.
+
+    Module-level and public for the same reason ``build_profile_search_shape``
+    is: as an inline dict literal buried in ``main()`` the ONLY way to check it
+    was a source grep, and a source grep is not a check —
+    ``test_dump_row_carries_both_stamps`` used to assert a literal line of text,
+    which meant it went red on a correct refactor and would have stayed green
+    for a stamp built from the wrong object. With this addressable the test
+    RUNS it and compares the stamps two different rulers produce.
+
+    ⚑ BOTH TRAINING ROWS. ``realized_shapes`` is keyed by row (``train`` /
+    ``train_fast``) and every one of them is stamped. Banking only ``train``
+    left ``cand.train_fast.*`` unprovenanced: change ``fast_simulations`` alone
+    and two dumps carry byte-identical stamps over rows produced by different
+    search budgets, so ``paired_compare`` joins them and charges the ruler
+    change to the checkpoints.
+    """
+    return {
+        "search_shape": {
+            row: train_shape_stamp(shape)
+            for row, shape in sorted(realized_shapes.items())
+        },
+        "config_authority": authority.stamp(),
+        "target_config": authority.config_values(),
+    }
 
 
 def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], ...]:
@@ -1111,6 +1186,7 @@ def _assert_config_is_production(
             reference=str(live.path) if live is not None else "<none>",
             reason=f"no authoritative live config: {reason}",
             allow_stale=allow_stale,
+            values=_realized_config_values(flat),
         )
     print(live.header(), flush=True)
     try:
@@ -1126,6 +1202,7 @@ def _assert_config_is_production(
                 f"{type(exc).__name__}: {exc}"
             ),
             allow_stale=allow_stale,
+            values=_realized_config_values(flat),
         )
     diffs = diffs + compare_config_values(flat, live.flat, AUDIT_DIRECT_CONFIG_KEYS)
     if not diffs:
@@ -1141,6 +1218,7 @@ def _assert_config_is_production(
         return ConfigAuthority(
             authoritative=True, reference=str(live.path),
             allow_stale=allow_stale, reason="",
+            values=_realized_config_values(flat),
         )
     detail = "\n  ".join(str(d) for d in diffs)
     return _refuse_or_degrade(
@@ -1148,11 +1226,28 @@ def _assert_config_is_production(
         reference=str(live.path),
         reason=f"{config_path} is not the live production search shape:\n  {detail}",
         allow_stale=allow_stale,
+        values=_realized_config_values(flat),
     )
+
+
+def _realized_config_values(flat: dict[str, object]) -> dict[str, object]:
+    """The value of every ``AUDIT_DIRECT_CONFIG_KEYS`` key in ``flat``.
+
+    Absent keys land on ``CONFIG_ABSENT`` rather than being dropped: a key
+    missing from one dump and set in another is exactly the ruler difference
+    this is banked to catch, and a dropped key would make the two stamps
+    compare EQUAL on it.
+
+    ⚑ The subscript is a variable, deliberately, so this loop is not itself a
+    "direct config read" the completeness scanner has to account for — the
+    keys it reads are the very list that scan regenerates.
+    """
+    return {key: flat.get(key, CONFIG_ABSENT) for key in AUDIT_DIRECT_CONFIG_KEYS}
 
 
 def _refuse_or_degrade(
     config_path: str, *, reference: str, reason: str, allow_stale: bool,
+    values: dict[str, object] | None = None,
 ) -> ConfigAuthority:
     """Stop, or proceed under an explicit non-authoritative stamp.
 
@@ -1181,6 +1276,12 @@ def _refuse_or_degrade(
     return ConfigAuthority(
         authoritative=False, reference=reference,
         allow_stale=allow_stale, reason=reason,
+      # ⚑ Banked on the DEGRADED path too. `--allow-stale-config` is exactly
+      # when two dumps are most likely to have been built from different
+      # target configs, so dropping the values here would remove the ruler
+      # field from the runs that need it most and leave `paired_compare`
+      # comparing `{}` to `{}` — equal, and therefore joinable.
+        values=dict(values or {}),
     )
 
 
@@ -2375,18 +2476,14 @@ def main() -> None:
                     for c in cands
                 },
                 "batch_size": int(args.batch_size),
-                # ⚑ RULER STAMP for rows (d)/(e), read off the shape the
-                # runner was ACTUALLY handed (`realized_shapes`), never off the
-                # pre-override `_SearchProfile`. Reading it off the profile is
-                # how the stamp came to report 1.5/5 for a run that searched
-                # 3.0/99 — a ruler declaration that lies exactly when a ruler
-                # difference exists. paired_compare refuses a join whose two
-                # sides disagree here.
-                "search_shape": train_shape_stamp(realized_shapes["train"]),
-                # Whether the config those rows were built from was PROVED to
-                # be the live one. `--allow-stale-config` lands False here, so
-                # the caveat rides on the artifact and not only on stdout.
-                "config_authority": config_authority.stamp(),
+                # ⚑ THE RULER STAMPS: rows (d)/(e)'s realized search shape (per
+                # TRAINING ROW, read off the shape the runner was ACTUALLY
+                # handed and never off the pre-override `_SearchProfile`),
+                # whether the config behind them was PROVED to be the live one,
+                # and the target-construction VALUES that authority verdict
+                # cannot see across time. `dump_ruler_stamps` builds all three
+                # so a test can RUN it — see its docstring.
+                **dump_ruler_stamps(realized_shapes, config_authority),
                 # null (not inf -> non-standard JSON "Infinity") for <2-move positions
                 "gap_cp": float(gap) if np.isfinite(gap) else None,
                 "n_legal": len(legal_ucis),

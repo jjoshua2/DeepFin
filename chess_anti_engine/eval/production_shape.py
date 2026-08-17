@@ -132,21 +132,39 @@ def load_config_file(
     Exactly one of the two is meaningful: on success the reason is ``""``, on
     failure the config is ``None`` and the reason NAMES the failure.
 
-    ⚑ The reason string is not decoration. Three different states used to
+    ⚑ The reason string is not decoration. Four different states used to
     collapse into a bare ``None`` — the variable is unset, the file it names
-    does not exist, and the file exists but will not flatten — and they call
-    for three different operator actions (export it / fix the path / rebase
-    onto the branch whose schema defines the live yaml's new key). A caller
-    that prints "unset or unreadable" for all three sends the reader to the
-    wrong one two times out of three.
+    does not exist, the file exists but cannot be read, and the file reads but
+    will not flatten — and they call for four different operator actions
+    (export it / fix the path / fix the permissions / rebase onto the branch
+    whose schema defines the live yaml's new key). A caller that prints "unset
+    or unreadable" for all of them sends the reader to the wrong one most of
+    the time.
+
+    ⚑ And it NEVER RAISES, which is a contract and not a description: the
+    callers print a degradation warning and carry on, so an exception here
+    kills them before the warning they exist to emit. Both the read and the
+    flatten are therefore inside the guard —
+    ``tests/test_production_shape_guard.py`` drives an unreadable file to prove
+    it.
     """
     from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
     if not path.is_file():
         return None, f"{path} does not exist ({provenance})"
-    raw_bytes = path.read_bytes()
     try:
+      # ⚑ INSIDE the guard, and this is a correction. `read_bytes()` used to
+      # sit above the `try`, so a path that exists but cannot be read — no
+      # permission, an I/O error, or the file removed in the window between
+      # `is_file()` and here — raised out of a function whose whole contract is
+      # "never raises, report the reason". Every caller (probe, value-regret,
+      # search-shape) then died before it could print its own degradation
+      # warning, which is the opposite of the loud-but-not-fatal behaviour this
+      # module promises.
+        raw_bytes = path.read_bytes()
         flat = flatten_run_config_defaults(load_yaml_file(str(path)))
+    except OSError as exc:
+        return None, f"{path} cannot be read: {type(exc).__name__}: {exc}"
     except Exception as exc:
       # Broad on purpose: yaml syntax, an unknown key rejected by the schema,
       # a bad value. They are NOT interchangeable to the reader, so the
@@ -290,10 +308,14 @@ RUNNER_ARG_FIELDS: tuple[str, ...] = ("target_batch", "vloss_weight")
 # no scope is how a reader concludes more than was checked.
 SHAPE_COVERAGE_NOTE = (
     "covers every GumbelConfig field plus "
-    f"{list(RUNNER_ARG_FIELDS)} (the complete argument set production's "
-    "selfplay hands its search runner). NOT covered: the per-ply root-noise "
-    "schedule (per_game_add_noise / per_game_gumbel_scale), which is a "
-    "function of the move number and has no field to compare."
+    f"{list(RUNNER_ARG_FIELDS)} (the config-derived argument set production's "
+    "selfplay hands its search runner). NOT covered, and stated rather than "
+    "implied: (1) the per-ply root-noise schedule (per_game_add_noise / "
+    "per_game_gumbel_scale), a function of the move number with no field to "
+    "compare; (2) the tablebase gate — the runner's tb_probe argument is "
+    "gated on game.syzygy_in_search, which reaches it without passing through "
+    "the shape, so syzygy_in_search/syzygy_path are value-compared separately "
+    "by audit_targets.AUDIT_DIRECT_CONFIG_KEYS instead."
 )
 
 
