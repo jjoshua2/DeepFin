@@ -42520,21 +42520,43 @@ describes, re-armed by a documentation gap rather than by code.
 
 **Repeat control (OLD vs OLD, referee A). Two runs, two DISTINCT cache paths, same binary:**
 
+⚑⚑ **EVERY FLAG BELOW THAT IS NOT `--sf-cache` / `--dump-per-position` / `--out-dir` IS COPIED
+VERBATIM FROM THE REGISTERED ARMS ABOVE, AND THAT IS THE POINT OF A REPEAT.** The first draft of
+this block carried only the flags the fix was about and inherited CLI DEFAULTS for the rest —
+most consequentially `--sf-workers`, which defaults to **4** while the registered OLD/NEW arms
+run **8**. `_shallow_sf_records` runs one stateful Stockfish process per worker and distributes
+positions among them dynamically, so the worker count changes each process's TT and search
+history and therefore the very relabelling noise this control exists to measure. A null
+calibrated at 4 workers does not bound a comparison run at 8. Same for `--max-positions 4000`,
+`--seed 0`, `--config` and the pinned checkpoint: a repeat control differs from the arms it
+calibrates in NOTHING except the cache it may read. (Codex review of PR #446, P1.)
+
 ```bash
 # run 1
-PYTHONPATH=. python3 scripts/audit_targets.py \
-  --checkpoint <CKPT> --audit-set data/audit_set_v1.jsonl \
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set data/audit_set_v1.jsonl --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
   --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
   --sf-cache scratchpad/sf440/repeat_A1.shallow_sf.jsonl \
-  --dump-per-position scratchpad/sf440/repeat_A1.jsonl
+  --dump-per-position scratchpad/sf440/repeat_A1.jsonl \
+  --out-dir scratchpad/sf440/report_A1
 
-# run 2 — ONLY --sf-cache and the dump differ
-PYTHONPATH=. python3 scripts/audit_targets.py \
-  --checkpoint <CKPT> --audit-set data/audit_set_v1.jsonl \
+# run 2 — ONLY --sf-cache, the dump and the report dir differ
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set data/audit_set_v1.jsonl --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
   --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
   --sf-cache scratchpad/sf440/repeat_A2.shallow_sf.jsonl \
-  --dump-per-position scratchpad/sf440/repeat_A2.jsonl
+  --dump-per-position scratchpad/sf440/repeat_A2.jsonl \
+  --out-dir scratchpad/sf440/report_A2
 ```
+
+⚑ `--out-dir` is not cosmetic either: the report is named `target_audit_<git-sha>.md` from the
+SHA alone, and a repeat control runs the same commit BY DEFINITION — so with the default
+`--out-dir runs` run 2 silently overwrites run 1's report and only one arm's readout survives
+alongside two caches and two dumps. (Codex review of PR #446, P2.)
 
 **Positive control that the repeat actually re-labelled — check BEFORE reading `d_obs`:** each run
 must print `[sf-soft] labeling 4000 positions` (`data/audit_set_v1.jsonl` is exactly 4000 lines,

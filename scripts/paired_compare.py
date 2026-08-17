@@ -167,15 +167,29 @@ def mcnemar(
     discordant and the null form is 1.12x wider at b=20, c=0, n=100. Both are
     printed and labelled; do not try to reconcile them into one number.
     """
-    if math.isnan(at):
+    if not math.isfinite(at):
         # Every comparison against NaN is False, so the predicate selects
         # nothing and the table is all-`neither` -> VOID. That is the SAME
         # output a served cache produces, which makes a typo'd threshold
         # indistinguishable from the defect this gate exists to catch.
+        #
+        # ⚑ NOT JUST NaN — `isfinite`, and the infinities are the likelier typo.
+        # argparse's `type=float` accepts `inf`, `-inf`, and overflowing
+        # spellings like `1e999`, and EITHER infinity makes the predicate
+        # CONSTANT across all finite metrics: `+inf` selects every row (all
+        # `both`), `-inf` selects none (all `neither`). Both give b + c == 0,
+        # which is the same VOID. The guard was written against NaN and read as
+        # if it covered "not a usable threshold"; it did not, and the two
+        # uncovered spellings produce the false stop from a live keyboard rather
+        # than from a computation. Codex review of PR #446 (P2) — taken over the
+        # human reviewer's "far less plausible than nan, not worth a change",
+        # because plausibility is not the test: the cost is one token and the
+        # failure it prevents is the one this whole entry exists to prevent.
         raise SystemExit(
-            "--mcnemar-at nan: the predicate `value <= nan` is False for every "
-            "row, so the table would print VOID for a reason that has nothing "
-            "to do with the data. Pass a real threshold (0 for top1_match)."
+            f"--mcnemar-at {at}: the predicate `value <= {at}` is CONSTANT over "
+            "every finite row, so the table would print VOID for a reason that "
+            "has nothing to do with the data — the same output a served cache "
+            "produces. Pass a real threshold (0 for top1_match)."
         )
     ha = va <= at
     hb = vb <= at

@@ -21,6 +21,7 @@ implementation would fail:
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 import sys
@@ -458,6 +459,31 @@ def test_a_nan_threshold_is_refused_rather_than_printed_as_VOID() -> None:
     shape — the one output this gate exists to make unmistakable."""
     with pytest.raises(SystemExit, match="nan"):
         mcnemar(np.zeros(4), np.zeros(4), at=float("nan"))
+
+
+@pytest.mark.parametrize("spelling", ["inf", "-inf", "1e999", "-1e999"])
+def test_an_INFINITE_threshold_is_refused_for_the_same_reason(
+    spelling: str,
+) -> None:
+    """⚑ THE NaN GUARD ABOVE READ AS IF IT COVERED "not a usable threshold".
+
+    It did not, and the infinities are the likelier typo: argparse's
+    `type=float` accepts `inf`, `-inf` and overflowing spellings like `1e999`,
+    and either makes the predicate CONSTANT over every finite row — `+inf`
+    selects all of them, `-inf` selects none. Both give `b + c == 0`, which is
+    the SAME `VOID` this file's other tests treat as the served-cache
+    fingerprint. So a malformed threshold typed at a live keyboard was
+    indistinguishable from the defect the gate exists to catch, while the
+    guarded spelling (`nan`) is the one nobody types.
+
+    Both directions are asserted deliberately: `+inf` produces an all-`both`
+    table and `-inf` an all-`neither` one, so a guard that only handled the
+    empty-selection case would let half of this through.
+    """
+    at = float(spelling)
+    assert not math.isfinite(at)
+    with pytest.raises(SystemExit, match="CONSTANT"):
+        mcnemar(np.zeros(4), np.zeros(4), at=at)
 
 
 def test_a_boolean_field_is_refused_because_it_inverts_the_verdict(

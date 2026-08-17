@@ -496,6 +496,81 @@ def test_the_resolver_lets_a_genuinely_new_path_through(tmp_path: Path) -> None:
     assert resolve_sf_cache_path(aset, None) == tmp_path / "set.jsonl.shallow_sf.jsonl"
 
 
+def test_a_FRESH_cache_that_aliases_the_dump_is_refused(tmp_path: Path) -> None:
+    """⚑⚑ THE COLLISION THE OTHER TWO GUARDS STRUCTURALLY CANNOT SEE.
+
+    `--sf-cache X --dump-per-position X` where X does not exist yet passes BOTH
+    existing guards: `refuse_if_not_a_shallow_sf_cache` inspects CONTENT and
+    returns early on a missing file, and the audit-set alias check compares
+    against a different path. The run then appends an hour of shallow-SF rows
+    to X, and `write_audit_cache(..., force=True)` truncates X at the end and
+    replaces it with the per-position dump — the run destroys its own most
+    expensive output, with no error and nothing in the log that looks wrong.
+
+    ⚑ This is the same lesson as the announced-vs-used mutant one level over:
+    a guard that reads the FILE cannot see a hazard that exists only between
+    two ARGUMENTS. Found by Codex review of PR #446 (P2).
+    """
+    aset = tmp_path / "set.jsonl"
+    fresh = tmp_path / "runs" / "arm_a.jsonl"
+    assert not fresh.exists(), "the whole point is that neither file exists yet"
+    with pytest.raises(SystemExit, match="SAME path"):
+        resolve_sf_cache_path(aset, fresh, fresh)
+
+
+def test_the_dump_alias_check_resolves_symlinks_and_dot_spellings(
+    tmp_path: Path,
+) -> None:
+    """A `./` spelling or a symlink must not route around the collision check."""
+    aset = tmp_path / "set.jsonl"
+    (tmp_path / "runs").mkdir()
+    dump = tmp_path / "runs" / "arm_a.jsonl"
+    dotted = tmp_path / "runs" / "." / "arm_a.jsonl"
+    with pytest.raises(SystemExit, match="SAME path"):
+        resolve_sf_cache_path(aset, dotted, dump)
+    dump.write_text("", encoding="utf-8")
+    link = tmp_path / "runs" / "link.jsonl"
+    link.symlink_to(dump)
+    with pytest.raises(SystemExit, match="SAME path"):
+        resolve_sf_cache_path(aset, link, dump)
+
+
+def test_distinct_cache_and_dump_paths_still_pass(tmp_path: Path) -> None:
+    """The complement: the repeat control's own shape must not be refused."""
+    aset = tmp_path / "set.jsonl"
+    got = resolve_sf_cache_path(
+        aset, tmp_path / "repeat_A1.shallow_sf.jsonl", tmp_path / "repeat_A1.jsonl",
+    )
+    assert got == tmp_path / "repeat_A1.shallow_sf.jsonl"
+    # And the default cache never collides with a dump, since it is derived
+    # from the audit set rather than named by the operator.
+    assert resolve_sf_cache_path(aset, None, tmp_path / "repeat_A1.jsonl") == (
+        tmp_path / "set.jsonl.shallow_sf.jsonl"
+    )
+
+
+def test_main_passes_the_dump_path_to_the_resolver() -> None:
+    """⚑ The guard is worthless if `main` calls the resolver with two arguments.
+
+    Source-level and labelled as such — but the executing wiring test one
+    screen up (`test_main_hands_the_RESOLVED_path_to_the_labelling_pass`) does
+    not exercise `--dump-per-position`, and adding a third argument to a call
+    site is exactly the edit that gets made in one place and forgotten in the
+    other.
+    """
+    import inspect
+
+    import scripts.audit_targets as at
+
+    src = inspect.getsource(at.main)
+    calls = [
+        line for line in src.splitlines() if "resolve_sf_cache_path(" in line
+    ]
+    assert len(calls) == 1, f"expected one resolver call in main, got {calls}"
+    call_block = src.split("resolve_sf_cache_path(", 1)[1].split(")", 1)[0]
+    assert "args.dump_per_position" in call_block, call_block
+
+
 def test_a_HARDLINK_to_the_audit_set_is_refused_at_the_append(
     tmp_path: Path,
 ) -> None:

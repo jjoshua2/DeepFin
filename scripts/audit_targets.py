@@ -1709,7 +1709,9 @@ def engine_identity(path: str, *, timeout_s: float = 60.0) -> str:
 SHALLOW_SF_CACHE_SUFFIX = ".shallow_sf.jsonl"
 
 
-def resolve_sf_cache_path(audit_set: Path, override: Path | None) -> Path:
+def resolve_sf_cache_path(
+    audit_set: Path, override: Path | None, dump_per_position: Path | None = None,
+) -> Path:
     """Where this run reads and writes shallow-SF labels.
 
     ⚑ The override exists for the REPEAT control and nothing else is a
@@ -1740,6 +1742,30 @@ def resolve_sf_cache_path(audit_set: Path, override: Path | None) -> Path:
             "this would write label rows into the frozen scoring set and "
             "permanently change what every later audit scores. Point --sf-cache "
             "at a NEW file (a repeat control wants one per repeat)."
+        )
+  # ⚑⚑ AND THE COLLISION THE OTHER TWO GUARDS STRUCTURALLY CANNOT SEE: both
+  # `--sf-cache` and `--dump-per-position` pointed at the SAME path that does
+  # not exist yet. `refuse_if_not_a_shallow_sf_cache` inspects CONTENT and
+  # returns early on a missing file, and the audit-set alias check above
+  # compares against a different path -- so a fresh collision passes both. The
+  # labelling pass then banks an hour of shallow-SF rows there, and
+  # `write_audit_cache(..., force=True)` TRUNCATES that same file at the end of
+  # the run and replaces it with the per-position dump. The expensive
+  # observations are destroyed by the run that made them, with no error.
+  # Compared by resolved path so a symlink or a `./` spelling cannot route
+  # around it, and checked HERE because at parse time neither file exists yet,
+  # which is precisely the case content inspection cannot reach.
+  # (Codex review, PR #446 P2.)
+    if dump_per_position is not None and (
+        Path(resolved).resolve() == Path(dump_per_position).resolve()
+    ):
+        raise SystemExit(
+            f"--sf-cache {resolved} and --dump-per-position "
+            f"{dump_per_position} resolve to the SAME path. The cache is "
+            "appended to during labelling and the dump is written with "
+            "force=True at the end, so this run would spend an hour producing "
+            "shallow-SF rows and then truncate them away. Give them separate "
+            "paths."
         )
     return resolved
 
@@ -2404,7 +2430,9 @@ def main() -> None:
   # it next to the labelling pass would be an hour too late, and printing the
   # flag rather than the resolved path is how a defaulted override reads as an
   # applied one.
-    sf_cache_path = resolve_sf_cache_path(args.audit_set, args.sf_cache)
+    sf_cache_path = resolve_sf_cache_path(
+        args.audit_set, args.sf_cache, args.dump_per_position,
+    )
     print(f"[sf-soft] cache {sf_cache_path}"
           f"{' (--sf-cache override)' if args.sf_cache else ''}")
   # Same fail-fast reasoning as the flags below, and the most expensive one to
