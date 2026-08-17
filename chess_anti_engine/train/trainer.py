@@ -1232,6 +1232,10 @@ _TRAIN_METRICS_FIELDS = frozenset(f.name for f in dataclasses.fields(TrainMetric
 _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "m_sf_own": ("sf_own_ce_sum", "sf_own_rows"),
     "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
+  # Fabricated-tail gate share. Same denominator as `m_sf_own_regret` above, on
+  # purpose: it answers "of the rows this term acted on, what share did the gate
+  # scale down", and reads exactly 0.0 at the identity defaults.
+    "sf_own_regret_gated_frac": ("sf_own_regret_gated_rows", "sf_own_regret_rows"),
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
   # Contamination detector. Row-weighted for the same reason: the SF-labelled
@@ -1726,6 +1730,8 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
+        "sf_own_regret_listed_mass_min": _f("sf_own_regret_listed_mass_min", 0.0),
+        "sf_own_regret_unlisted_scale": _f("sf_own_regret_unlisted_scale", 1.0),
         "w_wdl": _f("w_wdl", 1.0),
         "w_sf_move": _f("w_sf_move", 0.15),
         "w_sf_eval": _f("w_sf_eval", 0.15),
@@ -1827,6 +1833,8 @@ class Trainer:
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
+        sf_own_regret_listed_mass_min: float = 0.0,
+        sf_own_regret_unlisted_scale: float = 1.0,
         w_wdl: float = 1.0,
         w_sf_move: float = 0.15,
         w_sf_eval: float = 0.15,
@@ -2245,6 +2253,8 @@ class Trainer:
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
+        self.sf_own_regret_listed_mass_min = float(sf_own_regret_listed_mass_min)
+        self.sf_own_regret_unlisted_scale = float(sf_own_regret_unlisted_scale)
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
         self.w_sf_eval = float(w_sf_eval)
@@ -2664,6 +2674,8 @@ class Trainer:
         return {
             "w_policy": self.w_policy, "w_soft": self.w_soft, "w_future": self.w_future,
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
+            "sf_own_regret_listed_mass_min": self.sf_own_regret_listed_mass_min,
+            "sf_own_regret_unlisted_scale": self.sf_own_regret_unlisted_scale,
             "soft_policy_min_tv": self.soft_policy_min_tv,
             "policy_target_temp": self.policy_target_temp,
             "w_wdl": self.w_wdl, "w_sf_move": self.w_sf_move, "w_sf_eval": self.w_sf_eval,

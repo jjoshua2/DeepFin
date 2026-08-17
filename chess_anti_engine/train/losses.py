@@ -739,6 +739,78 @@ def _phase_split_masks(
     )
 
 
+def sf_regret_surfaced_mask(
+    reg_vec: torch.Tensor, legal_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Per-move mask of the moves SF ACTUALLY SURFACED, from the regret vector alone.
+
+    ``sf_p0_regret`` is a **constant-tail** construction, not a per-move
+    measurement: up to ``sf_multipv`` real normalized cp-regrets, then ONE fitted
+    value repeated over every other legal move. ``selfplay/finalize.py``'s comment
+    says absent moves "default to 1.0", but that is the CAP, not what production
+    stores — measured on live shards the fill is a fitted constant (e.g. 0.5259 on
+    a 28-legal-move row) and only 3.75% of legal entries are exactly 1.0. So
+    ``reg < 1.0`` is NOT the surfaced set; it selects ~every legal move.
+
+    The fill IS the row MAXIMUM, and that is measured rather than assumed: over
+    2350 live rows with >= 8 legal moves, the max is a plateau (multiplicity >= 2)
+    in **2350/2350**, median multiplicity 26, and **2350/2350** carry <= 6 values
+    strictly below it — exactly ``sf_multipv: 6``. Hence ``reg < row_max`` is the
+    surfaced set.
+
+    ⚑ WHY NOT ``sf_multipv_raw``, which stores the move indices directly: that
+    field is the PREVIOUS ply's read (``finalize.py`` builds this row's regret from
+    ``prepare_multipv(prev_idx)``), and the replay buffer shuffles rows
+    independently, so the aligned partner row is not in the batch. Reading it here
+    would silently mask the wrong position — the P0-alignment defect that was
+    caught once already by an impossible coverage of 1.04.
+    """
+    legal = legal_mask.to(torch.bool)
+  # Rows with no legal move would make `amax` read the -inf sentinel; clamp the
+  # comparison to legal entries only so an empty row yields an all-False mask
+  # rather than a NaN that propagates into the loss.
+    neg_inf = torch.finfo(reg_vec.dtype).min
+    row_max = torch.where(legal, reg_vec, torch.full_like(reg_vec, neg_inf)).amax(
+        dim=-1, keepdim=True,
+    )
+    return legal & (reg_vec < row_max)
+
+
+def sf_regret_gate_scale(
+    reg_vec: torch.Tensor,
+    target_probs: torch.Tensor,
+    legal_mask: torch.Tensor,
+    *,
+    listed_mass_min: float,
+    unlisted_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-row scale for the ``sf_own_regret`` term, plus the gated indicator.
+
+    WHY THIS GATE EXISTS. ``sf_own_regret`` is ``sum_m p_own(m) * regret(m)``, so
+    it puts gradient proportional to ``regret(m)``. Every UNSURFACED move shares
+    ONE fitted value, so the term carries **no information about their relative
+    merit** — it uniformly shoves mass into SF's six weighted by a number SF never
+    produced. On rows whose target already lives inside the surfaced set that is
+    harmless; on rows whose target lives in the tail it is the dominant signal.
+    This scales the term down on exactly the latter rows.
+
+    ⚑ The gate reads the STORED target, not the net's current policy. Gating on
+    the net's own mass would make the weight a function of the thing the term is
+    trying to move, i.e. a feedback loop that rewards the intervention for having
+    happened. Row exposure is a property of the DATA and is fixed at ingest.
+
+    ⚑ Returns a BIT-EXACT identity at the defaults (``listed_mass_min`` 0.0,
+    ``unlisted_scale`` 1.0): policy mass is non-negative, so ``mass < 0.0`` is
+    False on every row and the scale is all-ones. ``tests/`` asserts that with
+    ``torch.equal`` against an ungated run rather than a tolerance.
+    """
+    surfaced = sf_regret_surfaced_mask(reg_vec, legal_mask)
+    listed_mass = (target_probs.to(torch.float32) * surfaced.to(torch.float32)).sum(-1)
+    gated = (listed_mass < float(listed_mass_min)).to(torch.float32)
+    scale = 1.0 - gated * (1.0 - float(unlisted_scale))
+    return scale, gated
+
+
 def compute_loss(
     outputs: dict[str, torch.Tensor],
     batch: dict[str, torch.Tensor],
@@ -748,6 +820,12 @@ def compute_loss(
     w_future: float = 0.15,
     w_sf_own: float = 0.0,
     w_sf_own_regret: float = 0.0,
+  # Fabricated-tail gate on the sf_own_regret term. Defaults are a BIT-EXACT
+  # identity — see `sf_regret_gate_scale`. Both are read here, not just accepted:
+  # `sf_own_regret_gated_frac` in the returned metrics is how an operator proves
+  # the gate reached the production path at all.
+    sf_own_regret_listed_mass_min: float = 0.0,
+    sf_own_regret_unlisted_scale: float = 1.0,
     w_wdl: float = 1.0,
     w_sf_move: float = 0.15,
     w_sf_eval: float = 0.15,
@@ -888,8 +966,21 @@ def compute_loss(
         po_probs = torch.softmax(masked_base, dim=-1)
         reg_vec = align_action_values(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
         sf_own_regret = (po_probs * reg_vec).sum(-1)
+      # ⚑ Gated by the row's SURFACED-set exposure, using the STORED target
+      # (`batch["policy_t"]`) — NOT `pol_target`, which has already been through
+      # `retemper_main_policy_target`. The gate must describe the DATA, so a
+      # training knob must not be able to move which rows it selects.
+        sf_own_regret_scale, sf_own_regret_gated = sf_regret_gate_scale(
+            reg_vec,
+            align_policy_target(batch["policy_t"], int(base_policy_logits.shape[-1])),
+            align_policy_mask(batch["legal_mask"], int(base_policy_logits.shape[-1])),
+            listed_mass_min=sf_own_regret_listed_mass_min,
+            unlisted_scale=sf_own_regret_unlisted_scale,
+        )
+        sf_own_regret = sf_own_regret * sf_own_regret_scale
     else:
         sf_own_regret = zero_loss
+        sf_own_regret_gated = torch.zeros_like(zero_loss)
 
   # DIAGNOSTIC ONLY — hard one-hot CE against the recorded game result. The
   # optimizer never sees this term (see ``blended_wdl_ce`` below, which is the
@@ -1143,6 +1234,19 @@ def compute_loss(
     sf_own_regret_sum, sf_own_regret_rows = masked_sum_and_count(
         sf_own_regret, sf_p0_regret_base,
     )
+  # ⚑ THE OBSERVATION THAT PROVES THE GATE REACHED PRODUCTION. Without it an
+  # operator cannot distinguish "gate configured" from "gate applied": at the
+  # identity defaults it reads exactly 0.0, and any non-zero value is the share of
+  # eligible rows whose sf_own_regret term was scaled.
+  # ⚑ EMITTED AS A COUNT, NOT A PER-BATCH RATE, and registered in
+  # `_RATIO_METRIC_FIELDS` against `sf_own_regret_rows`. A `masked_mean` here would
+  # be aggregated as an unweighted mean of per-batch rates, which that table's own
+  # comment says is the wrong estimator for exactly the sf_p0 terms — their
+  # eligible count swings batch to batch. Numerator and denominator share the SAME
+  # mask, so the pair cannot disagree about how many rows were eligible.
+    sf_own_regret_gated_rows = (
+        sf_own_regret_gated.to(torch.float32) * sf_p0_regret_base.to(torch.float32)
+    ).sum()
     net_rows = net_mask.to(torch.float32).sum()
     sf_no_multipv_rows, sf_multipv_checked_rows = sf_multipv_presence_counts(
         batch, has_sf_wdl=has_sf_wdl,
@@ -1224,6 +1328,7 @@ def compute_loss(
         "future_policy_ce": m_future,
         "sf_own_ce": m_sf_own,
         "sf_own_regret": m_sf_own_regret,
+        "sf_own_regret_gated_rows": sf_own_regret_gated_rows,
   # sf_p0 policy-teacher observability. Emitted as SUMS + eligible-row COUNTS
   # rather than as per-batch means because the trainer accumulates these over
   # every microbatch of the iteration and divides once: eligibility is a

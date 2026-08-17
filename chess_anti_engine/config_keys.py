@@ -9,6 +9,13 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
     "w_future",
     "w_sf_own",
     "w_sf_own_regret",
+  # Fabricated-tail gate on the sf_own_regret term. Listed HERE rather than in a
+  # bespoke list because this tuple is BOTH the every-iteration live-push set and
+  # the YAML allowlist (`utils/config_yaml.py`), so one entry buys schema
+  # acceptance and live reload together -- and a key the schema rejects is FATAL
+  # at launch, not a silent revert.
+    "sf_own_regret_listed_mass_min",
+    "sf_own_regret_unlisted_scale",
     "w_wdl",
     "w_sf_move",
     "w_sf_eval",
