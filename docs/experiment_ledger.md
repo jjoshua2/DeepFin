@@ -57812,3 +57812,39 @@ of these are — currently freezes the best-model record: `_eval_loss_kwargs` pa
 weights into the holdout eval while `eval_ruler_id` does not hash them, so `test_loss` steps
 up under a ruler id that never moves and `_update_best_model` compares against a record it
 structurally cannot beat. Applies to a RESUME as well as a live flip. Fix in flight.
+
+#### AMENDMENT (same session, BEFORE any data): target effect set to +50 Elo
+
+Owner set the target: willing to run many iterations for a **+50 Elo** gain. That is a
+pre-data amendment — no readout has been taken — and it makes the design STRICTER, not
+looser, because +50 sits well above the instrument's floor instead of under it.
+
+**Power at +50 Elo** (from the n=400 / ±35.8 banked anchor, scaling 1/√N):
+
+| games | half-width | power @ +50 | power @ +25 | arena hours |
+|---|---|---|---|---|
+| 400 | ±35.8 | 78% | 28% | ~1.8 h |
+| **820** | **±25.0** | **97%** | 50% | **~3.6 h** |
+| 1282 | ±20.0 | 100% | 69% | ~5.6 h |
+
+⇒ **GATE 2 REVISED: n=820, not 1282.** At a true +50 the CI reads **[+25, +75]** — excludes
+zero with margin, at 97% power, for 2 fewer GPU-hours than the original spec. n=1282 buys
+nothing at this effect size; it would only matter if we were chasing +25, which the owner
+explicitly is not.
+
+**SUCCESS = paired pentanomial CI strictly above 0 at n=820.** A +50 arm clears this;
+a +25 arm reads NULL here by construction and that is accepted, not a defect of the design.
+
+**READOUT POINT: iteration 191 + 300.** The replay window is 1.5M rows and turns over in
+~288 iterations at ~300 s/iter, so **before ~300 iterations the arm is being judged partly
+on data made under the old objective.** Reading earlier measures a mixture. Cost to verdict:
+~25 h training + ~3.6 h arena.
+
+**⚑ ASYMMETRIC STOPPING, pre-committed.** Optional stopping on a rolling arena manufactured
++112 Elo here from a true null, so:
+- **SUCCESS is read ONCE, at n=820, at iteration 491.** No earlier look, no rolling read.
+- **An interim KILL is permitted** at iteration 191+100 on a 400-game arena, and ONLY if the
+  95% CI lies strictly BELOW zero — i.e. unambiguous harm. Any other interim result
+  (positive, or overlapping zero) is NOT a verdict and the run continues to 491.
+- This asymmetry is deliberate: early looks inflate false POSITIVES, so the early look may
+  only ever stop the run, never declare it a win.
