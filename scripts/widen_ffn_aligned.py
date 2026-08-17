@@ -11,10 +11,11 @@ already executes ``ceil(796/128)*128 = 896`` columns of tiles and masks 100 of
 them off. **The arithmetic is already being paid for and the result discarded.**
 
 Rounding the architecture up to the tile boundary turns that discarded work into
-real parameters at essentially unchanged cost: +710,325 params (+1.16%) for the
-production schedule, with the dominant GEMM already measured at ~86% of BF16
-peak, so there is no throughput headroom being claimed here — this buys
-CAPACITY, not speed.
+real parameters at essentially unchanged cost. Measured by execution on the
+production config (unique-storage count, NOT ``sum(numel())``):
+**63,084,128 -> 63,794,453 = +710,325 params, +1.126%**. The dominant GEMM is
+already at ~86% of BF16 peak, so there is no throughput headroom being claimed
+here — this buys CAPACITY, not speed.
 
 FUNCTION PRESERVATION
 ---------------------
@@ -65,7 +66,7 @@ norm 28.213 -> 29.933, ratio **1.0610 == sqrt(896/796)**, and the updates to the
 on the 10 of 16 blocks that grow; the other 6 are already tile-aligned and are
 untouched.
 
-⇒ **A widened arm differs from its control by TWO things, not one:** +1.16%
+⇒ **A widened arm differs from its control by TWO things, not one:** +1.126%
 capacity AND a per-layer 0.2–6.3% effective step-size increase on 10 of 16 FFN
 input projections. Any Elo / loss / regret readout that attributes a difference
 to "more capacity" is CONFOUNDED with an LR change concentrated in exactly the
@@ -113,14 +114,52 @@ another shape-coupled buffer is carried automatically instead of silently
 dropped. Non-tensor and non-conforming entries (``step``) are left untouched.
 Parameters are addressed by name through ``opt_param_names``, never by position.
 
-⚑ WHICH BUILDS CAN EVEN PRODUCE AN INPUT FOR THIS TOOL
-------------------------------------------------------
+⚑ WHICH BUILDS CAN PRODUCE AN INPUT FOR THIS TOOL
+--------------------------------------------------
 ``opt_param_names`` is the key the optimizer migration is addressed by, and
-``Trainer.save`` writes it only on ``ops/live-20260725`` and on PR #427. On
-``main`` it is NOT written, so a checkpoint produced by ``main`` reaches the
-refusal below and this tool is INOPERABLE against it. That is a merge-order
-fact, not a bug: it fails loudly and refuses to emit a mis-migrated file. Do
-not "fix" it by relaxing the refusal.
+``Trainer.save`` writes it whenever ``_optimizer_param_names()`` can resolve the
+mapping. **Current code writes it, so a freshly saved checkpoint operates
+normally and the refusal below is inert against it.** Measured by execution on
+this base: a checkpoint from this tree's own ``Trainer.save``
+(``optimizer: aurora``, ``matrix_optimizer_scope: mlp_out``, SWA off) carries a
+manifest for every optimizer slot and widens, and the SAME checkpoint with the
+manifest deleted is refused. Both halves are pinned by
+``tests/test_widen_ffn_aligned.py::test_a_real_trainer_save_carries_the_manifest_and_widens``
+and ``::test_a_real_checkpoint_without_the_manifest_is_REFUSED``.
+
+⚑ Checkpoints written before ``01b190f5d`` (2026-08-16) predate the key and are
+refused BY DESIGN — the tool fails loudly rather than emitting a mis-migrated
+file. The fix is to re-save through current code, NOT to relax the refusal.
+
+⚑⚑ An earlier revision of this section asserted that ``main`` does not write the
+key and that this tool is "INOPERABLE against it", and the operator-facing
+refusal string repeated it. That was true when written (branch point
+``f2677dd62``) and false about nine hours later: ``01b190f5d`` landed the key on
+``main`` independently of PR #427, whose base was the live branch. The stale
+claim is recorded rather than merely deleted because its failure mode is
+specific — an operator who hit the refusal was told by the tool's own error
+string to go solve a merge-order problem that no longer exists. A claim about
+what ANOTHER branch does is dated the moment it is written; state the commit it
+was measured at, or do not state it.
+
+WHAT COUNTS AS "THE FFN" — AND HOW THAT ASSUMPTION IS CHECKED
+--------------------------------------------------------------
+This tool widens exactly three tensors per block —
+``blocks.N.ffn.{0.weight, 0.bias, 2.weight}`` — because that is what a
+``TransformerBlock`` FFN is today. That is an assumption about the model, made
+inside a tool that only ever sees a checkpoint, so it is CHECKED rather than
+trusted: after widening, no tensor under ``blocks.<N>.`` may still carry the OLD
+hidden width as a dimension. A fourth width-coupled tensor (a per-unit scale, a
+gate) would otherwise be left behind while ``arch`` claims the new width, and
+``load_state_dict_tolerant`` drops it into fresh init with only a log line.
+
+⚑ That guard is a runtime APPROXIMATION — see its raise site for the three
+things it cannot see. The TOTAL check is model-derived and needs no list at all:
+``tests/test_widen_ffn_aligned.py::test_real_model_round_trip_loads_strict``
+rebuilds through the real ``resume_model_config_from_arch`` -> ``build_model``
+and loads ``strict=True``, which is red for a missing key, an unexpected key AND
+a size mismatch. "Exhaustive over the three keys I know about" is a hand-drawn
+boundary; ``strict=True`` against the real module is not.
 
 ARCH
 ----
@@ -164,6 +203,7 @@ import torch
 
 _FFN_IN_RE = re.compile(r"(?:^|\.)blocks\.(\d+)\.ffn\.0\.(weight|bias)$")
 _FFN_OUT_RE = re.compile(r"(?:^|\.)blocks\.(\d+)\.ffn\.2\.weight$")
+_BLOCK_RE = re.compile(r"(?:^|\.)blocks\.(\d+)\.")
 
 
 def align_up(value: int, align: int) -> int:
@@ -226,6 +266,47 @@ def _pad_cols(t: torch.Tensor, new_cols: int) -> torch.Tensor:
         (t.shape[0], new_cols - old, *t.shape[2:]), dtype=t.dtype, device=t.device
     )
     return torch.cat([t, extra], dim=1)
+
+
+def _unwrap(name: str) -> str:
+    """Strip compile/DDP wrappers from a model key. DEFENSIVE COVERAGE ONLY.
+
+    ⚑ This is NOT parity with the trainer's own re-keying. That rule has
+    exactly one definition in the project — the module-level
+    `strip_compile_prefix_from_name` in
+    `chess_anti_engine/train/trainer.py`, which is
+    `name.replace("_orig_mod.", "", 1)`: the FIRST occurrence anywhere in
+    the key, deliberately non-leading so it also reaches `AveragedModel`'s
+    nested `module._orig_mod.*`, and it never strips a `module.` segment at
+    all. Both `strip_compile_prefix` (a whole state_dict) and
+    `Trainer._wrap_agnostic_name` (one `named_parameters()` name) DELEGATE
+    to it, so the two cannot drift. This function strips a fixed set of
+    LEADING prefixes instead, which is a different rule.
+
+    ⚑⚑ An earlier revision of this docstring asserted that
+    `Trainer._wrap_agnostic_name` "does not exist in this repo at all". It
+    exists, in `chess_anti_engine/train/trainer.py`. The claim was measured
+    at this branch's merge-base, where it was true, and this branch lands 52
+    commits later. Same failure as the `opt_param_names` section above: a
+    statement about code OUTSIDE this file is dated at the moment it is
+    written. `test_the_trainers_real_rekeying_helper_is_what_the_unwrap_docstring_says`
+    now pins BOTH helpers' existence and behaviour, so the next drift is a
+    red test rather than a wrong comment.
+
+    ⚑ It is also a no-op on every genuine input today: `Trainer.save` runs
+    `strip_compile_prefix` over `state["model"]`, so real checkpoints carry
+    bare `blocks.N.ffn.*` keys. This is therefore defensive coverage for
+    keys `Trainer.save` does not currently emit — a hand-assembled or
+    externally produced state dict — and NOT a live failure being repaired.
+    The `opt_param_names` manifest is stored wrap-agnostic regardless, so if
+    a prefixed key ever DID arrive, looking it up unstripped would miss its
+    optimizer entry; the F5 backstop below would then refuse rather than
+    emit a half-migrated file.
+    """
+    for pfx in ("module._orig_mod.", "_orig_mod.module.", "module.", "_orig_mod."):
+        if name.startswith(pfx):
+            return name[len(pfx):]
+    return name
 
 
 def plan_widths(
@@ -351,39 +432,10 @@ def widen_checkpoint(
             "checkpoint has optimizer state but no 'opt_param_names'; the "
             "migration cannot be addressed by name. Refusing rather than "
             "emitting a checkpoint whose optimizer buffers are the wrong shape. "
-            "(Trainer.save writes this key on the live branch and PR #427, but "
-            "NOT on main — see the module docstring.)"
+            "(Trainer.save has written this key since 01b190f5d, 2026-08-16; a "
+            "checkpoint from older code has none. Re-save it through current "
+            "code — do not relax this refusal.)"
         )
-
-    def _unwrap(name: str) -> str:
-        """Strip compile/DDP wrappers from a model key. DEFENSIVE COVERAGE ONLY.
-
-        ⚑ This is NOT parity with the trainer's own re-keying, and an earlier
-        revision of this docstring claiming parity ("as Trainer's wrap-agnostic
-        name helper does") was wrong twice over. The real helper is the
-        module-level `strip_compile_prefix` in
-        `chess_anti_engine/train/trainer.py` — there is no
-        `Trainer._wrap_agnostic_name` — and it is
-        `k.replace("_orig_mod.", "", 1)`: the FIRST occurrence anywhere in the
-        key, deliberately non-leading so it also reaches `AveragedModel`'s
-        nested `module._orig_mod.*`, and it never strips a `module.` segment at
-        all. This function strips a fixed set of LEADING prefixes instead, which
-        is a different rule.
-
-        ⚑ It is also a no-op on every genuine input today: `Trainer.save` runs
-        `strip_compile_prefix` over `state["model"]`, so real checkpoints carry
-        bare `blocks.N.ffn.*` keys. This is therefore defensive coverage for
-        keys `Trainer.save` does not currently emit — a hand-assembled or
-        externally produced state dict — and NOT a live failure being repaired.
-        The `opt_param_names` manifest is stored wrap-agnostic regardless, so if
-        a prefixed key ever DID arrive, looking it up unstripped would miss its
-        optimizer entry; the F5 backstop below would then refuse rather than
-        emit a half-migrated file.
-        """
-        for pfx in ("module._orig_mod.", "_orig_mod.module.", "module.", "_orig_mod."):
-            if name.startswith(pfx):
-                return name[len(pfx):]
-        return name
 
     def _opt_entry(param_name: str) -> dict[str, Any] | None:
         key = _unwrap(param_name)
@@ -462,10 +514,67 @@ def widen_checkpoint(
             "Refusing."
         )
 
-    # ⚑ F5: the refusal above only catches an ABSENT manifest. A truncated,
-    # stale or mismatched one passes it and then resolves nothing, so the
-    # migration is skipped with no error — the same silent skip one level in.
-    # Every widened tensor must have found its optimizer entry, or we refuse.
+    # ⚑⚑ THE FFN IS THREE TENSORS ONLY BECAUSE IT IS THREE TENSORS TODAY.
+    # Everything above keys off `ffn.0.weight`, `ffn.0.bias` and `ffn.2.weight`.
+    # The day a block gains a FOURTH tensor sized by the hidden width — a
+    # per-unit scale, a gate, a normalisation over the hidden axis — this tool
+    # would widen the three it knows, rewrite `arch` to the new width, and leave
+    # the fourth at the old one WITHOUT RAISING. Neither guard above sees it:
+    # the arch/tensor check reads `ffn.0.weight`'s rows, and the
+    # "contributed no tensors" check only needs the layer to contribute SOME
+    # tensor. Downstream, `load_state_dict_tolerant` drops the stale tensor into
+    # fresh init with a log line. Demonstrated by an independent reviewer, on a
+    # real production state_dict, by injecting `blocks.5.ffn.scale` of shape
+    # (796,): widened, arch rewritten, nothing raised.
+    #
+    # So: after widening, no tensor in a widened block may still carry the OLD
+    # hidden width as one of its dimensions.
+    #
+    # ⚑ WHAT THIS CANNOT SEE, stated rather than implied — it is a runtime
+    # approximation, not a total check:
+    #   * a coupled tensor OUTSIDE the `blocks.<N>.` prefix;
+    #   * a dimension that is a FUNCTION of the width rather than equal to it
+    #     (a fused 2h gate, an h/2 split, a reshape to (h//k, k));
+    #   * anything at all when the old and new widths are equal, which cannot
+    #     happen here because only growing layers are in `changes`.
+    # The TOTAL check is model-derived and needs no list: build the real model at
+    # the emitted `arch` and `load_state_dict(..., strict=True)`, which is what
+    # `test_real_model_round_trip_loads_strict` does. This guard exists because
+    # that check cannot run inside a checkpoint-only tool.
+    #
+    # False positives are possible in principle — an unrelated tensor in the same
+    # block whose dimension happens to equal the old hidden width. That is a loud
+    # refusal, not a silent miswrite, and it is the right way round.
+    widened_keys = set(widened)
+    coupled_leftovers: list[str] = []
+    for key, tensor in model.items():
+        if key in widened_keys or not isinstance(tensor, torch.Tensor):
+            continue
+        block = _BLOCK_RE.search(key)
+        if block is None:
+            continue
+        layer = int(block.group(1))
+        if layer not in changes:
+            continue
+        old_w = changes[layer][0]
+        if old_w in tuple(int(d) for d in tensor.shape):
+            coupled_leftovers.append(f"{key} {tuple(int(d) for d in tensor.shape)}")
+    if coupled_leftovers:
+        raise ValueError(
+            "tensor(s) still carrying the OLD FFN hidden width after widening: "
+            f"{coupled_leftovers[:4]}{' ...' if len(coupled_leftovers) > 4 else ''}. "
+            "This tool widens blocks.N.ffn.{0.weight,0.bias,2.weight} and nothing "
+            "else, so a shape-coupled tensor it does not know about would be left "
+            "at the old width while arch claims the new one — and the tolerant "
+            "loader then drops it into fresh init with only a log line. Teach this "
+            "tool to widen it, or reject this architecture. Refusing."
+        )
+
+    # ⚑ F5: the `opt_param_names` refusal near the top of this function only
+    # catches an ABSENT manifest. A truncated, stale or mismatched one passes it
+    # and then resolves nothing, so the migration is skipped with no error — the
+    # same silent skip one level in. Every widened tensor must have found its
+    # optimizer entry, or we refuse.
     if opt_state:
         orphans = sorted(k for k in widened if _opt_entry(k) is None)
         if orphans:
@@ -507,6 +616,38 @@ def format_ffn_mult_yaml(mults: Sequence[float]) -> str:
     return f"ffn_mult_by_layer: [{body}]"
 
 
+def count_distinct_params(state: dict[str, Any]) -> int:
+    """Parameter elements in *state*, deduped by STORAGE.
+
+    ⚑ NOT ``sum(v.numel())``. Production ties one
+    ``layer_smolgens.*.gen_weight.weight`` storage across 16 state_dict keys, so
+    the naive sum reports 78,812,768 against a real 63,084,128 — over by exactly
+    15 × 1,048,576 = 15,728,640. That specific wrong number is the one CLAUDE.md
+    warns about and ``tests/test_param_count.py`` pins as
+    ``"the wrong number CLAUDE.md warns about"``; a capacity tool printing it as
+    its headline is how it gets quoted again.
+
+    The dedup key matches ``tests/test_param_count.py::_count_distinct``
+    (``data_ptr`` + ``storage_offset``) so the two cannot disagree about the
+    production number. Zero-element tensors skip the dedup — several can share a
+    null ``data_ptr`` without being tied — which costs nothing, since they
+    contribute nothing either way.
+    """
+    seen: set[tuple[int, int]] = set()
+    total = 0
+    for tensor in state.values():
+        if not isinstance(tensor, torch.Tensor):
+            continue
+        n = int(tensor.numel())
+        if n:
+            key = (tensor.untyped_storage().data_ptr(), int(tensor.storage_offset()))
+            if key in seen:
+                continue
+            seen.add(key)
+        total += n
+    return total
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--in", dest="src", required=True, help="input trainer.pt")
@@ -526,15 +667,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {dst} exists (pass --force to overwrite)", file=sys.stderr)
         return 2
     ck = torch.load(args.src, map_location="cpu", weights_only=False)
-    before = sum(int(v.numel()) for v in ck["model"].values() if hasattr(v, "numel"))
+    before = count_distinct_params(ck["model"])
+    naive_before = sum(int(v.numel()) for v in ck["model"].values() if hasattr(v, "numel"))
     ck, changes = widen_checkpoint(ck, align=args.align, seed=args.seed)
-    after = sum(int(v.numel()) for v in ck["model"].values() if hasattr(v, "numel"))
+    after = count_distinct_params(ck["model"])
+    naive_after = sum(int(v.numel()) for v in ck["model"].values() if hasattr(v, "numel"))
     if not changes:
         print("no layers need widening; checkpoint already tile-aligned")
     for layer in sorted(changes):
         old_w, new_w = changes[layer]
         print(f"  layer {layer:2d}: {old_w} -> {new_w}")
-    print(f"state_dict params: {before:,} -> {after:,} ({after - before:+,})")
+    # ⚑ The unique-storage count is the headline; the naive sum is printed only
+    # so a reader comparing against some other tool's output sees WHY the two
+    # differ instead of assuming this one is wrong. On production the gap is
+    # 15,728,640 — the tied Smolgen generator, counted 16 times.
+    print(f"params (unique storage): {before:,} -> {after:,} ({after - before:+,})")
+    print(
+        f"  sum(numel) over state_dict: {naive_before:,} -> {naive_after:,} "
+        f"({naive_after - naive_before:+,})  <-- NAIVE: double-counts tied storages"
+    )
     # ⚑ On the no-op path widen_checkpoint returns BEFORE materializing the
     # schedule, so arch may carry None or no key at all — list(None) raised and
     # no output file was written, on the very path the docstring advertises as
