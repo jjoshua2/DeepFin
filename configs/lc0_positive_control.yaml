@@ -421,14 +421,29 @@ train:
 # about. Now pinned by `chess_anti_engine/eval/lc0_control_replay.py` as launch
 # guard 0d, on the same instrument as the architecture and trainer pins.
 #
-# ⚑ Written out EXPLICITLY even where `TrialConfig`'s default already equals
-# live's value (`diff_focus_*`, the recency exponent, `shard_size`). A default
-# that happens to agree is not a claim about production; a value in the file is.
+# ⚑ Written out EXPLICITLY where the key is a real production setting
+# (`diff_focus_*`, `shard_size`): a `TrialConfig` default that happens to agree
+# is not a claim about production; a value in the file is.
 #
-# ⚑ THE TWO DECLARED DEVIATIONS CARRY PRODUCTION'S VALUE HERE ON PURPOSE.
-# `replay_shard_recency_exponent: 1.0` is live's; the driver overrides it to 0.0
-# via `LC0_REPLAY_DEVIATIONS` because this corpus is fixed rather than
-# streaming, and the override is recorded in `summary.json`'s
+# ⚑⚑ WITH ONE DELIBERATE EXCEPTION — THE SHARD-RECENCY EXPONENT KEY IS NOT
+# SHIPPED HERE, and that is a gate, not an oversight. That knob has its own test
+# module under `tests/` (grep the buffer kwarg `shard_recency_exponent`; the
+# "no live config ships the key yet" case) and it asserts that NO
+# `configs/*.yaml` so much as MENTIONS the tune-section spelling, in RAW TEXT —
+# which is why neither the key nor its test's filename appears anywhere in this
+# file. The knob's deciding instrument (the offline rig's arm G, on whether
+# recency weighting accelerates forgetting) has not read out, so flipping it is
+# a separate ledger-pre-registered change at a restart. An earlier revision of
+# this block shipped it at 1.0 — live's value AND `TrialConfig`'s default, so it
+# flipped nothing — and CI refused it anyway, correctly: the gate is a statement
+# about the repository, and "my value is the default" is exactly the argument
+# that erodes it one file at a time. The replay pin still judges the axis: the
+# signature reads `TrialConfig`'s realized 1.0 whether or not a yaml says so.
+#
+# ⚑ THE DECLARED DEVIATION IS APPLIED BY THE DRIVER, NOT BY THIS FILE. The
+# driver overrides the recency exponent to 0.0 via `LC0_REPLAY_DEVIATIONS`
+# because this corpus is fixed rather than streaming (it has always done so;
+# this is not a new flip), and the override is recorded in `summary.json`'s
 # `realized_replay_after_guard`. Putting 0.0 in the file instead would make the
 # deviation invisible to the guard, which is the opposite of the point.
 #
@@ -443,4 +458,3 @@ tune:
   shuffle_refresh_interval: 4
   shuffle_refresh_shards: 5
   shard_size: 2000
-  replay_shard_recency_exponent: 1.0

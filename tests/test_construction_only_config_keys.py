@@ -91,6 +91,24 @@ _ALLOWED_CONSUMER_FILES = {
     "chess_anti_engine/tune/trainable_init.py",
     "chess_anti_engine/tune/trainable_config_ops.py",
     "chess_anti_engine/utils/config_yaml.py",
+  # ⚑ ADDED 2026-08-17, WITH A VERDICT RATHER THAN REFLEXIVELY. The lc0 control's
+  # replay pin names every construction-only buffer key as a string literal, and
+  # the question this test asks is "does any of those files READ the key AFTER
+  # STARTUP" — because that is what would make freezing the key wrong.
+  #
+  # It does not, and the reason is structural rather than a promise: the module's
+  # only entry points are `replay_kwargs_signature` (a pure config -> kwargs
+  # projection) and `assert_control_matches_live_replay`, and both are called
+  # exactly twice per process — once by `preflight_replay` at launch and once to
+  # build the `DiskReplayBuffer` in the same function, before any step. There is
+  # no reload path, no per-iteration hook and no live-sync loop in the file. The
+  # arm it serves is an OFFLINE supervised driver with no `_reload_yaml_into_config`
+  # at all, so there is no mid-run edit for a value to reach.
+  #
+  # ⚑ This is the same class of consumer as `trainable_init.py` one line up —
+  # it reads the key to CONSTRUCT the buffer — and it is added for that reason,
+  # not because it was inconvenient to have the test fail.
+    "chess_anti_engine/eval/lc0_control_replay.py",
 }
 
 

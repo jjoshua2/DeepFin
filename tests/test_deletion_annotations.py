@@ -360,7 +360,17 @@ KEY_LITERAL_SURFACES: dict[str, tuple[str, ...]] = {
     "no_amp": ("chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
     "opening_fen_prob": ("chess_anti_engine/tune/distributed_runtime.py", "chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py", "chess_anti_engine/worker.py", "scripts/loop_health.py"),
     "pb2_perturbation_interval": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
-    "replay_sf_gap_priority_weight": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
+  # ⚑ `lc0_control_replay.py` ADDED 2026-08-17, judged rather than pinned
+  # reflexively. It names the key in `CONFIG_KWARGS`, which maps a
+  # `DiskReplayBuffer` kwarg to the `TrialConfig` FIELD that supplies it, and it
+  # reads the value with `getattr(tc, ...)` — never off the flat config. So the
+  # yaml key's absence cannot reach it as a `KeyError` or a substituted default
+  # of its own: `TrialConfig.from_dict` resolves the field to 0.0 either way,
+  # which is exactly what `tune/trainable_init.py` passes production's buffer.
+  # ⚑ And per the caveat below, "the resolver has a default" is NOT the argument:
+  # the argument is that this key is DELETED from the config, so absence IS the
+  # shipped state on both sides of the comparison and substitutes nothing.
+    "replay_sf_gap_priority_weight": ("chess_anti_engine/eval/lc0_control_replay.py", "chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
     "resid_channel_balance_weight": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
     "resid_channel_dropout": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
     "search_optimizer_choices": ("chess_anti_engine/run.py", "chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
@@ -400,6 +410,14 @@ MODULE_LEVEL_KEY_COLLECTIONS: dict[tuple[str, str], tuple[str, ...]] = {
   # Membership tests over the driver/tune config. Absence removes a member from
   # a set intersection; no value is read.
     ("chess_anti_engine/run.py", "_TUNE_CONFIG_DENYLIST"): ("search_optimizer_choices",),
+  # A BUFFER-KWARG -> TRIALCONFIG-FIELD MAP, not a config read. The lc0 control's
+  # replay pin loops this to build `DiskReplayBuffer` kwargs via `getattr(tc, ...)`,
+  # mirroring `tune/trainable_init.py`'s call site. Absence of the yaml key leaves
+  # `TrialConfig`'s field at 0.0 on BOTH the control and the live reference, so the
+  # comparison the collection feeds is unchanged — and because the key is DELETED
+  # from the config, absence is the shipped state rather than a substitution.
+  # NOT presence-requiring: nothing here indexes the flat config by this name.
+    ("chess_anti_engine/eval/lc0_control_replay.py", "CONFIG_KWARGS"): ("replay_sf_gap_priority_weight",),
     ("chess_anti_engine/tune/trainable_config_ops.py", "_DRIVER_LAUNCH_FIXED_KEYS"): ("gpbt_inertia_weight", "gpbt_quantile_fraction", "gpbt_resample_probability", "gpbt_winner_weight", "pb2_perturbation_interval", "search_optimizer_choices"),
     ("scripts/audit_realized_config.py", "_RECO_SERVER_RESOLVED"): ("games_per_iter_start",),
   # A FROZEN LITERAL. `LIVE_TRAINER_PIN` is a recorded snapshot of
