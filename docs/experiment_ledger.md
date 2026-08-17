@@ -56547,3 +56547,115 @@ the arm-calibration work. Training log frozen at 14:10:46.
 work_dirs under this trial; a `--fresh` restart or a different trial id will not pick them up. If the
 next run is a fresh lineage, they are lost — that is acceptable and expected, but it should be a
 DECISION rather than a discovery.
+
+## 2026-08-17 VERDICT — arm calibration RUN. ⚑⚑ PRODUCTION'S REGRET FORMULATION IS WORSE THAN SHUFFLING ITS OWN LABELS
+
+Prereg `564e6035c`, amendment `cca357141`. Rig `scratchpad/sfpolicy_compare/arm_calibration_bt4.py`.
+n = 4,000 audit positions, both node tiers, no training compute.
+
+### Inputs built for this (both fresh, both wide)
+
+- `data/lc0/bt4_audit_cache_topk256_20260817.jsonl` — BT4 at `--topk 256`, i.e. the FULL legal
+  support (median 30 moves, max 66), mass sums to 1.0. ⚑ The banked `bt4_audit_cache.jsonl` was
+  top-**5** and is contaminated on two axes; `--cache-out` DEFAULTS to it, so this run wrote to a new
+  path deliberately. Castling remap is the post-2026-08-13 correct one.
+- `data/lc0/ours_iter190_audit_cache_topk256_20260817.jsonl` — our net, `checkpoint_000190` of trial
+  `dea5e_00000`, scored through the SAME script so the encoding and gather are identical and the two
+  distributions are directly comparable with no translation. Overall exp/top1 regret 52.5 / 47.0 cp
+  against BT4's 46.0 / 19.3.
+
+### ⚑⚑ THE METRIC AS PRE-REGISTERED WAS DOMINATED BY A SHARPNESS AXIS — N2 CAUGHT IT
+
+The pre-registered raw cosine gives **N2 (anti-prior: pure confidence-flattening, zero SF input)**
+a mean of **+0.6122** (BT4) and **+0.6761** (deep). That is the highest score any direction achieves.
+⇒ roughly two-thirds of the attainable cosine is available from flattening our over-confident policy
+with **no information whatsoever**. Reporting the raw number as "arm quality" would have been a
+measurement artefact, exactly the failure N2 was written to catch
+[[shuffle_the_labels_negative_control]].
+
+So every arm is ALSO reported with the flattening direction projected out of both the arm and the
+ruler — the **ranking-only** read. Both views below; the orthogonalised one is the one that answers
+the question asked.
+
+### Results — ORTHOGONALISED (ranking only), tier 50k / tier 500k
+
+| arm | n | BT4 cos | deep-SF cos |
+|---|---|---|---|
+| **A** production cp + constant fill | 3889 | +0.0315 / +0.0252 | **−0.0989 / −0.0935** |
+| **B** #447 gate (cp, surfaced only) | 3859 | −0.0100 / −0.0211 | −0.0410 / −0.0478 |
+| **C** one-sided top-1/top-2 floor | 2945 | **+0.4147 / +0.4122** | **+0.3165 / +0.3201** |
+| **D** WDL-space regret | 2618 | +0.0244 / +0.0085 | −0.0304 / −0.0455 |
+| N1 shuffled regret | 3875 | −0.0972 / −0.0913 | −0.0217 / −0.0274 |
+
+**The two tiers agree to ~0.005 on every cell.** ⇒ these findings are about the REDUCTION, not about
+label depth — 50k and 500k node labels give the same answer, which also retires the worry that the
+MultiPV-40-vs-6 population note would change the ranking.
+
+### Paired contrasts (rows where BOTH arms are defined; *** = 95% CI excludes 0)
+
+| contrast | BT4 | deep-SF |
+|---|---|---|
+| **A − N1 (shuffled)** | +0.1276 *** | **−0.0788 *** / −0.0669 ***** |
+| D − N1 | +0.1328 *** | −0.0166 n.s. / −0.0273 n.s. |
+| C − N1 | +0.5282 *** | +0.3508 *** |
+| **D − B** | **+0.0126 *** / +0.0121 *** ** | **+0.0122 *** / +0.0124 *** ** |
+| D − A | −0.0331 *** | **+0.1021 *** / +0.0960 *** ** |
+| B − A | −0.0419 *** | +0.0580 *** / +0.0456 *** |
+| A − N2 | −0.7506 *** | −0.9504 *** |
+| C − N2 | +0.0222 *** | −0.0494 *** |
+
+### VERDICTS by the pre-committed rules
+
+- **ARM A — RETIRED, on all three rules, and the manner matters.** Rule 1: its raw BT4 CI is
+  [−0.1604, −0.1181], entirely below 0. Rule 3: **against the deep-SF ruler, production's regret
+  formulation is SIGNIFICANTLY WORSE than randomly PERMUTING its own regret values among the same
+  surfaced moves** (−0.0788 at 50k, −0.0669 at 500k, both ***). Shuffling the labels beats using
+  them. There is no reading of that under which the magnitudes carry usable ordering information.
+- **ARM B (#447's gate) — RETIRED by rule 1**, but the gate is VINDICATED as a change: B beats A on
+  the deep ruler (+0.0580 / +0.0456 ***). Removing the fabricated tail helps; it does not make the
+  arm good.
+- **ARM D (WDL-space) — RETIRED by rules 1 and 3**, and the amendment's prediction still held:
+  **D beats B on BOTH rulers at BOTH tiers (+0.012, four for four, all ***)** — identical support,
+  differing only cp-space vs WDL-space — and D beats A on deep by +0.10. So the saturation repair is
+  real and directionally right. It is not enough to rescue the formulation. ⚑ D is UNDEFINED on
+  1,382 of 4,000 rows (35%) because every surfaced move has identical SF WDL — the saturation showing
+  up as silence rather than as error.
+- **ARM C (one-sided top-1/top-2 floor) — THE ONLY SURVIVOR.** +0.41 / +0.32 orthogonalised, and it
+  beats the shuffle control by +0.53 / +0.35. ⚑ But it is NOT clean: on the raw metric C ≈ N2
+  (+0.0222 BT4, −0.0494 deep — opposite signs, so it neither beats nor fails the entropy control),
+  and it has an opinion on only 2,946 of 4,000 rows.
+
+### ⚑⚑ THE FINDING UNDERNEATH ALL FOUR: MEMBERSHIP WORKS, MAGNITUDE DOES NOT
+
+C is the only arm that never reads a regret MAGNITUDE. It uses one bit per move — *is this move in
+SF's top-2* — and top-1/top-2 are the ranks that are always genuinely surfaced, never the fitted
+fill. A, B and D all consume the cp or WDL magnitudes, and all three land at or below a shuffle
+control on the SF-native ruler. ⇒ **the usable signal in `sf_p0_regret` is SET MEMBERSHIP, not the
+numbers.** This independently reproduces [[relational_sf6_loses_to_the_constant_tail]] ("70% of the
+constant tail's fidelity is SET MEMBERSHIP") from a completely different instrument, which is why it
+is stated as a finding rather than a hypothesis.
+
+### CONSEQUENCE FOR TASK #252 — the program changes shape
+
+"Turn on `w_sf_own_regret` at its production formulation" is **KILLED before it cost a training
+run**, which is what the prereg's rule 5 existed to permit. What replaces it is a rank/membership
+term of C's shape. ⚑ And C's own result carries the next test, which is CHEAPER than C:
+since C ≈ N2 on the raw metric, a large share of C's benefit may be plain confidence-flattening,
+obtainable from a policy temperature or entropy bonus with no new machinery at all. **That control
+must run before C is built**, or we will ship a bespoke SF term to buy something a temperature knob
+already gives.
+
+### Preconditions, stated as required — NEITHER is resolved
+
+- **PURITY: NOT MEASURED.** The exposed/unexposed split the prereg required was not computed. #199's
+  gate failed at 5.23% exposed inputs and `p_ours` enters every number above. Exposure biases cosines
+  toward the ruler, which is CONSERVATIVE for the retirements (A/B/D are retired on NEGATIVE scores
+  that exposure would have inflated) but is NOT conservative for C's ranking. **C's margin is
+  provisional until the split is run.**
+- **RULER DISAGREEMENT IS REAL AND IS NOT AVERAGED.** BT4 and deep-SF give OPPOSITE signs on D−A and
+  B−A. Per rule 4 the SF-native ruler breaks ties, so the ordering above follows deep-SF. The deep
+  ruler's softmax (100cp scale, unsurfaced moves floored at the minimum scored value) is MY
+  construction, not production's `sf_policy_score_mode`, and that is a stated limitation.
+- N1 is not a perfect null: it preserves the surfaced/unsurfaced support structure and only permutes
+  magnitudes within it, which is why it scores −0.09 rather than 0.00 against BT4. That makes
+  "A loses to N1" a statement about MAGNITUDES specifically, which is the intended comparison.
