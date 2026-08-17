@@ -56774,3 +56774,37 @@ it were production's shape.
 others are value-head/output flavours and are expected to share the policy trunk, but **that is
 asserted, not measured** — if any later claim depends on BT4's policy being variant-invariant, run the
 check first.
+
+## 2026-08-17 ⚑⚑ RETRACTION — CERES IS NOT AN INDEPENDENT RULER. BT4 AND CERES SHARE THEIR HOLES
+
+The entry above (`d32973423`) said Ceres is *"a THIRD ruler from a different family — which matters,
+because the arm calibration found BT4 and deep-SF disagreeing on the sign of D−A and B−A."*
+**That is WRONG and is retracted.** Josh predicted it before it was measured: *"I expect ceres and bt4
+to have the same holes being trained similar."*
+
+Measured, n = 4,000, same frozen deep-SF ruler:
+
+| pair | top-1 move agreement | Pearson r of per-position top-1 regret |
+|---|---|---|
+| **BT4 ↔ Ceres** | **83.5%** | **+0.8211** |
+| BT4 ↔ ours | 50.8% | +0.2867 |
+| Ceres ↔ ours | 50.3% | +0.2969 |
+
+agreement with deep-SF's best move: BT4 **57.3%**, Ceres **58.2%**, ours 42.6%.
+
+⇒ BT4 and Ceres are **~2.9× more correlated with each other than either is with us**, and they fail on
+the SAME positions. They are one ruler with a small perturbation, not two. **Ceres cannot break a
+BT4-vs-deep-SF tie**, because that tie is a FAMILY split — lc0-style selfplay nets on one side,
+Stockfish on the other, disagreeing on ~42% of positions — and Ceres sits squarely on the BT4 side.
+
+⚑ Generalised, because this is the second time a "new instrument" turned out to be the old one:
+**an added ruler buys nothing unless its ERRORS are decorrelated from the rulers already in use.**
+Count independent rulers by error correlation, never by provenance ("different project" implied
+"different opinion" here, and it was worth r = +0.82 of the same opinion). The arm calibration's
+BT4-vs-deep-SF disagreement therefore remains OPEN and is NOT resolvable by adding lc0-family nets;
+it needs either a genuinely different family or adjudication by the anti-SF objective itself.
+[[same_name_different_population]], [[a_purity_gate_must_diff_arm_against_arm]]
+
+What SURVIVES from `d32973423`: every 1-node strength number (Ceres 18.6 / BT4 20.1 / ours 46.9 top-1),
+the 1.9× headline, the search ladder, and the C17 conclusion. Only the "independent third ruler"
+inference is withdrawn.
