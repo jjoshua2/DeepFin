@@ -56984,3 +56984,75 @@ reads **rank membership** rather than magnitude; and the magnitude arms are at o
 not an artefact of the p-confound — the `frac>0` gap (99.9% vs 43.4%) is strong evidence it is not, but
 the control makes it decisive; (2) the exposed/unexposed purity split (#199 failed at 5.23%); (3) the
 floor threshold τ (0.10 here, binds 23.02% of production rows) is UNTUNED and needs a ladder.
+
+## 2026-08-17 TEST OF ARM C — it survives its own control, but 77% of its effect is the MECHANISM, not Stockfish
+
+The controls used so far (N1 shuffled, N2 anti-prior) cannot test C: N1 permutes MAGNITUDES, which C
+never reads, and N2 is a ceiling artefact. C needs a control with the **same mechanism, same τ, same
+probability regime, differing only in WHICH moves get floored**. That is `C_RANDOM_ctl`: floor two
+**randomly chosen surfaced** moves instead of SF's top-2.
+
+| arm | n | mean argmax pull | frac>0 |
+|---|---|---|---|
+| **C τ=0.35** | 2166 | **+0.8987** | 98.4% |
+| C_top1 only (τ=0.10) | 1216 | +0.8526 | 99.9% |
+| C τ=0.20 | 2040 | +0.8553 | 99.8% |
+| **C τ=0.10 (as prereg'd)** | 1818 | **+0.8041** | 99.9% |
+| C τ=0.05 | 1590 | +0.7793 | 99.9% |
+| C τ=0.02 | 1256 | +0.7599 | 99.9% |
+| **C_RANDOM_ctl (τ=0.10)** | 1844 | **+0.6206** | 99.8% |
+
+### Verdict 1 — C IS real, and it is SMALLER than it looked
+
+| paired contrast | value |
+|---|---|
+| C τ=0.10 − C_RANDOM | **+0.1496** [+0.1292, +0.1694] *** |
+| C_top1 − C_RANDOM | +0.1751 [+0.1480, +0.2035] *** |
+| C τ=0.35 − C_RANDOM | **+0.2614** [+0.2351, +0.2860] *** |
+
+C beats its own control decisively, so **the SF ranking information is genuine** — this is not the
+p-confound, and task #255's worry is answered by a control that shares C's mechanism rather than by a
+temperature sweep. ⚑ But the split is sobering: **C = +0.804, control = +0.621 ⇒ ~77% of C's argmax
+pull comes from the MECHANISM ("floor some surfaced move") and only ~23% from knowing WHICH moves SF
+ranks top.** The C−N1 gap of +0.91 quoted in the previous entry OVERSTATES C's SF content by ~6×,
+because N1 was never the right denominator. **Quote +0.15 (or +0.26 at the tuned τ), not +0.91.**
+
+⇒ **Third independent appearance of the same law today: the payload is SET MEMBERSHIP in SF's MultiPV,
+not the ordering inside it.** Membership got 77% here, magnitudes got 0% (arms A/B/D, at or below
+chance), rank got 23%. [[relational_sf6_loses_to_the_constant_tail]]
+
+### Verdict 2 — τ = 0.10 was a bad guess; the optimum is ~0.35 and it is an INTERIOR maximum
+
+Paired against τ=0.10 on the same rows, so population is controlled:
+
+| τ | vs 0.10 |
+|---|---|
+| 0.05 | −0.0189 *** |
+| 0.20 | +0.0407 *** |
+| **0.35** | **+0.0717 *** (best)** |
+| 0.50 | +0.0369 *** |
+
+0.20 < **0.35** > 0.50 is a genuine interior peak, not a boundary artefact. ⚑ Caveat: `frac>0` decays
+with τ (99.9% → 98.4% at 0.35 → 92.9% at 0.50), so the high-τ gain is bought partly by binding on rows
+where it sometimes points the wrong way. **τ = 0.35 is the recommendation; τ ≥ 0.50 is rejected.**
+
+### Verdict 3 — keep top-2, not top-1
+
+`C_top1 − C_top2 = −0.0084 [−0.0231, +0.0058]`, **n.s.** — identical per-row quality. The unpaired
+means differ (+0.853 vs +0.804) purely because top-1 binds on fewer rows (1216 vs 1818). ⇒ top-2 gives
+**50% more coverage at statistically equal quality**, so top-2 wins on coverage. A textbook case of an
+unpaired comparison inverting a paired one.
+
+### ⇒ SPEC for the term to build
+
+`loss_C = w · Σ_{m ∈ SF top-2 of the MultiPV} relu(τ − p_m)`, **τ = 0.35**, one-sided (no penalty when
+already above the floor), reading only the RANK of surfaced moves and never a regret magnitude.
+Binds on ~54% of rows (2166/4000 at τ=0.35).
+
+**Owed before it ships:**
+1. **The cheaper variant must be screened first.** If 77% of the effect is "floor a surfaced move",
+   then flooring the WHOLE MultiPV-6 set — pure membership, zero rank — may capture most of it with
+   no ranking input at all. That is a cheaper term and a stronger claim; run it as arm **E** before
+   building C. **Not doing this risks shipping rank machinery to buy a membership effect.**
+2. The exposed/unexposed purity split (#199 failed at 5.23%), still unmeasured.
+3. `w` is entirely uncalibrated — no gradient-share measurement exists for a floor-shaped term.

@@ -138,13 +138,29 @@ def _arm_directions(
     # --- arm C: one-sided floor on SF's top-1/top-2 (always genuinely surfaced)
     order = sorted(scored, key=lambda t: -t[1])
     floor_idx = [i for i, _s, _q in order[:2]]
-    # loss = sum_{m in F} relu(tau - p_m); dL/dp_m = -1 where it binds
-    d_C = np.zeros(n, dtype=np.float64)
-    for m in floor_idx:
-        if p_ours[m] < TOP2_FLOOR:
-            e = np.zeros(n, dtype=np.float64)
-            e[m] = 1.0
-            d_C += p_ours[m] * (e - p_ours)
+
+    def _floor_dir(idxs: list[int], tau: float) -> np.ndarray:
+        """-d/dlogits of sum_{m in idxs} relu(tau - p_m); dL/dp_m = -1 where it binds."""
+        out = np.zeros(n, dtype=np.float64)
+        for m in idxs:
+            if p_ours[m] < tau:
+                e = np.zeros(n, dtype=np.float64)
+                e[m] = 1.0
+                out += p_ours[m] * (e - p_ours)
+        return out
+
+    d_C = _floor_dir(floor_idx, TOP2_FLOOR)
+
+    # ⚑ C_rand — THE control C actually needs. Same mechanism, same tau, same
+    # probability regime; only WHICH moves are floored differs. N2/N1 cannot test
+    # C: N2 is a ceiling artefact (it prefers any under-weighted move) and N1
+    # permutes magnitudes, which C never reads. If C >> C_rand then "the moves SF
+    # NAMES" is the information, which is the whole claim.
+    surf_idx = [i for i, _s, _q in scored]
+    d_Crand = _floor_dir(rng.sample(surf_idx, min(2, len(surf_idx))), TOP2_FLOOR)
+
+    # top-1 only: is the second floored move carrying weight or diluting?
+    d_C1 = _floor_dir(floor_idx[:1], TOP2_FLOOR)
 
     # --- arm D: WDL-space regret from SF's OWN w/d, surfaced support ---------
     r_q = np.zeros(n, dtype=np.float64)
@@ -169,6 +185,13 @@ def _arm_directions(
         "A_prod_cp_fill": _softmax_dir(p_ours, r_A),
         "B_gated_cp": d_B,
         "C_top2_floor": d_C,
+        "C_top1_only": d_C1,
+        "C_RANDOM_ctl": d_Crand,
+        "C_tau0.02": _floor_dir(floor_idx, 0.02),
+        "C_tau0.05": _floor_dir(floor_idx, 0.05),
+        "C_tau0.20": _floor_dir(floor_idx, 0.20),
+        "C_tau0.35": _floor_dir(floor_idx, 0.35),
+        "C_tau0.50": _floor_dir(floor_idx, 0.50),
         "D_wdl_space": d_D,
         "N1_shuffled": d_N1,
         "N2_antiprior": d_N2,
@@ -309,7 +332,8 @@ def main() -> None:
 
     boot = np.random.default_rng(args.seed)
     order = ("A_prod_cp_fill", "B_gated_cp", "C_top2_floor", "D_wdl_space",
-             "N1_shuffled", "N2_antiprior")
+             "C_top1_only", "C_tau0.02", "C_tau0.05", "C_tau0.20", "C_tau0.35",
+             "C_tau0.50", "C_RANDOM_ctl", "N1_shuffled", "N2_antiprior")
     contrasts = (("D_wdl_space", "A_prod_cp_fill"),
                  ("D_wdl_space", "B_gated_cp"),
                  ("B_gated_cp", "A_prod_cp_fill"),
@@ -319,7 +343,16 @@ def main() -> None:
                  ("D_wdl_space", "N2_antiprior"),
                  ("A_prod_cp_fill", "N1_shuffled"),
                  ("D_wdl_space", "N1_shuffled"),
-                 ("C_top2_floor", "N1_shuffled"))
+                 ("C_top2_floor", "N1_shuffled"),
+                 # ⚑ the contrasts that actually TEST C: same mechanism both sides
+                 ("C_top2_floor", "C_RANDOM_ctl"),
+                 ("C_top1_only", "C_RANDOM_ctl"),
+                 ("C_top1_only", "C_top2_floor"),
+                 ("C_tau0.05", "C_top2_floor"),
+                 ("C_tau0.20", "C_top2_floor"),
+                 ("C_tau0.35", "C_top2_floor"),
+                 ("C_tau0.50", "C_top2_floor"),
+                 ("C_tau0.35", "C_RANDOM_ctl"))
 
     report: dict = {"tier": args.tier, "n_keys": len(keys),
                     "skipped": dict(skipped), "views": {}}
